@@ -395,7 +395,7 @@ export function RoutineEditor({
             {runOn === "cloud" && (
               <div className={cn("mt-2 rounded-lg px-3 py-2 text-[11.5px] leading-relaxed", cloudReady ? "bg-accent/10 text-ink-secondary" : "border border-warning/25 bg-warning/10 text-warning")}>
                 {cloudReady
-                  ? "The VM wakes automatically for each run. Keep OpenMausBot running so its scheduler can launch the job."
+                  ? "The VM wakes automatically for each run. Keep RealBud running so its scheduler can launch the job."
                   : "Cloud VM needs a working Box API key in App Settings before this routine can run."}
               </div>
             )}
@@ -598,7 +598,7 @@ export function RoutinesPage() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-2.5"><CalendarDays size={21} className="text-accent" /><h1 className="text-[20px] font-semibold tracking-tight text-ink">Routines</h1></div>
-            <p className="mt-1 text-[12.5px] text-ink-secondary">Scheduled work runs through your real MAUS team while OpenMausBot is open.</p>
+            <p className="mt-1 text-[12.5px] text-ink-secondary">Scheduled work runs through your team while RealBud is open.</p>
           </div>
           <div className="flex items-center gap-2">
             {running > 0 && <span className="flex items-center gap-1.5 rounded-full border border-accent/25 bg-accent/10 px-2.5 py-1.5 text-[11px] text-accent"><Loader2 size={12} className="animate-spin" />{running} active</span>}

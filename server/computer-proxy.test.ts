@@ -339,9 +339,9 @@ describe("computer proxy (fake box)", () => {
     const result = await waitFor(130);
     const issued = commands.slice(before);
     expect(issued).toHaveLength(2);
-    expect(issued[0]).toContain('mkdir -p "$HOME/.openmausbot/chrome-profile"');
-    expect(issued[0]).toContain('chmod 700 "$HOME/.openmausbot/chrome-profile"');
-    expect(issued[0]).toContain('--user-data-dir="$HOME/.openmausbot/chrome-profile"');
+    expect(issued[0]).toContain('mkdir -p "$HOME/.realbud/chrome-profile"');
+    expect(issued[0]).toContain('chmod 700 "$HOME/.realbud/chrome-profile"');
+    expect(issued[0]).toContain('--user-data-dir="$HOME/.realbud/chrome-profile"');
     expect(issued[0]).not.toContain("user:password@");
     expect(issued[0]).toContain("'https://example.com/requested?token=secret#fragment'");
     expect(result.result.content[0].text).toContain("https://example.com/landed");

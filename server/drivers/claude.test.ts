@@ -37,7 +37,7 @@ describe("ClaudeDriver.decodeConfig", () => {
   });
 
   it.skipIf(process.platform !== "win32")("names permission pipes per harness process", () => {
-    expect(permissionSocketPath("thread-abc")).toBe(`\\\\.\\pipe\\openmausbot-perm-${process.pid}-thread-a`);
+    expect(permissionSocketPath("thread-abc")).toBe(`\\\\.\\pipe\\realbud-perm-${process.pid}-thread-a`);
   });
 });
 

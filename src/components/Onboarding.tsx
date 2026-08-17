@@ -80,7 +80,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
 
   const saveProfile = () => {
     identifyEmail(email.trim().toLowerCase());
-    // persisted server-side (~/.openmausbot/config.json) — the sidebar
+    // persisted server-side (~/.realbud/config.json) — the sidebar
     // footer reads it back through /api/config
     void fetch("/api/config", {
       method: "PUT",
@@ -144,7 +144,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         {step === 0 && (
           <div className="flex flex-col items-center">
             <MausAvatar color="green" state="happy" size={72} />
-            <h1 className="mt-4 text-[20px] font-semibold text-ink">Welcome to OpenMausBot</h1>
+            <h1 className="mt-4 text-[20px] font-semibold text-ink">Welcome to RealBud</h1>
             <p className="mt-1.5 text-center text-[14px] leading-relaxed text-ink-secondary">
               Bots that do real work on their own computer. Tell us who you are
               and we&rsquo;ll let you know when big things ship.
@@ -269,7 +269,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                   which is the moment the user has context for the dialog. */}
             </div>
             <button onClick={finish} className="mt-5 w-full rounded-lg bg-accent py-2.5 text-[15px] font-medium text-white">
-              Start using OpenMausBot
+              Start using RealBud
             </button>
             <button onClick={finish} className="mt-3 text-[12px] text-ink-secondary hover:text-ink">
               Skip for now

@@ -49,7 +49,7 @@ const SHOT_PATH = "/tmp/ogb-shot.jpg";
 const SETTLE_MS = 350;
 /** Gap between batched actions so focus changes land before typing. */
 const ACTION_GAP_MS = 120;
-const CHROME_PROFILE = "$HOME/.openmausbot/chrome-profile";
+const CHROME_PROFILE = "$HOME/.realbud/chrome-profile";
 const CHROME_DEBUG_FLAGS =
   `--user-data-dir="${CHROME_PROFILE}" --no-first-run --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222`;
 const CHROME_PROFILE_SETUP =
@@ -734,7 +734,7 @@ async function handle(msg: any) {
       result: {
         protocolVersion: msg.params?.protocolVersion ?? "2024-11-05",
         capabilities: { tools: {} },
-        serverInfo: { name: "openmausbot-computer", version: "3" },
+        serverInfo: { name: "realbud-computer", version: "3" },
       },
     });
   }

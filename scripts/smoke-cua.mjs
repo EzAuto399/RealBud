@@ -10,7 +10,7 @@ process.env.OPENMAUSBOT_CUA_SDK_LIBRARY = join(resources, "cua-sdk/native/libcua
 const sdk = pathToFileURL(join(resources, "cua-sdk/cua-sdk.mjs")).href;
 const binary = join(resources, "cua-driver");
 const { EmbeddedCuaDriverHost } = await import(sdk);
-const host = new EmbeddedCuaDriverHost(binary, "com.openmausbot.app");
+const host = new EmbeddedCuaDriverHost(binary, "com.realbud.app");
 let proxy;
 
 try {
@@ -20,7 +20,7 @@ try {
       ...process.env,
       ...Object.fromEntries(connection.mcp.environment.map(({ name, value }) => [name, value])),
       CUA_DRIVER_EMBEDDED: "1",
-      CUA_DRIVER_HOST_BUNDLE_ID: "com.openmausbot.app",
+      CUA_DRIVER_HOST_BUNDLE_ID: "com.realbud.app",
     },
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -60,7 +60,7 @@ try {
   await rpc("initialize", {
     protocolVersion: "2024-11-05",
     capabilities: {},
-    clientInfo: { name: "openmausbot-package-smoke", version: "1" },
+    clientInfo: { name: "realbud-package-smoke", version: "1" },
   });
   proxy.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
   const listed = await rpc("tools/list");

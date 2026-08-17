@@ -1,6 +1,6 @@
-appId: com.openmausbot.app
-productName: OpenMausBot
-artifactName: OpenMausBot-${version}-${arch}.${ext}
+appId: com.realbud.app
+productName: RealBud
+artifactName: RealBud-${version}-${arch}.${ext}
 
 # In-app auto-update reads latest-mac.yml + the .zip (macOS) or latest.yml +
 # the NSIS .exe (Windows) from this PUBLIC releases repo (separate from the
@@ -11,8 +11,8 @@ artifactName: OpenMausBot-${version}-${arch}.${ext}
 # stranded on its installed version.
 publish:
   - provider: github
-    owner: milind-soni
-    repo: openmausbot-releases
+    owner: EzAuto399
+    repo: RealBud
 
 directories:
   buildResources: build
@@ -29,7 +29,7 @@ files:
   - "!electron/resources/speech-helper"
   - "!electron/resources/speech-helper.swift"
   - "!electron/resources/speech-helper-Info.plist"
-  - "!electron/resources/OpenMausBot Speech.app/**"
+  - "!electron/resources/RealBud Speech.app/**"
   - "!**/node_modules/**"
   - package.json
 
@@ -55,8 +55,8 @@ mac:
   entitlementsInherit: build/entitlements.mac.plist
   # the dictation helper is a signed background app — Windows and Linux never see it
   extraResources:
-    - from: electron/resources/OpenMausBot Speech.app
-      to: OpenMausBot Speech.app
+    - from: electron/resources/RealBud Speech.app
+      to: RealBud Speech.app
     # CUA must live outside ASAR. prepare-cua stages the signed executable and
     # a self-contained JS/native SDK bundle selected for macOS arm64.
     - from: dist-native/cua-driver
@@ -64,17 +64,17 @@ mac:
     - from: dist-native/cua-sdk
       to: cua-sdk
   extendInfo:
-    NSMicrophoneUsageDescription: OpenMausBot uses the microphone for voice dictation into the composer.
-    NSSpeechRecognitionUsageDescription: OpenMausBot transcribes your voice on-device to type messages for you.
-    NSAccessibilityUsageDescription: OpenMausBot uses Accessibility when you let a bot control this Mac.
-    NSScreenCaptureUsageDescription: OpenMausBot uses Screen Recording so bots can see this Mac before acting.
+    NSMicrophoneUsageDescription: RealBud uses the microphone for voice dictation into the composer.
+    NSSpeechRecognitionUsageDescription: RealBud transcribes your voice on-device to type messages for you.
+    NSAccessibilityUsageDescription: RealBud uses Accessibility when you let a bot control this Mac.
+    NSScreenCaptureUsageDescription: RealBud uses Screen Recording so bots can see this Mac before acting.
   # Notarization runs manually after the build (notarytool + staple),
   # mirroring the BlueyLite ship_release.sh flow.
   notarize: false
 
 dmg:
   sign: true
-  artifactName: OpenMausBot-${version}.dmg
+  artifactName: RealBud-${version}.dmg
 
 win:
   target:
@@ -96,11 +96,10 @@ win:
 nsis:
   oneClick: true
   perMachine: false
-  shortcutName: OpenMausBot
-  # Versioned, like the .dmg. The README's /latest/download/ button needs a
-  # STABLE filename, so ship a second copy named OpenMausBot-setup.exe on the
-  # release — the same trick as OpenMausBot.dmg beside OpenMausBot-${version}.dmg.
-  artifactName: OpenMausBot-${version}-setup.${ext}
+  shortcutName: RealBud
+  # Versioned, like the .dmg. A stable RealBud-setup.exe can sit beside
+  # RealBud-${version}-setup.exe on a release.
+  artifactName: RealBud-${version}-setup.${ext}
 
 linux:
   target:
@@ -112,16 +111,16 @@ linux:
   # lone 1024px PNG is not indexed by GNOME's hicolor theme on Ubuntu 24.04.
   icon: build/icon.svg
   category: Utility
-  executableName: openmausbot
-  synopsis: Your own team of AI bots, in a chat app
-  description: A local-first chat app for running a team of AI agents.
-  maintainer: Milind Soni <46266943+milind-soni@users.noreply.github.com>
-  vendor: OpenMausBot
+  executableName: realbud
+  synopsis: A desk for real-estate agents and property managers
+  description: RealBud — local-first agents for rent, owners, and the building portal.
+  maintainer: EzAuto399 <75935138+EzAuto399@users.noreply.github.com>
+  vendor: RealBud
   syncDesktopName: true
   desktop:
     entry:
-      Name: OpenMausBot
-      Comment: Your own team of AI bots, in a chat app
+      Name: RealBud
+      Comment: A desk for real-estate agents and property managers
       Keywords: AI;Agents;Chat;Productivity;
 
 deb:

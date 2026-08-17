@@ -44,7 +44,7 @@ async function binaryVersion(candidate) {
 }
 
 async function officialBinary() {
-  const cache = join(root, "node_modules", ".cache", "openmausbot", `cua-driver-${release.version}`);
+  const cache = join(root, "node_modules", ".cache", "realbud", `cua-driver-${release.version}`);
   const cachedBinary = join(cache, "cua-driver");
   if ((await binaryVersion(cachedBinary)) === expectedVersion) return cachedBinary;
 
@@ -52,7 +52,7 @@ async function officialBinary() {
   await mkdir(cache, { recursive: true });
   const url = `https://github.com/trycua/cua/releases/download/cua-driver-rs-v${release.version}/${release.file}`;
   console.log(`Downloading CUA Driver ${release.version} from the official release…`);
-  const response = await fetch(url, { headers: { "user-agent": "OpenMausBot-packager" } });
+  const response = await fetch(url, { headers: { "user-agent": "RealBud-packager" } });
   if (!response.ok) throw new Error(`CUA Driver download failed: HTTP ${response.status}`);
   const bytes = Buffer.from(await response.arrayBuffer());
   const digest = createHash("sha256").update(bytes).digest("hex");

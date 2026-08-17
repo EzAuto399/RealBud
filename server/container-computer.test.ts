@@ -272,7 +272,7 @@ describe("Cua integration", () => {
     const screenshotCall =
       `docker exec -u cua -e HOME=/home/cua -e DISPLAY=:1 -e CUA_DRIVER_INSTALL_CHANNEL=python_package ${CONTAINER} ` +
       `${CUA_EXECUTABLE} call get_desktop_state {} --socket ${CUA_SOCKET} ` +
-      "--screenshot-out-file /tmp/openmausbot-preview.png";
+      "--screenshot-out-file /tmp/realbud-preview.png";
     const png = Buffer.concat([
       Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
       Buffer.alloc(600),
@@ -287,7 +287,7 @@ describe("Cua integration", () => {
       [versionProbe]: `cua-driver ${CUA_DRIVER_VERSION}\n`,
       [statusProbe]: "running\n",
       [screenshotCall]: "{}\n",
-      [`docker exec ${CONTAINER} base64 -w0 /tmp/openmausbot-preview.png`]: png.toString("base64"),
+      [`docker exec ${CONTAINER} base64 -w0 /tmp/realbud-preview.png`]: png.toString("base64"),
     });
 
     const image = await containerComputerScreenshot(fake.run, "linux");

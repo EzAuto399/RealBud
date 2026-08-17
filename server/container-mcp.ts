@@ -28,7 +28,7 @@ const child = spawn(
     "-e",
     "CUA_DRIVER_INSTALL_CHANNEL=python_package",
     container,
-    "/usr/local/libexec/openmausbot/cua-driver",
+    "/usr/local/libexec/realbud/cua-driver",
     "mcp",
     "--socket",
     socket,

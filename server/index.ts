@@ -1,4 +1,4 @@
-// OpenMausBot server — the harness host. Clients hold no transports
+// RealBud server — the harness host. Clients hold no transports
 // (upstream rule): the React app dispatches typed commands over HTTP and
 // folds one SSE event stream; every provider process runs here.
 import { randomBytes } from "node:crypto";
@@ -506,7 +506,7 @@ async function startTurn(
       : text;
 
   const persona = [
-    `You are ${bot.name}, a personal bot in OpenMausBot.`,
+    `You are ${bot.name}, a personal bot in RealBud.`,
     bot.title && `Role: ${bot.title}.`,
     bot.description && `About: ${bot.description}`,
   ]
@@ -550,7 +550,7 @@ async function startTurn(
           throw new Error("this model engine cannot control this computer — choose Claude or an ACP engine, or select another destination");
         }
         const cua = readCuaConnection();
-        if (!cua) throw new Error("CUA Driver is not ready for this computer — check permissions and restart OpenMausBot");
+        if (!cua) throw new Error("CUA Driver is not ready for this computer — check permissions and restart RealBud");
         integrations.localComputer = cua;
         computerKind = "local";
       }
@@ -764,7 +764,7 @@ async function runGroupMemberTurn(
     .map((b) => `@${b.name}${b.title ? ` (${b.title})` : ""}`)
     .join(", ");
   const system = [
-    `You are ${bot.name}, a bot in the room "${group.name}" in OpenMausBot.`,
+    `You are ${bot.name}, a bot in the room "${group.name}" in RealBud.`,
     bot.title && `Role: ${bot.title}.`,
     bot.description && `About: ${bot.description}`,
     `Room members: ${roster}, and ${userName} (the human).`,
@@ -1020,7 +1020,7 @@ const server = createServer(async (req, res) => {
             broadcastGroup(channel.id);
           }
         }
-        const prefixed = `[Message from @${fromName}, another bot in this OpenMausBot workspace. Reply to them.]\n\n${message}`;
+        const prefixed = `[Message from @${fromName}, another bot in this RealBud workspace. Reply to them.]\n\n${message}`;
         const reply = await askBotAndWait(toBotId, prefixed, depth);
         if (from) {
           mirror(target, reply);
@@ -1473,7 +1473,7 @@ const server = createServer(async (req, res) => {
     // child proves it is OURS by echoing its pid (a stray dev server has
     // the same API shape but a different pid)
     if (method === "GET" && path === "/api/health") {
-      return json(res, 200, { app: "openmausbot", pid: process.pid, static: Boolean(STATIC_DIR) });
+      return json(res, 200, { app: "realbud", pid: process.pid, static: Boolean(STATIC_DIR) });
     }
 
     // ── provider instances (model picker) ──
@@ -1636,7 +1636,7 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(PORT, "127.0.0.1", () => {
-  console.log(`openmausbot server on http://127.0.0.1:${PORT}`);
+  console.log(`realbud server on http://127.0.0.1:${PORT}`);
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

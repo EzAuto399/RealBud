@@ -303,7 +303,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
   };
 
   const openVmSettings = () => {
-    window.sessionStorage.setItem("openmausbot.settings.section", "computer");
+    window.sessionStorage.setItem("realbud.settings.section", "computer");
     dispatch({ type: "toggleAppSettings", open: true });
   };
 

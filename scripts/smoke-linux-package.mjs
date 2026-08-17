@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const executable = path.resolve(
-  process.env.OMB_SMOKE_EXECUTABLE ?? path.join(root, "release", "linux-unpacked", "openmausbot"),
+  process.env.OMB_SMOKE_EXECUTABLE ?? path.join(root, "release", "linux-unpacked", "realbud"),
 );
 if (!existsSync(executable)) throw new Error(`[smoke-linux-package] missing executable: ${executable}`);
 
@@ -15,10 +15,10 @@ const home = path.join(sandbox, "home");
 const xdgConfig = path.join(sandbox, "config");
 const marker = path.join(sandbox, "cua-was-executed");
 const sentinel = path.join(sandbox, "cua-driver");
-mkdirSync(path.join(home, ".openmausbot"), { recursive: true });
+mkdirSync(path.join(home, ".realbud"), { recursive: true });
 mkdirSync(xdgConfig, { recursive: true });
 writeFileSync(
-  path.join(home, ".openmausbot", "config.json"),
+  path.join(home, ".realbud", "config.json"),
   JSON.stringify({ instances: { ghost: { driver: "not-a-real-driver", displayName: "Ghost" } } }),
 );
 writeFileSync(sentinel, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\nexit 99\n`);
@@ -85,10 +85,10 @@ async function stopProcess() {
 try {
   const result = await until(async () => smokeResult, "the packaged renderer smoke result");
   const { capabilities, health, location, title } = result;
-  if (health?.app !== "openmausbot" || health.static !== true) {
+  if (health?.app !== "realbud" || health.static !== true) {
     throw new Error(`unexpected embedded health response: ${JSON.stringify(health)}`);
   }
-  if (!String(title).includes("OpenMausBot")) throw new Error(`unexpected renderer title: ${title}`);
+  if (!String(title).includes("RealBud")) throw new Error(`unexpected renderer title: ${title}`);
   if (capabilities.host.platform !== "linux") throw new Error("renderer did not report Linux");
   if (capabilities.dictation.available) throw new Error("dictation must be unavailable on Linux");
   if (capabilities.localComputer.available) throw new Error("local control must be unavailable on Linux");

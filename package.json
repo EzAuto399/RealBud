@@ -1,19 +1,19 @@
 {
-  "name": "openmausbot",
+  "name": "realbud",
   "private": true,
   "version": "0.1.17",
-  "description": "A local-first chat app for running a team of AI agents.",
-  "homepage": "https://github.com/milind-soni/OpenMausBot",
+  "description": "RealBud — a local-first desk for real-estate agents and property managers.",
+  "homepage": "https://github.com/EzAuto399/RealBud",
   "repository": {
     "type": "git",
-    "url": "https://github.com/milind-soni/OpenMausBot.git"
+    "url": "https://github.com/EzAuto399/RealBud.git"
   },
   "author": {
-    "name": "Milind Soni",
-    "email": "46266943+milind-soni@users.noreply.github.com"
+    "name": "EzAuto399",
+    "email": "75935138+EzAuto399@users.noreply.github.com"
   },
   "license": "MIT",
-  "desktopName": "com.openmausbot.app.desktop",
+  "desktopName": "com.realbud.app.desktop",
   "type": "module",
   "main": "electron/main.mjs",
   "engines": {

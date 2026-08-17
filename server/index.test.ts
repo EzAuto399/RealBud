@@ -37,12 +37,12 @@ beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), "omb-api-test-"));
   staticDir = join(home, "static");
   // a fleet of exactly one unknown driver: no CLI probes, no network
-  mkdirSync(join(home, ".openmausbot"), { recursive: true });
+  mkdirSync(join(home, ".realbud"), { recursive: true });
   mkdirSync(join(staticDir, "assets"), { recursive: true });
-  writeFileSync(join(staticDir, "index.html"), "<!doctype html><title>Packaged OpenMausBot</title>");
+  writeFileSync(join(staticDir, "index.html"), "<!doctype html><title>Packaged RealBud</title>");
   writeFileSync(join(staticDir, "assets", "smoke.css"), "body { color: white; }");
   writeFileSync(
-    join(home, ".openmausbot", "config.json"),
+    join(home, ".realbud", "config.json"),
     JSON.stringify({ instances: { ghost: { driver: "not-a-real-driver", displayName: "Ghost" } } }),
   );
 
@@ -98,7 +98,7 @@ describe("harness HTTP API", () => {
   it("identifies itself on /api/health", async () => {
     const { status, body } = await api("GET", "/api/health");
     expect(status).toBe(200);
-    expect(body.app).toBe("openmausbot");
+    expect(body.app).toBe("realbud");
     expect(typeof body.pid).toBe("number");
     expect(body.static).toBe(true);
   });
@@ -107,7 +107,7 @@ describe("harness HTTP API", () => {
     const root = await fetch(`${BASE}/`);
     expect(root.status).toBe(200);
     expect(root.headers.get("content-type")).toBe("text/html");
-    expect(await root.text()).toContain("Packaged OpenMausBot");
+    expect(await root.text()).toContain("Packaged RealBud");
 
     const asset = await fetch(`${BASE}/assets/smoke.css`);
     expect(asset.status).toBe(200);
@@ -117,7 +117,7 @@ describe("harness HTTP API", () => {
     const spa = await fetch(`${BASE}/settings/desktop`);
     expect(spa.status).toBe(200);
     expect(spa.headers.get("content-type")).toBe("text/html");
-    expect(await spa.text()).toContain("Packaged OpenMausBot");
+    expect(await spa.text()).toContain("Packaged RealBud");
 
     const unknownApi = await api("GET", "/api/not-a-real-route");
     expect(unknownApi.status).toBe(404);

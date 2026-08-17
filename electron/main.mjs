@@ -19,7 +19,7 @@ const APP_ICON = path.join(__dirname, "resources/app-icon.png");
 
 // GNOME groups the window with its installed desktop entry only when both
 // identities match. This must run before Electron becomes ready.
-if (process.platform === "linux") app.setDesktopName("com.openmausbot.app.desktop");
+if (process.platform === "linux") app.setDesktopName("com.realbud.app.desktop");
 
 // Packaged: the harness server ships in Resources (compiled JS, zero deps)
 // and runs on Electron's own Node via utilityProcess. It serves the built
@@ -31,8 +31,8 @@ let serverProc = null;
 let serverReady = true;
 
 // The packaged app has no terminal: everything about the server child's life
-// goes to server.log in the OS log dir (~/Library/Logs/OpenMausBot on macOS,
-// Console.app-visible; %APPDATA%\OpenMausBot\logs on Windows), which is also
+// goes to server.log in the OS log dir (~/Library/Logs/RealBud on macOS,
+// Console.app-visible; %APPDATA%\RealBud\logs on Windows), which is also
 // why stdio is piped, not inherited — under a Finder/Explorer launch the
 // parent's stdio leads nowhere and a failed boot is otherwise undiagnosable.
 const LOG_DIR = app.getPath("logs");
@@ -79,7 +79,7 @@ async function startServerOn(port) {
       const res = await fetch(`http://127.0.0.1:${port}/api/health`);
       if (res.ok) {
         const body = await res.json().catch(() => null);
-        if (body?.app === "openmausbot" && body.pid === proc.pid && body.static) return proc;
+        if (body?.app === "realbud" && body.pid === proc.pid && body.static) return proc;
         break; // someone else owns this port — try the next one
       }
     } catch {
@@ -113,7 +113,7 @@ async function startServerPackaged() {
 const ERROR_PAGE =
   "data:text/html;charset=utf-8," +
   encodeURIComponent(
-    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:360px"><div style="font-size:40px">🐭</div><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the bot server</h2><p style="color:#fcfcfc99;line-height:1.5">Something else is using its ports. Quit and reopen OpenMausBot — if it keeps happening, restart your computer.</p></div></body>`,
+    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:360px"><div style="font-size:40px">🏠</div><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the bot server</h2><p style="color:#fcfcfc99;line-height:1.5">Something else is using its ports. Quit and reopen RealBud — if it keeps happening, restart your computer.</p></div></body>`,
   );
 
 let cuaReady = Promise.resolve({ mode: "unavailable", reason: "not-started" });

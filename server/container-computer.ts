@@ -1,6 +1,6 @@
 // Cua-backed Local VM lifecycle and health checks.
 //
-// OpenMausBot owns only the sandbox boundary: image preparation, container
+// RealBud owns only the sandbox boundary: image preparation, container
 // lifecycle, resource limits, loopback viewer, and the single-bot lease in the
 // harness. Desktop automation itself is Cua Driver. Agents connect directly to
 // `cua-driver mcp` inside the container; this module never reimplements clicks,
@@ -31,15 +31,15 @@ export const BASE_IMAGE_DIGEST = "sha256:274eb636f5cf3fc58f705916ee72b7a701270b3
 export const BASE_IMAGE = `${BASE_IMAGE_REPOSITORY}@${BASE_IMAGE_DIGEST}`;
 // This tag is built locally from the pinned Cua base. Image and container
 // labels below are the authoritative compatibility check, not the mutable tag.
-export const IMAGE_REPOSITORY = "openmausbot/cua-local-vm";
+export const IMAGE_REPOSITORY = "realbud/cua-local-vm";
 export const IMAGE = `${IMAGE_REPOSITORY}:driver-${CUA_DRIVER_VERSION}`;
-export const CONTAINER = "openmausbot-computer";
-export const MANAGED_LABEL = "com.openmausbot.local-vm";
-export const DRIVER_LABEL = "com.openmausbot.cua-driver";
-export const BASE_IMAGE_LABEL = "com.openmausbot.cua-base";
+export const CONTAINER = "realbud-computer";
+export const MANAGED_LABEL = "com.realbud.local-vm";
+export const DRIVER_LABEL = "com.realbud.cua-driver";
+export const BASE_IMAGE_LABEL = "com.realbud.cua-base";
 export const DISPLAY = ":1";
-export const CUA_SOCKET = "/run/user/1000/openmausbot-cua.sock";
-export const CUA_EXECUTABLE = "/usr/local/libexec/openmausbot/cua-driver";
+export const CUA_SOCKET = "/run/user/1000/realbud-cua.sock";
+export const CUA_EXECUTABLE = "/usr/local/libexec/realbud/cua-driver";
 
 const RUNTIMES = ["docker", "podman", "container"] as const;
 export type Runtime = (typeof RUNTIMES)[number];
@@ -87,12 +87,12 @@ RUN printf '%s\\n' \\
       '#!/bin/sh' \\
       'while ! DISPLAY=:1 xset q >/dev/null 2>&1; do sleep 1; done' \\
       'exec env CUA_DRIVER_INSTALL_CHANNEL=python_package ${CUA_EXECUTABLE} serve --socket ${CUA_SOCKET} --permission-mode standard' \\
-      > /usr/local/bin/start-openmausbot-cua-driver.sh \\
-    && chmod 0755 /usr/local/bin/start-openmausbot-cua-driver.sh
+      > /usr/local/bin/start-realbud-cua-driver.sh \\
+    && chmod 0755 /usr/local/bin/start-realbud-cua-driver.sh
 RUN printf '%s\\n' \\
       '' \\
-      '[program:openmausbot-cua-driver]' \\
-      'command=/usr/local/bin/start-openmausbot-cua-driver.sh' \\
+      '[program:realbud-cua-driver]' \\
+      'command=/usr/local/bin/start-realbud-cua-driver.sh' \\
       'user=cua' \\
       'environment=HOME="/home/cua",USER="cua",DISPLAY=":1"' \\
       'autorestart=true' \\
@@ -180,7 +180,7 @@ function statusProblem(status: ContainerComputerStatus): string | null {
   if (!status.image) return `Prepare the Cua desktop image with Driver ${CUA_DRIVER_VERSION}`;
   if (status.container === "missing") return "Create the Local VM";
   if (!status.imageMatches) return "The existing Local VM uses an older desktop or Cua Driver; recreate it";
-  if (!status.managed) return "The existing container was not created by OpenMausBot; recreate it";
+  if (!status.managed) return "The existing container was not created by RealBud; recreate it";
   if (status.network === "unsafe") return "The existing Local VM exposes its viewer publicly; recreate it";
   if (status.security === "unsafe") return "The existing Local VM is missing safety limits; recreate it";
   if (status.container === "stopped") return "Start the Local VM";
@@ -275,7 +275,7 @@ export async function containerComputerStatus(
     const { stdout } = await runner(status.runtime, ["image", "inspect", IMAGE]);
     status.image = labelsMatch(inspectedImageLabels(stdout));
   } catch {
-    // The prepared OpenMausBot derivative has not been built yet.
+    // The prepared RealBud derivative has not been built yet.
   }
 
   try {
@@ -459,7 +459,7 @@ export function containerRunArgs(runtime: Runtime, password = "CHANGE_ME"): stri
 
 async function prepareManagedImage(runtime: Runtime, runner: CommandRunner): Promise<void> {
   await runner(runtime, ["pull", BASE_IMAGE], 10 * 60_000);
-  const context = await mkdtemp(join(tmpdir(), "openmausbot-cua-image-"));
+  const context = await mkdtemp(join(tmpdir(), "realbud-cua-image-"));
   try {
     await writeFile(join(context, "Dockerfile"), managedImageDockerfile(), { mode: 0o600 });
     await runner(runtime, ["build", "-t", IMAGE, context], 10 * 60_000);
@@ -541,7 +541,7 @@ export async function containerComputerScreenshot(
   if (!status.ready || !status.runtime) {
     throw Object.assign(new Error(status.problem ?? "The Local VM is not ready"), { status: 409 });
   }
-  const screenshot = "/tmp/openmausbot-preview.png";
+  const screenshot = "/tmp/realbud-preview.png";
   await runner(
     status.runtime,
     cuaExecArgs([
@@ -634,7 +634,7 @@ export function setupCommands(
   };
 }
 
-/** Cloud boxes still use OpenMausBot's high-latency REST adapter. Local VMs
+/** Cloud boxes still use RealBud's high-latency REST adapter. Local VMs
  * bypass it and mount Cua Driver's official MCP server through
  * containerComputerMcp(). */
 export function computerProxyEnv(

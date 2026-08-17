@@ -1,9 +1,12 @@
-# PropertyMe
+# RealBud
 
-OpenMausBot fork. Commercial shell for a real-estate agent product.
-Do not ship under the PropertyMe or Hermes brand.
+Our OpenMausBot fork. Product name is **RealBud**.
 
-See `docs/PRODUCT-BRIEF.md`.
+Do not ship as PropertyMe (PMS trademark), Hermes, or OpenMausBot.
+
+- Data: `~/.realbud`
+- Identity: `docs/IDENTITY.md`
+- Workflow: `docs/WORKFLOW-PLAN.md`
 
 ## Skill routing
 

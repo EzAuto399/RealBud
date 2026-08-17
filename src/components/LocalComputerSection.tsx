@@ -223,7 +223,7 @@ export function LocalComputerSection() {
         {error && <div className="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>}
       </Card>
 
-      <Card title="Setup" subtitle="Once a container runtime is open, OpenMausBot prepares Cua and the VM for you.">
+      <Card title="Setup" subtitle="Once a container runtime is open, RealBud prepares Cua and the VM for you.">
         <div className="flex flex-col gap-4">
           <Step n={1} title="Install a container runtime" done={Boolean(status?.runtime)}>
             <div className="text-[13px] leading-relaxed text-ink-secondary">
@@ -288,7 +288,7 @@ export function LocalComputerSection() {
         <Card>
           <div className="flex gap-2 text-[13px] text-ink-secondary">
             <AlertTriangle size={15} className="mt-0.5 shrink-0 text-warning" />
-            <span>OpenMausBot could not inspect the container runtime. Re-check, or review the app logs.</span>
+            <span>RealBud could not inspect the container runtime. Re-check, or review the app logs.</span>
           </div>
         </Card>
       )}
