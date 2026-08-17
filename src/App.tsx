@@ -13,6 +13,7 @@ import { SettingsModal } from "@/components/SettingsModal";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { DesktopCapabilitiesProvider } from "@/components/DesktopCapabilities";
 import { RoutinesPage } from "@/components/RoutinesPage";
+import { DeskPage } from "@/components/DeskPage";
 import { NoEngines } from "@/components/NoEngines";
 
 function Shell() {
@@ -65,7 +66,9 @@ function Shell() {
       <UpdateBanner />
       <div className="relative flex min-h-0 flex-1">
       <Sidebar />
-      {state.activeView === "routines" ? (
+      {state.activeView === "desk" ? (
+        <DeskPage />
+      ) : state.activeView === "routines" ? (
         <RoutinesPage />
       ) : noEngines ? (
         <NoEngines />

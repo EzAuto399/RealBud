@@ -11,7 +11,7 @@
 // sign-in, which is why the terminal is the destination rather than a
 // background `npm install` the user never sees.
 import { useState } from "react";
-import { Check, Copy, ExternalLink, TerminalSquare } from "lucide-react";
+import { Check, Copy, ExternalLink, Loader2 } from "lucide-react";
 import type { EngineInstall, InstanceInfo } from "@/state/store";
 import { cn } from "@/lib/cn";
 
@@ -40,9 +40,9 @@ export function needsSignIn(instance: InstanceInfo | undefined): boolean {
   return instance?.snapshot.state === "available" && instance.snapshot.authenticated === false;
 }
 
-function CommandRow({ command }: { command: string }) {
-  const [done, setDone] = useState<"copied" | "opened" | null>(null);
-  const canOpen = Boolean(window.ogb?.openInstallTerminal);
+function CommandRow({ command, instanceId }: { command: string; instanceId: string }) {
+  const [done, setDone] = useState<"ran" | "copied" | "failed" | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const copy = async () => {
     try {
@@ -54,39 +54,52 @@ function CommandRow({ command }: { command: string }) {
     }
   };
 
-  const openTerminal = async () => {
-    // the bridge copies to the clipboard too, so a failed launch still
-    // leaves the user able to paste
-    const ok = await window.ogb!.openInstallTerminal!(command);
-    setDone(ok ? "opened" : "copied");
-    setTimeout(() => setDone(null), 2500);
+  const allow = async () => {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/instances/${encodeURIComponent(instanceId)}/setup`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      const body = (await res.json().catch(() => ({}))) as { ok?: boolean };
+      if (res.ok && body.ok) {
+        setDone("ran");
+      } else {
+        await navigator.clipboard.writeText(command).catch(() => {});
+        setDone("failed");
+      }
+    } catch {
+      await navigator.clipboard.writeText(command).catch(() => {});
+      setDone("failed");
+    } finally {
+      setBusy(false);
+      setTimeout(() => setDone(null), 4000);
+    }
   };
 
   return (
     <div className="mt-2 flex flex-col gap-1.5">
-      <code className="block overflow-x-auto rounded-lg bg-app px-2.5 py-2 font-mono text-[12px] leading-relaxed text-ink-secondary">
-        {command}
-      </code>
-      <div className="flex items-center gap-1.5">
-        {canOpen && (
-          <button
-            onClick={openTerminal}
-            className="flex items-center gap-1.5 rounded-lg bg-accent px-2.5 py-1.5 text-[12.5px] font-medium text-white"
-          >
-            <TerminalSquare size={13} /> Copy &amp; Open Terminal
-          </button>
-        )}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button
+          onClick={allow}
+          disabled={busy}
+          className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-50"
+        >
+          {busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+          {done === "ran" ? "Opened Terminal" : done === "failed" ? "Copied — paste in Terminal" : "Allow"}
+        </button>
         <button
           onClick={copy}
-          className={cn(
-            "flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12.5px]",
-            canOpen ? "text-ink-secondary hover:bg-raised hover:text-ink" : "bg-raised text-ink hover:bg-raised-hover",
-          )}
+          className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink"
         >
-          {done ? <Check size={13} /> : <Copy size={13} />}
-          {done === "copied" ? "Copied" : done === "opened" ? "Copied — paste" : "Copy"}
+          {done === "copied" ? <Check size={13} /> : <Copy size={13} />}
+          {done === "copied" ? "Copied" : "Copy"}
         </button>
       </div>
+      <code className="block overflow-x-auto font-mono text-[11px] leading-relaxed text-ink-secondary/70">
+        {command}
+      </code>
     </div>
   );
 }
@@ -120,19 +133,19 @@ export function EngineSetup({
       {signInOnly ? (
         <>
           <p>
-            {instance.displayName} is installed but not signed in yet. Run this once, then come back.
+            {instance.displayName} is installed but not signed in yet. Allow RealBud to open Terminal and run the sign-in, then come back.
           </p>
-          {signIn && <CommandRow command={signIn} />}
+          {signIn && <CommandRow command={signIn} instanceId={instance.instanceId} />}
         </>
       ) : (
         <>
           {command ? (
             <>
               <p>
-                {instance.displayName} isn&rsquo;t installed. Run this in a terminal
+                {instance.displayName} isn&rsquo;t installed. Allow RealBud to open Terminal and run the installer
                 {signIn ? `, then \`${signIn}\` to sign in` : ""}.
               </p>
-              <CommandRow command={command} />
+              <CommandRow command={command} instanceId={instance.instanceId} />
               {install?.needsNode && (
                 <p className="mt-1.5 text-[11.5px] text-ink-secondary/70">
                   Needs Node.js — install it first if <code className="font-mono">npm</code> isn&rsquo;t

@@ -203,7 +203,7 @@ interface AppState {
   config: ConfigStatus | null;
   /** selected chat — a bot id OR a group id */
   selectedId: string;
-  activeView: "chat" | "routines";
+  activeView: "chat" | "routines" | "desk";
   routines: Routine[];
   routineRuns: RoutineRun[];
   settingsOpen: boolean;
@@ -227,6 +227,7 @@ interface AppState {
 type Action =
   | { type: "hydrate"; bots: Bot[]; groups: Group[] }
   | { type: "showRoutines" }
+  | { type: "showDesk" }
   | { type: "routinesHydrated"; routines: Routine[]; runs: RoutineRun[] }
   | { type: "routinePatched"; routine: Routine }
   | { type: "routineDeleted"; routineId: string }
@@ -354,6 +355,15 @@ function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         activeView: "routines",
+        settingsOpen: false,
+        computerOpen: false,
+        appSettingsOpen: false,
+        pluginsOpen: false,
+      };
+    case "showDesk":
+      return {
+        ...state,
+        activeView: "desk",
         settingsOpen: false,
         computerOpen: false,
         appSettingsOpen: false,

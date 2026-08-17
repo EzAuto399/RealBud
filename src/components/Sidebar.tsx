@@ -4,6 +4,7 @@ import {
   ArrowDownToLine,
   BellDot,
   Bot as BotIcon,
+  Building2,
   CalendarDays,
   Check,
   ClipboardCopy,
@@ -615,6 +616,16 @@ export function Sidebar() {
 
       {/* Footer */}
       <div className="px-3 pb-3 pt-2">
+        <button
+          onClick={() => dispatch({ type: "showDesk" })}
+          className={cn(
+            "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors",
+            state.activeView === "desk" ? "bg-raised text-ink" : "text-ink hover:bg-raised/50",
+          )}
+        >
+          <Building2 size={20} className={state.activeView === "desk" ? "text-accent" : "text-ink-secondary"} />
+          <span className="flex-1 text-[14px]">Desk</span>
+        </button>
         <button
           onClick={() => dispatch({ type: "showRoutines" })}
           className={cn(

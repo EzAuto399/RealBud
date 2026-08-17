@@ -7,6 +7,7 @@ Do not ship as PropertyMe (PMS trademark), Hermes, or OpenMausBot.
 - Data: `~/.realbud`
 - Identity: `docs/IDENTITY.md`
 - Workflow: `docs/WORKFLOW-PLAN.md`
+- Desk (fixture arrears Allow/Deny/Edit, no send): `server/desk.ts` + `/api/desk`
 
 ## Skill routing
 

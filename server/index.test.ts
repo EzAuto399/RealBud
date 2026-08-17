@@ -151,6 +151,12 @@ describe("harness HTTP API", () => {
     expect(body.bots[0].messages.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("refuses to run setup for an engine with no installer", async () => {
+    const setup = await api("POST", "/api/instances/ghost/setup", {});
+    expect(setup.status).toBe(400);
+    expect(String(setup.body.error)).toMatch(/no setup command/i);
+  });
+
   it("describes the configured fleet, shadows included", async () => {
     const { status, body } = await api("GET", "/api/instances");
     expect(status).toBe(200);
@@ -281,5 +287,26 @@ describe("harness HTTP API", () => {
     const res = await api("GET", "/api/definitely-not-a-route");
     expect(res.status).toBe(404);
     expect(res.body.error).toContain("/api/definitely-not-a-route");
+  });
+
+  it("runs the fixture desk check and refuses to send", async () => {
+    const empty = await api("GET", "/api/desk");
+    expect(empty.status).toBe(200);
+    expect(empty.body.properties.length).toBe(6);
+
+    const checked = await api("POST", "/api/desk/check");
+    expect(checked.status).toBe(200);
+    const courtesy = checked.body.drafts.find((d: { kind: string }) => d.kind === "courtesy-rent");
+    expect(courtesy?.status).toBe("pending");
+    expect(checked.body.escalations.length).toBeGreaterThan(0);
+
+    const send = await api("POST", `/api/desk/drafts/${courtesy.id}/send`);
+    expect(send.status).toBe(403);
+    expect(String(send.body.error)).toMatch(/never sends/i);
+
+    const allowed = await api("POST", `/api/desk/drafts/${courtesy.id}/allow`);
+    expect(allowed.status).toBe(200);
+    expect(allowed.body.draft.status).toBe("allowed");
+    expect(allowed.body.draft.sentAt).toBeUndefined();
   });
 });

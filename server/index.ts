@@ -30,6 +30,8 @@ import { mentionedBots, roomResponders, Store, type GroupDefaultResponder, type 
 import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { readCuaConnection } from "./local-computer.ts";
+import { Desk } from "./desk.ts";
+import { openTerminalAndRun, setupCommandFor } from "./engine-setup.ts";
 import { RoutineManager, type RoutineRunOn } from "./routines.ts";
 
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
@@ -165,6 +167,7 @@ const askMessageByRequest = new Map<string, string>(); // threadId:requestId -> 
 // records the active member here before dispatching its turn.
 const groupSpeakers = new Map<string, { botId: string; name: string; color: string }>();
 let routines: RoutineManager | null = null;
+const desk = new Desk();
 // The Local VM is intentionally one shared, visible desktop. Two agents
 // driving it simultaneously would mix clicks, keystrokes and screenshots,
 // so only one thread may lease it at a time.
@@ -1071,6 +1074,38 @@ const server = createServer(async (req, res) => {
       return run ? json(res, 200, { run }) : json(res, 404, { error: "no such active run" });
     }
 
+    // ── PM desk (fixture arrears; never sends) ────────────────────────
+    if (path === "/api/desk" && method === "GET") {
+      return json(res, 200, desk.snapshot());
+    }
+    if (path === "/api/desk/check" && method === "POST") {
+      return json(res, 200, desk.runMorningCheck());
+    }
+    if (path === "/api/desk/reset" && method === "POST") {
+      return json(res, 200, desk.resetFixtures());
+    }
+    const deskSend = path.match(/^\/api\/desk\/drafts\/([\w-]+)\/send$/);
+    if (deskSend && method === "POST") {
+      return json(res, 403, {
+        error: "RealBud never sends. Approve the draft and send it from the PMS.",
+      });
+    }
+    const deskDraft = path.match(/^\/api\/desk\/drafts\/([\w-]+)\/(allow|deny)$/);
+    if (deskDraft && method === "POST") {
+      const draft = deskDraft[2] === "allow" ? desk.allowDraft(deskDraft[1]) : desk.denyDraft(deskDraft[1]);
+      return json(res, 200, { draft });
+    }
+    const deskEdit = path.match(/^\/api\/desk\/drafts\/([\w-]+)$/);
+    if (deskEdit && method === "PATCH") {
+      const body = await readBody(req);
+      return json(res, 200, { draft: desk.editDraft(deskEdit[1], String(body.body ?? "")) });
+    }
+    const deskProp = path.match(/^\/api\/desk\/properties\/([\w-]+)$/);
+    if (deskProp && method === "PATCH") {
+      const body = await readBody(req);
+      return json(res, 200, { property: desk.patchProperty(deskProp[1], body) });
+    }
+
     // ── events stream ──
     if (method === "GET" && path === "/api/events") {
       res.writeHead(200, {
@@ -1484,6 +1519,21 @@ const server = createServer(async (req, res) => {
       // this the answer is frozen at boot and "check again" is a no-op.
       resetPathCache();
       return json(res, 200, { instances: await registry.describe() });
+    }
+    const setupMatch = path.match(/^\/api\/instances\/([\w.-]+)\/setup$/);
+    if (setupMatch && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      await readBody(req);
+      resetPathCache();
+      const instances = await registry.describe();
+      const instance = instances.find((row) => row.instanceId === setupMatch[1]);
+      if (!instance) return json(res, 404, { error: "no such engine" });
+      const command = setupCommandFor(instance.install, instance.snapshot, process.platform);
+      if (!command) return json(res, 400, { error: "no setup command for this engine" });
+      const ok = await openTerminalAndRun(command);
+      return json(res, ok ? 200 : 502, { ok, command });
     }
 
     // ── app config (API keys — never echoed back, booleans only) ──

@@ -24,7 +24,7 @@ Data lives in `~/.realbud` (migrated from `~/.openmausbot` on first run if that 
 
 - **Engine:** check rent / levy / ledger via skills (Hermes later). Computer use only for portal buttons that will not script.
 - **Options:** per-property switches (how rent lands, what comes out of rent, notify channel).
-- **Allow:** draft first. Nothing statutory sends itself.
+- **Approve wording:** draft first. RealBud never sends a notice or moves trust.
 
 See `docs/IDENTITY.md`, `docs/WORKFLOW-PLAN.md`, `docs/PRODUCT-BRIEF.md`.
 
