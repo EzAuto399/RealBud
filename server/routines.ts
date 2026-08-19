@@ -1,126 +1,95 @@
+// Named product loops on the RealBud clock. RealBud owns WHEN and what the
+// human sees; Hermes owns HOW (facts only, headless, cron_mode: deny). A
+// loop is "Desk, but the clock pressed Recheck" — never a second agent, no
+// free-text prompt, no MAUS roster. The OpenMausBot routine runner is gone.
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { DATA_DIR } from "./config.ts";
-import type { RuntimeEvent } from "./contracts.ts";
 
-export type RoutineSchedule =
-  | { type: "once"; at: number }
-  | { type: "daily"; time: string; weekdays: number[] };
+export type LoopId = "morning-arrears" | "owner-letter" | "inbound-triage";
 
-/** `cloud` runs the agent itself inside the bot's Box VM. `maus` keeps
- * using the provider selected on the MAUS and only borrows its configured
- * computer tools, if any. */
-export type RoutineRunOn = "maus" | "cloud";
+export type LoopSchedule = { type: "daily"; time: string; weekdays: number[] };
 
-export type RoutineRunStatus =
-  | "queued"
-  | "running"
-  | "waiting"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "missed";
+export type LoopRunStatus = "queued" | "running" | "completed" | "failed" | "missed";
 
-export interface Routine {
-  id: string;
+export interface Loop {
+  id: LoopId;
   name: string;
-  prompt: string;
-  botId: string;
-  runOn: RoutineRunOn;
+  description: string;
+  /** available = built and runnable now; false = declared, coming later. */
+  available: boolean;
   enabled: boolean;
-  schedule: RoutineSchedule;
-  durationMinutes: number;
+  schedule: LoopSchedule;
   nextRunAt: number | null;
-  createdAt: number;
-  updatedAt: number;
 }
 
-export interface RoutineRun {
+export interface LoopRun {
   id: string;
-  routineId: string;
-  routineName: string;
-  /** Snapshot the work so an edited/deleted definition cannot rewrite history. */
-  prompt?: string;
-  durationMinutes?: number;
-  botId: string;
-  runOn: RoutineRunOn;
+  loopId: LoopId;
+  loopName: string;
   scheduledFor: number;
-  status: RoutineRunStatus;
+  status: LoopRunStatus;
   manual: boolean;
-  threadId?: string;
+  /** handsDetail of the desk check, or the failure reason. */
+  detail?: string;
   startedAt?: number;
   finishedAt?: number;
-  output?: string;
-  error?: string;
-  cost?: number | null;
-  denials?: string[];
-  createdAt: number;
   seenAt?: number;
+  createdAt: number;
 }
 
-export interface RoutineInput {
-  name: string;
-  prompt: string;
-  botId: string;
-  runOn?: RoutineRunOn;
-  enabled?: boolean;
-  schedule: RoutineSchedule;
-  durationMinutes?: number;
-}
-
-interface RoutineFile {
-  version: 1;
-  routines: Routine[];
-  runs: RoutineRun[];
-}
-
-export interface RoutineManagerOptions {
+export interface LoopManagerOptions {
   file?: string;
   now?: () => number;
   emit?: (payload: unknown) => void;
-  botState: (botId: string) => "ready" | "busy" | "missing";
-  createTask: (botId: string, title: string) => { threadId: string } | null;
-  startTurn: (
-    botId: string,
-    threadId: string,
-    prompt: string,
-    runOn: RoutineRunOn,
-    onDispatchError: (message: string) => void,
-  ) => Promise<void>;
-  interruptTurn?: (botId: string, threadId: string, runOn: RoutineRunOn) => Promise<void>;
+  /** Runs one loop. Return the one-line detail to show on the run receipt. */
+  execute: (loop: Loop) => Promise<{ ok: boolean; detail: string }>;
 }
 
-const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
+interface LoopsFile {
+  version: 1;
+  /** enabled flags + handledThrough per loop id (catalog owns the rest). */
+  state: Record<string, { enabled: boolean; handledThrough: number }>;
+  runs: LoopRun[];
+}
+
+const WEEKDAYS = [1, 2, 3, 4, 5];
 const CATCH_UP_MS = 12 * 60 * 60_000;
 const MAX_RUNS = 2_000;
 
-function cleanDays(days: unknown): number[] {
-  if (!Array.isArray(days)) return ALL_DAYS;
-  const out = [...new Set(days.filter((d): d is number => Number.isInteger(d) && d >= 0 && d <= 6))].sort();
-  return out.length ? out : ALL_DAYS;
-}
+/** Fixed product catalog. Hermes does not invent the clock. */
+export const LOOP_CATALOG: ReadonlyArray<Omit<Loop, "enabled" | "nextRunAt">> = [
+  {
+    id: "morning-arrears",
+    name: "Morning arrears",
+    description:
+      "The clock presses Desk Recheck. Hermes reads the ledger, RealBud applies the shop rules, and courtesy drafts, levy flags, and escalations land on Desk for you to allow or deny.",
+    available: true,
+    schedule: { type: "daily", time: "07:30", weekdays: WEEKDAYS },
+  },
+  {
+    id: "owner-letter",
+    name: "Friday owner letter",
+    description:
+      "Same path, different skill. Hermes reads jobs, arrears, and inspections; RealBud drafts the owner catch-up. Declared, not built — lands after the first paid loop is chosen.",
+    available: false,
+    schedule: { type: "daily", time: "16:00", weekdays: [5] },
+  },
+  {
+    id: "inbound-triage",
+    name: "Inbound triage",
+    description:
+      "Mail in → classify → job + reply draft. Declared, not built.",
+    available: false,
+    schedule: { type: "daily", time: "09:00", weekdays: WEEKDAYS },
+  },
+];
 
-function cleanSchedule(schedule: RoutineSchedule): RoutineSchedule {
-  if (schedule?.type === "once") {
-    const at = Number(schedule.at);
-    if (!Number.isFinite(at)) throw new Error("Choose a valid date and time");
-    return { type: "once", at };
-  }
-  if (schedule?.type === "daily") {
-    const time = String(schedule.time ?? "");
-    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error("Time must use HH:MM");
-    return { type: "daily", time, weekdays: cleanDays(schedule.weekdays) };
-  }
-  throw new Error("Choose a supported schedule");
-}
-
-/** Next wall-clock occurrence in this computer's timezone, strictly after `after`. */
-export function nextOccurrence(schedule: RoutineSchedule, after: number): number | null {
-  if (schedule.type === "once") return schedule.at > after ? schedule.at : null;
+export function nextOccurrence(schedule: LoopSchedule, after: number): number | null {
   const [hour, minute] = schedule.time.split(":").map(Number);
-  const weekdays = new Set(cleanDays(schedule.weekdays));
+  const weekdays = new Set(schedule.weekdays);
   for (let offset = 0; offset <= 8; offset++) {
     const d = new Date(after);
     d.setDate(d.getDate() + offset);
@@ -130,198 +99,82 @@ export function nextOccurrence(schedule: RoutineSchedule, after: number): number
   return null;
 }
 
-function sanitizeInput(input: RoutineInput): Omit<Routine, "id" | "createdAt" | "updatedAt" | "nextRunAt"> {
-  const name = String(input.name ?? "").trim().slice(0, 80);
-  const prompt = String(input.prompt ?? "").trim().slice(0, 20_000);
-  const botId = String(input.botId ?? "").trim();
-  if (!name) throw new Error("Give the routine a name");
-  if (!prompt) throw new Error("Tell the bot what to do");
-  if (!botId) throw new Error("Choose a bot");
-  const runOn = input.runOn ?? "maus";
-  if (runOn !== "maus" && runOn !== "cloud") throw new Error("Choose where this routine runs");
-  return {
-    name,
-    prompt,
-    botId,
-    runOn,
-    enabled: input.enabled !== false,
-    schedule: cleanSchedule(input.schedule),
-    durationMinutes: Math.min(240, Math.max(15, Math.round(Number(input.durationMinutes) || 30))),
-  };
-}
-
-export class RoutineManager {
+export class LoopManager {
   private readonly file: string;
   private readonly now: () => number;
-  private readonly options: RoutineManagerOptions;
-  private routines: Routine[] = [];
-  private runs: RoutineRun[] = [];
+  private readonly options: LoopManagerOptions;
+  private loops: Loop[];
+  private runs: LoopRun[] = [];
+  private handledThrough = new Map<LoopId, number>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
 
-  constructor(options: RoutineManagerOptions) {
+  constructor(options: LoopManagerOptions) {
     this.options = options;
-    this.file = options.file ?? join(DATA_DIR, "routines.json");
+    this.file = options.file ?? join(DATA_DIR, "loops.json");
     this.now = options.now ?? Date.now;
+    let saved: Partial<LoopsFile> = {};
     try {
-      const disk = JSON.parse(readFileSync(this.file, "utf8")) as Partial<RoutineFile>;
-      this.routines = Array.isArray(disk.routines)
-        ? disk.routines.map((routine) => ({ ...routine, runOn: routine.runOn ?? "maus" }))
-        : [];
-      this.runs = Array.isArray(disk.runs)
-        ? disk.runs.map((run) => ({ ...run, runOn: run.runOn ?? "maus" }))
-        : [];
+      saved = JSON.parse(readFileSync(this.file, "utf8")) as Partial<LoopsFile>;
     } catch {
-      this.routines = [];
-      this.runs = [];
+      /* first run */
     }
-    // A local process cannot still own these turns after a full restart.
-    let recovered = false;
-    for (const run of this.runs) {
-      if (run.status === "running" || run.status === "waiting") {
-        run.status = "failed";
-        run.error = "RealBud restarted while this routine was running";
-        run.finishedAt = this.now();
-        recovered = true;
-      }
-    }
-    if (recovered) this.save();
+    this.runs = Array.isArray(saved.runs) ? saved.runs : [];
+    const savedState = saved.state ?? {};
+    this.loops = LOOP_CATALOG.map((loop) => {
+      const enabled = loop.available && savedState[loop.id]?.enabled !== false;
+      const handled = Number.isFinite(savedState[loop.id]?.handledThrough)
+        ? savedState[loop.id]!.handledThrough
+        : this.now() - 1;
+      this.handledThrough.set(loop.id, Math.min(handled, this.now() - 1));
+      return {
+        ...loop,
+        schedule: { ...loop.schedule },
+        enabled,
+        nextRunAt: enabled ? nextOccurrence(loop.schedule, this.now()) : null,
+      };
+    });
   }
 
-  listRoutines(): Routine[] {
-    return this.routines.map((r) => ({ ...r, schedule: { ...r.schedule } }));
+  listLoops(): Loop[] {
+    return this.loops.map((loop) => ({ ...loop, schedule: { ...loop.schedule } }));
   }
 
-  listRuns(from?: number, to?: number): RoutineRun[] {
+  listRuns(from?: number, to?: number): LoopRun[] {
     return this.runs
-      .filter((r) => (from == null || r.scheduledFor >= from) && (to == null || r.scheduledFor <= to))
+      .filter((run) => (from == null || run.scheduledFor >= from) && (to == null || run.scheduledFor <= to))
       .sort((a, b) => b.scheduledFor - a.scheduledFor)
-      .map((r) => ({ ...r }));
+      .map((run) => ({ ...run }));
   }
 
-  activeRunForBot(botId: string): RoutineRun | null {
-    const run = this.runs.find(
-      (candidate) => candidate.botId === botId && ["running", "waiting"].includes(candidate.status),
-    );
+  activeRun(loopId: LoopId): LoopRun | null {
+    const run = this.runs.find((r) => r.loopId === loopId && ["queued", "running"].includes(r.status));
     return run ? { ...run } : null;
   }
 
-  isActiveThread(threadId: string): boolean {
-    return this.runs.some(
-      (run) => run.threadId === threadId && ["running", "waiting"].includes(run.status),
-    );
-  }
-
-  create(input: RoutineInput): Routine {
-    const clean = sanitizeInput(input);
-    if (this.options.botState(clean.botId) === "missing") throw new Error("That bot no longer exists");
-    const at = this.now();
-    const routine: Routine = {
-      id: randomUUID(),
-      ...clean,
-      nextRunAt: clean.enabled ? this.initialOccurrence(clean.schedule, at) : null,
-      createdAt: at,
-      updatedAt: at,
-    };
-    this.routines.unshift(routine);
+  setEnabled(id: LoopId, enabled: boolean): Loop {
+    const loop = this.loops.find((candidate) => candidate.id === id);
+    if (!loop || !loop.available) throw new Error("that loop cannot be toggled");
+    loop.enabled = enabled;
+    loop.nextRunAt = enabled ? nextOccurrence(loop.schedule, this.now()) : null;
     this.save();
-    this.emitRoutine(routine);
-    return { ...routine, schedule: { ...routine.schedule } };
+    this.emitLoop(loop);
+    return { ...loop, schedule: { ...loop.schedule } };
   }
 
-  update(id: string, patch: Partial<RoutineInput>): Routine | null {
-    const routine = this.routines.find((r) => r.id === id);
-    if (!routine) return null;
-    const clean = sanitizeInput({
-      name: patch.name ?? routine.name,
-      prompt: patch.prompt ?? routine.prompt,
-      botId: patch.botId ?? routine.botId,
-      runOn: patch.runOn ?? routine.runOn,
-      enabled: patch.enabled ?? routine.enabled,
-      schedule: patch.schedule ?? routine.schedule,
-      durationMinutes: patch.durationMinutes ?? routine.durationMinutes,
-    });
-    if (this.options.botState(clean.botId) === "missing") throw new Error("That bot no longer exists");
-    Object.assign(routine, clean, {
-      nextRunAt: clean.enabled ? this.initialOccurrence(clean.schedule, this.now()) : null,
-      updatedAt: this.now(),
-    });
-    if (patch.enabled === false) {
-      for (const run of this.runs) {
-        if (run.routineId !== routine.id || run.status !== "queued") continue;
-        run.status = "cancelled";
-        run.finishedAt = this.now();
-        run.error = "The routine was paused before this run started";
-        this.emitRun(run);
-      }
-    }
-    this.save();
-    this.emitRoutine(routine);
-    return { ...routine, schedule: { ...routine.schedule } };
-  }
-
-  remove(id: string): boolean {
-    const at = this.routines.findIndex((r) => r.id === id);
-    if (at === -1) return false;
-    this.routines.splice(at, 1);
-    for (const run of this.runs) {
-      if (run.routineId === id && run.status === "queued") {
-        run.status = "cancelled";
-        run.finishedAt = this.now();
-        this.emitRun(run);
-      }
-    }
-    this.save();
-    this.options.emit?.({ kind: "routine.deleted", routineId: id });
-    return true;
-  }
-
-  disableForBot(botId: string) {
-    let changed = false;
-    for (const routine of this.routines) {
-      if (routine.botId !== botId || !routine.enabled) continue;
-      routine.enabled = false;
-      routine.nextRunAt = null;
-      routine.updatedAt = this.now();
-      this.emitRoutine(routine);
-      changed = true;
-    }
-    for (const run of this.runs) {
-      if (run.botId !== botId || !["queued", "running", "waiting"].includes(run.status)) continue;
-      run.status = "cancelled";
-      run.finishedAt = this.now();
-      run.error = "The assigned bot was deleted";
-      this.emitRun(run);
-      if (run.threadId) void this.options.interruptTurn?.(run.botId, run.threadId, run.runOn ?? "maus").catch(() => {});
-      changed = true;
-    }
-    if (changed) this.save();
-  }
-
-  runNow(id: string): RoutineRun | null {
-    const routine = this.routines.find((r) => r.id === id);
-    if (!routine) return null;
-    const run = this.newRun(routine, this.now(), true);
+  runNow(id: LoopId): LoopRun | null {
+    const loop = this.loops.find((candidate) => candidate.id === id);
+    if (!loop || !loop.available || !loop.enabled) return null;
+    if (this.activeRun(id)) throw Object.assign(new Error("this loop is already running"), { status: 409 });
+    const run = this.newRun(loop, this.now(), true);
     this.save();
     this.emitRun(run);
     queueMicrotask(() => void this.tick());
     return { ...run };
   }
 
-  async cancelRun(id: string): Promise<RoutineRun | null> {
-    const run = this.runs.find((r) => r.id === id);
-    if (!run || !["queued", "running", "waiting"].includes(run.status)) return null;
-    run.status = "cancelled";
-    run.finishedAt = this.now();
-    this.save();
-    this.emitRun(run);
-    if (run.threadId) await this.options.interruptTurn?.(run.botId, run.threadId, run.runOn ?? "maus").catch(() => {});
-    queueMicrotask(() => void this.tick());
-    return { ...run };
-  }
-
-  markSeen(id: string): RoutineRun | null {
-    const run = this.runs.find((r) => r.id === id);
+  markSeen(id: string): LoopRun | null {
+    const run = this.runs.find((candidate) => candidate.id === id);
     if (!run) return null;
     if (!run.seenAt) {
       run.seenAt = this.now();
@@ -349,123 +202,70 @@ export class RoutineManager {
     try {
       const now = this.now();
       let changed = false;
-      for (const routine of this.routines) {
-        if (!routine.enabled || routine.nextRunAt == null || routine.nextRunAt > now) continue;
-        const scheduledFor = routine.nextRunAt;
-        const late = now - scheduledFor;
-        if (late > CATCH_UP_MS) {
-          const missed = this.newRun(routine, scheduledFor, false);
-          missed.status = "missed";
-          missed.finishedAt = now;
-          missed.error = "This computer was offline for more than 12 hours after the scheduled time";
-          this.emitRun(missed);
-        } else {
-          const run = this.newRun(routine, scheduledFor, false);
-          this.emitRun(run);
+      for (const loop of this.loops) {
+        if (!loop.enabled || !loop.available) continue;
+        const handled = this.handledThrough.get(loop.id) ?? now - 1;
+        for (let at = nextOccurrence(loop.schedule, handled); at != null && at <= now; at = nextOccurrence(loop.schedule, at)) {
+          const late = now - at;
+          if (late > CATCH_UP_MS) {
+            const missed = this.newRun(loop, at, false);
+            missed.status = "missed";
+            missed.finishedAt = now;
+            missed.detail = "This computer was offline for more than 12 hours after the scheduled time";
+            this.emitRun(missed);
+          } else if (!this.activeRun(loop.id)) {
+            const run = this.newRun(loop, at, false);
+            this.emitRun(run);
+            await this.executeRun(run, loop);
+          }
+          this.handledThrough.set(loop.id, at);
+          changed = true;
         }
-        routine.nextRunAt =
-          routine.schedule.type === "once" ? null : nextOccurrence(routine.schedule, Math.max(now, scheduledFor));
-        if (routine.schedule.type === "once") routine.enabled = false;
-        routine.updatedAt = now;
-        this.emitRoutine(routine);
-        changed = true;
+        loop.nextRunAt = loop.enabled ? nextOccurrence(loop.schedule, Math.max(now, this.handledThrough.get(loop.id) ?? handled)) : null;
+        this.emitLoop(loop);
       }
-      if (changed) this.save();
-
+      // manual runs queue themselves, then tick; drain them here
       for (const run of [...this.runs].reverse()) {
         if (run.status !== "queued") continue;
-        const state = this.options.botState(run.botId);
-        if (state === "busy") continue;
-        if (state === "missing") {
+        const loop = this.loops.find((candidate) => candidate.id === run.loopId);
+        if (!loop || !loop.available) {
           run.status = "failed";
-          run.error = "The assigned bot no longer exists";
-          run.finishedAt = this.now();
-          this.save();
+          run.finishedAt = now;
+          run.detail = "this loop no longer exists";
           this.emitRun(run);
           continue;
         }
-        const task = this.options.createTask(run.botId, run.routineName);
-        if (!task) {
-          run.status = "failed";
-          run.error = "Could not create a task for this run";
-          run.finishedAt = this.now();
-          this.save();
-          this.emitRun(run);
-          continue;
-        }
-        run.threadId = task.threadId;
-        run.startedAt = this.now();
-        run.status = "running";
-        this.save();
-        this.emitRun(run);
-        try {
-          const prompt = run.prompt ?? this.routines.find((r) => r.id === run.routineId)?.prompt;
-          if (!prompt) {
-            this.failThread(task.threadId, "The routine was deleted before it could start");
-            continue;
-          }
-          await this.options.startTurn(run.botId, task.threadId, prompt, run.runOn ?? "maus", (message) =>
-            this.failThread(task.threadId, message),
-          );
-        } catch (error) {
-          this.failThread(task.threadId, error instanceof Error ? error.message : String(error));
-        }
+        await this.executeRun(run, loop);
       }
+      if (changed) this.save();
     } finally {
       this.ticking = false;
     }
   }
 
-  handleRuntimeEvent(event: RuntimeEvent) {
-    const run = this.runs.find((r) => r.threadId === event.threadId && ["running", "waiting"].includes(r.status));
-    if (!run) return;
-    if (event.type === "request.opened") {
-      run.status = "waiting";
-    } else if (event.type === "request.resolved") {
-      run.status = "running";
-    } else if (event.type === "item.completed" && event.itemType === "assistant_text") {
-      run.output = event.text.trim().slice(0, 2_000);
-    } else if (event.type === "runtime.error") {
-      run.error = event.message.slice(0, 500);
-    } else if (event.type === "turn.completed") {
-      run.status = event.ok ? "completed" : "failed";
-      run.finishedAt = this.now();
-      run.error = event.ok ? undefined : (event.stopReason ?? run.error ?? "The bot did not complete this run");
-      run.cost = event.cost;
-      run.denials = event.denials;
-    } else {
-      return;
-    }
+  private async executeRun(run: LoopRun, loop: Loop) {
+    run.startedAt = this.now();
+    run.status = "running";
     this.save();
     this.emitRun(run);
-    if (event.type === "turn.completed") queueMicrotask(() => void this.tick());
-  }
-
-  failThread(threadId: string, message: string) {
-    const run = this.runs.find((r) => r.threadId === threadId && ["running", "waiting"].includes(r.status));
-    if (!run) return;
-    run.status = "failed";
-    run.error = message.slice(0, 500);
+    try {
+      const { ok, detail } = await this.options.execute(loop);
+      run.status = ok ? "completed" : "failed";
+      run.detail = detail.slice(0, 500);
+    } catch (error) {
+      run.status = "failed";
+      run.detail = (error instanceof Error ? error.message : String(error)).slice(0, 500);
+    }
     run.finishedAt = this.now();
     this.save();
     this.emitRun(run);
-    queueMicrotask(() => void this.tick());
   }
 
-  private initialOccurrence(schedule: RoutineSchedule, now: number): number | null {
-    if (schedule.type === "once") return Math.max(schedule.at, now);
-    return nextOccurrence(schedule, now);
-  }
-
-  private newRun(routine: Routine, scheduledFor: number, manual: boolean): RoutineRun {
-    const run: RoutineRun = {
+  private newRun(loop: Loop, scheduledFor: number, manual: boolean): LoopRun {
+    const run: LoopRun = {
       id: randomUUID(),
-      routineId: routine.id,
-      routineName: routine.name,
-      prompt: routine.prompt,
-      durationMinutes: routine.durationMinutes,
-      botId: routine.botId,
-      runOn: routine.runOn ?? "maus",
+      loopId: loop.id,
+      loopName: loop.name,
       scheduledFor,
       status: "queued",
       manual,
@@ -476,18 +276,23 @@ export class RoutineManager {
     return run;
   }
 
-  private emitRoutine(routine: Routine) {
-    this.options.emit?.({ kind: "routine", routine: { ...routine, schedule: { ...routine.schedule } } });
+  private emitLoop(loop: Loop) {
+    this.options.emit?.({ kind: "loop", loop: { ...loop, schedule: { ...loop.schedule } } });
   }
 
-  private emitRun(run: RoutineRun) {
-    this.options.emit?.({ kind: "routine.run", run: { ...run } });
+  private emitRun(run: LoopRun) {
+    this.options.emit?.({ kind: "loop.run", run: { ...run } });
   }
 
   private save() {
     mkdirSync(dirname(this.file), { recursive: true });
+    const state: LoopsFile["state"] = {};
+    for (const loop of this.loops) {
+      state[loop.id] = { enabled: loop.enabled, handledThrough: this.handledThrough.get(loop.id) ?? 0 };
+    }
+    const payload = JSON.stringify({ version: 1, state, runs: this.runs } satisfies LoopsFile, null, 2);
     const temp = `${this.file}.tmp`;
-    writeFileSync(temp, JSON.stringify({ version: 1, routines: this.routines, runs: this.runs } satisfies RoutineFile, null, 2));
+    writeFileSync(temp, payload);
     renameSync(temp, this.file);
   }
 }

@@ -16,6 +16,10 @@ import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { CodexDriver } from "./codex.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-codex-app-server.ts");
+// The scripted fake CLI inherits process.env; under `--coverage` that would
+// leak NODE_V8_COVERAGE into the child and break its handshake. Strip it for
+// this file — the parent worker keeps its own instrumentation.
+delete process.env.NODE_V8_COVERAGE;
 
 describe("CodexDriver.decodeConfig", () => {
   it("defaults to the codex binary with fullAuto off", () => {

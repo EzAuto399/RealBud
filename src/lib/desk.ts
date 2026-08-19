@@ -63,12 +63,25 @@ export interface CheckResult {
   daysLate: number;
 }
 
+/** What the hands (Hermes or the fixture book) reported per property. */
+export interface LedgerFacts {
+  propertyId: string;
+  daysSinceDue: number;
+  rentLanded: boolean;
+  levyPaid: boolean;
+  daysSinceCourtesy: number | null;
+}
+
 export interface DeskSnapshot {
   properties: Property[];
+  ledger: LedgerFacts[];
   drafts: Draft[];
   escalations: Escalation[];
   lastRunAt: number | null;
   results: CheckResult[];
+  hands: "fixture" | "hermes";
+  /** Why hands are Hermes — or why the last check fell back to fixtures. */
+  handsDetail: string | null;
 }
 
 export function aud(cents: number): string {

@@ -35,6 +35,12 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm check:electron
+      - name: coverage thresholds (ubuntu only — fastest, same numbers)
+        if: matrix.os == 'ubuntu-latest'
+        run: pnpm test:coverage
+      - name: PM desk walkthrough (no engines needed)
+        if: matrix.os == 'ubuntu-latest'
+        run: node scripts/e2e-desk.mjs
       - name: production UI build
         if: matrix.os == 'ubuntu-latest'
         run: pnpm exec vite build

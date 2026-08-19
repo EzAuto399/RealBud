@@ -1,0 +1,15 @@
+# Locked RealBud worker. Do not flip approvals to off/smart/yolo.
+# model.default / model.provider are attached at install from this machine's
+# Hermes login. Change them with: hermes -p property model
+approvals:
+  mode: manual
+  timeout: 300
+  cron_mode: deny
+  mcp_reload_confirm: true
+agent:
+  max_turns: 20
+  verbose: false
+toolsets:
+  - hermes-cli
+terminal:
+  backend: local

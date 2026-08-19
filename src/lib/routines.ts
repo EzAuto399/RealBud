@@ -1,60 +1,34 @@
-export type RoutineSchedule =
-  | { type: "once"; at: number }
-  | { type: "daily"; time: string; weekdays: number[] };
+// Named product loops on the RealBud clock. RealBud owns WHEN and what the
+// human sees; Hermes owns HOW (facts only, headless). A loop is "Desk, but
+// the clock pressed Recheck" — never a bot, never a free-text prompt.
+export type LoopId = "morning-arrears" | "owner-letter" | "inbound-triage";
 
-export type RoutineRunOn = "maus" | "cloud";
+export type LoopSchedule = { type: "daily"; time: string; weekdays: number[] };
 
-export type RoutineRunStatus =
-  | "queued"
-  | "running"
-  | "waiting"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "missed";
+export type LoopRunStatus = "queued" | "running" | "completed" | "failed" | "missed";
 
-export interface Routine {
-  id: string;
+export interface Loop {
+  id: LoopId;
   name: string;
-  prompt: string;
-  botId: string;
-  runOn: RoutineRunOn;
+  description: string;
+  /** available = built and runnable now; false = declared, coming later. */
+  available: boolean;
   enabled: boolean;
-  schedule: RoutineSchedule;
-  durationMinutes: number;
+  schedule: LoopSchedule;
   nextRunAt: number | null;
-  createdAt: number;
-  updatedAt: number;
 }
 
-export interface RoutineRun {
+export interface LoopRun {
   id: string;
-  routineId: string;
-  routineName: string;
-  prompt?: string;
-  durationMinutes?: number;
-  botId: string;
-  runOn: RoutineRunOn;
+  loopId: LoopId;
+  loopName: string;
   scheduledFor: number;
-  status: RoutineRunStatus;
+  status: LoopRunStatus;
   manual: boolean;
-  threadId?: string;
+  /** handsDetail of the desk check, or the failure reason. */
+  detail?: string;
   startedAt?: number;
   finishedAt?: number;
-  output?: string;
-  error?: string;
-  cost?: number | null;
-  denials?: string[];
-  createdAt: number;
   seenAt?: number;
-}
-
-export interface RoutineInput {
-  name: string;
-  prompt: string;
-  botId: string;
-  runOn?: RoutineRunOn;
-  enabled?: boolean;
-  schedule: RoutineSchedule;
-  durationMinutes?: number;
+  createdAt: number;
 }

@@ -88,9 +88,12 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
+        // child-process coverage: the v8 provider measures the spawned server
+        ...(process.env.NODE_V8_COVERAGE ? { NODE_V8_COVERAGE: process.env.NODE_V8_COVERAGE } : {}),
         HOME: home,
         USERPROFILE: home,
         OMB_PORT: String(PORT),
+        OMB_TEST_FLEET: "1",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });

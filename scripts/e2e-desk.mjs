@@ -1,0 +1,150 @@
+#!/usr/bin/env node
+// PM walkthrough over the real HTTP API — no engines, no Hermes CLI needed.
+// Boots the harness server on a temp home, then walks exactly what the GUI
+// drives: Desk snapshot → draft gates → allow → recheck → book add/edit/
+// remove → named loops → hands status. Exits non-zero on the first failure.
+//
+//   node scripts/e2e-desk.mjs           (port 18879)
+//   OMB_E2E_PORT=8899 node scripts/e2e-desk.mjs
+import { spawn } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const PORT = Number(process.env.OMB_E2E_PORT ?? 18879);
+const BASE = `http://127.0.0.1:${PORT}`;
+
+const home = mkdtempSync(join(tmpdir(), "realbud-e2e-desk-"));
+mkdirSync(join(home, ".realbud"), { recursive: true });
+
+let failures = 0;
+const check = (label, ok, extra = "") => {
+  console.log(`${ok ? "ok  " : "FAIL"}  ${label}${extra ? ` — ${extra}` : ""}`);
+  if (!ok) failures++;
+};
+
+const api = async (method, path, body) => {
+  const res = await fetch(BASE + path, {
+    method,
+    headers: body !== undefined ? { "content-type": "application/json" } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  let json = null;
+  try {
+    json = await res.json();
+  } catch {
+    /* non-JSON body */
+  }
+  return { status: res.status, body: json };
+};
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const child = spawn(process.execPath, [join(ROOT, "server", "index.ts")], {
+  cwd: ROOT,
+  env: {
+    ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
+    ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+    HOME: home,
+    USERPROFILE: home,
+    OMB_PORT: String(PORT),
+  },
+  stdio: ["ignore", "pipe", "pipe"],
+});
+let stderr = "";
+child.stderr.on("data", (c) => (stderr += c));
+
+try {
+  // ── boot ──
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    try {
+      const res = await fetch(`${BASE}/api/health`);
+      if (res.ok) break;
+    } catch {
+      /* not up yet */
+    }
+    if (Date.now() > deadline) throw new Error(`server never came up. stderr:\n${stderr}`);
+    if (child.exitCode !== null) throw new Error(`server exited ${child.exitCode}. stderr:\n${stderr}`);
+    await sleep(150);
+  }
+  const health = (await api("GET", "/api/health")).body;
+  check("server identifies as realbud", health?.app === "realbud", health?.app);
+
+  // ── Desk: morning check + gates ──
+  const desk = (await api("GET", "/api/desk")).body;
+  check("desk has the 6-property training book", desk?.properties?.length === 6, `got ${desk?.properties?.length}`);
+  check("ledger facts are exposed", Array.isArray(desk?.ledger) && desk.ledger.length === 6);
+  check("morning check drafted courtesy + levy flags", ["courtesy-rent", "levy-from-rent"].every((kind) => desk?.drafts?.some((d) => d.kind === kind)));
+  check("escalation raised with no draft", desk?.escalations?.length >= 1 && desk.escalations[0].reason === "statutory-clock");
+  check("hands report why they are on the training book", typeof desk?.handsDetail === "string" && desk.handsDetail.length > 0, desk?.handsDetail);
+
+  const pending = desk.drafts.find((d) => d.status === "pending");
+  const send = await api("POST", `/api/desk/drafts/${pending.id}/send`, {});
+  check("draft send is always 403", send.status === 403, String(send.body?.error));
+
+  const allowed = await api("POST", `/api/desk/drafts/${pending.id}/allow`, {});
+  check("allow marks wording approved without a sentAt", allowed.body?.draft?.status === "allowed" && !("sentAt" in (allowed.body?.draft ?? {})), allowed.body?.draft?.status);
+
+  const recheck = await api("POST", "/api/desk/check", {});
+  check("recheck completes and reports hands", recheck.status === 200 && ["fixture", "hermes"].includes(recheck.body?.hands), recheck.body?.hands);
+
+  // ── Book: add → edit → remove ──
+  const added = await api("POST", "/api/desk/properties", {
+    address: "9 Wattle Ct, O'Connor ACT",
+    tenantName: "Morgan Lee",
+    tenantPhone: "0411 222 333",
+    weeklyRentCents: 61_000,
+  });
+  const property = added.body?.properties?.find((p) => p.address?.startsWith("9 Wattle"));
+  check("add property lands in the book with quiet day-0 facts", added.status === 201 && Boolean(property) && added.body.ledger.some((r) => r.propertyId === property.id && r.daysSinceDue === 0));
+  check("new property is inside grace (no draft)", added.body?.results?.find((r) => r.propertyId === property?.id)?.outcome === "skip");
+
+  const patched = await api("PATCH", `/api/desk/properties/${property.id}`, { notifyChannel: "portal", graceDays: 5 });
+  check("options patch sticks and never-rules stay locked", patched.body?.property?.options?.notifyChannel === "portal" && patched.body?.property?.options?.graceDays === 5 && patched.body?.property?.options?.never?.length === 2);
+
+  const removed = await api("DELETE", `/api/desk/properties/${property.id}`);
+  check("remove property drops it with its facts", removed.status === 200 && removed.body.properties.length === 6 && !removed.body.ledger.some((r) => r.propertyId === property.id));
+
+  // ── Schedule: named loops ──
+  const loops = (await api("GET", "/api/loops")).body;
+  check("three named loops, only morning-arrears available", loops?.loops?.map((l) => l.id).join(",") === "morning-arrears,owner-letter,inbound-triage" && loops.loops[0].available === true && loops.loops[1].available === false);
+  const plannedRun = await api("POST", "/api/loops/owner-letter/run", {});
+  check("planned loops refuse to run", plannedRun.status === 409);
+
+  const ran = await api("POST", "/api/loops/morning-arrears/run", {});
+  check("morning-arrears run accepted", ran.status === 201 && ran.body?.run?.loopId === "morning-arrears");
+  const runDeadline = Date.now() + 30_000;
+  let settled = null;
+  for (;;) {
+    const state = (await api("GET", "/api/loops")).body;
+    settled = state.runs.find((r) => r.id === ran.body.run.id);
+    if (settled && !["queued", "running"].includes(settled.status)) break;
+    if (Date.now() > runDeadline) break;
+    await sleep(250);
+  }
+  check("loop run settles with a hands detail", settled?.status === "completed" && typeof settled.detail === "string", `${settled?.status} · ${settled?.detail}`);
+
+  // ── Hands status ──
+  const hermes = (await api("GET", "/api/hermes")).body;
+  check("hands status reports the pin and readiness flags", hermes?.pin?.product === "0.20.3" && typeof hermes?.ready === "boolean", `ready=${hermes?.ready}`);
+} finally {
+  child.kill("SIGTERM");
+  await new Promise((resolve) => {
+    if (child.exitCode !== null) return resolve();
+    child.on("close", resolve);
+    setTimeout(() => {
+      child.kill("SIGKILL");
+      resolve();
+    }, 5_000).unref?.();
+  });
+  rmSync(home, { recursive: true, force: true });
+}
+
+if (failures) {
+  console.error(`\n${failures} walkthrough step(s) failed`);
+  process.exit(1);
+}
+console.log("\nDesk walkthrough complete.");

@@ -1,6 +1,6 @@
 # RealBud identity
 
-Fork of OpenMausBot (MIT). We own the shell. Hermes is a later driver, not the brand.
+Fork of OpenMausBot (MIT). We own the **visible window**. Hermes is a pinned **headless** worker (`server/hermes-pin.ts`, profile `property`), not the brand and not the OS. Models attach on that profile (`hermes -p property model`). Claude/Codex/Grok are not RealBud agents. Never launch Hermes.app. Never edit Hermes source.
 
 | Surface | Old | New |
 |---|---|---|

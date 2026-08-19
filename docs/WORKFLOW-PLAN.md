@@ -5,7 +5,7 @@ Status: Hermes does the work; computer use is the exception; the product is per-
 
 ## The split
 
-**Hermes** is the default hands. Bank, PMS exports, water/levy portals that can be scripted, email, calendars: turn the site into an API/CLI or a skill and call it. Better control than clicking every morning.
+**Hermes** (pinned in `server/hermes-pin.ts`, not latest) is the default **headless** hands (`hermes -p property`). Desk Recheck may ask it for ledger JSON; any miss stays on the training book. Never launch Hermes.app. Bank, PMS exports, water/levy portals that can be scripted, email, calendars: turn the site into an API/CLI or a skill and call it.
 
 **Computer use** is only for the few screens that will not script cleanly — usually the unique building/PMS “send reminder / assign tradie” button. Train that path once, save a skill, put it on a routine. That is a thin adapter, not the product.
 
@@ -45,13 +45,37 @@ v0 ships the card + arrears checks (rent landed, optional levy-from-rent) + draf
 | Jobs / tradie | Email/SMS/API | Building job portal is click-only |
 | Inspection / renewal | Calendar + templates | Forms Live merge is click-only |
 
+## Who owns what (the split, pinned)
+
+RealBud is not a remote for the Hermes terminal. It is the PM's desk. Hermes is the worker behind it.
+
+| Thing | RealBud window | Hermes property (headless) |
+|---|---|---|
+| When (7:30, Friday 4pm) | Yes | No |
+| What the human sees (Desk cards, Allow/Deny/Copy) | Yes | No |
+| How (bank, ledger, skill) | No | Yes — CLI / ACP / skill |
+| Send / pay / notice | Never | Never (approvals.mode manual, cron_mode deny) |
+
+```
+Schedule (RealBud clock)
+  → "morning arrears" loop
+  → hermes -p property   ← skill + model + SOUL
+  → JSON / draft text only
+  → Desk evaluate (shop rules, not law)
+  → Allow card → PM copies into the PMS
+```
+
+**A routine is Desk, but the clock pressed Recheck.** Named loops, not free-text prompts. The OpenMausBot routine runner (pick a MAUS + prompt) is deleted; Hermes cron stays denied. If the app is closed: on open, the next scheduled tick (or a manual Recheck) catches up. Later, if they need 7:30 with the lid shut: a launchd job that only writes a result file, RealBud reads it on open. Still fail closed. Still no send.
+
+Chat = ACP into the same `property` profile (one memory, one SOUL). Skills = files in `pack/property/skills/`. Approvals = Desk Allow. Terminal / pets / plugins / group chats are never shown to the PM.
+
 ## What we build now
 
-1. Property options model (the table above) + fixture properties.
-2. Hermes-shaped skills: `check-rent`, `check-levy-from-rent` (bank or export first, website→CLI when we wrap one).
-3. Routine that runs those skills per property and opens a draft card.
+1. Property options model (the table above) + fixture properties. ✅ Desk
+2. Hermes-shaped skills: `check-rent`, `check-levy-from-rent` (bank or export first, website→CLI when we wrap one). Skill `morning-arrears` in pack; live skill work continues.
+3. Routine that runs those skills per property and opens a draft card. ✅ Schedule → named loops (`server/routines.ts`).
 4. CUA skill slot reserved for `portal-notify` — empty until one portal is trained.
-5. Allow / Deny / Edit. No send on statutory. No Always allow.
+5. Allow / Deny / Edit. No send on statutory. No Always allow. ✅ Desk
 
 ## What we do not do
 

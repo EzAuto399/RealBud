@@ -1,6 +1,6 @@
-// Setup UI for an engine that isn't ready — shared by onboarding, the model
-// picker, and the chat's "engine missing" card so all three say the same
-// thing from the same data.
+// Setup UI for an engine that isn't ready — shared by the model picker
+// and the chat's "engine missing" card so both say the same thing from
+// the same data. First-run onboarding does not list engines.
 //
 // Everything here is driven by the driver-declared install descriptor
 // (server/contracts.ts EngineInstall), never by per-engine copy in the UI.

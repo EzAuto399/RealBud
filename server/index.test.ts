@@ -58,6 +58,8 @@ beforeAll(async () => {
     cwd: ROOT,
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
+      // child-process coverage: the v8 provider measures the spawned server
+      ...(process.env.NODE_V8_COVERAGE ? { NODE_V8_COVERAGE: process.env.NODE_V8_COVERAGE } : {}),
       ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
       HOME: home,
       USERPROFILE: home,
@@ -144,11 +146,33 @@ describe("harness HTTP API", () => {
     expect((await fetch(`${BASE}/api/health`)).status).toBe(200);
   });
 
-  it("seeds one starter bot with its greeting", async () => {
+  it("does not seed a starter chat bot", async () => {
     const { status, body } = await api("GET", "/api/bots");
     expect(status).toBe(200);
-    expect(body.bots.length).toBeGreaterThanOrEqual(1);
-    expect(body.bots[0].messages.length).toBeGreaterThanOrEqual(2);
+    expect(body.bots).toEqual([]);
+  });
+
+  it("lists the named loops and refuses to run a planned one", async () => {
+    const { status, body } = await api("GET", "/api/loops");
+    expect(status).toBe(200);
+    expect(body.loops.map((loop: { id: string }) => loop.id)).toEqual([
+      "morning-arrears",
+      "owner-letter",
+      "inbound-triage",
+    ]);
+    const morning = body.loops.find((loop: { id: string }) => loop.id === "morning-arrears");
+    expect(morning).toMatchObject({ available: true, enabled: true });
+    const planned = body.loops.find((loop: { id: string }) => loop.id === "owner-letter");
+    expect(planned).toMatchObject({ available: false, enabled: false });
+    expect(planned).not.toHaveProperty("prompt");
+
+    const run = await api("POST", "/api/loops/owner-letter/run", {});
+    expect(run.status).toBe(409);
+
+    const patch = await api("PATCH", "/api/loops/morning-arrears", { enabled: false });
+    expect(patch.status).toBe(200);
+    expect(patch.body.loop.enabled).toBe(false);
+    await api("PATCH", "/api/loops/morning-arrears", { enabled: true });
   });
 
   it("refuses to run setup for an engine with no installer", async () => {
@@ -170,6 +194,72 @@ describe("harness HTTP API", () => {
     expect(body.instances[0].snapshot.reason).toContain("not-a-real-driver");
   });
 
+  it("reports the pinned Hermes worker status", async () => {
+    const { status, body } = await api("GET", "/api/hermes");
+    expect(status).toBe(200);
+    expect(body.pin).toMatchObject({ product: "0.20.3", profile: "property" });
+    expect(body.cli).toMatchObject({ installed: expect.any(Boolean), matchesPin: expect.any(Boolean) });
+    expect(body.pack).toMatchObject({ installed: true, approvalsManual: true });
+    expect(typeof body.detail).toBe("string");
+    expect(body.installCommand).toContain("--force-commit");
+  });
+
+  it("applies the property pack on demand and rejects non-JSON calls", async () => {
+    const noJson = await api("POST", "/api/hermes/apply-pack");
+    expect(noJson.status).toBe(415);
+
+    const applied = await api("POST", "/api/hermes/apply-pack", {});
+    expect(applied.status).toBe(200);
+    expect(applied.body.pack.installed).toBe(true);
+    expect(applied.body.pin.product).toBe("0.20.3");
+  });
+
+  it("tests hands with the same content-type gate as other actions", async () => {
+    const noJson = await api("POST", "/api/hermes/test");
+    expect(noJson.status).toBe(415);
+  });
+
+  it("adds, patches, and removes a property with its facts", async () => {
+    const before = await api("GET", "/api/desk");
+    const count = before.body.properties.length;
+
+    const added = await api("POST", "/api/desk/properties", {
+      address: "9 Wattle Ct, O'Connor ACT",
+      tenantName: "Morgan Lee",
+      tenantPhone: "0411 222 333",
+      weeklyRentCents: 61_000,
+    });
+    expect(added.status).toBe(201);
+    expect(added.body.properties).toHaveLength(count + 1);
+    const property = added.body.properties.find((p: { address: string }) => p.address.startsWith("9 Wattle"));
+    expect(property).toMatchObject({ tenantName: "Morgan Lee" });
+    expect(added.body.ledger.find((r: { propertyId: string }) => r.propertyId === property.id)).toMatchObject({
+      daysSinceDue: 0,
+      rentLanded: false,
+    });
+
+    const patched = await api("PATCH", `/api/desk/properties/${property.id}`, { notifyChannel: "portal" });
+    expect(patched.status).toBe(200);
+    expect(patched.body.property.options.notifyChannel).toBe("portal");
+    expect(patched.body.property.options.never).toEqual(["statutory-send", "trust-pay"]);
+
+    const removed = await api("DELETE", `/api/desk/properties/${property.id}`);
+    expect(removed.status).toBe(200);
+    expect(removed.body.properties.some((p: { id: string }) => p.id === property.id)).toBe(false);
+
+    const bad = await api("POST", "/api/desk/properties", { address: "", tenantName: "X", weeklyRentCents: 10 });
+    expect(bad.status).toBe(400);
+  });
+
+  it("never sends a desk draft — the send route is always 403", async () => {
+    const snap = await api("GET", "/api/desk");
+    const draft = snap.body.drafts.find((d: { status: string }) => d.status === "pending");
+    expect(draft).toBeTruthy();
+    const send = await api("POST", `/api/desk/drafts/${draft.id}/send`, {});
+    expect(send.status).toBe(403);
+    expect(String(send.body.error)).toMatch(/never sends/i);
+  });
+
   it("creates, patches, and deletes a bot", async () => {
     const created = await api("POST", "/api/bots");
     expect(created.status).toBe(201);
@@ -188,9 +278,17 @@ describe("harness HTTP API", () => {
     expect(after.body.bots.find((b: { id: string }) => b.id === bot.id)).toBeUndefined();
   });
 
+  async function workshopBot() {
+    const created = await api("POST", "/api/bots");
+    expect(created.status).toBe(201);
+    const listed = await api("GET", "/api/bots");
+    const bot = listed.body.bots.find((b: { id: string }) => b.id === created.body.bot.id);
+    expect(bot).toBeTruthy();
+    return bot;
+  }
+
   it("persists an answered onboarding card", async () => {
-    const { body } = await api("GET", "/api/bots");
-    const bot = body.bots[0];
+    const bot = await workshopBot();
     const card = bot.messages.find((m: { kind: string }) => m.kind === "options");
     const res = await api("PATCH", `/api/bots/${bot.id}/cards/${card.id}`, { answered: card.card.options[0] });
     expect(res.status).toBe(200);
@@ -198,8 +296,7 @@ describe("harness HTTP API", () => {
   });
 
   it("rejects an empty message and explains an unavailable provider", async () => {
-    const { body } = await api("GET", "/api/bots");
-    const bot = body.bots[0];
+    const bot = await workshopBot();
 
     const empty = await api("POST", `/api/bots/${bot.id}/messages`, { text: "   " });
     expect(empty.status).toBe(400);
@@ -212,8 +309,7 @@ describe("harness HTTP API", () => {
   });
 
   it("refuses to fork a message when the provider is unavailable, without mutating", async () => {
-    const { body } = await api("GET", "/api/bots");
-    const bot = body.bots[0];
+    const bot = await workshopBot();
     const before = bot.messages.length;
 
     // greeting is a bot message — not editable
@@ -234,8 +330,7 @@ describe("harness HTTP API", () => {
   });
 
   it("switches the active branch and reports the new leaf", async () => {
-    const { body } = await api("GET", "/api/bots");
-    const bot = body.bots[0];
+    const bot = await workshopBot();
     expect(bot.activeLeafId).toBe(bot.messages.at(-1).id);
 
     // pointing at the first message descends back to the newest leaf on

@@ -1,87 +1,21 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { Check, AlertTriangle, Loader2, Mic } from "lucide-react";
-import { MausAvatar } from "./Avatar";
+import { useEffect, useState } from "react";
+import { Building2 } from "lucide-react";
 import { identifyEmail, setEmailGateDone, track } from "@/lib/analytics";
-import { useDesktopCapabilities } from "./DesktopCapabilities";
-import { EngineSetup } from "./EngineSetup";
-import type { InstanceInfo } from "@/state/store";
+import { useStore } from "@/state/store";
 
-// Three-step first-run onboarding: who you are (email), what's installed
-// (live engine checks from the harness), what the app may use (TCC).
-// Every check is skippable — onboarding must never brick the app.
-
-type InstanceRow = InstanceInfo;
-
-function StatusRow({
-  ok,
-  warn,
-  title,
-  detail,
-  children,
-}: {
-  ok: boolean;
-  warn?: boolean;
-  title: string;
-  detail?: string;
-  children?: ReactNode;
-}) {
-  return (
-    <div className="flex items-start gap-3 rounded-xl bg-card p-3.5">
-      <span
-        className={`mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full ${
-          ok ? "bg-[#00c97222] text-[#38d591]" : warn ? "bg-[#ff980022] text-[#ff9800]" : "bg-raised text-ink-secondary"
-        }`}
-      >
-        {ok ? <Check size={14} /> : <AlertTriangle size={13} />}
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="text-[14px] font-medium text-ink">{title}</div>
-        {detail && <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink-secondary">{detail}</div>}
-        {children}
-      </div>
-    </div>
-  );
-}
-
-/** One engine's onboarding row. Ready states get a sentence; anything the
- * user has to act on gets the shared setup UI, so the instructions come from
- * the driver and are correct for this platform. */
-function EngineRow({
-  instance,
-  label,
-  readyNote,
-}: {
-  instance: InstanceRow | undefined;
-  label: string;
-  readyNote: string;
-}) {
-  const ready = instance?.snapshot.state === "available" && instance.snapshot.authenticated !== false;
-  const version = instance?.snapshot.version ? ` · ${instance.snapshot.version.split(" ")[0]}` : "";
-  return (
-    <StatusRow ok={ready} warn title={`${label}${version}`} detail={ready ? readyNote : undefined}>
-      {!ready &&
-        (instance ? (
-          <EngineSetup instance={instance} className="mt-0.5" />
-        ) : (
-          <div className="mt-0.5 text-[12.5px] text-ink-secondary">Not configured on this machine.</div>
-        ))}
-    </StatusRow>
-  );
-}
+// First-run for a newly licensed PM. Desk is the product. Engines, mic,
+// and plugins stay out of this walkthrough.
 
 export function Onboarding({ onDone }: { onDone: () => void }) {
-  const { capabilities } = useDesktopCapabilities();
+  const { dispatch } = useStore();
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [instances, setInstances] = useState<InstanceRow[] | null>(null);
-  const [perms, setPerms] = useState<{ mic: string } | null>(null);
-  const valid = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
+  const emailOk = !email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
+  const canContinue = name.trim().length > 0 && emailOk;
 
   const saveProfile = () => {
-    identifyEmail(email.trim().toLowerCase());
-    // persisted server-side (~/.realbud/config.json) — the sidebar
-    // footer reads it back through /api/config
+    if (email.trim()) identifyEmail(email.trim().toLowerCase());
     void fetch("/api/config", {
       method: "PUT",
       headers: { "content-type": "application/json" },
@@ -94,60 +28,25 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     track("onboarding_step", { step });
   }, [step]);
 
-  useEffect(() => {
-    if (step !== 1) return;
-    let active = true;
-    let latestRequest = 0;
-    const refresh = () => {
-      const request = ++latestRequest;
-      fetch("/api/instances")
-        .then((r) => r.json())
-        .then((d) => active && request === latestRequest && setInstances(d.instances ?? []))
-        .catch(() => active && request === latestRequest && setInstances([]));
-    };
-    refresh();
-    window.addEventListener("focus", refresh);
-    return () => {
-      active = false;
-      window.removeEventListener("focus", refresh);
-    };
-  }, [step]);
-
-  useEffect(() => {
-    if (step === 2 && capabilities.dictation.available) {
-      const poll = () => window.ogb?.permStatus?.().then(setPerms).catch(() => {});
-      poll();
-      // keep polling — the user may grant in System Settings and come back
-      const t = setInterval(poll, 2000);
-      return () => clearInterval(t);
-    }
-  }, [step, capabilities.dictation.available]);
-
   const finish = () => {
-    track("onboarding_completed", {
-      engines_available: instances?.filter((i) => i.snapshot.state === "available").length ?? -1,
-      mic: perms?.mic ?? "n/a",
-    });
+    track("onboarding_completed", { engines_available: -1, mic: "n/a" });
     setEmailGateDone("submitted");
+    dispatch({ type: "showDesk" });
     onDone();
   };
-
-  const byKind = (kind: string) => instances?.find((i) => i.driverKind === kind);
-  const claude = byKind("claudeAgent");
-  const codex = byKind("codex");
-  const grok = byKind("grokAgent");
-  const antigravity = byKind("antigravityAgent");
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-app">
       <div className="flex w-[460px] flex-col rounded-2xl border border-hairline/40 bg-panel p-8">
         {step === 0 && (
           <div className="flex flex-col items-center">
-            <MausAvatar color="green" state="happy" size={72} />
+            <div className="flex size-[72px] items-center justify-center rounded-2xl bg-accent/10">
+              <Building2 size={32} className="text-accent" />
+            </div>
             <h1 className="mt-4 text-[20px] font-semibold text-ink">Welcome to RealBud</h1>
             <p className="mt-1.5 text-center text-[14px] leading-relaxed text-ink-secondary">
-              Bots that do real work on their own computer. Tell us who you are
-              and we&rsquo;ll let you know when big things ship.
+              A desk for property managers. It drafts the morning work. You send from the PMS.
+              It never issues a notice or moves trust money.
             </p>
             <input
               autoFocus
@@ -161,13 +60,13 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && valid && saveProfile()}
-              placeholder="you@example.com"
+              onKeyDown={(e) => e.key === "Enter" && canContinue && saveProfile()}
+              placeholder="Office email (optional)"
               className="mt-3 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2.5 text-[15px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
             />
             <button
               onClick={saveProfile}
-              disabled={!valid}
+              disabled={!canContinue}
               className="mt-3 w-full rounded-lg bg-accent py-2.5 text-[15px] font-medium text-white disabled:opacity-40"
             >
               Continue
@@ -179,104 +78,34 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
               }}
               className="mt-3 text-[12px] text-ink-secondary hover:text-ink"
             >
-              Maybe later
+              Skip for now
             </button>
           </div>
         )}
 
         {step === 1 && (
           <div className="flex flex-col">
-            <h1 className="text-[18px] font-semibold text-ink">Your engines</h1>
-            <p className="mt-1 text-[13.5px] text-ink-secondary">
-              Bots run on AI tools installed on this computer — here&rsquo;s what we found.
-            </p>
-            <div className="mt-4 flex flex-col gap-2.5">
-              {!instances ? (
-                <div className="flex items-center gap-2 py-6 text-ink-secondary">
-                  <Loader2 size={16} className="animate-spin" /> Checking…
-                </div>
-              ) : (
-                <>
-                  <EngineRow
-                    instance={claude}
-                    label="Claude Code"
-                    readyNote="Installed and signed in — ready to power bots."
-                  />
-                  <EngineRow instance={codex} label="Codex" readyNote="Installed — bots can run on Codex too." />
-                  <EngineRow
-                    instance={grok}
-                    label="Grok Build"
-                    readyNote="Installed and signed in — bots can run on Grok too."
-                  />
-                  <EngineRow
-                    instance={antigravity}
-                    label="Antigravity"
-                    readyNote="Installed — bots can run on Antigravity too."
-                  />
-                </>
-              )}
-            </div>
-            <button
-              onClick={() => (capabilities.dictation.available ? setStep(2) : finish())}
-              className="mt-5 w-full rounded-lg bg-accent py-2.5 text-[15px] font-medium text-white"
-            >
-              Continue
-            </button>
-          </div>
-        )}
-
-        {step === 2 && (
-          <div className="flex flex-col">
-            <h1 className="text-[18px] font-semibold text-ink">Permissions</h1>
-            <p className="mt-1 text-[13.5px] text-ink-secondary">
-              Optional, and only ever used when you ask for the feature.
-            </p>
-            <div className="mt-4 flex flex-col gap-2.5">
-              <div className="flex items-center justify-between gap-3 rounded-xl bg-card p-3.5">
-                <div className="flex items-start gap-3">
-                  <Mic size={18} className="mt-0.5 shrink-0 text-ink-secondary" />
-                  <div>
-                    <div className="text-[14px] font-medium text-ink">Microphone & speech</div>
-                    <div className="mt-0.5 text-[12.5px] text-ink-secondary">
-                      Voice dictation into the composer, transcribed on-device.
-                    </div>
-                  </div>
-                </div>
-                {perms?.mic === "granted" ? (
-                  <Check size={16} className="shrink-0 text-[#38d591]" />
-                ) : perms?.mic === "denied" || perms?.mic === "restricted" ? (
-                  <button
-                    onClick={() => window.ogb?.permOpenSettings?.("mic")}
-                    className="shrink-0 rounded-lg bg-raised px-3 py-1.5 text-[13px] text-ink hover:bg-raised-hover"
-                  >
-                    Open Settings
-                  </button>
-                ) : (
-                  <button
-                    onClick={() =>
-                      window.ogb?.permRequestMic?.().then(() => window.ogb?.permStatus?.().then(setPerms))
-                    }
-                    className="shrink-0 rounded-lg bg-raised px-3 py-1.5 text-[13px] text-ink hover:bg-raised-hover"
-                  >
-                    Enable
-                  </button>
-                )}
-              </div>
-              {/* Screen Recording deliberately has no row here: macOS 15+
-                  makes a pre-grant unreliable (per-process status caching,
-                  helper misattribution, periodic re-prompts) — the OS flow
-                  triggers on the first real capture in the Computer panel,
-                  which is the moment the user has context for the dialog. */}
-            </div>
+            <h1 className="text-[18px] font-semibold text-ink">How this desk works</h1>
+            <p className="mt-1 text-[13.5px] text-ink-secondary">Three rules. They do not change.</p>
+            <ol className="mt-4 space-y-2.5">
+              <li className="rounded-xl bg-card px-3.5 py-3 text-[13.5px] leading-relaxed text-ink">
+                <span className="font-medium">1. Draft only.</span>
+                <span className="text-ink-secondary"> Courtesy wording and flags wait for you. Copy them into the PMS yourself.</span>
+              </li>
+              <li className="rounded-xl bg-card px-3.5 py-3 text-[13.5px] leading-relaxed text-ink">
+                <span className="font-medium">2. No notices. No trust.</span>
+                <span className="text-ink-secondary"> Past the courtesy window, RealBud escalates to a licensed person. It will not draft or send a statutory notice, or pay from rent.</span>
+              </li>
+              <li className="rounded-xl bg-card px-3.5 py-3 text-[13.5px] leading-relaxed text-ink">
+                <span className="font-medium">3. Today is a training book.</span>
+                <span className="text-ink-secondary"> Six sample properties so you can walk the morning before a live roll is connected.</span>
+              </li>
+            </ol>
             <button onClick={finish} className="mt-5 w-full rounded-lg bg-accent py-2.5 text-[15px] font-medium text-white">
-              Start using RealBud
-            </button>
-            <button onClick={finish} className="mt-3 text-[12px] text-ink-secondary hover:text-ink">
-              Skip for now
+              Open today&rsquo;s desk
             </button>
           </div>
         )}
-
       </div>
     </div>
   );

@@ -1,19 +1,45 @@
 // Store persistence contract: bots.json + messages-<threadId>.json are
 // the durable record — everything here must survive a process restart
 // except `busy`, which never does (no turn survives one either).
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
-import { Store, type BotRecord } from "./store.ts";
+import type { BotRecord } from "./store.ts";
+
+// The Store writes under DATA_DIR — the same directory other parallel test
+// workers use (permission sockets, transcripts). Give THIS file a private
+// data dir before config.ts reads the env, so no worker ever deletes
+// another's files. vi.hoisted runs before any module is imported, so build
+// the path from globals only (no `join`/`tmpdir` in here).
+const dataDir = vi.hoisted(() => {
+  const base = process.env.TEMP || process.env.TMPDIR || process.cwd();
+  const dir = `${base}/realbud-store-${process.pid}-${Date.now().toString(36)}`;
+  process.env.REALBUD_DATA_DIR = dir;
+  return dir;
+});
+
+const { DATA_DIR } = await import("./config.ts");
+const { Store } = await import("./store.ts");
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 
+afterAll(() => {
+  rmSync(dataDir, { recursive: true, force: true });
+});
+
 describe("Store", () => {
   beforeEach(() => {
-    rmSync(DATA_DIR, { recursive: true, force: true });
+    // Remove only what the Store owns, so a leftover file from a previous
+    // test can never leak into this one.
+    mkdirSync(DATA_DIR, { recursive: true });
+    for (const name of ["bots.json", "groups.json", "events", "native"]) {
+      rmSync(join(DATA_DIR, name), { recursive: true, force: true });
+    }
+    for (const name of readdirSync(DATA_DIR)) {
+      if (name.startsWith("messages-")) rmSync(join(DATA_DIR, name), { force: true });
+    }
   });
 
   it("createBot seeds a greeting and an onboarding card", () => {
@@ -130,16 +156,21 @@ describe("Store", () => {
     expect(reloaded.bot(bot.id)?.resumeCursors).toEqual({ claude: "sess-abc", codex: "thread-xyz" });
   });
 
-  it("seedIfEmpty creates exactly one starter bot, once", () => {
+  it("redacts credential-shaped text on bot messages, not user ones", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const secret = `sk-ant-api03-${"abcdefghijklmnopqrstuvwxyz0123456789"}`;
+    const user = store.appendMessage(bot.threadId, { role: "user", kind: "text", text: `here is ${secret}` });
+    const reply = store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: `got ${secret}` });
+    expect(user.text).toContain("sk-ant");
+    expect(reply.text).not.toContain("sk-ant");
+    expect(reply.text).toMatch(/«redacted/);
+  });
+
+  it("seedIfEmpty does not create a starter bot", () => {
     const store = new Store(selection);
     store.seedIfEmpty();
-    expect(store.bots).toHaveLength(1);
-    store.seedIfEmpty();
-    expect(store.bots).toHaveLength(1);
-
-    const reloaded = new Store(selection);
-    reloaded.seedIfEmpty();
-    expect(reloaded.bots).toHaveLength(1);
+    expect(store.bots).toHaveLength(0);
   });
 
   it("chains appended messages and keeps the newest as active leaf", () => {

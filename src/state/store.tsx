@@ -14,7 +14,8 @@ import {
   type ReactNode,
 } from "react";
 import type { MausColor, MausMotion } from "@/lib/mascot";
-import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
+import type { Loop, LoopId, LoopRun } from "@/lib/routines";
+import type { DeskSnapshot } from "@/lib/desk";
 import { currentCall } from "@/lib/call";
 import { speaker } from "@/lib/tts";
 
@@ -196,16 +197,32 @@ export interface InstanceInfo {
 
 export type AppSettingsSection = "general" | "connections" | "voice" | "computer";
 
+/** GET /api/hermes — how the pinned worker is doing. Never any secrets. */
+export interface HermesStatus {
+  pin: { product: string; tag: string; commit: string; profile: string };
+  cli: { installed: boolean; versionText: string | null; matchesPin: boolean };
+  pack: { installed: boolean; approvalsManual: boolean };
+  homeDir: string;
+  profileDir: string;
+  installCommand: string | null;
+  signInCommand: string;
+  detail: string;
+  ready: boolean;
+}
+
 interface AppState {
   bots: Bot[];
   groups: Group[];
   instances: InstanceInfo[];
   config: ConfigStatus | null;
+  hermes: HermesStatus | null;
   /** selected chat — a bot id OR a group id */
   selectedId: string;
-  activeView: "chat" | "routines" | "desk";
-  routines: Routine[];
-  routineRuns: RoutineRun[];
+  activeView: "chat" | "schedule" | "desk";
+  loops: Loop[];
+  loopRuns: LoopRun[];
+  /** latest Desk snapshot pushed by the server (a clock loop pressed Recheck) */
+  desk: DeskSnapshot | null;
   settingsOpen: boolean;
   pluginsOpen: boolean;
   computerOpen: boolean;
@@ -228,16 +245,12 @@ type Action =
   | { type: "hydrate"; bots: Bot[]; groups: Group[] }
   | { type: "showRoutines" }
   | { type: "showDesk" }
-  | { type: "routinesHydrated"; routines: Routine[]; runs: RoutineRun[] }
-  | { type: "routinePatched"; routine: Routine }
-  | { type: "routineDeleted"; routineId: string }
-  | { type: "routineRunPatched"; run: RoutineRun }
-  | { type: "createRoutine"; input: RoutineInput }
-  | { type: "updateRoutine"; routineId: string; patch: Partial<RoutineInput> }
-  | { type: "deleteRoutine"; routineId: string }
-  | { type: "runRoutine"; routineId: string }
-  | { type: "cancelRoutineRun"; runId: string }
-  | { type: "markRoutineRunSeen"; runId: string }
+  | { type: "loopsHydrated"; loops: Loop[]; runs: LoopRun[] }
+  | { type: "loopPatched"; loop: Loop }
+  | { type: "loopRunPatched"; run: LoopRun }
+  | { type: "runLoop"; loopId: LoopId }
+  | { type: "markLoopRunSeen"; runId: string }
+  | { type: "deskSnapshot"; snapshot: DeskSnapshot }
   | { type: "groupPatched"; group: Partial<Group> & { id: string } }
   | { type: "groupDeleted"; groupId: string }
   | { type: "createGroup"; memberIds: string[]; name?: string }
@@ -252,6 +265,7 @@ type Action =
   | { type: "interruptGroup"; groupId: string }
   | { type: "instances"; instances: InstanceInfo[] }
   | { type: "configStatus"; config: ConfigStatus }
+  | { type: "hermesStatus"; status: HermesStatus }
   | { type: "select"; id: string }
   | { type: "send"; botId: string; text: string }
   | { type: "editMessage"; botId: string; messageId: string; text: string }
@@ -354,7 +368,7 @@ function reducer(state: AppState, action: Action): AppState {
     case "showRoutines":
       return {
         ...state,
-        activeView: "routines",
+        activeView: "schedule",
         settingsOpen: false,
         computerOpen: false,
         appSettingsOpen: false,
@@ -369,26 +383,26 @@ function reducer(state: AppState, action: Action): AppState {
         appSettingsOpen: false,
         pluginsOpen: false,
       };
-    case "routinesHydrated":
-      return { ...state, routines: action.routines, routineRuns: action.runs };
-    case "routinePatched": {
-      const exists = state.routines.some((routine) => routine.id === action.routine.id);
+    case "loopsHydrated":
+      return { ...state, loops: action.loops, loopRuns: action.runs };
+    case "loopPatched": {
+      const exists = state.loops.some((loop) => loop.id === action.loop.id);
       return {
         ...state,
-        routines: exists
-          ? state.routines.map((routine) => (routine.id === action.routine.id ? action.routine : routine))
-          : [action.routine, ...state.routines],
+        loops: exists
+          ? state.loops.map((loop) => (loop.id === action.loop.id ? action.loop : loop))
+          : [action.loop, ...state.loops],
       };
     }
-    case "routineDeleted":
-      return { ...state, routines: state.routines.filter((routine) => routine.id !== action.routineId) };
-    case "routineRunPatched": {
-      const exists = state.routineRuns.some((run) => run.id === action.run.id);
+    case "loopRunPatched": {
+      const exists = state.loopRuns.some((run) => run.id === action.run.id);
       const runs = exists
-        ? state.routineRuns.map((run) => (run.id === action.run.id ? action.run : run))
-        : [action.run, ...state.routineRuns];
-      return { ...state, routineRuns: runs.sort((a, b) => b.scheduledFor - a.scheduledFor) };
+        ? state.loopRuns.map((run) => (run.id === action.run.id ? action.run : run))
+        : [action.run, ...state.loopRuns];
+      return { ...state, loopRuns: runs.sort((a, b) => b.scheduledFor - a.scheduledFor) };
     }
+    case "deskSnapshot":
+      return { ...state, desk: action.snapshot };
     case "groupPatched": {
       const exists = state.groups.some((g) => g.id === action.group.id);
       const groups = exists
@@ -405,6 +419,8 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, instances: action.instances };
     case "configStatus":
       return { ...state, config: action.config };
+    case "hermesStatus":
+      return { ...state, hermes: action.status };
     case "select": {
       if (state.groups.some((g) => g.id === action.id)) {
         return {
@@ -674,12 +690,8 @@ function reducer(state: AppState, action: Action): AppState {
     case "sendGroup":
     case "deleteGroup":
     case "interruptGroup":
-    case "createRoutine":
-    case "updateRoutine":
-    case "deleteRoutine":
-    case "runRoutine":
-    case "cancelRoutineRun":
-    case "markRoutineRunSeen":
+    case "runLoop":
+    case "markLoopRunSeen":
       return state;
   }
 }
@@ -692,10 +704,12 @@ const initialState: AppState = {
   groups: [],
   instances: [],
   config: null,
+  hermes: null,
   selectedId: "",
-  activeView: "chat",
-  routines: [],
-  routineRuns: [],
+  activeView: "desk",
+  loops: [],
+  loopRuns: [],
+  desk: null,
   settingsOpen: false,
   pluginsOpen: false,
   computerOpen: false,
@@ -741,6 +755,8 @@ const StoreContext = createContext<{
   dispatch: React.Dispatch<Action>;
   /** Re-fetch engine availability — after an install, without a restart. */
   refreshInstances: () => Promise<void>;
+  /** Re-probe the pinned Hermes worker (version, pack, approvals). */
+  refreshHermes: () => Promise<void>;
 } | null>(null);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
@@ -809,26 +825,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const wrapped: React.Dispatch<Action> = (action) => {
       rawDispatch(action);
       switch (action.type) {
-        case "createRoutine":
-          api("/api/routines", { method: "POST", body: JSON.stringify(action.input) }).catch(showError);
+        case "runLoop":
+          api(`/api/loops/${action.loopId}/run`, { method: "POST" })
+            .then(({ run }) => run && rawDispatch({ type: "loopRunPatched", run }))
+            .catch(showError);
           break;
-        case "updateRoutine":
-          api(`/api/routines/${action.routineId}`, {
-            method: "PATCH",
-            body: JSON.stringify(action.patch),
-          }).catch(showError);
-          break;
-        case "deleteRoutine":
-          api(`/api/routines/${action.routineId}`, { method: "DELETE" }).catch(showError);
-          break;
-        case "runRoutine":
-          api(`/api/routines/${action.routineId}/run`, { method: "POST" }).catch(showError);
-          break;
-        case "cancelRoutineRun":
-          api(`/api/routine-runs/${action.runId}/cancel`, { method: "POST" }).catch(showError);
-          break;
-        case "markRoutineRunSeen":
-          api(`/api/routine-runs/${action.runId}/seen`, { method: "POST" }).catch(showError);
+        case "markLoopRunSeen":
+          api(`/api/loop-runs/${action.runId}/seen`, { method: "POST" }).catch(showError);
           break;
         case "send":
           api(`/api/bots/${action.botId}/messages`, {
@@ -1059,8 +1062,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       api("/api/config")
         .then((config) => alive && rawDispatch({ type: "configStatus", config }))
         .catch(() => {});
-      api("/api/routines")
-        .then(({ routines, runs }) => alive && rawDispatch({ type: "routinesHydrated", routines, runs }))
+      api("/api/hermes")
+        .then((status) => alive && rawDispatch({ type: "hermesStatus", status }))
+        .catch(() => {});
+      api("/api/loops")
+        .then(({ loops, runs }) => alive && rawDispatch({ type: "loopsHydrated", loops, runs: runs ?? [] }))
         .catch(() => {});
     };
     loadAll();
@@ -1139,14 +1145,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "group.deleted":
           rawDispatch({ type: "groupDeleted", groupId: frame.groupId });
           break;
-        case "routine":
-          rawDispatch({ type: "routinePatched", routine: frame.routine });
+        case "loop":
+          rawDispatch({ type: "loopPatched", loop: frame.loop });
           break;
-        case "routine.deleted":
-          rawDispatch({ type: "routineDeleted", routineId: frame.routineId });
+        case "loop.run":
+          rawDispatch({ type: "loopRunPatched", run: frame.run });
           break;
-        case "routine.run":
-          rawDispatch({ type: "routineRunPatched", run: frame.run });
+        case "desk":
+          rawDispatch({ type: "deskSnapshot", snapshot: frame.snapshot });
           break;
         case "runtime": {
           const event = frame.event;
@@ -1218,6 +1224,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const refreshHermes = useCallback(async () => {
+    try {
+      const status = await api("/api/hermes");
+      rawDispatch({ type: "hermesStatus", status });
+    } catch {
+      /* offline or server down — the existing status stays */
+    }
+  }, []);
+
   // Installing a CLI or signing one in happens in a terminal, outside this
   // window — so the moment the user comes back is exactly when our engine
   // snapshot is most likely stale. Re-probe on focus, throttled so that
@@ -1229,12 +1244,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (now - lastFocusProbe.current < 3000) return;
       lastFocusProbe.current = now;
       void refreshInstances();
+      void refreshHermes();
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [refreshInstances]);
+  }, [refreshInstances, refreshHermes]);
 
-  const value = useMemo(() => ({ state, dispatch, refreshInstances }), [state, dispatch, refreshInstances]);
+  const value = useMemo(
+    () => ({ state, dispatch, refreshInstances, refreshHermes }),
+    [state, dispatch, refreshInstances, refreshHermes],
+  );
   return (
     <StoreContext.Provider value={value}>
       <StreamContext.Provider value={stream}>{children}</StreamContext.Provider>

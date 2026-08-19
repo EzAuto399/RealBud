@@ -11,6 +11,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const PROXY = join(dirname(fileURLToPath(import.meta.url)), "agents-proxy.ts");
 const TOKEN = "test-comms-token";
+// The proxy child inherits process.env; keep coverage instrumentation out of
+// it — the stub under test is not the coverage target.
+delete process.env.NODE_V8_COVERAGE;
 
 // scripted harness stub
 let stub: Server;

@@ -20,7 +20,7 @@ The job is: take hours off a licensed-adjacent PM without ever pressing **Send**
 
 Not: DIY landlords, US multifamily, a full PMS replacement, a trust-accounting company.
 
-**Stack lock:** this repo is **RealBud** (OpenMausBot fork). **Wrap Hermes** as a driver. Do not rebuild on Hermes Desktop. Do not use OpenManus (different project).
+**Stack lock:** this repo is **RealBud** (OpenMausBot fork). RealBud owns the window. Hermes is a **pinned headless worker** (`hermes -p property` / ACP / cron). Do not launch Hermes.app. Do not fork or edit Hermes source. Do not use OpenManus (different project).
 
 Legal metaphor that should drive the UX: the product is an **unregistered assistant**. It may prepare, remind, draft, file, and escalate. It may not sign, pay, or bind the agency.
 
@@ -69,9 +69,8 @@ Why this, not “full PM OS”:
 ## Stack decision
 
 ```
-Commercial shell: this repo (OpenMausBot fork) — roster, approval cards, routines
-Runtime we wrap: Hermes ACP driver (memory, skills, cron, any model)
-Coding brains we keep: claude / codex / grok CLIs (already wired)
+Visible window: this repo — Desk, Copy/Approve, walkthrough
+Headless worker: pinned Hermes profile `property` (CLI / ACP / cron). Never Hermes.app.
 System of record: the agency PMS (read API + human-gated portal actions)
 Domain seed: /Users/yoda/projects/Property MCP (listings, applications, inspections)
 ```
@@ -79,10 +78,10 @@ Domain seed: /Users/yoda/projects/Property MCP (listings, applications, inspecti
 ### Hermes — use, do not “own”
 
 - MIT (Copyright Nous Research 2025). We may copy, modify, and sell **code**. We may not take the Hermes name, logo, or Desktop as our product.
-- Latest reviewed: **v0.20.1** (`v2026.8.13`). Local install is v0.20.0 at `~/.hermes/hermes-agent`.
+- Pinned worker: **v0.20.3** (`v2026.8.16.2`, commit `7339f5f160db5c96657a3bab60151227cc61f66c`) in `server/hermes-pin.ts`. We do not follow `main`. Bump the pin when we choose to.
 - Velocity is the killer: ~1,400 PRs in a single minor. A rebranded fork dies in a month.
 - Nous Portal is optional, not required. Force `approvals.mode: manual` for anything PM.
-- Correct seam: `server/drivers/acp/hermes.ts` next to the existing Grok ACP driver. Profile: `hermes -p property` so it does not share personal `~/.hermes` memory.
+- Seam: `server/drivers/acp/hermes.ts`. Profile: `hermes -p property` so it does not share personal `~/.hermes` memory.
 - Keep [EzAuto399/hermes-installer](https://github.com/EzAuto399/hermes-installer) as machine bootstrap only.
 
 OpenMausBot routines are **real** (`server/routines.ts` + `src/components/RoutinesPage.tsx`). README’s “routines are a placeholder” is stale. Approvals, Composio (Claude only), and Chief of Staff are real. Custom MCP mount is **not** — Property MCP cannot be attached without new glue.

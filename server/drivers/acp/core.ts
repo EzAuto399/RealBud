@@ -13,12 +13,10 @@
 // is never a security contract). session/load REPLAYS history as ordinary
 // session/update notifications, so updates are double-gated: nothing emits
 // before the prompt is sent, and `_meta.isReplay` updates are dropped.
-import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../../procs.ts";
+import { SPAWNED_PROXIES } from "../../proxy-paths.ts";
 
 import type {
   DriverCreateInput,
@@ -34,12 +32,7 @@ import { newEventId, newId } from "../../contracts.ts";
 import { computerProxyEnv } from "../../container-computer.ts";
 import { augmentedPath } from "../../env-path.ts";
 
-// the computer proxy entry: .ts in dev (node type stripping), .js in the
-// compiled dist-server the packaged app ships
-const COMPUTER_PROXY_PATH = (() => {
-  const ts = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "computer-proxy.ts");
-  return existsSync(ts) ? ts : ts.replace(/\.ts$/, ".js");
-})();
+const COMPUTER_PROXY_PATH = SPAWNED_PROXIES.computer;
 import { appendNative } from "../native.ts";
 
 export interface AcpConfig {

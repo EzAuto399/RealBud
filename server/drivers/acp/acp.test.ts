@@ -18,8 +18,14 @@ import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { GrokAgentDriver } from "./grok.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
 import { KimiAgentDriver } from "./kimi.ts";
+import { HermesAgentDriver } from "./hermes.ts";
+import { HERMES_PIN } from "../../hermes-pin.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
+// The scripted fake CLI inherits process.env; under `--coverage` that would
+// leak NODE_V8_COVERAGE into the child and break its handshake. Strip it for
+// this file — the parent worker keeps its own instrumentation.
+delete process.env.NODE_V8_COVERAGE;
 
 describe("ACP decodeConfig", () => {
   it("grok defaults to the grok binary", () => {
@@ -36,6 +42,12 @@ describe("ACP decodeConfig", () => {
       win32: expect.stringContaining("install.ps1"),
     });
     expect(KimiAgentDriver.install?.signInCommand).toBe("kimi login");
+  });
+  it("hermes defaults to the hermes binary and pins a commit on install", () => {
+    expect(HermesAgentDriver.decodeConfig(undefined)).toEqual({ cli: "hermes", fullAuto: false, workspace: undefined });
+    expect(HermesAgentDriver.install?.command?.darwin).toContain(HERMES_PIN.commit);
+    expect(HermesAgentDriver.install?.command?.darwin).toContain("--force-commit");
+    expect(HermesAgentDriver.install?.signInCommand).toBe(`hermes -p ${HERMES_PIN.profile} model`);
   });
   it("fullAuto only when explicitly true", () => {
     expect(GrokAgentDriver.decodeConfig({ fullAuto: "yes" }).fullAuto).toBe(false);
@@ -147,23 +159,31 @@ describe("ACP turns (fake CLI)", () => {
     expect(recorder.events.some((e) => e.provider === "geminiAgent")).toBe(true);
   });
 
-  it("rejects a second turn while one is in flight", async () => {
-    await create(GrokAgentDriver, "hang");
-    await instance.adapter.sendTurn({ threadId: "t-busy", text: "one" });
-    await recorder.until((e) => e.type === "session.started");
-    await expect(instance.adapter.sendTurn({ threadId: "t-busy", text: "two" })).rejects.toThrow(/already running/);
-    await instance.adapter.interruptTurn("t-busy");
-    await recorder.until((e) => e.type === "turn.completed");
-  });
+  it(
+    "rejects a second turn while one is in flight",
+    async () => {
+      await create(GrokAgentDriver, "hang");
+      await instance.adapter.sendTurn({ threadId: "t-busy", text: "one" });
+      await recorder.until((e) => e.type === "session.started");
+      await expect(instance.adapter.sendTurn({ threadId: "t-busy", text: "two" })).rejects.toThrow(/already running/);
+      await instance.adapter.interruptTurn("t-busy");
+      await recorder.until((e) => e.type === "turn.completed");
+    },
+    20_000, // spawn→interrupt→tree-kill is slow under coverage instrumentation
+  );
 
-  it("interrupt settles a hung turn as cancelled", async () => {
-    await create(GrokAgentDriver, "hang");
-    await instance.adapter.sendTurn({ threadId: "t-int", text: "go" });
-    await recorder.until((e) => e.type === "session.started");
-    await instance.adapter.interruptTurn("t-int");
-    const done = await recorder.until((e) => e.type === "turn.completed");
-    expect(done).toMatchObject({ type: "turn.completed" });
-  });
+  it(
+    "interrupt settles a hung turn as cancelled",
+    async () => {
+      await create(GrokAgentDriver, "hang");
+      await instance.adapter.sendTurn({ threadId: "t-int", text: "go" });
+      await recorder.until((e) => e.type === "session.started");
+      await instance.adapter.interruptTurn("t-int");
+      const done = await recorder.until((e) => e.type === "turn.completed");
+      expect(done).toMatchObject({ type: "turn.completed" });
+    },
+    20_000, // spawn→interrupt→tree-kill is slow under coverage instrumentation
+  );
 
   it("an exit before result becomes runtime.error + failed turn", async () => {
     await create(GrokAgentDriver, "exit-early");

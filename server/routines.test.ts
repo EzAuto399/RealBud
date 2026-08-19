@@ -1,240 +1,183 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { nextOccurrence, RoutineManager, type RoutineManagerOptions } from "./routines.ts";
+import { LOOP_CATALOG, LoopManager, nextOccurrence, type Loop, type LoopManagerOptions, type LoopRun } from "./routines.ts";
 
 const dirs: string[] = [];
 
 function tempFile() {
-  const dir = mkdtempSync(join(tmpdir(), "omb-routines-"));
+  const dir = mkdtempSync(join(tmpdir(), "realbud-loops-"));
   dirs.push(dir);
-  return join(dir, "routines.json");
-}
-
-function harness(start = new Date(2026, 7, 17, 8, 0, 0).getTime()) {
-  let now = start;
-  let bot: "ready" | "busy" | "missing" = "ready";
-  let task = 0;
-  const started: Array<{ botId: string; threadId: string; prompt: string }> = [];
-  const runOns: string[] = [];
-  const emitted: any[] = [];
-  const options: RoutineManagerOptions = {
-    file: tempFile(),
-    now: () => now,
-    emit: (payload) => emitted.push(payload),
-    botState: () => bot,
-    createTask: () => ({ threadId: `thread-${++task}` }),
-    startTurn: async (botId, threadId, prompt, runOn) => {
-      started.push({ botId, threadId, prompt });
-      runOns.push(runOn);
-    },
-  };
-  const manager = new RoutineManager(options);
-  return {
-    manager,
-    options,
-    emitted,
-    started,
-    runOns,
-    setNow: (value: number) => (now = value),
-    setBot: (value: typeof bot) => (bot = value),
-  };
+  return join(dir, "loops.json");
 }
 
 afterEach(() => {
-  vi.restoreAllMocks();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
 describe("nextOccurrence", () => {
-  it("finds the next selected weekday in local wall-clock time", () => {
-    const monday = new Date(2026, 7, 17, 10, 0, 0).getTime();
-    const next = nextOccurrence({ type: "daily", time: "09:30", weekdays: [1, 3] }, monday)!;
-    const d = new Date(next);
-    expect(d.getDay()).toBe(3);
-    expect([d.getHours(), d.getMinutes()]).toEqual([9, 30]);
+  const schedule = { type: "daily" as const, time: "07:30", weekdays: [1, 2, 3, 4, 5] };
+  // 2026-08-18 is a Tuesday
+  const tue = new Date(2026, 7, 18, 8, 0, 0).getTime();
+
+  it("finds the next weekday occurrence strictly after the anchor", () => {
+    const next = nextOccurrence(schedule, tue);
+    expect(next).toBe(new Date(2026, 7, 19, 7, 30, 0).getTime());
   });
 
-  it("returns a one-off only while it is still in the future", () => {
-    expect(nextOccurrence({ type: "once", at: 200 }, 100)).toBe(200);
-    expect(nextOccurrence({ type: "once", at: 100 }, 100)).toBeNull();
+  it("skips weekends", () => {
+    const fri = new Date(2026, 7, 21, 8, 0, 0).getTime();
+    expect(nextOccurrence(schedule, fri)).toBe(new Date(2026, 7, 24, 7, 30, 0).getTime());
   });
 });
 
-describe("RoutineManager", () => {
-  it("persists definitions separately from permanent run receipts", async () => {
-    const h = harness();
-    const routine = h.manager.create({
-      name: "Morning brief",
-      prompt: "Summarize what changed",
-      botId: "maus-1",
-      schedule: { type: "once", at: new Date(2026, 7, 17, 8, 5).getTime() },
-    });
-    h.setNow(routine.nextRunAt!);
-    await h.manager.tick();
+function makeManager(options: Partial<LoopManagerOptions> & { execute?: LoopManagerOptions["execute"] } = {}) {
+  const calls: Loop[] = [];
+  const runs: LoopRun[] = [];
+  const manager = new LoopManager({
+    file: tempFile(),
+    now: () => options.now?.() ?? Date.now(),
+    emit: (payload) => {
+      if (payload && typeof payload === "object" && (payload as { kind?: string }).kind === "loop.run") {
+        runs.push((payload as { run: LoopRun }).run);
+      }
+    },
+    execute:
+      options.execute ??
+      (async (loop) => {
+        calls.push(loop);
+        return { ok: true, detail: "desk check done — 2 drafts waiting" };
+      }),
+  });
+  return { manager, calls, runs };
+}
 
-    const reloaded = new RoutineManager(h.options);
-    expect(reloaded.listRoutines()).toHaveLength(1);
-    expect(reloaded.listRuns()).toMatchObject([
-      { routineId: routine.id, routineName: "Morning brief", status: "failed", threadId: "thread-1" },
-    ]);
-    // Reload recovery truthfully marks an in-process run as interrupted.
-    expect(reloaded.listRuns()[0]!.error).toContain("restarted");
+describe("LoopManager catalog", () => {
+  it("declares the three named loops; only morning-arrears is available and enabled", () => {
+    const { manager } = makeManager();
+    const loops = manager.listLoops();
+    expect(loops.map((loop) => loop.id)).toEqual(["morning-arrears", "owner-letter", "inbound-triage"]);
+    expect(loops[0]).toMatchObject({ available: true, enabled: true, name: "Morning arrears" });
+    expect(loops[1]).toMatchObject({ available: false, enabled: false });
+    expect(loops[2]).toMatchObject({ available: false, enabled: false });
+    expect(loops[0].nextRunAt).not.toBeNull();
+    expect(loops[1].nextRunAt).toBeNull();
   });
 
-  it("queues behind a busy bot, then dispatches into a detached task", async () => {
-    const h = harness();
-    h.setBot("busy");
-    const routine = h.manager.create({
-      name: "Review queue",
-      prompt: "Review the queue",
-      botId: "maus-2",
-      schedule: { type: "once", at: new Date(2026, 7, 17, 8, 1).getTime() },
-      durationMinutes: 45,
-    });
-    h.setNow(routine.nextRunAt!);
-    await h.manager.tick();
-    expect(h.manager.listRuns()[0]!.status).toBe("queued");
-    expect(h.started).toHaveLength(0);
-
-    h.setBot("ready");
-    await h.manager.tick();
-    expect(h.started).toEqual([{ botId: "maus-2", threadId: "thread-1", prompt: "Review the queue" }]);
-    expect(h.manager.listRuns()[0]).toMatchObject({ status: "running", threadId: "thread-1" });
-    expect(h.manager.activeRunForBot("maus-2")?.threadId).toBe("thread-1");
-    expect(h.manager.isActiveThread("thread-1")).toBe(true);
+  it("refuses to enable or run a loop that is not available yet", () => {
+    const { manager } = makeManager();
+    expect(() => manager.setEnabled("owner-letter", true)).toThrow(/cannot be toggled/);
+    expect(manager.runNow("owner-letter")).toBeNull();
   });
 
-  it("cancels queued work when a routine is paused", async () => {
-    const h = harness();
-    h.setBot("busy");
-    const routine = h.manager.create({
-      name: "Pauseable check",
-      prompt: "Check later",
-      botId: "maus-2",
-      schedule: { type: "once", at: new Date(2026, 7, 17, 8, 1).getTime() },
+  it("persists the enabled flag across reloads", () => {
+    const file = tempFile();
+    const first = new LoopManager({
+      file,
+      execute: async () => ({ ok: true, detail: "" }),
     });
-    h.setNow(routine.nextRunAt!);
-    await h.manager.tick();
-
-    h.manager.update(routine.id, { enabled: false });
-    h.setBot("ready");
-    await h.manager.tick();
-
-    expect(h.manager.listRuns()[0]).toMatchObject({ status: "cancelled" });
-    expect(h.started).toHaveLength(0);
+    first.setEnabled("morning-arrears", false);
+    const second = new LoopManager({ file, execute: async () => ({ ok: true, detail: "" }) });
+    expect(second.listLoops().find((loop) => loop.id === "morning-arrears")?.enabled).toBe(false);
   });
 
-  it("snapshots queued instructions so later edits do not rewrite a receipt", async () => {
-    const h = harness();
-    h.setBot("busy");
-    const routine = h.manager.create({
-      name: "Original brief",
-      prompt: "Use the original instructions",
-      botId: "maus-2",
-      schedule: { type: "once", at: new Date(2026, 7, 17, 8, 1).getTime() },
-    });
-    h.setNow(routine.nextRunAt!);
-    await h.manager.tick();
-    h.manager.update(routine.id, { name: "Edited brief", prompt: "Use the new instructions" });
+  it("survives a corrupt loops.json and still declares the catalog", () => {
+    const file = tempFile();
+    mkdirSync(join(file, ".."), { recursive: true });
+    writeFileSync(file, "not json {{{");
+    const manager = new LoopManager({ file, execute: async () => ({ ok: true, detail: "" }) });
+    const loops = manager.listLoops();
+    expect(loops.map((loop) => loop.id)).toEqual(["morning-arrears", "owner-letter", "inbound-triage"]);
+    expect(loops.find((loop) => loop.id === "morning-arrears")?.enabled).toBe(true);
+    expect(manager.listRuns()).toEqual([]);
+  });
+});
 
-    h.setBot("ready");
-    await h.manager.tick();
-
-    expect(h.started[0]?.prompt).toBe("Use the original instructions");
-    expect(h.manager.listRuns()[0]).toMatchObject({
-      routineName: "Original brief",
-      prompt: "Use the original instructions",
-    });
+describe("LoopManager runs", () => {
+  it("runNow executes the loop and records the detail", async () => {
+    const { manager, calls, runs } = makeManager();
+    const run = manager.runNow("morning-arrears");
+    expect(run).not.toBeNull();
+    await manager.tick();
+    expect(calls.map((loop) => loop.id)).toEqual(["morning-arrears"]);
+    const settled = manager.listRuns().find((r) => r.id === run!.id);
+    expect(settled?.status).toBe("completed");
+    expect(settled?.detail).toBe("desk check done — 2 drafts waiting");
+    expect(runs.some((r) => r.id === run!.id && r.status === "completed")).toBe(true);
   });
 
-  it("snapshots and dispatches the selected execution machine", async () => {
-    const h = harness();
-    h.setBot("busy");
-    const routine = h.manager.create({
-      name: "VM review",
-      prompt: "Review the project on the virtual machine",
-      botId: "maus-cloud",
-      runOn: "cloud",
-      schedule: { type: "once", at: new Date(2026, 7, 17, 8, 1).getTime() },
+  it("refuses a second run while one is queued or running", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const { manager } = makeManager({
+      execute: async () => {
+        await gate;
+        return { ok: true, detail: "" };
+      },
     });
-    h.setNow(routine.nextRunAt!);
-    await h.manager.tick();
-    h.manager.update(routine.id, { runOn: "maus" });
-
-    h.setBot("ready");
-    await h.manager.tick();
-
-    expect(h.runOns).toEqual(["cloud"]);
-    expect(h.manager.listRuns()[0]).toMatchObject({ runOn: "cloud" });
-    expect(h.manager.listRoutines()[0]).toMatchObject({ runOn: "maus" });
+    manager.runNow("morning-arrears");
+    expect(() => manager.runNow("morning-arrears")).toThrow(/already running/);
+    release();
+    await manager.tick();
   });
 
-  it("folds provider lifecycle events into the calendar receipt", async () => {
-    const h = harness();
-    const routine = h.manager.create({
-      name: "Ship report",
-      prompt: "Write the report",
-      botId: "maus-3",
-      schedule: { type: "once", at: new Date(2026, 7, 17, 8, 1).getTime() },
-    });
-    h.setNow(routine.nextRunAt!);
-    await h.manager.tick();
-    const base = {
-      eventId: "event-1",
-      provider: "fake",
-      threadId: "thread-1",
-      createdAt: new Date(h.manager.listRuns()[0]!.startedAt!).toISOString(),
-    };
-    h.manager.handleRuntimeEvent({ ...base, type: "request.opened", requestType: "question", tool: "ask", summary: "Need a date" });
-    expect(h.manager.listRuns()[0]!.status).toBe("waiting");
-    h.manager.handleRuntimeEvent({ ...base, type: "request.resolved", behavior: "answer", source: "user" });
-    h.manager.handleRuntimeEvent({ ...base, type: "item.completed", itemType: "assistant_text", text: "Report shipped." });
-    h.manager.handleRuntimeEvent({ ...base, type: "turn.completed", ok: true, cost: 0.02 });
-
-    expect(h.manager.listRuns()[0]).toMatchObject({
-      status: "completed",
-      output: "Report shipped.",
-      cost: 0.02,
-    });
+  it("runs a due scheduled occurrence once, and not again", async () => {
+    // 2026-08-18 is a Tuesday. The app is open: watch the clock cross 07:30.
+    let now = new Date(2026, 7, 18, 7, 29, 0).getTime();
+    const { manager, calls } = makeManager({ now: () => now });
+    await manager.tick();
+    expect(calls).toHaveLength(0);
+    now = new Date(2026, 7, 18, 7, 31, 0).getTime();
+    await manager.tick();
+    expect(calls).toHaveLength(1);
+    await manager.tick();
+    expect(calls).toHaveLength(1);
+    const run = manager.listRuns()[0];
+    expect(run.manual).toBe(false);
+    expect(run.scheduledFor).toBe(new Date(2026, 7, 18, 7, 30, 0).getTime());
   });
 
-  it("keeps recurring history while advancing the definition", async () => {
-    const h = harness();
-    const routine = h.manager.create({
-      name: "Daily check",
-      prompt: "Check it",
-      botId: "maus-4",
-      schedule: { type: "daily", time: "08:05", weekdays: [1, 2, 3, 4, 5] },
-    });
-    h.setNow(routine.nextRunAt!);
-    await h.manager.tick();
-    h.manager.handleRuntimeEvent({
-      eventId: "done",
-      provider: "fake",
-      threadId: "thread-1",
-      createdAt: new Date().toISOString(),
-      type: "turn.completed",
-      ok: true,
-    });
-
-    expect(h.manager.listRuns()).toHaveLength(1);
-    expect(h.manager.listRoutines()[0]!.nextRunAt).toBeGreaterThan(routine.nextRunAt!);
+  it("marks a run missed when the tick is more than 12 hours late", async () => {
+    // boot with handledThrough 20h behind the anchor so the 07:30 tick
+    // on the anchor day is discovered late
+    const anchor = new Date(2026, 7, 18, 7, 30, 0).getTime();
+    const now = anchor + 20 * 60 * 60_000;
+    const file = tempFile();
+    mkdirSync(join(file, ".."), { recursive: true });
+    writeFileSync(
+      file,
+      JSON.stringify({
+        version: 1,
+        state: { "morning-arrears": { enabled: true, handledThrough: anchor - 24 * 60 * 60_000 } },
+        runs: [],
+      }),
+    );
+    const manager = new LoopManager({ file, now: () => now, execute: async () => ({ ok: true, detail: "" }) });
+    await manager.tick();
+    const runs = manager.listRuns();
+    expect(runs.some((run) => run.status === "missed")).toBe(true);
+    expect(runs.some((run) => run.status === "completed")).toBe(false);
   });
 
-  it("records a missed receipt instead of launching very stale work", async () => {
-    const h = harness();
-    const routine = h.manager.create({
-      name: "Old check",
-      prompt: "Do the old thing",
-      botId: "maus-5",
-      schedule: { type: "once", at: new Date(2026, 7, 17, 8, 1).getTime() },
-    });
-    h.setNow(routine.nextRunAt! + 13 * 60 * 60_000);
-    await h.manager.tick();
-    expect(h.manager.listRuns()[0]).toMatchObject({ status: "missed" });
-    expect(h.started).toHaveLength(0);
+  it("markSeen sets seenAt exactly once", async () => {
+    const { manager } = makeManager();
+    const run = manager.runNow("morning-arrears")!;
+    await manager.tick();
+    const marked = manager.markSeen(run.id)!;
+    const again = manager.markSeen(run.id)!;
+    expect(marked.seenAt).toBeDefined();
+    expect(again.seenAt).toBe(marked.seenAt);
+  });
+
+  it("never exposes Hermes cron or send paths in the catalog", () => {
+    const { manager } = makeManager();
+    for (const loop of manager.listLoops()) {
+      expect(loop).not.toHaveProperty("prompt");
+      expect(loop).not.toHaveProperty("botId");
+      expect(loop).not.toHaveProperty("runOn");
+    }
+    expect(LOOP_CATALOG.every((loop) => !/send|pay|cron/i.test(loop.description + loop.name))).toBe(true);
   });
 });

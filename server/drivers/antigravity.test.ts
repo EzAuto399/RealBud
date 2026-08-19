@@ -15,6 +15,10 @@ import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { AntigravityDriver } from "./antigravity.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-agy-cli.ts");
+// The scripted fake CLI inherits process.env; under `--coverage` that would
+// leak NODE_V8_COVERAGE into the child and break its handshake. Strip it for
+// this file — the parent worker keeps its own instrumentation.
+delete process.env.NODE_V8_COVERAGE;
 
 describe("Antigravity decodeConfig", () => {
   it("publishes the official installer for every supported platform", () => {

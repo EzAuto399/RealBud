@@ -4,10 +4,13 @@ import {
   Check,
   CircleAlert,
   Copy,
+  Info,
   Loader2,
   Pencil,
+  Plus,
   RotateCcw,
   ShieldAlert,
+  Trash2,
   X,
 } from "lucide-react";
 
@@ -16,19 +19,39 @@ import {
   aud,
   type DeskSnapshot,
   type Draft,
+  type LedgerFacts,
+  type NotifyChannel,
   type Property,
   type PropertyOptions,
+  type RentSource,
 } from "@/lib/desk";
-import { api } from "@/state/store";
+import { api, useStore } from "@/state/store";
 
-function sourceLabel(source: Property["options"]["rentSource"]): string {
-  return { mepay: "MePay", bank: "Bank", "pms-export": "PMS export", fixture: "Sample ledger" }[source];
+const RENT_SOURCE_LABELS: Record<RentSource, string> = {
+  mepay: "MePay",
+  bank: "Bank feed",
+  "pms-export": "PMS export",
+  fixture: "Sample ledger",
+};
+const NOTIFY_LABELS: Record<NotifyChannel, string> = {
+  sms: "SMS",
+  email: "Email",
+  portal: "Portal",
+  desk: "Desk only",
+};
+
+function sourceLabel(source: RentSource): string {
+  return RENT_SOURCE_LABELS[source];
 }
 
 export function DeskPage() {
+  const { state, dispatch, refreshHermes } = useStore();
   const [snap, setSnap] = useState<DeskSnapshot | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<"check" | "reset" | string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [testingHands, setTestingHands] = useState(false);
+  const [handsTest, setHandsTest] = useState<{ ok: boolean; detail: string } | null>(null);
 
   const [ready, setReady] = useState(false);
 
@@ -48,6 +71,12 @@ export function DeskPage() {
     void load();
   }, [load]);
 
+  // a scheduled loop pressed Recheck while we were elsewhere — the server
+  // pushes the fresh snapshot so the cards are already here on arrival
+  useEffect(() => {
+    if (state.desk) setSnap(state.desk);
+  }, [state.desk]);
+
   const run = async (path: string, method: string, body?: unknown, key: string = method) => {
     setBusy(key);
     setError("");
@@ -58,10 +87,25 @@ export function DeskPage() {
       })) as DeskSnapshot & { draft?: Draft; property?: Property };
       if (next.properties) setSnap(next);
       else await load();
+      // a check may have just used Hermes (or missed it) — refresh the
+      // hands status so the chip and Settings card stay honest
+      if (path === "/api/desk/check") void refreshHermes();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setBusy(null);
+    }
+  };
+
+  const testHands = async () => {
+    setTestingHands(true);
+    setHandsTest(null);
+    try {
+      setHandsTest(await api("/api/hermes/test", { method: "POST", body: "{}" }));
+    } catch (cause) {
+      setHandsTest({ ok: false, detail: cause instanceof Error ? cause.message : String(cause) });
+    } finally {
+      setTestingHands(false);
     }
   };
 
@@ -100,7 +144,7 @@ export function DeskPage() {
               <h1 className="text-[20px] font-semibold tracking-tight text-ink">Desk</h1>
             </div>
             <p className="mt-1 max-w-[46rem] text-[12.5px] text-ink-secondary">
-              Morning arrears on a sample book. RealBud drafts the courtesy. It will not send a notice or move trust money.
+              This morning on the training book. RealBud drafts the courtesy. You send from the PMS. It will not send a notice or move trust money.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -113,11 +157,65 @@ export function DeskPage() {
             </button>
           </div>
         </div>
-        <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
           <span className="rounded-full border border-accent/25 bg-accent/10 px-2.5 py-1 text-accent">{pending.length} need you</span>
           <span className="rounded-full border border-warning/25 bg-warning/10 px-2.5 py-1 text-warning">{snap.escalations.length} escalate</span>
           <span className="rounded-full border border-hairline/50 bg-panel px-2.5 py-1 text-ink-secondary">{snap.properties.length} properties</span>
+          <span
+            title={snap.handsDetail ?? state.hermes?.detail ?? undefined}
+            className={cn(
+              "rounded-full border px-2.5 py-1",
+              snap.hands === "hermes"
+                ? "border-success/25 bg-success/10 text-success"
+                : "border-hairline/50 bg-panel text-ink-secondary",
+            )}
+          >
+            {snap.hands === "hermes" ? "Hermes live" : "Training book"}
+          </span>
+          <span className="ml-auto flex items-center gap-1.5">
+            {handsTest && (
+              <span
+                title={handsTest.detail}
+                className={cn(
+                  "max-w-[24rem] truncate rounded-full border px-2.5 py-1",
+                  handsTest.ok ? "border-success/25 bg-success/10 text-success" : "border-danger/25 bg-danger/10 text-danger",
+                )}
+              >
+                {handsTest.ok ? "Hermes answered OK" : handsTest.detail}
+              </span>
+            )}
+            <button
+              onClick={() => void testHands()}
+              disabled={testingHands}
+              title="Ask the pinned worker one headless question to prove it can answer"
+              className="flex items-center gap-1 rounded-full border border-hairline/50 bg-panel px-2.5 py-1 text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40"
+            >
+              {testingHands ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
+              Test hands
+            </button>
+            <button
+              onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "connections" })}
+              className="rounded-full border border-hairline/50 bg-panel px-2.5 py-1 text-ink-secondary hover:bg-raised hover:text-ink"
+            >
+              Manage
+            </button>
+          </span>
         </div>
+        {snap.hands !== "hermes" && (
+          <div className="mt-3 flex items-start gap-2 rounded-xl border border-hairline/40 bg-panel px-3 py-2.5 text-[12.5px] text-ink-secondary">
+            <Info size={15} className="mt-0.5 shrink-0 text-ink-secondary/70" />
+            <span>
+              Desk is on the training book{snap.handsDetail ? ` — ${snap.handsDetail}` : "."}{" "}
+              <button
+                onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "connections" })}
+                className="font-medium text-accent hover:underline"
+              >
+                Wire in Hermes
+              </button>{" "}
+              under Settings → Hands to run this against live hands.
+            </span>
+          </div>
+        )}
         {error && (
           <div className="mt-3 flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/10 px-3 py-2.5 text-[13px] text-danger">
             <CircleAlert size={16} className="mt-0.5 shrink-0" />
@@ -194,14 +292,26 @@ export function DeskPage() {
         )}
 
         <section className="mt-8 space-y-3">
-          <h2 className="text-[12px] font-medium uppercase tracking-[0.14em] text-ink-secondary">Book</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-[12px] font-medium uppercase tracking-[0.14em] text-ink-secondary">Book</h2>
+            <button
+              onClick={() => setAdding(true)}
+              className="flex items-center gap-1.5 rounded-xl bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:brightness-110"
+            >
+              <Plus size={14} />
+              Add property
+            </button>
+          </div>
           <div className="grid gap-3 xl:grid-cols-2">
             {snap.properties.map((property) => (
               <PropertyCard
                 key={property.id}
                 property={property}
+                facts={snap.ledger.find((row) => row.propertyId === property.id)}
+                hands={snap.hands}
                 result={snap.results.find((row) => row.propertyId === property.id)}
                 onSave={(options) => run(`/api/desk/properties/${property.id}`, "PATCH", options, property.id)}
+                onDelete={() => run(`/api/desk/properties/${property.id}`, "DELETE", undefined, `delete-${property.id}`)}
               />
             ))}
           </div>
@@ -214,6 +324,16 @@ export function DeskPage() {
           </button>
         </section>
       </div>
+
+      {adding && (
+        <AddPropertyModal
+          onClose={() => setAdding(false)}
+          onAdd={(input) => {
+            setAdding(false);
+            run("/api/desk/properties", "POST", input, "add");
+          }}
+        />
+      )}
     </main>
   );
 }
@@ -330,12 +450,18 @@ function DraftCard({
 
 function PropertyCard({
   property,
+  facts,
+  hands,
   result,
   onSave,
+  onDelete,
 }: {
   property: Property;
+  facts?: LedgerFacts;
+  hands: DeskSnapshot["hands"];
   result?: DeskSnapshot["results"][number];
   onSave: (options: Partial<PropertyOptions>) => void;
+  onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [graceDays, setGraceDays] = useState(String(property.options.graceDays));
@@ -344,12 +470,17 @@ function PropertyCard({
   const [levyAmount, setLevyAmount] = useState(
     property.options.levyFromRent ? String(property.options.levyFromRent.amountCents / 100) : "420",
   );
+  const [rentSource, setRentSource] = useState<RentSource>(property.options.rentSource);
+  const [notifyChannel, setNotifyChannel] = useState<NotifyChannel>(property.options.notifyChannel);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
     setGraceDays(String(property.options.graceDays));
     setCourtesyUntilDay(String(property.options.courtesyUntilDay));
     setLevyOn(Boolean(property.options.levyFromRent));
     setLevyAmount(property.options.levyFromRent ? String(property.options.levyFromRent.amountCents / 100) : "420");
+    setRentSource(property.options.rentSource);
+    setNotifyChannel(property.options.notifyChannel);
   }, [property]);
 
   const resultLabel = result
@@ -369,15 +500,35 @@ function PropertyCard({
         <div>
           <div className="text-[14px] font-semibold text-ink">{property.address}</div>
           <div className="mt-0.5 text-[12px] text-ink-secondary">
-            {property.tenantName} · {aud(property.weeklyRentCents)}/wk
+            {property.tenantName} · {property.tenantPhone} · {aud(property.weeklyRentCents)}/wk
           </div>
         </div>
         <span className={cn("rounded-md px-2 py-1 text-[11px]", result?.outcome === "escalate" ? "bg-warning/15 text-warning" : "bg-raised text-ink-secondary")}>
           {resultLabel}
         </span>
       </div>
+
+      {facts && (
+        <div className="mt-2.5 flex flex-wrap items-center gap-1.5 text-[11px]">
+          <span className="rounded-md bg-inset px-2 py-1 text-ink-secondary">{facts.daysSinceDue}d late</span>
+          <span className={cn("rounded-md px-2 py-1", facts.rentLanded ? "bg-success/10 text-success" : "bg-inset text-ink-secondary")}>
+            {facts.rentLanded ? "Rent in" : "No rent yet"}
+          </span>
+          {property.options.levyFromRent && (
+            <span className={cn("rounded-md px-2 py-1", facts.levyPaid ? "bg-success/10 text-success" : "bg-warning/10 text-warning")}>
+              Levy {facts.levyPaid ? "paid" : "not paid"}
+            </span>
+          )}
+          <span className="rounded-md bg-inset px-2 py-1 text-ink-secondary">
+            {facts.daysSinceCourtesy == null ? "Not reminded" : `Reminded ${facts.daysSinceCourtesy}d ago`}
+          </span>
+          <span className="ml-auto text-[10.5px] text-ink-secondary/60">{hands === "hermes" ? "from Hermes" : "sample book"}</span>
+        </div>
+      )}
+
       <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-ink-secondary">
         <span className="rounded-md bg-inset px-2 py-1">{sourceLabel(property.options.rentSource)}</span>
+        <span className="rounded-md bg-inset px-2 py-1">Notify: {NOTIFY_LABELS[property.options.notifyChannel]}</span>
         <span className="rounded-md bg-inset px-2 py-1">Grace {property.options.graceDays}d</span>
         <span className="rounded-md bg-inset px-2 py-1">Courtesy to day {property.options.courtesyUntilDay}</span>
         {property.options.levyFromRent && (
@@ -386,9 +537,38 @@ function PropertyCard({
           </span>
         )}
       </div>
-      <button onClick={() => setOpen((value) => !value)} className="mt-3 text-[12px] text-accent hover:underline">
-        {open ? "Hide options" : "Edit options"}
-      </button>
+
+      <div className="mt-3 flex items-center gap-3">
+        <button onClick={() => setOpen((value) => !value)} className="text-[12px] text-accent hover:underline">
+          {open ? "Hide options" : "Edit options"}
+        </button>
+        <div className="ml-auto">
+          {confirmDelete ? (
+            <span className="flex items-center gap-1.5 text-[12px]">
+              <span className="text-ink-secondary">Remove from book?</span>
+              <button
+                onClick={onDelete}
+                className="rounded-md bg-danger px-2 py-1 font-medium text-white hover:brightness-110"
+              >
+                Remove
+              </button>
+              <button onClick={() => setConfirmDelete(false)} className="rounded-md px-2 py-1 text-ink-secondary hover:bg-raised hover:text-ink">
+                Keep
+              </button>
+            </span>
+          ) : (
+            <button
+              onClick={() => setConfirmDelete(true)}
+              title="Remove this property from the book"
+              className="flex items-center gap-1 text-[11.5px] text-ink-secondary/70 hover:text-danger"
+            >
+              <Trash2 size={12} />
+              Remove
+            </button>
+          )}
+        </div>
+      </div>
+
       {open && (
         <form
           className="mt-3 space-y-3 border-t border-hairline/30 pt-3"
@@ -400,31 +580,61 @@ function PropertyCard({
               levyFromRent: levyOn
                 ? { amountCents: Math.round(Number(levyAmount) * 100), cadence: property.options.levyFromRent?.cadence ?? "quarterly" }
                 : null,
+              rentSource,
+              notifyChannel,
             });
           }}
         >
-          <label className="block text-[12px] text-ink-secondary">
-            Grace days
-            <input
-              type="number"
-              min={0}
-              max={28}
-              value={graceDays}
-              onChange={(event) => setGraceDays(event.target.value)}
-              className="mt-1 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink outline-none focus:border-accent/70"
-            />
-          </label>
-          <label className="block text-[12px] text-ink-secondary">
-            Courtesy until day
-            <input
-              type="number"
-              min={1}
-              max={60}
-              value={courtesyUntilDay}
-              onChange={(event) => setCourtesyUntilDay(event.target.value)}
-              className="mt-1 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink outline-none focus:border-accent/70"
-            />
-          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block text-[12px] text-ink-secondary">
+              Rent source
+              <select
+                value={rentSource}
+                onChange={(event) => setRentSource(event.target.value as RentSource)}
+                className="mt-1 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink outline-none focus:border-accent/70"
+              >
+                {(Object.keys(RENT_SOURCE_LABELS) as RentSource[]).map((value) => (
+                  <option key={value} value={value}>{RENT_SOURCE_LABELS[value]}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-[12px] text-ink-secondary">
+              Notify channel
+              <select
+                value={notifyChannel}
+                onChange={(event) => setNotifyChannel(event.target.value as NotifyChannel)}
+                className="mt-1 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink outline-none focus:border-accent/70"
+              >
+                {(Object.keys(NOTIFY_LABELS) as NotifyChannel[]).map((value) => (
+                  <option key={value} value={value}>{NOTIFY_LABELS[value]}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block text-[12px] text-ink-secondary">
+              Grace days
+              <input
+                type="number"
+                min={0}
+                max={28}
+                value={graceDays}
+                onChange={(event) => setGraceDays(event.target.value)}
+                className="mt-1 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink outline-none focus:border-accent/70"
+              />
+            </label>
+            <label className="block text-[12px] text-ink-secondary">
+              Courtesy until day
+              <input
+                type="number"
+                min={1}
+                max={60}
+                value={courtesyUntilDay}
+                onChange={(event) => setCourtesyUntilDay(event.target.value)}
+                className="mt-1 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink outline-none focus:border-accent/70"
+              />
+            </label>
+          </div>
           <label className="flex items-center gap-2 text-[12px] text-ink">
             <input type="checkbox" checked={levyOn} onChange={(event) => setLevyOn(event.target.checked)} />
             Levy taken from rent
@@ -442,11 +652,102 @@ function PropertyCard({
               />
             </label>
           )}
+          <div className="flex items-center gap-2 text-[11.5px] text-ink-secondary">
+            <ShieldAlert size={13} className="text-warning" />
+            Never allowed, on any property: {property.options.never.join(" · ")}
+          </div>
           <button type="submit" className="rounded-xl bg-accent px-3 py-1.5 text-[12px] font-medium text-white hover:brightness-110">
             Save options
           </button>
         </form>
       )}
     </article>
+  );
+}
+
+function AddPropertyModal({
+  onClose,
+  onAdd,
+}: {
+  onClose: () => void;
+  onAdd: (input: {
+    address: string;
+    tenantName: string;
+    tenantPhone: string;
+    weeklyRentCents: number;
+  }) => void;
+}) {
+  const [address, setAddress] = useState("");
+  const [tenantName, setTenantName] = useState("");
+  const [tenantPhone, setTenantPhone] = useState("");
+  const [rent, setRent] = useState("");
+  const valid = Boolean(address.trim() && tenantName.trim() && Number(rent) > 0);
+
+  const submit = () => {
+    if (!valid) return;
+    onAdd({
+      address: address.trim(),
+      tenantName: tenantName.trim(),
+      tenantPhone: tenantPhone.trim(),
+      weeklyRentCents: Math.round(Number(rent) * 100),
+    });
+  };
+
+  const inputClass =
+    "mt-1 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13.5px] text-ink outline-none placeholder:text-ink-secondary/60 focus:border-accent/70";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-5" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div className="w-full max-w-[440px] rounded-2xl border border-hairline/50 bg-panel p-5 shadow-2xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-[16px] font-semibold text-ink">Add a property</div>
+            <p className="mt-0.5 text-[12px] text-ink-secondary">
+              It lands in the book with shop defaults — quiet until the hands report real numbers.
+            </p>
+          </div>
+          <button onClick={onClose} className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink" aria-label="Close">
+            <X size={16} />
+          </button>
+        </div>
+        <div className="mt-4 space-y-3">
+          <label className="block text-[12px] text-ink-secondary">
+            Address
+            <input autoFocus value={address} onChange={(event) => setAddress(event.target.value)} placeholder="12 Oak St, Dickson ACT" className={inputClass} />
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block text-[12px] text-ink-secondary">
+              Tenant
+              <input value={tenantName} onChange={(event) => setTenantName(event.target.value)} placeholder="Sam Nguyen" className={inputClass} />
+            </label>
+            <label className="block text-[12px] text-ink-secondary">
+              Phone
+              <input value={tenantPhone} onChange={(event) => setTenantPhone(event.target.value)} placeholder="0400 111 222" className={inputClass} />
+            </label>
+          </div>
+          <label className="block text-[12px] text-ink-secondary">
+            Weekly rent (AUD)
+            <input
+              type="number"
+              min={1}
+              step="0.01"
+              value={rent}
+              onChange={(event) => setRent(event.target.value)}
+              onKeyDown={(event) => event.key === "Enter" && submit()}
+              placeholder="620"
+              className={inputClass}
+            />
+          </label>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-xl px-4 py-2 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink">
+            Cancel
+          </button>
+          <button onClick={submit} disabled={!valid} className="rounded-xl bg-accent px-4 py-2 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-40">
+            Add to book
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

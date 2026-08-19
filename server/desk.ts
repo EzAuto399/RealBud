@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
+import { tryHermesLedger, type HandsSource } from "./hermes-hands.ts";
 
 export const NEVER_ACTIONS = ["statutory-send", "trust-pay"] as const;
 export const COURTESY_DISCLAIMER =
@@ -90,10 +91,15 @@ export interface CheckResult {
 
 export interface DeskSnapshot {
   properties: Property[];
+  /** What the hands (Hermes or the fixture book) reported per property. */
+  ledger: LedgerFacts[];
   drafts: Draft[];
   escalations: Escalation[];
   lastRunAt: number | null;
   results: CheckResult[];
+  hands: HandsSource;
+  /** Why hands are Hermes — or why the last check fell back to fixtures. */
+  handsDetail: string | null;
 }
 
 interface DeskFile {
@@ -104,6 +110,8 @@ interface DeskFile {
   escalations: Escalation[];
   lastRunAt: number | null;
   results: CheckResult[];
+  hands: HandsSource;
+  handsDetail: string | null;
 }
 
 const DAY = 86_400_000;
@@ -118,6 +126,55 @@ function shopDefaults(): PropertyOptions {
     notifyChannel: "sms",
     never: [...NEVER],
   };
+}
+
+export interface NewPropertyInput {
+  address: string;
+  tenantName: string;
+  tenantPhone: string;
+  weeklyRentCents: number;
+  options?: Partial<PropertyOptions>;
+}
+
+const RENT_SOURCES: RentSource[] = ["mepay", "bank", "pms-export", "fixture"];
+const NOTIFY_CHANNELS: NotifyChannel[] = ["sms", "email", "portal", "desk"];
+
+/** Validate and apply an options patch. `never` is never editable — the
+ * hard gates (statutory send, trust pay) cannot be removed from a property. */
+function applyOptions(options: PropertyOptions, patch: Partial<PropertyOptions>) {
+  if (patch.graceDays != null) {
+    const n = Number(patch.graceDays);
+    if (!Number.isInteger(n) || n < 0 || n > 28) throw Object.assign(new Error("grace days must be 0–28"), { status: 400 });
+    options.graceDays = n;
+  }
+  if (patch.courtesyUntilDay != null) {
+    const n = Number(patch.courtesyUntilDay);
+    if (!Number.isInteger(n) || n < 1 || n > 60) throw Object.assign(new Error("courtesy window must be 1–60 days"), { status: 400 });
+    options.courtesyUntilDay = n;
+  }
+  if (options.courtesyUntilDay <= options.graceDays) {
+    throw Object.assign(new Error("courtesy window must be after grace days"), { status: 400 });
+  }
+  if (patch.levyFromRent !== undefined) {
+    if (patch.levyFromRent === null) options.levyFromRent = null;
+    else {
+      const amount = Number(patch.levyFromRent.amountCents);
+      if (!Number.isInteger(amount) || amount <= 0) throw Object.assign(new Error("levy amount required"), { status: 400 });
+      options.levyFromRent = {
+        amountCents: amount,
+        cadence: patch.levyFromRent.cadence === "monthly" ? "monthly" : "quarterly",
+      };
+    }
+  }
+  if (patch.rentSource !== undefined) {
+    if (!RENT_SOURCES.includes(patch.rentSource)) throw Object.assign(new Error("unknown rent source"), { status: 400 });
+    options.rentSource = patch.rentSource;
+  }
+  if (patch.notifyChannel !== undefined) {
+    if (!NOTIFY_CHANNELS.includes(patch.notifyChannel)) throw Object.assign(new Error("unknown notify channel"), { status: 400 });
+    options.notifyChannel = patch.notifyChannel;
+  }
+  options.never = [...NEVER];
 }
 
 export function fixtureBook(): { properties: Property[]; ledger: LedgerFacts[] } {
@@ -279,6 +336,8 @@ function emptyFile(): DeskFile {
     escalations: [],
     lastRunAt: null,
     results: [],
+    hands: "fixture",
+    handsDetail: null,
   };
 }
 
@@ -301,11 +360,37 @@ export class Desk {
 
   snapshot(): DeskSnapshot {
     if (this.data.lastRunAt == null) return this.runMorningCheck();
-    const { properties, drafts, escalations, lastRunAt, results } = this.data;
-    return { properties, drafts, escalations, lastRunAt, results };
+    const { properties, ledger, drafts, escalations, lastRunAt, results, hands, handsDetail } = this.data;
+    return {
+      properties,
+      ledger,
+      drafts,
+      escalations,
+      lastRunAt,
+      results,
+      hands: hands ?? "fixture",
+      handsDetail: handsDetail ?? null,
+    };
   }
 
+  /** Training book only — used by tests and first paint. */
   runMorningCheck(): DeskSnapshot {
+    return this.evaluateBook("fixture", "Training book — Recheck asks Hermes for the morning ledger.");
+  }
+
+  /** Recheck: try pinned Hermes, fall back to the training book. */
+  async runMorningCheckLive(): Promise<DeskSnapshot> {
+    const attempt = await tryHermesLedger(this.data.ledger);
+    if (attempt.rows) {
+      for (const row of attempt.rows) {
+        const idx = this.data.ledger.findIndex((item) => item.propertyId === row.propertyId);
+        if (idx >= 0) this.data.ledger[idx] = row;
+      }
+    }
+    return this.evaluateBook(attempt.rows ? "hermes" : "fixture", attempt.detail);
+  }
+
+  private evaluateBook(hands: HandsSource, handsDetail: string | null): DeskSnapshot {
     const now = this.now();
     const results: CheckResult[] = [];
     for (const property of this.data.properties) {
@@ -337,6 +422,8 @@ export class Desk {
     }
     this.data.results = results;
     this.data.lastRunAt = now;
+    this.data.hands = hands;
+    this.data.handsDetail = handsDetail;
     this.save();
     return this.snapshot();
   }
@@ -353,35 +440,58 @@ export class Desk {
       const err = Object.assign(new Error("no such property"), { status: 404 });
       throw err;
     }
-    if (patch.graceDays != null) {
-      const n = Number(patch.graceDays);
-      if (!Number.isInteger(n) || n < 0 || n > 28) throw Object.assign(new Error("grace days must be 0–28"), { status: 400 });
-      property.options.graceDays = n;
-    }
-    if (patch.courtesyUntilDay != null) {
-      const n = Number(patch.courtesyUntilDay);
-      if (!Number.isInteger(n) || n < 1 || n > 60) throw Object.assign(new Error("courtesy window must be 1–60 days"), { status: 400 });
-      property.options.courtesyUntilDay = n;
-    }
-    if (property.options.courtesyUntilDay <= property.options.graceDays) {
-      throw Object.assign(new Error("courtesy window must be after grace days"), { status: 400 });
-    }
-    if (patch.levyFromRent !== undefined) {
-      if (patch.levyFromRent === null) property.options.levyFromRent = null;
-      else {
-        const amount = Number(patch.levyFromRent.amountCents);
-        if (!Number.isInteger(amount) || amount <= 0) throw Object.assign(new Error("levy amount required"), { status: 400 });
-        property.options.levyFromRent = {
-          amountCents: amount,
-          cadence: patch.levyFromRent.cadence === "monthly" ? "monthly" : "quarterly",
-        };
-      }
-    }
-    if (patch.rentSource) property.options.rentSource = patch.rentSource;
-    if (patch.notifyChannel) property.options.notifyChannel = patch.notifyChannel;
-    property.options.never = [...NEVER];
+    applyOptions(property.options, patch);
     this.save();
     return property;
+  }
+
+  /** Add a property to the book. Quiet ledger facts by default: day 0, no
+   * rent seen yet — inside grace, so the next check stays silent until
+   * Hermes (or a bank export) reports real numbers. */
+  addProperty(input: NewPropertyInput): DeskSnapshot {
+    const address = String(input.address ?? "").trim();
+    const tenantName = String(input.tenantName ?? "").trim();
+    const tenantPhone = String(input.tenantPhone ?? "").trim();
+    const rent = Number(input.weeklyRentCents);
+    if (!address) throw Object.assign(new Error("address required"), { status: 400 });
+    if (address.length > 160) throw Object.assign(new Error("address is too long"), { status: 400 });
+    if (!tenantName) throw Object.assign(new Error("tenant name required"), { status: 400 });
+    if (!Number.isInteger(rent) || rent <= 0) throw Object.assign(new Error("weekly rent required"), { status: 400 });
+    if (this.data.properties.length >= 200) throw Object.assign(new Error("the book is full (200 properties)"), { status: 400 });
+
+    const options = shopDefaults();
+    if (input.options) applyOptions(options, input.options);
+    const id = `prop-${randomUUID().slice(0, 8)}`;
+    this.data.properties.push({
+      id,
+      address,
+      tenantName,
+      tenantPhone,
+      weeklyRentCents: rent,
+      options,
+    });
+    this.data.ledger.push({
+      propertyId: id,
+      daysSinceDue: 0,
+      rentLanded: false,
+      levyPaid: false,
+      daysSinceCourtesy: null,
+    });
+    return this.evaluateBook(this.data.hands ?? "fixture", this.data.handsDetail ?? null);
+  }
+
+  /** Remove a property and everything that belongs to it (facts, drafts,
+   * escalations, results). Pending drafts go with it — nothing was sent. */
+  removeProperty(id: string): DeskSnapshot {
+    if (!this.data.properties.some((p) => p.id === id)) {
+      throw Object.assign(new Error("no such property"), { status: 404 });
+    }
+    this.data.properties = this.data.properties.filter((p) => p.id !== id);
+    this.data.ledger = this.data.ledger.filter((r) => r.propertyId !== id);
+    this.data.drafts = this.data.drafts.filter((d) => d.propertyId !== id);
+    this.data.escalations = this.data.escalations.filter((e) => e.propertyId !== id);
+    this.data.results = this.data.results.filter((r) => r.propertyId !== id);
+    return this.evaluateBook(this.data.hands ?? "fixture", this.data.handsDetail ?? null);
   }
 
   allowDraft(id: string): Draft {
@@ -439,6 +549,8 @@ export class Desk {
           escalations: Array.isArray(parsed.escalations) ? parsed.escalations : [],
           lastRunAt: typeof parsed.lastRunAt === "number" ? parsed.lastRunAt : null,
           results: Array.isArray(parsed.results) ? parsed.results : [],
+          hands: parsed.hands === "hermes" ? "hermes" : "fixture",
+          handsDetail: typeof parsed.handsDetail === "string" ? parsed.handsDetail : null,
         };
       }
     } catch {

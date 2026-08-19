@@ -25,23 +25,21 @@ function Shell() {
   // response before deciding — an empty list means "not asked yet", and
   // flashing the setup screen at every launch would be worse than the bug.
   const noEngines =
+    state.activeView === "chat" &&
     state.connected &&
     state.instances.length > 0 &&
     !state.instances.some(
       (i) => i.snapshot.state === "available" && i.snapshot.authenticated !== false,
     );
 
-  // App-wide shortcuts: ⌘N new bot · ⌘1–9 jump to bot · ⌘⇧[ / ⌘⇧] prev/next.
-  // Kept deliberately small; every panel already closes on Esc.
+  // App-wide shortcuts: ⌘1–9 jump to bot · ⌘⇧[ / ⌘⇧] prev/next.
+  // No ⌘N — New Agent stays inside Workshop.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) return;
       const bots = state.bots.filter((b) => !b.hidden);
-      if (e.key === "n" && !e.shiftKey) {
-        e.preventDefault();
-        dispatch({ type: "newBot" });
-      } else if (/^[1-9]$/.test(e.key)) {
+      if (/^[1-9]$/.test(e.key)) {
         const target = bots[Number(e.key) - 1];
         if (target) {
           e.preventDefault();
@@ -68,7 +66,7 @@ function Shell() {
       <Sidebar />
       {state.activeView === "desk" ? (
         <DeskPage />
-      ) : state.activeView === "routines" ? (
+      ) : state.activeView === "schedule" ? (
         <RoutinesPage />
       ) : noEngines ? (
         <NoEngines />

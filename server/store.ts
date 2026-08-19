@@ -9,6 +9,7 @@ import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 import { newId, type ModelSelection, type ThreadId } from "./contracts.ts";
 import { pickBotName } from "./names.ts";
+import { redactSecretsInText } from "./redact.ts";
 
 export type MausColor =
   | "green"
@@ -259,9 +260,9 @@ export function roomResponders<T extends { id: string; name: string; hidden?: bo
 }
 
 const onboardingCard = (): OptionCardData => ({
-  title: "What do you mostly want help with?",
-  subtitle: "Pick whatever's closest; we can always expand from there.",
-  options: ["Work & projects", "Writing & research", "Life admin", "A bit of everything"],
+  title: "What should I help with first?",
+  subtitle: "This is an assistant chat. The morning arrears board is on Desk.",
+  options: ["Owner update", "Repair triage", "Lease enquiry", "Something else"],
 });
 
 /** Messages form a tree (forks appear when a message is edited); the
@@ -468,6 +469,17 @@ export class Store {
   appendMessage(threadId: string, message: Omit<Message, "id" | "at"> & { at?: number }): Message {
     const t = this.thread(threadId);
     const full: Message = { id: newId(), at: Date.now(), parentId: t.activeLeafId, ...message };
+    if (full.role === "bot") {
+      if (full.text) full.text = redactSecretsInText(full.text);
+      if (full.tool?.name) full.tool = { ...full.tool, name: redactSecretsInText(full.tool.name) };
+      if (full.card) {
+        full.card = {
+          ...full.card,
+          title: redactSecretsInText(full.card.title),
+          subtitle: redactSecretsInText(full.card.subtitle),
+        };
+      }
+    }
     t.messages.push(full);
     t.activeLeafId = full.id;
     if (full.kind === "screen") this.pruneScreenFrames(t);
@@ -564,7 +576,7 @@ export class Store {
     this.appendMessage(bot.threadId, {
       role: "bot",
       kind: "text",
-      text: `Hey — I'm ${name}. Nice to meet you.`,
+      text: `I'm ${name}, an assistant in RealBud. Morning arrears live on Desk — I can help draft owner notes and replies here.`,
     });
     this.appendMessage(bot.threadId, { role: "bot", kind: "options", card: onboardingCard() });
     return bot;
@@ -711,10 +723,8 @@ export class Store {
     return bot;
   }
 
-  /** First-run seed: one bot so the app never opens empty — it gets a
-   * random friendly name like every other bot. */
+  /** Desk is home. Do not seed a chat bot — Workshop stays empty until asked. */
   seedIfEmpty() {
-    if (this.bots.length) return;
-    this.createBot();
+    return;
   }
 }

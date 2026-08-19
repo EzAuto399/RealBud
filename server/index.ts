@@ -1,11 +1,10 @@
 // RealBud server — the harness host. Clients hold no transports
 // (upstream rule): the React app dispatches typed commands over HTTP and
 // folds one SSE event stream; every provider process runs here.
-import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { readFileSync, unlinkSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { dirname, extname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { extname, join } from "node:path";
 
 import { approvalKey, autoDecision } from "./auto-approve.ts";
 import * as box from "./box.ts";
@@ -30,9 +29,15 @@ import { mentionedBots, roomResponders, Store, type GroupDefaultResponder, type 
 import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { readCuaConnection } from "./local-computer.ts";
+import { applyPropertyPack } from "./hermes-pack.ts";
+import { hermesStatus } from "./hermes-status.ts";
+import { hermesInstallCommand, HERMES_PIN } from "./hermes-pin.ts";
+import { tryHermesPing } from "./hermes-hands.ts";
 import { Desk } from "./desk.ts";
 import { openTerminalAndRun, setupCommandFor } from "./engine-setup.ts";
-import { RoutineManager, type RoutineRunOn } from "./routines.ts";
+import { LoopManager, type LoopId } from "./routines.ts";
+import { SPAWNED_PROXIES } from "./proxy-paths.ts";
+import { TurnWatchdog } from "./turn-watchdog.ts";
 
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
 const STATIC_DIR = process.env.OMB_STATIC_DIR || null;
@@ -48,8 +53,19 @@ const MIME: Record<string, string> = {
 };
 
 ensureDirs();
+try {
+  applyPropertyPack();
+} catch {
+  /* hermes home missing or not writable — Desk stays on the training book */
+}
 const cfg = loadConfig();
-const registry = new ProviderRegistry(BUILT_IN_DRIVERS);
+// OMB_TEST_FLEET=1 (e2e tests) registers the legacy driver fleet so fake
+// ACP CLIs can run; the product fleet stays Hermes-only. Never set in builds.
+const registry = new ProviderRegistry(
+  process.env.OMB_TEST_FLEET === "1"
+    ? (await import("./testing/test-fleet.ts")).TEST_DRIVERS
+    : BUILT_IN_DRIVERS,
+);
 await registry.load(instanceConfigs(cfg));
 
 const bus = new EventBus();
@@ -59,15 +75,17 @@ bus.attach(registry.instances());
 // A shared secret guards the localhost-only /api/internal endpoints the
 // agents-proxy calls; regenerated each boot (the proxy gets it via env).
 const COMMS_TOKEN = randomBytes(24).toString("hex");
+function commsAuthorized(header: string | undefined): boolean {
+  if (!header?.startsWith("Bearer ")) return false;
+  const got = Buffer.from(header.slice(7));
+  const want = Buffer.from(COMMS_TOKEN);
+  return got.length === want.length && timingSafeEqual(got, want);
+}
 // Cap message chains: depth 0 = a user-initiated turn (may ask a peer);
 // a peer invoked via ask_bot runs at depth 1 and gets NO agents tool, so
 // A→B is allowed but B→C (and A→B→A loops) never start.
 const MAX_COMMS_DEPTH = 1;
-// proxy entry: .ts in dev (node type-strips), .js in the packaged dist-server
-const agentsProxyPath = (() => {
-  const ts = join(dirname(fileURLToPath(import.meta.url)), "drivers", "agents-proxy.ts");
-  return existsSync(ts) ? ts : ts.replace(/\.ts$/, ".js");
-})();
+const agentsProxyPath = SPAWNED_PROXIES.agents;
 // in the packaged app process.execPath is Electron — run the proxy as node
 const AGENTS_NODE_FLAG = { ELECTRON_RUN_AS_NODE: "1" };
 
@@ -126,7 +144,7 @@ async function defaultSelection() {
   // spawn ENOENT — the single worst first-run experience, and the one every
   // user with no CLIs used to get. An empty selection is honest: the UI shows
   // the setup path instead of a bot that cannot answer.
-  const pick = available.find((d) => d.driverKind === "claudeAgent") ?? available[0];
+  const pick = available.find((d) => d.driverKind === "hermesAgent") ?? available[0];
   return { instanceId: pick?.instanceId ?? "", model: pick?.models.default ?? "" };
 }
 let bootSelection = { instanceId: "", model: "" };
@@ -154,6 +172,26 @@ function broadcast(payload: unknown) {
   }
 }
 
+const watchdog = new TurnWatchdog({
+  stallMs: Number(process.env.OMB_TURN_STALL_MS) || 20 * 60_000,
+  checkMs: 30_000,
+  onStall: (turn) => {
+    const bot = store.bot(turn.botId);
+    const instance = bot ? registry.get(bot.modelSelection.instanceId) : null;
+    void instance?.adapter.interruptTurn(turn.threadId).catch(() => {});
+    if (!bot) return;
+    store.patchBot(bot.id, { busy: false });
+    const message = store.appendMessage(turn.threadId, {
+      role: "bot",
+      kind: "activity",
+      tool: { name: "error: this turn stalled — no activity for too long", ok: false },
+    });
+    broadcast({ kind: "message", threadId: turn.threadId, message });
+    broadcast({ kind: "bot", bot: store.bot(bot.id) });
+  },
+});
+watchdog.start();
+
 // ── server-side event folding (upstream's ingestion worker, miniature) ──
 // The canonical stream is the source of truth; the persisted transcript
 // and every client view are projections of it.
@@ -166,7 +204,7 @@ const askMessageByRequest = new Map<string, string>(); // threadId:requestId -> 
 // Group threads: the fold needs to know WHO is talking — the turn engine
 // records the active member here before dispatching its turn.
 const groupSpeakers = new Map<string, { botId: string; name: string; color: string }>();
-let routines: RoutineManager | null = null;
+let loops: LoopManager | null = null;
 const desk = new Desk();
 // The Local VM is intentionally one shared, visible desktop. Two agents
 // driving it simultaneously would mix clicks, keystrokes and screenshots,
@@ -175,8 +213,11 @@ let activeVmThreadId: string | null = null;
 let localVmLifecycleBusy = false;
 
 bus.subscribe((event: RuntimeEvent) => {
+  watchdog.touch(event.threadId);
+  if (event.type === "request.opened") watchdog.setWaitingOnHuman(event.threadId, true);
+  if (event.type === "request.resolved") watchdog.setWaitingOnHuman(event.threadId, false);
+  if (event.type === "turn.completed") watchdog.settle(event.threadId);
   broadcast({ kind: "runtime", event });
-  routines?.handleRuntimeEvent(event);
   const bot = store.botByThread(event.threadId);
   const group = bot ? undefined : store.groupByThread(event.threadId);
   if (!bot && !group) return;
@@ -439,11 +480,8 @@ async function startTurn(
   opts?: {
     commsDepth?: number;
     userMessage?: Message;
-    /** Routines run in detached tasks; pin the destination for the whole turn. */
+    /** Pin the destination thread for the whole turn. */
     threadId?: string;
-    /** Cloud routines run the whole agent inside the bot's Box VM instead
-     * of merely mounting that VM's computer tools on the MAUS's provider. */
-    runOn?: RoutineRunOn;
     onDispatchError?: (message: string) => void;
   },
 ) {
@@ -457,21 +495,15 @@ async function startTurn(
   // a task takes its name from the first thing you asked it to do
   if (text.trim()) store.titleTaskFromFirstMessage(bot.id, text, threadId);
 
-  const instance = opts?.runOn === "cloud"
-    ? registry.instances().find((candidate) => candidate.driverKind === "boxAgent") ?? null
-    : registry.get(bot.modelSelection.instanceId);
+  const instance = registry.get(bot.modelSelection.instanceId);
   if (!instance) {
     throw Object.assign(
-      new Error(
-        opts?.runOn === "cloud"
-          ? "the Cloud VM runner is unavailable — configure Box in App Settings"
-          : `provider instance "${bot.modelSelection.instanceId}" is unavailable — pick another model in settings`,
-      ),
+      new Error(`provider instance "${bot.modelSelection.instanceId}" is unavailable — pick another model in settings`),
       { status: 409 },
     );
   }
   const instanceId = instance.instanceId;
-  const model = opts?.runOn === "cloud" ? instance.models.default : bot.modelSelection.model;
+  const model = bot.modelSelection.model;
 
   // an edit hands us its already-branched user message; a plain send appends
   let userMessage = opts?.userMessage;
@@ -520,13 +552,14 @@ async function startTurn(
   // in the background — box provisioning can take ~90s and must never
   // hang the HTTP request
   store.patchBot(bot.id, { busy: true, unread: false });
+  watchdog.watch(threadId, bot.id);
   broadcast({ kind: "bot", bot: store.bot(bot.id) });
 
   void (async () => {
     try {
       const integrations: NonNullable<Parameters<typeof instance.adapter.sendTurn>[0]["integrations"]> = {};
       if (cfg.composio?.key) integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
-      const wants = opts?.runOn === "cloud" ? "cloud" : bot.computer; // cloud routine overrides the MAUS default
+      const wants = bot.computer;
       const mountsComputerMcp = instance.adapter.capabilities.computerMcp === true;
       const mountsCloudComputer = mountsComputerMcp || instance.driverKind === "boxAgent";
       let previewBoxId: string | null = null;
@@ -671,6 +704,7 @@ async function startTurn(
         tool: { name: `error: ${message.slice(0, 160)}`, ok: false },
       });
       broadcast({ kind: "message", threadId, message: failure });
+      watchdog.settle(threadId);
       store.patchBot(bot.id, { busy: false });
       broadcast({ kind: "bot", bot: store.bot(bot.id) });
       opts?.onDispatchError?.(message);
@@ -678,34 +712,21 @@ async function startTurn(
   })();
 }
 
-// ── routines: persisted definitions → detached bot tasks ───────────────
-// The scheduler owns timing and receipts; the existing harness remains the
-// only owner of provider sessions, approvals, tools, computers and messages.
-routines = new RoutineManager({
+// ── named loops: the RealBud clock presses Desk Recheck ────────────────
+// RealBud owns WHEN; Hermes owns HOW (headless, facts only, no cron).
+// A loop is never a bot turn, a prompt, or a second agent.
+loops = new LoopManager({
   emit: broadcast,
-  botState: (botId) => {
-    const bot = store.bot(botId);
-    return !bot ? "missing" : bot.busy ? "busy" : "ready";
-  },
-  createTask: (botId, title) => {
-    const task = store.createTask(botId, title, false);
-    const bot = store.bot(botId);
-    if (task && bot) broadcast({ kind: "bot", bot: publicBot(bot) });
-    return task;
-  },
-  startTurn: (botId, threadId, prompt, runOn, onDispatchError) =>
-    startTurn(botId, prompt, { threadId, runOn, onDispatchError }),
-  interruptTurn: async (botId, threadId, runOn) => {
-    const bot = store.bot(botId);
-    const instance = runOn === "cloud"
-      ? registry.instances().find((candidate) => candidate.driverKind === "boxAgent") ?? null
-      : bot
-        ? registry.get(bot.modelSelection.instanceId)
-        : null;
-    await instance?.adapter.interruptTurn(threadId);
+  execute: async (loop) => {
+    if (loop.id !== "morning-arrears") return { ok: false, detail: "not built yet" };
+    const snapshot = await desk.runMorningCheckLive();
+    broadcast({ kind: "desk", snapshot });
+    // A fixture fallback is a completed check, not a failed loop — the run
+    // detail carries the hands reason and Desk shows the same warning.
+    return { ok: true, detail: snapshot.handsDetail ?? "Desk check completed." };
   },
 });
-routines.start();
+loops.start();
 
 // ── config hot-reload ─────────────────────────────────────────────────
 // ── group turn engine ──────────────────────────────────────────────────
@@ -758,6 +779,7 @@ async function runGroupMemberTurn(
   }
 
   store.patchGroup(group.id, { busyBotId: bot.id });
+  watchdog.watch(group.threadId, bot.id);
   broadcastGroup(group.id);
   groupSpeakers.set(group.threadId, { botId: bot.id, name: bot.name, color: bot.color });
 
@@ -810,6 +832,7 @@ async function runGroupMemberTurn(
         finish();
       });
   });
+  watchdog.settle(group.threadId);
   groupSpeakers.delete(group.threadId);
   store.patchGroup(group.id, { busyBotId: null, unread: true });
   broadcastGroup(group.id);
@@ -946,7 +969,7 @@ const server = createServer(async (req, res) => {
     // The agents-proxy (spawned inside a bot's agent process) calls these to
     // discover peers and hand a message to one. Not part of the public API.
     if (path.startsWith("/api/internal/")) {
-      if (req.headers.authorization !== `Bearer ${COMMS_TOKEN}`) {
+      if (!commsAuthorized(req.headers.authorization)) {
         return json(res, 401, { error: "unauthorized" });
       }
       if (method === "GET" && path === "/api/internal/agents") {
@@ -1037,41 +1060,46 @@ const server = createServer(async (req, res) => {
       return json(res, 404, { error: "unknown internal endpoint" });
     }
 
-    // ── routines calendar ────────────────────────────────────────────────
-    if (path === "/api/routines" && method === "GET") {
+    // ── named loops (RealBud clock; never a bot, never Hermes cron) ─────
+    if (path === "/api/loops" && method === "GET") {
       const fromParam = url.searchParams.get("from");
       const toParam = url.searchParams.get("to");
       const from = fromParam == null ? undefined : Number(fromParam);
       const to = toParam == null ? undefined : Number(toParam);
       return json(res, 200, {
-        routines: routines!.listRoutines(),
-        runs: routines!.listRuns(from != null && Number.isFinite(from) ? from : undefined, to != null && Number.isFinite(to) ? to : undefined),
+        loops: loops!.listLoops(),
+        runs: loops!.listRuns(from != null && Number.isFinite(from) ? from : undefined, to != null && Number.isFinite(to) ? to : undefined),
       });
     }
-    if (path === "/api/routines" && method === "POST") {
-      return json(res, 201, { routine: routines!.create(await readBody(req)) });
+    let loopMatch = path.match(/^\/api\/loops\/([\w-]+)\/run$/);
+    if (loopMatch && method === "POST") {
+      const loop = loops!.listLoops().find((candidate) => candidate.id === loopMatch![1]);
+      if (!loop) return json(res, 404, { error: "no such loop" });
+      if (!loop.available) return json(res, 409, { error: "that loop is declared but not built yet" });
+      try {
+        const run = loops!.runNow(loopMatch[1] as LoopId);
+        return run ? json(res, 201, { run }) : json(res, 409, { error: "enable this loop before running it" });
+      } catch (error) {
+        const status = (error as { status?: number }).status ?? 500;
+        return json(res, status, { error: error instanceof Error ? error.message : String(error) });
+      }
     }
-    let routineMatch = path.match(/^\/api\/routines\/([\w-]+)\/run$/);
-    if (routineMatch && method === "POST") {
-      const run = routines!.runNow(routineMatch[1]);
-      return run ? json(res, 201, { run }) : json(res, 404, { error: "no such routine" });
+    loopMatch = path.match(/^\/api\/loops\/([\w-]+)$/);
+    if (loopMatch && method === "PATCH") {
+      const body = await readBody(req);
+      if (body.enabled === undefined) return json(res, 400, { error: "only `enabled` can be changed" });
+      try {
+        const loop = loops!.setEnabled(loopMatch[1] as LoopId, body.enabled === true);
+        return json(res, 200, { loop });
+      } catch (error) {
+        const status = (error as { status?: number }).status ?? 400;
+        return json(res, status, { error: error instanceof Error ? error.message : String(error) });
+      }
     }
-    routineMatch = path.match(/^\/api\/routines\/([\w-]+)$/);
-    if (routineMatch && method === "PATCH") {
-      const routine = routines!.update(routineMatch[1], await readBody(req));
-      return routine ? json(res, 200, { routine }) : json(res, 404, { error: "no such routine" });
-    }
-    if (routineMatch && method === "DELETE") {
-      return routines!.remove(routineMatch[1])
-        ? json(res, 200, { ok: true })
-        : json(res, 404, { error: "no such routine" });
-    }
-    const runMatch = path.match(/^\/api\/routine-runs\/([\w-]+)\/(cancel|seen)$/);
-    if (runMatch && method === "POST") {
-      const run = runMatch[2] === "cancel"
-        ? await routines!.cancelRun(runMatch[1])
-        : routines!.markSeen(runMatch[1]);
-      return run ? json(res, 200, { run }) : json(res, 404, { error: "no such active run" });
+    const loopRunSeen = path.match(/^\/api\/loop-runs\/([\w-]+)\/seen$/);
+    if (loopRunSeen && method === "POST") {
+      const run = loops!.markSeen(loopRunSeen[1]);
+      return run ? json(res, 200, { run }) : json(res, 404, { error: "no such run" });
     }
 
     // ── PM desk (fixture arrears; never sends) ────────────────────────
@@ -1079,7 +1107,7 @@ const server = createServer(async (req, res) => {
       return json(res, 200, desk.snapshot());
     }
     if (path === "/api/desk/check" && method === "POST") {
-      return json(res, 200, desk.runMorningCheck());
+      return json(res, 200, await desk.runMorningCheckLive());
     }
     if (path === "/api/desk/reset" && method === "POST") {
       return json(res, 200, desk.resetFixtures());
@@ -1104,6 +1132,55 @@ const server = createServer(async (req, res) => {
     if (deskProp && method === "PATCH") {
       const body = await readBody(req);
       return json(res, 200, { property: desk.patchProperty(deskProp[1], body) });
+    }
+    if (path === "/api/desk/properties" && method === "POST") {
+      const body = await readBody(req);
+      return json(res, 201, desk.addProperty(body));
+    }
+    if (deskProp && method === "DELETE") {
+      return json(res, 200, desk.removeProperty(deskProp[1]));
+    }
+
+    // ── pinned Hermes worker (Desk hands; never Hermes Desktop) ────────
+    if (path === "/api/hermes" && method === "GET") {
+      return json(res, 200, await hermesStatus());
+    }
+    if (path === "/api/hermes/test" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      await readBody(req);
+      return json(res, 200, await tryHermesPing());
+    }
+    if (path === "/api/hermes/model" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      await readBody(req);
+      const ok = await openTerminalAndRun(`hermes -p ${HERMES_PIN.profile} model`);
+      return json(res, ok ? 200 : 502, { ok });
+    }
+    if (path === "/api/hermes/apply-pack" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      await readBody(req);
+      try {
+        applyPropertyPack();
+      } catch (e) {
+        return json(res, 500, { error: e instanceof Error ? e.message : String(e) });
+      }
+      return json(res, 200, await hermesStatus());
+    }
+    if (path === "/api/hermes/install" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      await readBody(req);
+      const command = hermesInstallCommand(process.platform);
+      if (!command) return json(res, 400, { error: "no one-line installer for this platform" });
+      const ok = await openTerminalAndRun(command);
+      return json(res, ok ? 200 : 502, { ok, command });
     }
 
     // ── events stream ──
@@ -1288,7 +1365,6 @@ const server = createServer(async (req, res) => {
       // a running turn dies with its bot
       await registry.get(bot.modelSelection.instanceId)?.adapter.interruptTurn(bot.threadId).catch(() => {});
       stopScreenPoller(bot.id);
-      routines!.disableForBot(bot.id);
       store.deleteBot(bot.id);
       for (const dir of [EVENTS_DIR, NATIVE_DIR]) {
         try {
@@ -1409,11 +1485,6 @@ const server = createServer(async (req, res) => {
     if (m && method === "POST") {
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
-      const routineRun = routines!.activeRunForBot(bot.id);
-      if (routineRun) {
-        await routines!.cancelRun(routineRun.id);
-        return json(res, 200, { ok: true });
-      }
       const instance = registry.get(bot.modelSelection.instanceId);
       await instance?.adapter.interruptTurn(bot.threadId);
       return json(res, 200, { ok: true });
@@ -1460,7 +1531,7 @@ const server = createServer(async (req, res) => {
     }
     if (m && method === "DELETE") {
       const bot = store.bot(m[1]);
-      if (bot?.busy && (bot.threadId === m[2] || routines!.isActiveThread(m[2]))) {
+      if (bot?.busy && bot.threadId === m[2]) {
         return json(res, 409, { error: "this task is running — stop it first" });
       }
       const updated = store.deleteTask(m[1], m[2]);
@@ -1691,7 +1762,8 @@ server.listen(PORT, "127.0.0.1", () => {
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
-    routines?.stop();
+    loops?.stop();
+    watchdog.stop();
     void registry.disposeAll().finally(() => process.exit(0));
   });
 }

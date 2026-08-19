@@ -86,29 +86,13 @@ export function saveConfig(patch: Partial<AppConfig>): void {
 // Config-file keys are injected as per-instance environment so drivers
 // see them without needing real process env vars.
 export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
-  // The default `grok` instance rides the `grokAgent` driver, not the API-key
-  // one: like claude and codex it needs no credential from us, just the CLI
-  // installed and logged in (it shows up unavailable otherwise). The API-key
-  // `grok` driver stays registered but out of the default fleet — that key is
-  // a credential Milind doesn't want to manage; an `instances` entry brings
-  // it back anytime.
-  //
-  // Google rides `antigravityAgent` (the `agy` CLI), not `geminiAgent`:
-  // Google retired Gemini CLI for the free/Pro/Ultra tiers on 2026-06-18
-  // (developers.googleblog.com, "transitioning Gemini CLI to Antigravity
-  // CLI"), so a default `gemini` instance could only ever show unavailable.
-  // The driver stays registered for enterprise licences, which keep Gemini
-  // CLI — `{"instances": {"gemini": {"driver": "geminiAgent"}}}` restores it.
+  // Licensee fleet is the pinned Hermes worker only. Models attach on that
+  // profile (`hermes -p property model`), not as extra RealBud agents.
   const map: InstanceConfigMap =
     cfg.instances && Object.keys(cfg.instances).length
       ? cfg.instances
       : {
-          grok: { driver: "grokAgent" },
-          kimi: { driver: "kimiAgent" },
-          claude: { driver: "claudeAgent" },
-          codex: { driver: "codex" },
-          antigravity: { driver: "antigravityAgent" },
-          computer: { driver: "boxAgent" },
+          hermes: { driver: "hermesAgent" },
         };
   for (const entry of Object.values(map)) {
     entry.environment = {

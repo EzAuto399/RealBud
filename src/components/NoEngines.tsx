@@ -40,10 +40,9 @@ export function NoEngines() {
   return (
     <main className="flex h-full min-w-0 flex-1 flex-col overflow-y-auto bg-app">
       <div className="mx-auto w-full max-w-[560px] px-6 py-12">
-        <h1 className="text-[20px] font-semibold text-ink">Install an AI engine to get started</h1>
+        <h1 className="text-[20px] font-semibold text-ink">Set up hands for chat</h1>
         <p className="mt-1.5 text-[13.5px] leading-relaxed text-ink-secondary">
-          RealBud doesn&rsquo;t ship a model of its own — your bots run on an AI CLI installed on
-          this computer, using your existing login. Set up any one of these and your bots come alive.
+          Desk works without this. Chat uses the pinned Hermes worker, headless only.
         </p>
 
         <div className="mt-6 flex flex-col gap-2.5">

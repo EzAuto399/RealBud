@@ -20,7 +20,6 @@ import {
   RefreshCw,
   Search,
   Settings,
-  Puzzle,
   Trash2,
   Users,
 } from "lucide-react";
@@ -502,6 +501,7 @@ export function Sidebar() {
   const [plusOpen, setPlusOpen] = useState(false);
   const [newRoom, setNewRoom] = useState(false);
   const [query, setQuery] = useState("");
+  const [workshop, setWorkshop] = useState(false);
   const macInset = capabilities.windowChrome === "mac-inset";
   const browser = capabilities.host.label === "Browser";
 
@@ -541,10 +541,12 @@ export function Sidebar() {
           className="relative"
           style={macInset ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined}
         >
+          {workshop && (
+            <>
           <button
             onClick={() => setPlusOpen((o) => !o)}
             className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
-            title="New bot or room"
+            title="New assistant or room"
           >
             <Plus size={20} strokeWidth={2} />
           </button>
@@ -561,7 +563,7 @@ export function Sidebar() {
                   className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
                 >
                   <BotIcon size={16} className="text-ink-secondary" />
-                  New Bot
+                  New assistant
                 </button>
                 <button
                   onClick={() => {
@@ -571,80 +573,88 @@ export function Sidebar() {
                   className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
                 >
                   <Users size={16} className="text-ink-secondary" />
-                  New Room
+                  New room
                 </button>
               </div>
+            </>
+          )}
             </>
           )}
         </div>
       </div>
 
-      {/* Search */}
-      <div className="px-3 pt-2 pb-3">
-        <div className="flex items-center gap-2 rounded-lg bg-raised/70 px-3 py-2">
-          <Search size={16} className="text-ink-secondary" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Escape" && setQuery("")}
-            placeholder="Search"
-            aria-label="Search bots"
-            className="w-full bg-transparent text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
-          />
-        </div>
+      <div className="px-3 pb-1">
+        <button
+          onClick={() => dispatch({ type: "showDesk" })}
+          className={cn(
+            "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors",
+            state.activeView === "desk" ? "bg-raised text-ink" : "text-ink hover:bg-raised/50",
+          )}
+        >
+          <Building2 size={20} className={state.activeView === "desk" ? "text-accent" : "text-ink-secondary"} />
+          <span className="flex-1 text-[14px] font-medium">Desk</span>
+        </button>
       </div>
 
-      {/* Bot list */}
       <div className="flex-1 overflow-y-auto px-2">
-        <div className="flex flex-col gap-0.5">
-          {!chiefBot && visibleBots.length === 0 && visibleGroups.length === 0 && q && (
-            <div className="px-3 py-6 text-center text-[13px] text-ink-secondary">Nothing matches “{query}”</div>
-          )}
-          {chiefBot && (
-            <div className="mb-1.5">
-              <BotListItem bot={chiefBot} onMenu={setMenu} />
+        <button
+          onClick={() => setWorkshop((open) => !open)}
+          className="mb-1 flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-[12px] font-medium uppercase tracking-[0.14em] text-ink-secondary hover:bg-raised/50 hover:text-ink"
+        >
+          <span>Workshop</span>
+          <span className="normal-case tracking-normal text-[11px] text-ink-secondary/70">{workshop ? "Hide" : "Show"}</span>
+        </button>
+        {workshop && (
+          <>
+            <div className="mb-2 px-1">
+              <div className="flex items-center gap-2 rounded-lg bg-raised/70 px-3 py-2">
+                <Search size={16} className="text-ink-secondary" />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === "Escape" && setQuery("")}
+                  placeholder="Search"
+                  aria-label="Search assistants"
+                  className="w-full bg-transparent text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
+                />
+              </div>
             </div>
-          )}
-          {visibleGroups.map((g) => (
-            <GroupListItem key={g.id} group={g} onMenu={setRoomMenu} />
-          ))}
-          {visibleBots.map((b) => (
-            <BotListItem key={b.id} bot={b} onMenu={setMenu} />
-          ))}
-        </div>
+            <div className="flex flex-col gap-0.5">
+              {!chiefBot && visibleBots.length === 0 && visibleGroups.length === 0 && (
+                <div className="px-3 py-4 text-[12.5px] text-ink-secondary">
+                  {q ? `Nothing matches “${query}”` : "Empty. Desk is the product — assistants stay here if you need them."}
+                </div>
+              )}
+              {chiefBot && (
+                <div className="mb-1.5">
+                  <BotListItem bot={chiefBot} onMenu={setMenu} />
+                </div>
+              )}
+              {visibleGroups.map((g) => (
+                <GroupListItem key={g.id} group={g} onMenu={setRoomMenu} />
+              ))}
+              {visibleBots.map((b) => (
+                <BotListItem key={b.id} bot={b} onMenu={setMenu} />
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Footer */}
       <div className="px-3 pb-3 pt-2">
         <button
-          onClick={() => dispatch({ type: "showDesk" })}
-          className={cn(
-            "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors",
-            state.activeView === "desk" ? "bg-raised text-ink" : "text-ink hover:bg-raised/50",
-          )}
-        >
-          <Building2 size={20} className={state.activeView === "desk" ? "text-accent" : "text-ink-secondary"} />
-          <span className="flex-1 text-[14px]">Desk</span>
-        </button>
-        <button
           onClick={() => dispatch({ type: "showRoutines" })}
           className={cn(
             "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors",
-            state.activeView === "routines" ? "bg-raised text-ink" : "text-ink hover:bg-raised/50",
+            state.activeView === "schedule" ? "bg-raised text-ink" : "text-ink hover:bg-raised/50",
           )}
         >
-          <CalendarDays size={20} className={state.activeView === "routines" ? "text-accent" : "text-ink-secondary"} />
-          <span className="flex-1 text-[14px]">Routines</span>
-          {state.routineRuns.some((run) => ["failed", "missed"].includes(run.status) && !run.seenAt) && (
+          <CalendarDays size={20} className={state.activeView === "schedule" ? "text-accent" : "text-ink-secondary"} />
+          <span className="flex-1 text-[14px]">Schedule</span>
+          {state.loopRuns.some((run) => ["failed", "missed"].includes(run.status) && !run.seenAt) && (
             <span className="size-2 rounded-full bg-danger" />
           )}
-        </button>
-        <button
-          onClick={() => dispatch({ type: "togglePlugins", open: true })}
-          className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left hover:bg-raised/50"
-        >
-          <Puzzle size={20} className="text-ink-secondary" />
-          <span className="text-[14px] text-ink">Plugins</span>
         </button>
         <div className="flex items-center">
           <button

@@ -112,11 +112,14 @@ describe("comms e2e (fake ACP fleet)", () => {
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
+        // child-process coverage: the v8 provider measures the spawned server
+        ...(process.env.NODE_V8_COVERAGE ? { NODE_V8_COVERAGE: process.env.NODE_V8_COVERAGE } : {}),
         // without SystemRoot, winsock fails to initialize in the child
         ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
         HOME: home,
         USERPROFILE: home,
         OMB_PORT: String(PORT),
+        OMB_TEST_FLEET: "1",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -156,9 +159,12 @@ describe("comms e2e (fake ACP fleet)", () => {
   it(
     "carries a question from bot A through the agents proxy to bot B and back",
     async () => {
-      // deterministic roster: hide the seeded bot, add Asker + Helper
-      const seeded = (await api("GET", "/api/bots")).body.bots[0];
-      await api("PATCH", `/api/bots/${seeded.id}`, { hidden: true });
+      // deterministic roster: no starter bot is seeded anymore (Desk is
+      // home), so the two bots created here are the whole fleet
+      const roster = (await api("GET", "/api/bots")).body;
+      for (const leftover of roster.bots) {
+        await api("PATCH", `/api/bots/${leftover.id}`, { hidden: true });
+      }
       const selection = { instanceId: "grok", model: "fake-model" };
       const helper = (await api("POST", "/api/bots")).body.bot;
       await api("PATCH", `/api/bots/${helper.id}`, { name: "Helper", modelSelection: selection });

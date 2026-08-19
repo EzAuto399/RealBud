@@ -29,12 +29,18 @@ export function spawnCli(
   opts: SpawnOptions,
 ): ChildProcessByStdio<Writable, Readable, Readable> {
   const resolved = resolveCli(cli, args);
-  return spawn(resolved.command, resolved.args, {
+  const child = spawn(resolved.command, resolved.args, {
     ...opts,
     // posix: own process group so kill(-pid) reaps child MCP servers;
     // win32: taskkill /T does the reaping instead (see killCliTree)
     ...(process.platform === "win32" ? { windowsHide: true } : { detached: true }),
   }) as ChildProcessByStdio<Writable, Readable, Readable>; // callers always pipe all three
+
+  // A write to a dying child's stdin fails asynchronously on Windows
+  // (taskkill is a subprocess). An unlistened stream error kills the
+  // harness. Drivers already settle the turn on `close`.
+  child.stdin?.on("error", () => {});
+  return child;
 }
 
 export function execCli(
