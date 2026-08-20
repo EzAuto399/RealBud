@@ -23,12 +23,16 @@ let boxStubPort = 0;
 let home: string;
 let staticDir: string;
 let stderr = "";
+let session = "";
 
 const api = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers["content-type"] = "application/json";
+  if (session) headers["x-realbud-session"] = session;
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: body ? { "content-type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   return { status: res.status, body: await res.json() };
 };
@@ -83,6 +87,8 @@ beforeAll(async () => {
     if (child.exitCode !== null) throw new Error(`server exited ${child.exitCode}. stderr:\n${stderr}`);
     await new Promise((r) => setTimeout(r, 150));
   }
+  const boot = await fetch(`${BASE}/api/session`);
+  session = String(((await boot.json()) as { token?: string }).token ?? "");
 }, 30_000);
 
 afterAll(async () => {
@@ -146,10 +152,14 @@ describe("harness HTTP API", () => {
     expect((await fetch(`${BASE}/api/health`)).status).toBe(200);
   });
 
-  it("does not seed a starter chat bot", async () => {
+  it("seeds the canonical Bud thread and refuses extra bots", async () => {
     const { status, body } = await api("GET", "/api/bots");
     expect(status).toBe(200);
-    expect(body.bots).toEqual([]);
+    expect(body.bots).toHaveLength(1);
+    expect(body.bots[0]).toMatchObject({ id: "bud", name: "Bud", computer: "off" });
+    const created = await api("POST", "/api/bots");
+    expect(created.status).toBe(403);
+    expect(String(created.body.error)).toMatch(/one Bud thread/i);
   });
 
   it("lists the named loops and refuses to run a planned one", async () => {
@@ -252,7 +262,7 @@ describe("harness HTTP API", () => {
   });
 
   it("never sends a desk draft — the send route is always 403", async () => {
-    const snap = await api("GET", "/api/desk");
+    const snap = await api("POST", "/api/desk/check", {});
     const draft = snap.body.drafts.find((d: { status: string }) => d.status === "pending");
     expect(draft).toBeTruthy();
     const send = await api("POST", `/api/desk/drafts/${draft.id}/send`, {});
@@ -260,39 +270,24 @@ describe("harness HTTP API", () => {
     expect(String(send.body.error)).toMatch(/never sends/i);
   });
 
-  it("creates, patches, and deletes a bot", async () => {
-    const created = await api("POST", "/api/bots");
-    expect(created.status).toBe(201);
-    const bot = created.body.bot;
-
-    const patched = await api("PATCH", `/api/bots/${bot.id}`, { name: "Renamed", pinned: true });
-    expect(patched.status).toBe(200);
-    expect(patched.body.bot).toMatchObject({ name: "Renamed", pinned: true });
-
-    const missing = await api("PATCH", "/api/bots/does-not-exist", { name: "x" });
-    expect(missing.status).toBe(404);
-
-    const deleted = await api("DELETE", `/api/bots/${bot.id}`);
-    expect(deleted.status).toBe(200);
-    const after = await api("GET", "/api/bots");
-    expect(after.body.bots.find((b: { id: string }) => b.id === bot.id)).toBeUndefined();
+  it("refuses rooms, connectors, and raw computer screenshots in product mode", async () => {
+    expect((await api("POST", "/api/groups", { memberIds: ["bud"] })).status).toBe(403);
+    expect((await api("GET", "/api/connectors")).status).toBe(403);
+    expect((await api("POST", "/api/local-computer/screenshot", {})).status).toBe(403);
+    expect((await api("POST", "/api/bots/bud/computer", {})).status).toBe(403);
   });
 
   async function workshopBot() {
-    const created = await api("POST", "/api/bots");
-    expect(created.status).toBe(201);
     const listed = await api("GET", "/api/bots");
-    const bot = listed.body.bots.find((b: { id: string }) => b.id === created.body.bot.id);
+    const bot = listed.body.bots.find((b: { id: string }) => b.id === "bud");
     expect(bot).toBeTruthy();
     return bot;
   }
 
-  it("persists an answered onboarding card", async () => {
+  it("keeps Bud as the only visible thread", async () => {
     const bot = await workshopBot();
-    const card = bot.messages.find((m: { kind: string }) => m.kind === "options");
-    const res = await api("PATCH", `/api/bots/${bot.id}/cards/${card.id}`, { answered: card.card.options[0] });
-    expect(res.status).toBe(200);
-    expect(res.body.message.card.answered).toBe(card.card.options[0]);
+    expect(bot.name).toBe("Bud");
+    expect(bot.messages.some((m: { kind: string }) => m.kind === "text")).toBe(true);
   });
 
   it("rejects an empty message and explains an unavailable provider", async () => {
@@ -317,16 +312,11 @@ describe("harness HTTP API", () => {
     const notUser = await api("POST", `/api/bots/${bot.id}/messages/${greeting.id}/edit`, { text: "x" });
     expect(notUser.status).toBe(404);
 
-    // no user message exists yet, so fabricate the check via the card id
-    const card = bot.messages.find((m: { kind: string }) => m.kind === "options");
-    const res = await api("POST", `/api/bots/${bot.id}/messages/${card.id}/edit`, { text: "x" });
-    expect(res.status).toBe(404); // options card, not a user text message
-
     const empty = await api("POST", `/api/bots/${bot.id}/messages/${greeting.id}/edit`, { text: "  " });
     expect(empty.status).toBe(400);
 
     const after = await api("GET", "/api/bots");
-    expect(after.body.bots[0].messages.length).toBe(before);
+    expect(after.body.bots.find((b: { id: string }) => b.id === "bud").messages.length).toBe(before);
   });
 
   it("switches the active branch and reports the new leaf", async () => {
@@ -384,12 +374,27 @@ describe("harness HTTP API", () => {
     expect(res.body.error).toContain("/api/definitely-not-a-route");
   });
 
-  it("runs the fixture desk check and refuses to send", async () => {
+  it("requires a session for Desk and refuses a foreign Origin", async () => {
+    const bare = await fetch(`${BASE}/api/desk`);
+    expect(bare.status).toBe(401);
+    const foreign = await fetch(`${BASE}/api/desk`, {
+      headers: { origin: "https://evil.example", "x-realbud-session": session },
+    });
+    expect(foreign.status).toBe(403);
+    const artifact = await fetch(`${BASE}/api/artifacts/art-missing`);
+    expect(artifact.status).toBe(401);
+    const ok = await api("GET", "/api/desk");
+    expect(ok.status).toBe(200);
+    expect(ok.body.properties.length).toBe(6);
+    expect(JSON.stringify(ok.body)).not.toMatch(/"ct":/);
+  });
+
+  it("runs the Demo desk check and refuses to send", async () => {
     const empty = await api("GET", "/api/desk");
     expect(empty.status).toBe(200);
     expect(empty.body.properties.length).toBe(6);
 
-    const checked = await api("POST", "/api/desk/check");
+    const checked = await api("POST", "/api/desk/check", {});
     expect(checked.status).toBe(200);
     const courtesy = checked.body.drafts.find((d: { kind: string }) => d.kind === "courtesy-rent");
     expect(courtesy?.status).toBe("pending");
@@ -403,5 +408,40 @@ describe("harness HTTP API", () => {
     expect(allowed.status).toBe(200);
     expect(allowed.body.draft.status).toBe("allowed");
     expect(allowed.body.draft.sentAt).toBeUndefined();
+
+    const levy = checked.body.drafts.find((d: { kind: string; status: string }) => d.kind === "levy-from-rent" && d.status === "pending");
+    const stale = await api("POST", `/api/desk/drafts/${levy.id}/allow`, { expectedRevision: 0 });
+    expect(stale.status).toBe(409);
+    expect(String(stale.body.error)).toMatch(/revision/);
+  });
+
+  it("round-trips notes and puts an Ask courtesy on Desk without send", async () => {
+    const put = await api("PUT", "/api/desk/properties/prop-oak/notes", {
+      body: "Owner wants Friday email. No SMS after 8.",
+    });
+    expect(put.status).toBe(200);
+    expect(put.body.body).toMatch(/Friday email/);
+    const got = await api("GET", "/api/desk/properties/prop-oak/notes");
+    expect(got.body.body).toMatch(/No SMS after 8/);
+    expect(JSON.stringify(got.body)).not.toMatch(/Obsidian|second brain|vault/i);
+
+    const proposed = await api("POST", "/api/desk/propose", { propertyId: "prop-oak", kind: "courtesy-rent" });
+    expect(proposed.status).toBe(201);
+    const draft = proposed.body.drafts.find(
+      (d: { propertyId: string; kind: string; status: string }) =>
+        d.propertyId === "prop-oak" && d.kind === "courtesy-rent" && d.status === "pending",
+    );
+    expect(draft).toBeTruthy();
+    const send = await api("POST", `/api/desk/drafts/${draft.id}/send`, {});
+    expect(send.status).toBe(403);
+  });
+
+  it("imports an address-keyed CSV onto Oak Street", async () => {
+    const csv = `address,daysLate,rentLanded,levyPaid\n"12 Oak Street, Dickson ACT",4,false,false\n`;
+    const snap = await api("POST", "/api/desk/import", { csv });
+    expect(snap.status).toBe(200);
+    expect(snap.body.hands).toBe("csv");
+    const oak = snap.body.ledger.find((r: { propertyId: string }) => r.propertyId === "prop-oak");
+    expect(oak.daysSinceDue).toBe(4);
   });
 });

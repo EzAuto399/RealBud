@@ -167,10 +167,13 @@ describe("Store", () => {
     expect(reply.text).toMatch(/«redacted/);
   });
 
-  it("seedIfEmpty does not create a starter bot", () => {
+  it("seedIfEmpty creates the canonical Bud thread once", () => {
     const store = new Store(selection);
     store.seedIfEmpty();
-    expect(store.bots).toHaveLength(0);
+    expect(store.bots).toHaveLength(1);
+    expect(store.bots[0]).toMatchObject({ id: "bud", name: "Bud", computer: "off" });
+    store.seedIfEmpty();
+    expect(store.bots).toHaveLength(1);
   });
 
   it("chains appended messages and keeps the newest as active leaf", () => {

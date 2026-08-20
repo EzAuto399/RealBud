@@ -146,6 +146,49 @@ export async function startCua() {
   return connectionStore.persist(nextConnection);
 }
 
+const FORBIDDEN_PORTAL_TOOLS = [
+  "screenshot_desktop",
+  "click_xy",
+  "press_key",
+  "type_enter",
+  "javascript",
+  "shell",
+  "computer_exec",
+  "computer_batch",
+];
+
+/** Persist a per-workflow bounded Cua 0.19.3 session. Portal work must never
+ * fall back to an unrestricted host CUA descriptor. */
+export function persistBoundedSession(manifest) {
+  if (!manifest || manifest.mode !== "bounded" || manifest.version !== "0.19.3") {
+    throw new Error("portal work requires a bounded Cua 0.19.3 session");
+  }
+  const tools = Array.isArray(manifest.tools) ? manifest.tools : [];
+  if (tools.some((tool) => FORBIDDEN_PORTAL_TOOLS.includes(tool))) {
+    throw new Error("bounded session mounted a forbidden tool");
+  }
+  const current = connectionStore.get();
+  if (!current || current.mode === "unavailable") {
+    throw new Error("no Cua host for a bounded portal session — do not fall back to unrestricted CUA");
+  }
+  return connectionStore.persist({
+    ...current,
+    bounded: {
+      version: manifest.version,
+      mode: "bounded",
+      profile: manifest.profile,
+      origins: manifest.origins,
+      tools: manifest.tools,
+      forbidden: manifest.forbidden ?? FORBIDDEN_PORTAL_TOOLS,
+      expiresAt: manifest.expiresAt,
+      idleTimeoutMs: manifest.idleTimeoutMs,
+      workItemId: manifest.workItemId,
+      recipeId: manifest.recipeId,
+      recipeVersion: manifest.recipeVersion,
+    },
+  });
+}
+
 export function cuaPermissionsStatus() {
   const binary = resolveDriverBinary();
   if (!binary) return { available: false };

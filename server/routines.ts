@@ -1,56 +1,29 @@
-// Named product loops on the RealBud clock. RealBud owns WHEN and what the
-// human sees; Hermes owns HOW (facts only, headless, cron_mode: deny). A
-// loop is "Desk, but the clock pressed Recheck" — never a second agent, no
-// free-text prompt, no MAUS roster. The OpenMausBot routine runner is gone.
+// Named product loops on the RealBud clock. The injected executor resolves
+// a code-owned evaluator and writes proposals through Desk. A loop never
+// launches Cua, waits for approval, or performs a background handoff.
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
+import { evaluatorForLoop } from "./workflow-catalog.ts";
+import type { Loop, LoopId, LoopRun, LoopRunStatus, LoopSchedule } from "../shared/contracts.ts";
 
-export type LoopId = "morning-arrears" | "owner-letter" | "inbound-triage";
-
-export type LoopSchedule = { type: "daily"; time: string; weekdays: number[] };
-
-export type LoopRunStatus = "queued" | "running" | "completed" | "failed" | "missed";
-
-export interface Loop {
-  id: LoopId;
-  name: string;
-  description: string;
-  /** available = built and runnable now; false = declared, coming later. */
-  available: boolean;
-  enabled: boolean;
-  schedule: LoopSchedule;
-  nextRunAt: number | null;
-}
-
-export interface LoopRun {
-  id: string;
-  loopId: LoopId;
-  loopName: string;
-  scheduledFor: number;
-  status: LoopRunStatus;
-  manual: boolean;
-  /** handsDetail of the desk check, or the failure reason. */
-  detail?: string;
-  startedAt?: number;
-  finishedAt?: number;
-  seenAt?: number;
-  createdAt: number;
-}
+export type { Loop, LoopId, LoopRun, LoopRunStatus, LoopSchedule };
 
 export interface LoopManagerOptions {
   file?: string;
   now?: () => number;
   emit?: (payload: unknown) => void;
-  /** Runs one loop. Return the one-line detail to show on the run receipt. */
+  timezone?: string;
+  hostTimezone?: string;
   execute: (loop: Loop) => Promise<{ ok: boolean; detail: string }>;
 }
 
 interface LoopsFile {
-  version: 1;
-  /** enabled flags + handledThrough per loop id (catalog owns the rest). */
+  version: 2;
+  timezone: string;
   state: Record<string, { enabled: boolean; handledThrough: number }>;
   runs: LoopRun[];
 }
@@ -59,15 +32,16 @@ const WEEKDAYS = [1, 2, 3, 4, 5];
 const CATCH_UP_MS = 12 * 60 * 60_000;
 const MAX_RUNS = 2_000;
 
-/** Fixed product catalog. Hermes does not invent the clock. */
-export const LOOP_CATALOG: ReadonlyArray<Omit<Loop, "enabled" | "nextRunAt">> = [
+export const LOOP_CATALOG: ReadonlyArray<Omit<Loop, "enabled" | "nextRunAt" | "timezonePaused">> = [
   {
     id: "morning-arrears",
-    name: "Morning arrears",
+    name: "Morning money check",
     description:
-      "The clock presses Desk Recheck. Hermes reads the ledger, RealBud applies the shop rules, and courtesy drafts, levy flags, and escalations land on Desk for you to allow or deny.",
+      "The clock presses Desk Recheck. Sources are validated, shop rules run, and exception cards land on Desk. No portal session starts from the clock.",
     available: true,
     schedule: { type: "daily", time: "07:30", weekdays: WEEKDAYS },
+    evaluatorId: "morning-money",
+    evaluatorVersion: 1,
   },
   {
     id: "owner-letter",
@@ -76,25 +50,79 @@ export const LOOP_CATALOG: ReadonlyArray<Omit<Loop, "enabled" | "nextRunAt">> = 
       "Same path, different skill. Hermes reads jobs, arrears, and inspections; RealBud drafts the owner catch-up. Declared, not built — lands after the first paid loop is chosen.",
     available: false,
     schedule: { type: "daily", time: "16:00", weekdays: [5] },
+    evaluatorId: "owner-letter",
+    evaluatorVersion: 0,
   },
   {
     id: "inbound-triage",
     name: "Inbound triage",
-    description:
-      "Mail in → classify → job + reply draft. Declared, not built.",
+    description: "Mail in → classify → job + reply draft. Declared, not built.",
     available: false,
     schedule: { type: "daily", time: "09:00", weekdays: WEEKDAYS },
+    evaluatorId: "inbound-triage",
+    evaluatorVersion: 0,
   },
 ];
 
-export function nextOccurrence(schedule: LoopSchedule, after: number): number | null {
+export function hostTimezone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
+function wallInZone(ms: number, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour12: false,
+    weekday: "short",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(new Date(ms));
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "0";
+  const weekday = get("weekday");
+  const dow =
+    weekday === "Sun" ? 0 : weekday === "Mon" ? 1 : weekday === "Tue" ? 2 : weekday === "Wed" ? 3 : weekday === "Thu" ? 4 : weekday === "Fri" ? 5 : 6;
+  return {
+    year: Number(get("year")),
+    month: Number(get("month")),
+    day: Number(get("day")),
+    hour: Number(get("hour") === "24" ? "0" : get("hour")),
+    minute: Number(get("minute")),
+    dow,
+  };
+}
+
+function utcFromWall(timeZone: string, year: number, month: number, day: number, hour: number, minute: number): number {
+  let guess = Date.UTC(year, month - 1, day, hour, minute, 0);
+  for (let i = 0; i < 6; i++) {
+    const wall = wallInZone(guess, timeZone);
+    const delta =
+      Date.UTC(year, month - 1, day, hour, minute) - Date.UTC(wall.year, wall.month - 1, wall.day, wall.hour, wall.minute);
+    if (delta === 0) return guess;
+    guess += delta;
+  }
+  return guess;
+}
+
+export function nextOccurrence(schedule: LoopSchedule, after: number, timeZone?: string): number | null {
   const [hour, minute] = schedule.time.split(":").map(Number);
   const weekdays = new Set(schedule.weekdays);
+  if (!timeZone) {
+    for (let offset = 0; offset <= 8; offset++) {
+      const d = new Date(after);
+      d.setDate(d.getDate() + offset);
+      d.setHours(hour, minute, 0, 0);
+      if (d.getTime() > after && weekdays.has(d.getDay())) return d.getTime();
+    }
+    return null;
+  }
   for (let offset = 0; offset <= 8; offset++) {
-    const d = new Date(after);
-    d.setDate(d.getDate() + offset);
-    d.setHours(hour, minute, 0, 0);
-    if (d.getTime() > after && weekdays.has(d.getDay())) return d.getTime();
+    const wall = wallInZone(after + offset * 86_400_000, timeZone);
+    const candidate = utcFromWall(timeZone, wall.year, wall.month, wall.day, hour, minute);
+    const candWall = wallInZone(candidate, timeZone);
+    if (candidate > after && weekdays.has(candWall.dow)) return candidate;
   }
   return null;
 }
@@ -108,20 +136,33 @@ export class LoopManager {
   private handledThrough = new Map<LoopId, number>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
+  timezone: string;
+  private readonly hostTz: string;
 
   constructor(options: LoopManagerOptions) {
     this.options = options;
     this.file = options.file ?? join(DATA_DIR, "loops.json");
     this.now = options.now ?? Date.now;
-    let saved: Partial<LoopsFile> = {};
+    this.hostTz = options.hostTimezone ?? hostTimezone();
+    let saved: Partial<LoopsFile> & { version?: number } = {};
     try {
       saved = JSON.parse(readFileSync(this.file, "utf8")) as Partial<LoopsFile>;
     } catch {
       /* first run */
     }
+    this.timezone = options.timezone ?? saved.timezone ?? this.hostTz;
     this.runs = Array.isArray(saved.runs) ? saved.runs : [];
+    for (const run of this.runs) {
+      if (run.status === "queued" || run.status === "running") {
+        run.status = "interrupted";
+        run.finishedAt = this.now();
+        run.detail = run.detail ?? "Interrupted on startup — not resumed mid-action";
+      }
+    }
     const savedState = saved.state ?? {};
+    const paused = this.timezone !== this.hostTz;
     this.loops = LOOP_CATALOG.map((loop) => {
+      const spec = evaluatorForLoop(loop.id);
       const enabled = loop.available && savedState[loop.id]?.enabled !== false;
       const handled = Number.isFinite(savedState[loop.id]?.handledThrough)
         ? savedState[loop.id]!.handledThrough
@@ -129,11 +170,15 @@ export class LoopManager {
       this.handledThrough.set(loop.id, Math.min(handled, this.now() - 1));
       return {
         ...loop,
+        evaluatorId: spec?.id ?? loop.evaluatorId,
+        evaluatorVersion: spec?.version ?? loop.evaluatorVersion,
         schedule: { ...loop.schedule },
         enabled,
-        nextRunAt: enabled ? nextOccurrence(loop.schedule, this.now()) : null,
+        timezonePaused: paused,
+        nextRunAt: enabled && !paused ? nextOccurrence(loop.schedule, this.now(), this.zoneForClock()) : null,
       };
     });
+    if (this.runs.some((r) => r.status === "interrupted")) this.save();
   }
 
   listLoops(): Loop[] {
@@ -156,7 +201,7 @@ export class LoopManager {
     const loop = this.loops.find((candidate) => candidate.id === id);
     if (!loop || !loop.available) throw new Error("that loop cannot be toggled");
     loop.enabled = enabled;
-    loop.nextRunAt = enabled ? nextOccurrence(loop.schedule, this.now()) : null;
+    loop.nextRunAt = enabled && !loop.timezonePaused ? nextOccurrence(loop.schedule, this.now(), this.zoneForClock()) : null;
     this.save();
     this.emitLoop(loop);
     return { ...loop, schedule: { ...loop.schedule } };
@@ -204,8 +249,17 @@ export class LoopManager {
       let changed = false;
       for (const loop of this.loops) {
         if (!loop.enabled || !loop.available) continue;
+        if (loop.timezonePaused) {
+          loop.nextRunAt = null;
+          this.emitLoop(loop);
+          continue;
+        }
         const handled = this.handledThrough.get(loop.id) ?? now - 1;
-        for (let at = nextOccurrence(loop.schedule, handled); at != null && at <= now; at = nextOccurrence(loop.schedule, at)) {
+        for (
+          let at = nextOccurrence(loop.schedule, handled, this.zoneForClock());
+          at != null && at <= now;
+          at = nextOccurrence(loop.schedule, at, this.zoneForClock())
+        ) {
           const late = now - at;
           if (late > CATCH_UP_MS) {
             const missed = this.newRun(loop, at, false);
@@ -221,10 +275,11 @@ export class LoopManager {
           this.handledThrough.set(loop.id, at);
           changed = true;
         }
-        loop.nextRunAt = loop.enabled ? nextOccurrence(loop.schedule, Math.max(now, this.handledThrough.get(loop.id) ?? handled)) : null;
+        loop.nextRunAt = loop.enabled
+          ? nextOccurrence(loop.schedule, Math.max(now, this.handledThrough.get(loop.id) ?? handled), this.zoneForClock())
+          : null;
         this.emitLoop(loop);
       }
-      // manual runs queue themselves, then tick; drain them here
       for (const run of [...this.runs].reverse()) {
         if (run.status !== "queued") continue;
         const loop = this.loops.find((candidate) => candidate.id === run.loopId);
@@ -284,15 +339,19 @@ export class LoopManager {
     this.options.emit?.({ kind: "loop.run", run: { ...run } });
   }
 
+  private zoneForClock(): string | undefined {
+    return this.options.timezone ? this.timezone : undefined;
+  }
+
   private save() {
     mkdirSync(dirname(this.file), { recursive: true });
     const state: LoopsFile["state"] = {};
     for (const loop of this.loops) {
       state[loop.id] = { enabled: loop.enabled, handledThrough: this.handledThrough.get(loop.id) ?? 0 };
     }
-    const payload = JSON.stringify({ version: 1, state, runs: this.runs } satisfies LoopsFile, null, 2);
-    const temp = `${this.file}.tmp`;
-    writeFileSync(temp, payload);
-    renameSync(temp, this.file);
+    writeFileAtomic(
+      this.file,
+      JSON.stringify({ version: 2, timezone: this.timezone, state, runs: this.runs } satisfies LoopsFile, null, 2),
+    );
   }
 }

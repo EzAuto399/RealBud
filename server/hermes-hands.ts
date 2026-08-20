@@ -1,37 +1,37 @@
 // Optional live hands: ask pinned Hermes `property` for ledger JSON.
-// Any failure (missing pin, missing pack, bad JSON, timeout) returns null
-// rows plus a one-line reason, and Desk keeps the training book.
+// Any failure returns null rows plus a one-line reason. Desk holds —
+// it never copies Demo values into a live check.
 // Never passes --yolo. Never opens Desktop.
 import { execFile } from "node:child_process";
 
+import type { LedgerFacts } from "../shared/contracts.ts";
+import { asBoolean, asFiniteNumber, asNonEmptyString, asNullableNumber } from "./decode.ts";
 import { HERMES_PIN, hermesMatchesPin } from "./hermes-pin.ts";
 import { packInstalled } from "./hermes-pack.ts";
 import { probeHermesVersion } from "./hermes-status.ts";
-import type { LedgerFacts } from "./desk.ts";
+import { seedVault } from "./vault.ts";
 
-export type HandsSource = "fixture" | "hermes";
+export type HandsSource = "demo" | "hermes" | "held" | "csv" | "fixture";
 
 export interface HermesLedgerAttempt {
   rows: LedgerFacts[] | null;
-  /** Why we got rows (or why we fell back), for the Desk hands chip. */
+  /** Why we got rows (or why the live check missed). */
   detail: string;
 }
 
 export interface HermesPing {
   ok: boolean;
-  /** One human sentence — the answer or the reason it failed. */
   detail: string;
   elapsedMs: number;
 }
 
 const TIMEOUT_MS = 20_000;
 
-/** One live headless turn to prove the worker can actually answer — the
- * same gates as the ledger call (pin, pack, profile), minus the skill. */
 export async function tryHermesPing(opts?: {
   cli?: string;
   timeoutMs?: number;
   root?: string;
+  cwd?: string;
 }): Promise<HermesPing> {
   const started = Date.now();
   const done = (ok: boolean, detail: string): HermesPing => ({ ok, detail, elapsedMs: Date.now() - started });
@@ -48,7 +48,7 @@ export async function tryHermesPing(opts?: {
     execFile(
       cli,
       ["--profile", HERMES_PIN.profile, "chat", "-Q", "-q", "Reply with exactly one word: OK", "--max-turns", "1"],
-      { timeout: opts?.timeoutMs ?? TIMEOUT_MS },
+      { timeout: opts?.timeoutMs ?? TIMEOUT_MS, cwd: opts?.cwd ?? seedVault() },
       (err, stdout, stderr) => {
         const clean = (s: string) =>
           String(s)
@@ -84,15 +84,17 @@ export function parseLedgerFacts(text: string): LedgerFacts[] | null {
     for (const row of rows) {
       if (!row || typeof row !== "object") return null;
       const r = row as Record<string, unknown>;
-      if (typeof r.propertyId !== "string") return null;
-      if (!Number.isFinite(Number(r.daysSinceDue))) return null;
-      out.push({
-        propertyId: r.propertyId,
-        daysSinceDue: Number(r.daysSinceDue),
-        rentLanded: Boolean(r.rentLanded),
-        levyPaid: Boolean(r.levyPaid),
-        daysSinceCourtesy: r.daysSinceCourtesy == null ? null : Number(r.daysSinceCourtesy),
-      });
+      try {
+        out.push({
+          propertyId: asNonEmptyString(r.propertyId, "propertyId"),
+          daysSinceDue: asFiniteNumber(r.daysSinceDue, "daysSinceDue"),
+          rentLanded: asBoolean(r.rentLanded, "rentLanded"),
+          levyPaid: asBoolean(r.levyPaid, "levyPaid"),
+          daysSinceCourtesy: asNullableNumber(r.daysSinceCourtesy, "daysSinceCourtesy"),
+        });
+      } catch {
+        return null;
+      }
     }
     return out.length ? out : null;
   } catch {
@@ -101,11 +103,11 @@ export function parseLedgerFacts(text: string): LedgerFacts[] | null {
 }
 
 export async function tryHermesLedger(
-  fixture: LedgerFacts[],
-  opts?: { cli?: string; timeoutMs?: number; root?: string },
+  propertyIds: string[],
+  opts?: { cli?: string; timeoutMs?: number; root?: string; cwd?: string },
 ): Promise<HermesLedgerAttempt> {
   const miss = (detail: string): HermesLedgerAttempt => ({ rows: null, detail });
-  if (process.env.VITEST && !opts?.cli) return miss("tests run on the training book");
+  if (process.env.VITEST && !opts?.cli) return miss("tests do not use the live worker — unknown facts stay held");
   if (!packInstalled(opts?.root)) {
     return miss(`Hermes is not answering — the "${HERMES_PIN.profile}" pack is missing from ~/.hermes.`);
   }
@@ -116,24 +118,22 @@ export async function tryHermesLedger(
     return miss(`Hermes is not answering — installed ${version.trim()}, pin is v${HERMES_PIN.product} (${HERMES_PIN.tag}).`);
   }
 
+  const ids = propertyIds.length ? propertyIds.join(", ") : "(none)";
   const prompt =
     `Morning arrears check. Use skill morning-arrears.\n` +
-    `Return JSON only — one object per property, same shape as this fixture (copy values if unsure):\n` +
-    `${JSON.stringify(fixture)}\n` +
+    `Return JSON only — one object per property id you actually observed: ${ids}.\n` +
+    `If a fact is unknown, omit that property. Do not guess. Do not copy sample values.\n` +
     `Do not send, pay, or draft a statutory notice.`;
 
   return new Promise((resolve) => {
     execFile(
       cli,
       ["--profile", HERMES_PIN.profile, "chat", "-Q", "-q", prompt, "--max-turns", "2"],
-      { timeout: opts?.timeoutMs ?? TIMEOUT_MS },
+      { timeout: opts?.timeoutMs ?? TIMEOUT_MS, cwd: opts?.cwd ?? seedVault() },
       (err, stdout, stderr) => {
         if (err) {
           const timedOut = (err as NodeJS.ErrnoException & { killed?: boolean }).killed;
-          if (timedOut) return resolve(miss("Hermes took too long — Desk stays on the training book."));
-          // surface the provider's own words (billing, auth, network) so the
-          // Desk banner can say what to fix instead of just "it failed".
-          // Hermes prints the real error to stdout; stderr carries warnings.
+          if (timedOut) return resolve(miss("Hermes took too long — facts stay held."));
           const clean = (s: string) =>
             String(s)
               .replace(/\x1b\[[0-9;]*m/g, "")
@@ -145,13 +145,13 @@ export async function tryHermesLedger(
           return resolve(
             miss(
               snippet
-                ? `Hermes could not answer (${snippet}) — Desk stays on the training book.`
-                : "Hermes could not answer — Desk stays on the training book.",
+                ? `Hermes could not answer (${snippet}) — facts stay held.`
+                : "Hermes could not answer — facts stay held.",
             ),
           );
         }
         const rows = parseLedgerFacts(String(stdout));
-        if (!rows) return resolve(miss("Hermes answered without ledger JSON — Desk stays on the training book."));
+        if (!rows) return resolve(miss("Hermes answered without ledger JSON — facts stay held."));
         resolve({ rows, detail: `Hermes ${HERMES_PIN.product} answered with ${rows.length} ledger rows.` });
       },
     );

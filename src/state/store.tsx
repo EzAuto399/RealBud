@@ -218,7 +218,7 @@ interface AppState {
   hermes: HermesStatus | null;
   /** selected chat — a bot id OR a group id */
   selectedId: string;
-  activeView: "chat" | "schedule" | "desk";
+  activeView: "chat" | "schedule" | "desk" | "ask" | "you";
   loops: Loop[];
   loopRuns: LoopRun[];
   /** latest Desk snapshot pushed by the server (a clock loop pressed Recheck) */
@@ -245,6 +245,8 @@ type Action =
   | { type: "hydrate"; bots: Bot[]; groups: Group[] }
   | { type: "showRoutines" }
   | { type: "showDesk" }
+  | { type: "showAsk" }
+  | { type: "showYou" }
   | { type: "loopsHydrated"; loops: Loop[]; runs: LoopRun[] }
   | { type: "loopPatched"; loop: Loop }
   | { type: "loopRunPatched"; run: LoopRun }
@@ -378,6 +380,27 @@ function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         activeView: "desk",
+        settingsOpen: false,
+        computerOpen: false,
+        appSettingsOpen: false,
+        pluginsOpen: false,
+      };
+    case "showAsk": {
+      const bud = state.bots.find((b) => b.id === "bud" || b.name === "Bud") ?? state.bots[0];
+      return {
+        ...state,
+        activeView: "ask",
+        selectedId: bud?.id ?? state.selectedId,
+        settingsOpen: false,
+        computerOpen: false,
+        appSettingsOpen: false,
+        pluginsOpen: false,
+      };
+    }
+    case "showYou":
+      return {
+        ...state,
+        activeView: "you",
         settingsOpen: false,
         computerOpen: false,
         appSettingsOpen: false,
@@ -723,11 +746,23 @@ const initialState: AppState = {
 };
 
 // ── API client ─────────────────────────────────────────────────────────
+let sessionToken = "";
+
+export async function ensureSession(): Promise<string> {
+  if (sessionToken) return sessionToken;
+  const res = await fetch("/api/session");
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? "session refused");
+  sessionToken = String(body.token ?? "");
+  return sessionToken;
+}
+
 export async function api(path: string, init?: RequestInit): Promise<any> {
-  const res = await fetch(path, {
-    headers: { "content-type": "application/json" },
-    ...init,
-  });
+  const token = await ensureSession().catch(() => "");
+  const headers = new Headers(init?.headers);
+  if (!headers.has("content-type")) headers.set("content-type", "application/json");
+  if (token) headers.set("x-realbud-session", token);
+  const res = await fetch(path, { ...init, headers });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
   return body;
@@ -1069,15 +1104,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         .then(({ loops, runs }) => alive && rawDispatch({ type: "loopsHydrated", loops, runs: runs ?? [] }))
         .catch(() => {});
     };
-    loadAll();
-
-    const es = new EventSource("/api/events");
-    es.onopen = () => {
-      rawDispatch({ type: "connected", value: true });
-      loadAll(); // resync anything missed while disconnected
-    };
-    es.onerror = () => rawDispatch({ type: "connected", value: false });
-    es.onmessage = (raw) => {
+    const onFrame = (raw: MessageEvent) => {
       let frame: any;
       try {
         frame = JSON.parse(raw.data);
@@ -1206,9 +1233,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
       }
     };
+    let es: EventSource | null = null;
+    void ensureSession()
+      .catch(() => "")
+      .then((token) => {
+        if (!alive) return;
+        loadAll();
+        es = new EventSource(token ? `/api/events?session=${encodeURIComponent(token)}` : "/api/events");
+        es.onopen = () => {
+          rawDispatch({ type: "connected", value: true });
+          loadAll();
+        };
+        es.onerror = () => rawDispatch({ type: "connected", value: false });
+        es.onmessage = onFrame;
+      });
     return () => {
       alive = false;
-      es.close();
+      es?.close();
     };
   }, []);
 

@@ -46,7 +46,7 @@ describe("hard gates (canary)", () => {
 
   it("the courtesy disclaimer cannot be stripped by an edit", () => {
     const desk = tempDesk();
-    const snap = desk.snapshot();
+    const snap = desk.runMorningCheck();
     const draft = snap.drafts.find((d) => d.kind === "courtesy-rent")!;
     const edited = desk.editDraft(draft.id, "Pay up. You have 7 days or we issue a notice.");
     expect(edited.body).toMatch(/not a formal notice/i);
@@ -55,7 +55,7 @@ describe("hard gates (canary)", () => {
 
   it("approving a draft marks it allowed — it never gains a sentAt or a send path", () => {
     const desk = tempDesk();
-    const draft = desk.snapshot().drafts.find((d) => d.kind === "courtesy-rent")!;
+    const draft = desk.runMorningCheck().drafts.find((d) => d.kind === "courtesy-rent")!;
     const allowed = desk.allowDraft(draft.id);
     expect(allowed.status).toBe("allowed");
     expect(allowed).not.toHaveProperty("sentAt");
@@ -95,7 +95,7 @@ describe("hard gates (canary)", () => {
 
   it("the escalation copy states the shop rule and refuses to draft a notice", () => {
     const desk = tempDesk();
-    const escalation = desk.snapshot().escalations[0];
+    const escalation = desk.runMorningCheck().escalations[0];
     expect(escalation.reason).toBe("statutory-clock");
     expect(escalation.detail).toMatch(/shop reminder rule, not a legal clock/i);
     expect(escalation.detail).toMatch(/RealBud will not draft or send one/i);

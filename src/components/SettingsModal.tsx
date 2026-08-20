@@ -13,7 +13,7 @@ const SECTIONS: Array<{ id: AppSettingsSection; label: string; icon: typeof User
 ];
 
 /** Name + email, persisted to /api/config {profile} on blur. */
-function ProfileFields() {
+export function ProfileFields() {
   const { state, dispatch } = useStore();
   const [name, setName] = useState(state.config?.profile?.name ?? "");
   const [email, setEmail] = useState(state.config?.profile?.email ?? "");
@@ -89,9 +89,8 @@ function UpdatesRow() {
 
 /** The pinned Hermes worker is the product's hands — headless only, never
  * Hermes Desktop. Install the pinned CLI, apply the `property` pack, attach
- * a model; Desk Recheck asks it for the morning ledger and falls back to
- * the training book on any miss. */
-function HermesHandsCard() {
+ * a model; Desk Recheck asks it for the morning ledger. A miss holds. */
+export function HermesHandsCard() {
   const { state, dispatch, refreshHermes } = useStore();
   const [busy, setBusy] = useState<null | "install" | "pack" | "model" | "test" | "check">(null);
   const [error, setError] = useState("");

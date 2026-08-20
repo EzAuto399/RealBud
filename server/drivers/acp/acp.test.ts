@@ -20,6 +20,7 @@ import { GeminiAgentDriver } from "./gemini.ts";
 import { KimiAgentDriver } from "./kimi.ts";
 import { HermesAgentDriver } from "./hermes.ts";
 import { HERMES_PIN } from "../../hermes-pin.ts";
+import { seedVault } from "../../vault.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 // The scripted fake CLI inherits process.env; under `--coverage` that would
@@ -44,7 +45,9 @@ describe("ACP decodeConfig", () => {
     expect(KimiAgentDriver.install?.signInCommand).toBe("kimi login");
   });
   it("hermes defaults to the hermes binary and pins a commit on install", () => {
-    expect(HermesAgentDriver.decodeConfig(undefined)).toEqual({ cli: "hermes", fullAuto: false, workspace: undefined });
+    const book = seedVault();
+    expect(HermesAgentDriver.decodeConfig(undefined)).toEqual({ cli: "hermes", fullAuto: false, workspace: book });
+    expect(HermesAgentDriver.defaultConfig().workspace).toBe(book);
     expect(HermesAgentDriver.install?.command?.darwin).toContain(HERMES_PIN.commit);
     expect(HermesAgentDriver.install?.command?.darwin).toContain("--force-commit");
     expect(HermesAgentDriver.install?.signInCommand).toBe(`hermes -p ${HERMES_PIN.profile} model`);

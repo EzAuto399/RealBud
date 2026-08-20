@@ -25,10 +25,15 @@ const check = (label, ok, extra = "") => {
   if (!ok) failures++;
 };
 
+let session = "";
+
 const api = async (method, path, body) => {
+  const headers = {};
+  if (body !== undefined) headers["content-type"] = "application/json";
+  if (session) headers["x-realbud-session"] = session;
   const res = await fetch(BASE + path, {
     method,
-    headers: body !== undefined ? { "content-type": "application/json" } : undefined,
+    headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   let json = null;
@@ -73,13 +78,24 @@ try {
   const health = (await api("GET", "/api/health")).body;
   check("server identifies as realbud", health?.app === "realbud", health?.app);
 
-  // ── Desk: morning check + gates ──
-  const desk = (await api("GET", "/api/desk")).body;
-  check("desk has the 6-property training book", desk?.properties?.length === 6, `got ${desk?.properties?.length}`);
+  const sessionRes = await fetch(`${BASE}/api/session`);
+  const sessionBody = await sessionRes.json();
+  session = sessionBody.token;
+  check("per-boot session token issued", sessionRes.ok && typeof session === "string" && session.length > 8);
+
+  const noSession = await fetch(`${BASE}/api/desk`);
+  check("desk without a session is 401", noSession.status === 401);
+
+  // ── Desk: GET is side-effect free; Recheck is explicit ──
+  const empty = (await api("GET", "/api/desk")).body;
+  check("pure GET has the 6-property book and no implicit drafts", empty?.properties?.length === 6 && empty?.lastRunAt == null && empty?.drafts?.length === 0, `drafts=${empty?.drafts?.length}`);
+
+  const desk = (await api("POST", "/api/desk/check", {})).body;
+  check("desk has the 6-property Demo book", desk?.properties?.length === 6, `got ${desk?.properties?.length}`);
   check("ledger facts are exposed", Array.isArray(desk?.ledger) && desk.ledger.length === 6);
   check("morning check drafted courtesy + levy flags", ["courtesy-rent", "levy-from-rent"].every((kind) => desk?.drafts?.some((d) => d.kind === kind)));
   check("escalation raised with no draft", desk?.escalations?.length >= 1 && desk.escalations[0].reason === "statutory-clock");
-  check("hands report why they are on the training book", typeof desk?.handsDetail === "string" && desk.handsDetail.length > 0, desk?.handsDetail);
+  check("Demo check is labelled Demo, not a live success", desk?.demo === true && desk?.hands === "demo", `${desk?.hands} ${desk?.handsDetail}`);
 
   const pending = desk.drafts.find((d) => d.status === "pending");
   const send = await api("POST", `/api/desk/drafts/${pending.id}/send`, {});
@@ -88,8 +104,13 @@ try {
   const allowed = await api("POST", `/api/desk/drafts/${pending.id}/allow`, {});
   check("allow marks wording approved without a sentAt", allowed.body?.draft?.status === "allowed" && !("sentAt" in (allowed.body?.draft ?? {})), allowed.body?.draft?.status);
 
+  const afterAllow = (await api("GET", "/api/desk")).body;
+  const work = afterAllow.workItems?.find((w) => w.draftId === pending.id);
+  check("work item is approved, not confirmed or sent", work?.state === "approved", work?.state);
+
   const recheck = await api("POST", "/api/desk/check", {});
-  check("recheck completes and reports hands", recheck.status === 200 && ["fixture", "hermes"].includes(recheck.body?.hands), recheck.body?.hands);
+  check("recheck completes and reports hands", recheck.status === 200 && ["demo", "hermes", "held", "csv"].includes(recheck.body?.hands), recheck.body?.hands);
+  check("live readiness is not claimed from Demo facts", recheck.body?.demo === true || recheck.body?.hands === "hermes" || recheck.body?.hands === "csv");
 
   // ── Book: add → edit → remove ──
   const added = await api("POST", "/api/desk/properties", {

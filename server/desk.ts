@@ -1,132 +1,78 @@
-// Fixture PM desk: per-property options + morning arrears check + draft cards.
-// v0 sits on fake ledger facts. It never sends, never pays trust, never
-// drafts a statutory notice. Allow means "the PM approved this wording."
+// Desk spine: evaluate → proposal → human decision. Encrypted v2 store.
+// snapshot() is side-effect free. Approval never means sent.
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
-import { writeFileAtomic } from "./atomic.ts";
+import type {
+  DeskSnapshot,
+  Draft,
+  DraftKind,
+  HandsSource,
+  LedgerFacts,
+  Property,
+  PropertyOptions,
+  WorkItem,
+  WorkState,
+} from "../shared/contracts.ts";
 import { DATA_DIR } from "./config.ts";
-import { tryHermesLedger, type HandsSource } from "./hermes-hands.ts";
+import { persistArtifact } from "./audit-artifacts.ts";
+import { parsePmsExport, resolveExportRows } from "./csv-ledger.ts";
+import { runBoundedPrefill } from "./portal-handoff.ts";
+import {
+  applyOptions,
+  composeDraft,
+  dueDate,
+  fixtureBook,
+  shopDefaults,
+  withCourtesyDisclaimer,
+} from "./desk-evaluate.ts";
+import { DeskStore, type DeskFileV2 } from "./desk-store.ts";
+import { assertTransition, occurrenceKey, proposalHash } from "./desk-work.ts";
+import { tryHermesLedger, type HermesLedgerAttempt } from "./hermes-hands.ts";
+import { classifyMoneyRow, unmatchedException } from "./morning-money.ts";
+import { FAKE_PORTAL_RECIPE } from "./portal-recipe.ts";
+import { CSV_FRESH_MS, isFresh } from "./source-gate.ts";
+import {
+  appendAllowedLine,
+  archivePropertyNote,
+  readPropertyNote,
+  seedVault,
+  vaultDirFromDeskFile,
+  writePropertyNote,
+} from "./vault.ts";
 
-export const NEVER_ACTIONS = ["statutory-send", "trust-pay"] as const;
-export const COURTESY_DISCLAIMER =
-  "This is not a formal notice and does not start any notice period.";
+export {
+  COURTESY_DISCLAIMER,
+  NEVER_ACTIONS,
+  applyOptions,
+  aud,
+  composeDraft,
+  evaluateProperty,
+  fixtureBook,
+  shopDefaults,
+  withCourtesyDisclaimer,
+} from "./desk-evaluate.ts";
 
-export type RentSource = "mepay" | "bank" | "pms-export" | "fixture";
-export type NotifyChannel = "sms" | "email" | "portal" | "desk";
-export type DraftKind = "courtesy-rent" | "levy-from-rent";
-export type DraftStatus = "pending" | "allowed" | "denied";
-export type CheckOutcome = "draft" | "escalate" | "clear" | "skip";
-export type CheckReason =
-  | "rent-unpaid-courtesy"
-  | "rent-landed-levy-unpaid"
-  | "rent-landed"
-  | "inside-grace"
-  | "already-reminded"
-  | "statutory-clock";
-
-export interface LevyFromRent {
-  amountCents: number;
-  cadence: "quarterly" | "monthly";
-}
-
-export interface PropertyOptions {
-  rentSource: RentSource;
-  graceDays: number;
-  /** Days late at which we stop drafting courtesy and escalate. */
-  courtesyUntilDay: number;
-  levyFromRent: LevyFromRent | null;
-  notifyChannel: NotifyChannel;
-  never: string[];
-}
-
-export interface Property {
-  id: string;
-  address: string;
-  tenantName: string;
-  tenantPhone: string;
-  weeklyRentCents: number;
-  options: PropertyOptions;
-}
-
-/** Ledger as relative facts so the demo stays true on any calendar day. */
-export interface LedgerFacts {
-  propertyId: string;
-  daysSinceDue: number;
-  rentLanded: boolean;
-  levyPaid: boolean;
-  /** null = no courtesy this period */
-  daysSinceCourtesy: number | null;
-}
-
-export interface Draft {
-  id: string;
-  propertyId: string;
-  kind: DraftKind;
-  status: DraftStatus;
-  channel: NotifyChannel;
-  to: string;
-  body: string;
-  periodDueAt: number;
-  createdAt: number;
-  decidedAt?: number;
-}
-
-export interface Escalation {
-  id: string;
-  propertyId: string;
-  reason: "statutory-clock";
-  detail: string;
-  periodDueAt: number;
-  createdAt: number;
-}
-
-export interface CheckResult {
-  propertyId: string;
-  outcome: CheckOutcome;
-  reason: CheckReason;
-  daysLate: number;
-}
-
-export interface DeskSnapshot {
-  properties: Property[];
-  /** What the hands (Hermes or the fixture book) reported per property. */
-  ledger: LedgerFacts[];
-  drafts: Draft[];
-  escalations: Escalation[];
-  lastRunAt: number | null;
-  results: CheckResult[];
-  hands: HandsSource;
-  /** Why hands are Hermes — or why the last check fell back to fixtures. */
-  handsDetail: string | null;
-}
-
-interface DeskFile {
-  version: 1;
-  properties: Property[];
-  ledger: LedgerFacts[];
-  drafts: Draft[];
-  escalations: Escalation[];
-  lastRunAt: number | null;
-  results: CheckResult[];
-  hands: HandsSource;
-  handsDetail: string | null;
-}
-
-const DAY = 86_400_000;
-const NEVER = [...NEVER_ACTIONS];
-
-function shopDefaults(): PropertyOptions {
-  return {
-    rentSource: "fixture",
-    graceDays: 3,
-    courtesyUntilDay: 7,
-    levyFromRent: null,
-    notifyChannel: "sms",
-    never: [...NEVER],
-  };
-}
+export type {
+  BookMode,
+  CheckOutcome,
+  CheckReason,
+  CheckResult,
+  DeskSnapshot,
+  Draft,
+  DraftKind,
+  DraftStatus,
+  Escalation,
+  HandsSource,
+  LedgerFacts,
+  LevyFromRent,
+  NotifyChannel,
+  Property,
+  PropertyOptions,
+  RentSource,
+  WorkItem,
+  WorkState,
+} from "../shared/contracts.ts";
 
 export interface NewPropertyInput {
   address: string;
@@ -136,319 +82,175 @@ export interface NewPropertyInput {
   options?: Partial<PropertyOptions>;
 }
 
-const RENT_SOURCES: RentSource[] = ["mepay", "bank", "pms-export", "fixture"];
-const NOTIFY_CHANNELS: NotifyChannel[] = ["sms", "email", "portal", "desk"];
-
-/** Validate and apply an options patch. `never` is never editable — the
- * hard gates (statutory send, trust pay) cannot be removed from a property. */
-function applyOptions(options: PropertyOptions, patch: Partial<PropertyOptions>) {
-  if (patch.graceDays != null) {
-    const n = Number(patch.graceDays);
-    if (!Number.isInteger(n) || n < 0 || n > 28) throw Object.assign(new Error("grace days must be 0–28"), { status: 400 });
-    options.graceDays = n;
-  }
-  if (patch.courtesyUntilDay != null) {
-    const n = Number(patch.courtesyUntilDay);
-    if (!Number.isInteger(n) || n < 1 || n > 60) throw Object.assign(new Error("courtesy window must be 1–60 days"), { status: 400 });
-    options.courtesyUntilDay = n;
-  }
-  if (options.courtesyUntilDay <= options.graceDays) {
-    throw Object.assign(new Error("courtesy window must be after grace days"), { status: 400 });
-  }
-  if (patch.levyFromRent !== undefined) {
-    if (patch.levyFromRent === null) options.levyFromRent = null;
-    else {
-      const amount = Number(patch.levyFromRent.amountCents);
-      if (!Number.isInteger(amount) || amount <= 0) throw Object.assign(new Error("levy amount required"), { status: 400 });
-      options.levyFromRent = {
-        amountCents: amount,
-        cadence: patch.levyFromRent.cadence === "monthly" ? "monthly" : "quarterly",
-      };
-    }
-  }
-  if (patch.rentSource !== undefined) {
-    if (!RENT_SOURCES.includes(patch.rentSource)) throw Object.assign(new Error("unknown rent source"), { status: 400 });
-    options.rentSource = patch.rentSource;
-  }
-  if (patch.notifyChannel !== undefined) {
-    if (!NOTIFY_CHANNELS.includes(patch.notifyChannel)) throw Object.assign(new Error("unknown notify channel"), { status: 400 });
-    options.notifyChannel = patch.notifyChannel;
-  }
-  options.never = [...NEVER];
-}
-
-export function fixtureBook(): { properties: Property[]; ledger: LedgerFacts[] } {
-  const properties: Property[] = [
-    {
-      id: "prop-oak",
-      address: "12 Oak St, Dickson ACT",
-      tenantName: "Sam Nguyen",
-      tenantPhone: "0400 111 222",
-      weeklyRentCents: 62_000,
-      options: shopDefaults(),
-    },
-    {
-      id: "prop-harbour",
-      address: "4/22 Harbour Rd, Kingston ACT",
-      tenantName: "Priya Shah",
-      tenantPhone: "0400 333 444",
-      weeklyRentCents: 75_000,
-      options: {
-        ...shopDefaults(),
-        levyFromRent: { amountCents: 42_000, cadence: "quarterly" },
-        notifyChannel: "desk",
-      },
-    },
-    {
-      id: "prop-pine",
-      address: "8 Pine Ave, Braddon ACT",
-      tenantName: "Jordan Blake",
-      tenantPhone: "0400 555 666",
-      weeklyRentCents: 58_000,
-      options: shopDefaults(),
-    },
-    {
-      id: "prop-king",
-      address: "91 King St, Narrabundah ACT",
-      tenantName: "Alex Romero",
-      tenantPhone: "0400 777 888",
-      weeklyRentCents: 54_000,
-      options: shopDefaults(),
-    },
-    {
-      id: "prop-birch",
-      address: "3 Birch Cl, Watson ACT",
-      tenantName: "Casey Holt",
-      tenantPhone: "0400 999 000",
-      weeklyRentCents: 50_000,
-      options: shopDefaults(),
-    },
-    {
-      id: "prop-flora",
-      address: "2/5 Flora St, Ainslie ACT",
-      tenantName: "Riley Chen",
-      tenantPhone: "0412 000 111",
-      weeklyRentCents: 56_000,
-      options: shopDefaults(),
-    },
-  ];
-  const ledger: LedgerFacts[] = [
-    { propertyId: "prop-oak", daysSinceDue: 3, rentLanded: false, levyPaid: false, daysSinceCourtesy: null },
-    { propertyId: "prop-harbour", daysSinceDue: 2, rentLanded: true, levyPaid: false, daysSinceCourtesy: null },
-    { propertyId: "prop-pine", daysSinceDue: 5, rentLanded: false, levyPaid: false, daysSinceCourtesy: 4 },
-    { propertyId: "prop-king", daysSinceDue: 10, rentLanded: false, levyPaid: false, daysSinceCourtesy: null },
-    { propertyId: "prop-birch", daysSinceDue: 3, rentLanded: true, levyPaid: true, daysSinceCourtesy: null },
-    { propertyId: "prop-flora", daysSinceDue: 1, rentLanded: false, levyPaid: false, daysSinceCourtesy: null },
-  ];
-  return { properties, ledger };
-}
-
-export function aud(cents: number): string {
-  return new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(cents / 100);
-}
-
-export function evaluateProperty(property: Property, facts: LedgerFacts): CheckResult {
-  const daysLate = facts.daysSinceDue;
-  if (facts.rentLanded) {
-    if (property.options.levyFromRent && !facts.levyPaid) {
-      return { propertyId: property.id, outcome: "draft", reason: "rent-landed-levy-unpaid", daysLate };
-    }
-    return { propertyId: property.id, outcome: "clear", reason: "rent-landed", daysLate };
-  }
-  if (daysLate < property.options.graceDays) {
-    return { propertyId: property.id, outcome: "skip", reason: "inside-grace", daysLate };
-  }
-  if (daysLate >= property.options.courtesyUntilDay) {
-    return { propertyId: property.id, outcome: "escalate", reason: "statutory-clock", daysLate };
-  }
-  if (facts.daysSinceCourtesy != null) {
-    return { propertyId: property.id, outcome: "skip", reason: "already-reminded", daysLate };
-  }
-  return { propertyId: property.id, outcome: "draft", reason: "rent-unpaid-courtesy", daysLate };
-}
-
-function firstName(name: string): string {
-  return name.trim().split(/\s+/)[0] ?? name;
-}
-
-export function withCourtesyDisclaimer(body: string): string {
-  const trimmed = String(body ?? "").trim();
-  if (/not a formal notice/i.test(trimmed) && /does not start/i.test(trimmed)) return trimmed;
-  const withoutLoose = trimmed.replace(/\n*This is not a formal notice\.?\s*$/i, "").trim();
-  return `${withoutLoose}\n\n${COURTESY_DISCLAIMER}`;
-}
-
-function startOfDay(ms: number): number {
-  const d = new Date(ms);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-}
-
-function dueDate(now: number, daysSinceDue: number): number {
-  return startOfDay(now) - daysSinceDue * DAY;
-}
-
-function ausDate(ms: number): string {
-  return new Date(ms).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" });
-}
-
-export function composeDraft(property: Property, facts: LedgerFacts, now: number, kind: DraftKind): Draft {
-  const periodDueAt = dueDate(now, facts.daysSinceDue);
-  if (kind === "levy-from-rent") {
-    const levy = property.options.levyFromRent!;
-    return {
-      id: `draft-${randomUUID()}`,
-      propertyId: property.id,
-      kind,
-      status: "pending",
-      channel: "desk",
-      to: "PM desk",
-      periodDueAt,
-      createdAt: now,
-      body:
-        `Rent landed for ${property.address}. The ${aud(levy.amountCents)} ${levy.cadence} levy taken from rent is not marked paid on the owner ledger.\n` +
-        `Desk flag only. Check the bill and trust authority in the PMS. RealBud will not move trust money.`,
-    };
-  }
-  return {
-    id: `draft-${randomUUID()}`,
-    propertyId: property.id,
-    kind,
-    status: "pending",
-    channel: property.options.notifyChannel === "desk" ? "sms" : property.options.notifyChannel,
-    to: `${property.tenantName} · ${property.tenantPhone}`,
-    periodDueAt,
-    createdAt: now,
-    body: withCourtesyDisclaimer(
-      `Hi ${firstName(property.tenantName)}, just a courtesy from the office — we haven't seen this week's rent for ${property.address} yet (due ${ausDate(periodDueAt)}, ${aud(property.weeklyRentCents)}/wk). ` +
-        `If you've already paid, ignore this. If something's up, reply and we'll sort it.`,
-    ),
-  };
-}
-
-function emptyFile(): DeskFile {
-  const book = fixtureBook();
-  return {
-    version: 1,
-    properties: book.properties,
-    ledger: book.ledger,
-    drafts: [],
-    escalations: [],
-    lastRunAt: null,
-    results: [],
-    hands: "fixture",
-    handsDetail: null,
-  };
-}
-
-function isProperty(value: unknown): value is Property {
-  if (!value || typeof value !== "object") return false;
-  const p = value as Property;
-  return typeof p.id === "string" && typeof p.address === "string" && p.options != null;
-}
+export type DeskCommand =
+  | { type: "allow"; draftId: string; expectedRevision: number; approver?: string }
+  | { type: "deny"; draftId: string; expectedRevision: number }
+  | { type: "edit"; draftId: string; expectedRevision: number; body: string }
+  | { type: "check-demo"; expectedRevision?: number }
+  | { type: "import-csv"; expectedRevision: number; csv: string; observedAt?: number }
+  | { type: "propose"; expectedRevision?: number; propertyId: string; kind?: DraftKind; body?: string }
+  | { type: "prepare-portal"; expectedRevision: number; draftId: string }
+  | { type: "handoff-ready"; expectedRevision: number; workItemId: string }
+  | { type: "confirm"; expectedRevision: number; workItemId: string; attestation?: boolean }
+  | { type: "effect-unknown"; expectedRevision: number; workItemId: string };
 
 export class Desk {
-  private file: string;
+  private store: DeskStore;
   private now: () => number;
-  private data: DeskFile;
+  private hermes: (ids: string[]) => Promise<HermesLedgerAttempt>;
+  private onCommit: ((snap: DeskSnapshot) => void) | null;
+  private portalUrl: string | null;
+  private vaultRoot: string;
 
-  constructor(opts?: { file?: string; now?: () => number }) {
-    this.file = opts?.file ?? join(DATA_DIR, "desk.json");
+  constructor(opts?: {
+    file?: string;
+    now?: () => number;
+    key?: Buffer;
+    hermes?: (ids: string[]) => Promise<HermesLedgerAttempt>;
+    onCommit?: (snap: DeskSnapshot) => void;
+    portalUrl?: string;
+    vaultDir?: string;
+  }) {
     this.now = opts?.now ?? Date.now;
-    this.data = this.load();
+    this.hermes = opts?.hermes ?? ((ids) => tryHermesLedger(ids));
+    this.onCommit = opts?.onCommit ?? null;
+    this.portalUrl = opts?.portalUrl ?? process.env.FAKE_PORTAL_URL ?? null;
+    const file = opts?.file ?? join(DATA_DIR, "desk.json");
+    this.vaultRoot = opts?.vaultDir ?? vaultDirFromDeskFile(file);
+    seedVault(this.vaultRoot);
+    this.store = new DeskStore({
+      file,
+      book: fixtureBook(),
+      key: opts?.key,
+    });
+    if (this.store.data.recipes.length === 0 && !this.store.recovery.active) {
+      this.store.data.recipes.push({ ...FAKE_PORTAL_RECIPE });
+      this.store.data.portalBindings.push({
+        propertyId: "prop-oak",
+        recipeId: FAKE_PORTAL_RECIPE.id,
+        recipeVersion: FAKE_PORTAL_RECIPE.version,
+        remotePropertyId: "oak-1",
+      });
+      this.store.persistWithoutBump();
+    }
+  }
+
+  get revision(): number {
+    return this.store.data.revision;
+  }
+
+  get recovery() {
+    return this.store.recovery;
   }
 
   snapshot(): DeskSnapshot {
-    if (this.data.lastRunAt == null) return this.runMorningCheck();
-    const { properties, ledger, drafts, escalations, lastRunAt, results, hands, handsDetail } = this.data;
+    const d = this.store.data;
+    const extras = this.store.snapshotExtras();
     return {
-      properties,
-      ledger,
-      drafts,
-      escalations,
-      lastRunAt,
-      results,
-      hands: hands ?? "fixture",
-      handsDetail: handsDetail ?? null,
+      ...extras,
+      properties: d.properties.map((p) => ({ ...p, notes: readPropertyNote(p.id, this.vaultRoot) })),
+      ledger: d.ledger,
+      drafts: d.drafts,
+      escalations: d.escalations,
+      lastRunAt: d.lastRunAt,
+      results: d.results,
+      hands: d.hands,
+      handsDetail: d.handsDetail,
     };
   }
 
-  /** Training book only — used by tests and first paint. */
+  /** Training / Demo book only. Never counts as a live check. */
   runMorningCheck(): DeskSnapshot {
-    return this.evaluateBook("fixture", "Training book — Recheck asks Hermes for the morning ledger.");
+    this.assertWritable();
+    return this.evaluateBook("demo", "Demo book — Recheck asks Hermes or a CSV for live facts.");
   }
 
-  /** Recheck: try pinned Hermes, fall back to the training book. */
+  /** Live recheck. A miss never fabricates rows. Demo mode may still evaluate
+   * the labelled Demo book, and that is not a successful live check. */
   async runMorningCheckLive(): Promise<DeskSnapshot> {
-    const attempt = await tryHermesLedger(this.data.ledger);
+    this.assertWritable();
+    const ids = this.store.data.properties.map((p) => p.id);
+    const attempt = await this.hermes(ids);
     if (attempt.rows) {
       for (const row of attempt.rows) {
-        const idx = this.data.ledger.findIndex((item) => item.propertyId === row.propertyId);
-        if (idx >= 0) this.data.ledger[idx] = row;
+        const idx = this.store.data.ledger.findIndex((item) => item.propertyId === row.propertyId);
+        if (idx >= 0) this.store.data.ledger[idx] = row;
+        else this.store.data.ledger.push(row);
       }
+      this.observe("src-hermes", "hermes", "Hermes ledger", attempt.rows);
+      return this.evaluateBook("hermes", attempt.detail);
     }
-    return this.evaluateBook(attempt.rows ? "hermes" : "fixture", attempt.detail);
+    if (this.store.data.mode === "demo") {
+      return this.evaluateBook("demo", attempt.detail);
+    }
+    this.holdBook(attempt.detail);
+    return this.snapshot();
   }
 
-  private evaluateBook(hands: HandsSource, handsDetail: string | null): DeskSnapshot {
-    const now = this.now();
-    const results: CheckResult[] = [];
-    for (const property of this.data.properties) {
-      const facts = this.facts(property.id);
-      const result = evaluateProperty(property, facts);
-      results.push(result);
-      const periodDueAt = dueDate(now, facts.daysSinceDue);
-      if (result.outcome === "draft") {
-        const kind: DraftKind = result.reason === "rent-landed-levy-unpaid" ? "levy-from-rent" : "courtesy-rent";
-        const exists = this.data.drafts.some((d) => d.propertyId === property.id && d.kind === kind);
-        if (!exists) this.data.drafts.push(composeDraft(property, facts, now, kind));
-      } else if (result.outcome === "escalate") {
-        const exists = this.data.escalations.some(
-          (e) => e.propertyId === property.id && e.reason === result.reason,
-        );
-        if (!exists) {
-          this.data.escalations.push({
-            id: `esc-${randomUUID()}`,
-            propertyId: property.id,
-            reason: "statutory-clock",
-            periodDueAt,
-            createdAt: now,
-            detail:
-              `${property.address} is ${result.daysLate} days late on this sample book (courtesy window ends day ${property.options.courtesyUntilDay}). ` +
-              `That is a shop reminder rule, not a legal clock. A licensed person decides whether any state notice is due — in the PMS. RealBud will not draft or send one.`,
-          });
-        }
-      }
+  importCsv(csv: string, observedAt = this.now()): DeskSnapshot {
+    this.assertWritable();
+    const batch = parsePmsExport(csv, observedAt, "src-csv");
+    if (!isFresh(batch.observedAt, CSV_FRESH_MS, this.now())) {
+      this.holdBook("CSV batch is stale");
+      return this.snapshot();
     }
-    this.data.results = results;
-    this.data.lastRunAt = now;
-    this.data.hands = hands;
-    this.data.handsDetail = handsDetail;
-    this.save();
-    return this.snapshot();
+    const resolved = resolveExportRows(this.store.data.properties, batch.rows);
+    if (!resolved.ok) {
+      throw Object.assign(new Error(resolved.message), { status: 400 });
+    }
+    const previous = this.store.data.ledger.map((row) => ({ ...row }));
+    try {
+      for (const row of resolved.matched) {
+        const idx = this.store.data.ledger.findIndex((item) => item.propertyId === row.propertyId);
+        if (idx >= 0) this.store.data.ledger[idx] = row;
+        else this.store.data.ledger.push(row);
+      }
+      for (const row of resolved.unmatched) {
+        this.holdWork(unmatchedException(row.identity.value, batch.observedAt, batch.sourceId));
+      }
+    } catch (err) {
+      this.store.data.ledger = previous;
+      throw err;
+    }
+    this.store.data.mode = "live";
+    this.observe("src-csv", "csv", "PMS CSV export", resolved.matched);
+    return this.evaluateBook(
+      "csv",
+      `CSV import accepted ${resolved.matched.length} row${resolved.matched.length === 1 ? "" : "s"}.`,
+    );
   }
 
   resetFixtures(): DeskSnapshot {
-    this.data = emptyFile();
-    this.save();
-    return this.snapshot();
+    this.assertWritable();
+    const book = fixtureBook();
+    this.store.data.properties = book.properties;
+    this.store.data.ledger = book.ledger;
+    this.store.data.drafts = [];
+    this.store.data.escalations = [];
+    this.store.data.workItems = [];
+    this.store.data.results = [];
+    this.store.data.lastRunAt = null;
+    this.store.data.mode = "demo";
+    this.store.data.hands = "demo";
+    this.store.data.handsDetail = null;
+    this.store.data.capabilities = [];
+    this.store.persist();
+    return this.evaluateBook("demo", "Demo book reset.");
   }
 
   patchProperty(id: string, patch: Partial<PropertyOptions>): Property {
-    const property = this.data.properties.find((p) => p.id === id);
-    if (!property) {
-      const err = Object.assign(new Error("no such property"), { status: 404 });
-      throw err;
-    }
+    this.assertWritable();
+    const property = this.store.data.properties.find((p) => p.id === id);
+    if (!property) throw Object.assign(new Error("no such property"), { status: 404 });
     applyOptions(property.options, patch);
-    this.save();
+    this.invalidateCapabilities({ propertyId: id });
+    this.store.persist();
+    this.emit();
     return property;
   }
 
-  /** Add a property to the book. Quiet ledger facts by default: day 0, no
-   * rent seen yet — inside grace, so the next check stays silent until
-   * Hermes (or a bank export) reports real numbers. */
   addProperty(input: NewPropertyInput): DeskSnapshot {
+    this.assertWritable();
     const address = String(input.address ?? "").trim();
     const tenantName = String(input.tenantName ?? "").trim();
     const tenantPhone = String(input.tenantPhone ?? "").trim();
@@ -457,116 +259,445 @@ export class Desk {
     if (address.length > 160) throw Object.assign(new Error("address is too long"), { status: 400 });
     if (!tenantName) throw Object.assign(new Error("tenant name required"), { status: 400 });
     if (!Number.isInteger(rent) || rent <= 0) throw Object.assign(new Error("weekly rent required"), { status: 400 });
-    if (this.data.properties.length >= 200) throw Object.assign(new Error("the book is full (200 properties)"), { status: 400 });
+    if (this.store.data.properties.length >= 200) throw Object.assign(new Error("the book is full (200 properties)"), { status: 400 });
 
     const options = shopDefaults();
     if (input.options) applyOptions(options, input.options);
     const id = `prop-${randomUUID().slice(0, 8)}`;
-    this.data.properties.push({
-      id,
-      address,
-      tenantName,
-      tenantPhone,
-      weeklyRentCents: rent,
-      options,
-    });
-    this.data.ledger.push({
+    this.store.data.properties.push({ id, address, tenantName, tenantPhone, weeklyRentCents: rent, options });
+    writePropertyNote(id, "", { address }, this.vaultRoot);
+    this.store.data.ledger.push({
       propertyId: id,
       daysSinceDue: 0,
       rentLanded: false,
       levyPaid: false,
       daysSinceCourtesy: null,
     });
-    return this.evaluateBook(this.data.hands ?? "fixture", this.data.handsDetail ?? null);
+    return this.evaluateBook(this.store.data.hands, this.store.data.handsDetail);
   }
 
-  /** Remove a property and everything that belongs to it (facts, drafts,
-   * escalations, results). Pending drafts go with it — nothing was sent. */
   removeProperty(id: string): DeskSnapshot {
-    if (!this.data.properties.some((p) => p.id === id)) {
+    this.assertWritable();
+    if (!this.store.data.properties.some((p) => p.id === id)) {
       throw Object.assign(new Error("no such property"), { status: 404 });
     }
-    this.data.properties = this.data.properties.filter((p) => p.id !== id);
-    this.data.ledger = this.data.ledger.filter((r) => r.propertyId !== id);
-    this.data.drafts = this.data.drafts.filter((d) => d.propertyId !== id);
-    this.data.escalations = this.data.escalations.filter((e) => e.propertyId !== id);
-    this.data.results = this.data.results.filter((r) => r.propertyId !== id);
-    return this.evaluateBook(this.data.hands ?? "fixture", this.data.handsDetail ?? null);
+    this.store.data.properties = this.store.data.properties.filter((p) => p.id !== id);
+    this.store.data.ledger = this.store.data.ledger.filter((r) => r.propertyId !== id);
+    this.store.data.drafts = this.store.data.drafts.filter((d) => d.propertyId !== id);
+    this.store.data.escalations = this.store.data.escalations.filter((e) => e.propertyId !== id);
+    this.store.data.results = this.store.data.results.filter((r) => r.propertyId !== id);
+    this.store.data.workItems = this.store.data.workItems.filter((w) => w.propertyId !== id);
+    this.invalidateCapabilities({ propertyId: id });
+    archivePropertyNote(id, this.vaultRoot);
+    return this.evaluateBook(this.store.data.hands, this.store.data.handsDetail);
   }
 
-  allowDraft(id: string): Draft {
-    const draft = this.requirePending(id);
-    draft.status = "allowed";
-    draft.decidedAt = this.now();
-    if (draft.kind === "courtesy-rent") {
-      const facts = this.facts(draft.propertyId);
-      facts.daysSinceCourtesy = 0;
+  writeNotes(id: string, body: string): { id: string; body: string } {
+    this.assertWritable();
+    const property = this.store.data.properties.find((p) => p.id === id);
+    if (!property) throw Object.assign(new Error("no such property"), { status: 404 });
+    const next = writePropertyNote(id, body, { address: property.address }, this.vaultRoot);
+    this.emit();
+    return { id, body: next };
+  }
+
+  notesFor(id: string): { id: string; body: string } {
+    const property = this.store.data.properties.find((p) => p.id === id);
+    if (!property) throw Object.assign(new Error("no such property"), { status: 404 });
+    return { id, body: readPropertyNote(id, this.vaultRoot) };
+  }
+
+  /** Ask/Bud path: same pending Desk card morning check would create. */
+  proposeFromAsk(input: { propertyId: string; kind?: DraftKind; body?: string; expectedRevision?: number }): DeskSnapshot {
+    this.assertWritable();
+    if (input.expectedRevision != null && input.expectedRevision !== this.store.data.revision) {
+      throw Object.assign(new Error("stale desk revision"), { status: 409, code: "revision-conflict" });
     }
-    this.save();
-    return draft;
+    const property = this.store.data.properties.find((p) => p.id === input.propertyId);
+    if (!property) throw Object.assign(new Error("no such property"), { status: 404 });
+    const kind: DraftKind = input.kind === "levy-from-rent" ? "levy-from-rent" : "courtesy-rent";
+    if (kind === "levy-from-rent" && !property.options.levyFromRent) {
+      throw Object.assign(new Error("no levy-from-rent on this property"), { status: 400 });
+    }
+    const pending = this.store.data.drafts.find((d) => d.propertyId === property.id && d.kind === kind && d.status === "pending");
+    if (pending) return this.snapshot();
+    const now = this.now();
+    const facts = this.facts(property.id);
+    const draft = composeDraft(property, facts, now, kind);
+    if (input.body?.trim()) {
+      draft.body = kind === "courtesy-rent" ? withCourtesyDisclaimer(input.body) : input.body.trim();
+    }
+    const work = this.newWork(property, draft, now, "proposed", ["src-ask"]);
+    draft.workItemId = work.id;
+    this.store.data.drafts.push(draft);
+    this.store.data.workItems.push(work);
+    this.store.persist();
+    this.emit();
+    return this.snapshot();
   }
 
-  denyDraft(id: string): Draft {
+  allowDraft(id: string, expectedRevision?: number): Draft {
+    return this.command({ type: "allow", draftId: id, expectedRevision: expectedRevision ?? this.store.data.revision }).drafts.find((d) => d.id === id)!;
+  }
+
+  denyDraft(id: string, expectedRevision?: number): Draft {
+    return this.command({ type: "deny", draftId: id, expectedRevision: expectedRevision ?? this.store.data.revision }).drafts.find((d) => d.id === id)!;
+  }
+
+  editDraft(id: string, body: string, expectedRevision?: number): Draft {
+    return this.command({ type: "edit", draftId: id, expectedRevision: expectedRevision ?? this.store.data.revision, body }).drafts.find((d) => d.id === id)!;
+  }
+
+  command(cmd: DeskCommand): DeskSnapshot {
+    this.assertWritable();
+    if ("expectedRevision" in cmd && cmd.expectedRevision != null && cmd.expectedRevision !== this.store.data.revision) {
+      throw Object.assign(new Error("stale desk revision"), { status: 409, code: "revision-conflict" });
+    }
+    switch (cmd.type) {
+      case "check-demo":
+        return this.runMorningCheck();
+      case "import-csv":
+        return this.importCsv(cmd.csv, cmd.observedAt);
+      case "propose":
+        return this.proposeFromAsk(cmd);
+      case "allow":
+        this.decide(cmd.draftId, "approved", cmd.approver ?? "pm");
+        break;
+      case "deny":
+        this.decide(cmd.draftId, "denied");
+        break;
+      case "edit":
+        this.edit(cmd.draftId, cmd.body);
+        break;
+      case "prepare-portal":
+        this.preparePortal(cmd.draftId);
+        break;
+      case "handoff-ready":
+        this.setWork(cmd.workItemId, "handoff-ready");
+        break;
+      case "confirm":
+        this.setWork(cmd.workItemId, "confirmed");
+        break;
+      case "effect-unknown":
+        this.setWork(cmd.workItemId, "effect-unknown");
+        break;
+    }
+    this.store.persist();
+    this.emit();
+    return this.snapshot();
+  }
+
+  capabilityFor(draftId: string) {
+    const draft = this.store.data.drafts.find((d) => d.id === draftId);
+    if (!draft?.workItemId) return null;
+    return this.store.data.capabilities.find((c) => c.workItemId === draft.workItemId && !c.usedAt && !c.invalidatedAt) ?? null;
+  }
+
+  private evaluateBook(hands: HandsSource, handsDetail: string | null): DeskSnapshot {
+    const now = this.now();
+    const results = [];
+    for (const property of this.store.data.properties) {
+      const facts = this.facts(property.id);
+      const classified = classifyMoneyRow(property, facts, now, hands === "csv" ? "src-csv" : hands === "hermes" ? "src-hermes" : "src-demo");
+      results.push({ propertyId: classified.propertyId, outcome: classified.outcome, reason: classified.reason, daysLate: classified.daysLate });
+      const periodDueAt = dueDate(now, facts.daysSinceDue);
+      if (classified.outcome === "hold") {
+        this.holdWork(classified);
+      } else if (classified.outcome === "draft") {
+        const kind: DraftKind = classified.reason === "rent-landed-levy-unpaid" ? "levy-from-rent" : "courtesy-rent";
+        const key = occurrenceKey(property.id, kind, periodDueAt);
+        const exists = this.store.data.drafts.some((d) => d.propertyId === property.id && d.kind === kind);
+        const workExists = this.store.data.workItems.some((w) => w.occurrenceKey === key && w.state !== "superseded" && w.state !== "cancelled");
+        if (!exists && !workExists) {
+          const draft = composeDraft(property, facts, now, kind);
+          const work = this.newWork(property, draft, now, "proposed", [classified.sourceId]);
+          draft.workItemId = work.id;
+          this.store.data.drafts.push(draft);
+          this.store.data.workItems.push(work);
+        }
+      } else if (classified.outcome === "escalate") {
+        const exists = this.store.data.escalations.some((e) => e.propertyId === property.id && e.reason === classified.reason);
+        if (!exists) {
+          this.store.data.escalations.push({
+            id: `esc-${randomUUID()}`,
+            propertyId: property.id,
+            reason: "statutory-clock",
+            periodDueAt,
+            createdAt: now,
+            detail:
+              `${property.address} is ${classified.daysLate} days late on this sample book (courtesy window ends day ${property.options.courtesyUntilDay}). ` +
+              `That is a shop reminder rule, not a legal clock. A licensed person decides whether any state notice is due — in the PMS. RealBud will not draft or send one.`,
+          });
+        }
+      }
+    }
+    this.store.data.results = results;
+    this.store.data.lastRunAt = now;
+    this.store.data.hands = hands;
+    this.store.data.handsDetail = handsDetail;
+    this.store.persist();
+    this.emit();
+    return this.snapshot();
+  }
+
+  private holdBook(detail: string): void {
+    const now = this.now();
+    this.store.data.hands = "held";
+    this.store.data.handsDetail = detail;
+    this.store.data.lastRunAt = now;
+    for (const property of this.store.data.properties) {
+      this.holdWork({
+        propertyId: property.id,
+        reason: "unknown-facts",
+        daysLate: this.facts(property.id).daysSinceDue,
+        observedAt: now,
+        sourceId: "src-held",
+      });
+    }
+    this.store.persist();
+    this.emit();
+  }
+
+  private holdWork(exception: { propertyId: string; reason: string; daysLate: number; observedAt: number; sourceId: string }): void {
+    const key = occurrenceKey(exception.propertyId, `hold:${exception.reason}`, 0);
+    if (this.store.data.workItems.some((w) => w.occurrenceKey === key && w.state === "held")) return;
+    const property = this.store.data.properties.find((p) => p.id === exception.propertyId);
+    this.store.data.workItems.push({
+      id: `work-${randomUUID()}`,
+      kind: "money-arrears",
+      state: "held",
+      propertyId: exception.propertyId,
+      occurrenceKey: key,
+      periodDueAt: 0,
+      recipient: {
+        name: property?.tenantName ?? "",
+        phone: property?.tenantPhone ?? "",
+      },
+      sourceIds: [exception.sourceId],
+      observedAt: exception.observedAt,
+      proposalHash: `hold-${exception.reason}`,
+      createdAt: this.now(),
+      updatedAt: this.now(),
+      holdReason: exception.reason,
+    });
+  }
+
+  private newWork(property: Property, draft: Draft, now: number, state: WorkState, sourceIds: string[]): WorkItem {
+    return {
+      id: `work-${randomUUID()}`,
+      kind: "money-arrears",
+      state,
+      propertyId: property.id,
+      occurrenceKey: occurrenceKey(property.id, draft.kind, draft.periodDueAt),
+      periodDueAt: draft.periodDueAt,
+      draftId: draft.id,
+      recipient: { name: property.tenantName, phone: property.tenantPhone },
+      sourceIds,
+      observedAt: now,
+      proposalHash: proposalHash({
+        propertyId: property.id,
+        kind: draft.kind,
+        periodDueAt: draft.periodDueAt,
+        body: draft.body,
+        to: draft.to,
+        channel: draft.channel,
+      }),
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  private decide(id: string, state: "approved" | "denied", approver = "pm"): void {
     const draft = this.requirePending(id);
-    draft.status = "denied";
+    const work = this.workForDraft(draft);
+    assertTransition(work.state, state);
+    draft.status = state === "approved" ? "allowed" : "denied";
     draft.decidedAt = this.now();
-    this.save();
-    return draft;
+    work.state = state;
+    work.updatedAt = this.now();
+    if (state === "approved" && draft.channel === "portal") {
+      this.mintCapability(work, draft, approver);
+    }
+    const property = this.store.data.properties.find((p) => p.id === draft.propertyId);
+    const verb = state === "approved" ? "approved" : "denied";
+    const kind = draft.kind === "levy-from-rent" ? "levy flag" : "courtesy SMS";
+    appendAllowedLine(
+      draft.propertyId,
+      `${new Date(this.now()).toISOString().slice(0, 10)} — ${verb} ${kind} for ${property?.address ?? draft.propertyId} (not sent by RealBud).`,
+      this.vaultRoot,
+      property?.address,
+    );
   }
 
-  editDraft(id: string, body: string): Draft {
+  private edit(id: string, body: string): void {
     const draft = this.requirePending(id);
     const next = String(body ?? "").trim();
     if (!next) throw Object.assign(new Error("draft body required"), { status: 400 });
     if (next.length > 4_000) throw Object.assign(new Error("draft is too long"), { status: 400 });
     draft.body = draft.kind === "courtesy-rent" ? withCourtesyDisclaimer(next) : next;
-    this.save();
-    return draft;
+    const work = this.workForDraft(draft);
+    work.proposalHash = proposalHash({
+      propertyId: draft.propertyId,
+      kind: draft.kind,
+      periodDueAt: draft.periodDueAt,
+      body: draft.body,
+      to: draft.to,
+      channel: draft.channel,
+    });
+    work.updatedAt = this.now();
+    this.invalidateCapabilities({ workItemId: work.id });
+  }
+
+  private preparePortal(draftId: string): void {
+    const draft = this.store.data.drafts.find((d) => d.id === draftId);
+    if (!draft) throw Object.assign(new Error("no such draft"), { status: 404 });
+    const work = this.workForDraft(draft);
+    if (work.state !== "approved") throw Object.assign(new Error("approve the wording before portal prepare"), { status: 409 });
+    const cap = this.store.data.capabilities.find((c) => c.workItemId === work.id && !c.usedAt && !c.invalidatedAt);
+    if (!cap) throw Object.assign(new Error("portal capability missing or invalidated"), { status: 409 });
+    if (cap.expiresAt <= this.now()) throw Object.assign(new Error("portal capability expired"), { status: 409 });
+    if (cap.revision !== this.store.data.revision) throw Object.assign(new Error("portal capability is stale"), { status: 409 });
+    const recipe = this.store.data.recipes.find((r) => r.id === cap.recipeId && r.version === cap.recipeVersion);
+    if (!recipe?.published) throw Object.assign(new Error("portal recipe is not published"), { status: 409 });
+    assertTransition(work.state, "preparing");
+    work.state = "preparing";
+    cap.usedAt = this.now();
+    const meta = persistArtifact({
+      workItemId: work.id,
+      step: "prefill",
+      body: Buffer.from(JSON.stringify({ draftId, proposalHash: work.proposalHash }), "utf8"),
+      now: this.now(),
+      dir: join(this.store.file, ".."),
+    });
+    work.artifactIds = [...(work.artifactIds ?? []), meta.id];
+    assertTransition(work.state, "handoff-ready");
+    work.state = "handoff-ready";
+    work.updatedAt = this.now();
+  }
+
+  async preparePortalAsync(draftId: string): Promise<DeskSnapshot> {
+    this.assertWritable();
+    const draft = this.store.data.drafts.find((d) => d.id === draftId);
+    if (!draft) throw Object.assign(new Error("no such draft"), { status: 404 });
+    const work = this.workForDraft(draft);
+    if (work.state !== "approved") throw Object.assign(new Error("approve the wording before portal prepare"), { status: 409 });
+    const cap = this.store.data.capabilities.find((c) => c.workItemId === work.id && !c.usedAt && !c.invalidatedAt);
+    if (!cap) throw Object.assign(new Error("portal capability missing or invalidated"), { status: 409 });
+    if (cap.expiresAt <= this.now()) throw Object.assign(new Error("portal capability expired"), { status: 409 });
+    if (cap.revision !== this.store.data.revision) throw Object.assign(new Error("portal capability is stale"), { status: 409 });
+    const recipe = this.store.data.recipes.find((r) => r.id === cap.recipeId && r.version === cap.recipeVersion);
+    if (!recipe?.published) throw Object.assign(new Error("portal recipe is not published"), { status: 409 });
+    if (!this.portalUrl) throw Object.assign(new Error("no portal URL configured"), { status: 409 });
+    assertTransition(work.state, "preparing");
+    work.state = "preparing";
+    const result = await runBoundedPrefill({
+      baseUrl: this.portalUrl,
+      body: draft.body,
+      capability: cap,
+      recipe,
+      now: this.now(),
+    });
+    cap.usedAt = this.now();
+    const meta = persistArtifact({
+      workItemId: work.id,
+      step: "prefill",
+      body: Buffer.from(JSON.stringify({ draftId, proposalHash: work.proposalHash, portal: result }), "utf8"),
+      now: this.now(),
+      dir: join(this.store.file, ".."),
+    });
+    work.artifactIds = [...(work.artifactIds ?? []), meta.id];
+    if (!result.ok) {
+      assertTransition(work.state, "failed");
+      work.state = "failed";
+      work.updatedAt = this.now();
+      this.store.persist();
+      this.emit();
+      throw Object.assign(new Error(result.error), { status: 502 });
+    }
+    assertTransition(work.state, "handoff-ready");
+    work.state = "handoff-ready";
+    work.updatedAt = this.now();
+    this.store.persist();
+    this.emit();
+    return this.snapshot();
+  }
+
+  private setWork(id: string, state: WorkState): void {
+    const work = this.store.data.workItems.find((w) => w.id === id);
+    if (!work) throw Object.assign(new Error("no such work item"), { status: 404 });
+    assertTransition(work.state, state);
+    work.state = state;
+    work.updatedAt = this.now();
+  }
+
+  private mintCapability(work: WorkItem, draft: Draft, approver: string): void {
+    const binding = this.store.data.portalBindings.find((b) => b.propertyId === draft.propertyId);
+    const recipe = this.store.data.recipes.find((r) => r.id === (binding?.recipeId ?? FAKE_PORTAL_RECIPE.id) && r.published);
+    if (!binding || !recipe) return;
+    this.store.data.capabilities.push({
+      id: `cap-${randomUUID()}`,
+      workItemId: work.id,
+      revision: this.store.data.revision + 1,
+      proposalHash: work.proposalHash,
+      propertyId: draft.propertyId,
+      recipeId: recipe.id,
+      recipeVersion: recipe.version,
+      operation: "prefill-courtesy",
+      approver,
+      expiresAt: this.now() + 30 * 60_000,
+    });
+  }
+
+  private invalidateCapabilities(filter: { propertyId?: string; workItemId?: string }): void {
+    const now = this.now();
+    for (const cap of this.store.data.capabilities) {
+      if (filter.propertyId && cap.propertyId !== filter.propertyId) continue;
+      if (filter.workItemId && cap.workItemId !== filter.workItemId) continue;
+      if (!cap.usedAt && !cap.invalidatedAt) cap.invalidatedAt = now;
+    }
+  }
+
+  private observe(id: string, kind: "csv" | "hermes" | "demo", label: string, rows: LedgerFacts[]): void {
+    if (!this.store.data.sources.some((s) => s.id === id)) {
+      this.store.data.sources.push({ id, kind, label, stableKey: `${kind}:${id}` });
+    }
+    this.store.data.observations.push({
+      id: `obs-${randomUUID()}`,
+      sourceId: id,
+      observedAt: this.now(),
+      staleAfterMs: kind === "csv" ? CSV_FRESH_MS : 30 * 60_000,
+      facts: rows[0],
+    });
   }
 
   private requirePending(id: string): Draft {
-    const draft = this.data.drafts.find((d) => d.id === id);
+    const draft = this.store.data.drafts.find((d) => d.id === id);
     if (!draft) throw Object.assign(new Error("no such draft"), { status: 404 });
     if (draft.status !== "pending") throw Object.assign(new Error("draft is already decided"), { status: 409 });
     return draft;
   }
 
+  private workForDraft(draft: Draft): WorkItem {
+    const work = this.store.data.workItems.find((w) => w.id === draft.workItemId || w.draftId === draft.id);
+    if (!work) throw Object.assign(new Error("no such work item"), { status: 404 });
+    return work;
+  }
+
   private facts(propertyId: string): LedgerFacts {
-    const facts = this.data.ledger.find((row) => row.propertyId === propertyId);
+    const facts = this.store.data.ledger.find((row) => row.propertyId === propertyId);
     if (!facts) throw new Error(`missing ledger for ${propertyId}`);
     return facts;
   }
 
-  private load(): DeskFile {
-    try {
-      const parsed = JSON.parse(readFileSync(this.file, "utf8")) as DeskFile;
-      if (parsed?.version === 1 && Array.isArray(parsed.properties) && parsed.properties.every(isProperty)) {
-        return {
-          version: 1,
-          properties: parsed.properties,
-          ledger: Array.isArray(parsed.ledger) ? parsed.ledger : emptyFile().ledger,
-          drafts: Array.isArray(parsed.drafts) ? parsed.drafts : [],
-          escalations: Array.isArray(parsed.escalations) ? parsed.escalations : [],
-          lastRunAt: typeof parsed.lastRunAt === "number" ? parsed.lastRunAt : null,
-          results: Array.isArray(parsed.results) ? parsed.results : [],
-          hands: parsed.hands === "hermes" ? "hermes" : "fixture",
-          handsDetail: typeof parsed.handsDetail === "string" ? parsed.handsDetail : null,
-        };
-      }
-    } catch {
-      /* first run or junk */
+  private assertWritable(): void {
+    if (this.store.recovery.active) {
+      throw Object.assign(new Error("desk is read-only in recovery mode"), { status: 409 });
     }
-    const fresh = emptyFile();
-    this.write(fresh);
-    return fresh;
   }
 
-  private save(): void {
-    this.write(this.data);
-  }
-
-  private write(data: DeskFile): void {
-    mkdirSync(dirname(this.file), { recursive: true });
-    writeFileAtomic(this.file, JSON.stringify(data, null, 2));
+  private emit(): void {
+    this.onCommit?.(this.snapshot());
   }
 }
+
+export type { DeskFileV2 };

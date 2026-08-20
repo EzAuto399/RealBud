@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, chmodSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync, chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { HERMES_PIN } from "./hermes-pin.ts";
 import type { LedgerFacts } from "./desk.ts";
 import { parseLedgerFacts, tryHermesLedger, tryHermesPing } from "./hermes-hands.ts";
+import { seedVault } from "./vault.ts";
+import { HermesAgentDriver } from "./drivers/acp/hermes.ts";
 
 const fixture: LedgerFacts[] = [
   { propertyId: "prop-oak", daysSinceDue: 3, rentLanded: false, levyPaid: false, daysSinceCourtesy: null },
@@ -49,6 +51,14 @@ describe("parseLedgerFacts", () => {
     expect(parseLedgerFacts("I will send the notice now")).toBeNull();
     expect(parseLedgerFacts("not json")).toBeNull();
   });
+
+  it("rejects the string \"false\" instead of coercing it truthy", () => {
+    expect(
+      parseLedgerFacts(
+        `[{"propertyId":"prop-oak","daysSinceDue":3,"rentLanded":"false","levyPaid":false,"daysSinceCourtesy":null}]`,
+      ),
+    ).toBeNull();
+  });
 });
 
 describe("tryHermesLedger (fake pinned CLI)", () => {
@@ -56,29 +66,29 @@ describe("tryHermesLedger (fake pinned CLI)", () => {
     const { dir, script } = fakeHermes(
       `[{"propertyId":"prop-oak","daysSinceDue":3,"rentLanded":false,"levyPaid":false,"daysSinceCourtesy":null}]`,
     );
-    const attempt = await tryHermesLedger(fixture, { cli: script, root: dir });
+    const attempt = await tryHermesLedger(["prop-oak"], { cli: script, root: dir });
     expect(attempt.rows).toEqual(fixture);
     expect(attempt.detail).toMatch(/answered with 1 ledger rows/);
   });
 
   it("misses cleanly when the worker answers chatter", async () => {
     const { dir, script } = fakeHermes("Sure, here are the rows I would check!");
-    const attempt = await tryHermesLedger(fixture, { cli: script, root: dir });
+    const attempt = await tryHermesLedger(["prop-oak"], { cli: script, root: dir });
     expect(attempt.rows).toBeNull();
     expect(attempt.detail).toMatch(/without ledger JSON/);
   });
 
   it("surfaces the provider's own error words (billing, auth) in the detail", async () => {
     const { dir, script } = fakeHermes("", 1, "Billing or credits exhausted: HTTP 402");
-    const attempt = await tryHermesLedger(fixture, { cli: script, root: dir });
+    const attempt = await tryHermesLedger(["prop-oak"], { cli: script, root: dir });
     expect(attempt.rows).toBeNull();
     expect(attempt.detail).toContain("Billing or credits exhausted");
-    expect(attempt.detail).toMatch(/training book/);
+    expect(attempt.detail).toMatch(/held/);
   });
 
   it("finds the real error on stdout even when stderr is only warnings", async () => {
     const { dir, script } = fakeHermes("Billing or credits exhausted: HTTP 402", 1, "session_id: 123");
-    const attempt = await tryHermesLedger(fixture, { cli: script, root: dir });
+    const attempt = await tryHermesLedger(["prop-oak"], { cli: script, root: dir });
     expect(attempt.rows).toBeNull();
     expect(attempt.detail).toContain("Billing or credits exhausted");
     expect(attempt.detail).not.toContain("session_id");
@@ -131,7 +141,7 @@ describe("hermes CLI argv contract", () => {
     );
     chmodSync(script, 0o755);
 
-    const attempt = await tryHermesLedger(fixture, { cli: script, root: dir });
+    const attempt = await tryHermesLedger(["prop-oak"], { cli: script, root: dir });
     expect(attempt.rows).toEqual(fixture);
 
     // the contract: any change to these flags breaks the worker seam and
@@ -141,7 +151,32 @@ describe("hermes CLI argv contract", () => {
     const prompt = readFileSync(promptFile, "utf8");
     expect(prompt).toContain("Morning arrears check. Use skill morning-arrears.");
     expect(prompt).toContain("Do not send, pay, or draft a statutory notice.");
-    // the fixture itself is handed over so the skill can copy unknown values
-    expect(prompt).toContain('"propertyId":"prop-oak"');
+    expect(prompt).toContain("prop-oak");
+    expect(prompt).toContain("Do not copy sample values");
+    expect(prompt).not.toContain("training book");
+    expect(prompt).not.toContain("copy fixture");
+  });
+
+  it("runs the ledger spawn with cwd equal to the book", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omb-cwd-"));
+    dirs.push(dir);
+    const profile = join(dir, "profiles", HERMES_PIN.profile);
+    mkdirSync(profile, { recursive: true });
+    writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
+    const book = seedVault();
+    const cwdFile = join(dir, "cwd.txt");
+    const script = join(dir, "hermes");
+    writeFileSync(
+      script,
+      `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Hermes Agent v0.20.3 (2026.8.16.2)"; exit 0; fi\n` +
+        `pwd > "${cwdFile}"\n` +
+        `printf '%s' '[{"propertyId":"prop-oak","daysSinceDue":3,"rentLanded":false,"levyPaid":false,"daysSinceCourtesy":null}]'\n`,
+    );
+    chmodSync(script, 0o755);
+    const attempt = await tryHermesLedger(["prop-oak"], { cli: script, root: dir });
+    expect(attempt.rows?.[0]?.propertyId).toBe("prop-oak");
+    expect(realpathSync(readFileSync(cwdFile, "utf8").trim())).toBe(realpathSync(book));
+    expect(HermesAgentDriver.defaultConfig().workspace).toBe(book);
+    expect(HermesAgentDriver.decodeConfig({}).workspace).toBe(book);
   });
 });

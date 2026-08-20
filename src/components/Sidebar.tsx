@@ -1,36 +1,11 @@
-import { track } from "@/lib/analytics";
-import { useEffect, useState } from "react";
-import {
-  ArrowDownToLine,
-  BellDot,
-  Bot as BotIcon,
-  Building2,
-  CalendarDays,
-  Check,
-  ClipboardCopy,
-  Copy,
-  Crown,
-  EyeOff,
-  FolderPlus,
-  Loader2,
-  Pencil,
-  Pin,
-  PinOff,
-  Plus,
-  RefreshCw,
-  Search,
-  Settings,
-  Trash2,
-  Users,
-} from "lucide-react";
-import { useStore, formatTime, visibleMessages, type Bot, type Group } from "@/state/store";
-import { MausAvatar, InitialsAvatar } from "./Avatar";
-import { stateForBot } from "@/lib/mascot";
-import { useUpdaterState } from "@/lib/updater";
+import { useEffect, useState, type ReactNode } from "react";
+import { ArrowDownToLine, Bot as BotIcon, Building2, CalendarDays, Check, Loader2, RefreshCw } from "lucide-react";
+import { useStore } from "@/state/store";
+import { InitialsAvatar } from "./Avatar";
 import { cn } from "@/lib/cn";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
+import { useUpdaterState } from "@/lib/updater";
 
-/** "Milind Soni" → "MS", "milind" → "M", "you@x.dev" → "Y", unset → "?" */
 function profileInitials(profile?: { name?: string; email?: string }): string {
   const name = profile?.name?.trim();
   if (name) {
@@ -44,15 +19,10 @@ function profileInitials(profile?: { name?: string; email?: string }): string {
   return email ? email[0]!.toUpperCase() : "?";
 }
 
-/** Manual update check, next to the settings gear. Packaged app only (no
- * bridge in dev/browser). One button, state-dependent: check → download →
- * restart, with a brief "up to date" tick when a check finds nothing so a
- * click is never silent. The bottom-left popup handles the loud cases. */
 function UpdateButton() {
   const s = useUpdaterState();
   const [checkedAt, setCheckedAt] = useState(0);
   const updater = window.ogb?.updater;
-  // a check that found nothing lands back on idle — acknowledge it for 3s
   const upToDate = Boolean(checkedAt) && (!s || s.status === "idle") && Date.now() - checkedAt < 3000;
   useEffect(() => {
     if (!upToDate) return;
@@ -98,397 +68,7 @@ function UpdateButton() {
       ) : (
         <RefreshCw size={18} />
       )}
-      {status === "downloaded" && (
-        <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-accent" />
-      )}
-    </button>
-  );
-}
-
-function preview(bot: Bot): string {
-  if (bot.busy) return "Working…";
-  // the visible branch's tail — bot.messages holds every fork, so its last
-  // entry can belong to a version the user switched away from
-  const last = visibleMessages(bot).at(-1);
-  if (!last) return "";
-  if (last.kind === "options" && last.card) return last.card.title;
-  if (last.kind === "activity" && last.tool) return last.tool.name;
-  if (last.kind === "screen") return "Screen frame";
-  return last.text ?? "";
-}
-
-interface MenuState {
-  botId: string;
-  x: number;
-  y: number;
-}
-
-function groupPreview(group: Group, bots: Bot[]): string {
-  if (group.busyBotId) {
-    return `${bots.find((b) => b.id === group.busyBotId)?.name ?? "A bot"} is working…`;
-  }
-  const last = group.messages.at(-1);
-  if (!last) return "No messages yet";
-  const text = last.kind === "activity" && last.tool ? last.tool.name : (last.text ?? "");
-  if (last.role === "user") return `You: ${text}`;
-  return last.from ? `${last.from.name}: ${text}` : text;
-}
-
-/** Room avatar: 2–3 overlapping mauses in the same 56px slot a bot gets. */
-function StackedMauses({ members }: { members: Bot[] }) {
-  if (members.length <= 1) {
-    const b = members[0];
-    return (
-      <div className="flex size-14 shrink-0 items-center justify-center">
-        {b ? <MausAvatar color={b.color} state="happy" size={56} /> : <Users size={24} className="text-ink-secondary" />}
-      </div>
-    );
-  }
-  const shown = members.slice(0, 3);
-  const extra = members.length - shown.length;
-  return (
-    <div className="flex size-14 shrink-0 items-center justify-center">
-      <div className="flex items-center -space-x-3">
-        {shown.map((b) => (
-          <MausAvatar key={b.id} color={b.color} state="happy" size={30} />
-        ))}
-        {extra > 0 && (
-          <span className="z-10 flex size-[22px] items-center justify-center rounded-full border border-hairline/40 bg-raised text-[10px] font-medium text-ink-secondary">
-            +{extra}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function GroupListItem({ group, onMenu }: { group: Group; onMenu: (menu: { groupId: string; x: number; y: number }) => void }) {
-  const { state, dispatch } = useStore();
-  const selected = state.activeView === "chat" && state.selectedId === group.id;
-  const members = group.memberIds
-    .map((id) => state.bots.find((b) => b.id === id))
-    .filter((b): b is Bot => Boolean(b));
-  const last = group.messages.at(-1);
-  return (
-    <button
-      onClick={() => dispatch({ type: "select", id: group.id })}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        onMenu({ groupId: group.id, x: e.clientX, y: e.clientY });
-      }}
-      className={cn(
-        "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left",
-        selected ? "bg-raised" : "hover:bg-raised/50",
-      )}
-    >
-      <StackedMauses members={members} />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline justify-between gap-2">
-          <span className="truncate text-[15px] font-semibold text-ink">{group.name}</span>
-          {selected && last && <span className="shrink-0 text-xs text-ink-secondary">{formatTime(last.at)}</span>}
-        </div>
-        <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-[13px] text-ink-secondary">{groupPreview(group, state.bots)}</span>
-          {group.unread && <span className="size-2 shrink-0 rounded-full bg-accent" />}
-        </div>
-      </div>
-    </button>
-  );
-}
-
-function RoomContextMenu({ menu, onClose }: { menu: { groupId: string; x: number; y: number }; onClose: () => void }) {
-  const { state, dispatch } = useStore();
-  const group = state.groups.find((g) => g.id === menu.groupId);
-
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => {
-      if (!(e.target as HTMLElement).closest("[data-room-menu]")) onClose();
-    };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("blur", onClose);
-    return () => {
-      window.removeEventListener("mousedown", onDown);
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("blur", onClose);
-    };
-  }, [onClose]);
-
-  if (!group) return null;
-  const top = Math.min(menu.y, window.innerHeight - 120);
-  const left = Math.min(menu.x, window.innerWidth - 240);
-  return (
-    <div
-      data-room-menu
-      style={{ top, left }}
-      className="fixed z-40 w-[228px] overflow-hidden rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/60"
-    >
-      <button
-        onClick={() => {
-          void navigator.clipboard?.writeText(group.threadId);
-          onClose();
-        }}
-        className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
-      >
-        <ClipboardCopy size={16} className="text-ink-secondary" />
-        Copy conversation ID
-      </button>
-      <button
-        onClick={() => {
-          dispatch({ type: "deleteGroup", groupId: group.id });
-          onClose();
-        }}
-        className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-danger hover:bg-raised/70"
-      >
-        <Trash2 size={16} />
-        Delete Room
-      </button>
-    </div>
-  );
-}
-
-/** Pick members → Create. The room name is optional; the server defaults it. */
-function NewRoomPanel({ onClose }: { onClose: () => void }) {
-  const { state, dispatch } = useStore();
-  const [name, setName] = useState("");
-  const [picked, setPicked] = useState<Set<string>>(new Set());
-  const bots = state.bots.filter((b) => !b.hidden);
-  const toggle = (id: string) =>
-    setPicked((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  const create = () => {
-    if (!picked.size) return;
-    dispatch({ type: "createGroup", memberIds: [...picked], name: name.trim() || undefined });
-    track("room_created", { members: picked.size });
-    onClose();
-  };
-  return (
-    <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black/40"
-      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
-    >
-      <div className="w-[340px] rounded-2xl border border-hairline/50 bg-card p-4 shadow-2xl">
-        <div className="mb-3 text-[15px] font-semibold text-ink">New Room</div>
-        <input
-          autoFocus
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") create();
-            if (e.key === "Escape") onClose();
-          }}
-          placeholder="Room name (optional)"
-          className="mb-3 w-full rounded-lg bg-raised/70 px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
-        />
-        <div className="flex max-h-64 flex-col gap-0.5 overflow-y-auto">
-          {bots.length === 0 && (
-            <div className="px-2 py-4 text-center text-[13px] text-ink-secondary">Create a bot first — rooms are made of bots.</div>
-          )}
-          {bots.map((b) => (
-            <button
-              key={b.id}
-              onClick={() => toggle(b.id)}
-              className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-raised/50"
-            >
-              <MausAvatar color={b.color} state="happy" size={28} />
-              <span className="min-w-0 flex-1 truncate text-[14px] text-ink">{b.name}</span>
-              <span
-                className={cn(
-                  "flex size-[18px] shrink-0 items-center justify-center rounded-full border",
-                  picked.has(b.id) ? "border-accent bg-accent text-white" : "border-hairline/60",
-                )}
-              >
-                {picked.has(b.id) && <Check size={12} />}
-              </span>
-            </button>
-          ))}
-        </div>
-        <button
-          onClick={create}
-          disabled={!picked.size}
-          className="mt-3 w-full rounded-lg bg-accent py-2 text-[14px] font-medium text-white hover:brightness-110 disabled:opacity-40"
-        >
-          Create Room{picked.size ? ` · ${picked.size} ${picked.size === 1 ? "bot" : "bots"}` : ""}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function BotContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => void }) {
-  const { state, dispatch } = useStore();
-  const bot = state.bots.find((b) => b.id === menu.botId);
-
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => {
-      if (!(e.target as HTMLElement).closest("[data-bot-menu]")) onClose();
-    };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("blur", onClose);
-    return () => {
-      window.removeEventListener("mousedown", onDown);
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("blur", onClose);
-    };
-  }, [onClose]);
-
-  if (!bot) return null;
-  const engine = state.instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId);
-  const canCoordinate = engine?.capabilities?.agentsMcp === true;
-  // keep the menu on-screen near the click
-  const top = Math.max(8, Math.min(menu.y, window.innerHeight - 380));
-  const left = Math.min(menu.x, window.innerWidth - 240);
-
-  const item = (
-    icon: React.ReactNode,
-    label: string,
-    onClick?: () => void,
-    opts?: { danger?: boolean; disabled?: boolean; hint?: string },
-  ) => (
-    <button
-      key={label}
-      disabled={opts?.disabled}
-      onClick={() => {
-        onClick?.();
-        onClose();
-      }}
-      title={opts?.hint}
-      className={cn(
-        "flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px]",
-        opts?.danger ? "text-danger" : "text-ink",
-        opts?.disabled ? "cursor-default opacity-40" : "hover:bg-raised/70",
-      )}
-    >
-      {icon}
-      {label}
-    </button>
-  );
-  const divider = (key: string) => <div key={key} className="mx-2 my-1 border-t border-hairline/40" />;
-
-  return (
-    <div
-      data-bot-menu
-      style={{ top, left }}
-      className="fixed z-40 w-[228px] overflow-hidden rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/60"
-    >
-      {[
-        item(
-          bot.pinned ? <PinOff size={16} className="text-ink-secondary" /> : <Pin size={16} className="text-ink-secondary" />,
-          bot.pinned ? "Unpin" : "Pin",
-          () => dispatch({ type: "updateBot", botId: bot.id, patch: { pinned: !bot.pinned } }),
-        ),
-        item(
-          <Crown size={16} className={bot.chiefOfStaff ? "text-accent" : "text-ink-secondary"} />,
-          bot.chiefOfStaff ? "Remove Chief of Staff" : "Make Chief of Staff",
-          () => dispatch({ type: "updateBot", botId: bot.id, patch: { chiefOfStaff: !bot.chiefOfStaff } }),
-          {
-            disabled: !bot.chiefOfStaff && !canCoordinate,
-            hint: !bot.chiefOfStaff && !canCoordinate ? "Choose a Claude or ACP engine first" : undefined,
-          },
-        ),
-        item(<FolderPlus size={16} className="text-ink-secondary" />, "Move to new section", undefined, {
-          disabled: true,
-          hint: "Coming soon",
-        }),
-        item(<BellDot size={16} className="text-ink-secondary" />, "Mark as Unread", () =>
-          dispatch({ type: "markUnread", botId: bot.id }),
-        ),
-        divider("d1"),
-        item(<Pencil size={16} className="text-ink-secondary" />, "Edit Profile", () => {
-          dispatch({ type: "select", id: bot.id });
-          dispatch({ type: "toggleSettings", open: true });
-        }),
-        item(<Copy size={16} className="text-ink-secondary" />, "Duplicate", () =>
-          dispatch({ type: "duplicateBot", botId: bot.id }),
-        ),
-        divider("d2"),
-        item(<ClipboardCopy size={16} className="text-ink-secondary" />, "Copy conversation ID", () => {
-          void navigator.clipboard?.writeText(bot.threadId);
-        }),
-        divider("d3"),
-        item(
-          <EyeOff size={16} className="text-ink-secondary" />,
-          "Hide from sidebar",
-          () => dispatch({ type: "updateBot", botId: bot.id, patch: { hidden: true } }),
-          {
-            disabled: Boolean(bot.chiefOfStaff),
-            hint: bot.chiefOfStaff ? "Choose another Chief of Staff first" : undefined,
-          },
-        ),
-        item(<Trash2 size={16} />, "Delete", () => dispatch({ type: "deleteBot", botId: bot.id }), {
-          danger: true,
-        }),
-      ]}
-    </div>
-  );
-}
-
-function BotListItem({ bot, onMenu }: { bot: Bot; onMenu: (menu: MenuState) => void }) {
-  const { state, dispatch } = useStore();
-  const selected = state.activeView === "chat" && state.selectedId === bot.id;
-  const mascotMotion = selected && state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
-  // the visible branch, so a version switch changes the row with the chat
-  const visible = visibleMessages(bot);
-  const last = visible.at(-1);
-  return (
-    <button
-      onClick={() => dispatch({ type: "select", id: bot.id })}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        onMenu({ botId: bot.id, x: e.clientX, y: e.clientY });
-      }}
-      className={cn(
-        "flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left",
-        bot.chiefOfStaff
-          ? selected
-            ? "border-accent/40 bg-accent/15"
-            : "border-accent/25 bg-accent/5 hover:bg-accent/10"
-          : selected
-            ? "border-transparent bg-raised"
-            : "border-transparent hover:bg-raised/50",
-      )}
-    >
-      <MausAvatar
-        color={bot.color}
-        state={stateForBot({ ...bot, messages: visible })}
-        size={56}
-        motion={mascotMotion?.kind ?? "none"}
-        motionKey={mascotMotion?.nonce ?? 0}
-      />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline justify-between gap-2">
-          <span className="flex min-w-0 items-center gap-1.5 truncate text-[15px] font-semibold text-ink">
-            {bot.pinned && <Pin size={12} className="shrink-0 text-ink-secondary" />}
-            <span className="truncate">{bot.name}</span>
-          </span>
-          {selected && last && (
-            <span className="shrink-0 text-xs text-ink-secondary">
-              {formatTime(last.at)}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center justify-between gap-2">
-          <span className="flex min-w-0 items-center gap-1.5 truncate text-[13px] text-ink-secondary">
-            {bot.chiefOfStaff && (
-              <span className="flex shrink-0 items-center gap-1 text-[11.5px] font-medium text-accent">
-                <Crown size={11} /> Chief of Staff
-              </span>
-            )}
-            {bot.chiefOfStaff && preview(bot) && <span className="shrink-0 text-ink-secondary/60">·</span>}
-            <span className="truncate">{preview(bot)}</span>
-          </span>
-          {bot.unread && (
-            <span className="size-2 shrink-0 rounded-full bg-accent" />
-          )}
-        </div>
-      </div>
+      {status === "downloaded" && <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-accent" />}
     </button>
   );
 }
@@ -496,34 +76,31 @@ function BotListItem({ bot, onMenu }: { bot: Bot; onMenu: (menu: MenuState) => v
 export function Sidebar() {
   const { state, dispatch } = useStore();
   const { capabilities } = useDesktopCapabilities();
-  const [menu, setMenu] = useState<MenuState | null>(null);
-  const [roomMenu, setRoomMenu] = useState<{ groupId: string; x: number; y: number } | null>(null);
-  const [plusOpen, setPlusOpen] = useState(false);
-  const [newRoom, setNewRoom] = useState(false);
-  const [query, setQuery] = useState("");
-  const [workshop, setWorkshop] = useState(false);
   const macInset = capabilities.windowChrome === "mac-inset";
   const browser = capabilities.host.label === "Browser";
 
-  const q = query.trim().toLowerCase();
-  const matchingBots = state.bots
-    .filter((b) => !b.hidden)
-    .filter(
-      (b) =>
-        !q ||
-        b.name.toLowerCase().includes(q) ||
-        (b.title ?? "").toLowerCase().includes(q) ||
-        preview(b).toLowerCase().includes(q),
-    );
-  const chiefBot = matchingBots.find((bot) => bot.chiefOfStaff);
-  const visibleBots = matchingBots
-    .filter((bot) => !bot.chiefOfStaff)
-    .sort((a, b) => Number(b.pinned ?? false) - Number(a.pinned ?? false));
-  const visibleGroups = state.groups.filter((g) => !q || g.name.toLowerCase().includes(q));
+  const item = (
+    view: typeof state.activeView,
+    label: string,
+    icon: React.ReactNode,
+    action: () => void,
+    extra?: ReactNode,
+  ) => (
+    <button
+      onClick={action}
+      className={cn(
+        "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors",
+        state.activeView === view ? "bg-raised text-ink" : "text-ink hover:bg-raised/50",
+      )}
+    >
+      {icon}
+      <span className="flex-1 text-[14px] font-medium">{label}</span>
+      {extra}
+    </button>
+  );
 
   return (
     <aside className="flex h-full w-[320px] shrink-0 flex-col border-r border-hairline/40 bg-panel">
-      {/* macOS owns inset traffic lights; Linux/Windows use native chrome. */}
       <div
         className="flex items-center justify-between px-4 pt-3.5 pb-1"
         style={macInset ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined}
@@ -536,150 +113,34 @@ export function Sidebar() {
             <span className="size-3 rounded-full bg-[#febc2e]" />
             <span className="size-3 rounded-full bg-[#28c840]" />
           </div>
-        ) : <div />}
-        <div
-          className="relative"
-          style={macInset ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined}
-        >
-          {workshop && (
-            <>
-          <button
-            onClick={() => setPlusOpen((o) => !o)}
-            className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
-            title="New assistant or room"
-          >
-            <Plus size={20} strokeWidth={2} />
-          </button>
-          {plusOpen && (
-            <>
-              <div className="fixed inset-0 z-30" onMouseDown={() => setPlusOpen(false)} />
-              <div className="absolute right-0 top-full z-40 mt-1 w-44 overflow-hidden rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/60">
-                <button
-                  onClick={() => {
-                    setPlusOpen(false);
-                    track("bot_created");
-                    dispatch({ type: "newBot" });
-                  }}
-                  className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
-                >
-                  <BotIcon size={16} className="text-ink-secondary" />
-                  New assistant
-                </button>
-                <button
-                  onClick={() => {
-                    setPlusOpen(false);
-                    setNewRoom(true);
-                  }}
-                  className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
-                >
-                  <Users size={16} className="text-ink-secondary" />
-                  New room
-                </button>
-              </div>
-            </>
-          )}
-            </>
-          )}
-        </div>
-      </div>
-
-      <div className="px-3 pb-1">
-        <button
-          onClick={() => dispatch({ type: "showDesk" })}
-          className={cn(
-            "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors",
-            state.activeView === "desk" ? "bg-raised text-ink" : "text-ink hover:bg-raised/50",
-          )}
-        >
-          <Building2 size={20} className={state.activeView === "desk" ? "text-accent" : "text-ink-secondary"} />
-          <span className="flex-1 text-[14px] font-medium">Desk</span>
-        </button>
-      </div>
-
-      <div className="flex-1 overflow-y-auto px-2">
-        <button
-          onClick={() => setWorkshop((open) => !open)}
-          className="mb-1 flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-[12px] font-medium uppercase tracking-[0.14em] text-ink-secondary hover:bg-raised/50 hover:text-ink"
-        >
-          <span>Workshop</span>
-          <span className="normal-case tracking-normal text-[11px] text-ink-secondary/70">{workshop ? "Hide" : "Show"}</span>
-        </button>
-        {workshop && (
-          <>
-            <div className="mb-2 px-1">
-              <div className="flex items-center gap-2 rounded-lg bg-raised/70 px-3 py-2">
-                <Search size={16} className="text-ink-secondary" />
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === "Escape" && setQuery("")}
-                  placeholder="Search"
-                  aria-label="Search assistants"
-                  className="w-full bg-transparent text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
-                />
-              </div>
-            </div>
-            <div className="flex flex-col gap-0.5">
-              {!chiefBot && visibleBots.length === 0 && visibleGroups.length === 0 && (
-                <div className="px-3 py-4 text-[12.5px] text-ink-secondary">
-                  {q ? `Nothing matches “${query}”` : "Empty. Desk is the product — assistants stay here if you need them."}
-                </div>
-              )}
-              {chiefBot && (
-                <div className="mb-1.5">
-                  <BotListItem bot={chiefBot} onMenu={setMenu} />
-                </div>
-              )}
-              {visibleGroups.map((g) => (
-                <GroupListItem key={g.id} group={g} onMenu={setRoomMenu} />
-              ))}
-              {visibleBots.map((b) => (
-                <BotListItem key={b.id} bot={b} onMenu={setMenu} />
-              ))}
-            </div>
-          </>
+        ) : (
+          <div />
         )}
-      </div>
-
-      {/* Footer */}
-      <div className="px-3 pb-3 pt-2">
-        <button
-          onClick={() => dispatch({ type: "showRoutines" })}
-          className={cn(
-            "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors",
-            state.activeView === "schedule" ? "bg-raised text-ink" : "text-ink hover:bg-raised/50",
-          )}
-        >
-          <CalendarDays size={20} className={state.activeView === "schedule" ? "text-accent" : "text-ink-secondary"} />
-          <span className="flex-1 text-[14px]">Schedule</span>
-          {state.loopRuns.some((run) => ["failed", "missed"].includes(run.status) && !run.seenAt) && (
-            <span className="size-2 rounded-full bg-danger" />
-          )}
-        </button>
-        <div className="flex items-center">
-          <button
-            onClick={() => dispatch({ type: "toggleAppSettings" })}
-            className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2 text-left hover:bg-raised/50"
-          >
-            <InitialsAvatar initials={profileInitials(state.config?.profile)} size={28} />
-            <span className="truncate text-[14px] text-ink">
-              {state.config?.profile?.name?.trim() || state.config?.profile?.email?.trim() || "You"}
-            </span>
-          </button>
+        <div style={macInset ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined}>
           <UpdateButton />
-          <button
-            onClick={() => dispatch({ type: "toggleAppSettings" })}
-            className="rounded-md p-2 text-ink-secondary hover:bg-raised hover:text-ink"
-            title="App settings"
-          >
-            <Settings size={18} />
-          </button>
         </div>
       </div>
 
-      {menu && <BotContextMenu menu={menu} onClose={() => setMenu(null)} />}
-      {roomMenu && <RoomContextMenu menu={roomMenu} onClose={() => setRoomMenu(null)} />}
-      {newRoom && <NewRoomPanel onClose={() => setNewRoom(false)} />}
+      <nav className="flex flex-1 flex-col gap-0.5 px-3 pt-2">
+        {item("desk", "Desk", <Building2 size={20} className={state.activeView === "desk" ? "text-accent" : "text-ink-secondary"} />, () =>
+          dispatch({ type: "showDesk" }),
+        )}
+        {item("ask", "Ask", <BotIcon size={20} className={state.activeView === "ask" ? "text-accent" : "text-ink-secondary"} />, () =>
+          dispatch({ type: "showAsk" }),
+        )}
+        {item(
+          "schedule",
+          "Schedule",
+          <CalendarDays size={20} className={state.activeView === "schedule" ? "text-accent" : "text-ink-secondary"} />,
+          () => dispatch({ type: "showRoutines" }),
+          state.loopRuns.some((run) => ["failed", "missed", "interrupted"].includes(run.status) && !run.seenAt) ? (
+            <span className="size-2 rounded-full bg-danger" />
+          ) : null,
+        )}
+        {item("you", "You", <InitialsAvatar initials={profileInitials(state.config?.profile)} size={20} />, () =>
+          dispatch({ type: "showYou" }),
+        )}
+      </nav>
     </aside>
   );
 }

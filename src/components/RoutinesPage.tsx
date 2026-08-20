@@ -50,6 +50,7 @@ function statusChip(status: LoopRunStatus) {
       return { icon: <CheckCircle2 size={12} />, label: "done", cls: "text-success" };
     case "failed":
     case "missed":
+    case "interrupted":
       return { icon: <CircleAlert size={12} />, label: status, cls: "text-danger" };
   }
 }
@@ -124,6 +125,9 @@ function LoopCard({
       </div>
       <p className="mt-2.5 max-w-[52rem] text-[12.5px] leading-relaxed text-ink-secondary">{loop.description}</p>
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-ink-secondary">
+        {loop.timezonePaused && (
+          <span className="text-warning">Paused — agency timezone does not match this computer</span>
+        )}
         {loop.available && loop.enabled && loop.nextRunAt && <span>Next: {niceWhen(loop.nextRunAt)}</span>}
         {lastRun && (
           <span className="flex items-center gap-1.5">
@@ -181,7 +185,7 @@ export function RoutinesPage() {
   for (const run of state.loopRuns) {
     if (["queued", "running"].includes(run.status)) activeByLoop.set(run.loopId, run);
   }
-  const unseenFailures = state.loopRuns.filter((run) => ["failed", "missed"].includes(run.status) && !run.seenAt);
+  const unseenFailures = state.loopRuns.filter((run) => ["failed", "missed", "interrupted"].includes(run.status) && !run.seenAt);
 
   return (
     <main className="flex h-full min-w-0 flex-1 flex-col bg-app">
@@ -237,7 +241,7 @@ export function RoutinesPage() {
             <div className="space-y-1.5">
               {state.loopRuns.slice(0, 15).map((run) => {
                 const chip = statusChip(run.status);
-                const unseen = ["failed", "missed"].includes(run.status) && !run.seenAt;
+                const unseen = ["failed", "missed", "interrupted"].includes(run.status) && !run.seenAt;
                 return (
                   <button
                     key={run.id}

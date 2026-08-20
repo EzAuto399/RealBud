@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { HERMES_PIN, hermesInstallCommand } from "../../hermes-pin.ts";
+import { seedVault } from "../../vault.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
 const support: AcpSupport = {
@@ -49,4 +50,13 @@ const support: AcpSupport = {
   },
 };
 
-export const HermesAgentDriver = createAcpDriver(support);
+const base = createAcpDriver(support);
+
+export const HermesAgentDriver = {
+  ...base,
+  decodeConfig: (raw: unknown) => {
+    const decoded = base.decodeConfig(raw);
+    return { ...decoded, workspace: decoded.workspace || seedVault() };
+  },
+  defaultConfig: () => ({ ...base.decodeConfig({}), workspace: seedVault() }),
+};

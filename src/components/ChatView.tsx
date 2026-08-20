@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  api,
   useStore,
   useStreaming,
   formatTime,
@@ -26,6 +27,7 @@ import {
   type InstanceInfo,
   type Message,
 } from "@/state/store";
+import type { DeskSnapshot } from "@/lib/desk";
 import { EngineSetup } from "./EngineSetup";
 import { MausAvatar } from "./Avatar";
 import { stateForBot } from "@/lib/mascot";
@@ -571,7 +573,7 @@ const MessagesList = memo(function MessagesList({
   );
 });
 
-export function ChatView({ bot }: { bot: Bot }) {
+export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: boolean }) {
   const { state, dispatch } = useStore();
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -692,9 +694,10 @@ export function ChatView({ bot }: { bot: Bot }) {
               Stop
             </button>
           )}
-          <TaskPicker bot={bot} />
-          <ModelPicker bot={bot} />
-          <CallButton bot={bot} />
+          {!productAsk && <TaskPicker bot={bot} />}
+          {!productAsk && <ModelPicker bot={bot} />}
+          {!productAsk && <CallButton bot={bot} />}
+          {!productAsk && (
           <button
             onClick={() => dispatch({ type: "toggleComputer" })}
             className={cn(
@@ -705,8 +708,11 @@ export function ChatView({ bot }: { bot: Bot }) {
           >
             <Monitor size={18} />
           </button>
+          )}
         </div>
       </div>
+
+      {productAsk && <AskProposeBar />}
 
       {/* Error banner */}
       {state.error && (
@@ -804,5 +810,60 @@ export function ChatView({ bot }: { bot: Bot }) {
       />
 
     </main>
+  );
+}
+
+function AskProposeBar() {
+  const { dispatch } = useStore();
+  const [snap, setSnap] = useState<DeskSnapshot | null>(null);
+  const [propertyId, setPropertyId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    void api("/api/desk").then((next: DeskSnapshot) => {
+      setSnap(next);
+      setPropertyId((id) => id || next.properties[0]?.id || "");
+    }).catch(() => {});
+  }, []);
+
+  if (!snap?.properties.length) return null;
+
+  return (
+    <div className="mx-auto flex w-full max-w-[900px] flex-wrap items-center gap-2 px-5 pb-2">
+      <span className="text-[12px] text-ink-secondary">Put courtesy on Desk</span>
+      <select
+        value={propertyId}
+        onChange={(event) => setPropertyId(event.target.value)}
+        className="min-w-[12rem] flex-1 rounded-lg border border-hairline/40 bg-inset px-2 py-1.5 text-[13px] text-ink outline-none"
+      >
+        {snap.properties.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.address}
+          </option>
+        ))}
+      </select>
+      <button
+        disabled={busy || !propertyId}
+        onClick={() => {
+          setBusy(true);
+          setError("");
+          void api("/api/desk/propose", {
+            method: "POST",
+            body: JSON.stringify({ propertyId, kind: "courtesy-rent", expectedRevision: snap.revision }),
+          })
+            .then((next: DeskSnapshot) => {
+              setSnap(next);
+              dispatch({ type: "deskSnapshot", snapshot: next });
+            })
+            .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
+            .finally(() => setBusy(false));
+        }}
+        className="rounded-lg bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white disabled:opacity-40"
+      >
+        {busy ? "Putting…" : "Put on Desk"}
+      </button>
+      {error && <span className="text-[12px] text-danger">{error}</span>}
+    </div>
   );
 }

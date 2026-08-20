@@ -33,9 +33,14 @@ import { applyPropertyPack } from "./hermes-pack.ts";
 import { hermesStatus } from "./hermes-status.ts";
 import { hermesInstallCommand, HERMES_PIN } from "./hermes-pin.ts";
 import { tryHermesPing } from "./hermes-hands.ts";
+import { readArtifact } from "./audit-artifacts.ts";
 import { Desk } from "./desk.ts";
+import { seedVault } from "./vault.ts";
 import { openTerminalAndRun, setupCommandFor } from "./engine-setup.ts";
+import { PRODUCT_MODE, productDenied } from "./product-mode.ts";
 import { LoopManager, type LoopId } from "./routines.ts";
+import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
+import { evaluatorForLoop } from "./workflow-catalog.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import { TurnWatchdog } from "./turn-watchdog.ts";
 
@@ -53,6 +58,7 @@ const MIME: Record<string, string> = {
 };
 
 ensureDirs();
+seedVault();
 try {
   applyPropertyPack();
 } catch {
@@ -558,6 +564,20 @@ async function startTurn(
   void (async () => {
     try {
       const integrations: NonNullable<Parameters<typeof instance.adapter.sendTurn>[0]["integrations"]> = {};
+      if (PRODUCT_MODE) {
+        await instance.adapter.sendTurn({
+          threadId,
+          text: turnText,
+          model,
+          resumeCursor: rewound ? undefined : task.resumeCursors[instanceId],
+          transcript,
+          system:
+            `You are Bud, the one RealBud worker. Draft and explain only. Never send, pay, or open a computer. Desk owns approvals.`,
+          integrations: {},
+        });
+        if (rewound) store.patchBot(bot.id, { rewound: false, resumeCursors: {} });
+        return;
+      }
       if (cfg.composio?.key) integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
       const wants = bot.computer;
       const mountsComputerMcp = instance.adapter.capabilities.computerMcp === true;
@@ -715,15 +735,24 @@ async function startTurn(
 // ── named loops: the RealBud clock presses Desk Recheck ────────────────
 // RealBud owns WHEN; Hermes owns HOW (headless, facts only, no cron).
 // A loop is never a bot turn, a prompt, or a second agent.
+function commitDesk(snapshot: ReturnType<Desk["snapshot"]>) {
+  broadcast({ kind: "desk", snapshot });
+}
+
 loops = new LoopManager({
   emit: broadcast,
   execute: async (loop) => {
     if (loop.id !== "morning-arrears") return { ok: false, detail: "not built yet" };
-    const snapshot = await desk.runMorningCheckLive();
-    broadcast({ kind: "desk", snapshot });
-    // A fixture fallback is a completed check, not a failed loop — the run
-    // detail carries the hands reason and Desk shows the same warning.
-    return { ok: true, detail: snapshot.handsDetail ?? "Desk check completed." };
+    if (desk.recovery.active) return { ok: false, detail: "desk is in recovery — schedules are paused" };
+    const spec = evaluatorForLoop(loop.id);
+    if (spec && spec.mayLaunchCua) return { ok: false, detail: "the clock must not launch a browser" };
+    const before = desk.snapshot();
+    const snapshot = before.mode === "demo" ? desk.runMorningCheck() : await desk.runMorningCheckLive();
+    commitDesk(snapshot);
+    if (snapshot.hands === "held") return { ok: false, detail: snapshot.handsDetail ?? "held" };
+    if (snapshot.mode === "demo") return { ok: true, detail: snapshot.handsDetail ?? "Demo check completed." };
+    const live = snapshot.hands === "hermes" || snapshot.hands === "csv";
+    return { ok: live, detail: snapshot.handsDetail ?? (live ? "Desk check completed." : "live check did not use live facts") };
   },
 });
 loops.start();
@@ -965,6 +994,25 @@ const server = createServer(async (req, res) => {
   const path = url.pathname;
   const method = req.method ?? "GET";
   try {
+    if (needsSession(path)) {
+      const gate = sessionOk(req, PORT);
+      if (!gate.ok) return json(res, gate.status, { error: gate.error });
+    } else if (path.startsWith("/api/") && path !== "/api/health" && path !== "/api/session" && !path.startsWith("/api/internal/")) {
+      const gate = sessionOk(req, PORT);
+      if (!gate.ok && gate.status === 403) return json(res, 403, { error: gate.error });
+    }
+    const denied = productDenied(method, path);
+    if (denied) return json(res, 403, { error: denied });
+
+    if (path === "/api/session" && method === "GET") {
+      const host = typeof req.headers.host === "string" ? req.headers.host : undefined;
+      const origin = typeof req.headers.origin === "string" ? req.headers.origin : undefined;
+      if (!hostAllowed(host, PORT) || !originAllowed(origin, PORT)) {
+        return json(res, 403, { error: "refused host or origin" });
+      }
+      return json(res, 200, { token: SESSION_TOKEN, product: PRODUCT_MODE, nonProduction: process.env.REALBUD_PRODUCTION !== "1" });
+    }
+
     // ── internal peer-agent comms (localhost + shared token only) ──────
     // The agents-proxy (spawned inside a bot's agent process) calls these to
     // discover peers and hand a message to one. Not part of the public API.
@@ -1102,15 +1150,36 @@ const server = createServer(async (req, res) => {
       return run ? json(res, 200, { run }) : json(res, 404, { error: "no such run" });
     }
 
-    // ── PM desk (fixture arrears; never sends) ────────────────────────
+    // ── PM desk (never sends) ────────────────────────────────────────
     if (path === "/api/desk" && method === "GET") {
       return json(res, 200, desk.snapshot());
     }
     if (path === "/api/desk/check" && method === "POST") {
-      return json(res, 200, await desk.runMorningCheckLive());
+      const snapshot = await desk.runMorningCheckLive();
+      commitDesk(snapshot);
+      return json(res, 200, snapshot);
     }
     if (path === "/api/desk/reset" && method === "POST") {
-      return json(res, 200, desk.resetFixtures());
+      const snapshot = desk.resetFixtures();
+      commitDesk(snapshot);
+      return json(res, 200, snapshot);
+    }
+    if (path === "/api/desk/import" && method === "POST") {
+      const body = await readBody(req);
+      const snapshot = desk.importCsv(String(body.csv ?? ""), typeof body.observedAt === "number" ? body.observedAt : undefined);
+      commitDesk(snapshot);
+      return json(res, 200, snapshot);
+    }
+    if (path === "/api/desk/propose" && method === "POST") {
+      const body = await readBody(req);
+      const snapshot = desk.proposeFromAsk({
+        propertyId: String(body.propertyId ?? ""),
+        kind: body.kind === "levy-from-rent" ? "levy-from-rent" : "courtesy-rent",
+        body: typeof body.body === "string" ? body.body : undefined,
+        expectedRevision: typeof body.expectedRevision === "number" ? body.expectedRevision : undefined,
+      });
+      commitDesk(snapshot);
+      return json(res, 201, snapshot);
     }
     const deskSend = path.match(/^\/api\/desk\/drafts\/([\w-]+)\/send$/);
     if (deskSend && method === "POST") {
@@ -1118,27 +1187,78 @@ const server = createServer(async (req, res) => {
         error: "RealBud never sends. Approve the draft and send it from the PMS.",
       });
     }
+    const deskPrepare = path.match(/^\/api\/desk\/drafts\/([\w-]+)\/prepare$/);
+    if (deskPrepare && method === "POST") {
+      const snapshot = process.env.FAKE_PORTAL_URL
+        ? await desk.preparePortalAsync(deskPrepare[1])
+        : desk.command({ type: "prepare-portal", draftId: deskPrepare[1], expectedRevision: desk.revision });
+      commitDesk(snapshot);
+      return json(res, 200, snapshot);
+    }
+    const deskWork = path.match(/^\/api\/desk\/work\/([\w-]+)\/(confirm|unknown)$/);
+    if (deskWork && method === "POST") {
+      const snapshot = desk.command({
+        type: deskWork[2] === "confirm" ? "confirm" : "effect-unknown",
+        workItemId: deskWork[1],
+        expectedRevision: desk.revision,
+      });
+      commitDesk(snapshot);
+      return json(res, 200, snapshot);
+    }
     const deskDraft = path.match(/^\/api\/desk\/drafts\/([\w-]+)\/(allow|deny)$/);
     if (deskDraft && method === "POST") {
-      const draft = deskDraft[2] === "allow" ? desk.allowDraft(deskDraft[1]) : desk.denyDraft(deskDraft[1]);
+      let expected: number | undefined;
+      if (String(req.headers["content-type"] ?? "").toLowerCase().includes("json")) {
+        const body = await readBody(req);
+        if (typeof body.expectedRevision === "number") expected = body.expectedRevision;
+      }
+      const draft = deskDraft[2] === "allow" ? desk.allowDraft(deskDraft[1], expected) : desk.denyDraft(deskDraft[1], expected);
+      commitDesk(desk.snapshot());
       return json(res, 200, { draft });
     }
     const deskEdit = path.match(/^\/api\/desk\/drafts\/([\w-]+)$/);
     if (deskEdit && method === "PATCH") {
       const body = await readBody(req);
-      return json(res, 200, { draft: desk.editDraft(deskEdit[1], String(body.body ?? "")) });
+      const draft = desk.editDraft(deskEdit[1], String(body.body ?? ""));
+      commitDesk(desk.snapshot());
+      return json(res, 200, { draft });
+    }
+    const deskNotes = path.match(/^\/api\/desk\/properties\/([\w-]+)\/notes$/);
+    if (deskNotes && method === "GET") {
+      return json(res, 200, desk.notesFor(deskNotes[1]));
+    }
+    if (deskNotes && method === "PUT") {
+      const body = await readBody(req);
+      const note = desk.writeNotes(deskNotes[1], String(body.body ?? ""));
+      commitDesk(desk.snapshot());
+      return json(res, 200, note);
     }
     const deskProp = path.match(/^\/api\/desk\/properties\/([\w-]+)$/);
     if (deskProp && method === "PATCH") {
       const body = await readBody(req);
-      return json(res, 200, { property: desk.patchProperty(deskProp[1], body) });
+      const property = desk.patchProperty(deskProp[1], body);
+      commitDesk(desk.snapshot());
+      return json(res, 200, { property });
     }
     if (path === "/api/desk/properties" && method === "POST") {
-      const body = await readBody(req);
-      return json(res, 201, desk.addProperty(body));
+      const snapshot = desk.addProperty(await readBody(req));
+      commitDesk(snapshot);
+      return json(res, 201, snapshot);
     }
     if (deskProp && method === "DELETE") {
-      return json(res, 200, desk.removeProperty(deskProp[1]));
+      const snapshot = desk.removeProperty(deskProp[1]);
+      commitDesk(snapshot);
+      return json(res, 200, snapshot);
+    }
+    const artifact = path.match(/^\/api\/artifacts\/([\w-]+)$/);
+    if (artifact && method === "GET") {
+      const { meta, body } = readArtifact(artifact[1]);
+      res.writeHead(200, {
+        "content-type": meta.mime,
+        "cache-control": "no-store",
+        "content-length": String(body.length),
+      });
+      return res.end(body);
     }
 
     // ── pinned Hermes worker (Desk hands; never Hermes Desktop) ────────

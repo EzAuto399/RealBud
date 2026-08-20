@@ -59,7 +59,7 @@ describe("LoopManager catalog", () => {
     const { manager } = makeManager();
     const loops = manager.listLoops();
     expect(loops.map((loop) => loop.id)).toEqual(["morning-arrears", "owner-letter", "inbound-triage"]);
-    expect(loops[0]).toMatchObject({ available: true, enabled: true, name: "Morning arrears" });
+    expect(loops[0]).toMatchObject({ available: true, enabled: true, name: "Morning money check" });
     expect(loops[1]).toMatchObject({ available: false, enabled: false });
     expect(loops[2]).toMatchObject({ available: false, enabled: false });
     expect(loops[0].nextRunAt).not.toBeNull();
@@ -179,5 +179,86 @@ describe("LoopManager runs", () => {
       expect(loop).not.toHaveProperty("runOn");
     }
     expect(LOOP_CATALOG.every((loop) => !/send|pay|cron/i.test(loop.description + loop.name))).toBe(true);
+  });
+
+  it("marks persisted queued and running runs as interrupted on startup", () => {
+    const file = tempFile();
+    mkdirSync(join(file, ".."), { recursive: true });
+    writeFileSync(
+      file,
+      JSON.stringify({
+        version: 2,
+        timezone: "Australia/Sydney",
+        state: { "morning-arrears": { enabled: true, handledThrough: Date.now() } },
+        runs: [
+          {
+            id: "run-queued",
+            loopId: "morning-arrears",
+            loopName: "Morning money check",
+            scheduledFor: Date.now() - 1000,
+            status: "queued",
+            manual: false,
+            createdAt: Date.now() - 1000,
+          },
+          {
+            id: "run-running",
+            loopId: "morning-arrears",
+            loopName: "Morning money check",
+            scheduledFor: Date.now() - 500,
+            status: "running",
+            manual: false,
+            createdAt: Date.now() - 500,
+          },
+        ],
+      }),
+    );
+    const manager = new LoopManager({ file, execute: async () => ({ ok: true, detail: "" }) });
+    const runs = manager.listRuns();
+    expect(runs.every((run) => run.status === "interrupted")).toBe(true);
+    expect(runs.every((run) => /not resumed/i.test(run.detail ?? ""))).toBe(true);
+  });
+
+  it("pauses the clock when the agency timezone does not match the host", () => {
+    const { manager } = makeManager();
+    const paused = new LoopManager({
+      file: tempFile(),
+      timezone: "Australia/Sydney",
+      hostTimezone: "America/Los_Angeles",
+      execute: async () => ({ ok: true, detail: "" }),
+    });
+    const loop = paused.listLoops()[0];
+    expect(loop.timezonePaused).toBe(true);
+    expect(loop.nextRunAt).toBeNull();
+    expect(manager.listLoops()[0].timezonePaused).toBeFalsy();
+  });
+
+  it("does not double-fire when the clock rolls back inside the same minute", async () => {
+    let now = new Date(2026, 7, 18, 7, 29, 0).getTime();
+    const { manager, calls } = makeManager({ now: () => now });
+    await manager.tick();
+    expect(calls).toHaveLength(0);
+    now = new Date(2026, 7, 18, 7, 31, 0).getTime();
+    await manager.tick();
+    expect(calls).toHaveLength(1);
+    now = new Date(2026, 7, 18, 7, 30, 30).getTime();
+    await manager.tick();
+    expect(calls).toHaveLength(1);
+  });
+
+  it("schedules the next weekday 07:30 across the Sydney DST spring-forward", () => {
+    const schedule = { type: "daily" as const, time: "07:30", weekdays: [1, 2, 3, 4, 5] };
+    // Saturday 3 Oct 2026 12:00 Sydney — DST starts Sunday 4 Oct 02:00 → 03:00
+    const saturday = Date.parse("2026-10-03T02:00:00.000Z");
+    const next = nextOccurrence(schedule, saturday, "Australia/Sydney");
+    expect(next).not.toBeNull();
+    const wall = new Intl.DateTimeFormat("en-AU", {
+      timeZone: "Australia/Sydney",
+      weekday: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(new Date(next!));
+    expect(wall).toMatch(/Mon/);
+    expect(wall).toMatch(/07:30/);
   });
 });

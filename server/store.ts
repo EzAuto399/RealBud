@@ -723,8 +723,31 @@ export class Store {
     return bot;
   }
 
-  /** Desk is home. Do not seed a chat bot — Workshop stays empty until asked. */
+  /** One visible worker. Desk is home; Ask talks to Bud. */
   seedIfEmpty() {
-    return;
+    if (this.bots.some((b) => b.id === "bud")) return;
+    if (this.bots.length) return;
+    const bot: BotRecord = {
+      id: "bud",
+      threadId: newId(),
+      name: "Bud",
+      title: "Desk assistant",
+      description: "Ask about the book. Morning exceptions stay on Desk for you to allow.",
+      notifications: true,
+      color: "green",
+      unread: false,
+      modelSelection: this.defaultSelection(),
+      resumeCursors: {},
+      computer: "off",
+      createdAt: Date.now(),
+    };
+    bot.tasks = [{ threadId: bot.threadId, title: UNTITLED_TASK, createdAt: bot.createdAt, resumeCursors: {} }];
+    this.bots.unshift(bot);
+    this.saveBots();
+    this.appendMessage(bot.threadId, {
+      role: "bot",
+      kind: "text",
+      text: "I'm Bud. Morning money lives on Desk — I can help you read a card or draft an owner note. I never send or pay.",
+    });
   }
 }

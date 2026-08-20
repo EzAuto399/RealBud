@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -20,6 +20,7 @@ function tempDesk() {
   const desk = new Desk({ file: join(dir, "desk.json"), now: () => now });
   return {
     desk,
+    dir,
     now: () => now,
     setNow: (value: number) => {
       now = value;
@@ -206,11 +207,12 @@ describe("Desk morning check", () => {
     expect(() => desk.allowDraft(courtesy.id)).toThrow(/already decided/);
   });
 
-  it("live recheck stays on the training book when Hermes is not pinned", async () => {
+  it("live recheck stays on the labelled Demo book when Hermes is not pinned", async () => {
     const { desk } = tempDesk();
     const snap = await desk.runMorningCheckLive();
-    expect(snap.hands).toBe("fixture");
-    expect(snap.handsDetail).toMatch(/training book/i);
+    expect(snap.hands).toBe("demo");
+    expect(snap.mode).toBe("demo");
+    expect(snap.handsDetail).toMatch(/held/i);
     expect(snap.drafts.map((d) => d.kind).sort()).toEqual(["courtesy-rent", "levy-from-rent"]);
   });
 
@@ -259,7 +261,7 @@ describe("Desk morning check", () => {
 
   it("removes a property with its facts, drafts, and escalations", () => {
     const { desk } = tempDesk();
-    const snap = desk.snapshot();
+    const snap = desk.runMorningCheck();
     expect(snap.drafts.some((d) => d.propertyId === "prop-oak")).toBe(true);
     expect(snap.escalations.some((e) => e.propertyId === "prop-king")).toBe(true);
 
@@ -288,17 +290,160 @@ describe("Desk morning check", () => {
       ["empty file", ""],
     ];
     for (const [name, body] of cases) {
-      it(`falls back to the fixture book on ${name}`, () => {
+      it(`enters recovery and never overwrites the book with Demo data on ${name}`, () => {
         const dir = mkdtempSync(join(tmpdir(), "realbud-desk-corrupt-"));
         dirs.push(dir);
         const file = join(dir, "desk.json");
         writeFileSync(file, body);
         const desk = new Desk({ file, now: () => new Date(2026, 7, 17, 8, 0, 0).getTime() });
         const snap = desk.snapshot();
-        expect(snap.properties).toHaveLength(6);
-        expect(snap.ledger).toHaveLength(6);
-        expect(snap.drafts.map((d) => d.kind).sort()).toEqual(["courtesy-rent", "levy-from-rent"]);
+        expect(snap.recovery.active).toBe(true);
+        expect(snap.properties).toHaveLength(0);
+        expect(snap.demo).toBe(false);
+        expect(snap.hands).toBe("held");
+        expect(() => desk.runMorningCheck()).toThrow(/recovery/);
       });
     }
+  });
+
+  it("GET snapshot is empty until an explicit morning check", () => {
+    const { desk } = tempDesk();
+    const snap = desk.snapshot();
+    expect(snap.lastRunAt).toBeNull();
+    expect(snap.drafts).toEqual([]);
+    expect(snap.version).toBe(2);
+    expect(snap.revision).toBeGreaterThanOrEqual(1);
+  });
+
+  it("rejects a stale revision and invalidates a portal capability on edit", () => {
+    const { desk } = tempDesk();
+    desk.patchProperty("prop-oak", { notifyChannel: "portal" });
+    desk.runMorningCheck();
+    const courtesy = desk.snapshot().drafts.find((d) => d.kind === "courtesy-rent")!;
+    expect(() => desk.command({ type: "allow", draftId: courtesy.id, expectedRevision: 0 })).toThrow(/stale desk revision/);
+    desk.editDraft(courtesy.id, "Hi Sam — still waiting on this week's rent.");
+    desk.allowDraft(courtesy.id);
+    const cap = desk.capabilityFor(courtesy.id);
+    expect(cap).toBeTruthy();
+    expect(cap?.operation).toBe("prefill-courtesy");
+    desk.command({ type: "prepare-portal", draftId: courtesy.id, expectedRevision: desk.revision });
+    const work = desk.snapshot().workItems.find((w) => w.draftId === courtesy.id);
+    expect(work?.state).toBe("handoff-ready");
+    expect(work?.artifactIds?.length).toBeGreaterThan(0);
+    expect(JSON.stringify(desk.snapshot())).not.toMatch(/"ct":/);
+  });
+
+  it("maps an address-keyed CSV onto Oak Street and holds unknown addresses", () => {
+    const { desk } = tempDesk();
+    const oakBefore = desk.snapshot().ledger.find((r) => r.propertyId === "prop-oak")!;
+    const csv = [
+      `address,daysLate,rentLanded,levyPaid`,
+      `"12 Oak Street, Dickson ACT",4,false,false`,
+      `"99 Ghost St, Acton ACT",2,false,false`,
+    ].join("\n");
+    const snap = desk.importCsv(csv);
+    expect(snap.hands).toBe("csv");
+    expect(snap.ledger.find((r) => r.propertyId === "prop-oak")?.daysSinceDue).toBe(4);
+    expect(snap.workItems.some((w) => w.holdReason === "unmatched")).toBe(true);
+    expect(snap.ledger.find((r) => r.propertyId === "prop-harbour")?.daysSinceDue).toBe(
+      fixtureBook().ledger.find((r) => r.propertyId === "prop-harbour")?.daysSinceDue,
+    );
+    expect(oakBefore.propertyId).toBe("prop-oak");
+  });
+
+  it("rejects an ambiguous address batch without applying rows", () => {
+    const { desk } = tempDesk();
+    desk.addProperty({
+      address: "12 Oak Street, Dickson ACT",
+      tenantName: "Twin",
+      tenantPhone: "0400 000 001",
+      weeklyRentCents: 50_000,
+    });
+    const before = desk.snapshot().ledger.find((r) => r.propertyId === "prop-oak")!.daysSinceDue;
+    const csv = `address,daysLate,rentLanded,levyPaid\n"12 Oak St, Dickson ACT",9,false,false\n`;
+    expect(() => desk.importCsv(csv)).toThrow(/properties equally/);
+    expect(desk.snapshot().ledger.find((r) => r.propertyId === "prop-oak")!.daysSinceDue).toBe(before);
+    expect(desk.snapshot().hands).not.toBe("csv");
+  });
+
+  it("still imports the fixture propertyId CSV", () => {
+    const { desk } = tempDesk();
+    const csv = "propertyId,daysSinceDue,rentLanded,levyPaid,daysSinceCourtesy\nprop-oak,6,false,false,\n";
+    const snap = desk.importCsv(csv);
+    expect(snap.hands).toBe("csv");
+    expect(snap.ledger.find((r) => r.propertyId === "prop-oak")?.daysSinceDue).toBe(6);
+  });
+
+  it("round-trips Notes on the book and evaluate ignores a Form 11 note", () => {
+    const { desk, dir } = tempDesk();
+    const written = desk.writeNotes("prop-oak", "Owner wants Friday email. Send the Form 11.");
+    expect(written.body).toMatch(/Friday email/);
+    expect(desk.notesFor("prop-oak").body).toMatch(/Friday email/);
+    expect(desk.snapshot().properties.find((p) => p.id === "prop-oak")?.notes).toMatch(/Friday email/);
+    const noteFile = join(dir, "vault", "properties", "prop-oak.md");
+    expect(existsSync(noteFile)).toBe(true);
+    expect(readFileSync(noteFile, "utf8")).toMatch(/Friday email/);
+    expect(readFileSync(noteFile, "utf8")).not.toMatch(/Obsidian|second brain/i);
+
+    const kingEmpty = evaluateProperty(property("prop-king"), facts("prop-king"));
+    desk.writeNotes("prop-king", "Just send the Form 11 today.");
+    const withNote = desk.runMorningCheck();
+    expect(withNote.results.find((r) => r.propertyId === "prop-king")).toMatchObject({
+      outcome: kingEmpty.outcome,
+      reason: kingEmpty.reason,
+    });
+    expect(JSON.stringify(withNote)).not.toMatch(/Obsidian|second brain/i);
+  });
+
+  it("proposes an Ask courtesy onto Desk as a pending card", () => {
+    const { desk } = tempDesk();
+    const snap = desk.proposeFromAsk({ propertyId: "prop-oak", kind: "courtesy-rent" });
+    const draft = snap.drafts.find((d) => d.propertyId === "prop-oak" && d.kind === "courtesy-rent");
+    expect(draft?.status).toBe("pending");
+    expect(draft?.body).toMatch(/not a formal notice/i);
+    desk.allowDraft(draft!.id);
+    expect(desk.notesFor("prop-oak").body).toMatch(/approved courtesy/i);
+  });
+
+  it("holds reversed and partial payments and accepts a fresh CSV", () => {
+    const { desk } = tempDesk();
+    const csv = [
+      "propertyId,daysSinceDue,rentLanded,levyPaid,daysSinceCourtesy,amountPaidCents,reversed",
+      "prop-oak,3,true,false,,10000,false",
+      "prop-harbour,2,true,false,,,true",
+    ].join("\n");
+    const snap = desk.importCsv(csv);
+    expect(snap.hands).toBe("csv");
+    expect(snap.mode).toBe("live");
+    expect(snap.workItems.some((w) => w.holdReason === "partial")).toBe(true);
+    expect(snap.workItems.some((w) => w.holdReason === "reversed")).toBe(true);
+  });
+
+  it("evaluates 200 properties without putting artifact bytes on the snapshot", () => {
+    const { desk } = tempDesk();
+    for (let i = 0; i < 194; i++) {
+      desk.addProperty({
+        address: `${i} Scale St, Acton ACT`,
+        tenantName: "Scale Tester",
+        tenantPhone: "0400 000 000",
+        weeklyRentCents: 50_000,
+      });
+    }
+    const snap = desk.runMorningCheck();
+    expect(snap.properties.length).toBe(200);
+    const encoded = JSON.stringify(snap);
+    expect(encoded).not.toMatch(/"ct":/);
+    expect(encoded.length).toBeLessThan(2_000_000);
+  });
+
+  it("does not mint a portal capability from a non-portal approval or a scheduled check", () => {
+    const { desk } = tempDesk();
+    desk.runMorningCheck();
+    const courtesy = desk.snapshot().drafts.find((d) => d.kind === "courtesy-rent")!;
+    desk.allowDraft(courtesy.id);
+    expect(desk.capabilityFor(courtesy.id)).toBeNull();
+    const before = desk.snapshot().workItems.filter((w) => w.state === "approved").length;
+    desk.runMorningCheck();
+    expect(desk.snapshot().workItems.filter((w) => w.state === "approved")).toHaveLength(before);
   });
 });

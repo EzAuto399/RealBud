@@ -32,6 +32,7 @@ const RENT_SOURCE_LABELS: Record<RentSource, string> = {
   bank: "Bank feed",
   "pms-export": "PMS export",
   fixture: "Sample ledger",
+  csv: "CSV export",
 };
 const NOTIFY_LABELS: Record<NotifyChannel, string> = {
   sms: "SMS",
@@ -45,13 +46,11 @@ function sourceLabel(source: RentSource): string {
 }
 
 export function DeskPage() {
-  const { state, dispatch, refreshHermes } = useStore();
+  const { state, dispatch } = useStore();
   const [snap, setSnap] = useState<DeskSnapshot | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<"check" | "reset" | string | null>(null);
   const [adding, setAdding] = useState(false);
-  const [testingHands, setTestingHands] = useState(false);
-  const [handsTest, setHandsTest] = useState<{ ok: boolean; detail: string } | null>(null);
 
   const [ready, setReady] = useState(false);
 
@@ -59,13 +58,14 @@ export function DeskPage() {
     try {
       const next = (await api("/api/desk")) as DeskSnapshot;
       setSnap(next);
+      dispatch({ type: "deskSnapshot", snapshot: next });
       setError("");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setReady(true);
     }
-  }, []);
+  }, [dispatch]);
 
   useEffect(() => {
     void load();
@@ -85,27 +85,14 @@ export function DeskPage() {
         method,
         body: body === undefined ? undefined : JSON.stringify(body),
       })) as DeskSnapshot & { draft?: Draft; property?: Property };
-      if (next.properties) setSnap(next);
-      else await load();
-      // a check may have just used Hermes (or missed it) — refresh the
-      // hands status so the chip and Settings card stay honest
-      if (path === "/api/desk/check") void refreshHermes();
+      if (next.properties) {
+        setSnap(next);
+        dispatch({ type: "deskSnapshot", snapshot: next });
+      } else await load();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setBusy(null);
-    }
-  };
-
-  const testHands = async () => {
-    setTestingHands(true);
-    setHandsTest(null);
-    try {
-      setHandsTest(await api("/api/hermes/test", { method: "POST", body: "{}" }));
-    } catch (cause) {
-      setHandsTest({ ok: false, detail: cause instanceof Error ? cause.message : String(cause) });
-    } finally {
-      setTestingHands(false);
     }
   };
 
@@ -144,7 +131,8 @@ export function DeskPage() {
               <h1 className="text-[20px] font-semibold tracking-tight text-ink">Desk</h1>
             </div>
             <p className="mt-1 max-w-[46rem] text-[12.5px] text-ink-secondary">
-              This morning on the training book. RealBud drafts the courtesy. You send from the PMS. It will not send a notice or move trust money.
+              {snap.demo || snap.mode === "demo" ? "Demo book. " : ""}
+              Morning money exceptions only. RealBud drafts the courtesy. You send from the PMS or click the portal. It will not send a notice or move trust money.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -165,54 +153,38 @@ export function DeskPage() {
             title={snap.handsDetail ?? state.hermes?.detail ?? undefined}
             className={cn(
               "rounded-full border px-2.5 py-1",
-              snap.hands === "hermes"
+              snap.hands === "hermes" || snap.hands === "csv"
                 ? "border-success/25 bg-success/10 text-success"
-                : "border-hairline/50 bg-panel text-ink-secondary",
+                : snap.hands === "held"
+                  ? "border-warning/25 bg-warning/10 text-warning"
+                  : "border-hairline/50 bg-panel text-ink-secondary",
             )}
           >
-            {snap.hands === "hermes" ? "Hermes live" : "Training book"}
+            {snap.hands === "hermes" ? "Hermes live" : snap.hands === "csv" ? "CSV live" : snap.hands === "held" ? "Held" : "Demo"}
           </span>
           <span className="ml-auto flex items-center gap-1.5">
-            {handsTest && (
-              <span
-                title={handsTest.detail}
-                className={cn(
-                  "max-w-[24rem] truncate rounded-full border px-2.5 py-1",
-                  handsTest.ok ? "border-success/25 bg-success/10 text-success" : "border-danger/25 bg-danger/10 text-danger",
-                )}
-              >
-                {handsTest.ok ? "Hermes answered OK" : handsTest.detail}
-              </span>
-            )}
             <button
-              onClick={() => void testHands()}
-              disabled={testingHands}
-              title="Ask the pinned worker one headless question to prove it can answer"
-              className="flex items-center gap-1 rounded-full border border-hairline/50 bg-panel px-2.5 py-1 text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40"
-            >
-              {testingHands ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
-              Test hands
-            </button>
-            <button
-              onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "connections" })}
+              onClick={() => dispatch({ type: "showYou" })}
               className="rounded-full border border-hairline/50 bg-panel px-2.5 py-1 text-ink-secondary hover:bg-raised hover:text-ink"
             >
               Manage
             </button>
           </span>
         </div>
-        {snap.hands !== "hermes" && (
+        {snap.recovery?.active && (
+          <div className="mt-3 rounded-xl border border-danger/30 bg-danger/10 px-3 py-2.5 text-[13px] text-danger">
+            Desk is in recovery. Writes and schedules are paused. The book was not replaced with Demo data.
+          </div>
+        )}
+        {snap.hands !== "hermes" && snap.hands !== "csv" && (
           <div className="mt-3 flex items-start gap-2 rounded-xl border border-hairline/40 bg-panel px-3 py-2.5 text-[12.5px] text-ink-secondary">
             <Info size={15} className="mt-0.5 shrink-0 text-ink-secondary/70" />
             <span>
-              Desk is on the training book{snap.handsDetail ? ` — ${snap.handsDetail}` : "."}{" "}
-              <button
-                onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "connections" })}
-                className="font-medium text-accent hover:underline"
-              >
-                Wire in Hermes
+              Desk is on the Demo book{snap.handsDetail ? ` — ${snap.handsDetail}` : "."}{" "}
+              <button onClick={() => dispatch({ type: "showYou" })} className="font-medium text-accent hover:underline">
+                Open You
               </button>{" "}
-              under Settings → Hands to run this against live hands.
+              to check hands and sources.
             </span>
           </div>
         )}
@@ -240,11 +212,32 @@ export function DeskPage() {
           </section>
         )}
 
+        {snap.workItems.some((w) => w.state === "held") && (
+          <section className="mb-8 space-y-3">
+            <h2 className="text-[12px] font-medium uppercase tracking-[0.14em] text-ink-secondary">Held</h2>
+            {snap.workItems
+              .filter((w) => w.state === "held")
+              .map((work) => (
+                <div key={work.id} className="rounded-2xl border border-warning/30 bg-warning/5 p-4">
+                  <div className="text-[14px] font-semibold text-ink">
+                    {propertyById.get(work.propertyId)?.address ?? work.propertyId}
+                  </div>
+                  <p className="mt-1 text-[13px] text-ink-secondary">
+                    Held · {work.holdReason ?? "unknown"} · observed {new Date(work.observedAt).toLocaleString()} ·{" "}
+                    {work.sourceIds.join(", ")}
+                  </p>
+                </div>
+              ))}
+          </section>
+        )}
+
         <section className={cn("space-y-3", snap.escalations.length > 0 && "mt-8")}>
           <h2 className="text-[12px] font-medium uppercase tracking-[0.14em] text-ink-secondary">Approve wording</h2>
           {pending.length === 0 ? (
             <div className="rounded-2xl border border-hairline/40 bg-panel px-4 py-6 text-[13.5px] text-ink-secondary">
-              Nothing waiting. Recheck after you change options.
+              {snap.lastRunAt == null
+                ? "Press Recheck to run this morning’s money check. A GET of Desk never starts a check."
+                : "Nothing waiting. Recheck after you change options."}
             </div>
           ) : (
             pending.map((draft) => (
@@ -252,9 +245,10 @@ export function DeskPage() {
                 key={draft.id}
                 draft={draft}
                 property={propertyById.get(draft.propertyId)}
+                work={snap.workItems.find((w) => w.id === draft.workItemId || w.draftId === draft.id)}
                 busy={busy}
-                onAllow={() => run(`/api/desk/drafts/${draft.id}/allow`, "POST", undefined, draft.id)}
-                onDeny={() => run(`/api/desk/drafts/${draft.id}/deny`, "POST", undefined, draft.id)}
+                onAllow={() => run(`/api/desk/drafts/${draft.id}/allow`, "POST", { expectedRevision: snap.revision }, draft.id)}
+                onDeny={() => run(`/api/desk/drafts/${draft.id}/deny`, "POST", { expectedRevision: snap.revision }, draft.id)}
                 onEdit={(body) => run(`/api/desk/drafts/${draft.id}`, "PATCH", { body }, draft.id)}
               />
             ))
@@ -278,13 +272,23 @@ export function DeskPage() {
                 )}
                 <pre className="mt-2 whitespace-pre-wrap font-sans text-[12.5px] leading-relaxed text-ink-secondary">{draft.body}</pre>
                 {draft.status === "allowed" && (
-                  <button
-                    onClick={() => void navigator.clipboard.writeText(draft.body)}
-                    className="mt-2 flex items-center gap-1.5 rounded-xl px-3 py-2 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
-                  >
-                    <Copy size={14} />
-                    Copy
-                  </button>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      onClick={() => void navigator.clipboard.writeText(draft.body)}
+                      className="flex items-center gap-1.5 rounded-xl px-3 py-2 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
+                    >
+                      <Copy size={14} />
+                      Copy
+                    </button>
+                    {draft.channel === "portal" && (
+                      <button
+                        onClick={() => run(`/api/desk/drafts/${draft.id}/prepare`, "POST", undefined, `prepare-${draft.id}`)}
+                        className="rounded-xl bg-accent px-3 py-2 text-[13px] font-medium text-white hover:brightness-110"
+                      >
+                        Prepare portal
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             ))}
@@ -311,6 +315,7 @@ export function DeskPage() {
                 hands={snap.hands}
                 result={snap.results.find((row) => row.propertyId === property.id)}
                 onSave={(options) => run(`/api/desk/properties/${property.id}`, "PATCH", options, property.id)}
+                onNotes={(body) => run(`/api/desk/properties/${property.id}/notes`, "PUT", { body }, `notes-${property.id}`)}
                 onDelete={() => run(`/api/desk/properties/${property.id}`, "DELETE", undefined, `delete-${property.id}`)}
               />
             ))}
@@ -322,6 +327,20 @@ export function DeskPage() {
             {busy === "reset" ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />}
             Replay sample morning
           </button>
+          <label className="mt-3 flex cursor-pointer items-center gap-1.5 text-[12px] text-ink-secondary/70 hover:text-ink-secondary">
+            Import CSV
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              className="sr-only"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (!file) return;
+                void file.text().then((csv) => run("/api/desk/import", "POST", { csv, expectedRevision: snap.revision }, "import"));
+                event.target.value = "";
+              }}
+            />
+          </label>
         </section>
       </div>
 
@@ -341,6 +360,7 @@ export function DeskPage() {
 function DraftCard({
   draft,
   property,
+  work,
   busy,
   onAllow,
   onDeny,
@@ -348,6 +368,7 @@ function DraftCard({
 }: {
   draft: Draft;
   property?: Property;
+  work?: DeskSnapshot["workItems"][number];
   busy: string | null;
   onAllow: () => void;
   onDeny: () => void;
@@ -365,6 +386,12 @@ function DraftCard({
           <div className="text-[15px] font-semibold text-ink">{property?.address ?? draft.propertyId}</div>
           <div className="mt-0.5 text-[12.5px] text-ink-secondary">
             {levy ? "Levy from rent — desk flag" : `Courtesy ${draft.channel.toUpperCase()} draft`} · {draft.to}
+            {work && (
+              <>
+                {" "}
+                · {work.sourceIds.join(", ")} · {new Date(work.observedAt).toLocaleString()} · {work.state}
+              </>
+            )}
           </div>
         </div>
         <span className="rounded-md bg-raised px-2 py-1 text-[11px] text-ink-secondary">
@@ -454,6 +481,7 @@ function PropertyCard({
   hands,
   result,
   onSave,
+  onNotes,
   onDelete,
 }: {
   property: Property;
@@ -461,6 +489,7 @@ function PropertyCard({
   hands: DeskSnapshot["hands"];
   result?: DeskSnapshot["results"][number];
   onSave: (options: Partial<PropertyOptions>) => void;
+  onNotes: (body: string) => void;
   onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -473,6 +502,7 @@ function PropertyCard({
   const [rentSource, setRentSource] = useState<RentSource>(property.options.rentSource);
   const [notifyChannel, setNotifyChannel] = useState<NotifyChannel>(property.options.notifyChannel);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [notes, setNotes] = useState(property.notes ?? "");
 
   useEffect(() => {
     setGraceDays(String(property.options.graceDays));
@@ -481,6 +511,7 @@ function PropertyCard({
     setLevyAmount(property.options.levyFromRent ? String(property.options.levyFromRent.amountCents / 100) : "420");
     setRentSource(property.options.rentSource);
     setNotifyChannel(property.options.notifyChannel);
+    setNotes(property.notes ?? "");
   }, [property]);
 
   const resultLabel = result
@@ -491,6 +522,12 @@ function PropertyCard({
         "inside-grace": `Day ${result.daysLate} · still in grace`,
         "already-reminded": "Already reminded this period",
         "statutory-clock": `${result.daysLate}d late · licensee`,
+        "stale-source": "Held · stale source",
+        "unknown-facts": "Held · unknown facts",
+        unmatched: "Held · unmatched",
+        reversed: "Held · reversed payment",
+        partial: "Held · partial payment",
+        "ambiguous-match": "Held · ambiguous match",
       }[result.reason]
     : "Not checked yet";
 
@@ -522,7 +559,7 @@ function PropertyCard({
           <span className="rounded-md bg-inset px-2 py-1 text-ink-secondary">
             {facts.daysSinceCourtesy == null ? "Not reminded" : `Reminded ${facts.daysSinceCourtesy}d ago`}
           </span>
-          <span className="ml-auto text-[10.5px] text-ink-secondary/60">{hands === "hermes" ? "from Hermes" : "sample book"}</span>
+          <span className="ml-auto text-[10.5px] text-ink-secondary/60">{hands === "hermes" ? "from Hermes" : hands === "csv" ? "from CSV" : hands === "held" ? "held" : "Demo"}</span>
         </div>
       )}
 
@@ -537,6 +574,20 @@ function PropertyCard({
           </span>
         )}
       </div>
+
+      <label className="mt-3 block text-[12px] text-ink-secondary">
+        Notes
+        <textarea
+          value={notes}
+          onChange={(event) => setNotes(event.target.value)}
+          onBlur={() => {
+            if (notes !== (property.notes ?? "")) onNotes(notes);
+          }}
+          rows={3}
+          placeholder="How they like to be contacted. Hardship or deals. Anything the PMS does not keep."
+          className="mt-1 w-full resize-y rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink outline-none focus:border-accent/70"
+        />
+      </label>
 
       <div className="mt-3 flex items-center gap-3">
         <button onClick={() => setOpen((value) => !value)} className="text-[12px] text-accent hover:underline">
