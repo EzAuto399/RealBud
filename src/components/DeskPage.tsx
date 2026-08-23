@@ -378,6 +378,7 @@ function DraftCard({
   const [body, setBody] = useState(draft.body);
   const waiting = busy === draft.id;
   const levy = draft.kind === "levy-from-rent";
+  const owner = draft.kind === "owner-letter";
 
   return (
     <article className="rounded-2xl border border-accent/40 bg-card p-4">
@@ -385,7 +386,12 @@ function DraftCard({
         <div>
           <div className="text-[15px] font-semibold text-ink">{property?.address ?? draft.propertyId}</div>
           <div className="mt-0.5 text-[12.5px] text-ink-secondary">
-            {levy ? "Levy from rent — desk flag" : `Courtesy ${draft.channel.toUpperCase()} draft`} · {draft.to}
+            {owner
+              ? "Owner letter — factual catch-up from the book"
+              : levy
+                ? "Levy from rent — desk flag"
+                : `Courtesy ${draft.channel.toUpperCase()} draft`}{" "}
+            · {draft.to}
             {work && (
               <>
                 {" "}
@@ -395,7 +401,7 @@ function DraftCard({
           </div>
         </div>
         <span className="rounded-md bg-raised px-2 py-1 text-[11px] text-ink-secondary">
-          {levy ? "Not a payment" : "Not sent · not a notice"}
+          {levy ? "Not a payment" : owner ? "Copy only · you send it" : "Not sent · not a notice"}
         </span>
       </div>
 

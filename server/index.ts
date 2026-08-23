@@ -744,10 +744,17 @@ function commitDesk(snapshot: ReturnType<Desk["snapshot"]>) {
 loops = new LoopManager({
   emit: broadcast,
   execute: async (loop) => {
-    if (loop.id !== "morning-arrears") return { ok: false, detail: "not built yet" };
     if (desk.recovery.active) return { ok: false, detail: "desk is in recovery — schedules are paused" };
     const spec = evaluatorForLoop(loop.id);
     if (spec && spec.mayLaunchCua) return { ok: false, detail: "the clock must not launch a browser" };
+    if (loop.id === "owner-letter") {
+      const before = desk.snapshot().drafts.filter((d) => d.kind === "owner-letter").length;
+      const snapshot = desk.draftOwnerLetters();
+      commitDesk(snapshot);
+      const after = snapshot.drafts.filter((d) => d.kind === "owner-letter").length;
+      return { ok: true, detail: `Owner letters on Desk: ${after} (${after - before} new this week).` };
+    }
+    if (loop.id !== "morning-arrears") return { ok: false, detail: "not built yet" };
     const before = desk.snapshot();
     const snapshot = before.mode === "demo" ? desk.runMorningCheck() : await desk.runMorningCheckLive();
     commitDesk(snapshot);

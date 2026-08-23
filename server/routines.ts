@@ -68,11 +68,11 @@ export const LOOP_CATALOG: ReadonlyArray<Omit<Loop, "enabled" | "nextRunAt" | "t
     id: "owner-letter",
     name: "Friday owner letter",
     description:
-      "Same path, different skill. Hermes reads jobs, arrears, and inspections; RealBud drafts the owner catch-up. Declared, not built — lands after the first paid loop is chosen.",
-    available: false,
+      "Every Friday the clock drafts each owner a factual catch-up from the Desk book and Notes. You approve the wording and copy it out yourself.",
+    available: true,
     schedule: { type: "daily", time: "16:00", weekdays: [5] },
     evaluatorId: "owner-letter",
-    evaluatorVersion: 0,
+    evaluatorVersion: 1,
   },
   {
     id: "inbound-triage",

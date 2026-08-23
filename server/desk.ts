@@ -30,6 +30,7 @@ import { DeskStore, type DeskFileV2 } from "./desk-store.ts";
 import { assertTransition, occurrenceKey, proposalHash } from "./desk-work.ts";
 import { tryHermesLedger, type HermesLedgerAttempt } from "./hermes-hands.ts";
 import { ambiguousMatchException, classifyMoneyRow, unmatchedException } from "./morning-money.ts";
+import { composeOwnerLetter, ownerLetterWeekStart } from "./owner-letter.ts";
 import { FAKE_PORTAL_RECIPE } from "./portal-recipe.ts";
 import { CSV_FRESH_MS, isFresh } from "./source-gate.ts";
 import {
@@ -347,6 +348,31 @@ export class Desk {
     return this.snapshot();
   }
 
+  /** Friday owner letter v0: one factual catch-up per property per week,
+   * drafted from Desk facts + Notes. Copy-only — the clock and Run now both
+   * land here; nothing leaves without the PM. */
+  draftOwnerLetters(): DeskSnapshot {
+    this.assertWritable();
+    const now = this.now();
+    const weekStart = ownerLetterWeekStart(now);
+    for (const property of this.store.data.properties) {
+      const exists = this.store.data.drafts.some(
+        (d) => d.propertyId === property.id && d.kind === "owner-letter" && d.periodDueAt === weekStart,
+      );
+      if (exists) continue;
+      const facts = this.facts(property.id);
+      const note = readPropertyNote(property.id, this.vaultRoot);
+      const draft = composeOwnerLetter(property, facts, note, now);
+      const work = this.newWork(property, draft, now, "proposed", ["src-desk"]);
+      draft.workItemId = work.id;
+      this.store.data.drafts.push(draft);
+      this.store.data.workItems.push(work);
+    }
+    this.store.persist();
+    this.emit();
+    return this.snapshot();
+  }
+
   allowDraft(id: string, expectedRevision?: number): Draft {
     return this.command({ type: "allow", draftId: id, expectedRevision: expectedRevision ?? this.store.data.revision }).drafts.find((d) => d.id === id)!;
   }
@@ -496,7 +522,7 @@ export class Desk {
   private newWork(property: Property, draft: Draft, now: number, state: WorkState, sourceIds: string[]): WorkItem {
     return {
       id: `work-${randomUUID()}`,
-      kind: "money-arrears",
+      kind: draft.kind === "owner-letter" ? "owner-letter" : "money-arrears",
       state,
       propertyId: property.id,
       occurrenceKey: occurrenceKey(property.id, draft.kind, draft.periodDueAt),

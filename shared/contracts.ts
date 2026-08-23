@@ -8,7 +8,7 @@ export const COURTESY_DISCLAIMER =
 
 export type RentSource = "mepay" | "bank" | "pms-export" | "fixture" | "csv";
 export type NotifyChannel = "sms" | "email" | "portal" | "desk";
-export type DraftKind = "courtesy-rent" | "levy-from-rent";
+export type DraftKind = "courtesy-rent" | "levy-from-rent" | "owner-letter";
 export type DraftStatus = "pending" | "allowed" | "denied";
 export type CheckOutcome = "draft" | "escalate" | "clear" | "skip" | "hold";
 export type CheckReason =
@@ -29,7 +29,7 @@ export type HandsSource = "demo" | "hermes" | "held" | "csv" | "fixture";
 
 export type BookMode = "demo" | "live";
 
-export type WorkKind = "money-arrears";
+export type WorkKind = "money-arrears" | "owner-letter";
 
 export type WorkState =
   | "proposed"

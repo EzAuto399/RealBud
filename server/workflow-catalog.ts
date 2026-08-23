@@ -11,6 +11,7 @@ export interface EvaluatorSpec {
 
 export const EVALUATOR_CATALOG: readonly EvaluatorSpec[] = [
   { id: "morning-money", version: 1, loopId: "morning-arrears", mayLaunchCua: false },
+  { id: "owner-letter", version: 1, loopId: "owner-letter", mayLaunchCua: false },
 ];
 
 export function evaluatorForLoop(loopId: LoopId): EvaluatorSpec | null {

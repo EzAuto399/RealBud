@@ -85,7 +85,7 @@ A routine is a typed loop, not a prompt: kind (morning-money, owner-letter, inbo
 | Loop | Status |
 |---|---|
 | Morning arrears / money | Built (fixture + CSV + Hermes fail-closed) |
-| Friday owner letter | Declared — next build (after Routines PRs A/B) |
+| Friday owner letter | Built (v0: Desk facts + Notes, Copy-only) |
 | Inbound / emergency triage | Declared |
 
 Same worker. Different option sets on the property card. Not a roster. Ask does not PATCH the clock; it proposes a Schedule change as a card → Allow applies it (PR C, deferred).
@@ -117,20 +117,19 @@ Shipped
 • Product mode: one Bud thread; denied bot/group/plugin/cloud-computer routes; API-level gate hardening (no unattended-approval flips, Bud undeletable/unrenamable)
 • Desk book: add/edit/remove properties, full per-property options, locked never
 • Morning evaluate + Allow/Deny/Edit/Copy; send always 403
-• CSV import matched by address or property code (not fixture ids); freshness / unmatched / partial / reversed holds; ambiguous batch rejected whole (row-level holds next)
+• CSV import matched by address or property code; freshness / unmatched / partial / reversed holds; ambiguous rows become row-level holds (batch-reject schema-only; zero-match imports never fake live)
 • Notes on the card; vault seeded as Hermes cwd; Allow appends to note + decisions log; evaluate never reads the vault (regression-tested)
 • Ask → Desk: "Put on Desk" creates a pending draft needing the one Allow
 • Hermes pin (server/hermes-pin.ts v0.20.3 / v2026.8.16.2), pack/property/, fail-closed Recheck incl. manual-approvals spawn gate
-• Named loops (server/routines.ts + /api/loops); morning available; owner-letter and inbound available: false
+• Named loops with an editable clock: PATCH time/weekdays/enabled + revision, no backfill (server/routines.ts); Schedule GUI time + weekday chips
+• Friday owner letter v0 (server/owner-letter.ts): factual weekly catch-up per property from Desk facts + Notes, Copy-only, via Run now or the Friday clock
 • Bounded fake-portal prefill; Bud submit 403
 • Hands chip: Hermes live vs training book; miss surfaces why and falls back
 
 Not shipped
-• Clock retune (PATCH accepts enabled only; time/days are catalog constants)
-• Ask proposing a Schedule change as a card (PR C, deferred)
-• Row-level CSV holds (ambiguous row still rejects the batch)
-• Named paying/pilot agency · Owner letter evaluator · inbound triage
-• Live portal / PropertyMe OAuth · PM pocket messaging
+• Ask proposing a Schedule change as a card (PR C, deferred until a named office asks)
+• Inbound / emergency triage loop
+• Named paying/pilot agency · Live portal / PropertyMe OAuth · PM pocket messaging
 • Installer a graduate can double-click
 
 Key code
@@ -160,18 +159,15 @@ Forbidden even if Hermes ships it tomorrow: roster (arrears/owner/emergency/tena
 
 ## 8. Plan (do not jump)
 
-Beta door (1–5) is done at HEAD: their export in (address/code match), morning cards, Copy into their PMS, honest hands. Sells items 6–7 (Notes+vault cwd, Ask→Desk) also shipped. Remaining beta path, in order:
+The beta door (1–5) and all three sells items are done at HEAD, plus clock retune (PRs A/B) and owner-letter v0. Code is now ahead of the pilot; the next moves are commercial, not architectural:
 
-1. CSV row-level holds: ambiguous/unmatched row ⇒ hold work item; batch-reject stays for broken schemas.
-2. Routines PR A — clock PATCH: persist time/weekdays/enabled + revision (server/routines.ts).
-3. Routines PR B — Schedule GUI time + weekday chips; planned kinds cannot Run/On.
-4. Friday owner letter v0 evaluator + skill from Desk facts + notes, Copy only — then that kind appears in Add. (Amended order per ROUTINES.md 2026-08-23; PRs C/D deferred.)
-
-After a named shop is in docs/PILOT-CONTRACT.md (required fields: PMS brand, named exporter, export cadence, office OS):
-5. One vendor-test portal, bounded CUA, human Submit.
-6. Pocket: Telegram or WhatsApp Cloud, this PM only.
-7. PropertyMe read API only if the visit says they are on PropertyMe and CSV is the pain.
-8. Lid-shut later: launchd writes a result file only; RealBud reads on open. Still fail-closed. Still no send.
+1. `docs/PILOT-CONTRACT.md`: required fields — PMS brand, named exporter, export cadence, office OS.
+2. After a named agency signs: installer a graduate can double-click.
+3. One vendor-test portal, bounded CUA, human Submit.
+4. Pocket: Telegram or WhatsApp Cloud, this PM only.
+5. PropertyMe read API only if the visit says they are on PropertyMe and CSV is the pain.
+6. Lid-shut later: launchd writes a result file only; RealBud reads on open. Still fail-closed. Still no send.
+7. Ask-proposes-clock-changes (PR C) only when a named office asks for it.
 
 Not beta / do not start: tenant WhatsApp, law crawler, trust, Form 11, Tapi, vault page, extra agents, Computer playground, "create any routine from English," forking Hermes Desktop, overlaying Hermes.app, racing message_agent, replacing PropertyMe.
 

@@ -432,6 +432,29 @@ describe("Desk morning check", () => {
     expect(desk.notesFor("prop-oak").body).toMatch(/approved courtesy/i);
   });
 
+  it("drafts one Copy-only owner letter per property per week from facts and notes", () => {
+    const { desk } = tempDesk();
+    desk.writeNotes("prop-oak", "Owner prefers short updates. Gutter repair booked for Tuesday.");
+    const first = desk.draftOwnerLetters();
+    const letters = first.drafts.filter((d) => d.kind === "owner-letter");
+    expect(letters.length).toBe(first.properties.length);
+    const oak = letters.find((d) => d.propertyId === "prop-oak")!;
+    expect(oak).toMatchObject({ status: "pending", channel: "desk" });
+    expect(oak.body).toMatch(/Weekly update for 12 Oak St/);
+    expect(oak.body).toMatch(/Gutter repair booked for Tuesday/); // Notes colour the draft
+    expect(oak.body).toMatch(/Prepared from the RealBud Desk book/);
+
+    // running it again the same week never duplicates
+    const again = desk.draftOwnerLetters();
+    expect(again.drafts.filter((d) => d.kind === "owner-letter")).toHaveLength(letters.length);
+
+    // allow still works like every other card, and nothing was sent
+    desk.allowDraft(oak.id);
+    const decided = desk.snapshot().drafts.find((d) => d.id === oak.id)!;
+    expect(decided.status).toBe("allowed");
+    expect(JSON.stringify(desk.snapshot())).not.toMatch(/"sentAt"/);
+  });
+
   it("holds reversed and partial payments and accepts a fresh CSV", () => {
     const { desk } = tempDesk();
     const csv = [

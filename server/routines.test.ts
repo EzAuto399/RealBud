@@ -55,21 +55,27 @@ function makeManager(options: Partial<LoopManagerOptions> & { execute?: LoopMana
 }
 
 describe("LoopManager catalog", () => {
-  it("declares the three named loops; only morning-arrears is available and enabled", () => {
+  it("declares the three named loops; morning-arrears and owner-letter are available", () => {
     const { manager } = makeManager();
     const loops = manager.listLoops();
     expect(loops.map((loop) => loop.id)).toEqual(["morning-arrears", "owner-letter", "inbound-triage"]);
     expect(loops[0]).toMatchObject({ available: true, enabled: true, name: "Morning money check" });
-    expect(loops[1]).toMatchObject({ available: false, enabled: false });
+    expect(loops[1]).toMatchObject({ available: true, enabled: true });
     expect(loops[2]).toMatchObject({ available: false, enabled: false });
     expect(loops[0].nextRunAt).not.toBeNull();
-    expect(loops[1].nextRunAt).toBeNull();
+    expect(loops[1].nextRunAt).not.toBeNull();
+    expect(loops[2].nextRunAt).toBeNull();
   });
 
-  it("refuses to enable or run a loop that is not available yet", () => {
-    const { manager } = makeManager();
-    expect(() => manager.setEnabled("owner-letter", true)).toThrow(/not built yet/);
-    expect(manager.runNow("owner-letter")).toBeNull();
+  it("refuses to enable or run a loop that is not available yet; owner-letter v0 runs", () => {
+    const { manager, calls } = makeManager();
+    expect(() => manager.setEnabled("inbound-triage", true)).toThrow(/not built yet/);
+    expect(manager.runNow("inbound-triage")).toBeNull();
+    // owner-letter v0 is built: Run now goes through the injected executor
+    const run = manager.runNow("owner-letter");
+    expect(run).not.toBeNull();
+    void manager.tick();
+    expect(calls.some((loop) => loop.id === "owner-letter")).toBe(true);
   });
 
   it("persists the enabled flag across reloads", () => {
@@ -319,10 +325,10 @@ describe("LoopManager clock retune (PR A)", () => {
 
   it("lets a planned loop retune its clock but still refuses to enable it", () => {
     const { manager } = makeManager();
-    const patched = manager.patchClock("owner-letter", { time: "15:30", weekdays: [5] });
-    expect(patched.schedule.time).toBe("15:30");
+    const patched = manager.patchClock("inbound-triage", { time: "09:15", weekdays: [1, 2, 3, 4, 5] });
+    expect(patched.schedule.time).toBe("09:15");
     expect(patched.enabled).toBe(false);
-    expect(() => manager.patchClock("owner-letter", { enabled: true })).toThrow(/not built yet/);
+    expect(() => manager.patchClock("inbound-triage", { enabled: true })).toThrow(/not built yet/);
   });
 
   it("rejects malformed clock patches with a 400 status", () => {

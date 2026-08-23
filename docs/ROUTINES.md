@@ -90,7 +90,7 @@ Time + weekday chips + Save on existing cards. Planned: can edit when, cannot Ru
 
 **Not in these PRs:** owner-letter evaluator, NLP, pocket, launchd, Cua from the clock, “create any routine,” timezone editor.
 
-**Amendment 2026-08-23 (CEO review, HOLD SCOPE):** ship PRs A then B, then build owner-letter v0 before PR C. Ask-proposes-a-clock-change (PR C) is chat plumbing for a clock no office has used yet — defer until a named office asks for it; PR D stays gated on a named book as written.
+**Amendment 2026-08-23 (CEO review, HOLD SCOPE):** ship PRs A then B, then build owner-letter v0 before PR C. Ask-proposes-a-clock-change (PR C) is chat plumbing for a clock no office has used yet — defer until a named office asks for it; PR D stays gated on a named book as written. **Status: done as amended** — PR A (clock PATCH + revision, no backfill), PR B (Schedule GUI chips), and owner-letter v0 (`server/owner-letter.ts`, Copy-only) shipped 2026-08-23.
 
 v2 scope after a named book (otherwise “Oak” is a fixture id). v3 Add is shipping a kind, not a settings page.
 

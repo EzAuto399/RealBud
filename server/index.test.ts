@@ -172,12 +172,26 @@ describe("harness HTTP API", () => {
     ]);
     const morning = body.loops.find((loop: { id: string }) => loop.id === "morning-arrears");
     expect(morning).toMatchObject({ available: true, enabled: true });
-    const planned = body.loops.find((loop: { id: string }) => loop.id === "owner-letter");
+    const ownerLetter = body.loops.find((loop: { id: string }) => loop.id === "owner-letter");
+    expect(ownerLetter).toMatchObject({ available: true, enabled: true });
+    const planned = body.loops.find((loop: { id: string }) => loop.id === "inbound-triage");
     expect(planned).toMatchObject({ available: false, enabled: false });
     expect(planned).not.toHaveProperty("prompt");
 
-    const run = await api("POST", "/api/loops/owner-letter/run", {});
+    const run = await api("POST", "/api/loops/inbound-triage/run", {});
     expect(run.status).toBe(409);
+
+    // owner-letter v0 runs: it drafts Copy-only cards on Desk
+    const letter = await api("POST", "/api/loops/owner-letter/run", {});
+    expect(letter.status).toBe(201);
+    const deskSnap = (await api("GET", "/api/desk")).body;
+    const letters = deskSnap.drafts.filter((d: { kind: string }) => d.kind === "owner-letter");
+    expect(letters.length).toBeGreaterThan(0);
+    for (const draft of letters) {
+      expect(draft.status).toBe("pending");
+      expect(draft.channel).toBe("desk");
+      expect(draft.body).toMatch(/Prepared from the RealBud Desk book/);
+    }
 
     const patch = await api("PATCH", "/api/loops/morning-arrears", { enabled: false });
     expect(patch.status).toBe(200);
@@ -191,9 +205,9 @@ describe("harness HTTP API", () => {
     expect(retune.status).toBe(200);
     expect(retune.body.loop).toMatchObject({ schedule: { time: "08:15" }, revision: expect.any(Number) });
 
-    const planned = await api("PATCH", "/api/loops/owner-letter", { time: "15:30" });
+    const planned = await api("PATCH", "/api/loops/inbound-triage", { time: "09:15" });
     expect(planned.status).toBe(200);
-    const enablePlanned = await api("PATCH", "/api/loops/owner-letter", { enabled: true });
+    const enablePlanned = await api("PATCH", "/api/loops/inbound-triage", { enabled: true });
     expect(enablePlanned.status).toBe(400);
     expect(String(enablePlanned.body.error)).toMatch(/not built yet/);
 
@@ -206,7 +220,7 @@ describe("harness HTTP API", () => {
 
     // put the clock back for the rest of the suite
     await api("PATCH", "/api/loops/morning-arrears", { time: "07:30" });
-    await api("PATCH", "/api/loops/owner-letter", { time: "16:00" });
+    await api("PATCH", "/api/loops/inbound-triage", { time: "09:00" });
   });
 
   it("refuses to run setup for an engine with no installer", async () => {
