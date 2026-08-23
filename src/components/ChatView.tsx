@@ -806,6 +806,7 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
       <Composer
         key={bot.id}
         bot={bot}
+        productAsk={productAsk}
         onEditLast={lastUserMessage && !bot.busy ? () => setEditingId(lastUserMessage.id) : undefined}
       />
 

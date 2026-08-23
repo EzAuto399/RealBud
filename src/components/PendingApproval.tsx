@@ -82,12 +82,15 @@ export function PendingApprovalActions({
   threadId,
   bot,
   onCancelTurn,
+  alwaysAllowable = true,
 }: {
   pending: Pending;
   threadId: string;
   /** who asked — "always allow" is remembered against them */
   bot?: Bot;
   onCancelTurn: () => void;
+  /** product mode never offers a remembered yes: approvals stay per-turn */
+  alwaysAllowable?: boolean;
 }) {
   const { dispatch } = useStore();
   const decide = (behavior: "allow" | "deny", always = false) =>
@@ -112,7 +115,7 @@ export function PendingApprovalActions({
       >
         Deny
       </button>
-      {bot && pending.allowKey && (
+      {alwaysAllowable && bot && pending.allowKey && (
         <button
           onClick={() => decide("allow", true)}
           title={`Stop asking ${bot.name} about ${pending.allowKey}`}

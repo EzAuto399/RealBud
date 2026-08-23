@@ -36,11 +36,14 @@ export function Composer({
   group,
   members,
   onEditLast,
+  productAsk = false,
 }: {
   bot?: Bot;
   group?: Group;
   members?: Bot[];
   onEditLast?: () => void;
+  /** Ask never offers "Always allow": approvals stay manual, per turn. */
+  productAsk?: boolean;
 }) {
   const { state, dispatch } = useStore();
   const { capabilities } = useDesktopCapabilities();
@@ -271,6 +274,7 @@ export function Composer({
               pending={approval}
               threadId={threadId}
               bot={approvalBot}
+              alwaysAllowable={!productAsk}
               onCancelTurn={() => {
                 if (group) dispatch({ type: "interruptGroup", groupId: group.id });
                 else if (bot) dispatch({ type: "interrupt", botId: bot.id });

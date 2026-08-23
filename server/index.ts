@@ -37,7 +37,7 @@ import { readArtifact } from "./audit-artifacts.ts";
 import { Desk } from "./desk.ts";
 import { seedVault } from "./vault.ts";
 import { openTerminalAndRun, setupCommandFor } from "./engine-setup.ts";
-import { PRODUCT_MODE, productDenied } from "./product-mode.ts";
+import { CANONICAL_BUD_NAME, PRODUCT_MODE, isCanonicalBud, productDenied } from "./product-mode.ts";
 import { LoopManager, type LoopId } from "./routines.ts";
 import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
 import { evaluatorForLoop } from "./workflow-catalog.ts";
@@ -292,7 +292,9 @@ bus.subscribe((event: RuntimeEvent) => {
       // whole point of asking is that a person decides — and anything that
       // looks destructive stops even in auto mode.
       const asker = bot ?? (speaker ? store.bot(speaker.botId) : undefined);
-      const settled = permission && asker && event.requestId
+      // RealBud never auto-answers a permission, whatever the bot record
+      // says. Auto mode exists only in the legacy fleet (OMB_TEST_FLEET=1).
+      const settled = permission && !PRODUCT_MODE && asker && event.requestId
         ? autoDecision(asker, event.tool, event.summary)
         : null;
       if (settled && asker && event.requestId) {
@@ -1434,6 +1436,18 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)$/);
     if (m && method === "PATCH") {
       const body = await readBody(req);
+      // RealBud gates at the API, not just in hidden UI: nothing may flip
+      // unattended approvals or Chief of Staff onto the one worker, and Bud
+      // keeps its name. The seeded bot never carries these flags; this
+      // keeps it that way.
+      if (PRODUCT_MODE) {
+        if (body.autoApprove !== undefined || body.alwaysAllow !== undefined || body.chiefOfStaff !== undefined) {
+          return json(res, 403, { error: "RealBud never runs unattended. Approvals stay manual on Desk." });
+        }
+        if (isCanonicalBud(m[1]) && body.name !== undefined && body.name !== CANONICAL_BUD_NAME) {
+          return json(res, 403, { error: "Bud is the desk's one worker and keeps its name." });
+        }
+      }
       const patch: Record<string, unknown> = {};
       for (const key of ["name", "title", "description", "notifications", "modelSelection", "unread", "computer", "color", "mascotExpression", "pinned", "hidden", "speakReplies", "voice"] as const) {
         if (body[key] !== undefined) patch[key] = body[key];

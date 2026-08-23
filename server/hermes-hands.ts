@@ -7,7 +7,7 @@ import { execFile } from "node:child_process";
 import type { LedgerFacts } from "../shared/contracts.ts";
 import { asBoolean, asFiniteNumber, asNonEmptyString, asNullableNumber } from "./decode.ts";
 import { HERMES_PIN, hermesMatchesPin } from "./hermes-pin.ts";
-import { packInstalled } from "./hermes-pack.ts";
+import { approvalsAreManual, packInstalled } from "./hermes-pack.ts";
 import { probeHermesVersion } from "./hermes-status.ts";
 import { seedVault } from "./vault.ts";
 
@@ -37,6 +37,9 @@ export async function tryHermesPing(opts?: {
   const done = (ok: boolean, detail: string): HermesPing => ({ ok, detail, elapsedMs: Date.now() - started });
   if (process.env.VITEST && !opts?.cli) return done(false, "tests do not ping the live worker");
   if (!packInstalled(opts?.root)) return done(false, `the "${HERMES_PIN.profile}" pack is missing from ~/.hermes.`);
+  if (!approvalsAreManual(opts?.root)) {
+    return done(false, `the "${HERMES_PIN.profile}" pack is not in manual approvals — re-apply the pack.`);
+  }
   const cli = opts?.cli ?? "hermes";
   const version = await probeHermesVersion(cli);
   if (!version) return done(false, "Hermes CLI not found.");
@@ -110,6 +113,9 @@ export async function tryHermesLedger(
   if (process.env.VITEST && !opts?.cli) return miss("tests do not use the live worker — unknown facts stay held");
   if (!packInstalled(opts?.root)) {
     return miss(`Hermes is not answering — the "${HERMES_PIN.profile}" pack is missing from ~/.hermes.`);
+  }
+  if (!approvalsAreManual(opts?.root)) {
+    return miss(`Hermes is not answering — the "${HERMES_PIN.profile}" pack is not in manual approvals. Re-apply the pack.`);
   }
   const cli = opts?.cli ?? "hermes";
   const version = await probeHermesVersion(cli);

@@ -29,6 +29,9 @@ export function productDenied(method: string, path: string): string | null {
   if (/^\/api\/bots\/[\w-]+\/computer(\/|$)/.test(path)) {
     return "Cloud computers are not part of RealBud. Portal work uses a bounded Desk session.";
   }
+  if (method === "DELETE" && /^\/api\/bots\/[\w-]+$/.test(path)) {
+    return "RealBud keeps its one Bud thread. Bud cannot be deleted.";
+  }
   if (path === "/api/local-computer/screenshot" && method === "POST") {
     return "Raw computer screenshots are not available from Ask.";
   }

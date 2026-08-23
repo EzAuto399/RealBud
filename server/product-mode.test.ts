@@ -15,6 +15,8 @@ describe("product mode denials", () => {
     expect(productDenied("POST", "/api/connectors/x")).toMatch(/Connectors/);
     expect(productDenied("POST", "/api/local-computer/screenshot")).toMatch(/screenshots/);
     expect(productDenied("POST", "/api/bots/bud/computer")).toMatch(/Cloud computers/);
+    expect(productDenied("DELETE", "/api/bots/bud")).toMatch(/one Bud thread/);
+    expect(productDenied("DELETE", "/api/desk/properties/prop-oak")).toBeNull();
     expect(isCanonicalBud(CANONICAL_BUD_ID)).toBe(true);
   });
 

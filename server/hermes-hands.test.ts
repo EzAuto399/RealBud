@@ -23,6 +23,7 @@ function fakeHermes(answer: string, exitCode = 0, stderr = "") {
   const profile = join(dir, "profiles", HERMES_PIN.profile);
   mkdirSync(profile, { recursive: true });
   writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
+  writeFileSync(join(profile, "config.yaml"), "approvals:\n  mode: manual\ncron_mode: deny\n");
   const script = join(dir, "hermes");
   writeFileSync(
     script,
@@ -116,6 +117,19 @@ describe("tryHermesPing (fake pinned CLI)", () => {
     expect(ping.ok).toBe(false);
     expect(ping.detail).toMatch(/pack is missing/);
   });
+
+  it("refuses to spawn when the pack's approvals are not manual", async () => {
+    const { dir, script } = fakeHermes("OK");
+    const profile = join(dir, "profiles", HERMES_PIN.profile);
+    writeFileSync(join(profile, "config.yaml"), "approvals:\n  mode: yolo\n");
+    const attempt = await tryHermesLedger(["prop-oak"], { cli: script, root: dir });
+    expect(attempt.rows).toBeNull();
+    expect(attempt.detail).toMatch(/manual approvals/);
+
+    const ping = await tryHermesPing({ cli: script, root: dir });
+    expect(ping.ok).toBe(false);
+    expect(ping.detail).toMatch(/manual approvals/);
+  });
 });
 
 describe("hermes CLI argv contract", () => {
@@ -125,6 +139,7 @@ describe("hermes CLI argv contract", () => {
     const profile = join(dir, "profiles", HERMES_PIN.profile);
     mkdirSync(profile, { recursive: true });
     writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
+    writeFileSync(join(profile, "config.yaml"), "approvals:\n  mode: manual\ncron_mode: deny\n");
     const script = join(dir, "hermes");
     const head = join(dir, "argv-head.txt");
     const promptFile = join(dir, "argv-prompt.txt");
@@ -163,6 +178,7 @@ describe("hermes CLI argv contract", () => {
     const profile = join(dir, "profiles", HERMES_PIN.profile);
     mkdirSync(profile, { recursive: true });
     writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
+    writeFileSync(join(profile, "config.yaml"), "approvals:\n  mode: manual\ncron_mode: deny\n");
     const book = seedVault();
     const cwdFile = join(dir, "cwd.txt");
     const script = join(dir, "hermes");

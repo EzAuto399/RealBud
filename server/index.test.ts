@@ -277,6 +277,35 @@ describe("harness HTTP API", () => {
     expect((await api("POST", "/api/bots/bud/computer", {})).status).toBe(403);
   });
 
+  it("keeps the one worker unsupervisable-by-API and undeletable", async () => {
+    const auto = await api("PATCH", "/api/bots/bud", { autoApprove: true });
+    expect(auto.status).toBe(403);
+    expect(String(auto.body.error)).toMatch(/unattended/i);
+
+    const always = await api("PATCH", "/api/bots/bud", { alwaysAllow: ["Bash"] });
+    expect(always.status).toBe(403);
+
+    const chief = await api("PATCH", "/api/bots/bud", { chiefOfStaff: true });
+    expect(chief.status).toBe(403);
+
+    const rename = await api("PATCH", "/api/bots/bud", { name: "Not Bud" });
+    expect(rename.status).toBe(403);
+
+    // a cosmetic patch that flips nothing still works
+    const cosmetic = await api("PATCH", "/api/bots/bud", { pinned: false });
+    expect(cosmetic.status).toBe(200);
+
+    const del = await api("DELETE", "/api/bots/bud");
+    expect(del.status).toBe(403);
+    expect(String(del.body.error)).toMatch(/one Bud thread/i);
+
+    const after = (await api("GET", "/api/bots")).body.bots;
+    expect(after).toHaveLength(1);
+    expect(after[0]).toMatchObject({ id: "bud", name: "Bud" });
+    expect(after[0].autoApprove ?? false).toBe(false);
+    expect(after[0].alwaysAllow ?? []).toEqual([]);
+  });
+
   async function workshopBot() {
     const listed = await api("GET", "/api/bots");
     const bot = listed.body.bots.find((b: { id: string }) => b.id === "bud");
