@@ -229,7 +229,9 @@ export interface Loop {
   description: string;
   available: boolean;
   enabled: boolean;
+  /** Catalog default unless the PM retuned the clock (persisted in loops.json). */
   schedule: LoopSchedule;
+  revision: number;
   nextRunAt: number | null;
   evaluatorId: string;
   evaluatorVersion: number;

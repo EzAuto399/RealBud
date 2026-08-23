@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -68,7 +68,7 @@ describe("LoopManager catalog", () => {
 
   it("refuses to enable or run a loop that is not available yet", () => {
     const { manager } = makeManager();
-    expect(() => manager.setEnabled("owner-letter", true)).toThrow(/cannot be toggled/);
+    expect(() => manager.setEnabled("owner-letter", true)).toThrow(/not built yet/);
     expect(manager.runNow("owner-letter")).toBeNull();
   });
 
@@ -260,5 +260,78 @@ describe("LoopManager runs", () => {
     }).format(new Date(next!));
     expect(wall).toMatch(/Mon/);
     expect(wall).toMatch(/07:30/);
+  });
+});
+
+describe("LoopManager clock retune (PR A)", () => {
+  it("migrates a v2 loops.json: catalog schedule stands, first save is v3", () => {
+    const file = tempFile();
+    mkdirSync(join(file, ".."), { recursive: true });
+    writeFileSync(
+      file,
+      JSON.stringify({
+        version: 2,
+        timezone: "Australia/Sydney",
+        state: { "morning-arrears": { enabled: true, handledThrough: Date.now() } },
+        runs: [],
+      }),
+    );
+    const first = new LoopManager({ file, execute: async () => ({ ok: true, detail: "" }) });
+    const loop = first.listLoops().find((l) => l.id === "morning-arrears")!;
+    expect(loop.schedule).toMatchObject({ time: "07:30", weekdays: [1, 2, 3, 4, 5] });
+    expect(loop.revision).toBe(1);
+
+    first.patchClock("morning-arrears", { time: "08:15" });
+    const onDisk = JSON.parse(readFileSync(file, "utf8"));
+    expect(onDisk.version).toBe(3);
+    expect(onDisk.state["morning-arrears"]).toMatchObject({ schedule: { time: "08:15" }, revision: 2 });
+
+    const second = new LoopManager({ file, execute: async () => ({ ok: true, detail: "" }) });
+    const reloaded = second.listLoops().find((l) => l.id === "morning-arrears")!;
+    expect(reloaded.schedule.time).toBe("08:15");
+    expect(reloaded.revision).toBe(2);
+  });
+
+  it("retunes time and weekdays forward, bumping revision on every accepted change", () => {
+    const now = new Date(2026, 7, 18, 8, 0, 0).getTime(); // Tuesday
+    const { manager } = makeManager({ now: () => now });
+    const first = manager.patchClock("morning-arrears", { time: "08:15" });
+    expect(first.schedule.time).toBe("08:15");
+    expect(first.revision).toBe(2);
+    expect(first.nextRunAt!).toBeGreaterThan(now);
+    const second = manager.patchClock("morning-arrears", { weekdays: [1, 3, 5] });
+    expect(second.schedule.weekdays).toEqual([1, 3, 5]);
+    expect(second.schedule.time).toBe("08:15"); // untouched field survives
+    expect(second.revision).toBe(3);
+    // next occurrence respects both fields: Tue 18th → Wednesday 19th 08:15
+    expect(second.nextRunAt).toBe(new Date(2026, 7, 19, 8, 15, 0).getTime());
+  });
+
+  it("retunes the clock without backfilling a slot that already passed today", async () => {
+    const now = new Date(2026, 7, 18, 8, 0, 0).getTime(); // Tue 08:00 — today's 07:30 passed
+    const { manager, calls } = makeManager({ now: () => now });
+    const patched = manager.patchClock("morning-arrears", { time: "07:00", weekdays: [1, 2, 3, 4, 5] });
+    expect(patched.revision).toBe(2);
+    expect(patched.nextRunAt!).toBeGreaterThan(now); // tomorrow 07:00, not today's
+    await manager.tick();
+    expect(calls).toHaveLength(0); // no surprise run for the earlier slot
+  });
+
+  it("lets a planned loop retune its clock but still refuses to enable it", () => {
+    const { manager } = makeManager();
+    const patched = manager.patchClock("owner-letter", { time: "15:30", weekdays: [5] });
+    expect(patched.schedule.time).toBe("15:30");
+    expect(patched.enabled).toBe(false);
+    expect(() => manager.patchClock("owner-letter", { enabled: true })).toThrow(/not built yet/);
+  });
+
+  it("rejects malformed clock patches with a 400 status", () => {
+    const { manager } = makeManager();
+    expect(() => manager.patchClock("morning-arrears", {})).toThrow(/nothing to change/);
+    expect(() => manager.patchClock("morning-arrears", { time: "7:30" })).toThrow(/HH:MM/);
+    expect(() => manager.patchClock("morning-arrears", { time: "24:00" })).toThrow(/HH:MM/);
+    expect(() => manager.patchClock("morning-arrears", { weekdays: [] })).toThrow(/non-empty list/);
+    expect(() => manager.patchClock("morning-arrears", { weekdays: [1, 9] })).toThrow(/0–6/);
+    expect(() => manager.patchClock("no-such-loop" as never, { enabled: true })).toThrow(/no such loop/);
   });
 });

@@ -182,7 +182,31 @@ describe("harness HTTP API", () => {
     const patch = await api("PATCH", "/api/loops/morning-arrears", { enabled: false });
     expect(patch.status).toBe(200);
     expect(patch.body.loop.enabled).toBe(false);
+    expect(patch.body.loop.revision).toBeGreaterThanOrEqual(1);
     await api("PATCH", "/api/loops/morning-arrears", { enabled: true });
+  });
+
+  it("retunes a loop's clock over the API and rejects malformed patches", async () => {
+    const retune = await api("PATCH", "/api/loops/morning-arrears", { time: "08:15", weekdays: [1, 2, 3, 4, 5] });
+    expect(retune.status).toBe(200);
+    expect(retune.body.loop).toMatchObject({ schedule: { time: "08:15" }, revision: expect.any(Number) });
+
+    const planned = await api("PATCH", "/api/loops/owner-letter", { time: "15:30" });
+    expect(planned.status).toBe(200);
+    const enablePlanned = await api("PATCH", "/api/loops/owner-letter", { enabled: true });
+    expect(enablePlanned.status).toBe(400);
+    expect(String(enablePlanned.body.error)).toMatch(/not built yet/);
+
+    const empty = await api("PATCH", "/api/loops/morning-arrears", {});
+    expect(empty.status).toBe(400);
+    const badTime = await api("PATCH", "/api/loops/morning-arrears", { time: "7:77" });
+    expect(badTime.status).toBe(400);
+    const badDays = await api("PATCH", "/api/loops/morning-arrears", { weekdays: [0, 9] });
+    expect(badDays.status).toBe(400);
+
+    // put the clock back for the rest of the suite
+    await api("PATCH", "/api/loops/morning-arrears", { time: "07:30" });
+    await api("PATCH", "/api/loops/owner-letter", { time: "16:00" });
   });
 
   it("refuses to run setup for an engine with no installer", async () => {

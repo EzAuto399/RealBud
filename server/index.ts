@@ -1137,9 +1137,15 @@ const server = createServer(async (req, res) => {
     loopMatch = path.match(/^\/api\/loops\/([\w-]+)$/);
     if (loopMatch && method === "PATCH") {
       const body = await readBody(req);
-      if (body.enabled === undefined) return json(res, 400, { error: "only `enabled` can be changed" });
+      if (body.enabled === undefined && body.time === undefined && body.weekdays === undefined) {
+        return json(res, 400, { error: "nothing to change — send enabled, time, or weekdays" });
+      }
       try {
-        const loop = loops!.setEnabled(loopMatch[1] as LoopId, body.enabled === true);
+        const loop = loops!.patchClock(loopMatch[1] as LoopId, {
+          enabled: body.enabled,
+          time: body.time,
+          weekdays: body.weekdays,
+        });
         return json(res, 200, { loop });
       } catch (error) {
         const status = (error as { status?: number }).status ?? 400;

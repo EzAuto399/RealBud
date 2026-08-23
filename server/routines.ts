@@ -22,9 +22,12 @@ export interface LoopManagerOptions {
 }
 
 interface LoopsFile {
-  version: 2;
+  version: 3;
   timezone: string;
-  state: Record<string, { enabled: boolean; handledThrough: number }>;
+  state: Record<
+    string,
+    { enabled: boolean; handledThrough: number; schedule?: { time: string; weekdays: number[] }; revision?: number }
+  >;
   runs: LoopRun[];
 }
 
@@ -32,7 +35,25 @@ const WEEKDAYS = [1, 2, 3, 4, 5];
 const CATCH_UP_MS = 12 * 60 * 60_000;
 const MAX_RUNS = 2_000;
 
-export const LOOP_CATALOG: ReadonlyArray<Omit<Loop, "enabled" | "nextRunAt" | "timezonePaused">> = [
+/** Strict "HH:MM", 00-23 / 00-59. Returns null when it is not a clock time. */
+export function parseClockTime(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const match = value.match(/^([01]\d|2[0-3]):([0-5]\d)$/);
+  return match ? value : null;
+}
+
+/** Non-empty set of weekday numbers 0 (Sun) .. 6 (Sat), deduped and sorted. */
+export function parseWeekdays(value: unknown): number[] | null {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 7) return null;
+  const seen = new Set<number>();
+  for (const raw of value) {
+    if (!Number.isInteger(raw) || raw < 0 || raw > 6) return null;
+    seen.add(raw);
+  }
+  return [...seen].sort((a, b) => a - b);
+}
+
+export const LOOP_CATALOG: ReadonlyArray<Omit<Loop, "enabled" | "nextRunAt" | "timezonePaused" | "revision">> = [
   {
     id: "morning-arrears",
     name: "Morning money check",
@@ -134,6 +155,9 @@ export class LoopManager {
   private loops: Loop[];
   private runs: LoopRun[] = [];
   private handledThrough = new Map<LoopId, number>();
+  /** PM-retuned clocks; null means the catalog schedule still stands. */
+  private overrides = new Map<LoopId, { time: string; weekdays: number[] } | null>();
+  private revisions = new Map<LoopId, number>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
   timezone: string;
@@ -168,14 +192,25 @@ export class LoopManager {
         ? savedState[loop.id]!.handledThrough
         : this.now() - 1;
       this.handledThrough.set(loop.id, Math.min(handled, this.now() - 1));
+      // v2 files carry no per-loop clock; the catalog schedule migrates as-is
+      // and the first retune bumps revision from its initial 1.
+      const savedSchedule = savedState[loop.id]?.schedule;
+      const override =
+        savedSchedule && parseClockTime(savedSchedule.time) && parseWeekdays(savedSchedule.weekdays)
+          ? { time: savedSchedule.time, weekdays: parseWeekdays(savedSchedule.weekdays)! }
+          : null;
+      this.overrides.set(loop.id, override);
+      this.revisions.set(loop.id, Number.isInteger(savedState[loop.id]?.revision) ? savedState[loop.id]!.revision! : 1);
+      const schedule: LoopSchedule = { type: "daily", ...(override ?? loop.schedule) };
       return {
         ...loop,
         evaluatorId: spec?.id ?? loop.evaluatorId,
         evaluatorVersion: spec?.version ?? loop.evaluatorVersion,
-        schedule: { ...loop.schedule },
+        schedule,
+        revision: this.revisions.get(loop.id)!,
         enabled,
         timezonePaused: paused,
-        nextRunAt: enabled && !paused ? nextOccurrence(loop.schedule, this.now(), this.zoneForClock()) : null,
+        nextRunAt: enabled && !paused ? nextOccurrence(schedule, this.now(), this.zoneForClock()) : null,
       };
     });
     if (this.runs.some((r) => r.status === "interrupted")) this.save();
@@ -197,14 +232,44 @@ export class LoopManager {
     return run ? { ...run } : null;
   }
 
-  setEnabled(id: LoopId, enabled: boolean): Loop {
+  /** One door for clock changes: enabled, time, weekdays. Every accepted
+   * change bumps revision and recomputes nextRunAt strictly forward — a
+   * retune never backfills an already-passed slot. */
+  patchClock(id: LoopId, patch: { enabled?: boolean; time?: string; weekdays?: number[] }): Loop {
     const loop = this.loops.find((candidate) => candidate.id === id);
-    if (!loop || !loop.available) throw new Error("that loop cannot be toggled");
-    loop.enabled = enabled;
-    loop.nextRunAt = enabled && !loop.timezonePaused ? nextOccurrence(loop.schedule, this.now(), this.zoneForClock()) : null;
+    if (!loop) throw Object.assign(new Error("no such loop"), { status: 404 });
+    const wantsEnable = patch.enabled !== undefined && patch.enabled !== loop.enabled;
+    if (wantsEnable && !loop.available) throw new Error("that loop is declared but not built yet");
+    if (patch.enabled === undefined && patch.time === undefined && patch.weekdays === undefined) {
+      throw Object.assign(new Error("nothing to change — send enabled, time, or weekdays"), { status: 400 });
+    }
+    if (patch.time !== undefined && !parseClockTime(patch.time)) {
+      throw Object.assign(new Error("time must be HH:MM (00:00–23:59)"), { status: 400 });
+    }
+    if (patch.weekdays !== undefined && !parseWeekdays(patch.weekdays)) {
+      throw Object.assign(new Error("weekdays must be a non-empty list of numbers 0–6"), { status: 400 });
+    }
+    if (patch.enabled !== undefined) loop.enabled = patch.enabled;
+    if (patch.time !== undefined || patch.weekdays !== undefined) {
+      this.overrides.set(id, {
+        time: patch.time ?? this.overrides.get(id)?.time ?? loop.schedule.time,
+        weekdays: patch.weekdays ?? this.overrides.get(id)?.weekdays ?? loop.schedule.weekdays,
+      });
+      // the new clock starts from now: no backfill of earlier slots today
+      this.handledThrough.set(id, Math.max(this.handledThrough.get(id) ?? 0, this.now()));
+    }
+    loop.schedule = { type: "daily", ...(this.overrides.get(id) ?? LOOP_CATALOG.find((l) => l.id === id)!.schedule) };
+    loop.revision = (this.revisions.get(id) ?? 1) + 1;
+    this.revisions.set(id, loop.revision);
+    loop.nextRunAt =
+      loop.enabled && !loop.timezonePaused ? nextOccurrence(loop.schedule, this.now(), this.zoneForClock()) : null;
     this.save();
     this.emitLoop(loop);
     return { ...loop, schedule: { ...loop.schedule } };
+  }
+
+  setEnabled(id: LoopId, enabled: boolean): Loop {
+    return this.patchClock(id, { enabled });
   }
 
   runNow(id: LoopId): LoopRun | null {
@@ -347,11 +412,16 @@ export class LoopManager {
     mkdirSync(dirname(this.file), { recursive: true });
     const state: LoopsFile["state"] = {};
     for (const loop of this.loops) {
-      state[loop.id] = { enabled: loop.enabled, handledThrough: this.handledThrough.get(loop.id) ?? 0 };
+      state[loop.id] = {
+        enabled: loop.enabled,
+        handledThrough: this.handledThrough.get(loop.id) ?? 0,
+        schedule: this.overrides.get(loop.id) ?? undefined,
+        revision: this.revisions.get(loop.id) ?? 1,
+      };
     }
     writeFileAtomic(
       this.file,
-      JSON.stringify({ version: 2, timezone: this.timezone, state, runs: this.runs } satisfies LoopsFile, null, 2),
+      JSON.stringify({ version: 3, timezone: this.timezone, state, runs: this.runs } satisfies LoopsFile, null, 2),
     );
   }
 }
