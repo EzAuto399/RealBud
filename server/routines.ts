@@ -234,10 +234,15 @@ export class LoopManager {
 
   /** One door for clock changes: enabled, time, weekdays. Every accepted
    * change bumps revision and recomputes nextRunAt strictly forward — a
-   * retune never backfills an already-passed slot. */
+   * retune never backfills an already-passed slot. An idempotent PATCH
+   * (values identical to current) is acknowledged without touching the
+   * bookmark or revision, so it can never swallow a pending slot. */
   patchClock(id: LoopId, patch: { enabled?: boolean; time?: string; weekdays?: number[] }): Loop {
     const loop = this.loops.find((candidate) => candidate.id === id);
     if (!loop) throw Object.assign(new Error("no such loop"), { status: 404 });
+    if (patch.enabled !== undefined && typeof patch.enabled !== "boolean") {
+      throw Object.assign(new Error("enabled must be true or false"), { status: 400 });
+    }
     const wantsEnable = patch.enabled !== undefined && patch.enabled !== loop.enabled;
     if (wantsEnable && !loop.available) throw new Error("that loop is declared but not built yet");
     if (patch.enabled === undefined && patch.time === undefined && patch.weekdays === undefined) {
@@ -249,15 +254,22 @@ export class LoopManager {
     if (patch.weekdays !== undefined && !parseWeekdays(patch.weekdays)) {
       throw Object.assign(new Error("weekdays must be a non-empty list of numbers 0–6"), { status: 400 });
     }
-    if (patch.enabled !== undefined) loop.enabled = patch.enabled;
-    if (patch.time !== undefined || patch.weekdays !== undefined) {
-      this.overrides.set(id, {
-        time: patch.time ?? this.overrides.get(id)?.time ?? loop.schedule.time,
-        weekdays: patch.weekdays ?? this.overrides.get(id)?.weekdays ?? loop.schedule.weekdays,
-      });
+    const currentOverride = this.overrides.get(id);
+    const nextTime = patch.time ?? currentOverride?.time ?? loop.schedule.time;
+    // compare by content: catalog arrays are shared references
+    const nextDays = (patch.weekdays ?? currentOverride?.weekdays ?? loop.schedule.weekdays).slice().sort((a, b) => a - b);
+    const clockChanged =
+      (patch.time !== undefined || patch.weekdays !== undefined) &&
+      (nextTime !== loop.schedule.time || nextDays.join(",") !== loop.schedule.weekdays.join(","));
+    if (clockChanged) {
+      this.overrides.set(id, { time: nextTime, weekdays: nextDays });
       // the new clock starts from now: no backfill of earlier slots today
       this.handledThrough.set(id, Math.max(this.handledThrough.get(id) ?? 0, this.now()));
     }
+    if (!clockChanged && !wantsEnable) {
+      return { ...loop, schedule: { ...loop.schedule } };
+    }
+    if (wantsEnable) loop.enabled = patch.enabled!;
     loop.schedule = { type: "daily", ...(this.overrides.get(id) ?? LOOP_CATALOG.find((l) => l.id === id)!.schedule) };
     loop.revision = (this.revisions.get(id) ?? 1) + 1;
     this.revisions.set(id, loop.revision);
@@ -337,7 +349,9 @@ export class LoopManager {
             this.emitRun(run);
             await this.executeRun(run, loop);
           }
-          this.handledThrough.set(loop.id, at);
+          // never rewind the bookmark: a retune that landed mid-execution
+          // clamped it forward, and this slot's time is already stale
+          this.handledThrough.set(loop.id, Math.max(this.handledThrough.get(loop.id) ?? 0, at));
           changed = true;
         }
         loop.nextRunAt = loop.enabled

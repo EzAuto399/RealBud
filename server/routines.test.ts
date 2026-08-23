@@ -334,10 +334,68 @@ describe("LoopManager clock retune (PR A)", () => {
   it("rejects malformed clock patches with a 400 status", () => {
     const { manager } = makeManager();
     expect(() => manager.patchClock("morning-arrears", {})).toThrow(/nothing to change/);
+    expect(() => manager.patchClock("morning-arrears", { enabled: "false" as never })).toThrow(/true or false/);
     expect(() => manager.patchClock("morning-arrears", { time: "7:30" })).toThrow(/HH:MM/);
     expect(() => manager.patchClock("morning-arrears", { time: "24:00" })).toThrow(/HH:MM/);
     expect(() => manager.patchClock("morning-arrears", { weekdays: [] })).toThrow(/non-empty list/);
     expect(() => manager.patchClock("morning-arrears", { weekdays: [1, 9] })).toThrow(/0–6/);
     expect(() => manager.patchClock("no-such-loop" as never, { enabled: true })).toThrow(/no such loop/);
+  });
+
+  it("an idempotent clock PATCH neither bumps revision nor swallows a pending slot", async () => {
+    // Constructed at 07:29: today's 07:30 slot is still pending.
+    let now = new Date(2026, 7, 18, 7, 29, 0).getTime();
+    const { manager, calls } = makeManager({ now: () => now });
+    const revisionBefore = manager.listLoops()[0].revision;
+
+    // A client re-sending the current clock must be inert: before the
+    // dirty-check this clamped the bookmark past 07:30 and the slot died.
+    const patched = manager.patchClock("morning-arrears", { time: "07:30", weekdays: [1, 2, 3, 4, 5] });
+    expect(patched.revision).toBe(revisionBefore);
+
+    now = new Date(2026, 7, 18, 7, 31, 0).getTime();
+    await manager.tick();
+    expect(calls).toHaveLength(1); // the pending slot still fired
+    expect(manager.listRuns()[0].scheduledFor).toBe(new Date(2026, 7, 18, 7, 30, 0).getTime());
+  });
+
+  it("a retune while a run executes fires the new slot once and never rewinds the bookmark", async () => {
+    // Constructed before the slot so 07:30 is genuinely pending; the tick
+    // starting at 07:30:10 walks into the gated executor. At 07:40 the PM
+    // moves the clock to 07:45; the executor finishes at 07:46. The new
+    // slot fires exactly once (it had not run yet) and the bookmark never
+    // rewinds to the old slot time.
+    let now = new Date(2026, 7, 18, 7, 29, 0).getTime();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const { manager } = makeManager({
+      now: () => now,
+      execute: async () => {
+        await gate;
+        return { ok: true, detail: "" };
+      },
+    });
+
+    now = new Date(2026, 7, 18, 7, 30, 10).getTime();
+    const ticking = manager.tick(); // discovers 07:30 due, enters the gated run
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    now = new Date(2026, 7, 18, 7, 40, 0).getTime();
+    manager.patchClock("morning-arrears", { time: "07:45" }); // clamps bookmark to 07:40
+
+    now = new Date(2026, 7, 18, 7, 46, 0).getTime();
+    release();
+    await ticking;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await manager.tick();
+
+    const completed = manager.listRuns().filter((r) => r.status === "completed");
+    expect(completed).toHaveLength(2); // the 07:30 run + one 07:45 pass — never three
+    expect(completed.map((r) => r.scheduledFor).sort((a, b) => a - b)).toEqual([
+      new Date(2026, 7, 18, 7, 30, 0).getTime(),
+      new Date(2026, 7, 18, 7, 45, 0).getTime(),
+    ]);
+    const next = manager.listLoops()[0].nextRunAt!;
+    expect(next).toBe(new Date(2026, 7, 19, 7, 45, 0).getTime()); // tomorrow on the new clock
   });
 });

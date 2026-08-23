@@ -557,7 +557,8 @@ export class Desk {
     }
     const property = this.store.data.properties.find((p) => p.id === draft.propertyId);
     const verb = state === "approved" ? "approved" : "denied";
-    const kind = draft.kind === "levy-from-rent" ? "levy flag" : "courtesy SMS";
+    const kind =
+      draft.kind === "levy-from-rent" ? "levy flag" : draft.kind === "owner-letter" ? "owner letter" : "courtesy SMS";
     appendAllowedLine(
       draft.propertyId,
       `${new Date(this.now()).toISOString().slice(0, 10)} — ${verb} ${kind} for ${property?.address ?? draft.propertyId} (not sent by RealBud).`,

@@ -289,7 +289,9 @@ export function RoutinesPage() {
           <h2 className="text-[12px] font-medium uppercase tracking-[0.14em] text-ink-secondary">The loops</h2>
           {state.loops.map((loop) => (
             <LoopCard
-              key={loop.id}
+              // revision in the key: an accepted clock change anywhere
+              // rebuilds the editor from server truth instead of stale state
+              key={`${loop.id}:${loop.revision}`}
               loop={loop}
               lastRun={lastRunByLoop.get(loop.id)}
               activeRun={activeByLoop.get(loop.id)}
