@@ -1,6 +1,6 @@
 # RealBud — complete goal prompt
 
-Date: 2026-08-21  
+Date: 2026-08-23 (state synced to HEAD `bdb05ce` + gate hardening)  
 Repo: `EzAuto399/RealBud` (local folder still `PropertyMe`)  
 Use: paste this whole file into a new session, or point an agent at it. If a later idea fights this document, **this document wins**.
 
@@ -18,7 +18,7 @@ RealBud owns the window (Desk · Ask · Schedule · You). Pinned Hermes profile 
 
 Hard gates: no send, no trust, no statutory draft, no invented legal clock, no Hermes.app, no Hermes source edits, no extra RealBud agents, no tenant-facing bot, no law crawler.
 
-Current software is a training appliance (fixture book + our-schema CSV + fake portal). Beta is: **their export → matched addresses → morning cards → Copy into their PMS**, then Notes on the card and Ask writing Desk. Do not add surfaces. Do not rebuild PropertyMe.
+Current software is a training appliance (fixture book + CSV + fake portal) whose **beta door is done**: their export matches by address or their property code, morning cards land on Desk, the PM Copies into their PMS. Notes on the card and Ask→Desk proposals also shipped. Next: editable loop times (Routines PRs A/B), then Friday owner letter. Do not add surfaces. Do not rebuild PropertyMe.
 
 ---
 
@@ -141,6 +141,50 @@ Loops (catalog, not agents):
 
 Same worker. Different option sets on the property card. Not an emergency-bot / tenant-bot roster.
 
+### Routines: editable, still RealBud’s clock
+
+Full design (usability, eng, Hermes capability): `docs/ROUTINES.md`.
+
+The PM must be able to **see, turn on/off, retiming, and (later) add** routines from **Schedule** and from **Ask**. That is not Hermes Bot Mode cron and not the old OpenMausBot “pick a bot + free-text prompt.”
+
+| Piece | Owner | Hermes |
+|---|---|---|
+| When (7:30, Friday 4pm, weekdays) | RealBud Schedule | Never (`cron_mode: deny`) |
+| What lands on Desk | RealBud evaluate | Facts / draft text only |
+| How facts are read | Skill on `property` pack | `hermes -p property` |
+| Edit UI | Schedule form + Ask propose | No cron UI, no skill hub |
+
+**A routine is a typed loop, not a prompt.**
+
+Each routine is: `kind` (from a small catalog) + `when` + `which properties` + `enabled`. Kind is one of: morning-money, owner-letter, inbound-triage. Adding a routine means picking a kind that already has an evaluator + Hermes skill — not inventing a new agent.
+
+**GUI (Schedule)**  
+- List: name, next run, last result, On/Paused, Run now.  
+- Edit: time, weekdays, which properties (all vs this book vs one card).  
+- Add: choose a **kind that exists**. If the kind is still declared (owner-letter), the card stays “Planned” until that loop is built. No blank prompt box.
+
+**Ask (in-chat)**  
+Same objects, different door. “Run money check at 8 instead of 7:30.” “Pause Oak on the morning loop.” “Add Friday owner letters at 4.” Ask does **not** start a cron. It **proposes a Schedule change** as a Desk/Schedule card. Allow applies it. Deny leaves the clock alone. Same pattern as courtesy drafts.
+
+**Seamless with Hermes**  
+- One worker, one book, one SOUL.  
+- Clock tick → named skill → JSON/draft → Desk.  
+- Editing “how” (which bank, which CSV) is property options + skill, not a new bot.  
+- Lid shut: catch-up on open (already). Later launchd only writes a result file RealBud reads — still fail-closed, still no send.
+
+**Forbidden (looks like “routines” but is the old OS)**  
+- Free-text prompt saved as a job.  
+- Hermes gateway cron / `/cron`.  
+- “New assistant” per routine.  
+- Always-allow. A routine may **never** send, pay, or issue a notice even if the PM typed that in Ask.  
+- Ask applying a schedule change without Allow.
+
+**Build order (do not jump)**  
+1. Schedule edit of **existing** loops: time, weekdays, enable (GUI). Ask can propose those same fields.  
+2. Property scope on a loop (“all” vs one property).  
+3. Build owner-letter as a real kind, then it appears in Add.  
+4. Do not build “create any routine from chat” until kinds 1–3 exist and a named office has used the clock.
+
 ---
 
 ## 6. Hard gates (never “be helpful”)
@@ -173,7 +217,7 @@ Forking Hermes Desktop is rejected. Overlaying Hermes.app is rejected.
 
 ---
 
-## 8. Where the software actually is (2026-08-21)
+## 8. Where the software actually is (2026-08-23)
 
 Shipped, not slides:
 
@@ -181,17 +225,20 @@ Shipped, not slides:
 - Product mode: one Bud thread; denied bot/group/plugin/cloud-computer routes
 - Desk book: add/edit/remove properties, options, locked `never`
 - Morning evaluate + Allow/Deny/Edit/Copy; send 403
-- CSV import **in our schema** (`propertyId,daysSinceDue,rentLanded,levyPaid`) + freshness / unmatched / partial / reversed holds
-- Hermes pin, pack, fail-closed Recheck
+- CSV import matching by **address or property code** (`parsePmsExport`; identity-column aliases), freshness / unmatched / partial / reversed holds, ambiguous batch rejected whole
+- **Notes on the property card; vault seeded as Hermes cwd; Allow appends to the note + decisions log; evaluate never reads the vault (regression-tested)**
+- **Ask → Desk: "Put on Desk" creates a pending draft that needs the one Allow**
+- Hermes pin, pack, fail-closed Recheck (spawn now also requires `approvals.mode: manual`)
+- Gate hardening: product mode denies `autoApprove`/`alwaysAllow`/`chiefOfStaff` on bot PATCH, Bud rename and Bud delete; auto-answer of permissions is off in product mode
 - Named loops; morning available; owner-letter and inbound `available: false`
 - Bounded fake-portal prefill; Bud submit 403
 - Pilot contract still **demo** (`agency: RealBud Demo Book`)
 
 Not shipped:
 
-- `~/.realbud/vault` as Hermes cwd; Notes UI on the card (type has `notes?` only)
-- Ask creating Desk cards
-- Mapper from a **real** PMS export (address + days late, not `prop-oak`)
+- Clock retune: PATCH accepts `enabled` only; time/weekdays are catalog constants (Routines PRs A/B next)
+- Ask proposing a Schedule change as a card (PR C)
+- Row-level CSV holds: an ambiguous/unmatched row still rejects the whole batch (row-level holds are next)
 - Named paying/pilot agency
 - Owner letter, inbound triage
 - Live portal / PropertyMe OAuth
@@ -204,19 +251,21 @@ Not shipped:
 
 Beta is **not** more architecture. Beta is one PM and a **real book**.
 
-**Door (must):**
+**Door (must) — done at HEAD:**
 
-1. Import **their** arrears/export (column mapper; reject ambiguous rows).
-2. Match rows to Desk properties by **address or their property code**, not fixture ids.
-3. Morning cards from those facts (still shop rules, still no send).
-4. PM Copies into the PMS they already use.
-5. Hands stay honest (Hermes live or CSV live — not silently Demo).
+1. ✅ Import **their** arrears/export (identity-column mapper; reject ambiguous batches today).
+2. ✅ Match rows to Desk properties by **address or their property code**, not fixture ids.
+3. ✅ Morning cards from those facts (still shop rules, still no send).
+4. ✅ PM Copies into the PMS they already use.
+5. ✅ Hands stay honest (Hermes live or CSV live — never silently Demo; miss ⇒ hold).
 
-**Sells (do next, still beta):**
+**Sells — 6 and 7 shipped; 8 is next:**
 
-6. Notes on the property card; Hermes cwd = vault; Allow appends `## Last allowed`.
-7. Ask writes Desk (one Allow place).
-8. Friday owner letter v0 from Desk facts + notes, Copy only.
+6. ✅ Notes on the property card; Hermes cwd = vault; Allow appends to the note.
+7. ✅ Ask writes Desk (one Allow place).
+8. Friday owner letter v0 from Desk facts + notes, Copy only — build after Routines PRs A/B.
+
+**Small fix first:** ambiguous/unmatched CSV rows should become row-level hold work items instead of rejecting the whole batch (batch-reject stays for broken schemas).
 
 **After a named shop is in `docs/PILOT-CONTRACT.md`:**
 
@@ -241,8 +290,9 @@ Architecture is ahead of integration. Prefer **their file in, our ids out** over
 
 ### Next build if no other instruction
 
-1. PMS-export mapper + address match  
-2. Notes on the card + vault cwd for Hermes  
-3. Ask → Desk cards  
+1. CSV row-level holds (ambiguous/unmatched row ⇒ hold work item, not batch reject)  
+2. Routines PR A — clock PATCH: time/weekdays/enabled + revision  
+3. Routines PR B — Schedule GUI time + weekday chips  
+4. Owner-letter v0 evaluator + skill (Copy only), then `available: true`  
 
 Do not start a law shelf, a vault page, a second agent, or live CUA until the pilot contract names a real agency.

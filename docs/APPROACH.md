@@ -42,7 +42,7 @@ The PM never launches Hermes Desktop. We pin that stack (Desktop code + Bot Mode
 
 - `hermes -p property` — one locked bot
 - `hermes acp` / `hermes serve` — chat/streaming when we need it
-- cron — morning arrears later
+- RealBud clock — morning arrears (Hermes cron stays deny)
 - Bot Mode roster = that one pre-seeded profile, not a UI they browse
 
 The **window** is RealBud (this repo). We already control Desk, Copy/Approve, walkthrough, and we can hide Koda / Plugins / engine shopping.
@@ -83,7 +83,7 @@ Installer (later) drops both: RealBud.app + pinned Hermes checkout + config pack
 | Desktop shell + chat/streaming | RealBud already has a shell; Hermes ACP for the stream | Keep ours. Don’t open their chrome. |
 | Bot Mode roster, pre-seeded only | Hermes **profile**, not their roster UI | One profile: `property`. No second bot. |
 | 1 locked bot “RealBud” | `~/.hermes/profiles/property/` | SOUL.md + three rules + pinned model + no create-profile in our UI |
-| Routines (morning arrears) | Desk now; Hermes cron later | Fixture check first. Cron when the skill is real. |
+| Routines (morning arrears) | Desk + RealBud clock | Fixture / CSV / Hermes facts. Hermes cron stays deny. |
 | Copy + Approve only | Desk (done) | Never add Always-allow / send. |
 | Minimal settings | New small panel | PMS, tone, account. Not their Settings tree. |
 | Pets, New Agent, model shop, YOLO, voice, plugins, groups, terminal, Koda | Their Desktop + our leftover OS | **Don’t show their app.** Hide ours (Workshop fold / delete starter bot). |

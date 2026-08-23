@@ -70,7 +70,7 @@ Why this, not “full PM OS”:
 
 ```
 Visible window: this repo — Desk, Copy/Approve, walkthrough
-Headless worker: pinned Hermes profile `property` (CLI / ACP / cron). Never Hermes.app.
+Headless worker: pinned Hermes profile `property` (CLI / ACP). Clock is RealBud; Hermes `cron_mode: deny`. Never Hermes.app.
 System of record: the agency PMS (read API + human-gated portal actions)
 Domain seed: /Users/yoda/projects/Property MCP (listings, applications, inspections)
 ```

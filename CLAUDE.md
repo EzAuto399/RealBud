@@ -6,6 +6,7 @@ Do not ship as PropertyMe (PMS trademark), Hermes, or OpenMausBot.
 
 - Data: `~/.realbud`
 - Goal prompt (paste into a new session): `docs/GOAL-PROMPT.md`
+- Routines design (GUI + Ask, Hermes as hands): `docs/ROUTINES.md`
 - Identity: `docs/IDENTITY.md`
 - Workflow: `docs/WORKFLOW-PLAN.md`
 - Desk (fixture arrears Allow/Deny/Edit, no send): `server/desk.ts` + `/api/desk`. First-run lands on Desk; engines stay out of onboarding. Desk owns the book: add/edit/remove properties (`POST/DELETE /api/desk/properties`), full per-property options, per-property hands facts; `never` rules are locked.
