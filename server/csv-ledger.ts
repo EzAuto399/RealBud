@@ -36,9 +36,18 @@ export type MatchOk = { ok: true; propertyId: string };
 export type MatchFail = { ok: false; reason: "unmatched" } | { ok: false; reason: "ambiguous"; ids: string[] };
 export type MatchResult = MatchOk | MatchFail;
 
-export type ResolvedExport =
-  | { ok: true; matched: LedgerFacts[]; unmatched: ExportRow[] }
-  | { ok: false; reason: "ambiguous"; message: string };
+export interface AmbiguousRow {
+  row: ExportRow;
+  ids: string[];
+}
+
+/** Rows land in buckets; nothing aborts the batch here. Schema breakage
+ * throws earlier, in parsePmsExport. */
+export interface ResolvedExport {
+  matched: LedgerFacts[];
+  unmatched: ExportRow[];
+  ambiguous: AmbiguousRow[];
+}
 
 const STREET: Record<string, string> = {
   street: "st",
@@ -151,14 +160,12 @@ export function matchExportRow(properties: Pick<Property, "id" | "address">[], r
 export function resolveExportRows(properties: Pick<Property, "id" | "address">[], rows: ExportRow[]): ResolvedExport {
   const matched: LedgerFacts[] = [];
   const unmatched: ExportRow[] = [];
+  const ambiguous: AmbiguousRow[] = [];
   for (const row of rows) {
     const hit = matchExportRow(properties, row);
     if (!hit.ok && hit.reason === "ambiguous") {
-      return {
-        ok: false,
-        reason: "ambiguous",
-        message: `csv row matches ${hit.ids.length} properties equally (${hit.ids.join(", ")})`,
-      };
+      ambiguous.push({ row, ids: hit.ids });
+      continue;
     }
     if (!hit.ok) {
       unmatched.push(row);
@@ -174,7 +181,7 @@ export function resolveExportRows(properties: Pick<Property, "id" | "address">[]
       reversed: row.reversed,
     });
   }
-  return { ok: true, matched, unmatched };
+  return { matched, unmatched, ambiguous };
 }
 
 export function parsePmsExport(text: string, observedAt: number, sourceId = "src-csv"): PmsExportBatch {

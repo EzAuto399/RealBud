@@ -25,3 +25,20 @@ export function classifyMoneyRow(property: Property, facts: LedgerFacts, observe
 export function unmatchedException(propertyId: string, observedAt: number, sourceId: string): MoneyException {
   return { propertyId, outcome: "hold", reason: "unmatched", daysLate: 0, observedAt, sourceId };
 }
+
+export function ambiguousMatchException(
+  propertyId: string,
+  ids: string[],
+  observedAt: number,
+  sourceId: string,
+): MoneyException & { detail: string } {
+  return {
+    propertyId,
+    outcome: "hold",
+    reason: "ambiguous-match",
+    daysLate: 0,
+    observedAt,
+    sourceId,
+    detail: `csv row matches ${ids.length} properties equally (${ids.join(", ")})`,
+  };
+}

@@ -351,7 +351,7 @@ describe("Desk morning check", () => {
     expect(oakBefore.propertyId).toBe("prop-oak");
   });
 
-  it("rejects an ambiguous address batch without applying rows", () => {
+  it("holds an ambiguous address row without applying it or flipping to live", () => {
     const { desk } = tempDesk();
     desk.addProperty({
       address: "12 Oak Street, Dickson ACT",
@@ -361,9 +361,36 @@ describe("Desk morning check", () => {
     });
     const before = desk.snapshot().ledger.find((r) => r.propertyId === "prop-oak")!.daysSinceDue;
     const csv = `address,daysLate,rentLanded,levyPaid\n"12 Oak St, Dickson ACT",9,false,false\n`;
-    expect(() => desk.importCsv(csv)).toThrow(/properties equally/);
+    const snap = desk.importCsv(csv);
     expect(desk.snapshot().ledger.find((r) => r.propertyId === "prop-oak")!.daysSinceDue).toBe(before);
-    expect(desk.snapshot().hands).not.toBe("csv");
+    expect(snap.hands).not.toBe("csv");
+    const held = snap.workItems.find((w) => w.holdReason?.startsWith("ambiguous-match"));
+    expect(held?.state).toBe("held");
+    expect(held?.propertyId).toBe("12 Oak St, Dickson ACT");
+    expect(held?.holdReason).toMatch(/2 properties equally \(prop-oak, prop-/);
+  });
+
+  it("imports clean rows past an ambiguous one and stays honest about holds", () => {
+    const { desk } = tempDesk();
+    desk.addProperty({
+      address: "12 Oak Street, Dickson ACT",
+      tenantName: "Twin",
+      tenantPhone: "0400 000 001",
+      weeklyRentCents: 50_000,
+    });
+    const csv = [
+      `address,daysLate,rentLanded,levyPaid`,
+      `"4/22 Harbour Road, Kingston ACT",5,false,false`,
+      `"8 Pine Ave, Braddon ACT",1,true,true`,
+      `"12 Oak St, Dickson ACT",9,false,false`,
+    ].join("\n");
+    const snap = desk.importCsv(csv);
+    expect(snap.hands).toBe("csv");
+    expect(snap.mode).toBe("live");
+    expect(snap.ledger.find((r) => r.propertyId === "prop-harbour")?.daysSinceDue).toBe(5);
+    expect(snap.ledger.find((r) => r.propertyId === "prop-pine")?.rentLanded).toBe(true);
+    expect(snap.ledger.every((r) => r.propertyId !== "12 Oak St, Dickson ACT")).toBe(true);
+    expect(snap.workItems.some((w) => w.holdReason?.startsWith("ambiguous-match"))).toBe(true);
   });
 
   it("still imports the fixture propertyId CSV", () => {

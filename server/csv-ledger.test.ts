@@ -49,21 +49,18 @@ describe("PMS export address/code match", () => {
     expect(batch.rows).toHaveLength(1);
     expect(batch.rows[0]?.identity).toEqual({ kind: "address", value: "12 Oak St, Dickson ACT" });
     const resolved = resolveExportRows(book, batch.rows);
-    expect(resolved.ok).toBe(true);
-    if (resolved.ok) {
-      expect(resolved.matched).toEqual([
-        {
-          propertyId: "prop-oak",
-          daysSinceDue: 3,
-          rentLanded: false,
-          levyPaid: false,
-          daysSinceCourtesy: null,
-          amountPaidCents: null,
-          reversed: false,
-        },
-      ]);
-      expect(resolved.unmatched).toEqual([]);
-    }
+    expect(resolved.matched).toEqual([
+      {
+        propertyId: "prop-oak",
+        daysSinceDue: 3,
+        rentLanded: false,
+        levyPaid: false,
+        daysSinceCourtesy: null,
+        amountPaidCents: null,
+        reversed: false,
+      },
+    ]);
+    expect(resolved.unmatched).toEqual([]);
   });
 
   it("matches a property code to the Desk id", () => {
@@ -77,22 +74,27 @@ describe("PMS export address/code match", () => {
     const csv = `address,daysLate,rentLanded,levyPaid\n"99 Ghost St, Acton ACT",4,false,false\n`;
     const batch = parsePmsExport(csv, 1);
     const resolved = resolveExportRows(book, batch.rows);
-    expect(resolved.ok).toBe(true);
-    if (resolved.ok) {
-      expect(resolved.matched).toEqual([]);
-      expect(resolved.unmatched).toHaveLength(1);
-    }
+    expect(resolved.matched).toEqual([]);
+    expect(resolved.unmatched).toHaveLength(1);
   });
 
-  it("rejects the whole batch when one row matches two properties equally", () => {
+  it("holds an ambiguous row without rejecting its neighbours", () => {
     const twins = [
       { id: "prop-a", address: "12 Oak St, Dickson ACT" },
       { id: "prop-b", address: "12 Oak Street, Dickson ACT" },
+      { id: "prop-fir", address: "3 Fir Cl, Braddon ACT" },
     ];
-    const csv = `address,daysLate,rentLanded,levyPaid\n"12 Oak St, Dickson ACT",3,false,false\n`;
+    const csv =
+      `address,daysLate,rentLanded,levyPaid\n` +
+      `"12 Oak St, Dickson ACT",3,false,false\n` +
+      `"3 Fir Close, Braddon ACT",1,true,true\n`;
     const batch = parsePmsExport(csv, 1);
     const resolved = resolveExportRows(twins, batch.rows);
-    expect(resolved.ok).toBe(false);
-    if (!resolved.ok) expect(resolved.message).toMatch(/2 properties/);
+    expect(resolved.matched).toHaveLength(1);
+    expect(resolved.matched[0]).toMatchObject({ propertyId: "prop-fir" });
+    expect(resolved.unmatched).toEqual([]);
+    expect(resolved.ambiguous).toHaveLength(1);
+    expect(resolved.ambiguous[0]?.ids.slice().sort()).toEqual(["prop-a", "prop-b"]);
+    expect(resolved.ambiguous[0]?.row.identity.value).toBe("12 Oak St, Dickson ACT");
   });
 });

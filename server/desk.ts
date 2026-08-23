@@ -29,7 +29,7 @@ import {
 import { DeskStore, type DeskFileV2 } from "./desk-store.ts";
 import { assertTransition, occurrenceKey, proposalHash } from "./desk-work.ts";
 import { tryHermesLedger, type HermesLedgerAttempt } from "./hermes-hands.ts";
-import { classifyMoneyRow, unmatchedException } from "./morning-money.ts";
+import { ambiguousMatchException, classifyMoneyRow, unmatchedException } from "./morning-money.ts";
 import { FAKE_PORTAL_RECIPE } from "./portal-recipe.ts";
 import { CSV_FRESH_MS, isFresh } from "./source-gate.ts";
 import {
@@ -194,10 +194,9 @@ export class Desk {
       this.holdBook("CSV batch is stale");
       return this.snapshot();
     }
+    // Ambiguous and unmatched rows become held work items on Desk; only a
+    // broken schema (thrown in parsePmsExport) rejects the whole batch.
     const resolved = resolveExportRows(this.store.data.properties, batch.rows);
-    if (!resolved.ok) {
-      throw Object.assign(new Error(resolved.message), { status: 400 });
-    }
     const previous = this.store.data.ledger.map((row) => ({ ...row }));
     try {
       for (const row of resolved.matched) {
@@ -208,15 +207,27 @@ export class Desk {
       for (const row of resolved.unmatched) {
         this.holdWork(unmatchedException(row.identity.value, batch.observedAt, batch.sourceId));
       }
+      for (const hit of resolved.ambiguous) {
+        this.holdWork(ambiguousMatchException(hit.row.identity.value, hit.ids, batch.observedAt, batch.sourceId));
+      }
     } catch (err) {
       this.store.data.ledger = previous;
       throw err;
+    }
+    const held = resolved.unmatched.length + resolved.ambiguous.length;
+    if (!resolved.matched.length) {
+      // Nothing usable in the batch: holds are recorded on Desk, but the
+      // book keeps its current hands. Fixture facts never pose as live.
+      this.store.persist();
+      this.emit();
+      return this.snapshot();
     }
     this.store.data.mode = "live";
     this.observe("src-csv", "csv", "PMS CSV export", resolved.matched);
     return this.evaluateBook(
       "csv",
-      `CSV import accepted ${resolved.matched.length} row${resolved.matched.length === 1 ? "" : "s"}.`,
+      `CSV import accepted ${resolved.matched.length} row${resolved.matched.length === 1 ? "" : "s"}` +
+        (held ? `; ${held} held for mapping on Desk.` : "."),
     );
   }
 
@@ -458,7 +469,7 @@ export class Desk {
     this.emit();
   }
 
-  private holdWork(exception: { propertyId: string; reason: string; daysLate: number; observedAt: number; sourceId: string }): void {
+  private holdWork(exception: { propertyId: string; reason: string; daysLate: number; observedAt: number; sourceId: string; detail?: string }): void {
     const key = occurrenceKey(exception.propertyId, `hold:${exception.reason}`, 0);
     if (this.store.data.workItems.some((w) => w.occurrenceKey === key && w.state === "held")) return;
     const property = this.store.data.properties.find((p) => p.id === exception.propertyId);
@@ -478,7 +489,7 @@ export class Desk {
       proposalHash: `hold-${exception.reason}`,
       createdAt: this.now(),
       updatedAt: this.now(),
-      holdReason: exception.reason,
+      holdReason: exception.detail ? `${exception.reason}: ${exception.detail}` : exception.reason,
     });
   }
 
