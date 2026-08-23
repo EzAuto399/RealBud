@@ -62,6 +62,7 @@ function LoopCard({
   busy,
   onRun,
   onToggle,
+  onRetune,
 }: {
   loop: Loop;
   lastRun?: LoopRun;
@@ -69,7 +70,14 @@ function LoopCard({
   busy: boolean;
   onRun: () => void;
   onToggle: () => void;
+  onRetune: (when: { time: string; weekdays: number[] }) => void;
 }) {
+  const [time, setTime] = useState(loop.schedule.time);
+  const [days, setDays] = useState<number[]>(loop.schedule.weekdays);
+  const dirty = time !== loop.schedule.time || days.join(",") !== loop.schedule.weekdays.join(",");
+  const toggleDay = (day: number) =>
+    setDays((prev) => (prev.includes(day) ? (prev.length > 1 ? prev.filter((d) => d !== day) : prev) : [...prev, day].sort((a, b) => a - b)));
+
   return (
     <article className={cn("rounded-2xl border p-4", loop.available ? "border-hairline/40 bg-panel" : "border-dashed border-hairline/30 bg-panel/50")}>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -90,7 +98,7 @@ function LoopCard({
           </div>
           <div className="mt-1 flex items-center gap-1.5 text-[12px] text-ink-secondary">
             <Clock size={12} />
-            {loop.available ? scheduleLabel(loop) : "Schedule declared with the loop"}
+            {scheduleLabel(loop)}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -124,6 +132,51 @@ function LoopCard({
         </div>
       </div>
       <p className="mt-2.5 max-w-[52rem] text-[12.5px] leading-relaxed text-ink-secondary">{loop.description}</p>
+
+      {/* When — the PM owns the clock. A planned loop can be timed now so it
+          starts the moment it is built, but it cannot run or turn on yet. */}
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-hairline/30 bg-inset/40 px-3 py-2.5">
+        <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-ink-secondary">When</span>
+        <input
+          type="time"
+          value={time}
+          onChange={(event) => setTime(event.target.value)}
+          aria-label={`${loop.name} time of day`}
+          className="rounded-lg border border-hairline/50 bg-panel px-2 py-1 text-[13px] text-ink"
+        />
+        <div className="flex flex-wrap items-center gap-1" role="group" aria-label={`${loop.name} days`}>
+          {DAY_NAMES.map((name, day) => {
+            const active = days.includes(day);
+            return (
+              <button
+                key={day}
+                onClick={() => toggleDay(day)}
+                aria-pressed={active}
+                title={(active ? "Remove " : "Add ") + name}
+                className={cn(
+                  "rounded-lg px-2 py-1 text-[11.5px] transition-colors",
+                  active ? "bg-accent font-medium text-white" : "bg-raised text-ink-secondary hover:text-ink",
+                  !active && days.length === 1 && day === days[0] && "opacity-40",
+                )}
+              >
+                {name[0]}
+              </button>
+            );
+          })}
+        </div>
+        {dirty && (
+          <button
+            onClick={() => onRetune({ time, weekdays: days })}
+            disabled={busy}
+            title={`Save ${scheduleLabel({ ...loop, schedule: { type: "daily", time, weekdays: days } })}`}
+            className="ml-auto flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[12px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+          >
+            {busy ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
+            Save
+          </button>
+        )}
+      </div>
+
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-ink-secondary">
         {loop.timezonePaused && (
           <span className="text-warning">Paused — agency timezone does not match this computer</span>
@@ -177,6 +230,22 @@ export function RoutinesPage() {
     }
   };
 
+  const retune = async (loop: Loop, when: { time: string; weekdays: number[] }) => {
+    setBusy(loop.id);
+    setError("");
+    try {
+      const { loop: patched } = await api(`/api/loops/${loop.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(when),
+      });
+      dispatch({ type: "loopPatched", loop: patched });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const lastRunByLoop = new Map<string, LoopRun>();
   for (const run of state.loopRuns) {
     if (!lastRunByLoop.has(run.loopId)) lastRunByLoop.set(run.loopId, run);
@@ -197,7 +266,7 @@ export function RoutinesPage() {
               <h1 className="text-[20px] font-semibold tracking-tight text-ink">Schedule</h1>
             </div>
             <p className="mt-1 max-w-[52rem] text-[12.5px] text-ink-secondary">
-              Named loops on RealBud's clock. Hermes fetches the facts headless; the cards land on Desk for you to allow or deny. Nothing sends while nobody is looking.
+              Named loops on RealBud's clock. Facts are fetched headless; the cards land on Desk for you to allow or deny. Nothing sends while nobody is looking.
             </p>
           </div>
           {unseenFailures.length > 0 && (
@@ -227,6 +296,7 @@ export function RoutinesPage() {
               busy={busy === loop.id}
               onRun={() => void runNow(loop.id)}
               onToggle={() => void toggle(loop)}
+              onRetune={(when) => void retune(loop, when)}
             />
           ))}
         </section>
@@ -268,7 +338,7 @@ export function RoutinesPage() {
             </div>
           )}
           <p className="text-[11.5px] text-ink-secondary/70">
-            The Hermes worker keeps <code className="rounded bg-raised px-1 py-0.5">cron_mode: deny</code> — it reads when asked, and never sends while nobody is looking.
+            The clock is RealBud's. A loop presses Desk Recheck — it never sends while nobody is looking.
           </p>
         </section>
       </div>
