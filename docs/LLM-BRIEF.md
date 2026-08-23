@@ -161,7 +161,7 @@ Forbidden even if Hermes ships it tomorrow: roster (arrears/owner/emergency/tena
 
 The beta door (1–5) and all three sells items are done at HEAD, plus clock retune (PRs A/B) and owner-letter v0. Code is now ahead of the pilot; the next moves are commercial, not architectural:
 
-1. `docs/PILOT-CONTRACT.md`: required fields — PMS brand, named exporter, export cadence, office OS.
+1. Fill the eight required fields in `docs/PILOT-CONTRACT.md` on a real visit (agency + PM, PMS brand, named exporter, export cadence, identity column, office OS, jurisdictions, vendor test account).
 2. After a named agency signs: installer a graduate can double-click.
 3. One vendor-test portal, bounded CUA, human Submit.
 4. Pocket: Telegram or WhatsApp Cloud, this PM only.

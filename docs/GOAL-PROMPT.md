@@ -291,7 +291,7 @@ Architecture is ahead of integration. Prefer **their file in, our ids out** over
 
 Code is ahead of the pilot. In order, when there is a reason:
 
-1. `docs/PILOT-CONTRACT.md`: add required fields — PMS brand, named exporter, export cadence, office OS  
+1. Fill the eight required fields in `docs/PILOT-CONTRACT.md` on a real visit (agency + PM, PMS brand, named exporter, export cadence, identity column, office OS, jurisdictions, vendor test account)  
 2. After a named agency signs: installer a graduate can double-click, then vendor-test portal prep (bounded CUA, human Submit)  
 
 Do not start a law shelf, a vault page, a second agent, Ask-proposes-clock-changes (PR C), or live CUA until the pilot contract names a real agency and it asks for one.

@@ -36,6 +36,29 @@ SSO/MFA, cross-origin frames, and autosave-on-blur are recorded as
 vendor test account. Do not expand portal infrastructure past this fake
 until that spike is filled in.
 
+## Required fields before this stops being a demo
+
+Every field below blocks with a name on it. The visit fills them in; until
+then RealBud stays a training appliance and the live CUA path stays off
+(`readyForLivePortal` requires `realAgencyNamed`). No code work past the
+installer spike starts until these are answered.
+
+| # | Field | Why it blocks |
+|---|---|---|
+| 1 | **Agency + named PM user** | One desk, one user. The pilot names both — principal and the PM who will actually run Recheck. |
+| 2 | **PMS brand** | PropertyMe / Property Tree / Reapit PM / other. Confirm on the visit; never assume. Decides the export shape and whether a read API exists at all. |
+| 3 | **Named exporter** | The person who can actually pull the read-only arrears export. A first-desk PM often cannot — get a principal's yes in writing. This is the single most common pilot killer. |
+| 4 | **Export cadence** | How often the export lands. Must satisfy the 12-hour CSV freshness SLA at the office's real rhythm (weekly exports make a morning loop useless). |
+| 5 | **Export identity column** | Does their export carry a property id, address, or their own property code? Decides how the mapper matches rows to the book. |
+| 6 | **Office OS** | macOS keeps the live CUA door open for later; anything else means CSV + fake portal only for that office. |
+| 7 | **Book jurisdiction(s)** | Which states are in the book. Day counts stay shop reminder rules regardless; this only tunes courtesy windows and wording. |
+| 8 | **Vendor test account** | For the one portal: Stage-0 spike must be re-run against a vendor test account before any real click. |
+
+When all eight are ticked: replace the Locked stack table above with the
+office's real values, mirror them in `server/pilot-contract.ts`
+(`agency`, `pmsExport`, `portal`, `jurisdiction`), and the installer a
+graduate can double-click becomes worth building.
+
 ## Readiness
 
 A scheduled **live** loop stays disabled until:
