@@ -1,7 +1,9 @@
 // Desk spine: evaluate → proposal → human decision. Encrypted v2 store.
 // snapshot() is side-effect free. Approval never means sent.
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { decryptJson } from "./desk-crypto.ts";
+import { join, dirname } from "node:path";
 
 import type {
   DeskBookView,
@@ -413,7 +415,45 @@ export class Desk {
     return this.snapshot();
   }
 
-  resetFixtures(): DeskSnapshot {
+  /** Recovery escrow: the book key as hex (You-page reveal/copy). */
+  recoveryKeyHex(): string {
+    return this.store.keyHex;
+  }
+
+  get keyFilePath(): string {
+    return this.store.keyFile;
+  }
+
+  /** Unlock a quarantined book with the escrowed key: try every quarantined
+   * snapshot, and on the first that decrypts, restore the key + book files.
+   * The app restarts to reopen the restored book. */
+  unlockWithKey(keyHex: string): { ok: true; restoredFrom: string; needsRestart: true } {
+    const clean = String(keyHex ?? "").trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(clean)) {
+      throw Object.assign(new Error("the recovery key is 64 hex characters"), { status: 400 });
+    }
+    const key = Buffer.from(clean, "hex");
+    const dir = dirname(this.keyFilePath);
+    const candidates = this.store.recovery.quarantined.length
+      ? [...this.store.recovery.quarantined]
+      : readdirSync(dir).filter((f) => f.startsWith("desk.json.quarantine-")).map((f) => join(dir, f));
+    for (const candidate of candidates) {
+      if (!existsSync(candidate)) continue;
+      try {
+        const envelope = JSON.parse(readFileSync(candidate, "utf8"));
+        decryptJson(key, envelope);
+      } catch {
+        continue;
+      }
+      // key verified against this snapshot: restore both files
+      writeFileSync(this.keyFilePath, Buffer.from(clean, "hex"), { mode: 0o600 });
+      renameSync(candidate, this.keyFilePath.replace("desk.key", "desk.json"));
+      return { ok: true, restoredFrom: candidate, needsRestart: true };
+    }
+    throw Object.assign(new Error("that key does not open the quarantined book"), { status: 403 });
+  }
+
+    resetFixtures(): DeskSnapshot {
     this.assertWritable();
     const book = fixtureBook();
     this.store.data.properties = book.properties;

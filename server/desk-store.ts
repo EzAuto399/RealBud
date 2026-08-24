@@ -66,6 +66,16 @@ export class DeskStore {
   readonly file: string;
   readonly backupDir: string;
   private keyInfo: DeskKey;
+
+  /** Recovery escrow: the book's key as hex, for the You-page reveal/copy
+   * and the unlock flow. Session-gated routes only. */
+  get keyHex(): string {
+    return this.keyInfo.key.toString("hex");
+  }
+
+  get keyFile(): string {
+    return join(dirname(this.file), "desk.key");
+  }
   data: DeskFileV2;
   v3: DeskFileV3;
   recovery: RecoveryState;

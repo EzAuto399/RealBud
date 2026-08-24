@@ -204,7 +204,7 @@ export function DeskPage() {
         </div>
         {snap.recovery?.active ? (
           <div className="mt-3">
-            <RecoveryNotice>Desk is in recovery. Writes, schedules and browser work are paused. The book was not replaced with Demo data.</RecoveryNotice>
+            <RecoveryNotice>Desk is in recovery. Writes, schedules and browser work are paused. The book was not replaced with Demo data. Open You to unlock with your recovery key.</RecoveryNotice>
           </div>
         ) : null}
         {error ? (

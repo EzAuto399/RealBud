@@ -1190,6 +1190,22 @@ const server = createServer(async (req, res) => {
       commitDesk(snapshot);
       return json(res, 200, snapshot);
     }
+    if (path === "/api/desk/recovery-key" && method === "GET") {
+      return json(res, 200, { hex: desk.recoveryKeyHex() });
+    }
+    if (path === "/api/desk/recovery/unlock" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      try {
+        const result = desk.unlockWithKey(String(body.key ?? ""));
+        return json(res, 200, { ...result, message: "Book restored. Restart RealBud to open it." });
+      } catch (e) {
+        const status = (e as { status?: number }).status ?? 500;
+        return json(res, status, { error: e instanceof Error ? e.message : String(e) });
+      }
+    }
     if (path === "/api/desk/propose-book" && method === "POST") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
         return json(res, 415, { error: "content-type must be application/json" });

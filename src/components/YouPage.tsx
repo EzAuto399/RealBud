@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { User } from "lucide-react";
 
+import { cn } from "@/lib/cn";
 import { api, useStore } from "@/state/store";
 import { AdvancedDiagnostics, RecoveryNotice } from "./pm";
 import { Card } from "./SettingsPrimitives";
@@ -65,6 +66,7 @@ export function YouPage() {
           <ProfileFields />
         </Card>
         <HermesHandsCard />
+        <RecoveryKeyCard recoveryActive={Boolean(recovery)} />
         <Card
           title="Sources"
           subtitle={
@@ -106,5 +108,107 @@ export function YouPage() {
         </AdvancedDiagnostics>
       </div>
     </main>
+  );
+}
+
+function RecoveryKeyCard({ recoveryActive }: { recoveryActive: boolean }) {
+  const [hex, setHex] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [saved, setSaved] = useState(() => localStorage.getItem("realbud.recovery-key-saved") === "1");
+  const [unlockKey, setUnlockKey] = useState("");
+  const [unlockBusy, setUnlockBusy] = useState(false);
+  const [unlockMsg, setUnlockMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [error, setError] = useState("");
+
+  const reveal = async () => {
+    setError("");
+    try {
+      const res = await api("/api/desk/recovery-key");
+      setHex(res.hex ?? null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+
+  const unlock = async () => {
+    setUnlockBusy(true);
+    setUnlockMsg(null);
+    setError("");
+    try {
+      const res = await api("/api/desk/recovery/unlock", { method: "POST", body: JSON.stringify({ key: unlockKey }) });
+      setUnlockMsg({ ok: true, text: res.message ?? "Book restored." });
+    } catch (cause) {
+      setUnlockMsg({ ok: false, text: cause instanceof Error ? cause.message : String(cause) });
+    } finally {
+      setUnlockBusy(false);
+    }
+  };
+
+  return (
+    <Card
+      title="Recovery key"
+      subtitle="Your book is encrypted. This key is the only way to open it if the key file is ever lost. Save it somewhere safe."
+    >
+      {saved && !hex ? (
+        <div className="text-[13px] text-ink-secondary">
+          Saved ✓{" "}
+          <button className="text-accent hover:underline" onClick={() => { setSaved(false); localStorage.removeItem("realbud.recovery-key-saved"); }}>
+            Show it again
+          </button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {hex ? (
+            <>
+              <code className="break-all rounded-lg border border-line bg-sheet px-3 py-2 font-mono text-[12px] text-ink">{hex}</code>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { void navigator.clipboard.writeText(hex); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+                  className="rounded-lg border border-hairline/40 px-3 py-1.5 text-[12.5px] text-ink hover:bg-raised"
+                >
+                  {copied ? "Copied" : "Copy key"}
+                </button>
+                <button
+                  onClick={() => { localStorage.setItem("realbud.recovery-key-saved", "1"); setSaved(true); setHex(null); }}
+                  className="rounded-lg bg-agency px-3 py-1.5 text-[12.5px] font-medium text-white hover:brightness-110"
+                >
+                  I've saved it
+                </button>
+              </div>
+            </>
+          ) : (
+            <button onClick={() => void reveal()} className="rounded-lg border border-hairline/40 px-3 py-1.5 text-[12.5px] text-ink hover:bg-raised">
+              Reveal recovery key
+            </button>
+          )}
+        </div>
+      )}
+      {recoveryActive && (
+        <div className="mt-3 rounded-xl border border-warning/30 bg-warning/5 px-3 py-2.5">
+          <div className="text-[13px] font-medium text-ink">Book locked</div>
+          <p className="mt-0.5 text-[12px] text-ink-muted">Paste your recovery key to restore the quarantined book. RealBud restarts afterwards.</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <input
+              type="text"
+              value={unlockKey}
+              onChange={(e) => setUnlockKey(e.target.value)}
+              placeholder="64-character recovery key"
+              className="min-w-[16rem] flex-1 rounded-lg border border-hairline/40 bg-panel px-2 py-1.5 font-mono text-[12px] text-ink"
+            />
+            <button
+              onClick={() => void unlock()}
+              disabled={unlockBusy || unlockKey.trim().length === 0}
+              className="rounded-lg bg-agency px-3 py-1.5 text-[12.5px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+            >
+              {unlockBusy ? "Unlocking…" : "Unlock book"}
+            </button>
+          </div>
+          {unlockMsg && (
+            <div className={cn("mt-2 text-[12.5px]", unlockMsg.ok ? "text-success" : "text-danger")}>{unlockMsg.text}</div>
+          )}
+        </div>
+      )}
+      {error && <div className="mt-2 text-[12.5px] text-danger">{error}</div>}
+    </Card>
   );
 }

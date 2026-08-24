@@ -932,8 +932,31 @@ function AskIntakeBar() {
       .finally(() => setBusy(false));
   };
 
+  const readDrop = async (file: File) => {
+    setBusy(true);
+    setError("");
+    try {
+      const body = await file.text();
+      setText(body.slice(0, 20_000));
+      send();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <div className="mx-auto flex w-full max-w-[900px] flex-col gap-2 px-5 pb-2">
+    <div
+      className="mx-auto flex w-full max-w-[900px] flex-col gap-2 px-5 pb-2"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault();
+        const file = e.dataTransfer.files?.[0];
+        if (file && /\.(csv|txt|tsv)$/i.test(file.name)) void readDrop(file);
+        else if (file) setError("Drop a .csv, .txt or .tsv export — images go to Bud in the composer.");
+      }}
+    >
       <textarea
         value={text}
         onChange={(event) => setText(event.target.value)}
