@@ -220,6 +220,16 @@ export function DeskPage() {
           snap={snap}
           busy={busy}
           onAdd={(input) => void run("/api/desk/properties", "POST", input, "add", "Property added")}
+          onAllowBookProposal={(id) => void run(`/api/desk/book-proposals/${id}/allow`, "POST", {}, id, "Property added to the book")}
+          onDenyBookProposal={(id) => void run(`/api/desk/book-proposals/${id}/deny`, "POST", {}, id)}
+          onAllowAllBookProposals={() => {
+            const ids = (snap.book?.bookProposals ?? []).map((p) => p.id);
+            void (async () => {
+              for (const id of ids) {
+                await run(`/api/desk/book-proposals/${id}/allow`, "POST", {}, id, "Property added to the book");
+              }
+            })();
+          }}
           onSave={(id, options) => void run(`/api/desk/properties/${id}`, "PATCH", options, id, "Options saved")}
           onNotes={(id, body) => void run(`/api/desk/properties/${id}/notes`, "PUT", { body }, `notes-${id}`, "Notes saved")}
           onDelete={(id) => void run(`/api/desk/properties/${id}`, "DELETE", undefined, `delete-${id}`, "Property removed")}

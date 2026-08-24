@@ -432,6 +432,42 @@ describe("Desk morning check", () => {
     expect(desk.notesFor("prop-oak").body).toMatch(/approved courtesy/i);
   });
 
+  it("stages Bud intake as book proposals; allow adds, deny drops, duplicates skip", () => {
+    const { desk } = tempDesk();
+    const result = desk.proposeBook({
+      items: [
+        { address: "7 Intake St, Braddon ACT", tenantName: "Kai Tan", tenantPhone: "0400 555 999", weeklyRentCents: 60_000 },
+        { address: "7 Intake St, Braddon ACT", tenantName: "Kai Tan", tenantPhone: "0400 555 999", weeklyRentCents: 60_000 },
+        { address: "12 Oak St, Dickson ACT", tenantName: "Someone", tenantPhone: "0400 000 111", weeklyRentCents: 50_000 },
+      ],
+    }, "ask");
+    expect(result.created).toBe(1); // second is a duplicate, third matches an existing property
+    expect(result.skipped).toBe(2);
+
+    const before = desk.snapshot().properties.length;
+    const proposal = desk.snapshot().book!.bookProposals[0]!;
+    const snap = desk.allowBookProposal(proposal.id);
+    expect(snap.properties.length).toBe(before + 1);
+    expect(snap.properties.some((p) => p.address === "7 Intake St, Braddon ACT")).toBe(true);
+    expect(snap.book!.bookProposals).toHaveLength(0);
+    expect(desk.notesFor(snap.properties.find((p) => p.address === "7 Intake St, Braddon ACT")!.id).body).toMatch(/added from Bud intake/);
+
+    desk.proposeBook({ items: [{ address: "9 Drop St, Braddon ACT", tenantName: "Skip Me", tenantPhone: "0400 222 333", weeklyRentCents: 55_000 }] });
+    const drop = desk.snapshot().book!.bookProposals[0]!;
+    const afterDeny = desk.denyBookProposal(drop.id);
+    expect(afterDeny.properties.some((p) => p.address === "9 Drop St")).toBe(false);
+  });
+
+  it("parses pasted intake text into staged proposals and reports garbage", () => {
+    const { desk } = tempDesk();
+    const result = desk.proposeBook({
+      text: "12 Oak St, Dickson ACT, Jordan Blake, 0400 555 666, 580\nnot a property",
+    });
+    expect(result.created).toBe(0); // Oak already exists in the fixture book -> skipped
+    expect(result.skipped).toBe(1);
+    expect(result.unparsed).toEqual(["not a property"]);
+  });
+
   it("drafts one Copy-only owner letter per property per week from facts and notes", () => {
     const { desk } = tempDesk();
     desk.writeNotes("prop-oak", "Owner prefers short updates. Gutter repair booked for Tuesday.");

@@ -35,6 +35,7 @@ import {
   type ProposalRevision,
   type Source,
   type Tenancy,
+  type BookProposal,
 } from "../shared/desk-v3.ts";
 import { migrateV1ToV2 } from "./desk-v3-migrate.ts";
 
@@ -392,6 +393,34 @@ function decodeContact(value: unknown, field: string, errors: string[]): Contact
   };
 }
 
+function decodeBookProposal(value: unknown, field: string, errors: string[]): BookProposal {
+  if (!isRec(value)) {
+    errors.push(`${field} must be an object`);
+    return {
+      id: "",
+      kind: "add-property",
+      status: "open",
+      origin: "manual",
+      fields: { address: "", tenantName: "", tenantPhone: "", weeklyRentCents: 0 },
+      createdAt: 0,
+    };
+  }
+  const fieldsRec = isRec(value.fields) ? value.fields : {};
+  return {
+    id: str(value.id, `${field}.id`, errors),
+    kind: "add-property",
+    status: "open",
+    origin: value.origin === "ask" ? "ask" : "manual",
+    fields: {
+      address: text(fieldsRec.address, `${field}.fields.address`, errors),
+      tenantName: text(fieldsRec.tenantName, `${field}.fields.tenantName`, errors),
+      tenantPhone: text(fieldsRec.tenantPhone, `${field}.fields.tenantPhone`, errors),
+      weeklyRentCents: num(fieldsRec.weeklyRentCents, `${field}.fields.weeklyRentCents`, errors),
+    },
+    createdAt: num(value.createdAt, `${field}.createdAt`, errors),
+  };
+}
+
 function decodeImportIssue(value: unknown, field: string, errors: string[]): ImportIssue {
   if (!isRec(value)) {
     errors.push(`${field} must be an object`);
@@ -640,6 +669,7 @@ export function decodeDeskV3(value: unknown): DeskFileV3 {
     tenancies: arr(value.tenancies, "tenancies", errors).map((item, i) => decodeTenancy(item, `tenancies[${i}]`, errors)),
     contacts: arr(value.contacts, "contacts", errors).map((item, i) => decodeContact(item, `contacts[${i}]`, errors)),
     importIssues: arr(value.importIssues, "importIssues", errors).map((item, i) => decodeImportIssue(item, `importIssues[${i}]`, errors)),
+    bookProposals: arr(value.bookProposals, "bookProposals", errors).map((item, i) => decodeBookProposal(item, `bookProposals[${i}]`, errors)),
     cases: arr(value.cases, "cases", errors).map((item, i) => decodeCase(item, `cases[${i}]`, errors)),
     evidence: arr(value.evidence, "evidence", errors).map((item, i) => decodeEvidence(item, `evidence[${i}]`, errors)),
     moneyPositions: arr(value.moneyPositions, "moneyPositions", errors).map((item, i) => decodeMoney(item, `moneyPositions[${i}]`, errors)),
@@ -684,7 +714,7 @@ export function validateDeskV3(book: DeskFileV3): void {
   uniqueIds(book.contacts.map((c) => c.id), "contact", errors);
   uniqueIds(book.cases.map((c) => c.id), "case", errors);
   uniqueIds(book.proposals.map((p) => p.id), "proposal", errors);
-  uniqueIds([...book.importIssues.map((i) => i.id), ...book.cases.map((c) => c.id)], "importIssue/case", errors);
+  uniqueIds([...book.importIssues.map((i) => i.id), ...book.cases.map((c) => c.id), ...book.bookProposals.map((p) => p.id)], "importIssue/case/bookProposal", errors);
   uniqueIds(book.handoffs.map((h) => h.id), "handoff", errors);
   uniqueIds(book.evidence.map((e) => e.id), "evidence", errors);
 

@@ -32,6 +32,7 @@ import { assertTransition, occurrenceKey, proposalHash } from "./desk-work.ts";
 import { tryHermesLedger, type HermesLedgerAttempt } from "./hermes-hands.ts";
 import { ambiguousMatchException, classifyMoneyRow, unmatchedException } from "./morning-money.ts";
 import { composeOwnerLetter, ownerLetterWeekStart } from "./owner-letter.ts";
+import { parseIntakeText, type IntakeItem } from "./intake.ts";
 import { assertRoutineCannotMint, freezeAuthorization, withPresentation, type BrowserPresentation } from "./handoff-auth.ts";
 import type { RoutineOrigin } from "../shared/contracts.ts";
 import { FAKE_PORTAL_RECIPE } from "./portal-recipe.ts";
@@ -233,6 +234,14 @@ export class Desk {
         status: item.status,
         rawIdentity: item.rawIdentity,
       })),
+      bookProposals: v3.bookProposals.map((item) => ({
+        id: item.id,
+        address: item.fields.address,
+        tenantName: item.fields.tenantName,
+        tenantPhone: item.fields.tenantPhone,
+        weeklyRentCents: item.fields.weeklyRentCents,
+        origin: item.origin,
+      })),
       cases: v3.cases.map((item) => ({
         id: item.id,
         kind: item.kind,
@@ -323,6 +332,85 @@ export class Desk {
       `CSV import accepted ${resolved.matched.length} row${resolved.matched.length === 1 ? "" : "s"}` +
         (held ? `; ${held} held for mapping on Desk.` : "."),
     );
+  }
+
+  /** Bud/intake: stage add-property proposals from structured items or raw
+   * pasted text. Nothing touches the book until the PM allows each card. */
+  proposeBook(input: { text?: string; items?: IntakeItem[] }, origin: "ask" | "manual" = "ask"): { created: number; skipped: number; unparsed: string[] } {
+    this.assertWritable();
+    let items = input.items;
+    let unparsed: string[] = [];
+    if (!items && input.text !== undefined) {
+      const parsed = parseIntakeText(input.text);
+      items = parsed.items;
+      unparsed = parsed.unparsed;
+    }
+    const now = this.now();
+    let created = 0;
+    let skipped = 0;
+    for (const item of items ?? []) {
+      const address = String(item.address ?? "").trim();
+      const tenantName = String(item.tenantName ?? "").trim();
+      const tenantPhone = String(item.tenantPhone ?? "").trim();
+      const weeklyRentCents = Math.round(Number(item.weeklyRentCents));
+      if (!address || !tenantName || !tenantPhone || !Number.isInteger(weeklyRentCents) || weeklyRentCents <= 0) {
+        skipped++;
+        continue;
+      }
+      const key = `${address.toLowerCase()}|${tenantName.toLowerCase()}`;
+      const exists = this.store.v3.bookProposals.some(
+        (p) => `${p.fields.address.toLowerCase()}|${p.fields.tenantName.toLowerCase()}` === key,
+      ) || this.store.data.properties.some((p) => p.address.toLowerCase() === address.toLowerCase());
+      if (exists) {
+        skipped++;
+        continue;
+      }
+      this.store.v3.bookProposals.push({
+        id: `book-${randomUUID().slice(0, 8)}`,
+        kind: "add-property",
+        status: "open",
+        origin,
+        fields: { address, tenantName, tenantPhone, weeklyRentCents },
+        createdAt: now,
+      });
+      created++;
+    }
+    if (created || skipped) {
+      this.store.persistWithoutBump();
+      this.emit();
+    }
+    return { created, skipped, unparsed };
+  }
+
+  allowBookProposal(id: string): DeskSnapshot {
+    this.assertWritable();
+    const idx = this.store.v3.bookProposals.findIndex((p) => p.id === id && p.status === "open");
+    if (idx < 0) throw Object.assign(new Error("no such book proposal"), { status: 404 });
+    const proposal = this.store.v3.bookProposals[idx]!;
+    const added = this.addProperty({
+      address: proposal.fields.address,
+      tenantName: proposal.fields.tenantName,
+      tenantPhone: proposal.fields.tenantPhone,
+      weeklyRentCents: proposal.fields.weeklyRentCents,
+    });
+    const property = added.properties.find((p) => p.address === proposal.fields.address);
+    if (property) {
+      appendAllowedLine(property.id, `added from ${proposal.origin === "ask" ? "Bud intake" : "intake"} — ${proposal.fields.address}, ${proposal.fields.tenantName}`, this.vaultRoot, proposal.fields.address);
+    }
+    this.store.v3.bookProposals.splice(idx, 1);
+    this.store.persist();
+    this.emit();
+    return this.snapshot();
+  }
+
+  denyBookProposal(id: string): DeskSnapshot {
+    this.assertWritable();
+    const idx = this.store.v3.bookProposals.findIndex((p) => p.id === id);
+    if (idx < 0) throw Object.assign(new Error("no such book proposal"), { status: 404 });
+    this.store.v3.bookProposals.splice(idx, 1);
+    this.store.persist();
+    this.emit();
+    return this.snapshot();
   }
 
   resetFixtures(): DeskSnapshot {

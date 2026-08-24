@@ -142,6 +142,20 @@ export interface Contact {
   safeguards: ContactSafeguards;
 }
 
+export interface BookProposal {
+  id: string;
+  kind: "add-property";
+  status: "open";
+  origin: "ask" | "manual";
+  fields: {
+    address: string;
+    tenantName: string;
+    tenantPhone: string;
+    weeklyRentCents: number;
+  };
+  createdAt: number;
+}
+
 export interface ImportIssue {
   id: string;
   kind: ImportIssueKind;
@@ -294,6 +308,7 @@ export interface DeskFileV3 {
   tenancies: Tenancy[];
   contacts: Contact[];
   importIssues: ImportIssue[];
+  bookProposals: BookProposal[];
   cases: Case[];
   evidence: Evidence[];
   moneyPositions: MoneyPosition[];
@@ -320,6 +335,7 @@ export function emptyV3(agency: Agency): DeskFileV3 {
     tenancies: [],
     contacts: [],
     importIssues: [],
+    bookProposals: [],
     cases: [],
     evidence: [],
     moneyPositions: [],

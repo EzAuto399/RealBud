@@ -217,6 +217,14 @@ export interface RecoveryState {
 }
 
 export interface DeskBookView {
+  bookProposals: Array<{
+    id: string;
+    address: string;
+    tenantName: string;
+    tenantPhone: string;
+    weeklyRentCents: number;
+    origin: "ask" | "manual";
+  }>;
   agency: { name: string; timezone: string; jurisdictions: string[] };
   tenancies: Array<{
     id: string;

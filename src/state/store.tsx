@@ -748,8 +748,9 @@ const initialState: AppState = {
 // ── API client ─────────────────────────────────────────────────────────
 let sessionToken = "";
 
-export async function ensureSession(): Promise<string> {
-  if (sessionToken) return sessionToken;
+export async function ensureSession(force = false): Promise<string> {
+  if (sessionToken && !force) return sessionToken;
+  sessionToken = "";
   const res = await fetch("/api/session");
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error ?? "session refused");
@@ -758,11 +759,20 @@ export async function ensureSession(): Promise<string> {
 }
 
 export async function api(path: string, init?: RequestInit): Promise<any> {
-  const token = await ensureSession().catch(() => "");
-  const headers = new Headers(init?.headers);
-  if (!headers.has("content-type")) headers.set("content-type", "application/json");
-  if (token) headers.set("x-realbud-session", token);
-  const res = await fetch(path, { ...init, headers });
+  const call = async () => {
+    const token = await ensureSession().catch(() => "");
+    const headers = new Headers(init?.headers);
+    if (!headers.has("content-type")) headers.set("content-type", "application/json");
+    if (token) headers.set("x-realbud-session", token);
+    return fetch(path, { ...init, headers });
+  };
+  let res = await call();
+  // a harness restart mints a new session token; re-handshake once and retry
+  // so the desk survives a server bounce without a blank page
+  if (res.status === 401) {
+    await ensureSession(true).catch(() => "");
+    res = await call();
+  }
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
   return body;

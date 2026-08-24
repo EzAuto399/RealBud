@@ -15,6 +15,9 @@ export function DeskBook({
   onDelete,
   onReset,
   onImport,
+  onAllowBookProposal,
+  onDenyBookProposal,
+  onAllowAllBookProposals,
 }: {
   snap: DeskSnapshot;
   busy: string | null;
@@ -24,6 +27,9 @@ export function DeskBook({
   onDelete: (id: string) => void;
   onReset: () => void;
   onImport: (csv: string) => void;
+  onAllowBookProposal: (id: string) => void;
+  onDenyBookProposal: (id: string) => void;
+  onAllowAllBookProposals: () => void;
 }) {
   const [adding, setAdding] = useState(false);
   return (
@@ -69,6 +75,50 @@ export function DeskBook({
           </ul>
         </section>
       ) : null}
+      {(snap.book?.bookProposals.length ?? 0) > 0 && snap.book && (
+        <section className="mt-6">
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-[13px] font-semibold text-ink">Intake drafts — Bud prepared these</h3>
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={onAllowAllBookProposals}
+              className="rounded-lg bg-agency px-2.5 py-1 text-[12px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+            >
+              Allow all
+            </button>
+          </div>
+          <p className="mt-1 text-[12px] text-ink-muted">From what you gave Bud. Nothing is in the book until you allow it.</p>
+          <ul className="mt-2 space-y-2">
+            {snap.book.bookProposals.map((proposal) => (
+              <li key={proposal.id} className="rounded-xl border border-line bg-sheet px-3 py-2.5">
+                <div className="text-[13px] font-medium text-ink">{proposal.address}</div>
+                <div className="text-[12px] text-ink-muted">
+                  {proposal.tenantName} · {proposal.tenantPhone} · ${proposal.weeklyRentCents / 100}/wk
+                </div>
+                <div className="mt-1.5 flex gap-2">
+                  <button
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => onAllowBookProposal(proposal.id)}
+                    className="rounded-lg bg-agency px-2.5 py-1 text-[12px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+                  >
+                    Add to book
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => onDenyBookProposal(proposal.id)}
+                    className="rounded-lg px-2.5 py-1 text-[12px] text-ink-muted hover:bg-raised hover:text-ink disabled:opacity-40"
+                  >
+                    Discard
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {(snap.book?.importIssues.length ?? 0) > 0 ? (
         <section className="mt-6">
           <h3 className="text-[13px] font-semibold text-ink">Import issues</h3>

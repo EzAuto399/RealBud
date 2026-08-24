@@ -750,6 +750,7 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
       </div>
 
       {productAsk && <AskProposeBar />}
+      {productAsk && <AskIntakeBar />}
 
       {/* Error banner */}
       {state.error && (
@@ -903,6 +904,61 @@ function AskProposeBar() {
       >
         {busy ? "Putting…" : "Put on Desk"}
       </button>
+      {error && <span className="text-[12px] text-danger">{error}</span>}
+    </div>
+  );
+}
+
+/** Paste your existing book — one property per line — and Bud stages each
+ * one as a Desk card. Nothing is added until the PM allows it there. */
+function AskIntakeBar() {
+  const { dispatch } = useStore();
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ created: number; skipped: number; unparsed: string[] } | null>(null);
+  const [error, setError] = useState("");
+
+  const send = () => {
+    setBusy(true);
+    setError("");
+    void api("/api/desk/propose-book", { method: "POST", body: JSON.stringify({ text }) })
+      .then((res) => {
+        if (res.ok === false) throw new Error(res.error ?? "could not stage the list");
+        setResult({ created: res.created ?? 0, skipped: res.skipped ?? 0, unparsed: res.unparsed ?? [] });
+        setText("");
+        return api("/api/desk").then((next: DeskSnapshot) => dispatch({ type: "deskSnapshot", snapshot: next }));
+      })
+      .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <div className="mx-auto flex w-full max-w-[900px] flex-col gap-2 px-5 pb-2">
+      <textarea
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        rows={3}
+        placeholder={"Paste your existing properties, one per line:\n12 Oak St, Dickson ACT, Jordan Blake, 0400 555 666, 580"}
+        className="w-full resize-y rounded-xl border border-hairline/40 bg-inset px-3 py-2 text-[13px] leading-relaxed text-ink outline-none focus:border-accent/70"
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          disabled={busy || !text.trim()}
+          onClick={send}
+          className="rounded-lg border border-hairline/40 px-3 py-1.5 text-[12.5px] text-ink hover:bg-raised disabled:opacity-40"
+        >
+          {busy ? "Reading…" : "Stage properties on Desk"}
+        </button>
+        <span className="text-[11.5px] text-ink-secondary/80">
+          One per line: address, tenant, phone, weekly rent. Bud drafts them — you allow each on Desk.
+        </span>
+      </div>
+      {result && (
+        <div className="text-[12px] text-ink-secondary">
+          {result.created} staged on Desk{result.skipped ? ` · ${result.skipped} skipped (duplicate or incomplete)` : ""}
+          {result.unparsed.length ? ` · needs attention: ${result.unparsed.join(" | ")}` : ""}
+        </div>
+      )}
       {error && <span className="text-[12px] text-danger">{error}</span>}
     </div>
   );

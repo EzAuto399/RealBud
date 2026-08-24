@@ -122,6 +122,7 @@ describe("desk queue model", () => {
           contacts: [],
           archivedProperties: [],
           importIssues: [],
+    bookProposals: [],
           decisions: [],
           cases: [
             { id: "case-maint", kind: "maintenance-intake", state: "held", propertyId: "prop-oak" },

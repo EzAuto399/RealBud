@@ -1190,6 +1190,33 @@ const server = createServer(async (req, res) => {
       commitDesk(snapshot);
       return json(res, 200, snapshot);
     }
+    if (path === "/api/desk/propose-book" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      try {
+        const result = desk.proposeBook({ text: body.text, items: body.items }, "ask");
+        return json(res, 200, { ...result, snapshot: desk.snapshot() });
+      } catch (e) {
+        return json(res, 500, { error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    let bookMatch = path.match(/^\/api\/desk\/book-proposals\/([\w-]+)\/(allow|deny)$/);
+    if (bookMatch && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      await readBody(req);
+      try {
+        const snapshot = bookMatch[2] === "allow" ? desk.allowBookProposal(bookMatch[1]) : desk.denyBookProposal(bookMatch[1]);
+        commitDesk(snapshot);
+        return json(res, 200, snapshot);
+      } catch (e) {
+        const status = (e as { status?: number }).status ?? 500;
+        return json(res, status, { error: e instanceof Error ? e.message : String(e) });
+      }
+    }
     if (path === "/api/desk/propose" && method === "POST") {
       const body = await readBody(req);
       const snapshot = desk.proposeFromAsk({
