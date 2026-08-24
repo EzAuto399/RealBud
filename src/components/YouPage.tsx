@@ -42,7 +42,7 @@ export function YouPage() {
           <h1 className="pm-screen-title text-ink">You</h1>
         </div>
         <p className="mt-1 max-w-[40rem] text-[12.5px] text-ink-secondary">
-          Agency, source readiness, browser profile, and recovery. Hermes internals stay under Advanced diagnostics.
+          Agency, source readiness, browser profile, and recovery. Engine internals stay under Advanced diagnostics.
         </p>
       </header>
       <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-5 pb-6">
@@ -64,6 +64,7 @@ export function YouPage() {
         <Card title="Profile" subtitle="Shown in the sidebar. Saved as you go.">
           <ProfileFields />
         </Card>
+        <HermesHandsCard />
         <Card
           title="Sources"
           subtitle={
@@ -100,9 +101,8 @@ export function YouPage() {
               <div>{hermes.detail}</div>
             </>
           ) : (
-            <div>Hermes status is not available yet.</div>
+            <div>Engine status is not available yet.</div>
           )}
-          <HermesHandsCard />
         </AdvancedDiagnostics>
       </div>
     </main>

@@ -27,7 +27,7 @@ export function yamlBlock(raw: string, key: string): string | null {
   return match?.[0] ?? null;
 }
 
-function withYamlBlock(raw: string, key: string, block: string | null): string {
+export function withYamlBlock(raw: string, key: string, block: string | null): string {
   const cleaned = raw.replace(/\s+$/, "\n");
   const existing = new RegExp(`^${key}:\\n(?:[ \\t].*\\n)*`, "m");
   if (!block) return cleaned.replace(existing, "");

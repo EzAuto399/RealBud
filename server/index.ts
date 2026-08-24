@@ -37,6 +37,7 @@ import { readArtifact } from "./audit-artifacts.ts";
 import { Desk } from "./desk.ts";
 import { seedVault } from "./vault.ts";
 import { openTerminalAndRun, setupCommandFor } from "./engine-setup.ts";
+import { attachModel, installStatus, modelStatus, preflight, startInstall, type PreflightResult } from "./hermes-bridge.ts";
 import { CANONICAL_BUD_NAME, PRODUCT_MODE, isCanonicalBud, productDenied } from "./product-mode.ts";
 import { LoopManager, type LoopId } from "./routines.ts";
 import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
@@ -741,6 +742,8 @@ function commitDesk(snapshot: ReturnType<Desk["snapshot"]>) {
   broadcast({ kind: "desk", snapshot });
 }
 
+let installPreflight: PreflightResult | null = null;
+
 loops = new LoopManager({
   emit: broadcast,
   execute: async (loop, run) => {
@@ -1308,9 +1311,24 @@ const server = createServer(async (req, res) => {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
         return json(res, 415, { error: "content-type must be application/json" });
       }
-      await readBody(req);
-      const ok = await openTerminalAndRun(`hermes -p ${HERMES_PIN.profile} model`);
-      return json(res, ok ? 200 : 502, { ok });
+      const body = await readBody(req);
+      // zero-terminal: write the profile config/.env directly, never a CLI
+      try {
+        const status = attachModel({
+          providerId: String(body.providerId ?? ""),
+          apiKey: String(body.apiKey ?? ""),
+          model: String(body.model ?? ""),
+          baseUrl: body.baseUrl ? String(body.baseUrl) : undefined,
+        });
+        const ping = await tryHermesPing();
+        return json(res, 200, { ok: true, model: status, ping });
+      } catch (e) {
+        const status = (e as { status?: number }).status ?? 500;
+        return json(res, status, { error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    if (path === "/api/hermes/model" && method === "GET") {
+      return json(res, 200, { model: modelStatus() });
     }
     if (path === "/api/hermes/apply-pack" && method === "POST") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
@@ -1329,10 +1347,19 @@ const server = createServer(async (req, res) => {
         return json(res, 415, { error: "content-type must be application/json" });
       }
       await readBody(req);
+      // zero-terminal: the harness spawns the pinned installer and streams
+      // progress to /api/hermes/install/status — no Terminal window.
       const command = hermesInstallCommand(process.platform);
-      if (!command) return json(res, 400, { error: "no one-line installer for this platform" });
-      const ok = await openTerminalAndRun(command);
-      return json(res, ok ? 200 : 502, { ok, command });
+      if (!command) return json(res, 400, { error: "no installer for this platform — CSV-only mode" });
+      installPreflight = await preflight();
+      if (!installPreflight.ok) {
+        return json(res, 409, { error: "missing dependencies", install: installStatus(), preflight: installPreflight });
+      }
+      const job = startInstall(command);
+      return json(res, 202, { install: job, preflight: installPreflight });
+    }
+    if (path === "/api/hermes/install/status" && method === "GET") {
+      return json(res, 200, { install: installStatus(), preflight: installPreflight });
     }
 
     // ── events stream ──

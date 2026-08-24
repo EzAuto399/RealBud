@@ -47,19 +47,19 @@ export async function hermesStatus(
   let detail: string;
   let ready: boolean;
   if (!versionText) {
-    detail = `Hermes is not installed — install the pinned v${HERMES_PIN.product} worker, then run the install.`;
+    detail = `The worker is not installed — install the pinned v${HERMES_PIN.product} worker, then run the install.`;
     ready = false;
   } else if (!matchesPin) {
-    detail = `Installed Hermes is ${versionText.trim()} but the pin is v${HERMES_PIN.product} (${HERMES_PIN.tag}). Install the pinned worker.`;
+    detail = `Installed worker is ${versionText.trim()} but the pin is v${HERMES_PIN.product} (${HERMES_PIN.tag}). Install the pinned worker.`;
     ready = false;
   } else if (!pack.installed) {
-    detail = `Hermes ${HERMES_PIN.product} matches the pin, but the "${HERMES_PIN.profile}" pack is not installed. Apply the property pack.`;
+    detail = `Worker ${HERMES_PIN.product} matches the pin, but the "${HERMES_PIN.profile}" pack is not installed. Apply the property pack.`;
     ready = false;
   } else if (!pack.approvalsManual) {
-    detail = `Hermes ${HERMES_PIN.product} and the pack are in, but approvals are not manual on the "${HERMES_PIN.profile}" profile. Re-apply the pack.`;
+    detail = `Worker ${HERMES_PIN.product} and the pack are in, but approvals are not manual on the "${HERMES_PIN.profile}" profile. Re-apply the pack.`;
     ready = false;
   } else {
-    detail = `Hermes ${HERMES_PIN.product} answering on profile "${HERMES_PIN.profile}". Desk Recheck will ask it for the morning ledger.`;
+    detail = `Worker ${HERMES_PIN.product} answering. Desk Recheck will ask it for the morning ledger.`;
     ready = true;
   }
 

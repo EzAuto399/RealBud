@@ -398,6 +398,10 @@ You owns the bridge end-to-end so a non-technical graduate never opens a termina
 
 Keys live only in the profile auth files. They never enter desk.json, snapshots, or logs.
 
+## Known V3 perf bottleneck
+
+`addProperty` runs the full encrypted commit protocol per call (~38ms: serialize + encrypt + fsync + backup rotation), so bulk adds (194-property onboarding, CSV-backed imports) are linear-slow. The 200-property test now carries a 30s budget and a tracked fix: **batch persists for bulk operations** (single commit at the end of a bulk add/import transaction) before the pilot office loads a real book. Snapshot read path is unaffected (58ms / 182KB at 200 properties). Tracked under T2 follow-up.
+
 ## Blind-spot register (2026-08-25 sweep)
 
 Systematic "fresh graduate machine" + data-safety hunt. Fixed immediately: Hermes probes now use the augmented login PATH (Finder-launched apps previously could not find the worker that Ask could — Desk held while the worker was installed); recovery/migration no longer hardcodes Australia/Sydney; Electron takes the single-instance lock (a second launch now focuses the window instead of silently forking a second harness over one book).

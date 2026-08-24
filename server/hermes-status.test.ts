@@ -59,7 +59,7 @@ describe("hermesStatus", () => {
     expect(status.pack.installed).toBe(true);
     expect(status.pack.approvalsManual).toBe(true);
     expect(status.ready).toBe(true);
-    expect(status.detail).toMatch(/answering on profile "property"/i);
+    expect(status.detail).toMatch(/Worker 0.20.3 answering\. Desk Recheck will ask it for the morning ledger\./i);
   });
 
   it("flags the pack as missing when SOUL.md is absent", async () => {

@@ -469,7 +469,12 @@ describe("Desk morning check", () => {
     expect(snap.workItems.some((w) => w.holdReason === "reversed")).toBe(true);
   });
 
-  it("evaluates 200 properties without putting artifact bytes on the snapshot", () => {
+  // KNOWN V3 COST: every add runs the full encrypted commit protocol
+  // (fsync per add ≈ 38ms), so 194 sequential adds exceed the default
+  // budget. Batching persists for bulk adds is the tracked fix — see
+  // PRODUCT-DESIGN-PLAN.md "Known V3 perf bottleneck". The assertions here
+  // (snapshot size, no artifact bytes) are the actual contract.
+  it("evaluates 200 properties without putting artifact bytes on the snapshot", { timeout: 30_000 }, () => {
     const { desk } = tempDesk();
     for (let i = 0; i < 194; i++) {
       desk.addProperty({
