@@ -375,6 +375,29 @@ All save/copy/import/schedule actions announce success. Silent mutation is rejec
 - Reduced motion covers all custom and utility animations.
 - No status relies only on colour.
 
+## Ask as actor (action proposals)
+
+Ask is not only conversation: Bud proposes actions on the system, the PM allows them. The proposal union is closed — anything outside it is refused by the skill and by the API.
+
+| Proposal | Card shows | Allow runs |
+|---|---|---|
+| `run-loop` | loop name + what the run produces | loop runNow |
+| `retune-clock` | old → new time/weekdays | clock PATCH (revision + no-backfill rules) |
+| `add-property` / `edit-property` | full field diff | Book command |
+| `draft-owner-update` | proposed wording | existing proposeFromAsk |
+
+Rules: proposals carry `origin {kind:"ask"}`; Allow is the only execute path and is recorded as a Decision; the `desk-actions` pack skill returns structured JSON in a closed union (no free-form commands, no tool calls); send/trust/statutory/browser-launch are unreachable from proposals; chat text can never mutate the clock or book directly.
+
+## Worker bridge control plane (Hands 2.0)
+
+You owns the bridge end-to-end so a non-technical graduate never opens a terminal:
+
+- **Attach model in-app**: provider picker (OpenAI/Anthropic/xAI/OpenRouter/Ollama), key entry written to the Hermes profile auth only, model select, one-click Test hands.
+- **Worker update on pin bump**: You shows "Worker update available (app expects v0.20.x)" with a single Update button that runs the pinned installer, then re-runs the hands test. Never automatic, never tracks main, profile auth survives.
+- **Health surface (read-only)**: pin/pack/approvals/model status, last Hermes call result, log location.
+
+Keys live only in the profile auth files. They never enter desk.json, snapshots, or logs.
+
 ## Approved Mockups
 
 | Screen | Direction | Artifact |
@@ -435,6 +458,10 @@ Avoid a generic repository/service layer. Each module owns one trust boundary an
   Surfaced by: passes 2 and 6. Verify: WCAG-oriented manual checklist + automated smoke tests.
 - [ ] **T10 (P1, human: ~2 days / CC: ~4 h)** — Live QA — Run the full source→case→decision→handoff journey on demo/fake portal before pilot data.  
   Verify: `/qa`, before/after screenshots, zero send/pay paths.
+- [ ] **T11 (P1, human: ~3 days / CC: ~1 day)** — Worker bridge control plane (Hands 2.0) — In-app model attach (provider picker, key entry into profile auth, model select, test), one-click pinned worker update on pin bump (manual click, never auto, never main), health/log surface read-only.  
+  Surfaced by: setup dead-end for non-technical graduates. Files: `SettingsModal` Hermes card, `hermes-pin.ts`, new `server/hermes-bridge.ts`. Verify: fresh-machine attach E2E without terminal; update flow preserves profile auth; keys never enter desk.json.
+- [ ] **T12 (P1, human: ~4 days / CC: ~1 day)** — Ask as actor — Closed action-proposal catalog (`run-loop`, `retune-clock`, `add-property`, `edit-property`) rendered as diff cards in Ask; Allow applies through existing commands; Deny discards; `desk-actions` skill on the property pack returns structured action JSON only. Generalizes ROUTINES PR C.  
+  Surfaced by: product ask "Bud should be able to do tasks". Verify: no chat path executes without a recorded Allow; closed union denies everything else; send/trust/statutory/browser stay unreachable from proposals.
 
 Implementation order: `T1 → T2 contracts/decoder/migration → compatibility snapshot → T3/T4 → T5 → T6/T7/T8 → T9 → T10`. T3/T4 may proceed in parallel only after V3 contracts and projection DTOs settle; all browser work depends on the Case/ProposalRevision/HandoffAuthorization model.
 
