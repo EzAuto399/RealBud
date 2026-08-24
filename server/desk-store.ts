@@ -111,7 +111,7 @@ export class DeskStore {
       empty.handsDetail = "Desk is in recovery — the book was not replaced with Demo data.";
       return {
         data: empty,
-        v3: emptyV3({ name: "", timezone: "Australia/Sydney", jurisdictions: [] }),
+        v3: emptyV3({ name: "", timezone: hostTimezone(), jurisdictions: [] }),
         recovery: { ...result.recovery, quarantined },
         key: this.keyInfo,
       };

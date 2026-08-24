@@ -4,6 +4,8 @@
 // focus and after a Desk Recheck without a spinner.
 import { execFile } from "node:child_process";
 
+import { augmentedPath } from "./env-path.ts";
+
 import { HERMES_PIN, hermesInstallCommand, hermesMatchesPin } from "./hermes-pin.ts";
 import { approvalsAreManual, hermesHome, packInstalled, propertyProfileDir } from "./hermes-pack.ts";
 
@@ -22,7 +24,9 @@ export interface HermesStatus {
 
 export function probeHermesVersion(cli: string): Promise<string | null> {
   return new Promise((resolve) => {
-    execFile(cli, ["--version"], { timeout: 8_000 }, (err, stdout) => {
+    // Finder-launched apps inherit a stub PATH; the worker lives in
+    // ~/.local/bin or Homebrew, so probes use the augmented login PATH.
+    execFile(cli, ["--version"], { timeout: 8_000, env: { ...process.env, PATH: augmentedPath() } }, (err, stdout) => {
       resolve(err ? null : String(stdout));
     });
   });

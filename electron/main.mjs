@@ -21,6 +21,21 @@ const APP_ICON = path.join(__dirname, "resources/app-icon.png");
 // identities match. This must run before Electron becomes ready.
 if (process.platform === "linux") app.setDesktopName("com.realbud.app.desktop");
 
+// One desk, one app. A second launch would fork a second harness server over
+// the same ~/.realbud — silent last-writer-wins on the book. Focus the
+// existing window instead.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    const win = BrowserWindow.getAllWindows()[0];
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
+  });
+}
+
 // Packaged: the harness server ships in Resources (compiled JS, zero deps)
 // and runs on Electron's own Node via utilityProcess. It serves the built
 // UI too, so the window talks to one origin and there is no dev proxy.

@@ -6,6 +6,9 @@ import { dirname, join } from "node:path";
 import type { LedgerFacts, Property } from "../shared/contracts.ts";
 import type { DeskFileV3 } from "../shared/desk-v3.ts";
 import { fsyncDir, writeFileAtomic, writeFileFsynced } from "./atomic.ts";
+
+// local copy: importing from desk-store would be a circular import
+const hostTimezone = (): string => Intl.DateTimeFormat().resolvedOptions().timeZone || "Australia/Sydney";
 import { failClosedRecovery, idleRecovery, locksForRecovery, type DeskOperationalLocks } from "./desk-v3-recovery.ts";
 import { decryptJson, encryptJson, isEncryptedEnvelope } from "./desk-crypto.ts";
 import { decodeDeskPlain, decodeDeskV3, validateDeskV3 } from "./desk-v3-decode.ts";
@@ -80,7 +83,7 @@ export function commitV2ToV3(opts: {
   } catch (error) {
     throw new CommitFailed("decode", error);
   }
-  const decoded = decodeDeskPlain(parsed, opts.book ?? { properties: [], ledger: [] }, opts.timezone ?? "Australia/Sydney");
+  const decoded = decodeDeskPlain(parsed, opts.book ?? { properties: [], ledger: [] }, opts.timezone ?? hostTimezone());
   if (decoded.version === 3) {
     return { v3: decoded.data, originalHash, backupPath: null, rewritten: false };
   }

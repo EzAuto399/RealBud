@@ -398,7 +398,27 @@ You owns the bridge end-to-end so a non-technical graduate never opens a termina
 
 Keys live only in the profile auth files. They never enter desk.json, snapshots, or logs.
 
-## Approved Mockups
+## Blind-spot register (2026-08-25 sweep)
+
+Systematic "fresh graduate machine" + data-safety hunt. Fixed immediately: Hermes probes now use the augmented login PATH (Finder-launched apps previously could not find the worker that Ask could — Desk held while the worker was installed); recovery/migration no longer hardcodes Australia/Sydney; Electron takes the single-instance lock (a second launch now focuses the window instead of silently forking a second harness over one book).
+
+Mapped to work:
+
+| # | Sev | Blind spot | Lands in |
+|---|---|---|---|
+| 1 | P1 | Windows build ships but the pinned worker cannot be installed from the app (`installCommand` null on win32) | T11 — bundle worker or explicit "CSV-only on Windows" copy before NSIS ships |
+| 2 | P1 | Three-rules onboarding implemented but mounted nowhere — first launch skips the safety framing | T3 onboarding checklist card (mount + first-run flag) |
+| 3 | P1 | `desk.key` loss = permanent lockout: silent key replacement quarantines the book into unrecoverable recovery; no escrow, no unlock flow | **T13 (new, P1): key escrow phrase at first run + in-app unlock-quarantined-book flow** |
+| 4 | P2 | Failure/stale signals are passive-only: missed runs and held sources surface only if the PM opens the app; zero OS notifications; You sources lack last-checked times | **T14 (new, P2): OS notification on failed/held runs + last-checked timestamps on You sources** |
+| 5 | P2 | `retentionDays` enforced nowhere; evidence append-only and `purged-*` backups never deleted — disk growth + privacy posture gap | **T15 (new, P2): retention sweep honoring open-case references** |
+| 6 | P2 | safeStorage is a comment: `desk.key` sits plaintext next to the book; provider keys plaintext in config.json | **T16 (new, P2, pre-package): wrap desk.key with safeStorage; encrypt config secrets** |
+| 7 | P2 | "Allow" can report success when Terminal never opened (spawn ≠ osascript success); TCC denial invisible | T11 — capture exit/stderr, clipboard fallback made loud |
+| 8 | P2 | Packaging trust gates: notarize off, arm64-only mac, unsigned Windows — install #1 fails for exactly the target audience | **T17 (new, gated on release): CI notarize+staple, x64 mac artifact, signed Windows** |
+| 9 | P2 | Installer is `curl \| bash` with no preflight and no result verification | T11 — preflight deps in-app, verify `hermes --version` matches pin before declaring success |
+
+Checked and fine: port-collision fallback chain, Ask retry/failure UX, demo seeding, atomic write durability, analytics fully off, loop bookkeeping caps, Windows CLI shim resolution (the gap is only that Hermes paths bypass it — fixed above).
+
+
 
 | Screen | Direction | Artifact |
 |---|---|---|
@@ -460,6 +480,16 @@ Avoid a generic repository/service layer. Each module owns one trust boundary an
   Verify: `/qa`, before/after screenshots, zero send/pay paths.
 - [ ] **T11 (P1, human: ~3 days / CC: ~1 day)** — Worker bridge control plane (Hands 2.0) — In-app model attach (provider picker, key entry into profile auth, model select, test), one-click pinned worker update on pin bump (manual click, never auto, never main), health/log surface read-only.  
   Surfaced by: setup dead-end for non-technical graduates. Files: `SettingsModal` Hermes card, `hermes-pin.ts`, new `server/hermes-bridge.ts`. Verify: fresh-machine attach E2E without terminal; update flow preserves profile auth; keys never enter desk.json.
+- [ ] **T13 (P1, human: ~2 days / CC: ~4 h)** — Key escrow + unlock — recovery phrase / key-file export at first run; in-app "unlock quarantined book" flow that restores a lost desk.key safely.  
+  Surfaced by: blind-spot #3. Files: `desk-key.ts`, recovery UI. Verify: key-loss drill restores the book without terminal.
+- [ ] **T14 (P2, human: ~2 days / CC: ~4 h)** — Proactive signals — OS notification on failed/held loop runs and stale sources; last-checked timestamps on You sources.  
+  Surfaced by: blind-spot #4. Verify: notification fires on injected failure; silent when all green.
+- [ ] **T15 (P2, human: ~2 days / CC: ~4 h)** — Retention sweep — expire evidence/artifacts per retentionDays while never deleting evidence referenced by open cases/decisions/handoffs; hard-delete rotated backups.  
+  Surfaced by: blind-spot #5. Verify: 90-day sweep test with referenced-evidence protection.
+- [ ] **T16 (P2, human: ~2 days / CC: ~4 h)** — Secrets at rest — wrap desk.key with Electron safeStorage in the packaged app; encrypt provider keys in config.json.  
+  Surfaced by: blind-spot #6. Verify: packaged build stores wrapped key; dev fallback unchanged.
+- [ ] **T17 (P2, human: ~2 days / CC: ~1 day)** — Release trust gates — CI notarize+staple macOS, x64 mac artifact, signed Windows binaries. Gated on first public distribution.  
+  Surfaced by: blind-spot #8. Verify: fresh-machine install with zero Gatekeeper/SmartScreen surprises.
 - [ ] **T12 (P1, human: ~4 days / CC: ~1 day)** — Ask as actor — Closed action-proposal catalog (`run-loop`, `retune-clock`, `add-property`, `edit-property`) rendered as diff cards in Ask; Allow applies through existing commands; Deny discards; `desk-actions` skill on the property pack returns structured action JSON only. Generalizes ROUTINES PR C.  
   Surfaced by: product ask "Bud should be able to do tasks". Verify: no chat path executes without a recorded Allow; closed union denies everything else; send/trust/statutory/browser stay unreachable from proposals.
 

@@ -4,6 +4,8 @@
 // Never passes --yolo. Never opens Desktop.
 import { execFile } from "node:child_process";
 
+import { augmentedPath } from "./env-path.ts";
+
 import type { LedgerFacts } from "../shared/contracts.ts";
 import { asBoolean, asFiniteNumber, asNonEmptyString, asNullableNumber } from "./decode.ts";
 import { HERMES_PIN, hermesMatchesPin } from "./hermes-pin.ts";
@@ -51,7 +53,7 @@ export async function tryHermesPing(opts?: {
     execFile(
       cli,
       ["--profile", HERMES_PIN.profile, "chat", "-Q", "-q", "Reply with exactly one word: OK", "--max-turns", "1"],
-      { timeout: opts?.timeoutMs ?? TIMEOUT_MS, cwd: opts?.cwd ?? seedVault() },
+      { timeout: opts?.timeoutMs ?? TIMEOUT_MS, cwd: opts?.cwd ?? seedVault(), env: { ...process.env, PATH: augmentedPath() } },
       (err, stdout, stderr) => {
         const clean = (s: string) =>
           String(s)
@@ -135,7 +137,7 @@ export async function tryHermesLedger(
     execFile(
       cli,
       ["--profile", HERMES_PIN.profile, "chat", "-Q", "-q", prompt, "--max-turns", "2"],
-      { timeout: opts?.timeoutMs ?? TIMEOUT_MS, cwd: opts?.cwd ?? seedVault() },
+      { timeout: opts?.timeoutMs ?? TIMEOUT_MS, cwd: opts?.cwd ?? seedVault(), env: { ...process.env, PATH: augmentedPath() } },
       (err, stdout, stderr) => {
         if (err) {
           const timedOut = (err as NodeJS.ErrnoException & { killed?: boolean }).killed;
