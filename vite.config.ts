@@ -36,6 +36,9 @@ export default defineConfig({
     proxy: {
       "/api": {
         target: `http://127.0.0.1:${process.env.OMB_PORT || process.env.OGB_PORT || 8799}`,
+        // Rewrite Host to the harness so session-auth accepts the loopback
+        // API. Origin stays the Vite port (5199 / 5173), which is already allowlisted.
+        changeOrigin: true,
       },
     },
   },

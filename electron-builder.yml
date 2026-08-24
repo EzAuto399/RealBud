@@ -38,8 +38,10 @@ asar: true
 extraResources:
   - from: dist
     to: ui
-  - from: dist-server
+  - from: dist-server/server
     to: server
+  - from: dist-server/shared
+    to: shared
 
 mac:
   target:

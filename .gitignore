@@ -12,3 +12,7 @@ release
 coverage
 Untitled
 argv-*.txt
+
+# build outputs (new layout)
+dist-server/
+electron/resources/
