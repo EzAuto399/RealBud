@@ -91,6 +91,10 @@ Every component has loading, empty, partial, success, failure, stale and recover
 - Handoff completion is auto-verified only by read-back evidence; otherwise the PM records "Done in PMS". Unknown stays unknown.
 - Any destructive or irreversible action stays outside RealBud.
 
+## Zero-terminal rule
+
+The user interacts only with RealBud. RealBud takes their input and delivers it to the worker programmatically: installs run inside the app with streamed progress, model/provider setup is a form that writes worker config directly, updates are one click. Terminal never opens. The word Hermes never appears outside Advanced diagnostics.
+
 ## Onboarding rules
 
 - The product opens working (demo book). Setup never blocks the window.

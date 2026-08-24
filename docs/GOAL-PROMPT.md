@@ -197,6 +197,7 @@ Same objects, different door. “Run money check at 8 instead of 7:30.” “Pau
 - No TICA, lock changes, legal advice, inspection app, payments licence.
 - No photos of tenant belongings published.
 - No back-dating a maintenance request or a notice.
+- **The user never touches Hermes.** No Terminal, no `hermes` CLI in any user flow, no Hermes vocabulary outside Advanced diagnostics. RealBud drives the worker programmatically — install, model/auth config, updates — and translates every result into RealBud UI.
 - Law is a **refusal**, not a feature. No crawler, no national notice-period table. Quote a government page only if a human filed it with `source` + `retrieved` + `review_by`. Stale = do not use. SOP is the licensee’s or training partner’s; we author one page only: *no notices, no trust, escalate emergencies.*
 - Serving a notice on WhatsApp is not reliable service. Courtesy + disclaimer, or escalate.
 
