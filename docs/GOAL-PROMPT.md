@@ -4,7 +4,7 @@ Date: 2026-08-23 (state synced to HEAD `bdb05ce` + gate hardening)
 Repo: `EzAuto399/RealBud` (local folder still `PropertyMe`)  
 Use: paste this whole file into a new session, or point an agent at it. If a later idea fights this document, **this document wins**.
 
-Related: `docs/IDENTITY.md`, `docs/PRODUCT-BRIEF.md`, `docs/WORKFLOW-PLAN.md`, `docs/PILOT-CONTRACT.md`, `docs/APPROACH.md`, `pack/property/SOUL.md`, `CLAUDE.md`
+Related: `DESIGN.md`, `docs/PRODUCT-DESIGN-PLAN.md`, `docs/IDENTITY.md`, `docs/PRODUCT-BRIEF.md`, `docs/WORKFLOW-PLAN.md`, `docs/PILOT-CONTRACT.md`, `docs/APPROACH.md`, `pack/property/SOUL.md`, `CLAUDE.md`
 
 ---
 

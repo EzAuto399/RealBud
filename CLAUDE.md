@@ -6,6 +6,7 @@ Do not ship as PropertyMe (PMS trademark), Hermes, or OpenMausBot.
 
 - Data: `~/.realbud`
 - Goal prompt (paste into a new session): `docs/GOAL-PROMPT.md`
+- Native PM design system + approved implementation plan: `DESIGN.md` + `docs/PRODUCT-DESIGN-PLAN.md`
 - Routines design (GUI + Ask, Hermes as hands): `docs/ROUTINES.md`
 - Identity: `docs/IDENTITY.md`
 - Workflow: `docs/WORKFLOW-PLAN.md`
