@@ -18,7 +18,7 @@ export interface LoopManagerOptions {
   emit?: (payload: unknown) => void;
   timezone?: string;
   hostTimezone?: string;
-  execute: (loop: Loop) => Promise<{ ok: boolean; detail: string }>;
+  execute: (loop: Loop, run: LoopRun) => Promise<{ ok: boolean; detail: string }>;
 }
 
 interface LoopsFile {
@@ -383,7 +383,7 @@ export class LoopManager {
     this.save();
     this.emitRun(run);
     try {
-      const { ok, detail } = await this.options.execute(loop);
+      const { ok, detail } = await this.options.execute(loop, run);
       run.status = ok ? "completed" : "failed";
       run.detail = detail.slice(0, 500);
     } catch (error) {

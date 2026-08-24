@@ -16,7 +16,9 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { fmtTimeOfDay, whenLabel } from "@/lib/au";
 import type { Loop, LoopId, LoopRun, LoopRunStatus } from "@/lib/routines";
+import { RecoveryNotice } from "./pm";
 import { api, useStore } from "@/state/store";
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -30,14 +32,8 @@ function scheduleLabel(loop: Loop): string {
       : days.join(",") === "1,2,3,4,5"
         ? "Weekdays"
         : days.map((day) => DAY_NAMES[day]).join(", ");
-  const time = new Date(2000, 0, 1, hour, minute).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const time = fmtTimeOfDay(new Date(2000, 0, 1, hour, minute).getTime());
   return `${dayLabel} at ${time}`;
-}
-
-function niceWhen(at: number): string {
-  const date = new Date(at);
-  const today = new Date().toDateString() === date.toDateString() ? "today" : "tomorrow";
-  return `${today} at ${date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
 }
 
 function statusChip(status: LoopRunStatus) {
@@ -181,10 +177,10 @@ function LoopCard({
         {loop.timezonePaused && (
           <span className="text-warning">Paused — agency timezone does not match this computer</span>
         )}
-        {loop.available && loop.enabled && loop.nextRunAt && <span>Next: {niceWhen(loop.nextRunAt)}</span>}
+        {loop.available && loop.enabled && loop.nextRunAt && <span>Next: {whenLabel(loop.nextRunAt)}</span>}
         {lastRun && (
           <span className="flex items-center gap-1.5">
-            Last: {niceWhen(lastRun.scheduledFor)} ·{" "}
+            Last: {whenLabel(lastRun.scheduledFor)} ·{" "}
             <span className={cn("flex items-center gap-1", statusChip(lastRun.status).cls)}>
               {statusChip(lastRun.status).icon}
               {statusChip(lastRun.status).label}
@@ -207,6 +203,8 @@ export function RoutinesPage() {
     setError("");
     try {
       await api(`/api/loops/${loopId}/run`, { method: "POST" });
+      const desk = await api("/api/desk");
+      dispatch({ type: "deskSnapshot", snapshot: desk });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -263,7 +261,7 @@ export function RoutinesPage() {
           <div>
             <div className="flex items-center gap-2.5">
               <CalendarDays size={21} className="text-accent" />
-              <h1 className="text-[20px] font-semibold tracking-tight text-ink">Schedule</h1>
+              <h1 className="pm-screen-title text-ink">Schedule</h1>
             </div>
             <p className="mt-1 max-w-[52rem] text-[12.5px] text-ink-secondary">
               Named loops on RealBud's clock. Facts are fetched headless; the cards land on Desk for you to allow or deny. Nothing sends while nobody is looking.
@@ -276,6 +274,11 @@ export function RoutinesPage() {
             </span>
           )}
         </div>
+        {state.desk?.recovery?.active ? (
+          <div className="mt-3">
+            <RecoveryNotice>Desk is in recovery. Named loops are paused. The clock will not Recheck or mint a browser session.</RecoveryNotice>
+          </div>
+        ) : null}
         {error && (
           <div className="mt-3 flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/10 px-3 py-2.5 text-[13px] text-danger">
             <CircleAlert size={16} className="mt-0.5 shrink-0" />
@@ -314,10 +317,14 @@ export function RoutinesPage() {
               {state.loopRuns.slice(0, 15).map((run) => {
                 const chip = statusChip(run.status);
                 const unseen = ["failed", "missed", "interrupted"].includes(run.status) && !run.seenAt;
+                const produced = (state.desk?.book?.cases ?? []).filter((item) => item.origin?.runId === run.id).length;
                 return (
                   <button
                     key={run.id}
-                    onClick={() => unseen && dispatch({ type: "markLoopRunSeen", runId: run.id })}
+                    onClick={() => {
+                      if (unseen) dispatch({ type: "markLoopRunSeen", runId: run.id });
+                      dispatch({ type: "showDesk" });
+                    }}
                     className={cn(
                       "flex w-full items-center gap-3 rounded-xl border px-3.5 py-2.5 text-left",
                       unseen ? "border-danger/30 bg-danger/5" : "border-hairline/40 bg-panel hover:bg-raised/50",
@@ -329,9 +336,12 @@ export function RoutinesPage() {
                     </span>
                     <span className="text-[13px] font-medium text-ink">{run.loopName}</span>
                     {run.manual && <span className="rounded-md bg-inset px-1.5 py-0.5 text-[10px] text-ink-secondary">manual</span>}
-                    <span className="text-[11.5px] text-ink-secondary">{niceWhen(run.scheduledFor)}</span>
+                    <span className="text-[11.5px] text-ink-secondary">{whenLabel(run.scheduledFor)}</span>
                     <span className="min-w-0 flex-1 truncate text-[12px] text-ink-secondary" title={run.detail}>
                       {run.detail}
+                    </span>
+                    <span className="shrink-0 text-[11px] text-ink-secondary">
+                      {produced ? `${produced} on Desk` : "Open Desk"}
                     </span>
                     {unseen && <span className="size-2 shrink-0 rounded-full bg-danger" />}
                   </button>

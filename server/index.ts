@@ -743,25 +743,27 @@ function commitDesk(snapshot: ReturnType<Desk["snapshot"]>) {
 
 loops = new LoopManager({
   emit: broadcast,
-  execute: async (loop) => {
-    if (desk.recovery.active) return { ok: false, detail: "desk is in recovery — schedules are paused" };
-    const spec = evaluatorForLoop(loop.id);
-    if (spec && spec.mayLaunchCua) return { ok: false, detail: "the clock must not launch a browser" };
-    if (loop.id === "owner-letter") {
-      const before = desk.snapshot().drafts.filter((d) => d.kind === "owner-letter").length;
-      const snapshot = desk.draftOwnerLetters();
+  execute: async (loop, run) => {
+    return desk.withRoutineOrigin({ kind: "routine", runId: run.id, loopId: loop.id }, async () => {
+      if (desk.recovery.active) return { ok: false, detail: "desk is in recovery — schedules are paused" };
+      const spec = evaluatorForLoop(loop.id);
+      if (spec && spec.mayLaunchCua) return { ok: false, detail: "the clock must not launch a browser" };
+      if (loop.id === "owner-letter") {
+        const before = desk.snapshot().drafts.filter((d) => d.kind === "owner-letter").length;
+        const snapshot = desk.draftOwnerLetters();
+        commitDesk(snapshot);
+        const after = snapshot.drafts.filter((d) => d.kind === "owner-letter").length;
+        return { ok: true, detail: `Owner letters on Desk: ${after} (${after - before} new this week).` };
+      }
+      if (loop.id !== "morning-arrears") return { ok: false, detail: "not built yet" };
+      const before = desk.snapshot();
+      const snapshot = before.mode === "demo" ? desk.runMorningCheck() : await desk.runMorningCheckLive();
       commitDesk(snapshot);
-      const after = snapshot.drafts.filter((d) => d.kind === "owner-letter").length;
-      return { ok: true, detail: `Owner letters on Desk: ${after} (${after - before} new this week).` };
-    }
-    if (loop.id !== "morning-arrears") return { ok: false, detail: "not built yet" };
-    const before = desk.snapshot();
-    const snapshot = before.mode === "demo" ? desk.runMorningCheck() : await desk.runMorningCheckLive();
-    commitDesk(snapshot);
-    if (snapshot.hands === "held") return { ok: false, detail: snapshot.handsDetail ?? "held" };
-    if (snapshot.mode === "demo") return { ok: true, detail: snapshot.handsDetail ?? "Demo check completed." };
-    const live = snapshot.hands === "hermes" || snapshot.hands === "csv";
-    return { ok: live, detail: snapshot.handsDetail ?? (live ? "Desk check completed." : "live check did not use live facts") };
+      if (snapshot.hands === "held") return { ok: false, detail: snapshot.handsDetail ?? "held" };
+      if (snapshot.mode === "demo") return { ok: true, detail: snapshot.handsDetail ?? "Demo check completed." };
+      const live = snapshot.hands === "hermes" || snapshot.hands === "csv";
+      return { ok: live, detail: snapshot.handsDetail ?? (live ? "Desk check completed." : "live check did not use live facts") };
+    });
   },
 });
 loops.start();
@@ -1202,8 +1204,23 @@ const server = createServer(async (req, res) => {
         error: "RealBud never sends. Approve the draft and send it from the PMS.",
       });
     }
+    if (path === "/api/desk/handoff/present" && method === "POST") {
+      const body = await readBody(req);
+      const presentation = body.presentation;
+      if (presentation !== "side-by-side" && presentation !== "inspector" && presentation !== "window") {
+        return json(res, 400, { error: "presentation must be side-by-side, inspector, or window" });
+      }
+      const before = desk.snapshot().book?.handoff?.allowedActions ?? [];
+      const snapshot = desk.setPresentation(presentation);
+      const after = snapshot.book?.handoff?.allowedActions ?? [];
+      if (before.join("\0") !== after.join("\0") && snapshot.book?.handoff) {
+        return json(res, 409, { error: "presentation cannot widen authorization" });
+      }
+      return json(res, 200, snapshot);
+    }
     const deskPrepare = path.match(/^\/api\/desk\/drafts\/([\w-]+)\/prepare$/);
     if (deskPrepare && method === "POST") {
+      if (desk.recovery.active) return json(res, 409, { error: "desk is in recovery — browser work is paused" });
       const snapshot = process.env.FAKE_PORTAL_URL
         ? await desk.preparePortalAsync(deskPrepare[1])
         : desk.command({ type: "prepare-portal", draftId: deskPrepare[1], expectedRevision: desk.revision });

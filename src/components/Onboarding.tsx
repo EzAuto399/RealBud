@@ -37,13 +37,13 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-app">
-      <div className="flex w-[460px] flex-col rounded-2xl border border-hairline/40 bg-panel p-8">
+      <div className="flex w-[460px] flex-col rounded-lg border border-line bg-sheet p-8">
         {step === 0 && (
           <div className="flex flex-col items-center">
             <div className="flex size-[72px] items-center justify-center rounded-2xl bg-accent/10">
               <Building2 size={32} className="text-accent" />
             </div>
-            <h1 className="mt-4 text-[20px] font-semibold text-ink">Welcome to RealBud</h1>
+            <h1 className="pm-screen-title mt-4 text-ink">Welcome to RealBud</h1>
             <p className="mt-1.5 text-center text-[14px] leading-relaxed text-ink-secondary">
               A desk for property managers. It drafts the morning work. You send from the PMS.
               It never issues a notice or moves trust money.

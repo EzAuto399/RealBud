@@ -496,4 +496,21 @@ describe("Desk morning check", () => {
     desk.runMorningCheck();
     expect(desk.snapshot().workItems.filter((w) => w.state === "approved")).toHaveLength(before);
   });
+
+  it("surfaces demo book breadth and stamps routine origin without widening handoff", async () => {
+    const { desk } = tempDesk();
+    const snap = desk.snapshot();
+    expect(snap.book?.agency.jurisdictions).toContain("ACT");
+    expect(snap.book?.tenancies.some((tenancy) => tenancy.status === "closed")).toBe(true);
+    expect(snap.book?.contacts.some((contact) => contact.role === "owner")).toBe(true);
+    expect(snap.book?.contacts.some((contact) => contact.role === "tradie")).toBe(true);
+    expect(snap.book?.cases.map((item) => item.kind)).toEqual(
+      expect.arrayContaining(["maintenance-intake", "lease-review", "inspection-prep", "inbound-triage"]),
+    );
+    await desk.withRoutineOrigin({ kind: "routine", runId: "run-1", loopId: "morning-arrears" }, () => desk.runMorningCheck());
+    expect(desk.snapshot().workItems.some((item) => item.origin?.runId === "run-1")).toBe(true);
+    const presented = desk.setPresentation("inspector");
+    expect(presented.book?.handoff?.presentation ?? "inspector").toBe("inspector");
+    expect(presented.book?.handoff?.allowedActions ?? []).not.toContain("submit");
+  });
 });

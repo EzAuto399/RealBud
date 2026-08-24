@@ -1,4 +1,5 @@
 export type {
+  DeskBookView,
   BookMode,
   CheckOutcome,
   CheckReason,

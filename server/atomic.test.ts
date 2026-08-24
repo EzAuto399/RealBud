@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { writeFileAtomic } from "./atomic.ts";
+import { writeFileAtomic, writeFileFsynced } from "./atomic.ts";
 
 describe("writeFileAtomic", () => {
   let dir: string;
@@ -41,6 +41,12 @@ describe("writeFileAtomic", () => {
     writeFileAtomic(p, s);
     expect(readFileSync(p, "utf8")).toBe(s);
     expect(existsSync(p)).toBe(true);
+  });
+
+  it("fsyncs an exact backup without renaming away the original", () => {
+    const p = join(dir, "backup.json");
+    writeFileFsynced(p, Buffer.from("exact-bytes"));
+    expect(readFileSync(p)).toEqual(Buffer.from("exact-bytes"));
   });
 
   it("cleans up the temporary file when replacement fails", () => {

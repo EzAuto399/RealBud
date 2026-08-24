@@ -287,7 +287,7 @@ export function Composer({
           onAdd={addAttachments}
           onRemove={removeAttachment}
         />
-        <div className="flex items-end gap-2 rounded-3xl border border-hairline/40 bg-raised/60 py-2 pl-3 pr-2">
+        <div className="flex items-end gap-2 rounded-lg border border-line bg-sheet py-2 pl-3 pr-2">
         <textarea
           ref={inputRef}
           rows={1}
@@ -356,9 +356,11 @@ export function Composer({
                 ? `${busyName} is working — Enter queues your message`
                 : group
                   ? `Message ${group.name} — ${groupComposerHint(group, members ?? [])}`
-                  : `Message ${bot?.name ?? ""}`
+                  : productAsk
+                    ? "Ask about a property or this morning’s work"
+                    : `Message ${bot?.name ?? ""}`
           }
-          aria-label={`Message ${group ? group.name : (bot?.name ?? "")}`}
+          aria-label={productAsk ? "Ask about the book" : `Message ${group ? group.name : (bot?.name ?? "")}`}
           className="max-h-40 w-full resize-none self-center bg-transparent py-1 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none"
         />
         {busy && (
@@ -374,7 +376,7 @@ export function Composer({
             <Square size={14} className="fill-current" />
           </button>
         )}
-        {!busy && !hasContent && capabilities.dictation.available && (
+        {!busy && !hasContent && !productAsk && capabilities.dictation.available && (
           <button
             onClick={toggleMic}
             aria-label={recording ? "Stop dictation" : "Start dictation"}

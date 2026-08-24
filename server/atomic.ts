@@ -6,6 +6,26 @@
 // that fails to parse on next boot and is silently treated as empty state.
 import { randomUUID } from "node:crypto";
 import { closeSync, fsyncSync, openSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+
+export function fsyncDir(dir: string): void {
+  const fd = openSync(dir, "r");
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+export function writeFileFsynced(path: string, data: string | Buffer): void {
+  const fd = openSync(path, "w");
+  try {
+    writeFileSync(fd, data);
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
 
 export function writeFileAtomic(path: string, data: string): void {
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
@@ -17,6 +37,7 @@ export function writeFileAtomic(path: string, data: string): void {
     closeSync(fd);
     fd = null;
     renameSync(tmp, path);
+    fsyncDir(dirname(path));
   } catch (e) {
     if (fd !== null) {
       try {

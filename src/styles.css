@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Grok Bot dark palette (pixel-sampled from the real app) */
+/* Warm Operational Ledger — DESIGN.md. Existing class names stay as aliases. */
 @theme {
   --animate-panel-in: panel-in 0.24s cubic-bezier(0.22, 1, 0.36, 1);
   --animate-pop-in: pop-in 0.2s cubic-bezier(0.22, 1, 0.36, 1);
@@ -8,27 +8,38 @@
   --animate-msg-in: msg-in 0.18s cubic-bezier(0.22, 1, 0.36, 1);
   --animate-shimmer: shimmer 2s linear infinite;
 
-  --color-app: #070707;
-  --color-panel: #111111;
-  --color-raised: #2f2f2f;
-  --color-raised-hover: #3d3d3d;
-  --color-card: #262626;
-  --color-inset: #191919;
-  --color-hairline: #333333;
-  --color-ink: #fcfcfc;
-  --color-ink-secondary: #fcfcfc99;
-  --color-accent: #1084fe;
-  --color-accent-border: #459ffe;
-  --color-bubble-user: #5a5a5a;
-  --color-success: #38d591;
-  --color-danger: #ff5667;
-  --color-warning: #ff9800;
+  --color-paper: #f3efe5;
+  --color-sheet: #fffbf2;
+  --color-ink: #25231f;
+  --color-ink-muted: #6f695e;
+  --color-line: #d4ccbb;
+  --color-agency: #3f5f45;
+  --color-agency-hover: #314b36;
+  --color-selected: #dde4d2;
+  --color-hold: #b27a24;
+  --color-danger: #a64632;
+  --color-portal: #315f91;
 
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text",
-    "Segoe UI", system-ui, sans-serif;
+  --color-app: #f3efe5;
+  --color-panel: #fffbf2;
+  --color-raised: #e8e2d4;
+  --color-raised-hover: #ddd6c6;
+  --color-card: #fffbf2;
+  --color-inset: #ede8dc;
+  --color-hairline: #d4ccbb;
+  --color-ink-secondary: #6f695e;
+  --color-accent: #3f5f45;
+  --color-accent-border: #314b36;
+  --color-bubble-user: #e8e2d4;
+  --color-success: #3f5f45;
+  --color-warning: #b27a24;
 
-  --radius-lg: 6px;
-  --radius-xl: 10px;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --radius-lg: 4px;
+  --radius-xl: 8px;
+  --radius-2xl: 8px;
 }
 
 html,
@@ -38,22 +49,133 @@ body,
 }
 
 body {
-  background-color: var(--color-app);
+  background-color: var(--color-paper);
   color: var(--color-ink);
   font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
+}
+
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-agency);
+  outline-offset: 2px;
 }
 
 ::-webkit-scrollbar {
   width: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #3d3d3d;
+  background: var(--color-line);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+.pm-screen-title {
+  font-size: 27px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.pm-case-title {
+  font-size: 23px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+
+.pm-label {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.pm-control {
+  min-height: 40px;
+}
+
+.pm-decision {
+  min-height: 44px;
+}
+
+.pm-split {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+  background: var(--color-paper);
+}
+
+.pm-split-nav,
+.pm-split-queue,
+.pm-split-canvas,
+.pm-split-rail {
+  min-height: 0;
+  min-width: 0;
+}
+
+.pm-split-nav {
+  width: 200px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--color-line);
+  background: var(--color-sheet);
+}
+
+.pm-split-queue {
+  width: 300px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--color-line);
+  background: var(--color-paper);
+}
+
+.pm-split-canvas {
+  flex: 1;
+  background: var(--color-sheet);
+}
+
+.pm-split-rail {
+  width: 320px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--color-line);
+  background: var(--color-paper);
+}
+
+@media (max-width: 1279px) {
+  .pm-split-queue {
+    display: none;
+  }
+  .pm-split[data-queue-open="true"] .pm-split-queue {
+    display: flex;
+    position: absolute;
+    inset: 0 auto 0 200px;
+    z-index: 20;
+    box-shadow: 0 8px 24px rgb(37 35 31 / 12%);
+  }
+}
+
+@media (max-width: 959px) {
+  .pm-split-nav,
+  .pm-split-rail {
+    display: none;
+  }
+  .pm-split[data-nav-open="true"] .pm-split-nav,
+  .pm-split[data-rail-open="true"] .pm-split-rail {
+    display: flex;
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 30;
+    box-shadow: 0 8px 24px rgb(37 35 31 / 12%);
+  }
+  .pm-split[data-rail-open="true"] .pm-split-rail {
+    inset: 0 0 0 auto;
+  }
 }
 
 @keyframes panel-in {

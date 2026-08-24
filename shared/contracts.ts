@@ -29,7 +29,19 @@ export type HandsSource = "demo" | "hermes" | "held" | "csv" | "fixture";
 
 export type BookMode = "demo" | "live";
 
-export type WorkKind = "money-arrears" | "owner-letter";
+export type WorkKind =
+  | "money-arrears"
+  | "owner-letter"
+  | "inbound-triage"
+  | "maintenance-intake"
+  | "lease-review"
+  | "inspection-prep";
+
+export interface RoutineOrigin {
+  kind: "routine";
+  runId: string;
+  loopId: string;
+}
 
 export type WorkState =
   | "proposed"
@@ -163,6 +175,7 @@ export interface WorkItem {
   updatedAt: number;
   holdReason?: string;
   artifactIds?: string[];
+  origin?: RoutineOrigin;
 }
 
 export interface PropertyPortalBinding {
@@ -203,6 +216,57 @@ export interface RecoveryState {
   quarantined: string[];
 }
 
+export interface DeskBookView {
+  agency: { name: string; timezone: string; jurisdictions: string[] };
+  tenancies: Array<{
+    id: string;
+    propertyId: string;
+    status: "current" | "closed";
+    weeklyRentCents: number;
+    closedAt?: number;
+  }>;
+  contacts: Array<{
+    id: string;
+    role: string;
+    name: string;
+    phone: string;
+    propertyId: string;
+    tenancyId?: string;
+    safeguards: {
+      hardship: boolean;
+      dispute: boolean;
+      paymentArrangement: boolean;
+      doNotContact: boolean;
+      preferredChannel: string;
+    };
+  }>;
+  archivedProperties: Array<{ id: string; address: string; archivedAt?: number }>;
+  importIssues: Array<{ id: string; kind: string; status: string; rawIdentity: string }>;
+  cases: Array<{
+    id: string;
+    kind: string;
+    state: string;
+    propertyId?: string;
+    origin?: RoutineOrigin;
+  }>;
+  decisions: Array<{
+    id: string;
+    caseId: string;
+    proposalId: string;
+    revisionId: string;
+    action: string;
+    actor: string;
+    at: number;
+  }>;
+  handoff?: {
+    caseId: string;
+    origin: string;
+    allowedActions: string[];
+    expiresAt: number;
+    presentation: "side-by-side" | "inspector" | "window";
+  };
+}
+
 export interface DeskSnapshot {
   version: 2;
   revision: number;
@@ -221,6 +285,7 @@ export interface DeskSnapshot {
   handsDetail: string | null;
   sources: SourceIdentity[];
   demo: boolean;
+  book?: DeskBookView;
 }
 
 export interface Loop {

@@ -256,6 +256,7 @@ function Bubble({
   onCancelEdit,
   onSubmitEdit,
   onRegenerate,
+  productAsk = false,
 }: {
   bot: Bot;
   message: Message;
@@ -265,6 +266,7 @@ function Bubble({
   onCancelEdit: () => void;
   onSubmitEdit: (text: string) => void;
   onRegenerate?: () => void;
+  productAsk?: boolean;
 }) {
   const { dispatch } = useStore();
   const user = message.role === "user";
@@ -303,11 +305,11 @@ function Bubble({
             <Pencil size={14} />
           </button>
         )}
-        {user && message.kind === "text" && <ReactionBar threadId={bot.threadId} message={message} />}
+        {user && message.kind === "text" && !productAsk && <ReactionBar threadId={bot.threadId} message={message} />}
         {user && <CopyButton text={text} />}
         <div
           className={cn(
-            "max-w-[70%] rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed",
+            "max-w-[70%] rounded-lg px-4 py-2.5 text-[15px] leading-relaxed",
             user ? "whitespace-pre-wrap bg-bubble-user text-ink" : "bg-card text-ink",
           )}
           title={new Date(message.at).toLocaleString()}
@@ -339,10 +341,10 @@ function Bubble({
         {!user && (
           <div className="flex flex-col gap-0.5 self-end pb-0.5">
             <CopyButton text={text} />
-            {message.kind === "text" && (
+            {message.kind === "text" && !productAsk && (
               <SpeakButton text={text} botId={bot.id} messageId={message.id} voiceId={bot.voice} />
             )}
-            {isLastBotText && !bot.busy && onRegenerate && (
+            {isLastBotText && !bot.busy && onRegenerate && !productAsk && (
               <button
                 onClick={onRegenerate}
                 aria-label="Regenerate response"
@@ -354,7 +356,7 @@ function Bubble({
             )}
           </div>
         )}
-        {!user && message.kind === "text" && <ReactionBar threadId={bot.threadId} message={message} />}
+        {!user && message.kind === "text" && !productAsk && <ReactionBar threadId={bot.threadId} message={message} />}
         <span
           className={cn(
             "self-end pb-1 text-[11px] tabular-nums text-ink-secondary/70 opacity-0 transition-opacity group-hover:opacity-100",
@@ -364,8 +366,8 @@ function Bubble({
           {formatTime(message.at)}
         </span>
       </div>
-      <ReactionChips threadId={bot.threadId} message={message} align={user ? "right" : "left"} />
-      {versions.length > 1 && (
+      {!productAsk && <ReactionChips threadId={bot.threadId} message={message} align={user ? "right" : "left"} />}
+      {versions.length > 1 && !productAsk && (
         <div className="mt-1 flex items-center gap-0.5 pr-1 text-[12px] text-ink-secondary">
           <button
             onClick={() => switchTo(versions[versionIndex - 1])}
@@ -496,6 +498,8 @@ const MessagesList = memo(function MessagesList({
   onCancelEdit,
   onSubmitEdit,
   onRegenerate,
+  productAsk = false,
+  onAskStarter,
 }: {
   bot: Bot;
   messages: Message[];
@@ -508,16 +512,41 @@ const MessagesList = memo(function MessagesList({
   onCancelEdit: () => void;
   onSubmitEdit: (id: string, text: string) => void;
   onRegenerate: () => void;
+  productAsk?: boolean;
+  onAskStarter?: (text: string) => void;
 }) {
   return (
     <>
       {messages.length === 0 && !bot.busy && (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 py-24 text-center">
-          <MausAvatar color={bot.color} state="idle" size={64} motion="none" motionKey={0} />
-          <div className="text-[17px] font-semibold text-ink">{bot.name}</div>
-          <div className="max-w-[360px] text-[14px] text-ink-secondary">
-            {bot.description || "Send a message to start the conversation."}
-          </div>
+          {productAsk ? (
+            <>
+              <h2 className="pm-case-title text-ink">Ask about the book</h2>
+              <div className="max-w-[360px] text-[14px] text-ink-muted">
+                Scoped to your portfolio. Ask what needs you, or put courtesy on Desk for one Allow.
+              </div>
+              <div className="mt-2 flex max-w-[28rem] flex-wrap justify-center gap-2">
+                {["What needs me?", "Explain this hold", "Draft an owner update", "What changed since yesterday?"].map((starter) => (
+                  <button
+                    key={starter}
+                    type="button"
+                    onClick={() => onAskStarter?.(starter)}
+                    className="rounded border border-line bg-sheet px-3 py-1.5 text-[13px] text-ink hover:bg-raised"
+                  >
+                    {starter}
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <MausAvatar color={bot.color} state="idle" size={64} motion="none" motionKey={0} />
+              <div className="text-[17px] font-semibold text-ink">{bot.name}</div>
+              <div className="max-w-[360px] text-[14px] text-ink-secondary">
+                {bot.description || "Send a message to start the conversation."}
+              </div>
+            </>
+          )}
         </div>
       )}
       {messages.map((m, i) => {
@@ -557,6 +586,7 @@ const MessagesList = memo(function MessagesList({
                   onCancelEdit={onCancelEdit}
                   onSubmitEdit={(text) => onSubmitEdit(m.id, text)}
                   onRegenerate={onRegenerate}
+                  productAsk={productAsk}
                 />
               );
           }
@@ -659,9 +689,15 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
       <CallOverlay bot={bot} />
       {/* Header */}
       <div
-        className={cn("flex items-center justify-between px-5 py-3", isWin && "pr-[148px]")}
+        className={cn("flex items-center justify-between border-b border-line px-5 py-3", isWin && "pr-[148px]")}
         style={drag}
       >
+        {productAsk ? (
+          <div className="flex items-center gap-2.5 px-1.5 py-1" style={noDrag}>
+            <h1 className="pm-screen-title text-ink">Ask</h1>
+            {bot.busy && <Loader2 size={14} className="animate-spin text-ink-muted" />}
+          </div>
+        ) : (
         <button
           onClick={() => dispatch({ type: "toggleSettings" })}
           className="flex items-center gap-2.5 rounded-lg px-1.5 py-1 hover:bg-raised/50"
@@ -683,6 +719,7 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
           )}
           {bot.busy && <Loader2 size={14} className="animate-spin text-ink-secondary" />}
         </button>
+        )}
         <div className="flex items-center gap-2" style={noDrag}>
           {bot.busy && (
             <button
@@ -758,8 +795,10 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
             onCancelEdit={cancelEdit}
             onSubmitEdit={submitEdit}
             onRegenerate={regenerate}
+            productAsk={productAsk}
+            onAskStarter={(text) => dispatch({ type: "send", botId: bot.id, text })}
           />
-          {provisioning && (
+          {provisioning && !productAsk && (
             <div className="flex justify-start">
               <div className="flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary">
                 <Loader2 size={13} className="animate-spin" />

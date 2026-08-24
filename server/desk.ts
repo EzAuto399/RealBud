@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 import type {
+  DeskBookView,
   DeskSnapshot,
   Draft,
   DraftKind,
@@ -31,6 +32,8 @@ import { assertTransition, occurrenceKey, proposalHash } from "./desk-work.ts";
 import { tryHermesLedger, type HermesLedgerAttempt } from "./hermes-hands.ts";
 import { ambiguousMatchException, classifyMoneyRow, unmatchedException } from "./morning-money.ts";
 import { composeOwnerLetter, ownerLetterWeekStart } from "./owner-letter.ts";
+import { assertRoutineCannotMint, freezeAuthorization, withPresentation, type BrowserPresentation } from "./handoff-auth.ts";
+import type { RoutineOrigin } from "../shared/contracts.ts";
 import { FAKE_PORTAL_RECIPE } from "./portal-recipe.ts";
 import { CSV_FRESH_MS, isFresh } from "./source-gate.ts";
 import {
@@ -102,6 +105,8 @@ export class Desk {
   private onCommit: ((snap: DeskSnapshot) => void) | null;
   private portalUrl: string | null;
   private vaultRoot: string;
+  private presentation: BrowserPresentation = "side-by-side";
+  private pendingOrigin?: RoutineOrigin;
 
   constructor(opts?: {
     file?: string;
@@ -157,6 +162,94 @@ export class Desk {
       results: d.results,
       hands: d.hands,
       handsDetail: d.handsDetail,
+      book: this.bookView(),
+    };
+  }
+
+  async withRoutineOrigin<T>(origin: RoutineOrigin, fn: () => T | Promise<T>): Promise<T> {
+    this.pendingOrigin = origin;
+    try {
+      return await fn();
+    } finally {
+      this.pendingOrigin = undefined;
+    }
+  }
+
+  setPresentation(presentation: BrowserPresentation): DeskSnapshot {
+    if (presentation !== "side-by-side" && presentation !== "inspector" && presentation !== "window") {
+      throw Object.assign(new Error("unknown browser presentation"), { status: 400 });
+    }
+    this.presentation = presentation;
+    return this.snapshot();
+  }
+
+  private bookView(): DeskBookView {
+    const v3 = this.store.v3;
+    const live = v3.handoffs.find((item) => !item.usedAt && !item.invalidatedAt);
+    let handoff: DeskBookView["handoff"];
+    if (live) {
+      try {
+        const frozen = freezeAuthorization(live.authorization);
+        const auth = withPresentation(frozen, this.presentation);
+        handoff = {
+          caseId: auth.caseId,
+          origin: auth.allowedOrigins[0] ?? "",
+          allowedActions: auth.allowedActions,
+          expiresAt: auth.expiresAt,
+          presentation: this.presentation,
+        };
+      } catch {
+        handoff = undefined;
+      }
+    }
+    return {
+      agency: {
+        name: v3.agency.name,
+        timezone: v3.agency.timezone,
+        jurisdictions: v3.agency.jurisdictions,
+      },
+      tenancies: v3.tenancies.map((item) => ({
+        id: item.id,
+        propertyId: item.propertyId,
+        status: item.status,
+        weeklyRentCents: item.weeklyRentCents,
+        closedAt: item.closedAt,
+      })),
+      contacts: v3.contacts.map((item) => ({
+        id: item.id,
+        role: item.role,
+        name: item.name,
+        phone: item.phone,
+        propertyId: item.propertyId,
+        tenancyId: item.tenancyId,
+        safeguards: item.safeguards,
+      })),
+      archivedProperties: v3.properties
+        .filter((item) => item.status === "archived")
+        .map((item) => ({ id: item.id, address: item.address, archivedAt: item.archivedAt })),
+      importIssues: v3.importIssues.map((item) => ({
+        id: item.id,
+        kind: item.kind,
+        status: item.status,
+        rawIdentity: item.rawIdentity,
+      })),
+      cases: v3.cases.map((item) => ({
+        id: item.id,
+        kind: item.kind,
+        state: item.state,
+        propertyId: item.propertyId,
+        origin: item.origin,
+      })),
+      decisions: v3.decisions.map((item) => ({
+        id: item.id,
+        caseId: v3.proposals.find((proposal) => proposal.id === item.proposalId)?.caseId ?? "",
+        proposalId: item.proposalId,
+        revisionId: item.revisionId,
+        action: item.kind,
+        actor: item.actorId,
+        at: item.at,
+      })),
+      handoff,
     };
   }
 
@@ -516,6 +609,7 @@ export class Desk {
       createdAt: this.now(),
       updatedAt: this.now(),
       holdReason: exception.detail ? `${exception.reason}: ${exception.detail}` : exception.reason,
+      origin: this.pendingOrigin,
     });
   }
 
@@ -541,6 +635,7 @@ export class Desk {
       }),
       createdAt: now,
       updatedAt: now,
+      origin: this.pendingOrigin,
     };
   }
 
@@ -587,6 +682,7 @@ export class Desk {
   }
 
   private preparePortal(draftId: string): void {
+    assertRoutineCannotMint("pm");
     const draft = this.store.data.drafts.find((d) => d.id === draftId);
     if (!draft) throw Object.assign(new Error("no such draft"), { status: 404 });
     const work = this.workForDraft(draft);
@@ -614,6 +710,7 @@ export class Desk {
   }
 
   async preparePortalAsync(draftId: string): Promise<DeskSnapshot> {
+    assertRoutineCannotMint("pm");
     this.assertWritable();
     const draft = this.store.data.drafts.find((d) => d.id === draftId);
     if (!draft) throw Object.assign(new Error("no such draft"), { status: 404 });

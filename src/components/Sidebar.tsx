@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { ArrowDownToLine, Bot as BotIcon, Building2, CalendarDays, Check, Loader2, RefreshCw } from "lucide-react";
+import { ArrowDownToLine, Building2, CalendarDays, Check, Loader2, MessageSquare, RefreshCw } from "lucide-react";
 import { useStore } from "@/state/store";
 import { InitialsAvatar } from "./Avatar";
 import { cn } from "@/lib/cn";
@@ -88,9 +88,10 @@ export function Sidebar() {
   ) => (
     <button
       onClick={action}
+      aria-current={state.activeView === view ? "page" : undefined}
       className={cn(
-        "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors",
-        state.activeView === view ? "bg-raised text-ink" : "text-ink hover:bg-raised/50",
+        "flex w-full items-center gap-3 rounded px-3 py-2.5 text-left",
+        state.activeView === view ? "bg-selected text-ink" : "text-ink hover:bg-raised/70",
       )}
     >
       {icon}
@@ -100,7 +101,7 @@ export function Sidebar() {
   );
 
   return (
-    <aside className="flex h-full w-[320px] shrink-0 flex-col border-r border-hairline/40 bg-panel">
+    <aside className="flex h-full w-[200px] shrink-0 flex-col border-r border-line bg-sheet">
       <div
         className="flex items-center justify-between px-4 pt-3.5 pb-1"
         style={macInset ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined}
@@ -122,16 +123,16 @@ export function Sidebar() {
       </div>
 
       <nav className="flex flex-1 flex-col gap-0.5 px-3 pt-2">
-        {item("desk", "Desk", <Building2 size={20} className={state.activeView === "desk" ? "text-accent" : "text-ink-secondary"} />, () =>
+        {item("desk", "Desk", <Building2 size={20} className={state.activeView === "desk" ? "text-agency" : "text-ink-muted"} />, () =>
           dispatch({ type: "showDesk" }),
         )}
-        {item("ask", "Ask", <BotIcon size={20} className={state.activeView === "ask" ? "text-accent" : "text-ink-secondary"} />, () =>
+        {item("ask", "Ask", <MessageSquare size={20} className={state.activeView === "ask" ? "text-agency" : "text-ink-muted"} />, () =>
           dispatch({ type: "showAsk" }),
         )}
         {item(
           "schedule",
           "Schedule",
-          <CalendarDays size={20} className={state.activeView === "schedule" ? "text-accent" : "text-ink-secondary"} />,
+          <CalendarDays size={20} className={state.activeView === "schedule" ? "text-agency" : "text-ink-muted"} />,
           () => dispatch({ type: "showRoutines" }),
           state.loopRuns.some((run) => ["failed", "missed", "interrupted"].includes(run.status) && !run.seenAt) ? (
             <span className="size-2 rounded-full bg-danger" />

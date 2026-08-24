@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { isEncryptedEnvelope } from "./desk-crypto.ts";
+import { decryptJson, isEncryptedEnvelope } from "./desk-crypto.ts";
 import { DeskStore } from "./desk-store.ts";
 import { fixtureBook } from "./desk-evaluate.ts";
 
@@ -54,7 +54,12 @@ describe("DeskStore", () => {
     expect(store.data.workItems[0]?.state).toBe("approved");
     expect(store.data.ledger.every((row) => row.daysSinceCourtesy === null)).toBe(true);
     store.persist();
-    expect(isEncryptedEnvelope(JSON.parse(readFileSync(file, "utf8")))).toBe(true);
+    const envelope = JSON.parse(readFileSync(file, "utf8"));
+    expect(isEncryptedEnvelope(envelope)).toBe(true);
+    expect((decryptJson(key, envelope) as { version: number }).version).toBe(3);
+    const again = new DeskStore({ file, book: fixtureBook(), key });
+    expect(again.data.workItems[0]?.state).toBe("approved");
+    expect(again.v3.version).toBe(3);
   });
 
   it("quarantines a corrupt ledger and stays read-only", () => {
