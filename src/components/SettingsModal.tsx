@@ -99,6 +99,7 @@ const WORKER_PROVIDERS = [
 ];
 
 export function HermesHandsCard() {
+  const [modelOptions, setModelOptions] = useState<string[]>([]);
   const { state, dispatch, refreshHermes } = useStore();
   const [busy, setBusy] = useState<null | "install" | "pack" | "model" | "test" | "check">(null);
   const [error, setError] = useState("");
@@ -305,6 +306,9 @@ export function HermesHandsCard() {
                 onChange={(e) => {
                   setProviderId(e.target.value);
                   setModelId("");
+                  void api(`/api/hermes/models?provider=${encodeURIComponent(e.target.value)}`)
+                    .then((r) => setModelOptions(r.models ?? []))
+                    .catch(() => setModelOptions([]));
                 }}
                 className="mt-1 w-full rounded-lg border border-hairline/40 bg-panel px-2 py-1.5 text-[13px] text-ink"
               >
@@ -330,8 +334,14 @@ export function HermesHandsCard() {
                 value={modelId}
                 onChange={(e) => setModelId(e.target.value)}
                 placeholder={WORKER_PROVIDERS.find((p) => p.id === providerId)?.exampleModel}
+                list="worker-model-options"
                 className="mt-1 w-full rounded-lg border border-hairline/40 bg-panel px-2 py-1.5 text-[13px] text-ink placeholder:text-ink-secondary/60"
               />
+              <datalist id="worker-model-options">
+                {modelOptions.map((id) => (
+                  <option key={id} value={id} />
+                ))}
+              </datalist>
             </label>
             <div className="flex items-center gap-2">
               <button

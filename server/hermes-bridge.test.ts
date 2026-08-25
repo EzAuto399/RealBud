@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { HERMES_PIN } from "./hermes-pin.ts";
-import { attachModel, installStatus, modelStatus, preflight, startInstall } from "./hermes-bridge.ts";
+import { attachModel, installStatus, listModels, modelStatus, preflight, startInstall } from "./hermes-bridge.ts";
 
 const dirs: string[] = [];
 const tempHome = () => {
@@ -61,6 +61,20 @@ describe("attachModel", () => {
     writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
     attachModel({ providerId: "anthropic", apiKey: "sk-ant", model: "claude-sonnet-4-5" }, { root: dir });
     expect(modelStatus(dir)).toMatchObject({ provider: "anthropic", model: "claude-sonnet-4-5", keyPresent: true });
+  });
+});
+
+describe("listModels", () => {
+  it("reads the worker cache for the provider and skips non-text models", () => {
+    const dir = mkdtempSync(join(tmpdir(), "realbud-bridge-models-"));
+    dirs.push(dir);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "models_dev_cache.json"),
+      JSON.stringify({ xai: { models: { "grok-4.5": {}, "grok-4.6": {}, "grok-imagine-video": {} } } }),
+    );
+    expect(listModels("xai", dir)).toEqual(["grok-4.5", "grok-4.6"]);
+    expect(listModels("unknown-provider", dir)).toEqual([]);
   });
 });
 

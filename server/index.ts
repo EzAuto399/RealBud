@@ -37,7 +37,7 @@ import { readArtifact } from "./audit-artifacts.ts";
 import { Desk } from "./desk.ts";
 import { seedVault } from "./vault.ts";
 import { openTerminalAndRun, setupCommandFor } from "./engine-setup.ts";
-import { attachModel, installStatus, modelStatus, preflight, startInstall, type PreflightResult } from "./hermes-bridge.ts";
+import { attachModel, installStatus, listModels, modelStatus, preflight, startInstall, type PreflightResult } from "./hermes-bridge.ts";
 import { CANONICAL_BUD_NAME, PRODUCT_MODE, isCanonicalBud, productDenied } from "./product-mode.ts";
 import { LoopManager, type LoopId } from "./routines.ts";
 import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
@@ -1369,6 +1369,10 @@ const server = createServer(async (req, res) => {
         const status = (e as { status?: number }).status ?? 500;
         return json(res, status, { error: e instanceof Error ? e.message : String(e) });
       }
+    }
+    if (path === "/api/hermes/models" && method === "GET") {
+      const provider = url.searchParams.get("provider") ?? "";
+      return json(res, 200, { models: listModels(provider) });
     }
     if (path === "/api/hermes/model" && method === "GET") {
       return json(res, 200, { model: modelStatus() });

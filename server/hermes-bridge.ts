@@ -18,7 +18,7 @@ import { join } from "node:path";
 
 import { augmentedPath } from "./env-path.ts";
 import { HERMES_PIN, hermesMatchesPin } from "./hermes-pin.ts";
-import { propertyProfileDir, withYamlBlock, yamlBlock } from "./hermes-pack.ts";
+import { hermesHome, propertyProfileDir, withYamlBlock, yamlBlock } from "./hermes-pack.ts";
 import { probeHermesVersion } from "./hermes-status.ts";
 
 export interface ProviderOption {
@@ -176,6 +176,25 @@ export interface ModelStatus {
   provider: string | null;
   model: string | null;
   keyPresent: boolean;
+}
+
+/** Model ids for a provider, from the worker's own cache (same data the
+ * interactive picker shows). Empty when the cache has nothing — the UI keeps
+ * free-text entry as the fallback. */
+export function listModels(providerId: string, root?: string): string[] {
+  try {
+    const cache = JSON.parse(readFileSync(join(hermesHome(root), "models_dev_cache.json"), "utf8")) as Record<
+      string,
+      { models?: Record<string, unknown> } | undefined
+    >;
+    const entry = cache[providerId]?.models;
+    if (!entry || typeof entry !== "object") return [];
+    return Object.keys(entry)
+      .filter((id) => !/imagine|video|image/i.test(id))
+      .sort((a, b) => a.localeCompare(b));
+  } catch {
+    return [];
+  }
 }
 
 export function modelStatus(root?: string): ModelStatus {
