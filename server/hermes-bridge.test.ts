@@ -48,11 +48,18 @@ describe("attachModel", () => {
     writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
     expect(() => attachModel({ providerId: "nope", apiKey: "k", model: "m" }, { root: dir })).toThrow(/unknown provider/);
     expect(() => attachModel({ providerId: "xai", apiKey: "k", model: "" }, { root: dir })).toThrow(/model id/);
-    expect(() => attachModel({ providerId: "xai", apiKey: "", model: "m" }, { root: dir })).toThrow(/api key/);
+    // empty key with no existing credential for the provider -> refused
+    expect(() => attachModel({ providerId: "anthropic", apiKey: "", model: "m" }, { root: dir })).toThrow(/api key is required for Anthropic/);
+    // empty key on a provider that already has a credential -> keeps it
+    attachModel({ providerId: "xai", apiKey: "first-key", model: "grok-4" }, { root: dir });
+    const kept = attachModel({ providerId: "xai", apiKey: "", model: "grok-4.6" }, { root: dir });
+    expect(kept.keyPresent).toBe(true);
+    expect(readFileSync(join(profile, ".env"), "utf8")).toContain("first-key");
+    expect(readFileSync(join(profile, "config.yaml"), "utf8")).toMatch(/default: grok-4\.6/);
     const empty = mkdtempSync(join(tmpdir(), "realbud-bridge-empty-"));
     dirs.push(empty);
     expect(() => attachModel({ providerId: "xai", apiKey: "k", model: "m" }, { root: empty })).toThrow(/pack/);
-    expect(existsSync(join(profile, "config.yaml"))).toBe(false);
+    expect(existsSync(join(empty, "profiles", HERMES_PIN.profile, "config.yaml"))).toBe(false);
   });
 
   it("modelStatus reads back the block and masks absence", () => {

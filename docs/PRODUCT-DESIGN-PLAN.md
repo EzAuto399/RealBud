@@ -375,6 +375,16 @@ All save/copy/import/schedule actions announce success. Silent mutation is rejec
 - Reduced motion covers all custom and utility animations.
 - No status relies only on colour.
 
+### Worker card spec v2 (exact settings surface)
+
+Rows (top to bottom): Engine (version · pinned / pin mismatch) · Property pack (installed · approvals manual) · Model (model · provider · masked key hint, e.g. `XAI_API_KEY sk-a…9f2`) · Last hands test (answered/failed · time).
+
+Actions: Install/Update worker (in-app, streamed; hidden when pinned+matching) · Apply property pack · Attach/Change model · Test hands · Check again.
+
+Attach sheet fields: Provider (curated five) · API key (**optional when the same provider already has a credential** — hint shows the masked current key; required when switching providers) · Model (suggestions from the worker's own cache via `/api/hermes/models?provider=…`, free-text fallback) · Base URL behind an advanced toggle (empty = provider default). Save & test runs a real ping and records the result + timestamp.
+
+Locked (shown read-only inside Advanced diagnostics, managed by RealBud, never editable): `approvals: manual` · `cron: deny` · the three SOUL rules. Connectivity truth lives in the status detail + Last hands test row; source freshness lives in the Sources card.
+
 ## Ask as actor (action proposals)
 
 Ask is not only conversation: Bud proposes actions on the system, the PM allows them. The proposal union is closed — anything outside it is refused by the skill and by the API.

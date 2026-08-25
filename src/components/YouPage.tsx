@@ -100,6 +100,7 @@ export function YouPage() {
               <div>pin {hermes.pin.product} / {hermes.pin.tag}</div>
               <div>profile {hermes.pin.profile}</div>
               <div>pack {hermes.pack.installed ? "installed" : "missing"} · approvals {hermes.pack.approvalsManual ? "manual" : "not manual"}</div>
+              <div>approvals stay manual · scheduling stays on RealBud's clock · both are managed by RealBud and not editable</div>
               <div>{hermes.detail}</div>
             </>
           ) : (

@@ -105,7 +105,10 @@ export function HermesHandsCard() {
   const [error, setError] = useState("");
   const [test, setTest] = useState<{ ok: boolean; detail: string } | null>(null);
   const [install, setInstall] = useState<{ state: string; lines: string[]; error: string | null } | null>(null);
-  const [model, setModel] = useState<{ provider: string | null; model: string | null; keyPresent: boolean } | null>(null);
+  const [model, setModel] = useState<{ provider: string | null; model: string | null; keyPresent: boolean; keyHint: string | null } | null>(null);
+  const [lastTest, setLastTest] = useState<{ ok: boolean; detail: string; at: number } | null>(null);
+  const [showBaseUrl, setShowBaseUrl] = useState(false);
+  const [baseUrl, setBaseUrl] = useState("");
   const [sheet, setSheet] = useState(false);
   const [providerId, setProviderId] = useState(WORKER_PROVIDERS[0].id);
   const [key, setKey] = useState("");
@@ -151,7 +154,9 @@ export function HermesHandsCard() {
         await pollInstall();
         return;
       } else if (key === "test") {
-        setTest(await api("/api/hermes/test", { method: "POST", body: "{}" }));
+        const result = await api("/api/hermes/test", { method: "POST", body: "{}" });
+        setTest(result);
+        setLastTest({ ok: Boolean(result?.ok), detail: String(result?.detail ?? ""), at: Date.now() });
         return;
       } else if (key === "pack") {
         const fresh = await api("/api/hermes/apply-pack", { method: "POST", body: "{}" });
@@ -172,14 +177,18 @@ export function HermesHandsCard() {
     try {
       const res = await api("/api/hermes/model", {
         method: "POST",
-        body: JSON.stringify({ providerId, apiKey: key, model: modelId }),
+        body: JSON.stringify({ providerId, apiKey: key, model: modelId, baseUrl: baseUrl || undefined }),
       });
       if (res.ok === false) throw new Error(res.error ?? "could not attach the model");
       setModel(res.model ?? null);
-      setTest(res.ping ?? null);
+      if (res.ping) {
+        setTest(res.ping);
+        setLastTest({ ok: Boolean(res.ping?.ok), detail: String(res.ping?.detail ?? ""), at: Date.now() });
+      }
       setSheet(false);
       setKey("");
       setModelId("");
+      setBaseUrl("");
       await refreshHermes();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -227,8 +236,15 @@ export function HermesHandsCard() {
         <Row
           label="Model"
           ok={Boolean(model?.model)}
-          text={model?.model ? `${model.model} · ${model.provider}` : "not attached"}
+          text={model?.model ? `${model.model} · ${model.provider}${model.keyHint ? ` · ${model.keyHint}` : ""}` : "not attached"}
         />
+        {lastTest && (
+          <Row
+            label="Last hands test"
+            ok={lastTest.ok}
+            text={`${lastTest.ok ? "answered" : "failed"} · ${new Date(lastTest.at).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" })}`}
+          />
+        )}
         {install && !["idle", "done", "failed"].includes(install.state) && (
           <div className="rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[12px] text-ink-secondary">
             <div className="flex items-center gap-2">
@@ -318,15 +334,37 @@ export function HermesHandsCard() {
               </select>
             </label>
             <label className="text-[12px] text-ink-secondary">
-              API key
+              API key{" "}
+              {model?.provider === providerId && model?.keyPresent && (
+                <span className="text-ink-muted">
+                  — current {model.keyHint} · leave blank to keep
+                </span>
+              )}
               <input
                 type="password"
                 value={key}
                 onChange={(e) => setKey(e.target.value)}
                 autoComplete="off"
-                className="mt-1 w-full rounded-lg border border-hairline/40 bg-panel px-2 py-1.5 text-[13px] text-ink"
+                placeholder={model?.provider === providerId && model?.keyPresent ? "keep current" : "paste the provider key"}
+                className="mt-1 w-full rounded-lg border border-hairline/40 bg-panel px-2 py-1.5 text-[13px] text-ink placeholder:text-ink-secondary/60"
               />
             </label>
+            <button
+              type="button"
+              onClick={() => setShowBaseUrl((v) => !v)}
+              className="self-start text-[11.5px] text-ink-secondary hover:text-ink"
+            >
+              {showBaseUrl ? "− Hide base URL" : "+ Base URL (advanced)"}
+            </button>
+            {showBaseUrl && (
+              <input
+                type="text"
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder="https://api.example.com/v1 (leave empty for the provider default)"
+                className="w-full rounded-lg border border-hairline/40 bg-panel px-2 py-1.5 font-mono text-[12px] text-ink"
+              />
+            )}
             <label className="text-[12px] text-ink-secondary">
               Model
               <input
@@ -346,7 +384,7 @@ export function HermesHandsCard() {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => void saveModel()}
-                disabled={busy !== null || !key.trim() || !modelId.trim()}
+                disabled={busy !== null || !modelId.trim() || (!key.trim() && !(model?.provider === providerId && model?.keyPresent))}
                 className="rounded-lg bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:brightness-110 disabled:opacity-40"
               >
                 {busy === "model" ? <Loader2 size={12} className="animate-spin" /> : "Save & test"}

@@ -176,6 +176,8 @@ export interface ModelStatus {
   provider: string | null;
   model: string | null;
   keyPresent: boolean;
+  /** masked credential hint, e.g. "sk-a…9f2" — never the key itself */
+  keyHint: string | null;
 }
 
 /** Model ids for a provider, from the worker's own cache (same data the
@@ -199,6 +201,8 @@ export function listModels(providerId: string, root?: string): string[] {
 
 export function modelStatus(root?: string): ModelStatus {
   const configPath = join(propertyProfileDir(root), "config.yaml");
+  const mask = (value: string): string =>
+    value.length <= 8 ? `${value.slice(0, 2)}…` : `${value.slice(0, 4)}…${value.slice(-4)}`;
   let provider: string | null = null;
   let model: string | null = null;
   try {
@@ -207,15 +211,24 @@ export function modelStatus(root?: string): ModelStatus {
     model = block ? /^[ \t]+default:\s*(\S+)/m.exec(block)?.[1] ?? null : null;
   } catch { /* no config yet */ }
   let keyPresent = false;
+  let keyHint: string | null = null;
   try {
     const envPath = join(propertyProfileDir(root), ".env");
     if (existsSync(envPath)) {
+      const envBody = readFileSync(envPath, "utf8");
       const providerId = provider ? providerOption(provider)?.envVar : null;
-      if (providerId) keyPresent = new RegExp(`^${providerId}=.+`, "m").test(readFileSync(envPath, "utf8"));
-      else keyPresent = /^(OPENAI|ANTHROPIC|XAI|OPENROUTER|OLLAMA_CLOUD|GEMINI|NVIDIA)_API_KEY=.+/m.test(readFileSync(envPath, "utf8"));
+      const candidates = providerId ? [providerId] : PROVIDER_OPTIONS.map((p) => p.envVar);
+      for (const envVar of candidates) {
+        const match = new RegExp(`^${envVar}=(.+)$`, "m").exec(envBody);
+        if (match?.[1]) {
+          keyPresent = true;
+          keyHint = `${envVar} ${mask(match[1]!.trim())}`;
+          break;
+        }
+      }
     }
   } catch { /* ignore */ }
-  return { provider, model, keyPresent };
+  return { provider, model, keyPresent, keyHint };
 }
 
 export function attachModel(input: AttachModelInput, opts?: { root?: string }): ModelStatus {
@@ -224,14 +237,21 @@ export function attachModel(input: AttachModelInput, opts?: { root?: string }): 
   const model = String(input.model ?? "").trim();
   if (!model) throw Object.assign(new Error("model id is required"), { status: 400 });
   const key = String(input.apiKey ?? "").trim();
-  if (!key) throw Object.assign(new Error("api key is required"), { status: 400 });
 
   const profileDir = propertyProfileDir(opts?.root);
   if (!existsSync(join(profileDir, "SOUL.md"))) {
     throw Object.assign(new Error("the worker pack is not installed — apply the pack first"), { status: 409 });
   }
 
-  upsertEnvLine(join(profileDir, ".env"), option.envVar, key);
+  // an empty key means "keep the current credential" — but only if the new
+  // provider actually has one; switching providers always needs a fresh key
+  const envPath = join(profileDir, ".env");
+  const hasExistingKey =
+    existsSync(envPath) && new RegExp(`^${option.envVar}=.+`, "m").test(readFileSync(envPath, "utf8"));
+  if (!key && !hasExistingKey) {
+    throw Object.assign(new Error(`an api key is required for ${option.label}`), { status: 400 });
+  }
+  if (key) upsertEnvLine(envPath, option.envVar, key);
 
   const configPath = join(profileDir, "config.yaml");
   const existing = existsSync(configPath) ? readFileSync(configPath, "utf8") : "";
