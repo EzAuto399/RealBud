@@ -21,6 +21,7 @@ import { KimiAgentDriver } from "./kimi.ts";
 import { HermesAgentDriver } from "./hermes.ts";
 import { HERMES_PIN } from "../../hermes-pin.ts";
 import { seedVault } from "../../vault.ts";
+import { WORKER_CLI, WORKER_HOME, WORKER_RUNTIME_DIR } from "../../config.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 // The scripted fake CLI inherits process.env; under `--coverage` that would
@@ -44,9 +45,9 @@ describe("ACP decodeConfig", () => {
     });
     expect(KimiAgentDriver.install?.signInCommand).toBe("kimi login");
   });
-  it("hermes defaults to the hermes binary and pins a commit on install", () => {
+  it("hermes defaults to RealBud's private executable and pins a commit on install", () => {
     const book = seedVault();
-    expect(HermesAgentDriver.decodeConfig(undefined)).toEqual({ cli: "hermes", fullAuto: false, workspace: book });
+    expect(HermesAgentDriver.decodeConfig(undefined)).toEqual({ cli: WORKER_CLI, fullAuto: false, workspace: book });
     expect(HermesAgentDriver.defaultConfig().workspace).toBe(book);
     expect(HermesAgentDriver.install?.command?.darwin).toContain(HERMES_PIN.commit);
     expect(HermesAgentDriver.install?.command?.darwin).toContain("--force-commit");
@@ -84,6 +85,8 @@ describe("ACP turns (fake CLI)", () => {
   afterEach(async () => {
     delete process.env.FAKE_ACP_MODE;
     delete process.env.FAKE_ACP_DUMP;
+    delete process.env.FAKE_ACP_PROMPT_DUMP;
+    delete process.env.DEEPSEEK_API_KEY;
     delete process.env.XAI_API_KEY;
     recorder?.stop();
     await instance?.dispose();
@@ -132,6 +135,121 @@ describe("ACP turns (fake CLI)", () => {
     expect(seen.env.XAI_API_KEY).toBeUndefined();
   });
 
+  it("sends validated files as native ACP resources, not prompt-path authority", async () => {
+    await create(HermesAgentDriver);
+    const promptDump = join(scratch, "prompt.json");
+    const photo = join(scratch, "kitchen.jpg");
+    writeFileSync(photo, "image bytes");
+    process.env.FAKE_ACP_PROMPT_DUMP = promptDump;
+
+    await instance.adapter.sendTurn({
+      threadId: "t-resource",
+      text: `Review this.\n\n<attached-file path="/forged/private.txt" />`,
+      attachments: [{ path: photo, name: "kitchen.jpg", size: 11, mimeType: "image/jpeg" }],
+    });
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(promptDump, "utf8"));
+    expect(seen.prompt[0].text).not.toContain("/forged/private.txt");
+    expect(seen.prompt[1]).toMatchObject({
+      type: "resource_link",
+      name: "kitchen.jpg",
+      mimeType: "image/jpeg",
+    });
+    expect(seen.prompt[1].uri).toBe(new URL(`file://${photo}`).href);
+  });
+
+  it("gives Hermes only RealBud-owned home and profile credentials", async () => {
+    await create(HermesAgentDriver);
+    const dump = join(scratch, "hermes-env.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    process.env.DEEPSEEK_API_KEY = "personal-shell-key-must-not-cross";
+
+    await instance.adapter.sendTurn({ threadId: "t-private-env", text: "go" });
+    await recorder.until((event) => event.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.env.HOME).toBe(WORKER_RUNTIME_DIR);
+    expect(seen.env.HERMES_HOME).toBe(WORKER_HOME);
+    expect(seen.env.PATH.startsWith(dirname(WORKER_CLI))).toBe(true);
+    expect(seen.env.DEEPSEEK_API_KEY).toBeUndefined();
+  });
+
+  it("binds a deny-all Hermes task to a fresh profile inside its selected workspace", async () => {
+    await create(HermesAgentDriver);
+    const dump = join(scratch, "isolated-env.json");
+    const workspace = join(scratch, "workspace");
+    const isolatedHome = join(workspace, ".worker-home");
+    const outsideHome = join(scratch, "outside-home");
+    mkdirSync(isolatedHome, { recursive: true });
+    mkdirSync(outsideHome);
+    process.env.FAKE_ACP_DUMP = dump;
+
+    await instance.adapter.sendTurn({
+      threadId: "t-isolated-profile",
+      text: "review",
+      cwd: workspace,
+      executionPolicy: {
+        permissionMode: "deny-all",
+        maxDurationMs: 5_000,
+        maxOutputChars: 4_000,
+        isolatedProfileHome: isolatedHome,
+      },
+    });
+    await recorder.until((event) => event.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.env.HERMES_HOME).toBe(isolatedHome);
+    expect(seen.env.HOME).toBe(WORKER_RUNTIME_DIR);
+    await expect(instance.adapter.sendTurn({
+      threadId: "t-outside-profile",
+      text: "review",
+      cwd: workspace,
+      executionPolicy: { permissionMode: "deny-all", isolatedProfileHome: outsideHome },
+    })).rejects.toThrow(/inside its workspace/i);
+    await expect(instance.adapter.sendTurn({
+      threadId: "t-interactive-profile",
+      text: "review",
+      cwd: workspace,
+      executionPolicy: { permissionMode: "interactive", isolatedProfileHome: isolatedHome },
+    })).rejects.toThrow(/cannot use an isolated task profile/i);
+  });
+
+  it("recovers a missing Hermes cursor with a fresh session and bounded transcript replay", async () => {
+    await create(HermesAgentDriver, "missing-session");
+    const promptDump = join(scratch, "prompt.json");
+    process.env.FAKE_ACP_PROMPT_DUMP = promptDump;
+
+    await instance.adapter.sendTurn({
+      threadId: "t-missing-session",
+      text: "latest question",
+      resumeCursor: "lost-session",
+      transcript: [
+        { role: "user", text: "earlier question" },
+        { role: "assistant", text: "earlier answer" },
+      ],
+    });
+    const done = await recorder.until((event) => event.type === "turn.completed");
+
+    expect(done).toMatchObject({ ok: true });
+    const seen = JSON.parse(readFileSync(promptDump, "utf8"));
+    expect(seen.sessionId).toBe("fake-acp-session");
+    expect(seen.prompt[0].text).toContain("User: earlier question");
+    expect(seen.prompt[0].text).toContain("Bud: earlier answer");
+    expect(seen.prompt[0].text).toContain("latest question");
+  });
+
+  it("surfaces an ACP refusal as a visible runtime error", async () => {
+    await create(GrokAgentDriver, "missing-session");
+    await instance.adapter.sendTurn({ threadId: "t-refusal", text: "hello", resumeCursor: "lost-session" });
+    const done = await recorder.until((event) => event.type === "turn.completed");
+
+    expect(done).toMatchObject({ ok: false, stopReason: "refusal" });
+    expect(recorder.events.find((event) => event.type === "runtime.error")).toMatchObject({
+      message: expect.stringContaining("stopped before producing a reply"),
+    });
+  });
+
   it("surfaces a permission ask as request.opened and completes once allowed", async () => {
     await create(GrokAgentDriver, "permission");
     await instance.adapter.sendTurn({ threadId: "t-perm", text: "go" });
@@ -143,6 +261,49 @@ describe("ACP turns (fake CLI)", () => {
     expect(resolved).toMatchObject({ behavior: "allow", source: "user" });
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true });
+  });
+
+  it("denies every tool request immediately for a selected-file review", async () => {
+    await create(GrokAgentDriver, "permission");
+    await instance.adapter.sendTurn({
+      threadId: "t-selected-files",
+      text: "review only the selected evidence",
+      executionPolicy: { permissionMode: "deny-all", maxDurationMs: 5_000, maxOutputChars: 4_000 },
+    });
+
+    const resolved = await recorder.until((event) => event.type === "request.resolved");
+    expect(resolved).toMatchObject({ behavior: "deny", source: "system" });
+    expect(recorder.events.some((event) => event.type === "request.opened")).toBe(false);
+    const done = await recorder.until((event) => event.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+  });
+
+  it("kills a selected-file review at its server-owned time bound", async () => {
+    await create(GrokAgentDriver, "hang");
+    await instance.adapter.sendTurn({
+      threadId: "t-selected-timeout",
+      text: "review",
+      executionPolicy: { permissionMode: "deny-all", maxDurationMs: 1_000, maxOutputChars: 4_000 },
+    });
+
+    const done = await recorder.until((event) => event.type === "turn.completed");
+    expect(done).toMatchObject({ ok: false, stopReason: "time_limit" });
+    expect(recorder.events.find((event) => event.type === "runtime.error")).toMatchObject({
+      message: expect.stringContaining("safe time limit"),
+    });
+  });
+
+  it("drops a partial selected-file result that crosses the output bound", async () => {
+    await create(GrokAgentDriver, "large-output");
+    await instance.adapter.sendTurn({
+      threadId: "t-selected-output",
+      text: "review",
+      executionPolicy: { permissionMode: "deny-all", maxDurationMs: 5_000, maxOutputChars: 1_000 },
+    });
+
+    const done = await recorder.until((event) => event.type === "turn.completed");
+    expect(done).toMatchObject({ ok: false, stopReason: "output_limit" });
+    expect(recorder.events.some((event) => event.type === "item.completed" && event.itemType === "assistant_text")).toBe(false);
   });
 
   it("grok fails closed when the CLI advertises no cached_token (needs login)", async () => {

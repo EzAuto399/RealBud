@@ -3,16 +3,20 @@ import type { WorkState } from "../shared/contracts.ts";
 
 export const LEGAL_TRANSITIONS: Readonly<Record<WorkState, readonly WorkState[]>> = {
   proposed: ["approved", "denied", "held", "stale", "superseded"],
-  approved: ["preparing", "denied", "stale", "superseded"],
+  approved: ["preparing", "waiting", "denied", "stale", "superseded"],
   denied: [],
   held: ["proposed", "stale", "superseded", "cancelled"],
-  preparing: ["handoff-ready", "failed"],
+  // A process restart while an external preparation is in flight cannot
+  // prove whether the remote side observed the action. Recovery must record
+  // that uncertainty rather than retrying or pretending nothing happened.
+  preparing: ["handoff-ready", "failed", "effect-unknown"],
   "handoff-ready": ["confirmed", "effect-unknown", "handoff-expired"],
   confirmed: [],
   failed: ["proposed", "cancelled"],
   stale: [],
   superseded: [],
   cancelled: [],
+  waiting: ["proposed", "confirmed", "cancelled"],
   "effect-unknown": ["confirmed", "cancelled"],
   "handoff-expired": ["proposed", "cancelled"],
 };
@@ -27,15 +31,17 @@ export function assertTransition(from: WorkState, to: WorkState): void {
   }
 }
 
-export function draftStatusFor(state: WorkState): "pending" | "allowed" | "denied" {
+export function draftStatusFor(state: WorkState): "pending" | "allowed" | "denied" | "stale" {
   if (state === "denied") return "denied";
+  if (state === "stale" || state === "superseded" || state === "cancelled") return "stale";
   if (state === "proposed" || state === "held") return "pending";
   return "allowed";
 }
 
-export function workStateFromV1Draft(status: "pending" | "allowed" | "denied"): WorkState {
+export function workStateFromV1Draft(status: "pending" | "allowed" | "denied" | "stale"): WorkState {
   if (status === "pending") return "proposed";
   if (status === "denied") return "denied";
+  if (status === "stale") return "stale";
   return "approved";
 }
 

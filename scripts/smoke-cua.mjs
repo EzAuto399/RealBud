@@ -1,11 +1,11 @@
 // Read-only end-to-end smoke for the staged, packaged CUA path: native SDK
 // host -> private embedded daemon -> official stdio MCP proxy -> desktop frame.
 import { spawn } from "node:child_process";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const resources = process.env.OMB_CUA_RESOURCES ?? join(root, "dist-native");
+const resources = resolve(process.env.OMB_CUA_RESOURCES ?? join(root, "dist-native"));
 process.env.OPENMAUSBOT_CUA_SDK_LIBRARY = join(resources, "cua-sdk/native/libcua_driver_sdk.dylib");
 const sdk = pathToFileURL(join(resources, "cua-sdk/cua-sdk.mjs")).href;
 const binary = join(resources, "cua-driver");

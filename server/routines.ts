@@ -2,15 +2,34 @@
 // a code-owned evaluator and writes proposals through Desk. A loop never
 // launches Cua, waits for approval, or performs a background handoff.
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
+import { RecoveryRequiredError, readRecoverableFile, writeRecoverableFile } from "./recoverable-file.ts";
 import { evaluatorForLoop } from "./workflow-catalog.ts";
-import type { Loop, LoopId, LoopRun, LoopRunStatus, LoopSchedule } from "../shared/contracts.ts";
+import type {
+  Loop,
+  LoopId,
+  LoopRun,
+  LoopRunStatus,
+  LoopRunStep,
+  LoopRunStepId,
+  LoopRunStepStatus,
+  LoopSchedule,
+} from "../shared/contracts.ts";
+import { redactSecretsInText } from "./redact.ts";
 
-export type { Loop, LoopId, LoopRun, LoopRunStatus, LoopSchedule };
+export type { Loop, LoopId, LoopRun, LoopRunStatus, LoopRunStep, LoopRunStepId, LoopRunStepStatus, LoopSchedule };
+
+export interface LoopRunStepUpdate {
+  id: LoopRunStepId;
+  label: string;
+  status: Exclude<LoopRunStepStatus, "interrupted">;
+  detail?: string;
+}
+
+export type LoopRunReporter = (update: LoopRunStepUpdate) => void;
 
 export interface LoopManagerOptions {
   file?: string;
@@ -18,7 +37,7 @@ export interface LoopManagerOptions {
   emit?: (payload: unknown) => void;
   timezone?: string;
   hostTimezone?: string;
-  execute: (loop: Loop, run: LoopRun) => Promise<{ ok: boolean; detail: string }>;
+  execute: (loop: Loop, run: LoopRun, report: LoopRunReporter) => Promise<{ ok: boolean; detail: string }>;
 }
 
 interface LoopsFile {
@@ -31,9 +50,131 @@ interface LoopsFile {
   runs: LoopRun[];
 }
 
+export interface LoopRecoveryStatus {
+  active: boolean;
+  action: "none" | "restored-previous" | "attention";
+  detail: string;
+}
+
 const WEEKDAYS = [1, 2, 3, 4, 5];
 const CATCH_UP_MS = 12 * 60 * 60_000;
 const MAX_RUNS = 2_000;
+const MAX_RUN_STEPS = 8;
+const MAX_RUN_DETAIL = 500;
+const MAX_STEP_DETAIL = 240;
+const MAX_STEP_LABEL = 80;
+
+const STEP_IDS = new Set<LoopRunStepId>(["preflight", "collect", "evaluate", "stage-desk"]);
+const LOOP_IDS = new Set<LoopId>(["morning-arrears", "owner-letter", "inbound-triage"]);
+const RUN_STATUSES = new Set<LoopRunStatus>(["queued", "running", "completed", "failed", "missed", "interrupted"]);
+const STEP_STATUSES = new Set<LoopRunStepStatus>(["running", "completed", "failed", "skipped", "interrupted"]);
+
+function cleanReceiptText(value: unknown, limit: number): string {
+  return redactSecretsInText(typeof value === "string" ? value : String(value ?? ""))
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .trim()
+    .slice(0, limit);
+}
+
+export function scheduledOccurrenceKey(loopId: LoopId, scheduledFor: number): string {
+  return `scheduled:${loopId}:${Math.trunc(scheduledFor)}`;
+}
+
+function cloneRun(run: LoopRun): LoopRun {
+  return { ...run, steps: run.steps?.map((step) => ({ ...step })) };
+}
+
+function cloneLoop(loop: Loop): Loop {
+  return {
+    ...loop,
+    schedule: { ...loop.schedule, weekdays: [...loop.schedule.weekdays] },
+    requirements: loop.requirements?.map((requirement) => ({ ...requirement })),
+  };
+}
+
+function finiteTime(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function normalizeLoadedRun(value: unknown): LoopRun | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.id !== "string" || !raw.id.trim() || raw.id.length > 200) return null;
+  if (typeof raw.loopId !== "string" || !LOOP_IDS.has(raw.loopId as LoopId)) return null;
+  if (typeof raw.status !== "string" || !RUN_STATUSES.has(raw.status as LoopRunStatus)) return null;
+  const scheduledFor = finiteTime(raw.scheduledFor);
+  const createdAt = finiteTime(raw.createdAt);
+  if (scheduledFor === undefined || createdAt === undefined || typeof raw.manual !== "boolean") return null;
+  const loopId = raw.loopId as LoopId;
+  const manual = raw.manual;
+  const steps = Array.isArray(raw.steps)
+    ? raw.steps.slice(0, MAX_RUN_STEPS).flatMap((value): LoopRunStep[] => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+        const step = value as Record<string, unknown>;
+        if (typeof step.id !== "string" || !STEP_IDS.has(step.id as LoopRunStepId)) return [];
+        if (typeof step.status !== "string" || !STEP_STATUSES.has(step.status as LoopRunStepStatus)) return [];
+        const startedAt = finiteTime(step.startedAt);
+        if (startedAt === undefined) return [];
+        const label = cleanReceiptText(step.label, MAX_STEP_LABEL);
+        if (!label) return [];
+        const detail = cleanReceiptText(step.detail, MAX_STEP_DETAIL);
+        const finishedAt = finiteTime(step.finishedAt);
+        return [{
+          id: step.id as LoopRunStepId,
+          label,
+          status: step.status as LoopRunStepStatus,
+          ...(detail ? { detail } : {}),
+          startedAt,
+          ...(finishedAt === undefined ? {} : { finishedAt }),
+        }];
+      })
+    : undefined;
+  const detail = cleanReceiptText(raw.detail, MAX_RUN_DETAIL);
+  const requestId = cleanReceiptText(raw.requestId, 200);
+  const occurrenceKey = manual
+    ? cleanReceiptText(raw.occurrenceKey, 240)
+    : scheduledOccurrenceKey(loopId, scheduledFor);
+  const routineRevision = Number.isInteger(raw.routineRevision) && Number(raw.routineRevision) > 0
+    ? Number(raw.routineRevision)
+    : undefined;
+  const runStartedAt = finiteTime(raw.startedAt);
+  const runFinishedAt = finiteTime(raw.finishedAt);
+  const seenAt = finiteTime(raw.seenAt);
+  const notifiedAt = finiteTime(raw.notifiedAt);
+  return {
+    id: raw.id.trim(),
+    loopId,
+    loopName: cleanReceiptText(raw.loopName, 120) || loopId,
+    ...(requestId ? { requestId } : {}),
+    ...(occurrenceKey ? { occurrenceKey } : {}),
+    ...(routineRevision ? { routineRevision } : {}),
+    scheduledFor,
+    status: raw.status as LoopRunStatus,
+    manual,
+    ...(detail ? { detail } : {}),
+    ...(steps?.length ? { steps } : {}),
+    ...(runStartedAt === undefined ? {} : { startedAt: runStartedAt }),
+    ...(runFinishedAt === undefined ? {} : { finishedAt: runFinishedAt }),
+    ...(seenAt === undefined ? {} : { seenAt }),
+    ...(notifiedAt === undefined ? {} : { notifiedAt }),
+    createdAt,
+  };
+}
+
+function decodeLoopsFile(raw: string): Partial<LoopsFile> & { version: number } {
+  const parsed = JSON.parse(raw) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("routine state is invalid");
+  const file = parsed as Record<string, unknown>;
+  if (!Number.isInteger(file.version) || Number(file.version) < 1 || Number(file.version) > 3) {
+    throw new Error("routine state version is unsupported");
+  }
+  if (file.timezone !== undefined && typeof file.timezone !== "string") throw new Error("routine timezone is invalid");
+  if (file.state !== undefined && (!file.state || typeof file.state !== "object" || Array.isArray(file.state))) {
+    throw new Error("routine settings are invalid");
+  }
+  if (file.runs !== undefined && !Array.isArray(file.runs)) throw new Error("routine history is invalid");
+  return file as unknown as Partial<LoopsFile> & { version: number };
+}
 
 /** Strict "HH:MM", 00-23 / 00-59. Returns null when it is not a clock time. */
 export function parseClockTime(value: unknown): string | null {
@@ -63,6 +204,20 @@ export const LOOP_CATALOG: ReadonlyArray<Omit<Loop, "enabled" | "nextRunAt" | "t
     schedule: { type: "daily", time: "07:30", weekdays: WEEKDAYS },
     evaluatorId: "morning-money",
     evaluatorVersion: 1,
+    requirements: [
+      {
+        id: "desk-book",
+        label: "Desk book",
+        purpose: "The properties and current recovery state this run works from.",
+        setupTarget: "desk",
+      },
+      {
+        id: "current-money-source",
+        label: "Current money source",
+        purpose: "A current PMS export is the authority for live balances; Demo stays practice-only.",
+        setupTarget: "desk",
+      },
+    ],
   },
   {
     id: "owner-letter",
@@ -73,6 +228,20 @@ export const LOOP_CATALOG: ReadonlyArray<Omit<Loop, "enabled" | "nextRunAt" | "t
     schedule: { type: "daily", time: "16:00", weekdays: [5] },
     evaluatorId: "owner-letter",
     evaluatorVersion: 1,
+    requirements: [
+      {
+        id: "desk-book",
+        label: "Desk book",
+        purpose: "Current property, case and optional Notes context for factual drafts.",
+        setupTarget: "desk",
+      },
+      {
+        id: "current-money-source",
+        label: "Current money source",
+        purpose: "Live owner wording stays held unless current PMS evidence supports it.",
+        setupTarget: "desk",
+      },
+    ],
   },
   {
     id: "inbound-triage",
@@ -82,6 +251,20 @@ export const LOOP_CATALOG: ReadonlyArray<Omit<Loop, "enabled" | "nextRunAt" | "t
     schedule: { type: "daily", time: "09:00", weekdays: WEEKDAYS },
     evaluatorId: "inbound-triage",
     evaluatorVersion: 0,
+    requirements: [
+      {
+        id: "desk-book",
+        label: "Desk book",
+        purpose: "Mail can only be linked to known portfolio records and Desk cases.",
+        setupTarget: "desk",
+      },
+      {
+        id: "read-only-mail",
+        label: "Read-only mail",
+        purpose: "One named office inbox, exact account and read-only operation list.",
+        setupTarget: "connections",
+      },
+    ],
   },
 ];
 
@@ -160,6 +343,7 @@ export class LoopManager {
   private revisions = new Map<LoopId, number>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
+  private recovery: LoopRecoveryStatus = { active: false, action: "none", detail: "Routine state is protected." };
   timezone: string;
   private readonly hostTz: string;
 
@@ -168,26 +352,54 @@ export class LoopManager {
     this.file = options.file ?? join(DATA_DIR, "loops.json");
     this.now = options.now ?? Date.now;
     this.hostTz = options.hostTimezone ?? hostTimezone();
-    let saved: Partial<LoopsFile> & { version?: number } = {};
-    try {
-      saved = JSON.parse(readFileSync(this.file, "utf8")) as Partial<LoopsFile>;
-    } catch {
-      /* first run */
+    const loaded = readRecoverableFile(this.file, decodeLoopsFile);
+    const saved: Partial<LoopsFile> & { version?: number } = loaded.value ?? {};
+    if (loaded.state === "restored") {
+      this.recovery = {
+        active: false,
+        action: "restored-previous",
+        detail: "RealBud restored the last verified routine clock. Review the next run times before relying on them.",
+      };
+    } else if (loaded.state === "blocked") {
+      this.recovery = {
+        active: true,
+        action: "attention",
+        detail: "Routine state could not be verified. The clock is paused and the original file was preserved.",
+      };
     }
     this.timezone = options.timezone ?? saved.timezone ?? this.hostTz;
-    this.runs = Array.isArray(saved.runs) ? saved.runs : [];
+    const savedRuns = Array.isArray(saved.runs) ? saved.runs : [];
+    this.runs = savedRuns.flatMap((run) => {
+      const normalized = normalizeLoadedRun(run);
+      return normalized ? [normalized] : [];
+    });
+    let runsChanged = this.runs.length !== savedRuns.length || savedRuns.some((run) => {
+      if (!run || typeof run !== "object" || Array.isArray(run)) return true;
+      const raw = run as unknown as Record<string, unknown>;
+      return raw.manual === false && typeof raw.occurrenceKey !== "string";
+    });
     for (const run of this.runs) {
       if (run.status === "queued" || run.status === "running") {
         run.status = "interrupted";
         run.finishedAt = this.now();
         run.detail = run.detail ?? "Interrupted on startup — not resumed mid-action";
+        for (const step of run.steps ?? []) {
+          if (step.status !== "running") continue;
+          step.status = "interrupted";
+          step.finishedAt = run.finishedAt;
+          step.detail = step.detail ?? "Interrupted on startup — not replayed";
+        }
+        runsChanged = true;
       }
     }
     const savedState = saved.state ?? {};
     const paused = this.timezone !== this.hostTz;
     this.loops = LOOP_CATALOG.map((loop) => {
       const spec = evaluatorForLoop(loop.id);
-      const enabled = loop.available && savedState[loop.id]?.enabled !== false;
+      const savedEnabled = savedState[loop.id]?.enabled;
+      const enabled = !this.recovery.active && loop.available && (
+        savedEnabled === undefined ? loop.id === "morning-arrears" : savedEnabled
+      );
       const handled = Number.isFinite(savedState[loop.id]?.handledThrough)
         ? savedState[loop.id]!.handledThrough
         : this.now() - 1;
@@ -213,23 +425,32 @@ export class LoopManager {
         nextRunAt: enabled && !paused ? nextOccurrence(schedule, this.now(), this.zoneForClock()) : null,
       };
     });
-    if (this.runs.some((r) => r.status === "interrupted")) this.save();
+    if (runsChanged && !this.recovery.active) this.save();
+  }
+
+  recoveryStatus(): LoopRecoveryStatus {
+    return { ...this.recovery };
+  }
+
+  private assertWritable(): void {
+    if (!this.recovery.active) return;
+    throw new RecoveryRequiredError("Routine state needs recovery. The clock and manual runs remain paused.");
   }
 
   listLoops(): Loop[] {
-    return this.loops.map((loop) => ({ ...loop, schedule: { ...loop.schedule } }));
+    return this.loops.map(cloneLoop);
   }
 
   listRuns(from?: number, to?: number): LoopRun[] {
     return this.runs
       .filter((run) => (from == null || run.scheduledFor >= from) && (to == null || run.scheduledFor <= to))
       .sort((a, b) => b.scheduledFor - a.scheduledFor)
-      .map((run) => ({ ...run }));
+      .map(cloneRun);
   }
 
   activeRun(loopId: LoopId): LoopRun | null {
     const run = this.runs.find((r) => r.loopId === loopId && ["queued", "running"].includes(r.status));
-    return run ? { ...run } : null;
+    return run ? cloneRun(run) : null;
   }
 
   /** One door for clock changes: enabled, time, weekdays. Every accepted
@@ -237,9 +458,13 @@ export class LoopManager {
    * retune never backfills an already-passed slot. An idempotent PATCH
    * (values identical to current) is acknowledged without touching the
    * bookmark or revision, so it can never swallow a pending slot. */
-  patchClock(id: LoopId, patch: { enabled?: boolean; time?: string; weekdays?: number[] }): Loop {
+  patchClock(id: LoopId, patch: { enabled?: boolean; time?: string; weekdays?: number[]; expectedRevision?: number }): Loop {
+    this.assertWritable();
     const loop = this.loops.find((candidate) => candidate.id === id);
     if (!loop) throw Object.assign(new Error("no such loop"), { status: 404 });
+    if (patch.expectedRevision !== undefined && patch.expectedRevision !== loop.revision) {
+      throw Object.assign(new Error("stale routine revision"), { status: 409, code: "revision-conflict" });
+    }
     if (patch.enabled !== undefined && typeof patch.enabled !== "boolean") {
       throw Object.assign(new Error("enabled must be true or false"), { status: 400 });
     }
@@ -267,7 +492,7 @@ export class LoopManager {
       this.handledThrough.set(id, Math.max(this.handledThrough.get(id) ?? 0, this.now()));
     }
     if (!clockChanged && !wantsEnable) {
-      return { ...loop, schedule: { ...loop.schedule } };
+      return cloneLoop(loop);
     }
     if (wantsEnable) loop.enabled = patch.enabled!;
     loop.schedule = { type: "daily", ...(this.overrides.get(id) ?? LOOP_CATALOG.find((l) => l.id === id)!.schedule) };
@@ -277,25 +502,40 @@ export class LoopManager {
       loop.enabled && !loop.timezonePaused ? nextOccurrence(loop.schedule, this.now(), this.zoneForClock()) : null;
     this.save();
     this.emitLoop(loop);
-    return { ...loop, schedule: { ...loop.schedule } };
+    return cloneLoop(loop);
   }
 
   setEnabled(id: LoopId, enabled: boolean): Loop {
     return this.patchClock(id, { enabled });
   }
 
-  runNow(id: LoopId): LoopRun | null {
+  runNow(id: LoopId, requestId?: string): LoopRun | null {
+    this.assertWritable();
     const loop = this.loops.find((candidate) => candidate.id === id);
     if (!loop || !loop.available || !loop.enabled) return null;
+    if (requestId !== undefined && !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,199}$/.test(requestId)) {
+      throw Object.assign(new Error("routine request id is invalid"), { status: 400, code: "invalid-idempotency-key" });
+    }
+    if (requestId) {
+      const existing = this.runs.find((run) => run.requestId === requestId);
+      if (existing && existing.loopId !== id) {
+        throw Object.assign(new Error("that routine request id is already bound to another routine"), {
+          status: 409,
+          code: "idempotency-conflict",
+        });
+      }
+      if (existing) return cloneRun(existing);
+    }
     if (this.activeRun(id)) throw Object.assign(new Error("this loop is already running"), { status: 409 });
-    const run = this.newRun(loop, this.now(), true);
+    const run = this.newRun(loop, this.now(), true, requestId);
     this.save();
     this.emitRun(run);
     queueMicrotask(() => void this.tick());
-    return { ...run };
+    return cloneRun(run);
   }
 
   markSeen(id: string): LoopRun | null {
+    this.assertWritable();
     const run = this.runs.find((candidate) => candidate.id === id);
     if (!run) return null;
     if (!run.seenAt) {
@@ -303,7 +543,26 @@ export class LoopManager {
       this.save();
       this.emitRun(run);
     }
-    return { ...run };
+    return cloneRun(run);
+  }
+
+  /** Durable notification receipt. The renderer calls this only after the
+   * desktop shell accepted the privacy-safe reminder. It is idempotent so a
+   * reconnect cannot create a second receipt, and an active run cannot be
+   * prematurely silenced. */
+  markNotified(id: string): LoopRun | null {
+    this.assertWritable();
+    const run = this.runs.find((candidate) => candidate.id === id);
+    if (!run) return null;
+    if (run.status === "queued" || run.status === "running") {
+      throw Object.assign(new Error("a running routine cannot be marked notified"), { status: 409 });
+    }
+    if (!run.notifiedAt) {
+      run.notifiedAt = this.now();
+      this.save();
+      this.emitRun(run);
+    }
+    return cloneRun(run);
   }
 
   start() {
@@ -319,6 +578,7 @@ export class LoopManager {
   }
 
   async tick(): Promise<void> {
+    if (this.recovery.active) return;
     if (this.ticking) return;
     this.ticking = true;
     try {
@@ -337,14 +597,28 @@ export class LoopManager {
           at != null && at <= now;
           at = nextOccurrence(loop.schedule, at, this.zoneForClock())
         ) {
+          const occurrenceKey = scheduledOccurrenceKey(loop.id, at);
+          const existing = this.runs.find((run) => run.occurrenceKey === occurrenceKey);
           const late = now - at;
-          if (late > CATCH_UP_MS) {
+          if (existing) {
+            // The effect owner persisted this occurrence before any work.
+            // A stale bookmark after a crash may rediscover the clock slot,
+            // but it must never replay or create a duplicate run.
+          } else if (late > CATCH_UP_MS) {
             const missed = this.newRun(loop, at, false);
             missed.status = "missed";
             missed.finishedAt = now;
             missed.detail = "This computer was offline for more than 12 hours after the scheduled time";
+            this.save();
             this.emitRun(missed);
-          } else if (!this.activeRun(loop.id)) {
+          } else if (this.runs.some((run) => run.loopId === loop.id && (run.status === "queued" || run.status === "running"))) {
+            const missed = this.newRun(loop, at, false);
+            missed.status = "missed";
+            missed.finishedAt = now;
+            missed.detail = "Not started because the previous run was still active. RealBud never overlaps a routine.";
+            this.save();
+            this.emitRun(missed);
+          } else {
             const run = this.newRun(loop, at, false);
             this.emitRun(run);
             await this.executeRun(run, loop);
@@ -380,26 +654,82 @@ export class LoopManager {
   private async executeRun(run: LoopRun, loop: Loop) {
     run.startedAt = this.now();
     run.status = "running";
+    this.applyStep(run, {
+      id: "preflight",
+      label: "Check routine readiness",
+      status: "running",
+      detail: run.manual ? "Started by the PM" : "Started by RealBud's clock",
+    });
     this.save();
     this.emitRun(run);
     try {
-      const { ok, detail } = await this.options.execute(loop, run);
+      const report: LoopRunReporter = (update) => {
+        this.applyStep(run, update);
+        this.save();
+        this.emitRun(run);
+      };
+      const { ok, detail } = await this.options.execute(cloneLoop(loop), cloneRun(run), report);
       run.status = ok ? "completed" : "failed";
-      run.detail = detail.slice(0, 500);
+      run.detail = cleanReceiptText(detail, MAX_RUN_DETAIL);
+      this.settleOpenSteps(run, ok, run.detail);
     } catch (error) {
       run.status = "failed";
-      run.detail = (error instanceof Error ? error.message : String(error)).slice(0, 500);
+      run.detail = cleanReceiptText(error instanceof Error ? error.message : String(error), MAX_RUN_DETAIL);
+      this.settleOpenSteps(run, false, run.detail);
     }
     run.finishedAt = this.now();
     this.save();
     this.emitRun(run);
   }
 
-  private newRun(loop: Loop, scheduledFor: number, manual: boolean): LoopRun {
+  private applyStep(run: LoopRun, update: LoopRunStepUpdate): void {
+    if (!STEP_IDS.has(update.id)) throw new Error("unknown routine receipt step");
+    const label = cleanReceiptText(update.label, MAX_STEP_LABEL);
+    if (!label) throw new Error("routine receipt step label is required");
+    const detail = cleanReceiptText(update.detail, MAX_STEP_DETAIL);
+    const steps = run.steps ?? (run.steps = []);
+    let step = steps.find((candidate) => candidate.id === update.id);
+    if (!step) {
+      if (steps.length >= MAX_RUN_STEPS) throw new Error("routine receipt step limit exceeded");
+      step = {
+        id: update.id,
+        label,
+        status: update.status,
+        ...(detail ? { detail } : {}),
+        startedAt: this.now(),
+        ...(update.status === "running" ? {} : { finishedAt: this.now() }),
+      };
+      steps.push(step);
+      return;
+    }
+    if (step.status !== "running" && step.status !== update.status) {
+      throw new Error("a settled routine receipt step cannot be reopened");
+    }
+    step.label = label;
+    step.status = update.status;
+    if (detail) step.detail = detail;
+    else delete step.detail;
+    if (update.status === "running") delete step.finishedAt;
+    else step.finishedAt = this.now();
+  }
+
+  private settleOpenSteps(run: LoopRun, ok: boolean, detail: string): void {
+    for (const step of run.steps ?? []) {
+      if (step.status !== "running") continue;
+      step.status = ok ? "completed" : "failed";
+      step.finishedAt = this.now();
+      if (!step.detail || !ok) step.detail = cleanReceiptText(detail, MAX_STEP_DETAIL) || (ok ? "Completed" : "Failed");
+    }
+  }
+
+  private newRun(loop: Loop, scheduledFor: number, manual: boolean, requestId?: string): LoopRun {
     const run: LoopRun = {
       id: randomUUID(),
       loopId: loop.id,
       loopName: loop.name,
+      ...(requestId ? { requestId } : {}),
+      ...(!manual ? { occurrenceKey: scheduledOccurrenceKey(loop.id, scheduledFor) } : {}),
+      routineRevision: loop.revision,
       scheduledFor,
       status: "queued",
       manual,
@@ -411,11 +741,11 @@ export class LoopManager {
   }
 
   private emitLoop(loop: Loop) {
-    this.options.emit?.({ kind: "loop", loop: { ...loop, schedule: { ...loop.schedule } } });
+    this.options.emit?.({ kind: "loop", loop: cloneLoop(loop) });
   }
 
   private emitRun(run: LoopRun) {
-    this.options.emit?.({ kind: "loop.run", run: { ...run } });
+    this.options.emit?.({ kind: "loop.run", run: cloneRun(run) });
   }
 
   private zoneForClock(): string | undefined {
@@ -423,6 +753,7 @@ export class LoopManager {
   }
 
   private save() {
+    this.assertWritable();
     mkdirSync(dirname(this.file), { recursive: true });
     const state: LoopsFile["state"] = {};
     for (const loop of this.loops) {
@@ -433,9 +764,10 @@ export class LoopManager {
         revision: this.revisions.get(loop.id) ?? 1,
       };
     }
-    writeFileAtomic(
+    writeRecoverableFile(
       this.file,
       JSON.stringify({ version: 3, timezone: this.timezone, state, runs: this.runs } satisfies LoopsFile, null, 2),
+      decodeLoopsFile,
     );
   }
 }

@@ -6,7 +6,9 @@ import { cn } from "@/lib/cn";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { useUpdaterState } from "@/lib/updater";
 
-function profileInitials(profile?: { name?: string; email?: string }): string {
+export const YOU_NAV_LABEL = "You";
+
+export function profileInitials(profile?: { name?: string; email?: string }): string {
   const name = profile?.name?.trim();
   if (name) {
     const words = name.split(/\s+/);
@@ -77,7 +79,6 @@ export function Sidebar() {
   const { state, dispatch } = useStore();
   const { capabilities } = useDesktopCapabilities();
   const macInset = capabilities.windowChrome === "mac-inset";
-  const browser = capabilities.host.label === "Browser";
 
   const item = (
     view: typeof state.activeView,
@@ -88,6 +89,7 @@ export function Sidebar() {
   ) => (
     <button
       onClick={action}
+      aria-label={label}
       aria-current={state.activeView === view ? "page" : undefined}
       className={cn(
         "flex w-full items-center gap-3 rounded px-3 py-2.5 text-left",
@@ -107,15 +109,19 @@ export function Sidebar() {
         style={macInset ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined}
       >
         {macInset ? (
-          <div className="w-14" />
-        ) : browser ? (
           <div className="flex items-center gap-2">
-            <span className="size-3 rounded-full bg-[#ff5f57]" />
-            <span className="size-3 rounded-full bg-[#febc2e]" />
-            <span className="size-3 rounded-full bg-[#28c840]" />
+            <div className="w-14" />
+            <span className="realbud-mark flex text-agency">
+              <Building2 size={16} aria-hidden="true" />
+            </span>
           </div>
         ) : (
-          <div />
+          <div className="flex items-center gap-2 text-agency">
+            <span className="realbud-mark flex">
+              <Building2 size={16} aria-hidden="true" />
+            </span>
+            <span className="text-[14px] font-semibold text-ink">RealBud</span>
+          </div>
         )}
         <div style={macInset ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined}>
           <UpdateButton />
@@ -123,22 +129,22 @@ export function Sidebar() {
       </div>
 
       <nav className="flex flex-1 flex-col gap-0.5 px-3 pt-2">
-        {item("desk", "Desk", <Building2 size={20} className={state.activeView === "desk" ? "text-agency" : "text-ink-muted"} />, () =>
+        {item("desk", "Desk", <Building2 size={20} aria-hidden="true" className={state.activeView === "desk" ? "text-agency" : "text-ink-muted"} />, () =>
           dispatch({ type: "showDesk" }),
         )}
-        {item("ask", "Ask", <MessageSquare size={20} className={state.activeView === "ask" ? "text-agency" : "text-ink-muted"} />, () =>
+        {item("ask", "Ask", <MessageSquare size={20} aria-hidden="true" className={state.activeView === "ask" ? "text-agency" : "text-ink-muted"} />, () =>
           dispatch({ type: "showAsk" }),
         )}
         {item(
           "schedule",
           "Schedule",
-          <CalendarDays size={20} className={state.activeView === "schedule" ? "text-agency" : "text-ink-muted"} />,
+          <CalendarDays size={20} aria-hidden="true" className={state.activeView === "schedule" ? "text-agency" : "text-ink-muted"} />,
           () => dispatch({ type: "showRoutines" }),
           state.loopRuns.some((run) => ["failed", "missed", "interrupted"].includes(run.status) && !run.seenAt) ? (
-            <span className="size-2 rounded-full bg-danger" />
+            <span className="size-2 rounded-full bg-danger" aria-hidden="true" />
           ) : null,
         )}
-        {item("you", "You", <InitialsAvatar initials={profileInitials(state.config?.profile)} size={20} />, () =>
+        {item("you", YOU_NAV_LABEL, <InitialsAvatar initials={profileInitials(state.config?.profile)} size={20} />, () =>
           dispatch({ type: "showYou" }),
         )}
       </nav>

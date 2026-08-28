@@ -3,7 +3,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { LOOP_CATALOG, LoopManager, nextOccurrence, type Loop, type LoopManagerOptions, type LoopRun } from "./routines.ts";
+import {
+  LOOP_CATALOG,
+  LoopManager,
+  nextOccurrence,
+  scheduledOccurrenceKey,
+  type Loop,
+  type LoopManagerOptions,
+  type LoopRun,
+} from "./routines.ts";
 
 const dirs: string[] = [];
 
@@ -60,10 +68,10 @@ describe("LoopManager catalog", () => {
     const loops = manager.listLoops();
     expect(loops.map((loop) => loop.id)).toEqual(["morning-arrears", "owner-letter", "inbound-triage"]);
     expect(loops[0]).toMatchObject({ available: true, enabled: true, name: "Morning money check" });
-    expect(loops[1]).toMatchObject({ available: true, enabled: true });
+    expect(loops[1]).toMatchObject({ available: true, enabled: false });
     expect(loops[2]).toMatchObject({ available: false, enabled: false });
     expect(loops[0].nextRunAt).not.toBeNull();
-    expect(loops[1].nextRunAt).not.toBeNull();
+    expect(loops[1].nextRunAt).toBeNull();
     expect(loops[2].nextRunAt).toBeNull();
   });
 
@@ -71,6 +79,8 @@ describe("LoopManager catalog", () => {
     const { manager, calls } = makeManager();
     expect(() => manager.setEnabled("inbound-triage", true)).toThrow(/not built yet/);
     expect(manager.runNow("inbound-triage")).toBeNull();
+    expect(manager.runNow("owner-letter")).toBeNull();
+    manager.setEnabled("owner-letter", true);
     // owner-letter v0 is built: Run now goes through the injected executor
     const run = manager.runNow("owner-letter");
     expect(run).not.toBeNull();
@@ -89,15 +99,30 @@ describe("LoopManager catalog", () => {
     expect(second.listLoops().find((loop) => loop.id === "morning-arrears")?.enabled).toBe(false);
   });
 
-  it("survives a corrupt loops.json and still declares the catalog", () => {
+  it("holds a corrupt loops.json instead of silently replacing it with the default clock", () => {
     const file = tempFile();
     mkdirSync(join(file, ".."), { recursive: true });
     writeFileSync(file, "not json {{{");
     const manager = new LoopManager({ file, execute: async () => ({ ok: true, detail: "" }) });
     const loops = manager.listLoops();
     expect(loops.map((loop) => loop.id)).toEqual(["morning-arrears", "owner-letter", "inbound-triage"]);
-    expect(loops.find((loop) => loop.id === "morning-arrears")?.enabled).toBe(true);
+    expect(loops.every((loop) => !loop.enabled && loop.nextRunAt === null)).toBe(true);
     expect(manager.listRuns()).toEqual([]);
+    expect(manager.recoveryStatus()).toMatchObject({ active: true, action: "attention" });
+    expect(() => manager.runNow("morning-arrears")).toThrow(/needs recovery/i);
+    expect(readFileSync(file, "utf8")).toBe("not json {{{");
+  });
+
+  it("restores the last verified routine generation and reports that recovery", () => {
+    const file = tempFile();
+    const first = new LoopManager({ file, execute: async () => ({ ok: true, detail: "" }) });
+    first.setEnabled("morning-arrears", false);
+    first.setEnabled("morning-arrears", true);
+    writeFileSync(file, "truncated");
+
+    const restored = new LoopManager({ file, execute: async () => ({ ok: true, detail: "" }) });
+    expect(restored.recoveryStatus()).toMatchObject({ active: false, action: "restored-previous" });
+    expect(restored.listLoops().find((loop) => loop.id === "morning-arrears")?.enabled).toBe(false);
   });
 });
 
@@ -129,6 +154,75 @@ describe("LoopManager runs", () => {
     await manager.tick();
   });
 
+  it("deduplicates and persists a manual run request id", async () => {
+    const file = tempFile();
+    const manager = new LoopManager({ file, execute: async () => ({ ok: true, detail: "done" }) });
+    const first = manager.runNow("morning-arrears", "ask-action-1")!;
+    const retry = manager.runNow("morning-arrears", "ask-action-1")!;
+    expect(retry.id).toBe(first.id);
+    await manager.tick();
+
+    const reloaded = new LoopManager({ file, execute: async () => ({ ok: true, detail: "done" }) });
+    expect(reloaded.listRuns().filter((run) => run.requestId === "ask-action-1")).toHaveLength(1);
+    expect(reloaded.runNow("morning-arrears", "ask-action-1")?.id).toBe(first.id);
+  });
+
+  it("rejects an idempotency key reused for another routine", () => {
+    const { manager } = makeManager();
+    manager.runNow("morning-arrears", "ask-action-shared");
+    manager.setEnabled("owner-letter", true);
+    expect(() => manager.runNow("owner-letter", "ask-action-shared")).toThrow(/already bound to another routine/i);
+    expect(() => manager.runNow("owner-letter", " token=abc ")).toThrow(/request id is invalid/i);
+  });
+
+  it("persists bounded phase receipts and redacts failures before they reach Schedule", async () => {
+    const file = tempFile();
+    const manager = new LoopManager({
+      file,
+      execute: async (_loop, _run, report) => {
+        report({ id: "preflight", label: "Check routine readiness", status: "completed", detail: "Ready" });
+        report({ id: "collect", label: "Read source", status: "running" });
+        throw new Error("provider rejected API_KEY=sk-test-abcdefghijklmnopqrstuvwxyz123456");
+      },
+    });
+    const admitted = manager.runNow("morning-arrears")!;
+    await manager.tick();
+    const failed = manager.listRuns().find((run) => run.id === admitted.id)!;
+    expect(failed.status).toBe("failed");
+    expect(failed.steps).toEqual([
+      expect.objectContaining({ id: "preflight", status: "completed" }),
+      expect.objectContaining({ id: "collect", status: "failed" }),
+    ]);
+    expect(JSON.stringify(failed)).not.toContain("sk-test-abcdefghijklmnopqrstuvwxyz123456");
+    expect(JSON.stringify(failed)).toMatch(/redacted/i);
+
+    const reloaded = new LoopManager({ file, execute: async () => ({ ok: true, detail: "done" }) });
+    expect(reloaded.listRuns().find((run) => run.id === admitted.id)?.steps).toEqual(failed.steps);
+  });
+
+  it("records successful collection, evaluation and Desk staging receipts", async () => {
+    const { manager } = makeManager({
+      execute: async (_loop, _run, report) => {
+        report({ id: "preflight", label: "Check routine readiness", status: "completed" });
+        report({ id: "collect", label: "Read source", status: "completed", detail: "6 properties" });
+        report({ id: "evaluate", label: "Validate facts", status: "completed" });
+        report({ id: "stage-desk", label: "Put work on Desk", status: "completed", detail: "2 items" });
+        return { ok: true, detail: "2 items on Desk" };
+      },
+    });
+    const admitted = manager.runNow("morning-arrears")!;
+    await manager.tick();
+    const run = manager.listRuns().find((candidate) => candidate.id === admitted.id)!;
+    expect(run.status).toBe("completed");
+    expect(run.steps?.map((step) => [step.id, step.status])).toEqual([
+      ["preflight", "completed"],
+      ["collect", "completed"],
+      ["evaluate", "completed"],
+      ["stage-desk", "completed"],
+    ]);
+    expect(run.routineRevision).toBe(1);
+  });
+
   it("runs a due scheduled occurrence once, and not again", async () => {
     // 2026-08-18 is a Tuesday. The app is open: watch the clock cross 07:30.
     let now = new Date(2026, 7, 18, 7, 29, 0).getTime();
@@ -143,6 +237,47 @@ describe("LoopManager runs", () => {
     const run = manager.listRuns()[0];
     expect(run.manual).toBe(false);
     expect(run.scheduledFor).toBe(new Date(2026, 7, 18, 7, 30, 0).getTime());
+    expect(run.occurrenceKey).toBe(scheduledOccurrenceKey("morning-arrears", run.scheduledFor));
+  });
+
+  it("does not replay a persisted scheduled occurrence when the bookmark is stale after restart", async () => {
+    const occurrence = new Date(2026, 7, 18, 7, 30, 0).getTime();
+    const now = occurrence + 60_000;
+    const file = tempFile();
+    mkdirSync(join(file, ".."), { recursive: true });
+    writeFileSync(file, JSON.stringify({
+      version: 3,
+      state: {
+        "morning-arrears": { enabled: true, handledThrough: occurrence - 60_000, revision: 1 },
+        "owner-letter": { enabled: false, handledThrough: now, revision: 1 },
+        "inbound-triage": { enabled: false, handledThrough: now, revision: 1 },
+      },
+      runs: [{
+        id: "completed-before-bookmark",
+        loopId: "morning-arrears",
+        loopName: "Morning money check",
+        scheduledFor: occurrence,
+        status: "completed",
+        manual: false,
+        detail: "already done",
+        createdAt: occurrence,
+        finishedAt: occurrence + 100,
+      }],
+    }));
+    let executions = 0;
+    const manager = new LoopManager({
+      file,
+      now: () => now,
+      execute: async () => {
+        executions += 1;
+        return { ok: true, detail: "duplicate" };
+      },
+    });
+    await manager.tick();
+    expect(executions).toBe(0);
+    expect(manager.listRuns()).toHaveLength(1);
+    expect(manager.listRuns()[0].occurrenceKey).toBe(scheduledOccurrenceKey("morning-arrears", occurrence));
+    expect(JSON.parse(readFileSync(file, "utf8")).runs[0].occurrenceKey).toBe(scheduledOccurrenceKey("morning-arrears", occurrence));
   });
 
   it("marks a run missed when the tick is more than 12 hours late", async () => {
@@ -175,6 +310,37 @@ describe("LoopManager runs", () => {
     const again = manager.markSeen(run.id)!;
     expect(marked.seenAt).toBeDefined();
     expect(again.seenAt).toBe(marked.seenAt);
+  });
+
+  it("persists one notification receipt and refuses to silence an active run", async () => {
+    let now = 1_000;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const file = tempFile();
+    const manager = new LoopManager({
+      file,
+      now: () => now,
+      execute: async () => {
+        await gate;
+        return { ok: true, detail: "done" };
+      },
+    });
+    const active = manager.runNow("morning-arrears")!;
+    expect(() => manager.markNotified(active.id)).toThrow(/running routine/i);
+
+    now = 2_000;
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await manager.tick();
+    const marked = manager.markNotified(active.id)!;
+    now = 3_000;
+    const replay = manager.markNotified(active.id)!;
+    expect(marked.notifiedAt).toBe(2_000);
+    expect(replay.notifiedAt).toBe(2_000);
+
+    const reloaded = new LoopManager({ file, now: () => now, execute: async () => ({ ok: true, detail: "" }) });
+    expect(reloaded.listRuns().find((run) => run.id === active.id)?.notifiedAt).toBe(2_000);
+    expect(reloaded.markNotified("missing-run")).toBeNull();
   });
 
   it("never exposes Hermes cron or send paths in the catalog", () => {
@@ -305,6 +471,7 @@ describe("LoopManager clock retune (PR A)", () => {
     expect(first.schedule.time).toBe("08:15");
     expect(first.revision).toBe(2);
     expect(first.nextRunAt!).toBeGreaterThan(now);
+    expect(() => manager.patchClock("morning-arrears", { time: "08:30", expectedRevision: 1 })).toThrow(/stale routine revision/);
     const second = manager.patchClock("morning-arrears", { weekdays: [1, 3, 5] });
     expect(second.schedule.weekdays).toEqual([1, 3, 5]);
     expect(second.schedule.time).toBe("08:15"); // untouched field survives

@@ -84,7 +84,14 @@ describe("augmentedPath", () => {
       resetPathCacheForTests();
 
       augmentedPath();
-      await vi.waitFor(() => expect(augmentedPath().split(delimiter)).toContain(rcOnlyBin));
+      // The production probe deliberately allows a slow login shell up to
+      // five seconds. Keep the assertion inside that same contract so a busy
+      // full-suite worker does not turn a valid asynchronous result into a
+      // one-second timing flake.
+      await vi.waitFor(
+        () => expect(augmentedPath().split(delimiter)).toContain(rcOnlyBin),
+        { timeout: 5_500 },
+      );
 
       resetPathCache();
       expect(augmentedPath().split(delimiter)).toContain(rcOnlyBin);

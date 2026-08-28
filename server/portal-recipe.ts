@@ -10,6 +10,29 @@ export const FAKE_PORTAL_RECIPE: PortalRecipe = {
   finalControlFingerprint: "button#submit-reminder",
 };
 
+/** Bind the training recipe to the exact ephemeral loopback origin used by
+ * its fake portal. A host-only prefix is not an authorization boundary. */
+export function fakePortalRecipeAt(baseUrl: string): PortalRecipe {
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    throw Object.assign(new Error("fake portal URL is invalid"), { status: 400 });
+  }
+  if (
+    parsed.protocol !== "http:" ||
+    parsed.hostname !== "127.0.0.1" ||
+    parsed.username ||
+    parsed.password ||
+    (parsed.pathname !== "/" && parsed.pathname !== "") ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw Object.assign(new Error("fake portal must be an exact credential-free loopback origin"), { status: 400 });
+  }
+  return { ...FAKE_PORTAL_RECIPE, origin: parsed.origin };
+}
+
 export function recipeAllows(recipe: PortalRecipe, step: string): boolean {
   return recipe.steps.includes(step) && step !== "submit" && step !== "pay" && step !== "send";
 }
@@ -34,4 +57,3 @@ export function publishRecipe(recipe: PortalRecipe): PortalRecipe {
   if (recipe.published) return recipe;
   return { ...recipe, published: true };
 }
-

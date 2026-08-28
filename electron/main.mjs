@@ -1,14 +1,22 @@
-import { app, BrowserWindow, clipboard, desktopCapturer, ipcMain, session, shell, systemPreferences, utilityProcess } from "electron";
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Notification, safeStorage, session, shell, systemPreferences, utilityProcess } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { startCua, stopCua, registerCuaIpc } from "./cua.mjs";
+import { cuaRuntimeStatus, cuaWasEnabled, disableCua, enableCua, startCua, stopCua, registerCuaIpc } from "./cua.mjs";
 import { finishSpeech, startSpeech, stopSpeech } from "./speech.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { startUpdater, registerUpdaterIpc } from "./updater.mjs";
 import capabilitiesModule from "./capabilities.cjs";
+import routineRemindersModule from "./routine-reminders.cjs";
+import secureStorageModule from "./secure-storage.cjs";
+import packagedEnvironmentModule from "./packaged-environment.cjs";
+import openHttpsModule from "./open-https.cjs";
 
-const { desktopCapabilities } = capabilitiesModule;
+const { desktopCapabilities, macPrivacySettingsUrl } = capabilitiesModule;
+const { parseRoutineReminder, routineNotificationCopy } = routineRemindersModule;
+const { prepareSecureRuntimeEnv } = secureStorageModule;
+const { packagedServerEnvironment } = packagedEnvironmentModule;
+const { openHttpsExternal } = openHttpsModule;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 127.0.0.1 explicitly — vite binds IPv4; a bare "localhost" here can
@@ -16,6 +24,29 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEV_URL = process.env.ELECTRON_START_URL ?? "http://127.0.0.1:5199";
 let SERVER_PORT = 8799;
 const APP_ICON = path.join(__dirname, "resources/app-icon.png");
+
+// Package QA must never claim the real app's single-instance lock, Chromium
+// profile, logs or session state. Both flags are required so production
+// launches cannot redirect these paths through ambient environment alone.
+if (process.env.OMB_SMOKE_TEST === "1" && process.env.REALBUD_USER_DATA_DIR) {
+  const smokeUserData = path.resolve(process.env.REALBUD_USER_DATA_DIR);
+  fs.mkdirSync(smokeUserData, { recursive: true });
+  app.setPath("userData", smokeUserData);
+  app.setPath("sessionData", path.join(smokeUserData, "session"));
+  app.setPath("logs", path.join(smokeUserData, "logs"));
+}
+
+// Installed-package automation must not create, unlock or mutate a real
+// login-keychain item on the developer/CI machine. Chromium's mock keychain
+// is enabled only when both explicit package-smoke flags are present; normal
+// development and every production launch continue to use macOS Keychain.
+if (
+  process.platform === "darwin" &&
+  process.env.OMB_SMOKE_TEST === "1" &&
+  process.env.REALBUD_USE_MOCK_KEYCHAIN_FOR_TEST === "1"
+) {
+  app.commandLine.appendSwitch("use-mock-keychain");
+}
 
 // GNOME groups the window with its installed desktop entry only when both
 // identities match. This must run before Electron becomes ready.
@@ -44,6 +75,8 @@ if (!app.requestSingleInstanceLock()) {
 // our API shape, not just a 200).
 let serverProc = null;
 let serverReady = true;
+let secureRuntimeEnv = {};
+let serverBootFailure = "ports";
 
 // The packaged app has no terminal: everything about the server child's life
 // goes to server.log in the OS log dir (~/Library/Logs/RealBud on macOS,
@@ -69,10 +102,13 @@ async function startServerOn(port) {
   slog(`fork ${entry} port=${port}`);
   const proc = utilityProcess.fork(entry, [], {
     env: {
-      ...process.env,
+      ...packagedServerEnvironment(process.env),
       OMB_STATIC_DIR: path.join(process.resourcesPath, "ui"),
       OMB_PORT: String(port),
       OMB_USER_DATA: app.getPath("userData"),
+      OMB_CUA_DRIVER_PATH: path.join(process.resourcesPath, "cua-driver"),
+      REALBUD_APP_VERSION: app.getVersion(),
+      ...secureRuntimeEnv,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -125,13 +161,21 @@ async function startServerPackaged() {
   return false;
 }
 
-const ERROR_PAGE =
-  "data:text/html;charset=utf-8," +
-  encodeURIComponent(
-    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:360px"><div style="font-size:40px">🏠</div><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the bot server</h2><p style="color:#fcfcfc99;line-height:1.5">Something else is using its ports. Quit and reopen RealBud — if it keeps happening, restart your computer.</p></div></body>`,
+function errorPage() {
+  const storage = serverBootFailure === "storage";
+  const title = storage ? "Protected storage is unavailable" : "RealBud could not open its desk";
+  const detail = storage
+    ? "RealBud did not open the book because this computer's credential storage could not protect its keys. Quit and reopen RealBud. If it continues, check Keychain or your system password manager."
+    : "Another RealBud process or local service may still be closing. Quit and reopen RealBud. If it continues, restart your computer.";
+  return (
+    "data:text/html;charset=utf-8," +
+    encodeURIComponent(
+      `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#F3EFE5;color:#25231F;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:430px;padding:32px"><h2 style="font-weight:600;margin:0 0 10px">${title}</h2><p style="color:#6F695E;line-height:1.55">${detail}</p><p style="color:#6F695E;font-size:12px">No book changes were made.</p></div></body>`,
+    )
   );
+}
 
-let cuaReady = Promise.resolve({ mode: "unavailable", reason: "not-started" });
+let cuaReady = Promise.resolve({ mode: "unavailable", runtime: "none", reason: "not-started" });
 
 function createWindow() {
   const isMac = process.platform === "darwin";
@@ -164,28 +208,62 @@ function createWindow() {
   });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    void openHttpsExternal(shell, url);
     return { action: "deny" };
   });
 
   // Packaged CI smoke hook. It validates the real renderer/preload bridge and
-  // same-origin embedded server, then follows the normal window-close path.
-  // No debugging port or sandbox override is needed.
+  // same-origin embedded server, then closes the window and explicitly quits
+  // (macOS normally stays resident after its last window closes). app.quit()
+  // still exercises the production server/CUA cleanup path below.
   if (process.env.OMB_SMOKE_TEST === "1") {
     win.webContents.once("did-finish-load", async () => {
       try {
         const result = await win.webContents.executeJavaScript(`
           (async () => {
             if (!window.ogb?.getCapabilities) throw new Error("desktop preload bridge is unavailable");
-            const [capabilities, healthResponse] = await Promise.all([
+            const sessionResponse = await fetch("/api/session");
+            if (!sessionResponse.ok) throw new Error("session bootstrap failed");
+            const session = await sessionResponse.json();
+            const headers = { "x-realbud-session": String(session.token || "") };
+            const packResponse = await fetch("/api/hermes/apply-pack", {
+              method: "POST",
+              headers: { ...headers, "content-type": "application/json" },
+              body: "{}",
+            });
+            if (!packResponse.ok) {
+              throw new Error(\`property pack request failed: \${packResponse.status} \${packResponse.statusText}\`);
+            }
+            const [capabilities, healthResponse, deskResponse, workerResponse] = await Promise.all([
               window.ogb.getCapabilities(),
               fetch("/api/health"),
+              fetch("/api/desk", { headers }),
+              fetch("/api/hermes", { headers }),
             ]);
-            if (!healthResponse.ok) {
-              throw new Error(\`health request failed: \${healthResponse.status} \${healthResponse.statusText}\`);
+            for (const [name, response] of [["health", healthResponse], ["desk", deskResponse], ["worker", workerResponse]]) {
+              if (!response.ok) throw new Error(\`\${name} request failed: \${response.status} \${response.statusText}\`);
             }
             const health = await healthResponse.json();
-            return { capabilities, health, location: window.location.href, title: document.title };
+            const desk = await deskResponse.json();
+            const worker = await workerResponse.json();
+            return {
+              capabilities,
+              health,
+              desk: {
+                revision: desk.revision,
+                properties: Array.isArray(desk.properties) ? desk.properties.length : -1,
+                recovery: Boolean(desk.recovery?.active),
+              },
+              worker: {
+                provider: worker.model?.provider ?? null,
+                model: worker.model?.model ?? null,
+                keyPresent: Boolean(worker.model?.keyPresent),
+                packInstalled: Boolean(worker.pack?.installed),
+                approvalsManual: Boolean(worker.pack?.approvalsManual),
+              },
+              location: window.location.href,
+              title: document.title,
+            };
           })()
         `);
         const expectedLocation = `http://127.0.0.1:${SERVER_PORT}/`;
@@ -199,12 +277,13 @@ function createWindow() {
         console.error(`[smoke] renderer-failed ${error?.stack ?? error}`);
       } finally {
         win.close();
+        app.quit();
       }
     });
   }
 
   if (app.isPackaged) {
-    win.loadURL(serverReady ? `http://127.0.0.1:${SERVER_PORT}` : ERROR_PAGE);
+    win.loadURL(serverReady ? `http://127.0.0.1:${SERVER_PORT}` : errorPage());
   } else {
     win.loadURL(DEV_URL);
   }
@@ -220,6 +299,75 @@ ipcMain.handle("screen:frame", async () => {
     thumbnailSize: { width: 1280, height: 800 },
   });
   return sources[0]?.thumbnail.toDataURL() ?? null;
+});
+
+const MAX_SELECTED_FILES = 10;
+const MAX_SELECTED_FILE_BYTES = 50 * 1024 * 1024;
+ipcMain.handle("files:choose", async (event) => {
+  const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+  const result = owner
+    ? await dialog.showOpenDialog(owner, { properties: ["openFile", "multiSelections"] })
+    : await dialog.showOpenDialog({ properties: ["openFile", "multiSelections"] });
+  if (result.canceled) return [];
+  if (result.filePaths.length > MAX_SELECTED_FILES) {
+    throw new Error(`Choose no more than ${MAX_SELECTED_FILES} files at once.`);
+  }
+  const files = [];
+  const seen = new Set();
+  for (const selectedPath of result.filePaths) {
+    const filePath = fs.realpathSync(selectedPath);
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) throw new Error("Only regular files can be attached.");
+    if (stat.size > MAX_SELECTED_FILE_BYTES) throw new Error("Each file must be 50 MB or smaller.");
+    if (seen.has(filePath)) continue;
+    seen.add(filePath);
+    files.push({ path: filePath, name: path.basename(filePath), size: stat.size });
+  }
+  return files;
+});
+
+// Routine reminders are a closed, privacy-safe desktop capability. The
+// renderer sends only an opaque run id and one of two code-owned reasons;
+// tenant names, properties, balances and model-written detail never reach a
+// lock-screen notification. loops.json carries the durable notifiedAt receipt.
+const shownRoutineReminderIds = new Set();
+const liveRoutineNotifications = new Set();
+ipcMain.handle("routine-reminder:show", (event, input) => {
+  const reminder = parseRoutineReminder(input);
+  if (!reminder) return { shown: false, reason: "invalid" };
+  const { runId, kind } = reminder;
+  if (!Notification.isSupported()) return { shown: false, reason: "unsupported" };
+  if (shownRoutineReminderIds.has(runId)) return { shown: true, duplicate: true };
+
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  const notification = new Notification(routineNotificationCopy(kind));
+  shownRoutineReminderIds.add(runId);
+  if (shownRoutineReminderIds.size > 2_000) shownRoutineReminderIds.delete(shownRoutineReminderIds.values().next().value);
+  liveRoutineNotifications.add(notification);
+  const release = () => liveRoutineNotifications.delete(notification);
+  notification.once("close", release);
+  notification.once("failed", (_event, error) => {
+    shownRoutineReminderIds.delete(runId);
+    release();
+    slog(`routine reminder failed: ${String(error).slice(0, 160)}`);
+  });
+  notification.once("click", () => {
+    if (owner && !owner.isDestroyed()) {
+      if (owner.isMinimized()) owner.restore();
+      owner.show();
+      owner.focus();
+      owner.webContents.send("routine-reminder:opened", { runId, kind });
+    }
+  });
+  try {
+    notification.show();
+    return { shown: true };
+  } catch (error) {
+    shownRoutineReminderIds.delete(runId);
+    release();
+    slog(`routine reminder could not show: ${String(error).slice(0, 160)}`);
+    return { shown: false, reason: "failed" };
+  }
 });
 
 // Onboarding permission checks. Status reads are free; the mic request
@@ -240,6 +388,10 @@ ipcMain.handle("screen:frame", async () => {
 // text must never become a process argument: the user reviews and pastes it.
 // Returns false when the renderer should show the clipboard fallback.
 ipcMain.handle("engine:open-terminal", async (_event, command) => {
+  // This IPC belongs to the generic development fleet, not RealBud. Hidden
+  // UI is not an authority boundary: production/product mode refuses before
+  // even copying renderer-controlled text to the clipboard.
+  if (app.isPackaged || process.env.OMB_TEST_FLEET !== "1") return false;
   if (typeof command !== "string" || !command.trim()) return false;
   clipboard.writeText(command);
   return openBlankTerminal();
@@ -264,16 +416,12 @@ ipcMain.handle("perm:request-mic", async () => {
 // Settings; deep-link straight to the right privacy pane.
 ipcMain.handle("perm:open-settings", (_event, pane) => {
   if (process.platform !== "darwin") return false;
-  const panes = {
-    mic: "Privacy_Microphone",
-    screen: "Privacy_ScreenCapture",
-    speech: "Privacy_SpeechRecognition",
-  };
-  // own-property lookup only — a renderer-supplied "__proto__"/"constructor"
-  // would otherwise resolve up the prototype chain to a truthy object
-  const anchor = Object.hasOwn(panes, pane) ? panes[pane] : "Privacy";
-  return shell.openExternal(`x-apple.systempreferences:com.apple.preference.security?${anchor}`);
+  const url = macPrivacySettingsUrl(pane);
+  if (!url) return false;
+  return shell.openExternal(url).then(() => true, () => false);
 });
+
+ipcMain.handle("shell:open-https", (_event, url) => openHttpsExternal(shell, url));
 
 ipcMain.handle("speech:start", (event, options) => {
   const win = BrowserWindow.fromWebContents(event.sender);
@@ -300,6 +448,42 @@ ipcMain.handle("desktop:capabilities", async () =>
   }),
 );
 
+ipcMain.handle("cua:enable", async () => {
+  if (process.platform !== "darwin") {
+    return desktopCapabilities({
+      platform: process.platform,
+      env: process.env,
+      packaged: app.isPackaged,
+      localConnection: { mode: "unavailable", runtime: "none", reason: "unsupported-platform" },
+    });
+  }
+  cuaReady = enableCua().catch((error) => ({
+    mode: "unavailable",
+    runtime: cuaRuntimeStatus(),
+    reason: String(error),
+  }));
+  return desktopCapabilities({
+    platform: process.platform,
+    env: process.env,
+    packaged: app.isPackaged,
+    localConnection: await cuaReady,
+  });
+});
+
+ipcMain.handle("cua:disable", async () => {
+  cuaReady = disableCua().catch((error) => ({
+    mode: "unavailable",
+    runtime: cuaRuntimeStatus(),
+    reason: String(error),
+  }));
+  return desktopCapabilities({
+    platform: process.platform,
+    env: process.env,
+    packaged: app.isPackaged,
+    localConnection: await cuaReady,
+  });
+});
+
 app.whenReady().then(async () => {
   if (process.platform === "darwin") app.dock.setIcon(APP_ICON);
   // getDisplayMedia in the renderer → this handler → ScreenCaptureKit, all
@@ -319,17 +503,45 @@ app.whenReady().then(async () => {
   }
   registerCuaIpc();
   registerUpdaterIpc();
-  // Start the CUA daemon before the window so the harness can pick up the
-  // connection descriptor on first render. Never blocks window creation on
-  // failure — computer use degrades to "unavailable", the rest still works.
+  // CUA is bundled, but the first permission request follows an explicit setup
+  // action in You. Once the PM opts in, subsequent launches restart only the
+  // RealBud-owned host. Failure never blocks Desk/Ask/Schedule/You.
+  const cuaDisabledForPackageSmoke =
+    process.env.OMB_SMOKE_TEST === "1" && process.env.REALBUD_DISABLE_CUA_FOR_TEST === "1";
+  const cuaEnabled = !cuaDisabledForPackageSmoke && process.platform === "darwin" && cuaWasEnabled();
   cuaReady =
-    process.platform === "darwin"
+    cuaEnabled
       ? startCua().catch((e) => {
           console.error("[cua] start failed:", e);
-          return { mode: "unavailable", reason: String(e) };
+          return { mode: "unavailable", runtime: cuaRuntimeStatus(), reason: String(e) };
         })
-      : Promise.resolve({ mode: "unavailable", reason: "unsupported-platform" });
-  if (app.isPackaged) serverReady = await startServerPackaged();
+      : Promise.resolve({
+          mode: "unavailable",
+          runtime: process.platform === "darwin" ? cuaRuntimeStatus() : "none",
+          reason: cuaDisabledForPackageSmoke
+            ? "package-smoke-disabled"
+            : process.platform === "darwin"
+              ? cuaRuntimeStatus() === "none"
+                ? "cua-driver binary not found"
+                : "not-enabled"
+              : "unsupported-platform",
+        });
+  if (app.isPackaged) {
+    try {
+      const dataDir = process.env.REALBUD_DATA_DIR ?? process.env.OMB_DATA_DIR ?? path.join(app.getPath("home"), ".realbud");
+      secureRuntimeEnv = await prepareSecureRuntimeEnv({
+        safeStorage,
+        dataDir,
+        platform: process.platform,
+        allowInsecureTest: process.env.REALBUD_ALLOW_INSECURE_TEST_KEYS === "1" && process.env.OMB_SMOKE_TEST === "1",
+      });
+      serverReady = await startServerPackaged();
+    } catch (error) {
+      serverReady = false;
+      serverBootFailure = "storage";
+      slog(`protected storage unavailable: ${error instanceof Error ? error.message.slice(0, 160) : "unknown error"}`);
+    }
+  }
   const win = createWindow();
   // in-app auto-update (packaged only) — checks GitHub releases, downloads on
   // the user's click, installs on "Restart to update"

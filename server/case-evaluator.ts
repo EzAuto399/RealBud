@@ -18,10 +18,20 @@ export function evaluateFromProjection(input: EvaluateDto): CheckResult {
     throw new Error("evaluate must not receive Notes or vault paths");
   }
   if (input.money.status !== "current") {
+    const coverage = input.money.facts.coverage;
     return {
       propertyId: input.propertyId,
       outcome: "hold",
-      reason: input.money.status === "stale" ? "stale-source" : input.money.facts.reversed ? "reversed" : "unknown-facts",
+      reason:
+        input.money.status === "stale"
+          ? "stale-source"
+          : input.money.status === "conflicted" || coverage === "conflicted"
+            ? "conflicted-source"
+            : coverage === "missing"
+              ? "uncovered-source"
+              : input.money.facts.reversed
+                ? "reversed"
+                : "unknown-facts",
       daysLate: input.money.facts.daysSinceDue ?? 0,
     };
   }

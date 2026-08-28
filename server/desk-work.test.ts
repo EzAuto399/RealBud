@@ -10,6 +10,7 @@ describe("work-state machine", () => {
     ["proposed", "held"],
     ["approved", "preparing"],
     ["preparing", "handoff-ready"],
+    ["preparing", "effect-unknown"],
     ["handoff-ready", "confirmed"],
     ["handoff-ready", "effect-unknown"],
     ["handoff-ready", "handoff-expired"],

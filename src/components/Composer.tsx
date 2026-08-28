@@ -1,13 +1,19 @@
 import { track } from "@/lib/analytics";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, Clock, Mic, Square, Users, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ArrowUp, Clock, Mic, Paperclip, Square, Users, X } from "lucide-react";
 import { useStore, visibleMessages, type Bot, type Group } from "@/state/store";
 import { cn } from "@/lib/cn";
-import { useComposerDraft } from "@/lib/drafts";
+import {
+  composerOutboxStore,
+  getComposerOutbox,
+  setComposerOutbox,
+  useComposerDraft,
+} from "@/lib/drafts";
 import { MausAvatar } from "./Avatar";
 import { ComposerAttachments } from "./ComposerAttachments";
 import {
   composeMessage,
+  fileAttachment,
   isLongPaste,
   pasteAttachment,
   type Attachment,
@@ -31,12 +37,19 @@ function mentionQueryAt(text: string, caret: number): { start: number; query: st
 
 type MentionChoice = { id: string; name: string; bot?: Bot };
 
+async function composerPayloadDigest(text: string, attachments: Attachment[]): Promise<string> {
+  const encoded = new TextEncoder().encode(JSON.stringify({ text, attachments }));
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", encoded);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export function Composer({
   bot,
   group,
   members,
   onEditLast,
   productAsk = false,
+  askLead,
 }: {
   bot?: Bot;
   group?: Group;
@@ -44,8 +57,10 @@ export function Composer({
   onEditLast?: () => void;
   /** Ask never offers "Always allow": approvals stay manual, per turn. */
   productAsk?: boolean;
+  /** Ask-only lead (Add book). Lives with the composer, not above the thread. */
+  askLead?: ReactNode;
 }) {
-  const { state, dispatch } = useStore();
+  const { state, dispatch, sendMessage } = useStore();
   const { capabilities } = useDesktopCapabilities();
   // Unified target: a 1:1 bot thread or a room. In a room the @ picker
   // offers members plus @everyone; explicit mentions override the room's
@@ -66,12 +81,20 @@ export function Composer({
     : (bot?.name ?? "The bot");
   // Per-thread draft: switching bots unmounts this component, so both the
   // text and its attachment chips have to outlive it (see lib/drafts).
-  const [text, setText, attachments, setAttachments] = useComposerDraft(
-    group ? `group:${group.id}` : `bot:${bot?.id ?? ""}`,
-  );
+  const draftId = group ? `group:${group.id}` : `bot:${bot?.id ?? ""}`;
+  const [text, setText, attachments, setAttachments] = useComposerDraft(draftId);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
   const addAttachments = useCallback(
-    (next: Attachment[]) => setAttachments((prev) => [...prev, ...next]),
-    [setAttachments],
+    (next: Attachment[]) => setAttachments((prev) => {
+      const existingFiles = prev.filter((item) => item.kind === "file").length;
+      let fileSlots = Math.max(0, 10 - existingFiles);
+      const accepted = next.filter((item) => item.kind !== "file" || fileSlots-- > 0);
+      if (accepted.length !== next.length) setAttachmentError("Attach no more than 10 files at once.");
+      return [...prev, ...accepted];
+    }),
+    [setAttachments, setAttachmentError],
   );
   const removeAttachment = useCallback(
     (id: string) => setAttachments((prev) => prev.filter((a) => a.id !== id)),
@@ -133,36 +156,60 @@ export function Composer({
 
   // One message may be queued while the bot works; it auto-sends the moment
   // the turn settles. Enter during a turn queues instead of silently dying.
-  const [queued, setQueued] = useState<string | null>(null);
+  const [queued, setQueued] = useState<{ text: string; attachments: Attachment[] } | null>(null);
   // a chip on its own is a message: the send control has to appear for it
   const hasContent = Boolean(text.trim()) || attachments.length > 0;
-  const send = () => {
+  const send = async () => {
     const t = composeMessage(text, attachments);
     if (!t) return;
     if (busy) {
-      setQueued(t);
-      setText("");
-      setAttachments([]);
+      if (group) {
+        setQueued({ text: t, attachments });
+        setText("");
+        setAttachments([]);
+      }
       return;
     }
     if (group) {
       dispatch({ type: "sendGroup", groupId: group.id, text: t });
       track("message_sent", { room: true });
     } else if (bot) {
-      dispatch({ type: "send", botId: bot.id, text: t });
-      track("message_sent", { driver: bot.modelSelection?.instanceId });
+      if (sending) return;
+      const files = attachments
+        .filter((a) => a.kind === "file")
+        .map(({ path, name, size }) => ({ path, name, size }));
+      setSending(true);
+      setSendError(null);
+      try {
+        const payloadDigest = await composerPayloadDigest(t, attachments);
+        const outboxStore = composerOutboxStore();
+        const prior = getComposerOutbox(outboxStore, draftId);
+        const requestId = prior?.payloadDigest === payloadDigest
+          ? prior.requestId
+          : `ask_${globalThis.crypto.randomUUID()}`;
+        setComposerOutbox(outboxStore, draftId, { requestId, payloadDigest });
+        await sendMessage({ botId: bot.id, text: t, attachments: files, requestId });
+        setComposerOutbox(outboxStore, draftId, null);
+        setText("");
+        setAttachments([]);
+        track("message_sent", { driver: bot.modelSelection?.instanceId });
+      } catch (error) {
+        setSendError(error instanceof Error ? error.message : "Bud did not acknowledge that message. Your draft is still here; try again.");
+      } finally {
+        setSending(false);
+      }
+      return;
     }
     setText("");
     setAttachments([]);
   };
   useEffect(() => {
     if (!busy && queued) {
-      if (group) dispatch({ type: "sendGroup", groupId: group.id, text: queued });
-      else if (bot) dispatch({ type: "send", botId: bot.id, text: queued });
+      if (group) dispatch({ type: "sendGroup", groupId: group.id, text: queued.text });
       track("message_sent", { queued: true });
       setQueued(null);
     }
-  }, [busy, queued, bot, group, dispatch]);
+  }, [busy, queued, group, dispatch]);
 
   // native dictation: partials stream into the input while the Swift
   // helper runs; the final transcript stays in the box, ready to edit/send
@@ -207,6 +254,20 @@ export function Composer({
     setRecording((r) => !r);
   };
 
+  const chooseFiles = async () => {
+    if (!window.ogb?.chooseFiles) {
+      setAttachmentError("File selection is available in the RealBud desktop app. You can also drop files here.");
+      return;
+    }
+    setAttachmentError(null);
+    try {
+      const selected = await window.ogb.chooseFiles();
+      addAttachments(selected.map((file) => fileAttachment(file.name, file.path, file.size)));
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : "Those files could not be attached.");
+    }
+  };
+
   return (
     <div className="px-5 pb-5 pt-2">
       {speechError && (
@@ -214,12 +275,29 @@ export function Composer({
           {speechError}
         </div>
       )}
+      {attachmentError && (
+        <div className="mx-auto mb-2 flex max-w-[900px] items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">
+          <span className="min-w-0 flex-1">{attachmentError}</span>
+          <button onClick={() => setAttachmentError(null)} aria-label="Dismiss attachment error" className="shrink-0 rounded p-0.5">
+            <X size={12} />
+          </button>
+        </div>
+      )}
+      {sendError && (
+        <div role="alert" className="mx-auto mb-2 flex max-w-[900px] items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">
+          <span className="min-w-0 flex-1">{sendError}</span>
+          <button onClick={() => setSendError(null)} aria-label="Dismiss send error" className="shrink-0 rounded p-0.5">
+            <X size={12} />
+          </button>
+        </div>
+      )}
       <div className="relative mx-auto max-w-[900px]">
+        {askLead}
         {queued && (
           <div className="mb-2 flex items-center gap-2 rounded-lg border border-hairline/40 bg-panel px-3 py-2 text-[12.5px] text-ink-secondary">
             <Clock size={13} className="shrink-0" />
             <span className="min-w-0 flex-1 truncate">
-              Queued — sends when {busyName} finishes: “{queued}”
+              Queued — sends when {busyName} finishes: “{queued.text}”
             </span>
             <button
               onClick={() => setQueued(null)}
@@ -288,7 +366,20 @@ export function Composer({
           onRemove={removeAttachment}
         />
         <div className="flex items-end gap-2 rounded-lg border border-line bg-sheet py-2 pl-3 pr-2">
+        {!group && window.ogb?.chooseFiles && (
+          <button
+            id={productAsk ? "ask-attach-files" : undefined}
+            onClick={() => void chooseFiles()}
+            disabled={Boolean(approval)}
+            aria-label="Attach files or images"
+            title="Attach files or images"
+            className="flex size-8 shrink-0 items-center justify-center rounded-full text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40"
+          >
+            <Paperclip size={17} />
+          </button>
+        )}
         <textarea
+          id={productAsk ? "ask-bud-composer" : undefined}
           ref={inputRef}
           rows={1}
           value={text}
@@ -342,25 +433,29 @@ export function Composer({
             // Shift+Enter inserts a newline; plain Enter sends
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
-              send();
+              void send();
             }
             if (e.key === "Escape" && recording) setRecording(false);
           }}
-          disabled={Boolean(approval)}
+          disabled={Boolean(approval) || sending}
           placeholder={
             approval
               ? "Answer the approval above to continue"
               : recording
               ? "Listening…"
-              : busy
-                ? `${busyName} is working — Enter queues your message`
+              : sending
+                ? "Waiting for RealBud to save this message…"
+                : busy
+                ? group
+                  ? `${busyName} is working — Enter queues your message`
+                  : `${busyName} is working — your draft stays here`
                 : group
                   ? `Message ${group.name} — ${groupComposerHint(group, members ?? [])}`
                   : productAsk
-                    ? "Ask about a property or this morning’s work"
+                    ? "Ask Bud, paste a list, or attach a file or screenshot"
                     : `Message ${bot?.name ?? ""}`
           }
-          aria-label={productAsk ? "Ask about the book" : `Message ${group ? group.name : (bot?.name ?? "")}`}
+          aria-label={productAsk ? "Message Bud about the book" : `Message ${group ? group.name : (bot?.name ?? "")}`}
           className="max-h-40 w-full resize-none self-center bg-transparent py-1 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none"
         />
         {busy && (
@@ -393,11 +488,12 @@ export function Composer({
         )}
         {hasContent && (
           <button
-            onClick={send}
-            aria-label={busy ? "Queue message" : "Send message"}
-            title={busy ? "Queue — sends when the bot finishes" : "Send"}
+            onClick={() => void send()}
+            disabled={sending || (busy && !group)}
+            aria-label={sending ? "Saving message" : busy ? group ? "Queue message" : "Draft saved while Bud works" : "Send message"}
+            title={sending ? "Waiting for RealBud" : busy ? group ? "Queue — sends when the bot finishes" : "Bud is working; this draft is saved" : "Send"}
             className={cn(
-              "flex size-8 shrink-0 items-center justify-center rounded-full text-white",
+              "flex size-8 shrink-0 items-center justify-center rounded-full text-white disabled:cursor-not-allowed disabled:opacity-55",
               busy ? "bg-raised text-ink-secondary hover:bg-raised-hover" : "bg-accent hover:brightness-110",
             )}
           >

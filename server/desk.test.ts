@@ -1,7 +1,7 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   Desk,
@@ -34,6 +34,29 @@ function property(id: string): Property {
 
 function facts(id: string, patch: Partial<LedgerFacts> = {}): LedgerFacts {
   return { ...fixtureBook().ledger.find((row) => row.propertyId === id)!, ...patch };
+}
+
+function portfolioCsv(
+  patch: Partial<Record<string, Partial<LedgerFacts>>> = {},
+): string {
+  const rows = fixtureBook().properties.map((property) => {
+    const row = {
+      propertyId: property.id,
+      daysSinceDue: 0,
+      rentLanded: true,
+      levyPaid: true,
+      daysSinceCourtesy: null as number | null,
+      ...patch[property.id],
+    };
+    return [
+      row.propertyId,
+      row.daysSinceDue,
+      row.rentLanded,
+      row.levyPaid,
+      row.daysSinceCourtesy ?? "",
+    ].join(",");
+  });
+  return ["propertyId,daysSinceDue,rentLanded,levyPaid,daysSinceCourtesy", ...rows].join("\n");
 }
 
 afterEach(() => {
@@ -166,6 +189,16 @@ describe("Desk morning check", () => {
     expect((desk as unknown as { sendDraft?: unknown }).sendDraft).toBeUndefined();
   });
 
+  it("reopens the complete licensed-person escalation explanation", () => {
+    const { desk, dir, now } = tempDesk();
+    desk.runMorningCheck();
+
+    const escalation = new Desk({ file: join(dir, "desk.json"), now }).snapshot().escalations[0];
+    expect(escalation?.reason).toBe("statutory-clock");
+    expect(escalation?.detail).toMatch(/shop reminder rule, not a legal clock/i);
+    expect(escalation?.detail).toMatch(/will not draft or send one/i);
+  });
+
   it("does not open a second draft on re-run, after allow, or the next day", () => {
     const { desk, now, setNow } = tempDesk();
     desk.runMorningCheck();
@@ -192,7 +225,8 @@ describe("Desk morning check", () => {
     const courtesy = desk.snapshot().drafts.find((d) => d.kind === "courtesy-rent")!;
     const levy = desk.snapshot().drafts.find((d) => d.kind === "levy-from-rent")!;
 
-    const edited = desk.editDraft(courtesy.id, "Hi Sam — still waiting on rent. You have 7 days or we issue a notice.");
+    expect(() => desk.editDraft(courtesy.id, "Hi Sam — still waiting on rent. You have 7 days or we issue a breach notice.")).toThrow(/licensed human/i);
+    const edited = desk.editDraft(courtesy.id, "Hi Sam — still waiting on rent. Please contact the office if you have already paid.");
     expect(edited.status).toBe("pending");
     expect(edited.body).toMatch(/still waiting/);
     expect(edited.body).toMatch(/does not start any notice period/i);
@@ -275,6 +309,19 @@ describe("Desk morning check", () => {
     expect(() => desk.removeProperty("prop-oak")).toThrow(/no such property/);
   });
 
+  it("keeps an archived property out of the compatibility book after restart", () => {
+    const { desk, dir, now } = tempDesk();
+    desk.runMorningCheck();
+    desk.removeProperty("prop-oak");
+
+    const snap = new Desk({ file: join(dir, "desk.json"), now }).snapshot();
+    expect(snap.properties.some((p) => p.id === "prop-oak")).toBe(false);
+    expect(snap.ledger.some((r) => r.propertyId === "prop-oak")).toBe(false);
+    expect(snap.drafts.some((d) => d.propertyId === "prop-oak")).toBe(false);
+    expect(snap.escalations.some((e) => e.propertyId === "prop-oak")).toBe(false);
+    expect(snap.workItems.some((w) => w.propertyId === "prop-oak")).toBe(false);
+  });
+
   it("exposes the ledger facts in the snapshot", () => {
     const { desk } = tempDesk();
     const snap = desk.snapshot();
@@ -349,6 +396,154 @@ describe("Desk morning check", () => {
       fixtureBook().ledger.find((r) => r.propertyId === "prop-harbour")?.daysSinceDue,
     );
     expect(oakBefore.propertyId).toBe("prop-oak");
+    expect(snap.results.find((row) => row.propertyId === "prop-harbour")).toMatchObject({
+      outcome: "hold",
+      reason: "uncovered-source",
+    });
+  });
+
+  it("persists an import identity link, supports idempotent retry and applies it on the next batch", () => {
+    const { desk, dir } = tempDesk();
+    const csv = [
+      "address,daysLate,rentLanded,levyPaid",
+      `"99 Ghost St, Acton ACT",6,false,false`,
+    ].join("\n");
+    const first = desk.importCsv(csv, undefined, desk.revision);
+    const issue = first.book?.importIssues.find((item) => item.status === "open")!;
+    expect(issue).toMatchObject({ rawIdentity: "99 Ghost St, Acton ACT", identityKind: "address" });
+
+    const requestId = "import-link-test-0001";
+    const linked = desk.resolveImportIssue({
+      issueId: issue.id,
+      action: "linked",
+      propertyId: "prop-harbour",
+      expectedRevision: desk.revision,
+      requestId,
+    });
+    expect(linked.book?.importIssues.find((item) => item.id === issue.id)).toMatchObject({
+      status: "linked",
+      linkedPropertyId: "prop-harbour",
+      resolutionCount: 1,
+    });
+    expect(linked.workItems.some((item) => item.id === issue.id)).toBe(false);
+
+    const replay = desk.resolveImportIssue({
+      issueId: issue.id,
+      action: "linked",
+      propertyId: "prop-harbour",
+      expectedRevision: first.revision,
+      requestId,
+    });
+    expect(replay.revision).toBe(linked.revision);
+    expect(() => desk.resolveImportIssue({
+      issueId: issue.id,
+      action: "rejected",
+      expectedRevision: desk.revision,
+      requestId,
+    })).toThrow(/requestId was already used/i);
+
+    const reopened = new Desk({ file: join(dir, "desk.json") });
+    const applied = reopened.importCsv(csv, undefined, reopened.revision);
+    expect(applied.ledger.find((row) => row.propertyId === "prop-harbour")?.daysSinceDue).toBe(6);
+    expect(applied.book?.importIssues.find((item) => item.id === issue.id)).toMatchObject({ status: "linked", resolutionCount: 1 });
+  });
+
+  it("lets the clock re-evaluate admitted PMS evidence without a model call and holds it after expiry", () => {
+    const dir = mkdtempSync(join(tmpdir(), "realbud-desk-scheduled-source-"));
+    dirs.push(dir);
+    let now = new Date(2026, 7, 17, 8, 0, 0).getTime();
+    const hermes = vi.fn(async () => ({ rows: null, detail: "must not run" }));
+    const desk = new Desk({ file: join(dir, "desk.json"), now: () => now, hermes });
+    desk.importCsv(portfolioCsv({
+      "prop-oak": { daysSinceDue: 3, rentLanded: false, levyPaid: false, daysSinceCourtesy: null },
+    }));
+
+    const current = desk.runMorningCheckFromCurrentSource();
+    expect(hermes).not.toHaveBeenCalled();
+    expect(current.hands).toBe("csv");
+    expect(current.handsDetail).toMatch(/latest structured PMS export/i);
+    expect(current.results.find((row) => row.propertyId === "prop-oak")?.outcome).toBe("draft");
+
+    now += 13 * 60 * 60_000;
+    const stale = desk.runMorningCheckFromCurrentSource();
+    expect(hermes).not.toHaveBeenCalled();
+    expect(stale.results.every((row) => row.outcome === "hold")).toBe(true);
+    expect(stale.results.some((row) => row.reason === "stale-source")).toBe(true);
+    expect(stale.workItems.filter((item) => item.kind === "source-incident" && item.state === "held")).toHaveLength(1);
+    expect(stale.workItems.filter((item) => item.state === "held" && item.holdReason === "unknown-facts")).toHaveLength(0);
+  });
+
+  it("supersedes pending wording when a newer complete PMS snapshot changes the facts", () => {
+    const { desk, now, setNow } = tempDesk();
+    const first = desk.importCsv(portfolioCsv({
+      "prop-oak": { daysSinceDue: 3, rentLanded: false, levyPaid: false, daysSinceCourtesy: null },
+    }));
+    const draft = first.drafts.find((item) => item.propertyId === "prop-oak" && item.status === "pending")!;
+    const work = first.workItems.find((item) => item.id === draft.workItemId)!;
+    expect(work).toMatchObject({ state: "proposed", evidenceStatus: "current" });
+    expect(work.evidenceId).toMatch(/^obs-/);
+
+    setNow(now() + 1_000);
+    const paid = desk.importCsv(portfolioCsv());
+    expect(paid.drafts.find((item) => item.id === draft.id)?.status).toBe("stale");
+    expect(paid.workItems.find((item) => item.id === work.id)?.state).toBe("stale");
+    expect(paid.drafts.some((item) => item.propertyId === "prop-oak" && item.status === "pending")).toBe(false);
+    expect(() => desk.allowDraft(draft.id)).toThrow(/superseded/i);
+  });
+
+  it("revalidates exact evidence at Allow and refuses a source that expired after drafting", () => {
+    const { desk, now, setNow } = tempDesk();
+    const first = desk.importCsv(portfolioCsv({
+      "prop-oak": { daysSinceDue: 3, rentLanded: false, levyPaid: false, daysSinceCourtesy: null },
+    }));
+    const draft = first.drafts.find((item) => item.propertyId === "prop-oak" && item.status === "pending")!;
+    setNow(now() + 13 * 60 * 60_000);
+    expect(() => desk.allowDraft(draft.id)).toThrow(/no longer supported by the current PMS evidence/i);
+    expect(desk.snapshot().drafts.find((item) => item.id === draft.id)?.status).toBe("pending");
+  });
+
+  it("holds duplicate property rows as a conflict and never uses last-row-wins", () => {
+    const { desk } = tempDesk();
+    const before = desk.snapshot().ledger.find((row) => row.propertyId === "prop-oak")!;
+    const csv = [
+      "propertyId,daysSinceDue,rentLanded,levyPaid,daysSinceCourtesy",
+      "prop-oak,3,false,false,",
+      "prop-oak,4,false,false,",
+      "prop-pine,0,true,true,",
+    ].join("\n");
+    const snap = desk.importCsv(csv);
+    expect(snap.ledger.find((row) => row.propertyId === "prop-oak")).toEqual(before);
+    expect(snap.results.find((row) => row.propertyId === "prop-oak")).toMatchObject({
+      outcome: "hold",
+      reason: "conflicted-source",
+    });
+    expect(snap.drafts.some((item) => item.propertyId === "prop-oak" && item.status === "pending")).toBe(false);
+  });
+
+  it("never treats worker-produced money rows as PMS authority", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "realbud-worker-evidence-"));
+    dirs.push(dir);
+    const workerRows = fixtureBook().ledger.map((row) => ({ ...row }));
+    const desk = new Desk({
+      file: join(dir, "desk.json"),
+      hermes: async () => ({ rows: workerRows, detail: "Worker returned structured rows." }),
+    });
+    const before = desk.snapshot().ledger;
+    const snap = await desk.runMorningCheckLive();
+    expect(snap.mode).toBe("demo");
+    expect(snap.hands).toBe("held");
+    expect(snap.handsDetail).toMatch(/unverified/i);
+    expect(snap.drafts).toEqual([]);
+    expect(snap.ledger).toEqual(before);
+  });
+
+  it("rejects a stale CSV import before changing facts or live state", () => {
+    const { desk } = tempDesk();
+    const before = desk.snapshot();
+    const csv = `address,daysLate,rentLanded,levyPaid\n"12 Oak Street, Dickson ACT",4,false,false\n`;
+    expect(() => desk.importCsv(csv, undefined, before.revision - 1)).toThrow(/stale desk revision/);
+    expect(desk.snapshot()).toMatchObject({ revision: before.revision, mode: before.mode, hands: before.hands });
+    expect(desk.snapshot().ledger).toEqual(before.ledger);
   });
 
   it("holds an ambiguous address row without applying it or flipping to live", () => {
@@ -366,6 +561,23 @@ describe("Desk morning check", () => {
     expect(snap.hands).not.toBe("csv");
     const held = snap.workItems.find((w) => w.holdReason?.startsWith("ambiguous-match"));
     expect(held?.state).toBe("held");
+    expect(held?.propertyId).toBe("12 Oak St, Dickson ACT");
+    expect(held?.holdReason).toMatch(/2 properties equally \(prop-oak, prop-/);
+  });
+
+  it("reopens the full ambiguous-match explanation", () => {
+    const { desk, dir, now } = tempDesk();
+    desk.addProperty({
+      address: "12 Oak Street, Dickson ACT",
+      tenantName: "Twin",
+      tenantPhone: "0400 000 001",
+      weeklyRentCents: 50_000,
+    });
+    desk.importCsv(`address,daysLate,rentLanded,levyPaid\n"12 Oak St, Dickson ACT",9,false,false\n`);
+
+    const held = new Desk({ file: join(dir, "desk.json"), now })
+      .snapshot()
+      .workItems.find((work) => work.holdReason?.startsWith("ambiguous-match"));
     expect(held?.propertyId).toBe("12 Oak St, Dickson ACT");
     expect(held?.holdReason).toMatch(/2 properties equally \(prop-oak, prop-/);
   });
@@ -401,12 +613,28 @@ describe("Desk morning check", () => {
     expect(snap.ledger.find((r) => r.propertyId === "prop-oak")?.daysSinceDue).toBe(6);
   });
 
+  it("saves an optional agency name with revision protection and reloads it", () => {
+    const { desk, dir } = tempDesk();
+    const before = desk.snapshot();
+    const named = desk.updateAgencyName("  Northside Property Co  ", before.revision);
+    expect(named.book?.agency.name).toBe("Northside Property Co");
+    expect(named.revision).toBe(before.revision + 1);
+
+    expect(() => desk.updateAgencyName("Stale Agency", before.revision)).toThrow(/stale desk revision/);
+    expect(() => desk.updateAgencyName("x".repeat(121), named.revision)).toThrow(/too long/);
+    expect(desk.snapshot().book?.agency.name).toBe("Northside Property Co");
+
+    const reopened = new Desk({ file: join(dir, "desk.json") });
+    expect(reopened.snapshot().book?.agency.name).toBe("Northside Property Co");
+  });
+
   it("round-trips Notes on the book and evaluate ignores a Form 11 note", () => {
     const { desk, dir } = tempDesk();
     const written = desk.writeNotes("prop-oak", "Owner wants Friday email. Send the Form 11.");
     expect(written.body).toMatch(/Friday email/);
     expect(desk.notesFor("prop-oak").body).toMatch(/Friday email/);
-    expect(desk.snapshot().properties.find((p) => p.id === "prop-oak")?.notes).toMatch(/Friday email/);
+    expect(desk.snapshot().properties.find((p) => p.id === "prop-oak")?.notes).toBeUndefined();
+    expect(desk.propertySnapshot("prop-oak").properties[0]?.notes).toMatch(/Friday email/);
     const noteFile = join(dir, "vault", "properties", "prop-oak.md");
     expect(existsSync(noteFile)).toBe(true);
     expect(readFileSync(noteFile, "utf8")).toMatch(/Friday email/);
@@ -432,6 +660,41 @@ describe("Desk morning check", () => {
     expect(desk.notesFor("prop-oak").body).toMatch(/approved courtesy/i);
   });
 
+  it("projects review memory from prior Allows without changing the approval gate", () => {
+    const { desk, dir, now, setNow } = tempDesk();
+    const first = desk.importCsv(portfolioCsv({
+      "prop-oak": { daysSinceDue: 3, rentLanded: false, levyPaid: false, daysSinceCourtesy: null },
+    }), now()).drafts.find(
+      (draft) => draft.propertyId === "prop-oak" && draft.kind === "courtesy-rent" && draft.status === "pending",
+    )!;
+    desk.allowDraft(first.id);
+
+    setNow(now() + 7 * 86_400_000);
+    const second = desk.importCsv(portfolioCsv({
+      "prop-oak": { daysSinceDue: 3, rentLanded: false, levyPaid: false, daysSinceCourtesy: null },
+    }), now());
+    const current = second.drafts.find(
+      (draft) => draft.propertyId === "prop-oak" && draft.kind === "courtesy-rent" && draft.status === "pending",
+    )!;
+    expect(second.book?.reviewAssist?.find((item) => item.proposalId === current.id)).toMatchObject({
+      mode: "familiar",
+      priorAllowedCount: 1,
+      evidence: "current",
+      recipient: "same",
+      channel: "same",
+      wording: "same",
+    });
+    expect(current.status).toBe("pending");
+
+    const reopened = new Desk({ file: join(dir, "desk.json"), now });
+    expect(reopened.snapshot().book?.reviewAssist?.find((item) => item.proposalId === current.id)?.mode).toBe("familiar");
+
+    reopened.editDraft(current.id, "Hi Sam, please contact the office about your account.");
+    const edited = reopened.snapshot().book?.reviewAssist?.find((item) => item.proposalId === current.id);
+    expect(edited).toMatchObject({ mode: "attention", editedOnCard: true, wording: "changed" });
+    expect(reopened.snapshot().drafts.find((draft) => draft.id === current.id)?.status).toBe("pending");
+  });
+
   it("stages Bud intake as book proposals; allow adds, deny drops, duplicates skip", () => {
     const { desk } = tempDesk();
     const result = desk.proposeBook({
@@ -439,10 +702,11 @@ describe("Desk morning check", () => {
         { address: "7 Intake St, Braddon ACT", tenantName: "Kai Tan", tenantPhone: "0400 555 999", weeklyRentCents: 60_000 },
         { address: "7 Intake St, Braddon ACT", tenantName: "Kai Tan", tenantPhone: "0400 555 999", weeklyRentCents: 60_000 },
         { address: "12 Oak St, Dickson ACT", tenantName: "Someone", tenantPhone: "0400 000 111", weeklyRentCents: 50_000 },
+        { address: "!!!", tenantName: "Not an address", tenantPhone: "0400 000 222", weeklyRentCents: 50_000 },
       ],
     }, "ask");
-    expect(result.created).toBe(1); // second is a duplicate, third matches an existing property
-    expect(result.skipped).toBe(2);
+    expect(result.created).toBe(1); // duplicate, existing address, and malformed address are all skipped
+    expect(result.skipped).toBe(3);
 
     const before = desk.snapshot().properties.length;
     const proposal = desk.snapshot().book!.bookProposals[0]!;
@@ -456,6 +720,140 @@ describe("Desk morning check", () => {
     const drop = desk.snapshot().book!.bookProposals[0]!;
     const afterDeny = desk.denyBookProposal(drop.id);
     expect(afterDeny.properties.some((p) => p.address === "9 Drop St")).toBe(false);
+  });
+
+  it("allows the visible intake set with one revision bump and one encrypted commit", () => {
+    const { desk, dir, now } = tempDesk();
+    const beforeCount = desk.snapshot().properties.length;
+    const staged = desk.proposeBook({
+      items: Array.from({ length: 12 }, (_, index) => ({
+        address: `${index + 1} Batch Street, Braddon ACT`,
+        tenantName: `Batch Tenant ${index + 1}`,
+        tenantPhone: `0400 100 ${String(index).padStart(3, "0")}`,
+        weeklyRentCents: 50_000 + index,
+      })),
+    });
+    expect(staged).toMatchObject({ created: 12, skipped: 0 });
+    const before = desk.snapshot();
+    const ids = before.book!.bookProposals.map((proposal) => proposal.id);
+
+    const allowed = desk.allowBookProposals(ids, before.revision);
+    expect(allowed.revision).toBe(before.revision + 1);
+    expect(allowed.properties).toHaveLength(beforeCount + 12);
+    expect(allowed.book!.bookProposals).toHaveLength(0);
+    expect(readdirSync(join(dir, "desk-backups")).filter((name) => /^desk-\d+\.json$/.test(name))).toHaveLength(1);
+    expect(desk.notesFor(allowed.properties.find((property) => property.address.startsWith("1 Batch Street"))!.id).body).toMatch(
+      /added from Bud intake/,
+    );
+    const decisionDay = new Date(now()).toISOString().slice(0, 10);
+    const decisionLog = readFileSync(join(dir, "vault", "decisions", `${decisionDay}.md`), "utf8");
+    expect(decisionLog.match(/added from Bud intake/g)).toHaveLength(12);
+
+    const reopened = new Desk({ file: join(dir, "desk.json"), now });
+    expect(reopened.snapshot().properties).toHaveLength(beforeCount + 12);
+    expect(reopened.snapshot().book!.bookProposals).toHaveLength(0);
+  });
+
+  it("rejects an invalid, duplicate, missing, or stale batch without a partial add", () => {
+    const { desk } = tempDesk();
+    const baseline = desk.snapshot();
+    const valid = {
+      address: "88 Atomic Street, Braddon ACT",
+      tenantName: "Atomic One",
+      tenantPhone: "0400 888 001",
+      weeklyRentCents: 58_000,
+    };
+
+    expect(() => desk.addProperties([valid, { ...valid, address: "", tenantName: "Broken" }])).toThrow(/address required/);
+    expect(desk.snapshot().properties).toHaveLength(baseline.properties.length);
+    expect(desk.revision).toBe(baseline.revision);
+
+    expect(() =>
+      desk.addProperties([
+        valid,
+        { ...valid, address: "88 Atomic St, Braddon ACT", tenantName: "Atomic Two" },
+      ]),
+    ).toThrow(/already exists/);
+    expect(desk.snapshot().properties).toHaveLength(baseline.properties.length);
+
+    desk.proposeBook({ items: [valid, { ...valid, address: "89 Atomic St, Braddon ACT", tenantName: "Atomic Two" }] });
+    const proposed = desk.snapshot();
+    const ids = proposed.book!.bookProposals.map((proposal) => proposal.id);
+    expect(() => desk.allowBookProposals([ids[0]!, ids[0]!], proposed.revision)).toThrow(/unique/);
+    expect(() => desk.allowBookProposals([ids[0]!, "book-missing"], proposed.revision)).toThrow(/no such book proposal/);
+    expect(desk.snapshot().properties).toHaveLength(baseline.properties.length);
+    expect(desk.snapshot().book!.bookProposals).toHaveLength(2);
+
+    desk.runMorningCheck();
+    expect(() => desk.allowBookProposals(ids, proposed.revision)).toThrow(/stale desk revision/);
+    expect(desk.snapshot().properties).toHaveLength(baseline.properties.length);
+    expect(desk.snapshot().book!.bookProposals).toHaveLength(2);
+  });
+
+  it("restores proposals, book state, and new note files when the batch commit fails", () => {
+    const { desk, dir } = tempDesk();
+    desk.proposeBook({
+      items: [
+        { address: "91 Rollback St, Braddon ACT", tenantName: "Rollback One", tenantPhone: "0400 910 001", weeklyRentCents: 59_000 },
+        { address: "92 Rollback St, Braddon ACT", tenantName: "Rollback Two", tenantPhone: "0400 920 002", weeklyRentCents: 60_000 },
+      ],
+    });
+    const before = desk.snapshot();
+    const ids = before.book!.bookProposals.map((proposal) => proposal.id);
+    const noteDir = join(dir, "vault", "properties");
+    const decisionDir = join(dir, "vault", "decisions");
+    const notesBefore = readdirSync(noteDir).sort();
+    const decisionsBefore = readdirSync(decisionDir).sort();
+    const store = (desk as unknown as { store: { persist(): void } }).store;
+    const persist = vi.spyOn(store, "persist").mockImplementationOnce(() => {
+      throw new Error("simulated encrypted commit failure");
+    });
+
+    expect(() => desk.allowBookProposals(ids, before.revision)).toThrow(/simulated encrypted commit failure/);
+    persist.mockRestore();
+    const after = desk.snapshot();
+    expect(after.revision).toBe(before.revision);
+    expect(after.properties).toHaveLength(before.properties.length);
+    expect(after.book!.bookProposals.map((proposal) => proposal.id)).toEqual(ids);
+    expect(readdirSync(noteDir).sort()).toEqual(notesBefore);
+    expect(readdirSync(decisionDir).sort()).toEqual(decisionsBefore);
+  });
+
+  it("keeps a fully replaced batch when only final durability confirmation fails", () => {
+    const { desk, dir, now } = tempDesk();
+    desk.proposeBook({
+      items: [
+        { address: "93 Durable St, Braddon ACT", tenantName: "Durable One", tenantPhone: "0400 930 001", weeklyRentCents: 61_000 },
+        { address: "94 Durable St, Braddon ACT", tenantName: "Durable Two", tenantPhone: "0400 940 002", weeklyRentCents: 62_000 },
+      ],
+    });
+    const before = desk.snapshot();
+    const ids = before.book!.bookProposals.map((proposal) => proposal.id);
+    const store = (desk as unknown as { store: { persist(): void } }).store;
+    const originalPersist = store.persist.bind(store);
+    const persist = vi.spyOn(store, "persist").mockImplementationOnce(() => {
+      originalPersist();
+      throw new Error("simulated directory fsync failure after replace");
+    });
+
+    expect(() => desk.allowBookProposals(ids, before.revision)).toThrow(/saved the full batch/);
+    persist.mockRestore();
+    const after = desk.snapshot();
+    expect(after.revision).toBe(before.revision + 1);
+    expect(after.properties).toHaveLength(before.properties.length + 2);
+    expect(after.book!.bookProposals).toHaveLength(0);
+    expect(after.recovery.active).toBe(true);
+    expect(after.properties.filter((property) => property.address.includes("Durable St")).every((property) =>
+      desk.propertySnapshot(property.id).properties[0]?.notes?.includes("added from Bud intake"),
+    )).toBe(true);
+    expect(() =>
+      desk.addProperty({ address: "95 Blocked St", tenantName: "Wait", tenantPhone: "0400 950 003", weeklyRentCents: 63_000 }),
+    ).toThrow(/read-only in recovery/);
+
+    const reopened = new Desk({ file: join(dir, "desk.json"), now });
+    expect(reopened.snapshot().properties).toHaveLength(before.properties.length + 2);
+    expect(reopened.snapshot().book!.bookProposals).toHaveLength(0);
+    expect(reopened.recovery.active).toBe(false);
   });
 
   it("parses pasted intake text into staged proposals and reports garbage", () => {
@@ -505,26 +903,36 @@ describe("Desk morning check", () => {
     expect(snap.workItems.some((w) => w.holdReason === "reversed")).toBe(true);
   });
 
-  // KNOWN V3 COST: every add runs the full encrypted commit protocol
-  // (fsync per add ≈ 38ms), so 194 sequential adds exceed the default
-  // budget. Batching persists for bulk adds is the tracked fix — see
-  // PRODUCT-DESIGN-PLAN.md "Known V3 perf bottleneck". The assertions here
-  // (snapshot size, no artifact bytes) are the actual contract.
-  it("evaluates 200 properties without putting artifact bytes on the snapshot", { timeout: 30_000 }, () => {
+  it("allows 194 staged properties in one commit and keeps the 200-property snapshot bounded", () => {
     const { desk } = tempDesk();
-    for (let i = 0; i < 194; i++) {
-      desk.addProperty({
-        address: `${i} Scale St, Acton ACT`,
-        tenantName: "Scale Tester",
-        tenantPhone: "0400 000 000",
-        weeklyRentCents: 50_000,
-      });
-    }
+    const items = Array.from({ length: 194 }, (_, i) => ({
+      address: `${i} Scale St, Acton ACT`,
+      tenantName: "Scale Tester",
+      tenantPhone: "0400 000 000",
+      weeklyRentCents: 50_000,
+    }));
+    expect(desk.proposeBook({ items })).toMatchObject({ created: 194, skipped: 0 });
+    const beforeRevision = desk.revision;
+    const ids = desk.snapshot().book!.bookProposals.map((proposal) => proposal.id);
+    const added = desk.allowBookProposals(ids, beforeRevision);
+    expect(added.revision).toBe(beforeRevision + 1);
+    expect(added.properties).toHaveLength(200);
+    expect(() =>
+      desk.addProperties([
+        { address: "201 Scale St, Acton ACT", tenantName: "Over Capacity", tenantPhone: "0400 000 001", weeklyRentCents: 50_000 },
+      ]),
+    ).toThrow(/book is full/);
+    expect(desk.snapshot().properties).toHaveLength(200);
     const snap = desk.runMorningCheck();
     expect(snap.properties.length).toBe(200);
-    const encoded = JSON.stringify(snap);
+    const queue = desk.queueSnapshot();
+    expect(queue.properties).toHaveLength(200);
+    expect(queue.book?.contacts).toEqual([]);
+    expect(queue.book?.tenancies).toEqual([]);
+    expect(queue.properties.every((property) => property.notes === undefined)).toBe(true);
+    const encoded = JSON.stringify(queue);
     expect(encoded).not.toMatch(/"ct":/);
-    expect(encoded.length).toBeLessThan(2_000_000);
+    expect(encoded.length).toBeLessThan(750_000);
   });
 
   it("does not mint a portal capability from a non-portal approval or a scheduled check", () => {

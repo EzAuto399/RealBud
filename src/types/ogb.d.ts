@@ -24,6 +24,7 @@ declare global {
     localComputer: {
       available: boolean;
       support: "supported" | "limited" | "unsupported";
+      runtime: "bundled" | "development" | "none";
       reasonCode?: string;
     };
   };
@@ -32,6 +33,8 @@ declare global {
     ogb?: {
       platform: NodeJS.Platform;
       getCapabilities(): Promise<DesktopCapabilities>;
+      enableComputerUse(): Promise<DesktopCapabilities>;
+      disableComputerUse(): Promise<DesktopCapabilities>;
       screenFrame(): Promise<string | null>;
       /** Start native dictation. Call mode supplies endpointMs so silence
        * finalizes a turn; composer dictation omits it and remains manual. */
@@ -46,14 +49,28 @@ declare global {
       /** Absolute path of a dropped File ("" when the drag carried no
        * file on disk). Absent in older builds of the shell. */
       getPathForFile?(file: File): string;
+      /** Open the native multi-file picker. Cancel resolves to an empty list. */
+      chooseFiles?(): Promise<Array<{ path: string; name: string; size: number }>>;
+      /** Show one code-owned, privacy-safe routine reminder. Visible copy is
+       * constructed in Electron and never includes property or tenant data. */
+      notifyRoutine?(input: { runId: string; kind: "failed" | "held" }): Promise<{
+        shown: boolean;
+        duplicate?: boolean;
+        reason?: "invalid" | "unsupported" | "failed";
+      }>;
+      onRoutineReminderOpened?(
+        cb: (input: { runId: string; kind: "failed" | "held" }) => void,
+      ): () => void;
       /** {mic} TCC status: granted|denied|not-determined|unknown. Screen
        * status is deliberately absent — macOS 15+ caches it per-process,
        * so it lies for the whole session after a grant. */
       permStatus(): Promise<{ mic: string }>;
       /** Triggers the macOS microphone prompt; resolves true when granted. */
       permRequestMic(): Promise<boolean>;
-      /** Opens System Settings on a privacy pane: mic|screen|speech. */
-      permOpenSettings(pane: "mic" | "screen" | "speech"): Promise<void>;
+      /** Opens System Settings on a privacy pane. */
+      permOpenSettings(pane: "accessibility" | "mic" | "screen" | "speech"): Promise<void>;
+      /** Open an https URL in the OS browser. Never navigates this window. */
+      openExternal?(url: string): Promise<boolean>;
       /** Copies an engine install command and opens a blank terminal. False
        * when no terminal could be launched; the clipboard still has it. */
       openInstallTerminal?(command: string): Promise<boolean>;

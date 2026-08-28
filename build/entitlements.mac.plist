@@ -6,8 +6,9 @@
     <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
     <true/>
-    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
-    <true/>
+    <!-- The packaged CUA SDK is third-party native code loaded by Electron.
+         Keep this narrowly required entitlement, but never allow DYLD
+         environment injection in production. -->
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
   </dict>

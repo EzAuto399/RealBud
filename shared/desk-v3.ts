@@ -7,8 +7,11 @@ import {
   type BookMode,
   type DraftKind,
   type HandsSource,
+  type InboundCaseDetail,
   type NotifyChannel,
   type PropertyOptions,
+  type SourceIncidentDetail,
+  type WorkLifecycle,
   type WorkState,
 } from "./contracts.ts";
 
@@ -21,11 +24,12 @@ export const CASE_KINDS = [
   "maintenance-intake",
   "lease-review",
   "inspection-prep",
+  "source-incident",
   "licensee-required",
 ] as const;
 
 export const EVIDENCE_AUTHORITIES = ["pms", "demo", "legacy-unverified"] as const;
-export const EVIDENCE_COLLECTORS = ["csv", "hermes", "bounded-portal", "migration"] as const;
+export const EVIDENCE_COLLECTORS = ["csv", "hermes", "bounded-portal", "mail", "migration"] as const;
 export const MONEY_POSITION_STATUSES = ["current", "stale", "conflicted", "requires-recheck"] as const;
 export const DECISION_KINDS = ["allow", "deny", "copy", "done"] as const;
 export const CONTACT_ROLES = ["tenant", "occupant", "owner", "tradie"] as const;
@@ -61,6 +65,7 @@ export const CASE_STATES = [
   "stale",
   "superseded",
   "cancelled",
+  "waiting",
   "effect-unknown",
   "handoff-expired",
 ] as const satisfies readonly WorkState[];
@@ -162,9 +167,19 @@ export interface ImportIssue {
   status: ImportIssueStatus;
   sourceId: string;
   rawIdentity: string;
+  identityKind?: "id" | "address" | "code";
   candidates: string[];
   createdAt: number;
   linkedPropertyId?: string;
+  resolvedAt?: number;
+  resolvedBy?: string;
+  resolutions?: Array<{
+    id: string;
+    action: "linked" | "rejected";
+    propertyId?: string;
+    actorId: string;
+    at: number;
+  }>;
 }
 
 export interface RoutineOrigin {
@@ -186,19 +201,28 @@ export interface Case {
   periodDueAt?: number;
   occurrenceKey?: string;
   sourceIds?: string[];
+  evidenceIds?: string[];
+  evidenceStatus?: MoneyPositionStatus;
+  evidenceStaleAt?: number;
+  observedAt?: number;
   proposalHash?: string;
   artifactIds?: string[];
+  inbound?: InboundCaseDetail;
+  lifecycle?: WorkLifecycle;
+  sourceIncident?: SourceIncidentDetail;
   createdAt: number;
   updatedAt: number;
 }
 
 export interface EvidencePayload {
+  coverage?: "observed" | "missing" | "conflicted";
   daysSinceDue?: number;
   rentLanded?: boolean;
   levyPaid?: boolean;
   daysSinceCourtesy?: number | null;
   amountPaidCents?: number | null;
   reversed?: boolean;
+  inbound?: InboundCaseDetail;
 }
 
 export interface Evidence {

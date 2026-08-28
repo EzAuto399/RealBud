@@ -85,7 +85,7 @@ export function ComposerAttachments({
       {dragging && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-10">
           <div className="rounded-2xl border-2 border-dashed border-accent/70 bg-panel/90 px-8 py-6 text-[14px] font-medium text-ink shadow-2xl">
-            Drop to attach — the bot gets the file path
+            Drop to attach — Bud reviews only what you choose
           </div>
         </div>
       )}
@@ -114,12 +114,12 @@ export function ComposerAttachments({
                 onRemove={() => onRemove(a.id)}
               >
                 <div className="relative h-[76px] overflow-hidden">
-                  <pre className="whitespace-pre-wrap break-words font-mono text-[10.5px] leading-[1.45] text-ink-secondary">
+                  <pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-[1.45] text-ink-secondary">
                     {a.text.slice(0, 400)}
                   </pre>
                   <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-b from-transparent to-raised" />
                 </div>
-                <div className="mt-1 text-[10.5px] text-ink-secondary/70">{pasteSummary(a)}</div>
+                <div className="mt-1 text-[12px] text-ink-secondary/70">{pasteSummary(a)}</div>
               </Chip>
             ) : (
               <Chip key={a.id} label="FILE" title={a.path} onRemove={() => onRemove(a.id)}>
@@ -127,7 +127,7 @@ export function ComposerAttachments({
                   <FileIcon size={16} className="shrink-0 text-ink-secondary" />
                   <div className="min-w-0">
                     <div className="truncate text-[12px] text-ink">{a.name}</div>
-                    <div className="text-[10.5px] text-ink-secondary/70">{formatSize(a.size)}</div>
+                    <div className="text-[12px] text-ink-secondary/70">{formatSize(a.size)}</div>
                   </div>
                 </div>
               </Chip>
@@ -162,7 +162,7 @@ function Chip({
       {children}
       <div className="mt-1 flex items-center gap-1">
         <Icon size={11} className="text-ink-secondary/70" />
-        <span className="rounded border border-hairline/60 px-1 py-px text-[9.5px] font-medium tracking-wide text-ink-secondary">
+        <span className="rounded border border-hairline/60 px-1 py-px text-[12px] font-medium tracking-wide text-ink-secondary">
           {label}
         </span>
       </div>

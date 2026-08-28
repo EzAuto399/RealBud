@@ -48,6 +48,40 @@ describe("applyPropertyPack", () => {
     const again = readFileSync(join(first.dir, "config.yaml"), "utf8");
     expect(again).toMatch(/default:\s*grok-4\.5/);
     expect(readFileSync(join(first.dir, ".env"), "utf8")).toContain("keep-me");
+    expect(packInstalled(home)).toBe(true);
+  });
+
+  it("fails closed on a modified pack or stale skill and repairs both on re-apply", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-hermes-"));
+    dirs.push(home);
+    const installed = applyPropertyPack(home);
+    writeFileSync(join(installed.dir, "SOUL.md"), "modified\n");
+    expect(packInstalled(home)).toBe(false);
+    applyPropertyPack(home);
+    expect(packInstalled(home)).toBe(true);
+
+    writeFileSync(join(installed.dir, "skills", "morning-arrears", "SKILL.md"), "stale skill\n");
+    expect(packInstalled(home)).toBe(false);
+    applyPropertyPack(home);
+    expect(packInstalled(home)).toBe(true);
+  });
+
+  it("stays installed when the worker adds bundled skills beside the pack", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-hermes-"));
+    dirs.push(home);
+    const installed = applyPropertyPack(home);
+    writeFileSync(join(installed.dir, "skills", ".bundled_manifest"), "hermes-owned\n");
+    writeFileSync(join(installed.dir, "skills", "unowned.md"), "extra capability\n");
+    expect(packInstalled(home)).toBe(true);
+  });
+
+  it("requires manual approvals, cron deny, no toolsets and no terminal", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-hermes-"));
+    dirs.push(home);
+    const installed = applyPropertyPack(home);
+    const config = join(installed.dir, "config.yaml");
+    writeFileSync(config, readFileSync(config, "utf8").replace("cron_mode: deny", "cron_mode: allow"));
+    expect(approvalsAreManual(home)).toBe(false);
   });
 });
 

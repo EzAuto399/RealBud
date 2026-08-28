@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { decryptJson, isEncryptedEnvelope } from "./desk-crypto.ts";
+import { AtomicWriteError, writeFileAtomic } from "./atomic.ts";
 import { DeskStore } from "./desk-store.ts";
 import { fixtureBook } from "./desk-evaluate.ts";
 
@@ -79,5 +80,74 @@ describe("DeskStore", () => {
     const lost = new DeskStore({ file, book: fixtureBook(), key: other });
     expect(lost.recovery.active).toBe(true);
     expect(lost.data.properties).toEqual([]);
+  });
+
+  it("restores the committed V3 projection when an ordinary write is proven not to have landed", () => {
+    const { file, key } = tempFile();
+    let fail = false;
+    const store = new DeskStore({
+      file,
+      book: fixtureBook(),
+      key,
+      authorityWriter(path, data) {
+        if (fail) throw new AtomicWriteError("not-landed", new Error("fixture write failure"));
+        writeFileAtomic(path, data);
+      },
+    });
+    const before = structuredClone(store.data);
+    store.data.handsDetail = "must roll back";
+    fail = true;
+    try {
+      store.persist();
+      throw new Error("expected persistence to fail");
+    } catch (error) {
+      expect((error as { code?: string }).code).toBe("commit-not-landed");
+    }
+    expect(store.recovery.active).toBe(false);
+    expect(store.data).toEqual(before);
+    const reopened = new DeskStore({ file, book: fixtureBook(), key });
+    expect(reopened.data).toEqual(before);
+  });
+
+  it("keeps the exact candidate visible read-only when replacement landed but confirmation failed", () => {
+    const { file, key } = tempFile();
+    let failAfterWrite = false;
+    const store = new DeskStore({
+      file,
+      book: fixtureBook(),
+      key,
+      authorityWriter(path, data) {
+        writeFileAtomic(path, data);
+        if (failAfterWrite) throw new Error("fixture confirmation failure");
+      },
+    });
+    const beforeRevision = store.data.revision;
+    store.data.handsDetail = "landed candidate";
+    failAfterWrite = true;
+    try {
+      store.persist();
+      throw new Error("expected persistence to fail closed");
+    } catch (error) {
+      expect((error as { code?: string }).code).toBe("commit-outcome-unknown");
+    }
+    expect(store.recovery.active).toBe(true);
+    expect(store.data.revision).toBe(beforeRevision + 1);
+    expect(store.data.handsDetail).toBe("landed candidate");
+    expect(() => store.persist()).toThrow(/read-only/);
+
+    const reopened = new DeskStore({ file, book: fixtureBook(), key });
+    expect(reopened.recovery.active).toBe(false);
+    expect(reopened.data.revision).toBe(beforeRevision + 1);
+    expect(reopened.data.handsDetail).toBe("landed candidate");
+  });
+
+  it("rolls back an invalid compatibility mutation before any disk write", () => {
+    const { file, key } = tempFile();
+    const store = new DeskStore({ file, book: fixtureBook(), key });
+    const before = structuredClone(store.data);
+    store.data.retentionDays = 0;
+    expect(() => store.persist()).toThrow(/retentionDays/);
+    expect(store.data).toEqual(before);
+    expect(store.recovery.active).toBe(false);
   });
 });

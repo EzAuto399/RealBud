@@ -16,7 +16,11 @@ import {
 import type { MausColor, MausMotion } from "@/lib/mascot";
 import type { Loop, LoopId, LoopRun } from "@/lib/routines";
 import type { DeskSnapshot } from "@/lib/desk";
+import { honoredSetupRequest, type AskActionProposal, type AskConnectRequest, type AskSetupTarget } from "@shared/ask-actions";
+import { popAskConnectState, pushAskConnectState, replaceAskConnectState } from "@/lib/ask-connect";
 import { currentCall } from "@/lib/call";
+import { readActiveView, writeActiveView } from "@/lib/active-view";
+import { openResilientEventStream } from "@/lib/event-stream";
 import { speaker } from "@/lib/tts";
 
 export type { MausColor } from "@/lib/mascot";
@@ -40,9 +44,15 @@ export interface OptionCardData {
 export interface Message {
   id: string;
   role: "bot" | "user";
-  kind: "text" | "options" | "activity" | "screen";
+  kind: "text" | "options" | "activity" | "screen" | "action";
   text?: string;
+  requestId?: string;
+  requestDigest?: string;
+  requestState?: "admitted" | "dispatching" | "settled" | "held";
+  requestAttachmentCount?: number;
+  requestStatusDetail?: string;
   card?: OptionCardData;
+  action?: AskActionProposal;
   /** activity messages: tool name + outcome. `spoken` is the server's
    * narration of the same chip ("reading a file"), used by call mode. */
   /** `setup` marks an error fixed by installing something, not by retrying. */
@@ -165,8 +175,56 @@ export interface ConfigStatus {
    * a voice, which is what it takes to actually speak. The key itself is
    * never echoed back. */
   tts?: { configured: boolean; ready: boolean; voice: string };
+  pocket?: {
+    provider: "multi-channel";
+    configured: boolean;
+    enabled: boolean;
+    pilotReady: boolean;
+    state: "off" | "pilot-gated" | "setup-required" | "connecting" | "ready" | "attention";
+    detail: string;
+    connectedCount: number;
+    channels: {
+      telegram: {
+        provider: "telegram";
+        configured: boolean;
+        enabled: boolean;
+        pilotReady: boolean;
+        state: "off" | "pilot-gated" | "setup-required" | "connecting" | "ready" | "attention";
+        detail: string;
+        allowedUserId: string;
+        botUsername: string | null;
+        lastInboundAt: number | null;
+        deliveryUncertain: boolean;
+      };
+      whatsappCloud: {
+        provider: "whatsapp-cloud";
+        configured: boolean;
+        enabled: boolean;
+        pilotReady: boolean;
+        state: "off" | "pilot-gated" | "setup-required" | "connecting" | "ready" | "attention";
+        detail: string;
+        allowedUserId: string;
+        phoneNumberId: string;
+        displayPhoneNumber: string | null;
+        verifiedName: string | null;
+        webhookPort: number;
+        webhookPath: string;
+        webhookVerifiedAt: number | null;
+        lastInboundAt: number | null;
+        deliveryUncertain: boolean;
+      };
+    };
+  };
   /** who's using the app — collected in onboarding, shown in the sidebar */
   profile?: { name: string; email: string };
+  localRecovery?: {
+    active: boolean;
+    issues: Array<{
+      area: "configuration" | "assistant roster" | "conversation history" | "routine clock";
+      action: "restored-previous" | "attention";
+      detail: string;
+    }>;
+  };
 }
 
 /** How an engine gets installed — declared by its driver, mirrors
@@ -196,11 +254,12 @@ export interface InstanceInfo {
 }
 
 export type AppSettingsSection = "general" | "connections" | "voice" | "computer";
+export type YouFocusTarget = AskSetupTarget | "agency" | "computer-use" | "recovery";
 
 /** GET /api/hermes — how the pinned worker is doing. Never any secrets. */
 export interface HermesStatus {
   pin: { product: string; tag: string; commit: string; profile: string };
-  cli: { installed: boolean; versionText: string | null; matchesPin: boolean };
+  cli: { installed: boolean; versionText: string | null; matchesPin: boolean; installId: string | null };
   pack: { installed: boolean; approvalsManual: boolean };
   homeDir: string;
   profileDir: string;
@@ -208,6 +267,17 @@ export interface HermesStatus {
   signInCommand: string;
   detail: string;
   ready: boolean;
+  runtimeRecovery?: {
+    action: "none" | "restored-previous" | "discarded-staging" | "quarantined-staging" | "attention";
+    detail: string;
+    previousAvailable: boolean;
+  };
+  modelRecovery?: {
+    action: "none" | "restored-previous" | "attention";
+    detail: string;
+  };
+  /** Write-only credentials are never returned; only safe attach state. */
+  model?: { provider: string | null; model: string | null; keyPresent: boolean; keyHint: string | null } | null;
 }
 
 interface AppState {
@@ -223,6 +293,13 @@ interface AppState {
   loopRuns: LoopRun[];
   /** latest Desk snapshot pushed by the server (a clock loop pressed Recheck) */
   desk: DeskSnapshot | null;
+  /** One-shot setup handoff from Ask into the existing You → Worker card. */
+  youFocus: YouFocusTarget | null;
+  /** In-Ask connection sheet. Named setup stays on Ask instead of opening You. */
+  askConnect: AskConnectRequest | null;
+  /** Previous cards when the PM picks another source inside the sheet. */
+  askConnectStack: AskConnectRequest[];
+  setupReturnView: "ask" | null;
   settingsOpen: boolean;
   pluginsOpen: boolean;
   computerOpen: boolean;
@@ -246,7 +323,11 @@ type Action =
   | { type: "showRoutines" }
   | { type: "showDesk" }
   | { type: "showAsk" }
-  | { type: "showYou" }
+  | { type: "showYou"; focus?: YouFocusTarget; returnTo?: "ask" }
+  | { type: "openAskConnect"; target: AskSetupTarget; service?: string }
+  | { type: "pushAskConnect"; target: AskSetupTarget; service?: string }
+  | { type: "popAskConnect" }
+  | { type: "closeAskConnect" }
   | { type: "loopsHydrated"; loops: Loop[]; runs: LoopRun[] }
   | { type: "loopPatched"; loop: Loop }
   | { type: "loopRunPatched"; run: LoopRun }
@@ -269,7 +350,12 @@ type Action =
   | { type: "configStatus"; config: ConfigStatus }
   | { type: "hermesStatus"; status: HermesStatus }
   | { type: "select"; id: string }
-  | { type: "send"; botId: string; text: string }
+  | {
+      type: "send";
+      botId: string;
+      text: string;
+      attachments?: Array<{ path: string; name: string; size: number }>;
+    }
   | { type: "editMessage"; botId: string; messageId: string; text: string }
   | { type: "switchBranch"; botId: string; messageId: string }
   | { type: "threadActive"; threadId: string; activeLeafId: string }
@@ -371,6 +457,10 @@ function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         activeView: "schedule",
+        youFocus: null,
+        askConnect: null,
+        askConnectStack: [],
+        setupReturnView: null,
         settingsOpen: false,
         computerOpen: false,
         appSettingsOpen: false,
@@ -380,6 +470,10 @@ function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         activeView: "desk",
+        youFocus: null,
+        askConnect: null,
+        askConnectStack: [],
+        setupReturnView: null,
         settingsOpen: false,
         computerOpen: false,
         appSettingsOpen: false,
@@ -391,6 +485,8 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         activeView: "ask",
         selectedId: bud?.id ?? state.selectedId,
+        youFocus: null,
+        setupReturnView: null,
         settingsOpen: false,
         computerOpen: false,
         appSettingsOpen: false,
@@ -401,11 +497,53 @@ function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         activeView: "you",
+        youFocus: action.focus ?? null,
+        askConnect: null,
+        askConnectStack: [],
+        setupReturnView: action.returnTo ?? null,
         settingsOpen: false,
         computerOpen: false,
         appSettingsOpen: false,
         pluginsOpen: false,
       };
+    case "openAskConnect": {
+      const next = replaceAskConnectState({
+        target: action.target,
+        ...(action.service?.trim() ? { service: action.service.trim() } : {}),
+      });
+      return {
+        ...state,
+        activeView: "ask",
+        ...next,
+        youFocus: null,
+        setupReturnView: null,
+        settingsOpen: false,
+        computerOpen: false,
+        appSettingsOpen: false,
+        pluginsOpen: false,
+      };
+    }
+    case "pushAskConnect": {
+      const next = pushAskConnectState(state.askConnect, state.askConnectStack, {
+        target: action.target,
+        ...(action.service?.trim() ? { service: action.service.trim() } : {}),
+      });
+      return {
+        ...state,
+        activeView: "ask",
+        ...next,
+        youFocus: null,
+        setupReturnView: null,
+        settingsOpen: false,
+        computerOpen: false,
+        appSettingsOpen: false,
+        pluginsOpen: false,
+      };
+    }
+    case "popAskConnect":
+      return { ...state, ...popAskConnectState(state.askConnectStack) };
+    case "closeAskConnect":
+      return { ...state, askConnect: null, askConnectStack: [] };
     case "loopsHydrated":
       return { ...state, loops: action.loops, loopRuns: action.runs };
     case "loopPatched": {
@@ -441,7 +579,18 @@ function reducer(state: AppState, action: Action): AppState {
     case "instances":
       return { ...state, instances: action.instances };
     case "configStatus":
-      return { ...state, config: action.config };
+      return action.config.localRecovery?.active
+        ? {
+            ...state,
+            config: action.config,
+            activeView: "you",
+            youFocus: "recovery",
+            settingsOpen: false,
+            computerOpen: false,
+            appSettingsOpen: false,
+            pluginsOpen: false,
+          }
+        : { ...state, config: action.config };
     case "hermesStatus":
       return { ...state, hermes: action.status };
     case "select": {
@@ -729,10 +878,14 @@ const initialState: AppState = {
   config: null,
   hermes: null,
   selectedId: "",
-  activeView: "desk",
+  activeView: readActiveView(),
   loops: [],
   loopRuns: [],
   desk: null,
+  youFocus: null,
+  askConnect: null,
+  askConnectStack: [],
+  setupReturnView: null,
   settingsOpen: false,
   pluginsOpen: false,
   computerOpen: false,
@@ -774,7 +927,12 @@ export async function api(path: string, init?: RequestInit): Promise<any> {
     res = await call();
   }
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    throw Object.assign(new Error(body.error ?? `${res.status} ${res.statusText}`), {
+      status: res.status,
+      body,
+    });
+  }
   return body;
 }
 
@@ -798,6 +956,14 @@ export function useStreaming() {
 const StoreContext = createContext<{
   state: AppState;
   dispatch: React.Dispatch<Action>;
+  /** Ask admission resolves only after the server has durably persisted or
+   * deduplicated this request id. Callers keep their draft until it returns. */
+  sendMessage: (input: {
+    botId: string;
+    text: string;
+    requestId: string;
+    attachments?: Array<{ path: string; name: string; size: number }>;
+  }) => Promise<void>;
   /** Re-fetch engine availability — after an install, without a restart. */
   refreshInstances: () => Promise<void>;
   /** Re-probe the pinned Hermes worker (version, pack, approvals). */
@@ -870,6 +1036,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const wrapped: React.Dispatch<Action> = (action) => {
       rawDispatch(action);
       switch (action.type) {
+        case "showRoutines":
+          writeActiveView("schedule");
+          break;
+        case "showDesk":
+          writeActiveView("desk");
+          break;
+        case "showAsk":
+        case "openAskConnect":
+          writeActiveView("ask");
+          break;
+        case "showYou":
+          writeActiveView("you");
+          break;
         case "runLoop":
           api(`/api/loops/${action.loopId}/run`, { method: "POST" })
             .then(({ run }) => run && rawDispatch({ type: "loopRunPatched", run }))
@@ -881,8 +1060,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "send":
           api(`/api/bots/${action.botId}/messages`, {
             method: "POST",
-            body: JSON.stringify({ text: action.text }),
-          }).catch(showError);
+            body: JSON.stringify({
+              text: action.text,
+              attachments: action.attachments,
+              requestId: `ask_${globalThis.crypto.randomUUID()}`,
+            }),
+          })
+            // The command response carries the just-appended user message and
+            // busy state. Fold it immediately so Ask still shows progress if
+            // the live event stream is reconnecting after a harness restart.
+            .then((body: { bot?: Bot; navigation?: AskSetupTarget; service?: string }) => {
+              if (body.bot) rawDispatch({ type: "botPatched", bot: body.bot });
+              if (body.navigation) {
+                rawDispatch({ type: "openAskConnect", target: body.navigation, service: body.service });
+                writeActiveView("ask");
+              }
+            })
+            .catch((error: unknown) => {
+              const admitted = (error as { body?: { bot?: Bot } }).body?.bot;
+              if (admitted) {
+                rawDispatch({ type: "botPatched", bot: admitted });
+                return;
+              }
+              showError(error);
+            });
           break;
         case "editMessage":
           api(`/api/bots/${action.botId}/messages/${action.messageId}/edit`, {
@@ -1113,6 +1314,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       api("/api/loops")
         .then(({ loops, runs }) => alive && rawDispatch({ type: "loopsHydrated", loops, runs: runs ?? [] }))
         .catch(() => {});
+      api("/api/desk")
+        .then((snapshot) => alive && rawDispatch({ type: "deskSnapshot", snapshot }))
+        .catch(() => {});
     };
     const onFrame = (raw: MessageEvent) => {
       let frame: any;
@@ -1124,8 +1328,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       switch (frame.kind) {
         case "message": {
           rawDispatch({ type: "messageAdded", threadId: frame.threadId, message: frame.message });
+          const setup = honoredSetupRequest(frame.message?.action);
+          if (setup) {
+            rawDispatch({ type: "openAskConnect", target: setup.target, service: setup.service });
+            writeActiveView("ask");
+          }
           // a settled assistant bubble replaces the in-flight stream
-          if (frame.message?.role === "bot" && frame.message?.kind === "text") {
+          if (frame.message?.role === "bot" && (frame.message?.kind === "text" || frame.message?.kind === "action")) {
             clearStream(frame.threadId);
             // Auto-speak lives HERE rather than in the chat view so a bot
             // you switched away from still reads its answer out — which is
@@ -1133,7 +1342,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             // Auto-speak is disabled during any call. Call mode owns both the
             // singleton speaker and microphone ordering for its whole lifetime.
             const owner = stateRef.current.bots.find((b) => b.threadId === frame.threadId);
-            if (owner?.speakReplies && currentCall() === null && frame.message.text?.trim()) {
+            if (frame.message.kind === "text" && owner?.speakReplies && currentCall() === null && frame.message.text?.trim()) {
               void speaker.speak(frame.message.text, {
                 botId: owner.id,
                 messageId: frame.message.id,
@@ -1145,6 +1354,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         case "message.patch":
           rawDispatch({ type: "messagePatched", threadId: frame.threadId, message: frame.message });
+          {
+            const setup = honoredSetupRequest(frame.message?.action);
+            if (setup) {
+              rawDispatch({ type: "openAskConnect", target: setup.target, service: setup.service });
+              writeActiveView("ask");
+            }
+          }
           break;
         case "thread":
           rawDispatch({ type: "threadActive", threadId: frame.threadId, activeLeafId: frame.activeLeafId });
@@ -1234,7 +1450,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               composio: frame.composio,
               box: frame.box,
               tts: frame.tts,
+              pocket: frame.pocket,
               profile: frame.profile,
+              localRecovery: frame.localRecovery,
             },
           });
           api("/api/instances")
@@ -1243,23 +1461,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
       }
     };
-    let es: EventSource | null = null;
-    void ensureSession()
-      .catch(() => "")
-      .then((token) => {
+    loadAll();
+    const closeEvents = openResilientEventStream({
+      getSessionToken: ensureSession,
+      onMessage: onFrame,
+      onOpen: () => {
         if (!alive) return;
+        rawDispatch({ type: "connected", value: true });
+        // Rehydrate the authoritative transcript on every reconnect. Events
+        // that landed while the old token was stale are therefore not lost.
         loadAll();
-        es = new EventSource(token ? `/api/events?session=${encodeURIComponent(token)}` : "/api/events");
-        es.onopen = () => {
-          rawDispatch({ type: "connected", value: true });
-          loadAll();
-        };
-        es.onerror = () => rawDispatch({ type: "connected", value: false });
-        es.onmessage = onFrame;
-      });
+      },
+      onError: () => {
+        if (alive) rawDispatch({ type: "connected", value: false });
+      },
+    });
     return () => {
       alive = false;
-      es?.close();
+      closeEvents();
     };
   }, []);
 
@@ -1284,6 +1503,34 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const sendMessage = useCallback(async (input: {
+    botId: string;
+    text: string;
+    requestId: string;
+    attachments?: Array<{ path: string; name: string; size: number }>;
+  }) => {
+    rawDispatch({ type: "send", botId: input.botId, text: input.text, attachments: input.attachments });
+    try {
+      const body = await api(`/api/bots/${input.botId}/messages`, {
+        method: "POST",
+        body: JSON.stringify({
+          text: input.text,
+          attachments: input.attachments,
+          requestId: input.requestId,
+        }),
+      }) as { bot?: Bot; navigation?: AskSetupTarget; service?: string };
+      if (body.bot) rawDispatch({ type: "botPatched", bot: body.bot });
+      if (body.navigation) {
+        rawDispatch({ type: "openAskConnect", target: body.navigation, service: body.service });
+        writeActiveView("ask");
+      }
+    } catch (error) {
+      const admitted = (error as { body?: { bot?: Bot } }).body?.bot;
+      if (admitted) rawDispatch({ type: "botPatched", bot: admitted });
+      throw error;
+    }
+  }, []);
+
   // Installing a CLI or signing one in happens in a terminal, outside this
   // window — so the moment the user comes back is exactly when our engine
   // snapshot is most likely stale. Re-probe on focus, throttled so that
@@ -1302,8 +1549,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [refreshInstances, refreshHermes]);
 
   const value = useMemo(
-    () => ({ state, dispatch, refreshInstances, refreshHermes }),
-    [state, dispatch, refreshInstances, refreshHermes],
+    () => ({ state, dispatch, sendMessage, refreshInstances, refreshHermes }),
+    [state, dispatch, sendMessage, refreshInstances, refreshHermes],
   );
   return (
     <StoreContext.Provider value={value}>

@@ -24,6 +24,13 @@ function tempDesk() {
   return new Desk({ file: join(dir, "desk.json") });
 }
 
+function replaceDraftBodyForRecoveryTest(desk: Desk, draftId: string, body: string): void {
+  const internal = desk as unknown as { store: { data: { drafts: Array<{ id: string; body: string }> } } };
+  const draft = internal.store.data.drafts.find((candidate) => candidate.id === draftId);
+  if (!draft) throw new Error("test draft missing");
+  draft.body = body;
+}
+
 describe("hard gates (canary)", () => {
   it("never-actions are statutory-send and trust-pay — nothing else sneaks in", () => {
     expect(NEVER_ACTIONS).toEqual(["statutory-send", "trust-pay"]);
@@ -44,13 +51,30 @@ describe("hard gates (canary)", () => {
     expect(patched.options.never).toEqual(["statutory-send", "trust-pay"]);
   });
 
-  it("the courtesy disclaimer cannot be stripped by an edit", () => {
+  it("a courtesy edit cannot introduce notice or legal-clock wording", () => {
     const desk = tempDesk();
     const snap = desk.runMorningCheck();
     const draft = snap.drafts.find((d) => d.kind === "courtesy-rent")!;
-    const edited = desk.editDraft(draft.id, "Pay up. You have 7 days or we issue a notice.");
-    expect(edited.body).toMatch(/not a formal notice/i);
-    expect(edited.body).toMatch(/does not start any notice period/i);
+    expect(() => desk.editDraft(draft.id, "FORMAL NOTICE: Pay within 7 days or the tenancy will be terminated.")).toThrow(/licensed human/i);
+    expect(desk.snapshot().drafts.find((item) => item.id === draft.id)?.body).toBe(draft.body);
+  });
+
+  it("rechecks legacy or corrupted wording at Allow, not only in the editor", () => {
+    const desk = tempDesk();
+    const draft = desk.runMorningCheck().drafts.find((item) => item.kind === "courtesy-rent")!;
+    replaceDraftBodyForRecoveryTest(desk, draft.id, "You must pay within seven days under section 55(2).");
+    expect(() => desk.allowDraft(draft.id)).toThrow(/licensed human/i);
+    expect(desk.snapshot().drafts.find((item) => item.id === draft.id)?.status).toBe("pending");
+  });
+
+  it("rechecks already-allowed wording before any portal preparation", () => {
+    const desk = tempDesk();
+    desk.patchProperty("prop-oak", { notifyChannel: "portal" });
+    const draft = desk.runMorningCheck().drafts.find((item) => item.kind === "courtesy-rent")!;
+    desk.allowDraft(draft.id);
+    replaceDraftBodyForRecoveryTest(desk, draft.id, "A Form 11 Notice to Remedy Breach will be issued.");
+    expect(() => desk.command({ type: "prepare-portal", draftId: draft.id, expectedRevision: desk.revision })).toThrow(/licensed human/i);
+    expect(desk.snapshot().workItems.find((item) => item.draftId === draft.id)?.state).toBe("approved");
   });
 
   it("approving a draft marks it allowed — it never gains a sentAt or a send path", () => {

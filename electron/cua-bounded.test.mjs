@@ -7,8 +7,8 @@ import { describe, expect, it } from "vitest";
 const require = createRequire(import.meta.url);
 const { createCuaConnectionStore } = require("./cua-connection.cjs");
 
-describe("bounded Cua persistence", () => {
-  it("stores typed-browser manifest fields and refuses forbidden tools", () => {
+describe("bounded Cua descriptor persistence", () => {
+  it("stores native-policy evidence without broad desktop tools", () => {
     const userData = mkdtempSync(path.join(os.tmpdir(), "realbud-cua-bounded-"));
     try {
       const store = createCuaConnectionStore({
@@ -17,14 +17,16 @@ describe("bounded Cua persistence", () => {
         temporaryId: () => "test",
         processId: 9,
       });
-      store.persist({ mode: "standalone", mcpCommand: "cua-driver", mcpArgs: ["mcp"] });
+      store.persist({ mode: "embedded", mcpCommand: "/app/cua-driver", mcpArgs: ["mcp"] });
       const bounded = {
-        version: "0.19.3",
+        kind: "workflow",
+        driverVersion: "0.19.3",
+        policyVersion: 2,
         mode: "bounded",
-        profile: path.join(userData, "chrome-profile"),
+        profileKind: "isolated",
         origins: ["http://127.0.0.1:9"],
-        tools: ["navigate", "read", "fill", "click_semantic"],
-        forbidden: ["screenshot_desktop", "click_xy", "javascript", "shell"],
+        tools: ["browser_navigate", "get_browser_state", "browser_click", "browser_type"],
+        policySha256: "a".repeat(64),
         expiresAt: Date.now() + 60_000,
         idleTimeoutMs: 120_000,
         workItemId: "work-1",
@@ -32,8 +34,8 @@ describe("bounded Cua persistence", () => {
         recipeVersion: 1,
       };
       const next = store.persist({ ...store.get(), bounded });
-      expect(next.bounded.version).toBe("0.19.3");
-      expect(next.bounded.tools).not.toContain("click_xy");
+      expect(next.bounded.driverVersion).toBe("0.19.3");
+      expect(next.bounded.tools).not.toContain("get_desktop_state");
       expect(JSON.parse(fs.readFileSync(path.join(userData, "cua-connection.json"), "utf8")).bounded.workItemId).toBe(
         "work-1",
       );

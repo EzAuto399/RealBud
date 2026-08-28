@@ -48,6 +48,10 @@ body,
   height: 100%;
 }
 
+html {
+  overflow: hidden;
+}
+
 body {
   background-color: var(--color-paper);
   color: var(--color-ink);
@@ -78,6 +82,11 @@ body {
   background: transparent;
 }
 
+.pm-search-input::-webkit-search-cancel-button {
+  display: none;
+  -webkit-appearance: none;
+}
+
 .pm-screen-title {
   font-size: 27px;
   font-weight: 600;
@@ -101,8 +110,162 @@ body {
   min-height: 40px;
 }
 
+.pm-tactile,
+.pm-control {
+  transition: transform 110ms cubic-bezier(0.2, 0.8, 0.2, 1), background-color 140ms ease, border-color 140ms ease;
+}
+
+.pm-tactile:active:not(:disabled),
+.pm-control:active:not(:disabled) {
+  transform: translateY(1px) scale(0.985);
+}
+
 .pm-decision {
   min-height: 44px;
+}
+
+.setup-progress-fill {
+  transition: width 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.copy-pulse {
+  animation: copy-pulse 280ms cubic-bezier(0.22, 1, 0.36, 1) 1;
+}
+
+@keyframes copy-pulse {
+  40% { transform: scale(1.04); }
+}
+
+.recheck-graph {
+  height: 3px;
+  overflow: hidden;
+  background: var(--color-line);
+}
+
+.recheck-graph-fill {
+  height: 100%;
+  width: 0;
+  background: var(--color-agency);
+}
+
+.recheck-graph-fill.is-run {
+  width: 92%;
+  transition: width var(--recheck-ms, 700ms) linear;
+}
+
+.recheck-graph-fill.is-done {
+  width: 100%;
+  transition: width 40ms linear;
+}
+
+.desk-door {
+  animation: desk-door 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes desk-door {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.desk-case-open {
+  animation: desk-case-open 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes desk-case-open {
+  from { opacity: 0.35; }
+  to { opacity: 1; }
+}
+
+.realbud-mark {
+  view-transition-name: realbud-mark;
+}
+
+.desk-shared-address {
+  view-transition-name: desk-case-address;
+}
+
+.queue-row-exit {
+  display: grid;
+  grid-template-rows: 1fr;
+  animation: queue-row-compress 220ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.queue-row-exit > * {
+  min-height: 0;
+  overflow: hidden;
+}
+
+@keyframes queue-row-compress {
+  to {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+
+.queue-row-land {
+  animation: queue-row-land 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes queue-row-land {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.count-tick {
+  animation: count-tick 220ms cubic-bezier(0.22, 1, 0.36, 1) 1;
+}
+
+@keyframes count-tick {
+  40% { transform: scale(1.05); }
+}
+
+::view-transition-old(realbud-mark),
+::view-transition-new(realbud-mark) {
+  animation-duration: 220ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+::view-transition-old(desk-case-address),
+::view-transition-new(desk-case-address) {
+  animation-duration: 160ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Ask response typography is deliberately document-like: one quiet sheet,
+   clear hierarchy and generous line rhythm instead of nested chat bubbles. */
+.pm-assistant-response {
+  overflow-wrap: anywhere;
+}
+
+.chat-md > * + * {
+  margin-top: 0.75rem;
+}
+
+.chat-md > h2 + *,
+.chat-md > h3 + *,
+.chat-md > h4 + * {
+  margin-top: 0.35rem;
+}
+
+.chat-md > * + h2,
+.chat-md > * + h3,
+.chat-md > * + h4 {
+  margin-top: 1rem;
+}
+
+.chat-md li::marker {
+  color: var(--color-agency);
+}
+
+.chat-md input[type="checkbox"] {
+  accent-color: var(--color-agency);
+  margin-inline-end: 0.35rem;
 }
 
 .pm-split {
@@ -129,7 +292,7 @@ body {
 }
 
 .pm-split-queue {
-  width: 300px;
+  width: clamp(268px, 21vw, 300px);
   flex-shrink: 0;
   border-right: 1px solid var(--color-line);
   background: var(--color-paper);
@@ -141,20 +304,20 @@ body {
 }
 
 .pm-split-rail {
-  width: 320px;
+  width: clamp(286px, 22vw, 320px);
   flex-shrink: 0;
   border-left: 1px solid var(--color-line);
   background: var(--color-paper);
 }
 
-@media (max-width: 1279px) {
+@media (max-width: 1099px) {
   .pm-split-queue {
     display: none;
   }
   .pm-split[data-queue-open="true"] .pm-split-queue {
     display: flex;
     position: absolute;
-    inset: 0 auto 0 200px;
+    inset: 0 auto 0 0;
     z-index: 20;
     box-shadow: 0 8px 24px rgb(37 35 31 / 12%);
   }
@@ -209,11 +372,15 @@ body {
   color: transparent;
 }
 @media (prefers-reduced-motion: reduce) {
-  .animate-caret, .animate-msg-in, .animate-shimmer { animation: none; }
+  .animate-caret, .animate-msg-in, .animate-shimmer, .animate-pop-in, .animate-panel-in, .animate-spin { animation: none; }
   .thinking-shimmer { background: none; color: var(--color-ink-secondary); }
+  .pm-tactile, .pm-control, .setup-progress-fill, .recheck-graph-fill, .recheck-graph-fill.is-run, .recheck-graph-fill.is-done { transition: none; }
+  .copy-pulse, .desk-door, .desk-case-open, .queue-row-exit, .queue-row-land, .count-tick { animation: none; }
+  .realbud-mark, .desk-shared-address { view-transition-name: none; }
+  .pm-tactile:active:not(:disabled), .pm-control:active:not(:disabled) { transform: none; }
 }
 
-/* SupaMaus vector motion. The fast horizontal compression is the edge-on
+/* RealBud mascot vector motion. The fast horizontal compression is the edge-on
    moment of a turn; face parallax, surface lighting, and orbiting vector marks
    sell the 3D rotation without duplicate silhouettes, raster frames, or WebGL. */
 .maus-character,

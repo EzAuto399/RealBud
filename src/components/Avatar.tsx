@@ -1,4 +1,4 @@
-// Bot avatar — the Blob Studio "Cursor" mascot (CursorAvatar.tsx), wrapped
+// Bot avatar — the RealBud property-agent mascot (CursorAvatar.tsx), wrapped
 // in the app's historical MausAvatar API so no call site changes: per-bot
 // color becomes a body gradient, the app's one-shot motion beats borrow the
 // face/state for a moment, and the eyes follow the pointer. The previous
@@ -14,18 +14,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { MAUS_COLORS, type MausColor, type MausMotion, type MausState } from "@/lib/mascot";
-import { CursorAvatar, SHAPE, type CursorAvatarHandle, type CursorShape } from "./CursorAvatar";
-
-/**
- * The pack's baked-in silhouette was exported with the body fill hardcoded
- * to black instead of the {{GRADIENT}} placeholder the component
- * substitutes, which painted every bot the same. Restore the slot so the
- * per-bot gradient actually lands on the body.
- */
-const GRADIENT_SHAPE: CursorShape = {
-  ...SHAPE,
-  body: SHAPE.body.replace(/fill="#000000"/g, 'fill="{{GRADIENT}}"'),
-};
+import { CursorAvatar, SHAPE, type CursorAvatarHandle } from "./CursorAvatar";
 
 /**
  * Legacy face-placement knobs from the Maus body era. The cursor mascot
@@ -193,7 +182,7 @@ function MausAvatarComponent(
         state={motionState ?? state}
         expression={expression}
         size={size}
-        shape={GRADIENT_SHAPE}
+        shape={SHAPE}
         gradient={gradientFor(color)}
         title={label ?? null}
         lookAround={forward ? 0 : 1}
@@ -220,6 +209,7 @@ export function InitialsAvatar({
 }) {
   return (
     <div
+      aria-hidden="true"
       className="flex shrink-0 items-center justify-center rounded-full bg-raised text-ink-secondary font-medium"
       style={{ width: size, height: size, fontSize: size * 0.38 }}
     >

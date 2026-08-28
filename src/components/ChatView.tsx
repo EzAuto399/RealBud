@@ -2,15 +2,23 @@ import { Component, memo, useCallback, useDeferredValue, useEffect, useMemo, use
 import {
   AlertTriangle,
   ArrowDown,
+  BookOpen,
   Brain,
   Check,
+  CircleCheck,
+  CircleX,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Copy,
   Crown,
+  FileSearch,
+  FileUp,
+  Link2,
+  ListChecks,
   Loader2,
   Monitor,
+  PanelTop,
   Pencil,
   RefreshCw,
   Square,
@@ -28,6 +36,14 @@ import {
   type Message,
 } from "@/state/store";
 import type { DeskSnapshot } from "@/lib/desk";
+import type { Loop, LoopRun } from "@/lib/routines";
+import {
+  workerSetupStep,
+  workerVerified,
+  WORKER_VERIFICATION_EVENT,
+  WORKER_VERIFICATION_KEY,
+  type GoLiveStep,
+} from "@/lib/onboarding";
 import { EngineSetup } from "./EngineSetup";
 import { MausAvatar } from "./Avatar";
 import { stateForBot } from "@/lib/mascot";
@@ -37,10 +53,20 @@ import { ApprovalCard } from "./ApprovalCard";
 import { Composer } from "./Composer";
 import { ModelPicker } from "./ModelPicker";
 import { TaskPicker } from "./TaskPicker";
+import { PropertyPicker } from "./PropertyPicker";
 import { ReactionBar, ReactionChips } from "./Reactions";
 import { SpeakButton } from "./SpeakButton";
 import { CallButton, CallOverlay } from "./CallView";
 import { cn } from "@/lib/cn";
+import type { AskActionProposal } from "@shared/ask-actions";
+import { deriveAskSuggestions, presentAskActivity } from "@/lib/ask-presentation";
+import { hideAskSuggestions, readAskSuggestionsHidden } from "@/lib/ask-suggestion-visibility";
+import { foldAskSpentConnects } from "@/lib/ask-thread";
+import { askUserTurnStatus, followingAskAction } from "@/lib/ask-turn-status";
+import { staggerMs } from "@/lib/motion";
+import { AskActionCard, AskSpentConnectGroup } from "./AskActionCard";
+import { AskIntakeResult, type AskIntakeResultData } from "./AskIntakeResult";
+import { PropertyIntakeRoutePicker } from "./PropertyIntakeRoutePicker";
 
 /** Long user messages collapse behind a fade so pasted walls of text don't
  * bury the conversation; bots get full markdown. */
@@ -250,6 +276,7 @@ function BubbleEditor({
 function Bubble({
   bot,
   message,
+  followingAction,
   editing,
   isLastBotText,
   onStartEdit,
@@ -260,6 +287,7 @@ function Bubble({
 }: {
   bot: Bot;
   message: Message;
+  followingAction?: AskActionProposal;
   editing: boolean;
   isLastBotText: boolean;
   onStartEdit: () => void;
@@ -289,6 +317,27 @@ function Bubble({
   const switchTo = (v: Message | undefined) => {
     if (v && !bot.busy) dispatch({ type: "switchBranch", botId: bot.id, messageId: v.id });
   };
+
+  if (!user && productAsk) {
+    return (
+      <div className="group animate-msg-in flex w-full justify-start">
+        <article
+          className="pm-assistant-response w-full max-w-[760px] border-l-2 border-agency bg-sheet px-4 py-3 text-[15px] leading-relaxed text-ink"
+          aria-label="Bud's response"
+        >
+          <MessageBoundary fallbackText={text}>
+            <ChatMarkdown text={text} />
+          </MessageBoundary>
+          <footer className="mt-3 flex items-center gap-2 border-t border-line/70 pt-2 text-[12px] text-ink-muted">
+            <span className="font-medium text-agency">Bud</span>
+            <span aria-hidden="true">·</span>
+            <time dateTime={new Date(message.at).toISOString()}>{formatTime(message.at)}</time>
+            <CopyButton text={text} className="ml-auto opacity-100" />
+          </footer>
+        </article>
+      </div>
+    );
+  }
 
   return (
     <div className={cn("group animate-msg-in flex w-full flex-col", user ? "items-end" : "items-start")}>
@@ -366,6 +415,22 @@ function Bubble({
           {formatTime(message.at)}
         </span>
       </div>
+      {user && productAsk && message.requestState ? (() => {
+        const turn = askUserTurnStatus(message, followingAction);
+        return (
+          <div
+            role={turn.tone === "hold" ? "alert" : "status"}
+            className={cn(
+              "mt-1 inline-flex max-w-[70%] items-center gap-1.5 pr-1 text-[12px]",
+              turn.tone === "hold" ? "text-hold" : "text-ink-muted",
+            )}
+            title={message.requestStatusDetail}
+          >
+            {turn.tone === "hold" ? <AlertTriangle size={12} /> : message.requestState === "settled" ? <CircleCheck size={12} /> : <Loader2 size={12} className="animate-spin" />}
+            {turn.label}
+          </div>
+        );
+      })() : null}
       {!productAsk && <ReactionChips threadId={bot.threadId} message={message} align={user ? "right" : "left"} />}
       {versions.length > 1 && !productAsk && (
         <div className="mt-1 flex items-center gap-0.5 pr-1 text-[12px] text-ink-secondary">
@@ -395,7 +460,7 @@ function Bubble({
 }
 
 /** A tool run: spinner while live, check/cross once settled. */
-function ActivityChip({ message }: { message: Message }) {
+function ActivityChip({ message, productAsk = false }: { message: Message; productAsk?: boolean }) {
   const { dispatch } = useStore();
   const tool = message.tool;
   if (!tool) return null;
@@ -417,6 +482,46 @@ function ActivityChip({ message }: { message: Message }) {
     );
   }
   const failed = tool.ok === false;
+  if (productAsk) {
+    const presentation = presentAskActivity(tool.name, tool.ok);
+    if (presentation.kind === "suppressed") return null;
+    const ActivityIcon =
+      presentation.kind === "intake"
+        ? BookOpen
+        : presentation.kind === "evidence"
+          ? FileSearch
+          : presentation.kind === "connection"
+            ? Link2
+            : presentation.kind === "handoff"
+              ? PanelTop
+              : ListChecks;
+    const StateIcon = presentation.status === "working" ? Loader2 : presentation.status === "done" ? CircleCheck : CircleX;
+    const stateLabel = presentation.status === "working" ? "Working" : presentation.status === "done" ? "Done" : "Stopped";
+    return (
+      <div className="flex w-full justify-start">
+        <div
+          className={cn(
+            "flex w-full max-w-[760px] items-start gap-3 border-l-2 bg-paper/70 px-3 py-2",
+            presentation.status === "failed" ? "border-danger" : "border-line",
+          )}
+          role="status"
+          aria-label={`${presentation.title}. ${stateLabel}.`}
+        >
+          <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded border border-line bg-sheet text-agency">
+            <ActivityIcon size={14} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-[12.5px] font-medium text-ink">{presentation.title}</div>
+            <div className="mt-0.5 text-[12px] leading-relaxed text-ink-muted">{presentation.detail}</div>
+          </div>
+          <span className={cn("inline-flex shrink-0 items-center gap-1 text-[12px] font-medium", presentation.status === "failed" ? "text-danger" : "text-ink-muted")}>
+            <StateIcon size={12} className={presentation.status === "working" ? "animate-spin" : undefined} />
+            {stateLabel}
+          </span>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="flex justify-start">
       <div
@@ -450,16 +555,32 @@ function ScreenFrame({ png, mime }: { png: string; mime?: string }) {
   );
 }
 
-function StreamingBubble({ text }: { text: string }) {
+function StreamingBubble({ text, productAsk = false }: { text: string; productAsk?: boolean }) {
   // markdown re-parses on a deferred value: when tokens arrive faster than
   // the parser keeps up, React lags the parse instead of janking the frame
   const deferred = useDeferredValue(text);
+  const preparingAction = productAsk && (
+    deferred.trimStart().startsWith("{") ||
+    /^```(?:json)?\s*(?:\{|$)/i.test(deferred.trimStart()) ||
+    deferred.includes("realbud.propose-action.v1")
+  );
   return (
     <div className="flex w-full justify-start">
-      <div className="max-w-[70%] rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
-        <MessageBoundary fallbackText={deferred}>
-          <ChatMarkdown text={deferred} streaming />
-        </MessageBoundary>
+      <div className={cn(
+        "text-[15px] leading-relaxed text-ink",
+        productAsk
+          ? "pm-assistant-response w-full max-w-[760px] border-l-2 border-agency bg-sheet px-4 py-3"
+          : "max-w-[70%] rounded-2xl bg-card px-4 py-2.5",
+      )}>
+        {preparingAction ? (
+          <span className="inline-flex items-center gap-2 text-[13.5px] text-ink-muted">
+            <Loader2 size={14} className="animate-spin text-agency" /> Preparing a change for your review…
+          </span>
+        ) : (
+          <MessageBoundary fallbackText={deferred}>
+            <ChatMarkdown text={deferred} streaming />
+          </MessageBoundary>
+        )}
         <span className="animate-caret ml-0.5 inline-block h-[14px] w-[2px] bg-ink align-middle" />
       </div>
     </div>
@@ -500,6 +621,7 @@ const MessagesList = memo(function MessagesList({
   onRegenerate,
   productAsk = false,
   onAskStarter,
+  hideAskStarters = false,
 }: {
   bot: Bot;
   messages: Message[];
@@ -514,6 +636,7 @@ const MessagesList = memo(function MessagesList({
   onRegenerate: () => void;
   productAsk?: boolean;
   onAskStarter?: (text: string) => void;
+  hideAskStarters?: boolean;
 }) {
   return (
     <>
@@ -525,8 +648,9 @@ const MessagesList = memo(function MessagesList({
               <div className="max-w-[360px] text-[14px] text-ink-muted">
                 Scoped to your portfolio. Ask what needs you, or put courtesy on Desk for one Allow.
               </div>
+              {!hideAskStarters ? (
               <div className="mt-2 flex max-w-[28rem] flex-wrap justify-center gap-2">
-                {["What needs me?", "Explain this hold", "Draft an owner update", "What changed since yesterday?"].map((starter) => (
+                {["What needs me?", "Move the morning check to 8:00 am", "Add a property", "Draft an owner update"].map((starter) => (
                   <button
                     key={starter}
                     type="button"
@@ -537,6 +661,7 @@ const MessagesList = memo(function MessagesList({
                   </button>
                 ))}
               </div>
+              ) : null}
             </>
           ) : (
             <>
@@ -549,11 +674,20 @@ const MessagesList = memo(function MessagesList({
           )}
         </div>
       )}
-      {messages.map((m, i) => {
-        const prev = messages[i - 1];
-        const newDay = !prev || new Date(prev.at).toDateString() !== new Date(m.at).toDateString();
+      {foldAskSpentConnects(messages).map((item) => {
+        if (item.kind === "spent-group") {
+          return (
+            <div key={item.messages.map((message) => message.id).join(":")} className="contents">
+              {item.newDay ? <DaySeparator at={item.messages[0]!.at} /> : null}
+              <AskSpentConnectGroup messages={item.messages} />
+            </div>
+          );
+        }
+        const m = item.message;
         const row = (() => {
           switch (m.kind) {
+            case "action":
+              return <AskActionCard botId={bot.id} threadId={bot.threadId} message={m} />;
             case "options":
               // a live permission ask gets the approval box; questions and
               // the onboarding quiz keep the list card
@@ -571,7 +705,7 @@ const MessagesList = memo(function MessagesList({
                   setupInstance={m.tool.setup ? engine : undefined}
                 />
               ) : (
-                <ActivityChip message={m} />
+                <ActivityChip message={m} productAsk={productAsk} />
               );
             case "screen":
               return m.png ? <ScreenFrame png={m.png} mime={m.mime} /> : null;
@@ -580,6 +714,7 @@ const MessagesList = memo(function MessagesList({
                 <Bubble
                   bot={bot}
                   message={m}
+                  followingAction={followingAskAction(messages, m.id)}
                   editing={editingId === m.id}
                   isLastBotText={m.id === lastBotTextId}
                   onStartEdit={() => onStartEdit(m.id)}
@@ -594,7 +729,7 @@ const MessagesList = memo(function MessagesList({
         if (!row) return null;
         return (
           <div key={m.id} className="contents">
-            {newDay && <DaySeparator at={m.at} />}
+            {item.newDay ? <DaySeparator at={m.at} /> : null}
             {row}
           </div>
         );
@@ -603,9 +738,120 @@ const MessagesList = memo(function MessagesList({
   );
 });
 
-export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: boolean }) {
+function AskSuggestionStrip({
+  bot,
+  messages,
+  hidden,
+  onHide,
+  onAsk,
+}: {
+  bot: Bot;
+  messages: Message[];
+  hidden: boolean;
+  onHide: () => void;
+  onAsk: (prompt: string) => void;
+}) {
+  const { state } = useStore();
+  const userTexts = useMemo(
+    () => messages.flatMap((message) => (message.role === "user" && message.text?.trim() ? [message.text] : [])),
+    [messages],
+  );
+  const connecting = Boolean(state.askConnect);
+  const suggestions = useMemo(
+    () => deriveAskSuggestions(state.desk, state.loops, state.loopRuns, { userTexts, connecting }),
+    [state.desk, state.loops, state.loopRuns, userTexts, connecting],
+  );
+  if (bot.busy || connecting || hidden || suggestions.length === 0) return null;
+
+  return (
+    <aside className="mt-2 w-full max-w-[760px] border-t border-line pt-3" aria-label="Suggested next work">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-[12px] font-semibold text-ink-muted">
+          <ListChecks size={14} className="text-agency" /> Suggested next
+        </div>
+        <button
+          type="button"
+          onClick={onHide}
+          aria-label="Hide suggested next until the book changes"
+          className="pm-control pm-tactile min-h-10 rounded px-2 text-[12px] font-medium text-ink-muted hover:bg-paper hover:text-ink"
+        >
+          Hide
+        </button>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {suggestions.map((suggestion, index) => (
+          <button
+            key={suggestion.id}
+            type="button"
+            onClick={() => onAsk(suggestion.action.prompt)}
+            className="animate-msg-in pm-tactile min-h-16 border border-line bg-sheet px-3 py-2 text-left hover:border-agency/55 hover:bg-selected/35"
+            style={{ animationDelay: `${staggerMs(index)}ms` }}
+          >
+            <span className="block text-[12.5px] font-semibold text-ink">{suggestion.label}</span>
+            <span className="mt-0.5 block text-[12px] leading-snug text-ink-muted">{suggestion.detail}</span>
+          </button>
+        ))}
+      </div>
+    </aside>
+  );
+}
+
+export function ChatView({
+  bot,
+  productAsk = false,
+  onOpenSetupJourney,
+}: {
+  bot: Bot;
+  productAsk?: boolean;
+  onOpenSetupJourney?: () => void;
+}) {
   const { state, dispatch } = useStore();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [, setVerificationVersion] = useState(0);
+
+  useEffect(() => {
+    if (!productAsk) return;
+    const refresh = () => setVerificationVersion((value) => value + 1);
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === WORKER_VERIFICATION_KEY) refresh();
+    };
+    window.addEventListener(WORKER_VERIFICATION_EVENT, refresh);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener(WORKER_VERIFICATION_EVENT, refresh);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [productAsk]);
+
+  useEffect(() => {
+    if (!productAsk) return;
+    let cancelled = false;
+    void api("/api/desk")
+      .then((snapshot: DeskSnapshot) => {
+        if (!cancelled) dispatch({ type: "deskSnapshot", snapshot });
+      })
+      .catch(() => {});
+    void api("/api/loops")
+      .then((payload: { loops?: Loop[]; runs?: LoopRun[] }) => {
+        if (!cancelled && payload.loops) {
+          dispatch({ type: "loopsHydrated", loops: payload.loops, runs: payload.runs ?? [] });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [productAsk, dispatch]);
+
+  const sendAskTurn = useCallback((text: string) => {
+    if (bot.busy || !text.trim()) return;
+    dispatch({ type: "send", botId: bot.id, text });
+  }, [bot.busy, bot.id, dispatch]);
+
+  const askWorkerStep = productAsk
+    ? workerSetupStep({ worker: state.hermes, workerIsVerified: workerVerified(state.hermes) })
+    : null;
+  const askChatReady = !productAsk || askWorkerStep?.state === "done";
 
   const stream = useStreaming();
   const streaming = stream.streaming[bot.threadId];
@@ -615,6 +861,22 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
 
   // only the active branch is rendered; forks stay reachable via ‹ › nav
   const messages = useMemo(() => visibleMessages(bot), [bot]);
+  const [suggestionEpoch, setSuggestionEpoch] = useState(0);
+  const askUserTexts = useMemo(
+    () => messages.flatMap((message) => (message.role === "user" && message.text?.trim() ? [message.text] : [])),
+    [messages],
+  );
+  const suggestionsHidden = useMemo(
+    () => readAskSuggestionsHidden(bot.threadId, state.desk?.revision ?? null),
+    [bot.threadId, state.desk?.revision, suggestionEpoch],
+  );
+  const hasAskSuggestions = productAsk
+    && !state.askConnect
+    && !suggestionsHidden
+    && deriveAskSuggestions(state.desk, state.loops, state.loopRuns, {
+      userTexts: askUserTexts,
+      connecting: Boolean(state.askConnect),
+    }).length > 0;
   const lastBotTextId = useMemo(
     () => [...messages].reverse().find((m) => m.role === "bot" && m.kind === "text")?.id,
     [messages],
@@ -656,7 +918,7 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
   useEffect(() => setFollow(true), [bot.id]);
   useEffect(() => {
     if (follow) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [bot.id, messages.length, streaming, reasoning, bot.busy, follow]);
+  }, [bot.id, messages.length, streaming, reasoning, bot.busy, follow, state.desk, state.loops, state.loopRuns]);
 
   // keyboard is a scroll gesture too (upstream lesson): PageUp/Home break
   // follow like an upward wheel; the at-end onScroll check re-arms it
@@ -693,9 +955,14 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
         style={drag}
       >
         {productAsk ? (
-          <div className="flex items-center gap-2.5 px-1.5 py-1" style={noDrag}>
-            <h1 className="pm-screen-title text-ink">Ask</h1>
+          <div className="flex flex-wrap items-center gap-2.5 px-1.5 py-1" style={noDrag}>
+            <h1 className="pm-screen-title text-ink">Ask Bud</h1>
             {bot.busy && <Loader2 size={14} className="animate-spin text-ink-muted" />}
+            {!state.connected && askChatReady && (
+              <span className="flex items-center gap-1.5 rounded border border-hold/35 bg-hold/10 px-2 py-1 text-[12px] font-medium text-hold" role="status">
+                <RefreshCw size={12} className="animate-spin" /> Reconnecting to Bud…
+              </span>
+            )}
           </div>
         ) : (
         <button
@@ -749,8 +1016,15 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
         </div>
       </div>
 
-      {productAsk && <AskProposeBar />}
-      {productAsk && <AskIntakeBar />}
+      {productAsk && !askChatReady && askWorkerStep ? (
+        <AskWorkerSetup
+          step={askWorkerStep}
+          onContinue={() => {
+            if (onOpenSetupJourney) onOpenSetupJourney();
+            else dispatch({ type: "showYou", focus: "worker", returnTo: "ask" });
+          }}
+        />
+      ) : null}
 
       {/* Error banner */}
       {state.error && (
@@ -797,8 +1071,21 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
             onSubmitEdit={submitEdit}
             onRegenerate={regenerate}
             productAsk={productAsk}
-            onAskStarter={(text) => dispatch({ type: "send", botId: bot.id, text })}
+            onAskStarter={sendAskTurn}
+            hideAskStarters={hasAskSuggestions}
           />
+          {productAsk ? (
+            <AskSuggestionStrip
+              bot={bot}
+              messages={messages}
+              hidden={suggestionsHidden}
+              onHide={() => {
+                hideAskSuggestions(bot.threadId, state.desk?.revision ?? null);
+                setSuggestionEpoch((value) => value + 1);
+              }}
+              onAsk={sendAskTurn}
+            />
+          ) : null}
           {provisioning && !productAsk && (
             <div className="flex justify-start">
               <div className="flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary">
@@ -809,7 +1096,7 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
           )}
           {reasoning && bot.busy && <ThinkingStrip text={reasoning} active={!streaming} />}
           {streaming ? (
-            <StreamingBubble text={streaming} />
+            <StreamingBubble text={streaming} productAsk={productAsk} />
           ) : (
             bot.busy && (
               <div className="flex justify-start">
@@ -847,10 +1134,54 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
         key={bot.id}
         bot={bot}
         productAsk={productAsk}
+        askLead={productAsk && askChatReady ? <AskIntakeBar /> : undefined}
         onEditLast={lastUserMessage && !bot.busy ? () => setEditingId(lastUserMessage.id) : undefined}
       />
 
     </main>
+  );
+}
+
+export const ASK_WORKER_SETUP_DETAIL =
+  "Named routines still run from Ask. Prepare Bud to read cards and draft notes.";
+
+export function askSetupActionMessages(messages: Message[]): Message[] {
+  return messages.filter((message) => message.kind === "action" && Boolean(message.action)).slice(-5);
+}
+
+function AskWorkerSetup({ step, onContinue }: {
+  step: GoLiveStep;
+  onContinue: () => void;
+}) {
+  const checking = step.state === "checking";
+  return (
+    <div className="mx-auto w-full max-w-[900px] px-5 pb-2">
+      <section
+        aria-labelledby="ask-worker-setup-title"
+        className="flex flex-wrap items-center gap-3 border border-agency/30 bg-selected/45 px-3 py-2.5"
+      >
+        <div className="min-w-0 flex-1">
+          <h2 id="ask-worker-setup-title" className="text-[13px] font-semibold text-ink">
+            {checking ? "Checking Bud" : step.title}
+          </h2>
+          <p className="mt-0.5 text-[12px] text-ink-muted">{ASK_WORKER_SETUP_DETAIL}</p>
+        </div>
+        {checking ? (
+          <span className="flex items-center gap-1.5 text-[12px] text-ink-muted" role="status">
+            <Loader2 size={13} className="animate-spin" aria-hidden="true" />
+            Checking
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={onContinue}
+            className="pm-control pm-tactile rounded bg-agency px-3 text-[12.5px] font-semibold text-white hover:bg-agency-hover"
+          >
+            Prepare Bud
+          </button>
+        )}
+      </section>
+    </div>
   );
 }
 
@@ -860,30 +1191,31 @@ function AskProposeBar() {
   const [propertyId, setPropertyId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
     void api("/api/desk").then((next: DeskSnapshot) => {
       setSnap(next);
       setPropertyId((id) => id || next.properties[0]?.id || "");
-    }).catch(() => {});
+      setLoadFailed(false);
+    }).catch(() => setLoadFailed(true));
   }, []);
 
+  if (loadFailed) {
+    return <div className="mt-2.5 border-t border-line pt-2.5 text-[12px] text-danger">The property picker could not load. Reopen Add book to retry.</div>;
+  }
   if (!snap?.properties.length) return null;
 
   return (
-    <div className="mx-auto flex w-full max-w-[900px] flex-wrap items-center gap-2 px-5 pb-2">
+    <div className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-line pt-2.5">
       <span className="text-[12px] text-ink-secondary">Put courtesy on Desk</span>
-      <select
+      <PropertyPicker
+        properties={snap.properties}
         value={propertyId}
-        onChange={(event) => setPropertyId(event.target.value)}
-        className="min-w-[12rem] flex-1 rounded-lg border border-hairline/40 bg-inset px-2 py-1.5 text-[13px] text-ink outline-none"
-      >
-        {snap.properties.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.address}
-          </option>
-        ))}
-      </select>
+        onChange={setPropertyId}
+        disabled={busy}
+        dropUp
+      />
       <button
         disabled={busy || !propertyId}
         onClick={() => {
@@ -909,14 +1241,19 @@ function AskProposeBar() {
   );
 }
 
-/** Paste your existing book — one property per line — and Bud stages each
- * one as a Desk card. Nothing is added until the PM allows it there. */
-function AskIntakeBar() {
+/** Common files go through Bud below; deterministic quick paste remains
+ * available when the PM has no model attached yet. Both paths stage Desk
+ * cards only. */
+export function AskIntakeBar() {
   const { dispatch } = useStore();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [routesOpen, setRoutesOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<{ created: number; skipped: number; unparsed: string[] } | null>(null);
+  const [result, setResult] = useState<AskIntakeResultData | null>(null);
   const [error, setError] = useState("");
+  const open = drawerOpen || Boolean(result);
 
   const send = () => {
     setBusy(true);
@@ -932,57 +1269,99 @@ function AskIntakeBar() {
       .finally(() => setBusy(false));
   };
 
-  const readDrop = async (file: File) => {
-    setBusy(true);
-    setError("");
-    try {
-      const body = await file.text();
-      setText(body.slice(0, 20_000));
-      send();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
+  if (!open) {
+    return (
+      <div className="mb-1.5">
+        <button
+          type="button"
+          onClick={() => setDrawerOpen(true)}
+          className="text-[12px] font-medium text-ink-muted hover:text-ink hover:underline"
+        >
+          Add book
+        </button>
+      </div>
+    );
+  }
 
   return (
-    <div
-      className="mx-auto flex w-full max-w-[900px] flex-col gap-2 px-5 pb-2"
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={(e) => {
-        e.preventDefault();
-        const file = e.dataTransfer.files?.[0];
-        if (file && /\.(csv|txt|tsv)$/i.test(file.name)) void readDrop(file);
-        else if (file) setError("Drop a .csv, .txt or .tsv export — images go to Bud in the composer.");
-      }}
-    >
-      <textarea
-        value={text}
-        onChange={(event) => setText(event.target.value)}
-        rows={3}
-        placeholder={"Paste your existing properties, one per line:\n12 Oak St, Dickson ACT, Jordan Blake, 0400 555 666, 580"}
-        className="w-full resize-y rounded-xl border border-hairline/40 bg-inset px-3 py-2 text-[13px] leading-relaxed text-ink outline-none focus:border-accent/70"
-      />
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          disabled={busy || !text.trim()}
-          onClick={send}
-          className="rounded-lg border border-hairline/40 px-3 py-1.5 text-[12.5px] text-ink hover:bg-raised disabled:opacity-40"
-        >
-          {busy ? "Reading…" : "Stage properties on Desk"}
-        </button>
-        <span className="text-[11.5px] text-ink-secondary/80">
-          One per line: address, tenant, phone, weekly rent. Bud drafts them — you allow each on Desk.
-        </span>
-      </div>
-      {result && (
-        <div className="text-[12px] text-ink-secondary">
-          {result.created} staged on Desk{result.skipped ? ` · ${result.skipped} skipped (duplicate or incomplete)` : ""}
-          {result.unparsed.length ? ` · needs attention: ${result.unparsed.join(" | ")}` : ""}
+    <div className="mb-2">
+      <div className="relative z-10 overflow-visible border border-line bg-sheet px-3 py-2.5">
+        <div className="flex flex-wrap items-start gap-2.5">
+          <FileUp size={16} className="mt-0.5 shrink-0 text-agency" />
+          <div className="min-w-[15rem] flex-1">
+            <div className="text-[13px] font-semibold text-ink">Add book</div>
+            <p className="mt-0.5 text-[12px] text-ink-muted">PMS export, files, or a pasted list.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setDrawerOpen(false);
+              setRoutesOpen(false);
+              setExpanded(false);
+              setError("");
+            }}
+            className="pm-tactile rounded border border-hairline/60 px-2.5 py-1 text-[12px] font-medium text-ink-muted hover:bg-raised"
+          >
+            Close
+          </button>
+          <button
+            type="button"
+            aria-expanded={routesOpen}
+            aria-controls="ask-property-intake-routes"
+            onClick={() => {
+              setRoutesOpen((value) => !value);
+              setError("");
+            }}
+            className="pm-tactile rounded border border-hairline/60 px-2.5 py-1 text-[12px] font-medium text-ink hover:bg-raised"
+          >
+            {routesOpen ? "Hide options" : "Import options"}
+          </button>
         </div>
-      )}
-      {error && <span className="text-[12px] text-danger">{error}</span>}
+        {routesOpen ? (
+          <div id="ask-property-intake-routes" className="mt-2.5">
+            <PropertyIntakeRoutePicker
+              onChoosePmsExport={() => dispatch({ type: "showDesk" })}
+              onChooseFiles={() => {
+                const attach = document.getElementById("ask-attach-files") as HTMLButtonElement | null;
+                if (attach) attach.click();
+                else document.getElementById("ask-bud-composer")?.focus();
+              }}
+              onChoosePaste={() => {
+                setExpanded(true);
+                requestAnimationFrame(() => document.getElementById("ask-quick-property-text")?.focus());
+              }}
+              onOpenConnections={() => dispatch({ type: "openAskConnect", target: "connections", service: "Property book" })}
+            />
+          </div>
+        ) : null}
+        {expanded ? (
+          <div id="ask-quick-property-paste" className="mt-2.5 border-t border-line pt-2.5">
+            <label htmlFor="ask-quick-property-text" className="sr-only">Properties to stage, one per line</label>
+            <textarea
+              id="ask-quick-property-text"
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+              rows={3}
+              placeholder={"One property per line:\n12 Oak St, Dickson ACT, Jordan Blake, 0400 555 666, 580"}
+              className="w-full resize-y rounded-lg border border-hairline/60 bg-inset px-3 py-2 text-[13px] leading-relaxed text-ink outline-none focus:border-agency"
+            />
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={busy || !text.trim()}
+                onClick={send}
+                className="pm-tactile rounded-lg border border-hairline/60 px-3 py-1.5 text-[12.5px] text-ink hover:bg-raised disabled:opacity-40"
+              >
+                {busy ? "Reading…" : "Stage properties on Desk"}
+              </button>
+              <span className="text-[12px] text-ink-muted">Works without a model: address, tenant, phone, weekly rent.</span>
+            </div>
+          </div>
+        ) : null}
+        <AskProposeBar />
+        {result ? <AskIntakeResult result={result} onReview={() => dispatch({ type: "showDesk" })} /> : null}
+        {error ? <div role="alert" className="mt-2 text-[12px] text-danger">{error}</div> : null}
+      </div>
     </div>
   );
 }

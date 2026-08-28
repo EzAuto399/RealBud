@@ -1,6 +1,8 @@
 // Analytics are off by default and must never receive addresses, contacts,
 // balances, messages, portal URLs, or workflow content.
 
+import { markOnboardingComplete, onboardingComplete } from "./onboarding";
+
 export function initAnalytics() {
   /* off */
 }
@@ -14,9 +16,9 @@ export function identifyEmail(_email: string) {
 }
 
 export function emailGateDone(): boolean {
-  return true;
+  return onboardingComplete();
 }
 
 export function setEmailGateDone(_status: "submitted" | "skipped") {
-  /* off */
+  markOnboardingComplete();
 }

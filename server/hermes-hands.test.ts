@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync, chmodSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, writeFileSync, chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { HERMES_PIN } from "./hermes-pin.ts";
+import { applyPropertyPack, withYamlBlock } from "./hermes-pack.ts";
 import type { LedgerFacts } from "./desk.ts";
 import { parseLedgerFacts, tryHermesLedger, tryHermesPing } from "./hermes-hands.ts";
 import { seedVault } from "./vault.ts";
@@ -19,11 +20,15 @@ const dirs: string[] = [];
 function fakeHermes(answer: string, exitCode = 0, stderr = "") {
   const dir = mkdtempSync(join(tmpdir(), "omb-hands-"));
   dirs.push(dir);
-  // pack marker so tryHermesLedger passes its first gate
-  const profile = join(dir, "profiles", HERMES_PIN.profile);
-  mkdirSync(profile, { recursive: true });
-  writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
-  writeFileSync(join(profile, "config.yaml"), "approvals:\n  mode: manual\ncron_mode: deny\n");
+  // Exact pack attestation is part of the spawn gate. Tests install the real
+  // checked-in pack, then add only the dynamic model block it permits.
+  const profile = applyPropertyPack(dir).dir;
+  const config = join(profile, "config.yaml");
+  writeFileSync(
+    config,
+    withYamlBlock(readFileSync(config, "utf8"), "model", "model:\n  default: grok-4\n  provider: xai\n  base_url: ''\n"),
+  );
+  writeFileSync(join(profile, ".env"), "XAI_API_KEY=fixture-key\n");
   const script = join(dir, "hermes");
   writeFileSync(
     script,
@@ -76,7 +81,7 @@ describe("tryHermesLedger (fake pinned CLI)", () => {
     const { dir, script } = fakeHermes("Sure, here are the rows I would check!");
     const attempt = await tryHermesLedger(["prop-oak"], { cli: script, root: dir });
     expect(attempt.rows).toBeNull();
-    expect(attempt.detail).toMatch(/without ledger JSON/);
+    expect(attempt.detail).toMatch(/without ledger facts/);
   });
 
   it("surfaces the provider's own error words (billing, auth) in the detail", async () => {
@@ -112,23 +117,59 @@ describe("tryHermesPing (fake pinned CLI)", () => {
     expect(ping.detail).toContain("Billing or credits exhausted");
   });
 
+  it("stops before spawning when no model is attached", async () => {
+    const { dir, script } = fakeHermes("OK");
+    const profile = join(dir, "profiles", HERMES_PIN.profile);
+    const config = join(profile, "config.yaml");
+    writeFileSync(config, withYamlBlock(readFileSync(config, "utf8"), "model", null));
+    rmSync(join(profile, ".env"));
+
+    const ping = await tryHermesPing({ cli: script, root: dir });
+    expect(ping.ok).toBe(false);
+    expect(ping.detail).toMatch(/Choose a provider, model and key in You/);
+    expect(ping.detail).not.toMatch(/Hermes|terminal/i);
+  });
+
+  it("keeps engine setup and credentials out of provider failures", async () => {
+    const { dir, script } = fakeHermes(
+      "",
+      1,
+      "Or set OPENAI_API_KEY in your environment.\nRun 'worker setup' in an interactive terminal.",
+    );
+    const ping = await tryHermesPing({ cli: script, root: dir });
+    expect(ping.ok).toBe(false);
+    expect(ping.detail).toBe("The model could not authenticate. Reconnect it in You.");
+    expect(ping.detail).not.toMatch(/Hermes|terminal|API_KEY/i);
+  });
+
+  it("redacts a credential echoed by a provider error", async () => {
+    const fakeSecret = "sk-test-abcdefghijklmnopqrstuvwxyz012345";
+    const { dir, script } = fakeHermes("", 1, `Authentication failed: api_key=${fakeSecret}`);
+    const ping = await tryHermesPing({ cli: script, root: dir });
+    expect(ping.ok).toBe(false);
+    expect(ping.detail).toContain("Authentication failed");
+    expect(ping.detail).toContain("redacted");
+    expect(ping.detail).not.toContain(fakeSecret);
+  });
+
   it("fails cleanly when the pack is missing", async () => {
     const ping = await tryHermesPing({ cli: "/bin/false", root: "/tmp/realbud-no-such-home" });
     expect(ping.ok).toBe(false);
     expect(ping.detail).toMatch(/pack is missing/);
   });
 
-  it("refuses to spawn when the pack's approvals are not manual", async () => {
+  it("refuses to spawn when the pack's approval safety config is altered", async () => {
     const { dir, script } = fakeHermes("OK");
     const profile = join(dir, "profiles", HERMES_PIN.profile);
-    writeFileSync(join(profile, "config.yaml"), "approvals:\n  mode: yolo\n");
+    const config = join(profile, "config.yaml");
+    writeFileSync(config, readFileSync(config, "utf8").replace("mode: manual", "mode: yolo"));
     const attempt = await tryHermesLedger(["prop-oak"], { cli: script, root: dir });
     expect(attempt.rows).toBeNull();
-    expect(attempt.detail).toMatch(/manual approvals/);
+    expect(attempt.detail).toMatch(/pack is missing|re-apply/i);
 
     const ping = await tryHermesPing({ cli: script, root: dir });
     expect(ping.ok).toBe(false);
-    expect(ping.detail).toMatch(/manual approvals/);
+    expect(ping.detail).toMatch(/pack is missing|apply it again/i);
   });
 });
 
@@ -136,20 +177,19 @@ describe("hermes CLI argv contract", () => {
   it("invokes the worker with the exact pinned profile and headless flags", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omb-argv-"));
     dirs.push(dir);
-    const profile = join(dir, "profiles", HERMES_PIN.profile);
-    mkdirSync(profile, { recursive: true });
-    writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
-    writeFileSync(join(profile, "config.yaml"), "approvals:\n  mode: manual\ncron_mode: deny\n");
+    applyPropertyPack(dir);
     const script = join(dir, "hermes");
     const head = join(dir, "argv-head.txt");
     const promptFile = join(dir, "argv-prompt.txt");
     const tail = join(dir, "argv-tail.txt");
+    const workerHome = join(dir, "worker-home.txt");
     writeFileSync(
       script,
       // record argv without word-splitting (absolute paths: the child's cwd
       // is the caller's, not this directory)
       `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Hermes Agent v0.20.3 (2026.8.16.2)"; exit 0; fi\n` +
         `printf "%s\\n" "$1|$2|$3|$4|$5" > "${head}"\n` +
+        `printf "%s" "$HERMES_HOME" > "${workerHome}"\n` +
         `printf "%s" "$6" > "${promptFile}"\n` +
         `printf "%s|%s\\n" "$7" "$8" > "${tail}"\n` +
         `printf '%s' '[{"propertyId":"prop-oak","daysSinceDue":3,"rentLanded":false,"levyPaid":false,"daysSinceCourtesy":null}]'\n`,
@@ -162,6 +202,7 @@ describe("hermes CLI argv contract", () => {
     // the contract: any change to these flags breaks the worker seam and
     // must be deliberate (pin bump), never accidental
     expect(readFileSync(head, "utf8").trim()).toBe(`--profile|${HERMES_PIN.profile}|chat|-Q|-q`);
+    expect(readFileSync(workerHome, "utf8")).toBe(dir);
     expect(readFileSync(tail, "utf8").trim()).toBe("--max-turns|2");
     const prompt = readFileSync(promptFile, "utf8");
     expect(prompt).toContain("Morning arrears check. Use skill morning-arrears.");
@@ -175,10 +216,7 @@ describe("hermes CLI argv contract", () => {
   it("runs the ledger spawn with cwd equal to the book", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omb-cwd-"));
     dirs.push(dir);
-    const profile = join(dir, "profiles", HERMES_PIN.profile);
-    mkdirSync(profile, { recursive: true });
-    writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
-    writeFileSync(join(profile, "config.yaml"), "approvals:\n  mode: manual\ncron_mode: deny\n");
+    applyPropertyPack(dir);
     const book = seedVault();
     const cwdFile = join(dir, "cwd.txt");
     const script = join(dir, "hermes");

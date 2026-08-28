@@ -37,6 +37,7 @@ function sourceCollector(source: SourceIdentity): EvidenceCollector {
   if (source.kind === "csv") return "csv";
   if (source.kind === "hermes") return "hermes";
   if (source.kind === "portal") return "bounded-portal";
+  if (source.kind === "mail") return "mail";
   return "migration";
 }
 
@@ -51,7 +52,7 @@ function migrateSources(v2: DeskFileV2): Source[] {
     collector: sourceCollector(source),
     label: source.label,
     stableKey: source.stableKey,
-    freshnessMs: source.kind === "csv" ? DEFAULT_STALE_MS : 30 * 60 * 1000,
+    freshnessMs: source.kind === "csv" ? DEFAULT_STALE_MS : source.kind === "mail" ? 7 * 24 * 60 * 60 * 1000 : 30 * 60 * 1000,
   }));
 }
 
@@ -63,6 +64,7 @@ function migrateProperties(v2: DeskFileV2): { properties: PropertyV3[]; tenancie
     properties.push({
       id: property.id,
       address: property.address,
+      propertyCode: property.propertyCode,
       status: "active",
       options: { ...property.options, never: [...lockedNever()] },
     });
@@ -98,6 +100,8 @@ function migrateEvidence(v2: DeskFileV2, migratedAt: number): { evidence: Eviden
     const source = v2.sources.find((item) => item.id === observation.sourceId);
     const row: Evidence = {
       id: observation.id,
+      // A V2 row did not prove whole-book coverage, even when its label said
+      // CSV. Only a new V3-era import may mint PMS-authoritative evidence.
       authority: "legacy-unverified",
       collector: source ? sourceCollector(source) : "migration",
       sourceId: observation.sourceId,
@@ -107,7 +111,7 @@ function migrateEvidence(v2: DeskFileV2, migratedAt: number): { evidence: Eviden
       staleAt: observation.observedAt + observation.staleAfterMs,
       propertyId: observation.propertyId,
       tenancyId: observation.propertyId ? tenancyIdFromProperty(observation.propertyId) : undefined,
-      payload: observation.facts ?? {},
+      payload: { ...(observation.facts ?? {}), coverage: observation.coverage },
     };
     evidence.push(row);
     seen.add(observation.id);
@@ -168,17 +172,24 @@ function migrateEvidence(v2: DeskFileV2, migratedAt: number): { evidence: Eviden
   return { evidence, moneyPositions };
 }
 
-function migrateImportIssues(workItems: WorkItem[], migratedAt: number): ImportIssue[] {
-  return workItems.filter((work) => isImportHold(work.holdReason)).map((work) => ({
+function migrateImportIssues(v2: DeskFileV2, migratedAt: number): ImportIssue[] {
+  const issues = v2.importIssues.map((issue) => structuredClone(issue));
+  const knownIds = new Set(issues.map((issue) => issue.id));
+  for (const work of v2.workItems.filter((item) => isImportHold(item.holdReason))) {
+    if (knownIds.has(work.id)) continue;
+    issues.push({
     id: work.id,
     kind: work.holdReason === "unmatched" ? "unmatched" : "ambiguous",
     status: "open",
     sourceId: work.sourceIds[0] ?? "src-demo",
     // V2 unmatched/ambiguous holds carry the CSV identity in propertyId
     rawIdentity: work.propertyId || work.holdReason || "unmatched",
+    identityKind: work.importIdentity?.kind,
     candidates: [],
     createdAt: work.createdAt || migratedAt,
-  }));
+    });
+  }
+  return issues;
 }
 
 function migrateCases(v2: DeskFileV2): Case[] {
@@ -187,13 +198,30 @@ function migrateCases(v2: DeskFileV2): Case[] {
     if (isImportHold(work.holdReason)) continue;
     cases.push({
       id: work.id,
-      kind: work.kind === "owner-letter" ? "owner-update" : "money-arrears",
+      kind:
+        work.kind === "owner-letter"
+          ? "owner-update"
+          : work.kind === "inbound-triage" || work.kind === "maintenance-intake" || work.kind === "lease-review" || work.kind === "inspection-prep"
+            ? work.kind
+            : "money-arrears",
       state: work.state,
       propertyId: work.propertyId,
       tenancyId: tenancyIdFromProperty(work.propertyId),
       proposalId: work.draftId,
       holdReason: work.holdReason,
       periodDueAt: work.periodDueAt,
+      occurrenceKey: work.occurrenceKey,
+      sourceIds: work.sourceIds,
+      evidenceIds: work.evidenceIds ?? (work.evidenceId ? [work.evidenceId] : undefined),
+      evidenceStatus: work.evidenceStatus,
+      evidenceStaleAt: work.evidenceStaleAt,
+      observedAt: work.observedAt,
+      proposalHash: work.proposalHash,
+      artifactIds: work.artifactIds,
+      inbound: work.inbound,
+      lifecycle: work.lifecycle,
+      sourceIncident: work.sourceIncident,
+      origin: work.origin,
       createdAt: work.createdAt,
       updatedAt: work.updatedAt,
     });
@@ -285,8 +313,15 @@ export function migrateV2ToV3(v2: DeskFileV2, migratedAt: number): DeskFileV3 {
     const draft = v2.drafts.find((item) => item.id === proposal.id);
     cases.push({
       id: proposal.caseId,
-      kind: proposal.kind === "owner-letter" ? "owner-update" : "money-arrears",
-      state: draft?.status === "denied" ? "denied" : draft?.status === "allowed" ? "approved" : "proposed",
+      kind: proposal.kind === "owner-letter" ? "owner-update" : proposal.kind === "inbound-reply" ? "inbound-triage" : "money-arrears",
+      state:
+        draft?.status === "denied"
+          ? "denied"
+          : draft?.status === "allowed"
+            ? "approved"
+            : draft?.status === "stale"
+              ? "stale"
+              : "proposed",
       propertyId: draft?.propertyId,
       tenancyId: draft?.propertyId ? tenancyIdFromProperty(draft.propertyId) : undefined,
       proposalId: proposal.id,
@@ -310,7 +345,7 @@ export function migrateV2ToV3(v2: DeskFileV2, migratedAt: number): DeskFileV3 {
     properties,
     tenancies,
     contacts,
-    importIssues: migrateImportIssues(v2.workItems, migratedAt),
+    importIssues: migrateImportIssues(v2, migratedAt),
     cases,
     evidence,
     moneyPositions,
@@ -377,5 +412,6 @@ export function migrateV1ToV2(
     portalBindings: [],
     recipes: [],
     capabilities: [],
+    importIssues: [],
   };
 }

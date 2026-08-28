@@ -4,11 +4,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { NEVER_ACTIONS } from "../shared/contracts.ts";
-import { encryptJson, isEncryptedEnvelope } from "./desk-crypto.ts";
+import { decryptJson, encryptJson, isEncryptedEnvelope } from "./desk-crypto.ts";
 import { emptyV2 } from "./desk-store.ts";
 import { fixtureBook, shopDefaults } from "./desk-evaluate.ts";
 import { evaluateCurrentPositions, evaluateFromProjection } from "./case-evaluator.ts";
-import { COMMIT_PHASES, ciphertextHash, commitV2ToV3, candidatePath } from "./desk-v3-commit.ts";
+import { COMMIT_PHASES, ciphertextHash, commitOrRecover, commitV2ToV3, candidatePath } from "./desk-v3-commit.ts";
 import { DeskDecodeError, decodeDeskV2, decodeDeskV3, validateDeskV3 } from "./desk-v3-decode.ts";
 import { migrateV1ToV2, migrateV2ToV3 } from "./desk-v3-migrate.ts";
 import { projectDeskSnapshot, projectQueueSnapshot } from "./desk-v3-project.ts";
@@ -146,6 +146,19 @@ describe("atomic failure leaves V2 byte-identical", () => {
     expect(() => commitV2ToV3({ file, key, migratedAt, book: fixtureBook(), failAt: "rename" })).toThrow(/rename/);
     expect(readFileSync(file).equals(original)).toBe(true);
     expect(existsSync(candidatePath(file))).toBe(true);
+  });
+
+  it("reports the landed V3 book instead of claiming unchanged bytes after directory fsync fails", () => {
+    const { file, key } = tempDir();
+    const v2 = emptyV2(fixtureBook());
+    writeFileSync(file, JSON.stringify(encryptJson(key, v2)));
+    const result = commitOrRecover({ file, key, migratedAt, book: fixtureBook(), failAt: "dir-fsync" });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected recovery result");
+    expect(result.fileUnchanged).toBe(false);
+    expect(result.landedV3?.version).toBe(3);
+    expect(result.recovery.active).toBe(true);
+    expect(decodeDeskV3(decryptJson(key, JSON.parse(readFileSync(file, "utf8")))).version).toBe(3);
   });
 });
 

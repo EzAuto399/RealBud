@@ -91,6 +91,10 @@ export type RuntimeEventListener = (event: RuntimeEvent) => void;
 export interface SendTurnInput {
   threadId: ThreadId;
   text: string;
+  /** Files the human explicitly selected for this turn. The HTTP boundary
+   * resolves and validates these before a provider sees them; prompt text
+   * alone can never manufacture an attachment. */
+  attachments?: TurnAttachment[];
   model?: string;
   resumeCursor?: unknown;
   /** Prior turns for transcript-replay providers (API-backed drivers). */
@@ -110,6 +114,24 @@ export interface SendTurnInput {
     agents?: { command: string; args: string[]; env: Record<string, string> };
   };
   cwd?: string;
+  /** Server-owned execution limits. Renderer/model input never controls this.
+   * Selected-file reviews deny all tool permissions and run with bounded
+   * time/output even if the long-lived worker profile would normally ask. */
+  executionPolicy?: {
+    permissionMode?: "interactive" | "deny-all";
+    maxDurationMs?: number;
+    maxOutputChars?: number;
+    /** Server-owned fresh profile root for a deny-all task. ACP validates
+     * that it is nested beneath cwd; renderer/model input never sets it. */
+    isolatedProfileHome?: string;
+  };
+}
+
+export interface TurnAttachment {
+  path: string;
+  name: string;
+  size: number;
+  mimeType: string;
 }
 
 export interface TurnStartResult {

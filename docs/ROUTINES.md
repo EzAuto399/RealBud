@@ -14,9 +14,15 @@ Four reviews (code, usability, engineering, Hermes capability) agree: **PMs retu
 
 ---
 
-## Today vs the hole
+## Shipped clock and calendar
 
-Schedule can Pause / Resume / Run now on **Morning money**. PATCH only accepts `enabled`. Time and days are catalog constants. Ask can put a **courtesy** on Desk, not a clock change. Friday letter and inbound stay Planned.
+Schedule can Pause / Resume / Run now on **Morning money** and **Friday owner letter**, and PATCH their time/weekdays/enabled with revision and no backfill. The Monday-first month calendar previews those typed recurring dates; selecting an occurrence focuses the same authoritative editor. Inbound stays Planned and is not promoted onto the calendar. Ask can now prepare a one-run or clock-change card for those same code-owned routines; the clock remains unchanged until Allow, and the pending card is visible in both Ask and Desk.
+
+Every scheduled occurrence is admitted once under a durable key before source work starts. A crash may leave the clock bookmark behind, but startup finds the existing completed/interrupted occurrence and advances without replay. Overlap is recorded as missed rather than silently dropped. New runs persist a bounded PM-language receipt for readiness, source collection, evaluation and Desk staging; running steps become interrupted on restart. Existing v3 files and legacy runs require no migration and never receive invented history.
+
+Morning money uses the latest structured PMS export already admitted to Desk. It does not spend a model call to re-read facts RealBud already holds, search for a newer file or claim it refreshed the PMS. Current `MoneyPosition` projection decides whether those facts are fresh/unique enough; unsafe rows hold. Manual Desk Recheck remains the explicit worker-assisted collection path.
+
+An optional **Desktop reminders** connection in You can alert the PM once when a run fails, is missed/interrupted, or completes with linked held work. The shell owns generic notification copy; no property, person, balance, model text or outbound channel is involved. A durable `notifiedAt` receipt prevents reconnect/relaunch duplicates, and clicking opens Schedule or Desk. This is presentation of RealBud's existing clock state, not another scheduler.
 
 Hermes Bot Mode cron is a competing product (stored prompt + unattended **delivery**). Copying it breaks send-403, the training-provider story, and gives two clocks.
 
@@ -43,12 +49,12 @@ Hermes Bot Mode cron is a competing product (stored prompt + unattended **delive
 | Pack skills as HOW | Gateway `/cron`, Bot Mode Routines, deliver to WhatsApp |
 | Miss → hold | `cronjob` tool from Ask writing `jobs.json` |
 
-Clock stays CLI one-shot. Ask stays ACP. Same profile, different door. `cron_mode: deny` stays. A `jobs.json` under the property home is a **gate failure**.
+Clock stays a code-owned one-shot source/evaluator path. Ask stays ACP. The same private worker may serve an explicitly selected source adapter, but the built structured-export clock does not require a model. `cron_mode: deny` stays. A `jobs.json` under the property home is a **gate failure**.
 
 ### Engineering
 
 - Catalog owns: id, name, description, available, evaluator, `mayLaunchCua: false`.
-- Persist in `loops.json` v3: enabled, time, weekdays, property scope, revision, proposals.
+- Persist in `loops.json` v3: enabled, time, weekdays, property scope, revision, proposals, deterministic occurrence key and optional bounded phase receipts.
 - **Do not overload `Draft` or money `WorkItem`.** Own `LoopProposal` `{ kind: "schedule-change" }`. Allow on a courtesy must never move the clock.
 - GUI PATCH applies immediately (the PM is looking at the form). Ask POST `/propose` does not apply; Allow does.
 - Time/scope change: `handledThrough = now-1` so we **do not backfill** a missed old slot. Run now is explicit catch-up. Enable-only toggle keeps today’s 12h catch-up.
@@ -91,6 +97,14 @@ Time + weekday chips + Save on existing cards. Planned: can edit when, cannot Ru
 **Not in these PRs:** owner-letter evaluator, NLP, pocket, launchd, Cua from the clock, “create any routine,” timezone editor.
 
 **Amendment 2026-08-23 (CEO review, HOLD SCOPE):** ship PRs A then B, then build owner-letter v0 before PR C. Ask-proposes-a-clock-change (PR C) is chat plumbing for a clock no office has used yet — defer until a named office asks for it; PR D stays gated on a named book as written. **Status: done as amended** — PR A (clock PATCH + revision, no backfill), PR B (Schedule GUI chips), and owner-letter v0 (`server/owner-letter.ts`, Copy-only) shipped 2026-08-23.
+
+**Amendment 2026-08-26 (calendar projection):** the month view is presentation and navigation only. It derives occurrences from the existing typed schedules and cannot create a one-off date, exception, new kind or prompt job. Paused/timezone-held entries remain visibly named; inaccessible planned kinds are absent. The time/weekdays/enabled PATCH remains the only GUI clock write.
+
+**Amendment 2026-08-26 (conversational control plane):** an explicit product instruction activated the narrow PR C behavior through the shared Ask action broker. Bud returns one closed `run-routine` or `change-routine` request; RealBud resolves the named routine and revision, renders the before/after card in Ask and Desk, and only Allow calls the existing `runNow` or clock PATCH. The action id deduplicates a retried Run now. A stale same-routine edit fails closed. This does not add custom routine creation, prompts, property scope, another clock, or Hermes cron.
+
+**Amendment 2026-08-26 (execution receipts + source methods):** Schedule now shows the code-owned dependencies for each typed routine and expandable durable phase receipts. Manual ids cannot cross routine boundaries; scheduled keys suppress restart duplicates; overlap is visible; error/detail text is bounded and secret-redacted. You shows one RealBud-owned source map: local PMS export active, and Direct API / restricted Composio / approved MCP only as collapsed pilot-gated implementation candidates. It is not the generic connector marketplace and exposes no connect/execute authority.
+
+**Amendment 2026-08-27 (inbound interrupt foundation, clock still gated):** Desk can ingest one fixed, labelled Demo inbox batch through the bounded `realbud` contract described in ADR 0002. It deduplicates messages, collapses threads, stages operational reply wording and records Waiting/Close through the encrypted Desk owner. This does not make `inbound-triage` available on Schedule: there is no mailbox adapter, poller, OAuth grant, attachment reader or automatic follow-up run. Enabling the clock still requires the named-office gate and a code-owned evaluator/source path.
 
 v2 scope after a named book (otherwise “Oak” is a fixture id). v3 Add is shipping a kind, not a settings page.
 

@@ -2,14 +2,20 @@
 // thread→instance binding and per-instance resume cursors — upstream's
 // ProviderSessionDirectory, recipe step 6: persist the binding from day
 // one). messages-<threadId>.json holds the folded transcript.
-import { readFileSync, mkdirSync, unlinkSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 import { newId, type ModelSelection, type ThreadId } from "./contracts.ts";
 import { pickBotName } from "./names.ts";
 import { redactSecretsInText } from "./redact.ts";
+import {
+  RecoveryRequiredError,
+  deleteRecoverableFile,
+  readRecoverableFile,
+  writeRecoverableFile,
+} from "./recoverable-file.ts";
+import type { AskActionProposal } from "../shared/ask-actions.ts";
 
 export type MausColor =
   | "green"
@@ -50,9 +56,23 @@ export interface OptionCardData {
 export interface Message {
   id: string;
   role: "bot" | "user";
-  kind: "text" | "options" | "activity" | "screen";
+  kind: "text" | "options" | "activity" | "screen" | "action";
   text?: string;
+  /** Durable admission identity for a human-authored Ask turn. Reusing the
+   * id with different input is rejected at the HTTP owner. */
+  requestId?: string;
+  /** Digest of the admitted text + selected-file metadata. The input and
+   * local paths are never persisted in this field. */
+  requestDigest?: string;
+  /** Durable lifecycle for an admitted Ask request. Startup may resume only
+   * an attachment-free request whose admitted message is still the leaf. */
+  requestState?: "admitted" | "dispatching" | "settled" | "held";
+  requestAttachmentCount?: number;
+  requestStatusDetail?: string;
   card?: OptionCardData;
+  /** A closed RealBud mutation/setup proposal. The model can request one,
+   * but the server resolves every target/revision and only Allow executes. */
+  action?: AskActionProposal;
   /** activity messages: tool name + outcome. `spoken` is the same chip as
    * a phrase a voice can read ("reading a file") — computed once here so
    * call mode never has to re-derive it from the raw tool name, and absent
@@ -270,27 +290,96 @@ const onboardingCard = (): OptionCardData => ({
 interface ThreadState {
   messages: Message[];
   activeLeafId: string | null;
+  readOnly?: boolean;
+}
+
+export interface StoreRecoveryStatus {
+  active: boolean;
+  issues: Array<{
+    area: "assistant roster" | "conversation history";
+    action: "restored-previous" | "attention";
+    detail: string;
+  }>;
+}
+
+function decodeBots(raw: string): BotRecord[] {
+  const parsed = JSON.parse(raw) as unknown;
+  if (!Array.isArray(parsed)) throw new Error("assistant roster is invalid");
+  for (const item of parsed) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("assistant roster is invalid");
+    const bot = item as Record<string, unknown>;
+    if (typeof bot.id !== "string" || typeof bot.threadId !== "string" || typeof bot.name !== "string") {
+      throw new Error("assistant roster is invalid");
+    }
+  }
+  return parsed as BotRecord[];
+}
+
+function decodeGroups(raw: string): GroupRecord[] {
+  const parsed = JSON.parse(raw) as unknown;
+  if (!Array.isArray(parsed)) throw new Error("room roster is invalid");
+  for (const item of parsed) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("room roster is invalid");
+    const group = item as Record<string, unknown>;
+    if (
+      typeof group.id !== "string" ||
+      typeof group.threadId !== "string" ||
+      !Array.isArray(group.memberIds)
+    ) {
+      throw new Error("room roster is invalid");
+    }
+  }
+  return parsed as GroupRecord[];
+}
+
+function decodeThread(raw: string): ThreadState {
+  const parsed = JSON.parse(raw) as unknown;
+  const messages = Array.isArray(parsed)
+    ? parsed
+    : parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as { messages?: unknown }).messages
+      : null;
+  if (!Array.isArray(messages)) throw new Error("conversation history is invalid");
+  for (const item of messages) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("conversation history is invalid");
+    const message = item as Record<string, unknown>;
+    if (
+      typeof message.id !== "string" ||
+      !["bot", "user"].includes(String(message.role)) ||
+      !["text", "options", "activity", "screen", "action"].includes(String(message.kind)) ||
+      typeof message.at !== "number" ||
+      !Number.isFinite(message.at)
+    ) {
+      throw new Error("conversation history is invalid");
+    }
+  }
+  const activeLeafId = Array.isArray(parsed)
+    ? null
+    : (parsed as { activeLeafId?: unknown }).activeLeafId ?? null;
+  if (activeLeafId !== null && typeof activeLeafId !== "string") throw new Error("conversation branch is invalid");
+  return { messages: messages as Message[], activeLeafId };
 }
 
 export class Store {
   bots: BotRecord[] = [];
   groups: GroupRecord[] = [];
   private threads = new Map<string, ThreadState>();
+  private recoveryIssues = new Map<string, StoreRecoveryStatus["issues"][number]>();
+  private botsWritable = true;
+  private groupsWritable = true;
   private defaultSelection: () => ModelSelection;
 
   constructor(defaultSelection: () => ModelSelection) {
     this.defaultSelection = defaultSelection;
     mkdirSync(DATA_DIR, { recursive: true });
-    try {
-      this.bots = JSON.parse(readFileSync(BOTS_FILE, "utf8"));
-    } catch {
-      this.bots = [];
-    }
-    try {
-      this.groups = JSON.parse(readFileSync(GROUPS_FILE, "utf8"));
-    } catch {
-      this.groups = [];
-    }
+    const bots = readRecoverableFile(BOTS_FILE, decodeBots);
+    this.bots = bots.value ?? [];
+    this.botsWritable = bots.state !== "blocked";
+    this.recordCollectionRecovery("bots", bots.state, "assistant roster");
+    const groups = readRecoverableFile(GROUPS_FILE, decodeGroups);
+    this.groups = groups.value ?? [];
+    this.groupsWritable = groups.state !== "blocked";
+    this.recordCollectionRecovery("groups", groups.state, "assistant roster");
     // busy never survives a restart — no turn does either. Rooms saved
     // before default responders existed adopt their first member as lead.
     let botsMigrated = false;
@@ -316,8 +405,8 @@ export class Store {
       if (JSON.stringify(normalized) !== JSON.stringify(g.defaultResponder)) groupsMigrated = true;
       g.defaultResponder = normalized;
     }
-    if (botsMigrated) this.saveBots();
-    if (groupsMigrated) this.saveGroups();
+    if (botsMigrated && this.botsWritable) this.saveBots();
+    if (groupsMigrated && this.groupsWritable) this.saveGroups();
     // bots saved before tasks existed have one endless thread; adopt it as
     // their first task so nothing is lost and nothing special-cases it
     for (const b of this.bots) {
@@ -331,14 +420,59 @@ export class Store {
         },
       ];
     }
+    // Validate every known transcript during boot so recovery is visible on
+    // the first You render, not only after a PM happens to open that task.
+    for (const threadId of new Set([
+      ...this.bots.flatMap((bot) => [bot.threadId, ...(bot.tasks ?? []).map((task) => task.threadId)]),
+      ...this.groups.map((group) => group.threadId),
+    ])) {
+      this.thread(threadId);
+    }
+  }
+
+  private recordCollectionRecovery(
+    key: string,
+    state: "missing" | "current" | "restored" | "blocked",
+    area: StoreRecoveryStatus["issues"][number]["area"],
+  ): void {
+    if (state === "restored") {
+      this.recoveryIssues.set(key, {
+        area,
+        action: "restored-previous",
+        detail: area === "conversation history"
+          ? "RealBud restored a conversation from its last verified generation."
+          : "RealBud restored the last verified assistant roster.",
+      });
+    } else if (state === "blocked") {
+      this.recoveryIssues.set(key, {
+        area,
+        action: "attention",
+        detail: area === "conversation history"
+          ? "A conversation could not be verified. It is read-only and its original bytes were preserved."
+          : "The assistant roster could not be verified. RealBud did not replace it with an empty setup.",
+      });
+    } else {
+      this.recoveryIssues.delete(key);
+    }
+  }
+
+  recoveryStatus(): StoreRecoveryStatus {
+    const issues = [...this.recoveryIssues.values()];
+    return { active: issues.some((issue) => issue.action === "attention"), issues };
   }
 
   private saveBots() {
-    writeFileAtomic(BOTS_FILE, JSON.stringify(this.bots, null, 2));
+    if (!this.botsWritable) throw new RecoveryRequiredError("The assistant roster needs recovery before it can change.");
+    writeRecoverableFile(BOTS_FILE, JSON.stringify(this.bots, null, 2), decodeBots);
   }
 
   private saveGroups() {
-    writeFileAtomic(GROUPS_FILE, JSON.stringify(this.groups.map(({ busyBotId, ...g }) => g), null, 2));
+    if (!this.groupsWritable) throw new RecoveryRequiredError("The room roster needs recovery before it can change.");
+    writeRecoverableFile(
+      GROUPS_FILE,
+      JSON.stringify(this.groups.map(({ busyBotId, ...g }) => g), null, 2),
+      decodeGroups,
+    );
   }
 
   // ── groups ────────────────────────────────────────────────────────────
@@ -394,9 +528,7 @@ export class Store {
     this.groups = this.groups.filter((g) => g.id !== id);
     this.threads.delete(group.threadId);
     this.saveGroups();
-    try {
-      unlinkSync(messagesFile(group.threadId));
-    } catch {}
+    deleteRecoverableFile(messagesFile(group.threadId));
     return true;
   }
 
@@ -413,17 +545,21 @@ export class Store {
   private thread(threadId: string): ThreadState {
     let t = this.threads.get(threadId);
     if (t) return t;
-    let messages: Message[] = [];
-    let activeLeafId: string | null = null;
-    try {
-      const raw = JSON.parse(readFileSync(messagesFile(threadId), "utf8"));
-      if (Array.isArray(raw)) messages = raw; // pre-branching flat file
-      else {
-        messages = raw.messages ?? [];
-        activeLeafId = raw.activeLeafId ?? null;
-      }
-    } catch {
-      /* fresh thread */
+    const loaded = readRecoverableFile(messagesFile(threadId), decodeThread);
+    this.recordCollectionRecovery(`thread:${threadId}`, loaded.state, "conversation history");
+    let messages: Message[] = loaded.value?.messages ?? [];
+    let activeLeafId: string | null = loaded.value?.activeLeafId ?? null;
+    const readOnly = loaded.state === "blocked";
+    if (readOnly) {
+      messages = [{
+        id: `recovery-${threadId}`,
+        role: "bot",
+        kind: "text",
+        text: "This conversation is held for recovery. RealBud preserved its local history and will not start a new turn over it.",
+        at: 0,
+        parentId: null,
+      }];
+      activeLeafId = messages[0].id;
     }
     // legacy rows carry no parentId — chain them in array order
     let prev: string | null = null;
@@ -432,21 +568,32 @@ export class Store {
       prev = m.id;
     }
     if (!activeLeafId) activeLeafId = messages.at(-1)?.id ?? null;
-    t = { messages, activeLeafId };
+    t = { messages, activeLeafId, readOnly };
     this.threads.set(threadId, t);
     return t;
   }
 
   private saveThread(threadId: string) {
     const t = this.thread(threadId);
-    writeFileAtomic(
+    this.assertThreadWritable(t);
+    writeRecoverableFile(
       messagesFile(threadId),
       JSON.stringify({ activeLeafId: t.activeLeafId, messages: t.messages }, null, 2),
+      decodeThread,
     );
+  }
+
+  private assertThreadWritable(thread: ThreadState): void {
+    if (!thread.readOnly) return;
+    throw new RecoveryRequiredError("This conversation needs recovery before Bud can add another message.");
   }
 
   messagesFor(threadId: string): Message[] {
     return this.thread(threadId).messages;
+  }
+
+  messageForRequest(threadId: string, requestId: string): Message | null {
+    return this.thread(threadId).messages.find((message) => message.requestId === requestId) ?? null;
   }
 
   activeLeaf(threadId: string): string | null {
@@ -468,6 +615,7 @@ export class Store {
 
   appendMessage(threadId: string, message: Omit<Message, "id" | "at"> & { at?: number }): Message {
     const t = this.thread(threadId);
+    this.assertThreadWritable(t);
     const full: Message = { id: newId(), at: Date.now(), parentId: t.activeLeafId, ...message };
     if (full.role === "bot") {
       if (full.text) full.text = redactSecretsInText(full.text);
@@ -506,6 +654,7 @@ export class Store {
    * (same parent, new text) and becomes the active leaf. */
   branchMessage(threadId: string, sourceId: string, text: string): Message | null {
     const t = this.thread(threadId);
+    this.assertThreadWritable(t);
     const source = t.messages.find((m) => m.id === sourceId);
     if (!source) return null;
     const full: Message = {
@@ -526,6 +675,7 @@ export class Store {
    * descending to that branch's most recently active leaf. */
   setActiveLeaf(threadId: string, messageId: string): string | null {
     const t = this.thread(threadId);
+    this.assertThreadWritable(t);
     if (!t.messages.some((m) => m.id === messageId)) return null;
     let cur = messageId;
     for (;;) {
@@ -540,6 +690,7 @@ export class Store {
 
   patchMessage(threadId: string, messageId: string, patch: Partial<Message>): Message | null {
     const t = this.thread(threadId);
+    this.assertThreadWritable(t);
     const idx = t.messages.findIndex((m) => m.id === messageId);
     if (idx === -1) return null;
     t.messages[idx] = { ...t.messages[idx], ...patch, card: patch.card ?? t.messages[idx].card };
@@ -589,9 +740,7 @@ export class Store {
     // every task's transcript goes with the bot, not just the open one
     for (const threadId of new Set([bot.threadId, ...(bot.tasks ?? []).map((t) => t.threadId)])) {
       this.threads.delete(threadId);
-      try {
-        unlinkSync(messagesFile(threadId));
-      } catch {}
+      deleteRecoverableFile(messagesFile(threadId));
     }
     this.saveBots();
     return true;
@@ -712,9 +861,7 @@ export class Store {
     if (!bot.tasks.some((t) => t.threadId === threadId)) return null;
     bot.tasks = bot.tasks.filter((t) => t.threadId !== threadId);
     this.threads.delete(threadId);
-    try {
-      unlinkSync(messagesFile(threadId));
-    } catch {}
+    deleteRecoverableFile(messagesFile(threadId));
     if (bot.threadId === threadId) {
       bot.threadId = bot.tasks[0]!.threadId;
       bot.resumeCursors = { ...bot.tasks[0]!.resumeCursors };
@@ -725,6 +872,7 @@ export class Store {
 
   /** One visible worker. Desk is home; Ask talks to Bud. */
   seedIfEmpty() {
+    if (!this.botsWritable) return;
     if (this.bots.some((b) => b.id === "bud")) return;
     if (this.bots.length) return;
     const bot: BotRecord = {
@@ -747,7 +895,7 @@ export class Store {
     this.appendMessage(bot.threadId, {
       role: "bot",
       kind: "text",
-      text: "I'm Bud. Morning money lives on Desk — I can help you read a card or draft an owner note. I never send or pay.",
+      text: "I'm Bud. Desk, Ask, Schedule and You are the whole window — I can help you read a card or draft an owner note. I never send or pay.",
     });
   }
 }

@@ -1,8 +1,10 @@
 # intake-properties
 
-Turn what the PM gives you — pasted lists, emails, messages — into structured
-property intake. You never add anything to the book yourself: RealBud stages
-each property as a Desk card and the PM allows it.
+Turn what the PM gives you — selected spreadsheets, PDFs, documents,
+screenshots, photos, pasted lists, emails or messages — into structured
+property intake. Use the attached evidence and vision tools when needed. You
+never add anything to the book yourself:
+RealBud stages each property as a Desk card and the PM allows it.
 
 ## Output
 
@@ -10,6 +12,7 @@ Return JSON only, no preamble:
 
 ```json
 {
+  "action": "realbud.stage-properties.v1",
   "properties": [
     { "address": "12 Oak St, Dickson ACT", "tenantName": "Jordan Blake", "tenantPhone": "0400 555 666", "weeklyRentCents": 58000 }
   ],
@@ -24,3 +27,5 @@ Return JSON only, no preamble:
   that was not in the text — leave it out and put the line in `unparsed`.
 - Phone numbers stay exactly as written.
 - If the text is not about properties, return empty arrays.
+- Do not search the device. Review only the files/images explicitly attached
+  to this turn and any case evidence RealBud names.

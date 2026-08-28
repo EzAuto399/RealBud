@@ -1,16 +1,16 @@
-# Windows installer, built on a real Windows runner and published as a
-# workflow artifact.
+# Unsigned Windows training/QA installer, built and launched on a real
+# Windows runner. It is a workflow artifact only and is not distributable.
 #
 # Why this exists: releases are cut by hand from a Mac, which cannot build
 # an NSIS installer (electron-builder needs wine, and a cross-built exe
 # that never ran on Windows is exactly the artifact that looks fine and
 # breaks in the field). So every release so far shipped Windows behind the
-# mac build — different trees under one version number. Run this from the
-# same commit as the mac build and attach the artifact to the release.
+# mac build — different trees under one version number. This workflow proves
+# source/package behavior only; the gated signed release command is separate.
 #
 # Deliberately artifact-only: pushing straight to the separate releases
 # repo would need a cross-repo token this workflow has no business holding.
-name: Package Windows
+name: Package Windows (unsigned QA)
 
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ on:
 
 jobs:
   package:
-    name: NSIS installer
+    name: Unsigned NSIS + installed runtime QA
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -42,6 +42,8 @@ jobs:
         shell: bash
         run: rm -rf dist dist-server release
       - run: pnpm package:win
+      - name: Launch unpacked app twice and verify isolated first-run state
+        run: node scripts/smoke-linux-package.mjs
       - name: report what was built
         shell: bash
         run: |
@@ -50,7 +52,7 @@ jobs:
           ls -lh release/*.exe release/*.yml 2>/dev/null || true
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-installer
+          name: windows-unsigned-qa-installer-not-for-distribution
           path: |
             release/*.exe
             release/*.exe.blockmap

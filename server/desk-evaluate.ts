@@ -71,6 +71,7 @@ export function fixtureBook(): { properties: Property[]; ledger: LedgerFacts[] }
   const properties: Property[] = [
     {
       id: "prop-oak",
+      propertyCode: "prop-oak",
       address: "12 Oak St, Dickson ACT",
       tenantName: "Sam Nguyen",
       tenantPhone: "0400 111 222",
@@ -79,6 +80,7 @@ export function fixtureBook(): { properties: Property[]; ledger: LedgerFacts[] }
     },
     {
       id: "prop-harbour",
+      propertyCode: "prop-harbour",
       address: "4/22 Harbour Rd, Kingston ACT",
       tenantName: "Priya Shah",
       tenantPhone: "0400 333 444",
@@ -91,6 +93,7 @@ export function fixtureBook(): { properties: Property[]; ledger: LedgerFacts[] }
     },
     {
       id: "prop-pine",
+      propertyCode: "prop-pine",
       address: "8 Pine Ave, Braddon ACT",
       tenantName: "Jordan Blake",
       tenantPhone: "0400 555 666",
@@ -99,6 +102,7 @@ export function fixtureBook(): { properties: Property[]; ledger: LedgerFacts[] }
     },
     {
       id: "prop-king",
+      propertyCode: "prop-king",
       address: "91 King St, Narrabundah ACT",
       tenantName: "Alex Romero",
       tenantPhone: "0400 777 888",
@@ -107,6 +111,7 @@ export function fixtureBook(): { properties: Property[]; ledger: LedgerFacts[] }
     },
     {
       id: "prop-birch",
+      propertyCode: "prop-birch",
       address: "3 Birch Cl, Watson ACT",
       tenantName: "Casey Holt",
       tenantPhone: "0400 999 000",
@@ -115,6 +120,7 @@ export function fixtureBook(): { properties: Property[]; ledger: LedgerFacts[] }
     },
     {
       id: "prop-flora",
+      propertyCode: "prop-flora",
       address: "2/5 Flora St, Ainslie ACT",
       tenantName: "Riley Chen",
       tenantPhone: "0412 000 111",
@@ -190,8 +196,8 @@ function ausDate(ms: number): string {
   return new Date(ms).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" });
 }
 
-export function composeDraft(property: Property, facts: LedgerFacts, now: number, kind: DraftKind): Draft {
-  const periodDueAt = dueDate(now, facts.daysSinceDue);
+export function composeDraft(property: Property, facts: LedgerFacts, now: number, kind: DraftKind, factsObservedAt = now): Draft {
+  const periodDueAt = dueDate(factsObservedAt, facts.daysSinceDue);
   if (kind === "levy-from-rent") {
     const levy = property.options.levyFromRent!;
     return {

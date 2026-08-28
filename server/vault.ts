@@ -96,20 +96,30 @@ export function archivePropertyNote(id: string, book?: string): void {
   writeFileSync(path, `---\n${nextMatter.trim()}\n---\n\n${body.replace(/^\n+/, "")}`);
 }
 
-export function appendAllowedLine(id: string, line: string, book?: string, address?: string): void {
+export function appendAllowedLines(
+  entries: Array<{ id: string; line: string; address?: string }>,
+  book?: string,
+  at = Date.now(),
+): void {
+  if (entries.length === 0) return;
   seedVault(book);
-  const existing = readPropertyNote(id, book);
-  const bullet = `- ${line}`;
-  let next: string;
-  if (/^## Last allowed/m.test(existing)) {
-    next = existing.replace(/^(## Last allowed\n)/m, `$1\n${bullet}\n`);
-  } else {
-    next = `${existing.trimEnd()}\n\n## Last allowed\n\n${bullet}\n`;
+  const bullets: string[] = [];
+  for (const entry of entries) {
+    const existing = readPropertyNote(entry.id, book);
+    const bullet = `- ${entry.line}`;
+    const next = /^## Last allowed/m.test(existing)
+      ? existing.replace(/^(## Last allowed\n)/m, `$1\n${bullet}\n`)
+      : `${existing.trimEnd()}\n\n## Last allowed\n\n${bullet}\n`;
+    writePropertyNote(entry.id, next.trim(), { address: entry.address }, book);
+    bullets.push(bullet);
   }
-  writePropertyNote(id, next.trim(), { address }, book);
-  const day = new Date().toISOString().slice(0, 10);
+  const day = new Date(at).toISOString().slice(0, 10);
   const log = join(bookDir(book), "decisions", `${day}.md`);
   mkdirSync(dirname(log), { recursive: true });
   const prev = existsSync(log) ? readFileSync(log, "utf8") : `# ${day}\n\n`;
-  writeFileSync(log, `${prev.trimEnd()}\n${bullet}\n`);
+  writeFileSync(log, `${prev.trimEnd()}\n${bullets.join("\n")}\n`);
+}
+
+export function appendAllowedLine(id: string, line: string, book?: string, address?: string, at = Date.now()): void {
+  appendAllowedLines([{ id, line, address }], book, at);
 }

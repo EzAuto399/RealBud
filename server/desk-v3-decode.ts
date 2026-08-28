@@ -1,6 +1,16 @@
 // Strict V1/V2/V3 decoders and referential validation. No filesystem.
 import type { DeskFileV2 } from "../shared/desk-v2.ts";
 import {
+  CLOSURE_KINDS,
+  INBOUND_CATEGORIES,
+  INBOUND_PRIORITIES,
+  WAITING_PARTIES,
+  type InboundCaseDetail,
+  type ImportIdentity,
+  type SourceIncidentDetail,
+  type WorkLifecycle,
+} from "../shared/contracts.ts";
+import {
   CASE_KINDS,
   CASE_STATES,
   CONTACT_ROLES,
@@ -60,15 +70,17 @@ const WORK_STATES = [
   "stale",
   "superseded",
   "cancelled",
+  "waiting",
   "effect-unknown",
   "handoff-expired",
 ] as const;
 const HANDS = ["demo", "hermes", "held", "csv", "fixture"] as const;
 const RENT_SOURCES = ["mepay", "bank", "pms-export", "fixture", "csv"] as const;
 const CHANNELS = ["sms", "email", "portal", "desk"] as const;
-const DRAFT_KINDS = ["courtesy-rent", "levy-from-rent", "owner-letter"] as const;
-const DRAFT_STATUS = ["pending", "allowed", "denied"] as const;
-const SOURCE_KINDS = ["csv", "hermes", "portal", "demo"] as const;
+const DRAFT_KINDS = ["courtesy-rent", "levy-from-rent", "owner-letter", "inbound-reply"] as const;
+const DRAFT_STATUS = ["pending", "allowed", "denied", "stale"] as const;
+const SOURCE_KINDS = ["csv", "hermes", "portal", "mail", "demo"] as const;
+const WORK_KINDS = ["money-arrears", "owner-letter", "inbound-triage", "maintenance-intake", "lease-review", "inspection-prep", "source-incident"] as const;
 
 function isRec(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -90,6 +102,15 @@ function num(value: unknown, field: string, errors: string[]): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   errors.push(`${field} must be a finite number`);
   return 0;
+}
+
+function retentionDays(value: unknown, errors: string[]): number | null {
+  if (value === null) return null;
+  const days = num(value, "retentionDays", errors);
+  if (!Number.isInteger(days) || days < 1 || days > 3_650) {
+    errors.push("retentionDays must be an integer from 1 to 3650 or null");
+  }
+  return days;
 }
 
 function arr(value: unknown, field: string, errors: string[]): unknown[] {
@@ -115,7 +136,7 @@ export function decodeDeskV2(value: unknown): DeskFileV2 {
     revision: num(value.revision, "revision", errors),
     mode: oneOf(value.mode, ["demo", "live"], "mode", errors) ?? "demo",
     timezone: str(value.timezone, "timezone", errors),
-    retentionDays: value.retentionDays === null ? null : num(value.retentionDays, "retentionDays", errors),
+    retentionDays: retentionDays(value.retentionDays, errors),
     properties: properties.map((item, i) => decodeProperty(item, `properties[${i}]`, errors)),
     ledger: arr(value.ledger, "ledger", errors).map((item, i) => decodeLedger(item, `ledger[${i}]`, errors)),
     drafts: arr(value.drafts, "drafts", errors).map((item, i) => decodeDraft(item, `drafts[${i}]`, errors)),
@@ -130,11 +151,15 @@ export function decodeDeskV2(value: unknown): DeskFileV2 {
     portalBindings: Array.isArray(value.portalBindings) ? (value.portalBindings as DeskFileV2["portalBindings"]) : [],
     recipes: Array.isArray(value.recipes) ? (value.recipes as DeskFileV2["recipes"]) : [],
     capabilities: Array.isArray(value.capabilities) ? (value.capabilities as DeskFileV2["capabilities"]) : [],
+    importIssues: Array.isArray(value.importIssues)
+      ? value.importIssues.map((item, i) => decodeImportIssue(item, `importIssues[${i}]`, errors))
+      : [],
   };
   uniqueIds(decoded.properties.map((p) => p.id), "property", errors);
   uniqueIds(decoded.drafts.map((d) => d.id), "draft", errors);
   uniqueIds(decoded.workItems.map((w) => w.id), "workItem", errors);
   uniqueIds(decoded.capabilities.map((c) => c.id), "capability", errors);
+  uniqueIds(decoded.importIssues.map((issue) => issue.id), "importIssue", errors);
   if (errors.length) throw new DeskDecodeError(errors);
   return decoded;
 }
@@ -148,6 +173,7 @@ function decodeProperty(value: unknown, field: string, errors: string[]): DeskFi
   return {
     id: str(value.id, `${field}.id`, errors),
     address: str(value.address, `${field}.address`, errors),
+    propertyCode: typeof value.propertyCode === "string" ? value.propertyCode : undefined,
     tenantName: typeof value.tenantName === "string" ? value.tenantName : "",
     tenantPhone: typeof value.tenantPhone === "string" ? value.tenantPhone : "",
     weeklyRentCents: num(value.weeklyRentCents, `${field}.weeklyRentCents`, errors),
@@ -187,7 +213,7 @@ function decodeDraft(value: unknown, field: string, errors: string[]): DeskFileV
   }
   return {
     id: str(value.id, `${field}.id`, errors),
-    propertyId: str(value.propertyId, `${field}.propertyId`, errors),
+    propertyId: typeof value.propertyId === "string" ? value.propertyId : "",
     kind: oneOf(value.kind, DRAFT_KINDS, `${field}.kind`, errors) ?? "courtesy-rent",
     status: oneOf(value.status, DRAFT_STATUS, `${field}.status`, errors) ?? "pending",
     channel: oneOf(value.channel, CHANNELS, `${field}.channel`, errors) ?? "sms",
@@ -235,21 +261,51 @@ function decodeWork(value: unknown, field: string, errors: string[]): DeskFileV2
   }
   return {
     id: str(value.id, `${field}.id`, errors),
-    kind: value.kind === "owner-letter" ? "owner-letter" : "money-arrears",
+    kind: oneOf(value.kind, WORK_KINDS, `${field}.kind`, errors) ?? "money-arrears",
     state: oneOf(value.state, WORK_STATES, `${field}.state`, errors) ?? "held",
-    propertyId: str(value.propertyId, `${field}.propertyId`, errors),
+    propertyId: typeof value.propertyId === "string" ? value.propertyId : "",
     occurrenceKey: typeof value.occurrenceKey === "string" ? value.occurrenceKey : `${value.propertyId}`,
     periodDueAt: num(value.periodDueAt, `${field}.periodDueAt`, errors),
     draftId: typeof value.draftId === "string" ? value.draftId : undefined,
     recipient: isRec(value.recipient)
-      ? { name: String(value.recipient.name ?? ""), phone: String(value.recipient.phone ?? "") }
+      ? {
+          name: String(value.recipient.name ?? ""),
+          phone: String(value.recipient.phone ?? ""),
+          hardship: typeof value.recipient.hardship === "boolean" ? value.recipient.hardship : undefined,
+          dispute: typeof value.recipient.dispute === "boolean" ? value.recipient.dispute : undefined,
+          paymentArrangement: typeof value.recipient.paymentArrangement === "boolean" ? value.recipient.paymentArrangement : undefined,
+          doNotContact: typeof value.recipient.doNotContact === "boolean" ? value.recipient.doNotContact : undefined,
+        }
       : { name: "", phone: "" },
     sourceIds: Array.isArray(value.sourceIds) ? value.sourceIds.map(String) : [],
     observedAt: num(value.observedAt, `${field}.observedAt`, errors),
+    evidenceId: typeof value.evidenceId === "string" ? value.evidenceId : undefined,
+    evidenceIds: Array.isArray(value.evidenceIds) ? value.evidenceIds.map(String) : undefined,
+    evidenceStatus:
+      value.evidenceStatus === undefined
+        ? undefined
+        : oneOf(value.evidenceStatus, MONEY_POSITION_STATUSES, `${field}.evidenceStatus`, errors) ?? undefined,
+    evidenceStaleAt: optNum(value.evidenceStaleAt, `${field}.evidenceStaleAt`, errors),
     proposalHash: typeof value.proposalHash === "string" ? value.proposalHash : "",
     createdAt: num(value.createdAt, `${field}.createdAt`, errors),
     updatedAt: num(value.updatedAt, `${field}.updatedAt`, errors),
     holdReason: typeof value.holdReason === "string" ? value.holdReason : undefined,
+    artifactIds: Array.isArray(value.artifactIds) ? value.artifactIds.map(String) : undefined,
+    origin: isRec(value.origin)
+      ? {
+          kind: "routine",
+          runId: str(value.origin.runId, `${field}.origin.runId`, errors),
+          loopId: str(value.origin.loopId, `${field}.origin.loopId`, errors),
+        }
+      : undefined,
+    inbound: value.inbound === undefined ? undefined : decodeInbound(value.inbound, `${field}.inbound`, errors),
+    lifecycle: value.lifecycle === undefined ? undefined : decodeLifecycle(value.lifecycle, `${field}.lifecycle`, errors),
+    sourceIncident: value.sourceIncident === undefined
+      ? undefined
+      : decodeSourceIncident(value.sourceIncident, `${field}.sourceIncident`, errors),
+    importIdentity: value.importIdentity === undefined
+      ? undefined
+      : decodeImportIdentity(value.importIdentity, `${field}.importIdentity`, errors),
   };
 }
 
@@ -287,6 +343,91 @@ function bool(value: unknown, field: string, errors: string[]): boolean {
 function optNum(value: unknown, field: string, errors: string[]): number | undefined {
   if (value === undefined) return undefined;
   return num(value, field, errors);
+}
+
+function decodeLifecycle(value: unknown, field: string, errors: string[]): WorkLifecycle {
+  if (!isRec(value)) {
+    errors.push(`${field} must be an object`);
+    return {};
+  }
+  return {
+    waitingParty: value.waitingParty === undefined
+      ? undefined
+      : oneOf(value.waitingParty, WAITING_PARTIES, `${field}.waitingParty`, errors) ?? undefined,
+    dueAt: optNum(value.dueAt, `${field}.dueAt`, errors),
+    nextCheckAt: optNum(value.nextCheckAt, `${field}.nextCheckAt`, errors),
+    reminderSuppressedUntil: optNum(value.reminderSuppressedUntil, `${field}.reminderSuppressedUntil`, errors),
+    closedAt: optNum(value.closedAt, `${field}.closedAt`, errors),
+    closedBy: value.closedBy === undefined
+      ? undefined
+      : oneOf(value.closedBy, ["pm", "system"] as const, `${field}.closedBy`, errors) ?? undefined,
+    closureKind: value.closureKind === undefined
+      ? undefined
+      : oneOf(value.closureKind, CLOSURE_KINDS, `${field}.closureKind`, errors) ?? undefined,
+  };
+}
+
+function decodeSourceIncident(value: unknown, field: string, errors: string[]): SourceIncidentDetail {
+  if (!isRec(value)) {
+    errors.push(`${field} must be an object`);
+    return { sourceId: "", code: "unavailable", affectedPropertyCount: 0, firstSeenAt: 0, lastSeenAt: 0 };
+  }
+  return {
+    sourceId: str(value.sourceId, `${field}.sourceId`, errors),
+    code: oneOf(value.code, ["missing", "stale", "unavailable", "unverified", "revoked"] as const, `${field}.code`, errors) ?? "unavailable",
+    affectedPropertyCount: num(value.affectedPropertyCount, `${field}.affectedPropertyCount`, errors),
+    firstSeenAt: num(value.firstSeenAt, `${field}.firstSeenAt`, errors),
+    lastSeenAt: num(value.lastSeenAt, `${field}.lastSeenAt`, errors),
+  };
+}
+
+function decodeImportIdentity(value: unknown, field: string, errors: string[]): ImportIdentity {
+  if (!isRec(value)) {
+    errors.push(`${field} must be an object`);
+    return { kind: "address", value: "" };
+  }
+  return {
+    kind: oneOf(value.kind, ["id", "address", "code"] as const, `${field}.kind`, errors) ?? "address",
+    value: str(value.value, `${field}.value`, errors),
+  };
+}
+
+function decodeInbound(value: unknown, field: string, errors: string[]): InboundCaseDetail {
+  if (!isRec(value)) {
+    errors.push(`${field} must be an object`);
+    return {
+      category: "unmatched",
+      priority: "routine",
+      senderName: "",
+      senderAddress: "",
+      subject: "",
+      summary: "",
+      receivedAt: 0,
+      messageKey: "",
+      threadKey: "",
+      attachmentCount: 0,
+      messageCount: 1,
+      flags: [],
+    };
+  }
+  return {
+    category: oneOf(value.category, INBOUND_CATEGORIES, `${field}.category`, errors) ?? "unmatched",
+    priority: oneOf(value.priority, INBOUND_PRIORITIES, `${field}.priority`, errors) ?? "routine",
+    senderName: text(value.senderName, `${field}.senderName`, errors),
+    senderAddress: text(value.senderAddress, `${field}.senderAddress`, errors),
+    subject: text(value.subject, `${field}.subject`, errors),
+    summary: text(value.summary, `${field}.summary`, errors),
+    receivedAt: num(value.receivedAt, `${field}.receivedAt`, errors),
+    messageKey: str(value.messageKey, `${field}.messageKey`, errors),
+    threadKey: str(value.threadKey, `${field}.threadKey`, errors),
+    attachmentCount: num(value.attachmentCount, `${field}.attachmentCount`, errors),
+    messageCount: num(value.messageCount, `${field}.messageCount`, errors),
+    flags: arr(value.flags, `${field}.flags`, errors).map(String),
+    waitingOn: value.waitingOn === undefined
+      ? undefined
+      : oneOf(value.waitingOn, ["pm-send", "sender", "licensed-review"] as const, `${field}.waitingOn`, errors) ?? undefined,
+    followUpAt: optNum(value.followUpAt, `${field}.followUpAt`, errors),
+  };
 }
 
 function numOrNull(value: unknown, field: string, errors: string[]): number | null {
@@ -432,9 +573,27 @@ function decodeImportIssue(value: unknown, field: string, errors: string[]): Imp
     status: oneOf(value.status, IMPORT_ISSUE_STATUSES, `${field}.status`, errors) ?? "open",
     sourceId: str(value.sourceId, `${field}.sourceId`, errors),
     rawIdentity: text(value.rawIdentity, `${field}.rawIdentity`, errors),
+    identityKind: value.identityKind === undefined
+      ? undefined
+      : oneOf(value.identityKind, ["id", "address", "code"] as const, `${field}.identityKind`, errors) ?? undefined,
     candidates: arr(value.candidates, `${field}.candidates`, errors).map(String),
     createdAt: num(value.createdAt, `${field}.createdAt`, errors),
     linkedPropertyId: typeof value.linkedPropertyId === "string" ? value.linkedPropertyId : undefined,
+    resolvedAt: optNum(value.resolvedAt, `${field}.resolvedAt`, errors),
+    resolvedBy: typeof value.resolvedBy === "string" ? value.resolvedBy : undefined,
+    resolutions: value.resolutions === undefined
+      ? undefined
+      : arr(value.resolutions, `${field}.resolutions`, errors).map((resolution, index) => {
+          const row = isRec(resolution) ? resolution : {};
+          if (!isRec(resolution)) errors.push(`${field}.resolutions[${index}] must be an object`);
+          return {
+            id: str(row.id, `${field}.resolutions[${index}].id`, errors),
+            action: oneOf(row.action, ["linked", "rejected"] as const, `${field}.resolutions[${index}].action`, errors) ?? "rejected",
+            propertyId: typeof row.propertyId === "string" ? row.propertyId : undefined,
+            actorId: str(row.actorId, `${field}.resolutions[${index}].actorId`, errors),
+            at: num(row.at, `${field}.resolutions[${index}].at`, errors),
+          };
+        }),
   };
 }
 
@@ -463,8 +622,20 @@ function decodeCase(value: unknown, field: string, errors: string[]): Case {
     periodDueAt: optNum(value.periodDueAt, `${field}.periodDueAt`, errors),
     occurrenceKey: typeof value.occurrenceKey === "string" ? value.occurrenceKey : undefined,
     sourceIds: Array.isArray(value.sourceIds) ? value.sourceIds.map(String) : undefined,
+    evidenceIds: Array.isArray(value.evidenceIds) ? value.evidenceIds.map(String) : undefined,
+    evidenceStatus:
+      value.evidenceStatus === undefined
+        ? undefined
+        : oneOf(value.evidenceStatus, MONEY_POSITION_STATUSES, `${field}.evidenceStatus`, errors) ?? undefined,
+    evidenceStaleAt: optNum(value.evidenceStaleAt, `${field}.evidenceStaleAt`, errors),
+    observedAt: optNum(value.observedAt, `${field}.observedAt`, errors),
     proposalHash: typeof value.proposalHash === "string" ? value.proposalHash : undefined,
     artifactIds: Array.isArray(value.artifactIds) ? value.artifactIds.map(String) : undefined,
+    inbound: value.inbound === undefined ? undefined : decodeInbound(value.inbound, `${field}.inbound`, errors),
+    lifecycle: value.lifecycle === undefined ? undefined : decodeLifecycle(value.lifecycle, `${field}.lifecycle`, errors),
+    sourceIncident: value.sourceIncident === undefined
+      ? undefined
+      : decodeSourceIncident(value.sourceIncident, `${field}.sourceIncident`, errors),
     createdAt: num(value.createdAt, `${field}.createdAt`, errors),
     updatedAt: num(value.updatedAt, `${field}.updatedAt`, errors),
   };
@@ -477,6 +648,10 @@ function decodePayload(value: unknown, field: string, errors: string[]): Evidenc
     return {};
   }
   return {
+    coverage:
+      value.coverage === undefined
+        ? undefined
+        : oneOf(value.coverage, ["observed", "missing", "conflicted"] as const, `${field}.coverage`, errors) ?? undefined,
     daysSinceDue: typeof value.daysSinceDue === "number" ? value.daysSinceDue : undefined,
     rentLanded: typeof value.rentLanded === "boolean" ? value.rentLanded : undefined,
     levyPaid: typeof value.levyPaid === "boolean" ? value.levyPaid : undefined,
@@ -487,6 +662,7 @@ function decodePayload(value: unknown, field: string, errors: string[]): Evidenc
       ? value.amountPaidCents === null ? null : undefined
       : num(value.amountPaidCents, `${field}.amountPaidCents`, errors),
     reversed: typeof value.reversed === "boolean" ? value.reversed : undefined,
+    inbound: value.inbound === undefined ? undefined : decodeInbound(value.inbound, `${field}.inbound`, errors),
   };
 }
 
@@ -662,7 +838,7 @@ export function decodeDeskV3(value: unknown): DeskFileV3 {
     version: DESK_FILE_VERSION,
     revision: num(value.revision, "revision", errors),
     mode: oneOf(value.mode, ["demo", "live"], "mode", errors) ?? "demo",
-    retentionDays: value.retentionDays === null ? null : num(value.retentionDays, "retentionDays", errors),
+    retentionDays: retentionDays(value.retentionDays, errors),
     agency: decodeAgency(value.agency, errors),
     sources: arr(value.sources, "sources", errors).map((item, i) => decodeSourceV3(item, `sources[${i}]`, errors)),
     properties: arr(value.properties, "properties", errors).map((item, i) => decodePropertyV3(item, `properties[${i}]`, errors)),
@@ -705,10 +881,13 @@ export function validateDeskV3(book: DeskFileV3): void {
   const propertyIds = new Set(book.properties.map((p) => p.id));
   const tenancyIds = new Set(book.tenancies.map((t) => t.id));
   const caseIds = new Set(book.cases.map((c) => c.id));
+  const caseById = new Map(book.cases.map((c) => [c.id, c]));
   const proposalIds = new Set(book.proposals.map((p) => p.id));
   const revisionIds = new Set(book.proposalRevisions.map((r) => r.id));
   const evidenceIds = new Set(book.evidence.map((e) => e.id));
+  const evidenceById = new Map(book.evidence.map((e) => [e.id, e]));
   const sourceIds = new Set(book.sources.map((s) => s.id));
+  const importIssueIds = new Set(book.importIssues.map((issue) => issue.id));
   uniqueIds(book.properties.map((p) => p.id), "property", errors);
   uniqueIds(book.tenancies.map((t) => t.id), "tenancy", errors);
   uniqueIds(book.contacts.map((c) => c.id), "contact", errors);
@@ -747,6 +926,23 @@ export function validateDeskV3(book: DeskFileV3): void {
       errors.push(`importIssue ${issue.id} has illegal kind/status`);
     }
     if (caseIds.has(issue.id)) errors.push(`importIssue ${issue.id} collided with a case`);
+    if (!sourceIds.has(issue.sourceId)) errors.push(`importIssue ${issue.id} missing source ${issue.sourceId}`);
+    if (issue.linkedPropertyId && !propertyIds.has(issue.linkedPropertyId)) errors.push(`importIssue ${issue.id} missing linked property`);
+    if (issue.status === "linked" && !issue.linkedPropertyId) errors.push(`importIssue ${issue.id} is linked without a property`);
+    if (issue.status === "rejected" && issue.linkedPropertyId) errors.push(`importIssue ${issue.id} is rejected with a linked property`);
+    if (issue.status !== "open" && (issue.resolvedAt === undefined || !issue.resolvedBy)) errors.push(`importIssue ${issue.id} is resolved without a receipt`);
+    if (issue.resolvedAt !== undefined && issue.resolvedAt < issue.createdAt) errors.push(`importIssue ${issue.id} resolved before creation`);
+    uniqueIds((issue.resolutions ?? []).map((receipt) => receipt.id), `importIssue ${issue.id} resolution`, errors);
+    for (const candidate of issue.candidates) {
+      if (!propertyIds.has(candidate)) errors.push(`importIssue ${issue.id} has missing candidate ${candidate}`);
+    }
+    for (const receipt of issue.resolutions ?? []) {
+      if (!Number.isInteger(receipt.at) || receipt.at < issue.createdAt) errors.push(`importIssue ${issue.id} has invalid resolution time`);
+      if (receipt.action === "linked" && (!receipt.propertyId || !propertyIds.has(receipt.propertyId))) {
+        errors.push(`importIssue ${issue.id} has an invalid linked resolution`);
+      }
+      if (receipt.action === "rejected" && receipt.propertyId) errors.push(`importIssue ${issue.id} rejected a property link`);
+    }
   }
 
   for (const item of book.cases) {
@@ -754,11 +950,40 @@ export function validateDeskV3(book: DeskFileV3): void {
     if (item.propertyId && !propertyIds.has(item.propertyId)) errors.push(`case ${item.id} missing property`);
     if (item.tenancyId && !tenancyIds.has(item.tenancyId)) errors.push(`case ${item.id} missing tenancy`);
     if (item.proposalId && !proposalIds.has(item.proposalId)) errors.push(`case ${item.id} missing proposal ${item.proposalId}`);
+    if (item.importIssueId && !importIssueIds.has(item.importIssueId)) errors.push(`case ${item.id} missing import issue ${item.importIssueId}`);
+    for (const evidenceId of item.evidenceIds ?? []) {
+      if (!evidenceIds.has(evidenceId)) errors.push(`case ${item.id} missing evidence ${evidenceId}`);
+    }
+    if (item.inbound) {
+      if (item.kind !== "inbound-triage" && item.kind !== "maintenance-intake") errors.push(`case ${item.id} has inbound context on the wrong kind`);
+      validateInboundDetail(item.inbound, `case ${item.id}`, errors);
+      if (!(item.evidenceIds ?? []).some((id) => evidenceById.get(id)?.sourceRecordKey === item.inbound?.messageKey)) {
+        errors.push(`case ${item.id} missing its latest inbound evidence`);
+      }
+    }
+    if (item.lifecycle) validateLifecycle(item.lifecycle, `case ${item.id}`, item.createdAt, errors);
+    if (item.sourceIncident) {
+      const incident = item.sourceIncident;
+      if (item.kind !== "source-incident") errors.push(`case ${item.id} has source incident data on the wrong kind`);
+      if (!sourceIds.has(incident.sourceId)) errors.push(`case ${item.id} source incident is missing its source`);
+      if (!Number.isInteger(incident.affectedPropertyCount) || incident.affectedPropertyCount < 0 || incident.affectedPropertyCount > 100_000) {
+        errors.push(`case ${item.id} has an invalid affected property count`);
+      }
+      if (!Number.isInteger(incident.firstSeenAt) || !Number.isInteger(incident.lastSeenAt) || incident.firstSeenAt < 0 || incident.lastSeenAt < incident.firstSeenAt) {
+        errors.push(`case ${item.id} has invalid source incident times`);
+      }
+    } else if (item.kind === "source-incident") {
+      errors.push(`source incident case ${item.id} is missing source incident data`);
+    }
   }
 
   for (const proposal of book.proposals) {
     if (!caseIds.has(proposal.caseId)) errors.push(`orphan proposal ${proposal.id}`);
     if (!revisionIds.has(proposal.currentRevisionId)) errors.push(`proposal ${proposal.id} missing revision`);
+    const owner = caseById.get(proposal.caseId);
+    if (proposal.kind === "inbound-reply" && owner?.kind !== "inbound-triage" && owner?.kind !== "maintenance-intake") {
+      errors.push(`inbound proposal ${proposal.id} belongs to the wrong case kind`);
+    }
   }
 
   for (const revision of book.proposalRevisions) {
@@ -771,12 +996,21 @@ export function validateDeskV3(book: DeskFileV3): void {
     if (!DECISION_KINDS.includes(decision.kind)) errors.push(`decision ${decision.id} has illegal kind`);
   }
 
+  const mailRecordKeys = new Set<string>();
   for (const evidence of book.evidence) {
     if (!EVIDENCE_AUTHORITIES.includes(evidence.authority) || !EVIDENCE_COLLECTORS.includes(evidence.collector)) {
       errors.push(`evidence ${evidence.id} has illegal authority/collector`);
     }
     if (!sourceIds.has(evidence.sourceId)) errors.push(`evidence ${evidence.id} missing source`);
     if (evidence.authority === "pms" && evidence.observedAt == null) errors.push(`evidence ${evidence.id} claimed PMS without observed time`);
+    if (evidence.payload.inbound) {
+      validateInboundDetail(evidence.payload.inbound, `evidence ${evidence.id}`, errors);
+      if (evidence.collector !== "mail") errors.push(`evidence ${evidence.id} has inbound payload without mail collector`);
+      if (evidence.sourceRecordKey !== evidence.payload.inbound.messageKey) errors.push(`evidence ${evidence.id} message key mismatch`);
+      const dedupeKey = `${evidence.sourceId}:${evidence.sourceRecordKey}`;
+      if (mailRecordKeys.has(dedupeKey)) errors.push(`duplicate inbound source record ${evidence.sourceRecordKey}`);
+      mailRecordKeys.add(dedupeKey);
+    }
   }
 
   const positions = new Set<string>();
@@ -798,4 +1032,34 @@ export function validateDeskV3(book: DeskFileV3): void {
   }
 
   if (errors.length) throw new DeskDecodeError(errors);
+}
+
+function validateLifecycle(lifecycle: WorkLifecycle, label: string, createdAt: number, errors: string[]): void {
+  const times = [
+    ["dueAt", lifecycle.dueAt],
+    ["nextCheckAt", lifecycle.nextCheckAt],
+    ["reminderSuppressedUntil", lifecycle.reminderSuppressedUntil],
+    ["closedAt", lifecycle.closedAt],
+  ] as const;
+  for (const [name, value] of times) {
+    if (value !== undefined && (!Number.isInteger(value) || value < 0)) errors.push(`${label} has invalid ${name}`);
+  }
+  if (lifecycle.closedAt !== undefined && lifecycle.closedAt < createdAt) errors.push(`${label} closed before creation`);
+  if (lifecycle.closedAt !== undefined && (!lifecycle.closedBy || !lifecycle.closureKind)) errors.push(`${label} closure is missing its receipt`);
+  if (lifecycle.closedAt === undefined && (lifecycle.closedBy || lifecycle.closureKind)) errors.push(`${label} has a partial closure receipt`);
+  if (lifecycle.closedAt !== undefined && lifecycle.waitingParty) errors.push(`${label} is both closed and waiting`);
+  if (lifecycle.reminderSuppressedUntil !== undefined && lifecycle.nextCheckAt !== undefined && lifecycle.reminderSuppressedUntil > lifecycle.nextCheckAt) {
+    errors.push(`${label} suppresses reminders beyond its next check`);
+  }
+}
+
+function validateInboundDetail(detail: InboundCaseDetail, label: string, errors: string[]): void {
+  if (!INBOUND_CATEGORIES.includes(detail.category) || !INBOUND_PRIORITIES.includes(detail.priority)) errors.push(`${label} has illegal inbound classification`);
+  if (!/^[a-f0-9]{64}$/.test(detail.messageKey) || !/^[a-f0-9]{64}$/.test(detail.threadKey)) errors.push(`${label} has invalid inbound digest`);
+  if (!Number.isInteger(detail.receivedAt) || detail.receivedAt < 0) errors.push(`${label} has invalid inbound receivedAt`);
+  if (!Number.isInteger(detail.attachmentCount) || detail.attachmentCount < 0 || detail.attachmentCount > 12) errors.push(`${label} has invalid attachment count`);
+  if (!Number.isInteger(detail.messageCount) || detail.messageCount < 1 || detail.messageCount > 10_000) errors.push(`${label} has invalid message count`);
+  if (detail.senderName.length > 120 || detail.senderAddress.length > 254 || detail.subject.length > 300 || detail.summary.length > 500) errors.push(`${label} has oversized inbound text`);
+  if (detail.flags.length > 24 || detail.flags.some((flag) => flag.length > 80)) errors.push(`${label} has invalid inbound flags`);
+  if (detail.followUpAt !== undefined && (!Number.isInteger(detail.followUpAt) || detail.followUpAt < detail.receivedAt)) errors.push(`${label} has invalid follow-up time`);
 }

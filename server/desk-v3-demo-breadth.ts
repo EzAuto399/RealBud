@@ -66,7 +66,12 @@ export function ensureDemoBreadth(book: DeskFileV3, now: number): DeskFileV3 {
   const tenant = book.contacts.find((contact) => contact.id === tenantId);
   if (tenant && !tenant.tenancyId) tenant.tenancyId = currentTenancy;
 
+  if (book.cases.some((item) => item.inbound)) {
+    book.cases = book.cases.filter((item) => item.id !== "case-maint-prop-oak" && item.id !== "case-inbound-prop-oak");
+  }
+
   for (const extra of EXTRA_CASES) {
+    if (book.cases.some((item) => item.inbound) && (extra.kind === "maintenance-intake" || extra.kind === "inbound-triage")) continue;
     if (book.cases.some((item) => item.id === extra.id) || book.importIssues.some((issue) => issue.id === extra.id)) {
       continue;
     }

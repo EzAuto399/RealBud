@@ -42,7 +42,7 @@ export function NoEngines() {
       <div className="mx-auto w-full max-w-[560px] px-6 py-12">
         <h1 className="text-[20px] font-semibold text-ink">Set up hands for chat</h1>
         <p className="mt-1.5 text-[13.5px] leading-relaxed text-ink-secondary">
-          Desk works without this. Chat uses the pinned Hermes worker, headless only.
+          Desk works without this. Chat uses Bud's pinned worker, headless only.
         </p>
 
         <div className="mt-6 flex flex-col gap-2.5">

@@ -20,6 +20,7 @@ const browserCapabilities: DesktopCapabilities = {
   localComputer: {
     available: false,
     support: "unsupported",
+    runtime: "none",
     reasonCode: "desktop-app-required",
   },
 };
@@ -31,7 +32,7 @@ export function browserDesktopCapabilities(): DesktopCapabilities {
 }
 
 export function initialDesktopCapabilities(): DesktopCapabilities {
-  const platform = window.ogb?.platform;
+  const platform = typeof window === "undefined" ? undefined : window.ogb?.platform;
   if (!platform) return browserCapabilities;
   const isMac = platform === "darwin";
   return {
@@ -51,9 +52,14 @@ export function initialDesktopCapabilities(): DesktopCapabilities {
   };
 }
 
-export async function loadDesktopCapabilities(): Promise<DesktopCapabilities> {
-  if (cached) return cached;
-  if (!window.ogb?.getCapabilities) return browserCapabilities;
+export function rememberDesktopCapabilities(capabilities: DesktopCapabilities): DesktopCapabilities {
+  cached = capabilities;
+  return capabilities;
+}
+
+export async function loadDesktopCapabilities({ refresh = false }: { refresh?: boolean } = {}): Promise<DesktopCapabilities> {
+  if (!refresh && cached) return cached;
+  if (typeof window === "undefined" || !window.ogb?.getCapabilities) return browserCapabilities;
   try {
     cached = await window.ogb.getCapabilities();
   } catch {

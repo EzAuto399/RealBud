@@ -32,11 +32,11 @@ function setState(patch) {
   }
 }
 
-function check(manual = false) {
+async function check(manual = false) {
   if (!autoUpdater) return;
   userInitiated = manual;
   try {
-    autoUpdater.checkForUpdates();
+    await autoUpdater.checkForUpdates();
   } catch (e) {
     reportError(e);
   }
@@ -50,9 +50,9 @@ function reportError(e) {
 export function registerUpdaterIpc() {
   ipcMain.handle("update:get-state", () => state);
   ipcMain.handle("update:check", () => check(true));
-  ipcMain.handle("update:download", () => {
+  ipcMain.handle("update:download", async () => {
     try {
-      autoUpdater?.downloadUpdate();
+      await autoUpdater?.downloadUpdate();
     } catch (e) {
       setState({ status: "error", message: String(e?.message ?? e) });
     }
@@ -100,6 +100,6 @@ export function startUpdater(mainWindow) {
   // first check ~15s after launch (let the app settle), then hourly — both
   // silent on failure, hence the arrow: a bare `check` would receive the
   // timer's argument as `manual` and start reporting errors again.
-  setTimeout(() => check(), 15_000).unref?.();
-  setInterval(() => check(), 60 * 60 * 1000).unref?.();
+  setTimeout(() => void check(), 15_000).unref?.();
+  setInterval(() => void check(), 60 * 60 * 1000).unref?.();
 }

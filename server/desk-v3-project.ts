@@ -35,12 +35,14 @@ export function projectQueueSnapshot(book: DeskFileV3): QueueSnapshot {
 }
 
 export function projectDeskSnapshot(book: DeskFileV3, recovery: RecoveryState, notes?: ReadonlyMap<string, string>): DeskSnapshot {
+  const activePropertyIds = new Set(book.properties.filter((property) => property.status === "active").map((property) => property.id));
   const tenantByProperty = new Map(book.contacts.filter((c) => c.role === "tenant").map((c) => [c.propertyId, c]));
   const properties: Property[] = book.properties.filter((property) => property.status === "active").map((property) => {
     const tenant = tenantByProperty.get(property.id);
     return {
       id: property.id,
       address: property.address,
+      propertyCode: property.propertyCode,
       tenantName: tenant?.name ?? "",
       tenantPhone: tenant?.phone ?? "",
       weeklyRentCents: book.tenancies.find((t) => t.propertyId === property.id && t.status === "current")?.weeklyRentCents ?? 0,
@@ -51,14 +53,23 @@ export function projectDeskSnapshot(book: DeskFileV3, recovery: RecoveryState, n
 
   const revisionById = new Map(book.proposalRevisions.map((revision) => [revision.id, revision]));
   const decisionByProposal = new Map(book.decisions.map((decision) => [decision.proposalId, decision]));
-  const drafts: Draft[] = book.proposals.map((proposal) => {
+  const drafts: Draft[] = book.proposals.flatMap((proposal) => {
     const revision = revisionById.get(proposal.currentRevisionId);
     const decision = decisionByProposal.get(proposal.id);
-    return {
+    const proposalCase = book.cases.find((item) => item.id === proposal.caseId);
+    if (proposalCase?.propertyId && !activePropertyIds.has(proposalCase.propertyId)) return [];
+    return [{
       id: proposal.id,
-      propertyId: book.cases.find((item) => item.id === proposal.caseId)?.propertyId ?? "",
+      propertyId: proposalCase?.propertyId ?? "",
       kind: proposal.kind,
-      status: decision?.kind === "allow" ? "allowed" : decision?.kind === "deny" ? "denied" : "pending",
+      status:
+        decision?.kind === "allow"
+          ? "allowed"
+          : decision?.kind === "deny"
+            ? "denied"
+            : proposalCase?.state === "stale" || proposalCase?.state === "superseded"
+              ? "stale"
+              : "pending",
       channel: revision?.channel ?? "desk",
       to: revision?.to ?? "",
       body: revision?.body ?? "",
@@ -66,11 +77,11 @@ export function projectDeskSnapshot(book: DeskFileV3, recovery: RecoveryState, n
       createdAt: proposal.createdAt,
       decidedAt: decision?.at,
       workItemId: proposal.caseId,
-    };
+    }];
   });
 
   const workItems: WorkItem[] = book.cases
-    .filter((item) => item.kind !== "licensee-required")
+    .filter((item) => item.kind !== "licensee-required" && (!item.propertyId || activePropertyIds.has(item.propertyId)))
     .map((item) => {
     const tenant = item.propertyId ? tenantByProperty.get(item.propertyId) : undefined;
     return {
@@ -81,7 +92,8 @@ export function projectDeskSnapshot(book: DeskFileV3, recovery: RecoveryState, n
           : item.kind === "maintenance-intake" ||
               item.kind === "lease-review" ||
               item.kind === "inspection-prep" ||
-              item.kind === "inbound-triage"
+              item.kind === "inbound-triage" ||
+              item.kind === "source-incident"
             ? item.kind
             : "money-arrears",
       state: item.state,
@@ -98,18 +110,25 @@ export function projectDeskSnapshot(book: DeskFileV3, recovery: RecoveryState, n
         doNotContact: tenant?.safeguards.doNotContact,
       },
       sourceIds: item.sourceIds ?? [],
-      observedAt: item.createdAt,
+      observedAt: item.observedAt ?? item.createdAt,
+      evidenceId: item.evidenceIds?.[0],
+      evidenceIds: item.evidenceIds,
+      evidenceStatus: item.evidenceStatus,
+      evidenceStaleAt: item.evidenceStaleAt,
       proposalHash: item.proposalHash ?? item.proposalId ?? "",
       artifactIds: item.artifactIds,
       createdAt: item.createdAt,
       updatedAt: item.updatedAt,
       holdReason: item.holdReason,
       origin: item.origin,
+      inbound: item.inbound,
+      lifecycle: item.lifecycle,
+      sourceIncident: item.sourceIncident,
     };
   });
 
   const escalations: Escalation[] = book.cases
-    .filter((item) => item.kind === "licensee-required")
+    .filter((item) => item.kind === "licensee-required" && (!item.propertyId || activePropertyIds.has(item.propertyId)))
     .map((item) => ({
       id: item.id,
       propertyId: item.propertyId ?? "",
@@ -119,15 +138,19 @@ export function projectDeskSnapshot(book: DeskFileV3, recovery: RecoveryState, n
       createdAt: item.createdAt,
     }));
 
-  const ledger: LedgerFacts[] = book.moneyPositions.map((position) => ({
-    propertyId: book.tenancies.find((t) => t.id === position.tenancyId)?.propertyId ?? "",
-    daysSinceDue: position.facts.daysSinceDue ?? 0,
-    rentLanded: position.facts.rentLanded ?? false,
-    levyPaid: position.facts.levyPaid ?? false,
-    daysSinceCourtesy: position.facts.daysSinceCourtesy ?? null,
-    amountPaidCents: position.facts.amountPaidCents,
-    reversed: position.facts.reversed,
-  }));
+  const ledger: LedgerFacts[] = book.moneyPositions.flatMap((position) => {
+    const propertyId = book.tenancies.find((t) => t.id === position.tenancyId)?.propertyId ?? "";
+    if (!activePropertyIds.has(propertyId)) return [];
+    return [{
+      propertyId,
+      daysSinceDue: position.facts.daysSinceDue ?? 0,
+      rentLanded: position.facts.rentLanded ?? false,
+      levyPaid: position.facts.levyPaid ?? false,
+      daysSinceCourtesy: position.facts.daysSinceCourtesy ?? null,
+      ...(position.facts.amountPaidCents !== undefined ? { amountPaidCents: position.facts.amountPaidCents } : {}),
+      ...(position.facts.reversed !== undefined ? { reversed: position.facts.reversed } : {}),
+    }];
+  });
 
   return {
     version: 2,
@@ -157,7 +180,7 @@ export function projectDeskSnapshot(book: DeskFileV3, recovery: RecoveryState, n
 
 export function projectWorkingV2(book: DeskFileV3): DeskFileV2 {
   const snap = projectDeskSnapshot(book, { active: false, reason: null, quarantined: [] });
-  const importWork: WorkItem[] = book.importIssues.map((issue) => ({
+  const importWork: WorkItem[] = book.importIssues.filter((issue) => issue.status === "open").map((issue) => ({
     id: issue.id,
     kind: "money-arrears",
     state: "held",
@@ -176,7 +199,15 @@ export function projectWorkingV2(book: DeskFileV3): DeskFileV2 {
     proposalHash: "",
     createdAt: issue.createdAt,
     updatedAt: issue.createdAt,
-    holdReason: issue.kind === "unmatched" ? "unmatched" : "ambiguous-match",
+    importIdentity: issue.rawIdentity
+      ? { kind: issue.identityKind ?? "address", value: issue.rawIdentity }
+      : undefined,
+    holdReason:
+      issue.kind === "unmatched"
+        ? "unmatched"
+        : issue.candidates.length > 0
+          ? `ambiguous-match: csv row matches ${issue.candidates.length} properties equally (${issue.candidates.join(", ")})`
+          : "ambiguous-match",
   }));
   return {
     version: 2,
@@ -195,21 +226,25 @@ export function projectWorkingV2(book: DeskFileV3): DeskFileV2 {
     handsDetail: book.handsDetail,
     sources: snap.sources,
     observations: book.evidence
-      .filter((row) => row.observedAt != null)
+      .filter((row) => row.observedAt != null && row.collector !== "mail")
       .map((row) => ({
         id: row.id,
         sourceId: row.sourceId,
         observedAt: row.observedAt ?? row.ingestedAt,
         propertyId: row.propertyId,
-        facts: {
-          propertyId: row.propertyId ?? "",
-          daysSinceDue: row.payload.daysSinceDue ?? 0,
-          rentLanded: row.payload.rentLanded ?? false,
-          levyPaid: row.payload.levyPaid ?? false,
-          daysSinceCourtesy: row.payload.daysSinceCourtesy ?? null,
-          amountPaidCents: row.payload.amountPaidCents,
-          reversed: row.payload.reversed,
-        },
+        coverage: row.payload.coverage,
+        facts:
+          row.payload.coverage === "missing" || row.payload.coverage === "conflicted"
+            ? undefined
+            : {
+                propertyId: row.propertyId ?? "",
+                daysSinceDue: row.payload.daysSinceDue ?? 0,
+                rentLanded: row.payload.rentLanded ?? false,
+                levyPaid: row.payload.levyPaid ?? false,
+                daysSinceCourtesy: row.payload.daysSinceCourtesy ?? null,
+                amountPaidCents: row.payload.amountPaidCents,
+                reversed: row.payload.reversed,
+              },
         staleAfterMs: Math.max(0, row.staleAt - (row.observedAt ?? row.ingestedAt)),
       })),
     portalBindings: book.portalBindings.map((binding) => ({
@@ -220,6 +255,7 @@ export function projectWorkingV2(book: DeskFileV3): DeskFileV2 {
       remoteAccountId: binding.remoteAccountId,
     })),
     recipes: book.portalRecipes.map((recipe) => ({ ...recipe })),
+    importIssues: book.importIssues.map((issue) => structuredClone(issue)),
     capabilities: book.handoffs.map((handoff) => ({
       id: handoff.id,
       workItemId: handoff.authorization.caseId,

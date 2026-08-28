@@ -6,11 +6,15 @@
 // turn. Failure modes mirror how real ACP agents misbehave:
 //
 //   FAKE_ACP_MODE   happy (default) | exit-early | hang | no-auth | permission
+//                   | large-output | selected-file
+//                   | missing-session (session/load returns Hermes' empty
+//                     missing response; prompting it would refuse)
 //                   | ask-peer (spawn the injected "agents" MCP server from
 //                     session/new's mcpServers, call list_bots + ask_bot on a
 //                     peer, and reply with what the peer said — the comms e2e)
 //   FAKE_ACP_DUMP   path to write {argv, env} as JSON, so a test can assert
 //                   argv shape (agent/stdio flags) and env hygiene
+//   FAKE_ACP_PROMPT_DUMP path to write session/prompt params as JSON
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { spawn } from "node:child_process";
@@ -36,6 +40,7 @@ let onPermissionAnswered: (() => void) | null = null;
 // ask-peer mode: the "agents" MCP server entry from session/new's mcpServers
 type McpEntry = { command: string; args?: string[]; env?: Array<{ name: string; value: string }> };
 let agentsMcp: McpEntry | null = null;
+let activeSession: string | null = null;
 
 /** Minimal one-shot MCP stdio client: initialize, call each tool in
  * sequence, return the text of the last result. Dependency-free. */
@@ -88,6 +93,32 @@ function driveMcp(entry: McpEntry, calls: Array<{ name: string; args: (prev: str
 }
 
 function playTurn() {
+  if (mode === "selected-file") {
+    out({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            text: JSON.stringify({
+              kind: "realbud.selected-file-analysis.v1",
+              schemaVersion: 1,
+              summary: "One complete property record was verified from the selected file.",
+              properties: [{
+                address: "77 Test Lane, Braddon ACT",
+                tenantName: "Taylor Test",
+                tenantPhone: "0400 123 456",
+                weeklyRentCents: 57500,
+              }],
+              needsAttention: ["Confirm the source date before treating the record as current."],
+            }),
+          },
+        },
+      },
+    });
+    return;
+  }
   out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "hello from fake acp" } } } });
   out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call", toolCallId: "tc-1", title: "run" } } });
   out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call_update", toolCallId: "tc-1", status: "completed" } } });
@@ -136,16 +167,33 @@ function handle(msg: any) {
     case "session/new": {
       const servers: McpEntry[] = Array.isArray(msg.params?.mcpServers) ? msg.params.mcpServers : [];
       agentsMcp = servers.find((s: any) => s?.name === "agents") ?? null;
-      result(msg.id, { sessionId: "fake-acp-session" });
+      activeSession = "fake-acp-session";
+      result(msg.id, { sessionId: activeSession });
       break;
     }
     case "session/load":
-      result(msg.id, {});
+      if (mode !== "missing-session") activeSession = String(msg.params?.sessionId ?? "") || null;
+      result(msg.id, mode === "missing-session" ? {} : { models: [], modes: [] });
       break;
     case "session/prompt": {
+      if (process.env.FAKE_ACP_PROMPT_DUMP) {
+        writeFileSync(process.env.FAKE_ACP_PROMPT_DUMP, JSON.stringify(msg.params, null, 2));
+      }
       if (mode === "hang") {
         // never resolve the prompt — lets tests exercise interrupt
         setInterval(() => {}, 1_000);
+        return;
+      }
+      if (mode === "large-output") {
+        out({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "x".repeat(2_000) } } },
+        });
+        return;
+      }
+      if (mode === "missing-session" && msg.params?.sessionId !== activeSession) {
+        result(msg.id, { stopReason: "refusal" });
         return;
       }
       const complete = () =>

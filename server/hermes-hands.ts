@@ -5,12 +5,15 @@
 import { execFile } from "node:child_process";
 
 import { augmentedPath } from "./env-path.ts";
+import { applyWorkerRuntimeEnv, WORKER_CLI, workerCli as workerCliForRoot } from "./config.ts";
 
 import type { LedgerFacts } from "../shared/contracts.ts";
 import { asBoolean, asFiniteNumber, asNonEmptyString, asNullableNumber } from "./decode.ts";
+import { modelCredentialEnvironment, modelStatus } from "./hermes-bridge.ts";
 import { HERMES_PIN, hermesMatchesPin } from "./hermes-pin.ts";
-import { approvalsAreManual, packInstalled } from "./hermes-pack.ts";
+import { approvalsAreManual, hermesHome, packInstalled } from "./hermes-pack.ts";
 import { probeHermesVersion } from "./hermes-status.ts";
+import { redactSecretsInText } from "./redact.ts";
 import { seedVault } from "./vault.ts";
 
 export type HandsSource = "demo" | "hermes" | "held" | "csv" | "fixture";
@@ -29,6 +32,30 @@ export interface HermesPing {
 
 const TIMEOUT_MS = 20_000;
 
+const SETUP_ESCAPE = /\b(?:interactive\s+)?terminal\b|\b(?:hermes|worker)\s+(?:setup|model)\b|^Or set\b.*\b(?:API_KEY|environment)\b/i;
+
+function cleanWorkerLines(value: string): string[] {
+  return String(value)
+    .replace(/\x1b\[[0-9;]*m/g, "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !/^session_id:/.test(line));
+}
+
+/** Keep provider failures useful without leaking credentials or sending a PM
+ * back to an engine CLI/setup flow that RealBud owns. */
+function workerFailureDetail(stdout: string, stderr: string): string {
+  const stdoutLines = cleanWorkerLines(stdout);
+  const stderrLines = cleanWorkerLines(stderr);
+  const hadSetupEscape = [...stdoutLines, ...stderrLines].some((line) => SETUP_ESCAPE.test(line));
+  const safe = (lines: string[]) => lines.filter((line) => !SETUP_ESCAPE.test(line));
+  const picked = safe(stdoutLines).slice(-2).join(" · ") || safe(stderrLines).slice(-2).join(" · ");
+  if (picked) {
+    return redactSecretsInText(picked.replace(/Hermes(?: Agent| CLI)?/gi, "worker")).slice(0, 200);
+  }
+  return hadSetupEscape ? "The model could not authenticate. Reconnect it in You." : "";
+}
+
 export async function tryHermesPing(opts?: {
   cli?: string;
   timeoutMs?: number;
@@ -38,13 +65,17 @@ export async function tryHermesPing(opts?: {
   const started = Date.now();
   const done = (ok: boolean, detail: string): HermesPing => ({ ok, detail, elapsedMs: Date.now() - started });
   if (process.env.VITEST && !opts?.cli) return done(false, "tests do not ping the live worker");
-  if (!packInstalled(opts?.root)) return done(false, `the "${HERMES_PIN.profile}" pack is missing from ~/.hermes.`);
+  if (!packInstalled(opts?.root)) return done(false, "The property pack is missing — apply it again in You.");
   if (!approvalsAreManual(opts?.root)) {
     return done(false, `the "${HERMES_PIN.profile}" pack is not in manual approvals — re-apply the pack.`);
   }
-  const cli = opts?.cli ?? "hermes";
-  const version = await probeHermesVersion(cli);
-  if (!version) return done(false, "Hermes CLI not found.");
+  const attached = modelStatus(opts?.root);
+  if (!attached.provider || !attached.model || !attached.keyPresent) {
+    return done(false, "No model is attached. Choose a provider, model and key in You, then Save & test.");
+  }
+  const cli = opts?.cli ?? (opts?.root ? workerCliForRoot(opts.root) : WORKER_CLI);
+  const version = await probeHermesVersion(cli, { root: opts?.root });
+  if (!version) return done(false, "The worker is not installed or could not be found.");
   if (!hermesMatchesPin(version)) {
     return done(false, `installed ${version.trim()}, pin is v${HERMES_PIN.product} (${HERMES_PIN.tag}).`);
   }
@@ -53,24 +84,24 @@ export async function tryHermesPing(opts?: {
     execFile(
       cli,
       ["--profile", HERMES_PIN.profile, "chat", "-Q", "-q", "Reply with exactly one word: OK", "--max-turns", "1"],
-      { timeout: opts?.timeoutMs ?? TIMEOUT_MS, cwd: opts?.cwd ?? seedVault(), env: { ...process.env, PATH: augmentedPath() } },
+      {
+        timeout: opts?.timeoutMs ?? TIMEOUT_MS,
+        cwd: opts?.cwd ?? seedVault(),
+        env: {
+          ...applyWorkerRuntimeEnv({ ...process.env }, hermesHome(opts?.root), augmentedPath()),
+          ...modelCredentialEnvironment(opts?.root),
+        },
+      },
       (err, stdout, stderr) => {
-        const clean = (s: string) =>
-          String(s)
-            .replace(/\x1b\[[0-9;]*m/g, "")
-            .split("\n")
-            .map((line) => line.trim())
-            .filter((line) => line && !/^session_id:/.test(line));
-        const pick = (s: string) => clean(s).slice(-2).join(" · ");
         if (err) {
           const timedOut = (err as NodeJS.ErrnoException & { killed?: boolean }).killed;
-          if (timedOut) return resolve(done(false, "Hermes took too long to answer."));
-          const snippet = (pick(stdout) || pick(stderr)).slice(0, 200);
-          return resolve(done(false, snippet || "Hermes could not answer."));
+          if (timedOut) return resolve(done(false, "The worker took too long to answer."));
+          const snippet = workerFailureDetail(stdout, stderr);
+          return resolve(done(false, snippet || "The worker could not answer."));
         }
-        const answer = clean(stdout).find((line) => line.trim().toUpperCase() === "OK");
-        if (!answer) return resolve(done(false, "Hermes answered, but not with OK — check the model."));
-        resolve(done(true, "Hermes answered OK — the worker is live."));
+        const answer = cleanWorkerLines(stdout).find((line) => line.trim().toUpperCase() === "OK");
+        if (!answer) return resolve(done(false, "The worker answered, but not with OK — check the model."));
+        resolve(done(true, "The worker answered OK — Bud's hands are live."));
       },
     );
   });
@@ -114,16 +145,16 @@ export async function tryHermesLedger(
   const miss = (detail: string): HermesLedgerAttempt => ({ rows: null, detail });
   if (process.env.VITEST && !opts?.cli) return miss("tests do not use the live worker — unknown facts stay held");
   if (!packInstalled(opts?.root)) {
-    return miss(`Hermes is not answering — the "${HERMES_PIN.profile}" pack is missing from ~/.hermes.`);
+    return miss("The worker is not answering — the property pack is missing. Re-apply it in You.");
   }
   if (!approvalsAreManual(opts?.root)) {
-    return miss(`Hermes is not answering — the "${HERMES_PIN.profile}" pack is not in manual approvals. Re-apply the pack.`);
+    return miss("The worker is not answering — the property pack is not in manual approvals. Re-apply it in You.");
   }
-  const cli = opts?.cli ?? "hermes";
-  const version = await probeHermesVersion(cli);
-  if (!version) return miss("Hermes is not answering — CLI not found.");
+  const cli = opts?.cli ?? (opts?.root ? workerCliForRoot(opts.root) : WORKER_CLI);
+  const version = await probeHermesVersion(cli, { root: opts?.root });
+  if (!version) return miss("The worker is not answering — it is not installed or could not be found.");
   if (!hermesMatchesPin(version)) {
-    return miss(`Hermes is not answering — installed ${version.trim()}, pin is v${HERMES_PIN.product} (${HERMES_PIN.tag}).`);
+    return miss(`The worker is not answering — the installed version does not match pin v${HERMES_PIN.product} (${HERMES_PIN.tag}).`);
   }
 
   const ids = propertyIds.length ? propertyIds.join(", ") : "(none)";
@@ -137,30 +168,30 @@ export async function tryHermesLedger(
     execFile(
       cli,
       ["--profile", HERMES_PIN.profile, "chat", "-Q", "-q", prompt, "--max-turns", "2"],
-      { timeout: opts?.timeoutMs ?? TIMEOUT_MS, cwd: opts?.cwd ?? seedVault(), env: { ...process.env, PATH: augmentedPath() } },
+      {
+        timeout: opts?.timeoutMs ?? TIMEOUT_MS,
+        cwd: opts?.cwd ?? seedVault(),
+        env: {
+          ...applyWorkerRuntimeEnv({ ...process.env }, hermesHome(opts?.root), augmentedPath()),
+          ...modelCredentialEnvironment(opts?.root),
+        },
+      },
       (err, stdout, stderr) => {
         if (err) {
           const timedOut = (err as NodeJS.ErrnoException & { killed?: boolean }).killed;
-          if (timedOut) return resolve(miss("Hermes took too long — facts stay held."));
-          const clean = (s: string) =>
-            String(s)
-              .replace(/\x1b\[[0-9;]*m/g, "")
-              .split("\n")
-              .map((line) => line.trim())
-              .filter((line) => line && !/^session_id:/.test(line));
-          const pick = (s: string) => clean(s).slice(-2).join(" · ");
-          const snippet = (pick(stdout) || pick(stderr)).slice(0, 200);
+          if (timedOut) return resolve(miss("The worker took too long — facts stay held."));
+          const snippet = workerFailureDetail(stdout, stderr);
           return resolve(
             miss(
               snippet
-                ? `Hermes could not answer (${snippet}) — facts stay held.`
-                : "Hermes could not answer — facts stay held.",
+                ? `The worker could not answer (${snippet}) — facts stay held.`
+                : "The worker could not answer — facts stay held.",
             ),
           );
         }
         const rows = parseLedgerFacts(String(stdout));
-        if (!rows) return resolve(miss("Hermes answered without ledger JSON — facts stay held."));
-        resolve({ rows, detail: `Hermes ${HERMES_PIN.product} answered with ${rows.length} ledger rows.` });
+        if (!rows) return resolve(miss("The worker answered without ledger facts — facts stay held."));
+        resolve({ rows, detail: `The pinned worker answered with ${rows.length} ledger rows.` });
       },
     );
   });

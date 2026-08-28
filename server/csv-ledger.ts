@@ -30,6 +30,15 @@ export interface PmsExportBatch {
   sourceId: string;
   observedAt: number;
   rows: ExportRow[];
+  columns: {
+    identity: { kind: ExportIdentityKind; header: string };
+    daysSinceDue: string;
+    rentLanded: string;
+    levyPaid: string;
+    daysSinceCourtesy?: string;
+    amountPaidCents?: string;
+    reversed?: string;
+  };
 }
 
 export type MatchOk = { ok: true; propertyId: string };
@@ -41,12 +50,19 @@ export interface AmbiguousRow {
   ids: string[];
 }
 
+export interface ExportIdentityDecision {
+  identity: ExportIdentity;
+  action: "linked" | "rejected";
+  propertyId?: string;
+}
+
 /** Rows land in buckets; nothing aborts the batch here. Schema breakage
  * throws earlier, in parsePmsExport. */
 export interface ResolvedExport {
   matched: LedgerFacts[];
   unmatched: ExportRow[];
   ambiguous: AmbiguousRow[];
+  rejected: ExportRow[];
 }
 
 const STREET: Record<string, string> = {
@@ -142,11 +158,20 @@ export function normalizeAddress(value: string): string {
   return words.join(" ");
 }
 
-export function matchExportRow(properties: Pick<Property, "id" | "address">[], row: ExportRow): MatchResult {
+export function exportIdentityKey(identity: ExportIdentity): string {
+  const value = identity.kind === "address"
+    ? normalizeAddress(identity.value)
+    : identity.value.trim().toLowerCase();
+  return `${identity.kind}:${value}`;
+}
+
+export function matchExportRow(properties: Pick<Property, "id" | "address" | "propertyCode">[], row: ExportRow): MatchResult {
   const hits: string[] = [];
   for (const property of properties) {
-    if (row.identity.kind === "id" || row.identity.kind === "code") {
+    if (row.identity.kind === "id") {
       if (property.id.toLowerCase() === row.identity.value.trim().toLowerCase()) hits.push(property.id);
+    } else if (row.identity.kind === "code") {
+      if (property.propertyCode?.trim().toLowerCase() === row.identity.value.trim().toLowerCase()) hits.push(property.id);
     } else if (normalizeAddress(property.address) === normalizeAddress(row.identity.value)) {
       hits.push(property.id);
     }
@@ -157,12 +182,37 @@ export function matchExportRow(properties: Pick<Property, "id" | "address">[], r
   return { ok: false, reason: "unmatched" };
 }
 
-export function resolveExportRows(properties: Pick<Property, "id" | "address">[], rows: ExportRow[]): ResolvedExport {
+export function resolveExportRows(
+  properties: Pick<Property, "id" | "address" | "propertyCode">[],
+  rows: ExportRow[],
+  decisions: readonly ExportIdentityDecision[] = [],
+): ResolvedExport {
   const matched: LedgerFacts[] = [];
   const unmatched: ExportRow[] = [];
   const ambiguous: AmbiguousRow[] = [];
+  const rejected: ExportRow[] = [];
+  const propertyIds = new Set(properties.map((property) => property.id));
+  const decisionByIdentity = new Map<string, ExportIdentityDecision>();
+  for (const decision of decisions) {
+    const key = exportIdentityKey(decision.identity);
+    const existing = decisionByIdentity.get(key);
+    if (existing && (existing.action !== decision.action || existing.propertyId !== decision.propertyId)) {
+      throw Object.assign(new Error("conflicting saved identity decisions"), { status: 409, code: "source-identity-conflict" });
+    }
+    if (decision.action === "linked" && (!decision.propertyId || !propertyIds.has(decision.propertyId))) {
+      throw Object.assign(new Error("saved identity decision refers to a missing property"), { status: 409, code: "source-identity-conflict" });
+    }
+    decisionByIdentity.set(key, decision);
+  }
   for (const row of rows) {
-    const hit = matchExportRow(properties, row);
+    const decision = decisionByIdentity.get(exportIdentityKey(row.identity));
+    if (decision?.action === "rejected") {
+      rejected.push(row);
+      continue;
+    }
+    const hit = decision?.action === "linked"
+      ? { ok: true as const, propertyId: decision.propertyId! }
+      : matchExportRow(properties, row);
     if (!hit.ok && hit.reason === "ambiguous") {
       ambiguous.push({ row, ids: hit.ids });
       continue;
@@ -181,7 +231,7 @@ export function resolveExportRows(properties: Pick<Property, "id" | "address">[]
       reversed: row.reversed,
     });
   }
-  return { matched, unmatched, ambiguous };
+  return { matched, unmatched, ambiguous, rejected };
 }
 
 export function parsePmsExport(text: string, observedAt: number, sourceId = "src-csv"): PmsExportBatch {
@@ -194,14 +244,24 @@ export function parsePmsExport(text: string, observedAt: number, sourceId = "src
   const addressCol = pickHeader(headers, ["address", "propertyAddress", "property_address", "property address"]);
   const codeCol = pickHeader(headers, ["propertyCode", "property_code", "code", "property code"]);
   const daysCol = pickHeader(headers, ["daysSinceDue", "daysLate", "days_late", "days late", "daysOverdue", "days overdue"]);
-  const rentCol = pickHeader(headers, ["rentLanded", "rent_landed", "rentPaid", "rent_paid", "rentIn", "rent in"]);
+  const rentCol = pickHeader(headers, [
+    "rentLanded",
+    "rent_landed",
+    "rentPaid",
+    "rent_paid",
+    "rentIn",
+    "rent in",
+    "rentReceived",
+    "rent_received",
+    "rent received",
+  ]);
   const levyCol = pickHeader(headers, ["levyPaid", "levy_paid"]);
   if (!idCol && !addressCol && !codeCol) {
-    throw Object.assign(new Error("csv missing column propertyId"), { status: 400 });
+    throw Object.assign(new Error("RealBud could not find a property identity column. Export needs a property ID, property code or property address."), { status: 400 });
   }
-  if (!daysCol) throw Object.assign(new Error("csv missing column daysSinceDue"), { status: 400 });
-  if (!rentCol) throw Object.assign(new Error("csv missing column rentLanded"), { status: 400 });
-  if (!levyCol) throw Object.assign(new Error("csv missing column levyPaid"), { status: 400 });
+  if (!daysCol) throw Object.assign(new Error("RealBud could not find days overdue. Export needs a days overdue column."), { status: 400 });
+  if (!rentCol) throw Object.assign(new Error("RealBud could not find rent received. Export needs a rent received or rent paid column."), { status: 400 });
+  if (!levyCol) throw Object.assign(new Error("RealBud could not find levy paid. Export needs a levy paid column."), { status: 400 });
   const courtesyCol = pickHeader(headers, ["daysSinceCourtesy", "days_since_courtesy"]);
   const amountCol = pickHeader(headers, ["amountPaidCents", "amount_paid_cents"]);
   const reversedCol = pickHeader(headers, ["reversed"]);
@@ -239,7 +299,25 @@ export function parsePmsExport(text: string, observedAt: number, sourceId = "src
     rows.push({ identity, daysSinceDue, rentLanded, levyPaid, daysSinceCourtesy, amountPaidCents, reversed });
   }
   if (!rows.length) throw Object.assign(new Error("csv batch has no rows"), { status: 400 });
-  return { sourceId, observedAt, rows };
+  const identity = idCol
+    ? { kind: "id" as const, header: idCol }
+    : codeCol
+      ? { kind: "code" as const, header: codeCol }
+      : { kind: "address" as const, header: addressCol! };
+  return {
+    sourceId,
+    observedAt,
+    rows,
+    columns: {
+      identity,
+      daysSinceDue: daysCol,
+      rentLanded: rentCol,
+      levyPaid: levyCol,
+      ...(courtesyCol ? { daysSinceCourtesy: courtesyCol } : {}),
+      ...(amountCol ? { amountPaidCents: amountCol } : {}),
+      ...(reversedCol ? { reversed: reversedCol } : {}),
+    },
+  };
 }
 
 /** Fixture-shaped import: identity becomes `propertyId` (unmatched until Desk maps it). */

@@ -16,30 +16,27 @@ export interface DeskKey {
 }
 
 export function loadDeskKey(opts?: { dir?: string; key?: Buffer }): DeskKey {
+  const production = process.env.REALBUD_PRODUCTION === "1";
   if (opts?.key && opts.key.length === 32) {
-    return { key: opts.key, source: "inline", production: process.env.REALBUD_PRODUCTION === "1" };
+    return { key: opts.key, source: "inline", production };
   }
   const hex = process.env.REALBUD_DESK_KEY;
   if (hex && /^[0-9a-fA-F]{64}$/.test(hex)) {
-    return { key: Buffer.from(hex, "hex"), source: "env", production: process.env.REALBUD_PRODUCTION === "1" };
+    return { key: Buffer.from(hex, "hex"), source: "env", production };
   }
+  if (production) throw new Error("production desk key is unavailable");
   const dir = opts?.dir ?? DATA_DIR;
   mkdirSync(dir, { recursive: true });
   const path = join(dir, KEY_FILE);
   if (existsSync(path)) {
     const raw = readFileSync(path);
-    if (raw.length === 32) return { key: raw, source: "file", production: process.env.REALBUD_PRODUCTION === "1" };
+    if (raw.length === 32) return { key: raw, source: "file", production };
     if (raw.length === 64 && /^[0-9a-fA-F]+$/.test(raw.toString("utf8").trim())) {
-      return { key: Buffer.from(raw.toString("utf8").trim(), "hex"), source: "file", production: process.env.REALBUD_PRODUCTION === "1" };
+      return { key: Buffer.from(raw.toString("utf8").trim(), "hex"), source: "file", production };
     }
   }
   const key = randomBytes(32);
   writeFileSync(path, key, { mode: 0o600 });
-  try {
-    writeFileSync(path, key, { mode: 0o600 });
-  } catch {
-    /* already written */
-  }
   return { key, source: "generated", production: false };
 }
 

@@ -26,6 +26,7 @@ export const CASE_KIND_LABELS: Record<string, string> = {
   "maintenance-intake": "Maintenance",
   "lease-review": "Lease review",
   "inspection-prep": "Inspection",
+  "source-incident": "Source attention",
   "licensee-required": "Licensee",
   "import-issue": "Import issue",
 };

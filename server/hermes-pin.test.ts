@@ -30,8 +30,13 @@ describe("hermesMatchesPin", () => {
 describe("hermesInstallCommand", () => {
   it("pins the checkout on POSIX and skips a Windows curl|bash lie", () => {
     const cmd = hermesInstallCommand("darwin");
+    expect(cmd).toContain(`raw.githubusercontent.com/NousResearch/hermes-agent/${HERMES_PIN.commit}/scripts/install.sh`);
     expect(cmd).toContain(HERMES_PIN.commit);
     expect(cmd).toContain("--force-commit");
+    expect(cmd).toContain("--skip-setup");
+    expect(cmd).toContain("--skip-browser");
+    expect(cmd).toContain("--skip-computer-use");
+    expect(cmd).toContain("--no-skills");
     expect(hermesInstallCommand("linux")).toBe(cmd);
     expect(hermesInstallCommand("win32")).toBeNull();
   });

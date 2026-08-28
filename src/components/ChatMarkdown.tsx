@@ -36,7 +36,7 @@ function CodeBlock({ code, lang, streaming }: { code: string; lang: string; stre
       .then((shiki) =>
         shiki.codeToHtml(code, {
           lang: lang || "text",
-          theme: "github-dark-default",
+          theme: "github-light-default",
         }),
       )
       .then((out) => {
@@ -63,13 +63,14 @@ function CodeBlock({ code, lang, streaming }: { code: string; lang: string; stre
   };
 
   return (
-    <div className="my-2 overflow-hidden rounded-lg border border-hairline/40 bg-inset">
+    <div className="my-3 overflow-hidden rounded border border-line bg-inset">
       <div className="flex items-center justify-between border-b border-hairline/30 px-3 py-1">
         <span className="text-[11px] uppercase tracking-wide text-ink-secondary">{lang || "code"}</span>
         <button
           onClick={copy}
           className="rounded p-1 text-ink-secondary hover:bg-raised hover:text-ink"
           title="Copy code"
+          aria-label="Copy code"
         >
           {copied ? <Check size={13} className="text-success" /> : <Copy size={13} />}
         </button>
@@ -88,7 +89,7 @@ function CodeBlock({ code, lang, streaming }: { code: string; lang: string; stre
 
 function ChatMarkdownComponent({ text, streaming = false }: { text: string; streaming?: boolean }) {
   return (
-    <div className="chat-md min-w-0 [&>*+*]:mt-2">
+    <div className="chat-md min-w-0">
       <Markdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -147,22 +148,28 @@ function ChatMarkdownComponent({ text, streaming = false }: { text: string; stre
             return <td className="border-b border-hairline/20 px-2 py-1.5 align-top">{children}</td>;
           },
           ul({ children }: { children?: ReactNode }) {
-            return <ul className="list-disc space-y-1 pl-5">{children}</ul>;
+            return <ul className="list-disc space-y-1.5 pl-5">{children}</ul>;
           },
           ol({ children }: { children?: ReactNode }) {
-            return <ol className="list-decimal space-y-1 pl-5">{children}</ol>;
+            return <ol className="list-decimal space-y-1.5 pl-5">{children}</ol>;
+          },
+          p({ children }: { children?: ReactNode }) {
+            return <p className="leading-[1.62]">{children}</p>;
+          },
+          strong({ children }: { children?: ReactNode }) {
+            return <strong className="font-semibold text-ink">{children}</strong>;
           },
           h1({ children }: { children?: ReactNode }) {
-            return <div className="mt-2 text-[16px] font-semibold">{children}</div>;
+            return <h2 className="text-[16px] font-semibold tracking-[-0.01em] text-ink">{children}</h2>;
           },
           h2({ children }: { children?: ReactNode }) {
-            return <div className="mt-2 text-[15.5px] font-semibold">{children}</div>;
+            return <h2 className="text-[15.5px] font-semibold tracking-[-0.01em] text-ink">{children}</h2>;
           },
           h3({ children }: { children?: ReactNode }) {
-            return <div className="mt-1.5 font-semibold">{children}</div>;
+            return <h3 className="text-[15px] font-semibold text-ink">{children}</h3>;
           },
           h4({ children }: { children?: ReactNode }) {
-            return <div className="mt-1.5 font-semibold">{children}</div>;
+            return <h4 className="text-[14.5px] font-semibold text-ink">{children}</h4>;
           },
           h5({ children }: { children?: ReactNode }) {
             return <div className="mt-1.5 text-[14px] font-semibold">{children}</div>;
@@ -172,7 +179,7 @@ function ChatMarkdownComponent({ text, streaming = false }: { text: string; stre
           },
           blockquote({ children }: { children?: ReactNode }) {
             return (
-              <blockquote className="border-l-2 border-hairline pl-3 text-ink-secondary">{children}</blockquote>
+              <blockquote className="border-l-2 border-agency/45 bg-selected/20 py-1 pl-3 pr-2 text-ink-secondary">{children}</blockquote>
             );
           },
           hr() {

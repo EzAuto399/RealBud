@@ -22,7 +22,35 @@ export interface IntakeResult {
   unparsed: string[];
 }
 
+export const INTAKE_FIELD_LIMITS = {
+  address: 160,
+  tenantName: 120,
+  tenantPhone: 40,
+  weeklyRentCents: 10_000_000,
+} as const;
+
 const PHONE_DIGITS = (raw: string) => (raw.match(/\d/g) ?? []).length;
+const UNSAFE_FIELD_TEXT = /[\u0000-\u001f\u007f]|\\[rnt]/i;
+
+/** One shared validation contract for quick paste, worker output and the
+ * authoritative Desk mutation. This prevents a tolerant parser or future
+ * adapter from persisting control text or an unbounded person field. */
+export function intakeItemError(item: IntakeItem): string | null {
+  if (!item.address) return "address required";
+  if (item.address.length > INTAKE_FIELD_LIMITS.address) return "address is too long";
+  if (UNSAFE_FIELD_TEXT.test(item.address)) return "address contains invalid characters";
+  if (!item.tenantName) return "tenant name required";
+  if (item.tenantName.length > INTAKE_FIELD_LIMITS.tenantName) return "tenant name is too long";
+  if (UNSAFE_FIELD_TEXT.test(item.tenantName)) return "tenant name contains invalid characters";
+  if (!item.tenantPhone) return "tenant phone required";
+  if (item.tenantPhone.length > INTAKE_FIELD_LIMITS.tenantPhone) return "tenant phone is too long";
+  if (UNSAFE_FIELD_TEXT.test(item.tenantPhone) || PHONE_DIGITS(item.tenantPhone) < 8) {
+    return "tenant phone is invalid";
+  }
+  if (!Number.isInteger(item.weeklyRentCents) || item.weeklyRentCents <= 0) return "weekly rent required";
+  if (item.weeklyRentCents > INTAKE_FIELD_LIMITS.weeklyRentCents) return "weekly rent is too large";
+  return null;
+}
 
 function parseLine(line: string): IntakeItem | null {
   const clean = line.trim().replace(/^[-*•]\s*/, "");
@@ -67,11 +95,11 @@ function parseLine(line: string): IntakeItem | null {
   }
 
   const address = tokens[0]!;
-  const middle = tokens.slice(1, phoneIdx >= 0 ? phoneIdx : rentIdx).filter((_, i, arr) => arr.length > 0);
+  const middle = tokens.slice(1, phoneIdx >= 0 ? phoneIdx : rentIdx);
   const tenantName = middle.join(", ").trim();
 
-  if (!address || !tenantName || !phone || rentCents <= 0) return null;
-  return { address, tenantName, tenantPhone: phone, weeklyRentCents: rentCents };
+  const item = { address, tenantName, tenantPhone: phone, weeklyRentCents: rentCents };
+  return intakeItemError(item) ? null : item;
 }
 
 export function parseIntakeText(text: string): IntakeResult {

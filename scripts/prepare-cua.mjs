@@ -1,8 +1,9 @@
 // Stage the macOS CUA executable and native SDK outside ASAR. The npm SDK
 // deliberately does not ship the `cua-driver` CLI, so packaging must fail
 // loudly instead of producing an app whose "This computer" option can never
-// work. CUA_DRIVER_PATH is the CI/release override; otherwise an exact-version
-// installed binary or the checksummed official release asset is used.
+// work. CUA_DRIVER_PATH is an explicit CI/release override; the default always
+// uses the checksummed official release asset and never copies a personal CUA
+// installation from the packaging machine.
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, readFile, rm, stat, chmod, writeFile } from "node:fs/promises";
 import { existsSync, realpathSync } from "node:fs";
@@ -22,6 +23,10 @@ const sdkRoot = realpathSync(join(dirname(sdkEntry), ".."));
 const dependencyRoot = join(sdkRoot, "..", "..");
 const sdkPackage = JSON.parse(await readFile(join(sdkRoot, "package.json"), "utf8"));
 const expectedVersion = String(sdkPackage.version);
+const targetArch = process.env.REALBUD_PACKAGE_ARCH ?? process.arch;
+if (targetArch !== "arm64" && targetArch !== "x64") {
+  throw new Error(`CUA packaging does not support macOS ${targetArch}`);
+}
 const release = {
   version: "0.19.3",
   file: "cua-driver-rs-0.19.3-darwin-universal-binary.tar.gz",
@@ -79,8 +84,7 @@ if (process.env.CUA_DRIVER_PATH) {
   }
   binary = process.env.CUA_DRIVER_PATH;
 } else {
-  const installed = "/Applications/CuaDriver.app/Contents/MacOS/cua-driver";
-  binary = (await binaryVersion(installed)) === expectedVersion ? installed : await officialBinary();
+  binary = await officialBinary();
 }
 const details = await stat(binary);
 if (!details.isFile() || (details.mode & 0o111) === 0) {
@@ -110,8 +114,9 @@ await run("/usr/bin/codesign", [
 // files staged beside the bundle.
 const cuaSdkDir = join(stage, "cua-sdk");
 const nativeDir = join(cuaSdkDir, "native");
-const nativePackage = join(dependencyRoot, "@trycua", "cua-driver-darwin-arm64");
-if (!existsSync(nativePackage)) throw new Error("required CUA darwin-arm64 native package is missing");
+const nativePackageName = `cua-driver-darwin-${targetArch}`;
+const nativePackage = join(dependencyRoot, "@trycua", nativePackageName);
+if (!existsSync(nativePackage)) throw new Error(`required CUA ${nativePackageName} native package is missing`);
 await mkdir(nativeDir, { recursive: true });
 await Promise.all([
   copyFile(join(realpathSync(nativePackage), "libcua_driver_sdk.dylib"), join(nativeDir, "libcua_driver_sdk.dylib")),

@@ -22,8 +22,10 @@ function createCuaConnectionStore({
       const temporaryPath = `${descriptorPath}.${processId}.${temporaryId()}.tmp`;
 
       try {
-        fileSystem.writeFileSync(temporaryPath, JSON.stringify(next, null, 2));
+        fileSystem.writeFileSync(temporaryPath, JSON.stringify(next, null, 2), { mode: 0o600, flag: "wx" });
+        fileSystem.chmodSync?.(temporaryPath, 0o600);
         fileSystem.renameSync(temporaryPath, descriptorPath);
+        fileSystem.chmodSync?.(descriptorPath, 0o600);
       } catch (error) {
         try {
           fileSystem.unlinkSync(temporaryPath);

@@ -31,7 +31,7 @@ describe("parseLedgerCsv", () => {
     expect(() => parseLedgerCsv(`${header}\nprop-oak,3,false`, 1)).toThrow(/incomplete/);
     expect(() => parseLedgerCsv(`${header}\n,3,false,false,`, 1)).toThrow(/propertyId/);
     expect(() => parseLedgerCsv(`${header}\nprop-oak,,false,false,`, 1)).toThrow(/daysSinceDue/);
-    expect(() => parseLedgerCsv("propertyId,daysSinceDue\nprop-oak,3", 1)).toThrow(/missing column/);
+    expect(() => parseLedgerCsv("propertyId,daysSinceDue\nprop-oak,3", 1)).toThrow(/rent received or rent paid column/i);
     expect(() => parseLedgerCsv("propertyId,daysSinceDue,rentLanded,levyPaid\n", 1)).toThrow(/empty/);
   });
 });
@@ -76,6 +76,36 @@ describe("PMS export address/code match", () => {
     const resolved = resolveExportRows(book, batch.rows);
     expect(resolved.matched).toEqual([]);
     expect(resolved.unmatched).toHaveLength(1);
+  });
+
+  it("reuses an exact saved link or rejection without fuzzy rematching", () => {
+    const csv = `address,daysLate,rentLanded,levyPaid\n"99 Ghost St, Acton ACT",4,false,false\n`;
+    const batch = parsePmsExport(csv, 1);
+    const linked = resolveExportRows(book, batch.rows, [{
+      identity: { kind: "address", value: "99 Ghost Street, Acton ACT" },
+      action: "linked",
+      propertyId: "prop-oak",
+    }]);
+    expect(linked.matched).toEqual([expect.objectContaining({ propertyId: "prop-oak", daysSinceDue: 4 })]);
+    expect(linked.unmatched).toEqual([]);
+
+    const rejected = resolveExportRows(book, batch.rows, [{
+      identity: { kind: "address", value: "99 Ghost St, Acton ACT" },
+      action: "rejected",
+    }]);
+    expect(rejected.matched).toEqual([]);
+    expect(rejected.rejected).toHaveLength(1);
+  });
+
+  it("fails closed when saved decisions conflict or point to a removed property", () => {
+    const row = parsePmsExport(`address,daysLate,rentLanded,levyPaid\n"99 Ghost St, Acton ACT",4,false,false\n`, 1).rows;
+    expect(() => resolveExportRows(book, row, [
+      { identity: row[0]!.identity, action: "linked", propertyId: "prop-oak" },
+      { identity: row[0]!.identity, action: "rejected" },
+    ])).toThrow(/conflicting saved identity decisions/i);
+    expect(() => resolveExportRows(book, row, [
+      { identity: row[0]!.identity, action: "linked", propertyId: "prop-removed" },
+    ])).toThrow(/missing property/i);
   });
 
   it("holds an ambiguous row without rejecting its neighbours", () => {

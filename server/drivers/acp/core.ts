@@ -13,7 +13,10 @@
 // is never a security contract). session/load REPLAYS history as ordinary
 // session/update notifications, so updates are double-gated: nothing emits
 // before the prompt is sent, and `_meta.isReplay` updates are dropped.
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
+import { isAbsolute, relative, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../../procs.ts";
 import { SPAWNED_PROXIES } from "../../proxy-paths.ts";
@@ -58,7 +61,10 @@ export interface AcpSupport {
   /** CLI argv AFTER the binary name to enter ACP stdio mode. */
   spawnArgs(config: AcpConfig, turn: SendTurnInput): string[];
   /** Mutate the child env in place (e.g. strip a key). Optional. */
-  transformEnv?(env: Record<string, string | undefined>): void;
+  transformEnv?(env: Record<string, string | undefined>, turn?: SendTurnInput): void;
+  /** This support can bind its profile home to RealBud's validated fresh
+   * per-task directory. */
+  supportsIsolatedProfileHome?: boolean;
   /** Pick the ACP authenticate methodId from initialize's advertised
    * authMethods; return null to skip the authenticate step. */
   pickAuthMethod(authMethods: Array<{ id?: string }>): string | null;
@@ -69,11 +75,53 @@ export interface AcpSupport {
   isAuthenticated(env: Record<string, string | undefined>): boolean;
   /** Compose the session/prompt text. Default prepends the persona. */
   buildPromptText?(turn: SendTurnInput): string;
+  /** Some ACP servers encode a missing session/load as an empty success
+   * response. Return false here to make the runtime open a fresh session and
+   * replay the bounded transcript instead of prompting an unknown session. */
+  sessionLoadSucceeded?(result: unknown): boolean;
 }
 
 const INIT_TIMEOUT = 20_000;
 const NEW_SESSION_TIMEOUT = 30_000;
 const LOAD_SESSION_TIMEOUT = 120_000; // history replay on a long thread is slow
+
+function acpPrompt(turn: SendTurnInput, buildText?: (turn: SendTurnInput) => string) {
+  const built = buildText
+    ? buildText(turn)
+    : turn.system
+      ? `${turn.system}\n\n${turn.text}`
+      : turn.text;
+  // Legacy file tags are display/prompt text, never authority. Only the
+  // server-validated structured list below becomes an ACP resource.
+  const text = built.replace(/<attached-file\s+path="[^"]*"\s*\/>/g, "").replace(/\n{3,}/g, "\n\n").trim();
+  return [
+    { type: "text", text: text || "Review the selected files and report only what you can verify." },
+    ...(turn.attachments ?? []).map((file) => ({
+      type: "resource_link",
+      name: file.name,
+      title: file.name,
+      uri: pathToFileURL(file.path).href,
+      mimeType: file.mimeType,
+    })),
+  ];
+}
+
+function withTranscriptReplay(turn: SendTurnInput): SendTurnInput {
+  const transcript = turn.transcript?.slice(-40) ?? [];
+  if (!transcript.length) return turn;
+  return {
+    ...turn,
+    text: [
+      "[The saved worker session was unavailable. Continue from this verified RealBud conversation transcript:]",
+      "",
+      ...transcript.map((message) => `${message.role === "user" ? "User" : "Bud"}: ${message.text}`),
+      "",
+      "[Reply to the user's latest message:]",
+      "",
+      turn.text,
+    ].join("\n"),
+  };
+}
 
 function decodeAcpConfig(defaultCli: string) {
   return (raw: unknown): AcpConfig => {
@@ -123,13 +171,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         createdAt: new Date().toISOString(),
       });
 
-      const childEnv = () => {
+      const childEnv = (turn?: SendTurnInput) => {
         const env: Record<string, string | undefined> = {
           ...process.env,
           ...input.environment,
           PATH: augmentedPath(),
         };
-        support.transformEnv?.(env);
+        support.transformEnv?.(env, turn);
         return env;
       };
 
@@ -171,9 +219,50 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       const sendTurn = async (turn: SendTurnInput) => {
         const { threadId } = turn;
         if (active.has(threadId)) throw new Error("a turn is already running on this thread");
+        const executionPolicy = {
+          permissionMode: turn.executionPolicy?.permissionMode ?? "interactive",
+          maxDurationMs: turn.executionPolicy?.maxDurationMs,
+          maxOutputChars: turn.executionPolicy?.maxOutputChars,
+        };
+        if (!["interactive", "deny-all"].includes(executionPolicy.permissionMode)) {
+          throw new Error("invalid worker permission policy");
+        }
+        if (
+          executionPolicy.maxDurationMs !== undefined
+          && (!Number.isSafeInteger(executionPolicy.maxDurationMs) || executionPolicy.maxDurationMs < 1_000 || executionPolicy.maxDurationMs > 30 * 60_000)
+        ) {
+          throw new Error("invalid worker duration limit");
+        }
+        if (
+          executionPolicy.maxOutputChars !== undefined
+          && (!Number.isSafeInteger(executionPolicy.maxOutputChars) || executionPolicy.maxOutputChars < 1_000 || executionPolicy.maxOutputChars > 1_000_000)
+        ) {
+          throw new Error("invalid worker output limit");
+        }
         const turnId = newId();
         const cwd = turn.cwd ?? config.workspace ?? homedir();
-        const env = childEnv();
+        const isolatedProfileHome = turn.executionPolicy?.isolatedProfileHome;
+        if (isolatedProfileHome !== undefined) {
+          if (!support.supportsIsolatedProfileHome || executionPolicy.permissionMode !== "deny-all") {
+            throw new Error("this worker cannot use an isolated task profile");
+          }
+          if (!isAbsolute(cwd) || !isAbsolute(isolatedProfileHome)) {
+            throw new Error("isolated task paths must be absolute");
+          }
+          let workspaceRoot: string;
+          let profileRoot: string;
+          try {
+            workspaceRoot = realpathSync(cwd);
+            profileRoot = realpathSync(isolatedProfileHome);
+          } catch {
+            throw new Error("isolated task paths are unavailable");
+          }
+          const nested = relative(workspaceRoot, profileRoot);
+          if (!nested || nested === ".." || nested.startsWith(`..${sep}`) || isAbsolute(nested)) {
+            throw new Error("isolated task profile must stay inside its workspace");
+          }
+        }
+        const env = childEnv(turn);
         const mcpServers = acpMcpServers(turn);
 
         const child = spawnCli(config.cli, support.spawnArgs(config, turn), {
@@ -187,6 +276,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         let nextId = 1;
         let sessionId: string | null = null;
         let interruptTimer: ReturnType<typeof setTimeout> | null = null;
+        let executionTimer: ReturnType<typeof setTimeout> | null = null;
         const rpcPending = new Map<
           number,
           { resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> | null }
@@ -219,6 +309,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (state.settled) return;
           state.settled = true;
           if (interruptTimer) clearTimeout(interruptTimer);
+          if (executionTimer) clearTimeout(executionTimer);
           for (const finish of [...asks.values()]) finish("cancel");
           for (const p of rpcPending.values()) {
             if (p.timer) clearTimeout(p.timer);
@@ -252,6 +343,22 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             });
 
           const toolCall = params.toolCall ?? {};
+          if (executionPolicy.permissionMode === "deny-all") {
+            const reject = optionFor("reject");
+            send({
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: reject ? { outcome: { outcome: "selected", optionId: reject } } : cancelled,
+            });
+            emit({
+              ...base(threadId, turnId),
+              type: "request.resolved",
+              requestId: newId(),
+              behavior: "deny",
+              source: "system",
+            });
+            return;
+          }
           if (config.fullAuto) {
             const allow = optionFor("allow");
             if (!allow) missing("allow");
@@ -301,6 +408,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         };
 
         const handleNotification = (msg: any) => {
+          if (state.settled) return;
           // Vendor side-channels (e.g. grok's `_x.ai/*`) are teed to the
           // native log but never normalized: the prompt result is the settle.
           if (msg.method !== "session/update") return;
@@ -311,6 +419,20 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             case "agent_message_chunk": {
               const delta = u.content?.text;
               if (typeof delta === "string" && delta) {
+                if (
+                  executionPolicy.maxOutputChars !== undefined
+                  && state.text.length + delta.length > executionPolicy.maxOutputChars
+                ) {
+                  state.text = "";
+                  emit({
+                    ...base(threadId, turnId),
+                    type: "runtime.error",
+                    message: "The selected-file review exceeded its safe output limit. Nothing from the partial result was applied.",
+                  });
+                  if (sessionId) send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
+                  settle(false, "output_limit");
+                  return;
+                }
                 state.text += delta;
                 emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta });
               }
@@ -410,6 +532,20 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         };
         active.set(threadId, { stop, interrupt, turnId, asks });
         emit({ ...base(threadId, turnId), type: "turn.started" });
+        if (executionPolicy.maxDurationMs !== undefined) {
+          executionTimer = setTimeout(() => {
+            if (state.settled) return;
+            state.text = "";
+            emit({
+              ...base(threadId, turnId),
+              type: "runtime.error",
+              message: "The selected-file review reached its safe time limit. Nothing from the partial result was applied.",
+            });
+            if (sessionId) send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
+            settle(false, "time_limit");
+          }, executionPolicy.maxDurationMs);
+          executionTimer.unref?.();
+        }
 
         (async () => {
           try {
@@ -432,13 +568,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             }
 
             const cursor = typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
+            let promptTurn = turn;
             if (cursor) {
               try {
-                await request("session/load", { sessionId: cursor, cwd, mcpServers }, LOAD_SESSION_TIMEOUT);
-                sessionId = cursor;
+                const loaded = await request("session/load", { sessionId: cursor, cwd, mcpServers }, LOAD_SESSION_TIMEOUT);
+                if (support.sessionLoadSucceeded?.(loaded) !== false) sessionId = cursor;
               } catch {
                 /* session gone, load unsupported, or too slow — start fresh */
               }
+              if (!sessionId) promptTurn = withTranscriptReplay(turn);
             }
             if (!sessionId) {
               const started = await request("session/new", { cwd, mcpServers }, NEW_SESSION_TIMEOUT);
@@ -452,14 +590,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               model: init?._meta?.modelState?.currentModelId ?? turn.model ?? null,
             });
             state.promptSent = true;
-            const text = support.buildPromptText
-              ? support.buildPromptText(turn)
-              : turn.system
-                ? `${turn.system}\n\n${turn.text}`
-                : turn.text;
             const result = await request("session/prompt", {
               sessionId,
-              prompt: [{ type: "text", text }],
+              prompt: acpPrompt(promptTurn, support.buildPromptText),
             });
             const usage = result?._meta ?? {};
             if (typeof usage.inputTokens === "number" || typeof usage.outputTokens === "number") {
@@ -473,7 +606,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             const reason = result?.stopReason;
             if (reason === "end_turn") settle(true, null);
             else if (reason === "cancelled") settle(true, "cancelled");
-            else settle(false, reason ?? "failed");
+            else {
+              emit({
+                ...base(threadId, turnId),
+                type: "runtime.error",
+                message: "The model stopped before producing a reply. Retry once; if it continues, check You → Worker.",
+              });
+              settle(false, reason ?? "failed");
+            }
           } catch (e) {
             if (!state.settled) {
               const message = (e as Error).message;

@@ -9,8 +9,10 @@ import {
   tenancyIdFromProperty,
   type CaseKind,
   type DeskFileV3,
+  type EvidenceAuthority,
   type EvidenceCollector,
 } from "../shared/desk-v3.ts";
+import { projectCurrentPositions } from "./evidence-projector.ts";
 
 function caseKindFromWork(kind: string): CaseKind {
   if (kind === "owner-letter") return "owner-update";
@@ -22,7 +24,14 @@ function collectorFromKind(kind: DeskFileV2["sources"][number]["kind"]): Evidenc
   if (kind === "csv") return "csv";
   if (kind === "hermes") return "hermes";
   if (kind === "portal") return "bounded-portal";
+  if (kind === "mail") return "mail";
   return "migration";
+}
+
+function authorityFromKind(kind: DeskFileV2["sources"][number]["kind"], mode: DeskFileV2["mode"]): EvidenceAuthority {
+  if (kind === "csv") return "pms";
+  if (kind === "demo" || mode === "demo") return "demo";
+  return "legacy-unverified";
 }
 
 function factsEqual(a: DeskFileV3["moneyPositions"][number]["facts"], b: DeskFileV2["ledger"][number]): boolean {
@@ -34,6 +43,14 @@ function factsEqual(a: DeskFileV3["moneyPositions"][number]["facts"], b: DeskFil
     (a.amountPaidCents ?? null) === (b.amountPaidCents ?? null) &&
     Boolean(a.reversed) === Boolean(b.reversed)
   );
+}
+
+function ambiguousCandidates(holdReason: string | undefined): string[] {
+  if (!holdReason?.startsWith("ambiguous-match")) return [];
+  const match = holdReason.match(/properties equally \(([^)]+)\)\s*$/i);
+  return match?.[1]
+    ? match[1].split(",").map((id) => id.trim()).filter(Boolean)
+    : [];
 }
 
 export function syncWorkingV2IntoV3(v3: DeskFileV3, v2: DeskFileV2, now: number): DeskFileV3 {
@@ -60,12 +77,14 @@ export function syncWorkingV2IntoV3(v3: DeskFileV3, v2: DeskFileV2, now: number)
       row = {
         id: property.id,
         address: property.address,
+        propertyCode: property.propertyCode,
         status: "active",
         options: { ...property.options, never: [...lockedNever()] },
       };
       next.properties.push(row);
     } else {
       row.address = property.address;
+      row.propertyCode = property.propertyCode;
       row.status = "active";
       row.archivedAt = undefined;
       row.options = { ...property.options, never: [...lockedNever()] };
@@ -107,23 +126,28 @@ export function syncWorkingV2IntoV3(v3: DeskFileV3, v2: DeskFileV2, now: number)
   }
 
   for (const source of v2.sources) {
-    if (next.sources.some((item) => item.id === source.id)) continue;
-    next.sources.push({
-      id: source.id,
-      authority: v2.mode === "demo" || source.kind === "demo" ? "demo" : "legacy-unverified",
-      collector: collectorFromKind(source.kind),
-      label: source.label,
-      stableKey: source.stableKey,
-      freshnessMs: source.kind === "csv" ? 12 * 60 * 60 * 1000 : 30 * 60 * 1000,
-    });
+    const authority = authorityFromKind(source.kind, v2.mode);
+    const collector = collectorFromKind(source.kind);
+    const freshnessMs = source.kind === "csv" ? 12 * 60 * 60 * 1000 : source.kind === "mail" ? 7 * 24 * 60 * 60 * 1000 : 30 * 60 * 1000;
+    const current = next.sources.find((item) => item.id === source.id);
+    if (current) {
+      current.authority = authority;
+      current.collector = collector;
+      current.label = source.label;
+      current.stableKey = source.stableKey;
+      current.freshnessMs = freshnessMs;
+    } else {
+      next.sources.push({ id: source.id, authority, collector, label: source.label, stableKey: source.stableKey, freshnessMs });
+    }
   }
 
   for (const observation of v2.observations) {
     if (next.evidence.some((item) => item.id === observation.id)) continue;
     const source = v2.sources.find((item) => item.id === observation.sourceId);
+    const canonicalSource = next.sources.find((item) => item.id === observation.sourceId);
     next.evidence.push({
       id: observation.id,
-      authority: v2.mode === "demo" ? "demo" : "legacy-unverified",
+      authority: canonicalSource?.authority ?? "legacy-unverified",
       collector: source ? collectorFromKind(source.kind) : "migration",
       sourceId: observation.sourceId,
       sourceRecordKey: observation.id,
@@ -132,14 +156,15 @@ export function syncWorkingV2IntoV3(v3: DeskFileV3, v2: DeskFileV2, now: number)
       staleAt: observation.observedAt + observation.staleAfterMs,
       propertyId: observation.propertyId,
       tenancyId: observation.propertyId ? tenancyIdFromProperty(observation.propertyId) : undefined,
-      payload: observation.facts ?? {},
+      payload: { ...(observation.facts ?? {}), coverage: observation.coverage },
     });
   }
 
   for (const row of v2.ledger) {
     const tenancyId = tenancyIdFromProperty(row.propertyId);
-    let position = next.moneyPositions.find((item) => item.tenancyId === tenancyId);
-    if (position && factsEqual(position.facts, row)) continue;
+    const tenancyEvidence = next.evidence.filter((item) => item.tenancyId === tenancyId);
+    if (tenancyEvidence.some((item) => item.observedAt != null)) continue;
+    if (tenancyEvidence.some((item) => factsEqual(item.payload, row))) continue;
     const sourceId = v2.sources[0]?.id ?? next.sources[0]?.id ?? "src-demo";
     if (!next.sources.some((item) => item.id === sourceId)) {
       next.sources.push({
@@ -169,30 +194,20 @@ export function syncWorkingV2IntoV3(v3: DeskFileV3, v2: DeskFileV2, now: number)
           rentLanded: row.rentLanded,
           levyPaid: row.levyPaid,
           daysSinceCourtesy: row.daysSinceCourtesy,
-          amountPaidCents: row.amountPaidCents ?? null,
+          amountPaidCents: row.amountPaidCents,
           reversed: row.reversed,
         },
       });
     }
-    const evidence = next.evidence.find((item) => item.id === evidenceId)!;
-    if (!position) {
-      next.moneyPositions.push({
-        tenancyId,
-        evidenceId: evidence.id,
-        sourceId: evidence.sourceId,
-        observedAt: evidence.observedAt,
-        staleAt: evidence.staleAt,
-        facts: evidence.payload,
-        status: "requires-recheck",
-      });
-    } else {
-      position.evidenceId = evidence.id;
-      position.sourceId = evidence.sourceId;
-      position.observedAt = evidence.observedAt;
-      position.staleAt = evidence.staleAt;
-      position.facts = evidence.payload;
-      position.status = "requires-recheck";
-    }
+  }
+
+  next.moneyPositions = projectCurrentPositions(next, now);
+
+  const projectedIssueIds = new Set(v2.importIssues.map((issue) => issue.id));
+  for (const projected of v2.importIssues) {
+    const existing = next.importIssues.find((issue) => issue.id === projected.id);
+    if (existing) Object.assign(existing, structuredClone(projected));
+    else next.importIssues.push(structuredClone(projected));
   }
 
   const importIds = new Set<string>();
@@ -205,6 +220,8 @@ export function syncWorkingV2IntoV3(v3: DeskFileV3, v2: DeskFileV2, now: number)
       if (existing) {
         // repair pre-fix rows that stored the reason word instead of the address
         existing.rawIdentity = identity;
+        existing.identityKind = work.importIdentity?.kind ?? existing.identityKind;
+        existing.candidates = ambiguousCandidates(work.holdReason);
       } else {
         next.importIssues.push({
           id: work.id,
@@ -214,7 +231,8 @@ export function syncWorkingV2IntoV3(v3: DeskFileV3, v2: DeskFileV2, now: number)
           // V2 unmatched holds store the CSV identity in propertyId; the
           // holdReason is just the reason word and must not mask the address
           rawIdentity: identity,
-          candidates: [],
+          identityKind: work.importIdentity?.kind,
+          candidates: ambiguousCandidates(work.holdReason),
           createdAt: work.createdAt || now,
         });
       }
@@ -235,8 +253,15 @@ export function syncWorkingV2IntoV3(v3: DeskFileV3, v2: DeskFileV2, now: number)
         periodDueAt: work.periodDueAt,
         occurrenceKey: work.occurrenceKey,
         sourceIds: work.sourceIds,
+        evidenceIds: work.evidenceIds ?? (work.evidenceId ? [work.evidenceId] : undefined),
+        evidenceStatus: work.evidenceStatus,
+        evidenceStaleAt: work.evidenceStaleAt,
+        observedAt: work.observedAt,
         proposalHash: work.proposalHash,
         artifactIds: work.artifactIds,
+        inbound: work.inbound,
+        lifecycle: work.lifecycle,
+        sourceIncident: work.sourceIncident,
         createdAt: work.createdAt,
         updatedAt: work.updatedAt,
       });
@@ -249,18 +274,28 @@ export function syncWorkingV2IntoV3(v3: DeskFileV3, v2: DeskFileV2, now: number)
       item.periodDueAt = work.periodDueAt;
       item.occurrenceKey = work.occurrenceKey;
       item.sourceIds = work.sourceIds;
+      item.evidenceIds = work.evidenceIds ?? (work.evidenceId ? [work.evidenceId] : undefined);
+      item.evidenceStatus = work.evidenceStatus;
+      item.evidenceStaleAt = work.evidenceStaleAt;
+      item.observedAt = work.observedAt;
       item.proposalHash = work.proposalHash;
       item.artifactIds = work.artifactIds;
+      item.inbound = work.inbound;
+      item.lifecycle = work.lifecycle;
+      item.sourceIncident = work.sourceIncident;
       item.updatedAt = work.updatedAt;
     }
   }
 
-  // issues are 1:1 with import-hold work items: drop orphans left behind by
-  // resets or resolved holds, then keep one open issue per identity.
+  // Open issues are 1:1 with import-hold work items. Resolved issues and their
+  // immutable resolution receipts remain in the encrypted ledger.
   // A rawIdentity equal to the reason word is a pre-fix artifact with no
   // recoverable address — it told the PM nothing, so it does not survive.
   next.importIssues = next.importIssues.filter(
-    (issue) => importIds.has(issue.id) && issue.rawIdentity !== issue.kind && issue.rawIdentity !== "ambiguous-match",
+    (issue) =>
+      (issue.status !== "open" || importIds.has(issue.id) || projectedIssueIds.has(issue.id)) &&
+      issue.rawIdentity !== issue.kind &&
+      issue.rawIdentity !== "ambiguous-match",
   );
   {
     const seenIdentities = new Set<string>();
@@ -269,25 +304,36 @@ export function syncWorkingV2IntoV3(v3: DeskFileV3, v2: DeskFileV2, now: number)
       .sort((a, b) => a.createdAt - b.createdAt)
       .filter((issue) => {
         const key = issue.rawIdentity.trim().toLowerCase();
-        if (!key || seenIdentities.has(key)) return false;
-        seenIdentities.add(key);
+        const dedupeKey = `${issue.status}:${issue.sourceId}:${issue.identityKind ?? "address"}:${key}`;
+        if (!key || seenIdentities.has(dedupeKey)) return false;
+        seenIdentities.add(dedupeKey);
         return true;
       });
   }
 
   for (const escalation of v2.escalations) {
-    if (next.cases.some((item) => item.id === escalation.id)) continue;
-    next.cases.push({
-      id: escalation.id,
-      kind: "licensee-required",
-      state: "held",
-      propertyId: escalation.propertyId,
-      tenancyId: tenancyIdFromProperty(escalation.propertyId),
-      holdReason: escalation.reason,
-      periodDueAt: escalation.periodDueAt,
-      createdAt: escalation.createdAt,
-      updatedAt: escalation.createdAt,
-    });
+    const existing = next.cases.find((item) => item.id === escalation.id);
+    if (existing) {
+      existing.kind = "licensee-required";
+      existing.state = "held";
+      existing.propertyId = escalation.propertyId;
+      existing.tenancyId = tenancyIdFromProperty(escalation.propertyId);
+      existing.holdReason = escalation.detail;
+      existing.periodDueAt = escalation.periodDueAt;
+      existing.updatedAt = Math.max(existing.updatedAt, escalation.createdAt);
+    } else {
+      next.cases.push({
+        id: escalation.id,
+        kind: "licensee-required",
+        state: "held",
+        propertyId: escalation.propertyId,
+        tenancyId: tenancyIdFromProperty(escalation.propertyId),
+        holdReason: escalation.detail,
+        periodDueAt: escalation.periodDueAt,
+        createdAt: escalation.createdAt,
+        updatedAt: escalation.createdAt,
+      });
+    }
   }
 
   for (const draft of v2.drafts) {

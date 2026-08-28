@@ -23,6 +23,7 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const WITH_BOX = flag("--with-box");
 const KEEP_BOTS = flag("--keep-bots");
 const BOX_TOKEN = process.env.OMB_E2E_BOX_TOKEN ?? "";
+let sessionToken = "";
 
 const tag = Date.now().toString(36).slice(-6);
 const marker = (s) => `omb-e2e-${s}-${tag}`;
@@ -34,9 +35,21 @@ const fail = (msg) => {
 };
 
 async function api(path, init) {
+  if (!sessionToken) {
+    const boot = await fetch(`${BASE}/api/session`);
+    const body = await boot.json().catch(() => ({}));
+    if (!boot.ok || typeof body.token !== "string" || !body.token) {
+      throw new Error(`GET /api/session → ${boot.status}: ${body.error ?? "session refused"}`);
+    }
+    sessionToken = body.token;
+  }
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "content-type": "application/json" },
     ...init,
+    headers: {
+      "content-type": "application/json",
+      "x-realbud-session": sessionToken,
+      ...init?.headers,
+    },
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(`${init?.method ?? "GET"} ${path} → ${res.status}: ${body.error ?? "?"}`);
@@ -118,7 +131,10 @@ async function main() {
 
   // ── SSE hello ──
   const ctrl = new AbortController();
-  const sse = await fetch(`${BASE}/api/events`, { signal: ctrl.signal });
+  const sse = await fetch(`${BASE}/api/events`, {
+    headers: { "x-realbud-session": sessionToken },
+    signal: ctrl.signal,
+  });
   const reader = sse.body.getReader();
   const hello = await Promise.race([
     reader.read().then(({ value }) => new TextDecoder().decode(value)),

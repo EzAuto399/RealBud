@@ -34,11 +34,13 @@ describe("Store", () => {
     // Remove only what the Store owns, so a leftover file from a previous
     // test can never leak into this one.
     mkdirSync(DATA_DIR, { recursive: true });
-    for (const name of ["bots.json", "groups.json", "events", "native"]) {
+    for (const name of ["events", "native"]) {
       rmSync(join(DATA_DIR, name), { recursive: true, force: true });
     }
     for (const name of readdirSync(DATA_DIR)) {
-      if (name.startsWith("messages-")) rmSync(join(DATA_DIR, name), { force: true });
+      if (name.startsWith("messages-") || name.startsWith("bots.json") || name.startsWith("groups.json")) {
+        rmSync(join(DATA_DIR, name), { force: true });
+      }
     }
   });
 
@@ -252,13 +254,43 @@ describe("Store", () => {
     expect(reloaded.activePath(bot.threadId).map((m) => m.id)).toEqual(["m1", "m2"]);
   });
 
-  it("tolerates a corrupt bots.json by starting empty", () => {
+  it("holds a corrupt bots.json without overwriting it as a fresh setup", () => {
     const store = new Store(selection);
     store.createBot();
     writeFileSync(join(DATA_DIR, "bots.json"), "{not json");
 
     const reloaded = new Store(selection);
     expect(reloaded.bots).toEqual([]);
+    expect(reloaded.recoveryStatus()).toMatchObject({ active: true });
+    reloaded.seedIfEmpty();
+    expect(reloaded.bots).toEqual([]);
+    expect(readFileSync(join(DATA_DIR, "bots.json"), "utf8")).toBe("{not json");
+  });
+
+  it("restores the last verified bot roster generation", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const previousName = bot.name;
+    store.patchBot(bot.id, { name: "New name" });
+    writeFileSync(join(DATA_DIR, "bots.json"), "{not json");
+
+    const reloaded = new Store(selection);
+    expect(reloaded.bot(bot.id)?.name).toBe(previousName);
+    expect(reloaded.recoveryStatus().issues).toContainEqual(expect.objectContaining({ action: "restored-previous" }));
+  });
+
+  it("holds an unrecoverable conversation read-only instead of replacing it", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const file = join(DATA_DIR, `messages-${bot.threadId}.json`);
+    rmSync(`${file}.previous`, { force: true });
+    writeFileSync(file, "truncated");
+
+    const reloaded = new Store(selection);
+    expect(reloaded.messagesFor(bot.threadId)[0]?.text).toMatch(/held for recovery/i);
+    expect(reloaded.recoveryStatus()).toMatchObject({ active: true });
+    expect(() => reloaded.appendMessage(bot.threadId, { role: "user", kind: "text", text: "do not overwrite" })).toThrow(/needs recovery/i);
+    expect(readFileSync(file, "utf8")).toBe("truncated");
   });
 
   it("busy is wiped even when bots.json says otherwise", () => {

@@ -13,9 +13,9 @@ export function ModelPicker({ className }: { bot: Bot; className?: string }) {
     <div className={cn("flex items-center gap-2", className)}>
       <span
         className="rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[13px] text-ink"
-        title="Models attach with hermes -p property model"
+        title="Change the attached model in You → Worker"
       >
-        Hermes
+        Worker
       </span>
       {needsSetup && hermes ? <EngineSetup instance={hermes} /> : null}
     </div>

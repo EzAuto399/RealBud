@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 // Coverage is opt-in (pnpm test:coverage) and measured over server/ only.
@@ -5,6 +6,12 @@ import { defineConfig } from "vitest/config";
 // behaviorally by the spawned-server e2e tests (index/branching/comms) but
 // cannot be measured in-process, so they are excluded from the thresholds.
 export default defineConfig({
+  resolve: {
+    alias: {
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
+      "@shared": fileURLToPath(new URL("./shared", import.meta.url)),
+    },
+  },
   test: {
     coverage: {
       provider: "v8",

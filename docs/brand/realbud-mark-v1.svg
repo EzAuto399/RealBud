@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">RealBud</title>
+  <desc id="desc">A friendly property agent formed from one forward-moving roof and cursor silhouette.</desc>
+
+  <defs>
+    <linearGradient id="bud-green" x1="18%" y1="16%" x2="82%" y2="88%">
+      <stop offset="0" stop-color="#34745B" />
+      <stop offset="1" stop-color="#1F5543" />
+    </linearGradient>
+    <linearGradient id="roof-fold" x1="22%" y1="8%" x2="78%" y2="92%">
+      <stop offset="0" stop-color="#A8C7B2" />
+      <stop offset="1" stop-color="#6A9A7D" />
+    </linearGradient>
+  </defs>
+
+  <!-- One silhouette combines a forward-moving software cursor with a roof
+       and doorway. The doorway is knocked out so the mark remains readable
+       on any background. -->
+  <path
+    fill="url(#bud-green)"
+    fill-rule="evenodd"
+    d="
+      M 693 122
+      C 735 89 774 113 766 164
+      L 724 421
+      C 718 455 727 479 752 504
+      L 878 629
+      C 910 661 901 700 862 718
+      L 772 758
+      L 752 878
+      C 747 909 724 928 692 928
+      L 638 928
+      L 638 846
+      C 638 775 582 718 512 718
+      C 442 718 386 775 386 846
+      L 386 928
+      L 302 928
+      C 267 928 243 902 247 868
+      L 263 739
+      L 176 700
+      C 124 676 112 615 152 570
+      L 693 122
+      Z
+
+      M 448 928
+      L 448 846
+      C 448 810 477 781 512 781
+      C 547 781 576 810 576 846
+      L 576 928
+      Z
+    "
+  />
+
+  <!-- A small folded plane keeps the agent/cursor ancestry without copying
+       the existing GrokBot mark. -->
+  <path
+    d="M 704 151 C 728 132 744 141 739 170 L 702 395 C 696 428 700 455 714 478 C 671 430 650 374 661 311 C 673 245 687 185 704 151 Z"
+    fill="url(#roof-fold)"
+    opacity="0.9"
+  />
+
+  <g fill="#10191A">
+    <rect x="407" y="511" width="46" height="112" rx="23" transform="rotate(-7 430 567)" />
+    <rect x="584" y="506" width="46" height="112" rx="23" transform="rotate(5 607 562)" />
+  </g>
+
+  <path
+    d="M 427 652 C 477 711 552 715 607 653"
+    fill="none"
+    stroke="#10191A"
+    stroke-width="34"
+    stroke-linecap="round"
+  />
+</svg>

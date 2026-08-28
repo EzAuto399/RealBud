@@ -42,25 +42,28 @@ extraResources:
     to: server
   - from: dist-server/shared
     to: shared
+  # The compiled server resolves the code-owned safety pack from
+  # Resources/pack/property. Keep this outside ASAR on every platform so a
+  # first-run Bud setup can install and verify it without touching Hermes.
+  - from: pack/property
+    to: pack/property
 
 mac:
   target:
-    - target: dmg
-      arch: arm64
-    - target: zip
-      arch: arm64
+    - dmg
+    - zip
   icon: build/icon.icns
   category: public.app-category.productivity
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
-  entitlementsInherit: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
   # the dictation helper is a signed background app — Windows and Linux never see it
   extraResources:
     - from: electron/resources/RealBud Speech.app
       to: RealBud Speech.app
     # CUA must live outside ASAR. prepare-cua stages the signed executable and
-    # a self-contained JS/native SDK bundle selected for macOS arm64.
+    # a self-contained JS/native SDK bundle selected for the build host arch.
     - from: dist-native/cua-driver
       to: cua-driver
     - from: dist-native/cua-sdk
@@ -68,10 +71,11 @@ mac:
   extendInfo:
     NSMicrophoneUsageDescription: RealBud uses the microphone for voice dictation into the composer.
     NSSpeechRecognitionUsageDescription: RealBud transcribes your voice on-device to type messages for you.
-    NSAccessibilityUsageDescription: RealBud uses Accessibility when you let a bot control this Mac.
-    NSScreenCaptureUsageDescription: RealBud uses Screen Recording so bots can see this Mac before acting.
-  # Notarization runs manually after the build (notarytool + staple),
-  # mirroring the BlueyLite ship_release.sh flow.
+    NSAccessibilityUsageDescription: RealBud uses Accessibility only for visible, approved browser work.
+    NSScreenCaptureUsageDescription: RealBud reads the approved browser window so Bud can prepare a bounded handoff.
+  # Training/QA packages are intentionally not distributable. The gated
+  # package:mac:release command overrides this to true only after the named
+  # pilot, clean-checkout, Developer ID and Apple credential preflight.
   notarize: false
 
 dmg:
@@ -85,15 +89,11 @@ win:
     - target: zip
       arch: x64
   icon: build/icon.ico
-  # No signing config yet (would go under win.signtoolOptions or
-  # win.azureSignOptions — eb 26 nests it, there is no top-level
-  # win.certificateFile). The installer is unsigned, so SmartScreen shows
-  # "unknown publisher" on first run (README says so). verifyUpdateCodeSignature
-  # defaults true, but electron-updater skips the check when app-update.yml
-  # carries no publisherName — so auto-update still works today. Do NOT set
-  # publisherName without actually signing, or every update is rejected as
-  # untrusted; and once signed, keep the cert subject stable (or list both old
-  # and new in publisherName) or you strand already-installed users.
+  # The ordinary package:win command is an unsigned QA artifact. The gated
+  # package:win:release command requires WIN_CSC_LINK and lets
+  # electron-builder sign every executable and derive publisherName from the
+  # certificate. Preserve that subject (or explicitly list old + new during
+  # rotation) so updater signature verification does not strand installs.
 
 nsis:
   oneClick: true

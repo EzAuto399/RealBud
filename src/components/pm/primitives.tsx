@@ -5,6 +5,22 @@ import { cn } from "@/lib/cn";
 export type SurfaceState = "loading" | "empty" | "partial" | "success" | "failure" | "stale" | "recovery";
 export type StatusTone = "agency" | "hold" | "danger" | "portal" | "muted";
 
+const SOURCE_STATE_LABELS: Record<SurfaceState, string> = {
+  loading: "Checking",
+  empty: "No evidence yet",
+  partial: "Needs matching",
+  success: "Current",
+  failure: "Unavailable",
+  stale: "Out of date",
+  recovery: "Recovery",
+};
+
+const EVIDENCE_STATE_LABELS: Record<SurfaceState, string> = {
+  ...SOURCE_STATE_LABELS,
+  empty: "No case selected",
+  partial: "Needs attention",
+};
+
 export function SplitView({
   nav,
   queue,
@@ -39,7 +55,7 @@ export function SplitView({
   );
 }
 
-export function StatusLabel({ tone, children }: { tone: StatusTone; children: ReactNode }) {
+export function StatusLabel({ tone, children, className }: { tone: StatusTone; children: ReactNode; className?: string }) {
   const cls =
     tone === "agency"
       ? "border-agency/25 bg-agency/10 text-agency"
@@ -51,7 +67,7 @@ export function StatusLabel({ tone, children }: { tone: StatusTone; children: Re
             ? "border-portal/25 bg-portal/10 text-portal"
             : "border-line bg-sheet text-ink-muted";
   return (
-    <span className={cn("inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px]", cls)}>
+    <span className={cn("inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px]", cls, className)}>
       {children}
     </span>
   );
@@ -69,13 +85,23 @@ export function SourceStamp({
   state?: SurfaceState;
 }) {
   const tone: StatusTone =
-    state === "failure" || state === "recovery" ? "danger" : state === "stale" || state === "partial" ? "hold" : "muted";
+    state === "failure" || state === "recovery" ? "danger" : state === "stale" || state === "partial" ? "hold" : state === "success" ? "agency" : "muted";
+  const stateLabel = SOURCE_STATE_LABELS[state];
   return (
-    <div className="flex flex-wrap items-center gap-2 text-[12px] text-ink-muted">
-      <StatusLabel tone={tone}>{state === "success" ? "Observed" : state}</StatusLabel>
-      <span>{label}</span>
-      {authority ? <span>{authority}</span> : null}
-      {observedAt != null ? <span className="tabular-nums">{new Date(observedAt).toLocaleString()}</span> : null}
+    <div className="rounded-lg border border-line bg-sheet px-3 py-3 text-[12px]">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <span className="text-[13px] font-medium text-ink">{label}</span>
+        <StatusLabel tone={tone}>{stateLabel}</StatusLabel>
+      </div>
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-ink-muted">
+        {authority ? <span>{authority}</span> : null}
+        {observedAt != null ? (
+          <>
+            {authority ? <span aria-hidden="true">·</span> : null}
+            <span className="tabular-nums">Observed {new Date(observedAt).toLocaleString("en-AU")}</span>
+          </>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -93,12 +119,14 @@ export function CaseQueueRow({
   meta,
   action,
   selected,
+  shareAddress,
   onSelect,
 }: {
   title: string;
   meta: string;
   action: string;
   selected?: boolean;
+  shareAddress?: boolean;
   onSelect?: () => void;
 }) {
   return (
@@ -109,22 +137,27 @@ export function CaseQueueRow({
       aria-selected={selected ? true : false}
       aria-current={selected ? "true" : undefined}
       className={cn(
-        "flex w-full flex-col items-start gap-1 border-b border-line px-3 py-3 text-left",
-        selected ? "bg-selected" : "bg-transparent hover:bg-raised/60",
+        "group flex w-full flex-col items-start gap-1.5 border-b border-l-2 border-b-line px-3.5 py-3.5 text-left transition-colors",
+        selected ? "border-l-agency bg-selected/80" : "border-l-transparent bg-transparent hover:bg-raised/60",
       )}
     >
-      <span className="text-[14px] font-medium text-ink">{title}</span>
-      <span className="text-[12px] text-ink-muted">{meta}</span>
-      <span className="text-[12px] text-agency">{action}</span>
+      <span className={cn("text-[14px] font-semibold leading-snug text-ink", shareAddress && "desk-shared-address inline-block")}>{title}</span>
+      <span className="line-clamp-2 text-[12px] leading-relaxed text-ink-muted">{meta}</span>
+      <span className="inline-flex items-center gap-1 text-[12px] font-medium text-agency">
+        {action}
+        <span aria-hidden="true" className="transition-transform group-hover:translate-x-0.5">
+          →
+        </span>
+      </span>
     </button>
   );
 }
 
-export function CaseHeader({ title, status, children }: { title: string; status?: ReactNode; children?: ReactNode }) {
+export function CaseHeader({ title, status, shareAddress, children }: { title: string; status?: ReactNode; shareAddress?: boolean; children?: ReactNode }) {
   return (
     <header className="border-b border-line px-5 py-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <h2 className="pm-case-title text-ink">{title}</h2>
+        <h2 className={cn("pm-case-title text-ink", shareAddress && "desk-shared-address")}>{title}</h2>
         {status}
       </div>
       {children ? <div className="mt-2 text-[14px] text-ink-muted">{children}</div> : null}
@@ -161,7 +194,9 @@ export function EvidenceRail({ title = "Evidence", children, state }: { title?: 
     <aside className="flex h-full min-h-0 flex-col">
       <div className="border-b border-line px-4 py-3">
         <h3 className="text-[15px] font-semibold text-ink">{title}</h3>
-        {state && state !== "success" ? <div className="mt-1 text-[12px] text-ink-muted">{state}</div> : null}
+        {state && state !== "success" ? (
+          <div className="mt-1 text-[12px] text-ink-muted">{EVIDENCE_STATE_LABELS[state]}</div>
+        ) : null}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 text-[14px] text-ink">{children}</div>
     </aside>
@@ -174,35 +209,43 @@ export function DecisionBar({
   onDeny,
   onCopy,
   busy,
+  note = "Allow applies to this exact version once. A future exact match may be quicker to review, but it still needs Allow. Nothing is sent.",
 }: {
   onAllow?: () => void;
   onEdit?: () => void;
   onDeny?: () => void;
   onCopy?: () => void;
   busy?: boolean;
+  note?: ReactNode;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-3">
-      {onAllow ? (
-        <button type="button" disabled={busy} onClick={onAllow} className="pm-decision rounded bg-agency px-4 text-[14px] font-medium text-white hover:bg-agency-hover disabled:opacity-40">
-          Allow wording
-        </button>
-      ) : null}
-      {onEdit ? (
-        <button type="button" disabled={busy} onClick={onEdit} className="pm-control rounded border border-line bg-sheet px-3 text-[14px] text-ink hover:bg-raised disabled:opacity-40">
-          Edit
-        </button>
-      ) : null}
-      {onDeny ? (
-        <button type="button" disabled={busy} onClick={onDeny} className="pm-control rounded border border-line bg-sheet px-3 text-[14px] text-ink hover:bg-raised disabled:opacity-40">
-          Deny
-        </button>
-      ) : null}
-      {onCopy ? (
-        <button type="button" disabled={busy} onClick={onCopy} className="pm-control rounded border border-line bg-sheet px-3 text-[14px] text-ink hover:bg-raised disabled:opacity-40">
-          Copy
-        </button>
-      ) : null}
+    <div
+      className="flex flex-wrap items-center justify-between gap-3 border-t border-line bg-sheet px-4 py-3"
+      aria-label="Decision actions"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        {onAllow ? (
+          <button type="button" disabled={busy} onClick={onAllow} className="pm-decision rounded bg-agency px-4 text-[14px] font-medium text-white hover:bg-agency-hover disabled:opacity-40">
+            Allow wording once
+          </button>
+        ) : null}
+        {onEdit ? (
+          <button type="button" disabled={busy} onClick={onEdit} className="pm-control rounded border border-line bg-sheet px-3 text-[14px] text-ink hover:bg-raised disabled:opacity-40">
+            Edit
+          </button>
+        ) : null}
+        {onDeny ? (
+          <button type="button" disabled={busy} onClick={onDeny} className="pm-control rounded border border-line bg-sheet px-3 text-[14px] text-ink hover:bg-raised disabled:opacity-40">
+            Deny
+          </button>
+        ) : null}
+        {onCopy ? (
+          <button type="button" disabled={busy} onClick={onCopy} className="pm-control rounded border border-line bg-sheet px-3 text-[14px] text-ink hover:bg-raised disabled:opacity-40">
+            Copy
+          </button>
+        ) : null}
+      </div>
+      {note ? <p className="max-w-[27rem] text-[11.5px] leading-relaxed text-ink-muted">{note}</p> : null}
     </div>
   );
 }

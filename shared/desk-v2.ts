@@ -13,6 +13,7 @@ import type {
   SourceIdentity,
   WorkItem,
 } from "./contracts.ts";
+import type { ImportIssue } from "./desk-v3.ts";
 
 export interface DeskFileV2 {
   version: 2;
@@ -34,4 +35,7 @@ export interface DeskFileV2 {
   portalBindings: PropertyPortalBinding[];
   recipes: PortalRecipe[];
   capabilities: PortalCapability[];
+  /** V3-only lifecycle projected into the compatibility reducer so import
+   * identity decisions survive ordinary V2-shaped commands. */
+  importIssues: ImportIssue[];
 }

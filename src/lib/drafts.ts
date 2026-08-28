@@ -7,9 +7,15 @@ import { isAttachment, type Attachment } from "./composer-attachments.js";
 
 const KEY = "omb-drafts";
 const ATTACHMENTS_KEY = "omb-draft-attachments";
+const OUTBOX_KEY = "realbud-composer-outbox-v1";
 
 type Values = Record<string, unknown>;
 type Store = Pick<Storage, "getItem" | "setItem"> | undefined;
+
+export interface ComposerOutboxEntry {
+  requestId: string;
+  payloadDigest: string;
+}
 
 // Storage is best-effort: a full quota, a locked-down origin, or a garbled
 // value must never cost a keystroke — every failure reads as "no drafts".
@@ -54,6 +60,34 @@ export function setDraftAttachments(store: Store, id: string, attachments: Attac
   } catch {
     /* quota / private mode — attachments remain in component state */
   }
+}
+
+export function getComposerOutbox(store: Store, id: string): ComposerOutboxEntry | null {
+  const value = read(store, OUTBOX_KEY)[id];
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const entry = value as Record<string, unknown>;
+  if (
+    typeof entry.requestId !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/.test(entry.requestId) ||
+    typeof entry.payloadDigest !== "string" ||
+    !/^[a-f0-9]{64}$/.test(entry.payloadDigest)
+  ) return null;
+  return { requestId: entry.requestId, payloadDigest: entry.payloadDigest };
+}
+
+export function setComposerOutbox(store: Store, id: string, entry: ComposerOutboxEntry | null): void {
+  const outbox = read(store, OUTBOX_KEY);
+  if (entry) outbox[id] = entry;
+  else delete outbox[id];
+  try {
+    store?.setItem(OUTBOX_KEY, JSON.stringify(outbox));
+  } catch {
+    /* The visible draft still remains; a retry may need a fresh request id. */
+  }
+}
+
+export function composerOutboxStore(): Store {
+  return getStore();
 }
 
 // Reaching for localStorage is itself a failure point: on an origin with

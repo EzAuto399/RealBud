@@ -132,7 +132,12 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       });
 
       // turn 1 settles on the original branch
-      expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "original question" })).status).toBe(202);
+      const started = await api("POST", `/api/bots/${created.id}/messages`, { text: "original question" });
+      expect(started.status).toBe(202);
+      expect(started.body.bot).toMatchObject({ id: created.id, busy: true });
+      expect(started.body.bot.messages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: "user", kind: "text", text: "original question" }),
+      ]));
       await waitFor(async () => {
         const b = await getBot(created.id);
         return !b.busy && b.messages.some((m: Msg) => m.role === "bot" && m.kind === "text" && m.text?.includes("fake acp"));

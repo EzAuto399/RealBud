@@ -235,6 +235,21 @@ describe("evidence projector", () => {
     });
     expect(projectMoneyPosition(conflicted.evidence, tenancyId, migratedAt + 1)?.status).toBe("conflicted");
 
+    const newer = ingestEvidence(conflicted, {
+      ...base,
+      id: "ev-pms-3",
+      authority: "pms",
+      sourceRecordKey: "pms:3",
+      observedAt: migratedAt + 10,
+      ingestedAt: migratedAt + 10,
+      staleAt: migratedAt + 60_010,
+      payload: { daysSinceDue: 5, rentLanded: false, levyPaid: false },
+    });
+    expect(projectMoneyPosition(newer.evidence, tenancyId, migratedAt + 11)).toMatchObject({
+      evidenceId: "ev-pms-3",
+      status: "current",
+    });
+
     const reversed = ingestEvidence(v3, {
       ...base,
       id: "ev-rev",

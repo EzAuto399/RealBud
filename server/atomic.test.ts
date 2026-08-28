@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { writeFileAtomic, writeFileFsynced } from "./atomic.ts";
+import { AtomicWriteError, writeFileAtomic, writeFileFsynced } from "./atomic.ts";
 
 describe("writeFileAtomic", () => {
   let dir: string;
@@ -52,7 +52,13 @@ describe("writeFileAtomic", () => {
   it("cleans up the temporary file when replacement fails", () => {
     const p = join(dir, "target");
     mkdirSync(p);
-    expect(() => writeFileAtomic(p, "cannot replace a directory")).toThrow();
+    try {
+      writeFileAtomic(p, "cannot replace a directory");
+      throw new Error("expected replacement to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AtomicWriteError);
+      expect((error as AtomicWriteError).disposition).toBe("not-landed");
+    }
     expect(readdirSync(dir)).toEqual(["target"]);
   });
 });

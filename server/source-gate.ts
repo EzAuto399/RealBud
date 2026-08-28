@@ -5,7 +5,7 @@ export const CSV_FRESH_MS = 12 * 60 * 60_000;
 export const PORTAL_FRESH_MS = 30 * 60_000;
 
 export function isFresh(observedAt: number, staleAfterMs: number, now: number): boolean {
-  return now - observedAt <= staleAfterMs;
+  return Number.isFinite(observedAt) && observedAt <= now && now - observedAt <= staleAfterMs;
 }
 
 export function sourceReady(input: {
@@ -19,6 +19,7 @@ export function sourceReady(input: {
     return { ok: false, reason: "source identity is missing" };
   }
   if (input.observedAt == null) return { ok: false, reason: "no observation yet" };
+  if (input.observedAt > input.now) return { ok: false, reason: "source timestamp is in the future" };
   if (!isFresh(input.observedAt, input.staleAfterMs, input.now)) {
     return { ok: false, reason: "source is stale" };
   }

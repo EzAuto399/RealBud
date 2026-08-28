@@ -13,8 +13,16 @@ export const HERMES_PIN = {
 export function hermesInstallCommand(platform: NodeJS.Platform): string | null {
   if (platform === "win32") return null;
   return (
-    `curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- ` +
-    `--commit ${HERMES_PIN.commit} --force-commit`
+    // Fetch the installer from the same immutable checkout as the engine.
+    // A floating bootstrap script could otherwise change host behaviour even
+    // though the repository is checked out at our commit afterwards.
+    `curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/${HERMES_PIN.commit}/scripts/install.sh | bash -s -- ` +
+    `--commit ${HERMES_PIN.commit} --force-commit ` +
+    // RealBud owns onboarding, the bounded Cua/browser authority and the
+    // property skill pack. Upstream's browser bootstrap can hang on a large
+    // Chromium extraction, and its Cua bootstrap writes to /Applications;
+    // neither may decide host state behind RealBud's UI.
+    `--skip-setup --skip-browser --skip-computer-use --no-skills`
   );
 }
 

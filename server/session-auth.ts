@@ -19,14 +19,24 @@ export function hostAllowed(hostHeader: string | undefined, listenPort: number):
   return Number(port) === listenPort;
 }
 
-export function originAllowed(origin: string | undefined, listenPort: number): boolean {
+function validConfiguredPort(value: string | number | null | undefined): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const port = Number(value);
+  return Number.isInteger(port) && port > 0 && port <= 65_535 ? port : null;
+}
+
+export function originAllowed(
+  origin: string | undefined,
+  listenPort: number,
+  configuredUiPort: number | null = validConfiguredPort(process.env.OMB_UI_PORT),
+): boolean {
   if (!origin || origin === "null") return true;
   try {
     const url = new URL(origin);
     if (!LOOPBACK_HOSTS.has(url.hostname.toLowerCase())) return false;
     if (!url.port) return url.protocol === "http:" || url.protocol === "https:";
     const port = Number(url.port);
-    return port === listenPort || port === 5199 || port === 5173;
+    return port === listenPort || port === 5199 || port === 5173 || port === configuredUiPort;
   } catch {
     return false;
   }
@@ -76,6 +86,12 @@ export function needsSession(path: string): boolean {
     path.startsWith("/api/desk") ||
     path.startsWith("/api/loops") ||
     path.startsWith("/api/loop-runs") ||
+    path.startsWith("/api/source-connections") ||
+    path.startsWith("/api/pilot-discovery") ||
+    path.startsWith("/api/execution-adapters") ||
+    path.startsWith("/api/work-routing") ||
+    path.startsWith("/api/config") ||
+    path.startsWith("/api/profile") ||
     path.startsWith("/api/artifacts") ||
     path.startsWith("/api/portal") ||
     path.startsWith("/api/imports") ||

@@ -4,22 +4,43 @@ import { computerLease } from "./computer-lease.ts";
 export const CUA_PIN = "0.19.3";
 
 export const FORBIDDEN_TOOLS = [
-  "screenshot_desktop",
-  "click_xy",
+  "list_windows",
+  "get_desktop_state",
+  "get_accessibility_tree",
+  "get_window_state",
+  "verify_state",
+  "click",
+  "double_click",
+  "right_click",
+  "drag",
+  "scroll",
+  "type_text",
   "press_key",
-  "type_enter",
-  "javascript",
-  "shell",
-  "computer_exec",
-  "computer_batch",
+  "hotkey",
+  "set_value",
+  "page",
+  "clipboard_read",
+  "clipboard_write",
+  "browser_download",
+  "browser_set_input_files",
+  "launch_app",
+  "kill_app",
 ] as const;
 
-export const ALLOWED_TOOLS = ["navigate", "read", "fill", "click_semantic"] as const;
+export const ALLOWED_TOOLS = [
+  "start_session",
+  "end_session",
+  "browser_prepare",
+  "get_browser_state",
+  "browser_navigate",
+  "browser_click",
+  "browser_type",
+] as const;
 
 export interface BoundedManifest {
   version: typeof CUA_PIN;
   mode: "bounded";
-  profile: string;
+  profileKind: "isolated";
   origins: string[];
   tools: readonly string[];
   forbidden: readonly string[];
@@ -30,8 +51,26 @@ export interface BoundedManifest {
   recipeVersion: number;
 }
 
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/;
+
+function normalizeOrigin(value: string): string {
+  const parsed = new URL(value);
+  const loopback = parsed.hostname === "127.0.0.1" || parsed.hostname === "[::1]";
+  if (
+    parsed.origin !== value ||
+    parsed.username ||
+    parsed.password ||
+    parsed.pathname !== "/" ||
+    parsed.search ||
+    parsed.hash ||
+    (parsed.protocol !== "https:" && !(loopback && parsed.protocol === "http:"))
+  ) {
+    throw new Error("Cua browser origin must be one exact HTTPS origin");
+  }
+  return parsed.origin;
+}
+
 export function buildManifest(input: {
-  profile: string;
   origins: string[];
   workItemId: string;
   recipeId: string;
@@ -39,14 +78,29 @@ export function buildManifest(input: {
   now: number;
   ttlMs?: number;
 }): BoundedManifest {
+  const origins = input.origins.map(normalizeOrigin);
+  if (!origins.length || origins.length > 8 || new Set(origins).size !== origins.length) {
+    throw new Error("Cua browser origins are invalid");
+  }
+  if (!SAFE_ID.test(input.workItemId) || !SAFE_ID.test(input.recipeId)) {
+    throw new Error("Cua work or recipe id is invalid");
+  }
+  if (!Number.isSafeInteger(input.recipeVersion) || input.recipeVersion < 1 || input.recipeVersion > 1_000_000) {
+    throw new Error("Cua recipe version is invalid");
+  }
+  if (!Number.isSafeInteger(input.now) || input.now < 0) throw new Error("Cua clock is invalid");
+  const ttlMs = input.ttlMs ?? 15 * 60_000;
+  if (!Number.isSafeInteger(ttlMs) || ttlMs < 60_000 || ttlMs > 60 * 60_000) {
+    throw new Error("Cua session lifetime is invalid");
+  }
   return {
     version: CUA_PIN,
     mode: "bounded",
-    profile: input.profile,
-    origins: input.origins,
+    profileKind: "isolated",
+    origins,
     tools: ALLOWED_TOOLS,
     forbidden: FORBIDDEN_TOOLS,
-    expiresAt: input.now + (input.ttlMs ?? 15 * 60_000),
+    expiresAt: input.now + ttlMs,
     idleTimeoutMs: 120_000,
     workItemId: input.workItemId,
     recipeId: input.recipeId,
@@ -62,7 +116,7 @@ export function toolAllowed(_manifest: BoundedManifest, tool: string): boolean {
 export function originAllowed(manifest: BoundedManifest, url: string): boolean {
   try {
     const parsed = new URL(url);
-    return manifest.origins.some((origin) => url.startsWith(origin) || parsed.origin === origin);
+    return manifest.origins.includes(parsed.origin);
   } catch {
     return false;
   }
@@ -77,5 +131,5 @@ export function revokePortalLease(): void {
 }
 
 export function pinSupported(version: string): boolean {
-  return version === CUA_PIN || version.startsWith(`${CUA_PIN}`);
+  return version === CUA_PIN;
 }

@@ -69,6 +69,34 @@ try {
   // ── 1. demo desk ──
   let snap = (await api("GET", "/api/desk")).body;
   check("demo book on first paint", snap?.mode === "demo" && snap.properties.length >= 6, `${snap?.properties?.length} properties`);
+  check("default queue excludes portfolio Notes and contact history", snap.properties.every((property) => property.notes === undefined) && snap.book?.contacts.length === 0 && snap.book?.tenancies.length === 0);
+
+  const support = (await api("GET", "/api/support-report")).body;
+  const supportJson = JSON.stringify(support);
+  check("support report separates runtime and proof", support?.kind === "realbud.support-report.v1" && support.evidence?.installed === "requires-installed-proof" && support.evidence?.namedOffice === "pilot-gated");
+  check("support report contains no portfolio or credential material", !/tenant|phone|address|notes|message|prompt|cookie|credential|api.?key|token|secret|\.hermes|\/Users\//i.test(supportJson));
+
+  // ── 1.25 source-safe interrupt path: fixed sample only, no provider ──
+  snap = (await api("POST", "/api/desk/inbound/demo", { expectedRevision: snap.revision })).body;
+  const demoMaintenance = snap.workItems.find((item) => item.inbound?.category === "urgent-maintenance-review");
+  const demoBdm = snap.workItems.find((item) => item.inbound?.category === "bdm-lead");
+  check("sample inbox creates one urgent maintenance case", demoMaintenance?.kind === "maintenance-intake" && demoMaintenance?.state === "proposed");
+  check("sample inbox creates one supervised BDM reply", demoBdm?.kind === "inbound-triage" && Boolean(demoBdm?.draftId));
+  const sampleRevision = snap.revision;
+  snap = (await api("POST", "/api/desk/inbound/demo", { expectedRevision: sampleRevision })).body;
+  check("sample inbox replay is idempotent", snap.revision === sampleRevision && snap.workItems.filter((item) => item.inbound).length === 2);
+  const bdmDraft = snap.drafts.find((draft) => draft.id === demoBdm?.draftId);
+  if (!demoBdm || !bdmDraft) throw new Error("Demo BDM case did not produce its supervised draft");
+  const allowedBdm = await api("POST", `/api/desk/drafts/${bdmDraft.id}/allow`, { expectedRevision: snap.revision });
+  check("inbound reply requires exact manual Allow", allowedBdm.status === 200 && allowedBdm.body?.draft?.status === "allowed");
+  snap = (await api("GET", "/api/desk")).body;
+  const waitingBdm = await api("POST", `/api/desk/cases/${demoBdm.id}/waiting`, { expectedRevision: snap.revision });
+  const waitingWork = waitingBdm.body?.workItems?.find((item) => item.id === demoBdm.id);
+  check("allowed reply can wait with a next-check receipt", waitingBdm.status === 200 && waitingWork?.state === "waiting" && Number.isFinite(waitingWork.lifecycle?.nextCheckAt));
+  const closedBdm = await api("POST", `/api/desk/cases/${demoBdm.id}/close`, { expectedRevision: waitingBdm.body.revision, closureKind: "resolved-externally" });
+  const closedWork = closedBdm.body?.workItems?.find((item) => item.id === demoBdm.id);
+  check("waiting work closes with a durable external-resolution receipt", closedBdm.status === 200 && closedWork?.lifecycle?.closureKind === "resolved-externally" && Number.isFinite(closedWork.lifecycle?.closedAt));
+  snap = closedBdm.body;
 
   // ── 1.5 route Oak through the portal before any draft exists ──
   // (the seeded fake-portal binding is prop-oak)
@@ -87,12 +115,18 @@ try {
     '"4/22 Harbour Rd, Kingston ACT",5,false,false',
     '"99 Ghost St, Acton ACT",3,false,false',
   ].join("\n");
-  snap = (await api("POST", "/api/desk/import", { csv })).body;
+  snap = (await api("POST", "/api/desk/import", { csv, expectedRevision: snap.revision })).body;
   check("import flips the book live", snap?.mode === "live" && snap.hands === "csv");
   const issue = snap.book?.importIssues?.find((row) => row.rawIdentity.includes("Ghost"));
   check("unmatched row keeps its address", Boolean(issue), issue?.rawIdentity);
-  snap = (await api("POST", "/api/desk/import", { csv })).body;
+  snap = (await api("POST", "/api/desk/import", { csv, expectedRevision: snap.revision })).body;
   check("re-import does not duplicate the issue", snap.book.importIssues.filter((row) => row.rawIdentity.includes("Ghost")).length === 1);
+  const rejectedIssue = await api("POST", `/api/desk/import-issues/${issue.id}/reject`, {
+    expectedRevision: snap.revision,
+    requestId: "walkthrough-reject-ghost",
+  });
+  check("PM can durably reject an unmatched import identity", rejectedIssue.status === 200 && rejectedIssue.body.book.importIssues.find((row) => row.id === issue.id)?.status === "rejected");
+  snap = rejectedIssue.body;
 
   // ── 3. allow → decision recorded, wording still copyable, send 403 ──
   const courtesy = snap.drafts.find((d) => d.kind === "courtesy-rent" && d.status === "pending" && d.channel !== "portal");
@@ -103,7 +137,9 @@ try {
   check("send is still 403", (await api("POST", `/api/desk/drafts/${courtesy.id}/send`, {})).status === 403);
 
   // ── 5. schedule: retune + run now on both built loops ──
-  const retuned = await api("PATCH", "/api/loops/morning-arrears", { time: "08:15" });
+  const loopSnapshot = (await api("GET", "/api/loops")).body;
+  const morningLoop = loopSnapshot.loops.find((loop) => loop.id === "morning-arrears");
+  const retuned = await api("PATCH", "/api/loops/morning-arrears", { time: "08:15", expectedRevision: morningLoop.revision });
   check("clock retune sticks with revision", retuned.status === 200 && retuned.body.loop.revision >= 2);
   const run = await api("POST", "/api/loops/morning-arrears/run", {});
   check("morning loop runs now", run.status === 201);
@@ -116,10 +152,13 @@ try {
     await sleep(250);
   }
   check("owner letter drafted a proposal", snap.drafts.some((d) => d.kind === "owner-letter"));
-  await api("PATCH", "/api/loops/morning-arrears", { time: "07:30" });
+  await api("PATCH", "/api/loops/morning-arrears", { time: "07:30", expectedRevision: retuned.body.loop.revision });
 
-  // ── 6. bounded portal handoff: allow → prepare → bud prefills, human submits ──
-  snap = (await api("POST", "/api/desk/check", {})).body;
+  // ── 6. bounded portal handoff: reacquire current PMS evidence, then
+  // allow → prepare → Bud prefills, human submits. The scheduled Recheck
+  // above intentionally invalidates wording when no verified source answers.
+  snap = (await api("GET", "/api/desk")).body;
+  snap = (await api("POST", "/api/desk/import", { csv, expectedRevision: snap.revision })).body;
   const portalDraft = snap.drafts.find((d) => d.kind === "courtesy-rent" && d.status === "pending" && d.channel === "portal");
   check("portal draft belongs to the bound property", portalDraft?.propertyId === oak0.id);
   check("portal-channel courtesy draft exists", Boolean(portalDraft));
@@ -166,7 +205,7 @@ try {
   session = (await api("GET", "/api/session")).body?.token ?? "";
   const recRes = await api("GET", "/api/desk");
   const recovered = recRes.body;
-  console.log(`     [debug] recovery GET ${recRes.status}:`, JSON.stringify(recovered?.recovery), "mode:", recovered?.mode);
+  console.log(`     [debug] recovery GET ${recRes.status}: active=${Boolean(recovered?.recovery?.active)} mode=${recovered?.mode ?? "unknown"}`);
   check("corrupt book enters recovery, not demo", recRes.status === 200 && recovered?.recovery?.active === true);
   check("recovery keeps the desk readable", Array.isArray(recovered.properties));
   const writeAttempt = await api("POST", "/api/desk/check", {});

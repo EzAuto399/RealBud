@@ -6,6 +6,12 @@ contextBridge.exposeInMainWorld("ogb", {
   /** Host platform ("darwin" | "win32" | "linux") — for platform-aware UI. */
   platform: process.platform,
   getCapabilities: () => ipcRenderer.invoke("desktop:capabilities"),
+  /** Explicitly enables RealBud's bundled computer-use host and returns its
+   * current sanitized capability state. macOS owns the permission prompts. */
+  enableComputerUse: () => ipcRenderer.invoke("cua:enable"),
+  /** Explicitly revoke RealBud's local computer-use host and future
+   * auto-start. This does not modify macOS permission settings. */
+  disableComputerUse: () => ipcRenderer.invoke("cua:disable"),
   /** One frame of this computer's screen as a data: URL when supported. */
   screenFrame: () => ipcRenderer.invoke("screen:frame"),
   speechStart: (options) => ipcRenderer.invoke("speech:start", options),
@@ -30,14 +36,27 @@ contextBridge.exposeInMainWorld("ogb", {
       return "";
     }
   },
+  /** Human-initiated OS file picker. Main validates the returned regular
+   * files and bounds count/size before exposing paths to the renderer. */
+  chooseFiles: () => ipcRenderer.invoke("files:choose"),
+  /** Privacy-safe routine reminder. The shell owns all visible copy; the
+   * renderer can pass only a run id and the closed failed/held reason. */
+  notifyRoutine: (input) => ipcRenderer.invoke("routine-reminder:show", input),
+  onRoutineReminderOpened: (cb) => {
+    const handler = (_event, input) => cb(input);
+    ipcRenderer.on("routine-reminder:opened", handler);
+    return () => ipcRenderer.removeListener("routine-reminder:opened", handler);
+  },
   /** {mic} TCC status strings: granted|denied|not-determined|unknown.
    * No screen field — macOS 15+ caches that status per-process, so any
    * value here would lie for the whole session after a grant. */
   permStatus: () => ipcRenderer.invoke("perm:status"),
   /** Triggers the macOS microphone prompt; resolves true when granted. */
   permRequestMic: () => ipcRenderer.invoke("perm:request-mic"),
-  /** Opens System Settings on the given privacy pane: mic|screen|speech. */
+  /** Opens System Settings on the given privacy pane. */
   permOpenSettings: (pane) => ipcRenderer.invoke("perm:open-settings", pane),
+  /** Open an https URL in the OS browser. Never navigates this window. */
+  openExternal: (url) => ipcRenderer.invoke("shell:open-https", url),
 
   /** Copies an engine install command and opens a blank terminal. Resolves
    * false if no terminal could be launched; the clipboard still has it. */

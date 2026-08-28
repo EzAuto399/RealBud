@@ -144,9 +144,23 @@ export type CommitResult =
       ok: false;
       recovery: ReturnType<typeof failClosedRecovery>;
       locks: DeskOperationalLocks;
-      fileUnchanged: true;
+      fileUnchanged: boolean;
+      /** Present when the final candidate replaced desk.json but directory
+       * durability could not be confirmed. The UI may show this exact book
+       * read-only; restart performs the reconciliation. */
+      landedV3?: DeskFileV3;
       phase?: string;
     };
+
+function readLandedV3(file: string, key: Buffer): DeskFileV3 | null {
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8"));
+    if (!isEncryptedEnvelope(parsed)) return null;
+    return decodeDeskV3(decryptJson(key, parsed));
+  } catch {
+    return null;
+  }
+}
 
 export function commitOrRecover(opts: Parameters<typeof commitV2ToV3>[0]): CommitResult {
   try {
@@ -154,12 +168,18 @@ export function commitOrRecover(opts: Parameters<typeof commitV2ToV3>[0]): Commi
     const recovery = idleRecovery();
     return { ok: true, ...result, recovery, locks: locksForRecovery(recovery) };
   } catch (error) {
-    const recovery = failClosedRecovery(error instanceof Error ? error.message : "commit failed");
+    const landedV3 = readLandedV3(opts.file, opts.key);
+    const recovery = failClosedRecovery(
+      landedV3
+        ? "The V3 book reached storage, but final directory durability could not be confirmed. RealBud is read-only until restart reconciliation."
+        : error instanceof Error ? error.message : "commit failed",
+    );
     return {
       ok: false,
       recovery,
       locks: locksForRecovery(recovery),
-      fileUnchanged: true,
+      fileUnchanged: !landedV3,
+      landedV3: landedV3 ?? undefined,
       phase: error instanceof CommitFailed ? error.phase : undefined,
     };
   }

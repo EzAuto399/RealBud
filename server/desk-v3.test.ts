@@ -4,6 +4,7 @@ import { NEVER_ACTIONS } from "../shared/contracts.ts";
 import { emptyV2 } from "./desk-store.ts";
 import { fixtureBook } from "./desk-evaluate.ts";
 import { migrateV2ToV3 } from "./desk-v3-migrate.ts";
+import { validateDeskV3 } from "./desk-v3-decode.ts";
 import {
   CASE_KINDS,
   CLOSED_HANDOFF_OPERATIONS,
@@ -44,6 +45,7 @@ describe("Desk V3 contracts", () => {
       "maintenance-intake",
       "lease-review",
       "inspection-prep",
+      "source-incident",
       "licensee-required",
     ]);
     expect(CLOSED_HANDOFF_OPERATIONS).toEqual(["prefill-courtesy"]);
@@ -116,6 +118,34 @@ describe("Desk V2 → V3 migrate (pure)", () => {
     ]);
     expect(v3.cases.find((item) => item.id === "work-unmatched-1")).toBeUndefined();
     expect(v3.properties).toHaveLength(before);
+  });
+
+  it("validates source incidents and complete lifecycle receipts at the authority boundary", () => {
+    const book = migrateV2ToV3(emptyV2(fixtureBook()), migratedAt);
+    book.cases.push({
+      id: "case-source-1",
+      kind: "source-incident",
+      state: "held",
+      sourceIds: ["src-demo"],
+      sourceIncident: {
+        sourceId: "src-demo",
+        code: "unavailable",
+        affectedPropertyCount: book.properties.length,
+        firstSeenAt: migratedAt,
+        lastSeenAt: migratedAt,
+      },
+      createdAt: migratedAt,
+      updatedAt: migratedAt,
+    });
+    validateDeskV3(book);
+
+    const missingSource = structuredClone(book);
+    missingSource.cases[0]!.sourceIncident!.sourceId = "src-missing";
+    expect(() => validateDeskV3(missingSource)).toThrow(/missing its source/i);
+
+    const partialClosure = structuredClone(book);
+    partialClosure.cases[0]!.lifecycle = { closedAt: migratedAt };
+    expect(() => validateDeskV3(partialClosure)).toThrow(/closure is missing its receipt/i);
   });
 
   it("invalidates unused capabilities and never extends expiry", () => {
