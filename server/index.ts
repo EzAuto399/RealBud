@@ -760,8 +760,9 @@ loops = new LoopManager({
         return { ok: true, detail: `Owner letters on Desk: ${after} (${after - before} new this week).` };
       }
       if (loop.id !== "morning-arrears") return { ok: false, detail: "not built yet" };
-      const before = desk.snapshot();
-      const snapshot = before.mode === "demo" ? desk.runMorningCheck() : await desk.runMorningCheckLive();
+      // Same door as Desk Recheck. Demo miss stays labelled Demo and writes
+      // the shared worker clock. The fixture path never silently skips the worker.
+      const snapshot = await desk.runMorningCheckLive();
       commitDesk(snapshot);
       if (snapshot.hands === "held") return { ok: false, detail: snapshot.handsDetail ?? "held" };
       if (snapshot.mode === "demo") return { ok: true, detail: snapshot.handsDetail ?? "Demo check completed." };
@@ -1137,11 +1138,11 @@ const server = createServer(async (req, res) => {
     let loopMatch = path.match(/^\/api\/loops\/([\w-]+)\/run$/);
     if (loopMatch && method === "POST") {
       const loop = loops!.listLoops().find((candidate) => candidate.id === loopMatch![1]);
-      if (!loop) return json(res, 404, { error: "no such loop" });
-      if (!loop.available) return json(res, 409, { error: "that loop is declared but not built yet" });
+      if (!loop) return json(res, 404, { error: "no such routine" });
+      if (!loop.available) return json(res, 409, { error: "that routine is declared but not built yet" });
       try {
         const run = loops!.runNow(loopMatch[1] as LoopId);
-        return run ? json(res, 201, { run }) : json(res, 409, { error: "enable this loop before running it" });
+        return run ? json(res, 201, { run }) : json(res, 409, { error: "turn this routine on before running it" });
       } catch (error) {
         const status = (error as { status?: number }).status ?? 500;
         return json(res, status, { error: error instanceof Error ? error.message : String(error) });

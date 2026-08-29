@@ -109,7 +109,7 @@ function LoopCard({
               <button
                 onClick={onToggle}
                 disabled={busy}
-                title={loop.enabled ? "Pause this loop" : "Resume this loop"}
+                title={loop.enabled ? "Pause this routine" : "Resume this routine"}
                 className="flex items-center gap-1.5 rounded-xl border border-hairline/50 px-3 py-1.5 text-[12.5px] text-ink hover:bg-raised disabled:opacity-40"
               >
                 {loop.enabled ? <Pause size={13} /> : <Play size={13} />}
@@ -194,7 +194,7 @@ function LoopCard({
 }
 
 export function RoutinesPage() {
-  const { state, dispatch } = useStore();
+  const { state, dispatch, refreshHermes } = useStore();
   const [busy, setBusy] = useState<LoopId | null>(null);
   const [error, setError] = useState("");
 
@@ -202,9 +202,17 @@ export function RoutinesPage() {
     setBusy(loopId);
     setError("");
     try {
-      await api(`/api/loops/${loopId}/run`, { method: "POST" });
+      const started = await api(`/api/loops/${loopId}/run`, { method: "POST" });
+      const runId = started?.run?.id as string | undefined;
+      for (let i = 0; i < 40 && runId; i++) {
+        const state = await api("/api/loops");
+        const settled = (state.runs ?? []).find((run: { id: string; status: string }) => run.id === runId);
+        if (settled && !["queued", "running"].includes(settled.status)) break;
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
       const desk = await api("/api/desk");
       dispatch({ type: "deskSnapshot", snapshot: desk });
+      await refreshHermes();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -264,7 +272,7 @@ export function RoutinesPage() {
               <h1 className="pm-screen-title text-ink">Schedule</h1>
             </div>
             <p className="mt-1 max-w-[52rem] text-[12.5px] text-ink-secondary">
-              Named loops on RealBud's clock. Facts are fetched headless; the cards land on Desk for you to allow or deny. Nothing sends while nobody is looking.
+              Named routines on RealBud's clock. The worker fetches facts headless. Cards land on Desk for you to allow or deny. Nothing sends while nobody is looking.
             </p>
           </div>
           {unseenFailures.length > 0 && (
@@ -276,7 +284,7 @@ export function RoutinesPage() {
         </div>
         {state.desk?.recovery?.active ? (
           <div className="mt-3">
-            <RecoveryNotice>Desk is in recovery. Named loops are paused. The clock will not Recheck or mint a browser session.</RecoveryNotice>
+            <RecoveryNotice>Desk is in recovery. Named routines are paused. The clock will not Recheck or mint a browser session.</RecoveryNotice>
           </div>
         ) : null}
         {error && (
@@ -289,7 +297,7 @@ export function RoutinesPage() {
 
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-8">
         <section className="space-y-3">
-          <h2 className="text-[12px] font-medium uppercase tracking-[0.14em] text-ink-secondary">The loops</h2>
+          <h2 className="text-[12px] font-medium uppercase tracking-[0.14em] text-ink-secondary">The routines</h2>
           {state.loops.map((loop) => (
             <LoopCard
               // revision in the key: an accepted clock change anywhere
@@ -350,7 +358,7 @@ export function RoutinesPage() {
             </div>
           )}
           <p className="text-[11.5px] text-ink-secondary/70">
-            The clock is RealBud's. A loop presses Desk Recheck — it never sends while nobody is looking.
+            The clock is RealBud's. A routine presses Desk Recheck. It never sends while nobody is looking.
           </p>
         </section>
       </div>

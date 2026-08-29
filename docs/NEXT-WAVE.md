@@ -4,7 +4,7 @@ Date: 2026-08-29
 HEAD at writing: `750f7ae`  
 Canonical constraints: `docs/GOAL-PROMPT.md` wins conflicts.
 
-This is the pickup list for later sessions. W1–W5 shipped on `cursor/next-wave-tasks-fa2e`. The remaining hole is a named office (`docs/PILOT-CONTRACT.md`), not more Desk chrome.
+This is the pickup list for later sessions. W1–W5 shipped on `cursor/next-wave-tasks-fa2e`. The remaining hole is a named office (`docs/PILOT-CONTRACT.md`), not more Desk chrome. The weekday map is `docs/PM-DAY.md`.
 
 If a later idea fights this file, `docs/GOAL-PROMPT.md` still wins.
 
