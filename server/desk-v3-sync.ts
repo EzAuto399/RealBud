@@ -107,7 +107,11 @@ export function syncWorkingV2IntoV3(v3: DeskFileV3, v2: DeskFileV2, now: number)
   }
 
   for (const source of v2.sources) {
-    if (next.sources.some((item) => item.id === source.id)) continue;
+    const existing = next.sources.find((item) => item.id === source.id);
+    if (existing) {
+      if (source.lastCheckedAt != null) existing.lastCheckedAt = source.lastCheckedAt;
+      continue;
+    }
     next.sources.push({
       id: source.id,
       authority: v2.mode === "demo" || source.kind === "demo" ? "demo" : "legacy-unverified",
@@ -115,6 +119,7 @@ export function syncWorkingV2IntoV3(v3: DeskFileV3, v2: DeskFileV2, now: number)
       label: source.label,
       stableKey: source.stableKey,
       freshnessMs: source.kind === "csv" ? 12 * 60 * 60 * 1000 : 30 * 60 * 1000,
+      lastCheckedAt: source.lastCheckedAt,
     });
   }
 

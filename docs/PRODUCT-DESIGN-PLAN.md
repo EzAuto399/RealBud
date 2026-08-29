@@ -474,18 +474,18 @@ Avoid a generic repository/service layer. Each module owns one trust boundary an
 
 - [x] **T1** — Design system (Warm Ledger tokens/primitives). Residual: leftover OpenMausBot chrome still in tree, hidden by product mode.
 - [x] **T2** — Desk V3 contracts, decoders, migration, compatibility snapshot. Follow-up: batch persist (`docs/NEXT-WAVE.md` W3).
-- [x] **T3** — Queue/case/evidence split + Book mode + CSV drop. **Not done:** PropertyGroup grouping, Cmd+K, go-live checklist (`NEXT-WAVE` W1).
+- [x] **T3** — Queue/case/evidence split + Book mode + CSV drop. Go-live checklist shipped (`NEXT-WAVE` W1). PropertyGroup grouping and Cmd+K stay parked.
 - [x] **T4** — Demo-breadth cases render (maintenance/lease/inspection/inbound as held fixtures). Full historic tenancy/contact editing is not a next-wave item.
 - [x] **T5** — Fake-portal handoff, human Submit, effect-unknown. Live vendor portal waits on the pilot contract.
 - [x] **T6** — Product Ask (no reactions/models/computer in the default thread).
 - [x] **T7** — Schedule clock GUI + run history. Run-to-case index is good enough; do not rebuild Schedule.
-- [x] **T8** — You: agency, sources, recovery, worker card, Advanced diagnostics. **Not done:** go-live mirror, last-checked times (`NEXT-WAVE` W1, W5).
+- [x] **T8** — You: agency, sources, recovery, worker card, Advanced diagnostics. Go-live mirror and last-checked times shipped (`NEXT-WAVE` W1, W5).
 - [x] **T9** — Arrow-key queue, live-region confirmations, split-view drawers. Residual a11y is not a new project.
 - [x] **T10** — `scripts/e2e-walkthrough.mjs` 26 checks green at HEAD.
-- [x] **T11** — In-app worker install, model attach, Test hands. **Not done:** user chrome still says Hermes (`NEXT-WAVE` W2); Windows install stays CSV-only.
+- [x] **T11** — In-app worker install, model attach, Test hands. User chrome says Worker (`NEXT-WAVE` W2). Windows install stays CSV-only.
 - [~] **T12** — Intake + "Put courtesy on Desk" shipped. Closed Ask-as-actor catalog (`run-loop`, `retune-clock`) is ROUTINES PR C and stays deferred. Do not "finish T12" by building PR C.
 
-Historical implementation order is done. Next sessions pick `docs/NEXT-WAVE.md` W1 then W2. Do not start T1 again.
+Historical implementation order is done. W1–W5 shipped. Next work waits on a named office. Do not start T1 again.
 
 ## Review completion
 
@@ -511,6 +511,6 @@ Historical implementation order is done. Next sessions pick `docs/NEXT-WAVE.md` 
 
 **CODEX:** Blocked by missing local read-only bridge; internal eng review completed with file/line evidence and resolved 11 findings.
 
-**VERDICT:** CEO + DESIGN + ENG CLEARED — full native PM concept and Desk V3 architecture approved. Implementation may start with T1, then T2 contracts/decoder/migration behind the compatibility snapshot.
+**VERDICT:** CEO + DESIGN + ENG CLEARED. Native Desk and V3 shipped. Next code is `docs/NEXT-WAVE.md`, not T1.
 
 NO UNRESOLVED DECISIONS

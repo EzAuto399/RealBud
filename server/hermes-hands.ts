@@ -64,16 +64,21 @@ export async function tryHermesPing(opts?: {
         const pick = (s: string) => clean(s).slice(-2).join(" · ");
         if (err) {
           const timedOut = (err as NodeJS.ErrnoException & { killed?: boolean }).killed;
-          if (timedOut) return resolve(done(false, "Hermes took too long to answer."));
+          if (timedOut) return resolve(done(false, "The worker took too long to answer."));
           const snippet = (pick(stdout) || pick(stderr)).slice(0, 200);
-          return resolve(done(false, snippet || "Hermes could not answer."));
+          return resolve(done(false, snippet || "The worker could not answer."));
         }
         const answer = clean(stdout).find((line) => line.trim().toUpperCase() === "OK");
-        if (!answer) return resolve(done(false, "Hermes answered, but not with OK — check the model."));
-        resolve(done(true, "Hermes answered OK — the worker is live."));
+        if (!answer) return resolve(done(false, "The worker answered, but not with OK — check the model."));
+        resolve(done(true, "Worker answered OK — Desk Recheck can ask it for the ledger."));
       },
     );
   });
+}
+
+export function uncoveredPropertyIds(requested: string[], rows: LedgerFacts[]): string[] {
+  const got = new Set(rows.map((row) => row.propertyId));
+  return requested.filter((id) => !got.has(id));
 }
 
 export function parseLedgerFacts(text: string): LedgerFacts[] | null {
@@ -114,16 +119,16 @@ export async function tryHermesLedger(
   const miss = (detail: string): HermesLedgerAttempt => ({ rows: null, detail });
   if (process.env.VITEST && !opts?.cli) return miss("tests do not use the live worker — unknown facts stay held");
   if (!packInstalled(opts?.root)) {
-    return miss(`Hermes is not answering — the "${HERMES_PIN.profile}" pack is missing from ~/.hermes.`);
+    return miss(`The worker is not answering — the "${HERMES_PIN.profile}" pack is missing from ~/.hermes.`);
   }
   if (!approvalsAreManual(opts?.root)) {
-    return miss(`Hermes is not answering — the "${HERMES_PIN.profile}" pack is not in manual approvals. Re-apply the pack.`);
+    return miss(`The worker is not answering — the "${HERMES_PIN.profile}" pack is not in manual approvals. Re-apply the pack.`);
   }
   const cli = opts?.cli ?? "hermes";
   const version = await probeHermesVersion(cli);
-  if (!version) return miss("Hermes is not answering — CLI not found.");
+  if (!version) return miss("The worker is not answering — CLI not found.");
   if (!hermesMatchesPin(version)) {
-    return miss(`Hermes is not answering — installed ${version.trim()}, pin is v${HERMES_PIN.product} (${HERMES_PIN.tag}).`);
+    return miss(`The worker is not answering — installed ${version.trim()}, pin is v${HERMES_PIN.product} (${HERMES_PIN.tag}).`);
   }
 
   const ids = propertyIds.length ? propertyIds.join(", ") : "(none)";
@@ -141,7 +146,7 @@ export async function tryHermesLedger(
       (err, stdout, stderr) => {
         if (err) {
           const timedOut = (err as NodeJS.ErrnoException & { killed?: boolean }).killed;
-          if (timedOut) return resolve(miss("Hermes took too long — facts stay held."));
+          if (timedOut) return resolve(miss("The worker took too long — facts stay held."));
           const clean = (s: string) =>
             String(s)
               .replace(/\x1b\[[0-9;]*m/g, "")
@@ -153,14 +158,14 @@ export async function tryHermesLedger(
           return resolve(
             miss(
               snippet
-                ? `Hermes could not answer (${snippet}) — facts stay held.`
-                : "Hermes could not answer — facts stay held.",
+                ? `The worker could not answer (${snippet}) — facts stay held.`
+                : "The worker could not answer — facts stay held.",
             ),
           );
         }
         const rows = parseLedgerFacts(String(stdout));
-        if (!rows) return resolve(miss("Hermes answered without ledger JSON — facts stay held."));
-        resolve({ rows, detail: `Hermes ${HERMES_PIN.product} answered with ${rows.length} ledger rows.` });
+        if (!rows) return resolve(miss("The worker answered without ledger JSON — facts stay held."));
+        resolve({ rows, detail: `Worker ${HERMES_PIN.product} answered with ${rows.length} ledger rows.` });
       },
     );
   });

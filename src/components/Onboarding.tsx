@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Building2 } from "lucide-react";
 import { identifyEmail, setEmailGateDone, track } from "@/lib/analytics";
+import { markFirstRunDone } from "@/lib/first-run";
 import { useStore } from "@/state/store";
 
 // First-run for a newly licensed PM. Desk is the product. Engines, mic,
@@ -31,6 +32,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const finish = () => {
     track("onboarding_completed", { engines_available: -1, mic: "n/a" });
     setEmailGateDone("submitted");
+    markFirstRunDone();
     dispatch({ type: "showDesk" });
     onDone();
   };

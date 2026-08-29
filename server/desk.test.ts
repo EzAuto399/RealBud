@@ -10,14 +10,16 @@ import {
   type LedgerFacts,
   type Property,
 } from "./desk.ts";
+import { readHandsLast } from "./hands-last.ts";
+import type { HermesLedgerAttempt } from "./hermes-hands.ts";
 
 const dirs: string[] = [];
 
-function tempDesk() {
+function tempDesk(opts?: { hermes?: (ids: string[]) => Promise<HermesLedgerAttempt> }) {
   const dir = mkdtempSync(join(tmpdir(), "realbud-desk-"));
   dirs.push(dir);
   let now = new Date(2026, 7, 17, 8, 0, 0).getTime();
-  const desk = new Desk({ file: join(dir, "desk.json"), now: () => now });
+  const desk = new Desk({ file: join(dir, "desk.json"), now: () => now, hermes: opts?.hermes });
   return {
     desk,
     dir,
@@ -208,12 +210,35 @@ describe("Desk morning check", () => {
   });
 
   it("live recheck stays on the labelled Demo book when Hermes is not pinned", async () => {
-    const { desk } = tempDesk();
+    const { desk, dir } = tempDesk();
     const snap = await desk.runMorningCheckLive();
     expect(snap.hands).toBe("demo");
     expect(snap.mode).toBe("demo");
     expect(snap.handsDetail).toMatch(/held/i);
     expect(snap.drafts.map((d) => d.kind).sort()).toEqual(["courtesy-rent", "levy-from-rent"]);
+    expect(readHandsLast(dir)?.kind).toBe("recheck");
+    expect(readHandsLast(dir)?.ok).toBe(false);
+    expect(snap.sources.some((s) => s.kind === "hermes" && typeof s.lastCheckedAt === "number")).toBe(true);
+  });
+
+  it("holds properties the worker omitted and keeps the chip held", async () => {
+    const { desk, dir } = tempDesk({
+      hermes: async () => ({
+        rows: [
+          { propertyId: "prop-oak", daysSinceDue: 0, rentLanded: true, levyPaid: true, daysSinceCourtesy: null },
+        ],
+        detail: "Worker answered with 1 ledger rows.",
+      }),
+    });
+    const snap = await desk.runMorningCheckLive();
+    expect(snap.hands).toBe("held");
+    expect(snap.handsDetail).toMatch(/Uncovered stay held/);
+    const uncovered = snap.results.filter((row) => row.reason === "uncovered-by-worker");
+    expect(uncovered).toHaveLength(snap.properties.length - 1);
+    expect(uncovered.every((row) => row.propertyId !== "prop-oak")).toBe(true);
+    expect(snap.drafts.some((d) => uncovered.some((row) => row.propertyId === d.propertyId))).toBe(false);
+    expect(readHandsLast(dir)?.ok).toBe(false);
+    expect(readHandsLast(dir)?.kind).toBe("recheck");
   });
 
   it("never strips the hard never-rules off a property", () => {
@@ -458,6 +483,22 @@ describe("Desk morning check", () => {
     expect(afterDeny.properties.some((p) => p.address === "9 Drop St")).toBe(false);
   });
 
+  it("allows every staged book proposal in one revision bump", () => {
+    const { desk } = tempDesk();
+    desk.proposeBook({
+      items: [
+        { address: "1 Batch St, Braddon ACT", tenantName: "Ada Cole", tenantPhone: "0400 111 000", weeklyRentCents: 51_000 },
+        { address: "2 Batch St, Braddon ACT", tenantName: "Ben Cole", tenantPhone: "0400 111 001", weeklyRentCents: 52_000 },
+      ],
+    }, "ask");
+    const before = desk.revision;
+    const snap = desk.allowAllBookProposals();
+    expect(desk.revision).toBe(before + 1);
+    expect(snap.book!.bookProposals).toHaveLength(0);
+    expect(snap.properties.some((p) => p.address === "1 Batch St, Braddon ACT")).toBe(true);
+    expect(snap.properties.some((p) => p.address === "2 Batch St, Braddon ACT")).toBe(true);
+  });
+
   it("parses pasted intake text into staged proposals and reports garbage", () => {
     const { desk } = tempDesk();
     const result = desk.proposeBook({
@@ -505,21 +546,20 @@ describe("Desk morning check", () => {
     expect(snap.workItems.some((w) => w.holdReason === "reversed")).toBe(true);
   });
 
-  // KNOWN V3 COST: every add runs the full encrypted commit protocol
-  // (fsync per add ≈ 38ms), so 194 sequential adds exceed the default
-  // budget. Batching persists for bulk adds is the tracked fix — see
-  // PRODUCT-DESIGN-PLAN.md "Known V3 perf bottleneck". The assertions here
-  // (snapshot size, no artifact bytes) are the actual contract.
   it("evaluates 200 properties without putting artifact bytes on the snapshot", { timeout: 30_000 }, () => {
     const { desk } = tempDesk();
-    for (let i = 0; i < 194; i++) {
-      desk.addProperty({
-        address: `${i} Scale St, Acton ACT`,
-        tenantName: "Scale Tester",
-        tenantPhone: "0400 000 000",
-        weeklyRentCents: 50_000,
-      });
-    }
+    const before = desk.revision;
+    desk.batch(() => {
+      for (let i = 0; i < 194; i++) {
+        desk.addProperty({
+          address: `${i} Scale St, Acton ACT`,
+          tenantName: "Scale Tester",
+          tenantPhone: "0400 000 000",
+          weeklyRentCents: 50_000,
+        });
+      }
+    });
+    expect(desk.revision).toBe(before + 1);
     const snap = desk.runMorningCheck();
     expect(snap.properties.length).toBe(200);
     const encoded = JSON.stringify(snap);

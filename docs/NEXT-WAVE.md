@@ -4,7 +4,7 @@ Date: 2026-08-29
 HEAD at writing: `750f7ae`  
 Canonical constraints: `docs/GOAL-PROMPT.md` wins conflicts.
 
-This is the pickup list for the next few sessions. It is not a new product. The beta door is already done. The remaining hole is that a graduate can open Desk and never see the three rules, never get a go-live checklist, and can still read "Hermes" on the chip.
+This is the pickup list for later sessions. W1–W5 shipped on `cursor/next-wave-tasks-fa2e`. The remaining hole is a named office (`docs/PILOT-CONTRACT.md`), not more Desk chrome.
 
 If a later idea fights this file, `docs/GOAL-PROMPT.md` still wins.
 
@@ -68,11 +68,19 @@ The human task that actually finishes the product is still the visit: fill the e
 
 ---
 
+## Shipped this wave (2026-08-29)
+
+- **W1** First-run three-rules screen + Desk/You go-live card (export / worker / agency). Demo agency name does not count.
+- **W2** Partial worker ledger holds uncovered properties. Chip stays Held. User chrome says Worker, not Hermes.
+- **W3** `Desk.batch` / Allow-all one persist. 194 adds are one revision bump.
+- **W4** Electron wraps `desk.key` with `safeStorage`. `REALBUD_DESK_KEY` does not write a plaintext key file.
+- **W5** You sources show last-checked in the agency timezone. Desk Recheck and Test hands share `~/.realbud/hands-last.json`.
+
 ## Next sessions (unblocked)
 
 One session, one row. Tests first on gate and persist code. After Desk UI changes, run `node --experimental-strip-types scripts/e2e-walkthrough.mjs`.
 
-### W1. Mount first-run and the go-live card
+### W1. Mount first-run and the go-live card — shipped
 
 The three-rules screen exists and is dead. First launch opens Desk with no framing.
 
@@ -83,7 +91,7 @@ The three-rules screen exists and is dead. First launch opens Desk with no frami
 Files: `src/App.tsx`, `src/components/Onboarding.tsx`, `src/lib/analytics.ts`, `src/components/DeskPage.tsx`, `src/components/YouPage.tsx`.  
 Done when: a wiped profile sees the three rules, then Desk, then the checklist. Recheck, Allow, Copy still work.
 
-### W2. Hands honesty
+### W2. Hands honesty — shipped
 
 A subset Hermes answer still flips the chip to live and leaves uncovered properties on stale facts (`TODOS.md`, `server/hermes-hands.ts`). User chrome still says Hermes.
 
@@ -93,7 +101,7 @@ A subset Hermes answer still flips the chip to live and leaves uncovered propert
 Files: `server/hermes-hands.ts`, `server/desk.ts`, `src/components/DeskPage.tsx`, `src/components/desk/DeskBook.tsx`, `src/components/ModelPicker.tsx`, `src/components/SettingsPanel.tsx`.  
 Done when: a fixture with one property omitted from the worker JSON holds that property, and a string search of user chrome for `Hermes` is empty outside Advanced.
 
-### W3. One commit for a bulk book write
+### W3. One commit for a bulk book write — shipped
 
 `addProperty`, CSV-backed adds, and Allow-all intake each persist once per row. The 200-property test already carries a 30s budget.
 
@@ -103,7 +111,7 @@ Done when: a fixture with one property omitted from the worker JSON holds that p
 Files: `server/desk-store.ts`, `server/desk.ts`, `src/components/DeskPage.tsx`.  
 Done when: 194 adds stay well under the 30s budget, and Allow-all is one revision bump.
 
-### W4. Wrap `desk.key` (`T16`)
+### W4. Wrap `desk.key` (`T16`) — shipped
 
 The book is encrypted. The key sits next to it as plaintext. `server/desk-key.ts` still describes `safeStorage` as a comment. Do this before any graduate installer.
 
@@ -114,7 +122,7 @@ The book is encrypted. The key sits next to it as plaintext. `server/desk-key.ts
 Files: `server/desk-key.ts`, Electron main process.  
 Done when: a production-labelled run has no raw 32-byte key file beside `desk.json`.
 
-### W5. Last-checked on You sources (`T14` subset)
+### W5. Last-checked on You sources (`T14` subset) — shipped
 
 Missed runs and held sources are silent unless the PM is already looking. OS notifications can wait. Timestamps cannot.
 

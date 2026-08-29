@@ -235,7 +235,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             <div>
               <div className="text-[15px] font-medium text-ink">Hands</div>
               <div className="mt-0.5 text-[13px] text-ink-secondary">
-                Hermes property profile. Change the model with hermes -p property model.
+                Pinned worker property profile. Attach the model on You.
               </div>
             </div>
             <ModelPicker bot={bot} />

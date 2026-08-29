@@ -18,7 +18,7 @@ RealBud owns the window (Desk · Ask · Schedule · You). Pinned Hermes profile 
 
 Hard gates: no send, no trust, no statutory draft, no invented legal clock, no Hermes.app, no Hermes source edits, no extra RealBud agents, no tenant-facing bot, no law crawler.
 
-Current software is a training appliance (fixture book + CSV + fake portal) whose **beta door is done**: their export matches by address or their property code, morning cards land on Desk, the PM Copies into their PMS. Notes, Ask→Desk, intake, editable clocks, Friday owner letter v0, in-app worker attach, and recovery-key unlock also shipped. The next code wave is `docs/NEXT-WAVE.md` (mount first-run, hands honesty, batch persist). A named office in `docs/PILOT-CONTRACT.md` still gates inbound, live CUA, Pocket, and the graduate installer. Do not add surfaces. Do not rebuild PropertyMe.
+Current software is a training appliance (fixture book + CSV + fake portal) whose **beta door is done**: their export matches by address or their property code, morning cards land on Desk, the PM Copies into their PMS. Notes, Ask→Desk, intake, editable clocks, Friday owner letter v0, in-app worker attach, recovery-key unlock, first-run + go-live, worker-coverage holds, batch persist, and last-checked times also shipped. A named office in `docs/PILOT-CONTRACT.md` still gates inbound, live CUA, Pocket, and the graduate installer. Do not add surfaces. Do not rebuild PropertyMe.
 
 ---
 
@@ -237,12 +237,8 @@ Shipped, not slides:
 - Bounded fake-portal prefill; Bud submit 403
 - Pilot contract still **demo** (`agency: RealBud Demo Book`)
 
-Not shipped (see `docs/NEXT-WAVE.md` for the unblocked five):
+Not shipped (see `docs/NEXT-WAVE.md`; W1–W5 are done):
 
-- First-run three-rules screen is written and **not mounted**; no go-live checklist on Desk
-- Hermes subset answers still count as live; user chrome still says Hermes
-- Batch persist for bulk book writes
-- `desk.key` wrap (`T16`); You last-checked times (`T14` subset)
 - Ask proposing a Schedule change as a card (PR C — deferred until a named office asks)
 - Inbound / emergency triage loop
 - Named paying/pilot agency
@@ -262,7 +258,7 @@ Beta is **not** more architecture. Beta is one PM and a **real book**.
 2. ✅ Match rows to Desk properties by **address or their property code**, not fixture ids.
 3. ✅ Morning cards from those facts (still shop rules, still no send).
 4. ✅ PM Copies into the PMS they already use.
-5. ✅ Hands stay honest (Hermes live or CSV live — never silently Demo; miss ⇒ hold).
+5. ✅ Hands stay honest (Worker live or CSV live — never silently Demo; miss or uncovered property ⇒ hold).
 
 **Sells — all shipped at HEAD:**
 
@@ -295,7 +291,7 @@ Architecture is ahead of integration. Prefer **their file in, our ids out** over
 
 ### Next build if no other instruction
 
-Pick the top open row in `docs/NEXT-WAVE.md` (W1 first-run, then W2 hands honesty, then W3 batch persist).
+W1–W5 in `docs/NEXT-WAVE.md` are shipped. Stop unless a named office in `docs/PILOT-CONTRACT.md` asks for one gated item.
 
 The visit still finishes the product. Fill the eight fields in `docs/PILOT-CONTRACT.md`. After a named agency: installer a graduate can double-click, then vendor-test portal prep.
 

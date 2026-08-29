@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { HERMES_PIN } from "./hermes-pin.ts";
 import type { LedgerFacts } from "./desk.ts";
-import { parseLedgerFacts, tryHermesLedger, tryHermesPing } from "./hermes-hands.ts";
+import { parseLedgerFacts, tryHermesLedger, tryHermesPing, uncoveredPropertyIds } from "./hermes-hands.ts";
 import { seedVault } from "./vault.ts";
 import { HermesAgentDriver } from "./drivers/acp/hermes.ts";
 
@@ -36,6 +36,13 @@ function fakeHermes(answer: string, exitCode = 0, stderr = "") {
 
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+describe("uncoveredPropertyIds", () => {
+  it("returns requested ids the worker omitted", () => {
+    expect(uncoveredPropertyIds(["prop-oak", "prop-harbour"], fixture)).toEqual(["prop-harbour"]);
+    expect(uncoveredPropertyIds(["prop-oak"], fixture)).toEqual([]);
+  });
 });
 
 describe("parseLedgerFacts", () => {

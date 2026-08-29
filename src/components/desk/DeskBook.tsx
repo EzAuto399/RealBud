@@ -4,6 +4,7 @@ import { Loader2, Plus, RotateCcw, ShieldAlert, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { fmtDate } from "@/lib/au";
 import { aud, type DeskSnapshot, type LedgerFacts, type NotifyChannel, type Property, type PropertyOptions, type RentSource } from "@/lib/desk";
+import { handsFactSource } from "@/lib/hands-label";
 import { CONTACT_ROLE_LABELS, NOTIFY_LABELS, RENT_SOURCE_LABELS } from "./labels";
 
 export function DeskBook({
@@ -273,7 +274,7 @@ function PropertyCard({
             </span>
           ) : null}
           <span className="ml-auto text-[10.5px] text-ink-muted">
-            {hands === "hermes" ? "from Hermes" : hands === "csv" ? "from CSV" : hands === "held" ? "held" : "Demo"}
+            {handsFactSource(hands)}
           </span>
         </div>
       ) : null}

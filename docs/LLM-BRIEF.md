@@ -35,6 +35,7 @@ RealBud is a native desktop app (Warm Operational Ledger design) for one PM. It 
 - Ask: PM-scoped chat, courtesy/levy proposals, **paste/drop intake → staged book proposals → Allow fills the book** (deterministic parser, model-optional; pack skill `intake-properties` for conversational intake once a model is funded)
 - Worker bridge (zero-terminal): in-app install with streamed progress + preflight + pin verification; model attach (provider picker, key → profile `.env`, model suggestions from the worker's own cache); one-click pinned worker update; key-optional edits with masked key hint
 - Recovery key escrow: reveal/copy 64-hex key; unlock-quarantined-book flow
+- First-run three-rules screen + Desk/You go-live card; Worker vocabulary; partial ledger holds; one persist for bulk add / Allow-all; Electron `safeStorage` wrap; You last-checked + shared Recheck/Test clock (`hands-last.json`)
 - Blind-spot hardening: PATH-safe probes, single-instance lock, host-timezone recovery, send-gate canary tests
 
 ## 4. Current test/QA state
@@ -45,12 +46,7 @@ RealBud is a native desktop app (Warm Operational Ledger design) for one PM. It 
 
 ## 5. The plan (do not jump)
 
-**Immediate code.** `docs/NEXT-WAVE.md`, in order:
-1. W1 — mount first-run (`Onboarding.tsx` is unused) and the Desk go-live checklist
-2. W2 — Hermes subset answers hold uncovered properties; user chrome says Worker, not Hermes
-3. W3 — one encrypted commit for bulk add / import / Allow-all
-4. W4 — wrap `desk.key` with `safeStorage`
-5. W5 — last-checked timestamps on You sources
+**Immediate code.** W1–W5 in `docs/NEXT-WAVE.md` shipped (first-run + go-live, worker holds, batch persist, safeStorage wrap, last-checked + shared Recheck/Test clock).
 
 **Human, not code.** Fund one model key to live-test conversational + image intake. Fill the eight fields in `docs/PILOT-CONTRACT.md` on a visit.
 

@@ -263,6 +263,7 @@ function decodeSourceV2(value: unknown, field: string, errors: string[]): DeskFi
     kind: oneOf(value.kind, SOURCE_KINDS, `${field}.kind`, errors) ?? "demo",
     label: typeof value.label === "string" ? value.label : "",
     stableKey: typeof value.stableKey === "string" ? value.stableKey : "",
+    lastCheckedAt: value.lastCheckedAt == null ? value.lastCheckedAt === null ? null : undefined : num(value.lastCheckedAt, `${field}.lastCheckedAt`, errors),
   };
 }
 
@@ -333,6 +334,7 @@ function decodeSourceV3(value: unknown, field: string, errors: string[]): Source
     label: text(value.label, `${field}.label`, errors),
     stableKey: text(value.stableKey, `${field}.stableKey`, errors),
     freshnessMs: num(value.freshnessMs, `${field}.freshnessMs`, errors),
+    lastCheckedAt: value.lastCheckedAt == null ? value.lastCheckedAt === null ? null : undefined : num(value.lastCheckedAt, `${field}.lastCheckedAt`, errors),
   };
 }
 

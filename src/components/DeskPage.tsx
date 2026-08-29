@@ -4,14 +4,16 @@ import { Building2, CircleAlert, Loader2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { DeskSnapshot, Draft, Property } from "@/lib/desk";
 import { buildDeskQueue, filterDeskQueue, queueCounts, type QueueFilter } from "@/lib/desk-queue";
+import { handsChip } from "@/lib/hands-label";
 import { CaseQueueRow, RecoveryNotice, SplitView, StatusLabel } from "./pm";
 import { DeskBook } from "./desk/DeskBook";
 import { DeskCase } from "./desk/DeskCase";
 import { DeskEvidence } from "./desk/DeskEvidence";
+import { GoLiveCard } from "./desk/GoLiveCard";
 import { api, useStore } from "@/state/store";
 
 export function DeskPage() {
-  const { state, dispatch } = useStore();
+  const { state, dispatch, refreshHermes } = useStore();
   const [snap, setSnap] = useState<DeskSnapshot | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -39,7 +41,8 @@ export function DeskPage() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+    void refreshHermes();
+  }, [load, refreshHermes]);
 
   useEffect(() => {
     if (state.desk) setSnap(state.desk);
@@ -199,7 +202,7 @@ export function DeskPage() {
           <StatusLabel tone="danger">{counts.licensee} licensee</StatusLabel>
           <StatusLabel tone="muted">{snap.properties.length} properties</StatusLabel>
           <StatusLabel tone={snap.hands === "held" ? "hold" : snap.hands === "hermes" || snap.hands === "csv" ? "agency" : "muted"}>
-            {snap.hands === "hermes" ? "Hermes live" : snap.hands === "csv" ? "CSV live" : snap.hands === "held" ? "Held" : "Demo"}
+            {handsChip(snap.hands)}
           </StatusLabel>
         </div>
         {snap.recovery?.active ? (
@@ -213,6 +216,14 @@ export function DeskPage() {
             {error}
           </div>
         ) : null}
+        <GoLiveCard
+          mode={snap.mode}
+          agencyName={snap.book?.agency.name ?? ""}
+          workerReady={Boolean(state.hermes?.ready) || snap.hands === "hermes"}
+          onConnectExport={() => setMode("book")}
+          onAttachWorker={() => dispatch({ type: "showYou" })}
+          onSaveAgency={(name) => void run("/api/desk/agency", "PATCH", { name }, "agency", "Agency saved")}
+        />
       </header>
 
       {mode === "book" ? (
@@ -222,14 +233,7 @@ export function DeskPage() {
           onAdd={(input) => void run("/api/desk/properties", "POST", input, "add", "Property added")}
           onAllowBookProposal={(id) => void run(`/api/desk/book-proposals/${id}/allow`, "POST", {}, id, "Property added to the book")}
           onDenyBookProposal={(id) => void run(`/api/desk/book-proposals/${id}/deny`, "POST", {}, id)}
-          onAllowAllBookProposals={() => {
-            const ids = (snap.book?.bookProposals ?? []).map((p) => p.id);
-            void (async () => {
-              for (const id of ids) {
-                await run(`/api/desk/book-proposals/${id}/allow`, "POST", {}, id, "Property added to the book");
-              }
-            })();
-          }}
+          onAllowAllBookProposals={() => void run("/api/desk/book-proposals/allow-all", "POST", {}, "allow-all", "Properties added to the book")}
           onSave={(id, options) => void run(`/api/desk/properties/${id}`, "PATCH", options, id, "Options saved")}
           onNotes={(id, body) => void run(`/api/desk/properties/${id}/notes`, "PUT", { body }, `notes-${id}`, "Notes saved")}
           onDelete={(id) => void run(`/api/desk/properties/${id}`, "DELETE", undefined, `delete-${id}`, "Property removed")}

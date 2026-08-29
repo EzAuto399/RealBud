@@ -23,6 +23,7 @@ export type CheckReason =
   | "unmatched"
   | "reversed"
   | "partial"
+  | "uncovered-by-worker"
   | "ambiguous-match";
 
 export type HandsSource = "demo" | "hermes" | "held" | "csv" | "fixture";
@@ -139,6 +140,7 @@ export interface SourceIdentity {
   kind: "csv" | "hermes" | "portal" | "demo";
   label: string;
   stableKey: string;
+  lastCheckedAt?: number | null;
 }
 
 export interface Observation {

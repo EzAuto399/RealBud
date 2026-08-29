@@ -105,6 +105,7 @@ export interface Source {
   label: string;
   stableKey: string;
   freshnessMs: number;
+  lastCheckedAt?: number | null;
 }
 
 export interface PropertyV3 {

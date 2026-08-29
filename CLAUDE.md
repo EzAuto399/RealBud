@@ -6,7 +6,7 @@ Do not ship as PropertyMe (PMS trademark), Hermes, or OpenMausBot.
 
 - Data: `~/.realbud`
 - Goal prompt (paste into a new session): `docs/GOAL-PROMPT.md`
-- Next sessions: `docs/NEXT-WAVE.md` (mount first-run, hands honesty, batch persist). Do not start inbound, PR C, live CUA, or a graduate installer until `docs/PILOT-CONTRACT.md` names an office.
+- Next sessions: `docs/NEXT-WAVE.md` W1–W5 shipped. Do not start inbound, PR C, live CUA, or a graduate installer until `docs/PILOT-CONTRACT.md` names an office.
 - Native PM design system + approved implementation plan: `DESIGN.md` + `docs/PRODUCT-DESIGN-PLAN.md`
 - Routines design (GUI + Ask, Hermes as hands): `docs/ROUTINES.md`
 - Identity: `docs/IDENTITY.md`

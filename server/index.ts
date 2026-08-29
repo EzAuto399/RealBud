@@ -18,7 +18,7 @@ import {
   setupCommands,
   type LifecycleAction,
 } from "./container-computer.ts";
-import { ensureDirs, instanceConfigs, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.ts";
+import { DATA_DIR, ensureDirs, instanceConfigs, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.ts";
 import { resetPathCache } from "./env-path.ts";
 import type { RuntimeEvent } from "./contracts.ts";
 
@@ -33,6 +33,7 @@ import { applyPropertyPack } from "./hermes-pack.ts";
 import { hermesStatus } from "./hermes-status.ts";
 import { hermesInstallCommand, HERMES_PIN } from "./hermes-pin.ts";
 import { tryHermesPing } from "./hermes-hands.ts";
+import { readHandsLast, writeHandsLast } from "./hands-last.ts";
 import { readArtifact } from "./audit-artifacts.ts";
 import { Desk } from "./desk.ts";
 import { seedVault } from "./vault.ts";
@@ -1184,6 +1185,23 @@ const server = createServer(async (req, res) => {
       commitDesk(snapshot);
       return json(res, 200, snapshot);
     }
+    if (path === "/api/desk/agency" && method === "PATCH") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      try {
+        const snapshot = desk.patchAgency({
+          name: typeof body.name === "string" ? body.name : undefined,
+          jurisdictions: Array.isArray(body.jurisdictions) ? body.jurisdictions.map(String) : undefined,
+        });
+        commitDesk(snapshot);
+        return json(res, 200, snapshot);
+      } catch (e) {
+        const status = (e as { status?: number }).status ?? 500;
+        return json(res, status, { error: e instanceof Error ? e.message : String(e) });
+      }
+    }
     if (path === "/api/desk/import" && method === "POST") {
       const body = await readBody(req);
       const snapshot = desk.importCsv(String(body.csv ?? ""), typeof body.observedAt === "number" ? body.observedAt : undefined);
@@ -1216,6 +1234,20 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { ...result, snapshot: desk.snapshot() });
       } catch (e) {
         return json(res, 500, { error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    if (path === "/api/desk/book-proposals/allow-all" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      await readBody(req);
+      try {
+        const snapshot = desk.allowAllBookProposals();
+        commitDesk(snapshot);
+        return json(res, 200, snapshot);
+      } catch (e) {
+        const status = (e as { status?: number }).status ?? 500;
+        return json(res, status, { error: e instanceof Error ? e.message : String(e) });
       }
     }
     let bookMatch = path.match(/^\/api\/desk\/book-proposals\/([\w-]+)\/(allow|deny)$/);
@@ -1341,14 +1373,17 @@ const server = createServer(async (req, res) => {
 
     // ── pinned Hermes worker (Desk hands; never Hermes Desktop) ────────
     if (path === "/api/hermes" && method === "GET") {
-      return json(res, 200, await hermesStatus());
+      const status = await hermesStatus();
+      return json(res, 200, { ...status, lastTest: readHandsLast(DATA_DIR) });
     }
     if (path === "/api/hermes/test" && method === "POST") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
         return json(res, 415, { error: "content-type must be application/json" });
       }
       await readBody(req);
-      return json(res, 200, await tryHermesPing());
+      const ping = await tryHermesPing();
+      writeHandsLast(DATA_DIR, { at: Date.now(), ok: ping.ok, detail: ping.detail, kind: "ping" });
+      return json(res, 200, ping);
     }
     if (path === "/api/hermes/model" && method === "POST") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {

@@ -208,6 +208,7 @@ export interface HermesStatus {
   signInCommand: string;
   detail: string;
   ready: boolean;
+  lastTest?: { at: number; ok: boolean; detail: string; kind: "ping" | "recheck" } | null;
 }
 
 interface AppState {

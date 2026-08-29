@@ -31,7 +31,8 @@ import {
 } from "./desk-evaluate.ts";
 import { DeskStore, type DeskFileV2 } from "./desk-store.ts";
 import { assertTransition, occurrenceKey, proposalHash } from "./desk-work.ts";
-import { tryHermesLedger, type HermesLedgerAttempt } from "./hermes-hands.ts";
+import { tryHermesLedger, uncoveredPropertyIds, type HermesLedgerAttempt } from "./hermes-hands.ts";
+import { writeHandsLast } from "./hands-last.ts";
 import { ambiguousMatchException, classifyMoneyRow, unmatchedException } from "./morning-money.ts";
 import { composeOwnerLetter, ownerLetterWeekStart } from "./owner-letter.ts";
 import { parseIntakeText, type IntakeItem } from "./intake.ts";
@@ -267,7 +268,7 @@ export class Desk {
   /** Training / Demo book only. Never counts as a live check. */
   runMorningCheck(): DeskSnapshot {
     this.assertWritable();
-    return this.evaluateBook("demo", "Demo book — Recheck asks Hermes or a CSV for live facts.");
+    return this.evaluateBook("demo", "Demo book — Recheck asks the worker or a CSV for live facts.");
   }
 
   /** Live recheck. A miss never fabricates rows. Demo mode may still evaluate
@@ -277,18 +278,75 @@ export class Desk {
     const ids = this.store.data.properties.map((p) => p.id);
     const attempt = await this.hermes(ids);
     if (attempt.rows) {
-      for (const row of attempt.rows) {
+      const requested = new Set(ids);
+      const covered = attempt.rows.filter((row) => requested.has(row.propertyId));
+      const missing = uncoveredPropertyIds(ids, covered);
+      for (const row of covered) {
         const idx = this.store.data.ledger.findIndex((item) => item.propertyId === row.propertyId);
         if (idx >= 0) this.store.data.ledger[idx] = row;
         else this.store.data.ledger.push(row);
       }
-      this.observe("src-hermes", "hermes", "Hermes ledger", attempt.rows);
-      return this.evaluateBook("hermes", attempt.detail);
+      this.observe("src-hermes", "hermes", "Worker ledger", covered);
+      if (missing.length) {
+        const now = this.now();
+        for (const propertyId of missing) {
+          this.holdWork({
+            propertyId,
+            reason: "uncovered-by-worker",
+            daysLate: this.facts(propertyId).daysSinceDue,
+            observedAt: now,
+            sourceId: "src-hermes",
+            detail: "the worker did not return live facts for this property",
+          });
+        }
+        const snap = this.evaluateBook(
+          "held",
+          `Worker answered ${covered.length} of ${ids.length} properties. Uncovered stay held.`,
+          new Set(missing),
+        );
+        this.recordHandsLast(false, snap.handsDetail ?? "held");
+        return snap;
+      }
+      const snap = this.evaluateBook("hermes", attempt.detail);
+      this.recordHandsLast(true, snap.handsDetail ?? attempt.detail);
+      return snap;
     }
     if (this.store.data.mode === "demo") {
-      return this.evaluateBook("demo", attempt.detail);
+      this.stampSource("src-hermes", "hermes", "Worker ledger");
+      const snap = this.evaluateBook("demo", attempt.detail);
+      this.recordHandsLast(false, attempt.detail);
+      return snap;
     }
+    this.stampSource("src-hermes", "hermes", "Worker ledger");
     this.holdBook(attempt.detail);
+    this.recordHandsLast(false, attempt.detail);
+    return this.snapshot();
+  }
+
+  batch<T>(fn: () => T): T {
+    return this.store.runBatch(fn);
+  }
+
+  patchAgency(input: { name?: string; jurisdictions?: string[] }): DeskSnapshot {
+    this.assertWritable();
+    const name = input.name === undefined ? this.store.v3.agency.name : String(input.name).trim();
+    if (!name) throw Object.assign(new Error("agency name required"), { status: 400 });
+    if (name.length > 80) throw Object.assign(new Error("agency name is too long"), { status: 400 });
+    this.store.v3.agency.name = name;
+    if (input.jurisdictions) {
+      this.store.v3.agency.jurisdictions = input.jurisdictions.map((item) => String(item).trim()).filter(Boolean);
+    }
+    this.store.persist();
+    this.emit();
+    return this.snapshot();
+  }
+
+  allowAllBookProposals(): DeskSnapshot {
+    this.assertWritable();
+    const ids = this.store.v3.bookProposals.filter((p) => p.status === "open").map((p) => p.id);
+    this.store.runBatch(() => {
+      for (const id of ids) this.allowBookProposal(id);
+    });
     return this.snapshot();
   }
 
@@ -296,6 +354,7 @@ export class Desk {
     this.assertWritable();
     const batch = parsePmsExport(csv, observedAt, "src-csv");
     if (!isFresh(batch.observedAt, CSV_FRESH_MS, this.now())) {
+      this.stampSource("src-csv", "csv", "PMS CSV export");
       this.holdBook("CSV batch is stale");
       return this.snapshot();
     }
@@ -651,10 +710,14 @@ export class Desk {
     return this.store.data.capabilities.find((c) => c.workItemId === draft.workItemId && !c.usedAt && !c.invalidatedAt) ?? null;
   }
 
-  private evaluateBook(hands: HandsSource, handsDetail: string | null): DeskSnapshot {
+  private evaluateBook(hands: HandsSource, handsDetail: string | null, skipIds?: ReadonlySet<string>): DeskSnapshot {
     const now = this.now();
     const results = [];
     for (const property of this.store.data.properties) {
+      if (skipIds?.has(property.id)) {
+        results.push({ propertyId: property.id, outcome: "hold" as const, reason: "uncovered-by-worker" as const, daysLate: this.facts(property.id).daysSinceDue });
+        continue;
+      }
       const facts = this.facts(property.id);
       const classified = classifyMoneyRow(property, facts, now, hands === "csv" ? "src-csv" : hands === "hermes" ? "src-hermes" : "src-demo");
       results.push({ propertyId: classified.propertyId, outcome: classified.outcome, reason: classified.reason, daysLate: classified.daysLate });
@@ -920,10 +983,26 @@ export class Desk {
     }
   }
 
-  private observe(id: string, kind: "csv" | "hermes" | "demo", label: string, rows: LedgerFacts[]): void {
-    if (!this.store.data.sources.some((s) => s.id === id)) {
-      this.store.data.sources.push({ id, kind, label, stableKey: `${kind}:${id}` });
+  private stampSource(id: string, kind: "csv" | "hermes" | "demo", label: string): void {
+    const existing = this.store.data.sources.find((s) => s.id === id);
+    if (existing) {
+      existing.lastCheckedAt = this.now();
+      existing.label = label;
+      return;
     }
+    this.store.data.sources.push({ id, kind, label, stableKey: `${kind}:${id}`, lastCheckedAt: this.now() });
+  }
+
+  private recordHandsLast(ok: boolean, detail: string): void {
+    try {
+      writeHandsLast(dirname(this.store.file), { at: this.now(), ok, detail, kind: "recheck" });
+    } catch {
+      /* a last-test write must never fail Recheck */
+    }
+  }
+
+  private observe(id: string, kind: "csv" | "hermes" | "demo", label: string, rows: LedgerFacts[]): void {
+    this.stampSource(id, kind, label);
     this.store.data.observations.push({
       id: `obs-${randomUUID()}`,
       sourceId: id,

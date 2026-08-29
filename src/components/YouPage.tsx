@@ -2,22 +2,16 @@ import { useEffect, useState } from "react";
 import { User } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { fmtDateTime } from "@/lib/au";
 import { api, useStore } from "@/state/store";
 import { AdvancedDiagnostics, RecoveryNotice } from "./pm";
 import { Card } from "./SettingsPrimitives";
 import { HermesHandsCard, ProfileFields } from "./SettingsModal";
-
-type HermesStatus = {
-  pin: { product: string; tag: string; commit: string; profile: string };
-  pack: { installed: boolean; approvalsManual: boolean };
-  detail: string;
-  ready: boolean;
-};
+import { GoLiveCard } from "./desk/GoLiveCard";
 
 export function YouPage() {
-  const { state, dispatch } = useStore();
+  const { state, dispatch, refreshHermes } = useStore();
   const [session, setSession] = useState<{ product?: boolean; nonProduction?: boolean } | null>(null);
-  const [hermes, setHermes] = useState<HermesStatus | null>(null);
 
   useEffect(() => {
     void api("/api/session")
@@ -26,14 +20,14 @@ export function YouPage() {
     void api("/api/desk")
       .then((snapshot) => dispatch({ type: "deskSnapshot", snapshot }))
       .catch(() => {});
-    void api("/api/hermes")
-      .then((body) => setHermes(body))
-      .catch(() => setHermes(null));
-  }, [dispatch]);
+    void refreshHermes();
+  }, [dispatch, refreshHermes]);
 
   const desk = state.desk;
+  const hermes = state.hermes;
   const recovery = desk?.recovery?.active;
   const agency = desk?.book?.agency;
+  const timezone = agency?.timezone || desk?.timezone || "Australia/Sydney";
 
   return (
     <main className="flex h-full min-w-0 flex-1 flex-col bg-app">
@@ -57,6 +51,19 @@ export function YouPage() {
             Desk is in recovery. Writes, schedules and browser work are paused. The book was not replaced with Demo data.
           </RecoveryNotice>
         )}
+        {desk ? (
+          <GoLiveCard
+            mode={desk.mode}
+            agencyName={agency?.name ?? ""}
+            workerReady={Boolean(hermes?.ready) || desk.hands === "hermes"}
+            onConnectExport={() => dispatch({ type: "showDesk" })}
+            onSaveAgency={(name) => {
+              void api("/api/desk/agency", { method: "PATCH", body: JSON.stringify({ name }) })
+                .then((snapshot) => dispatch({ type: "deskSnapshot", snapshot }))
+                .catch(() => {});
+            }}
+          />
+        ) : null}
         <Card title="Agency" subtitle={agency ? `${agency.name || "Unnamed"} · ${agency.timezone}` : "Open Desk once to load the book."}>
           <div className="text-[13px] text-ink-secondary">
             Jurisdictions: {agency?.jurisdictions.length ? agency.jurisdictions.join(", ") : "Not set"}
@@ -77,8 +84,15 @@ export function YouPage() {
         >
           <ul className="text-[13px] text-ink-secondary">
             {(desk?.sources ?? []).map((source) => (
-              <li key={source.id}>
-                {source.label} · {source.kind}
+              <li key={source.id} className="flex flex-wrap items-baseline justify-between gap-2 py-1">
+                <span>
+                  {source.label} · {source.kind}
+                </span>
+                <span className="text-[12px] text-ink-muted">
+                  {source.lastCheckedAt
+                    ? `Checked ${fmtDateTime(source.lastCheckedAt, timezone)}`
+                    : "Not checked yet"}
+                </span>
               </li>
             ))}
             {!desk?.sources?.length && <li>No sources yet.</li>}
