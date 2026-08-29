@@ -46,7 +46,7 @@ RealBud is a native desktop app (Warm Operational Ledger design) for one PM. It 
 
 ## 5. The plan (do not jump)
 
-**Immediate code.** W1–W5 in `docs/NEXT-WAVE.md` shipped (first-run + go-live, worker holds, batch persist, safeStorage wrap, last-checked + shared Recheck/Test clock).
+**Immediate code.** W1–W5 plus the morning brief (six addresses + honest inbox) shipped. Do not fake a Gmail read to chase 100.
 
 **Human, not code.** Fund one model key to live-test conversational + image intake. Fill the eight fields in `docs/PILOT-CONTRACT.md` on a visit.
 

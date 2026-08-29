@@ -10,6 +10,9 @@ import { DeskBook } from "./desk/DeskBook";
 import { DeskCase } from "./desk/DeskCase";
 import { DeskEvidence } from "./desk/DeskEvidence";
 import { GoLiveCard } from "./desk/GoLiveCard";
+import { MorningBrief, MorningEmpty } from "./desk/MorningBrief";
+import { morningBrief } from "@/lib/morning-brief";
+import { fmtDateTime } from "@/lib/au";
 import { api, useStore } from "@/state/store";
 
 export function DeskPage() {
@@ -132,16 +135,24 @@ export function DeskPage() {
     );
   }
 
-  const emptyReason =
-    snap.lastRunAt == null
-      ? "Press Recheck to run this morning’s money check. Opening Desk never starts a check."
-      : visible.length === 0
-        ? query.trim()
-          ? "No cases match that search."
-          : filter === "needs-you"
-            ? "Nothing waiting. Recheck after you change options, or open Held."
-            : "No cases in this filter."
-        : "";
+  const brief = morningBrief(snap);
+  const timezone = snap.book?.agency.timezone || snap.timezone;
+  const empty =
+    snap.lastRunAt == null ? (
+      <MorningEmpty
+        brief={brief}
+        busy={busy === "check"}
+        onRecheck={() => void run("/api/desk/check", "POST", undefined, "check", "Recheck finished")}
+      />
+    ) : visible.length === 0 ? (
+      query.trim() ? (
+        <MorningEmpty brief={{ ...brief, headline: "No cases match that search." }} />
+      ) : filter === "needs-you" ? (
+        <MorningEmpty brief={{ ...brief, headline: brief.headline }} />
+      ) : (
+        <MorningEmpty brief={{ ...brief, headline: "No cases in this filter." }} />
+      )
+    ) : null;
 
   return (
     <main className="flex h-full min-w-0 flex-1 flex-col bg-paper">
@@ -157,7 +168,7 @@ export function DeskPage() {
             </div>
             <p className="mt-1 max-w-[46rem] text-[12.5px] text-ink-muted">
               {snap.demo || snap.mode === "demo" ? "Demo book. " : ""}
-              Queue, case, evidence. RealBud drafts the courtesy. You send from the PMS. It will not send a notice or move trust.
+              Queue, case, evidence. Recheck lands every address. You send from the PMS. It will not send a notice or move trust.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -204,6 +215,9 @@ export function DeskPage() {
           <StatusLabel tone={snap.hands === "held" ? "hold" : snap.hands === "hermes" || snap.hands === "csv" ? "agency" : "muted"}>
             {handsChip(snap.hands)}
           </StatusLabel>
+          {snap.lastRunAt ? (
+            <StatusLabel tone="muted">Last check {fmtDateTime(snap.lastRunAt, timezone)}</StatusLabel>
+          ) : null}
         </div>
         {snap.recovery?.active ? (
           <div className="mt-3">
@@ -216,6 +230,19 @@ export function DeskPage() {
             {error}
           </div>
         ) : null}
+        <MorningBrief
+          brief={brief}
+          timezone={timezone}
+          interactive
+          onOpenAddress={(propertyId) => {
+            const row = rows.find((item) => item.propertyId === propertyId);
+            if (!row) return;
+            setMode("cases");
+            setFilter(row.bucket === "decided" ? "all" : row.bucket);
+            setSelectedId(row.id);
+            setQueueOpen(false);
+          }}
+        />
         <GoLiveCard
           mode={snap.mode}
           agencyName={snap.book?.agency.name ?? ""}
@@ -263,7 +290,7 @@ export function DeskPage() {
               snap={snap}
               item={selected}
               busy={busy}
-              emptyReason={emptyReason}
+              empty={empty}
               onAllow={(draft) => void run(`/api/desk/drafts/${draft.id}/allow`, "POST", { expectedRevision: snap.revision }, draft.id, "Wording allowed")}
               onDeny={(draft) => void run(`/api/desk/drafts/${draft.id}/deny`, "POST", { expectedRevision: snap.revision }, draft.id, "Wording denied")}
               onEdit={(draft, body) => void run(`/api/desk/drafts/${draft.id}`, "PATCH", { body }, draft.id, "Wording saved")}

@@ -38,7 +38,7 @@ export function DeskBook({
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h2 className="text-[15px] font-semibold text-ink">Book</h2>
-          <p className="mt-1 text-[13px] text-ink-muted">Properties, tenancies and policies. This is not the active case queue.</p>
+          <p className="mt-1 text-[13px] text-ink-muted">Properties, tenancies and policies. Recheck stamps each address. This is not the case queue.</p>
         </div>
         <button
           type="button"
@@ -215,9 +215,9 @@ function PropertyCard({
     ? {
         "rent-unpaid-courtesy": `${result.daysLate}d late · courtesy draft`,
         "rent-landed-levy-unpaid": "Rent in · levy not paid out",
-        "rent-landed": "Rent landed",
-        "inside-grace": `Day ${result.daysLate} · still in grace`,
-        "already-reminded": "Already reminded this period",
+        "rent-landed": "Checked · rent landed",
+        "inside-grace": `Checked · day ${result.daysLate}, still in grace`,
+        "already-reminded": "Checked · already reminded",
         "statutory-clock": `${result.daysLate}d late · licensee`,
         "stale-source": "Held · stale source",
         "unknown-facts": "Held · unknown facts",

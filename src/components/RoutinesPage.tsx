@@ -12,7 +12,6 @@ import {
   Loader2,
   Pause,
   Play,
-  Sparkles,
 } from "lucide-react";
 
 import { cn } from "@/lib/cn";
@@ -75,21 +74,19 @@ function LoopCard({
     setDays((prev) => (prev.includes(day) ? (prev.length > 1 ? prev.filter((d) => d !== day) : prev) : [...prev, day].sort((a, b) => a - b)));
 
   return (
-    <article className={cn("rounded-2xl border p-4", loop.available ? "border-hairline/40 bg-panel" : "border-dashed border-hairline/30 bg-panel/50")}>
+    <article className={cn("rounded-lg border p-4", loop.available ? "border-line bg-sheet" : "border-dashed border-line bg-sheet/70")}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-[15px] font-semibold text-ink">{loop.name}</span>
             {loop.available ? (
               loop.enabled ? (
-                <span className="rounded-full border border-accent/25 bg-accent/10 px-2 py-0.5 text-[10.5px] text-accent">On</span>
+                <span className="rounded-full border border-agency/25 bg-agency/10 px-2 py-0.5 text-[10.5px] text-agency">On</span>
               ) : (
                 <span className="rounded-full border border-hairline/50 bg-inset px-2 py-0.5 text-[10.5px] text-ink-secondary">Paused</span>
               )
             ) : (
-              <span className="flex items-center gap-1 rounded-full border border-hairline/50 bg-inset px-2 py-0.5 text-[10.5px] text-ink-secondary">
-                <Sparkles size={10} /> Planned
-              </span>
+              <span className="rounded-full border border-line bg-inset px-2 py-0.5 text-[10.5px] text-ink-muted">Planned</span>
             )}
           </div>
           <div className="mt-1 flex items-center gap-1.5 text-[12px] text-ink-secondary">
@@ -118,7 +115,7 @@ function LoopCard({
               <button
                 onClick={onRun}
                 disabled={busy || !loop.enabled || Boolean(activeRun)}
-                className="flex items-center gap-1.5 rounded-xl bg-accent px-3.5 py-1.5 text-[12.5px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+                className="flex items-center gap-1.5 rounded-lg bg-agency px-3.5 py-1.5 text-[12.5px] font-medium text-white hover:bg-agency-hover disabled:opacity-40"
               >
                 {busy ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
                 Run now
@@ -151,7 +148,7 @@ function LoopCard({
                 title={(active ? "Remove " : "Add ") + name}
                 className={cn(
                   "rounded-lg px-2 py-1 text-[11.5px] transition-colors",
-                  active ? "bg-accent font-medium text-white" : "bg-raised text-ink-secondary hover:text-ink",
+                  active ? "bg-agency font-medium text-white" : "bg-raised text-ink-secondary hover:text-ink",
                   !active && days.length === 1 && day === days[0] && "opacity-40",
                 )}
               >
@@ -165,7 +162,7 @@ function LoopCard({
             onClick={() => onRetune({ time, weekdays: days })}
             disabled={busy}
             title={`Save ${scheduleLabel({ ...loop, schedule: { type: "daily", time, weekdays: days } })}`}
-            className="ml-auto flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[12px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+            className="ml-auto flex items-center gap-1.5 rounded-lg bg-agency px-3 py-1.5 text-[12px] font-medium text-white hover:bg-agency-hover disabled:opacity-40"
           >
             {busy ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
             Save
@@ -263,7 +260,7 @@ export function RoutinesPage() {
   const unseenFailures = state.loopRuns.filter((run) => ["failed", "missed", "interrupted"].includes(run.status) && !run.seenAt);
 
   return (
-    <main className="flex h-full min-w-0 flex-1 flex-col bg-app">
+    <main className="flex h-full min-w-0 flex-1 flex-col bg-paper">
       <header className="shrink-0 px-5 pb-4 pt-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -271,8 +268,8 @@ export function RoutinesPage() {
               <CalendarDays size={21} className="text-accent" />
               <h1 className="pm-screen-title text-ink">Schedule</h1>
             </div>
-            <p className="mt-1 max-w-[52rem] text-[12.5px] text-ink-secondary">
-              Named routines on RealBud's clock. The worker fetches facts headless. Cards land on Desk for you to allow or deny. Nothing sends while nobody is looking.
+            <p className="mt-1 max-w-[52rem] text-[12.5px] text-ink-muted">
+              Named routines on RealBud's clock. Morning money is Desk Recheck. Inbound mail stays Planned until a named inbox exists.
             </p>
           </div>
           {unseenFailures.length > 0 && (
@@ -317,7 +314,7 @@ export function RoutinesPage() {
         <section className="mt-8 space-y-3">
           <h2 className="text-[12px] font-medium uppercase tracking-[0.14em] text-ink-secondary">Runs</h2>
           {state.loopRuns.length === 0 ? (
-            <div className="rounded-2xl border border-hairline/40 bg-panel px-4 py-6 text-[13.5px] text-ink-secondary">
+            <div className="rounded-lg border border-line bg-sheet px-4 py-6 text-[13.5px] text-ink-muted">
               No runs yet. The first check lands here when the clock — or you — press Recheck.
             </div>
           ) : (

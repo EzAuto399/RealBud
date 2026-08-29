@@ -2,7 +2,7 @@
 
 Canonical next work: `docs/NEXT-WAVE.md`.
 
-W1–W5 shipped (first-run + go-live, worker holds, batch persist, safeStorage wrap, last-checked + shared hands clock).
+W1–W5 and the morning brief shipped (six addresses + honest inbox). Do not fake mail.
 
 Do not start inbound-triage, Ask clock proposals (PR C), live CUA, Pocket, or a graduate installer until `docs/PILOT-CONTRACT.md` has a named agency.
 

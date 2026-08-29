@@ -75,6 +75,7 @@ The human task that actually finishes the product is still the visit: fill the e
 - **W3** `Desk.batch` / Allow-all one persist. 194 adds are one revision bump.
 - **W4** Electron wraps `desk.key` with `safeStorage`. `REALBUD_DESK_KEY` does not write a plaintext key file.
 - **W5** You sources show last-checked in the agency timezone. Desk Recheck and Test hands share `~/.realbud/hands-last.json`.
+- **Morning brief** Desk, You and Ask share one this-morning strip: every known address after Recheck, plus an honest **Inbox not connected**. Does not read mail. 86 stays the ceiling until a named Gmail read exists.
 
 ## Next sessions (unblocked)
 

@@ -28,6 +28,7 @@ import {
   type Message,
 } from "@/state/store";
 import type { DeskSnapshot } from "@/lib/desk";
+import { morningBrief } from "@/lib/morning-brief";
 import { EngineSetup } from "./EngineSetup";
 import { MausAvatar } from "./Avatar";
 import { stateForBot } from "@/lib/mascot";
@@ -526,7 +527,7 @@ const MessagesList = memo(function MessagesList({
                 Scoped to your portfolio. Ask what needs you, or put courtesy on Desk for one Allow.
               </div>
               <div className="mt-2 flex max-w-[28rem] flex-wrap justify-center gap-2">
-                {["What needs me?", "Explain this hold", "Draft an owner update", "What changed since yesterday?"].map((starter) => (
+                {["What needs me?", "Explain this hold", "Draft an owner update", "What did Recheck find?"].map((starter) => (
                   <button
                     key={starter}
                     type="button"
@@ -684,7 +685,7 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
   const noDrag = isWin ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
   return (
-    <main className="relative flex h-full min-w-0 flex-1 flex-col bg-app">
+    <main className="relative flex h-full min-w-0 flex-1 flex-col bg-paper">
       {/* Call mode covers the thread while the bot is on the line */}
       <CallOverlay bot={bot} />
       {/* Header */}
@@ -693,9 +694,15 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
         style={drag}
       >
         {productAsk ? (
-          <div className="flex items-center gap-2.5 px-1.5 py-1" style={noDrag}>
-            <h1 className="pm-screen-title text-ink">Ask</h1>
-            {bot.busy && <Loader2 size={14} className="animate-spin text-ink-muted" />}
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5 px-1.5 py-1" style={noDrag}>
+            <div className="flex items-center gap-2.5">
+              <h1 className="pm-screen-title text-ink">Ask</h1>
+              {bot.busy && <Loader2 size={14} className="animate-spin text-ink-muted" />}
+            </div>
+            <p className="text-[12.5px] text-ink-muted">
+              About the book. Cards you allow land on Desk. Inbox is not connected.
+              {state.desk ? ` ${morningBrief(state.desk).headline}` : ""}
+            </p>
           </div>
         ) : (
         <button
@@ -900,7 +907,7 @@ function AskProposeBar() {
             .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
             .finally(() => setBusy(false));
         }}
-        className="rounded-lg bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white disabled:opacity-40"
+        className="rounded-lg bg-agency px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-agency-hover disabled:opacity-40"
       >
         {busy ? "Putting…" : "Put on Desk"}
       </button>

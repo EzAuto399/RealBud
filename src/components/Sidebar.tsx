@@ -3,6 +3,7 @@ import { ArrowDownToLine, Building2, CalendarDays, Check, Loader2, MessageSquare
 import { useStore } from "@/state/store";
 import { InitialsAvatar } from "./Avatar";
 import { cn } from "@/lib/cn";
+import { buildDeskQueue, queueCounts } from "@/lib/desk-queue";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { useUpdaterState } from "@/lib/updater";
 
@@ -79,6 +80,8 @@ export function Sidebar() {
   const macInset = capabilities.windowChrome === "mac-inset";
   const browser = capabilities.host.label === "Browser";
 
+  const needYou = state.desk?.lastRunAt != null ? queueCounts(buildDeskQueue(state.desk))["needs-you"] : 0;
+
   const item = (
     view: typeof state.activeView,
     label: string,
@@ -123,8 +126,12 @@ export function Sidebar() {
       </div>
 
       <nav className="flex flex-1 flex-col gap-0.5 px-3 pt-2">
-        {item("desk", "Desk", <Building2 size={20} className={state.activeView === "desk" ? "text-agency" : "text-ink-muted"} />, () =>
-          dispatch({ type: "showDesk" }),
+        {item(
+          "desk",
+          "Desk",
+          <Building2 size={20} className={state.activeView === "desk" ? "text-agency" : "text-ink-muted"} />,
+          () => dispatch({ type: "showDesk" }),
+          needYou > 0 ? <span className="text-[11px] tabular-nums text-ink-muted">{needYou}</span> : null,
         )}
         {item("ask", "Ask", <MessageSquare size={20} className={state.activeView === "ask" ? "text-agency" : "text-ink-muted"} />, () =>
           dispatch({ type: "showAsk" }),

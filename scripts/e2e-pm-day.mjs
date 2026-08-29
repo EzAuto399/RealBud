@@ -103,6 +103,9 @@ try {
   const hermes = await api("GET", "/api/hermes");
   check("clock wrote the shared worker stamp", typeof hermes.body?.lastTest?.at === "number");
   check("clock stamped the worker source", snap.sources?.some((s) => s.kind === "hermes" && typeof s.lastCheckedAt === "number"));
+  check("Recheck landed every address", Array.isArray(snap.results) && snap.results.length === snap.properties.length, `${snap.results?.length}/${snap.properties?.length}`);
+  check("every known address has a result", (snap.properties ?? []).every((p) => (snap.results ?? []).some((r) => r.propertyId === p.id)));
+  check("no mail source was invented", !(snap.sources ?? []).some((s) => /gmail|inbox|microsoft|imap/i.test(`${s.kind} ${s.label}`)));
   check("status payload is for Advanced, not a Hermes window", hermes.body?.pin?.profile === "property" && typeof hermes.body?.ready === "boolean");
 
   const courtesy = snap.drafts.find((d) => d.kind === "courtesy-rent" && d.status === "pending");

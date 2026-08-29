@@ -100,7 +100,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
               </li>
               <li className="rounded-xl bg-card px-3.5 py-3 text-[13.5px] leading-relaxed text-ink">
                 <span className="font-medium">3. Today is a training book.</span>
-                <span className="text-ink-secondary"> Six sample properties so you can walk the morning before a live roll is connected.</span>
+                <span className="text-ink-secondary"> Six sample ACT addresses. Recheck lands each as checked. Inbox stays disconnected until a named office connects mail.</span>
               </li>
             </ol>
             <button onClick={finish} className="mt-5 w-full rounded-lg bg-accent py-2.5 text-[15px] font-medium text-white">
