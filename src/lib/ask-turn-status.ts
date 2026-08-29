@@ -1,4 +1,5 @@
 import {
+  isCompletedToolConnect,
   isConnectSetupAction,
   isUnsupportedOfficeConnect,
   type AskActionProposal,
@@ -19,7 +20,7 @@ export function followingAskAction(
 export function askUserTurnStatus(
   message: Pick<Message, "requestState" | "requestStatusDetail">,
   followingAction?: AskActionProposal,
-): { label: string; tone: "hold" | "muted" | "working" } {
+): { label: string; tone: "hold" | "muted" | "working" | "agency" } {
   if (message.requestState === "held") {
     return { label: message.requestStatusDetail ?? "Needs your attention", tone: "hold" };
   }
@@ -28,11 +29,13 @@ export function askUserTurnStatus(
   }
   if (followingAction && isConnectSetupAction(followingAction)) {
     if (isUnsupportedOfficeConnect(followingAction)) return { label: "Not a source", tone: "hold" };
+    if (isCompletedToolConnect(followingAction)) return { label: "Connected", tone: "agency" };
     if (followingAction.status === "pending") return { label: "Needs Allow", tone: "muted" };
     return { label: "Card opened", tone: "muted" };
   }
   const detail = message.requestStatusDetail ?? "";
   if (/isn't a named office source/i.test(detail)) return { label: "Not a source", tone: "hold" };
+  if (/accepted this key|is on this device/i.test(detail)) return { label: "Connected", tone: "agency" };
   if (/opened the requested setup|nothing connected/i.test(detail)) return { label: "Card opened", tone: "muted" };
   if (/waiting for your decision/i.test(detail)) return { label: "Needs Allow", tone: "muted" };
   if (/stopped safely/i.test(detail)) return { label: "Stopped safely", tone: "hold" };

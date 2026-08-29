@@ -36,7 +36,9 @@ export function originAllowed(
     if (!LOOPBACK_HOSTS.has(url.hostname.toLowerCase())) return false;
     if (!url.port) return url.protocol === "http:" || url.protocol === "https:";
     const port = Number(url.port);
-    return port === listenPort || port === 5199 || port === 5173 || port === configuredUiPort;
+    // 5199 / 5173 are Vite defaults. 5201 is the isolated QA UI used next
+    // to a separate API port so packaged Electron data never gets touched.
+    return port === listenPort || port === 5199 || port === 5173 || port === 5201 || port === configuredUiPort;
   } catch {
     return false;
   }
@@ -87,6 +89,8 @@ export function needsSession(path: string): boolean {
     path.startsWith("/api/loops") ||
     path.startsWith("/api/loop-runs") ||
     path.startsWith("/api/source-connections") ||
+    path.startsWith("/api/office-sources") ||
+    path.startsWith("/api/ask-attachments") ||
     path.startsWith("/api/pilot-discovery") ||
     path.startsWith("/api/execution-adapters") ||
     path.startsWith("/api/work-routing") ||

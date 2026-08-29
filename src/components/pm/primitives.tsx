@@ -67,7 +67,7 @@ export function StatusLabel({ tone, children, className }: { tone: StatusTone; c
             ? "border-portal/25 bg-portal/10 text-portal"
             : "border-line bg-sheet text-ink-muted";
   return (
-    <span className={cn("inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px]", cls, className)}>
+    <span className={cn("inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[12px]", cls, className)}>
       {children}
     </span>
   );
@@ -245,7 +245,7 @@ export function DecisionBar({
           </button>
         ) : null}
       </div>
-      {note ? <p className="max-w-[27rem] text-[11.5px] leading-relaxed text-ink-muted">{note}</p> : null}
+      {note ? <p className="max-w-[27rem] text-[12px] leading-relaxed text-ink-muted">{note}</p> : null}
     </div>
   );
 }

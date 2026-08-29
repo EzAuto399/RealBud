@@ -329,19 +329,66 @@ describe("Ask action protocol", () => {
       navigation: "connections",
       proposal: { kind: "open-setup", target: "connections", service: "Google Calendar", title: "Connect Google Calendar", status: "allowed" },
     });
-
-    const instagram = stageDirectAskSetupIntent("connecgt me to instagram", context);
-    expect(instagram).toMatchObject({
+    expect(stageDirectAskSetupIntent("connect me to google claendar", context)).toMatchObject({
       matched: true,
       navigation: "connections",
+      proposal: { kind: "open-setup", target: "connections", service: "Google Calendar", title: "Connect Google Calendar", status: "allowed" },
+    });
+
+    expect(stageDirectAskSetupIntent("connect me to instagram", context)).toMatchObject({
+      matched: true,
+      navigation: "connections",
+      proposal: { kind: "open-setup", target: "connections", service: "Instagram", title: "Connect Instagram", status: "allowed" },
+    });
+    expect(stageDirectAskSetupIntent("connect me to slack", context)).toMatchObject({
+      matched: true,
+      navigation: "connections",
+      proposal: { kind: "open-setup", service: "Slack", title: "Connect Slack", status: "allowed" },
+    });
+    expect(stageDirectAskSetupIntent("connect me to notion", context)).toMatchObject({
+      matched: true,
+      navigation: "connections",
+      proposal: { kind: "open-setup", service: "Notion", title: "Connect Notion", status: "allowed" },
+    });
+    expect(stageDirectAskSetupIntent("what can you see inside of notion", context)).toMatchObject({
+      matched: true,
+      navigation: "connections",
+      proposal: { kind: "open-setup", service: "Notion", title: "Connect Notion", status: "allowed" },
+    });
+    expect(stageDirectAskSetupIntent("what can you see inside of notion", {
+      ...context,
+      linkedTools: [{ slug: "notion", label: "Notion", connected: true, account: "Northside workspace" }],
+    })).toMatchObject({
+      matched: true,
       proposal: {
         kind: "open-setup",
-        target: "connections",
-        service: "Instagram",
-        title: "Instagram isn't a named office source",
+        service: "Notion",
+        title: "Notion on this device",
+        detail: "Northside workspace is on this device. Ask still cannot send.",
         status: "allowed",
       },
     });
+    expect(stageDirectAskSetupIntent("what can you see inside of notion", {
+      ...context,
+      linkedTools: [{ slug: "notion", label: "Notion", connected: true, account: "Northside workspace" }],
+    })).not.toHaveProperty("navigation");
+    expect(stageDirectAskSetupIntent("connect me to notion", {
+      ...context,
+      linkedTools: [{ slug: "notion", label: "Notion", connected: true, account: "Northside workspace" }],
+    })).toMatchObject({
+      matched: true,
+      proposal: { title: "Notion on this device", status: "allowed" },
+    });
+    const workerInstagram = stageWorkerAskAction(action({
+      kind: "open-setup",
+      target: "connections",
+      service: "Instagram",
+    }), context);
+    expect(workerInstagram).toMatchObject({
+      matched: true,
+      proposal: { kind: "open-setup", service: "Instagram", title: "Connect Instagram" },
+    });
+    expect("error" in workerInstagram).toBe(false);
 
     const gmail = stageDirectAskSetupIntent("connect me to gmail", context);
     expect(gmail).toMatchObject({

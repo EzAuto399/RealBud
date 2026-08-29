@@ -2,7 +2,7 @@
 // the clock pressed Recheck": RealBud owns WHEN, the admitted source route
 // and the cards. There is no bot picker, free-text prompt or second clock.
 // Nothing sends while nobody is looking.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   CalendarDays,
   CheckCircle2,
@@ -41,6 +41,12 @@ function scheduleLabel(loop: Loop): string {
         : days.map((day) => DAY_NAMES[day]).join(", ");
   const time = fmtTimeOfDay(new Date(2000, 0, 1, hour, minute).getTime());
   return `${dayLabel} at ${time}`;
+}
+
+/** Day chips are local until Save. Never show the last saved Next as if the unsaved clock already applied. */
+export function routineNextCaption(dirty: boolean, nextLabel: string | null): string | null {
+  if (dirty) return "Save to set the next run";
+  return nextLabel ? `Next: ${nextLabel}` : null;
 }
 
 function statusChip(status: LoopRunStatus) {
@@ -86,7 +92,7 @@ function RoutineCalendar({ loops, onEdit }: { loops: Loop[]; onEdit: (loopId: Lo
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-hairline/40 px-4 py-3">
         <div>
           <h3 aria-live="polite" className="text-[15px] font-semibold text-ink">{calendar.label}</h3>
-          <p className="mt-0.5 text-[11.5px] text-ink-secondary">
+          <p className="mt-0.5 text-[12px] text-ink-secondary">
             Select a routine on the calendar to edit its recurring clock below.
           </p>
         </div>
@@ -236,7 +242,15 @@ function LoopCard({
 }) {
   const [time, setTime] = useState(loop.schedule.time);
   const [days, setDays] = useState<number[]>(loop.schedule.weekdays);
+  useEffect(() => {
+    setTime(loop.schedule.time);
+    setDays(loop.schedule.weekdays);
+  }, [loop.id, loop.revision, loop.schedule.time, loop.schedule.weekdays]);
   const dirty = time !== loop.schedule.time || days.join(",") !== loop.schedule.weekdays.join(",");
+  const nextCaption = routineNextCaption(
+    dirty,
+    loop.available && loop.enabled && loop.nextRunAt ? whenLabel(loop.nextRunAt) : null,
+  );
   const dependencyAttention = routineNeedsAttention(dependencies);
   const toggleDay = (day: number) =>
     setDays((prev) => (prev.includes(day) ? (prev.length > 1 ? prev.filter((d) => d !== day) : prev) : [...prev, day].sort((a, b) => a - b)));
@@ -254,12 +268,12 @@ function LoopCard({
             <span className="text-[15px] font-semibold text-ink">{loop.name}</span>
             {loop.available ? (
               loop.enabled ? (
-                <span className="rounded-full border border-accent/25 bg-accent/10 px-2 py-0.5 text-[10.5px] text-accent">On</span>
+                <span className="rounded-full border border-accent/25 bg-accent/10 px-2 py-0.5 text-[12px] text-accent">On</span>
               ) : (
-                <span className="rounded-full border border-hairline/50 bg-inset px-2 py-0.5 text-[10.5px] text-ink-secondary">Paused</span>
+                <span className="rounded-full border border-hairline/50 bg-inset px-2 py-0.5 text-[12px] text-ink-secondary">Paused</span>
               )
             ) : (
-              <span className="flex items-center gap-1 rounded-full border border-hairline/50 bg-inset px-2 py-0.5 text-[10.5px] text-ink-secondary">
+              <span className="flex items-center gap-1 rounded-full border border-hairline/50 bg-inset px-2 py-0.5 text-[12px] text-ink-secondary">
                 <Sparkles size={10} /> Planned
               </span>
             )}
@@ -309,12 +323,12 @@ function LoopCard({
       {dependencies.length > 0 ? (
         <div className="mt-3 border-y border-hairline/35 py-2.5">
           <div className="flex flex-wrap items-center gap-1.5" aria-label={`${loop.name} connections and readiness`}>
-            <span className="mr-1 text-[11px] font-medium uppercase tracking-[0.1em] text-ink-secondary">Uses</span>
+            <span className="mr-1 text-[12px] font-medium uppercase tracking-[0.1em] text-ink-secondary">Uses</span>
             {dependencies.map((dependency) => (
               <span
                 key={dependency.id}
                 title={`${dependency.purpose} ${dependency.detail}`}
-                className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px]", dependencyStyle(dependency.state))}
+                className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[12px]", dependencyStyle(dependency.state))}
               >
                 <DependencyIcon state={dependency.state} />
                 {dependency.label} · {dependency.status}
@@ -322,7 +336,7 @@ function LoopCard({
             ))}
           </div>
           {dependencyAttention ? (
-            <p className="mt-1.5 text-[11.5px] leading-relaxed text-ink-muted">
+            <p className="mt-1.5 text-[12px] leading-relaxed text-ink-muted">
               {dependencyAttention.detail}
             </p>
           ) : null}
@@ -332,7 +346,7 @@ function LoopCard({
       {/* When — the PM owns the clock. A planned loop can be timed now so it
           starts the moment it is built, but it cannot run or turn on yet. */}
       <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-hairline/30 bg-inset/40 px-3 py-2.5">
-        <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-ink-secondary">When</span>
+        <span className="text-[12px] font-medium uppercase tracking-[0.12em] text-ink-secondary">When</span>
         <input
           type="time"
           value={time}
@@ -354,7 +368,7 @@ function LoopCard({
                 aria-label={`${onlySelectedDay ? "Keep" : active ? "Remove" : "Add"} ${name} for ${loop.name}`}
                 title={onlySelectedDay ? "Keep at least one day" : (active ? "Remove " : "Add ") + name}
                 className={cn(
-                  "rounded-lg px-2 py-1 text-[11.5px] transition-colors",
+                  "rounded-lg px-2 py-1 text-[12px] transition-colors",
                   active ? "bg-accent font-medium text-white" : "bg-raised text-ink-secondary hover:text-ink",
                   onlySelectedDay && "cursor-not-allowed opacity-55",
                 )}
@@ -377,11 +391,11 @@ function LoopCard({
         )}
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-ink-secondary">
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-ink-secondary">
         {loop.timezonePaused && (
           <span className="text-warning">Paused — agency timezone does not match this computer</span>
         )}
-        {loop.available && loop.enabled && loop.nextRunAt && <span>Next: {whenLabel(loop.nextRunAt)}</span>}
+        {nextCaption ? <span>{nextCaption}</span> : null}
         {lastRun && (
           <span className="flex items-center gap-1.5">
             Last: {whenLabel(lastRun.scheduledFor)} ·{" "}
@@ -447,16 +461,16 @@ function RunReceipt({
           <ChevronDown size={14} className={cn("shrink-0 transition-transform", expanded && "rotate-180")} />
           <span className={cn("flex shrink-0 items-center gap-1.5 text-[12px]", chip.cls)}>{chip.icon}{chip.label}</span>
           <span className="truncate text-[13px] font-medium text-ink">{run.loopName}</span>
-          {run.manual ? <span className="rounded bg-inset px-1.5 py-0.5 text-[10px] text-ink-secondary">manual</span> : null}
-          <span className="shrink-0 text-[11.5px] text-ink-secondary">{whenLabel(run.scheduledFor)}</span>
+          {run.manual ? <span className="rounded bg-inset px-1.5 py-0.5 text-[12px] text-ink-secondary">manual</span> : null}
+          <span className="shrink-0 text-[12px] text-ink-secondary">{whenLabel(run.scheduledFor)}</span>
           {unseen ? <span className="size-2 shrink-0 rounded-full bg-danger" aria-label="Unseen failure" /> : null}
         </button>
         {attention && ["failed", "missed", "interrupted"].includes(run.status) ? (
-          <button type="button" onClick={onReview} className="pm-control pm-tactile rounded border border-hold/40 bg-hold/10 px-2.5 text-[11.5px] font-medium text-hold hover:bg-hold/15">
+          <button type="button" onClick={onReview} className="pm-control pm-tactile rounded border border-hold/40 bg-hold/10 px-2.5 text-[12px] font-medium text-hold hover:bg-hold/15">
             {reviewLabel}
           </button>
         ) : null}
-        <button type="button" onClick={onOpenDesk} className="pm-control pm-tactile rounded border border-line bg-sheet px-2.5 text-[11.5px] font-medium text-ink hover:border-agency/55">
+        <button type="button" onClick={onOpenDesk} className="pm-control pm-tactile rounded border border-line bg-sheet px-2.5 text-[12px] font-medium text-ink hover:border-agency/55">
           {produced ? `${produced} on Desk` : "Open Desk"}
         </button>
       </div>
@@ -497,6 +511,7 @@ export function RoutinesPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+  const [monthPreviewOpen, setMonthPreviewOpen] = useState(false);
   const routineRecoveryActive = routineMutationsLocked({
     deskRecovery: Boolean(state.desk?.recovery?.active),
     localIssues: state.config?.localRecovery?.issues,
@@ -607,7 +622,7 @@ export function RoutinesPage() {
               <h1 className="pm-screen-title text-ink">Schedule</h1>
             </div>
             <p className="mt-1 max-w-[52rem] text-[12.5px] text-ink-muted">
-              After setup, Morning money and Friday letters replace those desk checks. Exceptions land on Desk. Nothing sends.
+              After setup, Morning money and Friday letters replace those desk checks. Exceptions land on Desk.
             </p>
           </div>
           {unseenFailures.length > 0 && (
@@ -663,16 +678,6 @@ export function RoutinesPage() {
           ))}
         </section>
 
-        <details className="mt-8 border border-line bg-sheet px-3.5 py-3">
-          <summary className="cursor-pointer text-[13px] font-semibold text-ink">Month preview</summary>
-          <p className="mt-1 text-[12px] text-ink-muted">
-            Dates are a preview. The routine rows above stay authoritative.
-          </p>
-          <div className="mt-3">
-            <RoutineCalendar loops={state.loops} onEdit={focusRoutine} />
-          </div>
-        </details>
-
         <section className="mt-8 space-y-3">
           <h2 className="text-[12px] font-semibold text-ink">Runs</h2>
           {state.loopRuns.length === 0 ? (
@@ -716,9 +721,24 @@ export function RoutinesPage() {
               })}
             </div>
           )}
-          <p className="text-[11.5px] text-ink-secondary/70">
+          <p className="text-[12px] text-ink-secondary/70">
             The clock is RealBud's. A routine presses Desk Recheck — it never sends while nobody is looking.
           </p>
+          <div className="pt-2">
+            <button
+              type="button"
+              aria-expanded={monthPreviewOpen}
+              onClick={() => setMonthPreviewOpen((open) => !open)}
+              className="text-[12px] font-medium text-ink-muted hover:text-ink hover:underline"
+            >
+              {monthPreviewOpen ? "Hide month" : "Preview month"}
+            </button>
+            {monthPreviewOpen ? (
+              <div className="mt-3">
+                <RoutineCalendar loops={state.loops} onEdit={focusRoutine} />
+              </div>
+            ) : null}
+          </div>
         </section>
       </div>
     </main>

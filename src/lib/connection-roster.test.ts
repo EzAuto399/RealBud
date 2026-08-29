@@ -33,6 +33,13 @@ describe("connection roster", () => {
       tone: "ready",
     });
     expect(youConnectionsStatus(rows)).toBe("2 of 3 common");
+    expect(youConnectionsStatus(rows, { linkedReady: 1 })).toBe("2 of 3 common · 1 linked");
     expect(JSON.stringify(rows)).not.toMatch(/composio|propertyme/i);
+  });
+
+  it("names a linked tool on a practice book without calling the book live", () => {
+    const rows = buildConnectionRoster({ deskMode: "demo" });
+    expect(youConnectionsStatus(rows, { linkedReady: 1 })).toBe("1 linked tool");
+    expect(youConnectionsStatus(rows, { linkedReady: 2 })).toBe("2 linked tools");
   });
 });

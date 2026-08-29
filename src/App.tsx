@@ -13,11 +13,9 @@ import { Onboarding } from "@/components/Onboarding";
 import { SetupJourney } from "@/components/SetupJourney";
 import { ProactiveReminderBridge } from "@/components/ProactiveReminderBridge";
 import {
-  nextWorkerSetupOperation,
   onboardingComplete,
   setSetupJourneyPending,
   setupJourneyPending,
-  workerVerified,
 } from "@/lib/onboarding";
 
 function Shell() {
@@ -27,11 +25,6 @@ function Shell() {
     () => onboardingComplete() && setupJourneyPending(),
   );
   const bud = state.bots.find((b) => b.id === "bud" || b.name === "Bud") ?? state.bots[0];
-  const workerOperation = nextWorkerSetupOperation({
-    worker: state.hermes,
-    workerIsVerified: workerVerified(state.hermes),
-  });
-  const setupRequired = Boolean(state.hermes) && workerOperation !== "done";
   const openSetupJourney = () => {
     setSetupJourneyPending(true);
     setSetupJourneyOpen(true);
@@ -48,16 +41,12 @@ function Shell() {
     );
   }
 
-  if (setupJourneyOpen || setupRequired) {
+  if (setupJourneyOpen) {
     return (
       <div className="h-full bg-paper">
         {bud ? <ProactiveReminderBridge botId={bud.id} /> : null}
         <SetupJourney
           onClose={() => {
-            if (nextWorkerSetupOperation({
-              worker: state.hermes,
-              workerIsVerified: workerVerified(state.hermes),
-            }) !== "done") return;
             setSetupJourneyPending(false);
             setSetupJourneyOpen(false);
           }}

@@ -1,5 +1,5 @@
 import type { LoopId, NotifyChannel, RentSource, WorkRoutingPlan } from "./contracts.ts";
-import { isKnownOfficeService, prettyOfficeName } from "./ask-connections.ts";
+import { prettyOfficeName } from "./ask-connections.ts";
 
 export const WORKER_ASK_ACTION_PROTOCOL = "realbud.propose-action.v1" as const;
 
@@ -207,11 +207,16 @@ export type AskConnectRequest = {
 
 /** Navigation-only setup the PM already asked for. Fresh allowed cards open
  * the Ask connect sheet; older receipts stay in the transcript. */
+export function isCompletedToolConnect(action: AskActionProposal | undefined): boolean {
+  return action?.kind === "open-setup" && /(?: connected| on this device)$/i.test(action.title ?? "");
+}
+
 export function honoredSetupRequest(
   action: AskActionProposal | undefined,
   now = Date.now(),
 ): AskConnectRequest | null {
   if (!action || action.status !== "allowed") return null;
+  if (isCompletedToolConnect(action)) return null;
   const at = action.decidedAt ?? action.createdAt;
   if (!Number.isFinite(at) || now - at > HONORED_SETUP_WINDOW_MS) return null;
   if (action.kind === "open-setup") {
@@ -245,23 +250,27 @@ export function isSpentConnectReceipt(action: AskActionProposal | undefined): bo
   return isConnectSetupAction(action) && action.status !== "pending";
 }
 
-/** A spoken social or unnamed tool. Opening the refusal card is not a connection. */
+/** Historic refusal receipts only. New named-app cards are ordinary connects. */
 export function isUnsupportedOfficeConnect(action: AskActionProposal | undefined): boolean {
   if (!isConnectSetupAction(action)) return false;
-  const service = action.kind === "open-setup"
-    ? action.service
-    : action.options.find((option) => option.id === action.selectedId)?.service;
-  return Boolean(service?.trim() && !isKnownOfficeService(service));
+  return /isn't a named office source/i.test(action.title ?? "");
 }
 
 export function askConnectReceiptCopy(action: AskActionProposal): { status: string; open: string } {
   if (action.status === "denied") return { status: "Not run", open: "Open card" };
   if (action.status === "stale") return { status: "Stopped safely", open: "Open card" };
   if (isUnsupportedOfficeConnect(action)) return { status: "Not a source", open: "Pick a source" };
+  if (isCompletedToolConnect(action)) return { status: "Connected", open: "Open card" };
   return { status: "Card ready", open: "Open card" };
 }
 
 export function askSetupUserTurnCopy(action: AskActionProposal): { label: string; detail: string } {
+  if (isCompletedToolConnect(action)) {
+    return {
+      label: "Connected",
+      detail: action.detail || "This key is on this device. Ask still cannot send.",
+    };
+  }
   if (isUnsupportedOfficeConnect(action)) {
     const service = action.kind === "open-setup"
       ? action.service

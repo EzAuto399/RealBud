@@ -153,6 +153,32 @@ describe("Ask approval experience", () => {
     expect(html).not.toContain("Open You");
   });
 
+  it("pulses a completed Notion connect on the RealBud receipt, not as a mascot reaction", () => {
+    const html = renderToStaticMarkup(
+      <SpentConnectReceipt
+        action={{
+          schemaVersion: 1,
+          id: "setup-notion",
+          status: "allowed",
+          title: "Notion connected",
+          detail: "This key is on this device. Ask still cannot send.",
+          createdAt: 1,
+          decidedAt: 2,
+          kind: "open-setup",
+          target: "connections",
+          service: "Notion",
+        }}
+        onOpen={() => {}}
+      />,
+    );
+    expect(html).toContain("Notion connected");
+    expect(html).toContain("Connected");
+    expect(html).toContain("This key is on this device. Ask still cannot send.");
+    expect(html).toContain("copy-pulse");
+    expect(html).toContain("border-agency/40");
+    expect(html).not.toContain("Card ready");
+  });
+
   it("does not call a refused social name Ready or Completed", () => {
     const html = renderToStaticMarkup(
       <SpentConnectReceipt

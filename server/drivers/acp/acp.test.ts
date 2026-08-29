@@ -22,6 +22,7 @@ import { HermesAgentDriver } from "./hermes.ts";
 import { HERMES_PIN } from "../../hermes-pin.ts";
 import { seedVault } from "../../vault.ts";
 import { WORKER_CLI, WORKER_HOME, WORKER_RUNTIME_DIR } from "../../config.ts";
+import { modelCredentialEnvironment } from "../../hermes-bridge.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 // The scripted fake CLI inherits process.env; under `--coverage` that would
@@ -172,7 +173,9 @@ describe("ACP turns (fake CLI)", () => {
     expect(seen.env.HOME).toBe(WORKER_RUNTIME_DIR);
     expect(seen.env.HERMES_HOME).toBe(WORKER_HOME);
     expect(seen.env.PATH.startsWith(dirname(WORKER_CLI))).toBe(true);
-    expect(seen.env.DEEPSEEK_API_KEY).toBeUndefined();
+    expect(seen.env.DEEPSEEK_API_KEY === "personal-shell-key-must-not-cross").toBe(false);
+    const profileKey = modelCredentialEnvironment(WORKER_HOME).DEEPSEEK_API_KEY;
+    expect(seen.env.DEEPSEEK_API_KEY === undefined || seen.env.DEEPSEEK_API_KEY === profileKey).toBe(true);
   });
 
   it("binds a deny-all Hermes task to a fresh profile inside its selected workspace", async () => {

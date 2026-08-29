@@ -37,6 +37,7 @@
     "test:bank-browser": "node --experimental-strip-types scripts/e2e-bank-browser.mjs",
     "test:bank-cua": "node scripts/e2e-bank-cua.mjs",
     "test:cua-bounded-policy": "node scripts/e2e-cua-bounded-policy.mjs",
+    "test:day-in-life": "node --experimental-strip-types scripts/e2e-day-in-life.mjs",
     "test:cua-container": "node scripts/smoke-cua-container.mjs",
     "check:electron": "node --check electron/main.mjs && node --check electron/terminal-launch.mjs && node --check electron/preload.cjs && node --check electron/capabilities.cjs && node --check electron/routine-reminders.cjs && node --check electron/secure-storage.cjs && node --check electron/packaged-environment.cjs && node --check electron/cua-connection.cjs && node --check electron/cua-policy.cjs && node --check electron/cua-runtime.cjs && node --check electron/cua.mjs && node --check electron/speech.mjs",
     "preview": "vite preview",

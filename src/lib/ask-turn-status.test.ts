@@ -29,11 +29,22 @@ describe("Ask user-turn status", () => {
       requestStatusDetail: "Opened the requested setup in Ask. Nothing connected automatically.",
     }, {
       ...instagram,
-      service: "Gmail",
-      title: "Connect Gmail",
+      service: "Instagram",
+      title: "Connect Instagram",
     })).toEqual({
       label: "Card opened",
       tone: "muted",
+    });
+    expect(askUserTurnStatus({
+      requestState: "settled",
+      requestStatusDetail: "Notion accepted this key. It is on this device. Ask still cannot send.",
+    }, {
+      ...instagram,
+      service: "Notion",
+      title: "Notion connected",
+    })).toEqual({
+      label: "Connected",
+      tone: "agency",
     });
     expect(askUserTurnStatus({
       requestState: "settled",

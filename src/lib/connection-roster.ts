@@ -95,12 +95,22 @@ export function connectionRosterSummary(rows: readonly ConnectionRosterRow[]): {
   };
 }
 
-export function youConnectionsStatus(rows: readonly ConnectionRosterRow[]): string {
+export function youConnectionsStatus(
+  rows: readonly ConnectionRosterRow[],
+  extras?: { linkedReady?: number },
+): string {
+  const linkedReady = extras?.linkedReady ?? 0;
   const common = rows.filter((row) => row.common);
   const connected = common.filter((row) => row.tone === "ready").length;
-  if (connected === 0) {
+  if (connected === 0 && linkedReady === 0) {
     const book = common.find((row) => row.id === "property-book");
     return book?.status.startsWith("Practice") ? "Practice book" : "None connected";
+  }
+  if (connected === 0) {
+    return linkedReady === 1 ? "1 linked tool" : `${linkedReady} linked tools`;
+  }
+  if (linkedReady > 0) {
+    return `${connected} of ${common.length} common · ${linkedReady} linked`;
   }
   return `${connected} of ${common.length} common`;
 }

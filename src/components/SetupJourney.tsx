@@ -63,18 +63,13 @@ export function SetupJourney({ onClose }: { onClose: () => void }) {
     portfolioReady,
   });
 
-  const workerReady = workerOperation === "done";
   const dismiss = useCallback(() => {
-    if (!recoveryActive && nextWorkerSetupOperation({
-      worker: state.hermes,
-      workerIsVerified: workerVerified(state.hermes),
-    }) !== "done") return;
     setSetupJourneyPending(false);
     withViewTransition(() => {
       dispatch({ type: "showDesk" });
       onClose();
     });
-  }, [dispatch, onClose, recoveryActive, state.hermes]);
+  }, [dispatch, onClose]);
 
   const openPortfolio = useCallback(() => {
     setSetupJourneyPending(false);
@@ -126,23 +121,13 @@ export function SetupJourney({ onClose }: { onClose: () => void }) {
             </span>
             <span className="text-[15px] font-semibold text-ink">RealBud</span>
           </div>
-          {recoveryActive ? (
-            <button
-              type="button"
-              onClick={dismiss}
-              className="pm-control pm-tactile rounded px-3 text-[12.5px] font-medium text-ink-secondary hover:bg-raised hover:text-ink"
-            >
-              Open Desk read-only
-            </button>
-          ) : workerReady && (stage.kind === "portfolio" || stage.complete) ? (
-            <button
-              type="button"
-              onClick={openDesk}
-              className="pm-control pm-tactile rounded px-3 text-[12.5px] font-medium text-ink-secondary hover:bg-raised hover:text-ink"
-            >
-              Continue to Desk
-            </button>
-          ) : null}
+          <button
+            type="button"
+            onClick={recoveryActive ? dismiss : openDesk}
+            className="pm-control pm-tactile rounded px-3 text-[12.5px] font-medium text-ink-secondary hover:bg-raised hover:text-ink"
+          >
+            {recoveryActive ? "Open Desk read-only" : "Open Desk"}
+          </button>
         </div>
 
         <div className="animate-pop-in flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line bg-sheet shadow-[0_18px_60px_rgb(37_35_31/0.10)]">

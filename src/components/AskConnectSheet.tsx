@@ -2,9 +2,9 @@ import { useEffect, useRef } from "react";
 import { BellRing, Cable, ChevronLeft, CircleAlert, Mail, X } from "lucide-react";
 
 import type { AskConnectRequest } from "@shared/ask-actions";
-import { ASK_CONNECTION_OPTIONS, askConnectionOption, resolveAskOfficeTool } from "@shared/ask-connections";
+import { ASK_CONNECTION_OPTIONS, askConnectionOption, resolveAskOfficeTool, resolveConnectableTool } from "@shared/ask-connections";
 import { cn } from "@/lib/cn";
-import { askConnectBookSubtitle, askConnectHeading, askConnectMailSubtitle, askConnectPanel, suggestedOfficeName } from "@/lib/ask-connect";
+import { askConnectBookSubtitle, askConnectHeading, askConnectMailSubtitle, askConnectPanel, isAskServiceLinked, suggestedOfficeName } from "@/lib/ask-connect";
 import { workerSetupStep, workerVerified } from "@/lib/onboarding";
 import { useStore } from "@/state/store";
 import { AskConnectionPicker } from "./AskConnectionPicker";
@@ -180,11 +180,13 @@ export function AskConnectSheet({
   const dialogRef = useRef<HTMLDivElement>(null);
   const { state } = useStore();
   const panel = askConnectPanel(request);
-  const heading = askConnectHeading(request);
+  const heading = askConnectHeading(request, isAskServiceLinked(request.service, state.config?.linkedTools ?? []));
+  const connectTool = resolveConnectableTool(request.service ?? "") ?? resolveAskOfficeTool(request.service ?? "");
   const subtitle = panel === "mail"
     ? askConnectMailSubtitle(
       Boolean(state.config?.composio.configured),
-      Boolean(resolveAskOfficeTool(request.service ?? "")?.composioSlug),
+      Boolean(connectTool?.composioSlug),
+      connectTool?.kind,
     )
     : panel === "book"
       ? askConnectBookSubtitle()
@@ -197,7 +199,7 @@ export function AskConnectSheet({
             : panel === "worker"
               ? "Private worker and model. Keys stay on this device."
               : panel === "composio"
-                ? "Sign in, then paste the Connect key. Not a marketplace."
+                ? "Login, or paste the Connect key. Not a marketplace."
                 : panel === "unsupported"
                   ? "That name is not a RealBud source. Nothing connected."
                   : "Keys stay on this device. Nothing connects automatically.";
@@ -237,7 +239,7 @@ export function AskConnectSheet({
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
       <div
-        className="absolute inset-0 bg-ink/25"
+        className="ask-connect-veil absolute inset-0 bg-ink/25"
         role="presentation"
         onMouseDown={onClose}
       />
@@ -248,7 +250,7 @@ export function AskConnectSheet({
         aria-labelledby="ask-connect-title"
         aria-describedby="ask-connect-description"
         tabIndex={-1}
-        className="relative z-[1] flex max-h-[min(44rem,calc(100vh-2rem))] w-full max-w-[36rem] flex-col overflow-hidden rounded-lg border border-line bg-sheet shadow-[0_18px_60px_rgb(37_35_31/0.16)] outline-none"
+        className="animate-pop-in relative z-[1] flex max-h-[min(44rem,calc(100vh-2rem))] w-full max-w-[36rem] flex-col overflow-hidden rounded-lg border border-line bg-sheet shadow-[0_18px_60px_rgb(37_35_31/0.16)] outline-none"
       >
         <header className="flex shrink-0 items-start gap-3 border-b border-line px-4 py-3.5">
           <span className={cn(
@@ -299,7 +301,12 @@ export function AskConnectSheet({
           <button
             type="button"
             onClick={onClose}
-            className="pm-control pm-tactile min-h-10 rounded bg-agency px-3.5 text-[13px] font-semibold text-white hover:bg-agency-hover"
+            className={cn(
+              "pm-control pm-tactile min-h-10 rounded px-3.5 text-[13px] font-semibold",
+              panel === "unsupported"
+                ? "bg-agency text-white hover:bg-agency-hover"
+                : "border border-line bg-paper text-ink hover:border-agency/55",
+            )}
           >
             {panel === "unsupported" ? "Close" : "Done"}
           </button>

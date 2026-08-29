@@ -14,6 +14,7 @@ import type { SourceConnection } from "@/lib/source-connections";
 import { useStore } from "@/state/store";
 import { ComputerUseConnectionCard } from "./ComputerUseConnectionCard";
 import { ComposioAccountCard } from "./ComposioAccountCard";
+import { LinkedToolsPanel } from "./LinkedToolsPanel";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { ExecutionFoundationsPanel } from "./ExecutionFoundationsPanel";
 import { PocketConnectionCard } from "./PocketConnectionCard";
@@ -93,6 +94,7 @@ export function ConnectionsHub({
   );
   const visibleRoster = roster.filter((row) => visible.has(row.id));
   const summary = connectionRosterSummary(visibleRoster);
+  const linkedReady = (state.config?.linkedTools ?? []).filter((tool) => tool.connected).length;
   const clear = () => {
     setQuery("");
     setCategory("common");
@@ -105,11 +107,11 @@ export function ConnectionsHub({
           <div>
             <h2 className="text-[15px] font-semibold text-ink">Office connections</h2>
             <p className="mt-0.5 max-w-[48rem] text-[12.5px] leading-relaxed text-ink-muted">
-              Tell Ask the PMS, inbox or portal this office already uses, or name it here. Connected means RealBud can read that source. Keys stay in You.
+              Tell Ask the PMS, inbox, calendar or named app this office already uses. Paste an API key on the card — it stays on this device.
             </p>
           </div>
           <span className="text-[12px] tabular-nums text-ink-muted">
-            {summary.connected} connected · {summary.notYet} not yet
+            {summary.connected + linkedReady} connected · {summary.notYet} not yet
             {summary.attention ? ` · ${summary.attention} need you` : ""}
           </span>
         </div>
@@ -205,6 +207,7 @@ export function ConnectionsHub({
       ) : (
         <>
           {showComposio ? <ComposioAccountCard /> : null}
+          {category === "all" || category === "common" || query.trim() ? <LinkedToolsPanel query={query} /> : null}
           {sourceIds.length ? (
             <section aria-labelledby="source-capabilities-heading" className="space-y-2">
               <div className="flex items-baseline justify-between gap-3 px-1">

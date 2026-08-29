@@ -131,9 +131,15 @@ try {
 
   // ── Schedule: named loops ──
   const loops = (await api("GET", "/api/loops")).body;
-  check("three named loops, only morning-arrears available", loops?.loops?.map((l) => l.id).join(",") === "morning-arrears,owner-letter,inbound-triage" && loops.loops[0].available === true && loops.loops[1].available === false);
-  const plannedRun = await api("POST", "/api/loops/owner-letter/run", {});
-  check("planned loops refuse to run", plannedRun.status === 409);
+  check(
+    "three named loops, inbound still declared",
+    loops?.loops?.map((l) => l.id).join(",") === "morning-arrears,owner-letter,inbound-triage"
+      && loops.loops[0].available === true
+      && loops.loops[1].available === true
+      && loops.loops[2].available === false,
+  );
+  const plannedRun = await api("POST", "/api/loops/inbound-triage/run", {});
+  check("declared inbound loop refuses to run", plannedRun.status === 409);
 
   const ran = await api("POST", "/api/loops/morning-arrears/run", {});
   check("morning-arrears run accepted", ran.status === 201 && ran.body?.run?.loopId === "morning-arrears");

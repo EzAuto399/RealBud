@@ -17,6 +17,7 @@ describe("focused first-run setup journey", () => {
     expect(html).toContain("1 of 3");
     expect(html).toContain("Checking this computer");
     expect(html).toContain("Nothing is sent or paid during setup");
+    expect(html).toContain("Open Desk");
     expect(html).not.toContain("Use practice desk");
     expect(html).not.toContain("Approved capabilities");
     expect(html).not.toContain("Technical details and repair");

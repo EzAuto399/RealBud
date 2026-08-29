@@ -381,6 +381,10 @@ function configSecretStore(opts?: ConfigIoOptions): SecretStore {
   });
 }
 
+export function appSecretStore(opts?: ConfigIoOptions): SecretStore {
+  return configSecretStore(opts);
+}
+
 function commitConfigPair(
   disk: Record<string, unknown>,
   beforeConfigRaw: string | null,

@@ -4,6 +4,7 @@ import {
   PASTE_CHARS,
   PASTE_LINES,
   attachmentsFromDroppedFiles,
+  composerFileKind,
   byteLength,
   composeMessage,
   fileAttachment,
@@ -80,7 +81,26 @@ describe("composer paste attachments", () => {
       path: "/tmp/on-disk.md",
     });
     expect(result.attachments[1]).toMatchObject({ kind: "paste", text: "browser" });
-    expect(result.rejectedNames).toEqual(["image.png"]);
+    expect(result.browserFiles.map((file) => file.name)).toEqual(["image.png"]);
+    expect(result.rejectedNames).toEqual([]);
+  });
+
+  it("rejects a type RealBud will not review", async () => {
+    const result = await attachmentsFromDroppedFiles([{
+      name: "reel.mp4",
+      size: 20,
+      type: "video/mp4",
+      text: async () => "",
+    }], () => "");
+    expect(result.attachments).toEqual([]);
+    expect(result.browserFiles).toEqual([]);
+    expect(result.rejectedNames).toEqual(["reel.mp4"]);
+  });
+
+  it("names office files for the composer receipt", () => {
+    expect(composerFileKind("arrears.pdf")).toBe("PDF");
+    expect(composerFileKind("leak.png")).toBe("Image");
+    expect(composerFileKind("rent-roll.csv")).toBe("Spreadsheet");
   });
 
   it("rejects malformed persisted attachments", () => {

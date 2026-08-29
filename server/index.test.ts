@@ -74,6 +74,7 @@ beforeAll(async () => {
       REALBUD_BANK_ALLOWED_ORIGIN: "http://127.0.0.1:54321",
       REALBUD_APP_VERSION: "0.1.17",
       REALBUD_BUILD_ID: "http-test-build",
+      REALBUD_TOOL_VERIFY: "0",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -272,6 +273,44 @@ describe("harness HTTP API", () => {
     ]);
     expect(mail.methods.every((method: { state: string }) => method.state === "pilot-gated")).toBe(true);
     expect((await api("GET", "/api/connectors")).status).toBe(403);
+    expect((await api("POST", "/api/connectors/gmail/authorize")).status).toBe(403);
+    const office = await api("GET", "/api/office-sources?services=gmail");
+    expect(office.status).toBe(200);
+    expect(office.body.configured).toBe(false);
+    expect((await api("POST", "/api/office-sources/slack/authorize")).status).toBe(409);
+    expect((await api("POST", "/api/office-sources/gmail/authorize")).status).toBe(409);
+
+    const unauth = await fetch(`${BASE}/api/ask-attachments`, {
+      method: "POST",
+      headers: { "x-realbud-filename": "note.pdf", "content-type": "application/octet-stream" },
+      body: "%PDF-1.4",
+    });
+    expect(unauth.status).toBe(401);
+    const refused = await fetch(`${BASE}/api/ask-attachments`, {
+      method: "POST",
+      headers: {
+        "x-realbud-session": session,
+        "x-realbud-filename": "reel.mp4",
+        "content-type": "application/octet-stream",
+      },
+      body: "nope",
+    });
+    expect(refused.status).toBe(400);
+    expect((await refused.json()).error).toMatch(/PDF, image, spreadsheet or text export/i);
+    const staged = await fetch(`${BASE}/api/ask-attachments`, {
+      method: "POST",
+      headers: {
+        "x-realbud-session": session,
+        "x-realbud-filename": encodeURIComponent("hold card.pdf"),
+        "content-type": "application/octet-stream",
+      },
+      body: "%PDF-1.4 hold",
+    });
+    expect(staged.status).toBe(201);
+    const stagedBody = await staged.json() as { path: string; name: string; mimeType: string };
+    expect(stagedBody.name).toBe("hold card.pdf");
+    expect(stagedBody.mimeType).toBe("application/pdf");
+    expect(stagedBody.path).toContain("composer-inbox");
   });
 
   it("projects agency-neutral pilot discovery without unlocking operational authority", async () => {
@@ -753,6 +792,60 @@ describe("harness HTTP API", () => {
     const blockedEdit = await api("POST", `/api/bots/${bot.id}/messages/${userMessage.id}/edit`, { text: credential });
     expect(blockedEdit.status).toBe(400);
     expect(blockedEdit.body).toMatchObject({ code: "CREDENTIAL_IN_ASK" });
+
+    const notionToken = "ntn_g9538deadbeef99";
+    const beforeNotion = (await workshopBot()).messages.length;
+    const linkedNotion = await api("POST", `/api/bots/${bot.id}/messages`, { text: `connect me to notion ${notionToken}` });
+    expect(linkedNotion.status).toBe(202);
+    expect(linkedNotion.body.navigation).toBeUndefined();
+    expect(linkedNotion.body).toMatchObject({ service: "Notion", connected: true });
+    const notionAction = linkedNotion.body.bot.messages.findLast((message: { kind: string; action?: { title?: string } }) =>
+      message.kind === "action" && message.action?.title === "Notion connected",
+    );
+    expect(notionAction?.action).toMatchObject({ title: "Notion connected", service: "Notion" });
+    const notionVoice = linkedNotion.body.bot.messages.findLast((message: { role: string; kind?: string; text?: string }) =>
+      message.role === "bot" && message.kind === "text",
+    );
+    expect(notionVoice?.text).toMatch(/on this device/i);
+    expect(notionVoice?.text).not.toMatch(/no connection is active/i);
+    expect(JSON.stringify((await workshopBot()).messages)).not.toContain(notionToken);
+    expect((await workshopBot()).messages.length).toBeGreaterThan(beforeNotion);
+    const configAfter = await api("GET", "/api/config");
+    expect(configAfter.body.linkedTools).toEqual(expect.arrayContaining([
+      expect.objectContaining({ slug: "notion", connected: true }),
+    ]));
+    expect(JSON.stringify(configAfter.body)).not.toContain(notionToken);
+
+    const notionCard = await api("POST", `/api/bots/${bot.id}/messages`, { text: "connect me to notion" });
+    expect(notionCard.status).toBe(202);
+    expect(notionCard.body.navigation).toBeUndefined();
+    expect(notionCard.body).toMatchObject({ service: "Notion" });
+
+    const peek = await api("POST", `/api/bots/${bot.id}/messages`, { text: "what can you see inside of notion" });
+    expect(peek.status).toBe(202);
+    expect(peek.body.navigation).toBeUndefined();
+    const peekVoice = peek.body.bot.messages.findLast((message: { role: string; kind?: string; text?: string }) =>
+      message.role === "bot" && message.kind === "text",
+    );
+    expect(peekVoice?.text).toMatch(/on this device/i);
+    expect(peekVoice?.text).not.toMatch(/no connection is active|not read in this build|cannot read pages/i);
+
+    const recheck = await api("POST", "/api/desk/check", {});
+    expect(recheck.status).toBe(200);
+    const needsMe = await api("POST", `/api/bots/${bot.id}/messages`, { text: "What needs me?" });
+    expect(needsMe.status).toBe(202);
+    expect(needsMe.body.bot.busy ?? false).toBe(false);
+    const deskVoice = needsMe.body.bot.messages.findLast((message: { role: string; kind?: string; text?: string }) =>
+      message.role === "bot" && message.kind === "text",
+    );
+    expect(deskVoice?.text).toMatch(/On Desk now|Desk has no exceptions|Desk is in recovery/i);
+    expect(deskVoice?.text).not.toMatch(/cards were not shared|cannot see Desk/i);
+    const deskSnap = await api("GET", "/api/desk");
+    const heldAddress = deskSnap.body.properties?.find((property: { id?: string }) =>
+      deskSnap.body.escalations?.some((item: { propertyId?: string }) => item.propertyId === property.id)
+      || deskSnap.body.drafts?.some((item: { propertyId?: string; status?: string }) => item.propertyId === property.id && item.status === "pending"),
+    )?.address;
+    if (heldAddress) expect(deskVoice?.text).toContain(heldAddress);
   });
 
   it("deduplicates an acknowledged Ask request and rejects id reuse with different content", async () => {

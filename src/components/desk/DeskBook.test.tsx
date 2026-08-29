@@ -71,5 +71,6 @@ describe("DeskBook portfolio navigation", () => {
     expect(html).not.toContain("Open property");
     expect(html).toContain("Bring in or refresh the portfolio");
     expect(html).toContain("Use another format in Ask");
+    expect(html).not.toContain("Demo inbox");
   });
 });

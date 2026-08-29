@@ -144,8 +144,12 @@ try {
   const run = await api("POST", "/api/loops/morning-arrears/run", {});
   check("morning loop runs now", run.status === 201);
   await sleep(500);
+  const letterLoop = (await api("GET", "/api/loops")).body.loops.find((loop) => loop.id === "owner-letter");
+  if (letterLoop && !letterLoop.enabled) {
+    await api("PATCH", "/api/loops/owner-letter", { enabled: true, expectedRevision: letterLoop.revision });
+  }
   const letter = await api("POST", "/api/loops/owner-letter/run", {});
-  check("owner letter runs now", letter.status === 201);
+  check("owner letter runs now", letter.status === 201, `${letter.status} ${letter.body?.error ?? ""}`);
   for (let i = 0; i < 20; i++) {
     snap = (await api("GET", "/api/desk")).body;
     if (snap.drafts.some((d) => d.kind === "owner-letter")) break;

@@ -71,19 +71,42 @@ describe("spent connect receipts", () => {
     })).toBe(false);
   });
 
-  it("does not treat a refused social name as a completed connection", () => {
-    const instagram = setup({
+  it("treats only historic refusal titles as unsupported", () => {
+    const refused = setup({
       title: "Instagram isn't a named office source",
       service: "Instagram",
     });
-    expect(isUnsupportedOfficeConnect(instagram)).toBe(true);
+    expect(isUnsupportedOfficeConnect(refused)).toBe(true);
+    expect(isUnsupportedOfficeConnect(setup({ service: "Instagram", title: "Connect Instagram" }))).toBe(false);
     expect(isUnsupportedOfficeConnect(setup({ service: "Gmail" }))).toBe(false);
-    expect(askConnectReceiptCopy(instagram)).toEqual({ status: "Not a source", open: "Pick a source" });
+    expect(askConnectReceiptCopy(refused)).toEqual({ status: "Not a source", open: "Pick a source" });
+    expect(askConnectReceiptCopy(setup({ service: "Instagram", title: "Connect Instagram" }))).toEqual({
+      status: "Card ready",
+      open: "Open card",
+    });
     expect(askConnectReceiptCopy(setup({ service: "Gmail" }))).toEqual({ status: "Card ready", open: "Open card" });
-    expect(askSetupUserTurnCopy(instagram)).toEqual({
+    expect(askSetupUserTurnCopy(refused)).toEqual({
       label: "Not a source",
       detail: "Instagram isn't a named office source. Nothing connected.",
     });
     expect(askSetupUserTurnCopy(setup({ service: "Gmail" })).label).toBe("Card opened");
+    expect(honoredSetupRequest(setup({ service: "Notion", title: "Notion connected" }), 1_100)).toBeNull();
+    expect(askConnectReceiptCopy(setup({ service: "Notion", title: "Notion connected" }))).toEqual({
+      status: "Connected",
+      open: "Open card",
+    });
+    expect(askConnectReceiptCopy(setup({ service: "Notion", title: "Notion on this device" }))).toEqual({
+      status: "Connected",
+      open: "Open card",
+    });
+    expect(honoredSetupRequest(setup({ service: "Notion", title: "Notion on this device" }), 1_100)).toBeNull();
+    expect(askSetupUserTurnCopy(setup({
+      service: "Notion",
+      title: "Notion connected",
+      detail: "Notion accepted this key. It is on this device. Ask still cannot send.",
+    }))).toEqual({
+      label: "Connected",
+      detail: "Notion accepted this key. It is on this device. Ask still cannot send.",
+    });
   });
 });

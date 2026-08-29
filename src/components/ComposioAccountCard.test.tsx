@@ -12,7 +12,8 @@ describe("Composio account card", () => {
       </StoreProvider>,
     );
     expect(html).toContain("Sign in to Composio");
-    expect(html).toContain("Then paste the Connect key");
+    expect(html).toContain("Login");
+    expect(html).toContain("Connect key");
     expect(html).not.toContain('href="https://platform.composio.dev"');
     expect(html).toMatch(/not a tool marketplace/);
     expect(html).not.toMatch(/9000/);

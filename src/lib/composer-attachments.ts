@@ -73,6 +73,29 @@ export function pasteAttachment(text: string): PasteAttachment {
   return { kind: "paste", id, text, size: byteLength(text), lines: countLines(text) };
 }
 
+const OFFICE_FILE_EXTENSIONS = new Set([
+  ".bmp", ".csv", ".docx", ".gif", ".heic", ".heif", ".jpeg", ".jpg",
+  ".json", ".md", ".pdf", ".png", ".svg", ".tsv", ".txt", ".webp",
+  ".xls", ".xlsx",
+]);
+
+export const COMPOSER_FILE_ACCEPT = [...OFFICE_FILE_EXTENSIONS].join(",");
+
+export function isAllowedComposerFile(name: string, type = ""): boolean {
+  const ext = name.includes(".") ? `.${name.split(".").pop()!.toLowerCase()}` : "";
+  if (OFFICE_FILE_EXTENSIONS.has(ext)) return true;
+  return /^(?:image\/|text\/|application\/pdf|application\/json|application\/vnd\.(?:ms-excel|openxmlformats))/.test(type);
+}
+
+export function composerFileKind(name: string): "PDF" | "Image" | "Spreadsheet" | "Text" | "Document" {
+  const ext = name.includes(".") ? `.${name.split(".").pop()!.toLowerCase()}` : "";
+  if (ext === ".pdf") return "PDF";
+  if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".heif", ".bmp", ".svg"].includes(ext)) return "Image";
+  if ([".csv", ".tsv", ".xls", ".xlsx"].includes(ext)) return "Spreadsheet";
+  if ([".txt", ".md", ".json"].includes(ext)) return "Text";
+  return "Document";
+}
+
 export const INLINE_DROP_LIMIT = 512 * 1024;
 
 export type DroppedFile = Pick<File, "name" | "size" | "type" | "text">;
@@ -84,7 +107,7 @@ export type DroppedFile = Pick<File, "name" | "size" | "type" | "text">;
 export async function attachmentsFromDroppedFiles<T extends DroppedFile>(
   files: readonly T[],
   getPath: (file: T) => string,
-): Promise<{ attachments: Attachment[]; rejectedNames: string[] }> {
+): Promise<{ attachments: Attachment[]; rejectedNames: string[]; browserFiles: T[] }> {
   const results = await Promise.all(
     files.map(async (file) => {
       let path = "";
@@ -101,6 +124,7 @@ export async function attachmentsFromDroppedFiles<T extends DroppedFile>(
           // Treat an unreadable browser drag like any other pathless file.
         }
       }
+      if (isAllowedComposerFile(file.name, file.type)) return { browserFile: file };
       return { rejectedName: file.name };
     }),
   );
@@ -111,6 +135,9 @@ export async function attachmentsFromDroppedFiles<T extends DroppedFile>(
     ),
     rejectedNames: results.flatMap((result) =>
       "rejectedName" in result && result.rejectedName ? [result.rejectedName] : [],
+    ),
+    browserFiles: results.flatMap((result) =>
+      "browserFile" in result && result.browserFile ? [result.browserFile] : [],
     ),
   };
 }

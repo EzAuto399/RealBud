@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { redactSecrets, redactSecretsInText } from "./redact.ts";
+import { extractFirstSecret, hintToolFromSecret, redactSecrets, redactSecretsInText, stripSecretsForSpeech } from "./redact.ts";
 
 const flat = (value: unknown) => JSON.stringify(value);
 
@@ -43,6 +43,12 @@ describe("redactSecretsInText", () => {
     const out = redactSecretsInText(`set ANTHROPIC_API_KEY=sk-ant-api03-${alpha}`);
     expect(out).not.toMatch(/sk-ant/);
     expect(out).toMatch(/«redacted \d+ chars»/);
+    const notion = redactSecretsInText("connect me to notion ntn_g9538deadbeef99");
+    expect(notion).not.toContain("ntn_g9538");
+    expect(notion).toMatch(/«redacted \d+ chars»/);
+    expect(extractFirstSecret("connect me to notion ntn_g9538deadbeef99")).toBe("ntn_g9538deadbeef99");
+    expect(stripSecretsForSpeech("connect me to notion ntn_g9538deadbeef99")).toBe("connect me to notion");
+    expect(hintToolFromSecret("ntn_g9538deadbeef99")).toEqual({ slug: "notion", label: "Notion" });
   });
 
   it("leaves ordinary text alone", () => {
