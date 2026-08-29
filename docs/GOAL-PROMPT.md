@@ -233,7 +233,7 @@ Shipped, not slides:
 - Hermes pin, pack, fail-closed Recheck (spawn now also requires `approvals.mode: manual`)
 - Gate hardening: product mode denies `autoApprove`/`alwaysAllow`/`chiefOfStaff` on bot PATCH, Bud rename and Bud delete; auto-answer of permissions is off in product mode
 - Named loops with an editable clock (PATCH time/weekdays/enabled + revision, no backfill) and Schedule GUI chips
-- Shared this-morning brief: Recheck lands every known address; inbox stays not connected until a named office reads mail
+- Shared this-morning brief: Recheck lands every known address; seeded demo kinds stay on the book and do not count as Held; inbox stays not connected until a named office reads mail
 - **Friday owner letter v0** (`server/owner-letter.ts`): one factual catch-up per property per week from Desk facts + Notes; Copy-only; Run now or the Friday clock lands it on Desk
 - Bounded fake-portal prefill; Bud submit 403
 - Pilot contract still **demo** (`agency: RealBud Demo Book`)

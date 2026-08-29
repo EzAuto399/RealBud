@@ -29,23 +29,17 @@ Do not rebuild any of that.
 
 ## What we keep getting wrong
 
-These are the same misses, twice or more.
+These are the same misses, twice or more. Do not re-open a shipped row.
 
-**Built, then left unmounted.** `src/components/Onboarding.tsx` has the three rules. `App.tsx` never imports it. `emailGateDone()` in `src/lib/analytics.ts` always returns true. Blind-spot #2 in `docs/PRODUCT-DESIGN-PLAN.md` named this on 2026-08-25. It is still true.
+**Handoff docs lag the branch.** This file used to say Onboarding was unmounted, user chrome still said Hermes, and Allow-all was N commits after those three had shipped. The next session then remounted first-run. If a later idea fights HEAD, read the code.
 
-**Handoff docs lie after a ship.** `CLAUDE.md` still says owner-letter is declared. The plan's T1 to T13 boxes are still empty. `docs/GOAL-PROMPT.md` §8 is dated 2026-08-23. The next session then re-plans V3 or starts inbound.
+**T12 was specified as Ask-as-actor, shipped as intake.** The plan asked for `run-loop`, `retune-clock`, `add-property`, `edit-property`. What landed is paste-a-book plus "Put courtesy on Desk", now folded under one disclosure. Clock-from-Ask stays deferred (ROUTINES PR C). Do not "finish T12" by building PR C.
 
-**T12 was specified as Ask-as-actor, shipped as intake.** The plan asked for `run-loop`, `retune-clock`, `add-property`, `edit-property`. What landed is paste-a-book plus "Put courtesy on Desk". Clock-from-Ask stays deferred (ROUTINES PR C). Do not "finish T12" by building PR C.
-
-**T11 claimed a vocabulary purge.** Desk still prints "Hermes live". `ModelPicker` still says Hermes. Settings still mention `hermes -p property`. Advanced diagnostics is the only place that word is allowed.
-
-**Blind-spot register, then only T13.** The Aug 25 sweep listed nine gaps. Recovery escrow shipped. First-run, last-checked times, retention, and `safeStorage` did not.
-
-**Architecture ahead of the office.** GOAL-PROMPT already said this. Then V3 shipped anyway. That platform is useful. Starting inbound mail, live CUA, Pocket, or a law shelf before `docs/PILOT-CONTRACT.md` has eight named fields is the same mistake again.
-
-**Allow-all is a loop of full commits.** Desk "allow all" book proposals calls `/allow` once per property. Each `addProperty` does the encrypted commit (~38ms). A real book will feel broken. Tracked as the T2 follow-up.
+**Architecture ahead of the office.** Starting inbound mail, live CUA, Pocket, or a law shelf before `docs/PILOT-CONTRACT.md` has eight named fields is the same mistake again.
 
 **A previous cloud run sat on "Hi".** No task, no branch, idle. If the prompt is empty, stop.
+
+Already closed on this branch (do not rebuild): first-run mounted, go-live card, Worker vocabulary outside Advanced, uncovered-by-worker holds, one persist for Allow-all / bulk add, `safeStorage` wrap for `desk.key`, last-checked + shared Recheck clock, morning brief, Ask refuses provider keys.
 
 ---
 
@@ -76,6 +70,10 @@ The human task that actually finishes the product is still the visit: fill the e
 - **W4** Electron wraps `desk.key` with `safeStorage`. `REALBUD_DESK_KEY` does not write a plaintext key file.
 - **W5** You sources show last-checked in the agency timezone. Desk Recheck and Test hands share `~/.realbud/hands-last.json`.
 - **Morning brief** Desk, You and Ask share one this-morning strip: every known address after Recheck, plus an honest **Inbox not connected**. Does not read mail. 86 stays the ceiling until a named Gmail read exists.
+- **Keys stay on You** Ask refuses a pasted provider key. The worker may use a key after Attach model. It does not get to read the secret from chat.
+- **Morning honesty** Seeded demo kinds (maintenance, lease, inspection, inbound) stay on the book. They do not inflate the Held chip. Go-live collapses to one line after the first Recheck. Evidence stamps use `fmtDateTime`. Ask intake sits under "Put work on Desk".
+
+Provider keys in the worker profile `.env` stay readable by the worker. Wrapping that file would hide the key from Recheck. That is not a vault we can add without a decrypt shim the worker does not have.
 
 ## Next sessions (unblocked)
 

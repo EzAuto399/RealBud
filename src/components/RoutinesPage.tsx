@@ -294,7 +294,7 @@ export function RoutinesPage() {
 
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-8">
         <section className="space-y-3">
-          <h2 className="text-[12px] font-medium uppercase tracking-[0.14em] text-ink-secondary">The routines</h2>
+          <h2 className="text-[13px] font-medium text-ink-muted">The routines</h2>
           {state.loops.map((loop) => (
             <LoopCard
               // revision in the key: an accepted clock change anywhere
@@ -312,7 +312,7 @@ export function RoutinesPage() {
         </section>
 
         <section className="mt-8 space-y-3">
-          <h2 className="text-[12px] font-medium uppercase tracking-[0.14em] text-ink-secondary">Runs</h2>
+          <h2 className="text-[13px] font-medium text-ink-muted">Runs</h2>
           {state.loopRuns.length === 0 ? (
             <div className="rounded-lg border border-line bg-sheet px-4 py-6 text-[13.5px] text-ink-muted">
               No runs yet. The first check lands here when the clock — or you — press Recheck.

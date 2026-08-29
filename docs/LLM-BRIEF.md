@@ -46,7 +46,7 @@ RealBud is a native desktop app (Warm Operational Ledger design) for one PM. It 
 
 ## 5. The plan (do not jump)
 
-**Immediate code.** W1–W5 plus the morning brief (six addresses + honest inbox) shipped. Do not fake a Gmail read to chase 100.
+**Immediate code.** W1–W5, morning brief, Ask key refuse, and morning-honesty shipped. Do not fake a Gmail read. Do not remount first-run or rebuild Allow-all. The remaining hole is `docs/PILOT-CONTRACT.md`.
 
 **Human, not code.** Fund one model key to live-test conversational + image intake. Fill the eight fields in `docs/PILOT-CONTRACT.md` on a visit.
 

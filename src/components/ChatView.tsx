@@ -29,6 +29,7 @@ import {
 } from "@/state/store";
 import type { DeskSnapshot } from "@/lib/desk";
 import { morningBrief } from "@/lib/morning-brief";
+import { fmtDateTime } from "@/lib/au";
 import { EngineSetup } from "./EngineSetup";
 import { MausAvatar } from "./Avatar";
 import { stateForBot } from "@/lib/mascot";
@@ -56,7 +57,7 @@ function dayLabel(at: number): string {
   const diffDays = Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000);
   if (diffDays === 0) return "Today";
   if (diffDays === 1) return "Yesterday";
-  return d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+  return d.toLocaleDateString("en-AU", { weekday: "short", month: "short", day: "numeric" });
 }
 
 function DaySeparator({ at }: { at: number }) {
@@ -313,7 +314,7 @@ function Bubble({
             "max-w-[70%] rounded-lg px-4 py-2.5 text-[15px] leading-relaxed",
             user ? "whitespace-pre-wrap bg-bubble-user text-ink" : "bg-card text-ink",
           )}
-          title={new Date(message.at).toLocaleString()}
+          title={fmtDateTime(message.at)}
         >
           {user ? (
             <>
@@ -756,8 +757,16 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
         </div>
       </div>
 
-      {productAsk && <AskProposeBar />}
-      {productAsk && <AskIntakeBar />}
+      {productAsk && (
+        <details className="mx-auto w-full max-w-[900px] border-b border-line px-5 pb-3">
+          <summary className="cursor-pointer text-[13px] font-medium text-ink">Put work on Desk</summary>
+          <p className="mt-1 text-[12px] text-ink-muted">Courtesy and a pasted book wait here for one Allow. Inbox is not connected.</p>
+          <div className="mt-2">
+            <AskProposeBar />
+            <AskIntakeBar />
+          </div>
+        </details>
+      )}
 
       {/* Error banner */}
       {state.error && (
@@ -878,7 +887,7 @@ function AskProposeBar() {
   if (!snap?.properties.length) return null;
 
   return (
-    <div className="mx-auto flex w-full max-w-[900px] flex-wrap items-center gap-2 px-5 pb-2">
+    <div className="flex w-full flex-wrap items-center gap-2 pb-2">
       <span className="text-[12px] text-ink-secondary">Put courtesy on Desk</span>
       <select
         value={propertyId}
@@ -955,7 +964,7 @@ function AskIntakeBar() {
 
   return (
     <div
-      className="mx-auto flex w-full max-w-[900px] flex-col gap-2 px-5 pb-2"
+      className="flex w-full flex-col gap-2 pb-2"
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
         e.preventDefault();

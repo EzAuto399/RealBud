@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { agencyIsNamed, goLiveComplete, goLiveRows } from "./go-live";
+import { agencyIsNamed, goLiveActionCount, goLiveComplete, goLiveRows } from "./go-live";
 
 describe("go-live checklist", () => {
   it("starts as three actions on the demo book", () => {
     const rows = goLiveRows({ mode: "demo", agencyName: "RealBud Demo Book", workerReady: false });
     expect(rows.map((row) => row.state)).toEqual(["action", "action", "action"]);
     expect(goLiveComplete(rows)).toBe(false);
+    expect(goLiveActionCount(rows)).toBe(3);
   });
 
   it("goes green only when export, worker, and a real agency name are set", () => {

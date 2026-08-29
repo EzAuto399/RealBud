@@ -210,6 +210,11 @@ export function DeskPage() {
         <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
           <StatusLabel tone="agency">{counts["needs-you"]} need you</StatusLabel>
           <StatusLabel tone="hold">{counts.held} held</StatusLabel>
+          {counts["on-book"] > 0 ? (
+            <button type="button" onClick={() => { setFilter("all"); setMode("cases"); }} className="rounded-full">
+              <StatusLabel tone="muted">{counts["on-book"]} on the book</StatusLabel>
+            </button>
+          ) : null}
           <StatusLabel tone="danger">{counts.licensee} licensee</StatusLabel>
           <StatusLabel tone="muted">{snap.properties.length} properties</StatusLabel>
           <StatusLabel tone={snap.hands === "held" ? "hold" : snap.hands === "hermes" || snap.hands === "csv" ? "agency" : "muted"}>
@@ -238,7 +243,7 @@ export function DeskPage() {
             const row = rows.find((item) => item.propertyId === propertyId);
             if (!row) return;
             setMode("cases");
-            setFilter(row.bucket === "decided" ? "all" : row.bucket);
+            setFilter(row.bucket === "decided" || row.bucket === "on-book" ? "all" : row.bucket);
             setSelectedId(row.id);
             setQueueOpen(false);
           }}
@@ -247,6 +252,7 @@ export function DeskPage() {
           mode={snap.mode}
           agencyName={snap.book?.agency.name ?? ""}
           workerReady={Boolean(state.hermes?.ready) || snap.hands === "hermes"}
+          compact={snap.lastRunAt != null}
           onConnectExport={() => setMode("book")}
           onAttachWorker={() => dispatch({ type: "showYou" })}
           onSaveAgency={(name) => void run("/api/desk/agency", "PATCH", { name }, "agency", "Agency saved")}

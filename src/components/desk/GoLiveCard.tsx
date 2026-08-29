@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import { goLiveComplete, goLiveRows, type GoLiveRow } from "@/lib/go-live";
+import { goLiveActionCount, goLiveComplete, goLiveRows, type GoLiveRow } from "@/lib/go-live";
 
 export function GoLiveCard({
   mode,
   agencyName,
   workerReady,
+  compact = false,
   onConnectExport,
   onAttachWorker,
   onSaveAgency,
@@ -13,18 +14,53 @@ export function GoLiveCard({
   mode: "demo" | "live";
   agencyName: string;
   workerReady: boolean;
+  compact?: boolean;
   onConnectExport: () => void;
   onAttachWorker?: () => void;
   onSaveAgency: (name: string) => void;
 }) {
   const rows = goLiveRows({ mode, agencyName, workerReady });
   const [name, setName] = useState("");
+  const [open, setOpen] = useState(!compact);
+  const left = goLiveActionCount(rows);
+
+  useEffect(() => {
+    if (compact) setOpen(false);
+  }, [compact]);
+
   if (goLiveComplete(rows)) return null;
+
+  if (compact && !open) {
+    return (
+      <section className="mt-3 border border-line bg-sheet px-3.5 py-2" aria-label="Go live">
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="flex w-full items-center justify-between gap-2 text-left text-[13px] text-ink"
+        >
+          <span>
+            Go live · {left} left
+            <span className="text-ink-muted"> · export, worker, agency name. Desk already works.</span>
+          </span>
+          <span className="text-[12px] text-agency">Open</span>
+        </button>
+      </section>
+    );
+  }
 
   return (
     <section className="mt-3 rounded-lg border border-line bg-sheet px-3.5 py-3" aria-label="Go live">
-      <div className="text-[13px] font-medium text-ink">Go live</div>
-      <p className="mt-0.5 text-[12px] text-ink-muted">Three steps. Desk already works on the sample book.</p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="text-[13px] font-medium text-ink">Go live</div>
+          <p className="mt-0.5 text-[12px] text-ink-muted">Three steps. Desk already works on the sample book.</p>
+        </div>
+        {compact ? (
+          <button type="button" onClick={() => setOpen(false)} className="text-[12px] text-ink-muted hover:text-ink">
+            Hide
+          </button>
+        ) : null}
+      </div>
       <ul className="mt-2 space-y-2">
         {rows.map((row) => (
           <GoLiveRowView

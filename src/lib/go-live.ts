@@ -51,3 +51,7 @@ export function goLiveRows(input: GoLiveInput): GoLiveRow[] {
 export function goLiveComplete(rows: GoLiveRow[]): boolean {
   return rows.every((row) => row.state === "done");
 }
+
+export function goLiveActionCount(rows: GoLiveRow[]): number {
+  return rows.filter((row) => row.state === "action").length;
+}

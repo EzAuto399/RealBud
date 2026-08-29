@@ -72,6 +72,7 @@ export function YouPage() {
             mode={desk.mode}
             agencyName={agency?.name ?? ""}
             workerReady={Boolean(hermes?.ready) || desk.hands === "hermes"}
+            compact={desk.lastRunAt != null}
             onConnectExport={() => dispatch({ type: "showDesk" })}
             onSaveAgency={(name) => {
               void api("/api/desk/agency", { method: "PATCH", body: JSON.stringify({ name }) })

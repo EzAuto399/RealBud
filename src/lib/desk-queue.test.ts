@@ -104,7 +104,7 @@ describe("desk queue model", () => {
         ],
       }),
     );
-    expect(queueCounts(rows)).toEqual({ "needs-you": 1, held: 1, licensee: 1 });
+    expect(queueCounts(rows)).toEqual({ "needs-you": 1, held: 1, licensee: 1, "on-book": 0 });
     expect(rows.find((row) => row.kind === "import-issue")?.bucket).toBe("held");
     expect(filterDeskQueue(rows, "needs-you")).toHaveLength(1);
     expect(filterDeskQueue(rows, "needs-you", "unmatched")).toHaveLength(1);
@@ -139,5 +139,9 @@ describe("desk queue model", () => {
       "lease-review",
       "maintenance-intake",
     ]);
+    expect(rows.every((row) => row.bucket === "on-book")).toBe(true);
+    expect(queueCounts(rows)).toEqual({ "needs-you": 0, held: 0, licensee: 0, "on-book": 4 });
+    expect(filterDeskQueue(rows, "held")).toHaveLength(0);
+    expect(filterDeskQueue(rows, "all")).toHaveLength(4);
   });
 });
