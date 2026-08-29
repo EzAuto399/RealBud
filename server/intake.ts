@@ -67,7 +67,7 @@ function parseLine(line: string): IntakeItem | null {
   }
 
   const address = tokens[0]!;
-  const middle = tokens.slice(1, phoneIdx >= 0 ? phoneIdx : rentIdx).filter((_, i, arr) => arr.length > 0);
+  const middle = tokens.slice(1, phoneIdx >= 0 ? phoneIdx : rentIdx);
   const tenantName = middle.join(", ").trim();
 
   if (!address || !tenantName || !phone || rentCents <= 0) return null;

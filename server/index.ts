@@ -31,7 +31,7 @@ import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { readCuaConnection } from "./local-computer.ts";
 import { applyPropertyPack } from "./hermes-pack.ts";
 import { hermesStatus } from "./hermes-status.ts";
-import { hermesInstallCommand, HERMES_PIN } from "./hermes-pin.ts";
+import { hermesInstallCommand } from "./hermes-pin.ts";
 import { tryHermesPing } from "./hermes-hands.ts";
 import { readHandsLast, writeHandsLast } from "./hands-last.ts";
 import { readArtifact } from "./audit-artifacts.ts";

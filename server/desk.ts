@@ -1,7 +1,7 @@
 // Desk spine: evaluate → proposal → human decision. Encrypted v2 store.
 // snapshot() is side-effect free. Approval never means sent.
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { decryptJson } from "./desk-crypto.ts";
 import { join, dirname } from "node:path";
 

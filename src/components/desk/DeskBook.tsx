@@ -224,6 +224,7 @@ function PropertyCard({
         unmatched: "Held · unmatched",
         reversed: "Held · reversed payment",
         partial: "Held · partial payment",
+        "uncovered-by-worker": "Held · worker missed this property",
         "ambiguous-match": "Held · ambiguous match",
       }[result.reason]
     : "Not checked yet";
