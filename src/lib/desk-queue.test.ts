@@ -118,6 +118,15 @@ describe("desk queue model", () => {
       snap({
         book: {
           agency: { name: "Demo agency", timezone: "Australia/Sydney", jurisdictions: ["ACT"] },
+          office: {
+            pmUser: "",
+            pmsBrand: "",
+            namedExporter: "",
+            exportCadence: "",
+            exportIdentity: "",
+            officeOs: "",
+            vendorTestAccount: "",
+          },
           tenancies: [],
           contacts: [],
           archivedProperties: [],

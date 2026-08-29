@@ -1201,7 +1201,8 @@ const server = createServer(async (req, res) => {
       try {
         const snapshot = desk.patchAgency({
           name: typeof body.name === "string" ? body.name : undefined,
-          jurisdictions: Array.isArray(body.jurisdictions) ? body.jurisdictions.map(String) : undefined,
+          jurisdictions: Array.isArray(body.jurisdictions) ? body.jurisdictions : undefined,
+          office: body.office,
         });
         commitDesk(snapshot);
         return json(res, 200, snapshot);

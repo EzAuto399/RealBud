@@ -93,8 +93,21 @@ try {
   snap = (await api("POST", "/api/desk/import", { csv })).body;
   check("import flips the book live", snap?.mode === "live" && snap.hands === "csv");
   check("csv source has last-checked", snap.sources?.some((s) => s.kind === "csv" && typeof s.lastCheckedAt === "number"));
-  const named = await api("PATCH", "/api/desk/agency", { name: "Harbour PM" });
+  const named = await api("PATCH", "/api/desk/agency", {
+    name: "Harbour PM",
+    jurisdictions: ["ACT"],
+    office: {
+      pmUser: "Alex",
+      pmsBrand: "other",
+      namedExporter: "Principal",
+      exportCadence: "daily",
+      exportIdentity: "address",
+      officeOs: "linux",
+      vendorTestAccount: "fake-building-portal",
+    },
+  });
   check("agency name sticks", named.status === 200 && named.body?.book?.agency?.name === "Harbour PM");
+  check("office visit fields stick", named.body?.book?.office?.pmUser === "Alex" && named.body?.book?.office?.pmsBrand === "other");
   const issue = snap.book?.importIssues?.find((row) => row.rawIdentity.includes("Ghost"));
   check("unmatched row keeps its address", Boolean(issue), issue?.rawIdentity);
   snap = (await api("POST", "/api/desk/import", { csv })).body;

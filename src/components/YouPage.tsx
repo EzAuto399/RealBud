@@ -11,6 +11,7 @@ import { Card } from "./SettingsPrimitives";
 import { HermesHandsCard, ProfileFields } from "./SettingsModal";
 import { GoLiveCard } from "./desk/GoLiveCard";
 import { MorningBrief } from "./desk/MorningBrief";
+import { OfficeCard } from "./you/OfficeCard";
 
 export function YouPage() {
   const { state, dispatch, refreshHermes } = useStore();
@@ -40,7 +41,7 @@ export function YouPage() {
           <h1 className="pm-screen-title text-ink">You</h1>
         </div>
         <p className="mt-1 max-w-[40rem] text-[12.5px] text-ink-secondary">
-          Agency, when the book was last checked, and recovery. Engine internals stay under Advanced diagnostics.
+          This office, when the book was last checked, and recovery. Engine internals stay under Advanced diagnostics.
         </p>
       </header>
       <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-5 pb-6">
@@ -54,11 +55,23 @@ export function YouPage() {
             Desk is in recovery. Writes, schedules and browser work are paused. The book was not replaced with Demo data.
           </RecoveryNotice>
         )}
-        <Card title="Agency" subtitle={agency ? `${agency.name || "Unnamed"} · ${agency.timezone}` : "Open Desk once to load the book."}>
-          <div className="text-[13px] text-ink-secondary">
-            Jurisdictions: {agency?.jurisdictions.length ? agency.jurisdictions.join(", ") : "Not set"}
-          </div>
-        </Card>
+        {desk ? (
+          <OfficeCard
+            agencyName={agency?.name ?? ""}
+            timezone={timezone}
+            jurisdictions={agency?.jurisdictions ?? []}
+            office={desk.book?.office}
+            profileName={state.config?.profile?.name}
+            onSave={(input) =>
+              api("/api/desk/agency", {
+                method: "PATCH",
+                body: JSON.stringify({ name: input.name, jurisdictions: input.jurisdictions, office: input.office }),
+              }).then((snapshot) => dispatch({ type: "deskSnapshot", snapshot }))
+            }
+          />
+        ) : (
+          <Card title="This office" subtitle="Open Desk once to load the book." />
+        )}
         {desk ? (
           <MorningBrief
             brief={morningBrief(desk)}

@@ -38,6 +38,7 @@ import { composeOwnerLetter, ownerLetterWeekStart } from "./owner-letter.ts";
 import { parseIntakeText, type IntakeItem } from "./intake.ts";
 import { assertRoutineCannotMint, freezeAuthorization, withPresentation, type BrowserPresentation } from "./handoff-auth.ts";
 import type { RoutineOrigin } from "../shared/contracts.ts";
+import { emptyOffice, parseJurisdictions, parseOfficePatch } from "../shared/office.ts";
 import { FAKE_PORTAL_RECIPE } from "./portal-recipe.ts";
 import { CSV_FRESH_MS, isFresh } from "./source-gate.ts";
 import {
@@ -212,6 +213,7 @@ export class Desk {
         timezone: v3.agency.timezone,
         jurisdictions: v3.agency.jurisdictions,
       },
+      office: { ...(v3.office ?? emptyOffice()) },
       tenancies: v3.tenancies.map((item) => ({
         id: item.id,
         propertyId: item.propertyId,
@@ -327,14 +329,21 @@ export class Desk {
     return this.store.runBatch(fn);
   }
 
-  patchAgency(input: { name?: string; jurisdictions?: string[] }): DeskSnapshot {
+  patchAgency(input: { name?: string; jurisdictions?: string[]; office?: unknown }): DeskSnapshot {
     this.assertWritable();
-    const name = input.name === undefined ? this.store.v3.agency.name : String(input.name).trim();
-    if (!name) throw Object.assign(new Error("agency name required"), { status: 400 });
-    if (name.length > 80) throw Object.assign(new Error("agency name is too long"), { status: 400 });
-    this.store.v3.agency.name = name;
+    if (input.name !== undefined) {
+      const name = String(input.name).trim();
+      if (!name) throw Object.assign(new Error("agency name required"), { status: 400 });
+      if (name.length > 80) throw Object.assign(new Error("agency name is too long"), { status: 400 });
+      this.store.v3.agency.name = name;
+    }
     if (input.jurisdictions) {
-      this.store.v3.agency.jurisdictions = input.jurisdictions.map((item) => String(item).trim()).filter(Boolean);
+      this.store.v3.agency.jurisdictions = parseJurisdictions(input.jurisdictions);
+    }
+    if (input.office !== undefined) {
+      const parsed = parseOfficePatch(input.office);
+      if (!parsed.ok) throw Object.assign(new Error(parsed.error), { status: 400 });
+      this.store.v3.office = { ...(this.store.v3.office ?? emptyOffice()), ...parsed.value };
     }
     this.store.persist();
     this.emit();

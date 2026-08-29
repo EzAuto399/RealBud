@@ -594,4 +594,32 @@ describe("Desk morning check", () => {
     expect(presented.book?.handoff?.presentation ?? "inspector").toBe("inspector");
     expect(presented.book?.handoff?.allowedActions ?? []).not.toContain("submit");
   });
+
+  it("persists office visit fields without inventing an agency", () => {
+    const { desk } = tempDesk();
+    const start = desk.snapshot();
+    expect(start.book?.agency.name).toMatch(/demo/i);
+    expect(start.book?.office.pmUser).toBe("");
+    const named = desk.patchAgency({
+      name: "Harbour PM",
+      jurisdictions: ["ACT", "nsw", "ZZ"],
+      office: {
+        pmUser: "Alex",
+        pmsBrand: "other",
+        namedExporter: "Principal",
+        exportCadence: "daily",
+        exportIdentity: "address",
+        officeOs: "linux",
+        vendorTestAccount: "fake-building-portal",
+      },
+    });
+    expect(named.book?.agency.name).toBe("Harbour PM");
+    expect(named.book?.agency.jurisdictions).toEqual(["ACT", "NSW"]);
+    expect(named.book?.office.pmUser).toBe("Alex");
+    expect(named.book?.office.pmsBrand).toBe("other");
+    expect(() => desk.patchAgency({ office: { pmsBrand: "aime" } })).toThrow(/pmsBrand/);
+    const onlyOffice = desk.patchAgency({ office: { pmUser: "Sam" } });
+    expect(onlyOffice.book?.agency.name).toBe("Harbour PM");
+    expect(onlyOffice.book?.office.pmUser).toBe("Sam");
+  });
 });

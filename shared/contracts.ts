@@ -228,6 +228,16 @@ export interface DeskBookView {
     origin: "ask" | "manual";
   }>;
   agency: { name: string; timezone: string; jurisdictions: string[] };
+  /** Eight visit fields. Empty strings until a named office fills them. */
+  office: {
+    pmUser: string;
+    pmsBrand: string;
+    namedExporter: string;
+    exportCadence: string;
+    exportIdentity: string;
+    officeOs: string;
+    vendorTestAccount: string;
+  };
   tenancies: Array<{
     id: string;
     propertyId: string;

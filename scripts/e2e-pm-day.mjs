@@ -146,8 +146,23 @@ try {
   check("PM retunes morning to 8:00", retune.status === 200 && retune.body?.loop?.schedule?.time === "08:00");
   await api("PATCH", "/api/loops/morning-arrears", { time: "07:30" });
 
-  const named = await api("PATCH", "/api/desk/agency", { name: "Harbour PM" });
+  const named = await api("PATCH", "/api/desk/agency", {
+    name: "Harbour PM",
+    jurisdictions: ["ACT"],
+    office: {
+      pmUser: "Alex",
+      pmsBrand: "other",
+      namedExporter: "Principal",
+      exportCadence: "daily",
+      exportIdentity: "address",
+      officeOs: "linux",
+      vendorTestAccount: "fake-building-portal",
+    },
+  });
   check("agency name is Harbour PM", named.body?.book?.agency?.name === "Harbour PM");
+  check("office visit fields stick", named.body?.book?.office?.pmUser === "Alex");
+  const refused = await api("PATCH", "/api/desk/agency", { office: { pmsBrand: "aime" } });
+  check("unknown PMS is refused", refused.status === 400);
 } finally {
   child.kill("SIGKILL");
   setTimeout(() => rmSync(HOME, { recursive: true, force: true }), 200);

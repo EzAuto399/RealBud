@@ -1,3 +1,5 @@
+import { agencyIsNamed } from "../../shared/office";
+
 export type GoLiveState = "done" | "action";
 
 export interface GoLiveRow {
@@ -13,12 +15,7 @@ export interface GoLiveInput {
   workerReady: boolean;
 }
 
-const TRAINING_AGENCY = new Set(["demo agency", "realbud demo book"]);
-
-export function agencyIsNamed(name: string | undefined): boolean {
-  const trimmed = String(name ?? "").trim();
-  return trimmed.length > 0 && !TRAINING_AGENCY.has(trimmed.toLowerCase());
-}
+export { agencyIsNamed };
 
 export function goLiveRows(input: GoLiveInput): GoLiveRow[] {
   const exportDone = input.mode === "live";
@@ -43,7 +40,9 @@ export function goLiveRows(input: GoLiveInput): GoLiveRow[] {
       id: "agency",
       title: "Name your agency",
       state: agencyDone ? "done" : "action",
-      detail: agencyDone ? input.agencyName.trim() : "Shown on You. Timezone stays this computer's until you change it.",
+      detail: agencyDone
+        ? input.agencyName.trim()
+        : "Name it on You under This office. Training names do not count.",
     },
   ];
 }

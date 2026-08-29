@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Building2 } from "lucide-react";
 import { identifyEmail, setEmailGateDone, track } from "@/lib/analytics";
 import { markFirstRunDone } from "@/lib/first-run";
-import { useStore } from "@/state/store";
+import { api, useStore } from "@/state/store";
 
 // First-run for a newly licensed PM. Desk is the product. Engines, mic,
 // and plugins stay out of this walkthrough.
@@ -33,6 +33,12 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     track("onboarding_completed", { engines_available: -1, mic: "n/a" });
     setEmailGateDone("submitted");
     markFirstRunDone();
+    if (name.trim()) {
+      void api("/api/desk/agency", {
+        method: "PATCH",
+        body: JSON.stringify({ office: { pmUser: name.trim() } }),
+      }).catch(() => {});
+    }
     dispatch({ type: "showDesk" });
     onDone();
   };

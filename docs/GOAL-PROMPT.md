@@ -18,7 +18,7 @@ RealBud owns the window (Desk · Ask · Schedule · You). Pinned Hermes profile 
 
 Hard gates: no send, no trust, no statutory draft, no invented legal clock, no Hermes.app, no Hermes source edits, no extra RealBud agents, no tenant-facing bot, no law crawler.
 
-Current software is a training appliance (fixture book + CSV + fake portal) whose **beta door is done**: their export matches by address or their property code, morning cards land on Desk, the PM Copies into their PMS. Notes, Ask→Desk, intake, editable clocks, Friday owner letter v0, in-app worker attach, recovery-key unlock, first-run + go-live, worker-coverage holds, batch persist, and last-checked times also shipped. A named office in `docs/PILOT-CONTRACT.md` still gates inbound, live CUA, Pocket, and the graduate installer. Do not add surfaces. Do not rebuild PropertyMe.
+Current software is a training appliance (fixture book + CSV + fake portal) whose **beta door is done**: their export matches by address or their property code, morning cards land on Desk, the PM Copies into their PMS. Notes, Ask→Desk, intake, editable clocks, Friday owner letter v0, in-app worker attach, recovery-key unlock, first-run + go-live, worker-coverage holds, batch persist, last-checked times, and You → This office (eight visit fields, empty until typed) also shipped. A named office on that form still gates inbound, live CUA, Pocket, and the graduate installer. Do not add surfaces. Do not rebuild PropertyMe.
 
 ---
 
@@ -236,7 +236,7 @@ Shipped, not slides:
 - Shared this-morning brief: Recheck lands every known address; seeded demo kinds stay on the book and do not count as Held; inbox stays not connected until a named office reads mail
 - **Friday owner letter v0** (`server/owner-letter.ts`): one factual catch-up per property per week from Desk facts + Notes; Copy-only; Run now or the Friday clock lands it on Desk
 - Bounded fake-portal prefill; Bud submit 403
-- Pilot contract still **demo** (`agency: RealBud Demo Book`)
+- Pilot contract still **demo** until You → This office is filled with a real shop (`agency: RealBud Demo Book` does not count)
 
 Not shipped (see `docs/NEXT-WAVE.md`; W1–W5 are done):
 

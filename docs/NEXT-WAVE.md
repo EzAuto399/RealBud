@@ -4,7 +4,10 @@ Date: 2026-08-29
 HEAD at writing: `750f7ae`  
 Canonical constraints: `docs/GOAL-PROMPT.md` wins conflicts.
 
-This is the pickup list for later sessions. W1–W5 shipped on `cursor/next-wave-tasks-fa2e`. The remaining hole is a named office (`docs/PILOT-CONTRACT.md`), not more Desk chrome. The weekday map is `docs/PM-DAY.md`.
+This is the pickup list for later sessions. W1–W5 and the You office form
+shipped on `cursor/next-wave-tasks-fa2e`. The remaining hole is a **visit**
+that fills those eight fields with a real shop — code cannot invent one.
+The weekday map is `docs/PM-DAY.md`.
 
 If a later idea fights this file, `docs/GOAL-PROMPT.md` still wins.
 
@@ -58,7 +61,8 @@ These look like product completion. They are not the next session.
 | OpenMausBot leftover files (`GroupView`, Plugins, mascot) | Product mode already hides them. A purge is tempting and is not the hole. |
 | Funding a model key | Human. Not a code task. |
 
-The human task that actually finishes the product is still the visit: fill the eight fields in `docs/PILOT-CONTRACT.md`. Code cannot invent an agency.
+The human task that actually finishes the product is still the visit: type
+the eight fields on You → This office. Code cannot invent an agency.
 
 ---
 
@@ -72,6 +76,7 @@ The human task that actually finishes the product is still the visit: fill the e
 - **Morning brief** Desk, You and Ask share one this-morning strip: every known address after Recheck, plus an honest **Inbox not connected**. Does not read mail. 86 stays the ceiling until a named Gmail read exists.
 - **Keys stay on You** Ask refuses a pasted provider key. The worker may use a key after Attach model. It does not get to read the secret from chat.
 - **Morning honesty** Seeded demo kinds (maintenance, lease, inspection, inbound) stay on the book. They do not inflate the Held chip. Go-live collapses to one line after the first Recheck. Evidence stamps use `fmtDateTime`. Ask intake sits under "Put work on Desk".
+- **This office** You persists the eight visit fields. Demo / training names stay unnamed. Completing the form does not open inbound or live CUA.
 
 Provider keys in the worker profile `.env` stay readable by the worker. Wrapping that file would hide the key from Recheck. That is not a vault we can add without a decrypt shim the worker does not have.
 
