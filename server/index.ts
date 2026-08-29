@@ -43,6 +43,7 @@ import { CANONICAL_BUD_NAME, PRODUCT_MODE, isCanonicalBud, productDenied } from 
 import { LoopManager, type LoopId } from "./routines.ts";
 import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
 import { evaluatorForLoop } from "./workflow-catalog.ts";
+import { containsCredential } from "./redact.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import { TurnWatchdog } from "./turn-watchdog.ts";
 
@@ -497,6 +498,12 @@ async function startTurn(
 ) {
   const bot = store.bot(botId);
   if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
+  if (PRODUCT_MODE && containsCredential(text)) {
+    throw Object.assign(
+      new Error("Provider keys go on You → Attach model. Ask never sees the secret."),
+      { status: 400 },
+    );
+  }
   if (bot.busy) throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });
   const threadId = opts?.threadId ?? bot.threadId;
   const task = store.taskByThread(bot.id, threadId);

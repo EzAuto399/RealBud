@@ -13,6 +13,7 @@ import {
   type Attachment,
 } from "@/lib/composer-attachments";
 import { normalizeState } from "@/lib/mascot";
+import { KEY_ON_YOU, looksLikeProviderKey } from "@/lib/looks-like-secret";
 import { groupComposerHint } from "@/lib/group-routing";
 import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals } from "./PendingApproval";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
@@ -139,6 +140,10 @@ export function Composer({
   const send = () => {
     const t = composeMessage(text, attachments);
     if (!t) return;
+    if (productAsk && looksLikeProviderKey(t)) {
+      setSpeechError(KEY_ON_YOU);
+      return;
+    }
     if (busy) {
       setQueued(t);
       setText("");
@@ -157,12 +162,17 @@ export function Composer({
   };
   useEffect(() => {
     if (!busy && queued) {
+      if (productAsk && looksLikeProviderKey(queued)) {
+        setSpeechError(KEY_ON_YOU);
+        setQueued(null);
+        return;
+      }
       if (group) dispatch({ type: "sendGroup", groupId: group.id, text: queued });
       else if (bot) dispatch({ type: "send", botId: bot.id, text: queued });
       track("message_sent", { queued: true });
       setQueued(null);
     }
-  }, [busy, queued, bot, group, dispatch]);
+  }, [busy, queued, bot, group, dispatch, productAsk]);
 
   // native dictation: partials stream into the input while the Swift
   // helper runs; the final transcript stays in the box, ready to edit/send
