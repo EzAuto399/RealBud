@@ -122,6 +122,8 @@ describe("morning brief", () => {
       "quiet",
     ]);
     expect(brief.addresses.filter((row) => row.label === "Checked")).toHaveLength(3);
+    expect(brief.addresses.find((row) => row.attention === "quiet")?.tone).toBe("muted");
+    expect(brief.addresses.find((row) => row.attention === "needs-you")?.tone).toBe("agency");
     expect(brief.needsYou).toBe(2);
     expect(brief.licensee).toBe(1);
     expect(brief.headline).toBe("6 addresses checked. 2 need you, 1 for the licensee.");

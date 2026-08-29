@@ -43,7 +43,7 @@ const LABEL: Record<MorningAttention, string> = {
 
 const TONE: Record<MorningAttention, MorningTone> = {
   unchecked: "muted",
-  quiet: "agency",
+  quiet: "muted",
   "needs-you": "agency",
   held: "hold",
   licensee: "danger",
