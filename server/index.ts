@@ -18,7 +18,7 @@ import {
   setupCommands,
   type LifecycleAction,
 } from "./container-computer.ts";
-import { ensureDirs, instanceConfigs, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.ts";
+import { DATA_DIR, ensureDirs, instanceConfigs, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.ts";
 import { resetPathCache } from "./env-path.ts";
 import type { RuntimeEvent } from "./contracts.ts";
 
@@ -31,8 +31,9 @@ import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { readCuaConnection } from "./local-computer.ts";
 import { applyPropertyPack } from "./hermes-pack.ts";
 import { hermesStatus } from "./hermes-status.ts";
-import { hermesInstallCommand, HERMES_PIN } from "./hermes-pin.ts";
+import { hermesInstallCommand } from "./hermes-pin.ts";
 import { tryHermesPing } from "./hermes-hands.ts";
+import { readHandsLast, writeHandsLast } from "./hands-last.ts";
 import { readArtifact } from "./audit-artifacts.ts";
 import { Desk } from "./desk.ts";
 import { seedVault } from "./vault.ts";
@@ -42,6 +43,7 @@ import { CANONICAL_BUD_NAME, PRODUCT_MODE, isCanonicalBud, productDenied } from 
 import { LoopManager, type LoopId } from "./routines.ts";
 import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
 import { evaluatorForLoop } from "./workflow-catalog.ts";
+import { containsCredential } from "./redact.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import { TurnWatchdog } from "./turn-watchdog.ts";
 
@@ -496,6 +498,12 @@ async function startTurn(
 ) {
   const bot = store.bot(botId);
   if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
+  if (PRODUCT_MODE && containsCredential(text)) {
+    throw Object.assign(
+      new Error("Provider keys go on You → Attach model. Ask never sees the secret."),
+      { status: 400 },
+    );
+  }
   if (bot.busy) throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });
   const threadId = opts?.threadId ?? bot.threadId;
   const task = store.taskByThread(bot.id, threadId);
@@ -759,8 +767,9 @@ loops = new LoopManager({
         return { ok: true, detail: `Owner letters on Desk: ${after} (${after - before} new this week).` };
       }
       if (loop.id !== "morning-arrears") return { ok: false, detail: "not built yet" };
-      const before = desk.snapshot();
-      const snapshot = before.mode === "demo" ? desk.runMorningCheck() : await desk.runMorningCheckLive();
+      // Same door as Desk Recheck. Demo miss stays labelled Demo and writes
+      // the shared worker clock. The fixture path never silently skips the worker.
+      const snapshot = await desk.runMorningCheckLive();
       commitDesk(snapshot);
       if (snapshot.hands === "held") return { ok: false, detail: snapshot.handsDetail ?? "held" };
       if (snapshot.mode === "demo") return { ok: true, detail: snapshot.handsDetail ?? "Demo check completed." };
@@ -1136,11 +1145,11 @@ const server = createServer(async (req, res) => {
     let loopMatch = path.match(/^\/api\/loops\/([\w-]+)\/run$/);
     if (loopMatch && method === "POST") {
       const loop = loops!.listLoops().find((candidate) => candidate.id === loopMatch![1]);
-      if (!loop) return json(res, 404, { error: "no such loop" });
-      if (!loop.available) return json(res, 409, { error: "that loop is declared but not built yet" });
+      if (!loop) return json(res, 404, { error: "no such routine" });
+      if (!loop.available) return json(res, 409, { error: "that routine is declared but not built yet" });
       try {
         const run = loops!.runNow(loopMatch[1] as LoopId);
-        return run ? json(res, 201, { run }) : json(res, 409, { error: "enable this loop before running it" });
+        return run ? json(res, 201, { run }) : json(res, 409, { error: "turn this routine on before running it" });
       } catch (error) {
         const status = (error as { status?: number }).status ?? 500;
         return json(res, status, { error: error instanceof Error ? error.message : String(error) });
@@ -1184,6 +1193,24 @@ const server = createServer(async (req, res) => {
       commitDesk(snapshot);
       return json(res, 200, snapshot);
     }
+    if (path === "/api/desk/agency" && method === "PATCH") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      try {
+        const snapshot = desk.patchAgency({
+          name: typeof body.name === "string" ? body.name : undefined,
+          jurisdictions: Array.isArray(body.jurisdictions) ? body.jurisdictions : undefined,
+          office: body.office,
+        });
+        commitDesk(snapshot);
+        return json(res, 200, snapshot);
+      } catch (e) {
+        const status = (e as { status?: number }).status ?? 500;
+        return json(res, status, { error: e instanceof Error ? e.message : String(e) });
+      }
+    }
     if (path === "/api/desk/import" && method === "POST") {
       const body = await readBody(req);
       const snapshot = desk.importCsv(String(body.csv ?? ""), typeof body.observedAt === "number" ? body.observedAt : undefined);
@@ -1216,6 +1243,20 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { ...result, snapshot: desk.snapshot() });
       } catch (e) {
         return json(res, 500, { error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    if (path === "/api/desk/book-proposals/allow-all" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      await readBody(req);
+      try {
+        const snapshot = desk.allowAllBookProposals();
+        commitDesk(snapshot);
+        return json(res, 200, snapshot);
+      } catch (e) {
+        const status = (e as { status?: number }).status ?? 500;
+        return json(res, status, { error: e instanceof Error ? e.message : String(e) });
       }
     }
     let bookMatch = path.match(/^\/api\/desk\/book-proposals\/([\w-]+)\/(allow|deny)$/);
@@ -1341,14 +1382,17 @@ const server = createServer(async (req, res) => {
 
     // ── pinned Hermes worker (Desk hands; never Hermes Desktop) ────────
     if (path === "/api/hermes" && method === "GET") {
-      return json(res, 200, await hermesStatus());
+      const status = await hermesStatus();
+      return json(res, 200, { ...status, lastTest: readHandsLast(DATA_DIR) });
     }
     if (path === "/api/hermes/test" && method === "POST") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
         return json(res, 415, { error: "content-type must be application/json" });
       }
       await readBody(req);
-      return json(res, 200, await tryHermesPing());
+      const ping = await tryHermesPing();
+      writeHandsLast(DATA_DIR, { at: Date.now(), ok: ping.ok, detail: ping.detail, kind: "ping" });
+      return json(res, 200, ping);
     }
     if (path === "/api/hermes/model" && method === "POST") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {

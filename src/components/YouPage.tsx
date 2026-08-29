@@ -2,22 +2,20 @@ import { useEffect, useState } from "react";
 import { User } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { fmtDateTime } from "@/lib/au";
+import { sourceKindLabel } from "@/lib/hands-label";
+import { morningBrief } from "@/lib/morning-brief";
 import { api, useStore } from "@/state/store";
 import { AdvancedDiagnostics, RecoveryNotice } from "./pm";
 import { Card } from "./SettingsPrimitives";
 import { HermesHandsCard, ProfileFields } from "./SettingsModal";
-
-type HermesStatus = {
-  pin: { product: string; tag: string; commit: string; profile: string };
-  pack: { installed: boolean; approvalsManual: boolean };
-  detail: string;
-  ready: boolean;
-};
+import { GoLiveCard } from "./desk/GoLiveCard";
+import { MorningBrief } from "./desk/MorningBrief";
+import { OfficeCard } from "./you/OfficeCard";
 
 export function YouPage() {
-  const { state, dispatch } = useStore();
+  const { state, dispatch, refreshHermes } = useStore();
   const [session, setSession] = useState<{ product?: boolean; nonProduction?: boolean } | null>(null);
-  const [hermes, setHermes] = useState<HermesStatus | null>(null);
 
   useEffect(() => {
     void api("/api/session")
@@ -26,29 +24,29 @@ export function YouPage() {
     void api("/api/desk")
       .then((snapshot) => dispatch({ type: "deskSnapshot", snapshot }))
       .catch(() => {});
-    void api("/api/hermes")
-      .then((body) => setHermes(body))
-      .catch(() => setHermes(null));
-  }, [dispatch]);
+    void refreshHermes();
+  }, [dispatch, refreshHermes]);
 
   const desk = state.desk;
+  const hermes = state.hermes;
   const recovery = desk?.recovery?.active;
   const agency = desk?.book?.agency;
+  const timezone = agency?.timezone || desk?.timezone || "Australia/Sydney";
 
   return (
-    <main className="flex h-full min-w-0 flex-1 flex-col bg-app">
+    <main className="flex h-full min-w-0 flex-1 flex-col bg-paper">
       <header className="px-5 pb-3 pt-4">
         <div className="flex items-center gap-2.5">
-          <User size={21} className="text-accent" />
+          <User size={21} className="text-agency" />
           <h1 className="pm-screen-title text-ink">You</h1>
         </div>
         <p className="mt-1 max-w-[40rem] text-[12.5px] text-ink-secondary">
-          Agency, source readiness, browser profile, and recovery. Engine internals stay under Advanced diagnostics.
+          This office, when the book was last checked, and recovery. Engine internals stay under Advanced diagnostics.
         </p>
       </header>
       <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-5 pb-6">
         {session?.nonProduction && (
-          <div className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-[13px] text-warning">
+          <div className="rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-[13px] text-warning">
             Source-run key. This is not a production distribution. Agency data stays local.
           </div>
         )}
@@ -57,11 +55,45 @@ export function YouPage() {
             Desk is in recovery. Writes, schedules and browser work are paused. The book was not replaced with Demo data.
           </RecoveryNotice>
         )}
-        <Card title="Agency" subtitle={agency ? `${agency.name || "Unnamed"} · ${agency.timezone}` : "Open Desk once to load the book."}>
-          <div className="text-[13px] text-ink-secondary">
-            Jurisdictions: {agency?.jurisdictions.length ? agency.jurisdictions.join(", ") : "Not set"}
-          </div>
-        </Card>
+        {desk ? (
+          <OfficeCard
+            agencyName={agency?.name ?? ""}
+            timezone={timezone}
+            jurisdictions={agency?.jurisdictions ?? []}
+            office={desk.book?.office}
+            profileName={state.config?.profile?.name}
+            onSave={(input) =>
+              api("/api/desk/agency", {
+                method: "PATCH",
+                body: JSON.stringify({ name: input.name, jurisdictions: input.jurisdictions, office: input.office }),
+              }).then((snapshot) => dispatch({ type: "deskSnapshot", snapshot }))
+            }
+          />
+        ) : (
+          <Card title="This office" subtitle="Open Desk once to load the book." />
+        )}
+        {desk ? (
+          <MorningBrief
+            brief={morningBrief(desk)}
+            timezone={timezone}
+            onOpenAddress={() => dispatch({ type: "showDesk" })}
+            interactive
+          />
+        ) : null}
+        {desk ? (
+          <GoLiveCard
+            mode={desk.mode}
+            agencyName={agency?.name ?? ""}
+            workerReady={Boolean(hermes?.ready) || desk.hands === "hermes"}
+            compact={desk.lastRunAt != null}
+            onConnectExport={() => dispatch({ type: "showDesk" })}
+            onSaveAgency={(name) => {
+              void api("/api/desk/agency", { method: "PATCH", body: JSON.stringify({ name }) })
+                .then((snapshot) => dispatch({ type: "deskSnapshot", snapshot }))
+                .catch(() => {});
+            }}
+          />
+        ) : null}
         <Card title="Profile" subtitle="Shown in the sidebar. Saved as you go.">
           <ProfileFields />
         </Card>
@@ -71,14 +103,21 @@ export function YouPage() {
           title="Sources"
           subtitle={
             desk
-              ? `${desk.mode === "demo" ? "Demo book" : "Live book"} · revision ${desk.revision} · ${desk.timezone}`
+              ? `${desk.mode === "demo" ? "Demo book" : "Live book"} · ${desk.timezone}`
               : "Open Desk once to load the book."
           }
         >
           <ul className="text-[13px] text-ink-secondary">
             {(desk?.sources ?? []).map((source) => (
-              <li key={source.id}>
-                {source.label} · {source.kind}
+              <li key={source.id} className="flex flex-wrap items-baseline justify-between gap-2 py-1">
+                <span>
+                  {source.label} · {sourceKindLabel(source.kind)}
+                </span>
+                <span className="text-[12px] text-ink-muted">
+                  {source.lastCheckedAt
+                    ? `Checked ${fmtDateTime(source.lastCheckedAt, timezone)}`
+                    : "Not checked yet"}
+                </span>
               </li>
             ))}
             {!desk?.sources?.length && <li>No sources yet.</li>}

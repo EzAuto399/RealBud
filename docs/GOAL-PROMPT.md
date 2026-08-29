@@ -1,10 +1,10 @@
 # RealBud — complete goal prompt
 
-Date: 2026-08-23 (state synced to HEAD `bdb05ce` + gate hardening)  
+Date: 2026-08-29 (state synced to HEAD `750f7ae`; next wave in `docs/NEXT-WAVE.md`)  
 Repo: `EzAuto399/RealBud` (local folder still `PropertyMe`)  
 Use: paste this whole file into a new session, or point an agent at it. If a later idea fights this document, **this document wins**.
 
-Related: `DESIGN.md`, `docs/PRODUCT-DESIGN-PLAN.md`, `docs/IDENTITY.md`, `docs/PRODUCT-BRIEF.md`, `docs/WORKFLOW-PLAN.md`, `docs/PILOT-CONTRACT.md`, `docs/APPROACH.md`, `pack/property/SOUL.md`, `CLAUDE.md`
+Related: `DESIGN.md`, `docs/PRODUCT-DESIGN-PLAN.md`, `docs/NEXT-WAVE.md`, `docs/IDENTITY.md`, `docs/PRODUCT-BRIEF.md`, `docs/WORKFLOW-PLAN.md`, `docs/PILOT-CONTRACT.md`, `docs/APPROACH.md`, `pack/property/SOUL.md`, `CLAUDE.md`
 
 ---
 
@@ -18,7 +18,7 @@ RealBud owns the window (Desk · Ask · Schedule · You). Pinned Hermes profile 
 
 Hard gates: no send, no trust, no statutory draft, no invented legal clock, no Hermes.app, no Hermes source edits, no extra RealBud agents, no tenant-facing bot, no law crawler.
 
-Current software is a training appliance (fixture book + CSV + fake portal) whose **beta door is done**: their export matches by address or their property code, morning cards land on Desk, the PM Copies into their PMS. Notes on the card, Ask→Desk proposals, editable loop times (PRs A/B), and Friday owner letter v0 also shipped. Next work waits on a named office in `docs/PILOT-CONTRACT.md`. Do not add surfaces. Do not rebuild PropertyMe.
+Current software is a training appliance (fixture book + CSV + fake portal) whose **beta door is done**: their export matches by address or their property code, morning cards land on Desk, the PM Copies into their PMS. Notes, Ask→Desk, intake, editable clocks, Friday owner letter v0, in-app worker attach, recovery-key unlock, first-run + go-live, worker-coverage holds, batch persist, last-checked times, and You → This office (eight visit fields, empty until typed) also shipped. A named office on that form still gates inbound, live CUA, Pocket, and the graduate installer. Do not add surfaces. Do not rebuild PropertyMe.
 
 ---
 
@@ -218,25 +218,27 @@ Forking Hermes Desktop is rejected. Overlaying Hermes.app is rejected.
 
 ---
 
-## 8. Where the software actually is (2026-08-23)
+## 8. Where the software actually is (2026-08-29)
 
 Shipped, not slides:
 
-- Appliance chrome: Desk / Ask / Schedule / You
+- Appliance chrome: Desk / Ask / Schedule / You. Warm Ledger tokens. Desk V3 book.
 - Product mode: one Bud thread; denied bot/group/plugin/cloud-computer routes
 - Desk book: add/edit/remove properties, options, locked `never`
 - Morning evaluate + Allow/Deny/Edit/Copy; send 403
 - CSV import matching by **address or property code** (`parsePmsExport`; identity-column aliases), freshness / unmatched / partial / reversed holds; ambiguous rows become row-level holds (batch-reject stays schema-only; zero-match imports never fake live)
 - **Notes on the property card; vault seeded as Hermes cwd; Allow appends to the note + decisions log; evaluate never reads the vault (regression-tested)**
-- **Ask → Desk: "Put on Desk" creates a pending draft that needs the one Allow**
+- **Ask → Desk: "Put on Desk" plus paste/drop intake that stages book cards for one Allow**
+- In-app worker install, model attach, Test hands, recovery-key reveal/unlock
 - Hermes pin, pack, fail-closed Recheck (spawn now also requires `approvals.mode: manual`)
 - Gate hardening: product mode denies `autoApprove`/`alwaysAllow`/`chiefOfStaff` on bot PATCH, Bud rename and Bud delete; auto-answer of permissions is off in product mode
 - Named loops with an editable clock (PATCH time/weekdays/enabled + revision, no backfill) and Schedule GUI chips
+- Shared this-morning brief: Recheck lands every known address; seeded demo kinds stay on the book and do not count as Held; inbox stays not connected until a named office reads mail
 - **Friday owner letter v0** (`server/owner-letter.ts`): one factual catch-up per property per week from Desk facts + Notes; Copy-only; Run now or the Friday clock lands it on Desk
 - Bounded fake-portal prefill; Bud submit 403
-- Pilot contract still **demo** (`agency: RealBud Demo Book`)
+- Pilot contract still **demo** until You → This office is filled with a real shop (`agency: RealBud Demo Book` does not count)
 
-Not shipped:
+Not shipped (see `docs/NEXT-WAVE.md`; W1–W5 are done):
 
 - Ask proposing a Schedule change as a card (PR C — deferred until a named office asks)
 - Inbound / emergency triage loop
@@ -257,7 +259,7 @@ Beta is **not** more architecture. Beta is one PM and a **real book**.
 2. ✅ Match rows to Desk properties by **address or their property code**, not fixture ids.
 3. ✅ Morning cards from those facts (still shop rules, still no send).
 4. ✅ PM Copies into the PMS they already use.
-5. ✅ Hands stay honest (Hermes live or CSV live — never silently Demo; miss ⇒ hold).
+5. ✅ Hands stay honest (Worker live or CSV live — never silently Demo; miss or uncovered property ⇒ hold).
 
 **Sells — all shipped at HEAD:**
 
@@ -290,9 +292,8 @@ Architecture is ahead of integration. Prefer **their file in, our ids out** over
 
 ### Next build if no other instruction
 
-Code is ahead of the pilot. In order, when there is a reason:
+W1–W5 and the morning brief in `docs/NEXT-WAVE.md` are shipped. Stop unless a named office in `docs/PILOT-CONTRACT.md` asks for one gated item. Do not fake an inbox read.
 
-1. Fill the eight required fields in `docs/PILOT-CONTRACT.md` on a real visit (agency + PM, PMS brand, named exporter, export cadence, identity column, office OS, jurisdictions, vendor test account)  
-2. After a named agency signs: installer a graduate can double-click, then vendor-test portal prep (bounded CUA, human Submit)  
+The visit still finishes the product. Fill the eight fields in `docs/PILOT-CONTRACT.md`. After a named agency: installer a graduate can double-click, then vendor-test portal prep.
 
-Do not start a law shelf, a vault page, a second agent, Ask-proposes-clock-changes (PR C), or live CUA until the pilot contract names a real agency and it asks for one.
+Do not start a law shelf, a vault page, a second agent, Ask-proposes-clock-changes (PR C), inbound mail, or live CUA until the pilot contract names a real agency and it asks for one.

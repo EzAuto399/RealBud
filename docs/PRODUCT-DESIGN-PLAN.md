@@ -1,7 +1,7 @@
 # RealBud Native PM Product Design Plan
 
-Date: 2026-08-24  
-Status: design decisions approved; implementation not started  
+Date: 2026-08-24 (status refreshed 2026-08-29)  
+Status: V3 + native Desk shipped on main (`750f7ae`). Remaining pickup is `docs/NEXT-WAVE.md`. T1–T13 boxes below are historical; do not rebuild them.  
 Canonical constraints: `docs/GOAL-PROMPT.md` wins conflicts  
 Approved concept: Warm Operational Ledger (`~/.gstack/projects/EzAuto399-PropertyMe/designs/realbud-pm-case-spine-20260824/`)
 
@@ -472,32 +472,20 @@ Avoid a generic repository/service layer. Each module owns one trust boundary an
 
 ## Implementation Tasks
 
-- [ ] **T1 (P1, human: ~1 day / CC: ~30 min)** — Design system — Implement `DESIGN.md` tokens/primitives and remove Grok palette/mascot-first shell.  
-  Surfaced by: passes 4–5. Files: `src/styles.css`, shared UI primitives. Verify: token audit + visual regression.
-- [ ] **T2 (P1, human: ~10–15 days / CC: ~3–5 days)** — Domain/data — Define full V3 contracts, strict decoders, immutable evidence/projections, atomic V2→V3 migration and compatibility snapshot.  
-  Surfaced by: design pass 7 + V3 eng review. Files: V3 modules above, current Desk/evaluators. Verify: complete migration matrix + all hard-gate tests.
-- [ ] **T3 (P1, human: ~4 days / CC: ~1 day)** — Desk shell — Build adaptive queue/case/evidence split view and Book secondary mode, including PropertyGroup grouping, command-palette/keyboard fast navigation, CSV drop-target, and the Go-live checklist card.  
-  Surfaced by: pass 1 + onboarding section. Files: `DeskPage.tsx` split into focused components. Verify: keyboard/responsive/state tests.
-- [ ] **T4 (P1, human: ~6–8 days / CC: ~2–3 days)** — Case/evidence breadth — Surface current/historic tenancies, owner/tenant/tradie contacts, safeguards, maintenance/lease/inspection cases, evidence and immutable decision history.  
-  Surfaced by: passes 1–3 + full-breadth decision. Verify: every Case type/state and ImportIssue renders.
-- [ ] **T5 (P1, human: ~4 days / CC: ~1 day)** — Bounded browser workspace — Add side-by-side default plus inspector/popout modes; implement full handoff lifecycle and completion semantics.  
-  Surfaced by: passes 1–2. Reuse: existing CUA lease/recipe/capability. Verify: origin/expiry/human-Submit/effect-unknown E2E.
-- [ ] **T6 (P2, human: ~3 days / CC: ~1 day)** — Ask — Create case-scoped PM default and Advanced diagnostics; remove generic-agent affordances from default.  
-  Surfaced by: pass 4. Verify: no bots/models/tools appear in default product mode.
-- [ ] **T7 (P2, human: ~2 days / CC: ~4 h)** — Schedule — Link runs to produced cases/proposals and add complete loading/error/recovery states.  
-  Surfaced by: passes 2–3.
-- [ ] **T8 (P2, human: ~2 days / CC: ~4 h)** — You — Make agency/source/recovery primary; move Hermes internals under Advanced; mirror the Go-live checklist with worker/provider auto-detection.  
-  Surfaced by: passes 3–4 + onboarding section.
-- [ ] **T9 (P1, human: ~3 days / CC: ~1 day)** — Accessibility/state pass — dialogs, focus, keyboard, confirmations, reduced motion and narrow-window behaviour.  
-  Surfaced by: passes 2 and 6. Verify: WCAG-oriented manual checklist + automated smoke tests.
-- [ ] **T10 (P1, human: ~2 days / CC: ~4 h)** — Live QA — Run the full source→case→decision→handoff journey on demo/fake portal before pilot data.  
-  Verify: `/qa`, before/after screenshots, zero send/pay paths.
-- [ ] **T11 (P1, human: ~4 days / CC: ~1.5 days)** — Worker bridge control plane (Hands 2.0, zero-terminal) — The user never sees Terminal or the hermes CLI. Programmatic worker install: harness spawns the pinned installer itself, streams progress into the You card, runs dependency preflight (curl/git/python) with in-app results, verifies `hermes --version` matches the pin before declaring success. Programmatic model attach: provider picker + key entry written directly to the profile (`config.yaml` model block + `auth.json` credentials — schema oracle: the configured dev machine), then Test hands. One-click pinned worker update on pin bump (manual click, never auto, never main, profile auth survives). Vocabulary purge: user surfaces say Worker/Bud's engine; "Hermes" only inside Advanced diagnostics; the "Opens a terminal" copy dies.  
-  Surfaced by: setup dead-end for non-technical graduates + zero-terminal doctrine. Files: new `server/hermes-bridge.ts`, `SettingsModal` Hermes card → Worker card, `hermes-pin.ts`, delete the three `openTerminalAndRun` escapes from `server/index.ts`. Verify: fresh-Mac E2E — install, attach, test, go live with Terminal never opening and no Hermes word outside Advanced; update flow preserves profile auth; keys never enter desk.json.
-- [ ] **T12 (P1, human: ~4 days / CC: ~1 day)** — Ask as actor — Closed action-proposal catalog (`run-loop`, `retune-clock`, `add-property`, `edit-property`) rendered as diff cards in Ask; Allow applies through existing commands; Deny discards; `desk-actions` skill on the property pack returns structured action JSON only. Generalizes ROUTINES PR C.  
-  Surfaced by: product ask "Bud should be able to do tasks". Verify: no chat path executes without a recorded Allow; closed union denies everything else; send/trust/statutory/browser stay unreachable from proposals.
+- [x] **T1** — Design system (Warm Ledger tokens/primitives). Residual: leftover OpenMausBot chrome still in tree, hidden by product mode.
+- [x] **T2** — Desk V3 contracts, decoders, migration, compatibility snapshot. Follow-up: batch persist (`docs/NEXT-WAVE.md` W3).
+- [x] **T3** — Queue/case/evidence split + Book mode + CSV drop. Go-live checklist shipped (`NEXT-WAVE` W1). PropertyGroup grouping and Cmd+K stay parked.
+- [x] **T4** — Demo-breadth cases render (maintenance/lease/inspection/inbound as held fixtures). Full historic tenancy/contact editing is not a next-wave item.
+- [x] **T5** — Fake-portal handoff, human Submit, effect-unknown. Live vendor portal waits on the pilot contract.
+- [x] **T6** — Product Ask (no reactions/models/computer in the default thread).
+- [x] **T7** — Schedule clock GUI + run history. Run-to-case index is good enough; do not rebuild Schedule.
+- [x] **T8** — You: agency, sources, recovery, worker card, Advanced diagnostics. Go-live mirror and last-checked times shipped (`NEXT-WAVE` W1, W5).
+- [x] **T9** — Arrow-key queue, live-region confirmations, split-view drawers. Residual a11y is not a new project.
+- [x] **T10** — `scripts/e2e-walkthrough.mjs` 26 checks green at HEAD.
+- [x] **T11** — In-app worker install, model attach, Test hands. User chrome says Worker (`NEXT-WAVE` W2). Windows install stays CSV-only.
+- [~] **T12** — Intake + "Put courtesy on Desk" shipped. Closed Ask-as-actor catalog (`run-loop`, `retune-clock`) is ROUTINES PR C and stays deferred. Do not "finish T12" by building PR C.
 
-Implementation order: `T1 → T2 contracts/decoder/migration → compatibility snapshot → T3/T4 → T5 → T6/T7/T8 → T9 → T10`. T3/T4 may proceed in parallel only after V3 contracts and projection DTOs settle; all browser work depends on the Case/ProposalRevision/HandoffAuthorization model.
+Historical implementation order is done. W1–W5 shipped. Next work waits on a named office. Do not start T1 again.
 
 ## Review completion
 
@@ -523,6 +511,6 @@ Implementation order: `T1 → T2 contracts/decoder/migration → compatibility s
 
 **CODEX:** Blocked by missing local read-only bridge; internal eng review completed with file/line evidence and resolved 11 findings.
 
-**VERDICT:** CEO + DESIGN + ENG CLEARED — full native PM concept and Desk V3 architecture approved. Implementation may start with T1, then T2 contracts/decoder/migration behind the compatibility snapshot.
+**VERDICT:** CEO + DESIGN + ENG CLEARED. Native Desk and V3 shipped. Next code is `docs/NEXT-WAVE.md`, not T1.
 
 NO UNRESOLVED DECISIONS

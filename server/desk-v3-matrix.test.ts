@@ -57,6 +57,16 @@ describe("strict V3 decoder", () => {
     const again = decodeDeskV3(JSON.parse(JSON.stringify(v3)));
     expect(again.version).toBe(3);
     expect(again.properties).toHaveLength(v3.properties.length);
+    expect(again.office.pmUser).toBe("");
+  });
+
+  it("loads a V3 book that was written before office existed", () => {
+    const v3 = migrateV2ToV3(emptyV2(fixtureBook()), migratedAt);
+    const raw = JSON.parse(JSON.stringify(v3)) as { office?: unknown };
+    delete raw.office;
+    const again = decodeDeskV3(raw);
+    expect(again.office.vendorTestAccount).toBe("");
+    expect(again.office.pmsBrand).toBe("");
   });
 
   it("decodes V2 that omitted optional collections", () => {

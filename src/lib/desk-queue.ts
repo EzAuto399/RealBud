@@ -3,7 +3,20 @@ import type { DeskSnapshot, Draft, WorkItem, WorkKind } from "../../shared/contr
 
 export const QUEUE_FILTERS = ["needs-you", "held", "licensee", "all"] as const;
 export type QueueFilter = (typeof QUEUE_FILTERS)[number];
-export type QueueBucket = "needs-you" | "held" | "licensee" | "decided";
+export type QueueBucket = "needs-you" | "held" | "licensee" | "decided" | "on-book";
+
+/** Seeded demo kinds. Recheck does not create them. They stay on the book. */
+const BOOK_ONLY_KINDS = new Set<QueueKind>([
+  "maintenance-intake",
+  "lease-review",
+  "inspection-prep",
+  "inbound-triage",
+]);
+
+function morningBucket(kind: QueueKind, bucket: QueueBucket): QueueBucket {
+  if (BOOK_ONLY_KINDS.has(kind) && bucket === "held") return "on-book";
+  return bucket;
+}
 export type QueueKind =
   | "money-arrears"
   | "owner-update"
@@ -50,6 +63,7 @@ function kindFromDraft(draft: Draft): QueueKind {
 
 function actionFor(bucket: QueueBucket, kind: QueueKind): string {
   if (bucket === "licensee") return "Licensee — do not draft";
+  if (bucket === "on-book") return "On the book — not this check";
   if (kind === "import-issue") return "Match this source row";
   if (bucket === "held") return "Held — no wording yet";
   if (bucket === "decided") return "Recorded decision";
@@ -147,15 +161,16 @@ export function buildDeskQueue(snap: DeskSnapshot): DeskQueueItem[] {
     }
     if (work.state === "held" || !work.draftId) {
       const kind = kindFromWork(work.kind);
+      const bucket = morningBucket(kind, work.state === "held" ? "held" : "needs-you");
       seenWork.add(work.id);
       rows.push({
         id: `work:${work.id}`,
         kind,
-        bucket: work.state === "held" ? "held" : "needs-you",
+        bucket,
         state: work.state,
         propertyId: work.propertyId,
         address: addressById.get(work.propertyId) ?? work.propertyId,
-        action: actionFor(work.state === "held" ? "held" : "needs-you", kind),
+        action: actionFor(bucket, kind),
         meta: work.holdReason ?? work.state,
         holdReason: work.holdReason,
         updatedAt: work.updatedAt,
@@ -210,7 +225,10 @@ export function buildDeskQueue(snap: DeskSnapshot): DeskQueueItem[] {
       continue;
     }
     const kind = kindFromWork(item.kind);
-    const bucket: QueueBucket = item.state === "held" ? "held" : item.state === "proposed" ? "needs-you" : "decided";
+    const bucket = morningBucket(
+      kind,
+      item.state === "held" ? "held" : item.state === "proposed" ? "needs-you" : "decided",
+    );
     rows.push({
       id: `work:${item.id}`,
       kind,
@@ -225,7 +243,7 @@ export function buildDeskQueue(snap: DeskSnapshot): DeskQueueItem[] {
     });
   }
 
-  const order: Record<QueueBucket, number> = { "needs-you": 0, held: 1, licensee: 2, decided: 3 };
+  const order: Record<QueueBucket, number> = { "needs-you": 0, held: 1, licensee: 2, "on-book": 3, decided: 4 };
   return rows.sort((a, b) => order[a.bucket] - order[b.bucket] || b.updatedAt - a.updatedAt);
 }
 
@@ -236,10 +254,11 @@ export function filterDeskQueue(rows: DeskQueueItem[], filter: QueueFilter, quer
   return scoped.filter((row) => `${row.address} ${row.meta} ${row.kind}`.toLowerCase().includes(needle));
 }
 
-export function queueCounts(rows: DeskQueueItem[]): Record<Exclude<QueueFilter, "all">, number> {
+export function queueCounts(rows: DeskQueueItem[]): Record<Exclude<QueueFilter, "all">, number> & { "on-book": number } {
   return {
     "needs-you": rows.filter((row) => row.bucket === "needs-you").length,
     held: rows.filter((row) => row.bucket === "held").length,
     licensee: rows.filter((row) => row.bucket === "licensee").length,
+    "on-book": rows.filter((row) => row.bucket === "on-book").length,
   };
 }

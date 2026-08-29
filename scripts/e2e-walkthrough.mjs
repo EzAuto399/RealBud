@@ -79,6 +79,9 @@ try {
   snap = (await api("POST", "/api/desk/check", {})).body;
   const portalEarly = snap.drafts.find((d) => d.kind === "courtesy-rent" && d.status === "pending" && d.channel === "portal");
   check("recheck drafts portal courtesy for Oak", Boolean(portalEarly));
+  const hermesAfterCheck = await api("GET", "/api/hermes");
+  check("recheck writes the shared worker clock", typeof hermesAfterCheck.body?.lastTest?.at === "number");
+  check("recheck stamps the worker source", snap.sources?.some((s) => s.kind === "hermes" && typeof s.lastCheckedAt === "number"));
 
   // ── 4. CSV import: matched go live, unmatched becomes an issue with an address ──
   const csv = [
@@ -89,6 +92,22 @@ try {
   ].join("\n");
   snap = (await api("POST", "/api/desk/import", { csv })).body;
   check("import flips the book live", snap?.mode === "live" && snap.hands === "csv");
+  check("csv source has last-checked", snap.sources?.some((s) => s.kind === "csv" && typeof s.lastCheckedAt === "number"));
+  const named = await api("PATCH", "/api/desk/agency", {
+    name: "Harbour PM",
+    jurisdictions: ["ACT"],
+    office: {
+      pmUser: "Alex",
+      pmsBrand: "other",
+      namedExporter: "Principal",
+      exportCadence: "daily",
+      exportIdentity: "address",
+      officeOs: "linux",
+      vendorTestAccount: "fake-building-portal",
+    },
+  });
+  check("agency name sticks", named.status === 200 && named.body?.book?.agency?.name === "Harbour PM");
+  check("office visit fields stick", named.body?.book?.office?.pmUser === "Alex" && named.body?.book?.office?.pmsBrand === "other");
   const issue = snap.book?.importIssues?.find((row) => row.rawIdentity.includes("Ghost"));
   check("unmatched row keeps its address", Boolean(issue), issue?.rawIdentity);
   snap = (await api("POST", "/api/desk/import", { csv })).body;

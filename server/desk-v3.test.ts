@@ -64,6 +64,15 @@ describe("Desk V3 contracts", () => {
     expect(book.contacts).toEqual([]);
     expect(book.evidence).toEqual([]);
     expect(book.decisions).toEqual([]);
+    expect(book.office).toEqual({
+      pmUser: "",
+      pmsBrand: "",
+      namedExporter: "",
+      exportCadence: "",
+      exportIdentity: "",
+      officeOs: "",
+      vendorTestAccount: "",
+    });
     expect(LEGACY_UNKNOWN_ACTOR).toBe("legacy-unknown");
   });
 });

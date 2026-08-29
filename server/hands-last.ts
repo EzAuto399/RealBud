@@ -1,0 +1,38 @@
+// Last worker ping or Recheck. Desk and You read the same file so the
+// GUI and the worker stay on one clock.
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { writeFileAtomic } from "./atomic.ts";
+
+export interface HandsLast {
+  at: number;
+  ok: boolean;
+  detail: string;
+  kind: "ping" | "recheck";
+}
+
+export function handsLastPath(dir: string): string {
+  return join(dir, "hands-last.json");
+}
+
+export function readHandsLast(dir: string): HandsLast | null {
+  try {
+    const raw = JSON.parse(readFileSync(handsLastPath(dir), "utf8")) as unknown;
+    if (!raw || typeof raw !== "object") return null;
+    const rec = raw as Record<string, unknown>;
+    if (typeof rec.at !== "number" || typeof rec.ok !== "boolean" || typeof rec.detail !== "string") return null;
+    if (rec.kind !== "ping" && rec.kind !== "recheck") return null;
+    return { at: rec.at, ok: rec.ok, detail: rec.detail, kind: rec.kind };
+  } catch {
+    return null;
+  }
+}
+
+export function writeHandsLast(dir: string, record: HandsLast): void {
+  writeFileAtomic(handsLastPath(dir), JSON.stringify(record));
+}
+
+export function handsLastExists(dir: string): boolean {
+  return existsSync(handsLastPath(dir));
+}

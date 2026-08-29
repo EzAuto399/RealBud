@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { redactSecrets, redactSecretsInText } from "./redact.ts";
+import { containsCredential, redactSecrets, redactSecretsInText } from "./redact.ts";
 
 const flat = (value: unknown) => JSON.stringify(value);
 
@@ -43,6 +43,14 @@ describe("redactSecretsInText", () => {
     const out = redactSecretsInText(`set ANTHROPIC_API_KEY=sk-ant-api03-${alpha}`);
     expect(out).not.toMatch(/sk-ant/);
     expect(out).toMatch(/«redacted \d+ chars»/);
+  });
+
+  it("treats a pasted provider key as a credential and leaves book talk alone", () => {
+    const alpha = "abcdefghijklmnopqrstuvwxyz0123456789";
+    expect(containsCredential(`sk-ant-api03-${alpha}`)).toBe(true);
+    expect(containsCredential(`xai-${alpha}${alpha}`)).toBe(true);
+    expect(containsCredential("What needs me on Oak?")).toBe(false);
+    expect(containsCredential("the keyboard shortcut is cmd-k")).toBe(false);
   });
 
   it("leaves ordinary text alone", () => {

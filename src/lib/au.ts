@@ -6,8 +6,13 @@ export function fmtDate(ms: number): string {
   return new Date(ms).toLocaleDateString(AU, { day: "numeric", month: "short", year: "numeric" });
 }
 
-export function fmtDateTime(ms: number): string {
-  return new Date(ms).toLocaleString(AU, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+export function fmtDateTime(ms: number, timeZone?: string): string {
+  const opts: Intl.DateTimeFormatOptions = { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" };
+  try {
+    return new Date(ms).toLocaleString(AU, timeZone ? { ...opts, timeZone } : opts);
+  } catch {
+    return new Date(ms).toLocaleString(AU, opts);
+  }
 }
 
 export function fmtTimeOfDay(ms: number): string {

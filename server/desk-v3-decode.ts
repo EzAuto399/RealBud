@@ -37,6 +37,14 @@ import {
   type Tenancy,
   type BookProposal,
 } from "../shared/desk-v3.ts";
+import {
+  emptyOffice,
+  EXPORT_CADENCES,
+  EXPORT_IDENTITY_COLUMNS,
+  OFFICE_OS,
+  PMS_BRANDS,
+  type Office,
+} from "../shared/office.ts";
 import { migrateV1ToV2 } from "./desk-v3-migrate.ts";
 
 export class DeskDecodeError extends Error {
@@ -263,6 +271,7 @@ function decodeSourceV2(value: unknown, field: string, errors: string[]): DeskFi
     kind: oneOf(value.kind, SOURCE_KINDS, `${field}.kind`, errors) ?? "demo",
     label: typeof value.label === "string" ? value.label : "",
     stableKey: typeof value.stableKey === "string" ? value.stableKey : "",
+    lastCheckedAt: value.lastCheckedAt == null ? value.lastCheckedAt === null ? null : undefined : num(value.lastCheckedAt, `${field}.lastCheckedAt`, errors),
   };
 }
 
@@ -306,6 +315,35 @@ function decodeAgency(value: unknown, errors: string[]): Agency {
   };
 }
 
+function closedOrEmpty<T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  field: string,
+  errors: string[],
+): T | "" {
+  if (value === undefined || value === null || value === "") return "";
+  if (typeof value === "string" && (allowed as readonly string[]).includes(value)) return value as T;
+  errors.push(`${field} is not a closed union value`);
+  return "";
+}
+
+function decodeOffice(value: unknown, errors: string[]): Office {
+  if (value === undefined || value === null) return emptyOffice();
+  if (!isRec(value)) {
+    errors.push("office must be an object");
+    return emptyOffice();
+  }
+  return {
+    pmUser: typeof value.pmUser === "string" ? value.pmUser : "",
+    pmsBrand: closedOrEmpty(value.pmsBrand, PMS_BRANDS, "office.pmsBrand", errors),
+    namedExporter: typeof value.namedExporter === "string" ? value.namedExporter : "",
+    exportCadence: closedOrEmpty(value.exportCadence, EXPORT_CADENCES, "office.exportCadence", errors),
+    exportIdentity: closedOrEmpty(value.exportIdentity, EXPORT_IDENTITY_COLUMNS, "office.exportIdentity", errors),
+    officeOs: closedOrEmpty(value.officeOs, OFFICE_OS, "office.officeOs", errors),
+    vendorTestAccount: typeof value.vendorTestAccount === "string" ? value.vendorTestAccount : "",
+  };
+}
+
 function decodeOptionsV3(value: unknown, field: string, errors: string[]): PropertyV3["options"] {
   const options = isRec(value) ? value : {};
   if (!isRec(value)) errors.push(`${field} is required`);
@@ -333,6 +371,7 @@ function decodeSourceV3(value: unknown, field: string, errors: string[]): Source
     label: text(value.label, `${field}.label`, errors),
     stableKey: text(value.stableKey, `${field}.stableKey`, errors),
     freshnessMs: num(value.freshnessMs, `${field}.freshnessMs`, errors),
+    lastCheckedAt: value.lastCheckedAt == null ? value.lastCheckedAt === null ? null : undefined : num(value.lastCheckedAt, `${field}.lastCheckedAt`, errors),
   };
 }
 
@@ -664,6 +703,7 @@ export function decodeDeskV3(value: unknown): DeskFileV3 {
     mode: oneOf(value.mode, ["demo", "live"], "mode", errors) ?? "demo",
     retentionDays: value.retentionDays === null ? null : num(value.retentionDays, "retentionDays", errors),
     agency: decodeAgency(value.agency, errors),
+    office: decodeOffice(value.office, errors),
     sources: arr(value.sources, "sources", errors).map((item, i) => decodeSourceV3(item, `sources[${i}]`, errors)),
     properties: arr(value.properties, "properties", errors).map((item, i) => decodePropertyV3(item, `properties[${i}]`, errors)),
     tenancies: arr(value.tenancies, "tenancies", errors).map((item, i) => decodeTenancy(item, `tenancies[${i}]`, errors)),

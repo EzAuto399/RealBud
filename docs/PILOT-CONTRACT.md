@@ -54,10 +54,15 @@ installer spike starts until these are answered.
 | 7 | **Book jurisdiction(s)** | Which states are in the book. Day counts stay shop reminder rules regardless; this only tunes courtesy windows and wording. |
 | 8 | **Vendor test account** | For the one portal: Stage-0 spike must be re-run against a vendor test account before any real click. |
 
-When all eight are ticked: replace the Locked stack table above with the
-office's real values, mirror them in `server/pilot-contract.ts`
-(`agency`, `pmsExport`, `portal`, `jurisdiction`), and the installer a
-graduate can double-click becomes worth building.
+The eight fields persist on You → This office (`desk.json` `office`, plus
+agency name and jurisdictions). Training names still do not count. Filling
+the form does not invent a paying agency and does not turn on inbound, live
+CUA, Pocket, or the graduate installer.
+
+When all eight are ticked on a real visit: replace the Locked stack table
+above with the office's real values. `pilotContractFromBook` already mirrors
+the persisted fields. The installer a graduate can double-click becomes
+worth building after that visit, not after the form exists.
 
 ## Readiness
 

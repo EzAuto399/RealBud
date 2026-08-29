@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Hand, Loader2, RefreshCw, User, X } from "lucide-react";
 import { api, useStore, type AppSettingsSection } from "@/state/store";
+import { fmtDateTime } from "@/lib/au";
 import { useUpdaterState } from "@/lib/updater";
 import { Card } from "./SettingsPrimitives";
 import { cn } from "@/lib/cn";
@@ -126,6 +127,12 @@ export function HermesHandsCard() {
     void loadModel();
   }, []);
 
+  useEffect(() => {
+    const shared = status?.lastTest;
+    if (!shared) return;
+    setLastTest({ ok: shared.ok, detail: shared.detail, at: shared.at });
+  }, [status?.lastTest]);
+
   const pollInstall = async () => {
     for (;;) {
       const res = await api("/api/hermes/install/status");
@@ -157,6 +164,7 @@ export function HermesHandsCard() {
         const result = await api("/api/hermes/test", { method: "POST", body: "{}" });
         setTest(result);
         setLastTest({ ok: Boolean(result?.ok), detail: String(result?.detail ?? ""), at: Date.now() });
+        await refreshHermes();
         return;
       } else if (key === "pack") {
         const fresh = await api("/api/hermes/apply-pack", { method: "POST", body: "{}" });
@@ -242,7 +250,7 @@ export function HermesHandsCard() {
           <Row
             label="Last hands test"
             ok={lastTest.ok}
-            text={`${lastTest.ok ? "answered" : "failed"} · ${new Date(lastTest.at).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" })}`}
+            text={`${lastTest.ok ? "answered" : "failed"} · ${fmtDateTime(lastTest.at, state.desk?.book?.agency.timezone ?? state.desk?.timezone)}`}
           />
         )}
         {install && !["idle", "done", "failed"].includes(install.state) && (

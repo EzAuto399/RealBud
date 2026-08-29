@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import { StoreProvider, useStore } from "@/state/store";
 import { Sidebar } from "@/components/Sidebar";
@@ -7,6 +8,8 @@ import { DesktopCapabilitiesProvider } from "@/components/DesktopCapabilities";
 import { RoutinesPage } from "@/components/RoutinesPage";
 import { DeskPage } from "@/components/DeskPage";
 import { YouPage } from "@/components/YouPage";
+import { Onboarding } from "@/components/Onboarding";
+import { firstRunDone } from "@/lib/first-run";
 
 function Shell() {
   const { state } = useStore();
@@ -37,10 +40,11 @@ function Shell() {
 }
 
 export default function App() {
+  const [welcome, setWelcome] = useState(() => !firstRunDone());
   return (
     <DesktopCapabilitiesProvider>
       <StoreProvider>
-        <Shell />
+        {welcome ? <Onboarding onDone={() => setWelcome(false)} /> : <Shell />}
       </StoreProvider>
     </DesktopCapabilitiesProvider>
   );

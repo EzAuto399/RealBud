@@ -11,6 +11,9 @@ import {
   type PropertyOptions,
   type WorkState,
 } from "./contracts.ts";
+import { emptyOffice, type Office } from "./office.ts";
+
+export type { Office } from "./office.ts";
 
 export const DESK_FILE_VERSION = 3 as const;
 
@@ -105,6 +108,7 @@ export interface Source {
   label: string;
   stableKey: string;
   freshnessMs: number;
+  lastCheckedAt?: number | null;
 }
 
 export interface PropertyV3 {
@@ -303,6 +307,7 @@ export interface DeskFileV3 {
   mode: BookMode;
   retentionDays: number | null;
   agency: Agency;
+  office: Office;
   sources: Source[];
   properties: PropertyV3[];
   tenancies: Tenancy[];
@@ -330,6 +335,7 @@ export function emptyV3(agency: Agency): DeskFileV3 {
     mode: "demo",
     retentionDays: 90,
     agency,
+    office: emptyOffice(),
     sources: [],
     properties: [],
     tenancies: [],

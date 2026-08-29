@@ -1,4 +1,5 @@
-import { app, BrowserWindow, clipboard, desktopCapturer, ipcMain, session, shell, systemPreferences, utilityProcess } from "electron";
+import { app, BrowserWindow, clipboard, desktopCapturer, ipcMain, safeStorage, session, shell, systemPreferences, utilityProcess } from "electron";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -64,15 +65,58 @@ function slog(line) {
   }
 }
 
+function realbudDataDir() {
+  return process.env.REALBUD_DATA_DIR || process.env.OMB_DATA_DIR || path.join(app.getPath("home"), ".realbud");
+}
+
+/** Unwrap or create the book key. When safeStorage works, the plaintext
+ * desk.key file is removed and the hex is passed to the server child. */
+function deskKeyForChild() {
+  const dir = realbudDataDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const rawPath = path.join(dir, "desk.key");
+  const wrapPath = path.join(dir, "desk.key.wrap");
+  const asHex = (raw) => {
+    if (raw.length === 32) return Buffer.from(raw).toString("hex");
+    const text = raw.toString("utf8").trim();
+    return /^[0-9a-fA-F]{64}$/.test(text) ? text.toLowerCase() : null;
+  };
+  if (safeStorage.isEncryptionAvailable()) {
+    try {
+      if (fs.existsSync(wrapPath)) {
+        const hex = safeStorage.decryptString(fs.readFileSync(wrapPath));
+        if (/^[0-9a-fA-F]{64}$/.test(hex)) return { hex, production: true };
+      }
+      let hex = null;
+      if (fs.existsSync(rawPath)) hex = asHex(fs.readFileSync(rawPath));
+      if (!hex) hex = randomBytes(32).toString("hex");
+      fs.writeFileSync(wrapPath, safeStorage.encryptString(hex), { mode: 0o600 });
+      try {
+        fs.unlinkSync(rawPath);
+      } catch {
+        /* leftover plaintext is best-effort */
+      }
+      return { hex, production: true };
+    } catch (err) {
+      slog(`desk key wrap failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return { hex: process.env.REALBUD_DESK_KEY || null, production: false };
+}
+
 async function startServerOn(port) {
   const entry = path.join(process.resourcesPath, "server", "index.js");
-  slog(`fork ${entry} port=${port}`);
+  const deskKey = deskKeyForChild();
+  slog(`fork ${entry} port=${port} key=${deskKey.production ? "wrapped" : "source"}`);
   const proc = utilityProcess.fork(entry, [], {
     env: {
       ...process.env,
       OMB_STATIC_DIR: path.join(process.resourcesPath, "ui"),
       OMB_PORT: String(port),
       OMB_USER_DATA: app.getPath("userData"),
+      REALBUD_DATA_DIR: realbudDataDir(),
+      ...(deskKey.hex ? { REALBUD_DESK_KEY: deskKey.hex } : {}),
+      ...(deskKey.production ? { REALBUD_PRODUCTION: "1" } : {}),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

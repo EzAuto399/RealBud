@@ -77,7 +77,8 @@ export const LOOP_CATALOG: ReadonlyArray<Omit<Loop, "enabled" | "nextRunAt" | "t
   {
     id: "inbound-triage",
     name: "Inbound triage",
-    description: "Mail in → classify → job + reply draft. Declared, not built.",
+    description:
+      "Agency inbox (Microsoft 365 or Gmail) → classify → job + reply draft. Declared. Needs a named inbox on the visit. RealBud will not open mail until then.",
     available: false,
     schedule: { type: "daily", time: "09:00", weekdays: WEEKDAYS },
     evaluatorId: "inbound-triage",

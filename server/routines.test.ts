@@ -67,6 +67,13 @@ describe("LoopManager catalog", () => {
     expect(loops[2].nextRunAt).toBeNull();
   });
 
+  it("names the agency inbox on inbound and keeps Hermes out of routine copy", () => {
+    const { manager } = makeManager();
+    const inbound = manager.listLoops().find((loop) => loop.id === "inbound-triage");
+    expect(inbound?.description).toMatch(/Microsoft 365|Gmail/);
+    expect(JSON.stringify(manager.listLoops().map((loop) => loop.description))).not.toMatch(/Hermes/i);
+  });
+
   it("refuses to enable or run a loop that is not available yet; owner-letter v0 runs", () => {
     const { manager, calls } = makeManager();
     expect(() => manager.setEnabled("inbound-triage", true)).toThrow(/not built yet/);

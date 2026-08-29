@@ -66,6 +66,8 @@ export class DeskStore {
   readonly file: string;
   readonly backupDir: string;
   private keyInfo: DeskKey;
+  private batchDepth = 0;
+  private batchNeedsBump = false;
 
   /** Recovery escrow: the book's key as hex, for the You-page reveal/copy
    * and the unlock flow. Session-gated routes only. */
@@ -139,6 +141,10 @@ export class DeskStore {
     if (this.recovery.active) {
       throw Object.assign(new Error("desk is read-only in recovery mode"), { status: 409 });
     }
+    if (this.batchDepth > 0) {
+      this.batchNeedsBump = true;
+      return;
+    }
     this.data.revision += 1;
     this.flushV3();
     this.rotateBackup();
@@ -148,7 +154,29 @@ export class DeskStore {
     if (this.recovery.active) {
       throw Object.assign(new Error("desk is read-only in recovery mode"), { status: 409 });
     }
+    if (this.batchDepth > 0) {
+      this.batchNeedsBump = true;
+      return;
+    }
     this.flushV3();
+  }
+
+  /** One encrypt/fsync/backup at the end. Nested calls share the same write. */
+  runBatch<T>(fn: () => T): T {
+    this.batchDepth += 1;
+    try {
+      return fn();
+    } finally {
+      this.batchDepth -= 1;
+      if (this.batchDepth === 0 && this.batchNeedsBump) {
+        this.batchNeedsBump = false;
+        if (!this.recovery.active) {
+          this.data.revision += 1;
+          this.flushV3();
+          this.rotateBackup();
+        }
+      }
+    }
   }
 
   private flushV3(): void {

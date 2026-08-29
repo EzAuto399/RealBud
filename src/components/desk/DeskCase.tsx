@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 
 import type { DeskSnapshot, Draft } from "@/lib/desk";
@@ -12,7 +12,7 @@ export function DeskCase({
   snap,
   item,
   busy,
-  emptyReason,
+  empty,
   onAllow,
   onDeny,
   onEdit,
@@ -22,7 +22,7 @@ export function DeskCase({
   snap: DeskSnapshot;
   item?: DeskQueueItem;
   busy: string | null;
-  emptyReason: string;
+  empty: ReactNode;
   onAllow: (draft: Draft) => void;
   onDeny: (draft: Draft) => void;
   onEdit: (draft: Draft, body: string) => void;
@@ -38,11 +38,7 @@ export function DeskCase({
   }, [draft?.id, draft?.body]);
 
   if (!item) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center px-6 text-center text-[14px] text-ink-muted">
-        {emptyReason}
-      </div>
-    );
+    return <>{empty}</>;
   }
 
   const property = snap.properties.find((row) => row.id === item.propertyId);

@@ -16,7 +16,7 @@ Four reviews (code, usability, engineering, Hermes capability) agree: **PMs retu
 
 ## Today vs the hole
 
-Schedule can Pause / Resume / Run now on **Morning money**. PATCH only accepts `enabled`. Time and days are catalog constants. Ask can put a **courtesy** on Desk, not a clock change. Friday letter and inbound stay Planned.
+Schedule can Pause / Resume / Run now and retune time/weekdays on built loops. Ask can put a **courtesy** on Desk and paste a book, not a clock change. Friday owner letter is built (Copy-only). Inbound stays Planned.
 
 Hermes Bot Mode cron is a competing product (stored prompt + unattended **delivery**). Copying it breaks send-403, the training-provider story, and gives two clocks.
 

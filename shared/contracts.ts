@@ -23,6 +23,7 @@ export type CheckReason =
   | "unmatched"
   | "reversed"
   | "partial"
+  | "uncovered-by-worker"
   | "ambiguous-match";
 
 export type HandsSource = "demo" | "hermes" | "held" | "csv" | "fixture";
@@ -139,6 +140,7 @@ export interface SourceIdentity {
   kind: "csv" | "hermes" | "portal" | "demo";
   label: string;
   stableKey: string;
+  lastCheckedAt?: number | null;
 }
 
 export interface Observation {
@@ -226,6 +228,16 @@ export interface DeskBookView {
     origin: "ask" | "manual";
   }>;
   agency: { name: string; timezone: string; jurisdictions: string[] };
+  /** Eight visit fields. Empty strings until a named office fills them. */
+  office: {
+    pmUser: string;
+    pmsBrand: string;
+    namedExporter: string;
+    exportCadence: string;
+    exportIdentity: string;
+    officeOs: string;
+    vendorTestAccount: string;
+  };
   tenancies: Array<{
     id: string;
     propertyId: string;

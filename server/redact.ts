@@ -23,6 +23,7 @@ const mask = (value: string) => `«redacted ${value.length} chars»`;
 
 const KEY_PREFIXES: RegExp[] = [
   /\bsk-(?:ant-|proj-|live-|test-)?[A-Za-z0-9_-]{16,}/g,
+  /\bxai-[A-Za-z0-9_-]{16,}/g,
   /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/g,
   /\bgithub_pat_[A-Za-z0-9_]{20,}/g,
   /\bxox[abposr]-[A-Za-z0-9-]{20,}/g,
@@ -35,6 +36,13 @@ const BEARER = /(\bBearer\s+)([A-Za-z0-9._~+/=-]{12,})/g;
 const PEM_BLOCK = /(-----BEGIN [A-Z ]*PRIVATE KEY-----)([\s\S]*?)(-----END [A-Z ]*PRIVATE KEY-----)/g;
 const KEY_VALUE =
   /\b((?:[A-Za-z0-9_-]*_)?(?:api[_-]?key|apikey|secret|token|password|passwd|authorization|auth[_-]?token|access[_-]?key|private[_-]?key)s?)(["']?\s*[=:]\s*)(["']?)([A-Za-z0-9._~+/=-]{8,})\3/gi;
+
+/** True when the text carries a credential-shaped value. Used to keep
+ * provider keys off Ask. The worker may use a key after You attaches it.
+ * It does not get to read the raw secret from chat. */
+export function containsCredential(text: string): boolean {
+  return Boolean(text) && redactSecretsInText(text) !== text;
+}
 
 export function redactSecretsInText(text: string): string {
   if (!text || text.length < 8) return text;

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
+import { fmtDateTime } from "@/lib/au";
 
 export type SurfaceState = "loading" | "empty" | "partial" | "success" | "failure" | "stale" | "recovery";
 export type StatusTone = "agency" | "hold" | "danger" | "portal" | "muted";
@@ -75,7 +76,7 @@ export function SourceStamp({
       <StatusLabel tone={tone}>{state === "success" ? "Observed" : state}</StatusLabel>
       <span>{label}</span>
       {authority ? <span>{authority}</span> : null}
-      {observedAt != null ? <span className="tabular-nums">{new Date(observedAt).toLocaleString()}</span> : null}
+      {observedAt != null ? <span className="tabular-nums">{fmtDateTime(observedAt)}</span> : null}
     </div>
   );
 }
@@ -138,7 +139,7 @@ export function FactSummary({ label, value, observedAt }: { label: string; value
       <span className="pm-label text-ink-muted">{label}</span>
       <span className="tabular-nums text-[15px] text-ink">{value}</span>
       {observedAt != null ? (
-        <span className="tabular-nums text-[12px] text-ink-muted">{new Date(observedAt).toLocaleString()}</span>
+        <span className="tabular-nums text-[12px] text-ink-muted">{fmtDateTime(observedAt)}</span>
       ) : null}
     </div>
   );

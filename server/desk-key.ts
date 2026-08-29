@@ -21,6 +21,7 @@ export function loadDeskKey(opts?: { dir?: string; key?: Buffer }): DeskKey {
   }
   const hex = process.env.REALBUD_DESK_KEY;
   if (hex && /^[0-9a-fA-F]{64}$/.test(hex)) {
+    // Electron unwraps safeStorage and passes the key. Do not write desk.key.
     return { key: Buffer.from(hex, "hex"), source: "env", production: process.env.REALBUD_PRODUCTION === "1" };
   }
   const dir = opts?.dir ?? DATA_DIR;
@@ -35,11 +36,6 @@ export function loadDeskKey(opts?: { dir?: string; key?: Buffer }): DeskKey {
   }
   const key = randomBytes(32);
   writeFileSync(path, key, { mode: 0o600 });
-  try {
-    writeFileSync(path, key, { mode: 0o600 });
-  } catch {
-    /* already written */
-  }
   return { key, source: "generated", production: false };
 }
 

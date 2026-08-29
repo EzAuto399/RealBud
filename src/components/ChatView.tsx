@@ -28,6 +28,8 @@ import {
   type Message,
 } from "@/state/store";
 import type { DeskSnapshot } from "@/lib/desk";
+import { morningBrief } from "@/lib/morning-brief";
+import { fmtDateTime } from "@/lib/au";
 import { EngineSetup } from "./EngineSetup";
 import { MausAvatar } from "./Avatar";
 import { stateForBot } from "@/lib/mascot";
@@ -55,7 +57,7 @@ function dayLabel(at: number): string {
   const diffDays = Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000);
   if (diffDays === 0) return "Today";
   if (diffDays === 1) return "Yesterday";
-  return d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+  return d.toLocaleDateString("en-AU", { weekday: "short", month: "short", day: "numeric" });
 }
 
 function DaySeparator({ at }: { at: number }) {
@@ -312,7 +314,7 @@ function Bubble({
             "max-w-[70%] rounded-lg px-4 py-2.5 text-[15px] leading-relaxed",
             user ? "whitespace-pre-wrap bg-bubble-user text-ink" : "bg-card text-ink",
           )}
-          title={new Date(message.at).toLocaleString()}
+          title={fmtDateTime(message.at)}
         >
           {user ? (
             <>
@@ -526,7 +528,7 @@ const MessagesList = memo(function MessagesList({
                 Scoped to your portfolio. Ask what needs you, or put courtesy on Desk for one Allow.
               </div>
               <div className="mt-2 flex max-w-[28rem] flex-wrap justify-center gap-2">
-                {["What needs me?", "Explain this hold", "Draft an owner update", "What changed since yesterday?"].map((starter) => (
+                {["What needs me?", "Explain this hold", "Draft an owner update", "What did Recheck find?"].map((starter) => (
                   <button
                     key={starter}
                     type="button"
@@ -684,7 +686,7 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
   const noDrag = isWin ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
   return (
-    <main className="relative flex h-full min-w-0 flex-1 flex-col bg-app">
+    <main className="relative flex h-full min-w-0 flex-1 flex-col bg-paper">
       {/* Call mode covers the thread while the bot is on the line */}
       <CallOverlay bot={bot} />
       {/* Header */}
@@ -693,9 +695,15 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
         style={drag}
       >
         {productAsk ? (
-          <div className="flex items-center gap-2.5 px-1.5 py-1" style={noDrag}>
-            <h1 className="pm-screen-title text-ink">Ask</h1>
-            {bot.busy && <Loader2 size={14} className="animate-spin text-ink-muted" />}
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5 px-1.5 py-1" style={noDrag}>
+            <div className="flex items-center gap-2.5">
+              <h1 className="pm-screen-title text-ink">Ask</h1>
+              {bot.busy && <Loader2 size={14} className="animate-spin text-ink-muted" />}
+            </div>
+            <p className="text-[12.5px] text-ink-muted">
+              About the book. Cards you allow land on Desk. Inbox is not connected.
+              {state.desk ? ` ${morningBrief(state.desk).headline}` : ""}
+            </p>
           </div>
         ) : (
         <button
@@ -749,8 +757,16 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
         </div>
       </div>
 
-      {productAsk && <AskProposeBar />}
-      {productAsk && <AskIntakeBar />}
+      {productAsk && (
+        <details className="mx-auto w-full max-w-[900px] border-b border-line px-5 pb-3">
+          <summary className="cursor-pointer text-[13px] font-medium text-ink">Put work on Desk</summary>
+          <p className="mt-1 text-[12px] text-ink-muted">Courtesy and a pasted book wait here for one Allow. Inbox is not connected.</p>
+          <div className="mt-2">
+            <AskProposeBar />
+            <AskIntakeBar />
+          </div>
+        </details>
+      )}
 
       {/* Error banner */}
       {state.error && (
@@ -871,7 +887,7 @@ function AskProposeBar() {
   if (!snap?.properties.length) return null;
 
   return (
-    <div className="mx-auto flex w-full max-w-[900px] flex-wrap items-center gap-2 px-5 pb-2">
+    <div className="flex w-full flex-wrap items-center gap-2 pb-2">
       <span className="text-[12px] text-ink-secondary">Put courtesy on Desk</span>
       <select
         value={propertyId}
@@ -900,7 +916,7 @@ function AskProposeBar() {
             .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
             .finally(() => setBusy(false));
         }}
-        className="rounded-lg bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white disabled:opacity-40"
+        className="rounded-lg bg-agency px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-agency-hover disabled:opacity-40"
       >
         {busy ? "Putting…" : "Put on Desk"}
       </button>
@@ -948,7 +964,7 @@ function AskIntakeBar() {
 
   return (
     <div
-      className="mx-auto flex w-full max-w-[900px] flex-col gap-2 px-5 pb-2"
+      className="flex w-full flex-col gap-2 pb-2"
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
         e.preventDefault();

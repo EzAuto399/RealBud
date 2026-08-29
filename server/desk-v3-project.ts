@@ -150,6 +150,7 @@ export function projectDeskSnapshot(book: DeskFileV3, recovery: RecoveryState, n
       kind: source.collector === "bounded-portal" ? "portal" : source.collector === "migration" ? "demo" : source.collector,
       label: source.label,
       stableKey: source.stableKey,
+      lastCheckedAt: source.lastCheckedAt,
     })),
     demo: book.mode === "demo",
   };

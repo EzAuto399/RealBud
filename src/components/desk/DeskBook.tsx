@@ -4,6 +4,7 @@ import { Loader2, Plus, RotateCcw, ShieldAlert, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { fmtDate } from "@/lib/au";
 import { aud, type DeskSnapshot, type LedgerFacts, type NotifyChannel, type Property, type PropertyOptions, type RentSource } from "@/lib/desk";
+import { handsFactSource } from "@/lib/hands-label";
 import { CONTACT_ROLE_LABELS, NOTIFY_LABELS, RENT_SOURCE_LABELS } from "./labels";
 
 export function DeskBook({
@@ -37,7 +38,7 @@ export function DeskBook({
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h2 className="text-[15px] font-semibold text-ink">Book</h2>
-          <p className="mt-1 text-[13px] text-ink-muted">Properties, tenancies and policies. This is not the active case queue.</p>
+          <p className="mt-1 text-[13px] text-ink-muted">Properties, tenancies and policies. Recheck stamps each address. This is not the case queue.</p>
         </div>
         <button
           type="button"
@@ -214,15 +215,16 @@ function PropertyCard({
     ? {
         "rent-unpaid-courtesy": `${result.daysLate}d late · courtesy draft`,
         "rent-landed-levy-unpaid": "Rent in · levy not paid out",
-        "rent-landed": "Rent landed",
-        "inside-grace": `Day ${result.daysLate} · still in grace`,
-        "already-reminded": "Already reminded this period",
+        "rent-landed": "Checked · rent landed",
+        "inside-grace": `Checked · day ${result.daysLate}, still in grace`,
+        "already-reminded": "Checked · already reminded",
         "statutory-clock": `${result.daysLate}d late · licensee`,
         "stale-source": "Held · stale source",
         "unknown-facts": "Held · unknown facts",
         unmatched: "Held · unmatched",
         reversed: "Held · reversed payment",
         partial: "Held · partial payment",
+        "uncovered-by-worker": "Held · worker missed this property",
         "ambiguous-match": "Held · ambiguous match",
       }[result.reason]
     : "Not checked yet";
@@ -273,7 +275,7 @@ function PropertyCard({
             </span>
           ) : null}
           <span className="ml-auto text-[10.5px] text-ink-muted">
-            {hands === "hermes" ? "from Hermes" : hands === "csv" ? "from CSV" : hands === "held" ? "held" : "Demo"}
+            {handsFactSource(hands)}
           </span>
         </div>
       ) : null}
