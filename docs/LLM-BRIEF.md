@@ -1,8 +1,8 @@
 # RealBud — LLM briefing (handoff)
 
-Date: 2026-08-25
+Date: 2026-08-29
 Repo: EzAuto399/RealBud (local folder still /Users/yoda/projects/PropertyMe)
-Canonical spec: **docs/GOAL-PROMPT.md wins on conflict**. Read next: DESIGN.md, docs/PRODUCT-DESIGN-PLAN.md, docs/ROUTINES.md, docs/PILOT-CONTRACT.md, pack/property/SOUL.md, TODOS.md.
+Canonical spec: **docs/GOAL-PROMPT.md wins on conflict**. Pickup list: **docs/NEXT-WAVE.md**. Read next: DESIGN.md, docs/PRODUCT-DESIGN-PLAN.md, docs/ROUTINES.md, docs/PILOT-CONTRACT.md, pack/property/SOUL.md, TODOS.md.
 
 You are continuing RealBud: a supervised Australian property-management desktop app. Do not invent a PMS, a Hermes fork UI, a bot roster, or a 50-hour unsupervised agent. If a change does not make the worker more PM and less general agent, it is out.
 
@@ -45,20 +45,20 @@ RealBud is a native desktop app (Warm Operational Ledger design) for one PM. It 
 
 ## 5. The plan (do not jump)
 
-**Immediate**
-1. Fund one model key (Worker → Change model) → live-test conversational + image intake (the only untested path; blocked on credits, not code)
-2. T2 follow-up: batch persists for bulk adds (per-add encrypted commit ≈38ms — known bottleneck, documented in plan)
+**Immediate code.** `docs/NEXT-WAVE.md`, in order:
+1. W1 — mount first-run (`Onboarding.tsx` is unused) and the Desk go-live checklist
+2. W2 — Hermes subset answers hold uncovered properties; user chrome says Worker, not Hermes
+3. W3 — one encrypted commit for bulk add / import / Allow-all
+4. W4 — wrap `desk.key` with `safeStorage`
+5. W5 — last-checked timestamps on You sources
 
-**Waves (PRODUCT-DESIGN-PLAN.md "Vertical load-off roadmap")**
-- Wave 1: inbound-triage pipe — read-only mail (IMAP/Graph OAuth) → classify → cases + reply drafts. The week-destroyer the PMS assistants never touch
-- Wave 2: tenancy date entry → lease-review (T-90/60/30), inspection-prep, vacate checklists
-- Wave 3: new-management onboarding, storm/event mode, agency wording templates
-- Wave 4: load-off ledger (drafted/approved/escalated + honest minutes saved)
+**Human, not code.** Fund one model key to live-test conversational + image intake. Fill the eight fields in `docs/PILOT-CONTRACT.md` on a visit.
 
-**Gated on the pilot office (PILOT-CONTRACT.md eight fields)**
-- Real PMS export dialects, vendor portal spike (SSO/MFA), live Hermes hands at scale, installer a graduate double-clicks, PropertyMe read API, Pocket (Telegram/WhatsApp Cloud)
+**Gated on the pilot office**
+- Inbound-triage mail, vendor portal, graduate installer, PropertyMe read API, Pocket
+- Ask-proposes-clock-changes (PR C), property scope (PR D), Windows worker bundle
 
-**Deferred by decision**: Ask-proposes-clock-changes (PR C) until an office asks; property scope (PR D); Windows worker install (CSV-only copy until bundled)
+**Do not start** inbound, a law shelf, Cmd+K, PropertyGroup UI, or a second agent to "finish" the product.
 
 ## 6. How to work in this repo
 
@@ -66,4 +66,4 @@ RealBud is a native desktop app (Warm Operational Ledger design) for one PM. It 
 - QA with isolated data: `REALBUD_DATA_DIR=/tmp/… HOME=/tmp/… node --experimental-strip-types server/index.ts` + `./node_modules/.bin/vite --port 5199`
 - User-facing strings never say Hermes (only Advanced diagnostics); never open Terminal; never edit Hermes source; pin bumps are deliberate
 - Docs live or die: update GOAL-PROMPT/PRODUCT-DESIGN-PLAN sections you change
-- If the next instruction is missing: pick the top item from §5 and run `/spec`-style discipline (tests first for migration/gate code)
+- If the next instruction is missing: pick the top open row in `docs/NEXT-WAVE.md`. Tests first for gate and persist code.
