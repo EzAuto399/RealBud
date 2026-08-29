@@ -3,6 +3,7 @@ import { User } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { fmtDateTime } from "@/lib/au";
+import { sourceKindLabel } from "@/lib/hands-label";
 import { api, useStore } from "@/state/store";
 import { AdvancedDiagnostics, RecoveryNotice } from "./pm";
 import { Card } from "./SettingsPrimitives";
@@ -86,7 +87,7 @@ export function YouPage() {
             {(desk?.sources ?? []).map((source) => (
               <li key={source.id} className="flex flex-wrap items-baseline justify-between gap-2 py-1">
                 <span>
-                  {source.label} · {source.kind}
+                  {source.label} · {sourceKindLabel(source.kind)}
                 </span>
                 <span className="text-[12px] text-ink-muted">
                   {source.lastCheckedAt

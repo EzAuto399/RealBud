@@ -14,3 +14,8 @@ export function handsFactSource(hands: HandsSource): string {
   if (hands === "held") return "held";
   return "Demo";
 }
+
+export function sourceKindLabel(kind: string): string {
+  if (kind === "hermes") return "worker";
+  return kind;
+}

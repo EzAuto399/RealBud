@@ -13,11 +13,11 @@ export interface GoLiveInput {
   workerReady: boolean;
 }
 
-const DEMO_AGENCY = "Demo agency";
+const TRAINING_AGENCY = new Set(["demo agency", "realbud demo book"]);
 
 export function agencyIsNamed(name: string | undefined): boolean {
   const trimmed = String(name ?? "").trim();
-  return trimmed.length > 0 && trimmed !== DEMO_AGENCY;
+  return trimmed.length > 0 && !TRAINING_AGENCY.has(trimmed.toLowerCase());
 }
 
 export function goLiveRows(input: GoLiveInput): GoLiveRow[] {

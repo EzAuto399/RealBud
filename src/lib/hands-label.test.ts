@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { handsChip, handsFactSource } from "./hands-label";
+import { handsChip, handsFactSource, sourceKindLabel } from "./hands-label";
 
 describe("hands labels", () => {
   it("keeps Hermes out of user chrome", () => {
@@ -9,6 +9,7 @@ describe("hands labels", () => {
     expect(handsChip("held")).toBe("Held");
     expect(handsChip("demo")).toBe("Demo");
     expect(handsFactSource("hermes")).toBe("from worker");
-    expect(`${handsChip("hermes")} ${handsFactSource("hermes")}`).not.toMatch(/Hermes/i);
+    expect(sourceKindLabel("hermes")).toBe("worker");
+    expect(`${handsChip("hermes")} ${handsFactSource("hermes")} ${sourceKindLabel("hermes")}`).not.toMatch(/Hermes/i);
   });
 });
