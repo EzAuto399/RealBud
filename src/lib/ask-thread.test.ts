@@ -75,6 +75,29 @@ describe("Ask spent connect folding", () => {
     expect(items.some((item) => item.kind === "message" && item.message.id === "action-4")).toBe(false);
   });
 
+  it("keeps the latest connected receipt when Bud only restates the card", () => {
+    const messages = [
+      spent(1, "Connect Instagram"),
+      spent(2, "Connect Gmail"),
+      text("u3", 3, "user", "what can you see inside of notion"),
+      spent(4, "Notion on this device"),
+      text("b4", 5, "bot", "Yo Da's Space is on this device. Visible now: Getting Started. Ask still cannot send."),
+    ];
+    const items = foldAskSpentConnects(messages);
+    expect(items.map((item) => item.kind)).toEqual([
+      "spent-group",
+      "message",
+      "message",
+      "message",
+    ]);
+    expect(items[0]).toMatchObject({
+      kind: "spent-group",
+      messages: [messages[0], messages[1]],
+    });
+    expect(items.some((item) => item.kind === "message" && item.message.id === "action-4")).toBe(true);
+    expect(items.some((item) => item.kind === "message" && item.message.id === "b4")).toBe(true);
+  });
+
   it("does not fold a pending Allow or a routine card", () => {
     const pending: Message = {
       id: "pending-1",

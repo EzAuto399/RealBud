@@ -1,4 +1,5 @@
 import type { BudPromptContext } from "./bud-prompt.ts";
+import { currentAskDeskBrief } from "./ask-desk-brief.ts";
 import type { Desk } from "./desk.ts";
 import { PILOT_CONTRACT, pilotContractComplete, type PilotContract } from "./pilot-contract.ts";
 import type { PocketHubStatus } from "./pocket-hub.ts";
@@ -10,6 +11,10 @@ export interface AskCapabilityContextOptions {
   pocket?: PocketHubStatus | null;
   pilotContract?: PilotContract;
   bankAdapterConfigured?: boolean;
+  /** Local Connect key present. Never a live inbox claim. */
+  composioLinked?: boolean;
+  /** Public linked-tool status only. Never a key. */
+  linkedTools?: Array<{ slug: string; label: string; connected: boolean; account?: string; lastPeekTitles?: string[] }>;
 }
 
 /**
@@ -20,7 +25,7 @@ export interface AskCapabilityContextOptions {
 export function currentAskCapabilityContext(
   desk: Desk,
   options: AskCapabilityContextOptions = {},
-): Pick<BudPromptContext, "capabilities" | "preparableHandoffs"> {
+): Pick<BudPromptContext, "capabilities" | "preparableHandoffs" | "deskBrief" | "linkedReads"> {
   const now = options.now?.() ?? Date.now();
   const portalMode = options.portalMode ?? "practice";
   const pocket = options.pocket;
@@ -52,8 +57,13 @@ export function currentAskCapabilityContext(
   const handoffDetail = preparableHandoffs.length
     ? `${preparableHandoffs.length} approved handoff${preparableHandoffs.length === 1 ? " is" : "s are"} ready for an Allow decision`
     : "No approved handoff is ready; wording must be allowed on Desk first";
+  const mailLinked = (options.linkedTools ?? []).some((tool) => (
+    tool.connected && (tool.slug === "gmail" || tool.slug === "googlecalendar" || tool.slug === "outlook")
+  ));
 
   return {
+    deskBrief: currentAskDeskBrief(snapshot),
+    linkedReads: linkedReadsFrom(options.linkedTools),
     capabilities: [
       {
         id: "selected-evidence-review",
@@ -109,13 +119,26 @@ export function currentAskCapabilityContext(
           ? `${pocket.connectedCount} allowlisted PM channel${pocket.connectedCount === 1 ? " is" : "s are"} connected; changes still require manual Allow`
           : pocket?.detail ?? "Pocket is not connected",
       },
+      ...(linkedOfficeCapability(options.linkedTools) ? [linkedOfficeCapability(options.linkedTools)!] : []),
+      {
+        id: "composio-account",
+        label: "Restricted Composio account",
+        status: options.composioLinked ? "ready" : "setup-required",
+        detail: options.composioLinked
+          ? "Linked on this device. Named login stays on the Ask card. Ask never sees the key"
+          : "Not linked. If this job needs a named read, propose open-setup for composio-account",
+      },
       {
         id: "mail-calendar-source",
         label: "Read-only mail and calendar source",
-        status: "pilot-gated",
-        detail: demoInboxExercised
-          ? "The bounded Demo inbox case flow is available on Desk; no verified provider source is connected"
-          : "No verified source adapter is connected in this build",
+        status: mailLinked ? "practice-only" : "setup-required",
+        detail: mailLinked
+          ? "Gmail is on this device. RealBud can list recent subjects. Ask still cannot send."
+          : options.composioLinked
+            ? "Named login is on this device. Inbox is not listed yet. Do not claim mail was read"
+            : demoInboxExercised
+              ? "Demo inbox is on Desk. For a named inbox, propose composio-account first. Do not claim mail was read"
+              : "If this job needs a named inbox, propose composio-account first. Do not claim mail was read",
       },
       {
         id: "sandboxed-cli",
@@ -132,4 +155,31 @@ export function currentAskCapabilityContext(
     ],
     preparableHandoffs,
   };
+}
+
+function linkedOfficeCapability(
+  tools: AskCapabilityContextOptions["linkedTools"],
+): { id: string; label: string; status: "practice-only"; detail: string } | null {
+  const ready = (tools ?? []).filter((tool) => tool.connected).slice(0, 4);
+  if (ready.length === 0) return null;
+  const names = ready.map((tool) => tool.label).join(", ");
+  return {
+    id: "linked-office-tools",
+    label: "Named app keys on this device",
+    status: "practice-only",
+    detail: `${names} ${ready.length === 1 ? "is" : "are"} on this device. RealBud can list what they share. Ask still cannot send.`,
+  };
+}
+
+function linkedReadsFrom(
+  tools: AskCapabilityContextOptions["linkedTools"],
+): Array<{ label: string; account?: string; titles: string[] }> {
+  return (tools ?? [])
+    .filter((tool) => tool.connected)
+    .slice(0, 4)
+    .map((tool) => ({
+      label: tool.label,
+      ...(tool.account ? { account: tool.account } : {}),
+      titles: (tool.lastPeekTitles ?? []).slice(0, 8),
+    }));
 }

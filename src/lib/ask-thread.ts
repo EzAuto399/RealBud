@@ -10,8 +10,15 @@ function isSpentConnectMessage(message: Message): boolean {
   return message.kind === "action" && isSpentConnectReceipt(message.action);
 }
 
+function isLayerConnectVoice(message: Message): boolean {
+  return message.role === "bot"
+    && message.kind === "text"
+    && /(?:on this device|accepted this key|not read in this build)/i.test(message.text ?? "");
+}
+
 function isLaterAsk(message: Message): boolean {
-  return !isSpentConnectMessage(message) && message.kind !== "activity";
+  if (isSpentConnectMessage(message) || message.kind === "activity" || isLayerConnectVoice(message)) return false;
+  return true;
 }
 
 function isNewDay(previousAt: number | undefined, at: number): boolean {

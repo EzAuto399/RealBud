@@ -110,7 +110,7 @@ describe("Ask next-step suggestions", () => {
       [run({ status: "failed" })],
     );
 
-    expect(suggestions.map((item) => item.id)).toEqual(["recovery", "routine-attention", "held-work"]);
+    expect(suggestions.map((item) => item.id)).toEqual(["recovery", "routine-attention"]);
     expect(suggestions.every((item) => item.action.kind === "ask")).toBe(true);
     expect(suggestions.every((item) => item.action.kind === "ask" && item.action.prompt.length > 20)).toBe(true);
     expect(JSON.stringify(suggestions)).not.toMatch(/"kind":"desk"|"kind":"you"/);
@@ -232,18 +232,21 @@ describe("Ask next-step suggestions", () => {
       [],
       { composioConfigured: false },
     );
-    expect(suggestions.map((item) => item.id)).toEqual([
-      "review-morning-landed",
-      "run-owner-letter",
-      "connect-office-sources",
-    ]);
-    expect(suggestions[1]).toMatchObject({
+    expect(suggestions.map((item) => item.id)).toEqual(["review-morning-landed"]);
+    expect(JSON.stringify(suggestions)).not.toMatch(/composio/i);
+
+    const fridayOnly = deriveAskSuggestions(
+      desk({ lastRunAt: Date.now() - 86_400_000, mode: "live", demo: false, hands: "csv" }),
+      [friday],
+      [],
+    );
+    expect(fridayOnly[0]).toMatchObject({
+      id: "run-owner-letter",
       label: "Run Friday owner letter",
       detail: expect.stringMatching(/Fri at 4:00 pm/i),
       action: { kind: "ask", prompt: "Run the Friday owner letter now." },
     });
-    expect(JSON.stringify(suggestions)).not.toMatch(/composio/i);
-    expect(suggestions[1].action.kind === "ask" && suggestions[1].action.prompt).not.toMatch(/send/i);
+    expect(fridayOnly[0].action.kind === "ask" && fridayOnly[0].action.prompt).not.toMatch(/send/i);
   });
 
   it("offers to turn on a paused named routine at its current clock", () => {
@@ -279,21 +282,14 @@ describe("Ask next-step suggestions", () => {
     expect(suggestions[0].detail).toMatch(/Weekdays at 7:30 am/);
   });
 
-  it("offers You connections so the office can name PMS, inbox or portal", () => {
+  it("keeps Suggested next on the current book decision, not a setup strip", () => {
     const suggestions = deriveAskSuggestions(
       desk({ lastRunAt: Date.now(), mode: "demo", demo: true }),
       [loop],
       [],
     );
-    expect(suggestions.map((item) => item.id)).toEqual([
-      "review-morning-landed",
-      "connect-office-sources",
-      "verify-book",
-    ]);
-    expect(suggestions[1]).toMatchObject({
-      action: { kind: "ask", prompt: "Set up connections" },
-    });
-    expect(JSON.stringify(suggestions)).not.toMatch(/composio|propertyme/i);
+    expect(suggestions.map((item) => item.id)).toEqual(["review-morning-landed"]);
+    expect(JSON.stringify(suggestions)).not.toMatch(/composio|propertyme|Set up connections/i);
   });
 
   it("drops a card this office already asked, then shows the next live book item", () => {
@@ -311,7 +307,7 @@ describe("Ask next-step suggestions", () => {
       [],
       { userTexts: [asked] },
     );
-    expect(suggestions.map((item) => item.id)).toEqual(["connect-office-sources", "verify-book"]);
+    expect(suggestions).toEqual([]);
     expect(suggestions.some((item) => item.id === "review-morning-landed")).toBe(false);
   });
 
@@ -324,25 +320,24 @@ describe("Ask next-step suggestions", () => {
     }, ["hold", "review", "exceptions"])).toBe(false);
   });
 
-  it("drops source setup while a connection card is already open", () => {
-    const suggestions = deriveAskSuggestions(
-      desk({ lastRunAt: Date.now(), mode: "demo", demo: true }),
-      [loop],
-      [],
-      { connecting: true },
-    );
-    expect(suggestions.some((item) => item.id === "connect-office-sources")).toBe(false);
-  });
-
-  it("does not keep offering source setup after this office already asked to connect", () => {
+  it("does not pad Suggested next with connect or verify after the office already spoke", () => {
     const suggestions = deriveAskSuggestions(
       desk({ lastRunAt: Date.now(), mode: "demo", demo: true }),
       [loop],
       [],
       { userTexts: ["connect me to instagram"] },
     );
-    expect(suggestions.map((item) => item.id)).toEqual(["review-morning-landed", "verify-book"]);
-    expect(suggestions.some((item) => item.id === "connect-office-sources")).toBe(false);
+    expect(suggestions.map((item) => item.id)).toEqual(["review-morning-landed"]);
+    expect(JSON.stringify(suggestions)).not.toMatch(/Set up connections|Verify the live book/);
+  });
+
+  it("offers verify-book only on an empty demo thread with no live decision", () => {
+    const suggestions = deriveAskSuggestions(
+      desk({ lastRunAt: 0, mode: "demo", demo: true }),
+      [],
+      [],
+    );
+    expect(suggestions.map((item) => item.id)).toEqual(["verify-book"]);
   });
 });
 

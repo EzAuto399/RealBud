@@ -1,16 +1,22 @@
-// Chips for what is attached to the next message, plus the window-wide
-// file drop that creates them. A long paste collapses into a card of its
-// first lines instead of flooding the composer; a file dropped anywhere
-// on the window attaches by path.
+// Receipts for what is attached to the next message, plus the window-wide
+// file drop that creates them. A long paste becomes one row instead of
+// flooding the composer; a file the PM chooses is staged, never scanned.
 import { useEffect, useRef, useState } from "react";
-import { ClipboardPaste, File as FileIcon, X } from "lucide-react";
-import { cn } from "@/lib/cn";
+import { X } from "lucide-react";
 import {
   attachmentsFromDroppedFiles,
+  composerFileKind,
   formatSize,
   pasteSummary,
   type Attachment,
 } from "@/lib/composer-attachments";
+
+export type PendingComposerFile = {
+  id: string;
+  name: string;
+  size: number;
+  error?: string;
+};
 
 /** Electron 32 removed File.path — only the preload can name a file. */
 function pathForFile(file: File): string {
@@ -19,17 +25,19 @@ function pathForFile(file: File): string {
 
 export function ComposerAttachments({
   items,
+  pending = [],
   onAdd,
   onRemove,
+  onBrowserFiles,
 }: {
   items: Attachment[];
+  pending?: readonly PendingComposerFile[];
   onAdd: (attachments: Attachment[]) => void;
   onRemove: (id: string) => void;
+  onBrowserFiles?: (files: File[]) => void;
 }) {
   const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  // dragenter/dragleave fire once per element crossed, so the overlay
-  // tracks depth rather than the last event it happened to see
   const depth = useRef(0);
 
   useEffect(() => {
@@ -46,8 +54,6 @@ export function ComposerAttachments({
       depth.current = Math.max(0, depth.current - 1);
       if (depth.current === 0) setDragging(false);
     };
-    // without preventDefault the window navigates to the dropped file and
-    // the app is simply gone
     const onOver = (e: DragEvent) => {
       if (carriesFiles(e)) e.preventDefault();
     };
@@ -57,12 +63,13 @@ export function ComposerAttachments({
       depth.current = 0;
       setDragging(false);
       const files = Array.from(e.dataTransfer?.files ?? []);
-      const { attachments, rejectedNames } = await attachmentsFromDroppedFiles(files, pathForFile);
+      const { attachments, rejectedNames, browserFiles } = await attachmentsFromDroppedFiles(files, pathForFile);
       if (!active) return;
       if (attachments.length) onAdd(attachments);
+      if (browserFiles.length) onBrowserFiles?.(browserFiles);
       setNotice(
         rejectedNames.length
-          ? `${rejectedNames.join(", ")} — that drag carried no file on disk. Save it first, then drop it from Finder.`
+          ? `${rejectedNames.join(", ")} — RealBud reviews a PDF, image, spreadsheet or text export you choose.`
           : null,
       );
     };
@@ -78,22 +85,25 @@ export function ComposerAttachments({
       window.removeEventListener("dragover", onOver);
       window.removeEventListener("drop", onDrop);
     };
-  }, [onAdd]);
+  }, [onAdd, onBrowserFiles]);
+
+  const empty = items.length === 0 && pending.length === 0;
 
   return (
     <>
       {dragging && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-10">
-          <div className="rounded-2xl border-2 border-dashed border-accent/70 bg-panel/90 px-8 py-6 text-[14px] font-medium text-ink shadow-2xl">
+        <div className="pointer-events-none fixed inset-6 z-50 flex items-center justify-center">
+          <div className="rounded-lg border border-dashed border-agency bg-sheet px-8 py-6 text-[14px] font-medium text-ink">
             Drop to attach — Bud reviews only what you choose
           </div>
         </div>
       )}
 
       {notice && (
-        <div className="mb-2 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">
+        <div className="mb-2 flex items-start gap-2 border border-hold/35 bg-hold/10 px-3 py-2 text-[12px] text-hold" role="status">
           <span className="min-w-0 flex-1">{notice}</span>
           <button
+            type="button"
             onClick={() => setNotice(null)}
             aria-label="Dismiss"
             className="shrink-0 rounded p-0.5"
@@ -103,78 +113,39 @@ export function ComposerAttachments({
         </div>
       )}
 
-      {items.length > 0 && (
-        <div className="mb-2 flex flex-wrap gap-2">
-          {items.map((a) =>
-            a.kind === "paste" ? (
-              <Chip
-                key={a.id}
-                label="PASTED"
-                title={a.text.slice(0, 4000)}
-                onRemove={() => onRemove(a.id)}
+      {!empty && (
+        <ul className="mb-2 divide-y divide-line border border-line bg-sheet" aria-label="Attached to this message">
+          {pending.map((row) => (
+            <li key={row.id} className="flex items-center gap-3 px-3 py-2">
+              <span className="w-20 shrink-0 text-[12px] font-medium text-ink-muted">{composerFileKind(row.name)}</span>
+              <span className="min-w-0 flex-1 truncate text-[13px] text-ink">{row.name}</span>
+              <span className="shrink-0 text-[12px] text-ink-muted">
+                {row.error ?? `Attaching · ${formatSize(row.size)}`}
+              </span>
+            </li>
+          ))}
+          {items.map((item) => (
+            <li key={item.id} className="flex items-center gap-3 px-3 py-2">
+              <span className="w-20 shrink-0 text-[12px] font-medium text-ink-muted">
+                {item.kind === "paste" ? "Paste" : composerFileKind(item.name)}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-[13px] text-ink" title={item.kind === "file" ? item.path : undefined}>
+                {item.kind === "paste" ? item.text.slice(0, 80).replace(/\s+/g, " ") : item.name}
+              </span>
+              <span className="shrink-0 text-[12px] text-ink-muted">
+                {item.kind === "paste" ? pasteSummary(item) : formatSize(item.size)}
+              </span>
+              <button
+                type="button"
+                onClick={() => onRemove(item.id)}
+                className="pm-control shrink-0 text-[12px] font-medium text-ink-muted hover:text-ink"
               >
-                <div className="relative h-[76px] overflow-hidden">
-                  <pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-[1.45] text-ink-secondary">
-                    {a.text.slice(0, 400)}
-                  </pre>
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-b from-transparent to-raised" />
-                </div>
-                <div className="mt-1 text-[12px] text-ink-secondary/70">{pasteSummary(a)}</div>
-              </Chip>
-            ) : (
-              <Chip key={a.id} label="FILE" title={a.path} onRemove={() => onRemove(a.id)}>
-                <div className="flex h-[76px] items-center gap-2">
-                  <FileIcon size={16} className="shrink-0 text-ink-secondary" />
-                  <div className="min-w-0">
-                    <div className="truncate text-[12px] text-ink">{a.name}</div>
-                    <div className="text-[12px] text-ink-secondary/70">{formatSize(a.size)}</div>
-                  </div>
-                </div>
-              </Chip>
-            ),
-          )}
-        </div>
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
     </>
-  );
-}
-
-function Chip({
-  children,
-  label,
-  title,
-  onRemove,
-}: {
-  children: React.ReactNode;
-  label: "PASTED" | "FILE";
-  title: string;
-  onRemove: () => void;
-}) {
-  const Icon = label === "PASTED" ? ClipboardPaste : FileIcon;
-  return (
-    <div
-      title={title}
-      className={cn(
-        "group relative w-[172px] rounded-xl border border-hairline/40 bg-raised px-2.5 py-2",
-        "transition-colors hover:border-hairline",
-      )}
-    >
-      {children}
-      <div className="mt-1 flex items-center gap-1">
-        <Icon size={11} className="text-ink-secondary/70" />
-        <span className="rounded border border-hairline/60 px-1 py-px text-[12px] font-medium tracking-wide text-ink-secondary">
-          {label}
-        </span>
-      </div>
-      {/* hover reveals it, but so must focus: `hidden` would take the only
-          way to drop a chip out of reach of the keyboard */}
-      <button
-        onClick={onRemove}
-        aria-label={`Remove ${label === "PASTED" ? "pasted text" : "file"}`}
-        className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full border border-hairline/60 bg-panel text-ink-secondary opacity-0 transition-opacity hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
-      >
-        <X size={11} />
-      </button>
-    </div>
   );
 }

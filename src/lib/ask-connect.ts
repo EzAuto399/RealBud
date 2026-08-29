@@ -1,5 +1,5 @@
 import type { AskActionProposal, AskConnectRequest, AskSetupTarget } from "@shared/ask-actions";
-import { isKnownOfficeService, prettyOfficeName, resolveAskOfficeTool } from "@shared/ask-connections";
+import { isConnectableService, isKnownOfficeService, matchAskConnectionSpeech, prettyOfficeName, resolveAskOfficeTool, resolveConnectableTool } from "@shared/ask-connections";
 
 export type AskConnectPanel =
   | "mail"
@@ -15,7 +15,7 @@ export type AskConnectPanel =
   | "unsupported";
 
 export type AskConnectMethod = "direct-api" | "approved-mcp" | "isolated-cli" | "restricted-composio";
-export type AskConnectMethodFill = "composio" | "export" | "gated" | "composio-unavailable";
+export type AskConnectMethodFill = "composio" | "export" | "gated" | "composio-unavailable" | "direct";
 export type AskConnectMethodBadgeTone = "standard" | "live" | "gated";
 
 /** Professional rank: first-party, current live standard, reviewed MCP, file fallback. */
@@ -33,13 +33,15 @@ export const COMPOSIO_SIGN_IN_URL = "https://platform.composio.dev";
 export function defaultAskConnectMethod(options: {
   composioLinked: boolean;
   hasNamedToolkit: boolean;
+  officeMail?: boolean;
 }): AskConnectMethod {
-  if (options.hasNamedToolkit) return "restricted-composio";
+  if (options.officeMail && options.hasNamedToolkit) return "restricted-composio";
+  if (options.hasNamedToolkit) return "direct-api";
   return "isolated-cli";
 }
 
 export function isLiveAskConnectMethod(method: AskConnectMethod): boolean {
-  return method === "restricted-composio" || method === "isolated-cli";
+  return method === "restricted-composio" || method === "isolated-cli" || method === "direct-api";
 }
 
 export function askConnectMethodTitle(method: AskConnectMethod): string {
@@ -72,7 +74,8 @@ export function askConnectMethodFill(options: {
   method: AskConnectMethod;
   hasNamedToolkit: boolean;
 }): AskConnectMethodFill {
-  if (options.method === "direct-api" || options.method === "approved-mcp") return "gated";
+  if (options.method === "approved-mcp") return "gated";
+  if (options.method === "direct-api") return options.hasNamedToolkit ? "direct" : "gated";
   if (options.method === "isolated-cli") return "export";
   if (!options.hasNamedToolkit) return "composio-unavailable";
   return "composio";
@@ -104,18 +107,110 @@ export function askConnectComposioStatus(options: {
   composioLinked: boolean;
   toolConnected: boolean | null;
   hasNamedToolkit: boolean;
+  keyRejected?: boolean;
 }): string {
-  if (!options.composioLinked) return "Sign in";
+  if (!options.composioLinked || options.keyRejected) return "Sign in";
   if (options.toolConnected) return "Connected";
   if (options.hasNamedToolkit) return "Ready to sign in";
   return "No named toolkit";
 }
 
-export function askConnectMailSubtitle(composioLinked: boolean, hasNamedToolkit = true): string {
+/** Sheet chrome only. Step copy lives in the wizard body, once. */
+export function askConnectMailSubtitle(_composioLinked: boolean, hasNamedToolkit = true, kind?: "mail" | "calendar" | "app"): string {
   if (!hasNamedToolkit) return "Attach an export this office already has. Nothing sends.";
-  return composioLinked
-    ? "Sign in this account or attach an export. Nothing sends."
-    : "Sign in to Composio here, then paste the Connect key. Nothing sends.";
+  if (kind === "app") return "Paste the API key, or sign in through Composio. Nothing sends.";
+  return "Named read only. Nothing sends.";
+}
+
+export type AskConnectWizardStep = "link-composio" | "sign-in-source" | "attach-export" | "ready";
+
+/** A stored key is not a linked account until Composio accepts it. */
+export function askConnectWizardStep(options: {
+  hasNamedToolkit: boolean;
+  composioLinked: boolean;
+  toolConnected?: boolean | null;
+  keyRejected?: boolean;
+  keyVerified?: boolean;
+}): AskConnectWizardStep {
+  if (!options.hasNamedToolkit) return "attach-export";
+  if (!options.composioLinked || options.keyRejected || options.keyVerified !== true) {
+    return "link-composio";
+  }
+  if (options.toolConnected) return "ready";
+  return "sign-in-source";
+}
+
+export function askConnectWizardProgress(
+  step: AskConnectWizardStep,
+  extras?: { keyRejected?: boolean },
+): {
+  current: number;
+  total: number;
+  label: string;
+  complete: boolean;
+} {
+  switch (step) {
+    case "link-composio":
+      return {
+        current: 1,
+        total: 2,
+        label: extras?.keyRejected ? "This key was refused" : "Link Composio",
+        complete: false,
+      };
+    case "sign-in-source":
+      return { current: 2, total: 2, label: "Sign in this account", complete: false };
+    case "ready":
+      return { current: 2, total: 2, label: "Signed in", complete: true };
+    case "attach-export":
+      return { current: 1, total: 1, label: "Attach an export", complete: false };
+  }
+}
+
+/** Finished steps are full. The current incomplete step is a mark, not a finish. */
+export function askConnectWizardBarFill(
+  position: number,
+  current: number,
+  complete: boolean,
+): "full" | "current" | "empty" {
+  if (complete || position < current) return "full";
+  if (position === current) return "current";
+  return "empty";
+}
+
+export function askConnectWizardDetail(
+  step: AskConnectWizardStep,
+  toolLabel: string,
+  extras?: { keyRejected?: boolean },
+): string {
+  switch (step) {
+    case "link-composio":
+      return extras?.keyRejected
+        ? "This Connect key was refused. Sign in to Composio and paste a current key."
+        : `Link your Composio account, then sign in ${toolLabel}.`;
+    case "sign-in-source":
+      return `Composio accepted this key. Sign in ${toolLabel} for a named read.`;
+    case "ready":
+      return `${toolLabel} is signed in. Ask still cannot send.`;
+    case "attach-export":
+      return "Attach an export this office already has. Isolated file work only.";
+  }
+}
+
+export function isRejectedOfficeKey(message: string): boolean {
+  return /HTTP 401|did not accept this Connect key/i.test(message);
+}
+
+export function mapOfficeSourceError(message: string): string {
+  if (/Connectors are not part|generic connector catalog/i.test(message)) {
+    return "Use the office login here. The generic connector catalog stays out.";
+  }
+  if (/no Composio key/i.test(message)) {
+    return "Login to Composio, then paste the Connect key. The key stays on this device.";
+  }
+  if (/HTTP 401/i.test(message)) {
+    return "Composio did not accept this Connect key. Sign in to Composio and paste a current key.";
+  }
+  return message;
 }
 
 export function askConnectBookSubtitle(): string {
@@ -160,14 +255,31 @@ export function popAskConnectState(stack: readonly AskConnectRequest[]): {
   };
 }
 
-export function askConnectHeading(request: AskConnectRequest): string {
-  const tool = resolveAskOfficeTool(request.service ?? "");
-  if (tool) return `Connect ${tool.label}`;
-  if (request.target === "connections" && request.service?.trim() && !isKnownOfficeService(request.service)) {
+export function isAskServiceLinked(
+  service: string | undefined,
+  linkedTools: readonly { slug: string; label: string; connected?: boolean }[],
+): boolean {
+  const tool = resolveConnectableTool(service ?? "") ?? resolveAskOfficeTool(service ?? "");
+  if (!tool) return false;
+  return linkedTools.some((row) =>
+    row.connected
+    && (
+      row.slug === tool.composioSlug
+      || row.slug === tool.id
+      || row.label.toLowerCase() === tool.label.toLowerCase()
+    ),
+  );
+}
+
+export function askConnectHeading(request: AskConnectRequest, alreadyLinked = false): string {
+  const tool = resolveConnectableTool(request.service ?? "") ?? resolveAskOfficeTool(request.service ?? "");
+  if (tool) return alreadyLinked ? `${tool.label} on this device` : `Connect ${tool.label}`;
+  if (request.target === "connections" && request.service?.trim() && !isConnectableService(request.service)) {
     return `${prettyOfficeName(request.service)} isn't a named office source`;
   }
-  if (request.service?.trim() && isKnownOfficeService(request.service)) {
-    return `Connect ${prettyOfficeName(request.service)}`;
+  if (request.service?.trim() && isConnectableService(request.service)) {
+    const name = prettyOfficeName(request.service);
+    return alreadyLinked ? `${name} on this device` : `Connect ${name}`;
   }
   switch (request.target) {
     case "worker":
@@ -191,10 +303,12 @@ export function askConnectPanel(request: AskConnectRequest): AskConnectPanel {
   const service = (request.service ?? "").toLowerCase();
   if (/whatsapp/.test(service)) return "pocket-whatsapp";
   if (/telegram/.test(service)) return "pocket-telegram";
+  if (resolveAskOfficeTool(request.service ?? "")) return "mail";
   if (/gmail|outlook|hotmail|incoming mail|inbox|calendar/.test(service)) return "mail";
   if (/property book|property tree|propertyme|reapit|pms|portfolio/.test(service)) return "book";
   if (/\bapi\b|\bmcp\b/.test(service)) return "api";
-  if (request.service?.trim() && !isKnownOfficeService(request.service)) return "unsupported";
+  if (resolveConnectableTool(request.service ?? "")) return "mail";
+  if (request.service?.trim() && !isConnectableService(request.service)) return "unsupported";
   return "sources";
 }
 
@@ -227,5 +341,18 @@ export function askConnectFromSpentAction(action: AskActionProposal): AskConnect
   if (action.kind === "open-setup") {
     return { target: action.target, ...(action.service ? { service: action.service } : {}) };
   }
+  return null;
+}
+
+/** Open the Ask card locally when the harness is down so a named connect
+ * still has a place for the key. Does not claim the tool is connected. */
+export function localAskConnectFromSpeech(text: string): AskConnectRequest | null {
+  const speech = matchAskConnectionSpeech(text);
+  if (speech.kind === "option") {
+    return { target: speech.option.target, ...(speech.option.service ? { service: speech.option.service } : {}) };
+  }
+  if (speech.kind === "tool") return { target: "connections", service: speech.tool.label };
+  if (speech.kind === "chooser") return { target: "connections" };
+  if (speech.kind === "unsupported") return { target: "connections", service: speech.name };
   return null;
 }

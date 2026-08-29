@@ -29,12 +29,42 @@ const KEY_PREFIXES: RegExp[] = [
   /\bAKIA[0-9A-Z]{16}\b/g,
   /\bAIza[0-9A-Za-z_-]{30,}/g,
   /\bnpm_[A-Za-z0-9]{20,}/g,
+  /\bntn_[A-Za-z0-9_-]{8,}/g,
+  /\bsecret_[A-Za-z0-9]{20,}/g,
+  /\bck_[A-Za-z0-9]{16,}/g,
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
 ];
 const BEARER = /(\bBearer\s+)([A-Za-z0-9._~+/=-]{12,})/g;
 const PEM_BLOCK = /(-----BEGIN [A-Z ]*PRIVATE KEY-----)([\s\S]*?)(-----END [A-Z ]*PRIVATE KEY-----)/g;
 const KEY_VALUE =
   /\b((?:[A-Za-z0-9_-]*_)?(?:api[_-]?key|apikey|secret|token|password|passwd|authorization|auth[_-]?token|access[_-]?key|private[_-]?key)s?)(["']?\s*[=:]\s*)(["']?)([A-Za-z0-9._~+/=-]{8,})\3/gi;
+
+export function extractFirstSecret(text: string): string | null {
+  if (!text || redactSecretsInText(text) === text) return null;
+  for (const re of KEY_PREFIXES) {
+    const match = new RegExp(re.source, re.flags).exec(text);
+    if (match?.[0]) return match[0];
+  }
+  const bearer = new RegExp(BEARER.source, BEARER.flags).exec(text);
+  if (bearer?.[2]) return bearer[2];
+  const kv = new RegExp(KEY_VALUE.source, KEY_VALUE.flags).exec(text);
+  if (kv?.[4]) return kv[4];
+  return null;
+}
+
+export function stripSecretsForSpeech(text: string): string {
+  return redactSecretsInText(text)
+    .replace(/\s*«redacted \d+ chars»\s*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function hintToolFromSecret(secret: string): { slug: string; label: string } | null {
+  if (/^ntn_/i.test(secret)) return { slug: "notion", label: "Notion" };
+  if (/^xox[abposr]-/i.test(secret)) return { slug: "slack", label: "Slack" };
+  if (/^(?:ghp|gho|ghu|ghs|ghr|github_pat)_/i.test(secret)) return { slug: "github", label: "GitHub" };
+  return null;
+}
 
 export function redactSecretsInText(text: string): string {
   if (!text || text.length < 8) return text;

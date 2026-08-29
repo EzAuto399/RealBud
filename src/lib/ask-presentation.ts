@@ -1,5 +1,3 @@
-import { matchAskConnectionSpeech } from "@shared/ask-connections";
-
 import type { DeskSnapshot } from "./desk";
 import type { Loop, LoopRun } from "./routines";
 import { buildDeskQueue, type DeskQueueItem } from "./desk-queue";
@@ -169,10 +167,6 @@ export function isAskSuggestionSpent(
     if (text === prompt || (promptHead.length >= 24 && text.includes(promptHead))) return true;
     return label.length >= 12 && text.includes(label);
   });
-}
-
-function recentConnectSpeech(userTexts: readonly string[]): boolean {
-  return userTexts.slice(-6).some((text) => matchAskConnectionSpeech(text).kind !== "none");
 }
 
 function countLabel(count: number, singular: string, plural = `${singular}s`): string {
@@ -398,21 +392,26 @@ export function deriveAskSuggestions(
     });
   }
 
-  const connecting = extras.connecting || recentConnectSpeech(extras.userTexts ?? []);
-  if (!desk.recovery.active && !connecting) {
-    suggestions.push({
-      id: "connect-office-sources",
-      label: "Connect this office's sources",
-      detail: "PMS, inbox or portal you already use. Bud opens the picker here.",
-      action: {
-        kind: "ask",
-        prompt: "Set up connections",
-      },
-    });
-  }
+  const userTexts = extras.userTexts ?? [];
+  const live = suggestions.filter((suggestion) => !isAskSuggestionSpent(suggestion, userTexts));
+  const urgent = live.filter((item) => (
+    item.id === "recovery" || item.id === "routine-attention" || item.id === "held-work" || item.id === "licensee"
+  ));
+  if (urgent.length) return urgent.slice(0, 2);
 
-  if (desk.mode === "demo") {
-    suggestions.push({
+  const decisions = live.filter((item) => item.id === "pending-decisions" || item.id === "review-morning-landed");
+  if (decisions.length) return decisions.slice(0, 2);
+
+  const clock = live.filter((item) => (
+    item.id === "enable-morning-money"
+    || item.id === "run-morning-money"
+    || item.id === "enable-owner-letter"
+    || item.id === "run-owner-letter"
+  ));
+  if (clock.length) return clock.slice(0, 1);
+
+  if (desk.mode === "demo" && userTexts.length === 0 && !desk.recovery.active) {
+    return [{
       id: "verify-book",
       label: "Verify the live book",
       detail: "Ask Bud how to stage a current PMS export.",
@@ -420,24 +419,10 @@ export function deriveAskSuggestions(
         kind: "ask",
         prompt: "This is still the practice book. Help me verify live balances with the PMS export or files this office already uses. Explain the route from the current book source, then wait for my review. Do not mark the book live or name a vendor we have not confirmed.",
       },
-    });
+    }];
   }
 
-  if (suggestions.length === 0 && loops.some((loop) => loop.available && loop.enabled)) {
-    suggestions.push({
-      id: "ask-needs-me",
-      label: "Ask what needs me",
-      detail: "Bud reads Desk and Schedule without changing them.",
-      action: {
-        kind: "ask",
-        prompt: "What needs my attention next on Desk and Schedule? Name the spine pages if useful. Separate verified facts from missing evidence. Answer in ordinary prose. Do not run a routine or change the book.",
-      },
-    });
-  }
-
-  return suggestions
-    .filter((suggestion) => !isAskSuggestionSpent(suggestion, extras.userTexts ?? []))
-    .slice(0, 3);
+  return [];
 }
 
 export interface RoutineReminder {

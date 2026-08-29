@@ -2,6 +2,8 @@ import { track } from "@/lib/analytics";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowUp, Clock, Mic, Paperclip, Square, Users, X } from "lucide-react";
 import { useStore, visibleMessages, type Bot, type Group } from "@/state/store";
+import { describeSessionHeal } from "@/lib/session-heal";
+import { SessionHealCard } from "./SessionHealCard";
 import { cn } from "@/lib/cn";
 import {
   composerOutboxStore,
@@ -10,8 +12,10 @@ import {
   useComposerDraft,
 } from "@/lib/drafts";
 import { MausAvatar } from "./Avatar";
-import { ComposerAttachments } from "./ComposerAttachments";
+import { ComposerAttachments, type PendingComposerFile } from "./ComposerAttachments";
+import { stageAskAttachment } from "@/lib/ask-attach";
 import {
+  COMPOSER_FILE_ACCEPT,
   composeMessage,
   fileAttachment,
   isLongPaste,
@@ -84,6 +88,8 @@ export function Composer({
   const draftId = group ? `group:${group.id}` : `bot:${bot?.id ?? ""}`;
   const [text, setText, attachments, setAttachments] = useComposerDraft(draftId);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [pendingFiles, setPendingFiles] = useState<PendingComposerFile[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const addAttachments = useCallback(
@@ -158,10 +164,11 @@ export function Composer({
   // the turn settles. Enter during a turn queues instead of silently dying.
   const [queued, setQueued] = useState<{ text: string; attachments: Attachment[] } | null>(null);
   // a chip on its own is a message: the send control has to appear for it
+  const staging = pendingFiles.some((item) => !item.error);
   const hasContent = Boolean(text.trim()) || attachments.length > 0;
   const send = async () => {
     const t = composeMessage(text, attachments);
-    if (!t) return;
+    if (!t || staging) return;
     if (busy) {
       if (group) {
         setQueued({ text: t, attachments });
@@ -194,7 +201,10 @@ export function Composer({
         setAttachments([]);
         track("message_sent", { driver: bot.modelSelection?.instanceId });
       } catch (error) {
-        setSendError(error instanceof Error ? error.message : "Bud did not acknowledge that message. Your draft is still here; try again.");
+        const copy = describeSessionHeal(error);
+        setSendError(copy.kind === "other"
+          ? (error instanceof Error ? error.message : "Bud did not acknowledge that message. Your draft is still here; try again.")
+          : `${copy.title}. ${copy.detail}`);
       } finally {
         setSending(false);
       }
@@ -203,6 +213,11 @@ export function Composer({
     setText("");
     setAttachments([]);
   };
+  useEffect(() => {
+    if (state.connected && sendError && describeSessionHeal(sendError).kind !== "other") {
+      setSendError(null);
+    }
+  }, [state.connected, sendError]);
   useEffect(() => {
     if (!busy && queued) {
       if (group) dispatch({ type: "sendGroup", groupId: group.id, text: queued.text });
@@ -254,18 +269,39 @@ export function Composer({
     setRecording((r) => !r);
   };
 
+  const stageBrowserFiles = useCallback(async (files: File[]) => {
+    if (!files.length) return;
+    setAttachmentError(null);
+    const rows = files.map((file) => ({
+      id: globalThis.crypto.randomUUID(),
+      name: file.name,
+      size: file.size,
+    }));
+    setPendingFiles((prev) => [...prev, ...rows]);
+    await Promise.all(rows.map(async (row, index) => {
+      try {
+        const staged = await stageAskAttachment(files[index]!);
+        addAttachments([fileAttachment(staged.name, staged.path, staged.size)]);
+        setPendingFiles((prev) => prev.filter((item) => item.id !== row.id));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "That file could not be attached.";
+        setPendingFiles((prev) => prev.map((item) => item.id === row.id ? { ...item, error: message } : item));
+      }
+    }));
+  }, [addAttachments]);
+
   const chooseFiles = async () => {
-    if (!window.ogb?.chooseFiles) {
-      setAttachmentError("File selection is available in the RealBud desktop app. You can also drop files here.");
+    setAttachmentError(null);
+    if (window.ogb?.chooseFiles) {
+      try {
+        const selected = await window.ogb.chooseFiles();
+        addAttachments(selected.map((file) => fileAttachment(file.name, file.path, file.size)));
+      } catch (error) {
+        setAttachmentError(error instanceof Error ? error.message : "Those files could not be attached.");
+      }
       return;
     }
-    setAttachmentError(null);
-    try {
-      const selected = await window.ogb.chooseFiles();
-      addAttachments(selected.map((file) => fileAttachment(file.name, file.path, file.size)));
-    } catch (error) {
-      setAttachmentError(error instanceof Error ? error.message : "Those files could not be attached.");
-    }
+    fileInputRef.current?.click();
   };
 
   return (
@@ -283,14 +319,21 @@ export function Composer({
           </button>
         </div>
       )}
-      {sendError && (
+      {sendError && describeSessionHeal(sendError).kind !== "other" ? (
+        <SessionHealCard
+          copy={describeSessionHeal(sendError)}
+          retrying={sending}
+          onRetry={() => void send()}
+          onDismiss={() => setSendError(null)}
+        />
+      ) : sendError ? (
         <div role="alert" className="mx-auto mb-2 flex max-w-[900px] items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">
           <span className="min-w-0 flex-1">{sendError}</span>
           <button onClick={() => setSendError(null)} aria-label="Dismiss send error" className="shrink-0 rounded p-0.5">
             <X size={12} />
           </button>
         </div>
-      )}
+      ) : null}
       <div className="relative mx-auto max-w-[900px]">
         {askLead}
         {queued && (
@@ -362,21 +405,39 @@ export function Composer({
         )}
         <ComposerAttachments
           items={attachments}
+          pending={pendingFiles}
           onAdd={addAttachments}
           onRemove={removeAttachment}
+          onBrowserFiles={(files) => void stageBrowserFiles(files)}
         />
         <div className="flex items-end gap-2 rounded-lg border border-line bg-sheet py-2 pl-3 pr-2">
-        {!group && window.ogb?.chooseFiles && (
-          <button
-            id={productAsk ? "ask-attach-files" : undefined}
-            onClick={() => void chooseFiles()}
-            disabled={Boolean(approval)}
-            aria-label="Attach files or images"
-            title="Attach files or images"
-            className="flex size-8 shrink-0 items-center justify-center rounded-full text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40"
-          >
-            <Paperclip size={17} />
-          </button>
+        {!group && (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept={COMPOSER_FILE_ACCEPT}
+              className="sr-only"
+              tabIndex={-1}
+              aria-hidden="true"
+              onChange={(event) => {
+                const files = Array.from(event.target.files ?? []);
+                event.target.value = "";
+                void stageBrowserFiles(files);
+              }}
+            />
+            <button
+              type="button"
+              id={productAsk ? "ask-attach-files" : undefined}
+              onClick={() => void chooseFiles()}
+              disabled={Boolean(approval) || sending}
+              className="pm-control pm-tactile inline-flex h-10 shrink-0 items-center gap-1.5 self-end rounded px-2 text-[12px] font-medium text-ink hover:bg-paper disabled:opacity-40"
+            >
+              <Paperclip size={14} aria-hidden="true" />
+              Attach
+            </button>
+          </>
         )}
         <textarea
           id={productAsk ? "ask-bud-composer" : undefined}
@@ -452,7 +513,9 @@ export function Composer({
                 : group
                   ? `Message ${group.name} — ${groupComposerHint(group, members ?? [])}`
                   : productAsk
-                    ? "Ask Bud, paste a list, or attach a file or screenshot"
+                    ? attachments.length || pendingFiles.length
+                      ? "Add a note for these files, or send them as they are"
+                      : "Ask Bud, paste a list, or attach a file or screenshot"
                     : `Message ${bot?.name ?? ""}`
           }
           aria-label={productAsk ? "Message Bud about the book" : `Message ${group ? group.name : (bot?.name ?? "")}`}
@@ -489,7 +552,7 @@ export function Composer({
         {hasContent && (
           <button
             onClick={() => void send()}
-            disabled={sending || (busy && !group)}
+            disabled={sending || staging || (busy && !group)}
             aria-label={sending ? "Saving message" : busy ? group ? "Queue message" : "Draft saved while Bud works" : "Send message"}
             title={sending ? "Waiting for RealBud" : busy ? group ? "Queue — sends when the bot finishes" : "Bud is working; this draft is saved" : "Send"}
             className={cn(

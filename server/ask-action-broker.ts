@@ -10,8 +10,9 @@ import {
 } from "../shared/ask-actions.ts";
 import {
   ASK_CONNECTION_OPTIONS,
-  isKnownOfficeService,
+  isConnectableService,
   matchAskConnectionSpeech,
+  matchAskToolPeekSpeech,
   namedOfficeService,
   prettyOfficeName,
 } from "../shared/ask-connections.ts";
@@ -67,6 +68,8 @@ export interface AskActionBrokerContext {
   workRoutingPlan?: (snapshot: DeskSnapshot) => WorkRoutingPlan;
   /** Required when Allowing a choose-connection card. */
   selection?: string;
+  /** Public linked-tool status only. Never a key. */
+  linkedTools?: Array<{ slug: string; label: string; connected: boolean; account?: string }>;
 }
 
 function boundedString(value: unknown, max: number, allowEmpty = false): string | null {
@@ -465,18 +468,21 @@ export function stageWorkerAskAction(
       };
     }
 
+    if (input.kind === "open-setup" && input.target === "connections" && input.service && !isConnectableService(input.service)) {
+      throw actionError(
+        `${prettyOfficeName(input.service)} could not be opened as a connection. Name the app, inbox, calendar or Pocket channel.`,
+        400,
+        "UNSUPPORTED_SOURCE",
+      );
+    }
+
     const setupCopy = {
-      connections: input.service && !isKnownOfficeService(input.service)
-        ? {
-          title: `${prettyOfficeName(input.service)} isn't a named office source`,
-          detail: `RealBud does not connect ${prettyOfficeName(input.service)}. Pick the book, inbox, calendar or a PM channel this office already uses.`,
-        }
-        : {
-          title: input.service ? `Connect ${prettyOfficeName(input.service)}` : "Connect a source",
-          detail: input.service
-            ? `Connect ${prettyOfficeName(input.service)} here in Ask. Keys stay on this device. Nothing connects automatically.`
-            : "Name the source this office already uses. Keys stay on this device. Nothing connects automatically.",
-        },
+      connections: {
+        title: input.service ? `Connect ${prettyOfficeName(input.service)}` : "Connect a source",
+        detail: input.service
+          ? `Connect ${prettyOfficeName(input.service)} here in Ask. Keys stay on this device. Nothing connects automatically.`
+          : "Name the source this office already uses. Keys stay on this device. Nothing connects automatically.",
+      },
       worker: {
         title: "Connect Bud",
         detail: "Prepare Bud's private worker and model. Keys stay on this device.",
@@ -515,11 +521,9 @@ export function stageWorkerAskAction(
 }
 
 /**
- * Resolve an explicit PM-owned Pocket setup request without spending a model
- * call. This is deliberately narrower than general intent parsing: it can
- * only stage the same navigation-only `open-setup` proposal the worker may
- * request, and potentially external/tenant-facing requests stay with Bud so
- * the normal refusal boundary can explain them.
+ * Resolve an explicit setup request without spending a model call.
+ * Named office tools, Pocket, and any spoken app open that card.
+ * An unslugifiable name still opens the book/export card.
  */
 const ROUTINE_NEGATION = /\b(?:do\s+not|don't|dont|never)\b/i;
 const ROUTINE_FORBIDDEN = /\b(?:send|pay|notice|sms|text them)\b/i;
@@ -602,17 +606,75 @@ export function stageDirectAskRoutineIntent(
   return { matched: false };
 }
 
+function linkedToolFor(
+  tool: { id: string; label: string; composioSlug: string | null },
+  linked: AskActionBrokerContext["linkedTools"],
+) {
+  return (linked ?? []).find((row) =>
+    row.connected
+    && (row.slug === tool.composioSlug || row.slug === tool.id || row.label.toLowerCase() === tool.label.toLowerCase()),
+  );
+}
+
 export function stageDirectAskSetupIntent(
   text: string,
   context: AskActionBrokerContext,
 ): StageWorkerActionResult {
+  const peek = matchAskToolPeekSpeech(text);
+  if (peek) {
+    const now = context.now?.() ?? Date.now();
+    const stagedPeek = stageWorkerAskAction(JSON.stringify({
+      action: WORKER_ASK_ACTION_PROTOCOL,
+      proposal: { kind: "open-setup", target: "connections", service: peek.label },
+    }), context);
+    if (!stagedPeek.matched || "error" in stagedPeek) return stagedPeek;
+    const honored = honorOpenSetup(stagedPeek, now);
+    const linked = linkedToolFor(peek, context.linkedTools);
+    if (!linked || honored.proposal.kind !== "open-setup") return honored;
+    const account = linked.account?.trim();
+    return {
+      matched: true,
+      deskChanged: honored.deskChanged,
+      proposal: {
+        ...honored.proposal,
+        title: `${peek.label} on this device`,
+        detail: account && account !== "Key on this device"
+          ? `${account} is on this device. Ask still cannot send.`
+          : `A ${peek.label} key is on this device. Ask still cannot send.`,
+      },
+    };
+  }
   const match = matchAskConnectionSpeech(text);
   if (match.kind === "none") return { matched: false };
   const now = context.now?.() ?? Date.now();
+  if (match.kind === "tool") {
+    const stagedTool = stageWorkerAskAction(JSON.stringify({
+      action: WORKER_ASK_ACTION_PROTOCOL,
+      proposal: { kind: "open-setup", target: "connections", service: match.tool.label },
+    }), context);
+    if (!stagedTool.matched || "error" in stagedTool) return stagedTool;
+    const honoredTool = honorOpenSetup(stagedTool, now);
+    const already = linkedToolFor(match.tool, context.linkedTools);
+    if (!already || honoredTool.proposal.kind !== "open-setup") return honoredTool;
+    const account = already.account?.trim();
+    return {
+      matched: true,
+      deskChanged: honoredTool.deskChanged,
+      proposal: {
+        ...honoredTool.proposal,
+        title: `${match.tool.label} on this device`,
+        detail: account && account !== "Key on this device"
+          ? `${account} is on this device. Ask still cannot send.`
+          : `A ${match.tool.label} key is on this device. Ask still cannot send.`,
+      },
+    };
+  }
   if (match.kind === "unsupported") {
+    const book = ASK_CONNECTION_OPTIONS.find((item) => item.id === "property-book");
+    if (!book) return { matched: false };
     const stagedUnknown = stageWorkerAskAction(JSON.stringify({
       action: WORKER_ASK_ACTION_PROTOCOL,
-      proposal: { kind: "open-setup", target: "connections", service: match.name },
+      proposal: { kind: "open-setup", target: book.target, service: book.service },
     }), context);
     if (!stagedUnknown.matched || "error" in stagedUnknown) return stagedUnknown;
     return honorOpenSetup(stagedUnknown, now);

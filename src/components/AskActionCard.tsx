@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { CalendarDays, Check, ChevronDown, CircleAlert, Clock3, Loader2, MonitorUp, Settings2, ShieldCheck, X } from "lucide-react";
 
 import type { AskActionProposal } from "@shared/ask-actions";
-import { askActionApprovalCopy, askConnectReceiptCopy, isSpentConnectReceipt, isUnsupportedOfficeConnect, readAdmittedAskWorkRoutingPlan } from "@shared/ask-actions";
+import { askActionApprovalCopy, askConnectReceiptCopy, isCompletedToolConnect, isSpentConnectReceipt, isUnsupportedOfficeConnect, readAdmittedAskWorkRoutingPlan } from "@shared/ask-actions";
 import { askConnectFromSpentAction } from "@/lib/ask-connect";
+import { describeSessionHeal } from "@/lib/session-heal";
 import { cn } from "@/lib/cn";
 import { api, useStore, type Message } from "@/state/store";
 import { AskConnectionPicker } from "./AskConnectionPicker";
@@ -93,13 +94,16 @@ export function SpentConnectReceipt({
 }) {
   return (
     <article
-      className="w-full max-w-[760px] border border-line bg-sheet px-3 py-2 text-ink"
+      className={cn(
+        "w-full max-w-[760px] border bg-sheet px-3 py-2 text-ink",
+        isCompletedToolConnect(action) ? "copy-pulse border-agency/40" : "border-line",
+      )}
       aria-label="Earlier connection card"
     >
       <div className="flex min-h-10 items-center gap-2">
-        <Settings2 size={15} className="shrink-0 text-ink-muted" aria-hidden="true" />
+        <Settings2 size={15} className={cn("shrink-0", isCompletedToolConnect(action) ? "text-agency" : "text-ink-muted")} aria-hidden="true" />
         <h3 className="min-w-0 flex-1 truncate text-[13px] font-semibold">{action.title}</h3>
-        <span className={cn("shrink-0 text-[12px]", isUnsupportedOfficeConnect(action) ? "text-hold" : "text-ink-muted")}>{spentConnectStatus(action)}</span>
+        <span className={cn("shrink-0 text-[12px]", isUnsupportedOfficeConnect(action) ? "text-hold" : isCompletedToolConnect(action) ? "text-agency" : "text-ink-muted")}>{spentConnectStatus(action)}</span>
         {onOpen ? (
           <button
             type="button"
@@ -110,6 +114,9 @@ export function SpentConnectReceipt({
           </button>
         ) : null}
       </div>
+      {isCompletedToolConnect(action) && action.detail ? (
+        <p className="mt-1 text-[12px] leading-relaxed text-ink-muted">{action.detail}</p>
+      ) : null}
     </article>
   );
 }
@@ -432,7 +439,7 @@ export function AskActionCard({ botId, threadId, message, compact = false }: {
       }
       else if (decision === "allow" && action.kind === "run-routine") dispatch({ type: "showDesk" });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(describeSessionHeal(cause).detail);
     } finally {
       setBusy(null);
     }

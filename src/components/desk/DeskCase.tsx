@@ -65,8 +65,7 @@ function ReviewMemory({ review, wordingOpen, onToggleWording }: {
         <div className="flex items-start justify-between gap-3"><dt className="text-ink-muted">Channel</dt><dd className="text-right font-medium text-ink">{comparisonLabel(review.channel)}</dd></div>
         <div className="flex items-start justify-between gap-3"><dt className="text-ink-muted">Wording</dt><dd className="text-right font-medium text-ink">{wording}</dd></div>
       </dl>
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[11.5px] text-ink-muted">Allow approves this exact version once. Future matching cards may be shorter, but they are never automatically approved or sent.</p>
+      <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
         <button
           type="button"
           aria-expanded={wordingOpen}
@@ -122,7 +121,7 @@ export function DeskCase({
   useEffect(() => {
     setEditing(false);
     setBody(draft?.body ?? "");
-  }, [draft?.id, draft?.body]);
+  }, [draft?.id, draft?.body, draft?.status]);
   useEffect(() => {
     setWordingOpen(review?.mode !== "familiar");
   }, [draft?.id, review?.mode]);
@@ -383,7 +382,7 @@ export function DeskCase({
         ) : null}
       </div>
 
-      {draft && draft.status === "pending" ? (
+      {draft && draft.status === "pending" && !editing ? (
         <DecisionBar
           busy={waiting}
           onAllow={() => onAllow(draft)}

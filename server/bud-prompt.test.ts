@@ -49,7 +49,17 @@ describe("budSystemPrompt", () => {
     expect(prompt).toContain('"kind":"prepare-handoff"');
     expect(prompt).toMatch(/One proposal per turn/i);
     expect(prompt).toMatch(/never put a credential, token, arbitrary command/i);
-    expect(prompt).toMatch(/never means a tool is connected/i);
+    expect(prompt).not.toMatch(/never means a tool is connected/i);
+    expect(prompt).toMatch(/that key is on this device/i);
+    expect(prompt).not.toMatch(/cannot read pages/i);
+    expect(prompt).toMatch(/Never deny a listed read/i);
+    expect(prompt).toMatch(/Never say no connection is active when a named app is listed/i);
+    expect(prompt).toMatch(/You decide whether this turn needs a named source/i);
+    expect(prompt).toContain("composio-account");
+    expect(prompt).toMatch(/you never emit a URL, key, marketplace slug/i);
+    expect(prompt).toMatch(/Never put a token in an action/i);
+    expect(prompt).toMatch(/exact service they named/i);
+    expect(prompt).toMatch(/including mid-work/i);
   });
 
   it("describes current capabilities and handoffs without turning them into authority", () => {
@@ -71,5 +81,37 @@ describe("budSystemPrompt", () => {
     expect(prompt).toContain('"draftId":"draft-123"');
     expect(prompt).toMatch(/must be labelled as training/i);
     expect(prompt).toMatch(/Do not invent a draft id/i);
+  });
+
+  it("puts the current Desk queue on the worker so Ask can name holds", () => {
+    const prompt = budSystemPrompt({
+      deskBrief: {
+        mode: "demo",
+        recovery: false,
+        items: [{
+          kind: "licensee-hold",
+          address: "4/22 Harbour Rd, Kingston ACT",
+          detail: "Past the shop courtesy window. A licensed person decides.",
+        }],
+      },
+    });
+    expect(prompt).toContain("4/22 Harbour Rd, Kingston ACT");
+    expect(prompt).toMatch(/you can see Desk/i);
+    expect(prompt).toMatch(/Never say the cards were not shared/i);
+  });
+
+  it("passes last peek titles so the next turn can name them", () => {
+    const prompt = budSystemPrompt({
+      linkedReads: [{
+        label: "Notion",
+        account: "Yo Da's Space",
+        titles: ["Getting Started", "Arrears board"],
+      }],
+    });
+    expect(prompt).toContain("Getting Started");
+    expect(prompt).toContain("Arrears board");
+    expect(prompt).toMatch(/you can see those items/i);
+    expect(prompt).not.toMatch(/cannot read pages/i);
+    expect(prompt).not.toMatch(/ntn_/i);
   });
 });

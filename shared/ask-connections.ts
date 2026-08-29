@@ -102,11 +102,12 @@ const OPTION_PATTERNS: ReadonlyArray<{ id: AskConnectionOptionId; pattern: RegEx
   { id: "desktop-reminders", pattern: /\b(?:desktop\s+)?reminders?\b/i },
   { id: "worker", pattern: /\b(?:worker(?:\s+setup)?|connect(?:\s+a)?\s+model|prepare\s+bud)\b/i },
   { id: "api-mcp", pattern: /\b(?:mcp|direct\s+api|pms\s+api)\b/i },
-  { id: "incoming-mail", pattern: /\b(?:gmail|outlook|hotmail|inbox|calendar|e-?mail|gcal|google[\s_-]*(?:calendar|calandar|calender|clandar|cal)|googlecalendar)\b/i },
+  { id: "incoming-mail", pattern: /\b(?:gmail|outlook|hotmail|inbox|calendar|e-?mail|gcal|googlecalendar)\b/i },
   { id: "property-book", pattern: /\b(?:property\s+book|pms|portfolio|property\s*me|property\s+tree|reapit|rent\s+roll)\b/i },
 ];
 
 const SETUP_VERB = /\b(?:con+e+c[a-z]{0,2}t|set\s*up|setup|link|configure|enable|activate|add|open|show|prepare|we\s+use|our\s+(?:pms|inbox|portal))\b/i;
+const PEEK_VERB = /\b(?:what(?:'s|s| is)?\s+(?:in|inside)|see\s+inside|can you see|could you see|fetch|read(?:\s+from)?|show me|list(?:\s+(?:the\s+)?)?pages|look(?:\s+in(?:side)?)?|inside of)\b/i;
 const SETUP_NEGATION = /\b(?:do\s+not|don't|dont|never)\b/i;
 const SETUP_FORBIDDEN = /\b(?:tenant|owner|tradie|contractor|group|send|pay|notice)\b/i;
 const CHOOSER = /\b(?:tools?|connections?|integrations?|accounts?|sources?|pocket|mobile\s+(?:message|messaging|channel))\b/i;
@@ -117,6 +118,7 @@ export type AskConnectionSpeech =
   | { kind: "none" }
   | { kind: "chooser" }
   | { kind: "option"; option: AskConnectionOption }
+  | { kind: "tool"; tool: AskOfficeTool }
   | { kind: "unsupported"; name: string };
 
 /** Title-case a spoken product name without inventing a catalog slot. */
@@ -136,8 +138,23 @@ export function isKnownOfficeService(service?: string): boolean {
   ));
 }
 
+/** Any named app RealBud can open a connect card for — office sources plus a spoken toolkit. */
+export function isConnectableService(service?: string): boolean {
+  if (isKnownOfficeService(service)) return true;
+  return Boolean(resolveConnectableTool(service ?? ""));
+}
+
+/** Drop credential-shaped tokens so “connect Notion ntn_…” still names Notion. */
+export function stripCredentialLooks(text: string): string {
+  return text
+    .replace(/\b(?:sk-(?:ant-|proj-|live-|test-)?|ntn_|ck_|secret_|ghp_|gho_|ghu_|ghs_|ghr_|github_pat_|xox[abposr]-|AKIA|AIza|npm_|eyJ)[A-Za-z0-9._~+/=-]{8,}/g, " ")
+    .replace(/\b(?:api[_-]?key|token|secret|password)\s*[=:]\s*\S+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function extractSpokenConnectName(text: string): string | null {
-  const match = text.match(/\b(?:con+e+c[a-z]{0,2}t|link|set\s*up|setup)\s+(?:(?:me|us|bud)\s+)?(?:to\s+|with\s+)?(.+)$/i);
+  const match = stripCredentialLooks(text).match(/\b(?:con+e+c[a-z]{0,2}t|link|set\s*up|setup)\s+(?:(?:me|us|bud)\s+)?(?:to\s+|with\s+)?(.+)$/i);
   if (!match) return null;
   const name = match[1]!.replace(/[.?!]+$/g, "").trim();
   if (!name || name.length < 2 || name.length > 40) return null;
@@ -147,7 +164,7 @@ export function extractSpokenConnectName(text: string): string | null {
 }
 
 export function matchAskConnectionSpeech(text: string): AskConnectionSpeech {
-  const clean = text.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+  const clean = stripCredentialLooks(text.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim());
   if (!clean || clean.length > 500 || !SETUP_VERB.test(clean) || SETUP_NEGATION.test(clean) || SETUP_FORBIDDEN.test(clean)) {
     return { kind: "none" };
   }
@@ -160,14 +177,26 @@ export function matchAskConnectionSpeech(text: string): AskConnectionSpeech {
       ?? OFFICE_SETUP_OPTIONS.find((item) => item.id === matched[0]!.id);
     return option ? { kind: "option", option } : { kind: "none" };
   }
+  const officeTool = speechForResolvedOfficeTool(clean);
+  if (officeTool) return officeTool;
   if (CHOOSER.test(clean) || /^(?:con+e+c[a-z]{0,2}t|set\s*up|setup|link)(?:\s+bud)?\.?$/i.test(clean)) {
     return { kind: "chooser" };
   }
   const named = extractSpokenConnectName(clean);
-  if (named && !isKnownOfficeService(named)) {
-    return { kind: "unsupported", name: named };
+  if (named) {
+    const namedTool = speechForResolvedOfficeTool(named);
+    if (namedTool) return namedTool;
+    const app = resolveConnectableTool(named);
+    if (app?.kind === "app") return { kind: "tool", tool: app };
+    if (!isKnownOfficeService(named)) return { kind: "unsupported", name: named };
   }
   return { kind: "none" };
+}
+
+function speechForResolvedOfficeTool(text: string): AskConnectionSpeech | null {
+  if (!resolveAskOfficeTool(text)) return null;
+  const option = ASK_CONNECTION_OPTIONS.find((item) => item.id === "incoming-mail");
+  return option ? { kind: "option", option } : null;
 }
 
 export function askConnectionOption(id: string): AskConnectionOption | undefined {
@@ -175,35 +204,187 @@ export function askConnectionOption(id: string): AskConnectionOption | undefined
     ?? OFFICE_SETUP_OPTIONS.find((item) => item.id === id);
 }
 
-export type AskOfficeToolKind = "mail" | "calendar";
+export type AskOfficeToolKind = "mail" | "calendar" | "app";
 
 export interface AskOfficeTool {
-  id: "gmail" | "google-calendar" | "outlook" | "hotmail" | "incoming-mail";
+  id: string;
   label: string;
   kind: AskOfficeToolKind;
-  /** Restricted Composio toolkit slug, when one exists for this office tool. */
-  composioSlug: "gmail" | "googlecalendar" | "outlook" | null;
+  /** Composio toolkit slug, when the spoken name maps to one. */
+  composioSlug: string | null;
 }
 
-const GOOGLE_CALENDAR = /\b(?:google[\s_-]*(?:calendar|calandar|calender|clandar|cal)|googlecalendar|gcal)\b/i;
+const GOOGLE_CALENDAR: AskOfficeTool = {
+  id: "google-calendar",
+  label: "Google Calendar",
+  kind: "calendar",
+  composioSlug: "googlecalendar",
+};
+
+function officeWords(text: string): string[] {
+  return text.toLowerCase().split(" ").filter(Boolean);
+}
+
+/** Damerau-Levenshtein, capped. Closed office names only — not a catalog search. */
+function officeEditDistance(left: string, right: string): number {
+  if (left === right) return 0;
+  const limit = 2;
+  if (Math.abs(left.length - right.length) > limit) return limit + 1;
+  const rows = left.length + 1;
+  const cols = right.length + 1;
+  const grid: number[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
+  for (let i = 0; i < rows; i += 1) grid[i]![0] = i;
+  for (let j = 0; j < cols; j += 1) grid[0]![j] = j;
+  for (let i = 1; i < rows; i += 1) {
+    for (let j = 1; j < cols; j += 1) {
+      const cost = left[i - 1] === right[j - 1] ? 0 : 1;
+      let next = Math.min(grid[i - 1]![j]! + 1, grid[i]![j - 1]! + 1, grid[i - 1]![j - 1]! + cost);
+      if (i > 1 && j > 1 && left[i - 1] === right[j - 2] && left[i - 2] === right[j - 1]) {
+        next = Math.min(next, grid[i - 2]![j - 2]! + 1);
+      }
+      grid[i]![j] = next;
+    }
+  }
+  return grid[left.length]![right.length]!;
+}
+
+function closeOfficeWord(spoken: string, target: string): boolean {
+  if (spoken === target) return true;
+  const longer = Math.max(spoken.length, target.length);
+  if (longer < 5) return false;
+  const allowed = longer <= 6 ? 1 : 2;
+  return officeEditDistance(spoken, target) <= allowed;
+}
+
+function looksLikeGoogle(word: string): boolean {
+  return word === "google" || closeOfficeWord(word, "google");
+}
+
+function looksLikeCalendar(word: string, withGoogle: boolean): boolean {
+  if (word === "gcal") return true;
+  if (word === "cal") return withGoogle;
+  return word === "calendar" || closeOfficeWord(word, "calendar");
+}
+
+function looksLikeNamedMail(word: string, name: "gmail" | "outlook" | "hotmail"): boolean {
+  if (word === name) return true;
+  return word.startsWith(name[0]!) && closeOfficeWord(word, name);
+}
 
 /** Resolve the office tool the PM named, including worker slugs and typos. */
 export function resolveAskOfficeTool(text: string): AskOfficeTool | null {
   const clean = text.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
   if (!clean) return null;
-  if (GOOGLE_CALENDAR.test(clean) || /^google calendar$/i.test(clean)) {
-    return { id: "google-calendar", label: "Google Calendar", kind: "calendar", composioSlug: "googlecalendar" };
+  const words = officeWords(clean);
+  for (let index = 0; index < words.length; index += 1) {
+    const word = words[index]!;
+    const next = words[index + 1];
+    if (word === "googlecalendar" || (word.startsWith("google") && looksLikeCalendar(word.slice(6), true))) {
+      return GOOGLE_CALENDAR;
+    }
+    if (looksLikeGoogle(word) && next && looksLikeCalendar(next, true)) return GOOGLE_CALENDAR;
+    if (word === "gcal") return GOOGLE_CALENDAR;
   }
-  if (/\bgmail\b/i.test(clean)) return { id: "gmail", label: "Gmail", kind: "mail", composioSlug: "gmail" };
-  if (/\boutlook\b/i.test(clean)) return { id: "outlook", label: "Outlook", kind: "mail", composioSlug: "outlook" };
-  if (/\bhotmail\b/i.test(clean)) return { id: "hotmail", label: "Hotmail", kind: "mail", composioSlug: null };
-  if (/\b(?:inbox|incoming mail|e-?mail)\b/i.test(clean)) {
+  if (words.some((word) => looksLikeNamedMail(word, "gmail"))) {
+    return { id: "gmail", label: "Gmail", kind: "mail", composioSlug: "gmail" };
+  }
+  if (words.some((word) => looksLikeNamedMail(word, "outlook"))) {
+    return { id: "outlook", label: "Outlook", kind: "mail", composioSlug: "outlook" };
+  }
+  if (words.some((word) => looksLikeNamedMail(word, "hotmail"))) {
+    return { id: "hotmail", label: "Hotmail", kind: "mail", composioSlug: null };
+  }
+  if (
+    words.includes("inbox")
+    || words.includes("email")
+    || (words.includes("e") && words.includes("mail"))
+    || (words.includes("incoming") && words.includes("mail"))
+    || words.includes("mail")
+  ) {
     return { id: "incoming-mail", label: "Incoming mail", kind: "mail", composioSlug: null };
   }
-  if (/\bcalendar\b/i.test(clean)) {
+  if (words.some((word) => looksLikeCalendar(word, false))) {
     return { id: "incoming-mail", label: "Incoming calendar", kind: "calendar", composioSlug: null };
   }
   return null;
+}
+
+const TOOLKIT_ALIASES: Readonly<Record<string, { slug: string; label: string }>> = {
+  notion: { slug: "notion", label: "Notion" },
+  slack: { slug: "slack", label: "Slack" },
+  instagram: { slug: "instagram", label: "Instagram" },
+  github: { slug: "github", label: "GitHub" },
+  linear: { slug: "linear", label: "Linear" },
+  discord: { slug: "discord", label: "Discord" },
+  hubspot: { slug: "hubspot", label: "HubSpot" },
+  salesforce: { slug: "salesforce", label: "Salesforce" },
+  jira: { slug: "jira", label: "Jira" },
+  asana: { slug: "asana", label: "Asana" },
+  trello: { slug: "trello", label: "Trello" },
+  dropbox: { slug: "dropbox", label: "Dropbox" },
+  airtable: { slug: "airtable", label: "Airtable" },
+  figma: { slug: "figma", label: "Figma" },
+  stripe: { slug: "stripe", label: "Stripe" },
+  googledrive: { slug: "googledrive", label: "Google Drive" },
+  googledocs: { slug: "googledocs", label: "Google Docs" },
+  googlesheets: { slug: "googlesheets", label: "Google Sheets" },
+  googlephotos: { slug: "googlephotos", label: "Google Photos" },
+  x: { slug: "x", label: "X" },
+  twitter: { slug: "x", label: "X" },
+  reddit: { slug: "reddit", label: "Reddit" },
+  zapier: { slug: "zapier", label: "Zapier" },
+  sentry: { slug: "sentry", label: "Sentry" },
+  posthog: { slug: "posthog", label: "PostHog" },
+  facebook: { slug: "facebook", label: "Facebook" },
+  linkedin: { slug: "linkedin", label: "LinkedIn" },
+};
+
+const RESERVED_TOOL_SLUGS = new Set([
+  "token", "secret", "password", "passwd", "key", "apikey", "api", "mcp", "connect", "tool", "tools",
+]);
+
+/** Safe Composio-style slug from a spoken product name. */
+export function toolkitSlug(name: string): string | null {
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  if (!/^[a-z][a-z0-9]{1,31}$/.test(slug)) return null;
+  if (RESERVED_TOOL_SLUGS.has(slug)) return null;
+  return slug;
+}
+
+function appTool(slug: string, label: string): AskOfficeTool {
+  return { id: slug, label, kind: "app", composioSlug: slug };
+}
+
+/** Office mail/calendar first, then a named app — including an unknown spoken name. */
+export function resolveConnectableTool(text: string): AskOfficeTool | null {
+  const office = resolveAskOfficeTool(text);
+  if (office) return office;
+  const clean = stripCredentialLooks(text.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim());
+  if (!clean || clean.length > 40) return null;
+  const collapsed = clean.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const aliased = TOOLKIT_ALIASES[collapsed];
+  if (aliased) return appTool(aliased.slug, aliased.label);
+  const slug = toolkitSlug(clean);
+  if (!slug) return null;
+  if (/\b(?:so|because|and then|that can)\b/i.test(clean)) return null;
+  return appTool(slug, prettyOfficeName(clean));
+}
+
+/** “What can you see in Notion” is a peek of the saved key, not a reconnect. */
+export function matchAskToolPeekSpeech(text: string): AskOfficeTool | null {
+  const clean = stripCredentialLooks(text.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim());
+  if (!clean || clean.length > 500 || SETUP_NEGATION.test(clean) || SETUP_FORBIDDEN.test(clean)) return null;
+  if (!PEEK_VERB.test(clean)) return null;
+  const office = resolveAskOfficeTool(clean);
+  if (office) return office;
+  const collapsed = clean.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  for (const [alias, meta] of Object.entries(TOOLKIT_ALIASES)) {
+    if (collapsed.includes(alias) || new RegExp(`\\b${alias}\\b`, "i").test(clean)) {
+      return appTool(meta.slug, meta.label);
+    }
+  }
+  const named = extractSpokenConnectName(clean);
+  return named ? resolveConnectableTool(named) : null;
 }
 
 /** Use the name the office said when it is more specific than the catalog slot. */

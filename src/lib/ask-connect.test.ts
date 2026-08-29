@@ -9,14 +9,22 @@ import {
   askConnectFromSpentAction,
   askConnectGatedDetail,
   askConnectHeading,
+  isAskServiceLinked,
   askConnectMailSubtitle,
+  mapOfficeSourceError,
   askConnectMethodBadge,
   askConnectMethodFill,
   askConnectMethodTitle,
   askConnectPanel,
   askConnectUseStandardLabel,
+  askConnectWizardBarFill,
+  askConnectWizardDetail,
+  askConnectWizardProgress,
+  askConnectWizardStep,
+  isRejectedOfficeKey,
   defaultAskConnectMethod,
   isLiveAskConnectMethod,
+  localAskConnectFromSpeech,
   popAskConnectState,
   pushAskConnectState,
   replaceAskConnectState,
@@ -30,13 +38,24 @@ describe("Ask connect sheet", () => {
     expect(askConnectPanel({ target: "connections", service: "google-calendar" })).toBe("mail");
     expect(askConnectHeading({ target: "connections" })).toBe("Connect a source");
     expect(askConnectPanel({ target: "connections", service: "Gmail" })).toBe("mail");
+    expect(askConnectHeading({ target: "connections", service: "Google Claendar" })).toBe("Connect Google Calendar");
+    expect(askConnectPanel({ target: "connections", service: "Google Claendar" })).toBe("mail");
     expect(askConnectPanel({ target: "connections", service: "Property Tree" })).toBe("book");
     expect(askConnectPanel({ target: "connections", service: "WhatsApp Business" })).toBe("pocket-whatsapp");
     expect(askConnectPanel({ target: "computer-use" })).toBe("computer-use");
   });
 
+  it("opens the Notion card from speech even when the harness is down", () => {
+    expect(localAskConnectFromSpeech("connect me to notion")).toEqual({
+      target: "connections",
+      service: "Notion",
+    });
+    expect(localAskConnectFromSpeech("what is on Desk")).toBeNull();
+  });
+
   it("lets a missing Composio account be signed in on the named-tool card", () => {
-    expect(defaultAskConnectMethod({ composioLinked: false, hasNamedToolkit: true })).toBe("restricted-composio");
+    expect(defaultAskConnectMethod({ composioLinked: false, hasNamedToolkit: true, officeMail: true })).toBe("restricted-composio");
+    expect(defaultAskConnectMethod({ composioLinked: false, hasNamedToolkit: true })).toBe("direct-api");
     expect(defaultAskConnectMethod({ composioLinked: true, hasNamedToolkit: false })).toBe("isolated-cli");
     expect(defaultAskConnectMethod({ composioLinked: false, hasNamedToolkit: false })).toBe("isolated-cli");
     expect(askConnectMethodTitle("isolated-cli")).toBe("Attach an export");
@@ -46,12 +65,46 @@ describe("Ask connect sheet", () => {
       toolConnected: null,
       hasNamedToolkit: true,
     })).toBe("Sign in");
-    expect(askConnectMailSubtitle(false)).toMatch(/Sign in to Composio/i);
-    expect(askConnectMailSubtitle(true)).toMatch(/Sign in this account/i);
+    expect(askConnectMailSubtitle(false)).toMatch(/Named read only/i);
+    expect(askConnectMailSubtitle(true)).toMatch(/Named read only/i);
+    expect(askConnectMailSubtitle(false)).toMatch(/Nothing sends/i);
+    expect(askConnectWizardStep({ hasNamedToolkit: true, composioLinked: false })).toBe("link-composio");
+    expect(askConnectWizardStep({ hasNamedToolkit: true, composioLinked: true })).toBe("link-composio");
+    expect(askConnectWizardStep({ hasNamedToolkit: true, composioLinked: true, keyVerified: true })).toBe("sign-in-source");
+    expect(askConnectWizardStep({
+      hasNamedToolkit: true, composioLinked: true, keyVerified: true, toolConnected: true,
+    })).toBe("ready");
+    expect(askConnectWizardStep({
+      hasNamedToolkit: true, composioLinked: true, keyVerified: true, keyRejected: true,
+    })).toBe("link-composio");
+    expect(askConnectWizardStep({ hasNamedToolkit: false, composioLinked: true })).toBe("attach-export");
+    expect(askConnectWizardProgress("link-composio")).toEqual({
+      current: 1, total: 2, label: "Link Composio", complete: false,
+    });
+    expect(askConnectWizardProgress("link-composio", { keyRejected: true }).label).toBe("This key was refused");
+    expect(askConnectWizardProgress("sign-in-source")).toEqual({
+      current: 2, total: 2, label: "Sign in this account", complete: false,
+    });
+    expect(askConnectWizardBarFill(1, 1, false)).toBe("current");
+    expect(askConnectWizardBarFill(1, 2, false)).toBe("full");
+    expect(askConnectWizardBarFill(2, 2, false)).toBe("current");
+    expect(askConnectWizardBarFill(2, 2, true)).toBe("full");
+    expect(askConnectWizardBarFill(2, 1, false)).toBe("empty");
+    expect(askConnectWizardDetail("sign-in-source", "Gmail")).toMatch(/Sign in Gmail/i);
+    expect(askConnectWizardDetail("sign-in-source", "Gmail")).not.toMatch(/Nothing sends/i);
+    expect(askConnectWizardDetail("link-composio", "Gmail")).not.toMatch(/Nothing sends/i);
+    expect(askConnectWizardDetail("link-composio", "Gmail", { keyRejected: true })).toMatch(/refused/i);
     expect(askConnectMailSubtitle(true, false)).toMatch(/Attach an export this office already has/i);
     expect(askConnectMailSubtitle(true, false)).not.toMatch(/Sign in this account/i);
     expect(COMPOSIO_SIGN_IN_URL).toBe("https://platform.composio.dev");
     expect(askConnectHeading({ target: "composio-account" })).toBe("Sign in to Composio");
+    expect(mapOfficeSourceError("Connectors are not part of RealBud.")).toMatch(/office login/i);
+    expect(mapOfficeSourceError("Connectors are not part of RealBud.")).not.toMatch(/Connectors are not part/i);
+    expect(mapOfficeSourceError("Use the Ask connection card. The generic connector catalog is not part of RealBud.")).toMatch(/office login/i);
+    expect(mapOfficeSourceError("Composio MCP: HTTP 401")).toMatch(/did not accept this Connect key/i);
+    expect(isRejectedOfficeKey("Composio MCP: HTTP 401")).toBe(true);
+    expect(isRejectedOfficeKey("Composio did not accept this Connect key.")).toBe(true);
+    expect(isRejectedOfficeKey("Could not open a login page for Gmail.")).toBe(false);
   });
 
   it("ranks methods professionally and fills only the live standard", () => {
@@ -61,11 +114,12 @@ describe("Ask connect sheet", () => {
       "approved-mcp",
       "isolated-cli",
     ]);
-    expect(isLiveAskConnectMethod("direct-api")).toBe(false);
+    expect(isLiveAskConnectMethod("direct-api")).toBe(true);
     expect(isLiveAskConnectMethod("approved-mcp")).toBe(false);
     expect(isLiveAskConnectMethod("restricted-composio")).toBe(true);
     expect(isLiveAskConnectMethod("isolated-cli")).toBe(true);
-    expect(defaultAskConnectMethod({ composioLinked: false, hasNamedToolkit: true })).not.toBe("direct-api");
+    expect(defaultAskConnectMethod({ composioLinked: false, hasNamedToolkit: true, officeMail: true })).toBe("restricted-composio");
+    expect(defaultAskConnectMethod({ composioLinked: false, hasNamedToolkit: true })).toBe("direct-api");
     expect(defaultAskConnectMethod({ composioLinked: false, hasNamedToolkit: true })).not.toBe("approved-mcp");
     expect(askConnectMethodBadge({
       method: "restricted-composio",
@@ -74,7 +128,7 @@ describe("Ask connect sheet", () => {
     expect(askConnectMethodBadge({
       method: "direct-api",
       currentStandard: "restricted-composio",
-    })).toEqual({ label: "Not in this build", tone: "gated" });
+    })).toEqual({ label: "Available", tone: "live" });
     expect(askConnectMethodBadge({
       method: "isolated-cli",
       currentStandard: "restricted-composio",
@@ -85,7 +139,8 @@ describe("Ask connect sheet", () => {
     })).toEqual({ label: "Current standard", tone: "standard" });
     expect(askConnectMethodFill({ method: "restricted-composio", hasNamedToolkit: true })).toBe("composio");
     expect(askConnectMethodFill({ method: "restricted-composio", hasNamedToolkit: false })).toBe("composio-unavailable");
-    expect(askConnectMethodFill({ method: "direct-api", hasNamedToolkit: true })).toBe("gated");
+    expect(askConnectMethodFill({ method: "direct-api", hasNamedToolkit: true })).toBe("direct");
+    expect(askConnectMethodFill({ method: "direct-api", hasNamedToolkit: false })).toBe("gated");
     expect(askConnectMethodFill({ method: "approved-mcp", hasNamedToolkit: true })).toBe("gated");
     expect(askConnectMethodFill({ method: "isolated-cli", hasNamedToolkit: true })).toBe("export");
     expect(askConnectGatedDetail("direct-api", {
@@ -108,11 +163,13 @@ describe("Ask connect sheet", () => {
     expect(suggestedOfficeName("instagram")).toBeNull();
   });
 
-  it("does not treat a social name as a PMS or inbox card", () => {
-    expect(askConnectPanel({ target: "connections", service: "instagram" })).toBe("unsupported");
-    expect(askConnectHeading({ target: "connections", service: "instagram" })).toBe(
-      "Instagram isn't a named office source",
-    );
+  it("opens a named-app card for a spoken tool", () => {
+    expect(askConnectPanel({ target: "connections", service: "instagram" })).toBe("mail");
+    expect(askConnectHeading({ target: "connections", service: "instagram" })).toBe("Connect Instagram");
+    expect(askConnectHeading({ target: "connections", service: "Notion" })).toBe("Connect Notion");
+    expect(askConnectHeading({ target: "connections", service: "Notion" }, true)).toBe("Notion on this device");
+    expect(isAskServiceLinked("Notion", [{ slug: "notion", label: "Notion", connected: true }])).toBe(true);
+    expect(isAskServiceLinked("Notion", [])).toBe(false);
   });
 
   it("keeps the book card to a name and an export", () => {

@@ -12,7 +12,13 @@ describe("product mode denials", () => {
     expect(productDenied("POST", "/api/groups")).toMatch(/Bud thread|Rooms/);
     expect(productDenied("POST", "/api/groups/x/messages")).toMatch(/Rooms/);
     expect(productDenied("GET", "/api/connectors")).toMatch(/Bud thread|Connectors/);
-    expect(productDenied("POST", "/api/connectors/x")).toMatch(/Connectors/);
+    expect(productDenied("POST", "/api/connectors/x")).toMatch(/Ask connection card|connector catalog/i);
+    expect(productDenied("POST", "/api/connectors/gmail/authorize")).toMatch(/Ask connection card|connector catalog/i);
+    expect(productDenied("GET", "/api/office-sources")).toBeNull();
+    expect(productDenied("POST", "/api/office-sources/gmail/authorize")).toBeNull();
+    expect(productDenied("PUT", "/api/office-sources/notion")).toBeNull();
+    expect(productDenied("DELETE", "/api/office-sources/notion")).toBeNull();
+    expect(productDenied("POST", "/api/ask-attachments")).toBeNull();
     expect(productDenied("GET", "/api/source-connections")).toBeNull();
     expect(productDenied("GET", "/api/pilot-discovery")).toBeNull();
     expect(productDenied("POST", "/api/pilot-discovery")).toMatch(/code-owned and read-only/);
@@ -36,6 +42,8 @@ describe("product mode denials", () => {
     expect(needsSession("/api/desk")).toBe(true);
     expect(needsSession("/api/loops")).toBe(true);
     expect(needsSession("/api/source-connections")).toBe(true);
+    expect(needsSession("/api/office-sources")).toBe(true);
+    expect(needsSession("/api/ask-attachments")).toBe(true);
     expect(needsSession("/api/pilot-discovery")).toBe(true);
     expect(needsSession("/api/execution-adapters")).toBe(true);
     expect(needsSession("/api/work-routing")).toBe(true);
@@ -52,6 +60,7 @@ describe("product mode denials", () => {
     expect(hostAllowed("127.0.0.1:8799", 8799)).toBe(true);
     expect(hostAllowed("evil.example", 8799)).toBe(false);
     expect(originAllowed("http://127.0.0.1:5199", 8799)).toBe(true);
+    expect(originAllowed("http://127.0.0.1:5201", 18902)).toBe(true);
     expect(originAllowed("https://evil.example", 8799)).toBe(false);
   });
 });

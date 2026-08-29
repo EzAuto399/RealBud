@@ -161,9 +161,10 @@ describe("Desk case review presentation", () => {
     expect(html).toContain("1 similar Allow");
     expect(html).toContain("Unchanged");
     expect(html).toContain("Checked · none active");
-    expect(html).toContain("Allow approves this exact version once");
-    expect(html).toContain("never automatically approved or sent");
+    expect(html).toContain("Allow applies to this exact version once");
+    expect(html).toContain("Nothing is sent");
     expect(html).toContain("Allow wording once");
+    expect(html).not.toContain("never automatically approved or sent");
     expect(html).not.toContain("Always approve");
     expect(html).not.toContain("Same as last allowed");
     expect(html).not.toContain(">Send<");
@@ -304,6 +305,7 @@ describe("Desk case review presentation", () => {
       />,
     );
     expect(idle).toContain(">Copy<");
+    expect(idle).not.toContain("Save wording");
     expect(idle).not.toContain("copy-pulse");
     expect(pulsed).toContain("copy-pulse");
   });

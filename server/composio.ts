@@ -27,11 +27,16 @@ function parseMcpResponse(text: string) {
   }
 }
 
-export async function composioTool(cfg: AppConfig, name: string, args: unknown) {
+export async function composioTool(
+  cfg: AppConfig,
+  name: string,
+  args: unknown,
+  fetchImpl: typeof fetch = fetch,
+) {
   if (!cfg.composio?.key) {
-    throw new Error('no Composio key configured — add {"composio":{"key":"ck_…"}} to ~/.realbud/config.json');
+    throw new Error("Login to Composio, then paste the Connect key.");
   }
-  const res = await fetch(cfg.composio.url || CONNECT_URL, {
+  const res = await fetchImpl(cfg.composio.url || CONNECT_URL, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -87,6 +92,64 @@ export async function authorizeService(cfg: AppConfig, slug: string) {
   const url = urls.find((u) => /composio|connect|auth/i.test(u)) ?? urls[0];
   if (!url) throw new Error(`Composio returned no auth link for ${slug}`);
   return { url };
+}
+
+function peekAction(slug: string): { tool: string; args: Record<string, unknown> } | null {
+  if (slug === "gmail") {
+    return {
+      tool: "GMAIL_FETCH_EMAILS",
+      args: { max_results: 8, user_id: "me", include_payload: false, verbose: false },
+    };
+  }
+  if (slug === "googlecalendar") {
+    return { tool: "GOOGLECALENDAR_LIST_EVENTS", args: { max_results: 8 } };
+  }
+  return null;
+}
+
+function collectPeekTitles(value: unknown, out: string[], depth = 0): void {
+  if (out.length >= 8 || depth > 6 || value == null) return;
+  if (Array.isArray(value)) {
+    for (const item of value) collectPeekTitles(item, out, depth + 1);
+    return;
+  }
+  if (typeof value !== "object") return;
+  const row = value as Record<string, unknown>;
+  const title = row.subject ?? row.title ?? row.summary ?? row.snippet;
+  if (typeof title === "string") {
+    const clean = title.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+    if (clean && !out.includes(clean)) out.push(clean);
+  }
+  for (const nested of Object.values(row)) collectPeekTitles(nested, out, depth + 1);
+}
+
+/** RealBud-owned read. Hermes never receives the Connect key. */
+export async function peekComposioOffice(
+  cfg: AppConfig,
+  slug: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ ok: boolean; titles: string[]; error?: string }> {
+  const action = peekAction(slug);
+  if (!action) {
+    return { ok: false, titles: [], error: `${slug} is signed in through Composio. A live list is not wired yet.` };
+  }
+  try {
+    const out = await composioTool(cfg, "COMPOSIO_MULTI_EXECUTE_TOOL", {
+      tools: [{ tool_slug: action.tool, arguments: action.args }],
+      memory: {},
+      current_step: "LISTING",
+      sync_response_to_workbench: false,
+    }, fetchImpl);
+    const titles: string[] = [];
+    collectPeekTitles(out, titles);
+    return { ok: true, titles };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/HTTP 401/i.test(message)) {
+      return { ok: false, titles: [], error: "Composio did not accept this Connect key." };
+    }
+    return { ok: false, titles: [], error: "Composio did not return items just now." };
+  }
 }
 
 // ── marketplace catalog ────────────────────────────────────────────────

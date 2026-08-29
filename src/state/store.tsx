@@ -17,10 +17,11 @@ import type { MausColor, MausMotion } from "@/lib/mascot";
 import type { Loop, LoopId, LoopRun } from "@/lib/routines";
 import type { DeskSnapshot } from "@/lib/desk";
 import { honoredSetupRequest, type AskActionProposal, type AskConnectRequest, type AskSetupTarget } from "@shared/ask-actions";
-import { popAskConnectState, pushAskConnectState, replaceAskConnectState } from "@/lib/ask-connect";
+import { localAskConnectFromSpeech, popAskConnectState, pushAskConnectState, replaceAskConnectState } from "@/lib/ask-connect";
 import { currentCall } from "@/lib/call";
 import { readActiveView, writeActiveView } from "@/lib/active-view";
 import { openResilientEventStream } from "@/lib/event-stream";
+import { describeSessionHeal, isRetryableApiFailure, runWithTransportRetry } from "@/lib/session-heal";
 import { speaker } from "@/lib/tts";
 
 export type { MausColor } from "@/lib/mascot";
@@ -170,6 +171,7 @@ export function messageVersions(bot: Bot, message: Message): Message[] {
 export interface ConfigStatus {
   xai?: { configured: boolean };
   composio: { configured: boolean; apiKeyConfigured?: boolean };
+  linkedTools?: Array<{ slug: string; label: string; method: "direct-api" | "composio"; connected: boolean; account?: string; lastPeekTitles?: string[] }>;
   box: { configured: boolean };
   /** Voice (ElevenLabs). `configured` = a key is saved; `ready` = a key AND
    * a voice, which is what it takes to actually speak. The key itself is
@@ -912,28 +914,39 @@ export async function ensureSession(force = false): Promise<string> {
 }
 
 export async function api(path: string, init?: RequestInit): Promise<any> {
-  const call = async () => {
-    const token = await ensureSession().catch(() => "");
-    const headers = new Headers(init?.headers);
-    if (!headers.has("content-type")) headers.set("content-type", "application/json");
-    if (token) headers.set("x-realbud-session", token);
-    return fetch(path, { ...init, headers });
-  };
-  let res = await call();
-  // a harness restart mints a new session token; re-handshake once and retry
-  // so the desk survives a server bounce without a blank page
-  if (res.status === 401) {
-    await ensureSession(true).catch(() => "");
-    res = await call();
-  }
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw Object.assign(new Error(body.error ?? `${res.status} ${res.statusText}`), {
-      status: res.status,
-      body,
-    });
-  }
-  return body;
+  return runWithTransportRetry(async (attempt) => {
+    const call = async () => {
+      const token = await ensureSession(attempt > 0).catch(() => "");
+      const headers = new Headers(init?.headers);
+      if (!headers.has("content-type")) headers.set("content-type", "application/json");
+      if (token) headers.set("x-realbud-session", token);
+      return fetch(path, { ...init, headers });
+    };
+    let res: Response;
+    try {
+      res = await call();
+    } catch (error) {
+      throw Object.assign(error instanceof Error ? error : new Error(String(error)), { status: 503 });
+    }
+    // a harness restart mints a new session token; re-handshake once and retry
+    // so the desk survives a server bounce without a blank page
+    if (res.status === 401) {
+      await ensureSession(true).catch(() => "");
+      try {
+        res = await call();
+      } catch (error) {
+        throw Object.assign(error instanceof Error ? error : new Error(String(error)), { status: 503 });
+      }
+    }
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw Object.assign(new Error(body.error ?? `${res.status} ${res.statusText}`), {
+        status: res.status,
+        body,
+      });
+    }
+    return body;
+  });
 }
 
 /** Per-frame stream state lives in its OWN context: token frames update only
@@ -968,6 +981,8 @@ const StoreContext = createContext<{
   refreshInstances: () => Promise<void>;
   /** Re-probe the pinned Hermes worker (version, pack, approvals). */
   refreshHermes: () => Promise<void>;
+  /** Re-handshake the session and reload Desk/Ask after a dropped harness. */
+  recoverSession: () => Promise<void>;
 } | null>(null);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
@@ -1021,8 +1036,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const dispatch = useMemo(() => {
     const showError = (e: unknown) => {
-      rawDispatch({ type: "error", message: e instanceof Error ? e.message : String(e) });
-      setTimeout(() => rawDispatch({ type: "error", message: null }), 6000);
+      const copy = describeSessionHeal(e);
+      rawDispatch({ type: "error", message: `${copy.title}. ${copy.detail}` });
+      if (copy.kind === "other") {
+        setTimeout(() => rawDispatch({ type: "error", message: null }), 6000);
+      }
     };
     // fire-and-forget card persistence; the route is optional server-side
     const persistCard = (botId: string, messageId: string, patch: Partial<OptionCardData>) => {
@@ -1448,6 +1466,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             config: {
               xai: frame.xai,
               composio: frame.composio,
+              linkedTools: frame.linkedTools,
               box: frame.box,
               tts: frame.tts,
               pocket: frame.pocket,
@@ -1503,6 +1522,31 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const recoverSession = useCallback(async () => {
+    rawDispatch({ type: "error", message: null });
+    sessionToken = "";
+    try {
+      await ensureSession(true);
+      const [bots, instances, config, hermes, loops, desk] = await Promise.all([
+        api("/api/bots").catch(() => null),
+        api("/api/instances").catch(() => null),
+        api("/api/config").catch(() => null),
+        api("/api/hermes").catch(() => null),
+        api("/api/loops").catch(() => null),
+        api("/api/desk").catch(() => null),
+      ]);
+      if (bots) rawDispatch({ type: "hydrate", bots: bots.bots, groups: bots.groups ?? [] });
+      if (instances) rawDispatch({ type: "instances", instances: instances.instances });
+      if (config) rawDispatch({ type: "configStatus", config });
+      if (hermes) rawDispatch({ type: "hermesStatus", status: hermes });
+      if (loops) rawDispatch({ type: "loopsHydrated", loops: loops.loops, runs: loops.runs ?? [] });
+      if (desk) rawDispatch({ type: "deskSnapshot", snapshot: desk });
+    } catch (error) {
+      const copy = describeSessionHeal(error);
+      rawDispatch({ type: "error", message: `${copy.title}. ${copy.detail}` });
+    }
+  }, []);
+
   const sendMessage = useCallback(async (input: {
     botId: string;
     text: string;
@@ -1527,7 +1571,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       const admitted = (error as { body?: { bot?: Bot } }).body?.bot;
       if (admitted) rawDispatch({ type: "botPatched", bot: admitted });
-      throw error;
+      if (isRetryableApiFailure(error)) {
+        const local = localAskConnectFromSpeech(input.text);
+        if (local) {
+          rawDispatch({ type: "openAskConnect", target: local.target, service: local.service });
+          writeActiveView("ask");
+        }
+      }
+      const copy = describeSessionHeal(error);
+      throw Object.assign(new Error(`${copy.title}. ${copy.detail}`), {
+        cause: error,
+        status: (error as { status?: number }).status,
+        body: (error as { body?: unknown }).body,
+      });
     }
   }, []);
 
@@ -1548,9 +1604,34 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("focus", onFocus);
   }, [refreshInstances, refreshHermes]);
 
+  useEffect(() => {
+    if (state.connected && state.error && /realbud dropped|cannot reach realbud/i.test(state.error)) {
+      rawDispatch({ type: "error", message: null });
+    }
+  }, [state.connected, state.error]);
+
+  const healthHealLock = useRef(false);
+  useEffect(() => {
+    if (state.connected) {
+      healthHealLock.current = false;
+      return;
+    }
+    const timer = window.setInterval(() => {
+      if (healthHealLock.current) return;
+      void fetch("/api/health").then((res) => {
+        if (!res.ok) return;
+        healthHealLock.current = true;
+        void recoverSession().finally(() => {
+          healthHealLock.current = false;
+        });
+      }).catch(() => {});
+    }, 4_000);
+    return () => window.clearInterval(timer);
+  }, [state.connected, recoverSession]);
+
   const value = useMemo(
-    () => ({ state, dispatch, sendMessage, refreshInstances, refreshHermes }),
-    [state, dispatch, sendMessage, refreshInstances, refreshHermes],
+    () => ({ state, dispatch, sendMessage, refreshInstances, refreshHermes, recoverSession }),
+    [state, dispatch, sendMessage, refreshInstances, refreshHermes, recoverSession],
   );
   return (
     <StoreContext.Provider value={value}>

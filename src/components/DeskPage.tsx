@@ -3,7 +3,7 @@ import { flushSync } from "react-dom";
 import { Building2, CircleAlert, Loader2, Upload } from "lucide-react";
 
 import { cn } from "@/lib/cn";
-import { deskCopyPulse, DESK_ROW_MOTION_MS, RECHECK_GRAPH_LINGER_MS, recheckButtonLabel } from "@/lib/desk-motion";
+import { deskCopyPulse, DESK_ROW_MOTION_MS, RECHECK_GRAPH_LINGER_MS, recheckBeatMs, recheckButtonLabel, recheckLandCaption, recheckLandRevealed } from "@/lib/desk-motion";
 import { prefersReducedMotion, staggerMs, withViewTransition } from "@/lib/motion";
 import type { DeskSnapshot, Draft, Property } from "@/lib/desk";
 import { buildDeskQueue, filterDeskQueue, groupDeskQueue, queueCounts, type DeskQueueItem, type QueueFilter } from "@/lib/desk-queue";
@@ -361,12 +361,37 @@ export function DeskPage({ onOpenSetupJourney }: { onOpenSetupJourney?: () => vo
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (mode !== "cases" || !visible.length) return;
       const target = event.target;
       if (target instanceof HTMLElement) {
         const tag = target.tagName;
         if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable) return;
       }
+      if (event.key === "Escape") {
+        setQueueOpen(false);
+        setRailOpen(false);
+        return;
+      }
+      if (event.key === "[") {
+        event.preventDefault();
+        if (mode === "book") {
+          setMode("cases");
+          setQueueOpen(true);
+        } else {
+          setQueueOpen((value) => !value);
+        }
+        return;
+      }
+      if (event.key === "]") {
+        event.preventDefault();
+        if (mode === "book") {
+          setMode("cases");
+          setRailOpen(true);
+        } else {
+          setRailOpen((value) => !value);
+        }
+        return;
+      }
+      if (mode !== "cases" || !visible.length) return;
       const index = visible.findIndex((row) => row.id === selected?.id);
       if (event.key === "ArrowDown" && index < visible.length - 1) {
         event.preventDefault();
@@ -375,18 +400,6 @@ export function DeskPage({ onOpenSetupJourney }: { onOpenSetupJourney?: () => vo
       if (event.key === "ArrowUp" && index > 0) {
         event.preventDefault();
         openCase(visible[index - 1]!.id);
-      }
-      if (event.key === "Escape") {
-        setQueueOpen(false);
-        setRailOpen(false);
-      }
-      if (event.key === "[" ) {
-        event.preventDefault();
-        setQueueOpen((value) => !value);
-      }
-      if (event.key === "]") {
-        event.preventDefault();
-        setRailOpen((value) => !value);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -512,7 +525,14 @@ export function DeskPage({ onOpenSetupJourney }: { onOpenSetupJourney?: () => vo
               type="button"
               className="pm-control rounded border border-line bg-sheet px-3 text-[13px] text-ink min-[1100px]:hidden"
               aria-expanded={queueOpen}
-              onClick={() => setQueueOpen((value) => !value)}
+              onClick={() => {
+                if (mode === "book") {
+                  setMode("cases");
+                  setQueueOpen(true);
+                  return;
+                }
+                setQueueOpen((value) => !value);
+              }}
             >
               Queue
             </button>
@@ -520,7 +540,14 @@ export function DeskPage({ onOpenSetupJourney }: { onOpenSetupJourney?: () => vo
               type="button"
               className="pm-control rounded border border-line bg-sheet px-3 text-[13px] text-ink min-[960px]:hidden"
               aria-expanded={railOpen}
-              onClick={() => setRailOpen((value) => !value)}
+              onClick={() => {
+                if (mode === "book") {
+                  setMode("cases");
+                  setRailOpen(true);
+                  return;
+                }
+                setRailOpen((value) => !value);
+              }}
             >
               Evidence
             </button>
@@ -547,7 +574,7 @@ export function DeskPage({ onOpenSetupJourney }: { onOpenSetupJourney?: () => vo
             </button>
           </div>
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-[12px]">
           <StatusLabel tone="agency" className={needTick ? "count-tick" : undefined}>{counts["needs-you"]} need you</StatusLabel>
           <StatusLabel tone="muted">{counts.waiting} waiting</StatusLabel>
           <StatusLabel tone="muted">{counts.handling} Bud handling</StatusLabel>
@@ -562,20 +589,10 @@ export function DeskPage({ onOpenSetupJourney }: { onOpenSetupJourney?: () => vo
           <StatusLabel tone={snap.hands === "held" ? "hold" : snap.hands === "hermes" || snap.hands === "csv" ? "agency" : "muted"}>
             {snap.hands === "hermes" ? "Worker live" : snap.hands === "csv" ? "CSV live" : snap.hands === "held" ? "Held" : "Demo"}
           </StatusLabel>
-          {snap.demo ? (
-            <button
-              type="button"
-              onClick={() => void run("/api/desk/inbound/demo", "POST", { expectedRevision: snap.revision }, "demo-inbox", "Sample inbox triaged")}
-              aria-busy={busy === "demo-inbox"}
-              className="text-[12px] font-medium text-ink-muted hover:text-ink hover:underline"
-            >
-              {busy === "demo-inbox" ? "Sample inbox…" : "Sample inbox"}
-            </button>
-          ) : null}
         </div>
         <RecheckGraph
           running={busy === "check"}
-          propertyCount={snap.properties.length}
+          properties={snap.properties.map((property) => ({ id: property.id, address: property.address }))}
           recordsChecked={snap.loadOff?.recordsChecked}
         />
         {snap.recovery?.active ? (
@@ -589,6 +606,7 @@ export function DeskPage({ onOpenSetupJourney }: { onOpenSetupJourney?: () => vo
             {error}
           </div>
         ) : null}
+        {(snap.properties.length === 0 || snap.recovery?.active) ? (
         <div className="mt-3 empty:hidden">
           <GoLiveChecklist
             mode={snap.mode}
@@ -612,6 +630,7 @@ export function DeskPage({ onOpenSetupJourney }: { onOpenSetupJourney?: () => vo
             compact
           />
         </div>
+        ) : null}
       </header>
 
       {bud && pendingAskActions.length > 0 ? (
@@ -655,6 +674,9 @@ export function DeskPage({ onOpenSetupJourney }: { onOpenSetupJourney?: () => vo
           onNotes={(id, body) => void run(`/api/desk/properties/${id}/notes`, "PUT", { body }, `notes-${id}`, "Notes saved")}
           onDelete={(id) => void run(`/api/desk/properties/${id}`, "DELETE", undefined, `delete-${id}`, "Property removed")}
           onReset={() => void run("/api/desk/reset", "POST", undefined, "reset", "Sample morning replayed")}
+          onDemoInbox={snap.demo
+            ? () => void run("/api/desk/inbound/demo", "POST", { expectedRevision: snap.revision }, "demo-inbox", "Demo inbox triaged")
+            : undefined}
           onImport={(file) => void importFile(file)}
           onOpenAsk={() => dispatch({ type: "showAsk" })}
           propertyDetails={propertyDetails}
@@ -738,35 +760,39 @@ export function DeskPage({ onOpenSetupJourney }: { onOpenSetupJourney?: () => vo
 
 function RecheckGraph({
   running,
-  propertyCount,
+  properties,
   recordsChecked,
 }: {
   running: boolean;
-  propertyCount: number;
+  properties: Array<{ id: string; address: string }>;
   recordsChecked?: number;
 }) {
   const [phase, setPhase] = useState<"idle" | "run" | "done">("idle");
   const [armed, setArmed] = useState(false);
+  const [revealed, setRevealed] = useState(0);
   const startedAt = useRef(0);
-  const durationMs = Math.min(700, Math.max(320, (propertyCount || 8) * 40));
+  const durationMs = recheckBeatMs(properties.length || 8);
+  const reduceMotion = prefersReducedMotion();
 
   useEffect(() => {
     if (running) {
       startedAt.current = Date.now();
       setPhase("run");
+      setRevealed(reduceMotion ? properties.length : 0);
       return;
     }
     if (phase !== "run") return;
-    const remain = prefersReducedMotion() ? 0 : Math.max(0, durationMs - (Date.now() - startedAt.current));
+    const remain = reduceMotion ? 0 : Math.max(0, durationMs - (Date.now() - startedAt.current));
     const finish = window.setTimeout(() => setPhase("done"), remain);
     return () => window.clearTimeout(finish);
-  }, [running, phase, durationMs]);
+  }, [running, phase, durationMs, properties.length, reduceMotion]);
 
   useEffect(() => {
     if (phase !== "done") return;
-    const hide = window.setTimeout(() => setPhase("idle"), prefersReducedMotion() ? 0 : RECHECK_GRAPH_LINGER_MS);
+    setRevealed(properties.length);
+    const hide = window.setTimeout(() => setPhase("idle"), reduceMotion ? 0 : RECHECK_GRAPH_LINGER_MS);
     return () => window.clearTimeout(hide);
-  }, [phase]);
+  }, [phase, properties.length, reduceMotion]);
 
   useEffect(() => {
     if (phase !== "run") {
@@ -777,21 +803,62 @@ function RecheckGraph({
     return () => window.clearTimeout(id);
   }, [phase]);
 
+  useEffect(() => {
+    if (phase !== "run" || reduceMotion || properties.length === 0) return;
+    const tick = () => {
+      const elapsed = Date.now() - startedAt.current;
+      setRevealed(recheckLandRevealed({
+        count: properties.length,
+        elapsedMs: elapsed,
+        durationMs,
+        done: false,
+      }));
+    };
+    tick();
+    const step = Math.max(40, durationMs / Math.max(properties.length, 1));
+    const timer = window.setInterval(tick, step);
+    return () => window.clearInterval(timer);
+  }, [phase, properties.length, durationMs, reduceMotion]);
+
   if (phase === "idle") return null;
 
   const now = phase === "done" ? 100 : 92;
+  const visible = properties.slice(0, revealed);
+  const current = visible[visible.length - 1];
+  const caption = recheckLandCaption(
+    current?.address,
+    revealed,
+    properties.length,
+    phase === "done",
+  );
   return (
-    <div
-      className="recheck-graph mt-3"
-      role="progressbar"
-      aria-label="Recheck"
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={now}
-      aria-valuetext={running ? "Checking the book" : `${recordsChecked ?? 0} checked`}
-      style={{ ["--recheck-ms" as string]: `${durationMs}ms` }}
-    >
-      <div className={cn("recheck-graph-fill", phase === "done" ? "is-done" : armed && "is-run")} />
+    <div className="mt-3">
+      <div
+        className="recheck-graph"
+        role="progressbar"
+        aria-label="Recheck"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={now}
+        aria-valuetext={phase === "done" ? `${recordsChecked ?? properties.length} checked` : caption}
+        style={{ ["--recheck-ms" as string]: `${durationMs}ms` }}
+      >
+        <div className={cn("recheck-graph-fill", phase === "done" ? "is-done" : armed && "is-run")} />
+      </div>
+      {visible.length > 0 ? (
+        <ol className="recheck-land mt-2" aria-live="polite" aria-label={caption}>
+          {visible.map((property, index) => (
+            <li
+              key={property.id}
+              className={reduceMotion ? undefined : "queue-row-land"}
+              style={reduceMotion ? undefined : { animationDelay: `${Math.min(index * 40, 200)}ms` }}
+            >
+              <span className="truncate">{property.address}</span>
+              <span className="shrink-0 text-ink-muted">{index + 1 === visible.length && phase !== "done" ? "Checking" : "Checked"}</span>
+            </li>
+          ))}
+        </ol>
+      ) : null}
     </div>
   );
 }
@@ -834,7 +901,7 @@ function QueuePane({
       <div className="border-b border-line px-3 py-3">
         <div className="mb-2 flex items-center justify-between gap-2">
           <h2 className="text-[12px] font-semibold text-ink">Work queue</h2>
-          <span className="text-[11px] tabular-nums text-ink-muted">{total} total</span>
+          <span className="text-[12px] tabular-nums text-ink-muted">{total} total</span>
         </div>
         <div className="flex flex-wrap gap-1">
           {filters.map(([value, label, count]) => (
@@ -853,7 +920,7 @@ function QueuePane({
           ))}
         </div>
       </div>
-      <label className="block border-b border-line px-3 py-2.5 text-[11px] font-medium text-ink-muted">
+      <label className="block border-b border-line px-3 py-2.5 text-[12px] font-medium text-ink-muted">
         Search the desk
         <input
           type="search"

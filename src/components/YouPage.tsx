@@ -13,6 +13,7 @@ import {
   workerSetupStep,
   workerVerified,
 } from "@/lib/onboarding";
+import { youLeadCopy, youShowsConnections, youShowsVerifyHero } from "@/lib/you-lead";
 import { AdvancedDiagnostics, RecoveryNotice } from "./pm";
 import { Card } from "./SettingsPrimitives";
 import { HermesHandsCard, ProfileFields } from "./SettingsModal";
@@ -137,10 +138,11 @@ export function YouPage({ onOpenSetupJourney }: { onOpenSetupJourney?: () => voi
     onOpenSetupJourney();
   }, [onOpenSetupJourney, state.youFocus, workerReady]);
 
+  const linkedReady = (state.config?.linkedTools ?? []).filter((tool) => tool.connected).length;
   const essentialsReady = workerReady && desk?.mode === "live" && !recoveryAttention;
   const peek = state.youFocus;
   const openYouSection = (id: string) => {
-    if (!essentialsReady && id === "worker-setup") {
+    if (!workerReady && id === "worker-setup") {
       onOpenSetupJourney?.();
       return;
     }
@@ -164,11 +166,12 @@ export function YouPage({ onOpenSetupJourney }: { onOpenSetupJourney?: () => voi
           <h1 className="pm-screen-title text-ink">You</h1>
         </div>
         <p className="mt-1 max-w-[40rem] text-[13px] text-ink-secondary">
-          {essentialsReady
-            ? "Agency, connections and recovery."
-            : workerReady
-              ? "Verify the live book with a current PMS export. The rest of You waits."
-              : "Finish setup first. The rest of You waits."}
+          {youLeadCopy({
+            workerReady,
+            recoveryAttention,
+            deskMode: desk?.mode,
+            propertyCount: desk?.properties.length ?? 0,
+          })}
         </p>
       </header>
       <div ref={scrollPaneRef} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 pb-6">
@@ -205,7 +208,7 @@ export function YouPage({ onOpenSetupJourney }: { onOpenSetupJourney?: () => voi
               </h2>
               <p className="mt-0.5 text-[12.5px] text-ink-muted">
                 {state.youFocus === "connections" || state.youFocus === "composio-account" || state.youFocus === "computer-use"
-                  ? "Bud can bring you to setup, but cannot receive credentials in chat or declare a source connected. Your Ask thread is still waiting."
+                  ? "Paste a named key in Ask or here. RealBud stores it on this device and can list what that app shares. Ask still cannot send. Your Ask thread is still waiting."
                   : state.youFocus === "desktop-reminders"
                     ? "This local alert never contacts a tenant, owner or tradie. Your Ask thread is still waiting."
                     : workerReady ? "Your unfinished Ask draft is still waiting." : `${workerStep.detail} Your unfinished Ask draft is safe.`}
@@ -235,12 +238,17 @@ export function YouPage({ onOpenSetupJourney }: { onOpenSetupJourney?: () => voi
             computerUseAvailable: desktop.capabilities.localComputer.available,
             remindersAvailable: desktopRemindersAvailable,
             remindersOn: Boolean(bud?.notifications),
-          }))}
+          }), { linkedReady })}
           recoveryStatus={recoveryAttention ? "Needs attention" : localRecovery?.issues.length ? "Restored · review" : "Protected"}
           recoveryActive={recoveryAttention}
           onOpen={openYouSection}
         />
-        {desk && !essentialsReady ? (
+        {desk && !essentialsReady && youShowsVerifyHero({
+          workerReady,
+          recoveryAttention,
+          deskMode: desk.mode,
+          propertyCount: desk.properties.length,
+        }) ? (
           <section className="flex flex-wrap items-center gap-3 border border-agency/30 bg-selected/45 px-4 py-3" aria-labelledby="focused-setup-title">
             <div className="flex size-9 shrink-0 items-center justify-center rounded bg-sheet text-agency">
               <Sparkles size={17} aria-hidden="true" />
@@ -253,7 +261,7 @@ export function YouPage({ onOpenSetupJourney }: { onOpenSetupJourney?: () => voi
                 {recoveryAttention
                   ? "Recovery owns the next step."
                   : workerReady
-                    ? "The practice book can already be on Desk. A current PMS export verifies live balances and opens the rest of You."
+                    ? "The practice book can already be on Desk. A current PMS export verifies live balances."
                     : "One guide. Then You opens fully."}
               </p>
             </div>
@@ -293,13 +301,32 @@ export function YouPage({ onOpenSetupJourney }: { onOpenSetupJourney?: () => voi
           <HermesHandsCard />
         </section>
         ) : <div id="worker-setup" className="sr-only" />}
-        {(essentialsReady || peek === "connections" || peek === "desktop-reminders" || peek === "composio-account" || peek === "computer-use") ? (
+        {youShowsConnections({
+          essentialsReady,
+          linkedReady,
+          peek,
+          workerReady,
+          recoveryAttention,
+          propertyCount: desk?.properties.length ?? 0,
+        }) ? (
         <section id="connections-setup" tabIndex={-1} className="scroll-m-28 space-y-3 outline-none">
           <div>
             <h2 className="text-[14px] font-semibold text-ink">Connections</h2>
             <p className="mt-0.5 max-w-[46rem] text-[13px] leading-relaxed text-ink-muted">
-              Name the PMS, inbox or portal this office already uses. Tell Ask, or connect here. Keys never go into chat.
+              Name the PMS, inbox, calendar or app this office already uses. Tell Ask, or connect here. Keys never stay in chat.
+              {desk && desk.mode !== "live" && !recoveryAttention
+                ? " A current PMS export verifies live balances."
+                : ""}
             </p>
+            {desk && desk.mode !== "live" && !recoveryAttention && onOpenSetupJourney ? (
+              <button
+                type="button"
+                onClick={onOpenSetupJourney}
+                className="pm-control pm-tactile mt-2 min-h-10 rounded border border-line bg-sheet px-3 text-[12.5px] font-medium text-ink hover:border-agency/55"
+              >
+                Import live export
+              </button>
+            ) : null}
           </div>
           <ConnectionsHub
             deskRevision={desk?.revision}

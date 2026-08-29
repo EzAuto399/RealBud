@@ -14,6 +14,7 @@ export function DeskBook({
   onNotes,
   onDelete,
   onReset,
+  onDemoInbox,
   onImport,
   onOpenAsk,
   onAllowBookProposal,
@@ -30,6 +31,7 @@ export function DeskBook({
   onNotes: (id: string, body: string) => void;
   onDelete: (id: string) => void;
   onReset: () => void;
+  onDemoInbox?: () => void;
   onImport: (file: File) => void;
   onOpenAsk: () => void;
   onAllowBookProposal: (id: string) => void;
@@ -234,14 +236,26 @@ export function DeskBook({
           </ul>
         </section>
       ) : null}
-      <button
-        type="button"
-        onClick={onReset}
-        className="mt-4 flex items-center gap-1.5 text-[12px] text-ink-muted hover:text-ink"
-      >
-        {busy === "reset" ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />}
-        Replay sample morning
-      </button>
+      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1">
+        <button
+          type="button"
+          onClick={onReset}
+          className="flex items-center gap-1.5 text-[12px] text-ink-muted hover:text-ink hover:underline"
+        >
+          {busy === "reset" ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />}
+          Replay sample morning
+        </button>
+        {snap.demo && onDemoInbox ? (
+          <button
+            type="button"
+            onClick={onDemoInbox}
+            aria-busy={busy === "demo-inbox"}
+            className="text-[12px] text-ink-muted hover:text-ink hover:underline"
+          >
+            {busy === "demo-inbox" ? "Demo inbox…" : "Demo inbox"}
+          </button>
+        ) : null}
+      </div>
       <section className="mt-5 border border-line bg-card px-3.5 py-3" aria-labelledby="desk-book-intake-heading">
         <div className="flex flex-wrap items-start gap-3">
           <span className="flex size-9 shrink-0 items-center justify-center rounded border border-line bg-sheet text-agency"><FileUp size={16} /></span>

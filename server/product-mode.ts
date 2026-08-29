@@ -24,10 +24,10 @@ export function productDenied(method: string, path: string): string | null {
     return "Rooms are not part of RealBud.";
   }
   if (method === "POST" && /^\/api\/connectors\//.test(path)) {
-    return "Connectors are not part of RealBud.";
+    return "Use the Ask connection card. The generic connector catalog is not part of RealBud.";
   }
   if (method === "DELETE" && /^\/api\/connectors\//.test(path)) {
-    return "Connectors are not part of RealBud.";
+    return "Use the Ask connection card. The generic connector catalog is not part of RealBud.";
   }
   if (method === "PATCH" && path === "/api/work-routing/preference") return null;
   if (method !== "GET" && /^\/api\/(execution-adapters|work-routing|pilot-discovery)(\/|$)/.test(path)) {

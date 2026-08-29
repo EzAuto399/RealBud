@@ -83,15 +83,25 @@ import {
 import { LoopManager, type LoopId } from "./routines.ts";
 import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
 import { evaluatorForLoop } from "./workflow-catalog.ts";
+import { isSafeToolkitSlug, parseOfficeSourceServices } from "./office-sources.ts";
+import { listLinkedTools, removeLinkedTool, saveLinkedComposioTool, saveLinkedToolKey, saveLinkedToolPeek } from "./linked-tools.ts";
+import { linkedToolPeekCopy, peekLinkedTool } from "./tool-peek.ts";
+import { currentAskDeskBrief, askDeskVoice } from "./ask-desk-brief.ts";
+import { matchAskToolPeekSpeech } from "../shared/ask-connections.ts";
+import { matchAskDeskSpeech } from "../shared/ask-desk-speech.ts";
+import { admitAskCredential } from "./ask-credentials.ts";
+import { verifyToolKey } from "./tool-verify.ts";
 import { sourceConnectionCatalog } from "./source-connections.ts";
 import { loadConnectionAliases, setConnectionAlias } from "./connection-aliases.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import { TurnWatchdog } from "./turn-watchdog.ts";
 import { decodeTurnAttachments } from "./turn-attachments.ts";
+import { stageComposerInboxFile } from "./composer-inbox.ts";
 import { parseWorkerIntakeAction, workerIntakeSummary } from "./worker-intake.ts";
 import { decideAskAction, stageDirectAskRoutineIntent, stageDirectAskSetupIntent, stageWorkerAskAction } from "./ask-action-broker.ts";
-import { askActionApprovalCopy, askSetupUserTurnCopy, isConnectSetupAction } from "../shared/ask-actions.ts";
-import { redactSecretsInText } from "./redact.ts";
+import { askActionApprovalCopy, askSetupUserTurnCopy, isCompletedToolConnect, isConnectSetupAction } from "../shared/ask-actions.ts";
+import { askLayerVoice, deniesLinkedConnection, reconcileAskWorkerText } from "../shared/ask-layer-voice.ts";
+import { redactSecretsInText, stripSecretsForSpeech } from "./redact.ts";
 import { recoverInterruptedWorkerUpdate } from "./worker-runtime.ts";
 import { WorkerOperationGate, type WorkerOperationLease } from "./worker-operation-gate.ts";
 import { UsageLedger } from "./usage-ledger.ts";
@@ -409,6 +419,56 @@ function broadcast(payload: unknown) {
   }
 }
 
+/** Connection facts are code-owned. Overwrite any earlier Bud sentence that denied them. */
+function replaceDenyingAskVoice(threadId: string, text: string) {
+  const linked = listLinkedTools();
+  for (const prior of store.messagesFor(threadId)) {
+    if (prior.role !== "bot" || prior.kind !== "text") continue;
+    if (!deniesLinkedConnection(prior.text ?? "", linked) || prior.text === text) continue;
+    const patched = store.patchMessage(threadId, prior.id, { text });
+    if (patched) broadcast({ kind: "message.patch", threadId, message: patched });
+  }
+}
+
+function speakAskLayerVoice(threadId: string, text: string) {
+  replaceDenyingAskVoice(threadId, text);
+  const voice = store.appendMessage(threadId, { role: "bot", kind: "text", text });
+  broadcast({ kind: "message", threadId, message: voice });
+  return voice;
+}
+
+function scrubAskSecrets(threadId: string) {
+  for (const prior of store.messagesFor(threadId)) {
+    if (prior.kind !== "text" || !prior.text) continue;
+    const text = redactSecretsInText(prior.text);
+    if (text === prior.text) continue;
+    const patched = store.patchMessage(threadId, prior.id, { text });
+    if (patched) broadcast({ kind: "message.patch", threadId, message: patched });
+  }
+}
+
+async function fillLinkedToolPeek(
+  proposal: { kind: string; detail?: string; title?: string; service?: string },
+  tool: { id: string; label: string; composioSlug: string | null },
+  account?: string,
+) {
+  if (proposal.kind !== "open-setup") return proposal;
+  const slug = tool.composioSlug ?? tool.id;
+  const peek = await peekLinkedTool(slug);
+  if (peek.ok && !peek.skipped) saveLinkedToolPeek(slug, peek.titles);
+  return {
+    ...proposal,
+    detail: linkedToolPeekCopy({
+      label: tool.label,
+      account,
+      slug,
+      titles: peek.titles,
+      skipped: peek.skipped,
+      error: peek.error,
+    }),
+  };
+}
+
 const watchdog = new TurnWatchdog({
   stallMs: Number(process.env.OMB_TURN_STALL_MS) || 20 * 60_000,
   checkMs: 30_000,
@@ -572,7 +632,11 @@ bus.subscribe((event: RuntimeEvent) => {
             });
           }
         } else {
-          pushMessage({ role: "bot", kind: "text", text: event.text });
+          const text = PRODUCT_MODE && bot && isCanonicalBud(bot.id)
+            ? reconcileAskWorkerText(event.text, listLinkedTools())
+            : event.text;
+          if (text !== event.text) replaceDenyingAskVoice(event.threadId, text);
+          pushMessage({ role: "bot", kind: "text", text });
         }
       } else if (event.itemType === "tool" && event.itemId) {
         const itemKey = `${event.threadId}:${event.itemId}`;
@@ -1108,6 +1172,8 @@ async function startTurn(
           pocket: pocketGateway?.status(),
           pilotContract: PILOT_CONTRACT,
           bankAdapterConfigured: Boolean(BANK_ALLOWED_ORIGIN),
+          composioLinked: Boolean(cfg.composio?.key),
+          linkedTools: listLinkedTools(),
         });
         await instance.adapter.sendTurn({
           threadId,
@@ -1901,6 +1967,7 @@ function configStatus() {
   return {
     xai: { configured: Boolean(cfg.xai?.key) },
     composio: { configured: Boolean(cfg.composio?.key), apiKeyConfigured: Boolean(cfg.composio?.apiKey) },
+    linkedTools: listLinkedTools(),
     box: { configured: Boolean(cfg.box?.token) },
     // the chosen voice is a setting, not a secret; the key is reported the
     // same configured-or-not way as every other credential
@@ -2210,6 +2277,107 @@ const server = createServer(async (req, res) => {
             aliases,
           }),
         });
+      } catch (error) {
+        const status = (error as { status?: number }).status ?? 400;
+        return json(res, status, { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    if (path === "/api/office-sources" && method === "GET") {
+      const requested = parseOfficeSourceServices(url.searchParams.get("services"));
+      const linked = listLinkedTools();
+      const slugs = requested.length ? requested : linked.map((row) => row.slug);
+      const local: Record<string, { connected: boolean; status: string; method?: string; label?: string }> = {};
+      for (const slug of slugs) {
+        const row = linked.find((item) => item.slug === slug);
+        local[slug] = row
+          ? { connected: true, status: "active", method: row.method, label: row.label }
+          : { connected: false, status: "unknown" };
+      }
+      if (!cfg.composio?.key) return json(res, 200, { configured: false, services: local });
+      if (slugs.length === 0) return json(res, 200, { configured: true, services: {} });
+      try {
+        const remote = await composio.connectionStatus(cfg, slugs);
+        const services: Record<string, { connected: boolean; status: string; method?: string; label?: string }> = {};
+        for (const slug of slugs) {
+          const composioConnected = Boolean(remote[slug]?.connected);
+          if (composioConnected) {
+            saveLinkedComposioTool({ slug, label: local[slug]?.label });
+          }
+          services[slug] = {
+            connected: composioConnected || Boolean(local[slug]?.connected),
+            status: composioConnected ? (remote[slug]?.status ?? "active") : (local[slug]?.status ?? "unknown"),
+            method: composioConnected ? "composio" : local[slug]?.method,
+            label: local[slug]?.label,
+          };
+        }
+        return json(res, 200, { configured: true, services });
+      } catch (error) {
+        if (slugs.length && slugs.every((slug) => local[slug]?.connected)) {
+          return json(res, 200, { configured: true, services: local });
+        }
+        return json(res, 502, { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    const officeAuthorize = path.match(/^\/api\/office-sources\/([\w-]+)\/authorize$/);
+    if (officeAuthorize && method === "POST") {
+      const slug = officeAuthorize[1] ?? "";
+      if (!isSafeToolkitSlug(slug)) {
+        return json(res, 404, { error: "That tool name is not usable." });
+      }
+      if (!cfg.composio?.key) {
+        return json(res, 409, { error: "Login to Composio, then paste the Connect key." });
+      }
+      try {
+        return json(res, 200, await composio.authorizeService(cfg, slug));
+      } catch (error) {
+        return json(res, 502, { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    const officeTool = path.match(/^\/api\/office-sources\/([\w-]+)$/);
+    if (officeTool && (method === "PUT" || method === "DELETE")) {
+      const slug = officeTool[1] ?? "";
+      if (!isSafeToolkitSlug(slug)) {
+        return json(res, 404, { error: "That tool name is not usable." });
+      }
+      try {
+        if (method === "DELETE") {
+          removeLinkedTool(slug);
+        } else {
+          if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+            return json(res, 415, { error: "content-type must be application/json" });
+          }
+          const body = await readBody(req);
+          const key = String(body.key ?? "");
+          const checked = await verifyToolKey(slug, key);
+          if (!checked.ok) {
+            return json(res, 400, { error: checked.error, code: "TOOL_KEY_REJECTED" });
+          }
+          saveLinkedToolKey({
+            slug,
+            key,
+            label: typeof body.label === "string" ? body.label : undefined,
+            account: checked.account,
+          });
+        }
+        const status = configStatus();
+        broadcast({ kind: "config", ...status });
+        return json(res, 200, { ok: true, config: status, tools: status.linkedTools });
+      } catch (error) {
+        const code = (error as { status?: number }).status ?? 400;
+        return json(res, code, { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    if (path === "/api/ask-attachments" && method === "POST") {
+      const rawName = req.headers["x-realbud-filename"];
+      const encoded = typeof rawName === "string" ? rawName.trim() : "";
+      let filename = "";
+      try {
+        filename = encoded ? decodeURIComponent(encoded) : "";
+      } catch {
+        return json(res, 400, { error: "that file name is not usable" });
+      }
+      try {
+        return json(res, 201, await stageComposerInboxFile({ filename, body: req }));
       } catch (error) {
         const status = (error as { status?: number }).status ?? 400;
         return json(res, status, { error: error instanceof Error ? error.message : String(error) });
@@ -3150,7 +3318,7 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/messages$/);
     if (m && method === "POST") {
       const body = await readBody(req);
-      const text = String(body.text ?? "").trim();
+      let text = String(body.text ?? "").trim();
       let requestId: string;
       try {
         requestId = askRequestId(body.requestId);
@@ -3169,11 +3337,17 @@ const server = createServer(async (req, res) => {
         return json(res, status, { error: error instanceof Error ? error.message : String(error) });
       }
       if (!text && !attachments.length) return json(res, 400, { error: "text or attachment required" });
-      if (text && redactSecretsInText(text) !== text) {
-        return json(res, 400, {
-          error: "Do not paste API keys or channel credentials into Ask. Open You and use the relevant write-only Worker or Connections setup fields.",
-          code: "CREDENTIAL_IN_ASK",
-        });
+      let credentialAdmit: Awaited<ReturnType<typeof admitAskCredential>> = { ok: true, text };
+      if (text) {
+        credentialAdmit = await admitAskCredential(text);
+        if (!credentialAdmit.ok) {
+          return json(res, 400, { error: credentialAdmit.error, code: credentialAdmit.code });
+        }
+        if (credentialAdmit.text !== text) {
+          text = credentialAdmit.text;
+          if (credentialAdmit.composio) Object.assign(cfg, loadConfig());
+          broadcast({ kind: "config", ...configStatus() });
+        }
       }
       const hasInstruction = text.replace(/<attached-file\s+path="[^"]*"\s*\/>/g, "").trim();
       const attachmentPrompt = "Review the selected files. If they contain property records, use the intake-properties skill. Otherwise summarise only what you can verify and tell me what needs attention.";
@@ -3209,14 +3383,15 @@ const server = createServer(async (req, res) => {
         }
       }
 
-      // Exact Pocket setup requests are a code-owned navigation shortcut.
-      // They remain usable when the model provider is unavailable, but they
-      // can never save credentials, claim success or turn on a channel.
+      // Named office/Pocket/app setup is a code-owned navigation shortcut.
+      // A key admitted above is already on the device; this never writes the
+      // raw secret into the transcript.
       const directSetup = PRODUCT_MODE && bot && isCanonicalBud(bot.id) && loops && !attachments.length
-        ? stageDirectAskSetupIntent(turnText, {
+        ? stageDirectAskSetupIntent(stripSecretsForSpeech(turnText), {
             desk,
             loops,
             portalMode: PILOT_CONTRACT.demo ? "practice" : "pilot",
+            linkedTools: listLinkedTools(),
           })
         : { matched: false as const };
       if (directSetup.matched) {
@@ -3224,6 +3399,34 @@ const server = createServer(async (req, res) => {
         if ("error" in directSetup) {
           return json(res, directSetup.status, { error: directSetup.error, code: directSetup.code });
         }
+        const linkedNow = credentialAdmit.ok ? credentialAdmit.linked : undefined;
+        if (linkedNow && directSetup.proposal.kind === "open-setup") {
+          const account = linkedNow.account?.trim();
+          directSetup.proposal = {
+            ...directSetup.proposal,
+            title: `${linkedNow.label} connected`,
+            detail: account && account !== "Key on this device"
+              ? `${linkedNow.label} accepted this key. ${account} is on this device. Ask still cannot send.`
+              : `${linkedNow.label} accepted this key. It is on this device. Ask still cannot send.`,
+          };
+          delete (directSetup as { navigation?: string }).navigation;
+        }
+        const peekTool = matchAskToolPeekSpeech(stripSecretsForSpeech(turnText))
+          ?? (linkedNow ? { id: linkedNow.slug, label: linkedNow.label, composioSlug: linkedNow.slug } : null);
+        const peekLinked = peekTool
+          ? listLinkedTools().find((row) =>
+            row.connected
+            && (row.slug === peekTool.composioSlug || row.slug === peekTool.id || row.label.toLowerCase() === peekTool.label.toLowerCase()),
+          )
+          : undefined;
+        if (peekTool && peekLinked && directSetup.proposal.kind === "open-setup") {
+          directSetup.proposal = {
+            ...directSetup.proposal,
+            ...(await fillLinkedToolPeek(directSetup.proposal, peekTool, peekLinked.account ?? linkedNow?.account)),
+          };
+          delete (directSetup as { navigation?: string }).navigation;
+        }
+        scrubAskSecrets(bot.threadId);
         const openedNow = Boolean(directSetup.navigation);
         const setupTurn = isConnectSetupAction(directSetup.proposal)
           ? askSetupUserTurnCopy(directSetup.proposal)
@@ -3238,7 +3441,7 @@ const server = createServer(async (req, res) => {
           requestState: "settled",
           requestAttachmentCount: 0,
           requestStatusDetail: setupTurn
-            ? (openedNow || setupTurn.label === "Not a source" ? setupTurn.detail : "Setup proposal is waiting for your decision")
+            ? (openedNow || setupTurn.label === "Not a source" || setupTurn.label === "Connected" ? setupTurn.detail : "Setup proposal is waiting for your decision")
             : openedNow
               ? "Opened the requested setup in Ask. Nothing connected automatically."
               : "Setup proposal is waiting for your decision",
@@ -3247,7 +3450,7 @@ const server = createServer(async (req, res) => {
           store.patchMessage(bot.threadId, admitted.id, {
             requestState: "settled",
             requestStatusDetail: setupTurn
-              ? (openedNow || setupTurn.label === "Not a source" ? setupTurn.detail : "Setup proposal is waiting for your decision")
+              ? (openedNow || setupTurn.label === "Not a source" || setupTurn.label === "Connected" ? setupTurn.detail : "Setup proposal is waiting for your decision")
               : openedNow
                 ? "Opened the requested setup in Ask. Nothing connected automatically."
                 : "Setup proposal is waiting for your decision",
@@ -3256,6 +3459,9 @@ const server = createServer(async (req, res) => {
         const actionMessage = store.appendMessage(bot.threadId, { role: "bot", kind: "action", action: directSetup.proposal });
         if (!admitted) broadcast({ kind: "message", threadId: bot.threadId, message: userMessage });
         broadcast({ kind: "message", threadId: bot.threadId, message: actionMessage });
+        if (isCompletedToolConnect(directSetup.proposal)) {
+          speakAskLayerVoice(bot.threadId, askLayerVoice(directSetup.proposal));
+        }
         const currentBot = store.bot(bot.id);
         if (!currentBot) return json(res, 500, { error: "Bud setup handoff could not be projected." });
         return json(res, 202, {
@@ -3266,6 +3472,7 @@ const server = createServer(async (req, res) => {
           ...(directSetup.proposal.kind === "open-setup" && directSetup.proposal.service
             ? { service: directSetup.proposal.service }
             : {}),
+          ...(linkedNow ? { connected: true } : {}),
         });
       }
 
@@ -3306,6 +3513,34 @@ const server = createServer(async (req, res) => {
         return json(res, 202, { ok: true, requestId, bot: publicBot(currentBot) });
       }
 
+      if (PRODUCT_MODE && bot && isCanonicalBud(bot.id) && !attachments.length && matchAskDeskSpeech(stripSecretsForSpeech(turnText))) {
+        if (bot.busy) return json(res, 409, { error: "Bud is already working — wait for the current Ask turn." });
+        const voice = askDeskVoice(currentAskDeskBrief(desk.snapshot()));
+        store.titleTaskFromFirstMessage(bot.id, text, bot.threadId);
+        const userMessage = admitted ?? store.appendMessage(bot.threadId, {
+          role: "user",
+          kind: "text",
+          text,
+          requestId,
+          requestDigest,
+          requestState: "settled",
+          requestAttachmentCount: 0,
+          requestStatusDetail: "Answered from the current Desk",
+        });
+        if (admitted && admitted.requestState !== "settled") {
+          store.patchMessage(bot.threadId, admitted.id, {
+            requestState: "settled",
+            requestStatusDetail: "Answered from the current Desk",
+          });
+        }
+        const reply = store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: voice });
+        if (!admitted) broadcast({ kind: "message", threadId: bot.threadId, message: userMessage });
+        broadcast({ kind: "message", threadId: bot.threadId, message: reply });
+        const currentBot = store.bot(bot.id);
+        if (!currentBot) return json(res, 500, { error: "Desk answer could not be projected." });
+        return json(res, 202, { ok: true, requestId, bot: publicBot(currentBot) });
+      }
+
       await startTurn(m[1], turnText, {
         attachments,
         ...(admitted ? { userMessage: admitted } : {}),
@@ -3329,13 +3564,18 @@ const server = createServer(async (req, res) => {
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
       const body = await readBody(req);
-      const text = String(body.text ?? "").trim();
+      let text = String(body.text ?? "").trim();
       if (!text) return json(res, 400, { error: "text required" });
-      if (redactSecretsInText(text) !== text) {
-        return json(res, 400, {
-          error: "Do not paste API keys or channel credentials into Ask. Open You and use the relevant write-only Worker or Connections setup fields.",
-          code: "CREDENTIAL_IN_ASK",
-        });
+      {
+        const credentialAdmit = await admitAskCredential(text);
+        if (!credentialAdmit.ok) {
+          return json(res, 400, { error: credentialAdmit.error, code: credentialAdmit.code });
+        }
+        if (credentialAdmit.text !== text) {
+          text = credentialAdmit.text;
+          if (credentialAdmit.composio) Object.assign(cfg, loadConfig());
+          broadcast({ kind: "config", ...configStatus() });
+        }
       }
       // everything from here down is synchronous, so two racing edits can
       // never both get past this check: startTurn flips busy before the

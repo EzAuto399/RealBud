@@ -59,11 +59,11 @@ import { SpeakButton } from "./SpeakButton";
 import { CallButton, CallOverlay } from "./CallView";
 import { cn } from "@/lib/cn";
 import type { AskActionProposal } from "@shared/ask-actions";
-import { deriveAskSuggestions, presentAskActivity } from "@/lib/ask-presentation";
-import { hideAskSuggestions, readAskSuggestionsHidden } from "@/lib/ask-suggestion-visibility";
+import { presentAskActivity } from "@/lib/ask-presentation";
+import { describeSessionHeal } from "@/lib/session-heal";
+import { SessionHealCard } from "./SessionHealCard";
 import { foldAskSpentConnects } from "@/lib/ask-thread";
 import { askUserTurnStatus, followingAskAction } from "@/lib/ask-turn-status";
-import { staggerMs } from "@/lib/motion";
 import { AskActionCard, AskSpentConnectGroup } from "./AskActionCard";
 import { AskIntakeResult, type AskIntakeResultData } from "./AskIntakeResult";
 import { PropertyIntakeRoutePicker } from "./PropertyIntakeRoutePicker";
@@ -422,7 +422,7 @@ function Bubble({
             role={turn.tone === "hold" ? "alert" : "status"}
             className={cn(
               "mt-1 inline-flex max-w-[70%] items-center gap-1.5 pr-1 text-[12px]",
-              turn.tone === "hold" ? "text-hold" : "text-ink-muted",
+              turn.tone === "hold" ? "text-hold" : turn.tone === "agency" ? "copy-pulse text-agency" : "text-ink-muted",
             )}
             title={message.requestStatusDetail}
           >
@@ -738,64 +738,6 @@ const MessagesList = memo(function MessagesList({
   );
 });
 
-function AskSuggestionStrip({
-  bot,
-  messages,
-  hidden,
-  onHide,
-  onAsk,
-}: {
-  bot: Bot;
-  messages: Message[];
-  hidden: boolean;
-  onHide: () => void;
-  onAsk: (prompt: string) => void;
-}) {
-  const { state } = useStore();
-  const userTexts = useMemo(
-    () => messages.flatMap((message) => (message.role === "user" && message.text?.trim() ? [message.text] : [])),
-    [messages],
-  );
-  const connecting = Boolean(state.askConnect);
-  const suggestions = useMemo(
-    () => deriveAskSuggestions(state.desk, state.loops, state.loopRuns, { userTexts, connecting }),
-    [state.desk, state.loops, state.loopRuns, userTexts, connecting],
-  );
-  if (bot.busy || connecting || hidden || suggestions.length === 0) return null;
-
-  return (
-    <aside className="mt-2 w-full max-w-[760px] border-t border-line pt-3" aria-label="Suggested next work">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-[12px] font-semibold text-ink-muted">
-          <ListChecks size={14} className="text-agency" /> Suggested next
-        </div>
-        <button
-          type="button"
-          onClick={onHide}
-          aria-label="Hide suggested next until the book changes"
-          className="pm-control pm-tactile min-h-10 rounded px-2 text-[12px] font-medium text-ink-muted hover:bg-paper hover:text-ink"
-        >
-          Hide
-        </button>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-        {suggestions.map((suggestion, index) => (
-          <button
-            key={suggestion.id}
-            type="button"
-            onClick={() => onAsk(suggestion.action.prompt)}
-            className="animate-msg-in pm-tactile min-h-16 border border-line bg-sheet px-3 py-2 text-left hover:border-agency/55 hover:bg-selected/35"
-            style={{ animationDelay: `${staggerMs(index)}ms` }}
-          >
-            <span className="block text-[12.5px] font-semibold text-ink">{suggestion.label}</span>
-            <span className="mt-0.5 block text-[12px] leading-snug text-ink-muted">{suggestion.detail}</span>
-          </button>
-        ))}
-      </div>
-    </aside>
-  );
-}
-
 export function ChatView({
   bot,
   productAsk = false,
@@ -805,7 +747,7 @@ export function ChatView({
   productAsk?: boolean;
   onOpenSetupJourney?: () => void;
 }) {
-  const { state, dispatch } = useStore();
+  const { state, dispatch, recoverSession } = useStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [, setVerificationVersion] = useState(0);
 
@@ -861,22 +803,6 @@ export function ChatView({
 
   // only the active branch is rendered; forks stay reachable via ‹ › nav
   const messages = useMemo(() => visibleMessages(bot), [bot]);
-  const [suggestionEpoch, setSuggestionEpoch] = useState(0);
-  const askUserTexts = useMemo(
-    () => messages.flatMap((message) => (message.role === "user" && message.text?.trim() ? [message.text] : [])),
-    [messages],
-  );
-  const suggestionsHidden = useMemo(
-    () => readAskSuggestionsHidden(bot.threadId, state.desk?.revision ?? null),
-    [bot.threadId, state.desk?.revision, suggestionEpoch],
-  );
-  const hasAskSuggestions = productAsk
-    && !state.askConnect
-    && !suggestionsHidden
-    && deriveAskSuggestions(state.desk, state.loops, state.loopRuns, {
-      userTexts: askUserTexts,
-      connecting: Boolean(state.askConnect),
-    }).length > 0;
   const lastBotTextId = useMemo(
     () => [...messages].reverse().find((m) => m.role === "bot" && m.kind === "text")?.id,
     [messages],
@@ -1026,12 +952,19 @@ export function ChatView({
         />
       ) : null}
 
-      {/* Error banner */}
       {state.error && (
         <div className="mx-auto w-full max-w-[900px] px-5">
-          <div className="mb-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[13px] text-danger">
-            {state.error}
-          </div>
+          {describeSessionHeal(state.error).kind === "other" ? (
+            <div className="mb-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[13px] text-danger">
+              {state.error}
+            </div>
+          ) : (
+            <SessionHealCard
+              copy={describeSessionHeal(state.error)}
+              onRetry={() => void recoverSession()}
+              onDismiss={() => dispatch({ type: "error", message: null })}
+            />
+          )}
         </div>
       )}
 
@@ -1072,20 +1005,7 @@ export function ChatView({
             onRegenerate={regenerate}
             productAsk={productAsk}
             onAskStarter={sendAskTurn}
-            hideAskStarters={hasAskSuggestions}
           />
-          {productAsk ? (
-            <AskSuggestionStrip
-              bot={bot}
-              messages={messages}
-              hidden={suggestionsHidden}
-              onHide={() => {
-                hideAskSuggestions(bot.threadId, state.desk?.revision ?? null);
-                setSuggestionEpoch((value) => value + 1);
-              }}
-              onAsk={sendAskTurn}
-            />
-          ) : null}
           {provisioning && !productAsk && (
             <div className="flex justify-start">
               <div className="flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary">

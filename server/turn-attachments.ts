@@ -35,6 +35,10 @@ export function mimeTypeForPath(filePath: string): string {
   return MIME_BY_EXTENSION[extname(filePath).toLowerCase()] ?? "application/octet-stream";
 }
 
+export function isAllowedTurnAttachmentName(name: string): boolean {
+  return Object.hasOwn(MIME_BY_EXTENSION, extname(name).toLowerCase());
+}
+
 /** Resolve only paths the renderer supplied through the structured file
  * field. Size/name from the renderer are deliberately ignored. */
 export function decodeTurnAttachments(value: unknown): TurnAttachment[] {
