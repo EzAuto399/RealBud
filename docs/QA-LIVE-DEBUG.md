@@ -14,16 +14,19 @@ same book as a morning — not adding surfaces ahead of a named office.
 Run before any Desk UI change or before a visit demo:
 
 ```bash
-pnpm typecheck
-pnpm test
-node scripts/qa-e2e.mjs
+pnpm qa                          # typecheck + vitest + e2e battery
+pnpm qa:scale                    # 20/50/80/100 property timings
+pnpm qa:live-worker              # real Hermes ping + Recheck (needs model on PATH)
 ```
 
 Quick gate (desk + exceptions only, ~1 min):
 
 ```bash
-node scripts/qa-e2e.mjs --quick
+pnpm qa:e2e:quick
 ```
+
+Live worker needs pinned Hermes, property pack, and attached model. Skip billing
+ping when credits are down: `QA_LIVE_SKIP_PING=1 pnpm qa:live-worker`.
 
 Individual suites (each uses its own temp home and port):
 
@@ -33,8 +36,10 @@ Individual suites (each uses its own temp home and port):
 | `scripts/e2e-pm-day.mjs` | Happy weekday: clock, practice Allow, Ask→Desk, Friday letter, CSV, office fields |
 | `scripts/e2e-pm-exceptions.mjs` | Messy day: Deny/Edit/stale Allow, evaluate matrix, money holds, notes isolation, pause, recipe gate, rules, law watch flag |
 | `scripts/e2e-walkthrough.mjs` | Partner demo + fake portal + recovery |
+| `scripts/qa-live-worker.mjs` | Real worker: Test hands ping, live Recheck, CSV, send 403 |
+| `scripts/simulate-scale.mjs` | Book at 20–100 properties; desk/import latency |
 
-CI runs the full battery on Ubuntu after unit tests.
+CI runs the full e2e battery on Ubuntu after unit tests.
 
 ---
 
