@@ -24,6 +24,23 @@ Typical weekday:
 
 RealBud owns WHEN and the cards. The pinned worker (`property`) fetches ledger JSON on Recheck and on the morning routine. Same door. A miss or an uncovered property holds. `cron_mode: deny` stays. The PM never sees a Hermes window, a cron UI, or `hermes -p property`.
 
+## How we simulate it
+
+These boot the real HTTP API on a temp home. They do not open mail, a live
+PMS, or Hermes.app.
+
+| Script | What it walks |
+|---|---|
+| `scripts/e2e-pm-day.mjs` | Happy weekday: morning clock, practice Allow, Ask→Desk, Friday letter, CSV, retune, office fields |
+| `scripts/e2e-pm-exceptions.mjs` | Messy day: Deny/Edit/stale Allow, evaluate matrix, partial/reversed/unmatched holds, notes isolation, pause, recipe plan gate, rules, training agency, law watch as flag |
+| `scripts/e2e-walkthrough.mjs` | Partner demo + fake portal + recovery |
+| `scripts/e2e-desk.mjs` | Desk book CRUD + send 403 + loops |
+
+```bash
+node --experimental-strip-types scripts/e2e-pm-day.mjs
+node --experimental-strip-types scripts/e2e-pm-exceptions.mjs
+```
+
 ## What we will not add from this map
 
 Inbox sync, PropertyMe/Property Tree APIs, Forms Live, a routine author, or a second clock. Those wait on `docs/PILOT-CONTRACT.md`.
