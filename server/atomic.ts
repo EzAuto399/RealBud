@@ -12,6 +12,13 @@ export function fsyncDir(dir: string): void {
   const fd = openSync(dir, "r");
   try {
     fsyncSync(fd);
+  } catch (err) {
+    // Windows (and some network FS) refuse directory fsync with EPERM.
+    // The file itself was already fsynced before rename; skipping the
+    // parent dir flush still leaves a complete old-or-new payload.
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (process.platform === "win32" && (code === "EPERM" || code === "EINVAL")) return;
+    throw err;
   } finally {
     closeSync(fd);
   }

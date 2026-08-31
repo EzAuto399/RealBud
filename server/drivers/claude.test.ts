@@ -41,7 +41,8 @@ describe("ClaudeDriver.decodeConfig", () => {
   });
 
   it.skipIf(process.platform !== "win32")("names permission pipes per harness process", () => {
-    expect(permissionSocketPath("thread-abc")).toBe(`\\\\.\\pipe\\realbud-perm-${process.pid}-thread-a`);
+    // Windows pipe names stay short: 4 safe chars + 4 hex of the thread id.
+    expect(permissionSocketPath("thread-abc")).toBe(`\\\\.\\pipe\\realbud-perm-${process.pid}-thre08f1`);
   });
 });
 
