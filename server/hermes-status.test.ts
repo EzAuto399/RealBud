@@ -1,22 +1,18 @@
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { applyHandsReadiness, hermesStatus } from "./hermes-status.ts";
 import { HERMES_PIN } from "./hermes-pin.ts";
-
-const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
-const OLD_HERMES = join(SERVER_DIR, "testing", "fake-hermes-old.sh");
-const PINNED_HERMES = join(SERVER_DIR, "testing", "fake-hermes-pinned.sh");
+import { fakeHermesVersion } from "./testing/fake-hermes.ts";
 
 let home: string;
+let OLD_HERMES: string;
+let PINNED_HERMES: string;
 
 beforeAll(() => {
   home = mkdtempSync(join(tmpdir(), "omb-hermes-status-"));
-  // `root` is the Hermes home itself (same convention as hermes-pack tests).
-  // Pack marker: SOUL.md presence; approvals come from config.yaml.
   const profile = join(home, "profiles", HERMES_PIN.profile);
   mkdirSync(profile, { recursive: true });
   writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
@@ -24,10 +20,8 @@ beforeAll(() => {
     join(profile, "config.yaml"),
     `approvals:\n  mode: manual\n  timeout: 300\nagent:\n  max_turns: 60\ntoolsets:\n  - web\n  - terminal\n  - file\n  - vision\n  - todo\n  - session_search\n  - delegation\nsecurity:\n  redact_secrets: true\nterminal:\n  backend: local\n  home_mode: profile\n  env_passthrough: []\nmodel:\n  default: test\n`,
   );
-  writeFileSync(OLD_HERMES, "#!/bin/sh\necho 'Hermes Agent v0.20.0 (2026.8.3)'\n");
-  writeFileSync(PINNED_HERMES, "#!/bin/sh\necho 'Hermes Agent v0.20.3 (2026.8.16.2)'\n");
-  chmodSync(OLD_HERMES, 0o755);
-  chmodSync(PINNED_HERMES, 0o755);
+  OLD_HERMES = fakeHermesVersion("Hermes Agent v0.20.0 (2026.8.3)", "fake-hermes-old");
+  PINNED_HERMES = fakeHermesVersion("Hermes Agent v0.20.3 (2026.8.16.2)", "fake-hermes-pinned");
 });
 
 afterAll(() => {

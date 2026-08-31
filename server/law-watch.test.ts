@@ -1,7 +1,9 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { fakeHermes } from "./testing/fake-hermes.ts";
 
 const dataDir = vi.hoisted(() => {
   const base = process.env.TEMP || process.env.TMPDIR || process.cwd();
@@ -21,27 +23,8 @@ const {
 const { LAW_REFERENCE_FILE, LAW_REFERENCE_MARKDOWN } = await import("./law-reference.ts");
 const { listRecipes } = await import("./recipes.ts");
 const { seedVault } = await import("./vault.ts");
-const { HERMES_PIN } = await import("./hermes-pin.ts");
 
 const dirs: string[] = [];
-
-/** A fake `hermes`: --version prints the pin; chat prints `answer`. */
-function fakeHermes(answer: string, exitCode = 0, stderr = "") {
-  const dir = mkdtempSync(join(tmpdir(), "omb-law-watch-"));
-  dirs.push(dir);
-  const profile = join(dir, "profiles", HERMES_PIN.profile);
-  mkdirSync(profile, { recursive: true });
-  writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
-  writeFileSync(join(profile, "config.yaml"), "approvals:\n  mode: manual\ncron_mode: deny\n");
-  const script = join(dir, "hermes");
-  writeFileSync(
-    script,
-    `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Hermes Agent v0.20.3 (2026.8.16.2)"; exit 0; fi\n` +
-      `printf '%s' '${answer.replace(/'/g, "'\\''")}'\n${stderr ? `echo '${stderr.replace(/'/g, "'\\''")}' >&2` : ""}\nexit ${exitCode}\n`,
-  );
-  chmodSync(script, 0o755);
-  return { dir, script };
-}
 
 const driftItem = {
   jurisdiction: "ACT",
@@ -71,6 +54,7 @@ describe("runLawWatch", () => {
     const { dir, script } = fakeHermes(
       `{"drift":[${JSON.stringify(driftItem)}],"checkedSources":["https://legislation.gov.au/act"]}`,
     );
+    dirs.push(dir);
     const result = await runLawWatch({ cli: script, root: dir, jurisdictions: ["ACT"] });
     expect(result).toEqual({
       drift: [driftItem],
@@ -85,6 +69,7 @@ describe("runLawWatch", () => {
 
   it("treats empty drift as current", async () => {
     const { dir, script } = fakeHermes(`{"drift":[],"checkedSources":["https://legislation.nsw.gov.au/x"]}`);
+    dirs.push(dir);
     const result = await runLawWatch({ cli: script, root: dir, jurisdictions: ["NSW"] });
     expect(result).toEqual({
       drift: [],
@@ -94,11 +79,13 @@ describe("runLawWatch", () => {
 
   it("returns null when the worker answers junk", async () => {
     const { dir, script } = fakeHermes("The Acts look about the same to me.");
+    dirs.push(dir);
     expect(await runLawWatch({ cli: script, root: dir })).toBeNull();
   });
 
   it("returns null when a drift item is missing a field", async () => {
     const { dir, script } = fakeHermes(`{"drift":[{"jurisdiction":"ACT","topic":"bond-cap"}],"checkedSources":[]}`);
+    dirs.push(dir);
     expect(await runLawWatch({ cli: script, root: dir })).toBeNull();
   });
 

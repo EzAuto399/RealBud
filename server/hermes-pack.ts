@@ -50,7 +50,8 @@ export function packInstalled(root?: string): boolean {
 
 /** Indented YAML map under `key:` (Hermes config style). */
 export function yamlBlock(raw: string, key: string): string | null {
-  const match = raw.match(new RegExp(`^${key}:\\n(?:[ \\t].*\\n)*`, "m"));
+  const normalized = raw.replace(/\r\n/g, "\n");
+  const match = normalized.match(new RegExp(`^${key}:\\n(?:[ \\t].*\\n)*`, "m"));
   return match?.[0] ?? null;
 }
 
@@ -107,7 +108,7 @@ export function approvalsAreManual(root?: string): boolean {
  * keeping subprocess credentials isolated from the user's normal HOME. */
 export function propertyWorkroomReady(root?: string): boolean {
   try {
-    const raw = readFileSync(join(propertyProfileDir(root), "config.yaml"), "utf8");
+    const raw = readIf(join(propertyProfileDir(root), "config.yaml")).replace(/\r\n/g, "\n");
     const terminal = yamlBlock(raw, "terminal") ?? "";
     const agent = yamlBlock(raw, "agent") ?? "";
     const security = yamlBlock(raw, "security") ?? "";
