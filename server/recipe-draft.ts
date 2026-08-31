@@ -1,11 +1,12 @@
 // Ask Bud to shape a job description into a recipe card. The server
 // validates; nothing is saved until the card is allowed.
-import { execFile, type ExecFileOptionsWithStringEncoding } from "node:child_process";
+import { type ExecFileOptionsWithStringEncoding } from "node:child_process";
 import { randomUUID } from "node:crypto";
 
 import type { Recipe } from "../shared/contracts.ts";
 import { hardenHermesChildEnv } from "./drivers/acp/hermes.ts";
 import { augmentedPath } from "./env-path.ts";
+import { execFileCli } from "./procs.ts";
 import { HERMES_PIN, hermesMatchesPin } from "./hermes-pin.ts";
 import { approvalsAreManual, packInstalled } from "./hermes-pack.ts";
 import { probeHermesVersion } from "./hermes-status.ts";
@@ -91,7 +92,7 @@ export async function askWorker(
       encoding: "utf8",
       detached: process.platform !== "win32",
     };
-    const child = execFile(
+    const child = execFileCli(
       cli,
       ["--profile", HERMES_PIN.profile, "chat", "-Q", "-q", prompt, "--max-turns", "6"],
       execOpts,

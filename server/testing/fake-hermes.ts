@@ -1,6 +1,6 @@
 // Cross-platform Hermes CLI stub for tests. POSIX keeps the shell script;
-// Windows gets a .cmd wrapper around a tiny node runner (CreateProcess cannot
-// exec bare #! scripts the way POSIX does).
+// Windows gets a node runner resolved through resolveCliSpawn (CreateProcess
+// cannot exec bare #! scripts or .cmd shims without shell:true).
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,10 +36,8 @@ export function fakeHermes(answer: string, exitCode = 0, stderr = ""): FakeHerme
   writeFileSync(join(profile, "config.yaml"), "approvals:\n  mode: manual\ncron_mode: deny\n");
 
   if (process.platform === "win32") {
-    const runner = join(dir, "fake-hermes-runner.mjs");
-    writeRunner(runner, answer, exitCode, stderr);
-    const script = join(dir, "hermes.cmd");
-    writeFileSync(script, `@ECHO OFF\r\n"${process.execPath}" "${runner}" %*\r\n`);
+    const script = join(dir, "fake-hermes-runner.mjs");
+    writeRunner(script, answer, exitCode, stderr);
     return { dir, script, root: dir };
   }
 
@@ -57,9 +55,9 @@ export function fakeHermes(answer: string, exitCode = 0, stderr = ""): FakeHerme
 export function fakeHermesVersion(versionLine: string, basename = "hermes"): string {
   const dir = mkdtempSync(join(tmpdir(), "omb-fake-hermes-ver-"));
   if (process.platform === "win32") {
-    const runner = join(dir, "fake-hermes-version.mjs");
+    const script = join(dir, `${basename}.mjs`);
     writeFileSync(
-      runner,
+      script,
       [
         "#!/usr/bin/env node",
         'if (process.argv.includes("--version")) {',
@@ -69,8 +67,6 @@ export function fakeHermesVersion(versionLine: string, basename = "hermes"): str
         "process.exit(1);",
       ].join("\n"),
     );
-    const script = join(dir, `${basename}.cmd`);
-    writeFileSync(script, `@ECHO OFF\r\n"${process.execPath}" "${runner}" %*\r\n`);
     return script;
   }
   const script = join(dir, basename);

@@ -12,13 +12,14 @@
 //         base_url: ''
 // Install runs the pinned installer as a spawned child with streamed
 // output — same command the terminal used to run, no terminal.
-import { spawn, execFile, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { WORKER_PROVIDERS, type WorkerProvider } from "../shared/worker-providers.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { augmentedPath } from "./env-path.ts";
+import { execCli } from "./procs.ts";
 import { HERMES_PIN, hermesMatchesPin } from "./hermes-pin.ts";
 import { hermesHome, propertyProfileDir, withYamlBlock, yamlBlock } from "./hermes-pack.ts";
 import { probeHermesVersion } from "./hermes-status.ts";
@@ -39,7 +40,7 @@ export interface PreflightResult {
 
 function whichOne(bin: string): Promise<{ ok: boolean; detail: string }> {
   return new Promise((resolve) => {
-    execFile(bin, ["--version"], { timeout: 8_000, env: { ...process.env, PATH: augmentedPath() } }, (err, stdout) => {
+    execCli(bin, ["--version"], { timeout: 8_000, env: { ...process.env, PATH: augmentedPath() } }, (err, stdout) => {
       resolve({ ok: !err, detail: err ? "not found" : String(stdout).trim().split("\n")[0]?.slice(0, 80) ?? "" });
     });
   });

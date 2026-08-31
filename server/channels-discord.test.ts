@@ -298,8 +298,10 @@ describe("gateway pairing and relay", () => {
     expect(JSON.stringify(publicBody)).not.toContain(TOKEN);
     expect(logs.join("\n")).not.toContain(TOKEN);
     expect(readFileSync(discord.channelPath(), "utf8")).toContain(TOKEN);
-    const mode = statSync(discord.channelPath()).mode & 0o777;
-    expect(mode).toBe(0o600);
+    if (process.platform !== "win32") {
+      const mode = statSync(discord.channelPath()).mode & 0o777;
+      expect(mode).toBe(0o600);
+    }
     for (const message of store.messagesFor(store.bot("bud")!.threadId)) {
       expect(JSON.stringify(message)).not.toContain(TOKEN);
     }

@@ -50,7 +50,7 @@ export function packInstalled(root?: string): boolean {
 
 /** Indented YAML map under `key:` (Hermes config style). */
 export function yamlBlock(raw: string, key: string): string | null {
-  const normalized = raw.replace(/\r\n/g, "\n");
+  const normalized = raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const match = normalized.match(new RegExp(`^${key}:\\n(?:[ \\t].*\\n)*`, "m"));
   return match?.[0] ?? null;
 }

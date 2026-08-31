@@ -87,6 +87,23 @@ export function execCli(
   );
 }
 
+/** Like execCli but keeps stderr and returns the child for timeout kills. */
+export function execFileCli(
+  cli: string,
+  args: string[],
+  opts: ExecFileOptions,
+  cb: (err: Error | null, stdout: string, stderr: string) => void,
+): ChildProcess {
+  const resolved = resolveCli(cli, args);
+  return execFile(
+    resolved.command,
+    resolved.args,
+    { ...opts, windowsHide: true },
+    (err, stdout, stderr) =>
+      cb(err, typeof stdout === "string" ? stdout : String(stdout), typeof stderr === "string" ? stderr : String(stderr)),
+  );
+}
+
 /** Human wording for a failed CLI spawn.
  *
  * Node reports these as bare errno strings — "spawn grok ENOENT" — which

@@ -69,6 +69,8 @@ describe("Desk workroom context", () => {
     const path = writeDeskContext(snapshot(), book);
     expect(path).toBe(join(book, DESK_CONTEXT_FILE));
     expect(readFileSync(path, "utf8")).toContain("Current Desk context");
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+    }
   });
 });

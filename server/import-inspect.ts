@@ -1,11 +1,12 @@
 // Ask Bud to name ledger-export columns. The model proposes; the server
 // keeps only header names that are actually in the file.
-import { execFile, type ExecFileOptionsWithStringEncoding } from "node:child_process";
+import { type ExecFileOptionsWithStringEncoding } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { hardenHermesChildEnv } from "./drivers/acp/hermes.ts";
 import { augmentedPath } from "./env-path.ts";
+import { execFileCli } from "./procs.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { parseCsvTable } from "./csv-ledger.ts";
 import { HERMES_PIN, hermesMatchesPin } from "./hermes-pin.ts";
@@ -151,7 +152,7 @@ export async function inspectLedgerColumns(
       encoding: "utf8",
       detached: process.platform !== "win32",
     };
-    const child = execFile(
+    const child = execFileCli(
       cli,
       ["--profile", HERMES_PIN.profile, "chat", "-Q", "-q", prompt, "--max-turns", "6"],
       execOpts,

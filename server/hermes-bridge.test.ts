@@ -29,7 +29,9 @@ describe("attachModel", () => {
     const env = readFileSync(join(profile, ".env"), "utf8");
     expect(env).toContain("OTHER_SETTING=keep-me");
     expect(env).toContain("XAI_API_KEY=sk-test-123");
-    expect(statSync(join(profile, ".env")).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(statSync(join(profile, ".env")).mode & 0o777).toBe(0o600);
+    }
     const config = readFileSync(join(profile, "config.yaml"), "utf8");
     expect(config).toMatch(/model:\n  default: grok-4\n  provider: xai/);
   });
@@ -140,7 +142,7 @@ describe("listModels", () => {
 });
 
 describe("install job", () => {
-  it("runs a fake installer, verifies the version, and lands done", async () => {
+  it.skipIf(process.platform === "win32")("runs a fake installer, verifies the version, and lands done", async () => {
     const dir = mkdtempSync(join(tmpdir(), "realbud-bridge-install-"));
     dirs.push(dir);
     const fake = join(dir, "hermes");
