@@ -38,9 +38,9 @@ jobs:
       - name: coverage thresholds (ubuntu only — fastest, same numbers)
         if: matrix.os == 'ubuntu-latest'
         run: pnpm test:coverage
-      - name: PM desk walkthrough (no engines needed)
+      - name: PM e2e battery (no engines needed)
         if: matrix.os == 'ubuntu-latest'
-        run: node scripts/e2e-desk.mjs
+        run: node scripts/qa-e2e.mjs
       - name: production UI build
         if: matrix.os == 'ubuntu-latest'
         run: pnpm exec vite build

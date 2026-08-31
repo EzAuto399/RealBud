@@ -1,33 +1,49 @@
 # Next wave
 
-Date: 2026-08-30  
-HEAD at writing: `511ad6a` (origin/main, PR #1) plus the honesty follow-up on this tree.  
+Date: 2026-08-31  
+HEAD at writing: `76d5885` (PR #2 merged — PM exception sims + CI unblock).  
 Canonical constraints: `docs/GOAL-PROMPT.md` wins conflicts.
 
 This is the pickup list for later sessions. W1–W5, morning brief, Ask key
-refuse, You office form, and worker-readiness honesty are shipped. Do not
-remount first-run. The remaining hole is a **visit** that fills those eight
-fields with a real shop — code cannot invent one. The weekday map is
-`docs/PM-DAY.md`.
+refuse, You office form, worker-readiness honesty, connected-Bud ship, and
+PM e2e battery are shipped. Do not remount first-run. The remaining hole is a
+**visit** that fills those eight fields with a real shop — code cannot invent
+one. The weekday map is `docs/PM-DAY.md`. QA and live debug:
+`docs/QA-LIVE-DEBUG.md`.
 
 If a later idea fights this file, `docs/GOAL-PROMPT.md` still wins.
 
-Related: `docs/LLM-BRIEF.md`, `docs/PRODUCT-DESIGN-PLAN.md`, `docs/PILOT-CONTRACT.md`, `TODOS.md`
+Related: `docs/LLM-BRIEF.md`, `docs/PRODUCT-DESIGN-PLAN.md`, `docs/PILOT-CONTRACT.md`, `docs/QA-LIVE-DEBUG.md`, `TODOS.md`
 
 ---
 
 ## What is already true
 
-Shipped on `511ad6a` and the honesty follow-up. Do not rebuild:
+Shipped through `76d5885`. Do not rebuild:
 
 - Four places only. Desk V3 book. Warm Ledger tokens.
 - Morning money and Friday owner letter. Editable clock. Copy only. Send 403.
 - CSV match by address or property code. Row-level holds. Notes isolated from evaluate.
 - Ask can put courtesy on Desk and paste or drop a book into staged cards.
 - Worker install, model attach, and recovery-key unlock are in-app.
+- Connected Bud: import mapping, rules, jobs, channels, law watch as flag, book scale.
+- Four PM e2e scripts + `scripts/qa-e2e.mjs` battery; CI runs full battery on Ubuntu.
 - Pilot contract is still the Demo Book. No named office.
 
 Do not rebuild any of that.
+
+---
+
+## QA phase (2026-08-31)
+
+**Focus:** prove honesty under a real PM thumb, not new architecture.
+
+Daily gate: `pnpm qa` (typecheck + vitest + e2e battery).  
+Desktop: follow `docs/QA-LIVE-DEBUG.md` happy + exception paths with live worker.  
+Optional: `scripts/simulate-scale.mjs` before a large-book visit.
+
+Fix only real defects. Do not open inbound, CUA, Pocket, or installer until You
+→ This office has a real shop name.
 
 ---
 
@@ -83,7 +99,9 @@ Provider keys in the worker profile `.env` stay readable by the worker. Wrapping
 
 ## Shipped evidence (do not rebuild)
 
-One session, one new row. Tests first on gate and persist code. After Desk UI changes, run `node --experimental-strip-types scripts/e2e-walkthrough.mjs`.
+One session, one new row. Tests first on gate and persist code. After Desk UI
+changes, run `pnpm qa` or `node scripts/qa-e2e.mjs`. Live desktop:
+`docs/QA-LIVE-DEBUG.md`.
 
 ### W1 — first-run + go-live — shipped on `511ad6a`
 

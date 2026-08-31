@@ -16,6 +16,7 @@ Do not ship as PropertyMe (PMS trademark), Hermes, or OpenMausBot.
 - Hermes worker pin: `server/hermes-pin.ts` (v0.20.3 / v2026.8.16.2). Do not track upstream main. Desk Recheck may call Hermes; any miss falls back to the training book.
 - OpenMausBot upstream: take harness/safety only (PATH, ports, redact, stall watchdog, proxy paths, permission broker). Do not take iOS, extra engines, teams, plugins, or their model shop. Models stay on `hermes -p property`.
 - Schedule = named loops on the RealBud clock (`server/routines.ts` + `/api/loops`): morning-arrears and owner-letter are built; inbound-triage is declared. No bot prompt-runner, no MAUS roster, no Hermes cron UI (`cron_mode: deny` stays). A loop is never a bot turn, a prompt, or a second agent.
+- QA: `docs/QA-LIVE-DEBUG.md` + `pnpm qa` / `scripts/qa-e2e.mjs` (four HTTP suites, no worker).
 
 ## Skill routing
 

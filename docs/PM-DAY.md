@@ -39,7 +39,11 @@ PMS, or Hermes.app.
 ```bash
 node --experimental-strip-types scripts/e2e-pm-day.mjs
 node --experimental-strip-types scripts/e2e-pm-exceptions.mjs
+node scripts/qa-e2e.mjs          # all four suites
+pnpm qa                          # typecheck + unit + e2e
 ```
+
+Live desktop walkthrough and worker failure matrix: `docs/QA-LIVE-DEBUG.md`.
 
 ## What we will not add from this map
 
