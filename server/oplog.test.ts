@@ -47,7 +47,13 @@ describe("operational log", () => {
   });
 
   it("never throws when the log cannot be written", () => {
-    setOpLogPath("/proc/definitely-not-writable/realbud.log");
+    const dir = mkdtempSync(join(tmpdir(), "realbud-oplog-ro-"));
+    dirs.push(dir);
+    const blocker = join(dir, "blocker");
+    writeFileSync(blocker, "x");
+    // Parent is a file, not a directory — append must fail fast on every OS.
+    // (/proc/... paths hang on Linux when mkdirSync walks procfs.)
+    setOpLogPath(join(blocker, "realbud.log"));
     expect(() => oplog("boot", "still fine")).not.toThrow();
   });
 });
