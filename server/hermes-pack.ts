@@ -51,8 +51,16 @@ export function packInstalled(root?: string): boolean {
 /** Indented YAML map under `key:` (Hermes config style). */
 export function yamlBlock(raw: string, key: string): string | null {
   const normalized = raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  const match = normalized.match(new RegExp(`^${key}:\\n(?:[ \\t].*\\n)*`, "m"));
-  return match?.[0] ?? null;
+  const lines = normalized.split("\n");
+  const start = lines.findIndex((line) => line === `${key}:` || line.startsWith(`${key}:`));
+  if (start < 0) return null;
+  const block = [lines[start]!];
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (line.length > 0 && !/^[ \t]/.test(line)) break;
+    block.push(line);
+  }
+  return block.join("\n");
 }
 
 export function withYamlBlock(raw: string, key: string, block: string | null): string {
