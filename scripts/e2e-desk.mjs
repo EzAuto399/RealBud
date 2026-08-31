@@ -47,7 +47,7 @@ const api = async (method, path, body) => {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const child = spawn(process.execPath, [join(ROOT, "server", "index.ts")], {
+const child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "server", "index.ts")], {
   cwd: ROOT,
   env: {
     ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -55,6 +55,7 @@ const child = spawn(process.execPath, [join(ROOT, "server", "index.ts")], {
     HOME: home,
     USERPROFILE: home,
     OMB_PORT: String(PORT),
+    REALBUD_DATA_DIR: join(home, ".realbud"),
   },
   stdio: ["ignore", "pipe", "pipe"],
 });

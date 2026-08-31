@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync, chmodSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ import type { LedgerFacts } from "./desk.ts";
 import { parseLedgerFacts, tryHermesLedger, tryHermesPing, uncoveredPropertyIds } from "./hermes-hands.ts";
 import { seedVault } from "./vault.ts";
 import { HermesAgentDriver } from "./drivers/acp/hermes.ts";
+import { fakeHermes } from "./testing/fake-hermes.ts";
 
 const fixture: LedgerFacts[] = [
   { propertyId: "prop-oak", daysSinceDue: 3, rentLanded: false, levyPaid: false, daysSinceCourtesy: null },
@@ -15,23 +16,10 @@ const fixture: LedgerFacts[] = [
 
 const dirs: string[] = [];
 
-/** A fake `hermes`: --version prints the pin; chat prints `answer`. */
-function fakeHermes(answer: string, exitCode = 0, stderr = "") {
-  const dir = mkdtempSync(join(tmpdir(), "omb-hands-"));
-  dirs.push(dir);
-  // pack marker so tryHermesLedger passes its first gate
-  const profile = join(dir, "profiles", HERMES_PIN.profile);
-  mkdirSync(profile, { recursive: true });
-  writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
-  writeFileSync(join(profile, "config.yaml"), "approvals:\n  mode: manual\ncron_mode: deny\n");
-  const script = join(dir, "hermes");
-  writeFileSync(
-    script,
-    `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Hermes Agent v0.20.3 (2026.8.16.2)"; exit 0; fi\n` +
-      `printf '%s' '${answer.replace(/'/g, "'\\''")}'\n${stderr ? `echo '${stderr.replace(/'/g, "'\\''")}' >&2` : ""}\nexit ${exitCode}\n`,
-  );
-  chmodSync(script, 0o755);
-  return { dir, script };
+function stubHermes(...args: Parameters<typeof fakeHermes>) {
+  const fake = fakeHermes(...args);
+  dirs.push(fake.dir);
+  return fake;
 }
 
 afterEach(() => {
@@ -102,7 +90,7 @@ describe("parseLedgerFacts", () => {
 
 describe("tryHermesLedger (fake pinned CLI)", () => {
   it("returns rows and a success detail when the worker answers JSON", async () => {
-    const { dir, script } = fakeHermes(
+    const { dir, script } = stubHermes(
       `[{"propertyId":"prop-oak","daysSinceDue":3,"rentLanded":false,"levyPaid":false,"daysSinceCourtesy":null}]`,
     );
     const attempt = await tryHermesLedger(["prop-oak"], { cli: script, root: dir });
@@ -111,21 +99,21 @@ describe("tryHermesLedger (fake pinned CLI)", () => {
   });
 
   it("misses cleanly when the worker answers chatter", async () => {
-    const { dir, script } = fakeHermes("Sure, here are the rows I would check!");
+    const { dir, script } = stubHermes("Sure, here are the rows I would check!");
     const attempt = await tryHermesLedger(["prop-oak"], { cli: script, root: dir });
     expect(attempt.rows).toBeNull();
     expect(attempt.detail).toMatch(/without ledger JSON/);
   });
 
   it("explains when the worker correctly observed no ledger facts", async () => {
-    const { dir, script } = fakeHermes("[]");
+    const { dir, script } = stubHermes("[]");
     const attempt = await tryHermesLedger(["prop-oak"], { cli: script, root: dir });
     expect(attempt.rows).toBeNull();
     expect(attempt.detail).toMatch(/no observed ledger facts/);
   });
 
   it("surfaces the provider's own error words (billing, auth) in the detail", async () => {
-    const { dir, script } = fakeHermes("", 1, "Billing or credits exhausted: HTTP 402");
+    const { dir, script } = stubHermes("", 1, "Billing or credits exhausted: HTTP 402");
     const attempt = await tryHermesLedger(["prop-oak"], { cli: script, root: dir });
     expect(attempt.rows).toBeNull();
     expect(attempt.detail).toContain("Billing or credits exhausted");
@@ -133,7 +121,7 @@ describe("tryHermesLedger (fake pinned CLI)", () => {
   });
 
   it("finds the real error on stdout even when stderr is only warnings", async () => {
-    const { dir, script } = fakeHermes("Billing or credits exhausted: HTTP 402", 1, "session_id: 123");
+    const { dir, script } = stubHermes("Billing or credits exhausted: HTTP 402", 1, "session_id: 123");
     const attempt = await tryHermesLedger(["prop-oak"], { cli: script, root: dir });
     expect(attempt.rows).toBeNull();
     expect(attempt.detail).toContain("Billing or credits exhausted");
@@ -143,7 +131,7 @@ describe("tryHermesLedger (fake pinned CLI)", () => {
 
 describe("tryHermesPing (fake pinned CLI)", () => {
   it("is ok when the worker answers OK", async () => {
-    const { dir, script } = fakeHermes("OK");
+    const { dir, script } = stubHermes("OK");
     const ping = await tryHermesPing({ cli: script, root: dir });
     expect(ping.ok).toBe(true);
     expect(ping.detail).toMatch(/answered OK/);
@@ -151,7 +139,7 @@ describe("tryHermesPing (fake pinned CLI)", () => {
   });
 
   it("fails with the provider's words when the model cannot answer", async () => {
-    const { dir, script } = fakeHermes("Billing or credits exhausted: HTTP 402", 1);
+    const { dir, script } = stubHermes("Billing or credits exhausted: HTTP 402", 1);
     const ping = await tryHermesPing({ cli: script, root: dir });
     expect(ping.ok).toBe(false);
     expect(ping.detail).toContain("Billing or credits exhausted");
@@ -164,7 +152,7 @@ describe("tryHermesPing (fake pinned CLI)", () => {
   });
 
   it("refuses to spawn when the pack's approvals are not manual", async () => {
-    const { dir, script } = fakeHermes("OK");
+    const { dir, script } = stubHermes("OK");
     const profile = join(dir, "profiles", HERMES_PIN.profile);
     writeFileSync(join(profile, "config.yaml"), "approvals:\n  mode: yolo\n");
     const attempt = await tryHermesLedger(["prop-oak"], { cli: script, root: dir });
@@ -177,7 +165,7 @@ describe("tryHermesPing (fake pinned CLI)", () => {
   });
 });
 
-describe("hermes CLI argv contract", () => {
+describe.skipIf(process.platform === "win32")("hermes CLI argv contract", () => {
   it("invokes the worker with the exact pinned profile and headless flags", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omb-argv-"));
     dirs.push(dir);

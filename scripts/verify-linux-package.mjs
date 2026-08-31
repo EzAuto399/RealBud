@@ -57,7 +57,7 @@ const fields = execFileSync(
 for (const expected of [
   "Package: realbud",
   "Architecture: amd64",
-  "Maintainer: Milind Soni",
+  "Maintainer: EzAuto399 <75935138+EzAuto399@users.noreply.github.com>",
   "Section: utils",
   "Priority: optional",
 ]) {

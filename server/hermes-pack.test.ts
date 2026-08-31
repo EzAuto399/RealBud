@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { applyPropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, packInstalled, propertyWorkroomReady } from "./hermes-pack.ts";
+import { applyPropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, packInstalled, propertyProfileDir, propertyWorkroomReady, yamlBlock } from "./hermes-pack.ts";
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 
 const dirs: string[] = [];
@@ -43,6 +43,16 @@ describe("applyPropertyPack", () => {
     writeFileSync(join(profile, "config.yaml"), "approvals:\n  mode: manual\nterminal:\n  backend: none\n");
     expect(approvalsAreManual(home)).toBe(true);
     expect(propertyWorkroomReady(home)).toBe(false);
+  });
+
+  it("treats CRLF config as workroom-ready", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-hermes-crlf-"));
+    dirs.push(home);
+    applyPropertyPack(home);
+    const configPath = join(propertyProfileDir(home), "config.yaml");
+    writeFileSync(configPath, readFileSync(configPath, "utf8").replace(/\n/g, "\r\n"));
+    expect(propertyWorkroomReady(home)).toBe(true);
+    expect(yamlBlock(readFileSync(configPath, "utf8"), "terminal")).toMatch(/backend: local/);
   });
 
   it("attaches the machine Hermes model without copying home credentials", () => {

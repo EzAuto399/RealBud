@@ -303,7 +303,11 @@ describe("harness HTTP API", () => {
     expect(body.cli).toMatchObject({ installed: expect.any(Boolean), matchesPin: expect.any(Boolean) });
     expect(body.pack).toMatchObject({ installed: true, approvalsManual: true, workroomReady: true });
     expect(typeof body.detail).toBe("string");
-    expect(body.installCommand).toContain("--force-commit");
+    if (process.platform !== "win32") {
+      expect(body.installCommand).toContain("--force-commit");
+    } else {
+      expect(body.installCommand).toBeNull();
+    }
     expect(body).toHaveProperty("lastPing");
     expect(body.ready).toBe(false);
 

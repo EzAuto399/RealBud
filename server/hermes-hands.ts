@@ -2,10 +2,11 @@
 // Any failure returns null rows plus a one-line reason. Desk holds —
 // it never copies Demo values into a live check.
 // Never passes --yolo. Never opens Desktop.
-import { execFile, type ExecFileOptionsWithStringEncoding } from "node:child_process";
+import { type ExecFileOptionsWithStringEncoding } from "node:child_process";
 
 import { hardenHermesChildEnv } from "./drivers/acp/hermes.ts";
 import { augmentedPath } from "./env-path.ts";
+import { execFileCli } from "./procs.ts";
 
 import type { LedgerFacts } from "../shared/contracts.ts";
 import { asBoolean, asFiniteNumber, asNonEmptyString, asNullableNumber } from "./decode.ts";
@@ -61,7 +62,7 @@ export async function tryHermesPing(opts?: {
       encoding: "utf8",
       detached: process.platform !== "win32",
     };
-    const child = execFile(
+    const child = execFileCli(
       cli,
       ["--profile", HERMES_PIN.profile, "chat", "-Q", "-q", "Reply with exactly one word: OK", "--max-turns", "1"],
       execOpts,
@@ -185,7 +186,7 @@ export async function tryHermesLedger(
       encoding: "utf8",
       detached: process.platform !== "win32",
     };
-    const child = execFile(
+    const child = execFileCli(
       cli,
       ["--profile", HERMES_PIN.profile, "chat", "-Q", "-q", prompt, "--max-turns", "6"],
       execOpts,

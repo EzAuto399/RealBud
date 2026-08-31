@@ -1,10 +1,9 @@
 // Distill a job from the last run: stub worker, keep origins and evidence.
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { HERMES_PIN } from "./hermes-pin.ts";
+import { fakeHermes } from "./testing/fake-hermes.ts";
 
 const dataDir = vi.hoisted(() => {
   const base = process.env.TEMP || process.env.TMPDIR || process.cwd();
@@ -20,21 +19,10 @@ const { appendHistory } = await import("./computer-history.ts");
 
 const dirs: string[] = [];
 
-function fakeHermes(answer: string, exitCode = 0) {
-  const dir = mkdtempSync(join(tmpdir(), "omb-recipe-distill-"));
-  dirs.push(dir);
-  const profile = join(dir, "profiles", HERMES_PIN.profile);
-  mkdirSync(profile, { recursive: true });
-  writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
-  writeFileSync(join(profile, "config.yaml"), "approvals:\n  mode: manual\ncron_mode: deny\n");
-  const script = join(dir, "hermes");
-  writeFileSync(
-    script,
-    `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Hermes Agent v0.20.3 (2026.8.16.2)"; exit 0; fi\n` +
-      `printf '%s' '${answer.replace(/'/g, "'\\''")}'\nexit ${exitCode}\n`,
-  );
-  chmodSync(script, 0o755);
-  return { dir, script };
+function trackFake(answer: string, exitCode = 0) {
+  const fake = fakeHermes(answer, exitCode);
+  dirs.push(fake.dir);
+  return fake;
 }
 
 function statusOf(err: unknown): number | undefined {
@@ -79,7 +67,7 @@ describe("distillRecipe", () => {
     transitionSession(session, "done", "Shadow run — nothing was browsed or clicked.");
     appendHistory({ kind: "tool", name: "Read", ok: true, detail: "" });
 
-    const { dir, script } = fakeHermes(
+    const { dir, script } = trackFake(
       `Here you go.\n{"steps":["Open Arrears on propertyme.com.au","Park 7+ day late rows on Desk"],"allowedOrigins":["evil.example"],"evidence":"drop this"}`,
     );
     const result = await distillRecipe(card.id, { cli: script, root: dir });
@@ -98,7 +86,7 @@ describe("distillRecipe", () => {
 
   it("returns 503 and leaves the recipe unchanged when the worker answers junk", async () => {
     saveRecipe(card);
-    const { dir, script } = fakeHermes("Sure, just click around until it looks right.");
+    const { dir, script } = trackFake("Sure, just click around until it looks right.");
     try {
       await distillRecipe(card.id, { cli: script, root: dir });
       expect.unreachable();
@@ -113,7 +101,7 @@ describe("distillRecipe", () => {
 
   it("returns 503 when rewritten steps are not usable", async () => {
     saveRecipe(card);
-    const { dir, script } = fakeHermes(`{"steps":[]}`);
+    const { dir, script } = trackFake(`{"steps":[]}`);
     try {
       await distillRecipe(card.id, { cli: script, root: dir });
       expect.unreachable();
