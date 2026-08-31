@@ -1,11 +1,15 @@
 // The PM's book: markdown files Hermes may read. Not a second brain UI.
 // Worker SOUL stays in the Hermes pack. Evaluate never reads these files.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
+import { LAW_REFERENCE_FILE, LAW_REFERENCE_MARKDOWN } from "./law-reference.ts";
 
 const SAFE_ID = /^[\w-]+$/;
+const hardenedDirs = new Set<string>();
+const hardenedFiles = new Set<string>();
 
 /** `dataDir` is `~/.realbud` (or the test data dir). The book is `<dataDir>/vault`. */
 export function vaultDir(dataDir?: string): string {
@@ -26,15 +30,39 @@ function propertyPath(id: string, book?: string): string {
   return join(bookDir(book), "properties", `${safeId(id)}.md`);
 }
 
+function ensurePrivateDir(path: string): void {
+  if (hardenedDirs.has(path)) return;
+  mkdirSync(path, { recursive: true, mode: 0o700 });
+  try {
+    chmodSync(path, 0o700);
+  } catch {
+    // Windows does not expose POSIX directory modes. The user-scoped app data
+    // ACL remains authoritative there.
+  }
+  hardenedDirs.add(path);
+}
+
+function keepPrivateFile(path: string): void {
+  if (hardenedFiles.has(path)) return;
+  try {
+    chmodSync(path, 0o600);
+  } catch {
+    // Best effort on platforms without POSIX modes.
+  }
+  hardenedFiles.add(path);
+}
+
 export function seedVault(book?: string): string {
   const dir = bookDir(book);
-  mkdirSync(join(dir, "properties"), { recursive: true });
-  mkdirSync(join(dir, "owners"), { recursive: true });
-  mkdirSync(join(dir, "decisions"), { recursive: true });
+  ensurePrivateDir(dir);
+  ensurePrivateDir(join(dir, "properties"));
+  ensurePrivateDir(join(dir, "owners"));
+  ensurePrivateDir(join(dir, "decisions"));
   const user = join(dir, "USER.md");
   if (!existsSync(user)) {
-    writeFileSync(user, "# You\n\nThis is the property manager RealBud works for.\n");
+    writeFileSync(user, "# You\n\nThis is the property manager RealBud works for.\n", { mode: 0o600 });
   }
+  keepPrivateFile(user);
   const readme = join(dir, "README.md");
   if (!existsSync(readme)) {
     writeFileSync(
@@ -47,8 +75,16 @@ export function seedVault(book?: string): string {
         "Process for notices and trust sits with the licensee.",
         "",
       ].join("\n"),
+      { mode: 0o600 },
     );
   }
+  keepPrivateFile(readme);
+  // The tenancy reference seeds once; the app's release train owns updates.
+  const law = join(dir, LAW_REFERENCE_FILE);
+  if (!existsSync(law)) {
+    writeFileSync(law, LAW_REFERENCE_MARKDOWN, { mode: 0o600 });
+  }
+  keepPrivateFile(law);
   return dir;
 }
 
@@ -78,8 +114,9 @@ export function writePropertyNote(id: string, body: string, meta: { address?: st
   if (text.length > 20_000) throw Object.assign(new Error("note is too long"), { status: 400 });
   const address = meta.address ? `\naddress: ${meta.address.replace(/\n/g, " ")}` : "";
   const file = `---\nid: ${safeId(id)}${address}\n---\n\n${text.trimEnd()}\n`;
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, file);
+  ensurePrivateDir(dirname(path));
+  writeFileAtomic(path, file, 0o600);
+  keepPrivateFile(path);
   return text.trimEnd();
 }
 
@@ -93,7 +130,8 @@ export function archivePropertyNote(id: string, book?: string): void {
   const nextMatter = matter.includes("archived:")
     ? matter.replace(/archived:\s*\w+/g, "archived: true")
     : `${matter.trim()}\narchived: true`;
-  writeFileSync(path, `---\n${nextMatter.trim()}\n---\n\n${body.replace(/^\n+/, "")}`);
+  writeFileSync(path, `---\n${nextMatter.trim()}\n---\n\n${body.replace(/^\n+/, "")}`, { mode: 0o600 });
+  keepPrivateFile(path);
 }
 
 export function appendAllowedLine(id: string, line: string, book?: string, address?: string): void {
@@ -109,7 +147,8 @@ export function appendAllowedLine(id: string, line: string, book?: string, addre
   writePropertyNote(id, next.trim(), { address }, book);
   const day = new Date().toISOString().slice(0, 10);
   const log = join(bookDir(book), "decisions", `${day}.md`);
-  mkdirSync(dirname(log), { recursive: true });
+  ensurePrivateDir(dirname(log));
   const prev = existsSync(log) ? readFileSync(log, "utf8") : `# ${day}\n\n`;
-  writeFileSync(log, `${prev.trimEnd()}\n${bullet}\n`);
+  writeFileSync(log, `${prev.trimEnd()}\n${bullet}\n`, { mode: 0o600 });
+  keepPrivateFile(log);
 }

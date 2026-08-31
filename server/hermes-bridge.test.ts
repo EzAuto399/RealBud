@@ -1,10 +1,10 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { HERMES_PIN } from "./hermes-pin.ts";
-import { attachModel, installStatus, listModels, modelStatus, preflight, startInstall } from "./hermes-bridge.ts";
+import { attachModel, installStatus, listModels, modelStatus, preflight, PROVIDER_OPTIONS, startInstall } from "./hermes-bridge.ts";
 
 const dirs: string[] = [];
 const tempHome = () => {
@@ -29,6 +29,7 @@ describe("attachModel", () => {
     const env = readFileSync(join(profile, ".env"), "utf8");
     expect(env).toContain("OTHER_SETTING=keep-me");
     expect(env).toContain("XAI_API_KEY=sk-test-123");
+    expect(statSync(join(profile, ".env")).mode & 0o777).toBe(0o600);
     const config = readFileSync(join(profile, "config.yaml"), "utf8");
     expect(config).toMatch(/model:\n  default: grok-4\n  provider: xai/);
   });
@@ -62,6 +63,50 @@ describe("attachModel", () => {
     expect(existsSync(join(empty, "profiles", HERMES_PIN.profile, "config.yaml"))).toBe(false);
   });
 
+  it("accepts DeepSeek and Kimi (Moonshot) from the curated list", () => {
+    const { dir, profile } = tempHome();
+    writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
+    expect(PROVIDER_OPTIONS.map((p) => p.id)).toEqual(
+      expect.arrayContaining(["deepseek", "moonshotai", "google", "groq", "mistral"]),
+    );
+    const deepseek = attachModel({ providerId: "deepseek", apiKey: "sk-ds", model: "deepseek-v4-pro" }, { root: dir });
+    expect(deepseek).toMatchObject({ provider: "deepseek", model: "deepseek-v4-pro", keyPresent: true });
+    expect(readFileSync(join(profile, ".env"), "utf8")).toContain("DEEPSEEK_API_KEY=sk-ds");
+    const kimi = attachModel({ providerId: "moonshotai", apiKey: "sk-kimi", model: "kimi-k3" }, { root: dir });
+    expect(kimi).toMatchObject({ provider: "moonshotai", model: "kimi-k3", keyPresent: true });
+    expect(readFileSync(join(profile, ".env"), "utf8")).toContain("MOONSHOT_API_KEY=sk-kimi");
+  });
+
+  it("rejects config injection and unsafe custom URLs at the authoritative boundary", () => {
+    const { dir, profile } = tempHome();
+    writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
+
+    expect(() =>
+      attachModel({ providerId: "xai", apiKey: "safe-key\nEVIL=value", model: "grok-4" }, { root: dir }),
+    ).toThrow(/api key format/);
+    expect(() =>
+      attachModel({ providerId: "xai", apiKey: "safe-key", model: "grok-4\napprovals: auto" }, { root: dir }),
+    ).toThrow(/model id contains unsupported/);
+    expect(() =>
+      attachModel({ providerId: "xai", apiKey: "safe-key", model: "grok-4", baseUrl: "file:///tmp/provider" }, { root: dir }),
+    ).toThrow(/http or https/);
+    expect(() =>
+      attachModel({ providerId: "xai", apiKey: "safe-key", model: "grok-4", baseUrl: "https://user:pass@example.com/v1" }, { root: dir }),
+    ).toThrow(/embedded credentials/);
+    expect(existsSync(join(profile, ".env"))).toBe(false);
+    expect(existsSync(join(profile, "config.yaml"))).toBe(false);
+  });
+
+  it("accepts a bounded local OpenAI-compatible URL", () => {
+    const { dir, profile } = tempHome();
+    writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
+    attachModel(
+      { providerId: "openai-api", apiKey: "local-test-key", model: "local/model-v1", baseUrl: "http://127.0.0.1:11434/v1" },
+      { root: dir },
+    );
+    expect(readFileSync(join(profile, "config.yaml"), "utf8")).toContain('base_url: "http://127.0.0.1:11434/v1"');
+  });
+
   it("modelStatus reads back the block and masks absence", () => {
     const { dir, profile } = tempHome();
     expect(modelStatus(dir)).toMatchObject({ provider: null, model: null, keyPresent: false });
@@ -82,6 +127,15 @@ describe("listModels", () => {
     );
     expect(listModels("xai", dir)).toEqual(["grok-4.5", "grok-4.6"]);
     expect(listModels("unknown-provider", dir)).toEqual([]);
+  });
+
+  it("reads the profile cache and maps OpenAI's attach id", () => {
+    const { dir, profile } = tempHome();
+    writeFileSync(
+      join(profile, "models_dev_cache.json"),
+      JSON.stringify({ openai: { models: { "gpt-5": {}, "gpt-image-1": {} } } }),
+    );
+    expect(listModels("openai-api", dir)).toEqual(["gpt-5"]);
   });
 });
 

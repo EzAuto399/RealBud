@@ -3,11 +3,13 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { decryptJson } from "./desk-crypto.ts";
-import { join, dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import type {
   DeskBookView,
   DeskSnapshot,
+  CsvColumnMapping,
+  CsvImportPreview,
   Draft,
   DraftKind,
   HandsSource,
@@ -87,16 +89,17 @@ export interface NewPropertyInput {
   address: string;
   tenantName: string;
   tenantPhone: string;
+  propertyCode?: string;
   weeklyRentCents: number;
   options?: Partial<PropertyOptions>;
 }
 
 export type DeskCommand =
-  | { type: "allow"; draftId: string; expectedRevision: number; approver?: string }
-  | { type: "deny"; draftId: string; expectedRevision: number }
+  | { type: "allow"; draftId: string; expectedRevision: number; approver?: string; via?: string }
+  | { type: "deny"; draftId: string; expectedRevision: number; via?: string }
   | { type: "edit"; draftId: string; expectedRevision: number; body: string }
   | { type: "check-demo"; expectedRevision?: number }
-  | { type: "import-csv"; expectedRevision: number; csv: string; observedAt?: number }
+  | { type: "import-csv"; expectedRevision: number; csv: string; observedAt?: number; mapping?: CsvColumnMapping }
   | { type: "propose"; expectedRevision?: number; propertyId: string; kind?: DraftKind; body?: string }
   | { type: "prepare-portal"; expectedRevision: number; draftId: string }
   | { type: "handoff-ready"; expectedRevision: number; workItemId: string }
@@ -273,12 +276,20 @@ export class Desk {
     return this.evaluateBook("demo", "Demo book — Recheck asks the worker or a CSV for live facts.");
   }
 
-  /** Live recheck. A miss never fabricates rows. Demo mode may still evaluate
-   * the labelled Demo book, and that is not a successful live check. */
+  /** Live recheck. A miss never fabricates rows or a finished morning. */
   async runMorningCheckLive(): Promise<DeskSnapshot> {
     this.assertWritable();
+    const startedAtRevision = this.store.data.revision;
     const ids = this.store.data.properties.map((p) => p.id);
     const attempt = await this.hermes(ids);
+    // The provider is the only await inside a Desk check. A PM may keep
+    // working (or explicitly choose the sample book) while it is away; never
+    // let that older response overwrite a newer durable Desk decision.
+    if (this.store.data.revision !== startedAtRevision) {
+      throw Object.assign(new Error("Desk changed while Bud was checking. The newer work was kept; run Recheck again."), {
+        status: 409,
+      });
+    }
     if (attempt.rows) {
       const requested = new Set(ids);
       const covered = attempt.rows.filter((row) => requested.has(row.propertyId));
@@ -314,10 +325,7 @@ export class Desk {
       return snap;
     }
     if (this.store.data.mode === "demo") {
-      this.stampSource("src-hermes", "hermes", "Worker ledger");
-      const snap = this.evaluateBook("demo", attempt.detail);
-      this.recordHandsLast(false, attempt.detail);
-      return snap;
+      return this.recordDemoMiss(attempt.detail);
     }
     this.stampSource("src-hermes", "hermes", "Worker ledger");
     this.holdBook(attempt.detail);
@@ -359,9 +367,33 @@ export class Desk {
     return this.snapshot();
   }
 
-  importCsv(csv: string, observedAt = this.now()): DeskSnapshot {
+  previewCsv(csv: string, observedAt = this.now(), mapping?: CsvColumnMapping): Omit<CsvImportPreview, "digest"> {
     this.assertWritable();
-    const batch = parsePmsExport(csv, observedAt, "src-csv");
+    const batch = parsePmsExport(csv, observedAt, "src-csv", mapping);
+    const resolved = resolveExportRows(this.store.data.properties, batch.rows);
+    const addressById = new Map(this.store.data.properties.map((property) => [property.id, property.address]));
+    return {
+      expectedRevision: this.revision,
+      observedAt: batch.observedAt,
+      totalRows: batch.rows.length,
+      matched: resolved.matched.map((row) => ({
+        propertyId: row.propertyId,
+        address: addressById.get(row.propertyId) ?? row.propertyId,
+      })),
+      unmatched: resolved.unmatched.map((row) => ({ ...row.identity })),
+      ambiguous: resolved.ambiguous.map((hit) => ({
+        ...hit.row.identity,
+        matchCount: hit.ids.length,
+      })),
+      headers: batch.headers,
+      detected: batch.detected,
+      rejected: batch.rejected,
+    };
+  }
+
+  importCsv(csv: string, observedAt = this.now(), mapping?: CsvColumnMapping): DeskSnapshot {
+    this.assertWritable();
+    const batch = parsePmsExport(csv, observedAt, "src-csv", mapping);
     if (!isFresh(batch.observedAt, CSV_FRESH_MS, this.now())) {
       this.stampSource("src-csv", "csv", "PMS CSV export");
       this.holdBook("CSV batch is stale");
@@ -521,6 +553,25 @@ export class Desk {
     throw Object.assign(new Error("that key does not open the quarantined book"), { status: 403 });
   }
 
+  startAgain(confirmation: string): { ok: true; needsRestart: true; preserved: string[] } {
+    if (!this.store.recovery.active) {
+      throw Object.assign(new Error("Desk is not in recovery"), { status: 409 });
+    }
+    if (confirmation !== "START AGAIN") {
+      throw Object.assign(new Error("type START AGAIN to confirm"), { status: 400 });
+    }
+    const stamp = this.now();
+    const preserved = this.store.recovery.quarantined.filter((path) => existsSync(path)).map((path) => basename(path));
+    const currentBook = this.keyFilePath.replace(/desk\.key$/, "desk.json");
+    for (const [source, label] of [[this.keyFilePath, "desk.key"], [currentBook, "desk.json"]] as const) {
+      if (!existsSync(source)) continue;
+      const destination = join(dirname(source), `${label}.abandoned-${stamp}`);
+      renameSync(source, destination);
+      preserved.push(basename(destination));
+    }
+    return { ok: true, needsRestart: true, preserved };
+  }
+
     resetFixtures(): DeskSnapshot {
     this.assertWritable();
     const book = fixtureBook();
@@ -545,8 +596,15 @@ export class Desk {
     if (!property) throw Object.assign(new Error("no such property"), { status: 404 });
     applyOptions(property.options, patch);
     this.invalidateCapabilities({ propertyId: id });
-    this.store.persist();
-    this.emit();
+    // A rule moved, so cards computed under the old rule are stale. Recompute
+    // from the facts already on the book. An unchecked book has nothing to
+    // recompute — evaluating there would invent cards from fixture facts.
+    if (this.store.data.lastRunAt != null) {
+      this.reevaluateOrKeepMiss({ stampRun: false });
+    } else {
+      this.store.persist();
+      this.emit();
+    }
     return property;
   }
 
@@ -555,17 +613,25 @@ export class Desk {
     const address = String(input.address ?? "").trim();
     const tenantName = String(input.tenantName ?? "").trim();
     const tenantPhone = String(input.tenantPhone ?? "").trim();
+    const propertyCode = String(input.propertyCode ?? "").trim();
     const rent = Number(input.weeklyRentCents);
     if (!address) throw Object.assign(new Error("address required"), { status: 400 });
     if (address.length > 160) throw Object.assign(new Error("address is too long"), { status: 400 });
+    if (propertyCode.length > 80) throw Object.assign(new Error("property code is too long"), { status: 400 });
     if (!tenantName) throw Object.assign(new Error("tenant name required"), { status: 400 });
     if (!Number.isInteger(rent) || rent <= 0) throw Object.assign(new Error("weekly rent required"), { status: 400 });
     if (this.store.data.properties.length >= 200) throw Object.assign(new Error("the book is full (200 properties)"), { status: 400 });
+    if (this.store.data.properties.some((p) => p.address.toLowerCase() === address.toLowerCase())) {
+      throw Object.assign(new Error("that address is already on the book"), { status: 409 });
+    }
+    if (propertyCode && this.store.data.properties.some((p) => p.propertyCode?.toLowerCase() === propertyCode.toLowerCase())) {
+      throw Object.assign(new Error("that property code is already on the book"), { status: 409 });
+    }
 
     const options = shopDefaults();
     if (input.options) applyOptions(options, input.options);
     const id = `prop-${randomUUID().slice(0, 8)}`;
-    this.store.data.properties.push({ id, address, tenantName, tenantPhone, weeklyRentCents: rent, options });
+    this.store.data.properties.push({ id, address, tenantName, tenantPhone, weeklyRentCents: rent, options, ...(propertyCode ? { propertyCode } : {}) });
     writePropertyNote(id, "", { address }, this.vaultRoot);
     this.store.data.ledger.push({
       propertyId: id,
@@ -574,7 +640,7 @@ export class Desk {
       levyPaid: false,
       daysSinceCourtesy: null,
     });
-    return this.evaluateBook(this.store.data.hands, this.store.data.handsDetail);
+    return this.reevaluateOrKeepMiss();
   }
 
   removeProperty(id: string): DeskSnapshot {
@@ -590,7 +656,7 @@ export class Desk {
     this.store.data.workItems = this.store.data.workItems.filter((w) => w.propertyId !== id);
     this.invalidateCapabilities({ propertyId: id });
     archivePropertyNote(id, this.vaultRoot);
-    return this.evaluateBook(this.store.data.hands, this.store.data.handsDetail);
+    return this.reevaluateOrKeepMiss();
   }
 
   writeNotes(id: string, body: string): { id: string; body: string } {
@@ -662,12 +728,12 @@ export class Desk {
     return this.snapshot();
   }
 
-  allowDraft(id: string, expectedRevision?: number): Draft {
-    return this.command({ type: "allow", draftId: id, expectedRevision: expectedRevision ?? this.store.data.revision }).drafts.find((d) => d.id === id)!;
+  allowDraft(id: string, expectedRevision?: number, via?: string): Draft {
+    return this.command({ type: "allow", draftId: id, expectedRevision: expectedRevision ?? this.store.data.revision, via }).drafts.find((d) => d.id === id)!;
   }
 
-  denyDraft(id: string, expectedRevision?: number): Draft {
-    return this.command({ type: "deny", draftId: id, expectedRevision: expectedRevision ?? this.store.data.revision }).drafts.find((d) => d.id === id)!;
+  denyDraft(id: string, expectedRevision?: number, via?: string): Draft {
+    return this.command({ type: "deny", draftId: id, expectedRevision: expectedRevision ?? this.store.data.revision, via }).drafts.find((d) => d.id === id)!;
   }
 
   editDraft(id: string, body: string, expectedRevision?: number): Draft {
@@ -683,14 +749,14 @@ export class Desk {
       case "check-demo":
         return this.runMorningCheck();
       case "import-csv":
-        return this.importCsv(cmd.csv, cmd.observedAt);
+        return this.importCsv(cmd.csv, cmd.observedAt, cmd.mapping);
       case "propose":
         return this.proposeFromAsk(cmd);
       case "allow":
-        this.decide(cmd.draftId, "approved", cmd.approver ?? "pm");
+        this.decide(cmd.draftId, "approved", cmd.approver ?? "pm", cmd.via);
         break;
       case "deny":
-        this.decide(cmd.draftId, "denied");
+        this.decide(cmd.draftId, "denied", "pm", cmd.via);
         break;
       case "edit":
         this.edit(cmd.draftId, cmd.body);
@@ -719,7 +785,42 @@ export class Desk {
     return this.store.data.capabilities.find((c) => c.workItemId === draft.workItemId && !c.usedAt && !c.invalidatedAt) ?? null;
   }
 
-  private evaluateBook(hands: HandsSource, handsDetail: string | null, skipIds?: ReadonlySet<string>): DeskSnapshot {
+  private isDemoWorkerMiss(detail = this.store.data.handsDetail): boolean {
+    if (this.store.data.hands !== "demo" || !detail) return false;
+    return !/^Demo book/.test(detail);
+  }
+
+  private reevaluateOrKeepMiss(opts?: { stampRun?: boolean }): DeskSnapshot {
+    if (this.isDemoWorkerMiss()) {
+      this.store.persist();
+      this.emit();
+      return this.snapshot();
+    }
+    return this.evaluateBook(this.store.data.hands, this.store.data.handsDetail, undefined, opts);
+  }
+
+  /** Live Recheck missed on the Demo book. Do not draft fixture cards. */
+  private recordDemoMiss(detail: string): DeskSnapshot {
+    const now = this.now();
+    this.stampSource("src-hermes", "hermes", "Worker ledger");
+    this.store.data.lastRunAt = now;
+    this.store.data.hands = "demo";
+    this.store.data.handsDetail = detail;
+    this.store.data.results = [];
+    this.store.persist();
+    this.emit();
+    this.recordHandsLast(false, detail);
+    return this.snapshot();
+  }
+
+  /** `stampRun: false` recomputes cards from facts already on the book without
+   * claiming a fresh check — a rule changed, nothing was re-read. */
+  private evaluateBook(
+    hands: HandsSource,
+    handsDetail: string | null,
+    skipIds?: ReadonlySet<string>,
+    opts?: { stampRun?: boolean },
+  ): DeskSnapshot {
     const now = this.now();
     const results = [];
     for (const property of this.store.data.properties) {
@@ -762,7 +863,7 @@ export class Desk {
       }
     }
     this.store.data.results = results;
-    this.store.data.lastRunAt = now;
+    if (opts?.stampRun !== false) this.store.data.lastRunAt = now;
     this.store.data.hands = hands;
     this.store.data.handsDetail = handsDetail;
     this.store.persist();
@@ -839,12 +940,13 @@ export class Desk {
     };
   }
 
-  private decide(id: string, state: "approved" | "denied", approver = "pm"): void {
+  private decide(id: string, state: "approved" | "denied", approver = "pm", via?: string): void {
     const draft = this.requirePending(id);
     const work = this.workForDraft(draft);
     assertTransition(work.state, state);
     draft.status = state === "approved" ? "allowed" : "denied";
     draft.decidedAt = this.now();
+    if (via) draft.via = via;
     work.state = state;
     work.updatedAt = this.now();
     if (state === "approved" && draft.channel === "portal") {

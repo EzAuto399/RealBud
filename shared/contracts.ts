@@ -59,7 +59,7 @@ export type WorkState =
   | "effect-unknown"
   | "handoff-expired";
 
-export type LoopId = "morning-arrears" | "owner-letter" | "inbound-triage";
+export type LoopId = "morning-arrears" | "owner-letter" | "inbound-triage" | `recipe-${string}`;
 
 export type LoopSchedule = { type: "daily"; time: string; weekdays: number[] };
 
@@ -67,6 +67,7 @@ export type LoopRunStatus =
   | "queued"
   | "running"
   | "completed"
+  | "partial"
   | "failed"
   | "missed"
   | "interrupted";
@@ -88,6 +89,8 @@ export interface PropertyOptions {
 export interface Property {
   id: string;
   address: string;
+  /** The office's own PMS code for this property, when the visit named one. */
+  propertyCode?: string;
   tenantName: string;
   tenantPhone: string;
   weeklyRentCents: number;
@@ -117,6 +120,8 @@ export interface Draft {
   createdAt: number;
   decidedAt?: number;
   workItemId?: string;
+  /** Remote audit stamp, e.g. "via Telegram · Yoda". Desk Allow leaves this unset. */
+  via?: string;
 }
 
 export interface Escalation {
@@ -265,7 +270,9 @@ export interface DeskBookView {
   cases: Array<{
     id: string;
     kind: string;
-    state: string;
+    /** Decode rejects anything outside WORK_STATES, so the queue can map this
+     * exhaustively instead of guessing. */
+    state: WorkState;
     propertyId?: string;
     origin?: RoutineOrigin;
   }>;
@@ -308,6 +315,31 @@ export interface DeskSnapshot {
   book?: DeskBookView;
 }
 
+export interface CsvColumnMapping {
+  identity?: string;
+  daysSinceDue?: string;
+  rentLanded?: string;
+  levyPaid?: string;
+}
+
+export interface CsvRejectedRow {
+  row: number;
+  reason: string;
+}
+
+export interface CsvImportPreview {
+  digest: string;
+  expectedRevision: number;
+  observedAt: number;
+  totalRows: number;
+  matched: Array<{ propertyId: string; address: string }>;
+  unmatched: Array<{ kind: "id" | "address" | "code"; value: string }>;
+  ambiguous: Array<{ kind: "id" | "address" | "code"; value: string; matchCount: number }>;
+  headers: string[];
+  detected: CsvColumnMapping;
+  rejected: CsvRejectedRow[];
+}
+
 export interface Loop {
   id: LoopId;
   name: string;
@@ -321,6 +353,8 @@ export interface Loop {
   evaluatorId: string;
   evaluatorVersion: number;
   timezonePaused?: boolean;
+  /** Recipe loops only: the plan is on the book but no one has approved it yet. */
+  waitingForPlan?: boolean;
 }
 
 export interface LoopRun {
@@ -335,6 +369,43 @@ export interface LoopRun {
   finishedAt?: number;
   seenAt?: number;
   createdAt: number;
+}
+
+export type RecipeStatus = "shadow" | "active" | "paused";
+export interface Recipe {
+  id: string;
+  title: string;
+  steps: string[];
+  allowedOrigins: string[];
+  evidence: string;
+  /** What runs taught Bud about this site's layout — page names, button
+   * labels, quirks. Written by distill; carried into every later run. */
+  siteNotes?: string | null;
+  status: RecipeStatus;
+  createdAt: number;
+  /** RealBud clock; null means the job stays manual until a cadence is taught. */
+  schedule: { time: string; weekdays: number[] } | null;
+  /** Set once when a person approves the plan. Missing on disk loads as null. */
+  planApprovedAt: number | null;
+}
+
+/** Clock-runnable: active and a person has approved the plan. Shadow stays manual. */
+export function recipeClockRunnable(recipe: Pick<Recipe, "status" | "planApprovedAt">): boolean {
+  return recipe.status === "active" && recipe.planApprovedAt != null;
+}
+
+export type PortalSessionState = "prepared" | "running" | "awaiting-review" | "done" | "unknown" | "failed";
+export interface PortalSession {
+  id: string;
+  recipeId: string;
+  state: PortalSessionState;
+  shadow: boolean;
+  allowedOrigins: string[];
+  submitLease: { origin: string; expiresAt: number } | null;
+  evidence: { at: number; note: string }[];
+  detail: string;
+  startedAt: number;
+  endedAt?: number;
 }
 
 export function aud(cents: number): string {

@@ -7,10 +7,18 @@ import { dirname, join } from "node:path";
 
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
+import { oplog } from "./oplog.ts";
 import { evaluatorForLoop } from "./workflow-catalog.ts";
-import type { Loop, LoopId, LoopRun, LoopRunStatus, LoopSchedule } from "../shared/contracts.ts";
+import { recipeClockRunnable, type Loop, type LoopId, type LoopRun, type LoopRunStatus, type LoopSchedule, type Recipe } from "../shared/contracts.ts";
 
 export type { Loop, LoopId, LoopRun, LoopRunStatus, LoopSchedule };
+
+export interface LoopExecuteResult {
+  ok: boolean;
+  detail: string;
+  covered?: number;
+  uncovered?: number;
+}
 
 export interface LoopManagerOptions {
   file?: string;
@@ -18,7 +26,34 @@ export interface LoopManagerOptions {
   emit?: (payload: unknown) => void;
   timezone?: string;
   hostTimezone?: string;
-  execute: (loop: Loop, run: LoopRun) => Promise<{ ok: boolean; detail: string }>;
+  /** Ceiling on one run. Tests shorten it; production uses RUN_DEADLINE_MS. */
+  runDeadlineMs?: number;
+  execute: (loop: Loop, run: LoopRun) => Promise<LoopExecuteResult>;
+  /** Taught jobs. Re-read each tick so a save, pause, or delete lands without a restart. */
+  listRecipes?: () => ReadonlyArray<Pick<Recipe, "id" | "title" | "status" | "schedule" | "planApprovedAt">>;
+  /** Pause/resume from the clock writes through to the job's status. */
+  setRecipeEnabled?: (recipeId: string, enabled: boolean) => void;
+}
+
+/** A worker that answered some addresses and held the rest is not a miss. */
+export function settleLoopRunStatus(result: Pick<LoopExecuteResult, "ok" | "covered" | "uncovered">): LoopRunStatus {
+  if ((result.covered ?? 0) > 0 && (result.uncovered ?? 0) > 0) return "partial";
+  return result.ok ? "completed" : "failed";
+}
+
+/** Coverage already written by Desk — only used to label the run. */
+export function coverageFromUncoveredHeld(
+  detail: string | null | undefined,
+  results: ReadonlyArray<{ reason: string }>,
+): { covered: number; uncovered: number } | null {
+  if (!detail?.includes("Uncovered stay held")) return null;
+  let covered = 0;
+  let uncovered = 0;
+  for (const row of results) {
+    if (row.reason === "uncovered-by-worker") uncovered += 1;
+    else covered += 1;
+  }
+  return { covered, uncovered };
 }
 
 interface LoopsFile {
@@ -33,6 +68,10 @@ interface LoopsFile {
 
 const WEEKDAYS = [1, 2, 3, 4, 5];
 const CATCH_UP_MS = 12 * 60 * 60_000;
+
+/** Ceiling on one run. Generous next to the worker's own 20s timeout — this
+ * only catches a path that would otherwise hang forever. */
+const RUN_DEADLINE_MS = 5 * 60_000;
 const MAX_RUNS = 2_000;
 
 /** Strict "HH:MM", 00-23 / 00-59. Returns null when it is not a clock time. */
@@ -52,6 +91,17 @@ export function parseWeekdays(value: unknown): number[] | null {
   }
   return [...seen].sort((a, b) => a - b);
 }
+
+export function recipeLoopId(recipeId: string): LoopId {
+  return `recipe-${recipeId}`;
+}
+
+export function recipeIdFromLoopId(id: LoopId): string | null {
+  return id.startsWith("recipe-") ? id.slice("recipe-".length) : null;
+}
+
+const RECIPE_LOOP_DESCRIPTION =
+  "A job you taught Bud. Runs on the RealBud clock; first runs are shadow runs.";
 
 export const LOOP_CATALOG: ReadonlyArray<Omit<Loop, "enabled" | "nextRunAt" | "timezonePaused" | "revision">> = [
   {
@@ -159,6 +209,13 @@ export class LoopManager {
   /** PM-retuned clocks; null means the catalog schedule still stands. */
   private overrides = new Map<LoopId, { time: string; weekdays: number[] } | null>();
   private revisions = new Map<LoopId, number>();
+  private savedState: LoopsFile["state"] = {};
+  /** Recipe catalog clocks (before a PM retune). */
+  private recipeBase = new Map<LoopId, LoopSchedule>();
+  /** Clock pause, separate from a paused job — save() persists this, not the overlay. */
+  private clockEnabled = new Map<LoopId, boolean>();
+  /** Scheduled jobs that may fire on tick: active + plan approved. */
+  private recipeClockOk = new Set<LoopId>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
   timezone: string;
@@ -184,7 +241,8 @@ export class LoopManager {
         run.detail = run.detail ?? "Interrupted on startup — not resumed mid-action";
       }
     }
-    const savedState = saved.state ?? {};
+    this.savedState = saved.state ?? {};
+    const savedState = this.savedState;
     const paused = this.timezone !== this.hostTz;
     this.loops = LOOP_CATALOG.map((loop) => {
       const spec = evaluatorForLoop(loop.id);
@@ -214,10 +272,12 @@ export class LoopManager {
         nextRunAt: enabled && !paused ? nextOccurrence(schedule, this.now(), this.zoneForClock()) : null,
       };
     });
+    this.refreshRecipeLoops();
     if (this.runs.some((r) => r.status === "interrupted")) this.save();
   }
 
   listLoops(): Loop[] {
+    this.refreshRecipeLoops();
     return this.loops.map((loop) => ({ ...loop, schedule: { ...loop.schedule } }));
   }
 
@@ -239,6 +299,7 @@ export class LoopManager {
    * (values identical to current) is acknowledged without touching the
    * bookmark or revision, so it can never swallow a pending slot. */
   patchClock(id: LoopId, patch: { enabled?: boolean; time?: string; weekdays?: number[] }): Loop {
+    this.refreshRecipeLoops();
     const loop = this.loops.find((candidate) => candidate.id === id);
     if (!loop) throw Object.assign(new Error("no such loop"), { status: 404 });
     if (patch.enabled !== undefined && typeof patch.enabled !== "boolean") {
@@ -270,8 +331,14 @@ export class LoopManager {
     if (!clockChanged && !wantsEnable) {
       return { ...loop, schedule: { ...loop.schedule } };
     }
-    if (wantsEnable) loop.enabled = patch.enabled!;
-    loop.schedule = { type: "daily", ...(this.overrides.get(id) ?? LOOP_CATALOG.find((l) => l.id === id)!.schedule) };
+    if (wantsEnable) {
+      loop.enabled = patch.enabled!;
+      this.clockEnabled.set(id, loop.enabled);
+      const recipeId = recipeIdFromLoopId(id);
+      if (recipeId) this.options.setRecipeEnabled?.(recipeId, loop.enabled);
+    }
+    const catalogSchedule = LOOP_CATALOG.find((l) => l.id === id)?.schedule ?? this.recipeBase.get(id);
+    loop.schedule = { type: "daily", ...(this.overrides.get(id) ?? catalogSchedule ?? loop.schedule) };
     loop.revision = (this.revisions.get(id) ?? 1) + 1;
     this.revisions.set(id, loop.revision);
     loop.nextRunAt =
@@ -286,6 +353,7 @@ export class LoopManager {
   }
 
   runNow(id: LoopId): LoopRun | null {
+    this.refreshRecipeLoops();
     const loop = this.loops.find((candidate) => candidate.id === id);
     if (!loop || !loop.available || !loop.enabled) return null;
     if (this.activeRun(id)) throw Object.assign(new Error("this loop is already running"), { status: 409 });
@@ -323,12 +391,18 @@ export class LoopManager {
     if (this.ticking) return;
     this.ticking = true;
     try {
+      this.refreshRecipeLoops();
       const now = this.now();
       let changed = false;
       for (const loop of this.loops) {
         if (!loop.enabled || !loop.available) continue;
         if (loop.timezonePaused) {
           loop.nextRunAt = null;
+          this.emitLoop(loop);
+          continue;
+        }
+        if (recipeIdFromLoopId(loop.id) && !this.recipeClockOk.has(loop.id)) {
+          loop.nextRunAt = nextOccurrence(loop.schedule, now, this.zoneForClock());
           this.emitLoop(loop);
           continue;
         }
@@ -384,9 +458,9 @@ export class LoopManager {
     this.save();
     this.emitRun(run);
     try {
-      const { ok, detail } = await this.options.execute(loop, run);
-      run.status = ok ? "completed" : "failed";
-      run.detail = detail.slice(0, 500);
+      const result = await this.withDeadline(this.options.execute(loop, run));
+      run.status = settleLoopRunStatus(result);
+      run.detail = result.detail.slice(0, 500);
     } catch (error) {
       run.status = "failed";
       run.detail = (error instanceof Error ? error.message : String(error)).slice(0, 500);
@@ -394,6 +468,27 @@ export class LoopManager {
     run.finishedAt = this.now();
     this.save();
     this.emitRun(run);
+    oplog("routine", run.detail || run.status, {
+      loopId: loop.id,
+      runId: run.id,
+      status: run.status,
+      scheduledFor: new Date(run.scheduledFor).toISOString(),
+    });
+  }
+
+  /** A run that never settles would leave `ticking` true and silently stop
+   * every routine until the process restarts. The worker call has its own
+   * shorter timeout; this is the backstop for anything that does not. */
+  private withDeadline<T>(work: Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout>;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(
+        () => reject(new Error("The run took too long and was stopped. Nothing was sent.")),
+        this.options.runDeadlineMs ?? RUN_DEADLINE_MS,
+      );
+      timer.unref?.();
+    });
+    return Promise.race([work, deadline]).finally(() => clearTimeout(timer)) as Promise<T>;
   }
 
   private newRun(loop: Loop, scheduledFor: number, manual: boolean): LoopRun {
@@ -419,8 +514,13 @@ export class LoopManager {
     this.options.emit?.({ kind: "loop.run", run: { ...run } });
   }
 
-  private zoneForClock(): string | undefined {
-    return this.options.timezone ? this.timezone : undefined;
+  /** Always an IANA zone. Gating this on `options.timezone` left production on
+   * the local-Date branch, so the DST-aware path and its test were unreachable
+   * from the running clock. `this.timezone` always resolves (option, saved file,
+   * then host), and a zone that disagrees with the host pauses the clock rather
+   * than firing in the wrong hour. */
+  private zoneForClock(): string {
+    return this.timezone;
   }
 
   private save() {
@@ -428,15 +528,90 @@ export class LoopManager {
     const state: LoopsFile["state"] = {};
     for (const loop of this.loops) {
       state[loop.id] = {
-        enabled: loop.enabled,
+        enabled: recipeIdFromLoopId(loop.id) ? (this.clockEnabled.get(loop.id) ?? true) : loop.enabled,
         handledThrough: this.handledThrough.get(loop.id) ?? 0,
         schedule: this.overrides.get(loop.id) ?? undefined,
         revision: this.revisions.get(loop.id) ?? 1,
       };
     }
+    this.savedState = state;
     writeFileAtomic(
       this.file,
       JSON.stringify({ version: 3, timezone: this.timezone, state, runs: this.runs } satisfies LoopsFile, null, 2),
     );
+  }
+
+  /** Catalog + current taught jobs. Recipes can be added, paused, or deleted between ticks. */
+  private refreshRecipeLoops(): void {
+    const recipes = this.options.listRecipes?.() ?? [];
+    const paused = this.timezone !== this.hostTz;
+    const wanted = new Map<
+      LoopId,
+      { recipe: Pick<Recipe, "id" | "title" | "status" | "schedule" | "planApprovedAt">; catalog: LoopSchedule }
+    >();
+    for (const recipe of recipes) {
+      if (!recipe.schedule) continue;
+      const time = parseClockTime(recipe.schedule.time);
+      const weekdays = parseWeekdays(recipe.schedule.weekdays);
+      if (!time || !weekdays) continue;
+      wanted.set(recipeLoopId(recipe.id), { recipe, catalog: { type: "daily", time, weekdays } });
+    }
+
+    this.loops = this.loops.filter((loop) => !recipeIdFromLoopId(loop.id) || wanted.has(loop.id));
+    this.recipeClockOk = new Set();
+
+    for (const [id, { recipe, catalog }] of wanted) {
+      this.recipeBase.set(id, catalog);
+      const saved = this.savedState[id];
+      if (!this.handledThrough.has(id)) {
+        const handled = Number.isFinite(saved?.handledThrough) ? saved!.handledThrough : this.now() - 1;
+        this.handledThrough.set(id, Math.min(handled, this.now() - 1));
+      }
+      if (!this.overrides.has(id)) {
+        const savedSchedule = saved?.schedule;
+        const override =
+          savedSchedule && parseClockTime(savedSchedule.time) && parseWeekdays(savedSchedule.weekdays)
+            ? { time: savedSchedule.time, weekdays: parseWeekdays(savedSchedule.weekdays)! }
+            : null;
+        this.overrides.set(id, override);
+      }
+      if (!this.revisions.has(id)) {
+        this.revisions.set(id, Number.isInteger(saved?.revision) ? saved!.revision! : 1);
+      }
+      if (!this.clockEnabled.has(id)) {
+        this.clockEnabled.set(id, saved?.enabled !== false);
+      }
+
+      const override = this.overrides.get(id);
+      const schedule: LoopSchedule = { type: "daily", ...(override ?? catalog) };
+      const enabled = recipe.status !== "paused" && this.clockEnabled.get(id) !== false;
+      const waitingForPlan = recipe.planApprovedAt == null;
+      if (recipeClockRunnable(recipe)) this.recipeClockOk.add(id);
+      const existing = this.loops.find((loop) => loop.id === id);
+      if (existing) {
+        existing.name = recipe.title;
+        existing.schedule = schedule;
+        existing.revision = this.revisions.get(id)!;
+        existing.enabled = enabled;
+        existing.timezonePaused = paused;
+        existing.waitingForPlan = waitingForPlan;
+        existing.nextRunAt = enabled && !paused ? nextOccurrence(schedule, this.now(), this.zoneForClock()) : null;
+        continue;
+      }
+      this.loops.push({
+        id,
+        name: recipe.title,
+        description: RECIPE_LOOP_DESCRIPTION,
+        available: true,
+        enabled,
+        schedule,
+        revision: this.revisions.get(id)!,
+        evaluatorId: "recipe",
+        evaluatorVersion: 1,
+        timezonePaused: paused,
+        waitingForPlan,
+        nextRunAt: enabled && !paused ? nextOccurrence(schedule, this.now(), this.zoneForClock()) : null,
+      });
+    }
   }
 }

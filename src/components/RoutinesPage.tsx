@@ -2,7 +2,7 @@
 // the clock pressed Recheck": RealBud owns WHEN and the cards; Hermes owns
 // HOW (headless facts). There is no bot picker, no free-text prompt, and
 // never a Hermes cron UI. Nothing sends while nobody is looking.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   CalendarDays,
   CheckCircle2,
@@ -16,11 +16,12 @@ import {
 
 import { cn } from "@/lib/cn";
 import { fmtTimeOfDay, whenLabel } from "@/lib/au";
+import { morningBrief } from "@/lib/morning-brief";
 import type { Loop, LoopId, LoopRun, LoopRunStatus } from "@/lib/routines";
+import { DAY_NAMES, producedByRunId, WEEKDAYS_MON_FIRST } from "@/lib/schedule-week";
 import { RecoveryNotice } from "./pm";
+import { WeekCalendar } from "./schedule/WeekCalendar";
 import { api, useStore } from "@/state/store";
-
-const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 function scheduleLabel(loop: Loop): string {
   const [hour, minute] = loop.schedule.time.split(":").map(Number);
@@ -43,6 +44,8 @@ function statusChip(status: LoopRunStatus) {
       return { icon: <Loader2 size={12} className="animate-spin" />, label: "running", cls: "text-accent" };
     case "completed":
       return { icon: <CheckCircle2 size={12} />, label: "done", cls: "text-success" };
+    case "partial":
+      return { icon: <CircleAlert size={12} />, label: "partial", cls: "text-hold" };
     case "failed":
     case "missed":
     case "interrupted":
@@ -55,6 +58,7 @@ function LoopCard({
   lastRun,
   activeRun,
   busy,
+  selected,
   onRun,
   onToggle,
   onRetune,
@@ -63,6 +67,7 @@ function LoopCard({
   lastRun?: LoopRun;
   activeRun?: LoopRun;
   busy: boolean;
+  selected: boolean;
   onRun: () => void;
   onToggle: () => void;
   onRetune: (when: { time: string; weekdays: number[] }) => void;
@@ -74,7 +79,15 @@ function LoopCard({
     setDays((prev) => (prev.includes(day) ? (prev.length > 1 ? prev.filter((d) => d !== day) : prev) : [...prev, day].sort((a, b) => a - b)));
 
   return (
-    <article className={cn("rounded-lg border p-4", loop.available ? "border-line bg-sheet" : "border-dashed border-line bg-sheet/70")}>
+    <article
+      id={`routine-${loop.id}`}
+      tabIndex={-1}
+      className={cn(
+        "rounded-xl border p-4",
+        loop.available ? "border-line bg-sheet" : "border-dashed border-line bg-sheet/70",
+        selected && "border-agency bg-selected",
+      )}
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -88,6 +101,11 @@ function LoopCard({
             ) : (
               <span className="rounded-full border border-line bg-inset px-2 py-0.5 text-[10.5px] text-ink-muted">Planned</span>
             )}
+            {loop.waitingForPlan ? (
+              <span className="rounded-full border border-hold/25 bg-hold/10 px-2 py-0.5 text-[10.5px] text-hold">
+                Plan needs approval
+              </span>
+            ) : null}
           </div>
           <div className="mt-1 flex items-center gap-1.5 text-[12px] text-ink-secondary">
             <Clock size={12} />
@@ -138,7 +156,8 @@ function LoopCard({
           className="rounded-lg border border-hairline/50 bg-panel px-2 py-1 text-[13px] text-ink"
         />
         <div className="flex flex-wrap items-center gap-1" role="group" aria-label={`${loop.name} days`}>
-          {DAY_NAMES.map((name, day) => {
+          {WEEKDAYS_MON_FIRST.map((day) => {
+            const name = DAY_NAMES[day];
             const active = days.includes(day);
             return (
               <button
@@ -147,7 +166,7 @@ function LoopCard({
                 aria-pressed={active}
                 title={(active ? "Remove " : "Add ") + name}
                 className={cn(
-                  "rounded-lg px-2 py-1 text-[11.5px] transition-colors",
+                  "min-h-10 rounded px-2.5 text-[12.5px] transition-colors",
                   active ? "bg-agency font-medium text-white" : "bg-raised text-ink-secondary hover:text-ink",
                   !active && days.length === 1 && day === days[0] && "opacity-40",
                 )}
@@ -194,6 +213,21 @@ export function RoutinesPage() {
   const { state, dispatch, refreshHermes } = useStore();
   const [busy, setBusy] = useState<LoopId | null>(null);
   const [error, setError] = useState("");
+  const [selectedId, setSelectedId] = useState<LoopId | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const timezone = state.desk?.book?.agency.timezone || state.desk?.timezone;
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const focusRoutine = (id: LoopId) => {
+    setSelectedId(id);
+    const card = document.getElementById(`routine-${id}`);
+    card?.scrollIntoView({ behavior: "smooth", block: "start" });
+    card?.focus({ preventScroll: true });
+  };
 
   const runNow = async (loopId: LoopId) => {
     setBusy(loopId);
@@ -201,12 +235,15 @@ export function RoutinesPage() {
     try {
       const started = await api(`/api/loops/${loopId}/run`, { method: "POST" });
       const runId = started?.run?.id as string | undefined;
+      let latest: { loops?: Loop[]; runs?: LoopRun[] } | undefined;
       for (let i = 0; i < 40 && runId; i++) {
-        const state = await api("/api/loops");
-        const settled = (state.runs ?? []).find((run: { id: string; status: string }) => run.id === runId);
+        const polled = (await api("/api/loops")) as { loops?: Loop[]; runs?: LoopRun[] };
+        latest = polled;
+        const settled = (polled.runs ?? []).find((run) => run.id === runId);
         if (settled && !["queued", "running"].includes(settled.status)) break;
         await new Promise((resolve) => setTimeout(resolve, 150));
       }
+      if (latest?.loops) dispatch({ type: "loopsHydrated", loops: latest.loops, runs: latest.runs ?? [] });
       const desk = await api("/api/desk");
       dispatch({ type: "deskSnapshot", snapshot: desk });
       await refreshHermes();
@@ -258,6 +295,21 @@ export function RoutinesPage() {
     if (["queued", "running"].includes(run.status)) activeByLoop.set(run.loopId, run);
   }
   const unseenFailures = state.loopRuns.filter((run) => ["failed", "missed", "interrupted"].includes(run.status) && !run.seenAt);
+  const brief = state.desk ? morningBrief(state.desk) : null;
+  const weekFacts = {
+    runs: state.loopRuns,
+    desk: state.desk && brief
+      ? {
+          lastRunAt: state.desk.lastRunAt,
+          hands: state.desk.hands,
+          handsDetail: state.desk.handsDetail,
+          needsYou: brief.needsYou,
+          checkedCount: brief.checkedCount,
+          producedByRunId: producedByRunId([...(state.desk.book?.cases ?? []), ...state.desk.workItems]),
+        }
+      : undefined,
+    worker: { lastTest: state.hermes?.lastTest ?? null },
+  };
 
   return (
     <main className="flex h-full min-w-0 flex-1 flex-col bg-paper">
@@ -269,7 +321,7 @@ export function RoutinesPage() {
               <h1 className="pm-screen-title text-ink">Schedule</h1>
             </div>
             <p className="mt-1 max-w-[52rem] text-[12.5px] text-ink-muted">
-              Named routines on RealBud's clock. Morning money is Desk Recheck. Inbound mail stays Planned until a named inbox exists.
+              This week is the same book as Desk. A slot that ran opens Desk. Click an empty slot to retune it.
             </p>
           </div>
           {unseenFailures.length > 0 && (
@@ -293,6 +345,24 @@ export function RoutinesPage() {
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-8">
+        <div className="mb-6">
+          <WeekCalendar
+            loops={state.loops}
+            nowMs={nowMs}
+            timeZone={timezone}
+            facts={weekFacts}
+            deskNote={brief?.headline ?? null}
+            selectedId={selectedId}
+            onSelect={(slot) => {
+              if (slot.produced > 0) {
+                dispatch({ type: "showDesk" });
+                return;
+              }
+              focusRoutine(slot.loopId);
+            }}
+          />
+        </div>
+
         <section className="space-y-3">
           <h2 className="text-[13px] font-medium text-ink-muted">The routines</h2>
           {state.loops.map((loop) => (
@@ -304,6 +374,7 @@ export function RoutinesPage() {
               lastRun={lastRunByLoop.get(loop.id)}
               activeRun={activeByLoop.get(loop.id)}
               busy={busy === loop.id}
+              selected={selectedId === loop.id}
               onRun={() => void runNow(loop.id)}
               onToggle={() => void toggle(loop)}
               onRetune={(when) => void retune(loop, when)}
@@ -321,7 +392,9 @@ export function RoutinesPage() {
             <div className="space-y-1.5">
               {state.loopRuns.slice(0, 15).map((run) => {
                 const chip = statusChip(run.status);
-                const unseen = ["failed", "missed", "interrupted"].includes(run.status) && !run.seenAt;
+                const unseenDanger = ["failed", "missed", "interrupted"].includes(run.status) && !run.seenAt;
+                const unseenPartial = run.status === "partial" && !run.seenAt;
+                const unseen = unseenDanger || unseenPartial;
                 const produced = (state.desk?.book?.cases ?? []).filter((item) => item.origin?.runId === run.id).length;
                 return (
                   <button
@@ -332,7 +405,11 @@ export function RoutinesPage() {
                     }}
                     className={cn(
                       "flex w-full items-center gap-3 rounded-xl border px-3.5 py-2.5 text-left",
-                      unseen ? "border-danger/30 bg-danger/5" : "border-hairline/40 bg-panel hover:bg-raised/50",
+                      unseenDanger
+                        ? "border-danger/30 bg-danger/5"
+                        : unseenPartial
+                          ? "border-hold/30 bg-hold/5"
+                          : "border-hairline/40 bg-panel hover:bg-raised/50",
                     )}
                   >
                     <span className={cn("flex items-center gap-1.5 text-[12px]", chip.cls)}>

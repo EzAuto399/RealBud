@@ -9,8 +9,9 @@
 //                   | ask-peer (spawn the injected "agents" MCP server from
 //                     session/new's mcpServers, call list_bots + ask_bot on a
 //                     peer, and reply with what the peer said — the comms e2e)
-//   FAKE_ACP_DUMP   path to write {argv, env} as JSON, so a test can assert
-//                   argv shape (agent/stdio flags) and env hygiene
+//   FAKE_ACP_DUMP   path to write {argv, env, mcpServers} as JSON, so a test
+//                   can assert argv shape (agent/stdio flags), env hygiene,
+//                   and the session/new mcpServers list
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { spawn } from "node:child_process";
@@ -136,6 +137,9 @@ function handle(msg: any) {
     case "session/new": {
       const servers: McpEntry[] = Array.isArray(msg.params?.mcpServers) ? msg.params.mcpServers : [];
       agentsMcp = servers.find((s: any) => s?.name === "agents") ?? null;
+      if (process.env.FAKE_ACP_DUMP) {
+        writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify({ argv, env: process.env, mcpServers: servers }, null, 2));
+      }
       result(msg.id, { sessionId: "fake-acp-session" });
       break;
     }

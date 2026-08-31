@@ -1,9 +1,20 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { LOOP_CATALOG, LoopManager, nextOccurrence, type Loop, type LoopManagerOptions, type LoopRun } from "./routines.ts";
+import type { Recipe } from "../shared/contracts.ts";
+import {
+  coverageFromUncoveredHeld,
+  LOOP_CATALOG,
+  LoopManager,
+  nextOccurrence,
+  recipeLoopId,
+  settleLoopRunStatus,
+  type Loop,
+  type LoopManagerOptions,
+  type LoopRun,
+} from "./routines.ts";
 
 const dirs: string[] = [];
 
@@ -33,6 +44,21 @@ describe("nextOccurrence", () => {
   });
 });
 
+function taughtJob(overrides: Partial<Recipe> = {}): Recipe {
+  return {
+    id: "job-1",
+    title: "Friday arrears",
+    steps: ["Open the arrears report"],
+    allowedOrigins: ["propertyme.com.au"],
+    evidence: "arrears rows",
+    status: "shadow",
+    createdAt: 1,
+    schedule: { time: "16:00", weekdays: [5] },
+    planApprovedAt: null,
+    ...overrides,
+  };
+}
+
 function makeManager(options: Partial<LoopManagerOptions> & { execute?: LoopManagerOptions["execute"] } = {}) {
   const calls: Loop[] = [];
   const runs: LoopRun[] = [];
@@ -44,6 +70,8 @@ function makeManager(options: Partial<LoopManagerOptions> & { execute?: LoopMana
         runs.push((payload as { run: LoopRun }).run);
       }
     },
+    listRecipes: options.listRecipes,
+    setRecipeEnabled: options.setRecipeEnabled,
     execute:
       options.execute ??
       (async (loop) => {
@@ -119,6 +147,32 @@ describe("LoopManager runs", () => {
     expect(settled?.status).toBe("completed");
     expect(settled?.detail).toBe("desk check done — 2 drafts waiting");
     expect(runs.some((r) => r.id === run!.id && r.status === "completed")).toBe(true);
+  });
+
+  it("classifies full / partial / none coverage without changing those counts", async () => {
+    expect(settleLoopRunStatus({ ok: true, covered: 6, uncovered: 0 })).toBe("completed");
+    expect(settleLoopRunStatus({ ok: false, covered: 1, uncovered: 5 })).toBe("partial");
+    expect(settleLoopRunStatus({ ok: false, covered: 0, uncovered: 6 })).toBe("failed");
+    expect(settleLoopRunStatus({ ok: false })).toBe("failed");
+    const detail = "Worker answered 1 of 6 properties. Uncovered stay held.";
+    expect(
+      coverageFromUncoveredHeld(detail, [
+        { reason: "rent-landed" },
+        { reason: "uncovered-by-worker" },
+        { reason: "uncovered-by-worker" },
+        { reason: "uncovered-by-worker" },
+        { reason: "uncovered-by-worker" },
+        { reason: "uncovered-by-worker" },
+      ]),
+    ).toEqual({ covered: 1, uncovered: 5 });
+    expect(coverageFromUncoveredHeld("the worker missed", [{ reason: "unknown-facts" }])).toBeNull();
+
+    const { manager } = makeManager({
+      execute: async () => ({ ok: false, detail, covered: 1, uncovered: 5 }),
+    });
+    const run = manager.runNow("morning-arrears")!;
+    await manager.tick();
+    expect(manager.listRuns().find((row) => row.id === run.id)?.status).toBe("partial");
   });
 
   it("refuses a second run while one is queued or running", async () => {
@@ -229,6 +283,39 @@ describe("LoopManager runs", () => {
     const runs = manager.listRuns();
     expect(runs.every((run) => run.status === "interrupted")).toBe(true);
     expect(runs.every((run) => /not resumed/i.test(run.detail ?? ""))).toBe(true);
+  });
+
+  it("schedules through the zone-aware path even when no timezone option is passed", () => {
+    // Production constructs LoopManager without `timezone`. That used to fall
+    // back to local-Date arithmetic, leaving the DST-aware path — and its test
+    // — unreachable from the running clock.
+    const manager = new LoopManager({
+      file: tempFile(),
+      hostTimezone: "Australia/Sydney",
+      execute: async () => ({ ok: true, detail: "" }),
+    });
+    const loop = manager.listLoops().find((row) => row.id === "morning-arrears")!;
+    expect(loop.timezonePaused).toBeFalsy();
+    expect(loop.nextRunAt).not.toBeNull();
+    // the clock resolves a real zone rather than undefined
+    const zoned = nextOccurrence(loop.schedule, Date.now(), "Australia/Sydney");
+    expect(loop.nextRunAt).toBe(zoned);
+  });
+
+  it("stops a run that never settles instead of freezing every routine", async () => {
+    const manager = new LoopManager({
+      file: tempFile(),
+      runDeadlineMs: 20,
+      execute: () => new Promise(() => {}),
+    });
+    const run = manager.runNow("morning-arrears")!;
+    await vi.waitFor(
+      () => expect(manager.listRuns().find((row) => row.id === run.id)?.status).toBe("failed"),
+      { timeout: 2000 },
+    );
+    expect(manager.listRuns().find((row) => row.id === run.id)?.detail).toMatch(/took too long/i);
+    // the clock is usable again rather than wedged behind the hung run
+    expect(manager.runNow("morning-arrears")).toBeTruthy();
   });
 
   it("pauses the clock when the agency timezone does not match the host", () => {
@@ -404,5 +491,140 @@ describe("LoopManager clock retune (PR A)", () => {
     ]);
     const next = manager.listLoops()[0].nextRunAt!;
     expect(next).toBe(new Date(2026, 7, 19, 7, 45, 0).getTime()); // tomorrow on the new clock
+  });
+});
+
+describe("LoopManager recipe loops", () => {
+  it("admits a scheduled job onto the clock and ignores a manual one", () => {
+    const recipes = [taughtJob(), taughtJob({ id: "job-manual", title: "One-off", schedule: null })];
+    const { manager } = makeManager({ listRecipes: () => recipes });
+    const loops = manager.listLoops();
+    expect(loops.map((loop) => loop.id)).toEqual([
+      "morning-arrears",
+      "owner-letter",
+      "inbound-triage",
+      "recipe-job-1",
+    ]);
+    const job = loops.find((loop) => loop.id === "recipe-job-1")!;
+    expect(job).toMatchObject({
+      name: "Friday arrears",
+      available: true,
+      enabled: true,
+      waitingForPlan: true,
+      evaluatorId: "recipe",
+      evaluatorVersion: 1,
+      schedule: { type: "daily", time: "16:00", weekdays: [5] },
+    });
+    expect(job.description).toMatch(/taught Bud/);
+    expect(job.nextRunAt).not.toBeNull();
+    expect(manager.patchClock("recipe-job-1", { time: "16:30" }).schedule.time).toBe("16:30");
+  });
+
+  it("ticks a due recipe slot once and run-now executes the shadow path", async () => {
+    // Friday 21 Aug 2026. Construct before 16:00 so today's slot is still pending.
+    let now = new Date(2026, 7, 21, 15, 59, 0).getTime();
+    const { manager, calls } = makeManager({
+      now: () => now,
+      listRecipes: () => [taughtJob({ status: "active", planApprovedAt: 1 })],
+      execute: async (loop) => {
+        calls.push(loop);
+        return { ok: true, detail: "Shadow run — nothing was browsed or clicked." };
+      },
+    });
+    manager.setEnabled("owner-letter", false);
+    await manager.tick();
+    expect(calls).toHaveLength(0);
+
+    now = new Date(2026, 7, 21, 16, 1, 0).getTime();
+    await manager.tick();
+    expect(calls.map((loop) => loop.id)).toEqual(["recipe-job-1"]);
+    await manager.tick();
+    expect(calls).toHaveLength(1);
+    const scheduled = manager.listRuns().find((run) => run.loopId === "recipe-job-1");
+    expect(scheduled).toMatchObject({
+      manual: false,
+      status: "completed",
+      detail: "Shadow run — nothing was browsed or clicked.",
+      scheduledFor: new Date(2026, 7, 21, 16, 0, 0).getTime(),
+    });
+
+    const run = manager.runNow("recipe-job-1");
+    expect(run).not.toBeNull();
+    await manager.tick();
+    expect(calls.filter((loop) => loop.id === "recipe-job-1")).toHaveLength(2);
+    expect(manager.listRuns().find((row) => row.id === run!.id)?.status).toBe("completed");
+  });
+
+  it("pause stops the clock; a paused job is disabled; delete drops the loop and keeps runs", async () => {
+    const recipes = [taughtJob()];
+    let now = new Date(2026, 7, 21, 15, 59, 0).getTime();
+    const { manager, calls } = makeManager({
+      now: () => now,
+      listRecipes: () => recipes,
+    });
+    manager.setEnabled("owner-letter", false);
+    expect(manager.listLoops().some((loop) => loop.id === recipeLoopId("job-1"))).toBe(true);
+
+    manager.setEnabled("recipe-job-1", false);
+    now = new Date(2026, 7, 21, 16, 1, 0).getTime();
+    await manager.tick();
+    expect(calls).toHaveLength(0);
+    expect(manager.listLoops().find((loop) => loop.id === "recipe-job-1")?.enabled).toBe(false);
+
+    manager.setEnabled("recipe-job-1", true);
+    recipes[0] = taughtJob({ status: "paused" });
+    expect(manager.listLoops().find((loop) => loop.id === "recipe-job-1")?.enabled).toBe(false);
+    await manager.tick();
+    expect(calls).toHaveLength(0);
+
+    recipes[0] = taughtJob();
+    const run = manager.runNow("recipe-job-1")!;
+    await manager.tick();
+    expect(manager.listRuns().some((row) => row.id === run.id)).toBe(true);
+
+    recipes.splice(0, recipes.length);
+    expect(manager.listLoops().map((loop) => loop.id)).toEqual([
+      "morning-arrears",
+      "owner-letter",
+      "inbound-triage",
+    ]);
+    expect(manager.listRuns().some((row) => row.id === run.id)).toBe(true);
+    expect(manager.runNow("recipe-job-1")).toBeNull();
+  });
+
+  it("skips an unapproved scheduled job on tick and still shadows on run-now", async () => {
+    let now = new Date(2026, 7, 21, 15, 59, 0).getTime();
+    const recipes = [taughtJob({ status: "active", planApprovedAt: null })];
+    const { manager, calls } = makeManager({
+      now: () => now,
+      listRecipes: () => recipes,
+      execute: async (loop) => {
+        calls.push(loop);
+        return { ok: true, detail: "Shadow run — nothing was browsed or clicked." };
+      },
+    });
+    manager.setEnabled("owner-letter", false);
+    const job = manager.listLoops().find((loop) => loop.id === "recipe-job-1");
+    expect(job).toMatchObject({ available: true, enabled: true, waitingForPlan: true });
+
+    now = new Date(2026, 7, 21, 16, 1, 0).getTime();
+    await manager.tick();
+    expect(calls).toHaveLength(0);
+    expect(manager.listRuns().filter((run) => run.loopId === "recipe-job-1")).toHaveLength(0);
+
+    const run = manager.runNow("recipe-job-1");
+    expect(run).not.toBeNull();
+    await manager.tick();
+    expect(calls.map((loop) => loop.id)).toEqual(["recipe-job-1"]);
+    expect(manager.listRuns().find((row) => row.id === run!.id)).toMatchObject({
+      manual: true,
+      status: "completed",
+      detail: "Shadow run — nothing was browsed or clicked.",
+    });
+
+    recipes[0] = taughtJob({ status: "active", planApprovedAt: now });
+    await manager.tick();
+    expect(calls.filter((loop) => loop.id === "recipe-job-1")).toHaveLength(2);
+    expect(manager.listLoops().find((loop) => loop.id === "recipe-job-1")?.waitingForPlan).toBe(false);
   });
 });

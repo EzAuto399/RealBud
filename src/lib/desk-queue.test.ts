@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { NEVER_ACTIONS, type DeskSnapshot } from "../../shared/contracts";
-import { buildDeskQueue, filterDeskQueue, queueCounts } from "./desk-queue";
+import { NEVER_ACTIONS, type DeskSnapshot, type WorkState } from "../../shared/contracts";
+import { bucketForWork, buildDeskQueue, filterDeskQueue, queueCounts, type QueueBucket } from "./desk-queue";
 
 function snap(partial: Partial<DeskSnapshot>): DeskSnapshot {
   return {
@@ -104,12 +104,17 @@ describe("desk queue model", () => {
         ],
       }),
     );
-    expect(queueCounts(rows)).toEqual({ "needs-you": 1, held: 1, licensee: 1, "on-book": 0 });
-    expect(rows.find((row) => row.kind === "import-issue")?.bucket).toBe("held");
-    expect(filterDeskQueue(rows, "needs-you")).toHaveLength(1);
-    expect(filterDeskQueue(rows, "needs-you", "unmatched")).toHaveLength(1);
-    expect(filterDeskQueue(rows, "needs-you", "unmatched")[0]?.kind).toBe("import-issue");
-    expect(rows.some((row) => row.kind === "import-issue" && row.bucket === "needs-you")).toBe(false);
+    // courtesy draft, licensee escalation and the unmatched row all need a
+    // person this sitting, so all three land in Now.
+    expect(queueCounts(rows, 0)).toEqual({ now: 3, next: 0, waiting: 0, done: 0, licensee: 1 });
+    expect(rows.find((row) => row.kind === "import-issue")?.bucket).toBe("now");
+    expect(filterDeskQueue(rows, "now")).toHaveLength(3);
+    expect(filterDeskQueue(rows, "now", "unmatched")).toHaveLength(1);
+    expect(filterDeskQueue(rows, "now", "unmatched")[0]?.kind).toBe("import-issue");
+    // an unmatched row is still its own kind, not a wording case
+    expect(rows.find((row) => row.kind === "import-issue")?.action).toBe("Match this source row");
+    // the licensee sorts to the top of Now
+    expect(rows[0]?.kind).toBe("licensee-required");
     expect(JSON.stringify(rows)).not.toMatch(/vault|Form 11/i);
   });
 
@@ -148,9 +153,90 @@ describe("desk queue model", () => {
       "lease-review",
       "maintenance-intake",
     ]);
-    expect(rows.every((row) => row.bucket === "on-book")).toBe(true);
-    expect(queueCounts(rows)).toEqual({ "needs-you": 0, held: 0, licensee: 0, "on-book": 4 });
-    expect(filterDeskQueue(rows, "held")).toHaveLength(0);
+    // seeded book kinds are not this morning's work and are not blocked — Next
+    expect(rows.every((row) => row.bucket === "next")).toBe(true);
+    expect(queueCounts(rows, 0)).toEqual({ now: 0, next: 4, waiting: 0, done: 0, licensee: 0 });
+    expect(filterDeskQueue(rows, "waiting")).toHaveLength(0);
+    expect(filterDeskQueue(rows, "next")).toHaveLength(4);
     expect(filterDeskQueue(rows, "all")).toHaveLength(4);
+  });
+
+  it("places every work state in exactly one part of the day", () => {
+    const expected: Record<WorkState, QueueBucket> = {
+      proposed: "now",
+      "handoff-ready": "now",
+      preparing: "next",
+      held: "waiting",
+      stale: "waiting",
+      failed: "waiting",
+      "effect-unknown": "waiting",
+      "handoff-expired": "waiting",
+      approved: "done",
+      denied: "done",
+      confirmed: "done",
+      superseded: "done",
+      cancelled: "done",
+    };
+    // the Record above cannot compile until a new WorkState is placed, and
+    // bucketForWork cannot compile until its switch handles it
+    for (const [state, bucket] of Object.entries(expected) as Array<[WorkState, QueueBucket]>) {
+      expect(bucketForWork(state)).toBe(bucket);
+    }
+    expect(Object.keys(expected)).toHaveLength(13);
+  });
+
+  it("a failed or unverifiable handoff waits for a person; it is not done", () => {
+    const base = {
+      kind: "money-arrears" as const,
+      propertyId: "prop-oak",
+      occurrenceKey: "oak",
+      periodDueAt: 1,
+      recipient: { name: "Sam", phone: "0400" },
+      sourceIds: ["src-demo"],
+      observedAt: 2,
+      proposalHash: "h",
+      createdAt: 2,
+      updatedAt: 2,
+    };
+    const rows = buildDeskQueue(
+      snap({
+        workItems: [
+          { ...base, id: "w-failed", state: "failed" },
+          { ...base, id: "w-unknown", state: "effect-unknown" },
+          { ...base, id: "w-expired", state: "handoff-expired" },
+          { ...base, id: "w-confirmed", state: "confirmed" },
+        ],
+      }),
+    );
+    const bucketOf = (id: string) => rows.find((row) => row.workItemId === id)?.bucket;
+    expect(bucketOf("w-failed")).toBe("waiting");
+    expect(bucketOf("w-unknown")).toBe("waiting");
+    expect(bucketOf("w-expired")).toBe("waiting");
+    expect(bucketOf("w-confirmed")).toBe("done");
+  });
+
+  it("counts Done for today only, but keeps the older decisions in the list", () => {
+    const today = Date.UTC(2026, 7, 30, 6, 0);
+    const draft = {
+      propertyId: "prop-oak",
+      kind: "courtesy-rent" as const,
+      status: "allowed" as const,
+      channel: "sms" as const,
+      to: "Sam",
+      body: "hi",
+      periodDueAt: 1,
+      createdAt: 1,
+    };
+    const rows = buildDeskQueue(
+      snap({
+        drafts: [
+          { ...draft, id: "d-today", decidedAt: today },
+          { ...draft, id: "d-last-week", decidedAt: today - 7 * 86_400_000 },
+        ],
+      }),
+    );
+    expect(rows.filter((row) => row.bucket === "done")).toHaveLength(2);
+    expect(queueCounts(rows, today).done).toBe(1);
+    expect(filterDeskQueue(rows, "done")).toHaveLength(2);
   });
 });

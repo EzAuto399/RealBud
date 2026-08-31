@@ -18,7 +18,7 @@ import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { GrokAgentDriver } from "./grok.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
 import { KimiAgentDriver } from "./kimi.ts";
-import { HermesAgentDriver } from "./hermes.ts";
+import { hardenHermesChildEnv, HermesAgentDriver } from "./hermes.ts";
 import { HERMES_PIN } from "../../hermes-pin.ts";
 import { seedVault } from "../../vault.ts";
 
@@ -51,6 +51,17 @@ describe("ACP decodeConfig", () => {
     expect(HermesAgentDriver.install?.command?.darwin).toContain(HERMES_PIN.commit);
     expect(HermesAgentDriver.install?.command?.darwin).toContain("--force-commit");
     expect(HermesAgentDriver.install?.signInCommand).toBe(`hermes -p ${HERMES_PIN.profile} model`);
+  });
+  it("keeps ambient provider keys and global MCP servers out of RealBud's Hermes child", () => {
+    const env = {
+      OPENAI_API_KEY: "secret-a",
+      OPENROUTER_API_KEY: "secret-b",
+      KIMI_API_KEY: "secret-c",
+      MOONSHOT_API_KEY: "secret-d",
+      SAFE_VALUE: "kept",
+    };
+    hardenHermesChildEnv(env);
+    expect(env).toEqual({ SAFE_VALUE: "kept", HERMES_ACP_SKIP_CONFIGURED_MCP: "1" });
   });
   it("fullAuto only when explicitly true", () => {
     expect(GrokAgentDriver.decodeConfig({ fullAuto: "yes" }).fullAuto).toBe(false);
@@ -195,6 +206,76 @@ describe("ACP turns (fake CLI)", () => {
     expect(done).toMatchObject({ ok: false });
     expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(true);
   });
+
+  it("does not mount a computer MCP server when computer is requested but no descriptor exists", async () => {
+    const userData = join(scratch, "no-cua");
+    mkdirSync(userData, { recursive: true });
+    const dump = join(scratch, "dump.json");
+    const prevUserData = process.env.OMB_USER_DATA;
+    const prevHome = process.env.HOME;
+    process.env.OMB_USER_DATA = userData;
+    process.env.HOME = scratch;
+    process.env.FAKE_ACP_DUMP = dump;
+    try {
+      await create();
+      await instance.adapter.sendTurn({ threadId: "t-no-cua", text: "go", computer: true });
+      await recorder.until((e) => e.type === "turn.completed");
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      expect(seen.mcpServers ?? []).not.toEqual(expect.arrayContaining([expect.objectContaining({ name: "computer" })]));
+    } finally {
+      if (prevUserData === undefined) delete process.env.OMB_USER_DATA;
+      else process.env.OMB_USER_DATA = prevUserData;
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+    }
+  });
+
+  it.skipIf(process.platform === "linux")(
+    "mounts the computer MCP server from a CUA descriptor when computer is requested",
+    async () => {
+      const userData = join(scratch, "cua");
+      mkdirSync(userData, { recursive: true });
+      writeFileSync(
+        join(userData, "cua-connection.json"),
+        JSON.stringify({
+          mode: "embedded",
+          mcpCommand: "/tmp/cua-driver",
+          mcpArgs: ["mcp", "--embedded"],
+          mcpEnv: { CUA_DRIVER_EMBEDDED: "1", CUA_SOCKET: "/tmp/cua.sock" },
+        }),
+      );
+      const dump = join(scratch, "dump.json");
+      const prevUserData = process.env.OMB_USER_DATA;
+      const prevHome = process.env.HOME;
+      process.env.OMB_USER_DATA = userData;
+      process.env.HOME = scratch;
+      process.env.FAKE_ACP_DUMP = dump;
+      try {
+        await create();
+        await instance.adapter.sendTurn({ threadId: "t-cua", text: "go", computer: true });
+        await recorder.until((e) => e.type === "turn.completed");
+        const seen = JSON.parse(readFileSync(dump, "utf8"));
+        expect(seen.mcpServers).toEqual(
+          expect.arrayContaining([
+            {
+              name: "computer",
+              command: "/tmp/cua-driver",
+              args: ["mcp", "--embedded"],
+              env: [
+                { name: "CUA_DRIVER_EMBEDDED", value: "1" },
+                { name: "CUA_SOCKET", value: "/tmp/cua.sock" },
+              ],
+            },
+          ]),
+        );
+      } finally {
+        if (prevUserData === undefined) delete process.env.OMB_USER_DATA;
+        else process.env.OMB_USER_DATA = prevUserData;
+        if (prevHome === undefined) delete process.env.HOME;
+        else process.env.HOME = prevHome;
+      }
+    },
+  );
 });
 
 describe("ACP snapshot", () => {

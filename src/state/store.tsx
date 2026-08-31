@@ -18,6 +18,8 @@ import type { Loop, LoopId, LoopRun } from "@/lib/routines";
 import type { DeskSnapshot } from "@/lib/desk";
 import { currentCall } from "@/lib/call";
 import { speaker } from "@/lib/tts";
+import { SERVICE_UNAVAILABLE_EVENT, isLocalServiceProxyFailure, localServiceError } from "@/lib/api-error";
+import { notifyDeskNeedsYou } from "@/lib/notify-desktop";
 
 export type { MausColor } from "@/lib/mascot";
 
@@ -201,7 +203,7 @@ export type AppSettingsSection = "general" | "connections" | "voice" | "computer
 export interface HermesStatus {
   pin: { product: string; tag: string; commit: string; profile: string };
   cli: { installed: boolean; versionText: string | null; matchesPin: boolean };
-  pack: { installed: boolean; approvalsManual: boolean };
+  pack: { installed: boolean; approvalsManual: boolean; workroomReady: boolean };
   homeDir: string;
   profileDir: string;
   installCommand: string | null;
@@ -209,6 +211,7 @@ export interface HermesStatus {
   detail: string;
   ready: boolean;
   lastTest?: { at: number; ok: boolean; detail: string; kind: "ping" | "recheck" } | null;
+  lastPing?: { at: number; ok: boolean; detail: string; kind: "ping" | "recheck" } | null;
 }
 
 interface AppState {
@@ -220,6 +223,8 @@ interface AppState {
   /** selected chat — a bot id OR a group id */
   selectedId: string;
   activeView: "chat" | "schedule" | "desk" | "ask" | "you";
+  /** Bumped when a caller sends the user to Desk straight into Book mode. */
+  deskBookNonce: number;
   loops: Loop[];
   loopRuns: LoopRun[];
   /** latest Desk snapshot pushed by the server (a clock loop pressed Recheck) */
@@ -245,7 +250,7 @@ interface AppState {
 type Action =
   | { type: "hydrate"; bots: Bot[]; groups: Group[] }
   | { type: "showRoutines" }
-  | { type: "showDesk" }
+  | { type: "showDesk"; book?: boolean }
   | { type: "showAsk" }
   | { type: "showYou" }
   | { type: "loopsHydrated"; loops: Loop[]; runs: LoopRun[] }
@@ -381,6 +386,7 @@ function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         activeView: "desk",
+        deskBookNonce: action.book ? state.deskBookNonce + 1 : state.deskBookNonce,
         settingsOpen: false,
         computerOpen: false,
         appSettingsOpen: false,
@@ -731,6 +737,7 @@ const initialState: AppState = {
   hermes: null,
   selectedId: "",
   activeView: "desk",
+  deskBookNonce: 0,
   loops: [],
   loopRuns: [],
   desk: null,
@@ -760,6 +767,10 @@ export async function ensureSession(force = false): Promise<string> {
 }
 
 export async function api(path: string, init?: RequestInit): Promise<any> {
+  const unavailable = (cause?: unknown): never => {
+    if (typeof window !== "undefined") window.dispatchEvent(new Event(SERVICE_UNAVAILABLE_EVENT));
+    throw localServiceError(cause);
+  };
   const call = async () => {
     const token = await ensureSession().catch(() => "");
     const headers = new Headers(init?.headers);
@@ -767,14 +778,22 @@ export async function api(path: string, init?: RequestInit): Promise<any> {
     if (token) headers.set("x-realbud-session", token);
     return fetch(path, { ...init, headers });
   };
-  let res = await call();
+  const request = async () => {
+    try {
+      return await call();
+    } catch (cause) {
+      return unavailable(cause);
+    }
+  };
+  let res = await request();
   // a harness restart mints a new session token; re-handshake once and retry
   // so the desk survives a server bounce without a blank page
   if (res.status === 401) {
     await ensureSession(true).catch(() => "");
-    res = await call();
+    res = await request();
   }
   const body = await res.json().catch(() => ({}));
+  if (isLocalServiceProxyFailure(res.status, body.error)) unavailable();
   if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
   return body;
 }
@@ -868,7 +887,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }).catch(() => {});
     };
 
+    const sending = new Set<string>();
+    const turnPolls = new Map<string, symbol>();
+    const pollTurnUntilSettled = async (botId: string) => {
+      const generation = Symbol(botId);
+      turnPolls.set(botId, generation);
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 750));
+        if (turnPolls.get(botId) !== generation) return;
+        try {
+          const { bots, groups } = await api("/api/bots");
+          rawDispatch({ type: "hydrate", bots, groups: groups ?? [] });
+          const bot = (bots as Bot[]).find((candidate) => candidate.id === botId);
+          if (!bot?.busy) break;
+        } catch {
+          // The bounded poll is only the restart fallback; the SSE reconnect
+          // and the next API retry continue owning the visible offline state.
+        }
+      }
+      if (turnPolls.get(botId) === generation) turnPolls.delete(botId);
+    };
+
     const wrapped: React.Dispatch<Action> = (action) => {
+      if (action.type === "send") {
+        if (sending.has(action.botId)) return;
+        sending.add(action.botId);
+      }
       rawDispatch(action);
       switch (action.type) {
         case "runLoop":
@@ -883,7 +927,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           api(`/api/bots/${action.botId}/messages`, {
             method: "POST",
             body: JSON.stringify({ text: action.text }),
-          }).catch(showError);
+          })
+            .then(() => void pollTurnUntilSettled(action.botId))
+            .catch(showError)
+            .finally(() => sending.delete(action.botId));
           break;
         case "editMessage":
           api(`/api/bots/${action.botId}/messages/${action.messageId}/edit`, {
@@ -909,18 +956,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             }).catch(showError);
           if (action.alwaysAllow) {
             const bot = stateRef.current.bots.find((b) => b.id === action.alwaysAllow!.botId);
-            const next = [...new Set([...(bot?.alwaysAllow ?? []), action.alwaysAllow.key])];
             // save the grant BEFORE releasing the bot: it may ask again
             // within milliseconds, and a grant that hasn't landed yet
             // would make "always allow" ask a second time. A failed save
             // still lets this one through — losing a preference must not
             // strand the turn — but it says so.
-            void api(`/api/bots/${action.alwaysAllow.botId}`, {
-              method: "PATCH",
-              body: JSON.stringify({ alwaysAllow: next }),
-            })
-              .catch(showError)
-              .finally(respond);
+            const save = bot && (bot.id === "bud" || bot.name === "Bud")
+              ? api("/api/rules", {
+                  method: "POST",
+                  body: JSON.stringify({ key: action.alwaysAllow.key, decision: "allow" }),
+                })
+              : api(`/api/bots/${action.alwaysAllow.botId}`, {
+                  method: "PATCH",
+                  body: JSON.stringify({
+                    alwaysAllow: [...new Set([...(bot?.alwaysAllow ?? []), action.alwaysAllow.key])],
+                  }),
+                });
+            void save.catch(showError).finally(respond);
             break;
           }
           void respond();
@@ -1191,6 +1243,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "desk":
           rawDispatch({ type: "deskSnapshot", snapshot: frame.snapshot });
+          notifyDeskNeedsYou(frame.snapshot);
           break;
         case "runtime": {
           const event = frame.event;
@@ -1245,22 +1298,63 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     };
     let es: EventSource | null = null;
-    void ensureSession()
-      .catch(() => "")
-      .then((token) => {
-        if (!alive) return;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let retryCount = 0;
+    const scheduleReconnect = () => {
+      if (!alive || retryTimer) return;
+      const delay = Math.min(500 * 2 ** retryCount, 5_000);
+      retryCount += 1;
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        void connect(true);
+      }, delay);
+    };
+    const connect = async (forceSession = false) => {
+      let token = "";
+      try {
+        token = await ensureSession(forceSession);
+      } catch {
+        scheduleReconnect();
+        return;
+      }
+      if (!alive) return;
+      es?.close();
+      const source = new EventSource(token ? `/api/events?session=${encodeURIComponent(token)}` : "/api/events");
+      es = source;
+      source.onopen = () => {
+        if (es !== source) return;
+        retryCount = 0;
+        rawDispatch({ type: "connected", value: true });
         loadAll();
-        es = new EventSource(token ? `/api/events?session=${encodeURIComponent(token)}` : "/api/events");
-        es.onopen = () => {
-          rawDispatch({ type: "connected", value: true });
-          loadAll();
-        };
-        es.onerror = () => rawDispatch({ type: "connected", value: false });
-        es.onmessage = onFrame;
-      });
+      };
+      source.onerror = () => {
+        // A close event from the replaced stream can arrive after the new
+        // stream is already open. It must never close that newer connection.
+        if (es !== source) {
+          source.close();
+          return;
+        }
+        rawDispatch({ type: "connected", value: false });
+        source.close();
+        es = null;
+        scheduleReconnect();
+      };
+      source.onmessage = onFrame;
+    };
+    const onServiceUnavailable = () => {
+      rawDispatch({ type: "connected", value: false });
+      const stale = es;
+      es = null;
+      stale?.close();
+      scheduleReconnect();
+    };
+    window.addEventListener(SERVICE_UNAVAILABLE_EVENT, onServiceUnavailable);
+    void connect();
     return () => {
       alive = false;
+      if (retryTimer) clearTimeout(retryTimer);
       es?.close();
+      window.removeEventListener(SERVICE_UNAVAILABLE_EVENT, onServiceUnavailable);
     };
   }, []);
 

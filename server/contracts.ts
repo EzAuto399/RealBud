@@ -109,6 +109,8 @@ export interface SendTurnInput {
      * owns turns, permissions, and recursion limits; the proxy only forwards. */
     agents?: { command: string; args: string[]; env: Record<string, string> };
   };
+  /** Product Ask: mount this Mac's computer MCP tools when a CUA descriptor exists. */
+  computer?: boolean;
   cwd?: string;
 }
 

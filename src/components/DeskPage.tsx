@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Building2, CircleAlert, Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/cn";
-import type { DeskSnapshot, Draft, Property } from "@/lib/desk";
+import type { CsvColumnMapping, CsvImportPreview, DeskSnapshot, Draft, Property } from "@/lib/desk";
 import { buildDeskQueue, filterDeskQueue, queueCounts, type QueueFilter } from "@/lib/desk-queue";
 import { handsChip } from "@/lib/hands-label";
 import { CaseQueueRow, RecoveryNotice, SplitView, StatusLabel } from "./pm";
@@ -11,18 +11,25 @@ import { DeskCase } from "./desk/DeskCase";
 import { DeskEvidence } from "./desk/DeskEvidence";
 import { GoLiveCard } from "./desk/GoLiveCard";
 import { MorningBrief, MorningEmpty } from "./desk/MorningBrief";
-import { morningBrief } from "@/lib/morning-brief";
+import { isDemoWorkerMiss, morningBrief } from "@/lib/morning-brief";
+import { workdayGuide } from "@/lib/workday";
 import { fmtDateTime } from "@/lib/au";
 import { api, useStore } from "@/state/store";
 
 export function DeskPage() {
   const { state, dispatch, refreshHermes } = useStore();
-  const [snap, setSnap] = useState<DeskSnapshot | null>(null);
+  // Paint instantly from the SSE-pushed snapshot when we have one; the
+  // effect below still refreshes from the server on mount.
+  const [snap, setSnap] = useState<DeskSnapshot | null>(state.desk ?? null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
-  const [ready, setReady] = useState(false);
+  const [ready, setReady] = useState(state.desk != null);
   const [mode, setMode] = useState<"cases" | "book">("cases");
-  const [filter, setFilter] = useState<QueueFilter>("needs-you");
+  // A "Connect your export" entry elsewhere in the app lands here in Book mode.
+  useEffect(() => {
+    if (state.deskBookNonce > 0) setMode("book");
+  }, [state.deskBookNonce]);
+  const [filter, setFilter] = useState<QueueFilter>("now");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [queueOpen, setQueueOpen] = useState(false);
   const [railOpen, setRailOpen] = useState(false);
@@ -43,9 +50,10 @@ export function DeskPage() {
   }, [dispatch]);
 
   useEffect(() => {
+    if (!state.connected) return;
     void load();
     void refreshHermes();
-  }, [load, refreshHermes]);
+  }, [state.connected, load, refreshHermes]);
 
   useEffect(() => {
     if (state.desk) setSnap(state.desk);
@@ -66,6 +74,43 @@ export function DeskPage() {
       if (spoken) setAnnounce(spoken);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const previewImport = async (csv: string, mapping?: CsvColumnMapping): Promise<CsvImportPreview> => {
+    setError("");
+    return (await api("/api/desk/import/preview", {
+      method: "POST",
+      body: JSON.stringify({ csv, mapping }),
+    })) as CsvImportPreview;
+  };
+
+  const inspectImport = async (csv: string): Promise<CsvColumnMapping | null> => {
+    setError("");
+    const result = (await api("/api/desk/import/inspect", {
+      method: "POST",
+      body: JSON.stringify({ csv }),
+    })) as { mapping: CsvColumnMapping | null; detail: string };
+    if (!result.mapping) throw new Error(result.detail || "Bud could not read the columns.");
+    return result.mapping;
+  };
+
+  const importReviewed = async (input: { csv: string; expectedDigest: string; expectedRevision: number; observedAt: number; mapping?: CsvColumnMapping }): Promise<void> => {
+    setBusy("import");
+    setError("");
+    try {
+      const next = (await api("/api/desk/import", {
+        method: "POST",
+        body: JSON.stringify(input),
+      })) as DeskSnapshot;
+      setSnap(next);
+      dispatch({ type: "deskSnapshot", snapshot: next });
+      setAnnounce("CSV imported");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      throw cause;
     } finally {
       setBusy(null);
     }
@@ -115,6 +160,16 @@ export function DeskPage() {
   }, [mode, visible, selected]);
 
   if (!ready || !snap) {
+    if (!state.connected && !snap) {
+      const guide = workdayGuide({ connected: false, desk: null, workerReady: Boolean(state.hermes?.ready) });
+      return (
+        <main className="flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-paper text-ink-muted">
+          <div className="text-[12px] font-semibold uppercase tracking-[0.12em]">{guide.eyebrow}</div>
+          <div className="text-[14px] text-ink">{guide.title}</div>
+          <div className="max-w-sm text-center text-[13px]">{guide.detail}</div>
+        </main>
+      );
+    }
     return (
       <main className="flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-paper text-ink-muted">
         {ready && error ? (
@@ -142,12 +197,12 @@ export function DeskPage() {
       <MorningEmpty
         brief={brief}
         busy={busy === "check"}
-        onRecheck={() => void run("/api/desk/check", "POST", undefined, "check", "Recheck finished")}
+        onRecheck={() => void run("/api/desk/check", "POST", undefined, "check", "Recheck ran")}
       />
     ) : visible.length === 0 ? (
       query.trim() ? (
         <MorningEmpty brief={{ ...brief, headline: "No cases match that search." }} />
-      ) : filter === "needs-you" ? (
+      ) : filter === "now" ? (
         <MorningEmpty brief={{ ...brief, headline: brief.headline }} />
       ) : (
         <MorningEmpty brief={{ ...brief, headline: "No cases in this filter." }} />
@@ -168,7 +223,7 @@ export function DeskPage() {
             </div>
             <p className="mt-1 max-w-[46rem] text-[12.5px] text-ink-muted">
               {snap.demo || snap.mode === "demo" ? "Demo book. " : ""}
-              Queue, case, evidence. Recheck lands every address. You send from the PMS. It will not send a notice or move trust.
+              Queue, case, evidence. Recheck asks Bud. A miss stays a miss. You send from the PMS. It will not send a notice or move trust.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -198,7 +253,7 @@ export function DeskPage() {
             </button>
             <button
               type="button"
-              onClick={() => void run("/api/desk/check", "POST", undefined, "check", "Recheck finished")}
+              onClick={() => void run("/api/desk/check", "POST", undefined, "check", "Recheck ran")}
               aria-busy={busy === "check"}
               className="pm-control flex items-center gap-2 rounded bg-agency px-3.5 text-[14px] font-medium text-white hover:bg-agency-hover"
             >
@@ -208,22 +263,28 @@ export function DeskPage() {
           </div>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
-          <StatusLabel tone="agency">{counts["needs-you"]} need you</StatusLabel>
-          <StatusLabel tone="hold">{counts.held} held</StatusLabel>
-          {counts["on-book"] > 0 ? (
-            <button type="button" onClick={() => { setFilter("all"); setMode("cases"); }} className="rounded-full">
-              <StatusLabel tone="muted">{counts["on-book"]} on the book</StatusLabel>
+          <StatusLabel tone="agency">{counts.now} need you</StatusLabel>
+          <StatusLabel tone="hold">{counts.waiting} waiting</StatusLabel>
+          {counts.next > 0 ? (
+            <button type="button" onClick={() => { setFilter("next"); setMode("cases"); }} className="rounded-full">
+              <StatusLabel tone="muted">{counts.next} next</StatusLabel>
             </button>
           ) : null}
+          {counts.done > 0 ? <StatusLabel tone="muted">{counts.done} done today</StatusLabel> : null}
           <StatusLabel tone="danger">{counts.licensee} licensee</StatusLabel>
           <StatusLabel tone="muted">{snap.properties.length} properties</StatusLabel>
-          <StatusLabel tone={snap.hands === "held" ? "hold" : snap.hands === "hermes" || snap.hands === "csv" ? "agency" : "muted"}>
+          <StatusLabel tone={snap.hands === "held" || isDemoWorkerMiss(snap.hands, snap.handsDetail) ? "hold" : snap.hands === "hermes" || snap.hands === "csv" ? "agency" : "muted"}>
             {handsChip(snap.hands)}
           </StatusLabel>
           {snap.lastRunAt ? (
-            <StatusLabel tone="muted">Last check {fmtDateTime(snap.lastRunAt, timezone)}</StatusLabel>
+            <StatusLabel tone={isDemoWorkerMiss(snap.hands, snap.handsDetail) ? "hold" : "muted"}>
+              {isDemoWorkerMiss(snap.hands, snap.handsDetail) ? "Last miss" : "Last check"} {fmtDateTime(snap.lastRunAt, timezone)}
+            </StatusLabel>
           ) : null}
         </div>
+        {isDemoWorkerMiss(snap.hands, snap.handsDetail) && snap.handsDetail ? (
+          <p className="mt-2 max-w-[46rem] text-[13px] text-hold">{snap.handsDetail}</p>
+        ) : null}
         {snap.recovery?.active ? (
           <div className="mt-3">
             <RecoveryNotice>Desk is in recovery. Writes, schedules and browser work are paused. The book was not replaced with Demo data. Open You to unlock with your recovery key.</RecoveryNotice>
@@ -243,7 +304,7 @@ export function DeskPage() {
             const row = rows.find((item) => item.propertyId === propertyId);
             if (!row) return;
             setMode("cases");
-            setFilter(row.bucket === "decided" || row.bucket === "on-book" ? "all" : row.bucket);
+            setFilter(row.bucket);
             setSelectedId(row.id);
             setQueueOpen(false);
           }}
@@ -251,8 +312,8 @@ export function DeskPage() {
         <GoLiveCard
           mode={snap.mode}
           agencyName={snap.book?.agency.name ?? ""}
-          workerReady={Boolean(state.hermes?.ready) || snap.hands === "hermes"}
-          compact={snap.lastRunAt != null}
+          workerReady={Boolean(state.hermes?.ready)}
+          compact
           onConnectExport={() => setMode("book")}
           onAttachWorker={() => dispatch({ type: "showYou" })}
           onSaveAgency={(name) => void run("/api/desk/agency", "PATCH", { name }, "agency", "Agency saved")}
@@ -271,7 +332,9 @@ export function DeskPage() {
           onNotes={(id, body) => void run(`/api/desk/properties/${id}/notes`, "PUT", { body }, `notes-${id}`, "Notes saved")}
           onDelete={(id) => void run(`/api/desk/properties/${id}`, "DELETE", undefined, `delete-${id}`, "Property removed")}
           onReset={() => void run("/api/desk/reset", "POST", undefined, "reset", "Sample morning replayed")}
-          onImport={(csv) => void run("/api/desk/import", "POST", { csv, expectedRevision: snap.revision }, "import", "CSV imported")}
+          onPreviewImport={previewImport}
+          onInspect={inspectImport}
+          onImport={importReviewed}
         />
       ) : (
         <SplitView
@@ -338,9 +401,10 @@ function QueuePane({
   onSelect: (id: string) => void;
 }) {
   const filters: Array<[QueueFilter, string]> = [
-    ["needs-you", "Needs you"],
-    ["held", "Held"],
-    ["licensee", "Licensee"],
+    ["now", "Now"],
+    ["next", "Next"],
+    ["waiting", "Waiting"],
+    ["done", "Done"],
     ["all", "All"],
   ];
   return (

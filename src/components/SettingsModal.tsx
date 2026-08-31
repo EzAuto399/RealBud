@@ -1,86 +1,165 @@
-// App settings: who you are, and the pinned Hermes worker. Voice, local VM,
-// and third-party key shop stay out of the licensee window.
-import { useEffect, useRef, useState } from "react";
-import { Hand, Loader2, RefreshCw, User, X } from "lucide-react";
-import { api, useStore, type AppSettingsSection } from "@/state/store";
-import { fmtDateTime } from "@/lib/au";
-import { useUpdaterState } from "@/lib/updater";
-import { Card } from "./SettingsPrimitives";
+// App settings keep the ordinary office-facing choices small. Bud's engine,
+// pin, and property pack stay behind the guided connection experience.
+import { useEffect, useId, useRef, useState } from "react";
+import { Hand, User, X } from "lucide-react";
+
 import { cn } from "@/lib/cn";
+import { useUpdaterState } from "@/lib/updater";
+import { api, useStore, type AppSettingsSection } from "@/state/store";
+import { BudSetupCard } from "./BudSetupCard";
+import { Card } from "./SettingsPrimitives";
 
 const SECTIONS: Array<{ id: AppSettingsSection; label: string; icon: typeof User }> = [
   { id: "general", label: "You", icon: User },
-  { id: "connections", label: "Hands", icon: Hand },
+  { id: "connections", label: "Bud", icon: Hand },
 ];
 
-/** Name + email, persisted to /api/config {profile} on blur. */
+type ProfileSaveState = "idle" | "saving" | "saved" | "invalid" | "error";
+
+/** Name and email are persisted in order so quick consecutive blurs cannot
+ * leave an older profile write as the final value. */
 export function ProfileFields() {
   const { state, dispatch } = useStore();
   const [name, setName] = useState(state.config?.profile?.name ?? "");
   const [email, setEmail] = useState(state.config?.profile?.email ?? "");
+  const [saveState, setSaveState] = useState<ProfileSaveState>("idle");
+  const nameRef = useRef<HTMLInputElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const mounted = useRef(true);
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
+  const latestSave = useRef(0);
+  const inputId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
+
+  useEffect(
+    () => () => {
+      mounted.current = false;
+    },
+    [],
+  );
+
   useEffect(() => {
-    setName(state.config?.profile?.name ?? "");
-    setEmail(state.config?.profile?.email ?? "");
+    if (document.activeElement !== nameRef.current) setName(state.config?.profile?.name ?? "");
+    if (document.activeElement !== emailRef.current) setEmail(state.config?.profile?.email ?? "");
   }, [state.config?.profile?.name, state.config?.profile?.email]);
 
   const save = () => {
-    void fetch("/api/config", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ profile: { name: name.trim(), email: email.trim().toLowerCase() } }),
-    })
-      .then((r) => r.json())
-      .then((config) => dispatch({ type: "configStatus", config }))
-      .catch(() => {});
+    const normalizedName = name.trim();
+    const normalizedEmail = email.trim().toLowerCase();
+    if (normalizedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(normalizedEmail)) {
+      setSaveState("invalid");
+      return;
+    }
+
+    const saveId = ++latestSave.current;
+    setSaveState("saving");
+    saveQueue.current = saveQueue.current
+      .catch(() => undefined)
+      .then(async () => {
+        try {
+          const config = await api("/api/config", {
+            method: "PUT",
+            body: JSON.stringify({ profile: { name: normalizedName, email: normalizedEmail } }),
+          });
+          dispatch({ type: "configStatus", config });
+          if (mounted.current && saveId === latestSave.current) setSaveState("saved");
+        } catch {
+          if (mounted.current && saveId === latestSave.current) setSaveState("error");
+        }
+      });
   };
 
-  const inputClass =
-    "w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none";
+  const fieldClass =
+    "pm-control mt-1.5 w-full rounded border border-line bg-inset px-3 text-[14px] text-ink placeholder:text-ink-muted focus:border-agency focus:outline-none";
+
   return (
     <div className="flex flex-col gap-3">
-      <input value={name} onChange={(e) => setName(e.target.value)} onBlur={save} placeholder="Your name" className={inputClass} />
-      <input
-        type="email"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        onBlur={save}
-        placeholder="you@example.com"
-        className={inputClass}
-      />
+      <label htmlFor={`${inputId}-name`} className="text-[12.5px] font-medium text-ink-secondary">
+        Name
+        <input
+          ref={nameRef}
+          id={`${inputId}-name`}
+          value={name}
+          onChange={(event) => {
+            setName(event.target.value);
+            setSaveState("idle");
+          }}
+          onBlur={save}
+          autoComplete="name"
+          placeholder="How the office knows you"
+          className={fieldClass}
+        />
+      </label>
+      <label htmlFor={`${inputId}-email`} className="text-[12.5px] font-medium text-ink-secondary">
+        Office email
+        <input
+          ref={emailRef}
+          id={`${inputId}-email`}
+          type="email"
+          value={email}
+          onChange={(event) => {
+            setEmail(event.target.value);
+            setSaveState("idle");
+          }}
+          onBlur={save}
+          autoComplete="email"
+          placeholder="you@example.com"
+          aria-invalid={saveState === "invalid" ? true : undefined}
+          className={fieldClass}
+        />
+      </label>
+      <div
+        aria-live="polite"
+        className={cn(
+          "min-h-4 text-[11.5px]",
+          saveState === "error" || saveState === "invalid" ? "text-danger" : "text-ink-muted",
+        )}
+      >
+        {saveState === "saving"
+          ? "Saving…"
+          : saveState === "saved"
+            ? "Saved"
+            : saveState === "invalid"
+              ? "Enter a complete email address, or leave it blank."
+              : saveState === "error"
+                ? "Could not save. Your changes are still here; leave the field to try again."
+                : "Saved on this Mac as you go."}
+      </div>
     </div>
   );
 }
 
 function UpdatesRow() {
-  const s = useUpdaterState();
+  const updaterState = useUpdaterState();
   if (!window.ogb?.updater) return null;
   const updater = window.ogb.updater;
   const label =
-    s?.status === "checking"
+    updaterState?.status === "checking"
       ? "Checking…"
-      : s?.status === "available"
-        ? `${s.version} available`
-        : s?.status === "downloading"
-          ? `Downloading ${Math.round(s.percent ?? 0)}%`
-          : s?.status === "downloaded"
-            ? `${s.version} ready — restart to apply`
-            : s?.status === "error"
-              ? `Check failed: ${s.message ?? "unknown error"}`
-              : "You're on the latest version we know of.";
+      : updaterState?.status === "available"
+        ? `${updaterState.version} available`
+        : updaterState?.status === "downloading"
+          ? `Downloading ${Math.round(updaterState.percent ?? 0)}%`
+          : updaterState?.status === "downloaded"
+            ? `${updaterState.version} is ready. Restart to apply it.`
+            : updaterState?.status === "error"
+              ? `Check failed: ${updaterState.message ?? "unknown error"}`
+              : "You are on the latest version we know of.";
+
   return (
     <Card title="Updates" subtitle={label}>
       <button
+        type="button"
         onClick={() => {
-          if (s?.status === "available") return void updater.download();
-          if (s?.status === "downloaded") return void updater.install();
+          if (updaterState?.status === "available") return void updater.download();
+          if (updaterState?.status === "downloaded") return void updater.install();
           void updater.check();
         }}
-        disabled={s?.status === "checking" || s?.status === "downloading"}
-        className="rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-raised disabled:opacity-40"
+        disabled={updaterState?.status === "checking" || updaterState?.status === "downloading"}
+        className="pm-control rounded border border-line px-3 text-[13px] text-ink transition-transform hover:bg-raised active:scale-[0.98] disabled:opacity-40"
       >
-        {s?.status === "available"
+        {updaterState?.status === "available"
           ? "Download"
-          : s?.status === "downloaded"
+          : updaterState?.status === "downloaded"
             ? "Restart and install"
             : "Check for updates"}
       </button>
@@ -88,332 +167,6 @@ function UpdatesRow() {
   );
 }
 
-/** The worker is the product's hands — headless, pinned, driven entirely by
- * RealBud. Install, update, and model attach happen in here: the user never
- * sees a terminal and never runs the hermes CLI. A hands miss holds Desk. */
-const WORKER_PROVIDERS = [
-  { id: "anthropic", label: "Anthropic", exampleModel: "claude-sonnet-4-5" },
-  { id: "xai", label: "xAI", exampleModel: "grok-4" },
-  { id: "openai-api", label: "OpenAI", exampleModel: "gpt-5" },
-  { id: "openrouter", label: "OpenRouter", exampleModel: "anthropic/claude-sonnet-4.5" },
-  { id: "ollama-cloud", label: "Ollama Cloud", exampleModel: "qwen3-coder:480b-cloud" },
-];
-
-export function HermesHandsCard() {
-  const [modelOptions, setModelOptions] = useState<string[]>([]);
-  const { state, dispatch, refreshHermes } = useStore();
-  const [busy, setBusy] = useState<null | "install" | "pack" | "model" | "test" | "check">(null);
-  const [error, setError] = useState("");
-  const [test, setTest] = useState<{ ok: boolean; detail: string } | null>(null);
-  const [install, setInstall] = useState<{ state: string; lines: string[]; error: string | null } | null>(null);
-  const [model, setModel] = useState<{ provider: string | null; model: string | null; keyPresent: boolean; keyHint: string | null } | null>(null);
-  const [lastTest, setLastTest] = useState<{ ok: boolean; detail: string; at: number } | null>(null);
-  const [showBaseUrl, setShowBaseUrl] = useState(false);
-  const [baseUrl, setBaseUrl] = useState("");
-  const [sheet, setSheet] = useState(false);
-  const [providerId, setProviderId] = useState(WORKER_PROVIDERS[0].id);
-  const [key, setKey] = useState("");
-  const [modelId, setModelId] = useState("");
-  const status = state.hermes;
-
-  const loadModel = async () => {
-    try {
-      const res = await api("/api/hermes/model");
-      setModel(res.model ?? null);
-    } catch { /* card still shows worker rows */ }
-  };
-
-  useEffect(() => {
-    void loadModel();
-  }, []);
-
-  useEffect(() => {
-    const shared = status?.lastTest;
-    if (!shared) return;
-    setLastTest({ ok: shared.ok, detail: shared.detail, at: shared.at });
-  }, [status?.lastTest]);
-
-  const pollInstall = async () => {
-    for (;;) {
-      const res = await api("/api/hermes/install/status");
-      const job = res.install;
-      if (!job) return;
-      setInstall({ state: job.state, lines: (job.lines ?? []).slice(-3), error: job.error ?? null });
-      if (["done", "failed", "idle"].includes(job.state)) {
-        await refreshHermes();
-        if (job.state === "done") setTest({ ok: true, detail: "Worker installed and answering the pin." });
-        return;
-      }
-      await new Promise((r) => setTimeout(r, 1000));
-    }
-  };
-
-  const act = async (key: "install" | "pack" | "test" | "check") => {
-    setBusy(key);
-    setError("");
-    setTest(null);
-    try {
-      if (key === "install") {
-        const res = await api("/api/hermes/install", { method: "POST", body: "{}" });
-        if (res.status === 409) throw new Error(res.error ?? "this machine is missing dependencies for the worker");
-        if (res.ok === false) throw new Error(res.error ?? "install could not start");
-        setBusy(null);
-        await pollInstall();
-        return;
-      } else if (key === "test") {
-        const result = await api("/api/hermes/test", { method: "POST", body: "{}" });
-        setTest(result);
-        setLastTest({ ok: Boolean(result?.ok), detail: String(result?.detail ?? ""), at: Date.now() });
-        await refreshHermes();
-        return;
-      } else if (key === "pack") {
-        const fresh = await api("/api/hermes/apply-pack", { method: "POST", body: "{}" });
-        dispatch({ type: "hermesStatus", status: fresh });
-        return;
-      }
-      await refreshHermes();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const saveModel = async () => {
-    setBusy("model");
-    setError("");
-    try {
-      const res = await api("/api/hermes/model", {
-        method: "POST",
-        body: JSON.stringify({ providerId, apiKey: key, model: modelId, baseUrl: baseUrl || undefined }),
-      });
-      if (res.ok === false) throw new Error(res.error ?? "could not attach the model");
-      setModel(res.model ?? null);
-      if (res.ping) {
-        setTest(res.ping);
-        setLastTest({ ok: Boolean(res.ping?.ok), detail: String(res.ping?.detail ?? ""), at: Date.now() });
-      }
-      setSheet(false);
-      setKey("");
-      setModelId("");
-      setBaseUrl("");
-      await refreshHermes();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const Row = ({ label, ok, text }: { label: string; ok: boolean; text: string }) => (
-    <div className="flex items-center justify-between gap-3 text-[13px]">
-      <span className="text-ink-secondary">{label}</span>
-      <span className={cn("min-w-0 truncate text-right", ok ? "text-ink" : "text-warning")}>{text}</span>
-    </div>
-  );
-
-  const pinMismatch = Boolean(status?.cli.installed && !status?.cli.matchesPin);
-  const installLabel = !status?.cli.installed ? "Install worker" : pinMismatch ? "Update worker" : "Reinstall worker";
-
-  return (
-    <Card
-      title="Worker"
-      subtitle={status ? status.detail : "Checking the pinned worker…"}
-    >
-      <div className="flex flex-col gap-2">
-        <Row
-          label="Engine"
-          ok={Boolean(status?.cli.matchesPin)}
-          text={
-            status && status.cli.versionText
-              ? `${status.cli.versionText.trim().split("\n")[0].replace("Hermes Agent ", "")} ${status.cli.matchesPin ? "· pinned" : "· pin is " + status.pin.product}`
-              : "not installed"
-          }
-        />
-        <Row
-          label="Property pack"
-          ok={Boolean(status?.pack.installed)}
-          text={
-            status?.pack.installed
-              ? status.pack.approvalsManual
-                ? "installed · approvals manual"
-                : "installed · approvals NOT manual"
-              : "missing"
-          }
-        />
-        <Row
-          label="Model"
-          ok={Boolean(model?.model)}
-          text={model?.model ? `${model.model} · ${model.provider}${model.keyHint ? ` · ${model.keyHint}` : ""}` : "not attached"}
-        />
-        {lastTest && (
-          <Row
-            label="Last hands test"
-            ok={lastTest.ok}
-            text={`${lastTest.ok ? "answered" : "failed"} · ${fmtDateTime(lastTest.at, state.desk?.book?.agency.timezone ?? state.desk?.timezone)}`}
-          />
-        )}
-        {install && !["idle", "done", "failed"].includes(install.state) && (
-          <div className="rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[12px] text-ink-secondary">
-            <div className="flex items-center gap-2">
-              <Loader2 size={12} className="animate-spin" />
-              Installing the pinned worker…
-            </div>
-            {install.lines.map((line, i) => (
-              <div key={i} className="mt-1 truncate font-mono text-[11px] opacity-70">{line}</div>
-            ))}
-          </div>
-        )}
-        {test && (
-          <div className={cn("rounded-lg border px-3 py-2 text-[12.5px]", test.ok ? "border-success/25 bg-success/10 text-success" : "border-danger/25 bg-danger/10 text-danger")}>
-            {test.detail}
-          </div>
-        )}
-        {error && <div className="text-[12.5px] text-danger">{error}</div>}
-        <div className="mt-1 flex flex-wrap items-center gap-2">
-          {(!status?.cli.installed || pinMismatch) && (
-            <button
-              onClick={() => act("install")}
-              disabled={busy !== null || (install !== null && !["done", "failed", "idle"].includes(install.state))}
-              title={
-                status?.installCommand
-                  ? "Runs inside RealBud and streams progress here."
-                  : "Worker install is not available on this platform — CSV mode still works."
-              }
-              className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-40"
-            >
-              {busy === "install" ? <Loader2 size={13} className="animate-spin" /> : <Hand size={13} />}
-              {installLabel}
-            </button>
-          )}
-          <button
-            onClick={() => act("pack")}
-            disabled={busy !== null}
-            className="flex items-center gap-1.5 rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-raised disabled:opacity-40"
-          >
-            {busy === "pack" ? <Loader2 size={13} className="animate-spin" /> : null}
-            Apply property pack
-          </button>
-          {!sheet && (
-            <button
-              onClick={() => { setSheet(true); setError(""); }}
-              disabled={busy !== null}
-              className="flex items-center gap-1.5 rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-raised disabled:opacity-40"
-            >
-              {model?.model ? "Change model" : "Attach model"}
-            </button>
-          )}
-          <button
-            onClick={() => act("test")}
-            disabled={busy !== null}
-            title="Ask the worker one headless question to prove it can answer"
-            className="flex items-center gap-1.5 rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-raised disabled:opacity-40"
-          >
-            {busy === "test" ? <Loader2 size={13} className="animate-spin" /> : null}
-            Test hands
-          </button>
-          <button
-            onClick={() => act("check")}
-            disabled={busy !== null}
-            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40"
-          >
-            {busy === "check" ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-            Check again
-          </button>
-        </div>
-        {sheet && (
-          <div className="mt-1 flex flex-col gap-2 rounded-xl border border-hairline/40 bg-inset p-3">
-            <label className="text-[12px] text-ink-secondary">
-              Provider
-              <select
-                value={providerId}
-                onChange={(e) => {
-                  setProviderId(e.target.value);
-                  setModelId("");
-                  void api(`/api/hermes/models?provider=${encodeURIComponent(e.target.value)}`)
-                    .then((r) => setModelOptions(r.models ?? []))
-                    .catch(() => setModelOptions([]));
-                }}
-                className="mt-1 w-full rounded-lg border border-hairline/40 bg-panel px-2 py-1.5 text-[13px] text-ink"
-              >
-                {WORKER_PROVIDERS.map((p) => (
-                  <option key={p.id} value={p.id}>{p.label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="text-[12px] text-ink-secondary">
-              API key{" "}
-              {model?.provider === providerId && model?.keyPresent && (
-                <span className="text-ink-muted">
-                  — current {model.keyHint} · leave blank to keep
-                </span>
-              )}
-              <input
-                type="password"
-                value={key}
-                onChange={(e) => setKey(e.target.value)}
-                autoComplete="off"
-                placeholder={model?.provider === providerId && model?.keyPresent ? "keep current" : "paste the provider key"}
-                className="mt-1 w-full rounded-lg border border-hairline/40 bg-panel px-2 py-1.5 text-[13px] text-ink placeholder:text-ink-secondary/60"
-              />
-            </label>
-            <button
-              type="button"
-              onClick={() => setShowBaseUrl((v) => !v)}
-              className="self-start text-[11.5px] text-ink-secondary hover:text-ink"
-            >
-              {showBaseUrl ? "− Hide base URL" : "+ Base URL (advanced)"}
-            </button>
-            {showBaseUrl && (
-              <input
-                type="text"
-                value={baseUrl}
-                onChange={(e) => setBaseUrl(e.target.value)}
-                placeholder="https://api.example.com/v1 (leave empty for the provider default)"
-                className="w-full rounded-lg border border-hairline/40 bg-panel px-2 py-1.5 font-mono text-[12px] text-ink"
-              />
-            )}
-            <label className="text-[12px] text-ink-secondary">
-              Model
-              <input
-                type="text"
-                value={modelId}
-                onChange={(e) => setModelId(e.target.value)}
-                placeholder={WORKER_PROVIDERS.find((p) => p.id === providerId)?.exampleModel}
-                list="worker-model-options"
-                className="mt-1 w-full rounded-lg border border-hairline/40 bg-panel px-2 py-1.5 text-[13px] text-ink placeholder:text-ink-secondary/60"
-              />
-              <datalist id="worker-model-options">
-                {modelOptions.map((id) => (
-                  <option key={id} value={id} />
-                ))}
-              </datalist>
-            </label>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => void saveModel()}
-                disabled={busy !== null || !modelId.trim() || (!key.trim() && !(model?.provider === providerId && model?.keyPresent))}
-                className="rounded-lg bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:brightness-110 disabled:opacity-40"
-              >
-                {busy === "model" ? <Loader2 size={12} className="animate-spin" /> : "Save & test"}
-              </button>
-              <button
-                onClick={() => setSheet(false)}
-                className="rounded-lg px-3 py-1.5 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink"
-              >
-                Cancel
-              </button>
-              <span className="ml-auto text-[11px] text-ink-secondary/70">Stored in the worker profile only.</span>
-            </div>
-          </div>
-        )}
-        <p className="text-[12px] leading-relaxed text-ink-secondary/80">
-          Runs headless inside RealBud. Install, updates, and model setup happen here — never a terminal, never a separate app.
-        </p>
-      </div>
-    </Card>
-  );
-}
 export function SettingsModal() {
   const { state, dispatch } = useStore();
   const section = state.appSettingsSection;
@@ -434,7 +187,7 @@ export function SettingsModal() {
 
       const focusable = Array.from(
         dialog.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), a[href], input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])',
         ),
       );
       if (focusable.length === 0) {
@@ -462,10 +215,13 @@ export function SettingsModal() {
     };
   }, [dispatch]);
 
+  const close = () => dispatch({ type: "toggleAppSettings", open: false });
+  const currentLabel = SECTIONS.find((item) => item.id === section)?.label ?? "Settings";
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
-      onMouseDown={(e) => e.target === e.currentTarget && dispatch({ type: "toggleAppSettings", open: false })}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/55 p-4"
+      onMouseDown={(event) => event.target === event.currentTarget && close()}
     >
       <div
         ref={dialogRef}
@@ -473,56 +229,65 @@ export function SettingsModal() {
         aria-modal="true"
         aria-labelledby="app-settings-title"
         tabIndex={-1}
-        className="flex h-[560px] w-full max-w-[860px] overflow-hidden rounded-2xl border border-hairline/50 bg-panel shadow-2xl outline-none"
+        className="flex h-[min(560px,calc(100dvh-2rem))] w-full max-w-[900px] flex-col overflow-hidden rounded-xl border border-line bg-paper shadow-2xl outline-none md:flex-row"
       >
-        {/* section nav */}
-        <nav className="flex w-[190px] shrink-0 flex-col gap-0.5 border-r border-hairline/40 p-3">
-          <div id="app-settings-title" className="px-2 pb-2 pt-1 text-[15px] font-semibold text-ink">
+        <nav
+          aria-label="Settings sections"
+          className="flex shrink-0 items-center gap-1 border-b border-line bg-sheet p-2.5 md:w-[184px] md:flex-col md:items-stretch md:border-b-0 md:border-r md:p-3"
+        >
+          <div id="app-settings-title" className="mr-auto px-2 text-[15px] font-semibold text-ink md:mb-1 md:mr-0 md:py-1">
             Settings
           </div>
           {SECTIONS.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
+              type="button"
               onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: id })}
               aria-current={section === id ? "page" : undefined}
               className={cn(
-                "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[14px]",
-                section === id ? "bg-raised text-ink" : "text-ink-secondary hover:bg-raised/50 hover:text-ink",
+                "pm-control flex items-center gap-2 rounded px-2.5 text-left text-[13.5px] transition-transform active:scale-[0.98]",
+                section === id ? "bg-selected text-ink" : "text-ink-secondary hover:bg-raised/60 hover:text-ink",
               )}
             >
-              <Icon size={15} />
+              <Icon size={15} aria-hidden="true" />
               {label}
             </button>
           ))}
+          <button
+            type="button"
+            onClick={close}
+            aria-label="Close settings"
+            className="rounded p-2 text-ink-secondary hover:bg-raised hover:text-ink md:hidden"
+          >
+            <X size={18} />
+          </button>
         </nav>
 
-        <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex items-center justify-between px-5 py-3">
-            <span className="text-[15px] font-semibold text-ink">
-              {SECTIONS.find((s) => s.id === section)?.label}
-            </span>
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <header className="flex items-center justify-between border-b border-line px-5 py-3">
+            <span className="text-[14px] font-semibold text-ink">{currentLabel}</span>
             <button
-              onClick={() => dispatch({ type: "toggleAppSettings", open: false })}
+              type="button"
+              onClick={close}
               aria-label="Close settings"
-              className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
+              className="hidden rounded p-1.5 text-ink-secondary hover:bg-raised hover:text-ink md:block"
             >
               <X size={18} />
             </button>
-          </div>
+          </header>
 
-          <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-5 pb-5">
-            {section === "general" && (
+          <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4 md:p-5">
+            {section === "general" ? (
               <>
-                <Card title="Profile" subtitle="Shown in the sidebar. Saved as you go.">
+                <Card title="Profile" subtitle="How RealBud addresses you.">
                   <ProfileFields />
                 </Card>
                 <UpdatesRow />
               </>
-            )}
-
-            {section === "connections" && <HermesHandsCard />}
+            ) : null}
+            {section === "connections" ? <BudSetupCard id="settings-bud" /> : null}
           </div>
-        </div>
+        </section>
       </div>
     </div>
   );

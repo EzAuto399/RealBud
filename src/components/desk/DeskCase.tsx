@@ -55,7 +55,17 @@ export function DeskCase({
       <CaseHeader
         title={item.address}
         status={
-          <StatusLabel tone={item.bucket === "needs-you" ? "agency" : item.bucket === "licensee" ? "danger" : item.bucket === "held" ? "hold" : "muted"}>
+          <StatusLabel
+            tone={
+              item.kind === "licensee-required"
+                ? "danger"
+                : item.bucket === "now"
+                  ? "agency"
+                  : item.bucket === "waiting"
+                    ? "hold"
+                    : "muted"
+            }
+          >
             {kindLabel} · {item.state}
           </StatusLabel>
         }

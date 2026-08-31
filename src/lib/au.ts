@@ -21,7 +21,7 @@ export function fmtTimeOfDay(ms: number): string {
 
 const DAY_MS = 86_400_000;
 
-function startOfDay(ms: number): number {
+export function startOfDay(ms: number): number {
   const d = new Date(ms);
   d.setHours(0, 0, 0, 0);
   return d.getTime();
@@ -38,4 +38,17 @@ export function whenLabel(ms: number): string {
   if (day === today - DAY_MS) return `yesterday at ${time}`;
   const label = date.toLocaleDateString(AU, { weekday: "short", day: "numeric", month: "short" });
   return `${label} at ${time}`;
+}
+
+/** Short relative stamp for session lines: "2 min ago", then hours, then the date. */
+export function relativeAgo(ms: number, now = Date.now()): string {
+  const delta = Math.max(0, now - ms);
+  const minutes = Math.round(delta / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes === 1) return "1 min ago";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours === 1) return "1 h ago";
+  if (hours < 24) return `${hours} h ago`;
+  return fmtDateTime(ms);
 }

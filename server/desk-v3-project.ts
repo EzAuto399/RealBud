@@ -3,6 +3,11 @@ import type { DeskSnapshot, Draft, Escalation, LedgerFacts, Property, RecoverySt
 import type { DeskFileV2 } from "../shared/desk-v2.ts";
 import type { DeskFileV3 } from "../shared/desk-v3.ts";
 
+function viaFromActor(actorId: string | undefined): string | undefined {
+  if (!actorId || actorId === "pm" || actorId === "legacy-unknown") return undefined;
+  return actorId;
+}
+
 export interface QueueSnapshot {
   revision: number;
   cases: Array<{
@@ -54,6 +59,7 @@ export function projectDeskSnapshot(book: DeskFileV3, recovery: RecoveryState, n
   const drafts: Draft[] = book.proposals.map((proposal) => {
     const revision = revisionById.get(proposal.currentRevisionId);
     const decision = decisionByProposal.get(proposal.id);
+    const via = viaFromActor(decision?.actorId);
     return {
       id: proposal.id,
       propertyId: book.cases.find((item) => item.id === proposal.caseId)?.propertyId ?? "",
@@ -66,6 +72,7 @@ export function projectDeskSnapshot(book: DeskFileV3, recovery: RecoveryState, n
       createdAt: proposal.createdAt,
       decidedAt: decision?.at,
       workItemId: proposal.caseId,
+      ...(via ? { via } : {}),
     };
   });
 
@@ -142,7 +149,7 @@ export function projectDeskSnapshot(book: DeskFileV3, recovery: RecoveryState, n
     escalations,
     workItems,
     lastRunAt: book.lastRunAt,
-    results: [],
+    results: book.results.map((result) => ({ ...result })),
     hands: book.hands,
     handsDetail: book.handsDetail,
     sources: book.sources.map((source) => ({
@@ -191,7 +198,7 @@ export function projectWorkingV2(book: DeskFileV3): DeskFileV2 {
     escalations: snap.escalations,
     workItems: [...snap.workItems, ...importWork],
     lastRunAt: book.lastRunAt,
-    results: [],
+    results: book.results.map((result) => ({ ...result })),
     hands: book.hands,
     handsDetail: book.handsDetail,
     sources: snap.sources,

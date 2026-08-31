@@ -1,120 +1,357 @@
-import { useEffect, useState } from "react";
-import { Building2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  BookOpen,
+  Check,
+  ClipboardCheck,
+  Loader2,
+  ShieldCheck,
+} from "lucide-react";
+
 import { identifyEmail, setEmailGateDone, track } from "@/lib/analytics";
+import { isRecoveryWriteError } from "@/lib/api-error";
 import { markFirstRunDone } from "@/lib/first-run";
 import { api, useStore } from "@/state/store";
+import { MausAvatar } from "./Avatar";
 
-// First-run for a newly licensed PM. Desk is the product. Engines, mic,
-// and plugins stay out of this walkthrough.
+const RESUME_KEY = "realbud.onboarding-stage";
 
+function resumedStep(): 0 | 1 {
+  try {
+    return localStorage.getItem(RESUME_KEY) === "office-rules" ? 1 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function rememberStep(step: 0 | 1 | null): void {
+  try {
+    if (step === null) localStorage.removeItem(RESUME_KEY);
+    else localStorage.setItem(RESUME_KEY, step === 1 ? "office-rules" : "profile");
+  } catch {
+    /* Private browsing can refuse local storage. The server-saved profile remains. */
+  }
+}
+
+type BusyState = "profile" | "finish" | null;
+
+// First run establishes the person and the product boundary. Bud's engine,
+// model, recovery, and operational controls remain in You after this journey.
 export function Onboarding({ onDone }: { onDone: () => void }) {
-  const { dispatch } = useStore();
-  const [step, setStep] = useState(0);
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+  const { state, dispatch } = useStore();
+  const [step, setStep] = useState<0 | 1>(resumedStep);
+  const [name, setName] = useState(state.config?.profile?.name ?? "");
+  const [email, setEmail] = useState(state.config?.profile?.email ?? "");
+  const [busy, setBusy] = useState<BusyState>(null);
+  const [error, setError] = useState("");
+  const [recoveryBlocked, setRecoveryBlocked] = useState(false);
+  const edited = useRef(false);
   const emailOk = !email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
-  const canContinue = name.trim().length > 0 && emailOk;
+  const canContinue = name.trim().length > 0 && emailOk && busy === null;
 
-  const saveProfile = () => {
-    if (email.trim()) identifyEmail(email.trim().toLowerCase());
-    void fetch("/api/config", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ profile: { name: name.trim(), email: email.trim().toLowerCase() } }),
-    }).catch(() => {});
-    setStep(1);
-  };
+  useEffect(() => {
+    if (edited.current) return;
+    setName(state.config?.profile?.name ?? "");
+    setEmail(state.config?.profile?.email ?? "");
+  }, [state.config?.profile?.email, state.config?.profile?.name]);
 
   useEffect(() => {
     track("onboarding_step", { step });
   }, [step]);
 
-  const finish = () => {
-    track("onboarding_completed", { engines_available: -1, mic: "n/a" });
-    setEmailGateDone("submitted");
-    markFirstRunDone();
-    if (name.trim()) {
-      void api("/api/desk/agency", {
-        method: "PATCH",
-        body: JSON.stringify({ office: { pmUser: name.trim() } }),
-      }).catch(() => {});
+  const saveProfile = async () => {
+    if (!canContinue) return;
+    setBusy("profile");
+    setError("");
+    setRecoveryBlocked(false);
+    const normalizedName = name.trim();
+    const normalizedEmail = email.trim().toLowerCase();
+    try {
+      const config = await api("/api/config", {
+        method: "PUT",
+        body: JSON.stringify({ profile: { name: normalizedName, email: normalizedEmail } }),
+      });
+      dispatch({ type: "configStatus", config });
+      if (normalizedEmail) identifyEmail(normalizedEmail);
+      rememberStep(1);
+      setStep(1);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "RealBud could not save your profile.");
+    } finally {
+      setBusy(null);
     }
+  };
+
+  const enterDesk = (emailStatus: "submitted" | "skipped") => {
+    setEmailGateDone(emailStatus);
+    rememberStep(null);
+    markFirstRunDone();
     dispatch({ type: "showDesk" });
     onDone();
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-app">
-      <div className="flex w-[460px] flex-col rounded-lg border border-line bg-sheet p-8">
-        {step === 0 && (
-          <div className="flex flex-col items-center">
-            <div className="flex size-[72px] items-center justify-center rounded-2xl bg-accent/10">
-              <Building2 size={32} className="text-accent" />
-            </div>
-            <h1 className="pm-screen-title mt-4 text-ink">Welcome to RealBud</h1>
-            <p className="mt-1.5 text-center text-[14px] leading-relaxed text-ink-secondary">
-              A desk for property managers. It drafts the morning work. You send from the PMS.
-              It never issues a notice or moves trust money.
-            </p>
-            <input
-              autoFocus
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Your name"
-              className="mt-5 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2.5 text-[15px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
-            />
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && canContinue && saveProfile()}
-              placeholder="Office email (optional)"
-              className="mt-3 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2.5 text-[15px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
-            />
-            <button
-              onClick={saveProfile}
-              disabled={!canContinue}
-              className="mt-3 w-full rounded-lg bg-accent py-2.5 text-[15px] font-medium text-white disabled:opacity-40"
-            >
-              Continue
-            </button>
-            <button
-              onClick={() => {
-                track("email_skipped");
-                setStep(1);
-              }}
-              className="mt-3 text-[12px] text-ink-secondary hover:text-ink"
-            >
-              Skip for now
-            </button>
-          </div>
-        )}
+  const exploreSampleDesk = () => {
+    track("onboarding_sample_desk");
+    rememberStep(1);
+    setStep(1);
+  };
 
-        {step === 1 && (
-          <div className="flex flex-col">
-            <h1 className="text-[18px] font-semibold text-ink">How this desk works</h1>
-            <p className="mt-1 text-[13.5px] text-ink-secondary">Three rules. They do not change.</p>
-            <ol className="mt-4 space-y-2.5">
-              <li className="rounded-xl bg-card px-3.5 py-3 text-[13.5px] leading-relaxed text-ink">
-                <span className="font-medium">1. Draft only.</span>
-                <span className="text-ink-secondary"> Courtesy wording and flags wait for you. Copy them into the PMS yourself.</span>
-              </li>
-              <li className="rounded-xl bg-card px-3.5 py-3 text-[13.5px] leading-relaxed text-ink">
-                <span className="font-medium">2. No notices. No trust.</span>
-                <span className="text-ink-secondary"> Past the courtesy window, RealBud escalates to a licensed person. It will not draft or send a statutory notice, or pay from rent.</span>
-              </li>
-              <li className="rounded-xl bg-card px-3.5 py-3 text-[13.5px] leading-relaxed text-ink">
-                <span className="font-medium">3. Today is a training book.</span>
-                <span className="text-ink-secondary"> Six sample ACT addresses. Recheck lands each as checked. Inbox stays disconnected until a named office connects mail.</span>
-              </li>
-            </ol>
-            <button onClick={finish} className="mt-5 w-full rounded-lg bg-accent py-2.5 text-[15px] font-medium text-white">
-              Open today&rsquo;s desk
-            </button>
-          </div>
-        )}
-      </div>
+  const finish = async () => {
+    if (!name.trim() || busy !== null) return;
+    setBusy("finish");
+    setError("");
+    setRecoveryBlocked(false);
+    let enteredDesk = false;
+    try {
+      const snapshot = await api("/api/desk/agency", {
+        method: "PATCH",
+        body: JSON.stringify({ office: { pmUser: name.trim() } }),
+      });
+      dispatch({ type: "deskSnapshot", snapshot });
+      track("onboarding_completed", { engines_available: -1, mic: "n/a" });
+      enteredDesk = true;
+      enterDesk(email.trim() ? "submitted" : "skipped");
+    } catch (cause) {
+      if (isRecoveryWriteError(cause)) {
+        setRecoveryBlocked(true);
+        setError("A protected book is already on this Mac. Open recovery to unlock it or preserve it before starting again.");
+      } else {
+        setError(cause instanceof Error ? cause.message : "RealBud could not prepare the sample desk.");
+      }
+    } finally {
+      if (!enteredDesk) setBusy(null);
+    }
+  };
+
+  const openRecovery = () => {
+    rememberStep(null);
+    markFirstRunDone();
+    dispatch({ type: "showYou" });
+    onDone();
+  };
+
+  const fieldClass =
+    "pm-decision mt-1.5 w-full rounded border border-line bg-sheet px-3.5 text-[15px] text-ink placeholder:text-ink-muted focus:border-agency focus:outline-none";
+
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-paper p-3 sm:p-4">
+      <main className="flex min-h-full items-center justify-center">
+        <div className="grid w-full max-w-[900px] overflow-hidden rounded-xl border border-line bg-sheet shadow-[0_24px_70px_rgba(37,35,31,0.14)] md:grid-cols-[0.8fr_1.2fr]">
+          <aside className="relative flex min-h-[180px] flex-col justify-between overflow-hidden border-b border-line bg-selected/65 p-5 sm:p-6 md:min-h-[510px] md:border-b-0 md:border-r">
+            <div className="relative z-10">
+              <div className="text-[12px] font-semibold uppercase tracking-[0.16em] text-agency">RealBud</div>
+              <p className="mt-2 max-w-[19rem] text-[13px] leading-relaxed text-ink-secondary">
+                A calm working desk for the morning, with Bud nearby when you need another pair of hands.
+              </p>
+            </div>
+            <div className="relative z-10 flex items-center justify-center py-2 md:py-5">
+              <MausAvatar
+                color="green"
+                state={step === 0 ? "happy" : "curious"}
+                motion={step === 0 ? "arrive" : "success"}
+                motionKey={step}
+                size={step === 0 ? 138 : 126}
+                label="Bud"
+                trackPointer={false}
+              />
+            </div>
+            <div className="relative z-10 hidden text-[12px] leading-relaxed text-ink-muted md:block">
+              Local-first by default. Nothing is sent, paid, or issued without the office.
+            </div>
+            <div className="absolute -bottom-24 -right-20 size-72 rounded-full border border-agency/10 bg-agency/5" aria-hidden="true" />
+          </aside>
+
+          <section className="flex min-h-[420px] flex-col p-5 sm:p-7 md:min-h-[510px]">
+            <header>
+              <div className="flex items-center justify-between gap-4 text-[11.5px] text-ink-muted">
+                <span>Set up your desk</span>
+                <span>{step + 1} of 2</span>
+              </div>
+              <div className="mt-2 h-1 overflow-hidden rounded-full bg-line/60" aria-hidden="true">
+                <div
+                  className="h-full origin-left rounded-full bg-agency transition-transform duration-500 motion-reduce:transition-none"
+                  style={{ transform: `scaleX(${step === 0 ? 0.5 : 1})` }}
+                />
+              </div>
+            </header>
+
+            {step === 0 ? (
+              <form
+                className="flex flex-1 animate-panel-in flex-col motion-reduce:animate-none"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void saveProfile();
+                }}
+              >
+                <div className="mt-5 sm:mt-7">
+                  <h1 className="text-[27px] font-semibold tracking-[-0.035em] text-ink">Make the desk yours</h1>
+                  <p className="mt-2 max-w-[28rem] text-[14px] leading-relaxed text-ink-secondary">
+                    See the morning clearly, ask Bud for help, and keep every real-world decision with your office.
+                  </p>
+                </div>
+
+                <div className="mt-6 space-y-4">
+                  <label htmlFor="onboarding-name" className="block text-[12.5px] font-medium text-ink">
+                    Your name
+                    <input
+                      id="onboarding-name"
+                      autoFocus
+                      type="text"
+                      value={name}
+                      onChange={(event) => {
+                        edited.current = true;
+                        setName(event.target.value);
+                        setError("");
+                      }}
+                      autoComplete="name"
+                      placeholder="What should Bud call you?"
+                      className={fieldClass}
+                    />
+                  </label>
+                  <label htmlFor="onboarding-email" className="block text-[12.5px] font-medium text-ink">
+                    Office email <span className="font-normal text-ink-muted">optional</span>
+                    <input
+                      id="onboarding-email"
+                      type="email"
+                      value={email}
+                      onChange={(event) => {
+                        edited.current = true;
+                        setEmail(event.target.value);
+                        setError("");
+                      }}
+                      autoComplete="email"
+                      placeholder="you@office.com.au"
+                      aria-invalid={!emailOk ? true : undefined}
+                      className={fieldClass}
+                    />
+                    {!emailOk ? (
+                      <span className="mt-1.5 block font-normal text-danger">Enter a complete email address, or leave it blank.</span>
+                    ) : (
+                      <span className="mt-1.5 block font-normal text-ink-muted">Stored on this Mac with your RealBud settings.</span>
+                    )}
+                  </label>
+                </div>
+
+                <div className="mt-auto pt-6">
+                  {error ? <div role="alert" className="mb-3 text-[12.5px] text-danger">{error}</div> : null}
+                  <button
+                    type="submit"
+                    disabled={!canContinue}
+                    className="pm-decision flex w-full items-center justify-center gap-2 rounded bg-agency px-4 text-[14px] font-medium text-white transition-transform hover:bg-agency-hover active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {busy === "profile" ? <Loader2 size={15} className="animate-spin motion-reduce:animate-none" /> : <ArrowRight size={15} />}
+                    Continue
+                  </button>
+                  <button
+                    type="button"
+                    onClick={exploreSampleDesk}
+                    disabled={busy !== null}
+                    className="pm-control mt-2 w-full rounded text-[13px] text-ink-secondary hover:bg-raised/60 hover:text-ink disabled:opacity-40"
+                  >
+                    Explore the sample desk
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="flex flex-1 animate-panel-in flex-col motion-reduce:animate-none">
+                <div className="mt-5">
+                  <div className="flex size-9 items-center justify-center rounded-full bg-agency text-white" aria-hidden="true">
+                    <Check size={17} />
+                  </div>
+                  <h1 className="mt-4 text-[27px] font-semibold tracking-[-0.035em] text-ink">You stay in charge</h1>
+                  <p className="mt-2 max-w-[29rem] text-[14px] leading-relaxed text-ink-secondary">
+                    Bud helps with the work around a decision. The decision itself stays visible and yours.
+                  </p>
+                </div>
+
+                <ul className="mt-4 divide-y divide-line border-y border-line">
+                  <BoundaryRow
+                    icon={ClipboardCheck}
+                    title="Bud prepares. You decide."
+                    detail="Drafts and flags wait on Desk. You copy approved wording into the PMS."
+                  />
+                  <BoundaryRow
+                    icon={ShieldCheck}
+                    title="No notices. No trust money."
+                    detail="Statutory work and payments stop with a licensed person."
+                  />
+                  <BoundaryRow
+                    icon={BookOpen}
+                    title="Start with a sample book."
+                    detail="Learn the rhythm safely, then connect a named office from You."
+                  />
+                </ul>
+
+                <div className="mt-auto pt-5">
+                  {error ? (
+                    <div role="alert" className="mb-3 border border-danger/25 bg-danger/10 px-3 py-2.5 text-[12.5px] text-danger">
+                      {error} Your setup is still here. Try again.
+                    </div>
+                  ) : null}
+                  {recoveryBlocked ? (
+                    <button
+                      type="button"
+                      onClick={openRecovery}
+                      disabled={busy !== null}
+                      className="pm-decision flex w-full items-center justify-center gap-2 rounded bg-agency px-4 text-[14px] font-medium text-white transition-transform hover:bg-agency-hover active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <ShieldCheck size={15} />
+                      Open recovery
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void finish()}
+                      disabled={busy !== null || !name.trim()}
+                      className="pm-decision flex w-full items-center justify-center gap-2 rounded bg-agency px-4 text-[14px] font-medium text-white transition-transform hover:bg-agency-hover active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {busy === "finish" ? <Loader2 size={15} className="animate-spin motion-reduce:animate-none" /> : <BookOpen size={15} />}
+                      Open the sample desk
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      rememberStep(0);
+                      setError("");
+                      setRecoveryBlocked(false);
+                      setStep(0);
+                    }}
+                    disabled={busy !== null}
+                    className="pm-control mt-2 flex w-full items-center justify-center gap-2 rounded text-[13px] text-ink-secondary hover:bg-raised/60 hover:text-ink disabled:opacity-40"
+                  >
+                    <ArrowLeft size={14} />
+                    Back
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
+      </main>
     </div>
+  );
+}
+
+function BoundaryRow({
+  icon: Icon,
+  title,
+  detail,
+}: {
+  icon: typeof ClipboardCheck;
+  title: string;
+  detail: string;
+}) {
+  return (
+    <li className="grid grid-cols-[2rem_minmax(0,1fr)] gap-3 py-2.5">
+      <span className="flex size-8 items-center justify-center rounded-full bg-selected text-agency" aria-hidden="true">
+        <Icon size={15} />
+      </span>
+      <div>
+        <div className="text-[13.5px] font-medium text-ink">{title}</div>
+        <p className="mt-0.5 text-[12.5px] leading-relaxed text-ink-muted">{detail}</p>
+      </div>
+    </li>
   );
 }

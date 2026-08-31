@@ -1,11 +1,58 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Plus, RotateCcw, ShieldAlert, Trash2, X } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { fmtDate } from "@/lib/au";
-import { aud, type DeskSnapshot, type LedgerFacts, type NotifyChannel, type Property, type PropertyOptions, type RentSource } from "@/lib/desk";
+import { aud, type CsvColumnMapping, type CsvImportPreview, type DeskSnapshot, type LedgerFacts, type NotifyChannel, type Property, type PropertyOptions, type RentSource } from "@/lib/desk";
+import { groupBySuburb, sortBook } from "@/lib/book-groups";
+import { completenessLine, propertyCompleteness } from "@/lib/completeness";
 import { handsFactSource } from "@/lib/hands-label";
 import { CONTACT_ROLE_LABELS, NOTIFY_LABELS, RENT_SOURCE_LABELS } from "./labels";
+
+function csvHeaderCells(text: string): string[] {
+  const src = text.replace(/^\uFEFF/, "");
+  const cells: string[] = [];
+  let cell = "";
+  let quoted = false;
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i]!;
+    if (quoted) {
+      if (ch === '"') {
+        if (src[i + 1] === '"') {
+          cell += '"';
+          i++;
+        } else quoted = false;
+      } else cell += ch;
+      continue;
+    }
+    if (ch === '"') {
+      quoted = true;
+      continue;
+    }
+    if (ch === ",") {
+      cells.push(cell.trim());
+      cell = "";
+      continue;
+    }
+    if (ch === "\n" || ch === "\r") break;
+    cell += ch;
+  }
+  cells.push(cell.trim());
+  return cells.some((value) => value) ? cells : [];
+}
+
+function isMissingColumnError(message: string): boolean {
+  return /csv missing column/i.test(message);
+}
+
+type ImportReview = {
+  fileName: string;
+  fileSize: number;
+  csv: string;
+  preview: CsvImportPreview | null;
+  headers: string[];
+  mapping?: CsvColumnMapping;
+};
 
 export function DeskBook({
   snap,
@@ -15,6 +62,8 @@ export function DeskBook({
   onNotes,
   onDelete,
   onReset,
+  onPreviewImport,
+  onInspect,
   onImport,
   onAllowBookProposal,
   onDenyBookProposal,
@@ -22,17 +71,45 @@ export function DeskBook({
 }: {
   snap: DeskSnapshot;
   busy: string | null;
-  onAdd: (input: { address: string; tenantName: string; tenantPhone: string; weeklyRentCents: number }) => void;
+  onAdd: (input: { address: string; tenantName: string; tenantPhone: string; weeklyRentCents: number; propertyCode?: string }) => void;
   onSave: (id: string, options: Partial<PropertyOptions>) => void;
   onNotes: (id: string, body: string) => void;
   onDelete: (id: string) => void;
   onReset: () => void;
-  onImport: (csv: string) => void;
+  onPreviewImport: (csv: string, mapping?: CsvColumnMapping) => Promise<CsvImportPreview>;
+  onInspect: (csv: string) => Promise<CsvColumnMapping | null>;
+  onImport: (input: { csv: string; expectedDigest: string; expectedRevision: number; observedAt: number; mapping?: CsvColumnMapping }) => Promise<void>;
   onAllowBookProposal: (id: string) => void;
   onDenyBookProposal: (id: string) => void;
   onAllowAllBookProposals: () => void;
 }) {
   const [adding, setAdding] = useState(false);
+  const [arrange, setArrange] = useState<"suburb" | "address" | "rent" | "late">("suburb");
+  const [filter, setFilter] = useState("");
+  const [importReview, setImportReview] = useState<ImportReview | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importError, setImportError] = useState("");
+  const visible = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return snap.properties;
+    return snap.properties.filter((p) =>
+      `${p.address} ${p.tenantName} ${p.propertyCode ?? ""}`.toLowerCase().includes(q),
+    );
+  }, [snap.properties, filter]);
+  const cardFor = (property: Property) => (
+    <PropertyCard
+      key={property.id}
+      property={property}
+      facts={snap.ledger.find((row) => row.propertyId === property.id)}
+      tenancies={snap.book?.tenancies.filter((row) => row.propertyId === property.id) ?? []}
+      contacts={snap.book?.contacts.filter((row) => row.propertyId === property.id) ?? []}
+      hands={snap.hands}
+      result={snap.results.find((row) => row.propertyId === property.id)}
+      onSave={(options) => onSave(property.id, options)}
+      onNotes={(body) => onNotes(property.id, body)}
+      onDelete={() => onDelete(property.id)}
+    />
+  );
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-8">
       <div className="mb-4 flex items-center justify-between">
@@ -40,31 +117,58 @@ export function DeskBook({
           <h2 className="text-[15px] font-semibold text-ink">Book</h2>
           <p className="mt-1 text-[13px] text-ink-muted">Properties, tenancies and policies. Recheck stamps each address. This is not the case queue.</p>
         </div>
-        <button
-          type="button"
-          onClick={() => setAdding(true)}
-          className="pm-control flex items-center gap-1.5 rounded bg-agency px-3 text-[13px] font-medium text-white hover:bg-agency-hover"
-        >
-          <Plus size={14} />
-          Add property
-        </button>
-      </div>
-      <div className="grid gap-3 xl:grid-cols-2">
-        {snap.properties.map((property) => (
-          <PropertyCard
-            key={property.id}
-            property={property}
-            facts={snap.ledger.find((row) => row.propertyId === property.id)}
-            tenancies={snap.book?.tenancies.filter((row) => row.propertyId === property.id) ?? []}
-            contacts={snap.book?.contacts.filter((row) => row.propertyId === property.id) ?? []}
-            hands={snap.hands}
-            result={snap.results.find((row) => row.propertyId === property.id)}
-            onSave={(options) => onSave(property.id, options)}
-            onNotes={(body) => onNotes(property.id, body)}
-            onDelete={() => onDelete(property.id)}
+        <div className="flex items-center gap-2">
+          <input
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+            placeholder="Filter address, tenant, code"
+            aria-label="Filter the book"
+            className="w-44 rounded border border-line bg-inset px-2 py-1.5 text-[12.5px] text-ink outline-none placeholder:text-ink-muted/70"
           />
-        ))}
+          <label className="flex items-center gap-1.5 text-[12px] text-ink-muted">
+            Arrange
+            <select
+              value={arrange}
+              onChange={(event) => setArrange(event.target.value as typeof arrange)}
+              className="rounded border border-line bg-inset px-2 py-1.5 text-[12.5px] text-ink outline-none"
+            >
+              <option value="suburb">By suburb</option>
+              <option value="address">Address A–Z</option>
+              <option value="rent">Rent high–low</option>
+              <option value="late">Days late</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            className="pm-control flex items-center gap-1.5 rounded bg-agency px-3 text-[13px] font-medium text-white hover:bg-agency-hover"
+          >
+            <Plus size={14} />
+            Add property
+          </button>
+        </div>
       </div>
+      {visible.length === 0 ? (
+        <p className="rounded-lg border border-line bg-sheet px-4 py-6 text-center text-[13px] text-ink-muted">
+          Nothing on the book matches “{filter.trim()}”.
+        </p>
+      ) : arrange === "suburb" ? (
+        <div className="space-y-6">
+          {groupBySuburb(visible).map((group) => (
+            <section key={group.suburb}>
+              <h3 className="mb-2 flex items-baseline gap-2 text-[13px] font-semibold text-ink">
+                {group.suburb}
+                <span className="text-[12px] font-normal text-ink-muted">
+                  {group.properties.length} · {aud(group.weeklyRentCents)}/wk
+                </span>
+              </h3>
+              <div className="grid gap-3 xl:grid-cols-2">{group.properties.map(cardFor)}</div>
+            </section>
+          ))}
+        </div>
+      ) : (
+        <div className="grid gap-3 xl:grid-cols-2">{sortBook(visible, snap.ledger, arrange).map(cardFor)}</div>
+      )}
       {(snap.book?.archivedProperties.length ?? 0) > 0 ? (
         <section className="mt-6">
           <h3 className="text-[13px] font-semibold text-ink">Archived</h3>
@@ -147,14 +251,46 @@ export function DeskBook({
           type="file"
           accept=".csv,text/csv"
           className="sr-only"
-          onChange={(event) => {
+          disabled={importBusy || busy !== null}
+          onChange={async (event) => {
             const file = event.target.files?.[0];
             if (!file) return;
-            void file.text().then(onImport);
             event.target.value = "";
+            setImportError("");
+            if (file.size === 0) {
+              setImportError("That CSV is empty.");
+              return;
+            }
+            if (file.size > 750_000) {
+              setImportError("That CSV is too large. Use a file under 750 KB.");
+              return;
+            }
+            setImportBusy(true);
+            try {
+              const csv = await file.text();
+              const headers = csvHeaderCells(csv);
+              try {
+                const preview = await onPreviewImport(csv);
+                setImportReview({ fileName: file.name, fileSize: file.size, csv, preview, headers: preview.headers.length ? preview.headers : headers });
+              } catch (cause) {
+                const message = cause instanceof Error ? cause.message : String(cause);
+                if (isMissingColumnError(message) && headers.length) {
+                  setImportError(message);
+                  setImportReview({ fileName: file.name, fileSize: file.size, csv, preview: null, headers });
+                } else {
+                  setImportError(message);
+                }
+              }
+            } catch (cause) {
+              setImportError(cause instanceof Error ? cause.message : String(cause));
+            } finally {
+              setImportBusy(false);
+            }
           }}
         />
+        {importBusy ? <Loader2 size={12} className="animate-spin" /> : null}
       </label>
+      {importError && !importReview ? <p role="alert" className="mt-1 text-[12px] text-danger">{importError}</p> : null}
       {adding ? (
         <AddPropertyModal
           onClose={() => setAdding(false)}
@@ -164,6 +300,214 @@ export function DeskBook({
           }}
         />
       ) : null}
+      {importReview ? (
+        <CsvImportReviewModal
+          review={importReview}
+          busy={importBusy}
+          error={importError}
+          onClose={() => {
+            if (importBusy) return;
+            setImportReview(null);
+            setImportError("");
+          }}
+          onInspect={async () => {
+            setImportBusy(true);
+            setImportError("");
+            try {
+              const mapping = await onInspect(importReview.csv);
+              if (mapping) setImportReview({ ...importReview, mapping });
+              return mapping;
+            } catch (cause) {
+              setImportError(cause instanceof Error ? cause.message : String(cause));
+              return null;
+            } finally {
+              setImportBusy(false);
+            }
+          }}
+          onRemap={async (mapping) => {
+            setImportBusy(true);
+            setImportError("");
+            try {
+              const preview = await onPreviewImport(importReview.csv, mapping);
+              setImportReview({ ...importReview, preview, mapping, headers: preview.headers.length ? preview.headers : importReview.headers });
+            } catch (cause) {
+              setImportError(cause instanceof Error ? cause.message : String(cause));
+            } finally {
+              setImportBusy(false);
+            }
+          }}
+          onImport={async () => {
+            if (!importReview.preview) return;
+            setImportBusy(true);
+            setImportError("");
+            try {
+              await onImport({
+                csv: importReview.csv,
+                expectedDigest: importReview.preview.digest,
+                expectedRevision: importReview.preview.expectedRevision,
+                observedAt: importReview.preview.observedAt,
+                mapping: importReview.mapping,
+              });
+              setImportReview(null);
+            } catch (cause) {
+              setImportError(cause instanceof Error ? cause.message : String(cause));
+            } finally {
+              setImportBusy(false);
+            }
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function columnLine(detected: CsvColumnMapping): string {
+  const parts: string[] = [];
+  if (detected.identity) parts.push(`Match by: ${detected.identity}`);
+  if (detected.daysSinceDue) parts.push(`Days late: ${detected.daysSinceDue}`);
+  if (detected.rentLanded) parts.push(`Rent landed: ${detected.rentLanded}`);
+  if (detected.levyPaid) parts.push(`Levy paid: ${detected.levyPaid}`);
+  return parts.join(" · ");
+}
+
+function CsvImportReviewModal({
+  review,
+  busy,
+  error,
+  onClose,
+  onImport,
+  onInspect,
+  onRemap,
+}: {
+  review: ImportReview;
+  busy: boolean;
+  error: string;
+  onClose: () => void;
+  onImport: () => void;
+  onInspect: () => Promise<CsvColumnMapping | null>;
+  onRemap: (mapping: CsvColumnMapping) => void;
+}) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const [identity, setIdentity] = useState(review.mapping?.identity ?? "");
+  const [daysSinceDue, setDaysSinceDue] = useState(review.mapping?.daysSinceDue ?? "");
+  const [rentLanded, setRentLanded] = useState(review.mapping?.rentLanded ?? "");
+  const [levyPaid, setLevyPaid] = useState(review.mapping?.levyPaid ?? "");
+  const [budNote, setBudNote] = useState("");
+  useEffect(() => {
+    const root = dialogRef.current;
+    if (!root) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    root.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    root.addEventListener("keydown", onKey);
+    return () => {
+      root.removeEventListener("keydown", onKey);
+      previous?.focus();
+    };
+  }, [busy, onClose]);
+  const { preview } = review;
+  const mappingReady = Boolean(identity && daysSinceDue && rentLanded && levyPaid);
+  const inputClass = "mt-1 w-full rounded border border-line bg-inset px-3 py-2 text-[13.5px] text-ink outline-none";
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-5" onMouseDown={(event) => event.target === event.currentTarget && !busy && onClose()}>
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="csv-review-title" className="max-h-[85vh] w-full max-w-[560px] overflow-y-auto border border-line bg-sheet p-5 shadow-lg outline-none">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div id="csv-review-title" className="text-[16px] font-semibold text-ink">Review this CSV before it changes the book</div>
+            <p className="mt-1 text-[12px] text-ink-muted">{review.fileName} · {Math.max(1, Math.ceil(review.fileSize / 1024))} KB{preview ? ` · ${preview.totalRows} rows` : ""}</p>
+          </div>
+          <button type="button" disabled={busy} onClick={onClose} className="rounded p-1 text-ink-muted hover:bg-raised disabled:opacity-40" aria-label="Close">
+            <X size={16} />
+          </button>
+        </div>
+        {preview ? (
+          <>
+            {columnLine(preview.detected) ? <p className="mt-3 text-[12px] text-ink-muted">Columns · {columnLine(preview.detected)}</p> : null}
+            {preview.rejected.length ? <p className="mt-2 text-[12px] text-hold">{preview.rejected.length} rows need attention</p> : null}
+            <div className="mt-4 grid grid-cols-3 gap-2 text-center text-[12px]">
+              <div className="rounded bg-agency/10 px-2 py-2 text-agency"><strong className="block text-[16px]">{preview.matched.length}</strong>Matched</div>
+              <div className="rounded bg-hold/10 px-2 py-2 text-hold"><strong className="block text-[16px]">{preview.unmatched.length}</strong>Unmatched</div>
+              <div className="rounded bg-hold/10 px-2 py-2 text-hold"><strong className="block text-[16px]">{preview.ambiguous.length}</strong>Ambiguous</div>
+            </div>
+            <div className="mt-4 space-y-3 text-[12px]">
+              {preview.matched.length ? <section><h3 className="font-semibold text-ink">Will update</h3><ul className="mt-1 space-y-1 text-ink-muted">{preview.matched.map((row) => <li key={row.propertyId}>{row.address}</li>)}</ul></section> : null}
+              {preview.unmatched.length ? <section><h3 className="font-semibold text-hold">Will be held for mapping</h3><ul className="mt-1 space-y-1 text-ink-muted">{preview.unmatched.map((row, index) => <li key={`${row.kind}-${row.value}-${index}`}>{row.kind}: {row.value}</li>)}</ul></section> : null}
+              {preview.ambiguous.length ? <section><h3 className="font-semibold text-hold">Needs one exact property</h3><ul className="mt-1 space-y-1 text-ink-muted">{preview.ambiguous.map((row, index) => <li key={`${row.kind}-${row.value}-${index}`}>{row.kind}: {row.value} · {row.matchCount} matches</li>)}</ul></section> : null}
+            </div>
+            <p className="mt-4 border border-line bg-inset px-3 py-2 text-[12px] text-ink-muted">No changes have been made yet. Importing updates matched ledger facts and places unresolved rows on Desk as holds.</p>
+          </>
+        ) : (
+          <div className="mt-4">
+            {review.headers.length > 0 ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  void (async () => {
+                    const mapping = await onInspect();
+                    if (!mapping) {
+                      setBudNote("");
+                      return;
+                    }
+                    setIdentity(mapping.identity ?? "");
+                    setDaysSinceDue(mapping.daysSinceDue ?? "");
+                    setRentLanded(mapping.rentLanded ?? "");
+                    setLevyPaid(mapping.levyPaid ?? "");
+                    setBudNote("Bud read the file — check the columns, then preview.");
+                  })();
+                }}
+                className="text-[12px] text-ink-muted hover:text-ink disabled:opacity-40"
+              >
+                Ask Bud to read the columns
+              </button>
+            ) : null}
+            {budNote ? <p className="mt-2 text-[12px] text-ink-muted">{budNote}</p> : null}
+            <div className={cn("grid grid-cols-2 gap-3", review.headers.length > 0 && "mt-3")}>
+            {([
+              ["Identity column", identity, setIdentity],
+              ["Days late", daysSinceDue, setDaysSinceDue],
+              ["Rent landed", rentLanded, setRentLanded],
+              ["Levy paid", levyPaid, setLevyPaid],
+            ] as const).map(([label, value, setValue]) => (
+              <label key={label} className="block text-[12px] text-ink-muted">
+                {label}
+                <select value={value} onChange={(event) => setValue(event.target.value)} className={inputClass}>
+                  <option value="">Select column</option>
+                  {review.headers.map((header) => (
+                    <option key={`${label}-${header}`} value={header}>{header}</option>
+                  ))}
+                </select>
+              </label>
+            ))}
+            </div>
+          </div>
+        )}
+        {error ? <p role="alert" className="mt-3 text-[12px] text-danger">{error}</p> : null}
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" disabled={busy} onClick={onClose} className="pm-control rounded px-4 text-[13px] text-ink-muted hover:bg-raised disabled:opacity-40">Cancel</button>
+          {preview ? (
+            <button type="button" disabled={busy || preview.matched.length === 0} onClick={onImport} className="pm-control flex items-center gap-2 rounded bg-agency px-4 text-[13px] font-medium text-white hover:bg-agency-hover disabled:opacity-40">
+              {busy ? <Loader2 size={13} className="animate-spin" /> : null}
+              Import reviewed rows
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={busy || !mappingReady}
+              onClick={() => onRemap({ identity, daysSinceDue, rentLanded, levyPaid })}
+              className="pm-control flex items-center gap-2 rounded bg-agency px-4 text-[13px] font-medium text-white hover:bg-agency-hover disabled:opacity-40"
+            >
+              {busy ? <Loader2 size={13} className="animate-spin" /> : null}
+              Preview columns
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -224,7 +568,7 @@ function PropertyCard({
         unmatched: "Held · unmatched",
         reversed: "Held · reversed payment",
         partial: "Held · partial payment",
-        "uncovered-by-worker": "Held · worker missed this property",
+        "uncovered-by-worker": "Held · Bud missed this property",
         "ambiguous-match": "Held · ambiguous match",
       }[result.reason]
     : "Not checked yet";
@@ -237,6 +581,11 @@ function PropertyCard({
           <div className="mt-0.5 text-[12px] text-ink-muted">
             {property.tenantName} · {property.tenantPhone} · {aud(property.weeklyRentCents)}/wk
           </div>
+          {completenessLine(propertyCompleteness(property, { tenancies, contacts })) ? (
+            <div className="mt-1 text-[11px] text-ink-muted/80">
+              {completenessLine(propertyCompleteness(property, { tenancies, contacts }))}
+            </div>
+          ) : null}
         </div>
         <span className={cn("rounded px-2 py-1 text-[11px]", result?.outcome === "escalate" ? "bg-hold/15 text-hold" : "bg-raised text-ink-muted")}>
           {resultLabel}
@@ -390,11 +739,12 @@ function AddPropertyModal({
   onAdd,
 }: {
   onClose: () => void;
-  onAdd: (input: { address: string; tenantName: string; tenantPhone: string; weeklyRentCents: number }) => void;
+  onAdd: (input: { address: string; tenantName: string; tenantPhone: string; weeklyRentCents: number; propertyCode?: string }) => void;
 }) {
   const [address, setAddress] = useState("");
   const [tenantName, setTenantName] = useState("");
   const [tenantPhone, setTenantPhone] = useState("");
+  const [propertyCode, setPropertyCode] = useState("");
   const [rent, setRent] = useState("");
   const dialogRef = useRef<HTMLDivElement>(null);
   const valid = Boolean(address.trim() && tenantName.trim() && Number(rent) > 0);
@@ -435,6 +785,7 @@ function AddPropertyModal({
       tenantName: tenantName.trim(),
       tenantPhone: tenantPhone.trim(),
       weeklyRentCents: Math.round(Number(rent) * 100),
+      ...(propertyCode.trim() ? { propertyCode: propertyCode.trim() } : {}),
     });
   };
   const inputClass = "mt-1 w-full rounded border border-line bg-inset px-3 py-2 text-[13.5px] text-ink outline-none";
@@ -469,6 +820,10 @@ function AddPropertyModal({
           <label className="block text-[12px] text-ink-muted">
             Weekly rent (AUD)
             <input type="number" min={1} step="0.01" value={rent} onChange={(event) => setRent(event.target.value)} onKeyDown={(event) => event.key === "Enter" && submit()} className={inputClass} />
+          </label>
+          <label className="block text-[12px] text-ink-muted">
+            Property code in your PMS (optional — your export can match on it)
+            <input value={propertyCode} onChange={(event) => setPropertyCode(event.target.value)} className={inputClass} />
           </label>
         </div>
         <div className="mt-5 flex justify-end gap-2">

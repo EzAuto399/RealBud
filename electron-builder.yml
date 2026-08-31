@@ -42,6 +42,10 @@ extraResources:
     to: server
   - from: dist-server/shared
     to: shared
+  - from: dist-server/src
+    to: src
+  - from: pack/property
+    to: pack/property
 
 mac:
   target:

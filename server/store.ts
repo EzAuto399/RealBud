@@ -547,6 +547,26 @@ export class Store {
     return t.messages[idx];
   }
 
+  /** A stopped or restarted provider can no longer answer its old request.
+   * Settle every orphaned card so the composer never stays locked forever. */
+  settleOpenRequests(threadId: string, behavior = "deny"): Message[] {
+    const t = this.thread(threadId);
+    const patched: Message[] = [];
+    t.messages = t.messages.map((message) => {
+      if (message.kind !== "options" || !message.card?.requestId || message.card.answered || message.card.dismissed) {
+        return message;
+      }
+      const next: Message = {
+        ...message,
+        card: { ...message.card, answered: behavior, dismissed: true },
+      };
+      patched.push(next);
+      return next;
+    });
+    if (patched.length) this.saveThread(threadId);
+    return patched;
+  }
+
   bot(id: string) {
     return this.bots.find((b) => b.id === id) ?? null;
   }
@@ -636,6 +656,17 @@ export class Store {
     // The legacy mirror follows the task visible in chat, never a detached
     // routine task working in the background.
     if (!threadId || bot.threadId === threadId) bot.resumeCursors[instanceId] = cursor;
+    this.saveBots();
+  }
+
+  /** A resumed session can be pinned to a dead model/provider; dropping the
+   * cursor lets the next turn start a fresh session on the current attach. */
+  clearResumeCursor(botId: string, instanceId: string, threadId?: string) {
+    const bot = this.bot(botId);
+    if (!bot) return;
+    const task = threadId ? this.taskByThread(botId, threadId) : this.activeTask(botId);
+    if (task) delete task.resumeCursors[instanceId];
+    if (!threadId || bot.threadId === threadId) delete bot.resumeCursors[instanceId];
     this.saveBots();
   }
 

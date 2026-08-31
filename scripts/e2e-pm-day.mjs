@@ -33,6 +33,16 @@ const api = async (method, path, body) => {
   }
   return { status: res.status, body: json };
 };
+const importReviewedCsv = async (csv) => {
+  const preview = await api("POST", "/api/desk/import/preview", { csv });
+  if (preview.status !== 200) return preview;
+  return api("POST", "/api/desk/import", {
+    csv,
+    expectedDigest: preview.body.digest,
+    expectedRevision: preview.body.expectedRevision,
+    observedAt: preview.body.observedAt,
+  });
+};
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let session = "";
@@ -96,18 +106,19 @@ try {
   const morningSettled = await waitForRun(morningPost.body?.run?.id);
   check("morning routine settled", Boolean(morningSettled), morningSettled?.status);
   let snap = (await api("GET", "/api/desk")).body;
-  check("morning left courtesy or levy cards", snap.drafts?.some((d) => d.kind === "courtesy-rent" || d.kind === "levy-from-rent"));
+  check("morning live Recheck does not draft fixture cards", snap.hands === "demo" && Array.isArray(snap.drafts) && snap.drafts.length === 0, `${snap?.hands} drafts=${snap?.drafts?.length}`);
   check("demo cases include maintenance, lease, inspection", ["maintenance-intake", "lease-review", "inspection-prep"].every((kind) =>
     (snap.book?.cases ?? []).some((c) => c.kind === kind),
   ));
   const hermes = await api("GET", "/api/hermes");
-  check("clock wrote the shared worker stamp", typeof hermes.body?.lastTest?.at === "number");
+  check("clock wrote the shared worker stamp", typeof hermes.body?.lastTest?.at === "number" && hermes.body.lastTest.ok === false);
   check("clock stamped the worker source", snap.sources?.some((s) => s.kind === "hermes" && typeof s.lastCheckedAt === "number"));
-  check("Recheck landed every address", Array.isArray(snap.results) && snap.results.length === snap.properties.length, `${snap.results?.length}/${snap.properties?.length}`);
-  check("every known address has a result", (snap.properties ?? []).every((p) => (snap.results ?? []).some((r) => r.propertyId === p.id)));
+  check("Recheck miss leaves addresses unchecked", Array.isArray(snap.results) && snap.results.length === 0, `${snap.results?.length}`);
   check("no mail source was invented", !(snap.sources ?? []).some((s) => /gmail|inbox|microsoft|imap/i.test(`${s.kind} ${s.label}`)));
-  check("status payload is for Advanced, not a Hermes window", hermes.body?.pin?.profile === "property" && typeof hermes.body?.ready === "boolean");
+  check("status payload is for Advanced, not a Hermes window", hermes.body?.pin?.profile === "property" && hermes.body?.ready === false);
 
+  snap = (await api("POST", "/api/desk/practice", {})).body;
+  check("practice left courtesy or levy cards", snap.drafts?.some((d) => d.kind === "courtesy-rent" || d.kind === "levy-from-rent"));
   const courtesy = snap.drafts.find((d) => d.kind === "courtesy-rent" && d.status === "pending");
   check("courtesy is waiting", Boolean(courtesy));
   const allowed = await api("POST", `/api/desk/drafts/${courtesy.id}/allow`, { expectedRevision: snap.revision });
@@ -140,7 +151,7 @@ try {
 
   // ── Their export, then retune the clock ──
   const csv = ["address,daysSinceDue,rentLanded,levyPaid", '"12 Oak St, Dickson ACT",6,false,false'].join("\n");
-  snap = (await api("POST", "/api/desk/import", { csv })).body;
+  snap = (await importReviewedCsv(csv)).body;
   check("CSV flips the book live", snap?.mode === "live" && snap.hands === "csv");
   const retune = await api("PATCH", "/api/loops/morning-arrears", { time: "08:00" });
   check("PM retunes morning to 8:00", retune.status === 200 && retune.body?.loop?.schedule?.time === "08:00");

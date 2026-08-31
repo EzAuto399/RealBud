@@ -18,6 +18,10 @@ const DEV_URL = process.env.ELECTRON_START_URL ?? "http://127.0.0.1:5199";
 let SERVER_PORT = 8799;
 const APP_ICON = path.join(__dirname, "resources/app-icon.png");
 
+// Electron otherwise presents the development binary as "Electron" in the
+// macOS menu bar even though the product and packaged bundle are RealBud.
+app.setName("RealBud");
+
 // GNOME groups the window with its installed desktop entry only when both
 // identities match. This must run before Electron becomes ready.
 if (process.platform === "linux") app.setDesktopName("com.realbud.app.desktop");
@@ -172,7 +176,7 @@ async function startServerPackaged() {
 const ERROR_PAGE =
   "data:text/html;charset=utf-8," +
   encodeURIComponent(
-    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:360px"><div style="font-size:40px">🏠</div><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the bot server</h2><p style="color:#fcfcfc99;line-height:1.5">Something else is using its ports. Quit and reopen RealBud — if it keeps happening, restart your computer.</p></div></body>`,
+    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:360px"><div style="font-size:40px">🏠</div><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the desk service</h2><p style="color:#fcfcfc99;line-height:1.5">Something else is using its ports. Quit and reopen RealBud — if it keeps happening, restart your computer.</p></div></body>`,
   );
 
 let cuaReady = Promise.resolve({ mode: "unavailable", reason: "not-started" });

@@ -90,12 +90,14 @@ try {
   const empty = (await api("GET", "/api/desk")).body;
   check("pure GET has the 6-property book and no implicit drafts", empty?.properties?.length === 6 && empty?.lastRunAt == null && empty?.drafts?.length === 0, `drafts=${empty?.drafts?.length}`);
 
-  const desk = (await api("POST", "/api/desk/check", {})).body;
-  check("desk has the 6-property Demo book", desk?.properties?.length === 6, `got ${desk?.properties?.length}`);
-  check("ledger facts are exposed", Array.isArray(desk?.ledger) && desk.ledger.length === 6);
-  check("morning check drafted courtesy + levy flags", ["courtesy-rent", "levy-from-rent"].every((kind) => desk?.drafts?.some((d) => d.kind === kind)));
+  const missed = (await api("POST", "/api/desk/check", {})).body;
+  check("desk has the 6-property Demo book", missed?.properties?.length === 6, `got ${missed?.properties?.length}`);
+  check("ledger facts are exposed", Array.isArray(missed?.ledger) && missed.ledger.length === 6);
+  check("live Recheck on Demo does not draft fixture cards", missed?.hands === "demo" && Array.isArray(missed?.drafts) && missed.drafts.length === 0, `${missed?.hands} drafts=${missed?.drafts?.length}`);
+  const desk = (await api("POST", "/api/desk/practice", {})).body;
+  check("practice drafted courtesy + levy flags", ["courtesy-rent", "levy-from-rent"].every((kind) => desk?.drafts?.some((d) => d.kind === kind)));
   check("escalation raised with no draft", desk?.escalations?.length >= 1 && desk.escalations[0].reason === "statutory-clock");
-  check("Demo check is labelled Demo, not a live success", desk?.demo === true && desk?.hands === "demo", `${desk?.hands} ${desk?.handsDetail}`);
+  check("Demo practice is labelled Demo, not a live success", desk?.demo === true && desk?.hands === "demo", `${desk?.hands} ${desk?.handsDetail}`);
 
   const pending = desk.drafts.find((d) => d.status === "pending");
   const send = await api("POST", `/api/desk/drafts/${pending.id}/send`, {});
@@ -121,7 +123,7 @@ try {
   });
   const property = added.body?.properties?.find((p) => p.address?.startsWith("9 Wattle"));
   check("add property lands in the book with quiet day-0 facts", added.status === 201 && Boolean(property) && added.body.ledger.some((r) => r.propertyId === property.id && r.daysSinceDue === 0));
-  check("new property is inside grace (no draft)", added.body?.results?.find((r) => r.propertyId === property?.id)?.outcome === "skip");
+  check("new property is inside grace (no draft)", Boolean(property) && !added.body?.drafts?.some((d) => d.propertyId === property.id));
 
   const patched = await api("PATCH", `/api/desk/properties/${property.id}`, { notifyChannel: "portal", graceDays: 5 });
   check("options patch sticks and never-rules stay locked", patched.body?.property?.options?.notifyChannel === "portal" && patched.body?.property?.options?.graceDays === 5 && patched.body?.property?.options?.never?.length === 2);
@@ -131,8 +133,8 @@ try {
 
   // ── Schedule: named loops ──
   const loops = (await api("GET", "/api/loops")).body;
-  check("three named loops, only morning-arrears available", loops?.loops?.map((l) => l.id).join(",") === "morning-arrears,owner-letter,inbound-triage" && loops.loops[0].available === true && loops.loops[1].available === false);
-  const plannedRun = await api("POST", "/api/loops/owner-letter/run", {});
+  check("three named loops, inbound stays Planned", loops?.loops?.map((l) => l.id).join(",") === "morning-arrears,owner-letter,inbound-triage" && loops.loops[0].available === true && loops.loops[1].available === true && loops.loops[2].available === false);
+  const plannedRun = await api("POST", "/api/loops/inbound-triage/run", {});
   check("planned loops refuse to run", plannedRun.status === 409);
 
   const ran = await api("POST", "/api/loops/morning-arrears/run", {});

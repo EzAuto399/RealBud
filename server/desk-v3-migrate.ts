@@ -328,6 +328,7 @@ export function migrateV2ToV3(v2: DeskFileV2, migratedAt: number): DeskFileV3 {
     portalRecipes: v2.recipes.map((recipe) => ({ ...recipe })),
     handoffs: migrateHandoffs(v2.capabilities, migratedAt),
     lastRunAt: v2.lastRunAt,
+    results: v2.results.map((result) => ({ ...result })),
     hands: v2.hands,
     handsDetail: v2.handsDetail,
   };

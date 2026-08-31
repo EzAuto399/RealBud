@@ -14,18 +14,14 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { MAUS_COLORS, type MausColor, type MausMotion, type MausState } from "@/lib/mascot";
-import { CursorAvatar, SHAPE, type CursorAvatarHandle, type CursorShape } from "./CursorAvatar";
+import { CursorAvatar, REALBUD_SHAPE, type CursorAvatarHandle } from "./CursorAvatar";
 
 /**
- * The pack's baked-in silhouette was exported with the body fill hardcoded
- * to black instead of the {{GRADIENT}} placeholder the component
- * substitutes, which painted every bot the same. Restore the slot so the
- * per-bot gradient actually lands on the body.
+ * Every bot wears the RealBud mark (docs/brand/realbud-mark-v1.svg): the
+ * roof/cursor silhouette carries the {{GRADIENT}} slot natively, so the
+ * per-bot gradient lands on the brand body and the engine's face plays inside.
  */
-const GRADIENT_SHAPE: CursorShape = {
-  ...SHAPE,
-  body: SHAPE.body.replace(/fill="#000000"/g, 'fill="{{GRADIENT}}"'),
-};
+const GRADIENT_SHAPE = REALBUD_SHAPE;
 
 /**
  * Legacy face-placement knobs from the Maus body era. The cursor mascot

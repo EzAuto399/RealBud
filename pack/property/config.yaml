@@ -1,15 +1,35 @@
 # Locked RealBud worker. Do not flip approvals to off/smart/yolo.
 # model.default / model.provider are attached at install from this machine's
 # Hermes login. Change them with: hermes -p property model
-# Host CLI / terminal stay off — RealBud owns read/propose.
+# Bud gets a private working home and starts in RealBud's property vault.
+# Safe reads, research, calculations, code, and working-file edits may run;
+# dangerous commands still route through the manual approval callback below.
 approvals:
   mode: manual
   timeout: 300
   cron_mode: deny
   mcp_reload_confirm: true
 agent:
-  max_turns: 20
+  max_turns: 60
   verbose: false
-toolsets: []
+# Purpose-built surface for RealBud. Terminal retains guarded code and
+# calculations; the ACP execute_code shortcut is intentionally omitted until
+# Hermes can route its whole-script approval through ACP's permission card.
+toolsets:
+  - web
+  - terminal
+  - file
+  - vision
+  - todo
+  - session_search
+  - delegation
+security:
+  redact_secrets: true
+delegation:
+  max_concurrent_children: 2
+  max_iterations: 24
 terminal:
-  backend: none
+  backend: local
+  home_mode: profile
+  timeout: 120
+  env_passthrough: []

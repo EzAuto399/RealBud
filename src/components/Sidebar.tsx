@@ -1,11 +1,12 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ArrowDownToLine, Building2, CalendarDays, Check, Loader2, MessageSquare, RefreshCw } from "lucide-react";
 import { useStore } from "@/state/store";
-import { InitialsAvatar } from "./Avatar";
+import { InitialsAvatar, MausAvatar } from "./Avatar";
 import { cn } from "@/lib/cn";
 import { buildDeskQueue, queueCounts } from "@/lib/desk-queue";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { useUpdaterState } from "@/lib/updater";
+import { WorkdayPulse } from "./WorkdayPulse";
 
 function profileInitials(profile?: { name?: string; email?: string }): string {
   const name = profile?.name?.trim();
@@ -80,7 +81,14 @@ export function Sidebar() {
   const macInset = capabilities.windowChrome === "mac-inset";
   const browser = capabilities.host.label === "Browser";
 
-  const needYou = state.desk?.lastRunAt != null ? queueCounts(buildDeskQueue(state.desk))["needs-you"] : 0;
+  // Sidebar re-renders on every store change, including each streamed chat
+  // token. Rebuilding the whole queue there is invisible on a demo book and
+  // jank on a real one.
+  const desk = state.desk;
+  const needYou = useMemo(
+    () => (desk?.lastRunAt != null ? queueCounts(buildDeskQueue(desk)).now : 0),
+    [desk],
+  );
 
   const item = (
     view: typeof state.activeView,
@@ -106,22 +114,35 @@ export function Sidebar() {
   return (
     <aside className="flex h-full w-[200px] shrink-0 flex-col border-r border-line bg-sheet">
       <div
-        className="flex items-center justify-between px-4 pt-3.5 pb-1"
+        className="px-4 pb-1 pt-3.5"
         style={macInset ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined}
       >
-        {macInset ? (
-          <div className="w-14" />
-        ) : browser ? (
-          <div className="flex items-center gap-2">
-            <span className="size-3 rounded-full bg-[#ff5f57]" />
-            <span className="size-3 rounded-full bg-[#febc2e]" />
-            <span className="size-3 rounded-full bg-[#28c840]" />
+        <div className="flex items-center justify-between">
+          {macInset ? (
+            <div className="w-14" />
+          ) : browser ? (
+            <div className="flex items-center gap-2">
+              <span className="size-3 rounded-full bg-[#ff5f57]" />
+              <span className="size-3 rounded-full bg-[#febc2e]" />
+              <span className="size-3 rounded-full bg-[#28c840]" />
+            </div>
+          ) : (
+            <div />
+          )}
+          <div style={macInset ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined}>
+            <UpdateButton />
           </div>
-        ) : (
-          <div />
-        )}
-        <div style={macInset ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined}>
-          <UpdateButton />
+        </div>
+        <div className="mt-2.5 flex items-center gap-2" aria-label="RealBud">
+          {/* The mark is alive: it blinks and settles with the office's rhythm. */}
+          <MausAvatar color="green" state={state.connected ? "idle" : "sleeping"} size={26} label="RealBud" trackPointer={false} />
+          <div className="min-w-0">
+            <div className="text-[13.5px] font-semibold tracking-[-0.01em] text-ink">RealBud</div>
+            <div className="flex items-center gap-1.5 text-[10.5px] text-ink-muted">
+              <span className={cn("size-1.5 rounded-full", state.connected ? "bg-agency" : "animate-pulse bg-hold motion-reduce:animate-none")} />
+              {state.connected ? "On this Mac" : "Reconnecting"}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -143,12 +164,15 @@ export function Sidebar() {
           () => dispatch({ type: "showRoutines" }),
           state.loopRuns.some((run) => ["failed", "missed", "interrupted"].includes(run.status) && !run.seenAt) ? (
             <span className="size-2 rounded-full bg-danger" />
+          ) : state.loopRuns.some((run) => run.status === "partial" && !run.seenAt) ? (
+            <span className="size-2 rounded-full bg-hold" />
           ) : null,
         )}
         {item("you", "You", <InitialsAvatar initials={profileInitials(state.config?.profile)} size={20} />, () =>
           dispatch({ type: "showYou" }),
         )}
       </nav>
+      <WorkdayPulse />
     </aside>
   );
 }

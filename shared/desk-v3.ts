@@ -5,6 +5,7 @@
 import {
   NEVER_ACTIONS,
   type BookMode,
+  type CheckResult,
   type DraftKind,
   type HandsSource,
   type NotifyChannel,
@@ -324,6 +325,9 @@ export interface DeskFileV3 {
   portalRecipes: PortalRecipe[];
   handoffs: Handoff[];
   lastRunAt: number | null;
+  /** Complete outcome set from the last check, including clear/skip rows that
+   * do not create a durable case. Older V3 books omit this and decode to []. */
+  results: CheckResult[];
   hands: HandsSource;
   handsDetail: string | null;
 }
@@ -352,6 +356,7 @@ export function emptyV3(agency: Agency): DeskFileV3 {
     portalRecipes: [],
     handoffs: [],
     lastRunAt: null,
+    results: [],
     hands: "demo",
     handsDetail: null,
   };

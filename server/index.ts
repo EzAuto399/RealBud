@@ -1,12 +1,19 @@
 // RealBud server — the harness host. Clients hold no transports
 // (upstream rule): the React app dispatches typed commands over HTTP and
 // folds one SSE event stream; every provider process runs here.
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, unlinkSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join } from "node:path";
 
 import { approvalKey, autoDecision } from "./auto-approve.ts";
+import { applyLawDrift, lawWatchView, persistLawWatchResult, runLawWatch, setLawWatchScheduled } from "./law-watch.ts";
+import { addRule, evaluateRules, loadRules, removeRule } from "./rules.ts";
+import { appendHistory, listHistory } from "./computer-history.ts";
+import { deleteRecipe, getRecipe, listRecipes, patchRecipe, patchRecipeStatus, recipeClockRunnable, saveRecipe } from "./recipes.ts";
+import { distillRecipe } from "./recipe-distill.ts";
+import { shapeRecipeDraft } from "./recipe-draft.ts";
+import { getSession, grantLease, listSessions, revokeLease, startShadowRun } from "./portal-sessions.ts";
 import * as box from "./box.ts";
 import * as composio from "./composio.ts";
 import { chiefOfStaffSystemPrompt } from "./chief-of-staff.ts";
@@ -20,7 +27,7 @@ import {
 } from "./container-computer.ts";
 import { DATA_DIR, ensureDirs, instanceConfigs, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.ts";
 import { resetPathCache } from "./env-path.ts";
-import type { RuntimeEvent } from "./contracts.ts";
+import type { ProviderInstance, RuntimeEvent } from "./contracts.ts";
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { EventBus } from "./harness/bus.ts";
@@ -30,22 +37,56 @@ import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { readCuaConnection } from "./local-computer.ts";
 import { applyPropertyPack } from "./hermes-pack.ts";
-import { hermesStatus } from "./hermes-status.ts";
+import { applyHandsReadiness, hermesStatus } from "./hermes-status.ts";
 import { hermesInstallCommand } from "./hermes-pin.ts";
 import { tryHermesPing } from "./hermes-hands.ts";
-import { readHandsLast, writeHandsLast } from "./hands-last.ts";
+import { ASK_ATTACH_MAX_BYTES, saveAskAttachment } from "./ask-attach.ts";
+import { answerAskFromDesk, productAskFailure, productBudSystemPrompt, productWorkerDump } from "./ask-book.ts";
+import { readHandsLast, readHandsPing, writeHandsPing } from "./hands-last.ts";
 import { readArtifact } from "./audit-artifacts.ts";
+import { readCsvMapping } from "./csv-ledger.ts";
+import { inspectLedgerColumns } from "./import-inspect.ts";
 import { Desk } from "./desk.ts";
 import { seedVault } from "./vault.ts";
 import { openTerminalAndRun, setupCommandFor } from "./engine-setup.ts";
-import { attachModel, installStatus, listModels, modelStatus, preflight, startInstall, type PreflightResult } from "./hermes-bridge.ts";
-import { CANONICAL_BUD_NAME, PRODUCT_MODE, isCanonicalBud, productDenied } from "./product-mode.ts";
-import { LoopManager, type LoopId } from "./routines.ts";
+import { attachModel, installInFlight, installStatus, listModels, modelStatus, preflight, PROVIDER_OPTIONS, startInstall, type PreflightResult } from "./hermes-bridge.ts";
+import { startRepair, uninstallWorker } from "./hermes-lifecycle.ts";
+import { installCrashHandlers, oplog } from "./oplog.ts";
+import { CANONICAL_BUD_NAME, PRODUCT_MODE, PRODUCT_TURN_DEFAULTS, isCanonicalBud, productDenied, productRuntimeEventVisible } from "./product-mode.ts";
+import { coverageFromUncoveredHeld, LoopManager, type LoopId } from "./routines.ts";
 import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
 import { evaluatorForLoop } from "./workflow-catalog.ts";
 import { containsCredential } from "./redact.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
-import { TurnWatchdog } from "./turn-watchdog.ts";
+import { TurnWatchdog, type TurnExpiryReason } from "./turn-watchdog.ts";
+import { SingleFlight } from "./single-flight.ts";
+import { writeDeskContext } from "./desk-context.ts";
+import {
+  bindDiscordBridge,
+  connectDiscord,
+  disconnectDiscord,
+  discordAdapter,
+  discordDecisionAdapter,
+  startDiscordBridge,
+  stopDiscordBridge,
+} from "./channels/discord.ts";
+import {
+  bindTelegramBridge,
+  connectTelegram,
+  disconnectTelegram,
+  startTelegramBridge,
+  stopTelegramBridge,
+  telegramAdapter,
+  telegramDecisionAdapter,
+} from "./channels/telegram.ts";
+import type { ChannelsPayload } from "./channels/types.ts";
+import { pulseLoopSettled } from "./pulses.ts";
+import {
+  bindRemoteDecisions,
+  notifyDeskSnapshot,
+  startRemoteDecisionFlush,
+  stopRemoteDecisionFlush,
+} from "./remote-decisions.ts";
 
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
 const STATIC_DIR = process.env.OMB_STATIC_DIR || null;
@@ -59,6 +100,11 @@ const MIME: Record<string, string> = {
   ".json": "application/json",
   ".woff2": "font/woff2",
 };
+const CSV_IMPORT_MAX_BYTES = 750_000;
+
+function csvDigest(csv: string): string {
+  return createHash("sha256").update(csv, "utf8").digest("hex");
+}
 
 ensureDirs();
 seedVault();
@@ -160,6 +206,10 @@ let bootSelection = { instanceId: "", model: "" };
 const store = new Store(() => bootSelection);
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
+for (const bot of store.bots) {
+  const threadIds = new Set([bot.threadId, ...(bot.tasks ?? []).map((task) => task.threadId)]);
+  for (const threadId of threadIds) store.settleOpenRequests(threadId);
+}
 
 const publicBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => ({
   ...bot,
@@ -181,20 +231,48 @@ function broadcast(payload: unknown) {
   }
 }
 
+function positiveEnvInt(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+function productTurnStopMessage(reason: TurnExpiryReason): string {
+  if (reason === "repeated-tool") {
+    return "I stopped after the same step repeated without progress. Nothing else will run until you ask again.";
+  }
+  if (reason === "tool-budget") {
+    return "I stopped after reaching this request's safe work limit. Nothing else will run until you ask again.";
+  }
+  if (reason === "deadline") {
+    return "I stopped because this turn was taking too long. Nothing else will run until you ask again.";
+  }
+  return "I stopped because Bud stopped responding. Nothing else will run until you ask again.";
+}
+
+const expectedStoppedThreads = new Set<string>();
+
 const watchdog = new TurnWatchdog({
   stallMs: Number(process.env.OMB_TURN_STALL_MS) || 20 * 60_000,
   checkMs: 30_000,
-  onStall: (turn) => {
+  maxMs: PRODUCT_MODE ? positiveEnvInt("OMB_PRODUCT_TURN_MAX_MS", PRODUCT_TURN_DEFAULTS.maxMs) : undefined,
+  maxTools: PRODUCT_MODE ? positiveEnvInt("OMB_PRODUCT_TURN_MAX_TOOLS", PRODUCT_TURN_DEFAULTS.maxTools) : undefined,
+  maxRepeatedTool: PRODUCT_MODE
+    ? positiveEnvInt("OMB_PRODUCT_TURN_MAX_REPEATED_TOOL", PRODUCT_TURN_DEFAULTS.maxRepeatedTool)
+    : undefined,
+  onStall: (turn, reason) => {
     const bot = store.bot(turn.botId);
     const instance = bot ? registry.get(bot.modelSelection.instanceId) : null;
+    if (PRODUCT_MODE) expectedStoppedThreads.add(turn.threadId);
     void instance?.adapter.interruptTurn(turn.threadId).catch(() => {});
     if (!bot) return;
     store.patchBot(bot.id, { busy: false });
-    const message = store.appendMessage(turn.threadId, {
-      role: "bot",
-      kind: "activity",
-      tool: { name: "error: this turn stalled — no activity for too long", ok: false },
-    });
+    const message = PRODUCT_MODE
+      ? store.appendMessage(turn.threadId, { role: "bot", kind: "text", text: productTurnStopMessage(reason) })
+      : store.appendMessage(turn.threadId, {
+          role: "bot",
+          kind: "activity",
+          tool: { name: "error: this turn stalled — no activity for too long", ok: false },
+        });
     broadcast({ kind: "message", threadId: turn.threadId, message });
     broadcast({ kind: "bot", bot: store.bot(bot.id) });
   },
@@ -208,13 +286,40 @@ watchdog.start();
 // item/request ids are only unique within a thread, so two bots acting at
 // once can collide on a bare id and patch each other's messages.
 const toolMessageByItem = new Map<string, string>(); // threadId:itemId -> messageId
+const toolNameByItem = new Map<string, string>(); // threadId:itemId -> tool title (history)
+const turnStartedAt = new Map<string, number>(); // threadId:turnId -> started ms
 const askMessageByRequest = new Map<string, string>(); // threadId:requestId -> messageId
+
+async function denyPendingRequests(threadId: string, instance: ProviderInstance | null | undefined): Promise<void> {
+  const prefix = `${threadId}:`;
+  const requestIds = [...askMessageByRequest.keys()]
+    .filter((key) => key.startsWith(prefix))
+    .map((key) => key.slice(prefix.length));
+  await Promise.allSettled(
+    requestIds.map((requestId) =>
+      instance?.adapter.respondToRequest(threadId, requestId, {
+        behavior: "deny",
+        message: "The user stopped this turn.",
+      }),
+    ),
+  );
+  for (const message of store.settleOpenRequests(threadId)) {
+    broadcast({ kind: "message.patch", threadId, message });
+  }
+  for (const requestId of requestIds) askMessageByRequest.delete(`${threadId}:${requestId}`);
+  watchdog.setWaitingOnHuman(threadId, false);
+}
 
 // Group threads: the fold needs to know WHO is talking — the turn engine
 // records the active member here before dispatching its turn.
 const groupSpeakers = new Map<string, { botId: string; name: string; color: string }>();
 let loops: LoopManager | null = null;
 const desk = new Desk();
+try {
+  writeDeskContext(desk.snapshot());
+} catch {
+  /* Desk remains usable if its read-only worker projection cannot be refreshed. */
+}
 // The Local VM is intentionally one shared, visible desktop. Two agents
 // driving it simultaneously would mix clicks, keystrokes and screenshots,
 // so only one thread may lease it at a time.
@@ -226,11 +331,28 @@ bus.subscribe((event: RuntimeEvent) => {
   if (event.type === "request.opened") watchdog.setWaitingOnHuman(event.threadId, true);
   if (event.type === "request.resolved") watchdog.setWaitingOnHuman(event.threadId, false);
   if (event.type === "turn.completed") watchdog.settle(event.threadId);
-  broadcast({ kind: "runtime", event });
   const bot = store.botByThread(event.threadId);
   const group = bot ? undefined : store.groupByThread(event.threadId);
   if (!bot && !group) return;
   const speaker = group ? groupSpeakers.get(event.threadId) : undefined;
+  const intentionallyStopped = PRODUCT_MODE && expectedStoppedThreads.has(event.threadId);
+  if (intentionallyStopped && event.type === "request.opened") {
+    const owner = bot ?? (speaker ? store.bot(speaker.botId) : null);
+    const instance = event.providerInstanceId
+      ? registry.get(event.providerInstanceId)
+      : owner
+        ? registry.get(owner.modelSelection.instanceId)
+        : null;
+    if (event.requestId) {
+      void instance?.adapter.respondToRequest(event.threadId, event.requestId, {
+        behavior: "deny",
+        message: "The user stopped this turn.",
+      }).catch(() => {});
+    }
+    return;
+  }
+  if (intentionallyStopped && event.type !== "request.resolved" && event.type !== "turn.completed") return;
+  if (!PRODUCT_MODE || productRuntimeEventVisible(event)) broadcast({ kind: "runtime", event });
 
   const pushMessage = (m: Omit<Message, "id" | "at">) => {
     const message = store.appendMessage(event.threadId, group && m.role === "bot" ? { ...m, from: speaker } : m);
@@ -244,23 +366,51 @@ bus.subscribe((event: RuntimeEvent) => {
         store.setResumeCursor(bot.id, event.providerInstanceId, event.sessionId, event.threadId);
       }
       break;
+    case "turn.started":
+      if (bot && isCanonicalBud(bot.id) && event.turnId) {
+        const started = Date.parse(event.createdAt);
+        turnStartedAt.set(`${event.threadId}:${event.turnId}`, Number.isFinite(started) ? started : Date.now());
+      }
+      break;
     case "item.completed":
       if (event.itemType === "assistant_text") {
-        pushMessage({ role: "bot", kind: "text", text: event.text });
+        // A provider failure can land as a normal assistant reply (the worker
+        // prints its retry dump and ends the turn). Answer in PM language and
+        // drop the resume cursor so the next turn gets a fresh session.
+        const dump = PRODUCT_MODE ? productWorkerDump(event.text) : null;
+        pushMessage({ role: "bot", kind: "text", text: dump ?? event.text });
+        if (dump && bot) {
+          store.clearResumeCursor(bot.id, event.providerInstanceId ?? bot.modelSelection.instanceId, event.threadId);
+        }
       } else if (event.itemType === "tool" && event.itemId) {
         const itemKey = `${event.threadId}:${event.itemId}`;
         const messageId = toolMessageByItem.get(itemKey);
-        let toolName = "tool";
+        let toolName = toolNameByItem.get(itemKey) ?? "tool";
+        toolNameByItem.delete(itemKey);
         if (messageId) {
           // the whole tool object is replaced, so carry `spoken` across —
           // dropping it here would silently un-narrate every completed tool
           const existing = store.messagesFor(event.threadId).find((m) => m.id === messageId)?.tool;
-          toolName = existing?.name ?? "tool";
+          toolName = existing?.name ?? toolName;
           const patched = store.patchMessage(event.threadId, messageId, {
             tool: { name: toolName, ok: event.ok, spoken: existing?.spoken },
           });
           if (patched) broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
           toolMessageByItem.delete(itemKey);
+        }
+        if (bot && isCanonicalBud(bot.id)) {
+          try {
+            appendHistory({
+              kind: "tool",
+              name: toolName,
+              ok: Boolean(event.ok),
+              detail: "",
+              threadId: event.threadId,
+              turnId: event.turnId,
+            });
+          } catch {
+            /* history must not take the desk down */
+          }
         }
         // the bot just acted ON ITS SCREEN — refresh the preview now. Only
         // computer tools can change the screen, and each capture competes
@@ -273,6 +423,11 @@ bus.subscribe((event: RuntimeEvent) => {
       break;
     case "item.started":
       if (event.itemType === "tool") {
+        watchdog.noteTool(event.threadId, event.title);
+        if (event.itemId) toolNameByItem.set(`${event.threadId}:${event.itemId}`, event.title ?? "tool");
+        // Raw provider tool names are implementation noise in the single-Bud
+        // product. Permission cards remain visible and authoritative.
+        if (PRODUCT_MODE) break;
         // ask_bot's raw tool chip is redundant — the internal endpoint
         // appends a richer "Messaged @X" chip linking to the channel
         if (event.title?.endsWith("__ask_bot")) break;
@@ -297,9 +452,21 @@ bus.subscribe((event: RuntimeEvent) => {
       const asker = bot ?? (speaker ? store.bot(speaker.botId) : undefined);
       // RealBud never auto-answers a permission, whatever the bot record
       // says. Auto mode exists only in the legacy fleet (OMB_TEST_FLEET=1).
-      const settled = permission && !PRODUCT_MODE && asker && event.requestId
-        ? autoDecision(asker, event.tool, event.summary)
-        : null;
+      // Product mode uses standing rules (guards still win).
+      let settled: string | null = null;
+      let ruleDeny = false;
+      if (permission && asker && event.requestId) {
+        if (!PRODUCT_MODE) {
+          settled = autoDecision(asker, event.tool, event.summary);
+        } else {
+          const verdict = evaluateRules(loadRules(), event.tool, event.summary);
+          if (verdict) {
+            const key = approvalKey(event.tool, event.summary);
+            settled = `${verdict === "deny" ? "denied" : "allowed"} by your rule: ${key}`;
+            ruleDeny = verdict === "deny";
+          }
+        }
+      }
       if (settled && asker && event.requestId) {
         const instance = event.providerInstanceId
           ? registry.get(event.providerInstanceId)
@@ -313,11 +480,18 @@ bus.subscribe((event: RuntimeEvent) => {
         void (async () => {
           try {
             if (!instance) throw new Error("provider unavailable");
-            await instance.adapter.respondToRequest(event.threadId, requestId, { behavior: "allow" });
+            await instance.adapter.respondToRequest(
+              event.threadId,
+              requestId,
+              ruleDeny ? { behavior: "deny", message: "Denied by a standing rule." } : { behavior: "allow" },
+            );
             pushMessage({
               role: "bot",
               kind: "activity",
-              tool: { name: `${settled}: ${summary.slice(0, 120)}`, ok: true },
+              tool: {
+                name: PRODUCT_MODE ? settled : `${settled}: ${summary.slice(0, 120)}`,
+                ok: !ruleDeny,
+              },
             });
           } catch {
             // couldn't answer it for them — hand it back to the human
@@ -374,6 +548,7 @@ bus.subscribe((event: RuntimeEvent) => {
       break;
     }
     case "runtime.error":
+      if (PRODUCT_MODE && expectedStoppedThreads.has(event.threadId)) break;
       pushMessage({
         role: "bot",
         kind: "activity",
@@ -381,7 +556,34 @@ bus.subscribe((event: RuntimeEvent) => {
       });
       break;
     case "turn.completed": {
+      if (bot && isCanonicalBud(bot.id)) {
+        const turnKey = event.turnId ? `${event.threadId}:${event.turnId}` : "";
+        const started = turnKey ? turnStartedAt.get(turnKey) : undefined;
+        if (turnKey) turnStartedAt.delete(turnKey);
+        const ended = Date.parse(event.createdAt);
+        const durationMs =
+          started != null && Number.isFinite(started) && Number.isFinite(ended) && ended >= started
+            ? ended - started
+            : undefined;
+        try {
+          appendHistory({
+            kind: "turn",
+            name: "ask turn",
+            ok: Boolean(event.ok),
+            detail: "",
+            threadId: event.threadId,
+            turnId: event.turnId,
+            ...(durationMs !== undefined ? { durationMs } : {}),
+          });
+        } catch {
+          /* history must not take the desk down */
+        }
+      }
       if (activeVmThreadId === event.threadId) activeVmThreadId = null;
+      if (PRODUCT_MODE && expectedStoppedThreads.delete(event.threadId)) {
+        stopScreenPoller(bot?.id ?? "");
+        break;
+      }
       if (bot) {
         store.patchBot(bot.id, { busy: false, unread: true });
         broadcast({ kind: "bot", bot: store.bot(bot.id) });
@@ -512,6 +714,18 @@ async function startTurn(
   // a task takes its name from the first thing you asked it to do
   if (text.trim()) store.titleTaskFromFirstMessage(bot.id, text, threadId);
 
+  const bookReply = PRODUCT_MODE && isCanonicalBud(bot.id) ? answerAskFromDesk(text, desk.snapshot()) : null;
+  if (bookReply) {
+    let userMessage = opts?.userMessage;
+    if (!userMessage) {
+      userMessage = store.appendMessage(threadId, { role: "user", kind: "text", text });
+      broadcast({ kind: "message", threadId, message: userMessage });
+    }
+    const reply = store.appendMessage(threadId, { role: "bot", kind: "text", text: bookReply });
+    broadcast({ kind: "message", threadId, message: reply });
+    return;
+  }
+
   const instance = registry.get(bot.modelSelection.instanceId);
   if (!instance) {
     throw Object.assign(
@@ -569,6 +783,7 @@ async function startTurn(
   // in the background — box provisioning can take ~90s and must never
   // hang the HTTP request
   store.patchBot(bot.id, { busy: true, unread: false });
+  expectedStoppedThreads.delete(threadId);
   watchdog.watch(threadId, bot.id);
   broadcast({ kind: "bot", bot: store.bot(bot.id) });
 
@@ -582,9 +797,9 @@ async function startTurn(
           model,
           resumeCursor: rewound ? undefined : task.resumeCursors[instanceId],
           transcript,
-          system:
-            `You are Bud, the one RealBud worker. Draft and explain only. Never send, pay, or open a computer. Desk owns approvals.`,
+          system: productBudSystemPrompt(),
           integrations: {},
+          ...(readCuaConnection() ? { computer: true } : {}),
         });
         if (rewound) store.patchBot(bot.id, { rewound: false, resumeCursors: {} });
         return;
@@ -728,11 +943,19 @@ async function startTurn(
       if (previewBoxId) startScreenPoller(bot.id, previewBoxId);
     } catch (e) {
       if (activeVmThreadId === threadId) activeVmThreadId = null;
-      const message = e instanceof Error ? e.message : String(e);
+      if (PRODUCT_MODE && expectedStoppedThreads.delete(threadId)) {
+        watchdog.settle(threadId);
+        store.patchBot(bot.id, { busy: false });
+        broadcast({ kind: "bot", bot: store.bot(bot.id) });
+        return;
+      }
+      const raw = e instanceof Error ? e.message : String(e);
+      const message = PRODUCT_MODE ? productAskFailure(raw) : raw;
       const failure = store.appendMessage(threadId, {
         role: "bot",
-        kind: "activity",
-        tool: { name: `error: ${message.slice(0, 160)}`, ok: false },
+        kind: PRODUCT_MODE ? "text" : "activity",
+        text: PRODUCT_MODE ? message : undefined,
+        tool: PRODUCT_MODE ? undefined : { name: `error: ${message.slice(0, 160)}`, ok: false },
       });
       broadcast({ kind: "message", threadId, message: failure });
       watchdog.settle(threadId);
@@ -747,35 +970,98 @@ async function startTurn(
 // RealBud owns WHEN; Hermes owns HOW (headless, facts only, no cron).
 // A loop is never a bot turn, a prompt, or a second agent.
 function commitDesk(snapshot: ReturnType<Desk["snapshot"]>) {
+  try {
+    writeDeskContext(snapshot);
+  } catch {
+    /* The durable Desk write already succeeded; projection repair can retry on the next commit or boot. */
+  }
   broadcast({ kind: "desk", snapshot });
+  notifyDeskSnapshot(snapshot);
+}
+
+bindRemoteDecisions({
+  desk,
+  commit: commitDesk,
+  channels: [telegramDecisionAdapter(), discordDecisionAdapter()],
+});
+
+// Desk, Schedule, and a fast double-click all reach the same Recheck door.
+// One worker read must mint one durable Desk revision; overlapping callers
+// wait for that same result instead of duplicating facts, drafts, or receipts.
+const deskCheckFlight = new SingleFlight<ReturnType<Desk["snapshot"]>>();
+function runDeskCheck(origin?: Parameters<Desk["withRoutineOrigin"]>[0]) {
+  return deskCheckFlight.run(async () => {
+    const check = async () => {
+      const snapshot = await desk.runMorningCheckLive();
+      commitDesk(snapshot);
+      return snapshot;
+    };
+    return origin ? desk.withRoutineOrigin(origin, check) : check();
+  });
 }
 
 let installPreflight: PreflightResult | null = null;
 
+function emitLoopAndPulse(payload: unknown) {
+  broadcast(payload);
+  if (process.env.VITEST) return;
+  if (!payload || typeof payload !== "object") return;
+  const rec = payload as { kind?: string; run?: { loopId?: string; status?: string } };
+  if (rec.kind !== "loop.run" || !rec.run?.loopId) return;
+  const status = rec.run.status;
+  if (status !== "completed" && status !== "failed" && status !== "partial" && status !== "missed") return;
+  void pulseLoopSettled(rec.run.loopId, desk.snapshot()).catch(() => {
+    /* a channel miss must never fail the clock */
+  });
+}
+
 loops = new LoopManager({
-  emit: broadcast,
+  emit: emitLoopAndPulse,
+  listRecipes,
+  setRecipeEnabled: (recipeId, enabled) => {
+    try {
+      const current = getRecipe(recipeId);
+      if (!current) return;
+      if (!enabled) patchRecipeStatus(recipeId, "paused");
+      else if (current.status === "paused") patchRecipeStatus(recipeId, "shadow");
+    } catch {
+      /* job already gone — the clock drop is enough */
+    }
+  },
   execute: async (loop, run) => {
-    return desk.withRoutineOrigin({ kind: "routine", runId: run.id, loopId: loop.id }, async () => {
-      if (desk.recovery.active) return { ok: false, detail: "desk is in recovery — schedules are paused" };
-      const spec = evaluatorForLoop(loop.id);
-      if (spec && spec.mayLaunchCua) return { ok: false, detail: "the clock must not launch a browser" };
-      if (loop.id === "owner-letter") {
+    if (desk.recovery.active) return { ok: false, detail: "desk is in recovery — schedules are paused" };
+    if (loop.id.startsWith("recipe-")) {
+      const recipe = getRecipe(loop.id.slice("recipe-".length));
+      if (!recipe) return { ok: false, detail: "that job is no longer on the book" };
+      if (!run.manual && !recipeClockRunnable(recipe)) {
+        return { ok: false, detail: "Waiting for plan approval" };
+      }
+      const session = await startShadowRun(recipe);
+      return { ok: session.state === "done", detail: session.detail || "Shadow run — nothing was browsed or clicked." };
+    }
+    const spec = evaluatorForLoop(loop.id);
+    if (spec && spec.mayLaunchCua) return { ok: false, detail: "the clock must not launch a browser" };
+    const origin = { kind: "routine" as const, runId: run.id, loopId: loop.id };
+    if (loop.id === "owner-letter") {
+      return desk.withRoutineOrigin(origin, async () => {
         const before = desk.snapshot().drafts.filter((d) => d.kind === "owner-letter").length;
         const snapshot = desk.draftOwnerLetters();
         commitDesk(snapshot);
         const after = snapshot.drafts.filter((d) => d.kind === "owner-letter").length;
         return { ok: true, detail: `Owner letters on Desk: ${after} (${after - before} new this week).` };
-      }
-      if (loop.id !== "morning-arrears") return { ok: false, detail: "not built yet" };
-      // Same door as Desk Recheck. Demo miss stays labelled Demo and writes
-      // the shared worker clock. The fixture path never silently skips the worker.
-      const snapshot = await desk.runMorningCheckLive();
-      commitDesk(snapshot);
-      if (snapshot.hands === "held") return { ok: false, detail: snapshot.handsDetail ?? "held" };
-      if (snapshot.mode === "demo") return { ok: true, detail: snapshot.handsDetail ?? "Demo check completed." };
-      const live = snapshot.hands === "hermes" || snapshot.hands === "csv";
-      return { ok: live, detail: snapshot.handsDetail ?? (live ? "Desk check completed." : "live check did not use live facts") };
-    });
+      });
+    }
+    if (loop.id !== "morning-arrears") return { ok: false, detail: "not built yet" };
+    // Same door as Desk Recheck. Demo miss stays labelled Demo and writes
+    // the shared worker clock. The fixture path never silently skips the worker.
+    const snapshot = await runDeskCheck(origin);
+    if (snapshot.hands === "held") {
+      const coverage = coverageFromUncoveredHeld(snapshot.handsDetail, snapshot.results);
+      return { ok: false, detail: snapshot.handsDetail ?? "held", ...coverage };
+    }
+    if (snapshot.mode === "demo") return { ok: true, detail: snapshot.handsDetail ?? "Demo check completed." };
+    const live = snapshot.hands === "hermes" || snapshot.hands === "csv";
+    return { ok: live, detail: snapshot.handsDetail ?? (live ? "Desk check completed." : "live check did not use live facts") };
   },
 });
 loops.start();
@@ -975,7 +1261,7 @@ function json(res: ServerResponse, status: number, body: unknown) {
   res.end(data);
 }
 
-function readBody(req: IncomingMessage): Promise<any> {
+function readBody(req: IncomingMessage, maxBytes = 1_000_000): Promise<any> {
   return new Promise((resolve, reject) => {
     let data = "";
     let bytes = 0;
@@ -989,7 +1275,7 @@ function readBody(req: IncomingMessage): Promise<any> {
     req.on("data", (c) => {
       if (done) return;
       bytes += typeof c === "string" ? Buffer.byteLength(c) : c.length;
-      if (bytes > 1_000_000) {
+      if (bytes > maxBytes) {
         // Keep draining the socket, but stop retaining attacker-controlled
         // bytes. Destroying the request here prevents the caller from
         // receiving the useful 413 response.
@@ -1179,12 +1465,189 @@ const server = createServer(async (req, res) => {
       return run ? json(res, 200, { run }) : json(res, 404, { error: "no such run" });
     }
 
+    // ── standing rules (Ask Always-allow; You → Bud's rules) ──────────
+    if (path === "/api/rules" && method === "GET") {
+      return json(res, 200, { rules: loadRules() });
+    }
+    if (path === "/api/rules" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      const key = typeof body.key === "string" ? body.key.trim() : "";
+      if (!key || key.length > 120) return json(res, 400, { error: "key must be 1–120 characters" });
+      if (body.decision !== "allow" && body.decision !== "deny") {
+        return json(res, 400, { error: "decision must be allow or deny" });
+      }
+      let label: string | undefined;
+      if (body.label !== undefined) {
+        if (typeof body.label !== "string" || body.label.length > 80) {
+          return json(res, 400, { error: "label must be at most 80 characters" });
+        }
+        label = body.label;
+      }
+      return json(res, 201, { rules: addRule(key, body.decision, label) });
+    }
+    const ruleMatch = path.match(/^\/api\/rules\/([\w-]+)$/);
+    if (ruleMatch && method === "DELETE") {
+      try {
+        return json(res, 200, { rules: removeRule(ruleMatch[1]) });
+      } catch (e) {
+        const status = (e as { status?: number }).status ?? 500;
+        return json(res, status, { error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+
+    // ── Law watch (shop reference drift; a person confirms before append) ──
+    if (path === "/api/law-watch" && method === "GET") {
+      return json(res, 200, lawWatchView());
+    }
+    if (path === "/api/law-watch/check" && method === "POST") {
+      const result = await runLawWatch({
+        jurisdictions: desk.snapshot().book?.agency?.jurisdictions ?? [],
+      });
+      if (!result) return json(res, 503, { error: "Bud could not re-read the shop reference." });
+      persistLawWatchResult(result);
+      return json(res, 200, lawWatchView());
+    }
+    if (path === "/api/law-watch/apply" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      try {
+        applyLawDrift(body.index);
+        return json(res, 200, lawWatchView());
+      } catch (e) {
+        const status = (e as { status?: number }).status ?? 500;
+        return json(res, status, { error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    if (path === "/api/law-watch/schedule" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      if (typeof body.on !== "boolean") return json(res, 400, { error: "on must be true or false" });
+      setLawWatchScheduled(body.on);
+      return json(res, 200, { scheduled: lawWatchView().scheduled });
+    }
+
+    // ── Channels (RealBud owns the door; Ask owns the turn) ──
+    if (path === "/api/channels" && method === "GET") {
+      return json(res, 200, channelsStatus());
+    }
+    const channelMatch = path.match(/^\/api\/channels\/([^/]+)$/);
+    if (channelMatch && (method === "POST" || method === "DELETE")) {
+      const platform = channelMatch[1];
+      if (platform !== "telegram" && platform !== "discord") {
+        return json(res, 404, { error: "unknown channel" });
+      }
+      if (method === "POST") {
+        if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+          return json(res, 415, { error: "content-type must be application/json" });
+        }
+        const body = await readBody(req);
+        const botToken = typeof body.botToken === "string" ? body.botToken.trim() : "";
+        if (!botToken) return json(res, 400, { error: "botToken required" });
+        try {
+          if (platform === "telegram") await connectTelegram(botToken);
+          else await connectDiscord(botToken);
+          return json(res, 200, channelsStatus());
+        } catch (error) {
+          return json(res, 400, { error: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      if (platform === "telegram") disconnectTelegram();
+      else disconnectDiscord();
+      return json(res, 200, channelsStatus());
+    }
+
+    // ── recipes + shadow portal sessions (no browse, no send) ────────
+    if (path === "/api/recipes" && method === "GET") {
+      return json(res, 200, { recipes: listRecipes() });
+    }
+    if (path === "/api/recipes/draft" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      const text = typeof body.text === "string" ? body.text.trim() : "";
+      if (!text) return json(res, 400, { error: "Describe the job in a sentence or two." });
+      if (text.length > 4_000) return json(res, 400, { error: "That description is too long." });
+      const shaped = await shapeRecipeDraft(text);
+      if (!shaped.draft) {
+        return json(res, 503, { error: `Bud could not shape that job — ${shaped.detail}` });
+      }
+      return json(res, 200, { draft: shaped.draft });
+    }
+    if (path === "/api/recipes" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      return json(res, 201, { recipes: saveRecipe(body.draft) });
+    }
+    if (path === "/api/computer-history" && method === "GET") {
+      return json(res, 200, { entries: listHistory(50) });
+    }
+    const recipeRun = path.match(/^\/api\/recipes\/([\w-]+)\/run$/);
+    if (recipeRun && method === "POST") {
+      const recipe = getRecipe(recipeRun[1]);
+      if (!recipe) return json(res, 404, { error: "no such recipe" });
+      return json(res, 200, { session: await startShadowRun(recipe) });
+    }
+    const recipeDistill = path.match(/^\/api\/recipes\/([\w-]+)\/distill$/);
+    if (recipeDistill && method === "POST") {
+      return json(res, 200, await distillRecipe(recipeDistill[1]));
+    }
+    const recipeMatch = path.match(/^\/api\/recipes\/([\w-]+)$/);
+    if (recipeMatch && method === "PATCH") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      return json(res, 200, { recipes: patchRecipe(recipeMatch[1], body) });
+    }
+    if (recipeMatch && method === "DELETE") {
+      return json(res, 200, { recipes: deleteRecipe(recipeMatch[1]) });
+    }
+    if (path === "/api/portal-sessions" && method === "GET") {
+      return json(res, 200, { sessions: listSessions() });
+    }
+    const sessionLease = path.match(/^\/api\/portal-sessions\/([\w-]+)\/lease$/);
+    if (sessionLease && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const session = getSession(sessionLease[1]);
+      if (!session) return json(res, 404, { error: "no such session" });
+      const body = await readBody(req);
+      return json(res, 200, { session: grantLease(session, String(body.origin ?? "")) });
+    }
+    if (sessionLease && method === "DELETE") {
+      const session = getSession(sessionLease[1]);
+      if (!session) return json(res, 404, { error: "no such session" });
+      return json(res, 200, { session: revokeLease(session) });
+    }
+
     // ── PM desk (never sends) ────────────────────────────────────────
+    if (path === "/api/ask/attachments" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req, Math.ceil(ASK_ATTACH_MAX_BYTES * 1.4) + 4_096);
+      return json(res, 201, saveAskAttachment(DATA_DIR, body));
+    }
     if (path === "/api/desk" && method === "GET") {
       return json(res, 200, desk.snapshot());
     }
     if (path === "/api/desk/check" && method === "POST") {
-      const snapshot = await desk.runMorningCheckLive();
+      const snapshot = await runDeskCheck();
+      return json(res, 200, snapshot);
+    }
+    if (path === "/api/desk/practice" && method === "POST") {
+      const snapshot = desk.runMorningCheck();
       commitDesk(snapshot);
       return json(res, 200, snapshot);
     }
@@ -1211,11 +1674,72 @@ const server = createServer(async (req, res) => {
         return json(res, status, { error: e instanceof Error ? e.message : String(e) });
       }
     }
-    if (path === "/api/desk/import" && method === "POST") {
+    if (path === "/api/desk/import/preview" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
       const body = await readBody(req);
-      const snapshot = desk.importCsv(String(body.csv ?? ""), typeof body.observedAt === "number" ? body.observedAt : undefined);
-      commitDesk(snapshot);
-      return json(res, 200, snapshot);
+      const csv = String(body.csv ?? "");
+      if (Buffer.byteLength(csv, "utf8") > CSV_IMPORT_MAX_BYTES) {
+        return json(res, 413, { error: "CSV is too large; use a file under 750 KB" });
+      }
+      try {
+        const observedAt = Date.now();
+        const mapping = readCsvMapping(body.mapping);
+        const preview = desk.previewCsv(csv, observedAt, mapping);
+        return json(res, 200, { ...preview, digest: csvDigest(csv) });
+      } catch (e) {
+        const status = (e as { status?: number }).status ?? 500;
+        return json(res, status, { error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    if (path === "/api/desk/import/inspect" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      const csv = String(body.csv ?? "");
+      if (Buffer.byteLength(csv, "utf8") > CSV_IMPORT_MAX_BYTES) {
+        return json(res, 413, { error: "CSV is too large; use a file under 750 KB" });
+      }
+      try {
+        return json(res, 200, await inspectLedgerColumns(csv));
+      } catch (e) {
+        const status = (e as { status?: number }).status ?? 500;
+        return json(res, status, { error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    if (path === "/api/desk/import" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      const csv = String(body.csv ?? "");
+      if (Buffer.byteLength(csv, "utf8") > CSV_IMPORT_MAX_BYTES) {
+        return json(res, 413, { error: "CSV is too large; use a file under 750 KB" });
+      }
+      if (typeof body.expectedRevision !== "number" || typeof body.observedAt !== "number") {
+        return json(res, 400, { error: "preview the CSV before importing it" });
+      }
+      const expectedDigest = String(body.expectedDigest ?? "");
+      if (!/^[0-9a-f]{64}$/.test(expectedDigest) || expectedDigest !== csvDigest(csv)) {
+        return json(res, 400, { error: "CSV changed after review; preview it again" });
+      }
+      try {
+        // Revision + digest bind this commit to the reviewed book and exact file.
+        const snapshot = desk.command({
+          type: "import-csv",
+          expectedRevision: body.expectedRevision,
+          csv,
+          observedAt: body.observedAt,
+          mapping: readCsvMapping(body.mapping),
+        });
+        commitDesk(snapshot);
+        return json(res, 200, snapshot);
+      } catch (e) {
+        const status = (e as { status?: number }).status ?? 500;
+        return json(res, status, { error: e instanceof Error ? e.message : String(e) });
+      }
     }
     if (path === "/api/desk/recovery-key" && method === "GET") {
       return json(res, 200, { hex: desk.recoveryKeyHex() });
@@ -1228,6 +1752,23 @@ const server = createServer(async (req, res) => {
       try {
         const result = desk.unlockWithKey(String(body.key ?? ""));
         return json(res, 200, { ...result, message: "Book restored. Restart RealBud to open it." });
+      } catch (e) {
+        const status = (e as { status?: number }).status ?? 500;
+        return json(res, status, { error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    if (path === "/api/desk/recovery/start-again" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      try {
+        const result = desk.startAgain(String(body.confirmation ?? ""));
+        return json(res, 200, {
+          ...result,
+          preserved: result.preserved.length,
+          message: "The locked book was preserved. Restart RealBud to begin with a new book.",
+        });
       } catch (e) {
         const status = (e as { status?: number }).status ?? 500;
         return json(res, status, { error: e instanceof Error ? e.message : String(e) });
@@ -1338,7 +1879,11 @@ const server = createServer(async (req, res) => {
     const deskEdit = path.match(/^\/api\/desk\/drafts\/([\w-]+)$/);
     if (deskEdit && method === "PATCH") {
       const body = await readBody(req);
-      const draft = desk.editDraft(deskEdit[1], String(body.body ?? ""));
+      const draft = desk.editDraft(
+        deskEdit[1],
+        String(body.body ?? ""),
+        typeof body.expectedRevision === "number" ? body.expectedRevision : undefined,
+      );
       commitDesk(desk.snapshot());
       return json(res, 200, { draft });
     }
@@ -1382,8 +1927,8 @@ const server = createServer(async (req, res) => {
 
     // ── pinned Hermes worker (Desk hands; never Hermes Desktop) ────────
     if (path === "/api/hermes" && method === "GET") {
-      const status = await hermesStatus();
-      return json(res, 200, { ...status, lastTest: readHandsLast(DATA_DIR) });
+      const status = applyHandsReadiness(await hermesStatus(), readHandsPing(DATA_DIR));
+      return json(res, 200, { ...status, lastTest: readHandsLast(DATA_DIR), lastPing: readHandsPing(DATA_DIR) });
     }
     if (path === "/api/hermes/test" && method === "POST") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
@@ -1391,7 +1936,7 @@ const server = createServer(async (req, res) => {
       }
       await readBody(req);
       const ping = await tryHermesPing();
-      writeHandsLast(DATA_DIR, { at: Date.now(), ok: ping.ok, detail: ping.detail, kind: "ping" });
+      writeHandsPing(DATA_DIR, { at: Date.now(), ok: ping.ok, detail: ping.detail, kind: "ping" });
       return json(res, 200, ping);
     }
     if (path === "/api/hermes/model" && method === "POST") {
@@ -1408,11 +1953,18 @@ const server = createServer(async (req, res) => {
           baseUrl: body.baseUrl ? String(body.baseUrl) : undefined,
         });
         const ping = await tryHermesPing();
+        // Connecting a model performs the same authoritative hands check as
+        // the standalone action. Persist it so a reload cannot forget a
+        // successful check or falsely present a failed one as ready.
+        writeHandsPing(DATA_DIR, { at: Date.now(), ok: ping.ok, detail: ping.detail, kind: "ping" });
         return json(res, 200, { ok: true, model: status, ping });
       } catch (e) {
         const status = (e as { status?: number }).status ?? 500;
         return json(res, status, { error: e instanceof Error ? e.message : String(e) });
       }
+    }
+    if (path === "/api/hermes/providers" && method === "GET") {
+      return json(res, 200, { providers: PROVIDER_OPTIONS });
     }
     if (path === "/api/hermes/models" && method === "GET") {
       const provider = url.searchParams.get("provider") ?? "";
@@ -1431,7 +1983,17 @@ const server = createServer(async (req, res) => {
       } catch (e) {
         return json(res, 500, { error: e instanceof Error ? e.message : String(e) });
       }
-      return json(res, 200, await hermesStatus());
+      writeHandsPing(DATA_DIR, {
+        at: Date.now(),
+        ok: false,
+        detail: "Property safeguards changed. Run the private readiness check again.",
+        kind: "ping",
+      });
+      return json(res, 200, {
+        ...applyHandsReadiness(await hermesStatus(), readHandsPing(DATA_DIR)),
+        lastTest: readHandsLast(DATA_DIR),
+        lastPing: readHandsPing(DATA_DIR),
+      });
     }
     if (path === "/api/hermes/install" && method === "POST") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
@@ -1447,10 +2009,56 @@ const server = createServer(async (req, res) => {
         return json(res, 409, { error: "missing dependencies", install: installStatus(), preflight: installPreflight });
       }
       const job = startInstall(command);
+      writeHandsPing(DATA_DIR, {
+        at: Date.now(),
+        ok: false,
+        detail: "The worker install changed. Run the private readiness check again when it finishes.",
+        kind: "ping",
+      });
       return json(res, 202, { install: job, preflight: installPreflight });
     }
     if (path === "/api/hermes/install/status" && method === "GET") {
       return json(res, 200, { install: installStatus(), preflight: installPreflight });
+    }
+    if (path === "/api/hermes/repair" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      await readBody(req);
+      if (installInFlight()) {
+        return json(res, 409, { error: "an install is already running", install: installStatus(), preflight: installPreflight });
+      }
+      const command = hermesInstallCommand(process.platform);
+      if (!command) return json(res, 400, { error: "no installer for this platform — CSV-only mode" });
+      installPreflight = await preflight();
+      if (!installPreflight.ok) {
+        return json(res, 409, { error: "missing dependencies", install: installStatus(), preflight: installPreflight });
+      }
+      const job = startRepair(command);
+      writeHandsPing(DATA_DIR, {
+        at: Date.now(),
+        ok: false,
+        detail: "The worker repair changed. Run the private readiness check again when it finishes.",
+        kind: "ping",
+      });
+      return json(res, 202, { install: job, preflight: installPreflight });
+    }
+    if (path === "/api/hermes/uninstall" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      await readBody(req);
+      try {
+        const status = await uninstallWorker({ dataDir: DATA_DIR });
+        return json(res, 200, {
+          ...applyHandsReadiness(status, readHandsPing(DATA_DIR)),
+          lastTest: readHandsLast(DATA_DIR),
+          lastPing: readHandsPing(DATA_DIR),
+        });
+      } catch (e) {
+        const status = (e as { status?: number }).status ?? 500;
+        return json(res, status, { error: e instanceof Error ? e.message : String(e) });
+      }
     }
 
     // ── events stream ──
@@ -1555,6 +2163,7 @@ const server = createServer(async (req, res) => {
       if (!group) return json(res, 404, { error: "no such room" });
       const busy = group.busyBotId ? store.bot(group.busyBotId) : undefined;
       const instance = busy ? registry.get(busy.modelSelection.instanceId) : undefined;
+      await denyPendingRequests(group.threadId, instance);
       await instance?.adapter.interruptTurn(group.threadId).catch(() => {});
       return json(res, 200, { ok: true });
     }
@@ -1767,8 +2376,24 @@ const server = createServer(async (req, res) => {
     if (m && method === "POST") {
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
+      const wasBusy = bot.busy;
       const instance = registry.get(bot.modelSelection.instanceId);
+      if (PRODUCT_MODE && wasBusy) expectedStoppedThreads.add(bot.threadId);
+      await denyPendingRequests(bot.threadId, instance);
       await instance?.adapter.interruptTurn(bot.threadId);
+      watchdog.settle(bot.threadId);
+      if (wasBusy) {
+        store.patchBot(bot.id, { busy: false });
+        if (PRODUCT_MODE) {
+          const message = store.appendMessage(bot.threadId, {
+            role: "bot",
+            kind: "text",
+            text: "Stopped. Bud will not continue this turn.",
+          });
+          broadcast({ kind: "message", threadId: bot.threadId, message });
+          broadcast({ kind: "bot", bot: store.bot(bot.id) });
+        }
+      }
       return json(res, 200, { ok: true });
     }
 
@@ -2038,12 +2663,49 @@ const server = createServer(async (req, res) => {
   }
 });
 
+installCrashHandlers();
+
+server.on("error", (error) => {
+  // Source runs get one fixed port; a busy one must say so, not hang silent.
+  const detail = `could not listen on 127.0.0.1:${PORT} — ${error.message}`;
+  console.error(`realbud server ${detail}`);
+  oplog("crash", detail);
+  process.exit(1);
+});
+
+function channelsStatus(): ChannelsPayload {
+  return { telegram: telegramAdapter.status(), discord: discordAdapter.status() };
+}
+
+bindTelegramBridge({
+  store,
+  startTurn,
+  subscribe: (listener) => bus.subscribe(listener),
+  broadcast,
+});
+bindDiscordBridge({
+  store,
+  startTurn,
+  subscribe: (listener) => bus.subscribe(listener),
+  broadcast,
+});
+
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`realbud server on http://127.0.0.1:${PORT}`);
+  oplog("boot", `listening on 127.0.0.1:${PORT}`);
+  if (!process.env.VITEST) {
+    startTelegramBridge();
+    startDiscordBridge();
+    startRemoteDecisionFlush();
+  }
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
+    oplog("shutdown", signal);
+    stopTelegramBridge();
+    stopDiscordBridge();
+    stopRemoteDecisionFlush();
     loops?.stop();
     watchdog.stop();
     void registry.disposeAll().finally(() => process.exit(0));

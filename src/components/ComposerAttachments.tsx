@@ -10,6 +10,7 @@ import {
   formatSize,
   pasteSummary,
   type Attachment,
+  type FileAttachment,
 } from "@/lib/composer-attachments";
 
 /** Electron 32 removed File.path — only the preload can name a file. */
@@ -21,10 +22,12 @@ export function ComposerAttachments({
   items,
   onAdd,
   onRemove,
+  persist,
 }: {
   items: Attachment[];
   onAdd: (attachments: Attachment[]) => void;
   onRemove: (id: string) => void;
+  persist?: (file: File) => Promise<FileAttachment | null>;
 }) {
   const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -57,7 +60,11 @@ export function ComposerAttachments({
       depth.current = 0;
       setDragging(false);
       const files = Array.from(e.dataTransfer?.files ?? []);
-      const { attachments, rejectedNames } = await attachmentsFromDroppedFiles(files, pathForFile);
+      const { attachments, rejectedNames } = await attachmentsFromDroppedFiles(
+        files,
+        pathForFile,
+        persist,
+      );
       if (!active) return;
       if (attachments.length) onAdd(attachments);
       setNotice(
@@ -78,7 +85,7 @@ export function ComposerAttachments({
       window.removeEventListener("dragover", onOver);
       window.removeEventListener("drop", onDrop);
     };
-  }, [onAdd]);
+  }, [onAdd, persist]);
 
   return (
     <>

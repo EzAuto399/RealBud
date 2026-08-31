@@ -1,7 +1,7 @@
 import { Loader2 } from "lucide-react";
 
 import { fmtDateTime } from "@/lib/au";
-import { shortStreet, type MorningBrief as MorningBriefModel } from "@/lib/morning-brief";
+import { collapseBriefRows, shortStreet, type MorningBrief as MorningBriefModel } from "@/lib/morning-brief";
 import { StatusLabel } from "../pm";
 
 export function MorningBrief({
@@ -18,6 +18,7 @@ export function MorningBrief({
   const when = brief.lastRunAt
     ? `Last check ${fmtDateTime(brief.lastRunAt, timezone)}`
     : "Recheck has not run";
+  const { expanded, collapsedSummary } = collapseBriefRows(brief.addresses);
 
   return (
     <section className="mt-3 border border-line bg-sheet px-3.5 py-3" aria-label="This morning">
@@ -32,7 +33,7 @@ export function MorningBrief({
         </div>
       </div>
       <ul className="mt-2.5 flex flex-wrap gap-1.5">
-        {brief.addresses.map((row) => {
+        {expanded.map((row) => {
           const canOpen = interactive && (row.attention === "needs-you" || row.attention === "held" || row.attention === "licensee");
           const chip = (
             <StatusLabel tone={row.tone}>
@@ -55,6 +56,7 @@ export function MorningBrief({
             </li>
           );
         })}
+        {collapsedSummary ? <li className="self-center text-[12px] text-ink-muted">{collapsedSummary}</li> : null}
         {brief.addresses.length === 0 ? <li className="text-[12px] text-ink-muted">No addresses on the book.</li> : null}
       </ul>
       <p className="mt-2 text-[11.5px] text-ink-muted">{brief.inboxDetail}</p>
@@ -75,7 +77,7 @@ export function MorningEmpty({
     <div className="flex h-full flex-col items-center justify-center px-6 text-center">
       <p className="max-w-[28rem] text-[15px] text-ink">{brief.headline}</p>
       {brief.lastRunAt == null && brief.addresses.length > 0 ? (
-        <ul className="mt-3 max-w-[28rem] space-y-1 text-[13px] text-ink-muted">
+        <ul className="morning-empty-addresses mt-3 max-w-[28rem] space-y-1 text-[13px] text-ink-muted">
           {brief.addresses.map((row) => (
             <li key={row.propertyId}>{row.address}</li>
           ))}

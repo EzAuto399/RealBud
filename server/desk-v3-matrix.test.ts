@@ -60,6 +60,15 @@ describe("strict V3 decoder", () => {
     expect(again.office.pmUser).toBe("");
   });
 
+  it("opens pre-results V3 books without inventing a completed check", () => {
+    const v3 = migrateV2ToV3(emptyV2(fixtureBook()), migratedAt);
+    const raw = JSON.parse(JSON.stringify(v3));
+    delete raw.results;
+
+    const opened = decodeDeskV3(raw);
+    expect(opened.results).toEqual([]);
+  });
+
   it("loads a V3 book that was written before office existed", () => {
     const v3 = migrateV2ToV3(emptyV2(fixtureBook()), migratedAt);
     const raw = JSON.parse(JSON.stringify(v3)) as { office?: unknown };

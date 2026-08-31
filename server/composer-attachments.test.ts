@@ -83,6 +83,27 @@ describe("composer paste attachments", () => {
     expect(result.rejectedNames).toEqual(["image.png"]);
   });
 
+  it("persists a pathless image when a saver is provided", async () => {
+    const dropped = [
+      {
+        name: "photo.png",
+        size: 10,
+        type: "image/png",
+        path: "",
+        text: async () => "not text",
+      },
+    ];
+    const result = await attachmentsFromDroppedFiles(
+      dropped,
+      (file) => file.path,
+      async (file) => fileAttachment(file.name, "/tmp/ask-uploads/photo.png", file.size),
+    );
+    expect(result.attachments).toEqual([
+      expect.objectContaining({ kind: "file", name: "photo.png", path: "/tmp/ask-uploads/photo.png" }),
+    ]);
+    expect(result.rejectedNames).toEqual([]);
+  });
+
   it("rejects malformed persisted attachments", () => {
     expect(isAttachment({ kind: "paste", id: "a", text: "ok", size: 2, lines: 1 })).toBe(true);
     expect(

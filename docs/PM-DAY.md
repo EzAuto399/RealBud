@@ -1,7 +1,7 @@
 # An Australian PM weekday, mapped onto RealBud
 
 Date: 2026-08-29  
-Canonical constraints: `docs/GOAL-PROMPT.md` wins. Routines stay named kinds. PMs retune them. They do not author jobs.
+Canonical constraints: `docs/GOAL-PROMPT.md` wins. Named routines stay named kinds and PMs retune them; since 2026-08-31 PMs also author *described, bounded* jobs (shadow-first, origin-locked, evidence per run — `docs/PORTAL-WORK.md`), which join the same clock per `docs/EFFORTLESS-DAY.md`.
 
 This is the office day we simulate. It is not a new product surface and not a licence to start inbound mail or a live PMS.
 

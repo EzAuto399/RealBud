@@ -95,10 +95,20 @@ Every component has loading, empty, partial, success, failure, stale and recover
 
 The user interacts only with RealBud. RealBud takes their input and delivers it to the worker programmatically: installs run inside the app with streamed progress, model/provider setup is a form that writes worker config directly, updates are one click. Terminal never opens. The word Hermes never appears outside Advanced diagnostics.
 
+## Bud setup and motion
+
+- The user knows the worker as Bud. Upstream engine names, versions and paths belong in Advanced diagnostics.
+- Setup follows four proven facts in order: Bud is installed, property safeguards are active with manual approvals, a model is connected, and a private readiness check has answered.
+- Show one current action. Later actions remain unavailable until their prerequisite has been proved by the server.
+- A completed check is a durable receipt. Reloading or leaving the page must not invent, lose or upgrade readiness.
+- Motion explains state: thinking while facts load, working while install or checks run, a short success reaction on completion, and an alert reaction on failure.
+- Motion uses transform and opacity, never delays a decision, and has a static reduced-motion equivalent.
+
 ## Onboarding rules
 
-- The product opens working (demo book). Setup never blocks the window.
-- One progressive Go-live checklist inside Desk/You; no wizard modals, no multi-step gates.
+- First run owns the initial window for a short identity and safety orientation. It always offers a clear escape into the working sample desk.
+- A failed save stays on the current step with the person's input intact and a retry. A completed first step resumes safely after restart.
+- Operational Go-live remains a progressive journey inside Desk/You. Recovery is separate, and operational controls stay hidden until first run exits.
 - Smart defaults: system timezone, inferred jurisdiction, AUD, shop-norm courtesy windows, detected Hermes install and provider auth.
 - Permissions (TCC/Accessibility) are requested at first use of the feature that needs them, with a plain-language pre-prompt.
 - Three coach marks maximum, ever. Success is announced; silence is a bug.

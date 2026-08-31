@@ -46,6 +46,7 @@ export function OfficeCard({
   });
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     const next = coerceOffice(office);
@@ -67,9 +68,12 @@ export function OfficeCard({
   const save = async () => {
     setBusy(true);
     setSaved(false);
+    setError("");
     try {
       await onSave({ name: name.trim(), jurisdictions: states, office: draft });
       setSaved(true);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setBusy(false);
     }
@@ -219,6 +223,7 @@ export function OfficeCard({
             {busy ? "Saving" : "Save office"}
           </button>
           {saved ? <span className="text-[12px] text-agency">Saved</span> : null}
+          {error ? <span className="text-[12.5px] text-danger">{error}</span> : null}
         </div>
       </div>
     </Card>

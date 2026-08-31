@@ -26,7 +26,11 @@ export function originAllowed(origin: string | undefined, listenPort: number): b
     if (!LOOPBACK_HOSTS.has(url.hostname.toLowerCase())) return false;
     if (!url.port) return url.protocol === "http:" || url.protocol === "https:";
     const port = Number(url.port);
-    return port === listenPort || port === 5199 || port === 5173;
+    const configuredUiPort = Number(process.env.OMB_UI_PORT);
+    const uiPortAllowed = Number.isInteger(configuredUiPort) && configuredUiPort > 0 && configuredUiPort <= 65_535
+      ? port === configuredUiPort
+      : false;
+    return port === listenPort || port === 5199 || port === 5173 || uiPortAllowed;
   } catch {
     return false;
   }
@@ -74,6 +78,11 @@ export function needsSession(path: string): boolean {
   if (path.startsWith("/api/internal/")) return false;
   return (
     path.startsWith("/api/desk") ||
+    path.startsWith("/api/channels") ||
+    path.startsWith("/api/rules") ||
+    path.startsWith("/api/law-watch") ||
+    path.startsWith("/api/recipes") ||
+    path.startsWith("/api/computer-history") ||
     path.startsWith("/api/loops") ||
     path.startsWith("/api/loop-runs") ||
     path.startsWith("/api/artifacts") ||

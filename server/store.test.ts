@@ -156,6 +156,17 @@ describe("Store", () => {
     expect(reloaded.bot(bot.id)?.resumeCursors).toEqual({ claude: "sess-abc", codex: "thread-xyz" });
   });
 
+  it("clearResumeCursor drops one instance and keeps the rest", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    store.setResumeCursor(bot.id, "hermes", "sess-stale");
+    store.setResumeCursor(bot.id, "codex", "thread-xyz");
+    store.clearResumeCursor(bot.id, "hermes");
+
+    const reloaded = new Store(selection);
+    expect(reloaded.bot(bot.id)?.resumeCursors).toEqual({ codex: "thread-xyz" });
+  });
+
   it("redacts credential-shaped text on bot messages, not user ones", () => {
     const store = new Store(selection);
     const bot = store.createBot();
@@ -174,6 +185,31 @@ describe("Store", () => {
     expect(store.bots[0]).toMatchObject({ id: "bud", name: "Bud", computer: "off" });
     store.seedIfEmpty();
     expect(store.bots).toHaveLength(1);
+  });
+
+  it("settles orphaned approvals after a stop or restart", () => {
+    const store = new Store(selection);
+    store.seedIfEmpty();
+    const bot = store.bots[0]!;
+    const request = store.appendMessage(bot.threadId, {
+      role: "bot",
+      kind: "options",
+      card: {
+        title: "Approval needed",
+        subtitle: "write morning-summary.md",
+        options: ["Allow", "Deny"],
+        requestId: "req-1",
+        tool: "Write",
+      },
+    });
+
+    expect(store.settleOpenRequests(bot.threadId)).toEqual([
+      expect.objectContaining({ id: request.id, card: expect.objectContaining({ answered: "deny", dismissed: true }) }),
+    ]);
+    expect(new Store(selection).messagesFor(bot.threadId).find((message) => message.id === request.id)?.card).toMatchObject({
+      answered: "deny",
+      dismissed: true,
+    });
   });
 
   it("chains appended messages and keeps the newest as active leaf", () => {

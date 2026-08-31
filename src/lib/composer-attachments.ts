@@ -84,6 +84,7 @@ export type DroppedFile = Pick<File, "name" | "size" | "type" | "text">;
 export async function attachmentsFromDroppedFiles<T extends DroppedFile>(
   files: readonly T[],
   getPath: (file: T) => string,
+  persist?: (file: T) => Promise<FileAttachment | null>,
 ): Promise<{ attachments: Attachment[]; rejectedNames: string[] }> {
   const results = await Promise.all(
     files.map(async (file) => {
@@ -94,6 +95,14 @@ export async function attachmentsFromDroppedFiles<T extends DroppedFile>(
         // A browser or older desktop shell has no disk path to expose.
       }
       if (path) return { attachment: fileAttachment(file.name, path, file.size) };
+      if (persist) {
+        try {
+          const saved = await persist(file);
+          if (saved) return { attachment: saved };
+        } catch {
+          // Fall through to inline text or reject.
+        }
+      }
       if (isInlineText(file) && file.size <= INLINE_DROP_LIMIT) {
         try {
           return { attachment: pasteAttachment(await file.text()) };

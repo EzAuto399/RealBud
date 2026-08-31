@@ -9,6 +9,7 @@ export function GoLiveCard({
   compact = false,
   onConnectExport,
   onAttachWorker,
+  attachWorkerLabel = "Open You",
   onSaveAgency,
 }: {
   mode: "demo" | "live";
@@ -17,6 +18,7 @@ export function GoLiveCard({
   compact?: boolean;
   onConnectExport: () => void;
   onAttachWorker?: () => void;
+  attachWorkerLabel?: string;
   onSaveAgency: (name: string) => void;
 }) {
   const rows = goLiveRows({ mode, agencyName, workerReady });
@@ -31,6 +33,9 @@ export function GoLiveCard({
   if (goLiveComplete(rows)) return null;
 
   if (compact && !open) {
+    const waiting = rows
+      .filter((row) => row.state === "action")
+      .map((row) => (row.id === "agency" ? "agency name" : row.id === "worker" ? "Bud" : row.id));
     return (
       <section className="mt-3 border border-line bg-sheet px-3.5 py-2" aria-label="Go live">
         <button
@@ -40,7 +45,7 @@ export function GoLiveCard({
         >
           <span>
             Go live · {left} left
-            <span className="text-ink-muted"> · export, worker, agency name. Desk already works.</span>
+            <span className="text-ink-muted"> · {waiting.join(", ") || "none"}. Desk already works.</span>
           </span>
           <span className="text-[12px] text-agency">Open</span>
         </button>
@@ -70,6 +75,7 @@ export function GoLiveCard({
             onName={setName}
             onConnectExport={onConnectExport}
             onAttachWorker={onAttachWorker}
+            attachWorkerLabel={attachWorkerLabel}
             onSaveAgency={onSaveAgency}
           />
         ))}
@@ -84,6 +90,7 @@ function GoLiveRowView({
   onName,
   onConnectExport,
   onAttachWorker,
+  attachWorkerLabel,
   onSaveAgency,
 }: {
   row: GoLiveRow;
@@ -91,6 +98,7 @@ function GoLiveRowView({
   onName: (value: string) => void;
   onConnectExport: () => void;
   onAttachWorker?: () => void;
+  attachWorkerLabel: string;
   onSaveAgency: (name: string) => void;
 }) {
   return (
@@ -129,7 +137,7 @@ function GoLiveRowView({
       ) : null}
       {row.state === "action" && row.id === "worker" && onAttachWorker ? (
         <button type="button" onClick={onAttachWorker} className="text-[12px] text-agency hover:underline">
-          Open You
+          {attachWorkerLabel}
         </button>
       ) : null}
     </li>

@@ -89,7 +89,7 @@ export function PendingApprovalActions({
   /** who asked — "always allow" is remembered against them */
   bot?: Bot;
   onCancelTurn: () => void;
-  /** product mode never offers a remembered yes: approvals stay per-turn */
+  /** Always allow writes a standing rule for this approval key. */
   alwaysAllowable?: boolean;
 }) {
   const { dispatch } = useStore();
@@ -118,7 +118,7 @@ export function PendingApprovalActions({
       {alwaysAllowable && bot && pending.allowKey && (
         <button
           onClick={() => decide("allow", true)}
-          title={`Stop asking ${bot.name} about ${pending.allowKey}`}
+          title={`Save a rule: stop asking about ${pending.allowKey}`}
           className={cn(base, "border border-hairline/50 text-ink hover:bg-raised")}
         >
           Always allow

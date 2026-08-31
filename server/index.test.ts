@@ -20,6 +20,12 @@ let child: ChildProcess;
 /** stands in for the box provider so config saving never touches the network */
 let boxStub: Server;
 let boxStubPort = 0;
+/** stands in for api.telegram.org so channel connect never leaves the box */
+let telegramStub: Server;
+let telegramStubPort = 0;
+/** stands in for discord.com so channel connect never leaves the box */
+let discordStub: Server;
+let discordStubPort = 0;
 let home: string;
 let staticDir: string;
 let stderr = "";
@@ -58,6 +64,47 @@ beforeAll(async () => {
   await new Promise<void>((r) => boxStub.listen(0, "127.0.0.1", r));
   boxStubPort = (boxStub.address() as { port: number }).port;
 
+  telegramStub = createServer((req, res) => {
+    const match = /^\/bot([^/]+)\/(\w+)/.exec(req.url ?? "");
+    const token = match?.[1] ?? "";
+    const method = match?.[2] ?? "";
+    res.setHeader("content-type", "application/json");
+    if (method === "getMe" && token === "999001:TestTelegramTokenAlpha") {
+      res.writeHead(200);
+      return res.end(JSON.stringify({ ok: true, result: { id: 42, is_bot: true, username: "realbud_bot" } }));
+    }
+    if (method === "getMe") {
+      res.writeHead(401);
+      return res.end(JSON.stringify({ ok: false, error_code: 401, description: "Unauthorized" }));
+    }
+    res.writeHead(200);
+    res.end(JSON.stringify({ ok: true, result: [] }));
+  });
+  await new Promise<void>((r) => telegramStub.listen(0, "127.0.0.1", r));
+  telegramStubPort = (telegramStub.address() as { port: number }).port;
+
+  discordStub = createServer((req, res) => {
+    const url = req.url ?? "";
+    const auth = String(req.headers.authorization ?? "");
+    res.setHeader("content-type", "application/json");
+    if (url.startsWith("/api/v10/users/@me")) {
+      if (auth === "Bot TestDiscordTokenAlpha") {
+        res.writeHead(200);
+        return res.end(JSON.stringify({ id: "1", username: "realbud", bot: true }));
+      }
+      res.writeHead(401);
+      return res.end(JSON.stringify({ message: "401: Unauthorized", code: 0 }));
+    }
+    if (url.startsWith("/api/v10/gateway")) {
+      res.writeHead(200);
+      return res.end(JSON.stringify({ url: "wss://127.0.0.1:1" }));
+    }
+    res.writeHead(404);
+    res.end(JSON.stringify({ message: "404" }));
+  });
+  await new Promise<void>((r) => discordStub.listen(0, "127.0.0.1", r));
+  discordStubPort = (discordStub.address() as { port: number }).port;
+
   child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
     cwd: ROOT,
     env: {
@@ -65,10 +112,15 @@ beforeAll(async () => {
       // child-process coverage: the v8 provider measures the spawned server
       ...(process.env.NODE_V8_COVERAGE ? { NODE_V8_COVERAGE: process.env.NODE_V8_COVERAGE } : {}),
       ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+      // The worker handshake is covered at its own boundary. Keep this HTTP
+      // suite deterministic and offline while still exercising its receipt.
+      VITEST: "true",
       HOME: home,
       USERPROFILE: home,
       OMB_PORT: String(PORT),
       OMB_BOX_API: `http://127.0.0.1:${boxStubPort}`,
+      REALBUD_TELEGRAM_API: `http://127.0.0.1:${telegramStubPort}`,
+      REALBUD_DISCORD_API: `http://127.0.0.1:${discordStubPort}`,
       OMB_STATIC_DIR: staticDir,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -93,6 +145,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   boxStub?.close();
+  telegramStub?.close();
+  discordStub?.close();
   child?.kill("SIGTERM");
   await new Promise<void>((resolve) => {
     if (!child || child.exitCode !== null) return resolve();
@@ -165,7 +219,7 @@ describe("harness HTTP API", () => {
   it("lists the named loops and refuses to run a planned one", async () => {
     const { status, body } = await api("GET", "/api/loops");
     expect(status).toBe(200);
-    expect(body.loops.map((loop: { id: string }) => loop.id)).toEqual([
+    expect(body.loops.filter((loop: { id: string }) => !String(loop.id).startsWith("recipe-")).map((loop: { id: string }) => loop.id)).toEqual([
       "morning-arrears",
       "owner-letter",
       "inbound-triage",
@@ -247,9 +301,17 @@ describe("harness HTTP API", () => {
     expect(status).toBe(200);
     expect(body.pin).toMatchObject({ product: "0.20.3", profile: "property" });
     expect(body.cli).toMatchObject({ installed: expect.any(Boolean), matchesPin: expect.any(Boolean) });
-    expect(body.pack).toMatchObject({ installed: true, approvalsManual: true });
+    expect(body.pack).toMatchObject({ installed: true, approvalsManual: true, workroomReady: true });
     expect(typeof body.detail).toBe("string");
     expect(body.installCommand).toContain("--force-commit");
+    expect(body).toHaveProperty("lastPing");
+    expect(body.ready).toBe(false);
+
+    const providers = await api("GET", "/api/hermes/providers");
+    expect(providers.status).toBe(200);
+    const ids = providers.body.providers.map((p: { id: string }) => p.id);
+    expect(ids).toEqual(expect.arrayContaining(["anthropic", "deepseek", "moonshotai", "google", "xai"]));
+    expect(ids).not.toContain("kimi-for-coding");
   });
 
   it("applies the property pack on demand and rejects non-JSON calls", async () => {
@@ -259,12 +321,61 @@ describe("harness HTTP API", () => {
     const applied = await api("POST", "/api/hermes/apply-pack", {});
     expect(applied.status).toBe(200);
     expect(applied.body.pack.installed).toBe(true);
+    expect(applied.body.pack.workroomReady).toBe(true);
     expect(applied.body.pin.product).toBe("0.20.3");
+    expect(applied.body.lastPing).toMatchObject({
+      ok: false,
+      detail: "Property safeguards changed. Run the private readiness check again.",
+      kind: "ping",
+    });
+    expect(applied.body.ready).toBe(false);
   });
 
   it("tests hands with the same content-type gate as other actions", async () => {
     const noJson = await api("POST", "/api/hermes/test");
     expect(noJson.status).toBe(415);
+  });
+
+  it("gates worker repair and remove like the other hermes actions", async () => {
+    const noRepair = await api("POST", "/api/hermes/repair");
+    expect(noRepair.status).toBe(415);
+    const noRemove = await api("POST", "/api/hermes/uninstall");
+    expect(noRemove.status).toBe(415);
+
+    const removed = await api("POST", "/api/hermes/uninstall", {});
+    expect(removed.status).toBe(200);
+    expect(removed.body.pack.installed).toBe(false);
+    expect(removed.body.ready).toBe(false);
+    expect(removed.body.lastPing).toBeNull();
+
+    const restored = await api("POST", "/api/hermes/apply-pack", {});
+    expect(restored.status).toBe(200);
+    expect(restored.body.pack.installed).toBe(true);
+  });
+
+  it("persists the model connection hands check across a status reload", async () => {
+    const noJson = await api("POST", "/api/hermes/model");
+    expect(noJson.status).toBe(415);
+
+    const connected = await api("POST", "/api/hermes/model", {
+      providerId: "deepseek",
+      apiKey: "test-only-key",
+      model: "deepseek-test",
+    });
+    expect(connected.status).toBe(200);
+    expect(connected.body.model).toMatchObject({ provider: "deepseek", model: "deepseek-test", keyPresent: true });
+    expect(connected.body.model.keyHint).not.toContain("test-only-key");
+    expect(connected.body.ping).toMatchObject({ ok: false, detail: "tests do not ping the live worker" });
+
+    const reloaded = await api("GET", "/api/hermes");
+    expect(reloaded.status).toBe(200);
+    expect(reloaded.body.lastPing).toMatchObject({
+      ok: false,
+      detail: "tests do not ping the live worker",
+      kind: "ping",
+      at: expect.any(Number),
+    });
+    expect(reloaded.body.ready).toBe(false);
   });
 
   it("adds, patches, and removes a property with its facts", async () => {
@@ -300,7 +411,11 @@ describe("harness HTTP API", () => {
   });
 
   it("never sends a desk draft — the send route is always 403", async () => {
-    const snap = await api("POST", "/api/desk/check", {});
+    const miss = await api("POST", "/api/desk/check", {});
+    expect(miss.status).toBe(200);
+    let snap = miss.body.drafts?.some((d: { status: string }) => d.status === "pending")
+      ? miss
+      : await api("POST", "/api/desk/practice", {});
     const draft = snap.body.drafts.find((d: { status: string }) => d.status === "pending");
     expect(draft).toBeTruthy();
     const send = await api("POST", `/api/desk/drafts/${draft.id}/send`, {});
@@ -313,6 +428,255 @@ describe("harness HTTP API", () => {
     expect((await api("GET", "/api/connectors")).status).toBe(403);
     expect((await api("POST", "/api/local-computer/screenshot", {})).status).toBe(403);
     expect((await api("POST", "/api/bots/bud/computer", {})).status).toBe(403);
+  });
+
+  it("round-trips standing rules and rejects bad writes", async () => {
+    const empty = await api("GET", "/api/rules");
+    expect(empty.status).toBe(200);
+    expect(empty.body.rules).toEqual([]);
+
+    const created = await api("POST", "/api/rules", { key: "Bash:git", decision: "allow" });
+    expect(created.status).toBe(201);
+    expect(created.body.rules).toHaveLength(1);
+    expect(created.body.rules[0]).toMatchObject({
+      key: "Bash:git",
+      decision: "allow",
+      label: "Run git commands",
+    });
+    expect(typeof created.body.rules[0].id).toBe("string");
+
+    const listed = await api("GET", "/api/rules");
+    expect(listed.status).toBe(200);
+    expect(listed.body.rules).toHaveLength(1);
+    expect(listed.body.rules[0].id).toBe(created.body.rules[0].id);
+
+    expect((await api("POST", "/api/rules", { key: "", decision: "allow" })).status).toBe(400);
+    expect((await api("POST", "/api/rules", { key: "x".repeat(121), decision: "allow" })).status).toBe(400);
+    expect((await api("POST", "/api/rules", { key: "Read", decision: "maybe" })).status).toBe(400);
+    expect((await api("POST", "/api/rules", { key: "Read", decision: "allow", label: "x".repeat(81) })).status).toBe(400);
+
+    const gone = await api("DELETE", `/api/rules/${created.body.rules[0].id}`);
+    expect(gone.status).toBe(200);
+    expect(gone.body.rules).toEqual([]);
+
+    const miss = await api("DELETE", "/api/rules/no-such-rule");
+    expect(miss.status).toBe(404);
+  });
+
+  it("round-trips law-watch schedule and stays honest when the worker is away", async () => {
+    const empty = await api("GET", "/api/law-watch");
+    expect(empty.status).toBe(200);
+    expect(empty.body).toMatchObject({ lastCheckedAt: 0, drift: [], checkedSources: [], scheduled: false });
+
+    const on = await api("POST", "/api/law-watch/schedule", { on: true });
+    expect(on.status).toBe(200);
+    expect(on.body).toEqual({ scheduled: true });
+    expect((await api("GET", "/api/law-watch")).body.scheduled).toBe(true);
+
+    const check = await api("POST", "/api/law-watch/check");
+    expect(check.status).toBe(503);
+    expect(String(check.body.error)).toMatch(/shop reference/);
+
+    const apply = await api("POST", "/api/law-watch/apply", { index: 0 });
+    expect(apply.status).toBe(400);
+
+    const off = await api("POST", "/api/law-watch/schedule", { on: false });
+    expect(off.status).toBe(200);
+    expect(off.body).toEqual({ scheduled: false });
+  });
+
+  it("connects Telegram without echoing the token and disconnects", async () => {
+    const token = "999001:TestTelegramTokenAlpha";
+    const empty = await api("GET", "/api/channels");
+    expect(empty.status).toBe(200);
+    expect(empty.body).toEqual({ telegram: { connected: false }, discord: { connected: false } });
+
+    const bare = await fetch(`${BASE}/api/channels`);
+    expect(bare.status).toBe(401);
+
+    const bad = await api("POST", "/api/channels/telegram", { botToken: "999001:TestTelegramTokenNope" });
+    expect(bad.status).toBe(400);
+    expect(String(bad.body.error)).toMatch(/BotFather/);
+    expect(JSON.stringify(bad.body)).not.toContain("TestTelegramTokenNope");
+
+    const ok = await api("POST", "/api/channels/telegram", { botToken: token });
+    expect(ok.status).toBe(200);
+    expect(ok.body.telegram).toMatchObject({
+      connected: true,
+      botUsername: "realbud_bot",
+      paired: false,
+      pairedName: null,
+    });
+    expect(ok.body.telegram).not.toHaveProperty("botToken");
+    expect(ok.body.telegram).not.toHaveProperty("pairedChatId");
+    expect(JSON.stringify(ok.body)).not.toContain(token);
+
+    const listed = await api("GET", "/api/channels");
+    expect(listed.status).toBe(200);
+    expect(listed.body.telegram).toMatchObject({ connected: true, botUsername: "realbud_bot", paired: false });
+    expect(JSON.stringify(listed.body)).not.toContain(token);
+
+    const gone = await api("DELETE", "/api/channels/telegram");
+    expect(gone.status).toBe(200);
+    expect(gone.body).toEqual({ telegram: { connected: false }, discord: { connected: false } });
+    expect((await api("GET", "/api/channels")).body).toEqual({
+      telegram: { connected: false },
+      discord: { connected: false },
+    });
+  });
+
+  it("connects Discord without echoing the token and 404s an unknown platform", async () => {
+    const token = "TestDiscordTokenAlpha";
+    const listed = await api("GET", "/api/channels");
+    expect(listed.status).toBe(200);
+    expect(listed.body).toEqual({ telegram: { connected: false }, discord: { connected: false } });
+
+    const bad = await api("POST", "/api/channels/discord", { botToken: "TestDiscordTokenNope" });
+    expect(bad.status).toBe(400);
+    expect(String(bad.body.error)).toMatch(/developer portal/);
+    expect(JSON.stringify(bad.body)).not.toContain("TestDiscordTokenNope");
+
+    const unknown = await api("POST", "/api/channels/whatsapp", { botToken: token });
+    expect(unknown.status).toBe(404);
+
+    const ok = await api("POST", "/api/channels/discord", { botToken: token });
+    expect(ok.status).toBe(200);
+    expect(ok.body.discord).toMatchObject({
+      connected: true,
+      botUsername: "realbud",
+      paired: false,
+      pairedName: null,
+    });
+    expect(ok.body.telegram).toEqual({ connected: false });
+    expect(ok.body.discord).not.toHaveProperty("botToken");
+    expect(ok.body.discord).not.toHaveProperty("pairedChannelId");
+    expect(JSON.stringify(ok.body)).not.toContain(token);
+
+    const gone = await api("DELETE", "/api/channels/discord");
+    expect(gone.status).toBe(200);
+    expect(gone.body).toEqual({ telegram: { connected: false }, discord: { connected: false } });
+  });
+
+  it("round-trips recipes and keeps shadow runs honest when the worker is away", async () => {
+    expect((await api("GET", "/api/recipes")).body.recipes).toEqual([]);
+    const draftFail = await api("POST", "/api/recipes/draft", { text: "Every Friday check arrears on PropertyMe." });
+    expect(draftFail.status).toBe(503);
+    expect(String(draftFail.body.error)).toMatch(/could not shape that job/i);
+
+    const created = await api("POST", "/api/recipes", {
+      draft: {
+        id: "rec-shadow-1",
+        title: "Friday arrears",
+        steps: ["Open the arrears report"],
+        allowedOrigins: ["https://www.PropertyMe.com.au/report"],
+        evidence: "arrears rows",
+        status: "shadow",
+        createdAt: 1,
+      },
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.recipes[0]).toMatchObject({
+      id: "rec-shadow-1",
+      allowedOrigins: ["propertyme.com.au"],
+      status: "shadow",
+    });
+
+    const patched = await api("PATCH", "/api/recipes/rec-shadow-1", { status: "active" });
+    expect(patched.status).toBe(200);
+    expect(patched.body.recipes[0].status).toBe("active");
+    expect(patched.body.recipes[0].planApprovedAt).toBeNull();
+
+    const approved = await api("PATCH", "/api/recipes/rec-shadow-1", { planApproved: true });
+    expect(approved.status).toBe(200);
+    expect(typeof approved.body.recipes[0].planApprovedAt).toBe("number");
+
+    const run = await api("POST", "/api/recipes/rec-shadow-1/run", {});
+    expect(run.status).toBe(200);
+    expect(run.body.session).toMatchObject({
+      recipeId: "rec-shadow-1",
+      state: "unknown",
+      shadow: true,
+      allowedOrigins: ["propertyme.com.au"],
+    });
+    expect(String(run.body.session.detail)).toMatch(/tests do not use the live worker/i);
+
+    const sessions = await api("GET", "/api/portal-sessions");
+    expect(sessions.status).toBe(200);
+    expect(sessions.body.sessions).toHaveLength(1);
+    expect(sessions.body.sessions[0].id).toBe(run.body.session.id);
+
+    const lease = await api("POST", `/api/portal-sessions/${run.body.session.id}/lease`, {
+      origin: "propertyme.com.au",
+    });
+    expect(lease.status).toBe(409);
+
+    const gone = await api("DELETE", "/api/recipes/rec-shadow-1");
+    expect(gone.status).toBe(200);
+    expect(gone.body.recipes).toEqual([]);
+
+    expect((await api("GET", "/api/computer-history")).body.entries).toEqual([]);
+    const distillCard = await api("POST", "/api/recipes", {
+      draft: {
+        id: "rec-distill-http",
+        title: "Friday arrears",
+        steps: ["Open the arrears report"],
+        allowedOrigins: ["propertyme.com.au"],
+        evidence: "arrears rows",
+        status: "shadow",
+        createdAt: 2,
+      },
+    });
+    expect(distillCard.status).toBe(201);
+    const distilled = await api("POST", "/api/recipes/rec-distill-http/distill", {});
+    expect(distilled.status).toBe(503);
+    expect(String(distilled.body.error)).toMatch(/could not tighten those steps/i);
+    const still = await api("GET", "/api/recipes");
+    expect(still.body.recipes[0].steps).toEqual(["Open the arrears report"]);
+    expect(still.body.recipes[0].allowedOrigins).toEqual(["propertyme.com.au"]);
+    expect(still.body.recipes[0].evidence).toBe("arrears rows");
+    await api("DELETE", "/api/recipes/rec-distill-http");
+  });
+
+  it("admits a scheduled job onto the RealBud clock as a recipe loop", async () => {
+    const created = await api("POST", "/api/recipes", {
+      draft: {
+        id: "rec-clock-1",
+        title: "Friday arrears",
+        steps: ["Open the arrears report"],
+        allowedOrigins: ["propertyme.com.au"],
+        evidence: "arrears rows",
+        status: "shadow",
+        createdAt: 3,
+        schedule: { time: "16:00", weekdays: [5] },
+      },
+    });
+    expect(created.status).toBe(201);
+
+    const listed = await api("GET", "/api/loops");
+    const job = listed.body.loops.find((loop: { id: string }) => loop.id === "recipe-rec-clock-1");
+    expect(job).toMatchObject({
+      name: "Friday arrears",
+      available: true,
+      enabled: true,
+      evaluatorId: "recipe",
+      schedule: { type: "daily", time: "16:00", weekdays: [5] },
+    });
+
+    const paused = await api("PATCH", "/api/loops/recipe-rec-clock-1", { enabled: false });
+    expect(paused.status).toBe(200);
+    expect(paused.body.loop.enabled).toBe(false);
+    expect((await api("GET", "/api/recipes")).body.recipes.find((row: { id: string }) => row.id === "rec-clock-1")?.status).toBe(
+      "paused",
+    );
+
+    await api("PATCH", "/api/loops/recipe-rec-clock-1", { enabled: true });
+    const run = await api("POST", "/api/loops/recipe-rec-clock-1/run", {});
+    expect(run.status).toBe(201);
+    expect(run.body.run.loopId).toBe("recipe-rec-clock-1");
+
+    await api("DELETE", "/api/recipes/rec-clock-1");
+    const after = await api("GET", "/api/loops");
+    expect(after.body.loops.some((loop: { id: string }) => loop.id === "recipe-rec-clock-1")).toBe(false);
   });
 
   it("keeps the one worker unsupervisable-by-API and undeletable", async () => {
@@ -363,9 +727,14 @@ describe("harness HTTP API", () => {
     const empty = await api("POST", `/api/bots/${bot.id}/messages`, { text: "   " });
     expect(empty.status).toBe(400);
 
-    // the seeded bot's selection points at the ghost instance — sending a
-    // real message must fail loudly, not 202-and-hang
-    const send = await api("POST", `/api/bots/${bot.id}/messages`, { text: "hello?" });
+    const hello = await api("POST", `/api/bots/${bot.id}/messages`, { text: "hello?" });
+    expect(hello.status).toBe(202);
+    const afterHello = await api("GET", "/api/bots");
+    const helloBot = afterHello.body.bots.find((b: { id: string }) => b.id === "bud");
+    expect(helloBot.messages.at(-1).text).toMatch(/I'm Bud/);
+
+    // a free-form turn still fails loudly when the worker instance is a ghost
+    const send = await api("POST", `/api/bots/${bot.id}/messages`, { text: "write a sonnet about trust accounts" });
     expect(send.status).toBe(409);
     expect(send.body.error).toContain("unavailable");
   });
@@ -461,7 +830,13 @@ describe("harness HTTP API", () => {
     expect(empty.status).toBe(200);
     expect(empty.body.properties.length).toBe(6);
 
-    const checked = await api("POST", "/api/desk/check", {});
+    const missed = await api("POST", "/api/desk/check", {});
+    expect(missed.status).toBe(200);
+    expect(["demo", "held", "hermes", "csv"]).toContain(missed.body.hands);
+
+    const checked = missed.body.drafts?.some((d: { kind: string }) => d.kind === "courtesy-rent")
+      ? missed
+      : await api("POST", "/api/desk/practice", {});
     expect(checked.status).toBe(200);
     const courtesy = checked.body.drafts.find((d: { kind: string }) => d.kind === "courtesy-rent");
     expect(courtesy?.status).toBe("pending");
@@ -505,10 +880,66 @@ describe("harness HTTP API", () => {
 
   it("imports an address-keyed CSV onto Oak Street", async () => {
     const csv = `address,daysLate,rentLanded,levyPaid\n"12 Oak Street, Dickson ACT",4,false,false\n`;
-    const snap = await api("POST", "/api/desk/import", { csv });
+    const before = await api("GET", "/api/desk");
+    const preview = await api("POST", "/api/desk/import/preview", { csv });
+    expect(preview.status).toBe(200);
+    expect(preview.body.matched).toEqual([{ propertyId: "prop-oak", address: "12 Oak St, Dickson ACT" }]);
+    const afterPreview = await api("GET", "/api/desk");
+    expect(afterPreview.body.revision).toBe(before.body.revision);
+    expect(afterPreview.body.ledger).toEqual(before.body.ledger);
+    const snap = await api("POST", "/api/desk/import", {
+      csv,
+      expectedDigest: preview.body.digest,
+      expectedRevision: preview.body.expectedRevision,
+      observedAt: preview.body.observedAt,
+    });
     expect(snap.status).toBe(200);
     expect(snap.body.hands).toBe("csv");
     const oak = snap.body.ledger.find((r: { propertyId: string }) => r.propertyId === "prop-oak");
     expect(oak.daysSinceDue).toBe(4);
+  });
+
+  it("refuses an import or a wording edit that was composed against a stale book", async () => {
+    // The clock rewrites the book while the PM has the screen open. Both of
+    // these paths used to accept the write and silently clobber the newer state.
+    const csv = `address,daysLate,rentLanded,levyPaid\n"12 Oak Street, Dickson ACT",6,false,false\n`;
+    const preview = await api("POST", "/api/desk/import/preview", { csv });
+    const changedCsv = csv.replace(",6,", ",7,");
+    const changed = await api("POST", "/api/desk/import", {
+      csv: changedCsv,
+      expectedDigest: preview.body.digest,
+      expectedRevision: preview.body.expectedRevision,
+      observedAt: preview.body.observedAt,
+    });
+    expect(changed.status).toBe(400);
+    expect(String(changed.body.error)).toMatch(/changed after review/);
+
+    const staleImport = await api("POST", "/api/desk/import", {
+      csv,
+      expectedDigest: preview.body.digest,
+      expectedRevision: 0,
+      observedAt: preview.body.observedAt,
+    });
+    expect(staleImport.status).toBe(409);
+    expect(String(staleImport.body.error)).toMatch(/revision/);
+
+    const freshPreview = await api("POST", "/api/desk/import/preview", { csv });
+    const fresh = await api("POST", "/api/desk/import", {
+      csv,
+      expectedDigest: freshPreview.body.digest,
+      expectedRevision: freshPreview.body.expectedRevision,
+      observedAt: freshPreview.body.observedAt,
+    });
+    expect(fresh.status).toBe(200);
+
+    const pending = fresh.body.drafts.find((d: { status: string }) => d.status === "pending");
+    if (pending) {
+      const staleEdit = await api("PATCH", `/api/desk/drafts/${pending.id}`, {
+        body: "edited under an old rule",
+        expectedRevision: 0,
+      });
+      expect(staleEdit.status).toBe(409);
+      expect(String(staleEdit.body.error)).toMatch(/revision/);
+    }
   });
 });

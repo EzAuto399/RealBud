@@ -27,11 +27,11 @@ export function writeFileFsynced(path: string, data: string | Buffer): void {
   }
 }
 
-export function writeFileAtomic(path: string, data: string): void {
+export function writeFileAtomic(path: string, data: string, mode?: number): void {
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   let fd: number | null = null;
   try {
-    fd = openSync(tmp, "w");
+    fd = openSync(tmp, "w", mode);
     writeFileSync(fd, data);
     fsyncSync(fd);
     closeSync(fd);

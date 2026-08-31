@@ -27,7 +27,10 @@ import {
   type InstanceInfo,
   type Message,
 } from "@/state/store";
-import type { DeskSnapshot } from "@/lib/desk";
+import type { DeskSnapshot, Recipe } from "@/lib/desk";
+import { recipeSavedLine, recipeSitesLine } from "@/lib/portal-job";
+import { recipeScheduleLine } from "@/lib/schedule-week";
+import { askNextActions, type AskNext } from "@/lib/ask-next";
 import { morningBrief } from "@/lib/morning-brief";
 import { fmtDateTime } from "@/lib/au";
 import { EngineSetup } from "./EngineSetup";
@@ -489,6 +492,46 @@ function WorkingTimer({ since }: { since: number }) {
  * every markdown tree, every code block — bails out of React work and only
  * the streaming tail below it commits. This is the t3code structural-sharing
  * idea at component granularity. */
+function AskChipRow({
+  next,
+  disabled,
+  align = "center",
+  onAsk,
+  onDesk,
+  onYou,
+}: {
+  next: AskNext[];
+  disabled?: boolean;
+  align?: "center" | "start";
+  onAsk: (text: string) => void;
+  onDesk: () => void;
+  onYou: () => void;
+}) {
+  return (
+    <div
+      className={cn("flex max-w-[32rem] flex-wrap gap-2", align === "center" ? "justify-center" : "justify-start")}
+      role="list"
+      aria-label="Suggested next"
+    >
+      {next.map((row) => (
+        <button
+          key={row.id}
+          type="button"
+          disabled={disabled}
+          onClick={() => {
+            if (row.kind === "ask") onAsk(row.text);
+            else if (row.kind === "desk") onDesk();
+            else onYou();
+          }}
+          className="rounded border border-line bg-sheet px-3 py-1.5 text-[13px] text-ink hover:bg-raised disabled:opacity-40"
+        >
+          {row.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 const MessagesList = memo(function MessagesList({
   bot,
   messages,
@@ -501,7 +544,13 @@ const MessagesList = memo(function MessagesList({
   onSubmitEdit,
   onRegenerate,
   productAsk = false,
+  askMiss = false,
+  askNeedsYou = 0,
+  askWorkerReady = true,
+  askWorkerSetupComplete = false,
   onAskStarter,
+  onAskDesk,
+  onAskYou,
 }: {
   bot: Bot;
   messages: Message[];
@@ -515,7 +564,13 @@ const MessagesList = memo(function MessagesList({
   onSubmitEdit: (id: string, text: string) => void;
   onRegenerate: () => void;
   productAsk?: boolean;
+  askMiss?: boolean;
+  askNeedsYou?: number;
+  askWorkerReady?: boolean;
+  askWorkerSetupComplete?: boolean;
   onAskStarter?: (text: string) => void;
+  onAskDesk?: () => void;
+  onAskYou?: () => void;
 }) {
   return (
     <>
@@ -525,19 +580,20 @@ const MessagesList = memo(function MessagesList({
             <>
               <h2 className="pm-case-title text-ink">Ask about the book</h2>
               <div className="max-w-[360px] text-[14px] text-ink-muted">
-                Scoped to your portfolio. Ask what needs you, or put courtesy on Desk for one Allow.
+                Ask Bud to inspect the book, analyse an attachment, research a question, draft an update, or prepare work for Desk.
               </div>
-              <div className="mt-2 flex max-w-[28rem] flex-wrap justify-center gap-2">
-                {["What needs me?", "Explain this hold", "Draft an owner update", "What did Recheck find?"].map((starter) => (
-                  <button
-                    key={starter}
-                    type="button"
-                    onClick={() => onAskStarter?.(starter)}
-                    className="rounded border border-line bg-sheet px-3 py-1.5 text-[13px] text-ink hover:bg-raised"
-                  >
-                    {starter}
-                  </button>
-                ))}
+              <div className="mt-2">
+                <AskChipRow
+                  next={askNextActions({
+                    miss: askMiss,
+                    needsYou: askNeedsYou,
+                    workerReady: askWorkerReady,
+                    workerSetupComplete: askWorkerSetupComplete,
+                  })}
+                  onAsk={(text) => onAskStarter?.(text)}
+                  onDesk={() => onAskDesk?.()}
+                  onYou={() => onAskYou?.()}
+                />
               </div>
             </>
           ) : (
@@ -617,6 +673,52 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
 
   // only the active branch is rendered; forks stay reachable via ‹ › nav
   const messages = useMemo(() => visibleMessages(bot), [bot]);
+  useEffect(() => {
+    if (!productAsk) return;
+    void api("/api/desk")
+      .then((snapshot) => dispatch({ type: "deskSnapshot", snapshot }))
+      .catch(() => {});
+  }, [productAsk, dispatch]);
+
+  const askBrief = productAsk && state.desk ? morningBrief(state.desk) : null;
+  const askMiss = Boolean(askBrief?.headline.startsWith("Recheck missed"));
+  const askNeedsYou = askBrief?.needsYou ?? 0;
+  const askWorkerKnown = state.hermes != null;
+  const askWorkerReady = Boolean(state.hermes?.ready);
+  const askWorkroomReady = Boolean(state.hermes?.pack.workroomReady);
+  const askStatus = !state.connected
+    ? { label: "Reconnecting", className: "border-hold/25 bg-hold/10 text-hold" }
+    : !askWorkerKnown
+      ? { label: "Checking Bud", className: "border-line bg-inset text-ink-muted" }
+      : askWorkerReady
+        ? { label: "Bud ready", className: "border-agency/25 bg-agency/10 text-agency" }
+        : askWorkroomReady
+          ? { label: "Workroom ready", className: "border-hold/25 bg-hold/10 text-hold" }
+          : { label: "Setup needed", className: "border-hold/25 bg-hold/10 text-hold" };
+  const askRepairCopy = !state.connected
+    ? "RealBud's local service is reconnecting. You can read this thread; new work will resume when it is back."
+    : !state.hermes
+      ? "RealBud is checking Bud's local setup."
+      : !state.hermes.cli.installed || !state.hermes.cli.matchesPin
+      ? "Bud needs to be installed or updated before tool work can run."
+      : !state.hermes.pack.installed || !state.hermes.pack.approvalsManual || !state.hermes.pack.workroomReady
+        ? "Bud's private workroom needs setup before files, research, calculations, or code can run."
+        : "Bud needs a private readiness check before Ask relies on the model connection.";
+  const sendAsk = useCallback((text: string) => dispatch({ type: "send", botId: bot.id, text }), [bot.id, dispatch]);
+  const goDesk = useCallback(() => dispatch({ type: "showDesk" }), [dispatch]);
+  const goYouSetup = useCallback(() => {
+    location.hash = "you-worker";
+    dispatch({ type: "showYou" });
+  }, [dispatch]);
+  const askNext = useMemo(
+    () => askNextActions({
+      miss: askMiss,
+      needsYou: askNeedsYou,
+      workerReady: askWorkerReady,
+      workerSetupComplete: askWorkroomReady,
+    }),
+    [askMiss, askNeedsYou, askWorkerReady, askWorkroomReady],
+  );
   const lastBotTextId = useMemo(
     () => [...messages].reverse().find((m) => m.role === "bot" && m.kind === "text")?.id,
     [messages],
@@ -698,12 +800,12 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
           <div className="flex min-w-0 flex-1 flex-col gap-0.5 px-1.5 py-1" style={noDrag}>
             <div className="flex items-center gap-2.5">
               <h1 className="pm-screen-title text-ink">Ask</h1>
+              <span className={cn("rounded-full border px-2 py-0.5 text-[10.5px] font-medium", askStatus.className)}>
+                {askStatus.label}
+              </span>
               {bot.busy && <Loader2 size={14} className="animate-spin text-ink-muted" />}
             </div>
-            <p className="text-[12.5px] text-ink-muted">
-              About the book. Cards you allow land on Desk. Inbox is not connected.
-              {state.desk ? ` ${morningBrief(state.desk).headline}` : ""}
-            </p>
+            <p className="text-[12.5px] text-ink-muted">Analyse, research, make working files, and check the book. Outside actions wait for your review on Desk.</p>
           </div>
         ) : (
         <button
@@ -757,25 +859,24 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
         </div>
       </div>
 
-      {productAsk && (
-        <details className="mx-auto w-full max-w-[900px] border-b border-line px-5 pb-3">
-          <summary className="cursor-pointer text-[13px] font-medium text-ink">Put work on Desk</summary>
-          <p className="mt-1 text-[12px] text-ink-muted">Courtesy and a pasted book wait here for one Allow. Inbox is not connected.</p>
-          <div className="mt-2">
-            <AskProposeBar />
-            <AskIntakeBar />
-          </div>
-        </details>
-      )}
+      {askMiss ? (
+        <p className="border-b border-line px-5 py-2 text-[12.5px] text-hold">{askBrief?.headline}</p>
+      ) : null}
 
-      {/* Error banner */}
-      {state.error && (
-        <div className="mx-auto w-full max-w-[900px] px-5">
-          <div className="mb-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[13px] text-danger">
-            {state.error}
-          </div>
+      {productAsk && (!state.connected || (state.hermes && !state.hermes.ready)) ? (
+        <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-2">
+          <p className="min-w-0 text-[12.5px] text-ink">{askRepairCopy}</p>
+          {state.connected ? (
+            <button
+              type="button"
+              onClick={goYouSetup}
+              className="shrink-0 text-[12.5px] font-medium text-agency hover:underline"
+            >
+              Open setup
+            </button>
+          ) : null}
         </div>
-      )}
+      ) : null}
 
       {/* Messages */}
       <div
@@ -813,7 +914,13 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
             onSubmitEdit={submitEdit}
             onRegenerate={regenerate}
             productAsk={productAsk}
-            onAskStarter={(text) => dispatch({ type: "send", botId: bot.id, text })}
+            askMiss={askMiss}
+            askNeedsYou={askNeedsYou}
+            askWorkerReady={askWorkerReady}
+            askWorkerSetupComplete={askWorkroomReady}
+            onAskStarter={sendAsk}
+            onAskDesk={goDesk}
+            onAskYou={goYouSetup}
           />
           {provisioning && !productAsk && (
             <div className="flex justify-start">
@@ -823,7 +930,7 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
               </div>
             </div>
           )}
-          {reasoning && bot.busy && <ThinkingStrip text={reasoning} active={!streaming} />}
+          {reasoning && bot.busy && !productAsk && <ThinkingStrip text={reasoning} active={!streaming} />}
           {streaming ? (
             <StreamingBubble text={streaming} />
           ) : (
@@ -831,9 +938,9 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
               <div className="flex justify-start">
                 <div className="flex items-center gap-2.5 rounded-2xl bg-raised px-4 py-3">
                   <span className="flex items-center gap-1.5">
-                    <span className="size-1.5 animate-bounce rounded-full bg-ink-secondary [animation-delay:0ms]" />
-                    <span className="size-1.5 animate-bounce rounded-full bg-ink-secondary [animation-delay:150ms]" />
-                    <span className="size-1.5 animate-bounce rounded-full bg-ink-secondary [animation-delay:300ms]" />
+                    <span className="size-1.5 animate-bounce rounded-full bg-ink-secondary [animation-delay:0ms] motion-reduce:animate-none" />
+                    <span className="size-1.5 animate-bounce rounded-full bg-ink-secondary [animation-delay:150ms] motion-reduce:animate-none" />
+                    <span className="size-1.5 animate-bounce rounded-full bg-ink-secondary [animation-delay:300ms] motion-reduce:animate-none" />
                   </span>
                   <WorkingTimer since={lastUserMessage?.at ?? Date.now()} />
                 </div>
@@ -859,6 +966,35 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
           the previous bot's half-written message over. ArrowUp-to-edit is
           gated on busy like the pencil button — editing rewinds the thread,
           which a live turn forbids (the server 409s it). */}
+      {productAsk && messages.length > 0 && !bot.busy && (
+        <div className="mx-auto w-full max-w-[900px] shrink-0 border-t border-line px-5 py-2">
+          <AskChipRow next={askNext} align="start" onAsk={sendAsk} onDesk={goDesk} onYou={goYouSetup} />
+        </div>
+      )}
+
+      {productAsk && (
+        <details className="mx-auto w-full max-w-[900px] shrink-0 border-t border-line px-5 py-2">
+          <summary className="cursor-pointer text-[13px] font-medium text-ink">Put work on Desk</summary>
+          <p className="mt-1 text-[12px] text-ink-muted">Courtesy and a pasted book wait here for one Allow.</p>
+          <div className="mt-2">
+            <AskProposeBar />
+            <AskIntakeBar />
+          </div>
+        </details>
+      )}
+
+      {productAsk && (
+        <details className="mx-auto w-full max-w-[900px] shrink-0 border-t border-line px-5 py-2">
+          <summary className="cursor-pointer text-[13px] font-medium text-ink">Teach Bud a job</summary>
+          <p className="mt-1 text-[12px] text-ink-muted">
+            Describe the job in plain words. First runs are shadow runs: Bud narrates and clicks nothing.
+          </p>
+          <div className="mt-2">
+            <TeachJobBar />
+          </div>
+        </details>
+      )}
+
       <Composer
         key={bot.id}
         bot={bot}
@@ -934,10 +1070,15 @@ function AskIntakeBar() {
   const [result, setResult] = useState<{ created: number; skipped: number; unparsed: string[] } | null>(null);
   const [error, setError] = useState("");
 
-  const send = () => {
+  const send = (payload = text) => {
+    const body = payload.slice(0, 20_000);
+    if (!body.trim()) {
+      setBusy(false);
+      return;
+    }
     setBusy(true);
     setError("");
-    void api("/api/desk/propose-book", { method: "POST", body: JSON.stringify({ text }) })
+    void api("/api/desk/propose-book", { method: "POST", body: JSON.stringify({ text: body }) })
       .then((res) => {
         if (res.ok === false) throw new Error(res.error ?? "could not stage the list");
         setResult({ created: res.created ?? 0, skipped: res.skipped ?? 0, unparsed: res.unparsed ?? [] });
@@ -952,12 +1093,11 @@ function AskIntakeBar() {
     setBusy(true);
     setError("");
     try {
-      const body = await file.text();
-      setText(body.slice(0, 20_000));
-      send();
+      const body = (await file.text()).slice(0, 20_000);
+      setText(body);
+      void send(body);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
       setBusy(false);
     }
   };
@@ -983,7 +1123,7 @@ function AskIntakeBar() {
       <div className="flex flex-wrap items-center gap-2">
         <button
           disabled={busy || !text.trim()}
-          onClick={send}
+          onClick={() => send()}
           className="rounded-lg border border-hairline/40 px-3 py-1.5 text-[12.5px] text-ink hover:bg-raised disabled:opacity-40"
         >
           {busy ? "Reading…" : "Stage properties on Desk"}
@@ -996,9 +1136,115 @@ function AskIntakeBar() {
         <div className="text-[12px] text-ink-secondary">
           {result.created} staged on Desk{result.skipped ? ` · ${result.skipped} skipped (duplicate or incomplete)` : ""}
           {result.unparsed.length ? ` · needs attention: ${result.unparsed.join(" | ")}` : ""}
+          {result.created > 0 ? (
+            <span className="block mt-1 text-ink-muted">
+              To complete each record: owner contact, property code, and notes — Book carries them from there.
+            </span>
+          ) : null}
         </div>
       )}
       {error && <span className="text-[12px] text-danger">{error}</span>}
+    </div>
+  );
+}
+
+/** Shape a recurring job into a recipe card. Nothing is saved until Save this job. */
+function TeachJobBar() {
+  const { state } = useStore();
+  const timezone = state.desk?.book?.agency.timezone || state.desk?.timezone;
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [draft, setDraft] = useState<Recipe | null>(null);
+  const [error, setError] = useState("");
+  const [savedLine, setSavedLine] = useState("");
+
+  const shape = () => {
+    const body = text.trim();
+    if (!body) return;
+    setBusy(true);
+    setError("");
+    setSavedLine("");
+    void api("/api/recipes/draft", { method: "POST", body: JSON.stringify({ text: body }) })
+      .then((res: { draft?: Recipe }) => {
+        if (!res.draft) throw new Error("Bud could not shape that job.");
+        setDraft(res.draft);
+      })
+      .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
+      .finally(() => setBusy(false));
+  };
+
+  const save = () => {
+    if (!draft) return;
+    setSaving(true);
+    setError("");
+    void api("/api/recipes", { method: "POST", body: JSON.stringify({ draft }) })
+      .then(() => {
+        setSavedLine(recipeSavedLine(Boolean(draft.schedule)));
+        setDraft(null);
+        setText("");
+      })
+      .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
+      .finally(() => setSaving(false));
+  };
+
+  return (
+    <div className="flex w-full flex-col gap-2 pb-2">
+      <textarea
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        rows={3}
+        placeholder="Every Friday, open my PMS, check who is late on rent, and put them on Desk…"
+        className="w-full resize-y rounded-xl border border-line bg-sheet px-3 py-2 text-[13px] leading-relaxed text-ink outline-none focus:border-agency"
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={busy || !text.trim()}
+          onClick={shape}
+          className="pm-control rounded-lg bg-agency px-3 text-[12.5px] font-medium text-white hover:bg-agency-hover disabled:opacity-40"
+        >
+          {busy ? "Shaping…" : "Shape this job"}
+        </button>
+      </div>
+      {draft ? (
+        <section className="rounded-lg border border-line bg-sheet px-3.5 py-3" aria-label={draft.title}>
+          <div className="text-[13px] font-medium text-ink">{draft.title}</div>
+          <ol className="mt-2 list-decimal space-y-1 pl-5 text-[13px] text-ink">
+            {draft.steps.map((step, index) => (
+              <li key={`${index}-${step}`}>{step}</li>
+            ))}
+          </ol>
+          <p className="mt-2 text-[12px] text-ink-muted">{recipeSitesLine(draft.allowedOrigins)}</p>
+          {draft.evidence ? <p className="mt-1 text-[12px] text-ink-muted">{draft.evidence}</p> : null}
+          {draft.schedule ? (
+            <p className="mt-2 text-[12px] text-ink-secondary">{recipeScheduleLine(draft.schedule, timezone)}</p>
+          ) : null}
+          <p className="mt-2 text-[12px] text-hold">
+            First runs are shadow runs: Bud narrates the job and clicks nothing.
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={saving}
+              onClick={save}
+              className="pm-control rounded-lg bg-agency px-3 text-[12.5px] font-medium text-white hover:bg-agency-hover disabled:opacity-40"
+            >
+              {saving ? "Saving…" : "Save this job"}
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => setDraft(null)}
+              className="pm-control rounded-lg px-3 text-[12.5px] text-ink-muted hover:bg-raised hover:text-ink disabled:opacity-40"
+            >
+              Discard
+            </button>
+          </div>
+        </section>
+      ) : null}
+      {savedLine ? <div className="text-[12px] text-ink-secondary">{savedLine}</div> : null}
+      {error ? <span className="text-[12px] text-danger">{error}</span> : null}
     </div>
   );
 }

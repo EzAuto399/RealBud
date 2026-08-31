@@ -1,6 +1,6 @@
 import { track } from "@/lib/analytics";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, Clock, Mic, Square, Users, X } from "lucide-react";
+import { ArrowUp, Clock, Mic, Paperclip, Square, Users, X } from "lucide-react";
 import { useStore, visibleMessages, type Bot, type Group } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { useComposerDraft } from "@/lib/drafts";
@@ -8,11 +8,14 @@ import { MausAvatar } from "./Avatar";
 import { ComposerAttachments } from "./ComposerAttachments";
 import {
   composeMessage,
+  fileAttachment,
   isLongPaste,
   pasteAttachment,
   type Attachment,
 } from "@/lib/composer-attachments";
 import { normalizeState } from "@/lib/mascot";
+import { ASK_ATTACH_ACCEPT } from "@/lib/ask-attach";
+import { persistAskFile, persistAskFiles } from "@/lib/ask-attach-client";
 import { KEY_ON_YOU, looksLikeProviderKey } from "@/lib/looks-like-secret";
 import { groupComposerHint } from "@/lib/group-routing";
 import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals } from "./PendingApproval";
@@ -43,7 +46,7 @@ export function Composer({
   group?: Group;
   members?: Bot[];
   onEditLast?: () => void;
-  /** Ask never offers "Always allow": approvals stay manual, per turn. */
+  /** Always allow writes a standing rule. You → Bud's rules can revoke it. */
   productAsk?: boolean;
 }) {
   const { state, dispatch } = useStore();
@@ -80,10 +83,12 @@ export function Composer({
   );
   const [recording, setRecording] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
+  const [attachError, setAttachError] = useState<string | null>(null);
   const [caret, setCaret] = useState(0);
   const [highlight, setHighlight] = useState(0);
   const [dismissedAt, setDismissedAt] = useState<number | null>(null); // Esc'd this @
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   // what was typed before the mic went on — partials append after it
   const baseText = useRef("");
 
@@ -208,6 +213,33 @@ export function Composer({
     };
   }, [recording]);
 
+  const pickFiles = async (list: FileList | null) => {
+    if (!list?.length) return;
+    const files = Array.from(list);
+    const onDisk: Attachment[] = [];
+    const needUpload: File[] = [];
+    for (const file of files) {
+      let path = "";
+      try {
+        path = window.ogb?.getPathForFile?.(file) ?? "";
+      } catch {
+        /* browser Vite has no disk path */
+      }
+      if (path) onDisk.push(fileAttachment(file.name, path, file.size));
+      else needUpload.push(file);
+    }
+    const uploaded = needUpload.length ? await persistAskFiles(needUpload) : { attachments: [], rejectedNames: [] };
+    if (onDisk.length || uploaded.attachments.length) {
+      addAttachments([...onDisk, ...uploaded.attachments]);
+    }
+    setAttachError(
+      uploaded.rejectedNames.length
+        ? `${uploaded.rejectedNames.join(", ")} — attach a PDF, image, or text file under 8 MB.`
+        : null,
+    );
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
   const toggleMic = () => {
     if (!capabilities.dictation.available || !window.ogb) {
       setSpeechError("Dictation isn't available in this build.");
@@ -219,9 +251,9 @@ export function Composer({
 
   return (
     <div className="px-5 pb-5 pt-2">
-      {speechError && (
+      {(speechError || attachError) && (
         <div className="mx-auto mb-2 max-w-[900px] rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">
-          {speechError}
+          {speechError ?? attachError}
         </div>
       )}
       <div className="relative mx-auto max-w-[900px]">
@@ -284,7 +316,7 @@ export function Composer({
               pending={approval}
               threadId={threadId}
               bot={approvalBot}
-              alwaysAllowable={!productAsk}
+              alwaysAllowable={true}
               onCancelTurn={() => {
                 if (group) dispatch({ type: "interruptGroup", groupId: group.id });
                 else if (bot) dispatch({ type: "interrupt", botId: bot.id });
@@ -296,8 +328,27 @@ export function Composer({
           items={attachments}
           onAdd={addAttachments}
           onRemove={removeAttachment}
+          persist={persistAskFile}
         />
         <div className="flex items-end gap-2 rounded-lg border border-line bg-sheet py-2 pl-3 pr-2">
+        <input
+          ref={fileRef}
+          type="file"
+          multiple
+          accept={ASK_ATTACH_ACCEPT}
+          className="sr-only"
+          onChange={(event) => void pickFiles(event.target.files)}
+        />
+        <button
+          type="button"
+          disabled={Boolean(approval)}
+          onClick={() => fileRef.current?.click()}
+          aria-label="Attach a PDF, image, or text file"
+          title="Attach"
+          className="flex size-8 shrink-0 items-center justify-center rounded-full text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40"
+        >
+          <Paperclip size={18} />
+        </button>
         <textarea
           ref={inputRef}
           rows={1}
@@ -367,7 +418,7 @@ export function Composer({
                 : group
                   ? `Message ${group.name} — ${groupComposerHint(group, members ?? [])}`
                   : productAsk
-                    ? "Ask about a property or this morning’s work"
+                    ? "Ask Bud to analyse, research, draft, or check the book"
                     : `Message ${bot?.name ?? ""}`
           }
           aria-label={productAsk ? "Ask about the book" : `Message ${group ? group.name : (bot?.name ?? "")}`}

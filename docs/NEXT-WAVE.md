@@ -1,13 +1,14 @@
 # Next wave
 
-Date: 2026-08-29  
-HEAD at writing: `750f7ae`  
+Date: 2026-08-30  
+HEAD at writing: `511ad6a` (origin/main, PR #1) plus the honesty follow-up on this tree.  
 Canonical constraints: `docs/GOAL-PROMPT.md` wins conflicts.
 
-This is the pickup list for later sessions. W1–W5 and the You office form
-shipped on `cursor/next-wave-tasks-fa2e`. The remaining hole is a **visit**
-that fills those eight fields with a real shop — code cannot invent one.
-The weekday map is `docs/PM-DAY.md`.
+This is the pickup list for later sessions. W1–W5, morning brief, Ask key
+refuse, You office form, and worker-readiness honesty are shipped. Do not
+remount first-run. The remaining hole is a **visit** that fills those eight
+fields with a real shop — code cannot invent one. The weekday map is
+`docs/PM-DAY.md`.
 
 If a later idea fights this file, `docs/GOAL-PROMPT.md` still wins.
 
@@ -17,7 +18,7 @@ Related: `docs/LLM-BRIEF.md`, `docs/PRODUCT-DESIGN-PLAN.md`, `docs/PILOT-CONTRAC
 
 ## What is already true
 
-Shipped on main, 500 tests, e2e walkthrough green:
+Shipped on `511ad6a` and the honesty follow-up. Do not rebuild:
 
 - Four places only. Desk V3 book. Warm Ledger tokens.
 - Morning money and Friday owner letter. Editable clock. Copy only. Send 403.
@@ -42,7 +43,7 @@ These are the same misses, twice or more. Do not re-open a shipped row.
 
 **A previous cloud run sat on "Hi".** No task, no branch, idle. If the prompt is empty, stop.
 
-Already closed on this branch (do not rebuild): first-run mounted, go-live card, Worker vocabulary outside Advanced, uncovered-by-worker holds, one persist for Allow-all / bulk add, `safeStorage` wrap for `desk.key`, last-checked + shared Recheck clock, morning brief, Ask refuses provider keys.
+Already closed on this branch (do not rebuild): first-run mounted, go-live card, Worker vocabulary outside Advanced, uncovered-by-worker holds, one persist for Allow-all / bulk add, `safeStorage` wrap for `desk.key`, last-checked + Recheck/ping clocks, morning brief, Ask refuses provider keys, ready-requires-ping, Demo miss does not look finished.
 
 ---
 
@@ -72,7 +73,7 @@ the eight fields on You → This office. Code cannot invent an agency.
 - **W2** Partial worker ledger holds uncovered properties. Chip stays Held. User chrome says Worker, not Hermes.
 - **W3** `Desk.batch` / Allow-all one persist. 194 adds are one revision bump.
 - **W4** Electron wraps `desk.key` with `safeStorage`. `REALBUD_DESK_KEY` does not write a plaintext key file.
-- **W5** You sources show last-checked in the agency timezone. Desk Recheck and Test hands share `~/.realbud/hands-last.json`.
+- **W5** You sources show last-checked in the agency timezone. Recheck writes `hands-last.json`. Test hands writes `hands-ping.json`. A miss says Missed.
 - **Morning brief** Desk, You and Ask share one this-morning strip: every known address after Recheck, plus an honest **Inbox not connected**. Does not read mail. 86 stays the ceiling until a named Gmail read exists.
 - **Keys stay on You** Ask refuses a pasted provider key. The worker may use a key after Attach model. It does not get to read the secret from chat.
 - **Morning honesty** Seeded demo kinds (maintenance, lease, inspection, inbound) stay on the book. They do not inflate the Held chip. Go-live collapses to one line after the first Recheck. Evidence stamps use `fmtDateTime`. Ask intake sits under "Put work on Desk".
@@ -80,61 +81,35 @@ the eight fields on You → This office. Code cannot invent an agency.
 
 Provider keys in the worker profile `.env` stay readable by the worker. Wrapping that file would hide the key from Recheck. That is not a vault we can add without a decrypt shim the worker does not have.
 
-## Next sessions (unblocked)
+## Shipped evidence (do not rebuild)
 
-One session, one row. Tests first on gate and persist code. After Desk UI changes, run `node --experimental-strip-types scripts/e2e-walkthrough.mjs`.
+One session, one new row. Tests first on gate and persist code. After Desk UI changes, run `node --experimental-strip-types scripts/e2e-walkthrough.mjs`.
 
-### W1. Mount first-run and the go-live card — shipped
+### W1 — first-run + go-live — shipped on `511ad6a`
 
-The three-rules screen exists and is dead. First launch opens Desk with no framing.
+A wiped profile sees the three rules, then Desk, then the checklist. Recheck, Allow, Copy still work. Do not remount `Onboarding` or invent a fourth nav place.
 
-- Import `Onboarding` from `App.tsx`. Gate it on a real first-run flag, not `emailGateDone()` returning true.
-- On Desk, a dismissible three-row card: Connect your export, Attach your worker, Name your agency. Done / ready / action. It disappears when all three are green. "Replay sample morning" stays after go-live.
-- No wizard modal beyond the existing two-step welcome. No new nav place.
+### W2 — uncovered holds + Worker chrome — shipped on `511ad6a`
 
-Files: `src/App.tsx`, `src/components/Onboarding.tsx`, `src/lib/analytics.ts`, `src/components/DeskPage.tsx`, `src/components/YouPage.tsx`.  
-Done when: a wiped profile sees the three rules, then Desk, then the checklist. Recheck, Allow, Copy still work.
+A subset ledger holds omitted properties (`uncovered-by-worker`). User chrome says Worker, not Hermes. Hermes remains Advanced-only.
 
-### W2. Hands honesty — shipped
+### W3 — one persist for bulk writes — shipped on `511ad6a`
 
-A subset Hermes answer still flips the chip to live and leaves uncovered properties on stale facts (`TODOS.md`, `server/hermes-hands.ts`). User chrome still says Hermes.
+Allow-all / 194 adds are one revision bump.
 
-- Compare returned ledger ids to the requested set. Missing ids become a hold (`uncovered-by-worker`). Chip stays held, not live.
-- User-facing copy: "Worker live", "CSV live", "Held", "Demo". "Hermes" only inside Advanced diagnostics.
+### W4 — `desk.key` wrap — shipped on `511ad6a`
 
-Files: `server/hermes-hands.ts`, `server/desk.ts`, `src/components/DeskPage.tsx`, `src/components/desk/DeskBook.tsx`, `src/components/ModelPicker.tsx`, `src/components/SettingsPanel.tsx`.  
-Done when: a fixture with one property omitted from the worker JSON holds that property, and a string search of user chrome for `Hermes` is empty outside Advanced.
+Electron `safeStorage` on production-labelled runs. Source runs stay non-production.
 
-### W3. One commit for a bulk book write — shipped
+### W5 — last-checked clock — shipped on `511ad6a`
 
-`addProperty`, CSV-backed adds, and Allow-all intake each persist once per row. The 200-property test already carries a 30s budget.
+You sources show last-checked in the agency timezone. Recheck writes `hands-last.json`.
 
-- Batch persist: one encrypt/fsync/backup at the end of a bulk add, import, or Allow-all.
-- Desk "Allow all" must not N sequential HTTP commits.
+### Worker honesty — shipped after the isolated self-test
 
-Files: `server/desk-store.ts`, `server/desk.ts`, `src/components/DeskPage.tsx`.  
-Done when: 194 adds stay well under the 30s budget, and Allow-all is one revision bump.
+`ready` requires a successful Test hands ping (`hands-ping.json`). Live Recheck on the Demo book does not draft fixture cards or say “N addresses checked.” You worker source says Missed after a failed Recheck. Training cards come from `POST /api/desk/practice` or Replay sample morning, not from a worker miss.
 
-### W4. Wrap `desk.key` (`T16`) — shipped
-
-The book is encrypted. The key sits next to it as plaintext. `server/desk-key.ts` still describes `safeStorage` as a comment. Do this before any graduate installer.
-
-- Electron wraps `desk.key` with `safeStorage` and passes the unwrapped key to the server child.
-- Source runs stay labelled non-production.
-- Provider keys stay out of `desk.json` and logs.
-
-Files: `server/desk-key.ts`, Electron main process.  
-Done when: a production-labelled run has no raw 32-byte key file beside `desk.json`.
-
-### W5. Last-checked on You sources (`T14` subset) — shipped
-
-Missed runs and held sources are silent unless the PM is already looking. OS notifications can wait. Timestamps cannot.
-
-- Each source row on You shows last-checked time and freshness.
-- Schedule already has a failed/missed dot. Do not add a new notification permission this session.
-
-Files: `src/components/YouPage.tsx`, snapshot source fields if they are missing.  
-Done when: You names when CSV and worker were last checked, in the agency timezone.
+Do not add pack skills, a cron product surface, or an installer / notarize wave to “finish” the worker.
 
 ---
 

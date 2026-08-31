@@ -60,6 +60,37 @@ describe("parseLedgerFacts", () => {
     expect(parseLedgerFacts("not json")).toBeNull();
   });
 
+  it("distinguishes a valid empty observation from malformed output", () => {
+    expect(parseLedgerFacts("[]")).toEqual([]);
+  });
+
+  it("strips ANSI color codes before finding the JSON array", () => {
+    const rows = parseLedgerFacts(
+      "\x1b[33mwarning: loading skill\x1b[0m\n" +
+        `[{"propertyId":"prop-oak","daysSinceDue":3,"rentLanded":false,"levyPaid":false,"daysSinceCourtesy":null}]`,
+    );
+    expect(rows).toEqual([
+      { propertyId: "prop-oak", daysSinceDue: 3, rentLanded: false, levyPaid: false, daysSinceCourtesy: null },
+    ]);
+  });
+
+  it("finds the answer after reasoning that quotes the instructions", () => {
+    // Live: the worker reasons "the prompt says return [] exactly…" before
+    // answering — the first bracket is prose, the answer is the last block.
+    expect(
+      parseLedgerFacts('The prompt says "return [] exactly" when nothing is observable.\nNone of the notes carry ledger facts.\n[]'),
+    ).toEqual([]);
+  });
+
+  it("reads JSON followed by trailing prose", () => {
+    const rows = parseLedgerFacts(
+      `[{"propertyId":"prop-oak","daysSinceDue":3,"rentLanded":false,"levyPaid":false,"daysSinceCourtesy":null}]\n\nHope that helps.`,
+    );
+    expect(rows).toEqual([
+      { propertyId: "prop-oak", daysSinceDue: 3, rentLanded: false, levyPaid: false, daysSinceCourtesy: null },
+    ]);
+  });
+
   it("rejects the string \"false\" instead of coercing it truthy", () => {
     expect(
       parseLedgerFacts(
@@ -84,6 +115,13 @@ describe("tryHermesLedger (fake pinned CLI)", () => {
     const attempt = await tryHermesLedger(["prop-oak"], { cli: script, root: dir });
     expect(attempt.rows).toBeNull();
     expect(attempt.detail).toMatch(/without ledger JSON/);
+  });
+
+  it("explains when the worker correctly observed no ledger facts", async () => {
+    const { dir, script } = fakeHermes("[]");
+    const attempt = await tryHermesLedger(["prop-oak"], { cli: script, root: dir });
+    expect(attempt.rows).toBeNull();
+    expect(attempt.detail).toMatch(/no observed ledger facts/);
   });
 
   it("surfaces the provider's own error words (billing, auth) in the detail", async () => {
@@ -169,12 +207,13 @@ describe("hermes CLI argv contract", () => {
     // the contract: any change to these flags breaks the worker seam and
     // must be deliberate (pin bump), never accidental
     expect(readFileSync(head, "utf8").trim()).toBe(`--profile|${HERMES_PIN.profile}|chat|-Q|-q`);
-    expect(readFileSync(tail, "utf8").trim()).toBe("--max-turns|2");
+    expect(readFileSync(tail, "utf8").trim()).toBe("--max-turns|6");
     const prompt = readFileSync(promptFile, "utf8");
     expect(prompt).toContain("Morning arrears check. Use skill morning-arrears.");
     expect(prompt).toContain("Do not send, pay, or draft a statutory notice.");
     expect(prompt).toContain("prop-oak");
     expect(prompt).toContain("Do not copy sample values");
+    expect(prompt).toContain("return [] exactly");
     expect(prompt).not.toContain("training book");
     expect(prompt).not.toContain("copy fixture");
   });

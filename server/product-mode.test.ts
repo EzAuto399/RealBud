@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { CANONICAL_BUD_ID, isCanonicalBud, productDenied } from "./product-mode.ts";
+import { CANONICAL_BUD_ID, PRODUCT_TURN_DEFAULTS, isCanonicalBud, productDenied, productRuntimeEventVisible } from "./product-mode.ts";
 import { hostAllowed, originAllowed, needsSession } from "./session-auth.ts";
 import { emptyOffice } from "../shared/office.ts";
 import { pilotContractFromBook, readyForLivePortal, readyForLivePortalFromBook } from "./pilot-contract.ts";
@@ -23,6 +23,12 @@ describe("product mode denials", () => {
 
   it("requires a session for Desk, loops, artifacts, and events", () => {
     expect(needsSession("/api/desk")).toBe(true);
+    expect(needsSession("/api/channels")).toBe(true);
+    expect(needsSession("/api/rules")).toBe(true);
+    expect(needsSession("/api/law-watch")).toBe(true);
+    expect(needsSession("/api/recipes")).toBe(true);
+    expect(needsSession("/api/computer-history")).toBe(true);
+    expect(needsSession("/api/portal-sessions")).toBe(true);
     expect(needsSession("/api/loops")).toBe(true);
     expect(needsSession("/api/artifacts/art-1")).toBe(true);
     expect(needsSession("/api/events")).toBe(true);
@@ -31,11 +37,33 @@ describe("product mode denials", () => {
     expect(needsSession("/api/bots")).toBe(false);
   });
 
-  it("accepts only loopback Host/Origin", () => {
+  it("accepts only loopback Host/Origin, including the configured UI port", () => {
     expect(hostAllowed("127.0.0.1:8799", 8799)).toBe(true);
     expect(hostAllowed("evil.example", 8799)).toBe(false);
     expect(originAllowed("http://127.0.0.1:5199", 8799)).toBe(true);
     expect(originAllowed("https://evil.example", 8799)).toBe(false);
+    const previous = process.env.OMB_UI_PORT;
+    process.env.OMB_UI_PORT = "5200";
+    try {
+      expect(originAllowed("http://127.0.0.1:5200", 8799)).toBe(true);
+      expect(originAllowed("http://127.0.0.1:5201", 8799)).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.OMB_UI_PORT;
+      else process.env.OMB_UI_PORT = previous;
+    }
+  });
+
+  it("does not expose provider reasoning or raw runtime internals to the product client", () => {
+    expect(productRuntimeEventVisible({ type: "content.delta", streamKind: "assistant_text" })).toBe(true);
+    expect(productRuntimeEventVisible({ type: "turn.completed" })).toBe(true);
+    expect(productRuntimeEventVisible({ type: "content.delta", streamKind: "reasoning_text" })).toBe(false);
+    expect(productRuntimeEventVisible({ type: "item.started" })).toBe(false);
+    expect(productRuntimeEventVisible({ type: "runtime.error" })).toBe(false);
+  });
+
+  it("gives useful work a larger but still bounded product budget", () => {
+    expect(PRODUCT_TURN_DEFAULTS).toEqual({ maxMs: 900_000, maxTools: 96, maxRepeatedTool: 5 });
+    expect(PRODUCT_TURN_DEFAULTS.maxRepeatedTool).toBeLessThan(PRODUCT_TURN_DEFAULTS.maxTools);
   });
 });
 

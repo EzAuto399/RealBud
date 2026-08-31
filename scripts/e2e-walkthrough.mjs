@@ -33,6 +33,16 @@ const api = async (method, path, body) => {
   try { json = await res.json(); } catch { /* empty */ }
   return { status: res.status, body: json };
 };
+const importReviewedCsv = async (csv) => {
+  const preview = await api("POST", "/api/desk/import/preview", { csv });
+  if (preview.status !== 200) return preview;
+  return api("POST", "/api/desk/import", {
+    csv,
+    expectedDigest: preview.body.digest,
+    expectedRevision: preview.body.expectedRevision,
+    observedAt: preview.body.observedAt,
+  });
+};
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const { startFakePortal } = await import(join(ROOT, "server", "testing", "fake-portal.ts"));
@@ -75,13 +85,15 @@ try {
   const oak0 = snap.properties.find((p) => p.address.includes("Oak"));
   await api("PATCH", `/api/desk/properties/${oak0.id}`, { notifyChannel: "portal" });
 
-  // ── 2. recheck drafts the portal courtesy for the bound property ──
+  // ── 2. live Recheck on Demo is a miss; practice drafts the portal courtesy ──
   snap = (await api("POST", "/api/desk/check", {})).body;
-  const portalEarly = snap.drafts.find((d) => d.kind === "courtesy-rent" && d.status === "pending" && d.channel === "portal");
-  check("recheck drafts portal courtesy for Oak", Boolean(portalEarly));
+  check("live Recheck on Demo does not draft fixture cards", snap?.hands === "demo" && Array.isArray(snap.drafts) && snap.drafts.length === 0, `${snap?.hands} drafts=${snap?.drafts?.length}`);
   const hermesAfterCheck = await api("GET", "/api/hermes");
-  check("recheck writes the shared worker clock", typeof hermesAfterCheck.body?.lastTest?.at === "number");
+  check("recheck writes the shared worker clock", typeof hermesAfterCheck.body?.lastTest?.at === "number" && hermesAfterCheck.body.lastTest.ok === false);
   check("recheck stamps the worker source", snap.sources?.some((s) => s.kind === "hermes" && typeof s.lastCheckedAt === "number"));
+  snap = (await api("POST", "/api/desk/practice", {})).body;
+  const portalEarly = snap.drafts.find((d) => d.kind === "courtesy-rent" && d.status === "pending" && d.channel === "portal");
+  check("practice drafts portal courtesy for Oak", Boolean(portalEarly));
 
   // ── 4. CSV import: matched go live, unmatched becomes an issue with an address ──
   const csv = [
@@ -90,7 +102,7 @@ try {
     '"4/22 Harbour Rd, Kingston ACT",5,false,false',
     '"99 Ghost St, Acton ACT",3,false,false',
   ].join("\n");
-  snap = (await api("POST", "/api/desk/import", { csv })).body;
+  snap = (await importReviewedCsv(csv)).body;
   check("import flips the book live", snap?.mode === "live" && snap.hands === "csv");
   check("csv source has last-checked", snap.sources?.some((s) => s.kind === "csv" && typeof s.lastCheckedAt === "number"));
   const named = await api("PATCH", "/api/desk/agency", {
@@ -110,7 +122,7 @@ try {
   check("office visit fields stick", named.body?.book?.office?.pmUser === "Alex" && named.body?.book?.office?.pmsBrand === "other");
   const issue = snap.book?.importIssues?.find((row) => row.rawIdentity.includes("Ghost"));
   check("unmatched row keeps its address", Boolean(issue), issue?.rawIdentity);
-  snap = (await api("POST", "/api/desk/import", { csv })).body;
+  snap = (await importReviewedCsv(csv)).body;
   check("re-import does not duplicate the issue", snap.book.importIssues.filter((row) => row.rawIdentity.includes("Ghost")).length === 1);
 
   // ── 3. allow → decision recorded, wording still copyable, send 403 ──

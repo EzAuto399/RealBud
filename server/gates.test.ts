@@ -73,8 +73,12 @@ describe("hard gates (canary)", () => {
     const config = readFileSync(join(home, "profiles", "property", "config.yaml"), "utf8");
     expect(config).toMatch(/mode:\s*manual/);
     expect(config).toMatch(/cron_mode:\s*deny/);
+    expect(config).toMatch(/backend:\s*local/);
+    expect(config).toMatch(/home_mode:\s*profile/);
+    expect(config).toMatch(/redact_secrets:\s*true/);
     expect(config).not.toMatch(/mode:\s*(off|smart|yolo)/);
     expect(config).not.toMatch(/cron_mode:\s*(on|allow)/);
+    expect(config).not.toMatch(/backend:\s*none/);
   });
 
   it("the pack soul refuses send, pay, and notices in its own words", () => {

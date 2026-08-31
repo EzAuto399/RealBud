@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { NEVER_ACTIONS, type DeskSnapshot } from "../../shared/contracts";
-import { morningBrief, shortStreet } from "./morning-brief";
+import { collapseBriefRows, morningBrief, shortStreet, type MorningAddress } from "./morning-brief";
 
 function property(id: string, address: string): DeskSnapshot["properties"][number] {
   return {
@@ -178,9 +178,88 @@ describe("morning brief", () => {
     expect(brief.inboxConnected).toBe(false);
   });
 
+  it("does not treat a Demo worker miss as addresses checked", () => {
+    const brief = morningBrief(
+      snap({
+        lastRunAt: 1_700_000_000_000,
+        hands: "demo",
+        handsDetail: "The worker answered without ledger JSON — facts stay held.",
+        drafts: [
+          {
+            id: "d-oak",
+            propertyId: "prop-oak",
+            kind: "courtesy-rent",
+            status: "pending",
+            channel: "sms",
+            to: "Sam",
+            body: "hi",
+            periodDueAt: 1,
+            createdAt: 2,
+          },
+        ],
+      }),
+    );
+    expect(brief.checkedCount).toBe(0);
+    expect(brief.addresses.every((row) => row.attention === "unchecked")).toBe(true);
+    expect(brief.headline).toBe("Recheck missed. The worker did not return live facts.");
+  });
+
+  it("still lands training Recheck as checked when the detail is the Demo book", () => {
+    const brief = morningBrief(
+      snap({
+        lastRunAt: 1,
+        hands: "demo",
+        handsDetail: "Demo book — Recheck asks the worker or a CSV for live facts.",
+        results: [{ propertyId: "prop-oak", outcome: "clear", reason: "rent-landed", daysLate: 0 }],
+      }),
+    );
+    expect(brief.addresses.find((row) => row.propertyId === "prop-oak")?.attention).toBe("quiet");
+    expect(brief.headline).not.toMatch(/missed/i);
+  });
+
   it("shortens a street for the strip without dropping the suburb from the model", () => {
     expect(shortStreet("12 Oak St, Dickson ACT")).toBe("12 Oak St");
     const brief = morningBrief(snap({}));
     expect(brief.addresses[0]?.address).toContain("Dickson");
+  });
+});
+
+function row(id: string, attention: MorningAddress["attention"]): MorningAddress {
+  const label =
+    attention === "needs-you" ? "Needs you" : attention === "licensee" ? "Licensee" : attention === "held" ? "Waiting" : attention === "quiet" ? "Checked" : "Not checked";
+  const tone =
+    attention === "needs-you" ? "agency" : attention === "licensee" ? "danger" : attention === "held" ? "hold" : "muted";
+  return { propertyId: id, address: `${id} St`, attention, label, tone };
+}
+
+describe("collapseBriefRows", () => {
+  it("leaves eight or fewer addresses expanded exactly as given", () => {
+    const rows = ["a", "b", "c", "d", "e", "f", "g", "h"].map((id) => row(id, "quiet"));
+    expect(collapseBriefRows(rows)).toEqual({ expanded: rows, collapsedCount: 0, collapsedSummary: null });
+    expect(collapseBriefRows(rows.slice(0, 3)).collapsedSummary).toBeNull();
+  });
+
+  it("keeps needs-you and licensee rows and folds the rest as checked", () => {
+    const rows = [
+      row("oak", "needs-you"),
+      row("king", "licensee"),
+      ...["a", "b", "c", "d", "e", "f", "g"].map((id) => row(id, "quiet")),
+    ];
+    const collapsed = collapseBriefRows(rows);
+    expect(collapsed.expanded.map((item) => item.propertyId)).toEqual(["oak", "king"]);
+    expect(collapsed.expanded.map((item) => item.label)).toEqual(["Needs you", "Licensee"]);
+    expect(collapsed.collapsedCount).toBe(7);
+    expect(collapsed.collapsedSummary).toBe("and 7 more — checked, nothing waiting");
+  });
+
+  it("names the honest mix when held addresses are folded", () => {
+    const rows = [
+      row("oak", "needs-you"),
+      ...["a", "b", "c", "d"].map((id) => row(id, "quiet")),
+      ...["h1", "h2", "h3", "h4"].map((id) => row(id, "held")),
+    ];
+    const collapsed = collapseBriefRows(rows);
+    expect(collapsed.expanded).toHaveLength(1);
+    expect(collapsed.collapsedSummary).toBe("and 8 more: 4 fine · 4 held");
   });
 });

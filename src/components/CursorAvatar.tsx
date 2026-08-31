@@ -44,6 +44,25 @@ export const SHAPE: CursorShape = {
   anchor: { x: 93, y: 101, scale: 0.74 },
 }
 
+/**
+ * The RealBud mark (docs/brand/realbud-mark-v1.svg) as an avatar silhouette:
+ * one forward-moving roof/cursor body, 1024-unit artwork mapped into the face
+ * box. The baked face stays out of the body — the engine's animated face plays
+ * inside the silhouette. The roof fold is a soft sheen so it reads on any
+ * per-instance gradient.
+ */
+const REALBUD_BODY =
+  '<path fill="{{GRADIENT}}" fill-rule="evenodd" d="M693 122C735 89 774 113 766 164L724 421C718 455 727 479 752 504L878 629C910 661 901 700 862 718L772 758 752 878C747 909 724 928 692 928H638V846C638 775 582 718 512 718S386 775 386 846V928H302C267 928 243 902 247 868L263 739 176 700C124 676 112 615 152 570L693 122ZM448 928V846C448 810 477 781 512 781S576 810 576 846V928Z"/>' +
+  '<path fill="#FFFFFF" opacity="0.32" d="M704 151C728 132 744 141 739 170L702 395C696 428 700 455 714 478C671 430 650 374 661 311C673 245 687 185 704 151Z"/>'
+
+export const REALBUD_SHAPE: CursorShape = {
+  name: "RealBud",
+  fit: "scale(0.223184)",
+  body: REALBUD_BODY,
+  clip: '<path fill-rule="evenodd" clip-rule="evenodd" d="M693 122C735 89 774 113 766 164L724 421C718 455 727 479 752 504L878 629C910 661 901 700 862 718L772 758 752 878C747 909 724 928 692 928H638V846C638 775 582 718 512 718S386 775 386 846V928H302C267 928 243 902 247 868L263 739 176 700C124 676 112 615 152 570L693 122ZM448 928V846C448 810 477 781 512 781S576 810 576 846V928Z"/>',
+  anchor: { x: 118, y: 130, scale: 0.5 },
+}
+
 export const DEFAULT_GRADIENT: [string, string, string] = ["#9FE6B5","#3FAE6E","#1C7A4C"]
 
 /** The face box every coordinate in this file is expressed in. */
@@ -134,7 +153,7 @@ export const EXPRESSION_COUNT = EXPRESSIONS.length
  *   skew   extra tilt in degrees on top of the eye-pair tilt, for smirks
  */
 export const MOUTHS: number[][] = [
-  [14,3,20,0],
+  [18,4,20,0],
   [13,1,20,0],
   [25,14,13,0],
   [11,4,18,0],

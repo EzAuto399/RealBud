@@ -18,22 +18,37 @@ function Shell() {
   return (
     <div className="flex h-full flex-col">
       <UpdateBanner />
+      {/* Store errors surface on every page, not just the view that failed. */}
+      {state.error && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex justify-center px-4">
+          <div
+            role="alert"
+            className="animate-panel-in max-w-[520px] rounded-lg border border-danger/30 bg-sheet px-3.5 py-2.5 text-[13px] text-danger shadow-lg"
+          >
+            {state.error}
+          </div>
+        </div>
+      )}
       <div className="relative flex min-h-0 flex-1">
         <Sidebar />
-        {state.activeView === "desk" ? (
-          <DeskPage />
-        ) : state.activeView === "schedule" ? (
-          <RoutinesPage />
-        ) : state.activeView === "you" ? (
-          <YouPage />
-        ) : bud ? (
-          <ChatView bot={bud} productAsk />
-        ) : (
-          <main className="flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-app text-ink-secondary">
-            <Loader2 size={20} className="animate-spin" />
-            <div className="text-[14px]">{state.connected ? "Bud is starting…" : "Connecting…"}</div>
-          </main>
-        )}
+        {/* Keyed on the view: each place rises in once on arrival. Pages already
+            remount on switch (the ternary above), so no state contract changes. */}
+        <div key={state.activeView} className="animate-view-in flex min-h-0 min-w-0 flex-1">
+          {state.activeView === "desk" ? (
+            <DeskPage />
+          ) : state.activeView === "schedule" ? (
+            <RoutinesPage />
+          ) : state.activeView === "you" ? (
+            <YouPage />
+          ) : bud ? (
+            <ChatView bot={bud} productAsk />
+          ) : (
+            <main className="flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-app text-ink-secondary">
+              <Loader2 size={20} className="animate-spin" />
+              <div className="text-[14px]">{state.connected ? "Bud is starting…" : "Connecting…"}</div>
+            </main>
+          )}
+        </div>
       </div>
     </div>
   );

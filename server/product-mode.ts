@@ -5,6 +5,14 @@ export const PRODUCT_MODE = process.env.OMB_TEST_FLEET === "1" ? false : true;
 export const CANONICAL_BUD_ID = "bud";
 export const CANONICAL_BUD_NAME = "Bud";
 
+// Long research and file-making jobs need room to finish. These remain hard
+// ceilings, while the repeated-tool limit still stops an actual loop quickly.
+export const PRODUCT_TURN_DEFAULTS = Object.freeze({
+  maxMs: 15 * 60_000,
+  maxTools: 96,
+  maxRepeatedTool: 5,
+});
+
 const DENIED = new Set([
   "POST /api/bots",
   "POST /api/groups",
@@ -40,4 +48,12 @@ export function productDenied(method: string, path: string): string | null {
 
 export function isCanonicalBud(id: string): boolean {
   return id === CANONICAL_BUD_ID;
+}
+
+/** Product clients need the answer stream and the terminal completion event,
+ * not provider reasoning, raw tool names, or runtime diagnostics. Permission
+ * cards and settled messages are projected separately by the server. */
+export function productRuntimeEventVisible(event: { type: string; streamKind?: string }): boolean {
+  return event.type === "turn.completed" ||
+    (event.type === "content.delta" && event.streamKind === "assistant_text");
 }

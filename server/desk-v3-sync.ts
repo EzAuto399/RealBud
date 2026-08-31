@@ -42,6 +42,7 @@ export function syncWorkingV2IntoV3(v3: DeskFileV3, v2: DeskFileV2, now: number)
   next.mode = v2.mode;
   next.retentionDays = v2.retentionDays;
   next.lastRunAt = v2.lastRunAt;
+  next.results = v2.results.map((result) => ({ ...result }));
   next.hands = v2.hands;
   next.handsDetail = v2.handsDetail;
   next.agency = { ...next.agency, timezone: v2.timezone };
@@ -346,13 +347,14 @@ export function syncWorkingV2IntoV3(v3: DeskFileV3, v2: DeskFileV2, now: number)
           proposalId: draft.id,
           revisionId: saved.currentRevisionId,
           kind,
-          actorId: "pm",
+          actorId: draft.via ?? "pm",
           at: draft.decidedAt ?? now,
         });
       } else {
         existing.kind = kind;
         existing.revisionId = saved.currentRevisionId;
         existing.at = draft.decidedAt ?? existing.at;
+        if (draft.via) existing.actorId = draft.via;
       }
     }
   }

@@ -13,29 +13,18 @@
 // Install runs the pinned installer as a spawned child with streamed
 // output — same command the terminal used to run, no terminal.
 import { spawn, execFile, type ChildProcess } from "node:child_process";
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { WORKER_PROVIDERS, type WorkerProvider } from "../shared/worker-providers.ts";
+import { writeFileAtomic } from "./atomic.ts";
 import { augmentedPath } from "./env-path.ts";
 import { HERMES_PIN, hermesMatchesPin } from "./hermes-pin.ts";
 import { hermesHome, propertyProfileDir, withYamlBlock, yamlBlock } from "./hermes-pack.ts";
 import { probeHermesVersion } from "./hermes-status.ts";
 
-export interface ProviderOption {
-  id: string;
-  label: string;
-  envVar: string;
-  exampleModel: string;
-}
-
-/** Curated key providers (ids/env vars mirror the worker's own registry). */
-export const PROVIDER_OPTIONS: ProviderOption[] = [
-  { id: "anthropic", label: "Anthropic", envVar: "ANTHROPIC_API_KEY", exampleModel: "claude-sonnet-4-5" },
-  { id: "xai", label: "xAI", envVar: "XAI_API_KEY", exampleModel: "grok-4" },
-  { id: "openai-api", label: "OpenAI", envVar: "OPENAI_API_KEY", exampleModel: "gpt-5" },
-  { id: "openrouter", label: "OpenRouter", envVar: "OPENROUTER_API_KEY", exampleModel: "anthropic/claude-sonnet-4.5" },
-  { id: "ollama-cloud", label: "Ollama Cloud", envVar: "OLLAMA_CLOUD_API_KEY", exampleModel: "qwen3-coder:480b-cloud" },
-];
+export type ProviderOption = WorkerProvider;
+export const PROVIDER_OPTIONS = WORKER_PROVIDERS;
 
 export interface PreflightEntry {
   name: string;
@@ -83,8 +72,12 @@ export function installStatus(): InstallJob {
   return { ...installJob, lines: installJob.lines.slice(-40) };
 }
 
-export function startInstall(command: string, opts?: { timeoutMs?: number }): InstallJob {
-  if (installJob.state === "running" || installJob.state === "verifying" || installJob.state === "preflight") {
+export function installInFlight(): boolean {
+  return installJob.state === "running" || installJob.state === "verifying" || installJob.state === "preflight";
+}
+
+export function startInstall(command: string, opts?: { timeoutMs?: number; onSuccess?: () => void | Promise<void> }): InstallJob {
+  if (installInFlight()) {
     return installStatus();
   }
   installJob.state = "running";
@@ -125,6 +118,16 @@ export function startInstall(command: string, opts?: { timeoutMs?: number }): In
     installJob.state = "verifying";
     const version = await probeHermesVersion("hermes");
     if (version && hermesMatchesPin(version)) {
+      if (opts?.onSuccess) {
+        try {
+          await opts.onSuccess();
+        } catch (err) {
+          installJob.state = "failed";
+          installJob.error = err instanceof Error ? err.message : String(err);
+          installJob.finishedAt = Date.now();
+          return;
+        }
+      }
       installJob.state = "done";
       installJob.lines.push(`verified ${version.trim().slice(0, 60)}`);
     } else {
@@ -161,8 +164,41 @@ function upsertEnvLine(envPath: string, key: string, value: string): void {
   if (idx >= 0) lines[idx] = next;
   else lines.push(next);
   body = lines.join("\n") + "\n";
-  writeFileSync(envPath, body, { mode: 0o600 });
+  writeFileAtomic(envPath, body, 0o600);
   try { chmodSync(envPath, 0o600); } catch { /* best effort */ }
+}
+
+function validatedModelId(value: unknown): string {
+  const model = String(value ?? "").trim();
+  if (!model) throw Object.assign(new Error("model id is required"), { status: 400 });
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/.test(model)) {
+    throw Object.assign(new Error("model id contains unsupported characters"), { status: 400 });
+  }
+  return model;
+}
+
+function validatedApiKey(value: unknown): string {
+  const key = String(value ?? "").trim();
+  if (key.length > 4_096 || /[\r\n\0]/.test(key)) {
+    throw Object.assign(new Error("api key format is not supported"), { status: 400 });
+  }
+  return key;
+}
+
+function validatedBaseUrl(value: unknown): string {
+  const baseUrl = String(value ?? "").trim();
+  if (!baseUrl) return "";
+  if (baseUrl.length > 2_048) throw Object.assign(new Error("base URL is too long"), { status: 400 });
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    throw Object.assign(new Error("base URL must be a complete http or https URL"), { status: 400 });
+  }
+  if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) {
+    throw Object.assign(new Error("base URL must be an http or https URL without embedded credentials"), { status: 400 });
+  }
+  return baseUrl;
 }
 
 export interface AttachModelInput {
@@ -183,20 +219,26 @@ export interface ModelStatus {
 /** Model ids for a provider, from the worker's own cache (same data the
  * interactive picker shows). Empty when the cache has nothing — the UI keeps
  * free-text entry as the fallback. */
+const CACHE_ALIASES: Record<string, string> = { "openai-api": "openai" };
+
 export function listModels(providerId: string, root?: string): string[] {
-  try {
-    const cache = JSON.parse(readFileSync(join(hermesHome(root), "models_dev_cache.json"), "utf8")) as Record<
-      string,
-      { models?: Record<string, unknown> } | undefined
-    >;
-    const entry = cache[providerId]?.models;
-    if (!entry || typeof entry !== "object") return [];
-    return Object.keys(entry)
-      .filter((id) => !/imagine|video|image/i.test(id))
-      .sort((a, b) => a.localeCompare(b));
-  } catch {
-    return [];
+  const keys = [providerId, CACHE_ALIASES[providerId]].filter((id): id is string => Boolean(id));
+  const paths = [join(hermesHome(root), "models_dev_cache.json"), join(propertyProfileDir(root), "models_dev_cache.json")];
+  for (const path of paths) {
+    try {
+      const cache = JSON.parse(readFileSync(path, "utf8")) as Record<string, { models?: Record<string, unknown> } | undefined>;
+      for (const key of keys) {
+        const entry = cache[key]?.models;
+        if (!entry || typeof entry !== "object") continue;
+        return Object.keys(entry)
+          .filter((id) => !/imagine|video|image/i.test(id))
+          .sort((a, b) => a.localeCompare(b));
+      }
+    } catch {
+      /* try the next cache path */
+    }
   }
+  return [];
 }
 
 export function modelStatus(root?: string): ModelStatus {
@@ -234,9 +276,9 @@ export function modelStatus(root?: string): ModelStatus {
 export function attachModel(input: AttachModelInput, opts?: { root?: string }): ModelStatus {
   const option = providerOption(input.providerId);
   if (!option) throw Object.assign(new Error("unknown provider"), { status: 400 });
-  const model = String(input.model ?? "").trim();
-  if (!model) throw Object.assign(new Error("model id is required"), { status: 400 });
-  const key = String(input.apiKey ?? "").trim();
+  const model = validatedModelId(input.model);
+  const key = validatedApiKey(input.apiKey);
+  const baseUrl = validatedBaseUrl(input.baseUrl);
 
   const profileDir = propertyProfileDir(opts?.root);
   if (!existsSync(join(profileDir, "SOUL.md"))) {
@@ -256,8 +298,8 @@ export function attachModel(input: AttachModelInput, opts?: { root?: string }): 
   const configPath = join(profileDir, "config.yaml");
   const existing = existsSync(configPath) ? readFileSync(configPath, "utf8") : "";
   const block =
-    `model:\n  default: ${model}\n  provider: ${option.id}\n  base_url: ${input.baseUrl?.trim() ? JSON.stringify(input.baseUrl.trim()) : "''"}\n`;
-  writeFileSync(configPath, withYamlBlock(existing, "model", block));
+    `model:\n  default: ${model}\n  provider: ${option.id}\n  base_url: ${baseUrl ? JSON.stringify(baseUrl) : "''"}\n`;
+  writeFileAtomic(configPath, withYamlBlock(existing, "model", block));
 
   const status = modelStatus(opts?.root);
   return { ...status, keyPresent: true };

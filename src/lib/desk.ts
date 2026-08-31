@@ -4,6 +4,9 @@ export type {
   CheckOutcome,
   CheckReason,
   CheckResult,
+  CsvColumnMapping,
+  CsvImportPreview,
+  CsvRejectedRow,
   DeskSnapshot,
   Draft,
   DraftKind,
@@ -13,11 +16,15 @@ export type {
   LedgerFacts,
   LevyFromRent,
   NotifyChannel,
+  PortalSession,
+  PortalSessionState,
   Property,
+  Recipe,
+  RecipeStatus,
   PropertyOptions,
   RentSource,
   WorkItem,
   WorkState,
 } from "@shared/contracts";
 
-export { aud, COURTESY_DISCLAIMER, NEVER_ACTIONS } from "@shared/contracts";
+export { aud, COURTESY_DISCLAIMER, NEVER_ACTIONS, recipeClockRunnable } from "@shared/contracts";

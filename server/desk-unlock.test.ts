@@ -1,4 +1,4 @@
-import { mkdtempSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, existsSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -43,5 +43,30 @@ describe("recovery key escrow + unlock", () => {
     const reopened = new Desk({ file, key: keyOnDisk });
     expect(reopened.snapshot().recovery.active).toBe(false);
     expect(reopened.snapshot().properties.some((p) => p.address === "1 Escrow St, Braddon ACT")).toBe(true);
+  });
+
+  it("preserves a locked book when the user explicitly starts again", async () => {
+    const { Desk } = await import("./desk.ts");
+    const { loadDeskKey } = await import("./desk-key.ts");
+    const dir = mkdtempSync(join(tmpdir(), "realbud-start-again-"));
+    dirs.push(dir);
+    const file = join(dir, "desk.json");
+
+    const original = new Desk({ file, key: loadDeskKey({ key: Buffer.alloc(32, 3) }).key });
+    original.addProperty({ address: "9 Preserve Lane", tenantName: "Keep Me", tenantPhone: "0400 999 999", weeklyRentCents: 60_000 });
+    const locked = new Desk({ file, key: loadDeskKey({ key: Buffer.alloc(32, 4) }).key });
+    expect(locked.snapshot().recovery.active).toBe(true);
+    expect(() => locked.startAgain("start again")).toThrow(/START AGAIN/);
+
+    const result = locked.startAgain("START AGAIN");
+    expect(result.ok).toBe(true);
+    expect(result.preserved.some((name) => name.startsWith("desk.json.quarantine-"))).toBe(true);
+    expect(readdirSync(dir).some((name) => name.startsWith("desk.json.quarantine-"))).toBe(true);
+
+    const fresh = new Desk({ file, key: loadDeskKey({ dir }).key });
+    expect(fresh.snapshot().recovery.active).toBe(false);
+    expect(fresh.snapshot().mode).toBe("demo");
+    expect(fresh.snapshot().properties.some((property) => property.address === "9 Preserve Lane")).toBe(false);
+    expect(readdirSync(dir).some((name) => name.startsWith("desk.json.quarantine-"))).toBe(true);
   });
 });

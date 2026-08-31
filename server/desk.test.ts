@@ -188,6 +188,21 @@ describe("Desk morning check", () => {
     expect(desk.snapshot().drafts.filter((d) => d.kind === "courtesy-rent")).toHaveLength(1);
   });
 
+  it("preserves every morning outcome across a restart", () => {
+    const { desk, dir, now } = tempDesk();
+    const checked = desk.runMorningCheck();
+    expect(checked.results).toHaveLength(checked.properties.length);
+    expect(checked.results.some((result) => result.outcome === "clear")).toBe(true);
+    expect(checked.results.some((result) => result.outcome === "skip")).toBe(true);
+
+    const reopened = new Desk({ file: join(dir, "desk.json"), now });
+    const restored = reopened.snapshot();
+
+    expect(restored.lastRunAt).toBe(checked.lastRunAt);
+    expect(restored.results).toEqual(checked.results);
+    expect(restored.results).toHaveLength(restored.properties.length);
+  });
+
   it("allow / deny / edit only touch pending drafts and never mark them sent", () => {
     const { desk } = tempDesk();
     desk.runMorningCheck();
@@ -215,7 +230,8 @@ describe("Desk morning check", () => {
     expect(snap.hands).toBe("demo");
     expect(snap.mode).toBe("demo");
     expect(snap.handsDetail).toMatch(/held/i);
-    expect(snap.drafts.map((d) => d.kind).sort()).toEqual(["courtesy-rent", "levy-from-rent"]);
+    expect(snap.drafts).toEqual([]);
+    expect(snap.results).toEqual([]);
     expect(readHandsLast(dir)?.kind).toBe("recheck");
     expect(readHandsLast(dir)?.ok).toBe(false);
     expect(snap.sources.some((s) => s.kind === "hermes" && typeof s.lastCheckedAt === "number")).toBe(true);
@@ -241,11 +257,55 @@ describe("Desk morning check", () => {
     expect(readHandsLast(dir)?.kind).toBe("recheck");
   });
 
+  it("never lets a late worker response overwrite newer Desk work", async () => {
+    let finish!: (attempt: HermesLedgerAttempt) => void;
+    const provider = new Promise<HermesLedgerAttempt>((resolve) => {
+      finish = resolve;
+    });
+    const { desk } = tempDesk({ hermes: async () => provider });
+
+    const pending = desk.runMorningCheckLive();
+    await Promise.resolve();
+    const practice = desk.runMorningCheck();
+    expect(practice.results).toHaveLength(practice.properties.length);
+
+    finish({ rows: [], detail: "Worker returned no observable rows." });
+    await expect(pending).rejects.toMatchObject({ status: 409 });
+    expect(desk.snapshot().revision).toBe(practice.revision);
+    expect(desk.snapshot().results).toEqual(practice.results);
+    expect(desk.snapshot().handsDetail).toBe(practice.handsDetail);
+  });
+
   it("never strips the hard never-rules off a property", () => {
     const { desk } = tempDesk();
     const patched = desk.patchProperty("prop-oak", { graceDays: 2 });
     expect(patched.options.never).toEqual(["statutory-send", "trust-pay"]);
     expect(() => desk.patchProperty("prop-oak", { courtesyUntilDay: 2 })).toThrow(/after grace/);
+  });
+
+  it("recomputes cards when a rule moves, without claiming a fresh check", () => {
+    const { desk } = tempDesk();
+    const checked = desk.command({ type: "check-demo" });
+    const ranAt = checked.lastRunAt;
+    expect(ranAt).not.toBeNull();
+    const before = checked.results.find((r) => r.propertyId === "prop-oak");
+
+    // widen the courtesy window past the late count: the case stops escalating
+    desk.patchProperty("prop-oak", { courtesyUntilDay: 60 });
+    const after = desk.snapshot();
+    expect(after.results.find((r) => r.propertyId === "prop-oak")?.outcome).not.toBe("escalate");
+    expect(after.lastRunAt).toBe(ranAt);
+    expect(before).toBeDefined();
+  });
+
+  it("does not evaluate an unchecked book when a rule moves", () => {
+    const { desk } = tempDesk();
+    expect(desk.snapshot().lastRunAt).toBeNull();
+    desk.patchProperty("prop-oak", { graceDays: 1 });
+    const snap = desk.snapshot();
+    expect(snap.lastRunAt).toBeNull();
+    expect(snap.results).toEqual([]);
+    expect(snap.drafts).toEqual([]);
   });
 
   it("validates rent source and notify channel strictly", () => {
@@ -282,6 +342,17 @@ describe("Desk morning check", () => {
     expect(() => desk.addProperty({ ...base, address: "" })).toThrow(/address required/);
     expect(() => desk.addProperty({ address: "1 X St", ...base, tenantName: "" })).toThrow(/tenant name required/);
     expect(() => desk.addProperty({ address: "1 X St", ...base, weeklyRentCents: 0 })).toThrow(/weekly rent required/);
+  });
+
+  it("rejects a duplicate address or property code, and keeps the code on the book", () => {
+    const { desk } = tempDesk();
+    const base = { tenantName: "A", tenantPhone: "0400 000 000", weeklyRentCents: 50_000 };
+    expect(() => desk.addProperty({ ...base, address: "12 Oak St, Dickson ACT" })).toThrow(/address is already on the book/);
+    const snap = desk.addProperty({ ...base, address: "7 Banksia Pl, Bruce ACT", propertyCode: "A-1042" });
+    expect(snap.properties.find((p) => p.propertyCode === "A-1042")?.address).toBe("7 Banksia Pl, Bruce ACT");
+    expect(() => desk.addProperty({ ...base, address: "8 Banksia Pl, Bruce ACT", propertyCode: "a-1042" })).toThrow(
+      /property code is already on the book/,
+    );
   });
 
   it("removes a property with its facts, drafts, and escalations", () => {

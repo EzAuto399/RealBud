@@ -15,9 +15,33 @@ import {
   type ExecFileOptions,
   type SpawnOptions,
 } from "node:child_process";
+import { accessSync, constants } from "node:fs";
 import type { Readable, Writable } from "node:stream";
+import { delimiter } from "node:path";
 import { join } from "node:path";
 import { resolveCliSpawn, type ResolvedSpawn } from "./env-path.ts";
+
+type SpawnCliOptions = SpawnOptions & {
+  /** POSIX child-created files default to owner-only. Used for private agent workrooms. */
+  privateFiles?: boolean;
+};
+
+function posixCommandExists(command: string, env: NodeJS.ProcessEnv | undefined): boolean {
+  const paths = command.includes("/")
+    ? [command]
+    : String(env?.PATH ?? process.env.PATH ?? "")
+        .split(delimiter)
+        .filter(Boolean)
+        .map((dir) => join(dir, command));
+  return paths.some((path) => {
+    try {
+      accessSync(path, constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
 
 export function resolveCli(cli: string, args: string[] = []): ResolvedSpawn {
   return resolveCliSpawn(cli, args);
@@ -26,11 +50,19 @@ export function resolveCli(cli: string, args: string[] = []): ResolvedSpawn {
 export function spawnCli(
   cli: string,
   args: string[],
-  opts: SpawnOptions,
+  opts: SpawnCliOptions,
 ): ChildProcessByStdio<Writable, Readable, Readable> {
   const resolved = resolveCli(cli, args);
-  const child = spawn(resolved.command, resolved.args, {
-    ...opts,
+  const { privateFiles = false, ...spawnOptions } = opts;
+  // Preserve the useful native ENOENT path when a CLI is missing. Wrapping a
+  // missing command in `sh` would turn setup guidance into a vague exit 127.
+  const usePrivateWrapper = privateFiles && process.platform !== "win32" && posixCommandExists(resolved.command, spawnOptions.env);
+  const command = usePrivateWrapper ? "/bin/sh" : resolved.command;
+  const spawnArgs = usePrivateWrapper
+    ? ["-c", 'umask 077; exec "$@"', "realbud-private-workroom", resolved.command, ...resolved.args]
+    : resolved.args;
+  const child = spawn(command, spawnArgs, {
+    ...spawnOptions,
     // posix: own process group so kill(-pid) reaps child MCP servers;
     // win32: taskkill /T does the reaping instead (see killCliTree)
     ...(process.platform === "win32" ? { windowsHide: true } : { detached: true }),

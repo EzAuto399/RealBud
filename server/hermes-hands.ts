@@ -2,8 +2,9 @@
 // Any failure returns null rows plus a one-line reason. Desk holds —
 // it never copies Demo values into a live check.
 // Never passes --yolo. Never opens Desktop.
-import { execFile } from "node:child_process";
+import { execFile, type ExecFileOptionsWithStringEncoding } from "node:child_process";
 
+import { hardenHermesChildEnv } from "./drivers/acp/hermes.ts";
 import { augmentedPath } from "./env-path.ts";
 
 import type { LedgerFacts } from "../shared/contracts.ts";
@@ -28,6 +29,7 @@ export interface HermesPing {
 }
 
 const TIMEOUT_MS = 20_000;
+const LEDGER_TIMEOUT_MS = 60_000;
 
 export async function tryHermesPing(opts?: {
   cli?: string;
@@ -50,10 +52,19 @@ export async function tryHermesPing(opts?: {
   }
 
   return new Promise((resolve) => {
-    execFile(
+    const env = { ...process.env, PATH: augmentedPath() };
+    hardenHermesChildEnv(env);
+    const execOpts: ExecFileOptionsWithStringEncoding & { detached?: boolean } = {
+      timeout: opts?.timeoutMs ?? TIMEOUT_MS,
+      cwd: opts?.cwd ?? seedVault(),
+      env,
+      encoding: "utf8",
+      detached: process.platform !== "win32",
+    };
+    const child = execFile(
       cli,
       ["--profile", HERMES_PIN.profile, "chat", "-Q", "-q", "Reply with exactly one word: OK", "--max-turns", "1"],
-      { timeout: opts?.timeoutMs ?? TIMEOUT_MS, cwd: opts?.cwd ?? seedVault(), env: { ...process.env, PATH: augmentedPath() } },
+      execOpts,
       (err, stdout, stderr) => {
         const clean = (s: string) =>
           String(s)
@@ -64,6 +75,11 @@ export async function tryHermesPing(opts?: {
         const pick = (s: string) => clean(s).slice(-2).join(" · ");
         if (err) {
           const timedOut = (err as NodeJS.ErrnoException & { killed?: boolean }).killed;
+          if (timedOut && process.platform !== "win32") {
+            try {
+              process.kill(-child.pid!, "SIGTERM");
+            } catch {}
+          }
           if (timedOut) return resolve(done(false, "The worker took too long to answer."));
           const snippet = (pick(stdout) || pick(stderr)).slice(0, 200);
           return resolve(done(false, snippet || "The worker could not answer."));
@@ -82,11 +98,31 @@ export function uncoveredPropertyIds(requested: string[], rows: LedgerFacts[]): 
 }
 
 export function parseLedgerFacts(text: string): LedgerFacts[] | null {
-  const start = text.search(/[[{]/);
-  if (start < 0) return null;
-  let raw = text.slice(start).trim();
-  const fence = raw.indexOf("```");
-  if (fence > 0) raw = raw.slice(0, fence).trim();
+  const clean = text.replace(/\x1b\[[0-9;]*m/g, "");
+  // The worker reasons before answering, and that reasoning can quote the
+  // instruction "return [] exactly" — so the FIRST bracket is often prose.
+  // The answer is the LAST bracketed block; try candidates from the end.
+  const starts: number[] = [];
+  for (let i = clean.length - 1; i >= 0; i--) {
+    if (clean[i] === "[" || clean[i] === "{") starts.push(i);
+  }
+  for (const start of starts) {
+    let raw = clean.slice(start).trim();
+    const fence = raw.indexOf("```");
+    if (fence > 0) raw = raw.slice(0, fence).trim();
+    const rows = parseLedgerRows(raw);
+    if (rows) return rows;
+    // Trailing prose after the JSON: retry cut at the matching close bracket.
+    const close = raw.startsWith("[") ? raw.lastIndexOf("]") : raw.startsWith("{") ? raw.lastIndexOf("}") : -1;
+    if (close > 0) {
+      const trimmed = parseLedgerRows(raw.slice(0, close + 1));
+      if (trimmed) return trimmed;
+    }
+  }
+  return null;
+}
+
+function parseLedgerRows(raw: string): LedgerFacts[] | null {
   try {
     const parsed = JSON.parse(raw) as unknown;
     const rows = Array.isArray(parsed) ? parsed : [parsed];
@@ -106,7 +142,7 @@ export function parseLedgerFacts(text: string): LedgerFacts[] | null {
         return null;
       }
     }
-    return out.length ? out : null;
+    return out;
   } catch {
     return null;
   }
@@ -135,17 +171,32 @@ export async function tryHermesLedger(
   const prompt =
     `Morning arrears check. Use skill morning-arrears.\n` +
     `Return JSON only — one object per property id you actually observed: ${ids}.\n` +
-    `If a fact is unknown, omit that property. Do not guess. Do not copy sample values.\n` +
+    `If a fact is unknown, omit that property. If none are observable, return [] exactly. Do not guess. Do not copy sample values.\n` +
+    `The last line of your reply must be the JSON array (at minimum []), with no text after it.\n` +
     `Do not send, pay, or draft a statutory notice.`;
 
   return new Promise((resolve) => {
-    execFile(
+    const env = { ...process.env, PATH: augmentedPath() };
+    hardenHermesChildEnv(env);
+    const execOpts: ExecFileOptionsWithStringEncoding & { detached?: boolean } = {
+      timeout: opts?.timeoutMs ?? LEDGER_TIMEOUT_MS,
+      cwd: opts?.cwd ?? seedVault(),
+      env,
+      encoding: "utf8",
+      detached: process.platform !== "win32",
+    };
+    const child = execFile(
       cli,
-      ["--profile", HERMES_PIN.profile, "chat", "-Q", "-q", prompt, "--max-turns", "2"],
-      { timeout: opts?.timeoutMs ?? TIMEOUT_MS, cwd: opts?.cwd ?? seedVault(), env: { ...process.env, PATH: augmentedPath() } },
+      ["--profile", HERMES_PIN.profile, "chat", "-Q", "-q", prompt, "--max-turns", "6"],
+      execOpts,
       (err, stdout, stderr) => {
         if (err) {
           const timedOut = (err as NodeJS.ErrnoException & { killed?: boolean }).killed;
+          if (timedOut && process.platform !== "win32") {
+            try {
+              process.kill(-child.pid!, "SIGTERM");
+            } catch {}
+          }
           if (timedOut) return resolve(miss("The worker took too long — facts stay held."));
           const clean = (s: string) =>
             String(s)
@@ -165,6 +216,7 @@ export async function tryHermesLedger(
         }
         const rows = parseLedgerFacts(String(stdout));
         if (!rows) return resolve(miss("The worker answered without ledger JSON — facts stay held."));
+        if (rows.length === 0) return resolve(miss("The worker found no observed ledger facts — facts stay held."));
         resolve({ rows, detail: `Worker ${HERMES_PIN.product} answered with ${rows.length} ledger rows.` });
       },
     );

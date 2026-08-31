@@ -30,11 +30,11 @@ export function goLiveRows(input: GoLiveInput): GoLiveRow[] {
     },
     {
       id: "worker",
-      title: "Attach your worker",
+      title: "Set up Bud",
       state: workerDone ? "done" : "action",
       detail: workerDone
-        ? "Pinned worker is answering. Recheck asks it for the morning ledger."
-        : "Install the worker, apply the property pack, and attach a model on You.",
+        ? "Bud passed the readiness check. Recheck can ask for the morning ledger."
+        : "Open Bud on You, connect the model provider your office uses, then run the private readiness check.",
     },
     {
       id: "agency",

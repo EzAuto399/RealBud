@@ -31,6 +31,7 @@ import type {
 import { newEventId, newId } from "../../contracts.ts";
 import { computerProxyEnv } from "../../container-computer.ts";
 import { augmentedPath } from "../../env-path.ts";
+import { readCuaConnection } from "../../local-computer.ts";
 
 const COMPUTER_PROXY_PATH = SPAWNED_PROXIES.computer;
 import { appendNative } from "../native.ts";
@@ -69,6 +70,8 @@ export interface AcpSupport {
   isAuthenticated(env: Record<string, string | undefined>): boolean;
   /** Compose the session/prompt text. Default prepends the persona. */
   buildPromptText?(turn: SendTurnInput): string;
+  /** Child-created files default to owner-only inside a private workroom. */
+  privateWorkspace?: boolean;
 }
 
 const INIT_TIMEOUT = 20_000;
@@ -165,6 +168,17 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             env: acpEnv(local.env ?? {}),
           });
         }
+        if (turn.computer === true && !servers.some((server) => server.name === "computer")) {
+          const conn = readCuaConnection();
+          if (conn) {
+            servers.push({
+              name: "computer",
+              command: conn.command,
+              args: conn.args,
+              env: Object.entries(conn.env).map(([name, value]) => ({ name, value })),
+            });
+          }
+        }
         return servers;
       };
 
@@ -180,6 +194,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           cwd,
           env,
           stdio: ["pipe", "pipe", "pipe"],
+          privateFiles: support.privateWorkspace === true,
         });
 
         const state = { settled: false, promptSent: false, text: "" };

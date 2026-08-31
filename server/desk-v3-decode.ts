@@ -77,6 +77,22 @@ const CHANNELS = ["sms", "email", "portal", "desk"] as const;
 const DRAFT_KINDS = ["courtesy-rent", "levy-from-rent", "owner-letter"] as const;
 const DRAFT_STATUS = ["pending", "allowed", "denied"] as const;
 const SOURCE_KINDS = ["csv", "hermes", "portal", "demo"] as const;
+const CHECK_OUTCOMES = ["draft", "escalate", "clear", "skip", "hold"] as const;
+const CHECK_REASONS = [
+  "rent-unpaid-courtesy",
+  "rent-landed-levy-unpaid",
+  "rent-landed",
+  "inside-grace",
+  "already-reminded",
+  "statutory-clock",
+  "stale-source",
+  "unknown-facts",
+  "unmatched",
+  "reversed",
+  "partial",
+  "uncovered-by-worker",
+  "ambiguous-match",
+] as const;
 
 function isRec(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -205,6 +221,7 @@ function decodeDraft(value: unknown, field: string, errors: string[]): DeskFileV
     createdAt: num(value.createdAt, `${field}.createdAt`, errors),
     decidedAt: typeof value.decidedAt === "number" ? value.decidedAt : undefined,
     workItemId: typeof value.workItemId === "string" ? value.workItemId : undefined,
+    ...(typeof value.via === "string" && value.via.trim() ? { via: value.via } : {}),
   };
 }
 
@@ -565,6 +582,19 @@ function decodeMoney(value: unknown, field: string, errors: string[]): MoneyPosi
   };
 }
 
+function decodeCheckResult(value: unknown, field: string, errors: string[]): DeskFileV3["results"][number] {
+  if (!isRec(value)) {
+    errors.push(`${field} must be an object`);
+    return { propertyId: "", outcome: "hold", reason: "unknown-facts", daysLate: 0 };
+  }
+  return {
+    propertyId: str(value.propertyId, `${field}.propertyId`, errors),
+    outcome: oneOf(value.outcome, CHECK_OUTCOMES, `${field}.outcome`, errors) ?? "hold",
+    reason: oneOf(value.reason, CHECK_REASONS, `${field}.reason`, errors) ?? "unknown-facts",
+    daysLate: num(value.daysLate, `${field}.daysLate`, errors),
+  };
+}
+
 function decodeProposal(value: unknown, field: string, errors: string[]): Proposal {
   if (!isRec(value)) {
     errors.push(`${field} must be an object`);
@@ -720,6 +750,11 @@ export function decodeDeskV3(value: unknown): DeskFileV3 {
     portalRecipes: arr(value.portalRecipes, "portalRecipes", errors).map((item, i) => decodeRecipe(item, `portalRecipes[${i}]`, errors)),
     handoffs: arr(value.handoffs, "handoffs", errors).map((item, i) => decodeHandoff(item, `handoffs[${i}]`, errors)),
     lastRunAt: value.lastRunAt === null || value.lastRunAt === undefined ? null : num(value.lastRunAt, "lastRunAt", errors),
+    // Results were added compatibly within V3. Missing means an older book whose
+    // quiet outcomes were never persisted; do not invent a completed check.
+    results: value.results === undefined
+      ? []
+      : arr(value.results, "results", errors).map((item, i) => decodeCheckResult(item, `results[${i}]`, errors)),
     hands: oneOf(value.hands, HANDS, "hands", errors) ?? "demo",
     handsDetail: typeof value.handsDetail === "string" ? value.handsDetail : null,
   };
@@ -757,6 +792,11 @@ export function validateDeskV3(book: DeskFileV3): void {
   uniqueIds([...book.importIssues.map((i) => i.id), ...book.cases.map((c) => c.id), ...book.bookProposals.map((p) => p.id)], "importIssue/case/bookProposal", errors);
   uniqueIds(book.handoffs.map((h) => h.id), "handoff", errors);
   uniqueIds(book.evidence.map((e) => e.id), "evidence", errors);
+  uniqueIds(book.results.map((result) => result.propertyId), "check result property", errors);
+
+  for (const result of book.results) {
+    if (!propertyIds.has(result.propertyId)) errors.push(`check result missing property ${result.propertyId}`);
+  }
 
   const currentByProperty = new Map<string, number>();
   for (const tenancy of book.tenancies) {

@@ -1,9 +1,17 @@
 // Compatibility queue: V2 snapshot + V3 book → Desk case rows. Import holds are not wording cases.
-import type { DeskSnapshot, Draft, WorkItem, WorkKind } from "../../shared/contracts";
+import type { DeskSnapshot, Draft, DraftStatus, WorkItem, WorkKind, WorkState } from "../../shared/contracts";
+import { startOfDay } from "./au";
 
-export const QUEUE_FILTERS = ["needs-you", "held", "licensee", "all"] as const;
+/** The four states of the day. Not navigation — every row lands in exactly one.
+ *  now      needs a person this sitting
+ *  next     the routine knows the step; nobody is needed yet
+ *  waiting  blocked on something outside this sitting
+ *  done     a decision is recorded */
+export const QUEUE_STATES = ["now", "next", "waiting", "done"] as const;
+export type QueueBucket = (typeof QUEUE_STATES)[number];
+
+export const QUEUE_FILTERS = [...QUEUE_STATES, "all"] as const;
 export type QueueFilter = (typeof QUEUE_FILTERS)[number];
-export type QueueBucket = "needs-you" | "held" | "licensee" | "decided" | "on-book";
 
 /** Seeded demo kinds. Recheck does not create them. They stay on the book. */
 const BOOK_ONLY_KINDS = new Set<QueueKind>([
@@ -13,9 +21,43 @@ const BOOK_ONLY_KINDS = new Set<QueueKind>([
   "inbound-triage",
 ]);
 
-function morningBucket(kind: QueueKind, bucket: QueueBucket): QueueBucket {
-  if (BOOK_ONLY_KINDS.has(kind) && bucket === "held") return "on-book";
-  return bucket;
+/** The one place a work state becomes a place in the day. A new WorkState
+ * cannot compile until someone says where in the day it belongs, so a case
+ * can never fall through and render in no bucket at all. */
+export function bucketForWork(state: WorkState): QueueBucket {
+  switch (state) {
+    case "proposed":
+    case "handoff-ready":
+      return "now";
+    case "preparing":
+      return "next";
+    case "held":
+    case "stale":
+    case "failed":
+    case "effect-unknown":
+    case "handoff-expired":
+      return "waiting";
+    case "approved":
+    case "denied":
+    case "confirmed":
+    case "superseded":
+    case "cancelled":
+      return "done";
+    default: {
+      const unmapped: never = state;
+      return unmapped;
+    }
+  }
+}
+
+function bucketForDraft(status: DraftStatus): QueueBucket {
+  return status === "pending" ? "now" : "done";
+}
+
+/** Seeded book kinds are not this morning's work. They wait in Next rather
+ * than reading as something blocked. */
+function onBook(kind: QueueKind, bucket: QueueBucket): QueueBucket {
+  return BOOK_ONLY_KINDS.has(kind) && bucket === "waiting" ? "next" : bucket;
 }
 export type QueueKind =
   | "money-arrears"
@@ -62,11 +104,11 @@ function kindFromDraft(draft: Draft): QueueKind {
 }
 
 function actionFor(bucket: QueueBucket, kind: QueueKind): string {
-  if (bucket === "licensee") return "Licensee — do not draft";
-  if (bucket === "on-book") return "On the book — not this check";
+  if (kind === "licensee-required") return "Licensee — do not draft";
   if (kind === "import-issue") return "Match this source row";
-  if (bucket === "held") return "Held — no wording yet";
-  if (bucket === "decided") return "Recorded decision";
+  if (bucket === "next") return "On the book — not this check";
+  if (bucket === "waiting") return "Waiting — no wording yet";
+  if (bucket === "done") return "Recorded decision";
   if (kind === "owner-update") return "Allow owner wording";
   if (kind === "maintenance-intake") return "Classify intake";
   if (kind === "lease-review") return "Review dates";
@@ -108,15 +150,17 @@ export function buildDeskQueue(snap: DeskSnapshot): DeskQueueItem[] {
   const seenWork = new Set<string>();
   const seenImport = new Set<string>();
 
+  // A licensee escalation needs a person this sitting, so it belongs in Now.
+  // The kind keeps it identifiable and sorts it to the top of that bucket.
   for (const item of snap.escalations) {
     rows.push({
       id: `esc:${item.id}`,
       kind: "licensee-required",
-      bucket: "licensee",
+      bucket: "now",
       state: "held",
       propertyId: item.propertyId,
       address: addressById.get(item.propertyId) ?? item.propertyId,
-      action: actionFor("licensee", "licensee-required"),
+      action: actionFor("now", "licensee-required"),
       meta: item.detail,
       holdReason: item.reason,
       updatedAt: item.createdAt,
@@ -126,16 +170,17 @@ export function buildDeskQueue(snap: DeskSnapshot): DeskQueueItem[] {
   }
 
   for (const work of snap.workItems) {
+    // An unmatched row is not blocked on anyone else — the PM matches it.
     if (isImportHold(work.holdReason)) {
       seenImport.add(work.id);
       rows.push({
         id: `import:${work.id}`,
         kind: "import-issue",
-        bucket: "held",
+        bucket: "now",
         state: work.state,
         propertyId: work.propertyId || undefined,
         address: work.propertyId ? (addressById.get(work.propertyId) ?? work.propertyId) : work.holdReason ?? "Unmatched source",
-        action: actionFor("held", "import-issue"),
+        action: actionFor("now", "import-issue"),
         meta: `${work.holdReason ?? "unmatched"} · ${work.sourceIds.join(", ")}`,
         holdReason: work.holdReason,
         updatedAt: work.updatedAt,
@@ -150,18 +195,13 @@ export function buildDeskQueue(snap: DeskSnapshot): DeskQueueItem[] {
       seenDrafts.add(draft.id);
       seenWork.add(work.id);
       rows.push(
-        draftRow(
-          draft,
-          work,
-          addressById.get(draft.propertyId) ?? draft.propertyId,
-          draft.status === "pending" ? "needs-you" : "decided",
-        ),
+        draftRow(draft, work, addressById.get(draft.propertyId) ?? draft.propertyId, bucketForDraft(draft.status)),
       );
       continue;
     }
     if (work.state === "held" || !work.draftId) {
       const kind = kindFromWork(work.kind);
-      const bucket = morningBucket(kind, work.state === "held" ? "held" : "needs-you");
+      const bucket = onBook(kind, bucketForWork(work.state));
       seenWork.add(work.id);
       rows.push({
         id: `work:${work.id}`,
@@ -186,7 +226,7 @@ export function buildDeskQueue(snap: DeskSnapshot): DeskQueueItem[] {
         draft,
         snap.workItems.find((item) => item.id === draft.workItemId || item.draftId === draft.id),
         addressById.get(draft.propertyId) ?? draft.propertyId,
-        draft.status === "pending" ? "needs-you" : "decided",
+        bucketForDraft(draft.status),
       ),
     );
   }
@@ -196,10 +236,10 @@ export function buildDeskQueue(snap: DeskSnapshot): DeskQueueItem[] {
     rows.push({
       id: `import:${issue.id}`,
       kind: "import-issue",
-      bucket: "held",
+      bucket: "now",
       state: issue.status,
       address: issue.rawIdentity,
-      action: actionFor("held", "import-issue"),
+      action: actionFor("now", "import-issue"),
       meta: `${issue.kind} · ${issue.rawIdentity}`,
       holdReason: issue.kind,
       updatedAt: 0,
@@ -213,11 +253,11 @@ export function buildDeskQueue(snap: DeskSnapshot): DeskQueueItem[] {
       rows.push({
         id: `esc:${item.id}`,
         kind: "licensee-required",
-        bucket: "licensee",
+        bucket: "now",
         state: item.state,
         propertyId: item.propertyId,
         address: item.propertyId ? (addressById.get(item.propertyId) ?? item.propertyId) : item.id,
-        action: actionFor("licensee", "licensee-required"),
+        action: actionFor("now", "licensee-required"),
         meta: item.state,
         updatedAt: 0,
         workItemId: item.id,
@@ -225,10 +265,7 @@ export function buildDeskQueue(snap: DeskSnapshot): DeskQueueItem[] {
       continue;
     }
     const kind = kindFromWork(item.kind);
-    const bucket = morningBucket(
-      kind,
-      item.state === "held" ? "held" : item.state === "proposed" ? "needs-you" : "decided",
-    );
+    const bucket = onBook(kind, bucketForWork(item.state));
     rows.push({
       id: `work:${item.id}`,
       kind,
@@ -243,8 +280,12 @@ export function buildDeskQueue(snap: DeskSnapshot): DeskQueueItem[] {
     });
   }
 
-  const order: Record<QueueBucket, number> = { "needs-you": 0, held: 1, licensee: 2, "on-book": 3, decided: 4 };
-  return rows.sort((a, b) => order[a.bucket] - order[b.bucket] || b.updatedAt - a.updatedAt);
+  const order: Record<QueueBucket, number> = { now: 0, next: 1, waiting: 2, done: 3 };
+  const licenseeFirst = (row: DeskQueueItem) => (row.kind === "licensee-required" ? 0 : 1);
+  return rows.sort(
+    (a, b) =>
+      order[a.bucket] - order[b.bucket] || licenseeFirst(a) - licenseeFirst(b) || b.updatedAt - a.updatedAt,
+  );
 }
 
 export function filterDeskQueue(rows: DeskQueueItem[], filter: QueueFilter, query = ""): DeskQueueItem[] {
@@ -254,11 +295,21 @@ export function filterDeskQueue(rows: DeskQueueItem[], filter: QueueFilter, quer
   return scoped.filter((row) => `${row.address} ${row.meta} ${row.kind}`.toLowerCase().includes(needle));
 }
 
-export function queueCounts(rows: DeskQueueItem[]): Record<Exclude<QueueFilter, "all">, number> & { "on-book": number } {
+export interface QueueCounts extends Record<QueueBucket, number> {
+  /** The part of Now that a licensed person must take. Not a separate bucket. */
+  licensee: number;
+}
+
+/** Done counts today only. A running total of every decision ever made is a
+ * vanity number, not a day's work. The Done list still holds the history. */
+export function queueCounts(rows: DeskQueueItem[], now = Date.now()): QueueCounts {
+  const today = startOfDay(now);
+  const inBucket = (bucket: QueueBucket) => rows.filter((row) => row.bucket === bucket);
   return {
-    "needs-you": rows.filter((row) => row.bucket === "needs-you").length,
-    held: rows.filter((row) => row.bucket === "held").length,
-    licensee: rows.filter((row) => row.bucket === "licensee").length,
-    "on-book": rows.filter((row) => row.bucket === "on-book").length,
+    now: inBucket("now").length,
+    next: inBucket("next").length,
+    waiting: inBucket("waiting").length,
+    done: inBucket("done").filter((row) => row.updatedAt >= today).length,
+    licensee: inBucket("now").filter((row) => row.kind === "licensee-required").length,
   };
 }

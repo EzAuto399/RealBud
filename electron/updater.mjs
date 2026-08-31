@@ -9,6 +9,7 @@
 // the packaged app ships no node_modules.
 import { app, ipcMain } from "electron";
 import { createRequire } from "node:module";
+import { runUpdaterAction } from "./updater-action.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -35,11 +36,7 @@ function setState(patch) {
 function check(manual = false) {
   if (!autoUpdater) return;
   userInitiated = manual;
-  try {
-    autoUpdater.checkForUpdates();
-  } catch (e) {
-    reportError(e);
-  }
+  runUpdaterAction(() => autoUpdater.checkForUpdates(), reportError);
 }
 
 function reportError(e) {
@@ -51,11 +48,10 @@ export function registerUpdaterIpc() {
   ipcMain.handle("update:get-state", () => state);
   ipcMain.handle("update:check", () => check(true));
   ipcMain.handle("update:download", () => {
-    try {
-      autoUpdater?.downloadUpdate();
-    } catch (e) {
-      setState({ status: "error", message: String(e?.message ?? e) });
-    }
+    runUpdaterAction(
+      () => autoUpdater?.downloadUpdate(),
+      (e) => setState({ status: "error", message: String(e?.message ?? e) }),
+    );
   });
   ipcMain.handle("update:install", () => {
     // isSilent, isForceRunAfter — relaunch straight into the new version

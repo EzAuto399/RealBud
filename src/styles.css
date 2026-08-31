@@ -4,6 +4,7 @@
 @theme {
   --animate-panel-in: panel-in 0.24s cubic-bezier(0.22, 1, 0.36, 1);
   --animate-pop-in: pop-in 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+  --animate-view-in: view-in 0.22s cubic-bezier(0.22, 1, 0.36, 1);
   --animate-caret: caret-blink 1s step-end infinite;
   --animate-msg-in: msg-in 0.18s cubic-bezier(0.22, 1, 0.36, 1);
   --animate-shimmer: shimmer 2s linear infinite;
@@ -137,6 +138,7 @@ body {
 
 .pm-split-canvas {
   flex: 1;
+  overflow: hidden;
   background: var(--color-sheet);
 }
 
@@ -178,6 +180,14 @@ body {
   }
 }
 
+@media (max-height: 700px) {
+  /* The morning brief directly above already lists these addresses. Removing
+     the duplicate list preserves the case canvas in compact desktop windows. */
+  .morning-empty-addresses {
+    display: none;
+  }
+}
+
 @keyframes panel-in {
   from { transform: translateX(28px); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
@@ -185,6 +195,11 @@ body {
 @keyframes pop-in {
   from { transform: scale(0.96) translateY(6px); opacity: 0; }
   to { transform: scale(1) translateY(0); opacity: 1; }
+}
+/* page change: a short rise-and-settle, GPU-only, never a layout shift */
+@keyframes view-in {
+  from { transform: translateY(7px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
 }
 /* streaming caret: a true typing blink (step, not fade) */
 @keyframes caret-blink {
@@ -194,6 +209,10 @@ body {
 /* new message settle-in: subtle, fast, GPU-only */
 @keyframes msg-in {
   from { transform: translateY(4px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@keyframes bud-step-in {
+  from { transform: translateY(4px); opacity: 0.72; }
   to { transform: translateY(0); opacity: 1; }
 }
 /* "Thinking…" label sheen while the model reasons */
@@ -208,8 +227,13 @@ body {
   background-clip: text;
   color: transparent;
 }
+@media (prefers-reduced-motion: no-preference) {
+  .bud-setup-step[data-state="current"] {
+    animation: bud-step-in 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+}
 @media (prefers-reduced-motion: reduce) {
-  .animate-caret, .animate-msg-in, .animate-shimmer { animation: none; }
+  .animate-caret, .animate-msg-in, .animate-shimmer, .animate-panel-in, .animate-pop-in, .animate-view-in { animation: none; }
   .thinking-shimmer { background: none; color: var(--color-ink-secondary); }
 }
 

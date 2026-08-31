@@ -4,7 +4,7 @@ Date: 2026-08-29 (state synced to HEAD `750f7ae`; next wave in `docs/NEXT-WAVE.m
 Repo: `EzAuto399/RealBud` (local folder still `PropertyMe`)  
 Use: paste this whole file into a new session, or point an agent at it. If a later idea fights this document, **this document wins**.
 
-Related: `DESIGN.md`, `docs/PRODUCT-DESIGN-PLAN.md`, `docs/NEXT-WAVE.md`, `docs/IDENTITY.md`, `docs/PRODUCT-BRIEF.md`, `docs/WORKFLOW-PLAN.md`, `docs/PILOT-CONTRACT.md`, `docs/APPROACH.md`, `pack/property/SOUL.md`, `CLAUDE.md`
+Related: `DESIGN.md`, `docs/OFFICE-DESIGN.md`, `docs/PRODUCT-DESIGN-PLAN.md`, `docs/NEXT-WAVE.md`, `docs/IDENTITY.md`, `docs/PRODUCT-BRIEF.md`, `docs/WORKFLOW-PLAN.md`, `docs/PILOT-CONTRACT.md`, `docs/APPROACH.md`, `pack/property/SOUL.md`, `CLAUDE.md`
 
 ---
 

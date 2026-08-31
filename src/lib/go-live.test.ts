@@ -8,6 +8,10 @@ describe("go-live checklist", () => {
     expect(rows.map((row) => row.state)).toEqual(["action", "action", "action"]);
     expect(goLiveComplete(rows)).toBe(false);
     expect(goLiveActionCount(rows)).toBe(3);
+    expect(rows.find((row) => row.id === "worker")).toMatchObject({
+      title: "Set up Bud",
+      detail: expect.stringMatching(/private readiness check/),
+    });
   });
 
   it("goes green only when export, worker, and a real agency name are set", () => {
@@ -17,5 +21,6 @@ describe("go-live checklist", () => {
     expect(agencyIsNamed("Harbour PM")).toBe(true);
     const rows = goLiveRows({ mode: "live", agencyName: "Harbour PM", workerReady: true });
     expect(goLiveComplete(rows)).toBe(true);
+    expect(rows.find((row) => row.id === "worker")?.detail).toMatch(/Bud passed the readiness check/);
   });
 });

@@ -8,6 +8,18 @@ import { HERMES_PIN, hermesInstallCommand } from "../../hermes-pin.ts";
 import { seedVault } from "../../vault.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
+export function hardenHermesChildEnv(env: Record<string, string | undefined>): void {
+  // The property profile owns its model. Ambient provider keys can silently
+  // reroute a turn, so they never reach the worker process.
+  delete env.OPENAI_API_KEY;
+  delete env.OPENROUTER_API_KEY;
+  delete env.KIMI_API_KEY;
+  delete env.MOONSHOT_API_KEY;
+  // RealBud is the capability broker. Globally configured MCP servers must
+  // not appear in Ask; only per-turn servers explicitly mounted by RealBud do.
+  env.HERMES_ACP_SKIP_CONFIGURED_MCP = "1";
+}
+
 const support: AcpSupport = {
   driverKind: "hermesAgent",
   displayName: "Hermes",
@@ -17,6 +29,7 @@ const support: AcpSupport = {
   },
   defaultCli: "hermes",
   nativeSource: "hermes.acp",
+  privateWorkspace: true,
   loginNote: `Hermes is not ready — install the pinned ${HERMES_PIN.product} worker, then run hermes -p ${HERMES_PIN.profile} model`,
 
   install: {
@@ -35,12 +48,9 @@ const support: AcpSupport = {
     "acp",
   ],
 
-  // A leftover OPENAI_API_KEY makes Hermes auto-resolve to OpenRouter.
-  // The property profile owns the model. Taken from OpenMausBot #177 family.
-  transformEnv: (env) => {
-    delete env.OPENAI_API_KEY;
-    delete env.OPENROUTER_API_KEY;
-  },
+  // A leftover provider key can reroute Hermes; globally configured MCP
+  // servers would bypass RealBud's explicit connection boundary.
+  transformEnv: hardenHermesChildEnv,
 
   pickAuthMethod: () => null,
   authFailure: "continue",
