@@ -34,6 +34,8 @@
     "qa:live-worker": "node scripts/qa-live-worker.mjs",
     "qa:scale": "node --experimental-strip-types scripts/simulate-scale.mjs",
     "qa:full": "pnpm qa && pnpm qa:scale && pnpm qa:live-worker",
+    "qa:package:mac": "node scripts/smoke-mac-package.mjs",
+    "smoke:mac": "node scripts/smoke-mac-package.mjs",
     "qa": "pnpm typecheck && pnpm test && pnpm qa:e2e",
     "bench:observation": "node --experimental-strip-types scripts/bench-observation.ts",
     "test:watch": "vitest",

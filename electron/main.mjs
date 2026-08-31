@@ -29,9 +29,10 @@ if (process.platform === "linux") app.setDesktopName("com.realbud.app.desktop");
 // One desk, one app. A second launch would fork a second harness server over
 // the same ~/.realbud — silent last-writer-wins on the book. Focus the
 // existing window instead.
-if (!app.requestSingleInstanceLock()) {
+const smokeMode = process.env.OMB_SMOKE_TEST === "1";
+if (!smokeMode && !app.requestSingleInstanceLock()) {
   app.quit();
-} else {
+} else if (!smokeMode) {
   app.on("second-instance", () => {
     const win = BrowserWindow.getAllWindows()[0];
     if (win) {
@@ -181,6 +182,17 @@ const ERROR_PAGE =
 
 let cuaReady = Promise.resolve({ mode: "unavailable", reason: "not-started" });
 
+function writeSmokeResult(payload) {
+  const file = process.env.OMB_SMOKE_RESULT_FILE;
+  if (!file) return;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify(payload)}\n`);
+  } catch (err) {
+    slog(`smoke result write failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 function createWindow() {
   const isMac = process.platform === "darwin";
   const win = new BrowserWindow({
@@ -219,7 +231,7 @@ function createWindow() {
   // Packaged CI smoke hook. It validates the real renderer/preload bridge and
   // same-origin embedded server, then follows the normal window-close path.
   // No debugging port or sandbox override is needed.
-  if (process.env.OMB_SMOKE_TEST === "1") {
+  if (smokeMode) {
     win.webContents.once("did-finish-load", async () => {
       try {
         const result = await win.webContents.executeJavaScript(`
@@ -242,11 +254,16 @@ function createWindow() {
             `unexpected packaged renderer URL: ${result.location} (expected ${expectedLocation})`,
           );
         }
+        const payload = { ok: true, result };
+        writeSmokeResult(payload);
         console.log(`[smoke] renderer-ready ${JSON.stringify(result)}`);
       } catch (error) {
-        console.error(`[smoke] renderer-failed ${error?.stack ?? error}`);
+        const message = error?.stack ?? String(error);
+        writeSmokeResult({ ok: false, error: message });
+        console.error(`[smoke] renderer-failed ${message}`);
       } finally {
         win.close();
+        if (smokeMode) app.quit();
       }
     });
   }

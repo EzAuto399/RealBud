@@ -41,6 +41,17 @@ Individual suites (each uses its own temp home and port):
 
 CI runs the full e2e battery on Ubuntu after unit tests.
 
+Packaged Mac smoke (renderer preload + embedded harness + clean exit):
+
+```bash
+pnpm package:mac
+pnpm smoke:mac
+```
+
+Same hook as Linux CI (`OMB_SMOKE_TEST=1` in `electron/main.mjs`). Override the
+binary with `OMB_SMOKE_EXECUTABLE=...` when testing a stapled copy outside
+`release/mac-arm64/`.
+
 ---
 
 ## Scale check (optional, pre-visit)

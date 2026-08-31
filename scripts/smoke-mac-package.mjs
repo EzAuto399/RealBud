@@ -1,0 +1,153 @@
+#!/usr/bin/env node
+// Packaged macOS smoke — same hook as Linux CI (OMB_SMOKE_TEST=1).
+// Validates renderer preload, embedded harness, capabilities, clean exit.
+//
+//   node scripts/smoke-mac-package.mjs
+//   OMB_SMOKE_EXECUTABLE=/path/to/RealBud.app/Contents/MacOS/RealBud node scripts/smoke-mac-package.mjs
+import { spawn } from "node:child_process";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const defaultApp = path.join(root, "release", "mac-arm64", "RealBud.app", "Contents", "MacOS", "RealBud");
+const altApp = path.join(root, "release", "mac", "RealBud.app", "Contents", "MacOS", "RealBud");
+const executable =
+  process.env.OMB_SMOKE_EXECUTABLE ??
+  [defaultApp, altApp].find((p) => existsSync(p)) ??
+  defaultApp;
+
+if (!existsSync(executable)) {
+  throw new Error(`[smoke-mac-package] missing executable: ${executable}\nRun pnpm package:mac first.`);
+}
+
+const sandbox = mkdtempSync(path.join(tmpdir(), "realbud-mac-smoke-"));
+const home = path.join(sandbox, "home");
+const dataDir = path.join(home, ".realbud");
+const resultFile = path.join(sandbox, "smoke-result.json");
+mkdirSync(dataDir, { recursive: true });
+writeFileSync(
+  path.join(dataDir, "config.json"),
+  JSON.stringify({ instances: { ghost: { driver: "not-a-real-driver", displayName: "Ghost" } } }),
+);
+
+let output = "";
+let smokeResult = null;
+function readSmokeFile() {
+  if (!existsSync(resultFile)) return null;
+  try {
+    return JSON.parse(readFileSync(resultFile, "utf8").trim());
+  } catch {
+    return null;
+  }
+}
+
+const child = spawn(executable, [], {
+  cwd: root,
+  detached: true,
+  env: {
+    ...process.env,
+    HOME: home,
+    REALBUD_DATA_DIR: dataDir,
+    OMB_SMOKE_TEST: "1",
+    OMB_SMOKE_RESULT_FILE: resultFile,
+  },
+  stdio: ["ignore", "pipe", "pipe"],
+});
+
+for (const stream of [child.stdout, child.stderr]) {
+  stream.setEncoding("utf8");
+  stream.on("data", (chunk) => {
+    output += chunk;
+    const match = output.match(/\[smoke\] renderer-ready (\{.*\})\r?\n/);
+    if (match && !smokeResult) smokeResult = JSON.parse(match[1]);
+  });
+}
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function waitForPortsFree(ports, timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const busy = await Promise.all(
+      ports.map(async (port) => {
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/api/health`);
+          return res.ok;
+        } catch {
+          return false;
+        }
+      }),
+    );
+    if (!busy.some(Boolean)) return;
+    await delay(200);
+  }
+  throw new Error(`ports still busy after ${timeoutMs}ms: ${ports.join(", ")}`);
+}
+
+await waitForPortsFree([8799, 18799, 28799]);
+
+async function until(probe, description) {
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    const value = await probe().catch(() => null);
+    if (value) return value;
+    if (child.exitCode !== null) {
+      const filePayload = readSmokeFile();
+      if (filePayload?.ok === false) throw new Error(filePayload.error);
+      throw new Error(`Electron exited ${child.exitCode} while waiting for ${description}.\n${output}`);
+    }
+    await delay(100);
+  }
+  const filePayload = readSmokeFile();
+  if (filePayload?.ok === false) throw new Error(filePayload.error);
+  throw new Error(`timed out waiting for ${description}.\n${output}`);
+}
+
+async function waitForExit() {
+  const deadline = Date.now() + 15_000;
+  while (child.exitCode === null && Date.now() < deadline) await delay(50);
+  if (child.exitCode === null) throw new Error(`Electron did not exit after its window closed.\n${output}`);
+}
+
+async function stopProcess() {
+  if (child.exitCode !== null) return;
+  try {
+    process.kill(-child.pid, "SIGTERM");
+  } catch {}
+  const stopDeadline = Date.now() + 5_000;
+  while (child.exitCode === null && Date.now() < stopDeadline) await delay(50);
+  if (child.exitCode === null) {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch {}
+  }
+}
+
+try {
+  const payload = await until(async () => {
+    const filePayload = readSmokeFile();
+    if (filePayload?.ok) return filePayload;
+    if (smokeResult) return { ok: true, result: smokeResult };
+    return null;
+  }, "the packaged renderer smoke result");
+  if (!payload.ok) throw new Error(payload.error ?? "smoke failed");
+
+  const { capabilities, health, location, title } = payload.result;
+  if (health?.app !== "realbud" || health.static !== true) {
+    throw new Error(`unexpected embedded health response: ${JSON.stringify(health)}`);
+  }
+  if (!String(title).includes("RealBud")) throw new Error(`unexpected renderer title: ${title}`);
+  if (capabilities.host.platform !== "darwin") throw new Error(`renderer did not report darwin: ${capabilities.host.platform}`);
+
+  await waitForExit();
+  const staleHealth = await fetch(new URL("/api/health", location)).catch(() => null);
+  if (staleHealth?.ok) throw new Error("embedded harness remained reachable after Electron quit");
+
+  console.log("[smoke-mac-package] OK: renderer, capabilities, embedded harness, and shutdown");
+} finally {
+  await stopProcess();
+  if (process.env.OMB_KEEP_SMOKE_DIR !== "1") rmSync(sandbox, { recursive: true, force: true });
+  else console.log(`[smoke-mac-package] kept ${sandbox}`);
+}
