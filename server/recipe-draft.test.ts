@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { fakeHermes } from "./testing/fake-hermes.ts";
