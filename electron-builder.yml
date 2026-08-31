@@ -74,8 +74,9 @@ mac:
     NSSpeechRecognitionUsageDescription: RealBud transcribes your voice on-device to type messages for you.
     NSAccessibilityUsageDescription: RealBud uses Accessibility when you let a bot control this Mac.
     NSScreenCaptureUsageDescription: RealBud uses Screen Recording so bots can see this Mac before acting.
-  # Notarization runs manually after the build (notarytool + staple),
-  # mirroring the BlueyLite ship_release.sh flow.
+  # Notarization stays off in electron-builder; run after the build:
+  #   NOTARY_KEYCHAIN_PROFILE=realbud-notary pnpm package:mac:notarize
+  # See docs/GRADUATE-RELEASE.md Wave 1.
   notarize: false
 
 dmg:

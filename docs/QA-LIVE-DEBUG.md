@@ -48,9 +48,20 @@ pnpm package:mac
 pnpm smoke:mac
 ```
 
+Notarized release build (needs keychain profile `realbud-notary` — see
+`docs/GRADUATE-RELEASE.md`):
+
+```bash
+pnpm package:mac:release
+OMB_SMOKE_EXECUTABLE=release/mac-arm64/RealBud.app/Contents/MacOS/RealBud pnpm smoke:mac
+```
+
 Same hook as Linux CI (`OMB_SMOKE_TEST=1` in `electron/main.mjs`). Override the
 binary with `OMB_SMOKE_EXECUTABLE=...` when testing a stapled copy outside
 `release/mac-arm64/`.
+
+Graduate release (notarize, strata Stage-0, Windows signing, bundled worker):
+`docs/GRADUATE-RELEASE.md`.
 
 ---
 

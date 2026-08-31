@@ -1,25 +1,25 @@
 ---
 name: windows-release
-description: Build, verify, and publish the Windows desktop build (NSIS installer + latest.yml) to the openmausbot-releases repo. Use when cutting a release, shipping a new version to Windows users, or when a Windows user reports they are stuck on an old version. Windows only — does not cover the macOS dmg/notarization flow.
+description: Build, verify, and publish the Windows desktop build (NSIS installer + latest.yml) to EzAuto399/RealBud. Use when cutting a release, shipping a new version to Windows users, or when a Windows user reports they are stuck on an old version. Windows only — does not cover the macOS dmg/notarization flow (see docs/GRADUATE-RELEASE.md).
 ---
 
 # Windows release
 
-Ships `OpenMausBot-<version>-setup.exe` and its update feed to
-[milind-soni/openmausbot-releases](https://github.com/milind-soni/openmausbot-releases).
+Ships `RealBud-<version>-setup.exe` and its update feed to
+[EzAuto399/RealBud](https://github.com/EzAuto399/RealBud).
 
 **Scope: Windows only.** The macOS build is a separate flow (dmg + notarytool +
-staple) that must run on a Mac. This skill never touches mac artifacts — but see
-[Every release ships both](#every-release-ships-both) before you finish.
+staple via `pnpm package:mac:release`) that must run on a Mac. This skill never
+touches mac artifacts — but see [Every release ships both](#every-release-ships-both)
+before you finish.
 
 ## Preconditions
 
 - **Run on Windows.** NSIS packaging from macOS needs Wine; don't.
-- **Node 24+** (`package.json` `engines`). Node 23 builds fine but pnpm warns on
-  every step and CI runs 24 — don't debug a runtime oddity on the wrong major.
-- **pnpm** via `corepack pnpm`. If `corepack enable` fails with EPERM (no admin),
-  drop a `pnpm.cmd` shim containing `@echo off` / `corepack pnpm %*` somewhere on
-  PATH — `package:win` chains `pnpm build && …` and needs bare `pnpm` to resolve.
+- **Node 24+** (`package.json` `engines`).
+- **pnpm** via `corepack pnpm`.
+- Graduate path: `docs/GRADUATE-RELEASE.md`. Until Hermes is bundled, Windows
+  stays CSV-only for worker attach (`hermesInstallCommand` is null on win32).
 
 ## 1. Version
 
@@ -41,90 +41,57 @@ Output in `release/`:
 
 | File | Purpose |
 |---|---|
-| `OpenMausBot-<version>-setup.exe` | the installer |
+| `RealBud-<version>-setup.exe` | the installer |
 | `latest.yml` | **the update feed** — see step 4 |
-| `OpenMausBot-<version>-setup.exe.blockmap` | differential updates |
-| `OpenMausBot-<version>-x64.zip` | portable, not used by the updater |
+| `RealBud-<version>-setup.exe.blockmap` | differential updates |
+| `RealBud-<version>-x64.zip` | portable, not used by the updater |
 
 ## 3. Verify before uploading
 
-Three things silently produce a broken app if wrong. Check all three:
-
 ```powershell
-Test-Path release\win-unpacked\resources\server\index.js   # harness server
-Test-Path release\win-unpacked\resources\ui\index.html     # built UI
-Get-Content release\win-unpacked\resources\app-update.yml  # feed config
+Test-Path release\win-unpacked\resources\server\index.js
+Test-Path release\win-unpacked\resources\ui\index.html
+Get-Content release\win-unpacked\resources\app-update.yml
 ```
 
-- Missing `server/index.js` → `utilityProcess.fork` fails → the 🐭 "Couldn't start
-  the bot server" page.
-- Missing `ui/index.html` → server has nothing to serve → black window.
-- `app-update.yml` must point at `milind-soni/openmausbot-releases` and, while the
-  build is unsigned, **must not contain `publisherName`** — electron-updater would
-  reject every update as untrusted.
+- Missing `server/index.js` → harness fails → "Couldn't start the desk service".
+- Missing `ui/index.html` → black window.
+- `app-update.yml` must point at `EzAuto399/RealBud` and, while the build is
+  unsigned, **must not contain `publisherName`**.
 
-Then smoke-test the installer itself. Run it, and confirm:
-
-1. It installs per-user with no UAC prompt and launches.
-2. The chat window renders (not the error page). Server logs land in
-   `%APPDATA%\OpenMausBot\logs\server.log`.
-3. The model picker lists at least one provider — this exercises the `.cmd`-shim
-   resolution in `server/procs.ts`, which only ever runs for real on Windows.
-4. No update popup appears on launch. Background check failures are silent by
-   design; a popup here means that regressed.
+Then smoke-test the installer: per-user install, Desk renders, logs under
+`%APPDATA%\RealBud\logs\server.log`, no surprise update popup on first launch.
 
 ## 4. Publish
 
-Upload to the **same tag** as the macOS release for that version, so one release
-carries both platforms.
+Upload to the **same tag** as the macOS release for that version.
 
 ```powershell
-Copy-Item release/OpenMausBot-<version>-setup.exe release/OpenMausBot-setup.exe
-gh release upload v<version> --repo milind-soni/openmausbot-releases `
-  release/OpenMausBot-<version>-setup.exe `
-  release/OpenMausBot-setup.exe `
-  release/OpenMausBot-<version>-setup.exe.blockmap `
+Copy-Item release/RealBud-<version>-setup.exe release/RealBud-setup.exe
+gh release upload v<version> --repo EzAuto399/RealBud `
+  release/RealBud-<version>-setup.exe `
+  release/RealBud-setup.exe `
+  release/RealBud-<version>-setup.exe.blockmap `
   release/latest.yml
 ```
 
-Both names are required, for different consumers:
+- **`RealBud-<version>-setup.exe`** is what `latest.yml` references.
+- **`RealBud-setup.exe`** is a stable `/releases/latest/download/` URL.
 
-- **`OpenMausBot-<version>-setup.exe`** is what `latest.yml` references by name and
-  sha512. The auto-updater downloads exactly this.
-- **`OpenMausBot-setup.exe`** is a byte-identical copy that gives the README's
-  `/releases/latest/download/OpenMausBot-setup.exe` button a stable URL. This
-  mirrors `OpenMausBot.dmg` sitting beside `OpenMausBot-<version>.dmg`.
-
-### latest.yml is not optional
-
-Without it every installed Windows app 404s on check and stays on its version
-forever. It is generated by `package:win` even under `--publish never`.
-
-**Never hand-edit it or carry one forward from a previous build.** It pins the
-installer's sha512; a mismatch makes the updater download and then reject the
-update, which looks like "updates silently do nothing".
+**Never hand-edit `latest.yml`.** It pins the installer's sha512.
 
 ## Every release ships both
 
-A version that exists on macOS but not on this release is a Windows user stuck on
-old code with no signal that anything is wrong — the updater reports "up to date"
-because `latest.yml` still describes the older build.
+Whenever a new version goes out, Mac notarized artifacts and Windows artifacts
+land on the same tag. If Windows can't ship, don't publish a mac-only tag as a
+customer release — or say Windows is frozen in the release notes.
 
-So: **whenever a new version goes out, this flow runs too.** If Windows can't ship
-for some reason, don't publish the mac-only release under a new version tag either
-— or accept that Windows is knowingly frozen and say so in the release notes.
+## Signing (T17 Win)
 
-Because the two builds must run on two machines, the tag is the join point: cut the
-release, attach mac artifacts from the Mac, attach Windows artifacts from here.
+No certificate is configured today, so SmartScreen shows "unknown publisher".
+Auto-update still works while unsigned (no `publisherName`).
 
-## Known: the build is unsigned
-
-No certificate is configured, so SmartScreen shows "unknown publisher" and users
-click **More info → Run anyway**. The README documents this. Auto-update still
-works *because* it's unsigned (no `publisherName` to verify against).
-
-If signing is added later, it goes under `win.signtoolOptions` or
-`win.azureSignOptions` in `electron-builder.yml` — electron-builder 26 nests these;
-there is no top-level `win.certificateFile`. Once signed, keep the certificate
-subject stable forever, or list both old and new in `publisherName`; changing it
-strands every already-installed user.
+When signing is added: `win.signtoolOptions` or `win.azureSignOptions` in
+`electron-builder.yml` (electron-builder 26 — no top-level `win.certificateFile`).
+Only then set `publisherName`. Keep the certificate subject stable forever, or
+list both old and new in `publisherName`.

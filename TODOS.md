@@ -1,15 +1,23 @@
 # TODOS
 
-Canonical next work: `docs/NEXT-WAVE.md`.
+Canonical next work: `docs/GRADUATE-RELEASE.md` (strata + graduate release).
+Pickup list: `docs/NEXT-WAVE.md`.
 
-W1–W5, morning brief, Ask key refuse, morning-honesty, and You → This office shipped. Do not fake mail.
+## Done (2026-08-31)
 
-Do not start inbound-triage, Ask clock proposals (PR C), live CUA, Pocket, or a graduate installer until a visit types a real shop into You → This office.
+- Mac notary keychain profiles `realbud-notary` + `ClawConnect`
+- Notarized + stapled RealBud **0.1.17** DMG + arm64 zip (local `release/`)
+- `pnpm clean:release` — one version on disk, no unpacked `.app` tree
 
 ## Open
 
-- Visit: type the eight fields on You → This office. Code cannot invent an agency.
+1. **Visit / office** — type eight real fields on You → This office (Dickson ACT strata pilot). Training names do not unlock live portal.
+2. **Strata Stage-0** — portal product name + base URL for the Dickson property; human Submit spike.
+3. **Windows Authenticode cert** — then `win.signtoolOptions` + signed NSIS.
+4. **Bundle pinned Hermes** — unlock `hermesInstallCommand` on win32; graduate double-click without Terminal.
+5. **Public GitHub release** — upload stapled 0.1.17 (or next bump) + `latest-mac.yml` to `EzAuto399/RealBud`.
 
 ## Parked
 
-- `T15` retention sweep. `T17` notarize. Windows worker install. All wait for a named office or a release cut.
+- `T15` retention sweep — if disk/privacy comes up on the visit.
+- Inbound mail, Pocket, Ask clock (PR C), Bud Submit — after Stage-0 evidence.

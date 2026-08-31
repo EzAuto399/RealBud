@@ -133,10 +133,14 @@ Do not add pack skills, a cron product surface, or an installer / notarize wave 
 
 ## After this wave
 
-Then stop and wait for a named office, unless that office asks for one of:
+Owner unlock (2026-08-31): **strata portal** (Dickson ACT) + **full graduate
+release** (notarized Mac, signed Windows, bundled worker). Sequence and
+commands live in `docs/GRADUATE-RELEASE.md`.
 
-1. Installer a graduate can double-click (Windows stays CSV-only until a worker is bundled).
-2. Vendor-test portal, human Submit.
-3. Retention sweep (`T15`) if disk or privacy comes up on the visit.
+1. Type the eight fields on You → This office (real shop — not Demo Book).
+2. Mac notarize: `pnpm package:mac:release` (needs `notarytool store-credentials` once).
+3. Strata Stage-0 on the Dickson portal (human login; Bud prefill only; human Submit).
+4. Windows Authenticode + NSIS; then bundle Hermes so win32 is not CSV-only.
+5. Cut public `EzAuto399/RealBud` release with `latest-mac.yml` + `latest.yml`.
 
-Do not start inbound, PR C, Pocket, or a second agent to "complete" the product.
+Do not start inbound, PR C, Pocket, or Bud Submit to "complete" the product.
