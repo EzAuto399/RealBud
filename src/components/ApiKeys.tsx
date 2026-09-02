@@ -33,9 +33,9 @@ const CREDENTIALS: Record<
   }
 > = {
   composio: {
-    label: "Composio Connect key",
+    label: "Connected apps key",
     placeholder: "ck_…",
-    description: "Connect Gmail, GitHub, Slack, Notion, and other apps to your bots.",
+    description: "A private broker key lets Bud open provider sign-in for Notion, Gmail, Outlook, calendars, and other apps without seeing their passwords.",
     href: "https://docs.composio.dev/docs/composio-connect",
     linkLabel: "Open Composio setup guide",
     optional: true,
@@ -95,7 +95,7 @@ function CredentialHelp({ section }: { section: ConfigSection }) {
         aria-expanded={open}
         aria-controls={popoverId}
         onClick={() => setOpen((current) => !current)}
-        className="flex size-6 items-center justify-center rounded-md text-ink-secondary outline-none transition-colors hover:bg-raised hover:text-ink focus-visible:ring-2 focus-visible:ring-accent/70"
+        className="flex size-6 items-center justify-center rounded-md text-ink-secondary transition-colors hover:bg-raised hover:text-ink"
       >
         <CircleHelp size={14} aria-hidden="true" />
       </button>
@@ -118,7 +118,7 @@ function CredentialHelp({ section }: { section: ConfigSection }) {
             target="_blank"
             rel="noopener noreferrer"
             onClick={() => setOpen(false)}
-            className="mt-2.5 flex items-center gap-1.5 text-[12px] font-medium text-accent hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+            className="mt-2.5 flex items-center gap-1.5 text-[12px] font-medium text-accent hover:underline"
           >
             {credential.linkLabel}
             <ExternalLink size={12} aria-hidden="true" />
@@ -153,7 +153,7 @@ export function ApiKeyRow({
     api("/api/config", {
       method: "PUT",
       body: JSON.stringify(SECTIONS[section].body(value.trim())),
-    })
+    }, { timeoutMs: 15_000 })
       .then((status: ConfigStatus) => {
         dispatch({ type: "configStatus", config: status });
         setValue("");
@@ -185,7 +185,7 @@ export function ApiKeyRow({
           placeholder={configured ? "••••••••  (paste to replace)" : credential.placeholder}
           aria-label={credential.label}
           autoComplete="off"
-          className="w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
+          className="w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink placeholder:text-ink-secondary focus:border-hairline"
         />
         <button
           onClick={save}

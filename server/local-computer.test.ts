@@ -1,8 +1,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { readCuaConnection } from "./local-computer.ts";
+import { __setCuaConnectionForTests, cuaAttendedReady, readCuaConnection } from "./local-computer.ts";
 
 describe("local computer descriptor", () => {
   it("fails closed on Linux even when a valid-looking descriptor exists", () => {
@@ -65,5 +65,39 @@ describe("local computer descriptor", () => {
     );
 
     expect(readCuaConnection({ platform: "win32", userData })).toBeNull();
+  });
+
+  afterEach(() => {
+    __setCuaConnectionForTests(undefined);
+    delete process.env.REALBUD_CUA_DESCRIPTOR_PATH;
+    delete process.env.REALBUD_CUA_TEST_READY;
+  });
+
+  it("honours REALBUD_CUA_DESCRIPTOR_PATH and the in-process test hook", () => {
+    const userData = join(process.env.HOME!, "descriptor-path-user-data");
+    mkdirSync(userData, { recursive: true });
+    const file = join(userData, "explicit-cua.json");
+    writeFileSync(
+      file,
+      JSON.stringify({
+        mode: "embedded",
+        mcpCommand: "/tmp/cua-driver",
+        mcpArgs: ["mcp"],
+        mcpEnv: { CUA_DRIVER_EMBEDDED: "1" },
+      }),
+    );
+    process.env.REALBUD_CUA_DESCRIPTOR_PATH = file;
+    expect(readCuaConnection({ platform: "darwin", home: userData })).toEqual({
+      command: "/tmp/cua-driver",
+      args: ["mcp"],
+      env: { CUA_DRIVER_EMBEDDED: "1" },
+    });
+
+    __setCuaConnectionForTests({ command: "/tmp/override", args: ["mcp"], env: {} });
+    expect(readCuaConnection()).toEqual({ command: "/tmp/override", args: ["mcp"], env: {} });
+    expect(cuaAttendedReady()).toBe(true);
+    __setCuaConnectionForTests(null);
+    expect(readCuaConnection()).toBeNull();
+    expect(cuaAttendedReady()).toBe(false);
   });
 });

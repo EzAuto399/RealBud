@@ -1,7 +1,6 @@
 import {
   useCallback,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
@@ -23,7 +22,7 @@ import { BUD_SETUP_STEPS, budFacingCopy, budSetupJourney, type BudSetupStep } fr
 import { cn } from "@/lib/cn";
 import type { MausMotion, MausState } from "@/lib/mascot";
 import { api, useStore } from "@/state/store";
-import { WORKER_PROVIDERS } from "@shared/worker-providers";
+import { WORKER_PROVIDERS, workerProvider } from "@shared/worker-providers";
 import { MausAvatar } from "./Avatar";
 
 type BusyAction = "install" | "safeguards" | "model" | "verify" | "check" | "repair" | "uninstall";
@@ -39,6 +38,15 @@ type ModelStatus = {
   keyPresent: boolean;
   keyHint: string | null;
 };
+
+type ModelPickerOption = {
+  id: string;
+  name: string;
+  releaseDate: string | null;
+  recommended: boolean;
+};
+
+const CUSTOM_MODEL = "__custom_model__";
 
 const ACTIVE_INSTALL_STATES = new Set<InstallStatus["state"]>(["preflight", "running", "verifying"]);
 
@@ -57,16 +65,37 @@ const primaryButton =
 const secondaryButton =
   "pm-control inline-flex items-center justify-center gap-2 rounded border border-line bg-sheet px-3 text-[14px] text-ink transition-transform hover:bg-raised active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40";
 const fieldClass =
-  "pm-control mt-1.5 w-full rounded border border-line bg-sheet px-3 text-[14px] text-ink placeholder:text-ink-muted focus:border-agency focus:outline-none";
+  "pm-control mt-1.5 w-full rounded border border-line bg-sheet px-3 text-[14px] text-ink placeholder:text-ink-muted focus:border-agency";
 
 function providerLabel(providerId: string | null | undefined): string {
-  return WORKER_PROVIDERS.find((provider) => provider.id === providerId)?.label ?? providerId ?? "Model";
+  const provider = workerProvider(providerId);
+  if (!provider) return providerId ?? "Model";
+  return provider.id === providerId ? provider.label : `${provider.label} (Bud's saved login)`;
 }
 
 function installProgressCopy(state: InstallStatus["state"]): string {
   if (state === "preflight") return "Checking this Mac";
   if (state === "verifying") return "Checking the installed worker";
   return "Installing Bud inside RealBud";
+}
+
+function BudCapabilities() {
+  return (
+    <ul className="grid gap-2 sm:grid-cols-3" aria-label="Bud capabilities">
+      <li className="rounded border border-line bg-inset/55 px-3 py-2">
+        <div className="text-[12.5px] font-medium text-ink">Make</div>
+        <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-muted">Read, calculate, code, and draft in the private workroom.</div>
+      </li>
+      <li className="rounded border border-line bg-inset/55 px-3 py-2">
+        <div className="text-[12.5px] font-medium text-ink">Research</div>
+        <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-muted">Search public sources and inspect what you attach.</div>
+      </li>
+      <li className="rounded border border-line bg-inset/55 px-3 py-2">
+        <div className="text-[12.5px] font-medium text-ink">Act</div>
+        <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-muted">Prepare the next step; outside actions wait for you on Desk.</div>
+      </li>
+    </ul>
+  );
 }
 
 export function BudSetupCard({ id = "you-worker" }: { id?: string }) {
@@ -78,24 +107,42 @@ export function BudSetupCard({ id = "you-worker" }: { id?: string }) {
   const [model, setModel] = useState<ModelStatus | null>(null);
   const [modelReadState, setModelReadState] = useState<"loading" | "loaded" | "error">("loading");
   const [lastTest, setLastTest] = useState<{ ok: boolean; detail: string; at: number } | null>(null);
-  const [modelOptions, setModelOptions] = useState<string[]>([]);
+  const [modelOptions, setModelOptions] = useState<ModelPickerOption[]>([]);
+  const [modelOptionsState, setModelOptionsState] = useState<"idle" | "loading" | "loaded" | "error">("idle");
   const [sheet, setSheet] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [providerId, setProviderId] = useState(WORKER_PROVIDERS[0].id);
   const [apiKey, setApiKey] = useState("");
   const [modelId, setModelId] = useState("");
+  const [modelChoice, setModelChoice] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
+  const [checkTick, setCheckTick] = useState(0);
+  const [checkingMs, setCheckingMs] = useState(0);
   const mounted = useRef(false);
   const pollGeneration = useRef(0);
+  const modelOptionsGeneration = useRef(0);
   const confirmRemoveTimer = useRef<number | null>(null);
-  const datalistId = `bud-models-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const status = state.hermes;
+  const providerChoices = useMemo(() => {
+    const currentId = model?.provider;
+    const current = workerProvider(currentId);
+    if (!currentId || !current || current.id === currentId) return WORKER_PROVIDERS;
+    return [{ ...current, id: currentId, label: `${current.label} (Bud's current login)` }, ...WORKER_PROVIDERS];
+  }, [model?.provider]);
+  const selectedProvider = workerProvider(providerId);
+  const usesProfileLogin = Boolean(
+    model?.provider === providerId &&
+    model.keyPresent &&
+    selectedProvider &&
+    selectedProvider.id !== providerId,
+  );
 
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
       pollGeneration.current += 1;
+      modelOptionsGeneration.current += 1;
       if (confirmRemoveTimer.current != null) window.clearTimeout(confirmRemoveTimer.current);
     };
   }, []);
@@ -145,6 +192,7 @@ export function BudSetupCard({ id = "you-worker" }: { id?: string }) {
   }, [refreshHermes]);
 
   const refreshAll = useCallback(async () => {
+    setCheckTick((tick) => tick + 1);
     setBusy("check");
     setError("");
     setFeedback(null);
@@ -188,12 +236,39 @@ export function BudSetupCard({ id = "you-worker" }: { id?: string }) {
     setLastTest({ ok: shared.ok, detail: shared.detail, at: shared.at });
   }, [status?.lastPing, status?.lastTest]);
 
-  const loadModelOptions = useCallback(async (nextProvider: string) => {
+  const loadModelOptions = useCallback(async (nextProvider: string, preferredModel = "") => {
+    const generation = ++modelOptionsGeneration.current;
+    setModelOptionsState("loading");
     try {
       const res = await api(`/api/hermes/models?provider=${encodeURIComponent(nextProvider)}`);
-      if (mounted.current) setModelOptions(res.models ?? []);
+      if (!mounted.current || generation !== modelOptionsGeneration.current) return;
+      const options: ModelPickerOption[] = Array.isArray(res.options)
+        ? res.options.filter((option: unknown): option is ModelPickerOption => {
+            if (!option || typeof option !== "object") return false;
+            const row = option as Partial<ModelPickerOption>;
+            return typeof row.id === "string" && typeof row.name === "string" && typeof row.recommended === "boolean";
+          })
+        : (Array.isArray(res.models) ? res.models : [])
+            .filter((id: unknown): id is string => typeof id === "string")
+            .map((id: string) => ({ id, name: id, releaseDate: null, recommended: false }));
+      setModelOptions(options);
+      setModelOptionsState("loaded");
+      const preferred = preferredModel.trim();
+      if (preferred) {
+        setModelId(preferred);
+        setModelChoice(options.some((option) => option.id === preferred) ? preferred : CUSTOM_MODEL);
+        return;
+      }
+      const first = options[0]?.id ?? "";
+      setModelId(first);
+      setModelChoice(first || CUSTOM_MODEL);
     } catch {
-      if (mounted.current) setModelOptions([]);
+      if (!mounted.current || generation !== modelOptionsGeneration.current) return;
+      setModelOptions([]);
+      setModelOptionsState("error");
+      const preferred = preferredModel.trim();
+      setModelId(preferred);
+      setModelChoice(CUSTOM_MODEL);
     }
   }, []);
 
@@ -202,17 +277,17 @@ export function BudSetupCard({ id = "you-worker" }: { id?: string }) {
       setError("Finish the earlier setup item before connecting a model.");
       return;
     }
-    const nextProvider = WORKER_PROVIDERS.some((provider) => provider.id === model?.provider)
-      ? String(model?.provider)
-      : providerId;
+    const nextProvider = model?.provider && workerProvider(model.provider) ? model.provider : providerId;
+    const savedModel = model?.model ?? "";
     setProviderId(nextProvider);
-    setModelId(model?.model ?? "");
+    setModelId(savedModel);
+    setModelChoice(savedModel ? CUSTOM_MODEL : "");
     setApiKey("");
     setBaseUrl("");
     setError("");
     setFeedback(null);
     setSheet(true);
-    void loadModelOptions(nextProvider);
+    void loadModelOptions(nextProvider, savedModel);
   }, [loadModelOptions, model, providerId, status]);
 
   const closeModelSheet = useCallback(() => {
@@ -255,6 +330,20 @@ export function BudSetupCard({ id = "you-worker" }: { id?: string }) {
   );
   const installActive = Boolean(install && ACTIVE_INSTALL_STATES.has(install.state));
   const locked = busy !== null || installActive;
+
+  useEffect(() => {
+    if (journey.stage !== "checking") {
+      setCheckingMs(0);
+      return;
+    }
+    setCheckingMs(0);
+    const started = Date.now();
+    const id = window.setInterval(() => {
+      if (!mounted.current) return;
+      setCheckingMs(Date.now() - started);
+    }, 250);
+    return () => window.clearInterval(id);
+  }, [journey.stage, checkTick]);
   const pinMismatch = Boolean(status?.cli.installed && !status.cli.matchesPin);
   const progress = journey.completed / journey.total;
   const timezone = state.desk?.book?.agency.timezone ?? state.desk?.timezone;
@@ -429,21 +518,10 @@ export function BudSetupCard({ id = "you-worker" }: { id?: string }) {
               style={{ transform: `scaleX(${progress})` }}
             />
           </div>
-          {status?.pack.workroomReady ? (
-            <ul className="mt-4 grid gap-2 sm:grid-cols-3" aria-label="Bud capabilities">
-              <li className="rounded border border-line bg-inset/55 px-3 py-2">
-                <div className="text-[12.5px] font-medium text-ink">Make</div>
-                <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-muted">Read, calculate, code, and draft in the private workroom.</div>
-              </li>
-              <li className="rounded border border-line bg-inset/55 px-3 py-2">
-                <div className="text-[12.5px] font-medium text-ink">Research</div>
-                <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-muted">Search public sources and inspect what you attach.</div>
-              </li>
-              <li className="rounded border border-line bg-inset/55 px-3 py-2">
-                <div className="text-[12.5px] font-medium text-ink">Act</div>
-                <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-muted">Prepare the next step; outside actions wait for you on Desk.</div>
-              </li>
-            </ul>
+          {journey.stage === "ready" && status?.pack.workroomReady ? (
+            <div className="mt-4">
+              <BudCapabilities />
+            </div>
           ) : null}
           <div
             className="sr-only"
@@ -499,6 +577,14 @@ export function BudSetupCard({ id = "you-worker" }: { id?: string }) {
               );
             })}
           </ol>
+          {journey.stage !== "ready" ? (
+            <details className="mt-4">
+              <summary className="cursor-pointer text-[13px] font-medium text-ink">What Bud can do</summary>
+              <div className="mt-2">
+                <BudCapabilities />
+              </div>
+            </details>
+          ) : null}
         </div>
 
         <aside className="hidden flex-col justify-between border-l border-line bg-inset/70 p-5 lg:flex" aria-live="polite">
@@ -514,8 +600,18 @@ export function BudSetupCard({ id = "you-worker" }: { id?: string }) {
                 trackPointer={false}
               />
             </div>
-            <h3 className="mt-3 text-[18px] font-semibold tracking-[-0.02em] text-ink">{headline}</h3>
-            <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{statusCopy}</p>
+            {journey.stage === "checking" && checkingMs < 3_000 ? (
+              <div className="mt-3 space-y-2" aria-busy="true">
+                <div className="h-6 w-[10rem] animate-pulse rounded bg-raised motion-reduce:animate-none" />
+                <div className="h-3 w-full animate-pulse rounded bg-raised motion-reduce:animate-none" />
+                <div className="h-3 w-[80%] animate-pulse rounded bg-raised motion-reduce:animate-none" />
+              </div>
+            ) : (
+              <>
+                <h3 className="mt-3 text-[18px] font-semibold tracking-[-0.02em] text-ink">{headline}</h3>
+                <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{statusCopy}</p>
+              </>
+            )}
           </div>
           <div className="mt-5 text-[11.5px] leading-relaxed text-ink-muted">
             Runs quietly inside RealBud. No separate worker window. No automatic sends or payments.
@@ -532,18 +628,31 @@ export function BudSetupCard({ id = "you-worker" }: { id?: string }) {
         ) : null}
 
         {!installActive && journey.stage === "checking" ? (
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="text-[14px] font-medium text-ink">
-                {modelReadState === "error" ? "Bud's model connection could not be read" : "Reading the current setup"}
-              </div>
-              <p className="mt-0.5 text-[12.5px] text-ink-muted">Check again if this does not settle in a moment.</p>
+          checkingMs < 3_000 ? (
+            <div className="space-y-2" aria-busy="true">
+              <span className="sr-only">Reading Bud's setup</span>
+              <div className="h-5 w-[10rem] max-w-[60%] animate-pulse rounded bg-raised motion-reduce:animate-none" />
+              <div className="h-3 w-[16rem] max-w-[80%] animate-pulse rounded bg-raised motion-reduce:animate-none" />
+              <div className="h-3 w-[12rem] max-w-[70%] animate-pulse rounded bg-raised motion-reduce:animate-none" />
             </div>
-            <button type="button" onClick={() => void refreshAll()} disabled={locked} className={secondaryButton}>
-              {busy === "check" ? <Loader2 size={14} className="animate-spin motion-reduce:animate-none" /> : <RefreshCw size={14} />}
-              Check again
-            </button>
-          </div>
+          ) : (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-[14px] font-medium text-ink">
+                  {modelReadState === "error" ? "Bud's model connection could not be read" : "Reading the current setup"}
+                </div>
+                {checkingMs >= 8_000 ? (
+                  <p className="mt-0.5 text-[12.5px] text-ink-muted">Check again if this does not settle in a moment.</p>
+                ) : null}
+              </div>
+              {checkingMs >= 8_000 ? (
+                <button type="button" onClick={() => void refreshAll()} disabled={locked} className={secondaryButton}>
+                  {busy === "check" ? <Loader2 size={14} className="animate-spin motion-reduce:animate-none" /> : <RefreshCw size={14} />}
+                  Check again
+                </button>
+              ) : null}
+            </div>
+          )
         ) : null}
 
         {!installActive && journey.stage === "install" ? (
@@ -601,10 +710,15 @@ export function BudSetupCard({ id = "you-worker" }: { id?: string }) {
               <div className="text-[14px] font-medium text-ink">Check that Bud can answer</div>
               <p className="mt-0.5 text-[12.5px] text-ink-muted">One private question proves the full connection. It does not read or change the book.</p>
             </div>
-            <button type="button" onClick={() => void runAction("verify")} disabled={locked} className={primaryButton}>
-              {busy === "verify" ? <Loader2 size={14} className="animate-spin motion-reduce:animate-none" /> : <Cpu size={14} />}
-              Check Bud
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => void runAction("verify")} disabled={locked} className={primaryButton}>
+                {busy === "verify" ? <Loader2 size={14} className="animate-spin motion-reduce:animate-none" /> : <Cpu size={14} />}
+                {busy === "verify" ? "Checking…" : "Run readiness check"}
+              </button>
+              <button type="button" onClick={openModelSheet} disabled={locked} className={secondaryButton}>
+                Change model
+              </button>
+            </div>
           </div>
         ) : null}
 
@@ -630,7 +744,7 @@ export function BudSetupCard({ id = "you-worker" }: { id?: string }) {
           </div>
         ) : null}
 
-        {status?.cli.installed && !sheet && !installActive ? (
+        {status?.cli.installed && (journey.stage === "ready" || hasFailure) && !sheet && !installActive ? (
           <div className="mt-4 flex flex-wrap items-center gap-4 border-t border-line/70 pt-3">
             <button
               type="button"
@@ -641,18 +755,20 @@ export function BudSetupCard({ id = "you-worker" }: { id?: string }) {
               {busy === "repair" ? <Loader2 size={12} className="animate-spin motion-reduce:animate-none" /> : null}
               Repair Bud
             </button>
-            <button
-              type="button"
-              onClick={() => void requestRemove()}
-              disabled={locked}
-              className={cn(
-                "inline-flex items-center gap-1.5 text-[12px] underline-offset-2 hover:underline disabled:opacity-40",
-                confirmRemove ? "text-danger hover:text-danger" : "text-ink-muted hover:text-danger",
-              )}
-            >
-              {busy === "uninstall" ? <Loader2 size={12} className="animate-spin motion-reduce:animate-none" /> : null}
-              {confirmRemove ? "Confirm remove — your book stays" : "Remove Bud"}
-            </button>
+            {journey.stage === "ready" ? (
+              <button
+                type="button"
+                onClick={() => void requestRemove()}
+                disabled={locked}
+                className={cn(
+                  "inline-flex items-center gap-1.5 text-[12px] underline-offset-2 hover:underline disabled:opacity-40",
+                  confirmRemove ? "text-danger hover:text-danger" : "text-ink-muted hover:text-danger",
+                )}
+              >
+                {busy === "uninstall" ? <Loader2 size={12} className="animate-spin motion-reduce:animate-none" /> : null}
+                {confirmRemove ? "Confirm remove — your book stays" : "Remove Bud"}
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -686,8 +802,13 @@ export function BudSetupCard({ id = "you-worker" }: { id?: string }) {
           <div className="max-w-[52rem]">
             <h3 id="bud-model-title" className="text-[16px] font-semibold text-ink">Connect a model</h3>
             <p className="mt-1 text-[12.5px] leading-relaxed text-ink-muted">
-              The provider key is written directly to Bud's private storage. It never enters Ask, Desk, analytics, or logs.
+              {usesProfileLogin
+                ? "This keeps Bud's current private login. Only the model choice changes."
+                : "The provider key is written directly to Bud's private storage. It never enters Ask, Desk, analytics, or logs."}
             </p>
+            {model?.keyPresent && model.keyHint ? (
+              <p className="mt-2 text-[12.5px] text-ink-muted">Key saved · ends …{model.keyHint}</p>
+            ) : null}
             <div className="mt-4 grid gap-4 md:grid-cols-2">
               <label className="text-[12.5px] font-medium text-ink">
                 Provider
@@ -697,66 +818,123 @@ export function BudSetupCard({ id = "you-worker" }: { id?: string }) {
                     const next = event.target.value;
                     setProviderId(next);
                     setModelId("");
+                    setModelChoice("");
+                    setApiKey("");
+                    setBaseUrl("");
                     void loadModelOptions(next);
                   }}
                   className={fieldClass}
                 >
-                  {WORKER_PROVIDERS.map((provider) => (
+                  {providerChoices.map((provider) => (
                     <option key={provider.id} value={provider.id}>{provider.label}</option>
                   ))}
                 </select>
               </label>
-              <label className="text-[12.5px] font-medium text-ink">
-                Model
+              <div>
+                <label className="text-[12.5px] font-medium text-ink" htmlFor="bud-model-choice">
+                  Model
+                </label>
+                <select
+                  id="bud-model-choice"
+                  value={modelChoice}
+                  disabled={modelOptionsState === "loading"}
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    setModelChoice(next);
+                    setModelId(next === CUSTOM_MODEL ? "" : next);
+                  }}
+                  className={fieldClass}
+                >
+                  <option value="" disabled>
+                    {modelOptionsState === "loading" ? "Loading current models…" : "Choose a model"}
+                  </option>
+                  {modelOptions.some((option) => option.recommended) ? (
+                    <optgroup label="Recommended for Bud">
+                      {modelOptions.filter((option) => option.recommended).map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.name === option.id ? option.id : `${option.name} — ${option.id}`}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : null}
+                  {modelOptions.some((option) => !option.recommended) ? (
+                    <optgroup label="Recently available to Bud">
+                      {modelOptions.filter((option) => !option.recommended).map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.name === option.id ? option.id : `${option.name} — ${option.id}`}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : null}
+                  <option value={CUSTOM_MODEL}>Custom model ID…</option>
+                </select>
+                <span className="mt-1.5 block text-[11.5px] font-normal text-ink-muted">
+                  {modelOptionsState === "error"
+                    ? "The model list could not load. Enter the provider model ID yourself."
+                    : "Recent models come from Bud's installed catalogue."}
+                </span>
+              </div>
+            </div>
+            {modelChoice === CUSTOM_MODEL ? (
+              <label className="mt-4 block text-[12.5px] font-medium text-ink">
+                Custom model ID
                 <input
                   type="text"
                   value={modelId}
                   onChange={(event) => setModelId(event.target.value)}
-                  placeholder={WORKER_PROVIDERS.find((provider) => provider.id === providerId)?.exampleModel}
-                  list={datalistId}
+                  placeholder="provider-model-id"
                   autoComplete="off"
+                  autoCapitalize="off"
                   spellCheck={false}
                   className={fieldClass}
                 />
-                <datalist id={datalistId}>
-                  {modelOptions.map((option) => <option key={option} value={option} />)}
-                </datalist>
+                <span className="mt-1.5 block font-normal text-ink-muted">
+                  Use the exact ID from your provider. RealBud checks it before marking Bud ready.
+                </span>
               </label>
-            </div>
-            <label className="mt-4 block text-[12.5px] font-medium text-ink">
-              Provider API key
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(event) => setApiKey(event.target.value)}
-                autoComplete="new-password"
-                autoCapitalize="off"
-                spellCheck={false}
-                placeholder={model?.provider === providerId && model.keyPresent ? "Leave blank to keep the current key" : "Paste the provider key"}
-                className={fieldClass}
-              />
-              <span className="mt-1.5 block font-normal text-ink-muted">
-                {model?.provider === providerId && model.keyPresent
-                  ? "A provider key is already saved. Leave this blank to keep it."
-                  : `Required for ${providerLabel(providerId)}.`}
-              </span>
-            </label>
-            <details className="mt-4 text-[12.5px] text-ink-muted">
-              <summary className="cursor-pointer font-medium text-ink">Custom provider URL</summary>
-              <label className="mt-3 block">
-                Base URL
-                <input
-                  type="url"
-                  value={baseUrl}
-                  onChange={(event) => setBaseUrl(event.target.value)}
-                  placeholder="https://api.example.com/v1"
-                  autoComplete="off"
-                  spellCheck={false}
-                  className={fieldClass}
-                />
-                <span className="mt-1.5 block">Leave this empty for the provider default.</span>
-              </label>
-            </details>
+            ) : null}
+            {usesProfileLogin ? (
+              <div className="mt-4 border border-agency/20 bg-agency/5 px-3 py-2.5 text-[12.5px] text-ink" role="status">
+                Using the saved {providerLabel(providerId)}. RealBud will not replace it or ask for a provider key.
+              </div>
+            ) : (
+              <>
+                <label className="mt-4 block text-[12.5px] font-medium text-ink">
+                  Provider API key
+                  <input
+                    type="password"
+                    value={apiKey}
+                    onChange={(event) => setApiKey(event.target.value)}
+                    autoComplete="new-password"
+                    autoCapitalize="off"
+                    spellCheck={false}
+                    placeholder={model?.provider === providerId && model.keyPresent ? "Leave blank to keep the current key" : "Paste the provider key"}
+                    className={fieldClass}
+                  />
+                  <span className="mt-1.5 block font-normal text-ink-muted">
+                    {model?.provider === providerId && model.keyPresent
+                      ? "A provider key is already saved. Leave this blank to keep it."
+                      : `Required for ${providerLabel(providerId)}.`}
+                  </span>
+                </label>
+                <details className="mt-4 text-[12.5px] text-ink-muted">
+                  <summary className="cursor-pointer font-medium text-ink">Custom provider URL</summary>
+                  <label className="mt-3 block">
+                    Base URL
+                    <input
+                      type="url"
+                      value={baseUrl}
+                      onChange={(event) => setBaseUrl(event.target.value)}
+                      placeholder="https://api.example.com/v1"
+                      autoComplete="off"
+                      spellCheck={false}
+                      className={fieldClass}
+                    />
+                    <span className="mt-1.5 block">Leave this empty for the provider default.</span>
+                  </label>
+                </details>
+              </>
+            )}
             <div className="mt-5 flex flex-wrap items-center gap-2">
               <button
                 type="submit"

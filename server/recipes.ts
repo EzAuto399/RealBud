@@ -3,7 +3,13 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { Recipe, RecipeStatus } from "../shared/contracts.ts";
+import {
+  JOB_CAPABILITIES,
+  type JobCapability,
+  type JobLimits,
+  type Recipe,
+  type RecipeStatus,
+} from "../shared/contracts.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 import { parseClockTime, parseWeekdays } from "./routines.ts";
@@ -15,7 +21,11 @@ const MAX_STEPS = 12;
 const MAX_STEP = 200;
 const MAX_ORIGINS = 5;
 const MAX_EVIDENCE = 200;
+const MAX_DESCRIPTION = 4_000;
 const ORIGIN_RE = /^[a-z0-9.-]+\.[a-z]{2,}$/;
+
+export const DEFAULT_JOB_CAPABILITIES: JobCapability[] = ["read-book", "analyse", "draft"];
+export const DEFAULT_JOB_LIMITS: JobLimits = { maxRuntimeMinutes: 2, maxTurns: 6 };
 
 function recipesPath(): string {
   return join(DATA_DIR, "recipes.json");
@@ -31,6 +41,73 @@ function isStatus(value: unknown): value is RecipeStatus {
 
 function asPlanApprovedAt(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function asRevision(value: unknown): number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : 1;
+}
+
+function asUpdatedAt(value: unknown, createdAt: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : createdAt;
+}
+
+function parseCapabilities(value: unknown): JobCapability[] {
+  if (value === undefined) return [...DEFAULT_JOB_CAPABILITIES];
+  if (!Array.isArray(value) || value.length < 1 || value.length > JOB_CAPABILITIES.length) {
+    bad(`Choose between 1 and ${JOB_CAPABILITIES.length} safe job capabilities.`);
+  }
+  const out: JobCapability[] = [];
+  for (const raw of value) {
+    if (typeof raw !== "string" || !(JOB_CAPABILITIES as readonly string[]).includes(raw)) {
+      bad("That job asks for a capability Bud cannot be granted.");
+    }
+    const capability = raw as JobCapability;
+    if (!out.includes(capability)) out.push(capability);
+  }
+  if (!out.length) bad("Choose at least one safe job capability.");
+  if (out.includes("portal-prefill") && !out.includes("portal-read")) out.unshift("portal-read");
+  if (out.includes("portal-submit") && !out.includes("portal-prefill")) {
+    bad("Add prefill before Bud may press Submit.");
+  }
+  return out;
+}
+
+export function recipeHasPortalCapability(capabilities: readonly JobCapability[]): boolean {
+  return (
+    capabilities.includes("portal-read") ||
+    capabilities.includes("portal-prefill") ||
+    capabilities.includes("portal-submit")
+  );
+}
+
+export function fenceCapabilitiesFor(recipe: Pick<Recipe, "capabilities" | "submitAcknowledgedAt">): JobCapability[] {
+  if (recipe.submitAcknowledgedAt != null) return [...recipe.capabilities];
+  return recipe.capabilities.filter((capability) => capability !== "portal-submit");
+}
+
+export type RecipeAttachment = { attachedAt: number; acknowledged: "human-login-and-submit" };
+
+function asAttachment(value: unknown): RecipeAttachment | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  if (row.acknowledged !== "human-login-and-submit") return null;
+  if (typeof row.attachedAt !== "number" || !Number.isFinite(row.attachedAt) || row.attachedAt <= 0) return null;
+  return { attachedAt: row.attachedAt, acknowledged: "human-login-and-submit" };
+}
+
+function parseLimits(value: unknown): JobLimits {
+  if (value === undefined) return { ...DEFAULT_JOB_LIMITS };
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    bad("Job limits must name maxRuntimeMinutes and maxTurns.");
+  }
+  const row = value as Record<string, unknown>;
+  if (!Number.isInteger(row.maxRuntimeMinutes) || Number(row.maxRuntimeMinutes) < 1 || Number(row.maxRuntimeMinutes) > 5) {
+    bad("Job runtime must be between 1 and 5 minutes.");
+  }
+  if (!Number.isInteger(row.maxTurns) || Number(row.maxTurns) < 1 || Number(row.maxTurns) > 12) {
+    bad("Job turns must be between 1 and 12.");
+  }
+  return { maxRuntimeMinutes: Number(row.maxRuntimeMinutes), maxTurns: Number(row.maxTurns) };
 }
 
 /** Bare https host: lowercase, drop scheme/path/port, drop a leading www. */
@@ -58,9 +135,12 @@ export function parseRecipeSchedule(value: unknown): { time: string; weekdays: n
 
 export function validateRecipe(input: unknown): {
   title: string;
+  description: string;
   steps: string[];
   allowedOrigins: string[];
   evidence: string;
+  capabilities: JobCapability[];
+  limits: JobLimits;
   siteNotes: string | null;
   schedule: { time: string; weekdays: number[] } | null;
 } {
@@ -71,6 +151,12 @@ export function validateRecipe(input: unknown): {
   if (typeof row.title !== "string") bad("Give the job a name — 1 to 80 characters.");
   const title = row.title.trim();
   if (!title || title.length > MAX_TITLE) bad("Give the job a name — 1 to 80 characters.");
+
+  if (row.description !== undefined && typeof row.description !== "string") {
+    bad("Job description must be at most 4000 characters.");
+  }
+  const description = typeof row.description === "string" ? row.description.trim() : "";
+  if (description.length > MAX_DESCRIPTION) bad("Job description must be at most 4000 characters.");
 
   if (!Array.isArray(row.steps)) bad("List between 1 and 12 steps.");
   if (row.steps.length < 1 || row.steps.length > MAX_STEPS) bad("List between 1 and 12 steps.");
@@ -106,7 +192,22 @@ export function validateRecipe(input: unknown): {
   const siteNotes = typeof row.siteNotes === "string" ? row.siteNotes.trim() : "";
   if (siteNotes.length > 500) bad("Site notes must be at most 500 characters.");
 
-  return { title, steps, allowedOrigins, evidence, siteNotes: siteNotes || null, schedule: parseRecipeSchedule(row.schedule) };
+  const capabilities = parseCapabilities(row.capabilities);
+  if (recipeHasPortalCapability(capabilities) && allowedOrigins.length < 1) {
+    bad("Name the portal site this job may open.");
+  }
+
+  return {
+    title,
+    description,
+    steps,
+    allowedOrigins,
+    evidence,
+    capabilities,
+    limits: parseLimits(row.limits),
+    siteNotes: siteNotes || null,
+    schedule: parseRecipeSchedule(row.schedule),
+  };
 }
 
 function asRecipe(value: unknown): Recipe | null {
@@ -121,18 +222,31 @@ function asRecipe(value: unknown): Recipe | null {
   if (typeof row.evidence !== "string") return null;
   if (!isStatus(row.status)) return null;
   if (typeof row.createdAt !== "number" || !Number.isFinite(row.createdAt)) return null;
-  return {
-    id: row.id,
-    title: row.title,
-    steps: row.steps,
-    allowedOrigins: row.allowedOrigins,
-    evidence: row.evidence,
-    siteNotes: typeof row.siteNotes === "string" && row.siteNotes.trim() ? row.siteNotes : null,
-    status: row.status,
-    createdAt: row.createdAt,
-    schedule: parseRecipeSchedule(row.schedule),
-    planApprovedAt: asPlanApprovedAt(row.planApprovedAt),
-  };
+  try {
+    const fields = validateRecipe(row);
+    const createdAt = row.createdAt;
+    const revision = asRevision(row.revision);
+    const planApprovedAt = asPlanApprovedAt(row.planApprovedAt);
+    const explicitApproved =
+      typeof row.approvedRevision === "number" && Number.isInteger(row.approvedRevision) && row.approvedRevision > 0
+        ? row.approvedRevision
+        : null;
+    return {
+      id: row.id,
+      ...fields,
+      status: row.status,
+      createdAt,
+      planApprovedAt,
+      revision,
+      updatedAt: asUpdatedAt(row.updatedAt, createdAt),
+      // A legacy approved row had only one implicit revision.
+      approvedRevision: planApprovedAt ? (explicitApproved ?? 1) : null,
+      attachment: asAttachment(row.attachment),
+      submitAcknowledgedAt: asPlanApprovedAt(row.submitAcknowledgedAt),
+    };
+  } catch {
+    return null;
+  }
 }
 
 function persist(recipes: Recipe[]): void {
@@ -172,25 +286,69 @@ export function saveRecipe(input: unknown): Recipe[] {
   const fields = validateRecipe(input);
   const row = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const id = typeof row.id === "string" && row.id.trim() ? row.id.trim() : randomUUID();
-  const createdAt =
-    typeof row.createdAt === "number" && Number.isFinite(row.createdAt) ? row.createdAt : Date.now();
-  const status = isStatus(row.status) ? row.status : "shadow";
   const recipes = loadRecipes();
   const existing = recipes.find((item) => item.id === id);
-  const recipe: Recipe = { id, ...fields, status, createdAt, planApprovedAt: existing?.planApprovedAt ?? null, siteNotes: fields.siteNotes ?? existing?.siteNotes ?? null };
+  const now = Date.now();
+  const createdAt = existing?.createdAt ??
+    (typeof row.createdAt === "number" && Number.isFinite(row.createdAt) ? row.createdAt : now);
+  const status = isStatus(row.status) ? row.status : (existing?.status ?? "shadow");
+  const effective = {
+    ...fields,
+    description: row.description === undefined && existing ? existing.description : fields.description,
+    capabilities: row.capabilities === undefined && existing ? existing.capabilities : fields.capabilities,
+    limits: row.limits === undefined && existing ? existing.limits : fields.limits,
+    siteNotes: fields.siteNotes ?? existing?.siteNotes ?? null,
+  };
+  const material = (recipe: Pick<Recipe, "title" | "description" | "steps" | "allowedOrigins" | "evidence" | "capabilities" | "limits" | "siteNotes" | "schedule">) =>
+    JSON.stringify({
+      title: recipe.title,
+      description: recipe.description,
+      steps: recipe.steps,
+      allowedOrigins: recipe.allowedOrigins,
+      evidence: recipe.evidence,
+      capabilities: recipe.capabilities,
+      limits: recipe.limits,
+      siteNotes: recipe.siteNotes ?? null,
+      schedule: recipe.schedule,
+    });
+  const changed = existing ? material(existing) !== material(effective) : false;
+  const originsChanged =
+    existing != null && JSON.stringify(existing.allowedOrigins) !== JSON.stringify(effective.allowedOrigins);
+  const capabilitiesChanged =
+    existing != null && JSON.stringify(existing.capabilities) !== JSON.stringify(effective.capabilities);
+  const recipe: Recipe = {
+    id,
+    ...effective,
+    status,
+    createdAt,
+    planApprovedAt: changed ? null : (existing?.planApprovedAt ?? null),
+    revision: existing ? (changed ? existing.revision + 1 : existing.revision) : 1,
+    updatedAt: existing ? (changed ? now : existing.updatedAt) : createdAt,
+    approvedRevision: changed ? null : (existing?.approvedRevision ?? null),
+    attachment: originsChanged ? null : (existing?.attachment ?? null),
+    submitAcknowledgedAt: originsChanged || capabilitiesChanged ? null : (existing?.submitAcknowledgedAt ?? null),
+  };
   const next = recipes.filter((item) => item.id !== id);
   next.push(recipe);
   persist(next);
   return next;
 }
 
-export function patchRecipe(id: string, patch: { status?: unknown; planApproved?: unknown }): Recipe[] {
+export function patchRecipe(
+  id: string,
+  patch: { status?: unknown; planApproved?: unknown; attach?: unknown; submitAcknowledged?: unknown },
+): Recipe[] {
   const wantsStatus = patch.status !== undefined && patch.status !== "";
   const wantsApprove = patch.planApproved === true;
+  const wantsAttach = patch.attach === true;
+  const wantsDetach = patch.attach === false;
+  const wantsSubmitAck = patch.submitAcknowledged === true;
+  // Turning Submit asks off is always allowed: it only narrows what Bud may ask.
+  const wantsSubmitOff = patch.submitAcknowledged === false;
   if (wantsStatus && !isStatus(patch.status)) {
     throw Object.assign(new Error("Status must be shadow, active, or paused."), { status: 400 });
   }
-  if (!wantsStatus && !wantsApprove) {
+  if (!wantsStatus && !wantsApprove && !wantsAttach && !wantsDetach && !wantsSubmitAck && !wantsSubmitOff) {
     throw Object.assign(new Error("Status must be shadow, active, or paused."), { status: 400 });
   }
   const recipes = loadRecipes();
@@ -198,10 +356,35 @@ export function patchRecipe(id: string, patch: { status?: unknown; planApproved?
   if (idx < 0) throw Object.assign(new Error("no such recipe"), { status: 404 });
   const current = recipes[idx];
   if (!current) throw Object.assign(new Error("no such recipe"), { status: 404 });
+  if (wantsAttach && (!current.allowedOrigins.length || !recipeHasPortalCapability(current.capabilities))) {
+    throw Object.assign(new Error("Add the portal site and a portal capability before attaching it."), {
+      status: 409,
+    });
+  }
+  if (wantsSubmitAck && !current.capabilities.includes("portal-submit")) {
+    throw Object.assign(new Error("Add 'Bud may press Submit' only on a job with the portal-submit capability."), {
+      status: 409,
+    });
+  }
   recipes[idx] = {
     ...current,
-    status: wantsStatus && isStatus(patch.status) ? patch.status : current.status,
-    planApprovedAt: wantsApprove ? (current.planApprovedAt ?? Date.now()) : current.planApprovedAt,
+    // Approving a plan is the one deliberate action that puts its current
+    // revision on the clock. Callers may still explicitly choose paused.
+    status: wantsStatus && isStatus(patch.status) ? patch.status : wantsApprove ? "active" : current.status,
+    planApprovedAt: wantsApprove
+      ? (current.approvedRevision === current.revision ? (current.planApprovedAt ?? Date.now()) : Date.now())
+      : current.planApprovedAt,
+    approvedRevision: wantsApprove ? current.revision : current.approvedRevision,
+    attachment: wantsAttach
+      ? (current.attachment ?? { attachedAt: Date.now(), acknowledged: "human-login-and-submit" })
+      : wantsDetach
+        ? null
+        : current.attachment,
+    submitAcknowledgedAt: wantsSubmitAck
+      ? (current.submitAcknowledgedAt ?? Date.now())
+      : wantsSubmitOff
+        ? null
+        : current.submitAcknowledgedAt,
   };
   persist(recipes);
   return recipes;

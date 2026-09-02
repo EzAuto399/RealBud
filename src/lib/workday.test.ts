@@ -44,7 +44,7 @@ describe("workdayGuide", () => {
 
   it("offers a labelled practice check on the sample book", () => {
     const guide = workdayGuide({ connected: true, desk: snapshot(), workerReady: false });
-    expect(guide).toMatchObject({ phase: "unchecked", action: "practice", actionLabel: "Run sample check" });
+    expect(guide).toMatchObject({ phase: "unchecked", action: "practice", actionLabel: "Recheck" });
     expect(guide.detail).toContain("training facts");
   });
 
@@ -54,7 +54,16 @@ describe("workdayGuide", () => {
       desk: snapshot({ lastRunAt: 1, handsDetail: "Worker timed out" }),
       workerReady: true,
     });
-    expect(guide).toMatchObject({ phase: "worker-miss", action: "practice", actionLabel: "Run sample check" });
+    expect(guide).toMatchObject({
+      phase: "worker-miss",
+      eyebrow: "Live check missed",
+      title: "Facts stay held",
+      action: "practice",
+      actionLabel: "Run the sample morning",
+    });
+    expect(guide.detail).toBe(
+      "Bud did not return live facts. Fix the model connection on You, or keep practising on the sample morning.",
+    );
   });
 
   it("routes a worker miss on a live book to Bud setup", () => {

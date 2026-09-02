@@ -1,7 +1,7 @@
 import { track } from "@/lib/analytics";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, Clock, Mic, Paperclip, Square, Users, X } from "lucide-react";
-import { useStore, visibleMessages, type Bot, type Group } from "@/state/store";
+import { ArrowUp, Clock, CornerDownRight, Loader2, Mic, Paperclip, Pencil, Square, Users, X } from "lucide-react";
+import { api, useStore, visibleMessages, type Bot, type Group } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { useComposerDraft } from "@/lib/drafts";
 import { MausAvatar } from "./Avatar";
@@ -41,6 +41,10 @@ export function Composer({
   members,
   onEditLast,
   productAsk = false,
+  askReady = true,
+  askBlockedDetail,
+  askSetupLabel = "Set up Bud",
+  onAskSetup,
 }: {
   bot?: Bot;
   group?: Group;
@@ -48,6 +52,13 @@ export function Composer({
   onEditLast?: () => void;
   /** Always allow writes a standing rule. You → Bud's rules can revoke it. */
   productAsk?: boolean;
+  /** Product Ask: false blocks send until Bud is ready. */
+  askReady?: boolean;
+  /** The one specific reason Bud is blocked, shown once beside the setup action. */
+  askBlockedDetail?: string;
+  /** Product Ask setup button. Defaults to "Set up Bud". */
+  askSetupLabel?: string;
+  onAskSetup?: () => void;
 }) {
   const { state, dispatch } = useStore();
   const { capabilities } = useDesktopCapabilities();
@@ -137,47 +148,131 @@ export function Composer({
     });
   };
 
-  // One message may be queued while the bot works; it auto-sends the moment
-  // the turn settles. Enter during a turn queues instead of silently dying.
-  const [queued, setQueued] = useState<string | null>(null);
-  // a chip on its own is a message: the send control has to appear for it
+  // Rooms retain their old in-renderer queue. A 1:1 Bud follow-up is owned by
+  // the server so it survives reloads and can be atomically replaced/drained.
+  const [groupQueued, setGroupQueued] = useState<string | null>(null);
+  const queuedItem = !group && bot && bot.queuedMessage?.threadId === bot.threadId ? bot.queuedMessage : null;
+  const queued = group ? groupQueued : (queuedItem?.text ?? null);
+  const [actionPending, setActionPending] = useState<"steer" | "queue" | "edit-queue" | "delete-queue" | null>(null);
   const hasContent = Boolean(text.trim()) || attachments.length > 0;
-  const send = () => {
-    const t = composeMessage(text, attachments);
-    if (!t) return;
-    if (productAsk && looksLikeProviderKey(t)) {
+  const askBlocked = productAsk && !askReady;
+  const interactionBlocked = Boolean(approval) || askBlocked || Boolean(actionPending);
+
+  const checkedMessage = () => {
+    if (askBlocked) return null;
+    const message = composeMessage(text, attachments);
+    if (!message) return null;
+    if (productAsk && looksLikeProviderKey(message)) {
       setSpeechError(KEY_ON_YOU);
-      return;
+      return null;
     }
-    if (busy) {
-      setQueued(t);
+    return message;
+  };
+
+  const submitWhileBusy = async (mode: "steer" | "queue") => {
+    if (!bot || actionPending) return;
+    const message = checkedMessage();
+    if (!message) return;
+    setActionPending(mode);
+    setSpeechError(null);
+    try {
+      await api(`/api/bots/${bot.id}/${mode === "steer" ? "steer" : "queued-message"}`, {
+        method: mode === "steer" ? "POST" : "PUT",
+        body: JSON.stringify({ text: message }),
+      });
       setText("");
       setAttachments([]);
+      track("message_sent", { driver: bot.modelSelection?.instanceId, [mode]: true });
+    } catch (error) {
+      setSpeechError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setActionPending(null);
+    }
+  };
+
+  const send = () => {
+    const message = checkedMessage();
+    if (!message) return;
+    if (busy) {
+      if (group) {
+        setGroupQueued(message);
+        setText("");
+        setAttachments([]);
+      } else {
+        void submitWhileBusy("steer");
+      }
       return;
     }
     if (group) {
-      dispatch({ type: "sendGroup", groupId: group.id, text: t });
+      dispatch({ type: "sendGroup", groupId: group.id, text: message });
       track("message_sent", { room: true });
     } else if (bot) {
-      dispatch({ type: "send", botId: bot.id, text: t });
+      dispatch({ type: "send", botId: bot.id, text: message });
       track("message_sent", { driver: bot.modelSelection?.instanceId });
     }
     setText("");
     setAttachments([]);
   };
+
   useEffect(() => {
-    if (!busy && queued) {
-      if (productAsk && looksLikeProviderKey(queued)) {
-        setSpeechError(KEY_ON_YOU);
-        setQueued(null);
-        return;
-      }
-      if (group) dispatch({ type: "sendGroup", groupId: group.id, text: queued });
-      else if (bot) dispatch({ type: "send", botId: bot.id, text: queued });
-      track("message_sent", { queued: true });
-      setQueued(null);
+    if (!group || busy || !groupQueued) return;
+    if (productAsk && !askReady) {
+      setGroupQueued(null);
+      return;
     }
-  }, [busy, queued, bot, group, dispatch, productAsk]);
+    if (productAsk && looksLikeProviderKey(groupQueued)) {
+      setSpeechError(KEY_ON_YOU);
+      setGroupQueued(null);
+      return;
+    }
+    dispatch({ type: "sendGroup", groupId: group.id, text: groupQueued });
+    track("message_sent", { queued: true });
+    setGroupQueued(null);
+  }, [busy, groupQueued, group, dispatch, productAsk, askReady]);
+
+  const editQueued = async () => {
+    if (actionPending || !queued) return;
+    if (group) {
+      setText(queued);
+      setGroupQueued(null);
+      inputRef.current?.focus();
+      return;
+    }
+    if (!bot || !queuedItem) return;
+    setActionPending("edit-queue");
+    try {
+      await api(`/api/bots/${bot.id}/queued-message`, {
+        method: "DELETE",
+        body: JSON.stringify({ id: queuedItem.id }),
+      });
+      setText(queuedItem.text);
+      requestAnimationFrame(() => inputRef.current?.focus());
+    } catch (error) {
+      setSpeechError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setActionPending(null);
+    }
+  };
+
+  const deleteQueued = async () => {
+    if (actionPending || !queued) return;
+    if (group) {
+      setGroupQueued(null);
+      return;
+    }
+    if (!bot || !queuedItem) return;
+    setActionPending("delete-queue");
+    try {
+      await api(`/api/bots/${bot.id}/queued-message`, {
+        method: "DELETE",
+        body: JSON.stringify({ id: queuedItem.id }),
+      });
+    } catch (error) {
+      setSpeechError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setActionPending(null);
+    }
+  };
 
   // native dictation: partials stream into the input while the Swift
   // helper runs; the final transcript stays in the box, ready to edit/send
@@ -261,15 +356,38 @@ export function Composer({
           <div className="mb-2 flex items-center gap-2 rounded-lg border border-hairline/40 bg-panel px-3 py-2 text-[12.5px] text-ink-secondary">
             <Clock size={13} className="shrink-0" />
             <span className="min-w-0 flex-1 truncate">
-              Queued — sends when {busyName} finishes: “{queued}”
+              Queued — {busy ? `starts when ${busyName} finishes` : "ready to start"}: “{queued}”
             </span>
-            <button
-              onClick={() => setQueued(null)}
-              aria-label="Discard queued message"
-              className="rounded p-0.5 hover:bg-raised hover:text-ink"
-            >
-              <X size={13} />
-            </button>
+            <div className="group relative shrink-0">
+              <button
+                type="button"
+                onClick={() => void editQueued()}
+                disabled={Boolean(actionPending)}
+                aria-label="Edit queued follow-up"
+                title="Edit queued follow-up"
+                className="flex size-6 items-center justify-center rounded hover:bg-raised hover:text-ink disabled:opacity-50"
+              >
+                {actionPending === "edit-queue" ? <Loader2 size={13} className="animate-spin" /> : <Pencil size={13} />}
+              </button>
+              <span role="tooltip" className="pointer-events-none absolute bottom-full right-0 z-30 mb-1.5 whitespace-nowrap rounded bg-ink px-2 py-1 text-[11px] text-paper opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                Edit follow-up
+              </span>
+            </div>
+            <div className="group relative shrink-0">
+              <button
+                type="button"
+                onClick={() => void deleteQueued()}
+                disabled={Boolean(actionPending)}
+                aria-label="Discard queued follow-up"
+                title="Discard queued follow-up"
+                className="flex size-6 items-center justify-center rounded hover:bg-raised hover:text-ink disabled:opacity-50"
+              >
+                {actionPending === "delete-queue" ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />}
+              </button>
+              <span role="tooltip" className="pointer-events-none absolute bottom-full right-0 z-30 mb-1.5 whitespace-nowrap rounded bg-ink px-2 py-1 text-[11px] text-paper opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                Discard follow-up
+              </span>
+            </div>
           </div>
         )}
         {pickerOpen && (
@@ -311,11 +429,12 @@ export function Composer({
             can type again, so a waiting bot is impossible to miss. */}
         {approval && (
           <div className="mb-2 overflow-hidden rounded-2xl border border-accent/40 bg-card">
-            <PendingApprovalPanel pending={approval} count={approvals.length} index={0} />
+            <PendingApprovalPanel pending={approval} count={approvals.length} index={0} productAsk={productAsk} />
             <PendingApprovalActions
               pending={approval}
               threadId={threadId}
               bot={approvalBot}
+              productAsk={productAsk}
               alwaysAllowable={true}
               onCancelTurn={() => {
                 if (group) dispatch({ type: "interruptGroup", groupId: group.id });
@@ -330,6 +449,22 @@ export function Composer({
           onRemove={removeAttachment}
           persist={persistAskFile}
         />
+        {askBlocked ? (
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-hold/30 bg-hold/10 px-3 py-2.5">
+            <p className="text-[13px] text-hold">
+              {askBlockedDetail ?? "Bud is not ready yet. Finish setup on You before Ask can run tool work."}
+            </p>
+            {onAskSetup ? (
+              <button
+                type="button"
+                onClick={onAskSetup}
+                className="pm-control shrink-0 rounded bg-agency px-3 text-[13px] font-medium text-white hover:bg-agency-hover"
+              >
+                {askSetupLabel}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         <div className="flex items-end gap-2 rounded-lg border border-line bg-sheet py-2 pl-3 pr-2">
         <input
           ref={fileRef}
@@ -341,7 +476,7 @@ export function Composer({
         />
         <button
           type="button"
-          disabled={Boolean(approval)}
+          disabled={interactionBlocked}
           onClick={() => fileRef.current?.click()}
           aria-label="Attach a PDF, image, or text file"
           title="Attach"
@@ -376,6 +511,7 @@ export function Composer({
           onKeyUp={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
           onClick={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
           onKeyDown={(e) => {
+            if (askBlocked) return;
             if (pickerOpen) {
               if (e.key === "ArrowDown" || e.key === "ArrowUp") {
                 e.preventDefault();
@@ -407,22 +543,32 @@ export function Composer({
             }
             if (e.key === "Escape" && recording) setRecording(false);
           }}
-          disabled={Boolean(approval)}
+          disabled={interactionBlocked}
           placeholder={
-            approval
-              ? "Answer the approval above to continue"
+            askBlocked
+              ? "Set up Bud on You first"
+              : approval
+              ? productAsk
+                ? "Answer the request above to continue"
+                : "Answer the approval above to continue"
+              : actionPending === "steer"
+                ? "Applying your new direction…"
+                : actionPending === "queue"
+                  ? "Saving the follow-up…"
               : recording
               ? "Listening…"
               : busy
-                ? `${busyName} is working — Enter queues your message`
+                ? group
+                  ? `${busyName} is working — Enter queues your message`
+                  : `${busyName} is working — Enter steers now; use the clock to queue`
                 : group
                   ? `Message ${group.name} — ${groupComposerHint(group, members ?? [])}`
                   : productAsk
-                    ? "Ask Bud to analyse, research, draft, or check the book"
+                    ? "Tell Bud the outcome — Bud handles the steps"
                     : `Message ${bot?.name ?? ""}`
           }
-          aria-label={productAsk ? "Ask about the book" : `Message ${group ? group.name : (bot?.name ?? "")}`}
-          className="max-h-40 w-full resize-none self-center bg-transparent py-1 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none"
+          aria-label={productAsk ? "Tell Bud what outcome you need" : `Message ${group ? group.name : (bot?.name ?? "")}`}
+          className="max-h-40 w-full resize-none self-center bg-transparent py-1 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none disabled:opacity-60"
         />
         {busy && (
           <button
@@ -430,8 +576,9 @@ export function Composer({
               if (group) dispatch({ type: "interruptGroup", groupId: group.id });
               else if (bot) dispatch({ type: "interrupt", botId: bot.id });
             }}
+            disabled={Boolean(actionPending)}
             aria-label="Stop this turn"
-            className="flex size-8 shrink-0 items-center justify-center rounded-full text-ink-secondary hover:bg-raised hover:text-ink"
+            className="flex size-8 shrink-0 items-center justify-center rounded-full text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40"
             title="Stop"
           >
             <Square size={14} className="fill-current" />
@@ -452,13 +599,48 @@ export function Composer({
             <Mic size={18} />
           </button>
         )}
-        {hasContent && (
+        {hasContent && !askBlocked && busy && !group && (
+          <>
+            <div className="group relative shrink-0">
+              <button
+                type="button"
+                onClick={() => void submitWhileBusy("steer")}
+                disabled={Boolean(actionPending)}
+                aria-label="Steer Bud now"
+                title="Steer now"
+                className="flex size-8 items-center justify-center rounded-full bg-accent text-white hover:brightness-110 disabled:opacity-50"
+              >
+                {actionPending === "steer" ? <Loader2 size={15} className="animate-spin" /> : <CornerDownRight size={16} />}
+              </button>
+              <span role="tooltip" className="pointer-events-none absolute bottom-full right-0 z-30 mb-2 whitespace-nowrap rounded bg-ink px-2 py-1 text-[11px] text-paper opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                Steer now · replaces the active direction
+              </span>
+            </div>
+            <div className="group relative shrink-0">
+              <button
+                type="button"
+                onClick={() => void submitWhileBusy("queue")}
+                disabled={Boolean(actionPending)}
+                aria-label={queuedItem ? "Replace queued follow-up" : "Queue a follow-up"}
+                title={queuedItem ? "Replace queued follow-up" : "Queue follow-up"}
+                className="flex size-8 items-center justify-center rounded-full bg-raised text-ink-secondary hover:bg-raised-hover hover:text-ink disabled:opacity-50"
+              >
+                {actionPending === "queue" ? <Loader2 size={15} className="animate-spin" /> : <Clock size={15} />}
+              </button>
+              <span role="tooltip" className="pointer-events-none absolute bottom-full right-0 z-30 mb-2 whitespace-nowrap rounded bg-ink px-2 py-1 text-[11px] text-paper opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                {queuedItem ? "Replace follow-up · runs next" : "Queue follow-up · runs next"}
+              </span>
+            </div>
+          </>
+        )}
+        {hasContent && !askBlocked && (group || !busy) && (
           <button
             onClick={send}
-            aria-label={busy ? "Queue message" : "Send message"}
-            title={busy ? "Queue — sends when the bot finishes" : "Send"}
+            disabled={Boolean(actionPending)}
+            aria-label={busy ? "Queue work for Bud" : productAsk ? "Start this work" : "Send message"}
+            title={busy ? "Queue — starts when Bud finishes" : productAsk ? "Start work" : "Send"}
             className={cn(
-              "flex size-8 shrink-0 items-center justify-center rounded-full text-white",
+              "flex size-8 shrink-0 items-center justify-center rounded-full text-white disabled:opacity-50",
               busy ? "bg-raised text-ink-secondary hover:bg-raised-hover" : "bg-accent hover:brightness-110",
             )}
           >

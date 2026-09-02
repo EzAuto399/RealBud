@@ -20,6 +20,8 @@ export interface HermesStatus {
   /** One human sentence: what is missing, or that the hands test passed. */
   detail: string;
   ready: boolean;
+  /** Present on GET /api/hermes. Never includes key material. */
+  model?: { attached: boolean; provider: string | null; model: string | null };
 }
 
 /** Pin+pack is not ready. Ready means Test hands returned OK. */

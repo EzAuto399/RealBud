@@ -99,7 +99,7 @@ body {
 }
 
 .pm-control {
-  min-height: 40px;
+  min-height: 44px;
 }
 
 .pm-decision {
@@ -133,7 +133,11 @@ body {
   width: 300px;
   flex-shrink: 0;
   border-right: 1px solid var(--color-line);
-  background: var(--color-paper);
+  background: var(--color-sheet);
+}
+
+.pm-split-queue-backdrop {
+  display: none;
 }
 
 .pm-split-canvas {
@@ -153,12 +157,53 @@ body {
   .pm-split-queue {
     display: none;
   }
+  .pm-split[data-queue-open="true"] .pm-split-queue-backdrop {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 15;
+    border: 0;
+    margin: 0;
+    padding: 0;
+    cursor: pointer;
+    background: rgb(37 35 31 / 28%);
+  }
   .pm-split[data-queue-open="true"] .pm-split-queue {
     display: flex;
     position: absolute;
-    inset: 0 auto 0 200px;
+    inset: 0 auto 0 0;
     z-index: 20;
-    box-shadow: 0 8px 24px rgb(37 35 31 / 12%);
+    width: min(300px, 88vw);
+    background: var(--color-sheet);
+    border-right: 1px solid var(--color-line);
+    box-shadow: 4px 0 24px rgb(37 35 31 / 14%);
+  }
+}
+
+@media (max-width: 719px) {
+  .rb-sidebar {
+    width: 64px;
+  }
+  .rb-sidebar-brand,
+  .rb-sidebar-label,
+  .rb-sidebar-pulse,
+  .rb-sidebar-traffic {
+    display: none;
+  }
+  .rb-sidebar-item {
+    min-height: 44px;
+    justify-content: center;
+    gap: 0;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+  .rb-sidebar-extra {
+    position: absolute;
+    right: 0.35rem;
+    top: 0.35rem;
+  }
+  .rb-sidebar-item {
+    position: relative;
   }
 }
 
@@ -185,6 +230,35 @@ body {
      the duplicate list preserves the case canvas in compact desktop windows. */
   .morning-empty-addresses {
     display: none;
+  }
+}
+
+/* Compact window (see COMPACT_WINDOW_QUERY): the Desk header gives its
+   explanatory lines back to the case so the wording under decision is visible
+   at the 900×600 floor. Controls and counts stay. */
+@media (max-height: 759px) {
+  .pm-desk-subtitle,
+  .pm-desk-hint {
+    display: none;
+  }
+}
+
+.pm-desk-header {
+  container-type: inline-size;
+  container-name: desk-header;
+}
+
+.pm-desk-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 0.75rem;
+}
+
+@container desk-header (min-width: 700px) {
+  .pm-desk-toolbar {
+    flex-wrap: nowrap;
   }
 }
 
@@ -235,6 +309,9 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .animate-caret, .animate-msg-in, .animate-shimmer, .animate-panel-in, .animate-pop-in, .animate-view-in { animation: none; }
   .thinking-shimmer { background: none; color: var(--color-ink-secondary); }
+  /* Progress must stay visible under reduced motion; a slower turn is the
+     static-equivalent that still says "working". */
+  .animate-spin { animation-duration: 2.4s; }
 }
 
 /* SupaMaus vector motion. The fast horizontal compression is the edge-on

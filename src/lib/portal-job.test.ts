@@ -4,11 +4,24 @@ import type { PortalSession } from "./desk";
 import {
   AWAITING_REVIEW_COPY,
   latestSessionFor,
+  findRecipeForLoop,
+  isLiveCapableHost,
   nextRecipeStatus,
+  recipeAttachment,
+  recipeCanAttach,
+  recipeHasPortalCapability,
   recipeNeedsPlanApproval,
+  recipePlanApproved,
+  recipePortalSiteLine,
   recipeSavedLine,
+  recipeSourceLine,
   recipeSitesLine,
   recipeStatusChip,
+  recipeHasSubmitCapability,
+  recipeSubmitAcknowledged,
+  alwaysAllowOfferLabel,
+  portalRuleLabel,
+  isPortalSiteRule,
   sessionSummaryLine,
 } from "./portal-job";
 
@@ -41,8 +54,14 @@ describe("recipeSitesLine", () => {
     );
   });
 
-  it("says Bud narrates from words when no site was named", () => {
-    expect(recipeSitesLine([])).toBe("No websites named — Bud narrates from your words only");
+  it("does not imply a live website when none was authorised", () => {
+    expect(recipeSitesLine([])).toBe("No website is authorised");
+    expect(recipeSourceLine({ allowedOrigins: [], capabilities: ["read-book", "read-files"] })).toBe(
+      "Reads: current Desk book, private workroom files; no website login is authorised",
+    );
+    expect(recipeSourceLine({ allowedOrigins: ["propertyme.com.au"], capabilities: ["read-book"] })).toBe(
+      "Reads only: propertyme.com.au",
+    );
   });
 });
 
@@ -90,8 +109,9 @@ describe("recipe status helpers", () => {
 
 describe("plan approval helpers", () => {
   it("holds an unapproved plan and stays calm once stamped", () => {
-    expect(recipeNeedsPlanApproval({ planApprovedAt: null })).toBe(true);
-    expect(recipeNeedsPlanApproval({ planApprovedAt: 12 })).toBe(false);
+    expect(recipeNeedsPlanApproval({ planApprovedAt: null, revision: 1, approvedRevision: null })).toBe(true);
+    expect(recipeNeedsPlanApproval({ planApprovedAt: 12, revision: 1, approvedRevision: 1 })).toBe(false);
+    expect(recipeNeedsPlanApproval({ planApprovedAt: 12, revision: 2, approvedRevision: 1 })).toBe(true);
   });
 
   it("tells the PM a scheduled job waits on You after save", () => {
@@ -99,6 +119,57 @@ describe("plan approval helpers", () => {
     expect(recipeSavedLine(true)).toBe(
       "Saved. It joins the clock after you approve the plan on You → Bud's jobs.",
     );
+  });
+});
+
+describe("portal site line and attach gate", () => {
+  it("names the portal site and whether Bud only reads or also prefills", () => {
+    expect(recipePortalSiteLine({ allowedOrigins: [], capabilities: ["read-book"] })).toBe(
+      "No portal site on this job",
+    );
+    expect(
+      recipePortalSiteLine({ allowedOrigins: ["strata.example.com"], capabilities: ["read-book"] }),
+    ).toBe("No portal site on this job");
+    expect(
+      recipePortalSiteLine({
+        allowedOrigins: ["strata.example.com"],
+        capabilities: ["portal-read"],
+      }),
+    ).toBe("Site: strata.example.com · read-only");
+    expect(
+      recipePortalSiteLine({
+        allowedOrigins: ["strata.example.com", "bank.example.com"],
+        capabilities: ["portal-read", "portal-prefill"],
+      }),
+    ).toBe("Site: strata.example.com, bank.example.com · reads and prefills");
+  });
+
+  it("requires origins plus a portal capability before attach", () => {
+    expect(recipeHasPortalCapability({ capabilities: ["read-book"] })).toBe(false);
+    expect(recipeHasPortalCapability({ capabilities: ["portal-submit"] })).toBe(true);
+    expect(recipeHasPortalCapability({ capabilities: ["portal-read"] })).toBe(true);
+    expect(recipeHasSubmitCapability({ capabilities: ["portal-read"] })).toBe(false);
+    expect(recipeHasSubmitCapability({ capabilities: ["portal-read", "portal-submit"] })).toBe(true);
+    expect(recipeSubmitAcknowledged({})).toBeNull();
+    expect(recipeSubmitAcknowledged({ submitAcknowledgedAt: 12 })).toBe(12);
+    expect(alwaysAllowOfferLabel("Reading on vantagestrata.com.au")).toBe(
+      "Always allow reading on vantagestrata.com.au",
+    );
+    expect(portalRuleLabel({ label: "old", surface: "portal-prefill", origin: "strata.example.com" })).toBe(
+      "Prefill on strata.example.com",
+    );
+    expect(isPortalSiteRule({ surface: "portal-read", origin: "vantagestrata.com.au" })).toBe(true);
+    expect(recipeCanAttach({ allowedOrigins: [], capabilities: ["portal-read"] })).toBe(false);
+    expect(recipeCanAttach({ allowedOrigins: ["strata.example.com"], capabilities: ["portal-read"] })).toBe(true);
+    expect(recipePlanApproved({ planApprovedAt: 1, revision: 2, approvedRevision: 1 })).toBe(false);
+    expect(recipePlanApproved({ planApprovedAt: 1, revision: 2, approvedRevision: 2 })).toBe(true);
+    expect(recipeAttachment({})).toBeNull();
+    expect(
+      recipeAttachment({ attachment: { attachedAt: 1_700_000_000_000, acknowledged: "human-login-and-submit" } }),
+    ).toEqual({ attachedAt: 1_700_000_000_000, acknowledged: "human-login-and-submit" });
+    expect(findRecipeForLoop([{ id: "job-1" } as never], "recipe-job-1")?.id).toBe("job-1");
+    expect(isLiveCapableHost("darwin")).toBe(true);
+    expect(isLiveCapableHost("linux")).toBe(false);
   });
 });
 

@@ -56,10 +56,11 @@ export function ProfileFields() {
       .catch(() => undefined)
       .then(async () => {
         try {
-          const config = await api("/api/config", {
-            method: "PUT",
-            body: JSON.stringify({ profile: { name: normalizedName, email: normalizedEmail } }),
-          });
+          const config = await api(
+            "/api/config",
+            { method: "PUT", body: JSON.stringify({ profile: { name: normalizedName, email: normalizedEmail } }) },
+            { timeoutMs: 15_000 },
+          );
           dispatch({ type: "configStatus", config });
           if (mounted.current && saveId === latestSave.current) setSaveState("saved");
         } catch {
@@ -69,7 +70,7 @@ export function ProfileFields() {
   };
 
   const fieldClass =
-    "pm-control mt-1.5 w-full rounded border border-line bg-inset px-3 text-[14px] text-ink placeholder:text-ink-muted focus:border-agency focus:outline-none";
+    "pm-control mt-1.5 w-full rounded border border-line bg-inset px-3 text-[14px] text-ink placeholder:text-ink-muted focus:border-agency";
 
   return (
     <div className="flex flex-col gap-3">

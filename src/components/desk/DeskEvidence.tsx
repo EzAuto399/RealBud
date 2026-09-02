@@ -1,9 +1,15 @@
-import type { DeskSnapshot } from "@/lib/desk";
+import { isObservedStale, type DeskSnapshot } from "@/lib/desk";
 import { fmtDateTime, fmtTimeOfDay } from "@/lib/au";
 import type { DeskQueueItem } from "@/lib/desk-queue";
+import { holdMeta } from "@/lib/desk-queue";
 import { EvidenceRail, HandoffPanel, SourceStamp } from "../pm";
 
 const PRESENTATIONS = ["side-by-side", "inspector", "window"] as const;
+const PRESENTATION_LABELS: Record<(typeof PRESENTATIONS)[number], string> = {
+  "side-by-side": "Side by side",
+  inspector: "Inspector",
+  window: "Window",
+};
 
 export function DeskEvidence({
   snap,
@@ -17,7 +23,7 @@ export function DeskEvidence({
   const work = item?.workItemId ? snap.workItems.find((row) => row.id === item.workItemId) : undefined;
   const source = work?.sourceIds[0] ? snap.sources.find((row) => row.id === work.sourceIds[0]) : snap.sources[0];
   const draft = item?.draftId ? snap.drafts.find((row) => row.id === item.draftId) : undefined;
-  const stale = work && Date.now() - work.observedAt > 12 * 60 * 60 * 1000;
+  const stale = isObservedStale(work?.observedAt);
   const handoff = snap.book?.handoff;
   const liveForCase = Boolean(handoff && item && (handoff.caseId === item.workItemId || draft?.status === "allowed"));
 
@@ -35,16 +41,18 @@ export function DeskEvidence({
           />
           <p className="mt-3 text-[14px] text-ink">
             {item.kind === "licensee-required"
-              ? "Past the courtesy window. Desk will not draft a notice."
+              ? "For the licensed person — RealBud will not draft a notice or start a statutory clock."
               : item.kind === "import-issue"
                 ? "This row did not match one property. It stays an import issue."
                 : item.kind === "maintenance-intake"
                   ? "Intake only. No tradie dispatch from RealBud."
                   : item.kind === "lease-review" || item.kind === "inspection-prep"
                     ? "Read-only dates and draft wording. No statutory clock."
-                    : item.holdReason
-                      ? `Held because ${item.holdReason}.`
-                      : "Current money facts from the last Recheck. Notes are not used here."}
+                    : item.bucket === "waiting" && item.holdReason
+                      ? item.action
+                      : item.holdReason
+                        ? `Held · ${holdMeta(item.holdReason)}.`
+                        : "Current money facts from the last Recheck. Notes are not used here."}
           </p>
           {work ? (
             <p className="mt-2 text-[12px] text-ink-muted">
@@ -70,7 +78,7 @@ export function DeskEvidence({
                     onClick={() => onPresent?.(value)}
                     className="rounded border border-line bg-sheet px-2 py-1 text-[11px] text-ink"
                   >
-                    {value}
+                    {PRESENTATION_LABELS[value]}
                   </button>
                 ))}
               </div>

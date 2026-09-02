@@ -57,6 +57,49 @@ describe("ask book", () => {
     expect(answerAskFromDesk("hi", missed)).toMatch(/I'm Bud/);
   });
 
+  it("answers a named hold with that property's recovery evidence only", () => {
+    const held = snap({
+      workItems: [
+        {
+          id: "work-oak",
+          kind: "money-arrears",
+          state: "held",
+          propertyId: "prop-oak",
+          occurrenceKey: "oak",
+          periodDueAt: 1,
+          recipient: { name: "Sam", phone: "0400" },
+          sourceIds: ["pms-live"],
+          observedAt: 2,
+          proposalHash: "h",
+          createdAt: 2,
+          updatedAt: 2,
+          holdReason: "uncovered-by-worker",
+        },
+        {
+          id: "work-harbour",
+          kind: "money-arrears",
+          state: "held",
+          propertyId: "prop-harbour",
+          occurrenceKey: "harbour",
+          periodDueAt: 1,
+          recipient: { name: "Lee", phone: "0401" },
+          sourceIds: ["pms-live"],
+          observedAt: 2,
+          proposalHash: "h2",
+          createdAt: 2,
+          updatedAt: 2,
+          holdReason: "partial-payment",
+        },
+      ],
+    });
+    const answer = answerAskFromDesk("Investigate why 12 Oak St is held", held);
+    expect(answer).toMatch(/12 Oak St, Dickson ACT is held/i);
+    expect(answer).toMatch(/Missing: Current rent, payment, or levy evidence/i);
+    expect(answer).toMatch(/Source: The connected PMS/i);
+    expect(answer).toMatch(/Nothing was sent or changed/i);
+    expect(answer).not.toMatch(/Harbour|partial payment/i);
+  });
+
   it("turns a worker 404 into Desk language", () => {
     expect(productAskFailure("API call failed after 3 retries: HTTP 404: The requested resource was not found")).toMatch(
       /Recheck facts are on Desk/,
@@ -90,6 +133,13 @@ describe("ask book", () => {
     expect(prompt).toMatch(/Only visit sites named in a saved job/i);
     expect(prompt).toMatch(/prepare and stop/i);
     expect(prompt).toMatch(/Never send, pay, submit, publish, sign/i);
+  });
+
+  it("offers a saved job instead of refusing a portal login request", () => {
+    const prompt = productBudSystemPrompt();
+    expect(prompt).toMatch(/do not refuse/i);
+    expect(prompt).toMatch(/Run beside me/);
+    expect(prompt).toMatch(/never move money/);
   });
 
   it("turns internal workroom and unknown failures into safe recovery copy", () => {

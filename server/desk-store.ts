@@ -27,6 +27,21 @@ export interface LoadedDesk {
 
 const MAX_BACKUPS = 5;
 
+export const STORAGE_FULL_MESSAGE =
+  "This Mac is out of space. Nothing was lost; the last good book is kept. Free space and try again.";
+
+function isStorageFullCode(code: unknown): boolean {
+  return code === "ENOSPC" || code === "EDQUOT";
+}
+
+function throwStorageWriteError(error: unknown): never {
+  const code = (error as NodeJS.ErrnoException)?.code;
+  if (isStorageFullCode(code)) {
+    throw Object.assign(new Error(STORAGE_FULL_MESSAGE), { status: 507, code: "storage-full" });
+  }
+  throw error;
+}
+
 function hostTimezone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "Australia/Sydney";
 }
@@ -68,6 +83,8 @@ export class DeskStore {
   private keyInfo: DeskKey;
   private batchDepth = 0;
   private batchNeedsBump = false;
+  /** Tests replace this to simulate a full disk without filling the machine. */
+  static atomicWrite: typeof writeFileAtomic = writeFileAtomic;
 
   /** Recovery escrow: the book's key as hex, for the You-page reveal/copy
    * and the unlock flow. Session-gated routes only. */
@@ -145,9 +162,7 @@ export class DeskStore {
       this.batchNeedsBump = true;
       return;
     }
-    this.data.revision += 1;
-    this.flushV3();
-    this.rotateBackup();
+    this.commitWithBump();
   }
 
   persistWithoutBump(): void {
@@ -170,13 +185,23 @@ export class DeskStore {
       this.batchDepth -= 1;
       if (this.batchDepth === 0 && this.batchNeedsBump) {
         this.batchNeedsBump = false;
-        if (!this.recovery.active) {
-          this.data.revision += 1;
-          this.flushV3();
-          this.rotateBackup();
-        }
+        if (!this.recovery.active) this.commitWithBump();
       }
     }
+  }
+
+  private commitWithBump(): void {
+    const previousRevision = this.data.revision;
+    const previousV3 = this.v3;
+    this.data.revision += 1;
+    try {
+      this.flushV3();
+    } catch (error) {
+      this.data.revision = previousRevision;
+      this.v3 = previousV3;
+      throw error;
+    }
+    this.rotateBackup();
   }
 
   private flushV3(): void {
@@ -187,7 +212,11 @@ export class DeskStore {
 
   private writeV3(v3: DeskFileV3): void {
     mkdirSync(dirname(this.file), { recursive: true });
-    writeFileAtomic(this.file, JSON.stringify(encryptJson(this.keyInfo.key, v3)));
+    try {
+      DeskStore.atomicWrite(this.file, JSON.stringify(encryptJson(this.keyInfo.key, v3)));
+    } catch (error) {
+      throwStorageWriteError(error);
+    }
   }
 
   private rotateBackup(): void {

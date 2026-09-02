@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   Desk,
+  MAX_BOOK_PROPERTIES,
   evaluateProperty,
   fixtureBook,
   type LedgerFacts,
@@ -216,12 +217,38 @@ describe("Desk morning check", () => {
 
     desk.denyDraft(levy.id);
     expect(desk.snapshot().drafts.find((d) => d.id === levy.id)?.status).toBe("denied");
+    expect(desk.notesFor(levy.propertyId).body).toMatch(/denied levy flag/);
+    expect(desk.notesFor(levy.propertyId).body).not.toMatch(/too soon/);
 
     desk.allowDraft(courtesy.id);
     const allowed = desk.snapshot().drafts.find((d) => d.id === courtesy.id)!;
     expect(allowed.status).toBe("allowed");
     expect(allowed).not.toHaveProperty("sentAt");
     expect(() => desk.allowDraft(courtesy.id)).toThrow(/already decided/);
+  });
+
+  it("records an optional deny reason on the property notes", () => {
+    const { desk } = tempDesk();
+    desk.runMorningCheck();
+    const courtesy = desk.snapshot().drafts.find((d) => d.kind === "courtesy-rent")!;
+    const levy = desk.snapshot().drafts.find((d) => d.kind === "levy-from-rent")!;
+    const notesBeforeStale = desk.notesFor(courtesy.propertyId).body;
+    expect(() => desk.denyDraft(courtesy.id, 0, undefined, "stale reason")).toThrow(
+      expect.objectContaining({ status: 409, message: expect.stringMatching(/stale desk revision/) }),
+    );
+    expect(desk.notesFor(courtesy.propertyId).body).toBe(notesBeforeStale);
+    expect(desk.snapshot().drafts.find((d) => d.id === courtesy.id)?.status).toBe("pending");
+
+    desk.denyDraft(courtesy.id, desk.revision, undefined, "  too soon  ");
+    const after = desk.notesFor(courtesy.propertyId).body;
+    expect(desk.snapshot().drafts.find((d) => d.id === courtesy.id)?.status).toBe("denied");
+    expect(after).toMatch(/too soon/);
+    expect(after).not.toMatch(/too soon  /);
+
+    desk.denyDraft(levy.id, desk.revision, undefined, "x".repeat(400));
+    const levyNotes = desk.notesFor(levy.propertyId).body;
+    expect(levyNotes).toContain("x".repeat(280));
+    expect(levyNotes).not.toContain("x".repeat(281));
   });
 
   it("live recheck stays on the labelled Demo book when Hermes is not pinned", async () => {
@@ -617,25 +644,42 @@ describe("Desk morning check", () => {
     expect(snap.workItems.some((w) => w.holdReason === "reversed")).toBe(true);
   });
 
-  it("evaluates 200 properties without putting artifact bytes on the snapshot", { timeout: 30_000 }, () => {
+  it("accepts and evaluates a 600-property office in one intake commit", { timeout: 30_000 }, () => {
     const { desk } = tempDesk();
+    const items = Array.from({ length: 594 }, (_, i) => ({
+      address: `${i + 1} Scale St, Acton ACT`,
+      tenantName: `Scale Tester ${i + 1}`,
+      tenantPhone: "0400 000 000",
+      weeklyRentCents: 50_000,
+    }));
+    expect(desk.proposeBook({ items }).created).toBe(594);
     const before = desk.revision;
-    desk.batch(() => {
-      for (let i = 0; i < 194; i++) {
-        desk.addProperty({
-          address: `${i} Scale St, Acton ACT`,
-          tenantName: "Scale Tester",
-          tenantPhone: "0400 000 000",
-          weeklyRentCents: 50_000,
-        });
-      }
-    });
+    const allowed = desk.allowAllBookProposals();
     expect(desk.revision).toBe(before + 1);
+    expect(allowed.properties).toHaveLength(600);
+    expect(allowed.book?.bookProposals).toHaveLength(0);
     const snap = desk.runMorningCheck();
-    expect(snap.properties.length).toBe(200);
+    expect(snap.properties.length).toBe(600);
     const encoded = JSON.stringify(snap);
     expect(encoded).not.toMatch(/"ct":/);
-    expect(encoded.length).toBeLessThan(2_000_000);
+    expect(encoded.length).toBeLessThan(8_000_000);
+  });
+
+  it("preflights capacity and leaves every proposal staged on overflow", { timeout: 30_000 }, () => {
+    const { desk } = tempDesk();
+    const items = Array.from({ length: MAX_BOOK_PROPERTIES - 5 }, (_, i) => ({
+      address: `${i + 1} Overflow Rd, Acton ACT`,
+      tenantName: `Overflow Tester ${i + 1}`,
+      tenantPhone: "0400 000 000",
+      weeklyRentCents: 50_000,
+    }));
+    expect(desk.proposeBook({ items }).created).toBe(MAX_BOOK_PROPERTIES - 5);
+    const before = desk.snapshot();
+    expect(() => desk.allowAllBookProposals()).toThrow(/No proposals were added/i);
+    const after = desk.snapshot();
+    expect(after.properties).toHaveLength(before.properties.length);
+    expect(after.book?.bookProposals).toHaveLength(MAX_BOOK_PROPERTIES - 5);
+    expect(after.revision).toBe(before.revision);
   });
 
   it("does not mint a portal capability from a non-portal approval or a scheduled check", () => {

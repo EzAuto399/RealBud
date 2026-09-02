@@ -290,6 +290,7 @@ export function syncWorkingV2IntoV3(v3: DeskFileV3, v2: DeskFileV2, now: number)
       propertyId: escalation.propertyId,
       tenancyId: tenancyIdFromProperty(escalation.propertyId),
       holdReason: escalation.reason,
+      detail: escalation.detail,
       periodDueAt: escalation.periodDueAt,
       createdAt: escalation.createdAt,
       updatedAt: escalation.createdAt,

@@ -4,7 +4,7 @@
 // buttons. Quiet hours follow the book's timezone, not the machine's.
 import type { DeskSnapshot, Draft, DraftKind } from "../shared/contracts.ts";
 
-export type RemoteChannelId = "telegram" | "discord";
+export type RemoteChannelId = "telegram" | "discord" | "slack";
 
 export type RemoteDecideResult =
   | { ok: true; stamp: string; draft: Draft }
@@ -21,7 +21,7 @@ export type RemoteChannelAdapter = {
 export type RemoteDesk = {
   snapshot(): DeskSnapshot;
   allowDraft(id: string, expectedRevision?: number, via?: string): Draft;
-  denyDraft(id: string, expectedRevision?: number, via?: string): Draft;
+  denyDraft(id: string, expectedRevision?: number, via?: string, reason?: string): Draft;
   notesFor?(id: string): { id: string; body: string };
   writeNotes?(id: string, body: string): { id: string; body: string };
 };
@@ -139,21 +139,11 @@ export async function decideRemotely(
     decided =
       decision === "allow"
         ? bound.desk.allowDraft(draftId, snapshot.revision, via)
-        : bound.desk.denyDraft(draftId, snapshot.revision, via);
+        : bound.desk.denyDraft(draftId, snapshot.revision, via, reason);
   } catch (error) {
     const status = (error as { status?: number } | null)?.status;
     if (status === 409 || status === 404) return { ok: false, message: BOOK_MOVED };
     throw error;
-  }
-
-  if (decision === "deny" && reason) {
-    try {
-      const current = bound.desk.notesFor?.(decided.propertyId);
-      const next = current?.body.trim() ? `${current.body.trim()}\n${reason}` : reason;
-      bound.desk.writeNotes?.(decided.propertyId, next);
-    } catch {
-      /* notes are best-effort on a remote deny */
-    }
   }
 
   pendingByChannel.delete(channel);

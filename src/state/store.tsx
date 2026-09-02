@@ -20,8 +20,19 @@ import { currentCall } from "@/lib/call";
 import { speaker } from "@/lib/tts";
 import { SERVICE_UNAVAILABLE_EVENT, isLocalServiceProxyFailure, localServiceError } from "@/lib/api-error";
 import { notifyDeskNeedsYou } from "@/lib/notify-desktop";
+import { STREAM_COMMIT_INTERVAL_MS } from "@/lib/chat-scroll";
 
 export type { MausColor } from "@/lib/mascot";
+
+export type PortalFenceSurface = "portal-read" | "portal-prefill" | "portal-submit";
+export type PortalRuleOfferSurface = "portal-read" | "portal-prefill";
+
+/** request.opened fence on a fenced computer permission. */
+export type RequestFence = {
+  surface: PortalFenceSurface;
+  origin: string;
+  ruleOffer: { surface: PortalRuleOfferSurface; origin: string; label: string } | null;
+};
 
 export interface OptionCardData {
   title: string;
@@ -37,6 +48,8 @@ export interface OptionCardData {
   held?: string;
   /** the narrow grant "always allow" remembers, e.g. "Bash:git" */
   allowKey?: string;
+  /** Fenced portal request from request.opened. */
+  fence?: RequestFence;
 }
 
 export interface Message {
@@ -111,6 +124,8 @@ export interface Bot {
   mascotExpression?: string | null;
   unread: boolean;
   busy?: boolean;
+  /** One server-persisted follow-up waiting behind the active turn. */
+  queuedMessage?: { id: string; text: string; at: number; threadId: string };
   modelSelection: ModelSelection;
   /** Where this bot's computer runs; unset = auto (cloud box if one exists, else local). */
   computer?: "cloud" | "vm" | "local" | "off";
@@ -212,6 +227,7 @@ export interface HermesStatus {
   ready: boolean;
   lastTest?: { at: number; ok: boolean; detail: string; kind: "ping" | "recheck" } | null;
   lastPing?: { at: number; ok: boolean; detail: string; kind: "ping" | "recheck" } | null;
+  model?: { attached: boolean; provider: string | null; model: string | null };
 }
 
 interface AppState {
@@ -289,6 +305,10 @@ type Action =
       requestId: string;
       behavior: "allow" | "deny" | "answer";
       message?: string;
+      /** Expiring provider-native grant for matching steps in this task. */
+      scope?: "once" | "session";
+      /** Standing site rule saved with this allow (portal read/prefill). */
+      rule?: { surface: PortalRuleOfferSurface; origin: string };
       /** remember this exact grant (the server's allowKey) for the bot */
       alwaysAllow?: { botId: string; key: string };
     }
@@ -766,7 +786,7 @@ export async function ensureSession(force = false): Promise<string> {
   return sessionToken;
 }
 
-export async function api(path: string, init?: RequestInit): Promise<any> {
+export async function api(path: string, init?: RequestInit, opts?: { timeoutMs?: number }): Promise<any> {
   const unavailable = (cause?: unknown): never => {
     if (typeof window !== "undefined") window.dispatchEvent(new Event(SERVICE_UNAVAILABLE_EVENT));
     throw localServiceError(cause);
@@ -776,7 +796,11 @@ export async function api(path: string, init?: RequestInit): Promise<any> {
     const headers = new Headers(init?.headers);
     if (!headers.has("content-type")) headers.set("content-type", "application/json");
     if (token) headers.set("x-realbud-session", token);
-    return fetch(path, { ...init, headers });
+    // A hung service must surface as a failure the PM can retry, never as a
+    // permanent "Saving…". Callers with a known budget pass it; worker calls
+    // (Recheck can take a minute) keep the default of no client-side limit.
+    const signal = init?.signal ?? (opts?.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined);
+    return fetch(path, { ...init, headers, signal });
   };
   const request = async () => {
     try {
@@ -833,7 +857,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // only StreamContext consumers
   const [stream, setStream] = useState<StreamState>(EMPTY_STREAM);
   const deltaBuffer = useRef(new Map<string, { text: string; reasoning: string }>());
-  const deltaFlush = useRef<number | null>(null);
+  const deltaFlush = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const openedExternalRequests = useRef(new Set<string>());
   const clearStream = (threadId: string) => {
     // Drop the thread's un-flushed deltas too: the settled message that
     // triggered this clear already contains them. Without this, the pending
@@ -852,7 +877,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   };
   const flushDeltas = () => {
     if (deltaFlush.current !== null) {
-      cancelAnimationFrame(deltaFlush.current);
+      clearTimeout(deltaFlush.current);
       deltaFlush.current = null;
     }
     const buf = deltaBuffer.current;
@@ -952,6 +977,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 requestId: action.requestId,
                 behavior: action.behavior,
                 message: action.message,
+                scope: action.scope,
+                rule: action.rule,
               }),
             }).catch(showError);
           if (action.alwaysAllow) {
@@ -1175,6 +1202,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return;
       }
       switch (frame.kind) {
+        case "external.open": {
+          const requestId = typeof frame.requestId === "string" ? frame.requestId : "";
+          if (!requestId || openedExternalRequests.current.has(requestId)) break;
+          let url: URL;
+          try {
+            url = new URL(String(frame.url));
+          } catch {
+            break;
+          }
+          if (url.protocol !== "https:") break;
+          openedExternalRequests.current.add(requestId);
+          if (openedExternalRequests.current.size > 100) {
+            const oldest = openedExternalRequests.current.values().next().value;
+            if (oldest) openedExternalRequests.current.delete(oldest);
+          }
+          if (window.ogb?.openExternal) void window.ogb.openExternal(url.toString());
+          else window.open(url.toString(), "_blank", "noopener,noreferrer");
+          break;
+        }
         case "message": {
           rawDispatch({ type: "messageAdded", threadId: frame.threadId, message: frame.message });
           // a settled assistant bubble replaces the in-flight stream
@@ -1248,19 +1294,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "runtime": {
           const event = frame.event;
           if (event.type === "content.delta") {
-            // Batch token deltas per animation frame (t3code-style): a fast
-            // stream dispatches once per frame instead of once per token, so
-            // the app tree re-renders at most ~60x/s while streaming.
+            // Batch token deltas to ~30fps. A 60fps token loop makes live
+            // Markdown parsing and bottom-follow compete with wheel scrolling;
+            // 32ms stays visually fluid while leaving a frame for input.
             const buf = deltaBuffer.current;
             const entry = buf.get(event.threadId) ?? { text: "", reasoning: "" };
             if (event.streamKind === "assistant_text") entry.text += event.delta;
             else if (event.streamKind === "reasoning_text") entry.reasoning += event.delta;
             buf.set(event.threadId, entry);
             if (deltaFlush.current === null) {
-              deltaFlush.current = requestAnimationFrame(() => {
+              deltaFlush.current = setTimeout(() => {
                 deltaFlush.current = null;
                 flushDeltas();
-              });
+              }, STREAM_COMMIT_INTERVAL_MS);
             }
           } else if (event.type === "turn.completed") {
             // flush any buffered tail before clearing so no tokens are lost

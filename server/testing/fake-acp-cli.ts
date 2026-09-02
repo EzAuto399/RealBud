@@ -5,7 +5,8 @@
 // session/prompt, and streams session/update notifications for a scripted
 // turn. Failure modes mirror how real ACP agents misbehave:
 //
-//   FAKE_ACP_MODE   happy (default) | exit-early | hang | no-auth | permission
+//   FAKE_ACP_MODE   happy (default) | slow | exit-early | hang | no-auth | permission
+//                   | permission-once-only | mode-error
 //                   | ask-peer (spawn the injected "agents" MCP server from
 //                     session/new's mcpServers, call list_bots + ask_bot on a
 //                     peer, and reply with what the peer said — the comms e2e)
@@ -15,7 +16,7 @@
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { spawn } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 const mode = process.env.FAKE_ACP_MODE ?? "happy";
 const argv = process.argv.slice(2);
@@ -24,7 +25,7 @@ if (argv.includes("--version")) {
   process.exit(0);
 }
 if (process.env.FAKE_ACP_DUMP) {
-  writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify({ argv, env: process.env }, null, 2));
+  writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify({ argv, env: process.env, pid: process.pid, promptCount: 0 }, null, 2));
 }
 
 const out = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");
@@ -33,10 +34,27 @@ const result = (id: unknown, res: unknown) => out({ jsonrpc: "2.0", id, result: 
 // pending server→client permission request id → resolver
 let pendingPermissionId: number | null = null;
 let onPermissionAnswered: (() => void) | null = null;
+let selectedPermissionOption: string | null = null;
+let sessionMode: string | null = null;
 
 // ask-peer mode: the "agents" MCP server entry from session/new's mcpServers
 type McpEntry = { command: string; args?: string[]; env?: Array<{ name: string; value: string }> };
 let agentsMcp: McpEntry | null = null;
+let seenMcpServers: McpEntry[] = [];
+let promptCount = 0;
+let pendingPromptId: number | null = null;
+
+function dumpState() {
+  if (!process.env.FAKE_ACP_DUMP) return;
+  writeFileSync(
+    process.env.FAKE_ACP_DUMP,
+    JSON.stringify(
+      { argv, env: process.env, pid: process.pid, promptCount, mcpServers: seenMcpServers, selectedPermissionOption, sessionMode },
+      null,
+      2,
+    ),
+  );
+}
 
 /** Minimal one-shot MCP stdio client: initialize, call each tool in
  * sequence, return the text of the last result. Dependency-free. */
@@ -88,8 +106,37 @@ function driveMcp(entry: McpEntry, calls: Array<{ name: string; args: (prev: str
   });
 }
 
-function playTurn() {
-  out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "hello from fake acp" } } } });
+function scriptedTurn() {
+  let tool = process.env.FAKE_ACP_TOOL ?? "";
+  let rawInput = {};
+  let reply = process.env.FAKE_ACP_REPLY ?? "";
+  let title = "";
+  let permission = mode === "permission" || mode === "permission-once-only";
+  if (process.env.FAKE_ACP_SCRIPT) {
+    try {
+      const script = JSON.parse(readFileSync(process.env.FAKE_ACP_SCRIPT, "utf8"));
+      if (typeof script.tool === "string") tool = script.tool;
+      if (script.rawInput && typeof script.rawInput === "object") rawInput = script.rawInput;
+      if (typeof script.reply === "string") reply = script.reply;
+      if (typeof script.title === "string") title = script.title;
+      if (script.permission === false) permission = false;
+      if (script.permission === true) permission = true;
+    } catch {
+      /* keep env fallbacks */
+    }
+  }
+  if (process.env.FAKE_ACP_TOOL_INPUT) {
+    try {
+      rawInput = JSON.parse(process.env.FAKE_ACP_TOOL_INPUT);
+    } catch {
+      /* keep script/empty */
+    }
+  }
+  return { tool, rawInput, reply, title, permission };
+}
+
+function playTurn(reply = "hello from fake acp") {
+  out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: reply } } } });
   out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call", toolCallId: "tc-1", title: "run" } } });
   out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call_update", toolCallId: "tc-1", status: "completed" } } });
 }
@@ -115,6 +162,8 @@ process.stdin.on("data", (c) => {
 function handle(msg: any) {
   // client's response to our permission request
   if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined) && msg.id === pendingPermissionId) {
+    selectedPermissionOption = msg.result?.outcome?.optionId ?? null;
+    dumpState();
     pendingPermissionId = null;
     onPermissionAnswered?.();
     return;
@@ -136,19 +185,30 @@ function handle(msg: any) {
       break;
     case "session/new": {
       const servers: McpEntry[] = Array.isArray(msg.params?.mcpServers) ? msg.params.mcpServers : [];
+      seenMcpServers = servers;
       agentsMcp = servers.find((s: any) => s?.name === "agents") ?? null;
-      if (process.env.FAKE_ACP_DUMP) {
-        writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify({ argv, env: process.env, mcpServers: servers }, null, 2));
-      }
+      dumpState();
       result(msg.id, { sessionId: "fake-acp-session" });
       break;
     }
     case "session/load":
       result(msg.id, {});
       break;
+    case "session/set_mode":
+      if (mode === "mode-error") {
+        out({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: "mode unsupported" } });
+        break;
+      }
+      sessionMode = typeof msg.params?.modeId === "string" ? msg.params.modeId : null;
+      dumpState();
+      result(msg.id, {});
+      break;
     case "session/prompt": {
+      promptCount += 1;
+      dumpState();
       if (mode === "hang") {
         // never resolve the prompt — lets tests exercise interrupt
+        pendingPromptId = msg.id;
         setInterval(() => {}, 1_000);
         return;
       }
@@ -175,23 +235,42 @@ function handle(msg: any) {
           });
         return;
       }
-      playTurn();
-      if (mode === "permission") {
+      const script = scriptedTurn();
+      playTurn(script.reply || "hello from fake acp");
+      if (script.permission) {
         // ask the client to approve a tool, then complete once answered
         pendingPermissionId = 9001;
         onPermissionAnswered = complete;
+        const computer = Boolean(script.tool);
         out({
           jsonrpc: "2.0",
           id: pendingPermissionId,
           method: "session/request_permission",
           params: {
-            toolCall: { kind: "execute", rawInput: { command: "echo hi" }, title: "echo hi" },
-            options: [
-              { optionId: "allow-once", kind: "allow_once" },
-              { optionId: "reject", kind: "reject_once" },
-            ],
+            toolCall: computer
+              ? {
+                  kind: script.tool,
+                  rawInput: script.rawInput,
+                  title: script.title || script.tool,
+                }
+              : { kind: "execute", rawInput: { command: "echo hi" }, title: "echo hi" },
+            options:
+              mode === "permission-once-only"
+                ? [
+                    { optionId: "allow-once", kind: "allow_once" },
+                    { optionId: "reject", kind: "reject_once" },
+                  ]
+                : [
+                    { optionId: "allow-once", kind: "allow_once" },
+                    { optionId: "allow_session", kind: "allow_always", name: "Allow for session" },
+                    { optionId: "reject", kind: "reject_once" },
+                  ],
           },
         });
+        return;
+      }
+      if (mode === "slow") {
+        setTimeout(complete, 350);
         return;
       }
       complete();
@@ -199,6 +278,10 @@ function handle(msg: any) {
     }
     case "session/cancel":
       // the interrupted prompt resolves as cancelled
+      if (pendingPromptId !== null) {
+        result(pendingPromptId, { stopReason: "cancelled" });
+        pendingPromptId = null;
+      }
       break;
     default:
       if (msg.id !== undefined) out({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } });

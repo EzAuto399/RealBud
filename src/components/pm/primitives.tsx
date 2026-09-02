@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 
 import { cn } from "@/lib/cn";
 import { fmtDateTime } from "@/lib/au";
@@ -14,6 +14,7 @@ export function SplitView({
   queueOpen,
   navOpen,
   railOpen,
+  onCloseQueue,
   className,
 }: {
   nav?: ReactNode;
@@ -23,6 +24,7 @@ export function SplitView({
   queueOpen?: boolean;
   navOpen?: boolean;
   railOpen?: boolean;
+  onCloseQueue?: () => void;
   className?: string;
 }) {
   return (
@@ -33,6 +35,14 @@ export function SplitView({
       data-rail-open={railOpen ? "true" : undefined}
     >
       {nav ? <div className="pm-split-nav flex flex-col">{nav}</div> : null}
+      {queueOpen && onCloseQueue ? (
+        <button
+          type="button"
+          className="pm-split-queue-backdrop"
+          aria-label="Close queue"
+          onClick={onCloseQueue}
+        />
+      ) : null}
       {queue ? <div className="pm-split-queue flex flex-col">{queue}</div> : null}
       <div className="pm-split-canvas flex flex-col">{canvas}</div>
       {rail ? <div className="pm-split-rail flex flex-col">{rail}</div> : null}
@@ -40,7 +50,7 @@ export function SplitView({
   );
 }
 
-export function StatusLabel({ tone, children }: { tone: StatusTone; children: ReactNode }) {
+export function StatusLabel({ tone, children, title }: { tone: StatusTone; children: ReactNode; title?: string }) {
   const cls =
     tone === "agency"
       ? "border-agency/25 bg-agency/10 text-agency"
@@ -52,7 +62,7 @@ export function StatusLabel({ tone, children }: { tone: StatusTone; children: Re
             ? "border-portal/25 bg-portal/10 text-portal"
             : "border-line bg-sheet text-ink-muted";
   return (
-    <span className={cn("inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px]", cls)}>
+    <span title={title} className={cn("inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px]", cls)}>
       {children}
     </span>
   );
@@ -90,33 +100,40 @@ export function RecoveryNotice({ children }: { children: ReactNode }) {
 }
 
 export function CaseQueueRow({
+  id,
   title,
   meta,
   action,
   selected,
   onSelect,
 }: {
+  id?: string;
   title: string;
   meta: string;
   action: string;
   selected?: boolean;
   onSelect?: () => void;
 }) {
+  // Drop a second line when action already says the same thing (Waiting · Bud miss).
+  const showAction = action.trim() && !meta.toLowerCase().includes(action.replace(/^Waiting — /i, "").toLowerCase());
   return (
     <button
+      id={id}
       type="button"
       onClick={onSelect}
       role="option"
+      tabIndex={-1}
       aria-selected={selected ? true : false}
       aria-current={selected ? "true" : undefined}
       className={cn(
-        "flex w-full flex-col items-start gap-1 border-b border-line px-3 py-3 text-left",
+        "flex w-full flex-col items-start gap-0.5 border-b border-line px-3 py-2.5 text-left",
         selected ? "bg-selected" : "bg-transparent hover:bg-raised/60",
       )}
     >
       <span className="text-[14px] font-medium text-ink">{title}</span>
-      <span className="text-[12px] text-ink-muted">{meta}</span>
-      <span className="text-[12px] text-agency">{action}</span>
+      {/* A row is a pointer to the case, not the case: two lines, the canvas has the rest. */}
+      <span className="line-clamp-2 text-[12px] text-ink-muted" title={meta}>{meta}</span>
+      {showAction ? <span className="text-[12px] text-agency">{action}</span> : null}
     </button>
   );
 }
@@ -175,18 +192,20 @@ export function DecisionBar({
   onDeny,
   onCopy,
   busy,
+  denyRef,
 }: {
   onAllow?: () => void;
   onEdit?: () => void;
   onDeny?: () => void;
   onCopy?: () => void;
   busy?: boolean;
+  denyRef?: Ref<HTMLButtonElement>;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-3">
+    <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-3" aria-busy={busy ? true : undefined}>
       {onAllow ? (
         <button type="button" disabled={busy} onClick={onAllow} className="pm-decision rounded bg-agency px-4 text-[14px] font-medium text-white hover:bg-agency-hover disabled:opacity-40">
-          Allow wording
+          {busy ? "Saving…" : "Allow wording"}
         </button>
       ) : null}
       {onEdit ? (
@@ -195,7 +214,7 @@ export function DecisionBar({
         </button>
       ) : null}
       {onDeny ? (
-        <button type="button" disabled={busy} onClick={onDeny} className="pm-control rounded border border-line bg-sheet px-3 text-[14px] text-ink hover:bg-raised disabled:opacity-40">
+        <button ref={denyRef} type="button" disabled={busy} onClick={onDeny} className="pm-control rounded border border-line bg-sheet px-3 text-[14px] text-ink hover:bg-raised disabled:opacity-40">
           Deny
         </button>
       ) : null}

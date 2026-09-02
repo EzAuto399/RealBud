@@ -25,4 +25,4 @@ This workspace is the PM's book (`properties/<id>.md`). Read those notes before 
 - Open Hermes Desktop, pets, plugins, group chats, or extra agents.
 - Legal advice, TICA, lock changes, bond claims.
 
-If asked to send, pay, or issue a notice, refuse in one sentence and escalate.
+If asked to send, pay, or issue a notice, refuse in one sentence and escalate. If asked to log in or run a portal routine, do not refuse: the person signs in and presses Submit or Pay; offer to run the saved job beside them or to set one up.

@@ -1,6 +1,6 @@
 import { relativeAgo } from "./au";
 
-export type ChannelPlatform = "telegram" | "discord";
+export type ChannelPlatform = "telegram" | "discord" | "slack";
 
 export type ChannelDisconnected = { connected: false };
 
@@ -17,11 +17,20 @@ export type ChannelStatus = ChannelDisconnected | ChannelConnected;
 export type ChannelsState = {
   telegram: ChannelStatus;
   discord: ChannelStatus;
+  slack: ChannelStatus;
 };
 
 export type TelegramDisconnected = ChannelDisconnected;
 export type TelegramConnected = ChannelConnected;
 export type TelegramChannel = ChannelStatus;
+
+export const LIVE_CHANNEL_PLATFORMS: ChannelPlatform[] = ["telegram", "discord", "slack"];
+
+export const CHANNEL_PLATFORM_LABEL: Record<ChannelPlatform, string> = {
+  telegram: "Telegram",
+  discord: "Discord",
+  slack: "Slack",
+};
 
 function readChannelStatus(raw: unknown): ChannelStatus {
   if (!raw || typeof raw !== "object") return { connected: false };
@@ -41,6 +50,7 @@ export function readChannels(body: unknown): ChannelsState {
   return {
     telegram: readChannelStatus(rec.telegram),
     discord: readChannelStatus(rec.discord),
+    slack: readChannelStatus(rec.slack),
   };
 }
 
@@ -54,9 +64,10 @@ export function channelStatusLine(
   now = Date.now(),
 ): string {
   if (!status.paired) {
-    return platform === "discord"
-      ? "Now DM the bot once — the first chat to write pairs with this Mac."
-      : "Now message the bot once from your phone — the first chat to write pairs with this Mac.";
+    if (platform === "discord" || platform === "slack") {
+      return "Now DM the bot once — the first chat to write pairs with this Mac.";
+    }
+    return "Now message the bot once from your phone — the first chat to write pairs with this Mac.";
   }
   const who = status.pairedName?.trim() ? `Paired with ${status.pairedName.trim()}` : "Paired";
   return status.lastMessageAt ? `${who} · last message ${relativeAgo(status.lastMessageAt, now)}` : who;
@@ -67,4 +78,10 @@ export function telegramPairingLine(
   now = Date.now(),
 ): string {
   return channelStatusLine("telegram", channel, now);
+}
+
+export function channelRowChip(status: ChannelStatus): string {
+  if (!status.connected) return "Off";
+  if (!status.paired) return "Pair chat";
+  return status.pairedName?.trim() ? `Paired · ${status.pairedName.trim()}` : "Paired";
 }

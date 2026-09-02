@@ -15,6 +15,13 @@ type ConnectionDescriptor = {
   mcpEnv?: unknown;
 };
 
+let testOverride: LocalComputerConnection | null | undefined;
+
+/** In-process test hook. `undefined` restores the normal file lookup. */
+export function __setCuaConnectionForTests(value: LocalComputerConnection | null | undefined): void {
+  testOverride = value;
+}
+
 function decodeDescriptor(value: ConnectionDescriptor): LocalComputerConnection | null {
   if (!value || value.mode === "unavailable" || typeof value.mcpCommand !== "string") return null;
   if (value.mcpArgs !== undefined && !Array.isArray(value.mcpArgs)) return null;
@@ -47,6 +54,18 @@ export function readCuaConnection({
   userData?: string;
   home?: string;
 } = {}): LocalComputerConnection | null {
+  if (testOverride !== undefined) return testOverride;
+
+  const overridePath = process.env.REALBUD_CUA_DESCRIPTOR_PATH?.trim();
+  if (overridePath && (platform !== "linux" || process.env.REALBUD_CUA_TEST_READY === "1")) {
+    try {
+      const decoded = decodeDescriptor(JSON.parse(readFileSync(overridePath, "utf8")));
+      if (decoded) return decoded;
+    } catch {
+      // Missing or invalid override — fall through to the usual lookup.
+    }
+  }
+
   // Linux local automation is deliberately outside the Ubuntu baseline.
   // Ignore even a forged or stale descriptor until the CUA follow-up adds
   // session-aware readiness and end-to-end evidence.
@@ -69,4 +88,11 @@ export function readCuaConnection({
     }
   }
   return null;
+}
+
+/** Attended portal runs need a Mac plus a live desktop helper. */
+export function cuaAttendedReady(): boolean {
+  if (testOverride !== undefined) return testOverride !== null;
+  if (process.platform !== "darwin" && process.env.REALBUD_CUA_TEST_READY !== "1") return false;
+  return readCuaConnection() !== null;
 }

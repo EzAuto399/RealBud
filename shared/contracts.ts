@@ -365,6 +365,8 @@ export interface LoopRun {
   status: LoopRunStatus;
   manual: boolean;
   detail?: string;
+  /** Taught-job loops link to the durable general execution receipt. */
+  jobRunId?: string;
   startedAt?: number;
   finishedAt?: number;
   seenAt?: number;
@@ -372,12 +374,40 @@ export interface LoopRun {
 }
 
 export type RecipeStatus = "shadow" | "active" | "paused";
+
+/** Safe abilities a taught job may ask of the pinned worker.
+ * Pay, sign, send, statutory notice, and PMS mutation are never granted.
+ * portal-submit is an opt-in click on a non-money control; every press still asks. */
+export const JOB_CAPABILITIES = [
+  "read-book",
+  "read-files",
+  "web-research",
+  "analyse",
+  "draft",
+  "portal-read",
+  "portal-prefill",
+  "portal-submit",
+] as const;
+export type JobCapability = (typeof JOB_CAPABILITIES)[number];
+
+export interface JobLimits {
+  /** Wall-clock ceiling for one worker attempt. */
+  maxRuntimeMinutes: number;
+  /** Worker turn ceiling. RealBud still owns the outer deadline. */
+  maxTurns: number;
+}
+
 export interface Recipe {
   id: string;
   title: string;
+  /** The PM's original description. Kept with the shaped steps so later
+   * edits and approvals remain reviewable in plain language. */
+  description: string;
   steps: string[];
   allowedOrigins: string[];
   evidence: string;
+  capabilities: JobCapability[];
+  limits: JobLimits;
   /** What runs taught Bud about this site's layout — page names, button
    * labels, quirks. Written by distill; carried into every later run. */
   siteNotes?: string | null;
@@ -387,11 +417,84 @@ export interface Recipe {
   schedule: { time: string; weekdays: number[] } | null;
   /** Set once when a person approves the plan. Missing on disk loads as null. */
   planApprovedAt: number | null;
+  /** Monotonic job-plan version. Runs carry a full immutable snapshot too. */
+  revision: number;
+  updatedAt: number;
+  /** Approval applies to one exact revision and never floats to later edits. */
+  approvedRevision: number | null;
+  /** Person confirmed they will sign in and submit. A change to allowedOrigins clears it. */
+  attachment: { attachedAt: number; acknowledged: "human-login-and-submit" } | null;
+  /** Person confirmed Bud may press Submit on this job. Editing origins or capabilities clears it. */
+  submitAcknowledgedAt: number | null;
 }
 
 /** Clock-runnable: active and a person has approved the plan. Shadow stays manual. */
-export function recipeClockRunnable(recipe: Pick<Recipe, "status" | "planApprovedAt">): boolean {
-  return recipe.status === "active" && recipe.planApprovedAt != null;
+export function recipeClockRunnable(
+  recipe: Pick<Recipe, "status" | "planApprovedAt" | "revision" | "approvedRevision">,
+): boolean {
+  return (
+    recipe.status === "active" &&
+    recipe.planApprovedAt != null &&
+    recipe.approvedRevision === recipe.revision
+  );
+}
+
+export type JobRunMode = "shadow" | "prepare" | "attended";
+export type JobRunStatus =
+  | "queued"
+  | "running"
+  | "awaiting-approval"
+  | "completed"
+  | "partial"
+  | "failed"
+  | "interrupted"
+  | "cancelled"
+  | "missed";
+export type JobRunTrigger = "manual" | "schedule";
+export type JobRunEvidenceKind = "observation" | "output" | "approval" | "action" | "denied" | "asked" | "note";
+
+export interface JobRunEvidence {
+  at: number;
+  note: string;
+  kind: JobRunEvidenceKind;
+}
+
+/** Frozen into every run so an edit cannot change work already queued. */
+export interface JobRunSpecSnapshot {
+  title: string;
+  description: string;
+  steps: string[];
+  allowedOrigins: string[];
+  evidence: string;
+  capabilities: JobCapability[];
+  limits: JobLimits;
+}
+
+export interface JobRun {
+  id: string;
+  jobId: string;
+  jobTitle: string;
+  jobRevision: number;
+  mode: JobRunMode;
+  status: JobRunStatus;
+  trigger: JobRunTrigger;
+  scheduledFor: number;
+  loopRunId?: string;
+  /** Durable dedupe key supplied by RealBud's manual or scheduled door. */
+  idempotencyKey: string;
+  attempt: number;
+  spec: JobRunSpecSnapshot;
+  evidence: JobRunEvidence[];
+  approvalRequests: string[];
+  detail: string;
+  createdAt: number;
+  startedAt?: number;
+  finishedAt?: number;
+  seenAt?: number;
+  /** Compatibility pointer while legacy portal-session views remain. */
+  legacySessionId?: string;
+  /** Product Bud thread for an attended run. */
+  threadId?: string;
 }
 
 export type PortalSessionState = "prepared" | "running" | "awaiting-review" | "done" | "unknown" | "failed";

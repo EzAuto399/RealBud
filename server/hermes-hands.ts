@@ -32,6 +32,33 @@ export interface HermesPing {
 const TIMEOUT_MS = 20_000;
 const LEDGER_TIMEOUT_MS = 60_000;
 
+/** Worker chatter that explains nothing about the miss to a PM. */
+const WORKER_NOISE = [/^session_id:/i, /security scanner/i, /pattern matching only/i, /^warning:/i];
+
+const WORKER_MISS_REASONS: Array<[RegExp, string]> = [
+  [/UnrecognizedClient|invalid.?api.?key|incorrect api key|authentication|unauthori[sz]ed|\b401\b|\b403\b/i, "the model provider refused Bud's key; check the model connection on You"],
+  [/insufficient|credit|billing|quota|\b402\b/i, "Billing or credits exhausted at the model provider"],
+  [/rate.?limit|\b429\b|too many requests/i, "the model provider is rate-limiting; try again shortly"],
+  [/no model|model (is )?not (set|configured)|missing model|api key (is )?(not set|missing)/i, "no model is connected; attach one on You"],
+  [/ECONNREFUSED|ENOTFOUND|getaddrinfo|network|timed? ?out|unreachable/i, "the model provider could not be reached"],
+];
+
+/** One plain line a PM can act on. Raw provider output stays out of user chrome;
+ * an unknown failure keeps its last meaningful line, single-line and bounded. */
+export function workerMissReason(stdout: string, stderr: string): string {
+  const lines = (s: string) =>
+    String(s)
+      .replace(/\x1b\[[0-9;]*m/g, "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line && !WORKER_NOISE.some((noise) => noise.test(line)));
+  const all = [...lines(stdout), ...lines(stderr)];
+  const text = all.join(" ");
+  for (const [pattern, reason] of WORKER_MISS_REASONS) if (pattern.test(text)) return reason;
+  const last = all.at(-1) ?? "";
+  return last.length > 120 ? `${last.slice(0, 117)}…` : last;
+}
+
 export async function tryHermesPing(opts?: {
   cli?: string;
   timeoutMs?: number;
@@ -73,7 +100,6 @@ export async function tryHermesPing(opts?: {
             .split("\n")
             .map((line) => line.trim())
             .filter((line) => line && !/^session_id:/.test(line));
-        const pick = (s: string) => clean(s).slice(-2).join(" · ");
         if (err) {
           const timedOut = (err as NodeJS.ErrnoException & { killed?: boolean }).killed;
           if (timedOut && process.platform !== "win32") {
@@ -82,8 +108,8 @@ export async function tryHermesPing(opts?: {
             } catch {}
           }
           if (timedOut) return resolve(done(false, "The worker took too long to answer."));
-          const snippet = (pick(stdout) || pick(stderr)).slice(0, 200);
-          return resolve(done(false, snippet || "The worker could not answer."));
+          const reason = workerMissReason(stdout, stderr);
+          return resolve(done(false, reason ? `The worker could not answer — ${reason}.` : "The worker could not answer."));
         }
         const answer = clean(stdout).find((line) => line.trim().toUpperCase() === "OK");
         if (!answer) return resolve(done(false, "The worker answered, but not with OK — check the model."));
@@ -199,18 +225,11 @@ export async function tryHermesLedger(
             } catch {}
           }
           if (timedOut) return resolve(miss("The worker took too long — facts stay held."));
-          const clean = (s: string) =>
-            String(s)
-              .replace(/\x1b\[[0-9;]*m/g, "")
-              .split("\n")
-              .map((line) => line.trim())
-              .filter((line) => line && !/^session_id:/.test(line));
-          const pick = (s: string) => clean(s).slice(-2).join(" · ");
-          const snippet = (pick(stdout) || pick(stderr)).slice(0, 200);
+          const reason = workerMissReason(stdout, stderr);
           return resolve(
             miss(
-              snippet
-                ? `The worker could not answer (${snippet}) — facts stay held.`
+              reason
+                ? `The worker could not answer — ${reason}. Facts stay held.`
                 : "The worker could not answer — facts stay held.",
             ),
           );

@@ -36,8 +36,10 @@ export function OptionCard({
             dispatch({ type: "dismissCard", botId, messageId: message.id })
           }
           className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
+          aria-label="Dismiss"
+          title="Dismiss"
         >
-          <X size={16} />
+          <X size={16} aria-hidden />
         </button>
       </div>
 

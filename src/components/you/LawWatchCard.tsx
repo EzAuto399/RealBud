@@ -36,7 +36,7 @@ export function LawWatchCard({
     if (applying != null || checking) return;
     setApplying(index);
     onError("");
-    void api("/api/law-watch/apply", { method: "POST", body: JSON.stringify({ index }) })
+    void api("/api/law-watch/apply", { method: "POST", body: JSON.stringify({ index }) }, { timeoutMs: 15_000 })
       .then((body) => onWatch(readLawWatch(body)))
       .catch(fail)
       .finally(() => setApplying(null));
@@ -58,6 +58,12 @@ export function LawWatchCard({
       subtitle="Bud re-reads the current Acts against the shop reference and flags drift. You confirm what lands — the reference never rewrites itself."
     >
       {error ? <p className="text-[12.5px] text-danger">{error}</p> : null}
+      {!error && !watch ? (
+        <div className="space-y-2" role="status" aria-label="Loading law watch">
+          <div className="h-3 w-[75%] max-w-[16rem] animate-pulse rounded bg-raised motion-reduce:animate-none" />
+          <div className="h-3 w-[50%] max-w-[10rem] animate-pulse rounded bg-raised motion-reduce:animate-none" />
+        </div>
+      ) : null}
       {watch ? (
         <>
           <div className="flex flex-wrap items-center justify-between gap-2">

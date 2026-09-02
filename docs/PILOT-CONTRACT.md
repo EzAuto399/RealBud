@@ -43,6 +43,12 @@ then RealBud stays a training appliance and the live CUA path stays off
 (`readyForLivePortal` requires `realAgencyNamed`). No code work past the
 installer spike starts until these are answered.
 
+**2026-09-02:** live portal runs no longer wait on these eight fields.
+They require plan approval + per-job Attach on this Mac with the desktop
+helper (`docs/PORTAL-WORK.md` "Run beside me"). `readyForLivePortal` was
+never an HTTP gate. The eight fields still gate inbound, Pocket, and the
+graduate installer.
+
 | # | Field | Why it blocks |
 |---|---|---|
 | 1 | **Agency + named PM user** | One desk, one user. The pilot names both — principal and the PM who will actually run Recheck. |
@@ -56,8 +62,9 @@ installer spike starts until these are answered.
 
 The eight fields persist on You → This office (`desk.json` `office`, plus
 agency name and jurisdictions). Training names still do not count. Filling
-the form does not invent a paying agency and does not turn on inbound, live
-CUA, Pocket, or the graduate installer.
+the form does not invent a paying agency and does not turn on inbound,
+Pocket, or the graduate installer. (2026-09-02: live attended portal runs
+are a separate Attach acknowledgement, not this form.)
 
 When all eight are ticked on a real visit: replace the Locked stack table
 above with the office's real values. `pilotContractFromBook` already mirrors

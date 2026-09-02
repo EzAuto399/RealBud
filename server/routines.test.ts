@@ -48,13 +48,21 @@ function taughtJob(overrides: Partial<Recipe> = {}): Recipe {
   return {
     id: "job-1",
     title: "Friday arrears",
+    description: "Check arrears and prepare exceptions.",
     steps: ["Open the arrears report"],
     allowedOrigins: ["propertyme.com.au"],
     evidence: "arrears rows",
+    capabilities: ["read-book", "analyse", "draft"],
+    limits: { maxRuntimeMinutes: 2, maxTurns: 6 },
     status: "shadow",
     createdAt: 1,
     schedule: { time: "16:00", weekdays: [5] },
     planApprovedAt: null,
+    revision: 1,
+    updatedAt: 1,
+    approvedRevision: null,
+    attachment: null,
+    submitAcknowledgedAt: null,
     ...overrides,
   };
 }
@@ -509,14 +517,14 @@ describe("LoopManager recipe loops", () => {
     expect(job).toMatchObject({
       name: "Friday arrears",
       available: true,
-      enabled: true,
+      enabled: false,
       waitingForPlan: true,
       evaluatorId: "recipe",
       evaluatorVersion: 1,
       schedule: { type: "daily", time: "16:00", weekdays: [5] },
     });
     expect(job.description).toMatch(/taught Bud/);
-    expect(job.nextRunAt).not.toBeNull();
+    expect(job.nextRunAt).toBeNull();
     expect(manager.patchClock("recipe-job-1", { time: "16:30" }).schedule.time).toBe("16:30");
   });
 
@@ -525,7 +533,7 @@ describe("LoopManager recipe loops", () => {
     let now = new Date(2026, 7, 21, 15, 59, 0).getTime();
     const { manager, calls } = makeManager({
       now: () => now,
-      listRecipes: () => [taughtJob({ status: "active", planApprovedAt: 1 })],
+      listRecipes: () => [taughtJob({ status: "active", planApprovedAt: 1, approvedRevision: 1 })],
       execute: async (loop) => {
         calls.push(loop);
         return { ok: true, detail: "Shadow run — nothing was browsed or clicked." };
@@ -605,7 +613,7 @@ describe("LoopManager recipe loops", () => {
     });
     manager.setEnabled("owner-letter", false);
     const job = manager.listLoops().find((loop) => loop.id === "recipe-job-1");
-    expect(job).toMatchObject({ available: true, enabled: true, waitingForPlan: true });
+    expect(job).toMatchObject({ available: true, enabled: false, waitingForPlan: true, nextRunAt: null });
 
     now = new Date(2026, 7, 21, 16, 1, 0).getTime();
     await manager.tick();
@@ -622,7 +630,7 @@ describe("LoopManager recipe loops", () => {
       detail: "Shadow run — nothing was browsed or clicked.",
     });
 
-    recipes[0] = taughtJob({ status: "active", planApprovedAt: now });
+    recipes[0] = taughtJob({ status: "active", planApprovedAt: now, approvedRevision: 1 });
     await manager.tick();
     expect(calls.filter((loop) => loop.id === "recipe-job-1")).toHaveLength(2);
     expect(manager.listLoops().find((loop) => loop.id === "recipe-job-1")?.waitingForPlan).toBe(false);

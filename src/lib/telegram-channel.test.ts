@@ -35,10 +35,11 @@ describe("readTelegramChannel", () => {
 });
 
 describe("readChannels", () => {
-  it("reads telegram and discord independently, defaulting a missing platform", () => {
+  it("reads telegram, discord, and slack independently, defaulting a missing platform", () => {
     expect(readChannels(undefined)).toEqual({
       telegram: { connected: false },
       discord: { connected: false },
+      slack: { connected: false },
     });
     expect(
       readChannels({
@@ -59,6 +60,7 @@ describe("readChannels", () => {
         lastMessageAt: 1_700_000_000_000,
       },
       discord: { connected: false },
+      slack: { connected: false },
     });
     expect(
       readChannels({
@@ -70,6 +72,13 @@ describe("readChannels", () => {
           paired: false,
           lastMessageAt: null,
         },
+        slack: {
+          connected: true,
+          botUsername: "bud",
+          pairedName: "Sam",
+          paired: true,
+          lastMessageAt: 9,
+        },
       }),
     ).toEqual({
       telegram: { connected: false },
@@ -79,6 +88,13 @@ describe("readChannels", () => {
         pairedName: null,
         paired: false,
         lastMessageAt: null,
+      },
+      slack: {
+        connected: true,
+        botUsername: "bud",
+        pairedName: "Sam",
+        paired: true,
+        lastMessageAt: 9,
       },
     });
   });
@@ -108,6 +124,12 @@ describe("channelStatusLine", () => {
   it("asks Discord for a first DM when unpaired", () => {
     expect(
       channelStatusLine("discord", { paired: false, pairedName: null, lastMessageAt: null }),
+    ).toBe("Now DM the bot once — the first chat to write pairs with this Mac.");
+  });
+
+  it("asks Slack for a first DM when unpaired", () => {
+    expect(
+      channelStatusLine("slack", { paired: false, pairedName: null, lastMessageAt: null }),
     ).toBe("Now DM the bot once — the first chat to write pairs with this Mac.");
   });
 

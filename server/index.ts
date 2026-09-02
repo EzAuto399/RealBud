@@ -8,12 +8,38 @@ import { extname, join } from "node:path";
 
 import { approvalKey, autoDecision } from "./auto-approve.ts";
 import { applyLawDrift, lawWatchView, persistLawWatchResult, runLawWatch, setLawWatchScheduled } from "./law-watch.ts";
-import { addRule, evaluateRules, loadRules, removeRule } from "./rules.ts";
+import { addPortalRule, addRule, evaluateRules, isPortalRuleSurface, loadRules, parsePortalRuleKey, removeRule } from "./rules.ts";
 import { appendHistory, listHistory } from "./computer-history.ts";
-import { deleteRecipe, getRecipe, listRecipes, patchRecipe, patchRecipeStatus, recipeClockRunnable, saveRecipe } from "./recipes.ts";
+import { deleteRecipe, fenceCapabilitiesFor, getRecipe, listRecipes, normalizeOrigin, patchRecipe, patchRecipeStatus, recipeClockRunnable, recipeHasPortalCapability, saveRecipe } from "./recipes.ts";
 import { distillRecipe } from "./recipe-distill.ts";
 import { shapeRecipeDraft } from "./recipe-draft.ts";
-import { getSession, grantLease, listSessions, revokeLease, startShadowRun } from "./portal-sessions.ts";
+import { portalJobIntentReply } from "./portal-job-intent.ts";
+import {
+  ATTEND_ERRORS,
+  attendBlocked,
+  attendedJobSystemBlock,
+  attendedSettleStatus,
+  attendedUserText,
+  fenceContextFor,
+  fenceEvidence,
+  portalRespondRuleError,
+  READY_BESIDE_YOU_SKIP,
+  setFenceContext,
+  submitHoldLine,
+  takeFenceContext,
+  turnEndedNote,
+} from "./attended-run.ts";
+import {
+  clickControlLabel,
+  fenceDecision,
+  fencePayload,
+  isComputerTool,
+  ruleAllowNote,
+  submitPressSummary,
+} from "./portal-fence.ts";
+import { getSession, grantLease, listSessions, revokeLease } from "./portal-sessions.ts";
+import { executeRecipeJob } from "./job-executor.ts";
+import { jobRuns, READY_BESIDE_YOU } from "./job-runs.ts";
 import * as box from "./box.ts";
 import * as composio from "./composio.ts";
 import { chiefOfStaffSystemPrompt } from "./chief-of-staff.ts";
@@ -27,15 +53,22 @@ import {
 } from "./container-computer.ts";
 import { DATA_DIR, ensureDirs, instanceConfigs, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.ts";
 import { resetPathCache } from "./env-path.ts";
-import type { ProviderInstance, RuntimeEvent } from "./contracts.ts";
+import { newId, type ProviderInstance, type RuntimeEvent } from "./contracts.ts";
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { EventBus } from "./harness/bus.ts";
 import { ProviderRegistry } from "./harness/registry.ts";
-import { mentionedBots, roomResponders, Store, type GroupDefaultResponder, type Message } from "./store.ts";
+import {
+  mentionedBots,
+  roomResponders,
+  Store,
+  type GroupDefaultResponder,
+  type Message,
+  type QueuedMessage,
+} from "./store.ts";
 import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
-import { readCuaConnection } from "./local-computer.ts";
+import { cuaAttendedReady, readCuaConnection } from "./local-computer.ts";
 import { applyPropertyPack } from "./hermes-pack.ts";
 import { applyHandsReadiness, hermesStatus } from "./hermes-status.ts";
 import { hermesInstallCommand } from "./hermes-pin.ts";
@@ -49,14 +82,16 @@ import { inspectLedgerColumns } from "./import-inspect.ts";
 import { Desk } from "./desk.ts";
 import { seedVault } from "./vault.ts";
 import { openTerminalAndRun, setupCommandFor } from "./engine-setup.ts";
-import { attachModel, installInFlight, installStatus, listModels, modelStatus, preflight, PROVIDER_OPTIONS, startInstall, type PreflightResult } from "./hermes-bridge.ts";
+import { attachModel, installInFlight, installStatus, listModelOptions, listModels, modelStatus, preflight, PROVIDER_OPTIONS, startInstall, type PreflightResult } from "./hermes-bridge.ts";
 import { startRepair, uninstallWorker } from "./hermes-lifecycle.ts";
 import { installCrashHandlers, oplog } from "./oplog.ts";
-import { CANONICAL_BUD_NAME, PRODUCT_MODE, PRODUCT_TURN_DEFAULTS, isCanonicalBud, productDenied, productRuntimeEventVisible } from "./product-mode.ts";
+import { CANONICAL_BUD_ID, CANONICAL_BUD_NAME, PRODUCT_MODE, PRODUCT_TURN_DEFAULTS, isCanonicalBud, productDenied, productRuntimeEventVisible } from "./product-mode.ts";
 import { coverageFromUncoveredHeld, LoopManager, type LoopId } from "./routines.ts";
 import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
 import { evaluatorForLoop } from "./workflow-catalog.ts";
 import { containsCredential } from "./redact.ts";
+import { parseConnectionIntent } from "./connection-intent.ts";
+import { parseRequestDecision } from "./request-decision.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import { TurnWatchdog, type TurnExpiryReason } from "./turn-watchdog.ts";
 import { SingleFlight } from "./single-flight.ts";
@@ -70,6 +105,15 @@ import {
   startDiscordBridge,
   stopDiscordBridge,
 } from "./channels/discord.ts";
+import {
+  bindSlackBridge,
+  connectSlack,
+  disconnectSlack,
+  slackAdapter,
+  slackDecisionAdapter,
+  startSlackBridge,
+  stopSlackBridge,
+} from "./channels/slack.ts";
 import {
   bindTelegramBridge,
   connectTelegram,
@@ -101,6 +145,7 @@ const MIME: Record<string, string> = {
   ".woff2": "font/woff2",
 };
 const CSV_IMPORT_MAX_BYTES = 750_000;
+const ASK_MESSAGE_MAX_CHARS = 50_000;
 
 function csvDigest(csv: string): string {
   return createHash("sha256").update(csv, "utf8").digest("hex");
@@ -206,6 +251,21 @@ let bootSelection = { instanceId: "", model: "" };
 const store = new Store(() => bootSelection);
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
+const existingProductBud = store.bot(CANONICAL_BUD_ID) ?? store.bots[0] ?? null;
+const existingProductInstance = existingProductBud
+  ? registry.get(existingProductBud.modelSelection.instanceId)
+  : null;
+// Old installs may still hold a pre-product assistant (for example Sage on
+// an obsolete Claude instance) while Hermes setup correctly reports ready.
+// Adopt it in place so history survives, and rebind only when a usable
+// Hermes worker is available.
+if (PRODUCT_MODE) {
+  store.adoptBud(
+    existingProductInstance?.driverKind !== "hermesAgent"
+      ? productHermesSelection()
+      : undefined,
+  );
+}
 for (const bot of store.bots) {
   const threadIds = new Set([bot.threadId, ...(bot.tasks ?? []).map((task) => task.threadId)]);
   for (const threadId of threadIds) store.settleOpenRequests(threadId);
@@ -218,8 +278,67 @@ const publicBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => ({
   tasks: store.tasks(bot.id).map(({ resumeCursors, ...task }) => task),
 });
 
+/** Fresh installs use id `bud`; upgraded installs retain their old id so
+ * every transcript and external reference remains valid. Both are the same
+ * single product worker at the authoritative server boundary. */
+function isProductBud(id: string): boolean {
+  if (!PRODUCT_MODE) return isCanonicalBud(id);
+  return (store.bot(CANONICAL_BUD_ID) ?? store.bots[0] ?? null)?.id === id;
+}
+
+function productHermesSelection(model = "default") {
+  const instance = registry.instances().find((candidate) => candidate.driverKind === "hermesAgent");
+  return instance ? { instanceId: instance.instanceId, model } : undefined;
+}
+
 // ── SSE fan-out to clients ─────────────────────────────────────────────
 const sseClients = new Set<ServerResponse>();
+jobRuns.setEmit((payload) => broadcast(payload));
+
+function lastAssistantText(threadId: string): string {
+  const texts = store
+    .messagesFor(threadId)
+    .filter((message) => message.role === "bot" && message.kind === "text" && message.text);
+  return texts.at(-1)?.text ?? "";
+}
+
+function settleAttendedTurn(
+  threadId: string,
+  input: { ok: boolean; stopReason?: string | null; detail?: string },
+) {
+  const ctx = takeFenceContext(threadId);
+  if (!ctx) return;
+  const run = jobRuns.get(ctx.runId);
+  if (!run || run.status !== "running") return;
+  const text = input.detail ?? lastAssistantText(threadId);
+  const status = attendedSettleStatus({
+    ok: input.ok,
+    stopReason: input.stopReason,
+    text,
+    allowedOrigins: ctx.allowedOrigins,
+  });
+  try {
+    jobRuns.settle(ctx.runId, {
+      status,
+      detail: text || (input.ok ? "Turn ended." : "The turn did not finish."),
+      evidence: [{ at: Date.now(), kind: "note", note: turnEndedNote(input.ok, input.stopReason) }],
+      approvalRequests: submitHoldLine(text),
+    });
+  } catch {
+    /* already settled */
+  }
+}
+
+function recordFenceEvidence(threadId: string, item: ReturnType<typeof fenceEvidence>) {
+  const ctx = fenceContextFor(threadId);
+  if (!ctx) return;
+  try {
+    jobRuns.appendEvidence(ctx.runId, [item]);
+  } catch {
+    /* run already settled */
+  }
+}
+
 function broadcast(payload: unknown) {
   const frame = `data: ${JSON.stringify(payload)}\n\n`;
   for (const res of [...sseClients]) {
@@ -250,6 +369,8 @@ function productTurnStopMessage(reason: TurnExpiryReason): string {
 }
 
 const expectedStoppedThreads = new Set<string>();
+const steeringBots = new Set<string>();
+const connectionOperations = new Map<string, string>();
 
 const watchdog = new TurnWatchdog({
   stallMs: Number(process.env.OMB_TURN_STALL_MS) || 20 * 60_000,
@@ -326,7 +447,21 @@ try {
 let activeVmThreadId: string | null = null;
 let localVmLifecycleBusy = false;
 
-bus.subscribe((event: RuntimeEvent) => {
+function attachFenceToOpened(event: RuntimeEvent): RuntimeEvent {
+  if (event.type !== "request.opened" || event.requestType !== "permission") return event;
+  if (!isComputerTool(event.tool, event.summary)) return event;
+  const fence = fenceContextFor(event.threadId);
+  if (!fence) return event;
+  const decision = fenceDecision(
+    { ...fence, rules: loadRules() },
+    { tool: event.tool, params: event.params, summary: event.summary },
+  );
+  const payload = fencePayload(decision);
+  return payload ? { ...event, fence: payload } : event;
+}
+
+bus.subscribe((raw: RuntimeEvent) => {
+  const event = raw.type === "request.opened" ? attachFenceToOpened(raw) : raw;
   watchdog.touch(event.threadId);
   if (event.type === "request.opened") watchdog.setWaitingOnHuman(event.threadId, true);
   if (event.type === "request.resolved") watchdog.setWaitingOnHuman(event.threadId, false);
@@ -367,7 +502,7 @@ bus.subscribe((event: RuntimeEvent) => {
       }
       break;
     case "turn.started":
-      if (bot && isCanonicalBud(bot.id) && event.turnId) {
+      if (bot && isProductBud(bot.id) && event.turnId) {
         const started = Date.parse(event.createdAt);
         turnStartedAt.set(`${event.threadId}:${event.turnId}`, Number.isFinite(started) ? started : Date.now());
       }
@@ -398,7 +533,7 @@ bus.subscribe((event: RuntimeEvent) => {
           if (patched) broadcast({ kind: "message.patch", threadId: event.threadId, message: patched });
           toolMessageByItem.delete(itemKey);
         }
-        if (bot && isCanonicalBud(bot.id)) {
+        if (bot && isProductBud(bot.id)) {
           try {
             appendHistory({
               kind: "tool",
@@ -450,6 +585,71 @@ bus.subscribe((event: RuntimeEvent) => {
       // whole point of asking is that a person decides — and anything that
       // looks destructive stops even in auto mode.
       const asker = bot ?? (speaker ? store.bot(speaker.botId) : undefined);
+      if (permission && asker && event.requestId && isComputerTool(event.tool, event.summary)) {
+        const fence = fenceContextFor(event.threadId);
+        const request = { tool: event.tool, params: event.params, summary: event.summary };
+        const instance = event.providerInstanceId
+          ? registry.get(event.providerInstanceId)
+          : registry.get(asker.modelSelection.instanceId);
+        const requestId = event.requestId;
+        if (!fence) {
+          const reason = "Only sites named in a saved job. Ask Bud to set the routine up as a job first.";
+          void (async () => {
+            try {
+              if (!instance) throw new Error("provider unavailable");
+              await instance.adapter.respondToRequest(event.threadId, requestId, {
+                behavior: "deny",
+                message: reason,
+              });
+              pushMessage({ role: "bot", kind: "activity", tool: { name: reason, ok: false } });
+            } catch {
+              pushMessage({ role: "bot", kind: "activity", tool: { name: reason, ok: false } });
+            }
+          })();
+          break;
+        }
+        const decision = fenceDecision({ ...fence, rules: loadRules() }, request);
+        const allowNote = decision.kind === "allow" ? ruleAllowNote(decision) : undefined;
+        recordFenceEvidence(
+          event.threadId,
+          decision.kind === "allow"
+            ? { at: Date.now(), kind: "action", note: allowNote! }
+            : fenceEvidence(request, decision),
+        );
+        if (decision.kind === "deny" || decision.kind === "allow") {
+          const reason = decision.kind === "deny" ? (decision.reason ?? "Denied.") : allowNote!;
+          void (async () => {
+            try {
+              if (!instance) throw new Error("provider unavailable");
+              await instance.adapter.respondToRequest(
+                event.threadId,
+                requestId,
+                decision.kind === "deny" ? { behavior: "deny", message: reason } : { behavior: "allow" },
+              );
+              pushMessage({
+                role: "bot",
+                kind: "activity",
+                tool: { name: reason, ok: decision.kind === "allow" },
+              });
+            } catch {
+              const card = pushMessage({
+                role: "bot",
+                kind: "options",
+                card: {
+                  title: "Approval needed",
+                  subtitle: event.summary,
+                  options: ["Allow", "Deny"],
+                  requestId,
+                  tool: event.tool,
+                  allowKey: approvalKey(event.tool, event.summary),
+                },
+              });
+              askMessageByRequest.set(`${event.threadId}:${requestId}`, card.id);
+            }
+          })();
+          break;
+        }
+      }
       // RealBud never auto-answers a permission, whatever the bot record
       // says. Auto mode exists only in the legacy fleet (OMB_TEST_FLEET=1).
       // Product mode uses standing rules (guards still win).
@@ -514,12 +714,16 @@ bus.subscribe((event: RuntimeEvent) => {
         })();
         break;
       }
+      const submitSummary =
+        event.type === "request.opened" && event.fence?.surface === "portal-submit"
+          ? submitPressSummary(clickControlLabel(event.params, event.summary), event.fence.origin)
+          : null;
       const message = pushMessage({
         role: "bot",
         kind: "options",
         card: {
           title: permission ? "Approval needed" : "Your bot has a question",
-          subtitle: event.summary,
+          subtitle: submitSummary ?? event.summary,
           options: event.choices?.length ? event.choices : permission ? ["Allow", "Deny"] : [],
           requestId: event.requestId,
           tool: permission ? event.tool : undefined,
@@ -528,6 +732,7 @@ bus.subscribe((event: RuntimeEvent) => {
           allowKey: permission ? approvalKey(event.tool, event.summary) : undefined,
           // in auto mode a card can only mean the guard stopped it — say so
           held: permission && asker?.autoApprove ? "This looked destructive, so auto mode stopped to ask." : undefined,
+          ...(event.type === "request.opened" && event.fence ? { fence: event.fence } : {}),
         },
       });
       if (event.requestId) askMessageByRequest.set(`${event.threadId}:${event.requestId}`, message.id);
@@ -535,6 +740,19 @@ bus.subscribe((event: RuntimeEvent) => {
     }
     case "request.resolved": {
       const messageId = event.requestId ? askMessageByRequest.get(`${event.threadId}:${event.requestId}`) : null;
+      if (event.behavior === "allow" && fenceContextFor(event.threadId)) {
+        const resolvedCard = messageId
+          ? store.messagesFor(event.threadId).find((m) => m.id === messageId)?.card
+          : undefined;
+        recordFenceEvidence(event.threadId, {
+          at: Date.now(),
+          kind: "action",
+          note:
+            resolvedCard?.fence?.surface === "portal-submit"
+              ? `Submit pressed with your approval on ${resolvedCard.fence.origin}.`
+              : "Allowed once by you.",
+        });
+      }
       if (messageId) {
         const existing = store.messagesFor(event.threadId).find((m) => m.id === messageId);
         if (existing?.card && !existing.card.answered) {
@@ -556,7 +774,8 @@ bus.subscribe((event: RuntimeEvent) => {
       });
       break;
     case "turn.completed": {
-      if (bot && isCanonicalBud(bot.id)) {
+      settleAttendedTurn(event.threadId, { ok: Boolean(event.ok), stopReason: event.stopReason });
+      if (bot && isProductBud(bot.id)) {
         const turnKey = event.turnId ? `${event.threadId}:${event.turnId}` : "";
         const started = turnKey ? turnStartedAt.get(turnKey) : undefined;
         if (turnKey) turnStartedAt.delete(turnKey);
@@ -585,9 +804,18 @@ bus.subscribe((event: RuntimeEvent) => {
         break;
       }
       if (bot) {
+        const queued = store.takeQueuedMessage(bot.id, event.threadId);
         store.patchBot(bot.id, { busy: false, unread: true });
-        broadcast({ kind: "bot", bot: store.bot(bot.id) });
-        if (screenPollers.has(bot.id)) {
+        if (queued) {
+          // Starting the next instruction matters more than capturing an
+          // intermediate screenshot. A final capture would contend with the
+          // new turn for the same computer endpoint and can add seconds.
+          stopScreenPoller(bot.id);
+          void dispatchQueuedMessage(bot.id, queued);
+        } else {
+          broadcast({ kind: "bot", bot: store.bot(bot.id) });
+        }
+        if (!queued && screenPollers.has(bot.id)) {
           // the last live frame becomes a settled inline screen message —
           // the screenshot-in-chat moment. One fresh capture first, so the
           // frame shows the turn's END state (the final tool's poke may
@@ -696,6 +924,10 @@ async function startTurn(
     /** Pin the destination thread for the whole turn. */
     threadId?: string;
     onDispatchError?: (message: string) => void;
+    /** Extra product-prompt block for an attended job. */
+    systemExtra?: string;
+    /** Mount the host computer MCP for this turn. */
+    computer?: boolean;
   },
 ) {
   const bot = store.bot(botId);
@@ -714,7 +946,99 @@ async function startTurn(
   // a task takes its name from the first thing you asked it to do
   if (text.trim()) store.titleTaskFromFirstMessage(bot.id, text, threadId);
 
-  const bookReply = PRODUCT_MODE && isCanonicalBud(bot.id) ? answerAskFromDesk(text, desk.snapshot()) : null;
+  if (PRODUCT_MODE && isProductBud(bot.id) && !opts?.systemExtra) {
+    try {
+      const portalReply = await portalJobIntentReply(text, {
+        recipes: listRecipes,
+        draft: async (draftText) => {
+          const shaped = await shapeRecipeDraft(draftText);
+          if (!shaped.draft) {
+            throw Object.assign(new Error(shaped.detail), { status: 503 });
+          }
+          return shaped.draft;
+        },
+        save: (draft) => {
+          const all = saveRecipe(draft);
+          return all.find((row) => row.id === draft.id) ?? all[all.length - 1]!;
+        },
+      });
+      if (portalReply) {
+        let userMessage = opts?.userMessage;
+        if (!userMessage) {
+          userMessage = store.appendMessage(threadId, { role: "user", kind: "text", text });
+          broadcast({ kind: "message", threadId, message: userMessage });
+        }
+        const reply = store.appendMessage(threadId, { role: "bot", kind: "text", text: portalReply.reply });
+        broadcast({ kind: "message", threadId, message: reply });
+        return;
+      }
+    } catch {
+      /* no intercept — continue to the model turn */
+    }
+  }
+
+  const connectionIntent = PRODUCT_MODE && isProductBud(bot.id) ? parseConnectionIntent(text) : null;
+  if (connectionIntent) {
+    let userMessage = opts?.userMessage;
+    if (!userMessage) {
+      userMessage = store.appendMessage(threadId, { role: "user", kind: "text", text });
+      broadcast({ kind: "message", threadId, message: userMessage });
+    }
+    store.patchBot(bot.id, { busy: true, unread: false });
+    const connectionOperationId = newId();
+    connectionOperations.set(bot.id, connectionOperationId);
+    broadcast({ kind: "bot", bot: store.bot(bot.id) });
+    void (async () => {
+      try {
+        if (!cfg.composio?.key) {
+          const message = store.appendMessage(threadId, {
+            role: "bot",
+            kind: "text",
+            text: `Connected apps needs its private broker key once. Open You → Connected apps, save it there, then say “connect ${connectionIntent.label}” again. Never paste the key into Ask.`,
+          });
+          broadcast({ kind: "message", threadId, message });
+          return;
+        }
+        const authorized = await composio.authorizeService(cfg, connectionIntent.slug);
+        if (connectionOperations.get(bot.id) !== connectionOperationId) return;
+        const authorizationUrl = new URL(String(authorized.url));
+        if (authorizationUrl.protocol !== "https:") throw new Error("the connection broker returned an unsafe link");
+        const requestId = newId();
+        const message = store.appendMessage(threadId, {
+          role: "bot",
+          kind: "text",
+          text: `I opened ${connectionIntent.label} sign-in. Finish the provider's own sign-in in your browser. If it did not open, [continue connecting ${connectionIntent.label}](${authorizationUrl.toString()}).`,
+        });
+        broadcast({ kind: "message", threadId, message });
+        broadcast({
+          kind: "external.open",
+          requestId,
+          service: connectionIntent.slug,
+          url: authorizationUrl.toString(),
+        });
+      } catch (error) {
+        if (connectionOperations.get(bot.id) !== connectionOperationId) return;
+        const raw = error instanceof Error ? error.message : String(error);
+        const message = store.appendMessage(threadId, {
+          role: "bot",
+          kind: "text",
+          text: `I couldn't open ${connectionIntent.label} sign-in. ${productAskFailure(raw)}`,
+        });
+        broadcast({ kind: "message", threadId, message });
+      } finally {
+        if (connectionOperations.get(bot.id) !== connectionOperationId) return;
+        connectionOperations.delete(bot.id);
+        watchdog.settle(threadId);
+        const queued = store.takeQueuedMessage(bot.id, threadId);
+        store.patchBot(bot.id, { busy: false, unread: true });
+        if (queued) void dispatchQueuedMessage(bot.id, queued);
+        else broadcast({ kind: "bot", bot: store.bot(bot.id) });
+      }
+    })();
+    return;
+  }
+
+  const bookReply = PRODUCT_MODE && isProductBud(bot.id) ? answerAskFromDesk(text, desk.snapshot()) : null;
   if (bookReply) {
     let userMessage = opts?.userMessage;
     if (!userMessage) {
@@ -790,6 +1114,7 @@ async function startTurn(
   void (async () => {
     try {
       const integrations: NonNullable<Parameters<typeof instance.adapter.sendTurn>[0]["integrations"]> = {};
+      if (cfg.composio?.key) integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
       if (PRODUCT_MODE) {
         await instance.adapter.sendTurn({
           threadId,
@@ -797,14 +1122,13 @@ async function startTurn(
           model,
           resumeCursor: rewound ? undefined : task.resumeCursors[instanceId],
           transcript,
-          system: productBudSystemPrompt(),
-          integrations: {},
-          ...(readCuaConnection() ? { computer: true } : {}),
+          system: [productBudSystemPrompt(), opts?.systemExtra].filter(Boolean).join("\n\n"),
+          integrations,
+          ...(readCuaConnection() || opts?.computer ? { computer: true } : {}),
         });
         if (rewound) store.patchBot(bot.id, { rewound: false, resumeCursors: {} });
         return;
       }
-      if (cfg.composio?.key) integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
       const wants = bot.computer;
       const mountsComputerMcp = instance.adapter.capabilities.computerMcp === true;
       const mountsCloudComputer = mountsComputerMcp || instance.driverKind === "boxAgent";
@@ -961,9 +1285,48 @@ async function startTurn(
       watchdog.settle(threadId);
       store.patchBot(bot.id, { busy: false });
       broadcast({ kind: "bot", bot: store.bot(bot.id) });
+      settleAttendedTurn(threadId, { ok: false, stopReason: "error", detail: message });
       opts?.onDispatchError?.(message);
     }
   })();
+}
+
+/** Deliver a previously claimed follow-up. Claiming happens synchronously
+ * before this function is called, so a completion event and a user click can
+ * never send the same slot twice. A pre-dispatch failure restores it. */
+async function dispatchQueuedMessage(botId: string, queued: QueuedMessage): Promise<void> {
+  try {
+    await startTurn(botId, queued.text, { threadId: queued.threadId });
+    // Desk quick answers do not enter a busy state, so they need an explicit
+    // bot projection to clear the queue chip in every open window.
+    if (!store.bot(botId)?.busy) broadcast({ kind: "bot", bot: store.bot(botId) });
+  } catch (error) {
+    store.restoreQueuedMessage(botId, queued);
+    const bot = store.bot(botId);
+    if (!bot) return;
+    const raw = error instanceof Error ? error.message : String(error);
+    const detail = PRODUCT_MODE ? productAskFailure(raw) : raw;
+    const message = store.appendMessage(queued.threadId, {
+      role: "bot",
+      kind: "text",
+      text: `Your follow-up is still queued because it could not start: ${detail}`,
+    });
+    broadcast({ kind: "message", threadId: queued.threadId, message });
+    broadcast({ kind: "bot", bot });
+  }
+}
+
+async function waitUntilTurnStopped(instance: ProviderInstance | null, threadId: string, timeoutMs = 4_000) {
+  if (!instance) return;
+  const deadline = Date.now() + timeoutMs;
+  while (instance.adapter.hasSession(threadId) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  if (instance.adapter.hasSession(threadId)) {
+    throw Object.assign(new Error("Bud is still stopping the previous turn — try steer again in a moment"), {
+      status: 409,
+    });
+  }
 }
 
 // ── named loops: the RealBud clock presses Desk Recheck ────────────────
@@ -982,7 +1345,7 @@ function commitDesk(snapshot: ReturnType<Desk["snapshot"]>) {
 bindRemoteDecisions({
   desk,
   commit: commitDesk,
-  channels: [telegramDecisionAdapter(), discordDecisionAdapter()],
+  channels: [telegramDecisionAdapter(), discordDecisionAdapter(), slackDecisionAdapter()],
 });
 
 // Desk, Schedule, and a fast double-click all reach the same Recheck door.
@@ -1023,21 +1386,46 @@ loops = new LoopManager({
       const current = getRecipe(recipeId);
       if (!current) return;
       if (!enabled) patchRecipeStatus(recipeId, "paused");
-      else if (current.status === "paused") patchRecipeStatus(recipeId, "shadow");
+      else if (current.status === "paused") {
+        const approved = current.planApprovedAt != null && current.approvedRevision === current.revision;
+        patchRecipeStatus(recipeId, approved ? "active" : "shadow");
+      }
     } catch {
       /* job already gone — the clock drop is enough */
     }
   },
   execute: async (loop, run) => {
+    jobRuns.sweepQueuedAttended();
     if (desk.recovery.active) return { ok: false, detail: "desk is in recovery — schedules are paused" };
     if (loop.id.startsWith("recipe-")) {
       const recipe = getRecipe(loop.id.slice("recipe-".length));
       if (!recipe) return { ok: false, detail: "that job is no longer on the book" };
+      if (recipeHasPortalCapability(recipe.capabilities)) {
+        const ready = recipeClockRunnable(recipe) && recipe.attachment != null;
+        if (!ready) return { ok: false, detail: READY_BESIDE_YOU_SKIP };
+        const enqueued = jobRuns.enqueue(recipe, {
+          mode: "attended",
+          trigger: run.manual ? "manual" : "schedule",
+          scheduledFor: run.scheduledFor,
+          loopRunId: run.id,
+          idempotencyKey: `${recipe.id}:${recipe.revision}:${run.manual ? `manual:${run.id}` : `schedule:${run.scheduledFor}`}`,
+          detail: READY_BESIDE_YOU,
+        });
+        return { ok: true, detail: enqueued.run.detail, jobRunId: enqueued.run.id };
+      }
       if (!run.manual && !recipeClockRunnable(recipe)) {
         return { ok: false, detail: "Waiting for plan approval" };
       }
-      const session = await startShadowRun(recipe);
-      return { ok: session.state === "done", detail: session.detail || "Shadow run — nothing was browsed or clicked." };
+      const mode = recipeClockRunnable(recipe) ? "prepare" : "shadow";
+      const executed = await executeRecipeJob(recipe, {
+        mode,
+        trigger: run.manual ? "manual" : "schedule",
+        scheduledFor: run.scheduledFor,
+        loopRunId: run.id,
+        idempotencyKey: `${recipe.id}:${recipe.revision}:${run.manual ? `manual:${run.id}` : `schedule:${run.scheduledFor}`}`,
+      });
+      const ok = executed.run.status === "completed" || executed.run.status === "awaiting-approval";
+      return { ok, detail: executed.run.detail, jobRunId: executed.run.id };
     }
     const spec = evaluatorForLoop(loop.id);
     if (spec && spec.mayLaunchCua) return { ok: false, detail: "the clock must not launch a browser" };
@@ -1474,6 +1862,19 @@ const server = createServer(async (req, res) => {
         return json(res, 415, { error: "content-type must be application/json" });
       }
       const body = await readBody(req);
+      if (body.surface !== undefined || parsePortalRuleKey(typeof body.key === "string" ? body.key : "")) {
+        const surface = isPortalRuleSurface(body.surface)
+          ? body.surface
+          : parsePortalRuleKey(typeof body.key === "string" ? body.key : "")?.surface;
+        if (!surface) return json(res, 400, { error: "surface must be portal-read or portal-prefill" });
+        if (body.decision !== "allow") return json(res, 400, { error: "Portal rules can only allow." });
+        const fromKey = parsePortalRuleKey(typeof body.key === "string" ? body.key : "");
+        const origin = typeof body.origin === "string" ? normalizeOrigin(body.origin) : (fromKey?.origin ?? null);
+        if (!origin) {
+          return json(res, 400, { error: "Use a portal hostname like propertyme.com.au — no path or port." });
+        }
+        return json(res, 201, { rules: addPortalRule(surface, origin) });
+      }
       const key = typeof body.key === "string" ? body.key.trim() : "";
       if (!key || key.length > 120) return json(res, 400, { error: "key must be 1–120 characters" });
       if (body.decision !== "allow" && body.decision !== "deny") {
@@ -1540,7 +1941,7 @@ const server = createServer(async (req, res) => {
     const channelMatch = path.match(/^\/api\/channels\/([^/]+)$/);
     if (channelMatch && (method === "POST" || method === "DELETE")) {
       const platform = channelMatch[1];
-      if (platform !== "telegram" && platform !== "discord") {
+      if (platform !== "telegram" && platform !== "discord" && platform !== "slack") {
         return json(res, 404, { error: "unknown channel" });
       }
       if (method === "POST") {
@@ -1550,20 +1951,39 @@ const server = createServer(async (req, res) => {
         const body = await readBody(req);
         const botToken = typeof body.botToken === "string" ? body.botToken.trim() : "";
         if (!botToken) return json(res, 400, { error: "botToken required" });
+        const appToken = typeof body.appToken === "string" ? body.appToken.trim() : "";
         try {
           if (platform === "telegram") await connectTelegram(botToken);
-          else await connectDiscord(botToken);
+          else if (platform === "discord") await connectDiscord(botToken);
+          else await connectSlack(botToken, appToken || null);
           return json(res, 200, channelsStatus());
         } catch (error) {
           return json(res, 400, { error: error instanceof Error ? error.message : String(error) });
         }
       }
       if (platform === "telegram") disconnectTelegram();
-      else disconnectDiscord();
+      else if (platform === "discord") disconnectDiscord();
+      else disconnectSlack();
       return json(res, 200, channelsStatus());
     }
 
-    // ── recipes + shadow portal sessions (no browse, no send) ────────
+    // ── taught jobs + durable prepare receipts ───────────────────────
+    if (path === "/api/job-runs" && method === "GET") {
+      const jobId = url.searchParams.get("jobId")?.trim() || undefined;
+      const requested = Number(url.searchParams.get("limit") ?? 100);
+      const limit = Number.isInteger(requested) ? Math.max(1, Math.min(500, requested)) : 100;
+      return json(res, 200, { runs: jobRuns.list(jobId).slice(0, limit) });
+    }
+    const jobRunSeen = path.match(/^\/api\/job-runs\/([\w-]+)\/seen$/);
+    if (jobRunSeen && method === "POST") {
+      try {
+        return json(res, 200, { run: jobRuns.markSeen(jobRunSeen[1]) });
+      } catch (error) {
+        const status = (error as { status?: number }).status ?? 500;
+        return json(res, status, { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    // ── recipes + compatibility portal sessions (never submit) ───────
     if (path === "/api/recipes" && method === "GET") {
       return json(res, 200, { recipes: listRecipes() });
     }
@@ -1595,7 +2015,102 @@ const server = createServer(async (req, res) => {
     if (recipeRun && method === "POST") {
       const recipe = getRecipe(recipeRun[1]);
       if (!recipe) return json(res, 404, { error: "no such recipe" });
-      return json(res, 200, { session: await startShadowRun(recipe) });
+      try {
+        const executed = await executeRecipeJob(recipe, {
+          mode: "shadow",
+          trigger: "manual",
+          idempotencyKey: `${recipe.id}:${recipe.revision}:shadow:${randomBytes(16).toString("hex")}`,
+        });
+        return json(res, 200, { run: executed.run, session: executed.session });
+      } catch (error) {
+        const status = (error as { status?: number }).status ?? 500;
+        return json(res, status, { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    const recipeAttend = path.match(/^\/api\/recipes\/([\w-]+)\/attend$/);
+    if (recipeAttend && method === "POST") {
+      const recipe = getRecipe(recipeAttend[1]);
+      const bud = store.bot(CANONICAL_BUD_ID) ?? store.bots[0];
+      const attendBody = await readBody(req);
+      const runId = typeof attendBody.runId === "string" ? attendBody.runId.trim() : "";
+      const queued = runId
+        ? jobRuns.list(recipeAttend[1]).find((run) => run.id === runId)
+        : undefined;
+      if (runId && (!queued || queued.mode !== "attended" || queued.status !== "queued" || queued.jobId !== recipeAttend[1])) {
+        return json(res, 404, { error: ATTEND_ERRORS.gone });
+      }
+      const blocked = attendBlocked(recipe, {
+        cuaReady: cuaAttendedReady(),
+        busy: Boolean(bud?.busy),
+        inFlight: Boolean(
+          recipe &&
+            jobRuns.list(recipe.id).some(
+              (run) => (run.status === "queued" || run.status === "running") && run.id !== queued?.id,
+            ),
+        ),
+      });
+      if (blocked) return json(res, blocked.status, { error: blocked.error });
+      if (!recipe || !bud) return json(res, 404, { error: ATTEND_ERRORS.unknown });
+      const threadId = bud.threadId;
+      try {
+        const running = queued
+          ? jobRuns.start(queued.id, "Bud is running this job beside you.", { threadId })
+          : (() => {
+              const enqueued = jobRuns.enqueue(recipe, {
+                mode: "attended",
+                trigger: "manual",
+                idempotencyKey: `${recipe.id}:${recipe.revision}:attended:${randomBytes(16).toString("hex")}`,
+                threadId,
+              });
+              if (!enqueued.created) {
+                throw Object.assign(new Error(ATTEND_ERRORS.overlap), { status: 409, run: enqueued.run });
+              }
+              return jobRuns.start(enqueued.run.id, "Bud is running this job beside you.", { threadId });
+            })();
+        setFenceContext(threadId, {
+          runId: running.id,
+          allowedOrigins: [...running.spec.allowedOrigins],
+          capabilities: fenceCapabilitiesFor(recipe),
+        });
+        await startTurn(bud.id, attendedUserText(recipe), {
+          threadId,
+          systemExtra: attendedJobSystemBlock(recipe),
+          computer: true,
+        });
+        return json(res, 202, { run: jobRuns.get(running.id) ?? running });
+      } catch (error) {
+        const running = jobRuns.list(recipe.id).find((run) => run.status === "running" || run.status === "queued");
+        if (running?.status === "running") {
+          settleAttendedTurn(threadId, {
+            ok: false,
+            stopReason: "error",
+            detail: error instanceof Error ? error.message : String(error),
+          });
+        } else {
+          takeFenceContext(threadId);
+        }
+        const status = (error as { status?: number }).status ?? 500;
+        return json(res, status, { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    const recipePrepare = path.match(/^\/api\/recipes\/([\w-]+)\/prepare$/);
+    if (recipePrepare && method === "POST") {
+      const recipe = getRecipe(recipePrepare[1]);
+      if (!recipe) return json(res, 404, { error: "no such recipe" });
+      if (!recipeClockRunnable(recipe)) {
+        return json(res, 409, { error: "Approve the current plan and activate the job before preparing it." });
+      }
+      try {
+        const executed = await executeRecipeJob(recipe, {
+          mode: "prepare",
+          trigger: "manual",
+          idempotencyKey: `${recipe.id}:${recipe.revision}:prepare:${randomBytes(16).toString("hex")}`,
+        });
+        return json(res, 200, { run: executed.run });
+      } catch (error) {
+        const status = (error as { status?: number }).status ?? 500;
+        return json(res, status, { error: error instanceof Error ? error.message : String(error) });
+      }
     }
     const recipeDistill = path.match(/^\/api\/recipes\/([\w-]+)\/distill$/);
     if (recipeDistill && method === "POST") {
@@ -1607,7 +2122,12 @@ const server = createServer(async (req, res) => {
         return json(res, 415, { error: "content-type must be application/json" });
       }
       const body = await readBody(req);
-      return json(res, 200, { recipes: patchRecipe(recipeMatch[1], body) });
+      try {
+        return json(res, 200, { recipes: patchRecipe(recipeMatch[1], body) });
+      } catch (error) {
+        const status = (error as { status?: number }).status ?? 500;
+        return json(res, status, { error: error instanceof Error ? error.message : String(error) });
+      }
     }
     if (recipeMatch && method === "DELETE") {
       return json(res, 200, { recipes: deleteRecipe(recipeMatch[1]) });
@@ -1783,7 +2303,8 @@ const server = createServer(async (req, res) => {
         const result = desk.proposeBook({ text: body.text, items: body.items }, "ask");
         return json(res, 200, { ...result, snapshot: desk.snapshot() });
       } catch (e) {
-        return json(res, 500, { error: e instanceof Error ? e.message : String(e) });
+        const status = (e as { status?: number }).status ?? 500;
+        return json(res, status, { error: e instanceof Error ? e.message : String(e) });
       }
     }
     if (path === "/api/desk/book-proposals/allow-all" && method === "POST") {
@@ -1868,11 +2389,16 @@ const server = createServer(async (req, res) => {
     const deskDraft = path.match(/^\/api\/desk\/drafts\/([\w-]+)\/(allow|deny)$/);
     if (deskDraft && method === "POST") {
       let expected: number | undefined;
+      let reason: string | undefined;
       if (String(req.headers["content-type"] ?? "").toLowerCase().includes("json")) {
         const body = await readBody(req);
         if (typeof body.expectedRevision === "number") expected = body.expectedRevision;
+        if (typeof body.reason === "string") reason = body.reason;
       }
-      const draft = deskDraft[2] === "allow" ? desk.allowDraft(deskDraft[1], expected) : desk.denyDraft(deskDraft[1], expected);
+      const draft =
+        deskDraft[2] === "allow"
+          ? desk.allowDraft(deskDraft[1], expected)
+          : desk.denyDraft(deskDraft[1], expected, undefined, reason);
       commitDesk(desk.snapshot());
       return json(res, 200, { draft });
     }
@@ -1928,7 +2454,17 @@ const server = createServer(async (req, res) => {
     // ── pinned Hermes worker (Desk hands; never Hermes Desktop) ────────
     if (path === "/api/hermes" && method === "GET") {
       const status = applyHandsReadiness(await hermesStatus(), readHandsPing(DATA_DIR));
-      return json(res, 200, { ...status, lastTest: readHandsLast(DATA_DIR), lastPing: readHandsPing(DATA_DIR) });
+      const current = modelStatus();
+      return json(res, 200, {
+        ...status,
+        lastTest: readHandsLast(DATA_DIR),
+        lastPing: readHandsPing(DATA_DIR),
+        model: {
+          attached: Boolean(current.model && current.keyPresent),
+          provider: current.provider,
+          model: current.model,
+        },
+      });
     }
     if (path === "/api/hermes/test" && method === "POST") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
@@ -1952,6 +2488,10 @@ const server = createServer(async (req, res) => {
           model: String(body.model ?? ""),
           baseUrl: body.baseUrl ? String(body.baseUrl) : undefined,
         });
+        const bud = PRODUCT_MODE
+          ? store.adoptBud(productHermesSelection(status.model || "default"))
+          : null;
+        if (bud) broadcast({ kind: "bot", bot: publicBot(bud) });
         const ping = await tryHermesPing();
         // Connecting a model performs the same authoritative hands check as
         // the standalone action. Persist it so a reload cannot forget a
@@ -1968,7 +2508,7 @@ const server = createServer(async (req, res) => {
     }
     if (path === "/api/hermes/models" && method === "GET") {
       const provider = url.searchParams.get("provider") ?? "";
-      return json(res, 200, { models: listModels(provider) });
+      return json(res, 200, { models: listModels(provider), options: listModelOptions(provider) });
     }
     if (path === "/api/hermes/model" && method === "GET") {
       return json(res, 200, { model: modelStatus() });
@@ -2201,7 +2741,7 @@ const server = createServer(async (req, res) => {
         if (body.autoApprove !== undefined || body.alwaysAllow !== undefined || body.chiefOfStaff !== undefined) {
           return json(res, 403, { error: "RealBud never runs unattended. Approvals stay manual on Desk." });
         }
-        if (isCanonicalBud(m[1]) && body.name !== undefined && body.name !== CANONICAL_BUD_NAME) {
+        if (isProductBud(m[1]) && body.name !== undefined && body.name !== CANONICAL_BUD_NAME) {
           return json(res, 403, { error: "Bud is the desk's one worker and keeps its name." });
         }
       }
@@ -2289,8 +2829,93 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const text = String(body.text ?? "").trim();
       if (!text) return json(res, 400, { error: "text required" });
+      if (text.length > ASK_MESSAGE_MAX_CHARS) return json(res, 413, { error: "message is too long" });
       await startTurn(m[1], text);
       return json(res, 202, { ok: true });
+    }
+
+    // One durable follow-up slot. PUT intentionally means replace: a second
+    // click cannot create two eventual side effects, and a renderer restart
+    // cannot lose the instruction.
+    m = path.match(/^\/api\/bots\/([\w-]+)\/queued-message$/);
+    if (m && method === "PUT") {
+      const bot = store.bot(m[1]);
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      const body = await readBody(req);
+      const text = String(body.text ?? "").trim();
+      if (!text) return json(res, 400, { error: "text required" });
+      if (text.length > ASK_MESSAGE_MAX_CHARS) return json(res, 413, { error: "message is too long" });
+      if (PRODUCT_MODE && containsCredential(text)) {
+        return json(res, 400, { error: "Provider keys go on You → Attach model. Ask never sees the secret." });
+      }
+      if (!bot.busy) {
+        await startTurn(bot.id, text);
+        return json(res, 202, { ok: true, started: true });
+      }
+      const queued = store.setQueuedMessage(bot.id, text, bot.threadId);
+      if (!queued) return json(res, 409, { error: "that task is no longer available" });
+      broadcast({ kind: "bot", bot: store.bot(bot.id) });
+      return json(res, 200, { ok: true, queued });
+    }
+    if (m && method === "DELETE") {
+      const bot = store.bot(m[1]);
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      const body = await readBody(req);
+      const expectedId = typeof body.id === "string" && body.id ? body.id : undefined;
+      if (expectedId && bot.queuedMessage && bot.queuedMessage.id !== expectedId) {
+        return json(res, 409, { error: "that follow-up was already replaced" });
+      }
+      store.clearQueuedMessage(bot.id, expectedId);
+      broadcast({ kind: "bot", bot: store.bot(bot.id) });
+      return json(res, 200, { ok: true });
+    }
+
+    // Steer is an atomic stop-and-replace of the active turn. The new text is
+    // not appended until the old provider session has actually settled, so
+    // late completion events cannot terminate or corrupt the replacement.
+    m = path.match(/^\/api\/bots\/([\w-]+)\/steer$/);
+    if (m && method === "POST") {
+      const bot = store.bot(m[1]);
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      const body = await readBody(req);
+      const text = String(body.text ?? "").trim();
+      if (!text) return json(res, 400, { error: "text required" });
+      if (text.length > ASK_MESSAGE_MAX_CHARS) return json(res, 413, { error: "message is too long" });
+      if (PRODUCT_MODE && containsCredential(text)) {
+        return json(res, 400, { error: "Provider keys go on You → Attach model. Ask never sees the secret." });
+      }
+      if (!bot.busy) {
+        await startTurn(bot.id, text);
+        return json(res, 202, { ok: true, started: true });
+      }
+      if (steeringBots.has(bot.id)) return json(res, 409, { error: "Bud is already applying another steer" });
+      steeringBots.add(bot.id);
+      try {
+        const threadId = bot.threadId;
+        // Direct connection brokering is a bounded server operation, not a
+        // provider turn. Supersede its delivery token so a late auth-link
+        // response cannot open a browser or clear the replacement turn.
+        if (connectionOperations.has(bot.id)) {
+          connectionOperations.delete(bot.id);
+          store.patchBot(bot.id, { busy: false });
+          await startTurn(bot.id, text, { threadId });
+          return json(res, 202, { ok: true, steered: true });
+        }
+        const instance = registry.get(bot.modelSelection.instanceId);
+        if (!instance) return json(res, 409, { error: "provider unavailable" });
+        if (PRODUCT_MODE) expectedStoppedThreads.add(threadId);
+        await denyPendingRequests(threadId, instance);
+        await instance.adapter.interruptTurn(threadId);
+        await waitUntilTurnStopped(instance, threadId);
+        watchdog.settle(threadId);
+        const current = store.bot(bot.id);
+        if (!current) return json(res, 404, { error: "no such bot" });
+        store.patchBot(current.id, { busy: false });
+        await startTurn(current.id, text, { threadId });
+        return json(res, 202, { ok: true, steered: true });
+      } finally {
+        steeringBots.delete(bot.id);
+      }
     }
 
     // edit a user message → fork the conversation there and rerun the turn.
@@ -2345,13 +2970,10 @@ const server = createServer(async (req, res) => {
     if (m && method === "POST") {
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
-      const body = await readBody(req);
+      const { requestId, decision } = parseRequestDecision(await readBody(req));
       const instance = registry.get(bot.modelSelection.instanceId);
       if (!instance) return json(res, 409, { error: "provider unavailable" });
-      await instance.adapter.respondToRequest(bot.threadId, String(body.requestId), {
-        behavior: body.behavior,
-        message: body.message,
-      });
+      await instance.adapter.respondToRequest(bot.threadId, requestId, decision);
       return json(res, 200, { ok: true });
     }
     // Answer by THREAD, so a request raised inside a room can be answered
@@ -2360,16 +2982,35 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/threads\/([\w-]+)\/respond$/);
     if (m && method === "POST") {
       const threadId = m[1];
-      const body = await readBody(req);
+      const parsed = parseRequestDecision(await readBody(req));
+      const { requestId } = parsed;
+      let { decision } = parsed;
+      const card = store
+        .messagesFor(threadId)
+        .find((message) => message.card?.requestId === requestId);
+      const fence = fenceContextFor(threadId);
+      // A session grant tells the worker to stop asking for that tool, and the
+      // fence only sees what the worker asks. During an attended run every
+      // browser action stays a one-time allow; a site rule is the safe
+      // "don't ask again" because the fence re-checks it per request.
+      if (fence && card?.card?.fence && decision.behavior === "allow" && decision.scope === "session") {
+        decision = { ...decision, scope: "once" };
+      }
+      if (parsed.rule) {
+        const ruleError = portalRespondRuleError(parsed.rule, {
+          behavior: decision.behavior,
+          tool: card?.card?.tool,
+          allowedOrigins: fence?.allowedOrigins,
+        });
+        if (ruleError) return json(res, 400, { error: ruleError });
+        addPortalRule(parsed.rule.surface, parsed.rule.origin);
+      }
       const group = store.groupByThread(threadId);
       const owner = group ? (group.busyBotId ? store.bot(group.busyBotId) : undefined) : store.botByThread(threadId);
       if (!owner) return json(res, 404, { error: "nothing is waiting on an answer in this conversation" });
       const instance = registry.get(owner.modelSelection.instanceId);
       if (!instance) return json(res, 409, { error: "provider unavailable" });
-      await instance.adapter.respondToRequest(threadId, String(body.requestId), {
-        behavior: body.behavior,
-        message: body.message,
-      });
+      await instance.adapter.respondToRequest(threadId, requestId, decision);
       return json(res, 200, { ok: true });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/interrupt$/);
@@ -2377,6 +3018,18 @@ const server = createServer(async (req, res) => {
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
       const wasBusy = bot.busy;
+      if (connectionOperations.has(bot.id)) {
+        connectionOperations.delete(bot.id);
+        store.patchBot(bot.id, { busy: false });
+        const message = store.appendMessage(bot.threadId, {
+          role: "bot",
+          kind: "text",
+          text: "Stopped. Bud will not continue this turn.",
+        });
+        broadcast({ kind: "message", threadId: bot.threadId, message });
+        broadcast({ kind: "bot", bot: store.bot(bot.id) });
+        return json(res, 200, { ok: true });
+      }
       const instance = registry.get(bot.modelSelection.instanceId);
       if (PRODUCT_MODE && wasBusy) expectedStoppedThreads.add(bot.threadId);
       await denyPendingRequests(bot.threadId, instance);
@@ -2543,10 +3196,10 @@ const server = createServer(async (req, res) => {
       }
       saveConfig(patch);
       Object.assign(cfg, loadConfig());
-      // provider keys change the fleet; a profile or voice edit must not
-      // kill in-flight turns with a pointless reload — no driver reads
-      // either, and picking a voice mid-turn should be free
-      if (Object.keys(patch).some((k) => k !== "profile" && k !== "tts")) await reloadProviders();
+      // Only a model-provider key changes the fleet's child environment.
+      // Connected-app and computer credentials are mounted per turn from
+      // cfg; reloading here used to kill an unrelated in-flight answer.
+      if (Object.hasOwn(patch, "xai")) await reloadProviders();
       const status = configStatus();
       broadcast({ kind: "config", ...status });
       return json(res, 200, status);
@@ -2658,8 +3311,10 @@ const server = createServer(async (req, res) => {
 
     return json(res, 404, { error: `no route: ${method} ${path}` });
   } catch (e) {
-    const status = (e as any)?.status ?? 500;
-    return json(res, status, { error: e instanceof Error ? e.message : String(e) });
+    const status = (e as { status?: number })?.status ?? 500;
+    const code = typeof (e as { code?: unknown })?.code === "string" ? (e as { code: string }).code : undefined;
+    const error = e instanceof Error ? e.message : String(e);
+    return json(res, status, code ? { error, code } : { error });
   }
 });
 
@@ -2674,7 +3329,11 @@ server.on("error", (error) => {
 });
 
 function channelsStatus(): ChannelsPayload {
-  return { telegram: telegramAdapter.status(), discord: discordAdapter.status() };
+  return {
+    telegram: telegramAdapter.status(),
+    discord: discordAdapter.status(),
+    slack: slackAdapter.status(),
+  };
 }
 
 bindTelegramBridge({
@@ -2689,13 +3348,27 @@ bindDiscordBridge({
   subscribe: (listener) => bus.subscribe(listener),
   broadcast,
 });
+bindSlackBridge({
+  store,
+  startTurn,
+  subscribe: (listener) => bus.subscribe(listener),
+  broadcast,
+});
 
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`realbud server on http://127.0.0.1:${PORT}`);
   oplog("boot", `listening on 127.0.0.1:${PORT}`);
+  // A renderer/server restart must not silently drop a follow-up the user
+  // already scheduled. Claim and resume each durable slot once at boot.
+  for (const bot of store.bots) {
+    if (bot.busy || !bot.queuedMessage) continue;
+    const queued = store.takeQueuedMessage(bot.id, bot.queuedMessage.threadId);
+    if (queued) void dispatchQueuedMessage(bot.id, queued);
+  }
   if (!process.env.VITEST) {
     startTelegramBridge();
     startDiscordBridge();
+    startSlackBridge();
     startRemoteDecisionFlush();
   }
 });
@@ -2705,6 +3378,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     oplog("shutdown", signal);
     stopTelegramBridge();
     stopDiscordBridge();
+    stopSlackBridge();
     stopRemoteDecisionFlush();
     loops?.stop();
     watchdog.stop();

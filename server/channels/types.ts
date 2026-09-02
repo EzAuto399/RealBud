@@ -22,4 +22,5 @@ export type ChannelAdapter = {
 export type ChannelsPayload = {
   telegram: ChannelPublic;
   discord: ChannelPublic;
+  slack: ChannelPublic;
 };

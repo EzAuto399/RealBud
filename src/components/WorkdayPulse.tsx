@@ -67,7 +67,7 @@ export function WorkdayPulse() {
   }, [state.loops]);
 
   const act = async () => {
-    if (!guide.action || inFlight.current) return;
+    if (!guide.action || inFlight.current || budBusy) return;
     setError("");
     if (guide.action === "desk") {
       dispatch({ type: "showDesk" });
@@ -121,12 +121,12 @@ export function WorkdayPulse() {
         <button
           type="button"
           onClick={() => void act()}
-          disabled={busy || !state.connected}
+          disabled={working || !state.connected}
           className="pm-control mt-2.5 flex w-full items-center justify-between rounded border border-line/80 bg-sheet px-2.5 text-[12px] font-medium text-ink transition-transform hover:bg-raised active:scale-[0.99] disabled:opacity-45"
         >
           <span className="flex items-center gap-1.5">
-            {busy ? <Loader2 size={12} className="animate-spin motion-reduce:animate-none" /> : <Sparkles size={12} className="text-agency" />}
-            {busy ? "Checking" : guide.actionLabel}
+            {working ? <Loader2 size={12} className="animate-spin motion-reduce:animate-none" /> : <Sparkles size={12} className="text-agency" />}
+            {working ? "Checking…" : guide.actionLabel}
           </span>
           <ArrowRight size={12} aria-hidden="true" />
         </button>

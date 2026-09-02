@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { buildScheduleWeek, calendarShortName, mondayOfWeek, recipeScheduleLine } from "./schedule-week";
+import {
+  buildScheduleWeek,
+  calendarShortName,
+  mondayOfWeek,
+  plannedLoopFootnote,
+  recipeScheduleLine,
+  scheduleSummary,
+  splitPlannedLoops,
+  weekOutcomeTone,
+} from "./schedule-week";
 
 const loops = [
   {
@@ -39,15 +48,15 @@ describe("schedule week", () => {
     expect(week[2]?.isToday).toBe(true);
     expect(week[4]?.slots.map((slot) => slot.loopId)).toEqual([
       "morning-arrears",
-      "inbound-triage",
       "owner-letter",
     ]);
     expect(week[5]?.slots).toEqual([]);
+    expect(week[6]?.slots).toEqual([]);
     expect(week[2]?.slots.find((slot) => slot.loopId === "morning-arrears")?.shortName).toBe("Morning");
     expect(week[2]?.slots.find((slot) => slot.loopId === "morning-arrears")?.next).toBe(true);
     expect(week[4]?.slots.find((slot) => slot.loopId === "owner-letter")?.next).toBe(true);
     expect(week[2]?.slots.find((slot) => slot.loopId === "morning-arrears")?.outcome).toBe("next");
-    expect(week[2]?.slots.find((slot) => slot.loopId === "inbound-triage")?.outcome).toBe("planned");
+    expect(week.every((day) => day.slots.every((slot) => slot.loopId !== "inbound-triage"))).toBe(true);
   });
 
   it("stamps a clock run and Desk cards on that day", () => {
@@ -198,11 +207,26 @@ describe("schedule week", () => {
       name: "Friday arrears",
       time: "16:00",
       outcome: "done",
-      stamp: "Done",
+      stamp: "Finished",
       produced: 0,
       openDesk: false,
     });
     expect(week[2]?.slots.find((slot) => slot.loopId === "recipe-job-1")).toBeUndefined();
+  });
+
+  it("shows an unapproved taught job as review, never paused or next", () => {
+    const wed = new Date(2026, 8, 2, 10, 0, 0).getTime();
+    const review = {
+      id: "recipe-review" as const,
+      name: "Owner exception brief",
+      available: true,
+      enabled: false,
+      waitingForPlan: true,
+      schedule: { type: "daily" as const, time: "16:00", weekdays: [5] },
+      nextRunAt: null,
+    };
+    const friday = buildScheduleWeek([...loops, review], wed)[4]?.slots.find((slot) => slot.loopId === "recipe-review");
+    expect(friday).toMatchObject({ outcome: "review", stamp: "Review plan", next: false });
   });
 });
 
@@ -212,5 +236,44 @@ describe("recipeScheduleLine", () => {
       "Runs Fridays at 4:00 pm · Australia/Brisbane",
     );
     expect(recipeScheduleLine({ time: "07:30", weekdays: [1, 2, 3, 4, 5] })).toBe("Runs weekdays at 7:30 am");
+  });
+});
+
+describe("planned loops stay off the day chips", () => {
+  it("splits unavailable loops out for a single footnote", () => {
+    const { scheduled, planned } = splitPlannedLoops(loops);
+    expect(scheduled.map((loop) => loop.id)).toEqual(["morning-arrears", "owner-letter"]);
+    expect(planned.map((loop) => loop.id)).toEqual(["inbound-triage"]);
+    expect(plannedLoopFootnote({ name: "Inbound triage" })).toBe(
+      "Inbound triage · Planned — set the clock now; RealBud runs it after it is built.",
+    );
+  });
+
+  it("leaves weekend days as empty Quiet rows", () => {
+    const wed = new Date(2026, 8, 2, 10, 0, 0).getTime();
+    const week = buildScheduleWeek(loops, wed);
+    expect(week[5]?.slots).toEqual([]);
+    expect(week[6]?.slots).toEqual([]);
+    expect(week[0]?.slots.map((slot) => slot.loopId)).toEqual(["morning-arrears"]);
+  });
+});
+
+describe("scheduleSummary", () => {
+  it("reads like the Change time disclosure", () => {
+    expect(scheduleSummary({ time: "07:30", weekdays: [1, 2, 3, 4, 5] })).toBe("Weekdays 7:30 am");
+    expect(scheduleSummary({ time: "16:00", weekdays: [5] })).toBe("Fri 4:00 pm");
+    expect(scheduleSummary({ time: "09:00", weekdays: [0, 1, 2, 3, 4, 5, 6] })).toBe("Every day 9:00 am");
+  });
+});
+
+describe("weekOutcomeTone", () => {
+  it("maps running and next to agency, partial to hold, missed to danger, finished to muted", () => {
+    expect(weekOutcomeTone("running")).toBe("agency");
+    expect(weekOutcomeTone("next")).toBe("agency");
+    expect(weekOutcomeTone("partial")).toBe("hold");
+    expect(weekOutcomeTone("missed")).toBe("danger");
+    expect(weekOutcomeTone("done")).toBe("muted");
+    expect(weekOutcomeTone("planned")).toBe("muted");
+    expect(weekOutcomeTone("scheduled")).toBeNull();
   });
 });

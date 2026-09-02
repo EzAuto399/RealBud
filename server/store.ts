@@ -45,6 +45,12 @@ export interface OptionCardData {
   held?: string;
   /** the narrow grant "always allow" remembers, e.g. "Bash:git" */
   allowKey?: string;
+  /** Attended portal fence: surface, site, and an optional standing-rule offer. */
+  fence?: {
+    surface: "portal-read" | "portal-prefill" | "portal-submit";
+    origin: string;
+    ruleOffer: { surface: "portal-read" | "portal-prefill"; origin: string; label: string } | null;
+  };
 }
 
 export interface Message {
@@ -117,6 +123,16 @@ export interface TaskRecord {
   resumeCursors: Record<string, unknown>;
 }
 
+/** One durable follow-up waiting behind the active turn. A single slot makes
+ * replacement explicit and prevents accidental duplicate sends after a
+ * renderer or server restart. It is bound to the task that queued it. */
+export interface QueuedMessage {
+  id: string;
+  text: string;
+  at: number;
+  threadId: ThreadId;
+}
+
 /** What a task is called before its first message names it. */
 export const UNTITLED_TASK = "New task";
 
@@ -169,6 +185,8 @@ export interface BotRecord {
    * most one bot owns this role, even if an older/corrupt file says more. */
   chiefOfStaff?: boolean;
   busy?: boolean;
+  /** At most one follow-up may wait behind this bot's active turn. */
+  queuedMessage?: QueuedMessage;
   createdAt: number;
 }
 
@@ -296,7 +314,23 @@ export class Store {
     let botsMigrated = false;
     let chiefSeen = false;
     let groupsMigrated = false;
-    for (const b of this.bots) b.busy = false;
+    for (const b of this.bots) {
+      b.busy = false;
+      const queued = b.queuedMessage;
+      if (
+        queued !== undefined &&
+        (!queued ||
+          typeof queued.id !== "string" ||
+          typeof queued.text !== "string" ||
+          !queued.text.trim() ||
+          typeof queued.at !== "number" ||
+          !Number.isFinite(queued.at) ||
+          typeof queued.threadId !== "string")
+      ) {
+        delete b.queuedMessage;
+        botsMigrated = true;
+      }
+    }
     for (const b of this.bots) {
       if (!b.chiefOfStaff) continue;
       if (!chiefSeen) {
@@ -331,6 +365,16 @@ export class Store {
         },
       ];
     }
+    // A task may have been removed by an older build while its queued item
+    // survived. Never deliver that instruction into a different task.
+    for (const b of this.bots) {
+      if (!b.queuedMessage) continue;
+      const knownThreads = new Set([b.threadId, ...(b.tasks ?? []).map((task) => task.threadId)]);
+      if (knownThreads.has(b.queuedMessage.threadId)) continue;
+      delete b.queuedMessage;
+      botsMigrated = true;
+    }
+    if (botsMigrated) this.saveBots();
   }
 
   private saveBots() {
@@ -625,6 +669,87 @@ export class Store {
     return bot;
   }
 
+  /** Adopt the existing visible assistant as Bud without changing its id or
+   * thread. Older RealBud builds created a named assistant before product
+   * mode introduced the canonical `bud` record; preserving those identifiers
+   * keeps transcripts, rooms, reactions, and channel references intact.
+   *
+   * Passing a selection is an authoritative worker rebind. Provider cursors
+   * cannot cross that boundary, so every task starts a fresh session and
+   * replays its surviving transcript on the next turn. */
+  adoptBud(selection?: ModelSelection): BotRecord | null {
+    const bot = this.bot("bud") ?? this.bots[0] ?? null;
+    if (!bot) return null;
+    let changed = false;
+    if (bot.name !== "Bud") {
+      bot.name = "Bud";
+      changed = true;
+    }
+    if (bot.computer !== "off") {
+      bot.computer = "off";
+      changed = true;
+    }
+    if (
+      selection?.instanceId &&
+      (bot.modelSelection.instanceId !== selection.instanceId || bot.modelSelection.model !== selection.model)
+    ) {
+      bot.modelSelection = { ...selection };
+      bot.resumeCursors = {};
+      for (const task of bot.tasks ?? []) task.resumeCursors = {};
+      bot.rewound = true;
+      changed = true;
+    }
+    if (changed) this.saveBots();
+    return bot;
+  }
+
+  /** Set or replace the one queued follow-up for a task. */
+  setQueuedMessage(botId: string, text: string, threadId?: string): QueuedMessage | null {
+    const bot = this.bot(botId);
+    const trimmed = text.trim();
+    const targetThread = threadId ?? bot?.threadId;
+    if (!bot || !trimmed || !targetThread || !this.taskByThread(botId, targetThread)) return null;
+    const queued: QueuedMessage = {
+      id: newId(),
+      text: trimmed,
+      at: Date.now(),
+      threadId: targetThread,
+    };
+    bot.queuedMessage = queued;
+    this.saveBots();
+    return queued;
+  }
+
+  /** Clear the slot, optionally only when it still contains the expected
+   * item. The id guard keeps a stale UI click from deleting a replacement. */
+  clearQueuedMessage(botId: string, expectedId?: string): QueuedMessage | null {
+    const bot = this.bot(botId);
+    const queued = bot?.queuedMessage;
+    if (!bot || !queued || (expectedId && queued.id !== expectedId)) return null;
+    delete bot.queuedMessage;
+    this.saveBots();
+    return queued;
+  }
+
+  /** Atomically claim the queued follow-up before dispatching it. Callers may
+   * restore the same item if dispatch fails before a turn is accepted. */
+  takeQueuedMessage(botId: string, threadId?: string): QueuedMessage | null {
+    const bot = this.bot(botId);
+    const queued = bot?.queuedMessage;
+    if (!bot || !queued || (threadId && queued.threadId !== threadId)) return null;
+    delete bot.queuedMessage;
+    this.saveBots();
+    return queued;
+  }
+
+  restoreQueuedMessage(botId: string, queued: QueuedMessage): boolean {
+    const bot = this.bot(botId);
+    if (!bot || bot.queuedMessage || !this.taskByThread(botId, queued.threadId)) return false;
+    bot.queuedMessage = { ...queued };
+    this.saveBots();
+    return true;
+  }
+
   /** Elect one Chief of Staff (or clear the role) as one persisted change.
    * The changed records are returned so the server can update every open
    * window, including the bot that just handed the role over. */
@@ -742,6 +867,7 @@ export class Store {
     if (!bot || !bot.tasks || bot.tasks.length < 2) return null;
     if (!bot.tasks.some((t) => t.threadId === threadId)) return null;
     bot.tasks = bot.tasks.filter((t) => t.threadId !== threadId);
+    if (bot.queuedMessage?.threadId === threadId) delete bot.queuedMessage;
     this.threads.delete(threadId);
     try {
       unlinkSync(messagesFile(threadId));

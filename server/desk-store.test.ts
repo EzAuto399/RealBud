@@ -1,10 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { decryptJson, isEncryptedEnvelope } from "./desk-crypto.ts";
-import { DeskStore } from "./desk-store.ts";
+import { DeskStore, STORAGE_FULL_MESSAGE } from "./desk-store.ts";
 import { fixtureBook } from "./desk-evaluate.ts";
 
 const dirs: string[] = [];
@@ -62,6 +62,25 @@ describe("DeskStore", () => {
     expect(again.v3.version).toBe(3);
   });
 
+  it("keeps a licensee escalation's explanation across a restart", () => {
+    const { file, key } = tempFile();
+    const sentence = "91 King St is 10 days late on this sample book. A licensed person decides whether any state notice is due.";
+    const store = new DeskStore({ file, book: fixtureBook(), key });
+    store.data.escalations.push({
+      id: "esc-king",
+      propertyId: "prop-king",
+      reason: "statutory-clock",
+      detail: sentence,
+      periodDueAt: 1,
+      createdAt: 2,
+    });
+    store.persist();
+    const again = new DeskStore({ file, book: fixtureBook(), key });
+    const reloaded = again.data.escalations.find((row) => row.id === "esc-king");
+    expect(reloaded?.detail).toBe(sentence);
+    expect(reloaded?.detail).not.toBe("statutory-clock");
+  });
+
   it("quarantines a corrupt ledger and stays read-only", () => {
     const { file, key } = tempFile();
     writeFileSync(file, "not json {{{");
@@ -79,5 +98,36 @@ describe("DeskStore", () => {
     const lost = new DeskStore({ file, book: fixtureBook(), key: other });
     expect(lost.recovery.active).toBe(true);
     expect(lost.data.properties).toEqual([]);
+  });
+
+  it("treats a full disk as a recoverable write failure and never quarantines", () => {
+    const { dir, file, key } = tempFile();
+    const store = new DeskStore({ file, book: fixtureBook(), key });
+    const beforeRevision = store.data.revision;
+    const beforeBytes = readFileSync(file);
+    const previous = DeskStore.atomicWrite;
+    DeskStore.atomicWrite = () => {
+      throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+    };
+    try {
+      expect(() => store.persist()).toThrow(expect.objectContaining({
+        status: 507,
+        code: "storage-full",
+        message: STORAGE_FULL_MESSAGE,
+      }));
+      expect(store.data.revision).toBe(beforeRevision);
+      expect(readFileSync(file)).toEqual(beforeBytes);
+      expect(readdirSync(dir).filter((name) => name.includes("quarantine"))).toEqual([]);
+      expect(decryptJson(key, JSON.parse(beforeBytes.toString("utf8")))).toMatchObject({ version: 3 });
+    } finally {
+      DeskStore.atomicWrite = previous;
+    }
+
+    store.persist();
+    expect(store.data.revision).toBe(beforeRevision + 1);
+    expect(readdirSync(dir).filter((name) => name.includes("quarantine"))).toEqual([]);
+    const again = new DeskStore({ file, book: fixtureBook(), key });
+    expect(again.data.revision).toBe(beforeRevision + 1);
+    expect(again.recovery.active).toBe(false);
   });
 });

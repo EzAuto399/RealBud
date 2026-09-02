@@ -16,7 +16,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { WORKER_PROVIDERS, type WorkerProvider } from "../shared/worker-providers.ts";
+import { WORKER_PROVIDERS, workerProvider, type WorkerProvider } from "../shared/worker-providers.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { augmentedPath } from "./env-path.ts";
 import { execCli } from "./procs.ts";
@@ -153,7 +153,7 @@ export function startInstall(command: string, opts?: { timeoutMs?: number; onSuc
 // ── model attach ─────────────────────────────────────────────────────────
 
 export function providerOption(providerId: string): ProviderOption | null {
-  return PROVIDER_OPTIONS.find((p) => p.id === providerId) ?? null;
+  return workerProvider(providerId);
 }
 
 function upsertEnvLine(envPath: string, key: string, value: string): void {
@@ -217,29 +217,98 @@ export interface ModelStatus {
   keyHint: string | null;
 }
 
+export interface WorkerModelOption {
+  id: string;
+  name: string;
+  releaseDate: string | null;
+  recommended: boolean;
+}
+
 /** Model ids for a provider, from the worker's own cache (same data the
  * interactive picker shows). Empty when the cache has nothing — the UI keeps
  * free-text entry as the fallback. */
 const CACHE_ALIASES: Record<string, string> = { "openai-api": "openai" };
 
-export function listModels(providerId: string, root?: string): string[] {
-  const keys = [providerId, CACHE_ALIASES[providerId]].filter((id): id is string => Boolean(id));
+type CachedWorkerModel = {
+  id?: unknown;
+  name?: unknown;
+  release_date?: unknown;
+  last_updated?: unknown;
+  tool_call?: unknown;
+  modalities?: { output?: unknown };
+};
+
+function cachedModels(providerId: string, root?: string): Record<string, CachedWorkerModel> {
+  const canonical = providerOption(providerId)?.id ?? providerId;
+  const keys = [providerId, canonical, CACHE_ALIASES[canonical]].filter((id, index, all): id is string => Boolean(id) && all.indexOf(id) === index);
   const paths = [join(hermesHome(root), "models_dev_cache.json"), join(propertyProfileDir(root), "models_dev_cache.json")];
   for (const path of paths) {
     try {
-      const cache = JSON.parse(readFileSync(path, "utf8")) as Record<string, { models?: Record<string, unknown> } | undefined>;
+      const cache = JSON.parse(readFileSync(path, "utf8")) as Record<string, { models?: Record<string, CachedWorkerModel> } | undefined>;
       for (const key of keys) {
         const entry = cache[key]?.models;
-        if (!entry || typeof entry !== "object") continue;
-        return Object.keys(entry)
-          .filter((id) => !/imagine|video|image/i.test(id))
-          .sort((a, b) => a.localeCompare(b));
+        if (entry && typeof entry === "object") return entry;
       }
     } catch {
       /* try the next cache path */
     }
   }
-  return [];
+  return {};
+}
+
+function isTextWorkerModel(id: string, model: CachedWorkerModel): boolean {
+  const output = model.modalities?.output;
+  if (Array.isArray(output) && !output.includes("text")) return false;
+  if (model.tool_call === false) return false;
+  return !/(?:^|[-/:])(audio|embed|embedding|guard|image|imagine|moderation|music|ocr|speech|tts|video|veo|whisper)(?:$|[-/:.])/i.test(id);
+}
+
+function modelName(id: string, model?: CachedWorkerModel): string {
+  const named = typeof model?.name === "string" ? model.name.trim() : "";
+  return named || id;
+}
+
+function modelDate(model?: CachedWorkerModel): string | null {
+  const value = typeof model?.release_date === "string"
+    ? model.release_date
+    : typeof model?.last_updated === "string"
+      ? model.last_updated
+      : "";
+  return /^\d{4}-\d{2}(?:-\d{2})?$/.test(value) ? value : null;
+}
+
+/** A compact picker for people, not the full registry. The worker cache is
+ * sorted by provider release date so new text/tool models appear without a
+ * RealBud release; curated entries are a safe fallback when that cache is
+ * missing or stale. */
+export function listModelOptions(providerId: string, root?: string): WorkerModelOption[] {
+  const provider = providerOption(providerId);
+  if (!provider) return [];
+  const models = cachedModels(providerId, root);
+  const out: WorkerModelOption[] = [];
+  const seen = new Set<string>();
+  for (const id of provider.recommendedModels) {
+    const model = models[id];
+    out.push({ id, name: modelName(id, model), releaseDate: modelDate(model), recommended: true });
+    seen.add(id);
+  }
+  const recent = Object.entries(models)
+    .filter(([id, model]) => !seen.has(id) && isTextWorkerModel(id, model))
+    .sort(([leftId, left], [rightId, right]) => {
+      const byDate = String(modelDate(right) ?? "").localeCompare(String(modelDate(left) ?? ""));
+      return byDate || leftId.localeCompare(rightId, undefined, { numeric: true });
+    })
+    .slice(0, 12);
+  for (const [id, model] of recent) {
+    out.push({ id, name: modelName(id, model), releaseDate: modelDate(model), recommended: false });
+  }
+  return out;
+}
+
+export function listModels(providerId: string, root?: string): string[] {
+  return Object.keys(cachedModels(providerId, root))
+    .filter((id) => !/imagine|video|image/i.test(id))
+    .sort((a, b) => a.localeCompare(b));
 }
 
 export function modelStatus(root?: string): ModelStatus {
@@ -255,22 +324,52 @@ export function modelStatus(root?: string): ModelStatus {
   } catch { /* no config yet */ }
   let keyPresent = false;
   let keyHint: string | null = null;
-  try {
-    const envPath = join(propertyProfileDir(root), ".env");
-    if (existsSync(envPath)) {
-      const envBody = readFileSync(envPath, "utf8");
-      const providerId = provider ? providerOption(provider)?.envVar : null;
-      const candidates = providerId ? [providerId] : PROVIDER_OPTIONS.map((p) => p.envVar);
-      for (const envVar of candidates) {
-        const match = new RegExp(`^${envVar}=(.+)$`, "m").exec(envBody);
-        if (match?.[1]) {
+  // Only direct key-provider ids read the profile .env. Aliased ids such as
+  // xai-oauth must keep using Hermes' opaque auth store.
+  const providerConfig = provider ? PROVIDER_OPTIONS.find((option) => option.id === provider) ?? null : null;
+  if (providerConfig) {
+    try {
+      const envPath = join(propertyProfileDir(root), ".env");
+      if (existsSync(envPath)) {
+        const envBody = readFileSync(envPath, "utf8");
+        const match = new RegExp(`^${providerConfig.envVar}=(.+)$`, "m").exec(envBody);
+        if (match?.[1]?.trim()) {
           keyPresent = true;
-          keyHint = `${envVar} ${mask(match[1]!.trim())}`;
-          break;
+          keyHint = `${providerConfig.envVar} ${mask(match[1].trim())}`;
         }
       }
+    } catch { /* unreadable credentials stay disconnected */ }
+  } else if (provider) {
+    const authPaths = [join(propertyProfileDir(root), "auth.json"), join(hermesHome(root), "auth.json")];
+    for (const authPath of authPaths) {
+      try {
+        const auth = JSON.parse(readFileSync(authPath, "utf8")) as {
+          providers?: unknown;
+          credential_pool?: unknown;
+        };
+        const hasExactProvider = (collection: unknown): boolean => {
+          if (Array.isArray(collection)) {
+            return collection.some((entry) => {
+              if (entry === provider) return true;
+              if (!entry || typeof entry !== "object") return false;
+              const item = entry as { id?: unknown; provider?: unknown; provider_id?: unknown };
+              return item.id === provider || item.provider === provider || item.provider_id === provider;
+            });
+          }
+          return Boolean(
+            collection
+              && typeof collection === "object"
+              && Object.prototype.hasOwnProperty.call(collection, provider),
+          );
+        };
+        if (hasExactProvider(auth.providers) || hasExactProvider(auth.credential_pool)) {
+          keyPresent = true;
+          keyHint = `${provider} profile login`;
+          break;
+        }
+      } catch { /* missing or malformed profile auth stays disconnected */ }
     }
-  } catch { /* ignore */ }
+  }
   return { provider, model, keyPresent, keyHint };
 }
 
@@ -280,6 +379,16 @@ export function attachModel(input: AttachModelInput, opts?: { root?: string }): 
   const model = validatedModelId(input.model);
   const key = validatedApiKey(input.apiKey);
   const baseUrl = validatedBaseUrl(input.baseUrl);
+  const currentStatus = modelStatus(opts?.root);
+  const profileLogin = input.providerId !== option.id;
+  const keepsProfileLogin = profileLogin && currentStatus.provider === input.providerId && currentStatus.keyPresent;
+
+  if (profileLogin && key) {
+    throw Object.assign(new Error("the current Hermes login does not accept a pasted API key"), { status: 400 });
+  }
+  if (profileLogin && !keepsProfileLogin) {
+    throw Object.assign(new Error("the current Hermes login is no longer available"), { status: 400 });
+  }
 
   const profileDir = propertyProfileDir(opts?.root);
   if (!existsSync(join(profileDir, "SOUL.md"))) {
@@ -291,16 +400,17 @@ export function attachModel(input: AttachModelInput, opts?: { root?: string }): 
   const envPath = join(profileDir, ".env");
   const hasExistingKey =
     existsSync(envPath) && new RegExp(`^${option.envVar}=.+`, "m").test(readFileSync(envPath, "utf8"));
-  if (!key && !hasExistingKey) {
+  if (!key && !hasExistingKey && !keepsProfileLogin) {
     throw Object.assign(new Error(`an api key is required for ${option.label}`), { status: 400 });
   }
   if (key) upsertEnvLine(envPath, option.envVar, key);
 
   const configPath = join(profileDir, "config.yaml");
-  const existing = existsSync(configPath) ? readFileSync(configPath, "utf8") : "";
+  const existingConfig = existsSync(configPath) ? readFileSync(configPath, "utf8") : "";
+  const provider = keepsProfileLogin ? input.providerId : option.id;
   const block =
-    `model:\n  default: ${model}\n  provider: ${option.id}\n  base_url: ${baseUrl ? JSON.stringify(baseUrl) : "''"}\n`;
-  writeFileAtomic(configPath, withYamlBlock(existing, "model", block));
+    `model:\n  default: ${model}\n  provider: ${provider}\n  base_url: ${baseUrl ? JSON.stringify(baseUrl) : "''"}\n`;
+  writeFileAtomic(configPath, withYamlBlock(existingConfig, "model", block));
 
   const status = modelStatus(opts?.root);
   return { ...status, keyPresent: true };

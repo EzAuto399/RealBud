@@ -17,7 +17,29 @@ import { seedVault } from "./vault.ts";
 // share this budget. 120s covers a slow model without hanging the run.
 const WORKER_TIMEOUT_MS = 120_000;
 
-export type WorkerChatOpts = { cli?: string; root?: string; timeoutMs?: number };
+const WORKER_TOOLSETS = ["todo", "file", "web"] as const;
+export type WorkerToolset = (typeof WORKER_TOOLSETS)[number];
+
+export type WorkerChatOpts = {
+  cli?: string;
+  root?: string;
+  timeoutMs?: number;
+  maxTurns?: number;
+  /** Exact per-run Hermes tool boundary. Missing means model-only plus the
+   * in-memory todo helper, never the profile's broad default toolsets. */
+  toolsets?: WorkerToolset[];
+};
+
+function boundedToolsets(value: WorkerChatOpts["toolsets"]): WorkerToolset[] | null {
+  const requested = value ?? ["todo"];
+  if (!requested.length) return ["todo"];
+  const out: WorkerToolset[] = [];
+  for (const item of requested) {
+    if (!(WORKER_TOOLSETS as readonly string[]).includes(item)) return null;
+    if (!out.includes(item)) out.push(item);
+  }
+  return out;
+}
 
 export function lastJsonObject(text: string): unknown | null {
   const clean = text.replace(/\x1b\[[0-9;]*m/g, "");
@@ -81,6 +103,8 @@ export async function askWorker(
       detail: `installed ${version.trim()}, pin is v${HERMES_PIN.product} (${HERMES_PIN.tag}).`,
     };
   }
+  const toolsets = boundedToolsets(opts?.toolsets);
+  if (!toolsets) return { ok: false, detail: "the worker tool boundary is not usable." };
 
   return new Promise((resolve) => {
     const env = { ...process.env, PATH: augmentedPath() };
@@ -94,7 +118,18 @@ export async function askWorker(
     };
     const child = execFileCli(
       cli,
-      ["--profile", HERMES_PIN.profile, "chat", "-Q", "-q", prompt, "--max-turns", "6"],
+      [
+        "--profile",
+        HERMES_PIN.profile,
+        "chat",
+        "-Q",
+        "--toolsets",
+        toolsets.join(","),
+        "-q",
+        prompt,
+        "--max-turns",
+        String(Math.max(1, Math.min(12, opts?.maxTurns ?? 6))),
+      ],
       execOpts,
       (err, stdout, stderr) => {
         if (err) {
@@ -124,8 +159,10 @@ function draftPrompt(text: string): string {
   return (
     `The user described a recurring property-management job. Return JSON ONLY as the last line: ` +
     `{ "title": "…", "steps": ["…"], "allowedOrigins": ["portal.example.com"], "evidence": "what each run must capture", ` +
+    `"capabilities": ["read-book", "read-files", "web-research", "analyse", "draft"], ` +
     `"schedule": { "time": "HH:MM", "weekdays": [0] } or null }\n` +
     `Origins are bare https hosts of the portals named in the description (no paths). ` +
+    `Capabilities must contain only the safe abilities actually needed; never return send, submit, payment, trust, legal, notice, or record-mutation authority. ` +
     `Steps are plain imperative sentences. Never include credentials. ` +
     `If the description names no portal site, allowedOrigins may be []. ` +
     `If the description names a cadence ("every Friday 4pm", "weekday mornings 7:30"), ` +
@@ -144,14 +181,20 @@ export async function shapeRecipeDraft(
   const parsed = lastJsonObject(result.stdout);
   if (parsed == null) return { draft: null, detail: "Bud answered without a job card." };
   try {
-    const fields = validateRecipe(parsed);
+    const fields = validateRecipe({ ...(parsed as Record<string, unknown>), description: text });
+    const createdAt = Date.now();
     return {
       draft: {
         id: randomUUID(),
         ...fields,
         status: "shadow",
-        createdAt: Date.now(),
+        createdAt,
         planApprovedAt: null,
+        revision: 1,
+        updatedAt: createdAt,
+        approvedRevision: null,
+        attachment: null,
+        submitAcknowledgedAt: null,
       },
       detail: "Bud shaped the job.",
     };

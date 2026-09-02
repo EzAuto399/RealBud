@@ -1,20 +1,39 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Building2, CircleAlert, Loader2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Building2, CircleAlert, Loader2, X } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import type { CsvColumnMapping, CsvImportPreview, DeskSnapshot, Draft, Property } from "@/lib/desk";
-import { buildDeskQueue, filterDeskQueue, queueCounts, type QueueFilter } from "@/lib/desk-queue";
-import { handsChip } from "@/lib/hands-label";
+import {
+  buildDeskQueue,
+  filterDeskQueue,
+  queueCounts,
+  type DeskQueueItem,
+  type DeskRecoveryPlan,
+  type QueueCounts,
+  type QueueFilter,
+} from "@/lib/desk-queue";
+import { handsChip, missAction } from "@/lib/hands-label";
+import { draftViaLine, phoneChip, phoneChipTone, phonePaired } from "@/lib/phone-label";
+import { readChannels, type ChannelsState } from "@/lib/telegram-channel";
 import { CaseQueueRow, RecoveryNotice, SplitView, StatusLabel } from "./pm";
 import { DeskBook } from "./desk/DeskBook";
 import { DeskCase } from "./desk/DeskCase";
 import { DeskEvidence } from "./desk/DeskEvidence";
 import { GoLiveCard } from "./desk/GoLiveCard";
+import { JobRunFeed } from "./desk/JobRunFeed";
+import { CASE_KIND_LABELS } from "./desk/labels";
 import { MorningBrief, MorningEmpty } from "./desk/MorningBrief";
 import { isDemoWorkerMiss, morningBrief } from "@/lib/morning-brief";
 import { workdayGuide } from "@/lib/workday";
-import { fmtDateTime } from "@/lib/au";
+import { recheckProgress } from "@/lib/task-progress";
+import { COMPACT_WINDOW_QUERY, useMediaQuery } from "@/lib/use-media-query";
 import { api, useStore } from "@/state/store";
+
+function deskFacingError(cause: unknown): string {
+  const raw = cause instanceof Error ? cause.message : String(cause);
+  if (/revision|stale|conflict/i.test(raw)) return "This card changed — open it again";
+  return raw;
+}
 
 export function DeskPage() {
   const { state, dispatch, refreshHermes } = useStore();
@@ -23,18 +42,68 @@ export function DeskPage() {
   const [snap, setSnap] = useState<DeskSnapshot | null>(state.desk ?? null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  const [recheckStartedAt, setRecheckStartedAt] = useState<number | null>(null);
+  const [recheckElapsed, setRecheckElapsed] = useState(0);
   const [ready, setReady] = useState(state.desk != null);
   const [mode, setMode] = useState<"cases" | "book">("cases");
+  const [jobRunsOpen, setJobRunsOpen] = useState(false);
   // A "Connect your export" entry elsewhere in the app lands here in Book mode.
   useEffect(() => {
     if (state.deskBookNonce > 0) setMode("book");
   }, [state.deskBookNonce]);
   const [filter, setFilter] = useState<QueueFilter>("now");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Case stays primary under 1280; queue opens only when something needs you
+  // (or the PM taps Open Queue). Wide desks keep the side pane always visible.
   const [queueOpen, setQueueOpen] = useState(false);
+  const autoOpenedForNeedRef = useRef(false);
   const [railOpen, setRailOpen] = useState(false);
   const [announce, setAnnounce] = useState("");
   const [query, setQuery] = useState("");
+  const [channels, setChannels] = useState<ChannelsState | null>(null);
+  // Short windows (Electron floor is 600px) fold the brief to one line so the
+  // case wording stays visible; the PM can still expand it for the day.
+  const compact = useMediaQuery(COMPACT_WINDOW_QUERY);
+  const [briefExpanded, setBriefExpanded] = useState(false);
+  const [keysHint, setKeysHint] = useState(() => {
+    try {
+      return typeof window !== "undefined" && window.localStorage.getItem("realbud.deskKeysHint") !== "1";
+    } catch {
+      return true;
+    }
+  });
+
+  useEffect(() => {
+    if (!announce) return;
+    const clear = window.setTimeout(() => setAnnounce(""), 2400);
+    return () => window.clearTimeout(clear);
+  }, [announce]);
+
+  useEffect(() => {
+    if (busy !== "check" || recheckStartedAt == null) return;
+    setRecheckElapsed(Math.max(0, Math.floor((Date.now() - recheckStartedAt) / 1_000)));
+    const id = window.setInterval(
+      () => setRecheckElapsed(Math.max(0, Math.floor((Date.now() - recheckStartedAt) / 1_000))),
+      1_000,
+    );
+    return () => window.clearInterval(id);
+  }, [busy, recheckStartedAt]);
+
+  useEffect(() => {
+    if (!state.connected) return;
+    void api("/api/channels")
+      .then((body) => setChannels(readChannels(body)))
+      .catch(() => setChannels(null));
+  }, [state.connected, state.desk?.revision]);
+
+  const dismissKeysHint = () => {
+    setKeysHint(false);
+    try {
+      window.localStorage.setItem("realbud.deskKeysHint", "1");
+    } catch {
+      /* ignore */
+    }
+  };
 
   const load = useCallback(async () => {
     try {
@@ -59,8 +128,29 @@ export function DeskPage() {
     if (state.desk) setSnap(state.desk);
   }, [state.desk]);
 
+  // Phone Allow/Deny arrives over SSE — toast the via stamp when a draft flips.
+  const prevDraftsRef = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    if (!snap) return;
+    const prev = prevDraftsRef.current;
+    const next = new Map<string, string>();
+    for (const draft of snap.drafts) {
+      next.set(draft.id, draft.status);
+      const was = prev.get(draft.id);
+      if (was === "pending" && (draft.status === "allowed" || draft.status === "denied") && draft.via) {
+        const line = draftViaLine(draft);
+        if (line) setAnnounce(line);
+      }
+    }
+    prevDraftsRef.current = next;
+  }, [snap]);
+
   const run = async (path: string, method: string, body?: unknown, key: string = method, spoken?: string) => {
     setBusy(key);
+    if (key === "check") {
+      setRecheckStartedAt(Date.now());
+      setRecheckElapsed(0);
+    }
     setError("");
     try {
       const next = (await api(path, {
@@ -73,9 +163,10 @@ export function DeskPage() {
       } else await load();
       if (spoken) setAnnounce(spoken);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(deskFacingError(cause));
     } finally {
       setBusy(null);
+      if (key === "check") setRecheckStartedAt(null);
     }
   };
 
@@ -121,6 +212,42 @@ export function DeskPage() {
   const selected = visible.find((row) => row.id === selectedId) ?? visible[0];
   const counts = queueCounts(rows);
 
+  const recoverCase = useCallback(
+    (item: DeskQueueItem, plan: DeskRecoveryPlan) => {
+      if (plan.action === "book") {
+        setMode("book");
+        setAnnounce("Properties opened for matching");
+        return;
+      }
+      if (plan.action === "you") {
+        dispatch({ type: "showYou" });
+        return;
+      }
+      if (plan.action !== "ask" || !plan.prompt) return;
+      const bud = state.bots.find((bot) => bot.name.trim().toLowerCase() === "bud") ?? state.bots[0];
+      if (!bud) {
+        setError("Bud is not ready yet. Open You to finish setup.");
+        return;
+      }
+      dispatch({ type: "showAsk" });
+      dispatch({ type: "send", botId: bud.id, text: plan.prompt });
+      setAnnounce(`Bud is investigating ${item.address.split(",")[0]?.trim() || "this case"}`);
+    },
+    [dispatch, state.bots],
+  );
+
+  useEffect(() => {
+    if (counts.now <= 0) {
+      autoOpenedForNeedRef.current = false;
+      return;
+    }
+    if (autoOpenedForNeedRef.current) return;
+    if (typeof window === "undefined" || window.matchMedia("(min-width: 1280px)").matches) return;
+    autoOpenedForNeedRef.current = true;
+    setQueueOpen(true);
+    setFilter("now");
+  }, [counts.now]);
+
   useEffect(() => {
     if (selected && selected.id !== selectedId) setSelectedId(selected.id);
   }, [selected, selectedId]);
@@ -132,6 +259,12 @@ export function DeskPage() {
       if (target instanceof HTMLElement) {
         const tag = target.tagName;
         if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable) return;
+        if (
+          target.closest('[role="listbox"]') &&
+          (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End" || event.key === "Enter")
+        ) {
+          return;
+        }
       }
       const index = visible.findIndex((row) => row.id === selected?.id);
       if (event.key === "ArrowDown" && index < visible.length - 1) {
@@ -192,13 +325,10 @@ export function DeskPage() {
 
   const brief = morningBrief(snap);
   const timezone = snap.book?.agency.timezone || snap.timezone;
+  const miss = snap.handsDetail && isDemoWorkerMiss(snap.hands, snap.handsDetail) ? missAction(snap.handsDetail) : null;
   const empty =
     snap.lastRunAt == null ? (
-      <MorningEmpty
-        brief={brief}
-        busy={busy === "check"}
-        onRecheck={() => void run("/api/desk/check", "POST", undefined, "check", "Recheck ran")}
-      />
+      <MorningEmpty brief={brief} />
     ) : visible.length === 0 ? (
       query.trim() ? (
         <MorningEmpty brief={{ ...brief, headline: "No cases match that search." }} />
@@ -214,26 +344,50 @@ export function DeskPage() {
       <div aria-live="polite" className="sr-only">
         {announce}
       </div>
-      <header className="shrink-0 border-b border-line px-5 pb-3 pt-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2.5">
-              <Building2 size={21} className="text-agency" />
-              <h1 className="pm-screen-title text-ink">Desk</h1>
-            </div>
-            <p className="mt-1 max-w-[46rem] text-[12.5px] text-ink-muted">
-              {snap.demo || snap.mode === "demo" ? "Demo book. " : ""}
-              Queue, case, evidence. Recheck asks Bud. A miss stays a miss. You send from the PMS. It will not send a notice or move trust.
-            </p>
+      {announce ? (
+        <div
+          role="status"
+          className="pointer-events-none fixed bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-lg border border-line bg-sheet px-4 py-2 text-[13px] font-medium text-ink shadow-sm"
+        >
+          {announce}
+        </div>
+      ) : null}
+      <header className="pm-desk-header shrink-0 border-b border-line px-5 pb-3 pt-4">
+        <div className="pm-desk-toolbar">
+          <div className="flex min-w-0 flex-wrap items-center gap-2.5">
+            <Building2 size={21} className="shrink-0 text-agency" />
+            <h1 className="pm-screen-title text-ink">Desk</h1>
+            <StatusLabel
+              tone={snap.hands === "held" || isDemoWorkerMiss(snap.hands, snap.handsDetail) ? "hold" : snap.hands === "hermes" || snap.hands === "csv" ? "agency" : "muted"}
+            >
+              {handsChip(snap.hands)}
+            </StatusLabel>
+            {phonePaired(channels) ? (
+              <StatusLabel
+                tone={phoneChipTone(channels)}
+                title="Pair Telegram, Discord, or Slack under You → Phone to Allow courtesy wording from your phone"
+              >
+                {phoneChip(channels)}
+              </StatusLabel>
+            ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              className="pm-control rounded border border-line bg-sheet px-3 text-[13px] text-ink xl:hidden"
-              aria-expanded={queueOpen}
-              onClick={() => setQueueOpen((value) => !value)}
+              aria-pressed={mode === "book"}
+              title="Addresses, options, and CSV import"
+              onClick={() => setMode((value) => (value === "book" ? "cases" : "book"))}
+              className={cn("pm-control rounded border px-3 text-[13px]", mode === "book" ? "border-agency bg-selected text-ink" : "border-line bg-sheet text-ink")}
             >
-              Queue
+              Properties
+            </button>
+            <button
+              type="button"
+              aria-expanded={jobRunsOpen}
+              onClick={() => setJobRunsOpen((value) => !value)}
+              className={cn("pm-control rounded border px-3 text-[13px]", jobRunsOpen ? "border-agency bg-selected text-ink" : "border-line bg-sheet text-ink")}
+            >
+              Activity
             </button>
             <button
               type="button"
@@ -245,45 +399,57 @@ export function DeskPage() {
             </button>
             <button
               type="button"
-              aria-pressed={mode === "book"}
-              onClick={() => setMode((value) => (value === "book" ? "cases" : "book"))}
-              className={cn("pm-control rounded border px-3 text-[13px]", mode === "book" ? "border-agency bg-selected text-ink" : "border-line bg-sheet text-ink")}
+              className="pm-control rounded border border-line bg-sheet px-3 text-[13px] text-ink xl:hidden"
+              aria-expanded={queueOpen}
+              onClick={() => setQueueOpen((value) => !value)}
             >
-              Book
+              {queueOpen ? "Hide queue" : `Queue · ${counts.now}`}
             </button>
             <button
               type="button"
-              onClick={() => void run("/api/desk/check", "POST", undefined, "check", "Recheck ran")}
+              onClick={() => {
+                // Second press while a check is in flight is a no-op, not a second run.
+                if (busy === "check") return;
+                void run("/api/desk/check", "POST", undefined, "check", "Recheck ran");
+              }}
               aria-busy={busy === "check"}
-              className="pm-control flex items-center gap-2 rounded bg-agency px-3.5 text-[14px] font-medium text-white hover:bg-agency-hover"
+              className={cn(
+                "pm-control flex items-center gap-2 rounded bg-agency px-3.5 text-[14px] font-medium text-white hover:bg-agency-hover",
+                busy === "check" && "cursor-progress opacity-80",
+              )}
             >
               {busy === "check" ? <Loader2 size={14} className="animate-spin" /> : null}
               Recheck
             </button>
           </div>
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
-          <StatusLabel tone="agency">{counts.now} need you</StatusLabel>
-          <StatusLabel tone="hold">{counts.waiting} waiting</StatusLabel>
-          {counts.next > 0 ? (
-            <button type="button" onClick={() => { setFilter("next"); setMode("cases"); }} className="rounded-full">
-              <StatusLabel tone="muted">{counts.next} next</StatusLabel>
-            </button>
-          ) : null}
-          {counts.done > 0 ? <StatusLabel tone="muted">{counts.done} done today</StatusLabel> : null}
-          <StatusLabel tone="danger">{counts.licensee} licensee</StatusLabel>
-          <StatusLabel tone="muted">{snap.properties.length} properties</StatusLabel>
-          <StatusLabel tone={snap.hands === "held" || isDemoWorkerMiss(snap.hands, snap.handsDetail) ? "hold" : snap.hands === "hermes" || snap.hands === "csv" ? "agency" : "muted"}>
-            {handsChip(snap.hands)}
-          </StatusLabel>
-          {snap.lastRunAt ? (
-            <StatusLabel tone={isDemoWorkerMiss(snap.hands, snap.handsDetail) ? "hold" : "muted"}>
-              {isDemoWorkerMiss(snap.hands, snap.handsDetail) ? "Last miss" : "Last check"} {fmtDateTime(snap.lastRunAt, timezone)}
-            </StatusLabel>
-          ) : null}
-        </div>
+        <p className="pm-desk-subtitle mt-1 max-w-[46rem] text-[12.5px] text-ink-muted">
+          {snap.demo || snap.mode === "demo" ? "Sample book. " : ""}
+          Queue → case → Allow → Copy into your PMS. Recheck asks Bud; a miss stays a miss.
+        </p>
         {isDemoWorkerMiss(snap.hands, snap.handsDetail) && snap.handsDetail ? (
-          <p className="mt-2 max-w-[46rem] text-[13px] text-hold">{snap.handsDetail}</p>
+          <div role="status" className="mt-2 flex max-w-full flex-wrap items-center gap-2 border border-hold/30 bg-hold/10 px-3 py-2 text-[13px] text-hold">
+            <span className="min-w-0 flex-1">Missed — facts held. {snap.handsDetail}</span>
+            {miss ? (
+              <button
+                type="button"
+                className="pm-control rounded border border-hold/40 bg-sheet px-3 text-[13px] text-ink"
+                onClick={() => {
+                  location.hash = miss.hash;
+                  dispatch({ type: "showYou" });
+                }}
+              >
+                {miss.label}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        {busy === "check" ? (
+          <div role="status" className="mt-2 max-w-[46rem] rounded border border-agency/20 bg-agency/5 px-3 py-2 text-[13px] text-ink-secondary">
+            <span className="font-medium text-ink">{recheckProgress(recheckElapsed).label}</span>
+            <span> · {recheckProgress(recheckElapsed).reassurance}</span>
+            <span className="ml-1 tabular-nums text-ink-muted">{recheckElapsed}s</span>
+          </div>
         ) : null}
         {snap.recovery?.active ? (
           <div className="mt-3">
@@ -291,15 +457,42 @@ export function DeskPage() {
           </div>
         ) : null}
         {error ? (
-          <div className="mt-3 flex items-start gap-2 border border-danger/30 bg-danger/10 px-3 py-2.5 text-[13px] text-danger">
+          <div
+            className={cn(
+              "mt-3 flex items-start gap-2 px-3 py-2.5 text-[13px]",
+              error.startsWith("This Mac is out of space")
+                ? "border border-hold/30 bg-hold/10 text-hold"
+                : "border border-danger/30 bg-danger/10 text-danger",
+            )}
+          >
             <CircleAlert size={16} className="mt-0.5 shrink-0" />
-            {error}
+            <span className="min-w-0 flex-1">{error}</span>
+            <button
+              type="button"
+              onClick={() => setError("")}
+              className={cn(
+                "shrink-0 text-[12px] underline-offset-2 hover:underline",
+                error.startsWith("This Mac is out of space") ? "text-hold/80" : "text-danger/80",
+              )}
+            >
+              Dismiss
+            </button>
           </div>
+        ) : null}
+        {keysHint ? (
+          <p className="pm-desk-hint mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-ink-muted">
+            <span>↑↓ move the queue · [ ] toggle Queue / Evidence</span>
+            <button type="button" onClick={dismissKeysHint} className="text-agency hover:underline">
+              Got it
+            </button>
+          </p>
         ) : null}
         <MorningBrief
           brief={brief}
           timezone={timezone}
           interactive
+          collapsed={compact && !briefExpanded}
+          onToggle={compact ? () => setBriefExpanded((value) => !value) : undefined}
           onOpenAddress={(propertyId) => {
             const row = rows.find((item) => item.propertyId === propertyId);
             if (!row) return;
@@ -309,15 +502,20 @@ export function DeskPage() {
             setQueueOpen(false);
           }}
         />
-        <GoLiveCard
-          mode={snap.mode}
-          agencyName={snap.book?.agency.name ?? ""}
-          workerReady={Boolean(state.hermes?.ready)}
-          compact
-          onConnectExport={() => setMode("book")}
-          onAttachWorker={() => dispatch({ type: "showYou" })}
-          onSaveAgency={(name) => void run("/api/desk/agency", "PATCH", { name }, "agency", "Agency saved")}
-        />
+        {/* In a short window with a case open, the case wins the space; the same
+            go-live journey stays on You and in the sidebar pulse. */}
+        {compact && selected && mode === "cases" ? null : (
+          <GoLiveCard
+            mode={snap.mode}
+            agencyName={snap.book?.agency.name ?? ""}
+            workerReady={Boolean(state.hermes?.ready)}
+            compact
+            onConnectExport={() => setMode("book")}
+            onAttachWorker={() => dispatch({ type: "showYou" })}
+            onNameAgency={() => dispatch({ type: "showYou" })}
+          />
+        )}
+        {jobRunsOpen ? <JobRunFeed limit={6} className="mt-3" /> : null}
       </header>
 
       {mode === "book" ? (
@@ -340,6 +538,7 @@ export function DeskPage() {
         <SplitView
           queueOpen={queueOpen}
           railOpen={railOpen}
+          onCloseQueue={() => setQueueOpen(false)}
           queue={
             <QueuePane
               filter={filter}
@@ -347,7 +546,10 @@ export function DeskPage() {
               query={query}
               onQuery={setQuery}
               rows={visible}
+              counts={counts}
               selectedId={selected?.id}
+              onClose={() => setQueueOpen(false)}
+              onHighlight={setSelectedId}
               onSelect={(id) => {
                 setSelectedId(id);
                 setQueueOpen(false);
@@ -361,13 +563,23 @@ export function DeskPage() {
               busy={busy}
               empty={empty}
               onAllow={(draft) => void run(`/api/desk/drafts/${draft.id}/allow`, "POST", { expectedRevision: snap.revision }, draft.id, "Wording allowed")}
-              onDeny={(draft) => void run(`/api/desk/drafts/${draft.id}/deny`, "POST", { expectedRevision: snap.revision }, draft.id, "Wording denied")}
+              onDeny={(draft, reason) =>
+                void run(
+                  `/api/desk/drafts/${draft.id}/deny`,
+                  "POST",
+                  { expectedRevision: snap.revision, ...(reason ? { reason } : {}) },
+                  draft.id,
+                  "Wording denied",
+                )
+              }
               onEdit={(draft, body) => void run(`/api/desk/drafts/${draft.id}`, "PATCH", { body }, draft.id, "Wording saved")}
               onCopy={(body) => {
                 void navigator.clipboard.writeText(body);
-                setAnnounce("Wording copied");
+                const street = selected?.address ? selected.address.split(",")[0]?.trim() : "";
+                setAnnounce(street ? `Copied… ${street}` : "Copied…");
               }}
               onPrepare={(draft) => void run(`/api/desk/drafts/${draft.id}/prepare`, "POST", undefined, `prepare-${draft.id}`, "Portal prepared")}
+              onRecover={recoverCase}
             />
           }
           rail={
@@ -383,22 +595,32 @@ export function DeskPage() {
   );
 }
 
+function queueRowId(id: string): string {
+  return `queue-row-${id}`;
+}
+
 function QueuePane({
   filter,
   onFilter,
   query,
   onQuery,
   rows,
+  counts,
   selectedId,
+  onHighlight,
   onSelect,
+  onClose,
 }: {
   filter: QueueFilter;
   onFilter: (filter: QueueFilter) => void;
   query: string;
   onQuery: (query: string) => void;
   rows: ReturnType<typeof filterDeskQueue>;
+  counts: QueueCounts;
   selectedId?: string;
+  onHighlight: (id: string) => void;
   onSelect: (id: string) => void;
+  onClose: () => void;
 }) {
   const filters: Array<[QueueFilter, string]> = [
     ["now", "Now"],
@@ -407,9 +629,42 @@ function QueuePane({
     ["done", "Done"],
     ["all", "All"],
   ];
+  const highlight = (id: string) => {
+    onHighlight(id);
+    document.getElementById(queueRowId(id))?.scrollIntoView({ block: "nearest" });
+  };
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex flex-wrap gap-1 border-b border-line px-3 py-3">
+    <div className="flex h-full min-h-0 flex-col bg-sheet">
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-line px-3 py-2.5">
+        <h2 className="mr-1 text-[14px] font-semibold text-ink">Queue</h2>
+        <button type="button" onClick={() => onFilter("now")} className="rounded-full">
+          <StatusLabel tone="agency">{counts.now} need you</StatusLabel>
+        </button>
+        <button type="button" onClick={() => onFilter("waiting")} className="rounded-full">
+          <StatusLabel tone="hold">{counts.waiting} waiting</StatusLabel>
+        </button>
+        {counts.next > 0 ? (
+          <button type="button" onClick={() => onFilter("next")} className="rounded-full">
+            <StatusLabel tone="muted">{counts.next} next</StatusLabel>
+          </button>
+        ) : null}
+        {counts.done > 0 ? <StatusLabel tone="muted">{counts.done} done today</StatusLabel> : null}
+        {counts.licensee > 0 ? (
+          <StatusLabel tone="danger" title="For the licensed person — RealBud will not draft a notice">
+            {counts.licensee} licensee
+          </StatusLabel>
+        ) : null}
+        <button
+          type="button"
+          onClick={onClose}
+          className="pm-control ml-auto inline-flex items-center gap-1.5 rounded border border-line bg-paper px-2.5 text-[12px] text-ink xl:hidden"
+          aria-label="Close queue"
+        >
+          <X size={14} aria-hidden />
+          Close
+        </button>
+      </div>
+      <div className="flex flex-wrap gap-1.5 border-b border-line px-3 py-2.5" role="toolbar" aria-label="Queue filters">
         {filters.map(([value, label]) => (
           <button
             key={value}
@@ -417,8 +672,8 @@ function QueuePane({
             aria-pressed={filter === value}
             onClick={() => onFilter(value)}
             className={cn(
-              "rounded-full border px-2.5 py-1 text-[11px]",
-              filter === value ? "border-agency bg-selected text-ink" : "border-line bg-sheet text-ink-muted",
+              "min-h-9 rounded border px-2 py-1.5 text-[12px]",
+              filter === value ? "border-agency bg-selected text-ink" : "border-line bg-paper text-ink-muted",
             )}
           >
             {label}
@@ -431,18 +686,61 @@ function QueuePane({
           type="search"
           value={query}
           onChange={(event) => onQuery(event.target.value)}
-          className="mt-1 w-full rounded border border-line bg-sheet px-2 py-1.5 text-[13px] text-ink"
+          className="mt-1 w-full rounded border border-line bg-paper px-2 py-1.5 text-[13px] text-ink"
         />
       </label>
-      <div className="min-h-0 flex-1 overflow-y-auto" role="listbox" aria-label="Case queue">
+      <div
+        className="min-h-0 flex-1 overflow-y-auto"
+        role="listbox"
+        tabIndex={0}
+        aria-label="Case queue"
+        aria-activedescendant={selectedId ? queueRowId(selectedId) : undefined}
+        onKeyDown={(event) => {
+          if (!rows.length) return;
+          const current = rows.findIndex((row) => row.id === selectedId);
+          if (event.key === "ArrowDown") {
+            event.preventDefault();
+            const next = current < 0 ? 0 : Math.min(rows.length - 1, current + 1);
+            highlight(rows[next]!.id);
+          } else if (event.key === "ArrowUp") {
+            event.preventDefault();
+            const next = current < 0 ? rows.length - 1 : Math.max(0, current - 1);
+            highlight(rows[next]!.id);
+          } else if (event.key === "Home") {
+            event.preventDefault();
+            highlight(rows[0]!.id);
+          } else if (event.key === "End") {
+            event.preventDefault();
+            highlight(rows[rows.length - 1]!.id);
+          } else if (event.key === "Enter") {
+            event.preventDefault();
+            const id = selectedId ?? rows[0]?.id;
+            if (id) onSelect(id);
+          }
+        }}
+      >
         {rows.length === 0 ? (
-          <p className="px-3 py-4 text-[13px] text-ink-muted">No cases in this filter.</p>
+          filter === "now" ? (
+            <div className="space-y-3 px-3 py-4 text-[13px] text-ink-muted">
+              <p>Nothing needs you right now.</p>
+              <button
+                type="button"
+                onClick={() => onFilter("waiting")}
+                className="pm-control rounded border border-line bg-paper px-3 text-[13px] text-ink"
+              >
+                Open Waiting
+              </button>
+            </div>
+          ) : (
+            <p className="px-3 py-4 text-[13px] text-ink-muted">No cases in this filter.</p>
+          )
         ) : (
           rows.map((row) => (
             <CaseQueueRow
               key={row.id}
+              id={queueRowId(row.id)}
               title={row.address}
-              meta={`${row.kind.replace("-", " ")} · ${row.meta}`}
+              meta={`${CASE_KIND_LABELS[row.kind] ?? row.kind} · ${row.meta}`}
               action={row.action}
               selected={row.id === selectedId}
               onSelect={() => onSelect(row.id)}

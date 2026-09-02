@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { HERMES_PIN } from "./hermes-pin.ts";
-import { attachModel, installStatus, listModels, modelStatus, preflight, PROVIDER_OPTIONS, startInstall } from "./hermes-bridge.ts";
+import { attachModel, installStatus, listModelOptions, listModels, modelStatus, preflight, PROVIDER_OPTIONS, startInstall } from "./hermes-bridge.ts";
 
 const dirs: string[] = [];
 const tempHome = () => {
@@ -116,6 +116,53 @@ describe("attachModel", () => {
     attachModel({ providerId: "anthropic", apiKey: "sk-ant", model: "claude-sonnet-4-5" }, { root: dir });
     expect(modelStatus(dir)).toMatchObject({ provider: "anthropic", model: "claude-sonnet-4-5", keyPresent: true });
   });
+
+  it("does not borrow an unrelated provider credential for a configured OAuth provider", () => {
+    const { dir, profile } = tempHome();
+    writeFileSync(join(profile, "config.yaml"), "model:\n  default: grok-4.5\n  provider: xai-oauth\n");
+    writeFileSync(join(profile, ".env"), "ANTHROPIC_API_KEY=unrelated-test-key\n");
+
+    expect(modelStatus(dir)).toEqual({
+      provider: "xai-oauth",
+      model: "grok-4.5",
+      keyPresent: false,
+      keyHint: null,
+    });
+  });
+
+  it("recognises only the exact configured provider in the profile credential pool", () => {
+    const { dir, profile } = tempHome();
+    writeFileSync(join(profile, "config.yaml"), "model:\n  default: grok-4.5\n  provider: xai-oauth\n");
+    writeFileSync(
+      join(profile, "auth.json"),
+      JSON.stringify({ version: 1, credential_pool: { "xai-oauth": [{ opaque: "not-inspected" }] } }),
+    );
+
+    expect(modelStatus(dir)).toEqual({
+      provider: "xai-oauth",
+      model: "grok-4.5",
+      keyPresent: true,
+      keyHint: "xai-oauth profile login",
+    });
+  });
+
+  it("changes models without replacing the current Hermes OAuth login", () => {
+    const { dir, profile } = tempHome();
+    writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
+    writeFileSync(join(profile, "config.yaml"), "model:\n  default: grok-4.5\n  provider: xai-oauth\n");
+    writeFileSync(
+      join(profile, "auth.json"),
+      JSON.stringify({ version: 1, credential_pool: { "xai-oauth": [{ opaque: "not-inspected" }] } }),
+    );
+
+    const status = attachModel({ providerId: "xai-oauth", apiKey: "", model: "grok-4.6" }, { root: dir });
+    expect(status).toMatchObject({ provider: "xai-oauth", model: "grok-4.6", keyPresent: true });
+    expect(readFileSync(join(profile, "config.yaml"), "utf8")).toMatch(/default: grok-4\.6\n  provider: xai-oauth/);
+    expect(existsSync(join(profile, ".env"))).toBe(false);
+    expect(() =>
+      attachModel({ providerId: "xai-oauth", apiKey: "must-not-be-stored", model: "grok-4.6" }, { root: dir }),
+    ).toThrow(/does not accept a pasted API key/);
+  });
 });
 
 describe("listModels", () => {
@@ -138,6 +185,30 @@ describe("listModels", () => {
       JSON.stringify({ openai: { models: { "gpt-5": {}, "gpt-image-1": {} } } }),
     );
     expect(listModels("openai-api", dir)).toEqual(["gpt-5"]);
+  });
+
+  it("offers recommended fallbacks plus the newest Hermes text/tool models", () => {
+    const dir = mkdtempSync(join(tmpdir(), "realbud-bridge-picker-"));
+    dirs.push(dir);
+    writeFileSync(
+      join(dir, "models_dev_cache.json"),
+      JSON.stringify({
+        xai: {
+          models: {
+            "grok-4.5": { name: "Grok 4.5", release_date: "2026-07-08", tool_call: true, modalities: { output: ["text"] } },
+            "grok-4.6": { name: "Grok 4.6", release_date: "2026-08-12", tool_call: true, modalities: { output: ["text"] } },
+            "grok-imagine-image": { name: "Imagine", release_date: "2026-08-20", tool_call: false, modalities: { output: ["image"] } },
+          },
+        },
+      }),
+    );
+
+    const options = listModelOptions("xai", dir);
+    expect(options[0]).toMatchObject({ id: "grok-4.6", name: "Grok 4.6", recommended: true });
+    expect(options.find((option) => option.id === "grok-4.5")).toMatchObject({ releaseDate: "2026-07-08", recommended: false });
+    expect(options.some((option) => option.id.includes("imagine"))).toBe(false);
+    expect(listModelOptions("xai-oauth", dir)).toEqual(options);
+    expect(listModelOptions("unknown-provider", dir)).toEqual([]);
   });
 });
 

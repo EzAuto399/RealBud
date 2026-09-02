@@ -8,7 +8,7 @@ export const WEEKDAYS_MON_FIRST = [1, 2, 3, 4, 5, 6, 0] as const;
 
 export const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
-export type WeekOutcome = "planned" | "paused" | "scheduled" | "next" | "running" | "done" | "partial" | "missed";
+export type WeekOutcome = "planned" | "review" | "paused" | "scheduled" | "next" | "running" | "done" | "partial" | "missed";
 
 export interface WeekSlot {
   loopId: Loop["id"];
@@ -56,6 +56,58 @@ export interface CalendarLoop {
   enabled: boolean;
   schedule: Pick<Loop["schedule"], "weekdays" | "time">;
   nextRunAt?: number | null;
+  waitingForPlan?: boolean;
+}
+
+export type WeekChipTone = "agency" | "hold" | "danger" | "muted";
+
+/** Planned loops (not yet built) belong under the grid once, not on every day. */
+export function splitPlannedLoops<T extends { available: boolean }>(
+  loops: ReadonlyArray<T>,
+): { scheduled: T[]; planned: T[] } {
+  const scheduled: T[] = [];
+  const planned: T[] = [];
+  for (const loop of loops) {
+    (loop.available ? scheduled : planned).push(loop);
+  }
+  return { scheduled, planned };
+}
+
+export function plannedLoopFootnote(loop: { name: string }): string {
+  return `${loop.name} · Planned — set the clock now; RealBud runs it after it is built.`;
+}
+
+/** Card-face / disclosure clock, e.g. "Weekdays 7:30 am". */
+export function scheduleSummary(schedule: { time: string; weekdays: number[] }): string {
+  const [hour, minute] = schedule.time.split(":").map(Number);
+  const time = fmtTimeOfDay(new Date(2000, 0, 1, hour || 0, minute || 0).getTime());
+  const days = [...schedule.weekdays].sort((a, b) => a - b);
+  const dayLabel =
+    days.length === 7
+      ? "Every day"
+      : days.join(",") === "1,2,3,4,5"
+        ? "Weekdays"
+        : days.map((day) => DAY_NAMES[day]).join(", ");
+  return `${dayLabel} ${time}`;
+}
+
+export function weekOutcomeTone(outcome: WeekOutcome): WeekChipTone | null {
+  switch (outcome) {
+    case "running":
+    case "next":
+      return "agency";
+    case "partial":
+    case "review":
+      return "hold";
+    case "missed":
+      return "danger";
+    case "planned":
+    case "paused":
+    case "done":
+      return "muted";
+    case "scheduled":
+      return null;
+  }
 }
 
 export function zonedYmd(
@@ -183,6 +235,9 @@ function stampSlot(
   if (!loop.available) {
     return { outcome: "planned", stamp: "Planned", produced: 0, runId: null, openDesk: false };
   }
+  if (loop.waitingForPlan) {
+    return { outcome: "review", stamp: "Review plan", produced: 0, runId: null, openDesk: false };
+  }
   if (!loop.enabled) {
     return { outcome: "paused", stamp: "Paused", produced: 0, runId: null, openDesk: false };
   }
@@ -204,7 +259,7 @@ function stampSlot(
   }
   if (run?.status === "completed") {
     if (miss) return { outcome: "missed", stamp: "Missed", produced, runId: run.id, openDesk: true };
-    const stamp = produced > 0 ? `${produced} on Desk` : deskToday && facts?.desk?.needsYou ? `${facts.desk.needsYou} on Desk` : "Done";
+    const stamp = produced > 0 ? `${produced} on Desk` : deskToday && facts?.desk?.needsYou ? `${facts.desk.needsYou} on Desk` : "Finished";
     return { outcome: "done", stamp, produced: produced || facts?.desk?.needsYou || 0, runId: run.id, openDesk: produced > 0 || (facts?.desk?.needsYou ?? 0) > 0 };
   }
   if (deskToday) {
@@ -212,7 +267,7 @@ function stampSlot(
     const needsYou = facts?.desk?.needsYou ?? 0;
     const checked = facts?.desk?.checkedCount ?? 0;
     if (needsYou > 0) return { outcome: "done", stamp: `${needsYou} on Desk`, produced: needsYou, runId: null, openDesk: true };
-    return { outcome: "done", stamp: checked ? `${checked} checked` : "Done", produced: 0, runId: null, openDesk: false };
+    return { outcome: "done", stamp: checked ? `${checked} checked` : "Finished", produced: 0, runId: null, openDesk: false };
   }
   if (next) return { outcome: "next", stamp: "Next", produced: 0, runId: null, openDesk: false };
   return { outcome: "scheduled", stamp: null, produced: 0, runId: null, openDesk: false };
@@ -224,12 +279,13 @@ export function buildScheduleWeek(
   timeZone?: string,
   facts?: WeekFacts,
 ): WeekDay[] {
+  const { scheduled } = splitPlannedLoops(loops);
   const today = zonedYmd(nowMs, timeZone);
   const todayIndex = today.weekday === 0 ? 6 : today.weekday - 1;
   const mondayDay = today.day + (today.weekday === 0 ? -6 : 1 - today.weekday);
   const days = WEEKDAYS_MON_FIRST.map((weekday, index) => {
     const dateMs = new Date(today.year, today.month - 1, mondayDay + index).getTime();
-    const slots = loops
+    const slots = scheduled
       .filter((loop) => loop.schedule.weekdays.includes(weekday))
       .map((loop) => {
         const next = Boolean(
@@ -249,7 +305,7 @@ export function buildScheduleWeek(
       .sort((a, b) => a.time.localeCompare(b.time));
     return { weekday, dateMs, isToday: index === todayIndex, slots };
   });
-  return injectDeskRecheck(days, loops, facts, timeZone);
+  return injectDeskRecheck(days, scheduled, facts, timeZone);
 }
 
 function padClock(hour: number, minute: number): string {

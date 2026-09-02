@@ -57,6 +57,8 @@ declare global {
       /** Copies an engine install command and opens a blank terminal. False
        * when no terminal could be launched; the clipboard still has it. */
       openInstallTerminal?(command: string): Promise<boolean>;
+      /** Open an HTTPS connection/auth link in the default browser. */
+      openExternal?(url: string): Promise<boolean>;
       /** In-app auto-update (packaged app only; dormant in dev). onState
        * fires immediately with the current state, then on transitions. */
       updater?: {

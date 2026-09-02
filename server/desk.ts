@@ -45,12 +45,21 @@ import { FAKE_PORTAL_RECIPE } from "./portal-recipe.ts";
 import { CSV_FRESH_MS, isFresh } from "./source-gate.ts";
 import {
   appendAllowedLine,
+  appendAllowedLines,
   archivePropertyNote,
   readPropertyNote,
   seedVault,
   vaultDirFromDeskFile,
   writePropertyNote,
 } from "./vault.ts";
+
+const DENY_REASON_MAX = 280;
+
+function normalizeDenyReason(reason?: string): string | undefined {
+  if (typeof reason !== "string") return undefined;
+  const trimmed = reason.trim().slice(0, DENY_REASON_MAX);
+  return trimmed || undefined;
+}
 
 export {
   COURTESY_DISCLAIMER,
@@ -92,6 +101,13 @@ export interface NewPropertyInput {
   propertyCode?: string;
   weeklyRentCents: number;
   options?: Partial<PropertyOptions>;
+}
+
+export const MAX_BOOK_PROPERTIES = 1_000;
+
+interface PreparedProperty {
+  property: Property;
+  facts: LedgerFacts;
 }
 
 export type DeskCommand =
@@ -360,10 +376,55 @@ export class Desk {
 
   allowAllBookProposals(): DeskSnapshot {
     this.assertWritable();
-    const ids = this.store.v3.bookProposals.filter((p) => p.status === "open").map((p) => p.id);
+    const proposals = this.store.v3.bookProposals.filter((proposal) => proposal.status === "open");
+    if (!proposals.length) return this.snapshot();
+    const capacity = MAX_BOOK_PROPERTIES - this.store.data.properties.length;
+    if (proposals.length > capacity) {
+      throw Object.assign(
+        new Error(`This book can add ${Math.max(0, capacity)} more properties (limit ${MAX_BOOK_PROPERTIES}). No proposals were added.`),
+        { status: 400 },
+      );
+    }
+    const addresses = new Set(this.store.data.properties.map((property) => property.address.toLowerCase()));
+    const codes = new Set(
+      this.store.data.properties.map((property) => property.propertyCode?.toLowerCase()).filter((code): code is string => Boolean(code)),
+    );
+    const ids = new Set(this.store.data.properties.map((property) => property.id));
+    const prepared = proposals.map((proposal) =>
+      this.prepareProperty(
+        {
+          address: proposal.fields.address,
+          tenantName: proposal.fields.tenantName,
+          tenantPhone: proposal.fields.tenantPhone,
+          weeklyRentCents: proposal.fields.weeklyRentCents,
+        },
+        addresses,
+        codes,
+        ids,
+      ),
+    );
+    const proposalIds = new Set(proposals.map((proposal) => proposal.id));
     this.store.runBatch(() => {
-      for (const id of ids) this.allowBookProposal(id);
+      for (const row of prepared) this.insertProperty(row);
+      this.store.v3.bookProposals = this.store.v3.bookProposals.filter((proposal) => !proposalIds.has(proposal.id));
+      this.reevaluateOrKeepMiss();
     });
+    try {
+      appendAllowedLines(
+        prepared.map((row, index) => ({
+          id: row.property.id,
+          address: row.property.address,
+          line: `added from ${proposals[index]?.origin === "ask" ? "Bud intake" : "intake"} — ${row.property.address}, ${row.property.tenantName}`,
+        })),
+        this.vaultRoot,
+      );
+    } catch (cause) {
+      console.warn("RealBud saved the bulk intake but could not append every private intake note", {
+        count: prepared.length,
+        error: cause instanceof Error ? cause.name : "UnknownError",
+      });
+    }
+    this.emit();
     return this.snapshot();
   }
 
@@ -447,9 +508,16 @@ export class Desk {
       items = parsed.items;
       unparsed = parsed.unparsed;
     }
+    if ((items?.length ?? 0) > MAX_BOOK_PROPERTIES) {
+      throw Object.assign(new Error(`Stage at most ${MAX_BOOK_PROPERTIES} properties at a time.`), { status: 400 });
+    }
     const now = this.now();
     let created = 0;
     let skipped = 0;
+    const proposalKeys = new Set(
+      this.store.v3.bookProposals.map((proposal) => `${proposal.fields.address.toLowerCase()}|${proposal.fields.tenantName.toLowerCase()}`),
+    );
+    const propertyAddresses = new Set(this.store.data.properties.map((property) => property.address.toLowerCase()));
     for (const item of items ?? []) {
       const address = String(item.address ?? "").trim();
       const tenantName = String(item.tenantName ?? "").trim();
@@ -460,9 +528,7 @@ export class Desk {
         continue;
       }
       const key = `${address.toLowerCase()}|${tenantName.toLowerCase()}`;
-      const exists = this.store.v3.bookProposals.some(
-        (p) => `${p.fields.address.toLowerCase()}|${p.fields.tenantName.toLowerCase()}` === key,
-      ) || this.store.data.properties.some((p) => p.address.toLowerCase() === address.toLowerCase());
+      const exists = proposalKeys.has(key) || propertyAddresses.has(address.toLowerCase());
       if (exists) {
         skipped++;
         continue;
@@ -475,6 +541,7 @@ export class Desk {
         fields: { address, tenantName, tenantPhone, weeklyRentCents },
         createdAt: now,
       });
+      proposalKeys.add(key);
       created++;
     }
     if (created || skipped) {
@@ -610,6 +677,23 @@ export class Desk {
 
   addProperty(input: NewPropertyInput): DeskSnapshot {
     this.assertWritable();
+    if (this.store.data.properties.length >= MAX_BOOK_PROPERTIES) {
+      throw Object.assign(new Error(`the book is full (${MAX_BOOK_PROPERTIES} properties)`), { status: 400 });
+    }
+    const prepared = this.prepareProperty(input);
+    this.insertProperty(prepared);
+    writePropertyNote(prepared.property.id, "", { address: prepared.property.address }, this.vaultRoot);
+    return this.reevaluateOrKeepMiss();
+  }
+
+  private prepareProperty(
+    input: NewPropertyInput,
+    addresses = new Set(this.store.data.properties.map((property) => property.address.toLowerCase())),
+    codes = new Set(
+      this.store.data.properties.map((property) => property.propertyCode?.toLowerCase()).filter((code): code is string => Boolean(code)),
+    ),
+    ids = new Set(this.store.data.properties.map((property) => property.id)),
+  ): PreparedProperty {
     const address = String(input.address ?? "").trim();
     const tenantName = String(input.tenantName ?? "").trim();
     const tenantPhone = String(input.tenantPhone ?? "").trim();
@@ -620,27 +704,35 @@ export class Desk {
     if (propertyCode.length > 80) throw Object.assign(new Error("property code is too long"), { status: 400 });
     if (!tenantName) throw Object.assign(new Error("tenant name required"), { status: 400 });
     if (!Number.isInteger(rent) || rent <= 0) throw Object.assign(new Error("weekly rent required"), { status: 400 });
-    if (this.store.data.properties.length >= 200) throw Object.assign(new Error("the book is full (200 properties)"), { status: 400 });
-    if (this.store.data.properties.some((p) => p.address.toLowerCase() === address.toLowerCase())) {
+    if (addresses.has(address.toLowerCase())) {
       throw Object.assign(new Error("that address is already on the book"), { status: 409 });
     }
-    if (propertyCode && this.store.data.properties.some((p) => p.propertyCode?.toLowerCase() === propertyCode.toLowerCase())) {
+    if (propertyCode && codes.has(propertyCode.toLowerCase())) {
       throw Object.assign(new Error("that property code is already on the book"), { status: 409 });
     }
 
     const options = shopDefaults();
     if (input.options) applyOptions(options, input.options);
-    const id = `prop-${randomUUID().slice(0, 8)}`;
-    this.store.data.properties.push({ id, address, tenantName, tenantPhone, weeklyRentCents: rent, options, ...(propertyCode ? { propertyCode } : {}) });
-    writePropertyNote(id, "", { address }, this.vaultRoot);
-    this.store.data.ledger.push({
-      propertyId: id,
-      daysSinceDue: 0,
-      rentLanded: false,
-      levyPaid: false,
-      daysSinceCourtesy: null,
-    });
-    return this.reevaluateOrKeepMiss();
+    let id = `prop-${randomUUID().slice(0, 8)}`;
+    while (ids.has(id)) id = `prop-${randomUUID().slice(0, 8)}`;
+    addresses.add(address.toLowerCase());
+    if (propertyCode) codes.add(propertyCode.toLowerCase());
+    ids.add(id);
+    return {
+      property: { id, address, tenantName, tenantPhone, weeklyRentCents: rent, options, ...(propertyCode ? { propertyCode } : {}) },
+      facts: {
+        propertyId: id,
+        daysSinceDue: 0,
+        rentLanded: false,
+        levyPaid: false,
+        daysSinceCourtesy: null,
+      },
+    };
+  }
+
+  private insertProperty(prepared: PreparedProperty): void {
+    this.store.data.properties.push(prepared.property);
+    this.store.data.ledger.push(prepared.facts);
   }
 
   removeProperty(id: string): DeskSnapshot {
@@ -732,8 +824,16 @@ export class Desk {
     return this.command({ type: "allow", draftId: id, expectedRevision: expectedRevision ?? this.store.data.revision, via }).drafts.find((d) => d.id === id)!;
   }
 
-  denyDraft(id: string, expectedRevision?: number, via?: string): Draft {
-    return this.command({ type: "deny", draftId: id, expectedRevision: expectedRevision ?? this.store.data.revision, via }).drafts.find((d) => d.id === id)!;
+  denyDraft(id: string, expectedRevision?: number, via?: string, reason?: string): Draft {
+    const note = normalizeDenyReason(reason);
+    const draft = this.command({
+      type: "deny",
+      draftId: id,
+      expectedRevision: expectedRevision ?? this.store.data.revision,
+      via,
+    }).drafts.find((d) => d.id === id)!;
+    if (note) this.appendDenyReason(draft.propertyId, note);
+    return draft;
   }
 
   editDraft(id: string, body: string, expectedRevision?: number): Draft {
@@ -938,6 +1038,16 @@ export class Desk {
       updatedAt: now,
       origin: this.pendingOrigin,
     };
+  }
+
+  private appendDenyReason(propertyId: string, reason: string): void {
+    try {
+      const current = this.notesFor(propertyId);
+      const next = current.body.trim() ? `${current.body.trim()}\n${reason}` : reason;
+      this.writeNotes(propertyId, next);
+    } catch {
+      /* notes are best-effort on a deny — same as a phone deny */
+    }
   }
 
   private decide(id: string, state: "approved" | "denied", approver = "pm", via?: string): void {

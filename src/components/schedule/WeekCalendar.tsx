@@ -3,13 +3,17 @@ import { fmtTimeOfDay } from "@/lib/au";
 import {
   buildScheduleWeek,
   DAY_NAMES,
+  plannedLoopFootnote,
   sameCalendarDay,
+  splitPlannedLoops,
+  weekOutcomeTone,
   type WeekDay,
   type WeekFacts,
   type WeekOutcome,
   type WeekSlot,
 } from "@/lib/schedule-week";
 import type { Loop } from "@/lib/routines";
+import { StatusLabel } from "../pm";
 
 function slotTime(time: string): string {
   const [hour, minute] = time.split(":").map(Number);
@@ -37,14 +41,10 @@ function todayHint(days: WeekDay[]): string {
   return range;
 }
 
-function outcomeClass(outcome: WeekOutcome, selected: boolean): string {
-  if (outcome === "planned") return "border-dashed border-line bg-inset text-ink-muted";
-  if (outcome === "missed") return "border-danger/30 bg-danger/10 text-ink";
-  if (outcome === "partial") return "border-hold/25 bg-hold/10 text-ink";
-  if (outcome === "running") return "border-agency/25 bg-agency/10 text-ink";
-  if (outcome === "done") return "border-agency/25 bg-agency/10 text-ink";
-  if (outcome === "paused") return "border-line bg-inset text-ink-secondary";
-  return selected ? "border-agency/25 bg-selected text-ink" : "border-agency/25 bg-agency/10 text-ink";
+function slotSurface(outcome: WeekOutcome, selected: boolean): string {
+  if (selected) return "border-agency bg-selected";
+  if (outcome === "missed") return "border-danger/30 bg-sheet";
+  return "border-line bg-sheet";
 }
 
 export function WeekCalendar({
@@ -64,19 +64,20 @@ export function WeekCalendar({
   selectedId: string | null;
   onSelect: (slot: WeekSlot) => void;
 }) {
-  const days = buildScheduleWeek(loops, nowMs, timeZone, facts);
+  const { scheduled, planned } = splitPlannedLoops(loops);
+  const days = buildScheduleWeek(scheduled, nowMs, timeZone, facts);
   const missed = days.some((day) => day.slots.some((slot) => slot.outcome === "missed"));
   const lastRunOnWeek = Boolean(
     facts?.desk?.lastRunAt && days.some((day) => sameCalendarDay(day.dateMs, facts.desk!.lastRunAt!, timeZone)),
   );
   return (
-    <section className="rounded-xl border border-line bg-sheet" aria-label="This week on the clock">
-      <div className="flex items-baseline justify-between gap-3 border-b border-line px-4 py-3">
+    <section className="min-w-0 rounded-xl border border-line bg-sheet" aria-label="This week on the clock">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-line px-4 py-3">
         <h2 className="text-[14px] font-medium text-ink">This week</h2>
-        <p className="text-[12px] text-ink-muted">{todayHint(days)}</p>
+        <p className="min-w-0 text-[12px] text-ink-muted">{todayHint(days)}</p>
       </div>
       {(missed || lastRunOnWeek) && deskNote ? (
-        <p className={cn("border-b border-line px-4 py-2 text-[12.5px]", missed ? "text-hold" : "text-ink-secondary")}>
+        <p className={cn("border-b border-line px-4 py-2 text-[12.5px]", missed ? "text-hold" : "text-ink-muted")}>
           {deskNote}
         </p>
       ) : null}
@@ -86,11 +87,11 @@ export function WeekCalendar({
             key={day.weekday}
             className={cn("flex items-start gap-3 px-4 py-2.5", day.isToday && "bg-selected")}
           >
-            <div className="w-16 shrink-0 pt-1.5">
+            <div className="w-14 shrink-0 pt-1.5">
               <div className={cn("text-[12px] font-medium", day.isToday ? "text-agency" : "text-ink-muted")}>
                 {DAY_NAMES[day.weekday]}
               </div>
-              <div className={cn("text-[12px] tabular-nums", day.isToday ? "text-agency" : "text-ink-secondary")}>
+              <div className={cn("text-[12px] tabular-nums", day.isToday ? "text-agency" : "text-ink-muted")}>
                 {new Date(day.dateMs).getDate()}
                 {day.isToday ? " · today" : ""}
               </div>
@@ -109,6 +110,15 @@ export function WeekCalendar({
           </li>
         ))}
       </ol>
+      {planned.length > 0 ? (
+        <ul className="space-y-1.5 border-t border-line px-4 py-2.5">
+          {planned.map((loop) => (
+            <li key={loop.id} className="text-[12px] leading-relaxed text-ink-muted">
+              {plannedLoopFootnote(loop)}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </section>
   );
 }
@@ -122,6 +132,7 @@ function SlotButton({
   selected: boolean;
   onSelect: (slot: WeekSlot) => void;
 }) {
+  const tone = weekOutcomeTone(slot.outcome);
   return (
     <button
       type="button"
@@ -129,13 +140,13 @@ function SlotButton({
       aria-pressed={selected}
       aria-label={`${slot.name} at ${slotTime(slot.time)}${slot.stamp ? `, ${slot.stamp}` : ""}`}
       title={slot.name}
-      className={cn("min-h-10 rounded border px-2.5 py-1.5 text-left", outcomeClass(slot.outcome, selected), selected && "bg-selected")}
+      className={cn("min-h-10 rounded border px-2.5 py-1.5 text-left", slotSurface(slot.outcome, selected))}
     >
-      <span className="text-[12px] font-medium">{slot.shortName}</span>
-      <span className="ml-1.5 tabular-nums text-[12px] text-ink-secondary">{slotTime(slot.time)}</span>
-      {slot.stamp ? (
-        <span className={cn("ml-1.5 text-[11px]", slot.outcome === "missed" ? "text-danger" : slot.outcome === "partial" ? "text-hold" : "text-ink-muted")}>
-          {slot.stamp}
+      <span className="text-[12px] font-medium text-ink">{slot.shortName}</span>
+      <span className="ml-1.5 tabular-nums text-[12px] text-ink-muted">{slotTime(slot.time)}</span>
+      {slot.stamp && tone ? (
+        <span className="ml-1.5 inline-block align-middle">
+          <StatusLabel tone={tone}>{slot.stamp}</StatusLabel>
         </span>
       ) : null}
     </button>

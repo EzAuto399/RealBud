@@ -10,7 +10,8 @@ const dataDir = vi.hoisted(() => {
   return dir;
 });
 
-const { addRule, evaluateRules, loadRules, removeRule, ruleLabel } = await import("./rules.ts");
+const { addPortalRule, addRule, evaluateRules, loadRules, portalRuleKey, portalRuleLabel, removeRule, ruleLabel } =
+  await import("./rules.ts");
 const { join } = await import("node:path");
 
 afterAll(() => {
@@ -29,6 +30,37 @@ describe("ruleLabel", () => {
     expect(ruleLabel("Write")).toBe("Change workroom files");
     expect(ruleLabel("Edit")).toBe("Change workroom files");
     expect(ruleLabel("WebSearch")).toBe("Allow WebSearch");
+    expect(ruleLabel("portal:read:propertyme.com.au")).toBe("Reading on propertyme.com.au");
+    expect(ruleLabel("portal:prefill:propertyme.com.au")).toBe("Prefill on propertyme.com.au");
+  });
+});
+
+describe("portal rules", () => {
+  it("writes portal keys and labels and rejects a deny", () => {
+    expect(portalRuleKey("portal-read", "propertyme.com.au")).toBe("portal:read:propertyme.com.au");
+    expect(portalRuleKey("portal-prefill", "propertyme.com.au")).toBe("portal:prefill:propertyme.com.au");
+    expect(portalRuleLabel("portal-read", "propertyme.com.au")).toBe("Reading on propertyme.com.au");
+    const written = addPortalRule("portal-read", "propertyme.com.au");
+    expect(written[0]).toMatchObject({
+      key: "portal:read:propertyme.com.au",
+      decision: "allow",
+      label: "Reading on propertyme.com.au",
+      surface: "portal-read",
+      origin: "propertyme.com.au",
+    });
+    expect(() => addRule("portal:read:propertyme.com.au", "deny")).toThrow(/only allow/);
+    expect(addPortalRule("portal-read", "propertyme.com.au")).toHaveLength(1);
+  });
+
+  it("rejects a deny or unknown surface the way POST /api/rules does", () => {
+    expect(() => addRule("portal:prefill:propertyme.com.au", "deny")).toThrow(/only allow/);
+    const again = addPortalRule("portal-prefill", "propertyme.com.au");
+    expect(again[0]).toMatchObject({
+      key: "portal:prefill:propertyme.com.au",
+      surface: "portal-prefill",
+      origin: "propertyme.com.au",
+      label: "Prefill on propertyme.com.au",
+    });
   });
 });
 

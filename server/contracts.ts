@@ -73,6 +73,16 @@ export type RuntimeEvent = RuntimeEventBase &
         tool: string;
         summary: string;
         choices?: string[];
+        params?: unknown;
+        fence?: {
+          surface: "portal-read" | "portal-prefill" | "portal-submit";
+          origin: string;
+          ruleOffer: {
+            surface: "portal-read" | "portal-prefill";
+            origin: string;
+            label: string;
+          } | null;
+        };
       }
     | { type: "request.resolved"; behavior: string; source: string }
     | { type: "thread.token-usage.updated"; input: number; output: number }
@@ -137,7 +147,14 @@ export interface ProviderAdapter {
   respondToRequest(
     threadId: ThreadId,
     requestId: string,
-    decision: { behavior: "allow" | "deny" | "answer"; message?: string },
+    decision: {
+      behavior: "allow" | "deny" | "answer";
+      message?: string;
+      /** Prefer a provider-native, expiring grant for matching steps in the
+       * current work session. Providers without that scope safely fall back
+       * to a one-time decision. */
+      scope?: "once" | "session";
+    },
   ): Promise<void>;
   hasSession(threadId: ThreadId): boolean;
   stopAll(): Promise<void>;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { NEVER_ACTIONS, type DeskSnapshot, type WorkState } from "../../shared/contracts";
-import { bucketForWork, buildDeskQueue, filterDeskQueue, queueCounts, type QueueBucket } from "./desk-queue";
+import { bucketForWork, buildDeskQueue, filterDeskQueue, queueCounts, recoveryPlanFor, type QueueBucket } from "./desk-queue";
 
 function snap(partial: Partial<DeskSnapshot>): DeskSnapshot {
   return {
@@ -115,7 +115,67 @@ describe("desk queue model", () => {
     expect(rows.find((row) => row.kind === "import-issue")?.action).toBe("Match this source row");
     // the licensee sorts to the top of Now
     expect(rows[0]?.kind).toBe("licensee-required");
+    expect(rows[0]?.action).toBe("For the licensee — RealBud will not draft");
     expect(JSON.stringify(rows)).not.toMatch(/vault|Form 11/i);
+  });
+
+  it("names the Waiting repair in one line", () => {
+    const rows = buildDeskQueue(
+      snap({
+        workItems: [
+          {
+            id: "w-miss",
+            propertyId: "prop-oak",
+            kind: "money-arrears",
+            state: "held",
+            holdReason: "uncovered-by-worker",
+            occurrenceKey: "miss",
+            periodDueAt: 1,
+            recipient: { name: "Sam", phone: "0400", hardship: false, dispute: false, paymentArrangement: false, doNotContact: false },
+            sourceIds: ["src"],
+            observedAt: 1,
+            proposalHash: "h",
+            updatedAt: 2,
+            createdAt: 1,
+          },
+        ],
+      }),
+    );
+    const waiting = rows.find((row) => row.bucket === "waiting");
+    expect(waiting?.action).toBe("Waiting — Bud miss");
+    expect(waiting?.meta).toBe("Bud miss");
+    expect(waiting && recoveryPlanFor(waiting)).toMatchObject({
+      headline: "Bud could not verify the current facts",
+      action: "ask",
+      actionLabel: "Ask Bud to investigate",
+    });
+    expect(waiting && recoveryPlanFor(waiting).prompt).toMatch(/12 Oak St.*only/i);
+    expect(waiting && recoveryPlanFor(waiting).prompt).toContain("source is restored. State");
+    expect(waiting && recoveryPlanFor(waiting).prompt).not.toMatch(/retry this property/i);
+  });
+
+  it("routes recoveries to the authoritative place without granting consequences", () => {
+    const base = {
+      id: "row",
+      bucket: "waiting" as const,
+      state: "held",
+      address: "12 Oak St, Dickson ACT",
+      action: "Waiting",
+      meta: "Held",
+      updatedAt: 1,
+    };
+    expect(recoveryPlanFor({ ...base, kind: "import-issue", holdReason: "ambiguous-match" })).toMatchObject({
+      action: "book",
+      source: "The CSV export and the Properties book",
+    });
+    expect(recoveryPlanFor({ ...base, kind: "inbound-triage" })).toMatchObject({
+      action: "you",
+      actionLabel: "Connect an inbox",
+    });
+    expect(recoveryPlanFor({ ...base, kind: "licensee-required", holdReason: "dispute" })).toMatchObject({
+      action: "none",
+    });
+    expect(recoveryPlanFor({ ...base, kind: "maintenance-intake" }).prompt).toMatch(/do not dispatch/i);
   });
 
   it("renders every case kind from the V3 book, including historic-only records", () => {

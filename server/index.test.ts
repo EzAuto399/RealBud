@@ -26,6 +26,12 @@ let telegramStubPort = 0;
 /** stands in for discord.com so channel connect never leaves the box */
 let discordStub: Server;
 let discordStubPort = 0;
+/** stands in for slack.com so channel connect never leaves the box */
+let slackStub: Server;
+let slackStubPort = 0;
+let composioStub: Server;
+let composioStubPort = 0;
+const composioCalls: string[] = [];
 let home: string;
 let staticDir: string;
 let stderr = "";
@@ -105,6 +111,46 @@ beforeAll(async () => {
   await new Promise<void>((r) => discordStub.listen(0, "127.0.0.1", r));
   discordStubPort = (discordStub.address() as { port: number }).port;
 
+  slackStub = createServer((req, res) => {
+    const url = req.url ?? "";
+    const auth = String(req.headers.authorization ?? "");
+    res.setHeader("content-type", "application/json");
+    if (url.startsWith("/api/auth.test")) {
+      if (auth === "Bearer xoxb-TestSlackTokenAlpha") {
+        res.writeHead(200);
+        return res.end(JSON.stringify({ ok: true, user: "realbud", user_id: "U_BOT" }));
+      }
+      res.writeHead(200);
+      return res.end(JSON.stringify({ ok: false, error: "invalid_auth" }));
+    }
+    res.writeHead(404);
+    res.end(JSON.stringify({ ok: false, error: "unknown_method" }));
+  });
+  await new Promise<void>((r) => slackStub.listen(0, "127.0.0.1", r));
+  slackStubPort = (slackStub.address() as { port: number }).port;
+
+  composioStub = createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      composioCalls.push(body);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          result: {
+            content: [
+              { type: "text", text: JSON.stringify({ url: "https://auth.example/connect/gmail" }) },
+            ],
+          },
+        }),
+      );
+    });
+  });
+  await new Promise<void>((r) => composioStub.listen(0, "127.0.0.1", r));
+  composioStubPort = (composioStub.address() as { port: number }).port;
+
   child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
     cwd: ROOT,
     env: {
@@ -121,6 +167,7 @@ beforeAll(async () => {
       OMB_BOX_API: `http://127.0.0.1:${boxStubPort}`,
       REALBUD_TELEGRAM_API: `http://127.0.0.1:${telegramStubPort}`,
       REALBUD_DISCORD_API: `http://127.0.0.1:${discordStubPort}`,
+      REALBUD_SLACK_API: `http://127.0.0.1:${slackStubPort}`,
       OMB_STATIC_DIR: staticDir,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -147,6 +194,8 @@ afterAll(async () => {
   boxStub?.close();
   telegramStub?.close();
   discordStub?.close();
+  slackStub?.close();
+  composioStub?.close();
   child?.kill("SIGTERM");
   await new Promise<void>((resolve) => {
     if (!child || child.exitCode !== null) return resolve();
@@ -310,6 +359,13 @@ describe("harness HTTP API", () => {
     }
     expect(body).toHaveProperty("lastPing");
     expect(body.ready).toBe(false);
+    expect(body.model).toEqual({
+      attached: expect.any(Boolean),
+      provider: body.model.provider ?? null,
+      model: body.model.model ?? null,
+    });
+    expect(body.model).not.toHaveProperty("keyHint");
+    expect(JSON.stringify(body.model)).not.toMatch(/keyHint/);
 
     const providers = await api("GET", "/api/hermes/providers");
     expect(providers.status).toBe(200);
@@ -373,6 +429,8 @@ describe("harness HTTP API", () => {
 
     const reloaded = await api("GET", "/api/hermes");
     expect(reloaded.status).toBe(200);
+    expect(reloaded.body.model).toEqual({ attached: true, provider: "deepseek", model: "deepseek-test" });
+    expect(reloaded.body.model).not.toHaveProperty("keyHint");
     expect(reloaded.body.lastPing).toMatchObject({
       ok: false,
       detail: "tests do not ping the live worker",
@@ -493,7 +551,11 @@ describe("harness HTTP API", () => {
     const token = "999001:TestTelegramTokenAlpha";
     const empty = await api("GET", "/api/channels");
     expect(empty.status).toBe(200);
-    expect(empty.body).toEqual({ telegram: { connected: false }, discord: { connected: false } });
+    expect(empty.body).toEqual({
+      telegram: { connected: false },
+      discord: { connected: false },
+      slack: { connected: false },
+    });
 
     const bare = await fetch(`${BASE}/api/channels`);
     expect(bare.status).toBe(401);
@@ -522,18 +584,27 @@ describe("harness HTTP API", () => {
 
     const gone = await api("DELETE", "/api/channels/telegram");
     expect(gone.status).toBe(200);
-    expect(gone.body).toEqual({ telegram: { connected: false }, discord: { connected: false } });
+    expect(gone.body).toEqual({
+      telegram: { connected: false },
+      discord: { connected: false },
+      slack: { connected: false },
+    });
     expect((await api("GET", "/api/channels")).body).toEqual({
       telegram: { connected: false },
       discord: { connected: false },
+      slack: { connected: false },
     });
   });
 
-  it("connects Discord without echoing the token and 404s an unknown platform", async () => {
+  it("connects Discord and Slack without echoing tokens and 404s an unknown platform", async () => {
     const token = "TestDiscordTokenAlpha";
     const listed = await api("GET", "/api/channels");
     expect(listed.status).toBe(200);
-    expect(listed.body).toEqual({ telegram: { connected: false }, discord: { connected: false } });
+    expect(listed.body).toEqual({
+      telegram: { connected: false },
+      discord: { connected: false },
+      slack: { connected: false },
+    });
 
     const bad = await api("POST", "/api/channels/discord", { botToken: "TestDiscordTokenNope" });
     expect(bad.status).toBe(400);
@@ -552,13 +623,36 @@ describe("harness HTTP API", () => {
       pairedName: null,
     });
     expect(ok.body.telegram).toEqual({ connected: false });
+    expect(ok.body.slack).toEqual({ connected: false });
     expect(ok.body.discord).not.toHaveProperty("botToken");
     expect(ok.body.discord).not.toHaveProperty("pairedChannelId");
     expect(JSON.stringify(ok.body)).not.toContain(token);
 
     const gone = await api("DELETE", "/api/channels/discord");
     expect(gone.status).toBe(200);
-    expect(gone.body).toEqual({ telegram: { connected: false }, discord: { connected: false } });
+    expect(gone.body).toEqual({
+      telegram: { connected: false },
+      discord: { connected: false },
+      slack: { connected: false },
+    });
+
+    const slackBad = await api("POST", "/api/channels/slack", { botToken: "xoxb-Nope" });
+    expect(slackBad.status).toBe(400);
+    expect(String(slackBad.body.error)).toMatch(/Slack app settings|did not answer/i);
+
+    const slackOk = await api("POST", "/api/channels/slack", { botToken: "xoxb-TestSlackTokenAlpha" });
+    expect(slackOk.status).toBe(200);
+    expect(slackOk.body.slack).toMatchObject({
+      connected: true,
+      botUsername: "realbud",
+      paired: false,
+      pairedName: null,
+    });
+    expect(JSON.stringify(slackOk.body)).not.toContain("xoxb-TestSlackTokenAlpha");
+
+    const slackGone = await api("DELETE", "/api/channels/slack");
+    expect(slackGone.status).toBe(200);
+    expect(slackGone.body.slack).toEqual({ connected: false });
   });
 
   it("round-trips recipes and keeps shadow runs honest when the worker is away", async () => {
@@ -583,12 +677,19 @@ describe("harness HTTP API", () => {
       id: "rec-shadow-1",
       allowedOrigins: ["propertyme.com.au"],
       status: "shadow",
+      revision: 1,
+      approvedRevision: null,
+      capabilities: ["read-book", "analyse", "draft"],
+      limits: { maxRuntimeMinutes: 2, maxTurns: 6 },
     });
 
     const patched = await api("PATCH", "/api/recipes/rec-shadow-1", { status: "active" });
     expect(patched.status).toBe(200);
     expect(patched.body.recipes[0].status).toBe("active");
     expect(patched.body.recipes[0].planApprovedAt).toBeNull();
+    const prepareHeld = await api("POST", "/api/recipes/rec-shadow-1/prepare", {});
+    expect(prepareHeld.status).toBe(409);
+    expect(String(prepareHeld.body.error)).toMatch(/approve the current plan/i);
 
     const approved = await api("PATCH", "/api/recipes/rec-shadow-1", { planApproved: true });
     expect(approved.status).toBe(200);
@@ -602,7 +703,31 @@ describe("harness HTTP API", () => {
       shadow: true,
       allowedOrigins: ["propertyme.com.au"],
     });
+    expect(run.body.run).toMatchObject({
+      jobId: "rec-shadow-1",
+      jobRevision: 1,
+      mode: "shadow",
+      status: "failed",
+      legacySessionId: run.body.session.id,
+    });
     expect(String(run.body.session.detail)).toMatch(/tests do not use the live worker/i);
+
+    const prepare = await api("POST", "/api/recipes/rec-shadow-1/prepare", {});
+    expect(prepare.status).toBe(200);
+    expect(prepare.body.run).toMatchObject({
+      jobId: "rec-shadow-1",
+      mode: "prepare",
+      status: "failed",
+    });
+    expect(String(prepare.body.run.detail)).toMatch(/tests do not use the live worker/i);
+
+    const jobRuns = await api("GET", "/api/job-runs?jobId=rec-shadow-1");
+    expect(jobRuns.status).toBe(200);
+    expect(jobRuns.body.runs).toHaveLength(2);
+    expect(jobRuns.body.runs.every((row: { jobRevision: number }) => row.jobRevision === 1)).toBe(true);
+    const seen = await api("POST", `/api/job-runs/${jobRuns.body.runs[0].id}/seen`, {});
+    expect(seen.status).toBe(200);
+    expect(typeof seen.body.run.seenAt).toBe("number");
 
     const sessions = await api("GET", "/api/portal-sessions");
     expect(sessions.status).toBe(200);
@@ -641,7 +766,7 @@ describe("harness HTTP API", () => {
     await api("DELETE", "/api/recipes/rec-distill-http");
   });
 
-  it("admits a scheduled job onto the RealBud clock as a recipe loop", async () => {
+  it("holds a scheduled job for one plan approval before admitting it onto the RealBud clock", async () => {
     const created = await api("POST", "/api/recipes", {
       draft: {
         id: "rec-clock-1",
@@ -661,10 +786,18 @@ describe("harness HTTP API", () => {
     expect(job).toMatchObject({
       name: "Friday arrears",
       available: true,
-      enabled: true,
+      enabled: false,
+      waitingForPlan: true,
       evaluatorId: "recipe",
       schedule: { type: "daily", time: "16:00", weekdays: [5] },
     });
+
+    const approved = await api("PATCH", "/api/recipes/rec-clock-1", { planApproved: true });
+    expect(approved.status).toBe(200);
+    const admitted = (await api("GET", "/api/loops")).body.loops.find(
+      (loop: { id: string }) => loop.id === "recipe-rec-clock-1",
+    );
+    expect(admitted).toMatchObject({ enabled: true, waitingForPlan: false });
 
     const paused = await api("PATCH", "/api/loops/recipe-rec-clock-1", { enabled: false });
     expect(paused.status).toBe(200);
@@ -737,10 +870,44 @@ describe("harness HTTP API", () => {
     const helloBot = afterHello.body.bots.find((b: { id: string }) => b.id === "bud");
     expect(helloBot.messages.at(-1).text).toMatch(/I'm Bud/);
 
+    // An explicit connection instruction is brokered directly even though
+    // the model instance is unavailable. No shell turn or extra permission
+    // is involved; without the broker key, Bud points to its write-only row.
+    const connect = await api("POST", `/api/bots/${bot.id}/messages`, { text: "connect me to notion" });
+    expect(connect.status).toBe(202);
+    const afterConnect = await api("GET", "/api/bots");
+    const connectedBot = afterConnect.body.bots.find((b: { id: string }) => b.id === "bud");
+    expect(connectedBot.busy).toBe(false);
+    expect(connectedBot.messages.at(-1).text).toMatch(/You → Connected apps/i);
+
     // a free-form turn still fails loudly when the worker instance is a ghost
     const send = await api("POST", `/api/bots/${bot.id}/messages`, { text: "write a sonnet about trust accounts" });
     expect(send.status).toBe(409);
     expect(send.body.error).toContain("unavailable");
+  });
+
+  it("opens provider sign-in directly for an explicit connection instruction", async () => {
+    const saved = await api("PUT", "/api/config", {
+      composio: { key: `ck_${"brokersecret".repeat(3)}`, url: `http://127.0.0.1:${composioStubPort}` },
+    });
+    expect(saved.status).toBe(200);
+    expect(saved.body.composio).toMatchObject({ configured: true });
+
+    const sent = await api("POST", "/api/bots/bud/messages", { text: "connect Gmail" });
+    expect(sent.status).toBe(202);
+    const deadline = Date.now() + 3_000;
+    let bot: any;
+    do {
+      bot = (await api("GET", "/api/bots")).body.bots.find((candidate: { id: string }) => candidate.id === "bud");
+      if (!bot.busy && /auth\.example/.test(bot.messages.at(-1)?.text ?? "")) break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    } while (Date.now() < deadline);
+
+    expect(bot.busy).toBe(false);
+    expect(bot.messages.at(-1).text).toMatch(/I opened Gmail sign-in/i);
+    expect(bot.messages.at(-1).text).toContain("https://auth.example/connect/gmail");
+    expect(composioCalls.some((body) => body.includes("COMPOSIO_MANAGE_CONNECTIONS") && body.includes("gmail"))).toBe(true);
+    expect(JSON.stringify(bot.messages)).not.toContain("brokersecret");
   });
 
   it("refuses to fork a message when the provider is unavailable, without mutating", async () => {
@@ -823,6 +990,8 @@ describe("harness HTTP API", () => {
     expect(foreign.status).toBe(403);
     const artifact = await fetch(`${BASE}/api/artifacts/art-missing`);
     expect(artifact.status).toBe(401);
+    const jobRuns = await fetch(`${BASE}/api/job-runs`);
+    expect(jobRuns.status).toBe(401);
     const ok = await api("GET", "/api/desk");
     expect(ok.status).toBe(200);
     expect(ok.body.properties.length).toBe(6);

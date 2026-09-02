@@ -405,10 +405,11 @@ async function bindPairedDesk(
         decided.push({ id, via, status: "allowed" });
         return drafts[0]!;
       },
-      denyDraft(id, _expected, via) {
+      denyDraft(id, _expected, via, reason) {
         drafts[0]!.status = "denied";
         drafts[0]!.via = via;
         decided.push({ id, via, status: "denied" });
+        if (reason) decided.push({ id: "note", status: "note", reason });
         return drafts[0]!;
       },
       notesFor() {

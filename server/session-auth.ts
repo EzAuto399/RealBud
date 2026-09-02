@@ -82,6 +82,7 @@ export function needsSession(path: string): boolean {
     path.startsWith("/api/rules") ||
     path.startsWith("/api/law-watch") ||
     path.startsWith("/api/recipes") ||
+    path.startsWith("/api/job-runs") ||
     path.startsWith("/api/computer-history") ||
     path.startsWith("/api/loops") ||
     path.startsWith("/api/loop-runs") ||

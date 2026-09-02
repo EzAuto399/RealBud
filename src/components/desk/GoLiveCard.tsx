@@ -11,6 +11,7 @@ export function GoLiveCard({
   onAttachWorker,
   attachWorkerLabel = "Open You",
   onSaveAgency,
+  onNameAgency,
 }: {
   mode: "demo" | "live";
   agencyName: string;
@@ -19,7 +20,8 @@ export function GoLiveCard({
   onConnectExport: () => void;
   onAttachWorker?: () => void;
   attachWorkerLabel?: string;
-  onSaveAgency: (name: string) => void;
+  onSaveAgency?: (name: string) => void;
+  onNameAgency?: () => void;
 }) {
   const rows = goLiveRows({ mode, agencyName, workerReady });
   const [name, setName] = useState("");
@@ -58,7 +60,7 @@ export function GoLiveCard({
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="text-[13px] font-medium text-ink">Go live</div>
-          <p className="mt-0.5 text-[12px] text-ink-muted">Three steps. Desk already works on the sample book.</p>
+          <p className="mt-0.5 text-[12px] text-ink-muted">Three steps when you are ready. The sample book already works on Desk.</p>
         </div>
         {compact ? (
           <button type="button" onClick={() => setOpen(false)} className="text-[12px] text-ink-muted hover:text-ink">
@@ -77,6 +79,7 @@ export function GoLiveCard({
             onAttachWorker={onAttachWorker}
             attachWorkerLabel={attachWorkerLabel}
             onSaveAgency={onSaveAgency}
+            onNameAgency={onNameAgency}
           />
         ))}
       </ul>
@@ -92,6 +95,7 @@ function GoLiveRowView({
   onAttachWorker,
   attachWorkerLabel,
   onSaveAgency,
+  onNameAgency,
 }: {
   row: GoLiveRow;
   name: string;
@@ -99,7 +103,8 @@ function GoLiveRowView({
   onConnectExport: () => void;
   onAttachWorker?: () => void;
   attachWorkerLabel: string;
-  onSaveAgency: (name: string) => void;
+  onSaveAgency?: (name: string) => void;
+  onNameAgency?: () => void;
 }) {
   return (
     <li className="flex flex-wrap items-start justify-between gap-2 text-[12.5px]">
@@ -110,9 +115,18 @@ function GoLiveRowView({
           {row.title}
         </div>
         <p className="text-ink-muted">{row.detail}</p>
-        {row.id === "agency" && row.state === "action" ? (
+        {row.id === "agency" && row.state === "action" && onNameAgency ? (
+          <button type="button" onClick={onNameAgency} className="pm-control mt-1.5 rounded border border-line bg-sheet px-3 text-[13px] text-ink">
+            Name it on You
+          </button>
+        ) : null}
+        {row.id === "agency" && row.state === "action" && !onNameAgency && onSaveAgency ? (
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            <label className="sr-only" htmlFor="go-live-agency">
+              Agency name
+            </label>
             <input
+              id="go-live-agency"
               type="text"
               value={name}
               onChange={(event) => onName(event.target.value)}
@@ -132,7 +146,7 @@ function GoLiveRowView({
       </div>
       {row.state === "action" && row.id === "export" ? (
         <button type="button" onClick={onConnectExport} className="text-[12px] text-agency hover:underline">
-          Open Book
+          Open properties
         </button>
       ) : null}
       {row.state === "action" && row.id === "worker" && onAttachWorker ? (

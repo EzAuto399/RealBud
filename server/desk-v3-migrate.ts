@@ -206,6 +206,7 @@ function migrateCases(v2: DeskFileV2): Case[] {
       propertyId: escalation.propertyId,
       tenancyId: tenancyIdFromProperty(escalation.propertyId),
       holdReason: escalation.reason,
+      detail: escalation.detail,
       createdAt: escalation.createdAt,
       updatedAt: escalation.createdAt,
     });

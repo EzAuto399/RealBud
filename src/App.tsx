@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { StoreProvider, useStore } from "@/state/store";
 import { Sidebar } from "@/components/Sidebar";
@@ -10,10 +10,51 @@ import { DeskPage } from "@/components/DeskPage";
 import { YouPage } from "@/components/YouPage";
 import { Onboarding } from "@/components/Onboarding";
 import { firstRunDone } from "@/lib/first-run";
+import { SHOW_DESK_EVENT } from "@/lib/notify-desktop";
+
+function macDoorKeys(): boolean {
+  const uaData = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData;
+  return /mac/i.test(uaData?.platform ?? navigator.platform);
+}
 
 function Shell() {
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
   const bud = state.bots.find((b) => b.id === "bud" || b.name === "Bud") ?? state.bots[0];
+
+  useEffect(() => {
+    const go = () => dispatch({ type: "showDesk" });
+    window.addEventListener(SHOW_DESK_EVENT, go);
+    return () => window.removeEventListener(SHOW_DESK_EVENT, go);
+  }, [dispatch]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.shiftKey || event.altKey) return;
+      const wantsMeta = macDoorKeys();
+      if (wantsMeta ? !event.metaKey : !event.ctrlKey) return;
+      if (event.key === "1") {
+        event.preventDefault();
+        dispatch({ type: "showDesk" });
+        return;
+      }
+      if (event.key === "2") {
+        event.preventDefault();
+        dispatch({ type: "showAsk" });
+        return;
+      }
+      if (event.key === "3") {
+        event.preventDefault();
+        dispatch({ type: "showRoutines" });
+        return;
+      }
+      if (event.key === "4") {
+        event.preventDefault();
+        dispatch({ type: "showYou" });
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [dispatch]);
 
   return (
     <div className="flex h-full flex-col">

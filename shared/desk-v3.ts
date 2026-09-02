@@ -188,6 +188,9 @@ export interface Case {
   importIssueId?: string;
   origin?: RoutineOrigin;
   holdReason?: string;
+  /** The human sentence behind a hold (why a licensee case is here). Survives
+   * restart; `holdReason` alone is a code the PM must never be shown. */
+  detail?: string;
   periodDueAt?: number;
   occurrenceKey?: string;
   sourceIds?: string[];

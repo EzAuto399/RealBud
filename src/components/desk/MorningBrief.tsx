@@ -1,5 +1,3 @@
-import { Loader2 } from "lucide-react";
-
 import { fmtDateTime } from "@/lib/au";
 import { collapseBriefRows, shortStreet, type MorningBrief as MorningBriefModel } from "@/lib/morning-brief";
 import { StatusLabel } from "../pm";
@@ -9,16 +7,46 @@ export function MorningBrief({
   timezone,
   interactive = false,
   onOpenAddress,
+  collapsed = false,
+  onToggle,
 }: {
   brief: MorningBriefModel;
   timezone?: string;
   interactive?: boolean;
   onOpenAddress?: (propertyId: string) => void;
+  /** Compact windows keep the case above the fold: one line, expand on demand. */
+  collapsed?: boolean;
+  onToggle?: () => void;
 }) {
   const when = brief.lastRunAt
     ? `Last check ${fmtDateTime(brief.lastRunAt, timezone)}`
     : "Recheck has not run";
   const { expanded, collapsedSummary } = collapseBriefRows(brief.addresses);
+  const toggle = onToggle ? (
+    <button
+      type="button"
+      aria-expanded={!collapsed}
+      onClick={onToggle}
+      className="min-h-8 rounded px-1.5 text-[12px] font-medium text-agency hover:underline"
+    >
+      {collapsed ? "Show addresses" : "Hide addresses"}
+    </button>
+  ) : null;
+
+  if (collapsed) {
+    return (
+      <section className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border border-line bg-sheet px-3.5 py-1.5" aria-label="This morning">
+        <p className="min-w-0 text-[12.5px] text-ink">
+          <span className="font-medium">This morning</span>
+          <span className="text-ink-muted"> · {brief.headline}</span>
+        </p>
+        <div className="flex items-center gap-1.5">
+          <StatusLabel tone="muted">{when}</StatusLabel>
+          {toggle}
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="mt-3 border border-line bg-sheet px-3.5 py-3" aria-label="This morning">
@@ -29,7 +57,8 @@ export function MorningBrief({
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           <StatusLabel tone="muted">{when}</StatusLabel>
-          <StatusLabel tone="hold">{brief.inboxLabel}</StatusLabel>
+          <StatusLabel tone="muted">{brief.inboxLabel}</StatusLabel>
+          {toggle}
         </div>
       </div>
       <ul className="mt-2.5 flex flex-wrap gap-1.5">
@@ -64,18 +93,24 @@ export function MorningBrief({
   );
 }
 
-export function MorningEmpty({
-  brief,
-  onRecheck,
-  busy,
-}: {
-  brief: MorningBriefModel;
-  onRecheck?: () => void;
-  busy?: boolean;
-}) {
+export function MorningEmpty({ brief }: { brief: MorningBriefModel }) {
+  const clearWin =
+    brief.lastRunAt != null &&
+    brief.needsYou === 0 &&
+    brief.held === 0 &&
+    brief.licensee === 0 &&
+    !brief.headline.startsWith("Recheck missed");
+
   return (
     <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-      <p className="max-w-[28rem] text-[15px] text-ink">{brief.headline}</p>
+      {clearWin ? (
+        <>
+          <p className="max-w-[28rem] text-[17px] font-medium text-ink">Nothing needs you</p>
+          <p className="mt-1.5 max-w-[28rem] text-[13px] text-ink-muted">{brief.headline}</p>
+        </>
+      ) : (
+        <p className="max-w-[28rem] text-[15px] text-ink">{brief.headline}</p>
+      )}
       {brief.lastRunAt == null && brief.addresses.length > 0 ? (
         <ul className="morning-empty-addresses mt-3 max-w-[28rem] space-y-1 text-[13px] text-ink-muted">
           {brief.addresses.map((row) => (
@@ -83,18 +118,7 @@ export function MorningEmpty({
           ))}
         </ul>
       ) : null}
-      {onRecheck && brief.lastRunAt == null ? (
-        <button
-          type="button"
-          onClick={onRecheck}
-          disabled={busy}
-          className="pm-control mt-4 flex items-center gap-2 rounded bg-agency px-3.5 text-[14px] font-medium text-white hover:bg-agency-hover disabled:opacity-40"
-        >
-          {busy ? <Loader2 size={14} className="animate-spin" /> : null}
-          Recheck this morning
-        </button>
-      ) : null}
-      <p className="mt-3 max-w-[28rem] text-[12.5px] text-hold">{brief.inboxLabel}. {brief.inboxDetail}</p>
+      <p className="mt-3 max-w-[28rem] text-[12.5px] text-ink-muted">{brief.inboxLabel}. {brief.inboxDetail}</p>
     </div>
   );
 }

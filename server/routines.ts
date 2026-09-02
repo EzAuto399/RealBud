@@ -18,6 +18,7 @@ export interface LoopExecuteResult {
   detail: string;
   covered?: number;
   uncovered?: number;
+  jobRunId?: string;
 }
 
 export interface LoopManagerOptions {
@@ -30,7 +31,9 @@ export interface LoopManagerOptions {
   runDeadlineMs?: number;
   execute: (loop: Loop, run: LoopRun) => Promise<LoopExecuteResult>;
   /** Taught jobs. Re-read each tick so a save, pause, or delete lands without a restart. */
-  listRecipes?: () => ReadonlyArray<Pick<Recipe, "id" | "title" | "status" | "schedule" | "planApprovedAt">>;
+  listRecipes?: () => ReadonlyArray<
+    Pick<Recipe, "id" | "title" | "status" | "schedule" | "planApprovedAt" | "revision" | "approvedRevision">
+  >;
   /** Pause/resume from the clock writes through to the job's status. */
   setRecipeEnabled?: (recipeId: string, enabled: boolean) => void;
 }
@@ -101,7 +104,7 @@ export function recipeIdFromLoopId(id: LoopId): string | null {
 }
 
 const RECIPE_LOOP_DESCRIPTION =
-  "A job you taught Bud. Runs on the RealBud clock; first runs are shadow runs.";
+  "A job you taught Bud. Once its current plan is approved, the RealBud clock runs it in prepare-only mode and records a receipt. Nothing is sent, submitted, or paid.";
 
 export const LOOP_CATALOG: ReadonlyArray<Omit<Loop, "enabled" | "nextRunAt" | "timezonePaused" | "revision">> = [
   {
@@ -355,7 +358,10 @@ export class LoopManager {
   runNow(id: LoopId): LoopRun | null {
     this.refreshRecipeLoops();
     const loop = this.loops.find((candidate) => candidate.id === id);
-    if (!loop || !loop.available || !loop.enabled) return null;
+    // A taught job awaiting plan approval is deliberately off the clock, but
+    // a person may still rehearse it manually in shadow mode. Catalog loops
+    // and explicitly paused jobs retain the ordinary enabled gate.
+    if (!loop || !loop.available || (!loop.enabled && !loop.waitingForPlan)) return null;
     if (this.activeRun(id)) throw Object.assign(new Error("this loop is already running"), { status: 409 });
     const run = this.newRun(loop, this.now(), true);
     this.save();
@@ -461,6 +467,7 @@ export class LoopManager {
       const result = await this.withDeadline(this.options.execute(loop, run));
       run.status = settleLoopRunStatus(result);
       run.detail = result.detail.slice(0, 500);
+      if (result.jobRunId) run.jobRunId = result.jobRunId;
     } catch (error) {
       run.status = "failed";
       run.detail = (error instanceof Error ? error.message : String(error)).slice(0, 500);
@@ -547,7 +554,13 @@ export class LoopManager {
     const paused = this.timezone !== this.hostTz;
     const wanted = new Map<
       LoopId,
-      { recipe: Pick<Recipe, "id" | "title" | "status" | "schedule" | "planApprovedAt">; catalog: LoopSchedule }
+      {
+        recipe: Pick<
+          Recipe,
+          "id" | "title" | "status" | "schedule" | "planApprovedAt" | "revision" | "approvedRevision"
+        >;
+        catalog: LoopSchedule;
+      }
     >();
     for (const recipe of recipes) {
       if (!recipe.schedule) continue;
@@ -584,9 +597,10 @@ export class LoopManager {
 
       const override = this.overrides.get(id);
       const schedule: LoopSchedule = { type: "daily", ...(override ?? catalog) };
-      const enabled = recipe.status !== "paused" && this.clockEnabled.get(id) !== false;
-      const waitingForPlan = recipe.planApprovedAt == null;
-      if (recipeClockRunnable(recipe)) this.recipeClockOk.add(id);
+      const waitingForPlan = recipe.planApprovedAt == null || recipe.approvedRevision !== recipe.revision;
+      const clockRunnable = recipeClockRunnable(recipe);
+      const enabled = clockRunnable && this.clockEnabled.get(id) !== false;
+      if (clockRunnable) this.recipeClockOk.add(id);
       const existing = this.loops.find((loop) => loop.id === id);
       if (existing) {
         existing.name = recipe.title;

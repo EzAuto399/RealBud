@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { shouldNotifyNeedsYou } from "./notify-desktop";
+import { notifyBody, shouldNotifyMiss, shouldNotifyNeedsYou } from "./notify-desktop";
+import type { MorningBrief } from "./morning-brief";
 
 describe("shouldNotifyNeedsYou", () => {
   it("notifies when the needs-you count goes up", () => {
@@ -18,5 +19,23 @@ describe("shouldNotifyNeedsYou", () => {
   it("never notifies when permission is denied or unavailable", () => {
     expect(shouldNotifyNeedsYou(1, 2, "denied")).toBe(false);
     expect(shouldNotifyNeedsYou(1, 2, "unavailable")).toBe(false);
+  });
+});
+
+describe("notify miss vocabulary", () => {
+  const miss = {
+    headline: "Recheck missed. Bud did not return live facts.",
+    checkedCount: 0,
+    needsYou: 0,
+    licensee: 0,
+  } as MorningBrief;
+
+  it("uses Recheck-missed body copy", () => {
+    expect(notifyBody(miss)).toBe("Recheck missed — facts held. Open Desk.");
+  });
+
+  it("notifies once when the miss headline appears", () => {
+    expect(shouldNotifyMiss(null, miss, "granted")).toBe(true);
+    expect(shouldNotifyMiss(miss.headline, miss, "granted")).toBe(false);
   });
 });

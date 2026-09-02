@@ -1,19 +1,22 @@
 # Next wave
 
-Date: 2026-08-31  
-HEAD at writing: `76d5885` (PR #2 merged — PM exception sims + CI unblock).  
+Date: 2026-09-01 · updated 2026-09-02
+Commercial delivery plan: `docs/REALBUD-V021-COMMERCIAL-DELIVERY-PLAN.md`
 Canonical constraints: `docs/GOAL-PROMPT.md` wins conflicts.
 
 This is the pickup list for later sessions. W1–W5, morning brief, Ask key
 refuse, You office form, worker-readiness honesty, connected-Bud ship, and
-PM e2e battery are shipped. Do not remount first-run. The remaining hole is a
-**visit** that fills those eight fields with a real shop — code cannot invent
-one. The weekday map is `docs/PM-DAY.md`. QA and live debug:
+PM e2e battery are shipped. Do not remount first-run. The product shell is
+source-ready, but commercial proof is incomplete. Before a live rollout, close
+the credential, browser-origin, durable-delivery, v0.21 canary, installed-app,
+and named-office gates in the commercial delivery plan. The human input still
+starts with a **visit** that fills the eight office fields with a real shop.
+The weekday map is `docs/PM-DAY.md`. QA and live debug:
 `docs/QA-LIVE-DEBUG.md`.
 
 If a later idea fights this file, `docs/GOAL-PROMPT.md` still wins.
 
-Related: `docs/LLM-BRIEF.md`, `docs/PRODUCT-DESIGN-PLAN.md`, `docs/PILOT-CONTRACT.md`, `docs/QA-LIVE-DEBUG.md`, `TODOS.md`
+Related: `docs/REALBUD-V021-COMMERCIAL-DELIVERY-PLAN.md`, `docs/LLM-BRIEF.md`, `docs/PRODUCT-DESIGN-PLAN.md`, `docs/PILOT-CONTRACT.md`, `docs/QA-LIVE-DEBUG.md`, `TODOS.md`
 
 ---
 
@@ -38,12 +41,21 @@ Do not rebuild any of that.
 
 **Focus:** prove honesty under a real PM thumb, not new architecture.
 
-Daily gate: `pnpm qa` (typecheck + vitest + e2e battery).  
-Desktop: follow `docs/QA-LIVE-DEBUG.md` happy + exception paths with live worker.  
+Daily gate: `pnpm qa` (typecheck + vitest + e2e battery).
+Desktop: follow `docs/QA-LIVE-DEBUG.md` happy + exception paths with live worker.
 Optional: `scripts/simulate-scale.mjs` before a large-book visit.
 
-Fix only real defects. Do not open inbound, CUA, Pocket, or installer until You
-→ This office has a real shop name.
+Fix only real defects. Do not open inbound, Pocket, or installer until You
+→ This office has a real shop name. Live portal is Attach + Run beside me
+(2026-09-02), not that visit gate.
+
+## v0.21 release prerequisites (2026-09-01)
+
+The upstream Hermes v0.21 release is a canary candidate, not the production
+pin. Keep v0.20.3 as the rollback path. First close exact-provider credential
+status, exact browser origins, durable external-delivery receipts, sanitised
+usage records, and the full typecheck. Then run the canary in a separate Hermes
+home and profile. Do not update the working profile in place.
 
 ---
 
@@ -55,7 +67,7 @@ These are the same misses, twice or more. Do not re-open a shipped row.
 
 **T12 was specified as Ask-as-actor, shipped as intake.** The plan asked for `run-loop`, `retune-clock`, `add-property`, `edit-property`. What landed is paste-a-book plus "Put courtesy on Desk", now folded under one disclosure. Clock-from-Ask stays deferred (ROUTINES PR C). Do not "finish T12" by building PR C.
 
-**Architecture ahead of the office.** Starting inbound mail, live CUA, Pocket, or a law shelf before `docs/PILOT-CONTRACT.md` has eight named fields is the same mistake again.
+**Architecture ahead of the office.** Starting inbound mail, Pocket, or a law shelf before `docs/PILOT-CONTRACT.md` has eight named fields is the same mistake again. Live portal runs no longer wait on those fields (2026-09-02).
 
 **A previous cloud run sat on "Hi".** No task, no branch, idle. If the prompt is empty, stop.
 
@@ -72,28 +84,37 @@ These look like product completion. They are not the next session.
 | Inbound-triage mail (IMAP/Graph) | Declared loop. Needs a named inbox and a named office. |
 | Ask proposes a clock change (PR C) | Deferred until an office asks. |
 | Property scope on a loop (PR D) | Fixture ids are not a book. |
-| Live portal / PropertyMe read API / Pocket | `docs/PILOT-CONTRACT.md` eight fields first. |
+| Live portal / CUA | Attended saved-job runs behind Attach shipped 2026-09-02; wave 2 (same day) added site rules, opt-in Submit asks, and Ready beside you (`docs/PORTAL-WORK.md`). Do not start unattended CUA, a Submit standing rule, or money/sign/notice Submit. Do not rebuild a visit gate. |
+| PropertyMe read API / Pocket | Eight fields first. |
 | Cmd+K, PropertyGroup UI, J/K, lease-review, inspection-prep | Chrome and declared case kinds. Not the graduate path. |
 | T17 notarize / signed Windows | Release gate. |
 | OpenMausBot leftover files (`GroupView`, Plugins, mascot) | Product mode already hides them. A purge is tempting and is not the hole. |
 | Funding a model key | Human. Not a code task. |
+| Later: general desktop apps beyond the browser | Fence is browser-typed today (`navigate` / `read` / `fill` / `click_semantic`). Do not widen computer-use to arbitrary apps. |
 
 The human task that actually finishes the product is still the visit: type
 the eight fields on You → This office. Code cannot invent an agency.
 
 ---
 
+## Shipped 2026-09-02
+
+- **GUI wave 1–2** Compact Desk, plain worker misses, Ask consolidation, restart fix for escalation detail — `docs/GUI-EXPERIENCE-PLAN.md`.
+- **Portal wave** Attended saved-job runs ("Run beside me") behind per-job Attach; fence in `server/portal-fence.ts`. Ask no longer refuses a portal routine. Visit still gates inbound, Pocket, installer.
+- **Portal wave 2 (2026-09-02)** Site rules for read/prefill; Submit as a per-instance ask on jobs with "Bud may press Submit"; clock queues Ready beside you (never launches a browser; `missed` after 24 h). Pay/sign/notice/send stay outside Bud.
+
 ## Shipped this wave (2026-08-29)
 
 - **W1** First-run three-rules screen + Desk/You go-live card (export / worker / agency). Demo agency name does not count.
 - **W2** Partial worker ledger holds uncovered properties. Chip stays Held. User chrome says Worker, not Hermes.
-- **W3** `Desk.batch` / Allow-all one persist. 194 adds are one revision bump.
+- **W3** Allow-all preflights capacity and duplicates, then evaluates and persists the full intake once.
 - **W4** Electron wraps `desk.key` with `safeStorage`. `REALBUD_DESK_KEY` does not write a plaintext key file.
 - **W5** You sources show last-checked in the agency timezone. Recheck writes `hands-last.json`. Test hands writes `hands-ping.json`. A miss says Missed.
 - **Morning brief** Desk, You and Ask share one this-morning strip: every known address after Recheck, plus an honest **Inbox not connected**. Does not read mail. 86 stays the ceiling until a named Gmail read exists.
 - **Keys stay on You** Ask refuses a pasted provider key. The worker may use a key after Attach model. It does not get to read the secret from chat.
 - **Morning honesty** Seeded demo kinds (maintenance, lease, inspection, inbound) stay on the book. They do not inflate the Held chip. Go-live collapses to one line after the first Recheck. Evidence stamps use `fmtDateTime`. Ask intake sits under "Put work on Desk".
 - **This office** You persists the eight visit fields. Demo / training names stay unnamed. Completing the form does not open inbound or live CUA.
+  (2026-09-02: live portal runs now require plan approval + Attach, not the eight fields; inbound and the installer still wait.)
 
 Provider keys in the worker profile `.env` stay readable by the worker. Wrapping that file would hide the key from Recheck. That is not a vault we can add without a decrypt shim the worker does not have.
 
@@ -113,7 +134,7 @@ A subset ledger holds omitted properties (`uncovered-by-worker`). User chrome sa
 
 ### W3 — one persist for bulk writes — shipped on `511ad6a`
 
-Allow-all / 194 adds are one revision bump.
+Allow-all is one revision bump; 600-property operating and 1,000-property boundary tests stay explicit.
 
 ### W4 — `desk.key` wrap — shipped on `511ad6a`
 
@@ -143,4 +164,5 @@ commands live in `docs/GRADUATE-RELEASE.md`.
 4. Windows Authenticode + NSIS; then bundle Hermes so win32 is not CSV-only.
 5. Cut public `EzAuto399/RealBud` release with `latest-mac.yml` + `latest.yml`.
 
-Do not start inbound, PR C, Pocket, or Bud Submit to "complete" the product.
+Do not start inbound, PR C, or Pocket to "complete" the product.
+(2026-09-02 wave 2: opt-in Submit asks shipped; do not widen to money, rules, or unattended.)

@@ -107,7 +107,7 @@ function fakeDesk(initial: DeskSnapshot): RemoteDesk & { notes: string } {
       snap = { ...snap, revision: snap.revision + 1, drafts: snap.drafts.map((item) => (item.id === id ? { ...row } : item)) };
       return row;
     },
-    denyDraft(id, expected, via) {
+    denyDraft(id, expected, via, reason) {
       if (expected != null && expected !== snap.revision) {
         throw Object.assign(new Error("stale desk revision"), { status: 409 });
       }
@@ -116,6 +116,10 @@ function fakeDesk(initial: DeskSnapshot): RemoteDesk & { notes: string } {
       row.status = "denied";
       row.decidedAt = 1_725_000_000_000;
       if (via) row.via = via;
+      if (reason) {
+        const trimmed = reason.trim();
+        if (trimmed) notes.body = notes.body.trim() ? `${notes.body.trim()}\n${trimmed}` : trimmed;
+      }
       snap = { ...snap, revision: snap.revision + 1, drafts: snap.drafts.map((item) => (item.id === id ? { ...row } : item)) };
       return row;
     },

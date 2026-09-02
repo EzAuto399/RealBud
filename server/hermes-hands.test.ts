@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { HERMES_PIN } from "./hermes-pin.ts";
 import type { LedgerFacts } from "./desk.ts";
-import { parseLedgerFacts, tryHermesLedger, tryHermesPing, uncoveredPropertyIds } from "./hermes-hands.ts";
+import { parseLedgerFacts, tryHermesLedger, tryHermesPing, uncoveredPropertyIds, workerMissReason } from "./hermes-hands.ts";
 import { seedVault } from "./vault.ts";
 import { HermesAgentDriver } from "./drivers/acp/hermes.ts";
 import { fakeHermes } from "./testing/fake-hermes.ts";
@@ -24,6 +24,31 @@ function stubHermes(...args: Parameters<typeof fakeHermes>) {
 
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+describe("workerMissReason", () => {
+  it("turns a refused provider key into one plain line without the scanner noise", () => {
+    const stderr =
+      "⚠ tirith security scanner enabled but not available — command scanning will use pattern matching only\n" +
+      "API call failed after 3 retries: An error occurred (UnrecognizedClientException) when calling the Converse operation\n";
+    const reason = workerMissReason("session_id: abc\n", stderr);
+    expect(reason).toBe("the model provider refused Bud's key; check the model connection on You");
+    expect(reason).not.toMatch(/tirith|UnrecognizedClient/);
+  });
+
+  it("names billing, rate limits, and a missing model", () => {
+    expect(workerMissReason("", "Error: insufficient_quota (402)")).toMatch(/Billing or credits exhausted/);
+    expect(workerMissReason("", "429 Too Many Requests")).toMatch(/rate-limiting/);
+    expect(workerMissReason("", "No model configured for profile property")).toMatch(/no model is connected/);
+  });
+
+  it("keeps an unknown failure honest but bounded to one line", () => {
+    const long = "x".repeat(300);
+    const reason = workerMissReason(`first line\n${long}`, "");
+    expect(reason.length).toBeLessThanOrEqual(120);
+    expect(reason.endsWith("…")).toBe(true);
+    expect(workerMissReason("", "")).toBe("");
+  });
 });
 
 describe("uncoveredPropertyIds", () => {

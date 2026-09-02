@@ -1,5 +1,6 @@
 import type { DeskSnapshot } from "../shared/contracts.ts";
 
+import { buildDeskQueue, recoveryPlanFor } from "../src/lib/desk-queue.ts";
 import { morningBrief, shortStreet } from "../src/lib/morning-brief.ts";
 
 export type AskBookIntent = "greeting" | "recheck" | "needs" | "hold" | "draft" | "inbox";
@@ -30,6 +31,34 @@ function addressLines(snap: DeskSnapshot, attention?: string): string {
   return rows.map((row) => `• ${shortStreet(row.address)} — ${row.label}`).join("\n");
 }
 
+function normaliseAddress(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function propertyNamedIn(text: string, snap: DeskSnapshot): DeskSnapshot["properties"][number] | undefined {
+  const request = ` ${normaliseAddress(text)} `;
+  return snap.properties.find((property) => {
+    const full = normaliseAddress(property.address);
+    const street = normaliseAddress(shortStreet(property.address));
+    return request.includes(` ${full} `) || request.includes(` ${street} `);
+  });
+}
+
+function scopedHoldAnswer(text: string, snap: DeskSnapshot): string | null {
+  const property = propertyNamedIn(text, snap);
+  if (!property) return null;
+  const item = buildDeskQueue(snap).find((row) => row.propertyId === property.id && row.bucket !== "done");
+  if (!item) return `${property.address} has no open Desk case. Nothing was sent or changed.`;
+  const plan = recoveryPlanFor(item);
+  return [
+    `${property.address} is ${item.bucket === "waiting" ? "held" : "open"} — ${plan.headline}.`,
+    `Missing: ${plan.missing}.`,
+    `Source: ${plan.source}.`,
+    `Next: ${plan.next}.`,
+    "Nothing was sent or changed.",
+  ].join("\n");
+}
+
 export function answerAskFromDesk(text: string, snap: DeskSnapshot): string | null {
   const intent = askBookIntent(text);
   if (!intent) return null;
@@ -47,6 +76,8 @@ export function answerAskFromDesk(text: string, snap: DeskSnapshot): string | nu
       return `${brief.headline}\n${waiting}`;
     }
     case "hold": {
+      const scoped = scopedHoldAnswer(text, snap);
+      if (scoped) return scoped;
       const held = addressLines(snap, "held");
       if (!held) return `${brief.headline} Nothing is held.`;
       return `Held on Desk:\n${held}`;
@@ -62,7 +93,8 @@ export function productBudSystemPrompt(): string {
   return [
     "You are Bud, the one RealBud property worker.",
     "Use the tools available to you when they improve the result. You may inspect and search the current RealBud workroom, analyse attachments, calculate, run guarded commands or code, research public sources, and create or edit working files inside that workroom.",
-    "When a job needs a portal page, you may drive this Mac's browser through the computer tools. Every computer action asks the user first. Only visit sites named in a saved job. Never submit, send, pay, or change an external account from the browser — prepare and stop.",
+    "Connected-app tools may be used to search, read, compare, and prepare drafts in services the user has connected. A request to connect an app is handled directly by RealBud outside this model turn. Never ask for or expose an app token. Sending, publishing, deleting, purchasing, or changing an external record remains consequential: prepare it and wait for the user's exact approval.",
+    "When a job needs a portal page, you may drive this Mac's browser through the computer tools. Every computer action asks the user first. Only visit sites named in a saved job. Never submit, send, pay, or change an external account from the browser — prepare and stop. If the user asks you to log in to a website, complete a portal routine, or take over repeated online work, do not refuse. Say in one sentence that they sign in themselves and press any Submit or Pay, then offer the job: if a saved job names that site, tell them to press Run beside me on Schedule; otherwise say RealBud will set the routine up as a saved job for one approval. On a bank site you only read and export; you never move money.",
     "For current book facts, read DESK-CONTEXT.md in the workroom. It is RealBud's least-privilege projection of the visible Desk. Never inspect or decrypt desk.json, desk.key, Desk backups, recovery files, or sibling data directories from Ask. If the projection lacks a fact, say what is missing and direct the user to Desk.",
     "For Australian residential tenancy questions, read AU-RENTAL-LAW.md in the workroom and answer in the book's jurisdiction frame from that reference. It is a shop-reminder sheet, not legal advice: cite the jurisdiction's Act, and always end with the verify line — verify against the current Act; the licensee owns statutory process. Never invent a threshold; unknown stays unknown.",
     "Prefer the direct tool for a simple job. Delegate only when distinct parallel research is genuinely useful, and always combine the results into one clear answer.",

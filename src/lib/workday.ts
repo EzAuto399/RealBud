@@ -110,7 +110,7 @@ export function workdayGuide(input: {
         title: "Run the sample morning",
         detail: "Use labelled training facts to learn the full Desk flow. Nothing touches a PMS or leaves this Mac.",
         action: "practice",
-        actionLabel: "Run sample check",
+        actionLabel: "Recheck",
         ...meta,
       };
     }
@@ -121,9 +121,9 @@ export function workdayGuide(input: {
       title: "Run the morning check",
       detail: input.workerReady
         ? `Bud will check ${desk.properties.length} ${desk.properties.length === 1 ? "address" : "addresses"} and put exceptions on Desk.`
-        : "Recheck remains available. Any worker miss stays clearly labelled and nothing is sent.",
+        : "Recheck remains available. Any Bud miss stays clearly labelled and nothing is sent.",
       action: "recheck",
-      actionLabel: "Run Recheck",
+      actionLabel: "Recheck",
       ...meta,
     };
   }
@@ -134,10 +134,12 @@ export function workdayGuide(input: {
         phase: "worker-miss",
         tone: "hold",
         eyebrow: "Live check missed",
-        title: "Continue with the sample",
-        detail: "Bud returned no live ledger facts. Use labelled training facts now, then check Bud under You.",
+        title: "Facts stay held",
+        // The button replays labelled training facts, so it must not be called
+        // Recheck: a live Recheck would miss again until the model is fixed.
+        detail: "Bud did not return live facts. Fix the model connection on You, or keep practising on the sample morning.",
         action: "practice",
-        actionLabel: "Run sample check",
+        actionLabel: "Run the sample morning",
         ...meta,
       };
     }

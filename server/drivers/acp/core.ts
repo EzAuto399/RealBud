@@ -13,6 +13,7 @@
 // is never a security contract). session/load REPLAYS history as ordinary
 // session/update notifications, so updates are double-gated: nothing emits
 // before the prompt is sent, and `_meta.isReplay` updates are dropped.
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../../procs.ts";
@@ -72,11 +73,35 @@ export interface AcpSupport {
   buildPromptText?(turn: SendTurnInput): string;
   /** Child-created files default to owner-only inside a private workroom. */
   privateWorkspace?: boolean;
+  /** Some ACP servers only keep sessions inside the live stdio process. For
+   * those servers, loading a cursor in a new process can never work and only
+   * adds a long failed round trip. */
+  resumeAcrossProcesses?: boolean;
+  /** Optional conservative session mode applied after session/new or load.
+   * Failure is non-fatal: the provider keeps its manual approval defaults. */
+  defaultSessionMode?: string;
 }
 
 const INIT_TIMEOUT = 20_000;
 const NEW_SESSION_TIMEOUT = 30_000;
 const LOAD_SESSION_TIMEOUT = 120_000; // history replay on a long thread is slow
+const SESSION_MODE_TIMEOUT = 5_000;
+const CANCEL_GRACE_MS = 2_000;
+const WARM_SESSION_IDLE_MS = 10 * 60_000;
+const MAX_WARM_SESSIONS = 8;
+
+type AcpStdioMcpServer = {
+  name: string;
+  command: string;
+  args: string[];
+  env: Array<{ name: string; value: string }>;
+};
+type AcpHttpMcpServer = {
+  name: string;
+  url: string;
+  headers: Array<{ name: string; value: string }>;
+};
+type AcpMcpServer = AcpStdioMcpServer | AcpHttpMcpServer;
 
 function decodeAcpConfig(defaultCli: string) {
   return (raw: unknown): AcpConfig => {
@@ -107,16 +132,35 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
     async create(input: DriverCreateInput<AcpConfig>): Promise<ProviderInstance> {
       const { instanceId, config } = input;
       const listeners = new Set<RuntimeEventListener>();
-      interface Turn {
+      interface ActiveTurn {
         stop: () => void;
-        interrupt: () => void;
+        interrupt: () => Promise<void>;
         turnId: string;
-        asks: Map<string, (behavior: string) => void>;
+        asks: Map<string, (decision: { behavior: string; scope?: "once" | "session" }) => void>;
       }
-      const active = new Map<string, Turn>();
+      interface SessionRuntime {
+        signature: string;
+        lastUsed: number;
+        resume: (turn: SendTurnInput, first?: boolean) => string;
+        stop: () => void;
+      }
+      interface RunningTurn {
+        turn: SendTurnInput;
+        turnId: string;
+        text: string;
+        promptSent: boolean;
+        settled: boolean;
+        asks: Map<string, (decision: { behavior: string; scope?: "once" | "session" }) => void>;
+        interruptTimer: ReturnType<typeof setTimeout> | null;
+        done: Promise<void>;
+        resolveDone: () => void;
+      }
+      const active = new Map<string, ActiveTurn>();
+      const warm = new Map<string, SessionRuntime>();
+      const sessions = new Set<SessionRuntime>();
 
       const emit = (event: RuntimeEvent) => {
-        for (const l of [...listeners]) l(event);
+        for (const listener of [...listeners]) listener(event);
       };
       const base = (threadId: string, turnId: string) => ({
         eventId: newEventId(),
@@ -136,21 +180,22 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         return env;
       };
 
-      // ACP session mcpServers: stdio is the baseline every ACP agent
-      // supports (mcpCapabilities.http/.sse only add EXTRA transports), so
-      // an injected stdio proxy — e.g. the peer-agent comms tool — attaches
-      // fine here. env is the ACP {name,value}[] shape.
-      const acpMcpServers = (turn: SendTurnInput) => {
-        const servers: Array<{ name: string; command: string; args: string[]; env: Array<{ name: string; value: string }> }> = [];
+      const acpMcpServers = (turn: SendTurnInput): AcpMcpServer[] => {
+        const servers: AcpMcpServer[] = [];
         const acpEnv = (env: Record<string, string>) =>
           Object.entries(env).map(([name, value]) => ({ name, value: String(value) }));
+        const composio = turn.integrations?.composio;
+        if (composio) {
+          servers.push({
+            name: "connected-apps",
+            url: composio.url || "https://connect.composio.dev/mcp",
+            headers: [{ name: "x-consumer-api-key", value: composio.key }],
+          });
+        }
         const agents = turn.integrations?.agents;
         if (agents) {
           servers.push({ name: "agents", command: agents.command, args: agents.args, env: acpEnv(agents.env) });
         }
-        // The bot's computer, mounted exactly like the Claude driver does.
-        // Cloud boxes use the REST adapter; host and sandbox Cua connections
-        // expose Cua Driver's official MCP server directly.
         const computer = turn.integrations?.computer;
         if (computer) {
           servers.push({
@@ -161,12 +206,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           });
         } else if (turn.integrations?.localComputer) {
           const local = turn.integrations.localComputer;
-          servers.push({
-            name: "computer",
-            command: local.command,
-            args: local.args,
-            env: acpEnv(local.env ?? {}),
-          });
+          servers.push({ name: "computer", command: local.command, args: local.args, env: acpEnv(local.env ?? {}) });
         }
         if (turn.computer === true && !servers.some((server) => server.name === "computer")) {
           const conn = readCuaConnection();
@@ -182,39 +222,63 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         return servers;
       };
 
-      const sendTurn = async (turn: SendTurnInput) => {
-        const { threadId } = turn;
-        if (active.has(threadId)) throw new Error("a turn is already running on this thread");
-        const turnId = newId();
-        const cwd = turn.cwd ?? config.workspace ?? homedir();
-        const env = childEnv();
-        const mcpServers = acpMcpServers(turn);
+      const signatureFor = (cwd: string, args: string[], mcpServers: AcpMcpServer[]) =>
+        createHash("sha256").update(JSON.stringify({ cli: config.cli, cwd, args, mcpServers })).digest("hex");
 
-        const child = spawnCli(config.cli, support.spawnArgs(config, turn), {
+      const replayOnFreshSession = (turn: SendTurnInput): SendTurnInput => {
+        const transcript = turn.transcript ?? [];
+        if (!transcript.length || turn.text.startsWith("[The user rewound this conversation")) return turn;
+        return {
+          ...turn,
+          text: [
+            "[RealBud restored this conversation after the worker restarted:]",
+            "",
+            ...transcript.map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.text}`),
+            "",
+            "[Latest user request:]",
+            "",
+            turn.text,
+          ].join("\n"),
+        };
+      };
+
+      const createRuntime = (
+        firstTurn: SendTurnInput,
+        cwd: string,
+        args: string[],
+        mcpServers: AcpMcpServer[],
+        signature: string,
+      ): SessionRuntime => {
+        const { threadId } = firstTurn;
+        const child = spawnCli(config.cli, args, {
           cwd,
-          env,
+          env: childEnv(),
           stdio: ["pipe", "pipe", "pipe"],
           privateFiles: support.privateWorkspace === true,
         });
-
-        const state = { settled: false, promptSent: false, text: "" };
-        const asks = new Map<string, (behavior: string) => void>();
+        let current: RunningTurn | null = null;
         let nextId = 1;
         let sessionId: string | null = null;
-        let interruptTimer: ReturnType<typeof setTimeout> | null = null;
+        let closed = false;
+        let sessionAnnounced = false;
+        let idleTimer: ReturnType<typeof setTimeout> | null = null;
+        let stderr = "";
+        let runtime!: SessionRuntime;
         const rpcPending = new Map<
           number,
-          { resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> | null }
+          { resolve: (value: any) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> | null }
         >();
 
-        const send = (obj: unknown) => {
+        const eventBase = (run: RunningTurn) => base(threadId, run.turnId);
+        const send = (message: unknown) => {
           try {
-            child.stdin.write(JSON.stringify(obj) + "\n");
+            child.stdin.write(JSON.stringify(message) + "\n");
           } catch {}
-          appendNative(threadId, { dir: "out", source: SOURCE, msg: obj });
+          appendNative(threadId, { dir: "out", source: SOURCE, msg: message });
         };
         const request = (method: string, params: unknown, timeoutMs?: number) =>
           new Promise<any>((resolve, reject) => {
+            if (closed) return reject(new Error(`${DRIVER_KIND} session is closed`));
             const id = nextId++;
             let timer: ReturnType<typeof setTimeout> | null = null;
             if (timeoutMs) {
@@ -228,40 +292,77 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             send({ jsonrpc: "2.0", id, method, params });
           });
 
-        const stop = () => killCliTree(child);
-
-        const settle = (ok: boolean, stopReason: string | null) => {
-          if (state.settled) return;
-          state.settled = true;
-          if (interruptTimer) clearTimeout(interruptTimer);
-          for (const finish of [...asks.values()]) finish("cancel");
-          for (const p of rpcPending.values()) {
-            if (p.timer) clearTimeout(p.timer);
-            p.reject(new Error("turn settled"));
+        const removeRuntime = () => {
+          if (idleTimer) clearTimeout(idleTimer);
+          idleTimer = null;
+          if (warm.get(threadId) === runtime) warm.delete(threadId);
+          sessions.delete(runtime);
+        };
+        const terminate = () => {
+          if (closed) return;
+          closed = true;
+          removeRuntime();
+          for (const pending of rpcPending.values()) {
+            if (pending.timer) clearTimeout(pending.timer);
+            pending.reject(new Error("ACP session closed"));
           }
           rpcPending.clear();
-          active.delete(threadId);
-          if (state.text.trim()) {
-            emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", text: state.text });
+          killCliTree(child);
+        };
+        const park = () => {
+          if (closed || current) return;
+          runtime.lastUsed = Date.now();
+          warm.set(threadId, runtime);
+          if (idleTimer) clearTimeout(idleTimer);
+          idleTimer = setTimeout(terminate, WARM_SESSION_IDLE_MS);
+          idleTimer.unref?.();
+          if (warm.size > MAX_WARM_SESSIONS) {
+            const victim = [...warm.values()]
+              .filter((candidate) => candidate !== runtime)
+              .sort((a, b) => a.lastUsed - b.lastUsed)[0];
+            victim?.stop();
           }
-          emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost: null });
-          stop(); // the agent process does not exit on its own
+        };
+        const settle = (run: RunningTurn, ok: boolean, stopReason: string | null, keepWarm: boolean) => {
+          if (run.settled) return;
+          run.settled = true;
+          if (run.interruptTimer) clearTimeout(run.interruptTimer);
+          for (const finish of [...run.asks.values()]) finish({ behavior: "cancel" });
+          const tracked = active.get(threadId);
+          if (tracked?.turnId === run.turnId) active.delete(threadId);
+          if (current === run) current = null;
+          if (run.text.trim()) {
+            emit({ ...eventBase(run), type: "item.completed", itemType: "assistant_text", text: run.text });
+          }
+          emit({ ...eventBase(run), type: "turn.completed", ok, stopReason, cost: null });
+          run.resolveDone();
+          if (keepWarm && !closed) park();
+          else terminate();
         };
 
-        // server→client permission request → canonical request.opened
-        const handleServerRequest = (msg: any) => {
-          if (msg.method !== "session/request_permission") {
-            // never leave an unknown server request hanging — the agent blocks
-            return send({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } });
+        const handleServerRequest = (message: any) => {
+          const run = current;
+          if (!run || run.settled || message.method !== "session/request_permission") {
+            return send({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "method not found" } });
           }
-          const params = msg.params ?? {};
+          const params = message.params ?? {};
           const options: Array<{ optionId?: string; kind?: string }> = Array.isArray(params.options) ? params.options : [];
           const optionFor = (want: "allow" | "reject") =>
-            options.find((o) => String(o.kind ?? "").startsWith(want) && typeof o.optionId === "string")?.optionId ?? null;
+            options.find((option) => String(option.kind ?? "").startsWith(want) && typeof option.optionId === "string")
+              ?.optionId ?? null;
+          const sessionAllowOption = () =>
+            options.find((option) => option.optionId === "allow_session")?.optionId ??
+            options.find(
+              (option) =>
+                String(option.kind ?? "").startsWith("allow") &&
+                /session/i.test(String((option as { name?: unknown }).name ?? "")) &&
+                typeof option.optionId === "string",
+            )?.optionId ??
+            null;
           const cancelled = { outcome: { outcome: "cancelled" } };
           const missing = (want: string) =>
             emit({
-              ...base(threadId, turnId),
+              ...eventBase(run),
               type: "runtime.error",
               message: `${DRIVER_KIND} offered no "${want}" permission option — cancelling the request instead of guessing`,
             });
@@ -272,242 +373,358 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (!allow) missing("allow");
             return send({
               jsonrpc: "2.0",
-              id: msg.id,
+              id: message.id,
               result: allow ? { outcome: { outcome: "selected", optionId: allow } } : cancelled,
             });
           }
           const kind = String(toolCall.kind ?? "");
-          const tool = kind === "execute" ? "shell" : kind === "edit" ? "edit" : kind || "tool";
-          const summary = String(toolCall.rawInput?.command ?? toolCall.title ?? tool).slice(0, 200);
+          const rawInput = toolCall.rawInput;
+          const named =
+            rawInput && typeof rawInput === "object"
+              ? typeof rawInput.name === "string"
+                ? rawInput.name
+                : typeof rawInput.tool === "string"
+                  ? rawInput.tool
+                  : ""
+              : "";
+          const tool = named
+            ? named
+            : kind === "execute"
+              ? "shell"
+              : kind === "edit"
+                ? "edit"
+                : kind || (typeof toolCall.title === "string" ? toolCall.title : "tool");
+          const summary = String(
+            rawInput?.command ?? rawInput?.url ?? rawInput?.label ?? toolCall.title ?? tool,
+          ).slice(0, 200);
           const requestId = newId();
-          const finish = (behavior: string) => {
-            if (!asks.delete(requestId)) return;
+          const finish = (decision: { behavior: string; scope?: "once" | "session" }) => {
+            if (!run.asks.delete(requestId)) return;
             clearTimeout(timer);
-            const want = behavior === "allow" ? "allow" : "reject";
-            const optionId = behavior === "cancel" ? null : optionFor(want);
-            if (behavior !== "cancel" && !optionId) missing(want);
+            const want = decision.behavior === "allow" ? "allow" : "reject";
+            const optionId =
+              decision.behavior === "cancel"
+                ? null
+                : decision.behavior === "allow" && decision.scope === "session"
+                  ? sessionAllowOption() ?? optionFor("allow")
+                  : optionFor(want);
+            if (decision.behavior !== "cancel" && !optionId) missing(want);
             send({
               jsonrpc: "2.0",
-              id: msg.id,
+              id: message.id,
               result: optionId ? { outcome: { outcome: "selected", optionId } } : cancelled,
             });
             emit({
-              ...base(threadId, turnId),
+              ...eventBase(run),
               type: "request.resolved",
               requestId,
-              behavior: optionId && behavior === "allow" ? "allow" : "deny",
+              behavior: optionId && decision.behavior === "allow" ? "allow" : "deny",
               source: optionId ? "user" : "system",
             });
           };
           const timer = setTimeout(() => {
-            emit({ ...base(threadId, turnId), type: "runtime.error", message: DENY_TIMEOUT_NOTE });
-            finish("deny");
+            emit({ ...eventBase(run), type: "runtime.error", message: DENY_TIMEOUT_NOTE });
+            finish({ behavior: "deny" });
           }, 15 * 60_000);
           timer.unref?.();
-          asks.set(requestId, finish);
+          run.asks.set(requestId, finish);
           emit({
-            ...base(threadId, turnId),
+            ...eventBase(run),
             type: "request.opened",
             requestId,
             requestType: "permission",
             tool,
             summary,
+            ...(rawInput !== undefined ? { params: rawInput } : {}),
           });
         };
 
-        const handleNotification = (msg: any) => {
-          // Vendor side-channels (e.g. grok's `_x.ai/*`) are teed to the
-          // native log but never normalized: the prompt result is the settle.
-          if (msg.method !== "session/update") return;
-          const p = msg.params ?? {};
-          if (!state.promptSent || p._meta?.isReplay === true) return;
-          const u = p.update ?? {};
-          switch (u.sessionUpdate) {
+        const handleNotification = (message: any) => {
+          const run = current;
+          if (!run || run.settled || message.method !== "session/update") return;
+          const params = message.params ?? {};
+          if (!run.promptSent || params._meta?.isReplay === true) return;
+          const update = params.update ?? {};
+          switch (update.sessionUpdate) {
             case "agent_message_chunk": {
-              const delta = u.content?.text;
+              const delta = update.content?.text;
               if (typeof delta === "string" && delta) {
-                state.text += delta;
-                emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta });
+                run.text += delta;
+                emit({ ...eventBase(run), type: "content.delta", streamKind: "assistant_text", delta });
               }
               break;
             }
             case "agent_thought_chunk": {
-              const delta = u.content?.text;
+              const delta = update.content?.text;
               if (typeof delta === "string" && delta) {
-                emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "reasoning_text", delta });
+                emit({ ...eventBase(run), type: "content.delta", streamKind: "reasoning_text", delta });
               }
               break;
             }
-            case "tool_call": {
+            case "tool_call":
               emit({
-                ...base(threadId, turnId),
+                ...eventBase(run),
                 type: "item.started",
                 itemType: "tool",
-                itemId: u.toolCallId,
-                title: String(u.rawInput?.command ?? u.title ?? "tool").slice(0, 80),
+                itemId: update.toolCallId,
+                title: String(update.rawInput?.command ?? update.title ?? "tool").slice(0, 80),
               });
               break;
-            }
-            case "tool_call_update": {
-              if (u.status === "completed" || u.status === "failed") {
+            case "tool_call_update":
+              if (update.status === "completed" || update.status === "failed") {
                 emit({
-                  ...base(threadId, turnId),
+                  ...eventBase(run),
                   type: "item.completed",
                   itemType: "tool",
-                  itemId: u.toolCallId,
-                  ok: u.status !== "failed",
+                  itemId: update.toolCallId,
+                  ok: update.status !== "failed",
                 });
               }
               break;
-            }
           }
         };
 
-        let buf = "";
-        // decode as UTF-8 across chunk boundaries — a raw `buf += chunk` splits
-        // multibyte characters that straddle two reads and corrupts the text
+        let buffer = "";
         child.stdout.setEncoding("utf8");
         child.stdout.on("data", (chunk) => {
-          buf += chunk;
-          let nl;
-          while ((nl = buf.indexOf("\n")) !== -1) {
-            const line = buf.slice(0, nl);
-            buf = buf.slice(nl + 1);
+          buffer += chunk;
+          let newline;
+          while ((newline = buffer.indexOf("\n")) !== -1) {
+            const line = buffer.slice(0, newline);
+            buffer = buffer.slice(newline + 1);
             if (!line.trim()) continue;
-            let msg: any;
+            let message: any;
             try {
-              msg = JSON.parse(line);
+              message = JSON.parse(line);
             } catch {
               continue;
             }
-            appendNative(threadId, { dir: "in", source: SOURCE, msg });
-            if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined)) {
-              const pend = rpcPending.get(msg.id);
-              if (pend) {
-                rpcPending.delete(msg.id);
-                if (pend.timer) clearTimeout(pend.timer);
-                msg.error ? pend.reject(new Error(msg.error.message ?? JSON.stringify(msg.error))) : pend.resolve(msg.result);
+            appendNative(threadId, { dir: "in", source: SOURCE, msg: message });
+            if (message.id !== undefined && (message.result !== undefined || message.error !== undefined)) {
+              const pending = rpcPending.get(message.id);
+              if (pending) {
+                rpcPending.delete(message.id);
+                if (pending.timer) clearTimeout(pending.timer);
+                message.error
+                  ? pending.reject(new Error(message.error.message ?? JSON.stringify(message.error)))
+                  : pending.resolve(message.result);
               }
-            } else if (msg.id !== undefined && msg.method) {
-              handleServerRequest(msg);
-            } else if (msg.method) {
-              handleNotification(msg);
+            } else if (message.id !== undefined && message.method) {
+              handleServerRequest(message);
+            } else if (message.method) {
+              handleNotification(message);
             }
           }
         });
 
-        let stderr = "";
-        child.stderr.on("data", (c) => {
-          stderr += c;
+        child.stderr.on("data", (chunk) => {
+          stderr += chunk;
           if (stderr.length > 8192) stderr = stderr.slice(-8192);
         });
-        child.on("error", (e) => {
-          emit({ ...base(threadId, turnId), type: "runtime.error", ...describeSpawnFailure(e, config.cli) });
-          settle(false, "spawn_error");
+        child.on("error", (error) => {
+          const run = current;
+          if (!run || run.settled) return terminate();
+          emit({ ...eventBase(run), type: "runtime.error", ...describeSpawnFailure(error, config.cli) });
+          settle(run, false, "spawn_error", false);
         });
         child.on("close", (code) => {
-          if (!state.settled) {
+          if (closed) return;
+          closed = true;
+          removeRuntime();
+          for (const pending of rpcPending.values()) {
+            if (pending.timer) clearTimeout(pending.timer);
+            pending.reject(new Error("ACP process exited"));
+          }
+          rpcPending.clear();
+          const run = current;
+          if (run && !run.settled) {
             emit({
-              ...base(threadId, turnId),
+              ...eventBase(run),
               type: "runtime.error",
               message: `${DRIVER_KIND} exited ${code} before the prompt result${stderr ? `: ${stderr.trim().slice(-300)}` : ""}`,
             });
-            settle(false, "exit_before_result");
+            settle(run, false, "exit_before_result", false);
           }
         });
 
-        const interrupt = () => {
-          if (sessionId) send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
-          else stop();
-          if (interruptTimer) clearTimeout(interruptTimer);
-          interruptTimer = setTimeout(() => settle(true, "cancelled"), 5_000);
-          interruptTimer.unref?.();
-        };
-        active.set(threadId, { stop, interrupt, turnId, asks });
-        emit({ ...base(threadId, turnId), type: "turn.started" });
+        const ready = (async () => {
+          const init = await request(
+            "initialize",
+            { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } } },
+            INIT_TIMEOUT,
+          );
+          const methods: Array<{ id?: string }> = Array.isArray(init?.authMethods) ? init.authMethods : [];
+          const methodId = support.pickAuthMethod(methods);
+          if (methodId) {
+            try {
+              await request("authenticate", { methodId }, INIT_TIMEOUT);
+            } catch {
+              if (support.authFailure === "fail") throw new Error(support.loginNote);
+            }
+          } else if (support.authFailure === "fail") {
+            throw new Error(support.loginNote);
+          }
 
-        (async () => {
+          let loaded = false;
+          const cursor = typeof firstTurn.resumeCursor === "string" ? firstTurn.resumeCursor : null;
+          if (cursor && support.resumeAcrossProcesses !== false) {
+            try {
+              await request("session/load", { sessionId: cursor, cwd, mcpServers }, LOAD_SESSION_TIMEOUT);
+              sessionId = cursor;
+              loaded = true;
+            } catch {
+              /* stale cursor or unsupported load — make a new session */
+            }
+          }
+          if (!sessionId) {
+            const started = await request("session/new", { cwd, mcpServers }, NEW_SESSION_TIMEOUT);
+            sessionId = typeof started?.sessionId === "string" ? started.sessionId : null;
+            if (!sessionId) throw new Error("session/new returned no sessionId");
+          }
+          if (support.defaultSessionMode) {
+            try {
+              await request(
+                "session/set_mode",
+                { sessionId, modeId: support.defaultSessionMode },
+                SESSION_MODE_TIMEOUT,
+              );
+            } catch {
+              // Fail closed to the provider's default approval mode. The
+              // request/response is still captured in the redacted native log.
+            }
+          }
+          return { init, loaded };
+        })();
+
+        const runPrompt = async (run: RunningTurn, first: boolean) => {
           try {
-            const init = await request(
-              "initialize",
-              { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } } },
-              INIT_TIMEOUT,
-            );
-            const methods: Array<{ id?: string }> = Array.isArray(init?.authMethods) ? init.authMethods : [];
-            const methodId = support.pickAuthMethod(methods);
-            if (methodId) {
-              try {
-                await request("authenticate", { methodId }, INIT_TIMEOUT);
-              } catch {
-                if (support.authFailure === "fail") throw new Error(support.loginNote);
-                // else: proceed on an ambient login
-              }
-            } else if (support.authFailure === "fail") {
-              throw new Error(support.loginNote);
+            const readyState = await ready;
+            if (run.settled || current !== run || !sessionId) return;
+            if (!sessionAnnounced) {
+              sessionAnnounced = true;
+              emit({
+                ...eventBase(run),
+                type: "session.started",
+                sessionId,
+                model: readyState.init?._meta?.modelState?.currentModelId ?? run.turn.model ?? null,
+              });
             }
-
-            const cursor = typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
-            if (cursor) {
-              try {
-                await request("session/load", { sessionId: cursor, cwd, mcpServers }, LOAD_SESSION_TIMEOUT);
-                sessionId = cursor;
-              } catch {
-                /* session gone, load unsupported, or too slow — start fresh */
-              }
-            }
-            if (!sessionId) {
-              const started = await request("session/new", { cwd, mcpServers }, NEW_SESSION_TIMEOUT);
-              sessionId = typeof started?.sessionId === "string" ? started.sessionId : null;
-              if (!sessionId) throw new Error("session/new returned no sessionId");
-            }
-            emit({
-              ...base(threadId, turnId),
-              type: "session.started",
-              sessionId,
-              model: init?._meta?.modelState?.currentModelId ?? turn.model ?? null,
-            });
-            state.promptSent = true;
+            run.promptSent = true;
+            const promptTurn = first && !readyState.loaded ? replayOnFreshSession(run.turn) : run.turn;
             const text = support.buildPromptText
-              ? support.buildPromptText(turn)
-              : turn.system
-                ? `${turn.system}\n\n${turn.text}`
-                : turn.text;
+              ? support.buildPromptText(promptTurn)
+              : promptTurn.system
+                ? `${promptTurn.system}\n\n${promptTurn.text}`
+                : promptTurn.text;
             const result = await request("session/prompt", {
               sessionId,
               prompt: [{ type: "text", text }],
             });
+            if (run.settled || current !== run) return;
             const usage = result?._meta ?? {};
             if (typeof usage.inputTokens === "number" || typeof usage.outputTokens === "number") {
               emit({
-                ...base(threadId, turnId),
+                ...eventBase(run),
                 type: "thread.token-usage.updated",
                 input: usage.inputTokens ?? 0,
                 output: usage.outputTokens ?? 0,
               });
             }
             const reason = result?.stopReason;
-            if (reason === "end_turn") settle(true, null);
-            else if (reason === "cancelled") settle(true, "cancelled");
-            else settle(false, reason ?? "failed");
-          } catch (e) {
-            if (!state.settled) {
-              const message = (e as Error).message;
-              // "not signed in" is a setup problem like a missing binary: the
-              // fix is a command in a terminal, not another attempt. Flagging
-              // it lets the error card show the sign-in step.
-              const needsAuth = message === support.loginNote;
-              emit({
-                ...base(threadId, turnId),
-                type: "runtime.error",
-                message,
-                ...(needsAuth ? { setup: true } : {}),
-              });
-              settle(false, needsAuth ? "auth_required" : "rpc_error");
-            }
+            if (reason === "end_turn") settle(run, true, null, true);
+            else if (reason === "cancelled") settle(run, true, "cancelled", true);
+            else settle(run, false, reason ?? "failed", false);
+          } catch (error) {
+            if (run.settled || current !== run) return;
+            const message = error instanceof Error ? error.message : String(error);
+            const needsAuth = message === support.loginNote;
+            emit({ ...eventBase(run), type: "runtime.error", message, ...(needsAuth ? { setup: true } : {}) });
+            settle(run, false, needsAuth ? "auth_required" : "rpc_error", false);
           }
-        })();
+        };
 
-        return { turnId };
+        const interrupt = async (run: RunningTurn) => {
+          if (run.settled) return run.done;
+          if (sessionId && run.promptSent) {
+            send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
+            if (run.interruptTimer) clearTimeout(run.interruptTimer);
+            run.interruptTimer = setTimeout(() => settle(run, true, "cancelled", false), CANCEL_GRACE_MS);
+            run.interruptTimer.unref?.();
+          } else {
+            settle(run, true, "cancelled", false);
+          }
+          return run.done;
+        };
+
+        const resume = (turn: SendTurnInput, first = false) => {
+          if (closed) throw new Error(`${DRIVER_KIND} session is closed`);
+          if (current) throw new Error("a turn is already running on this thread");
+          if (idleTimer) clearTimeout(idleTimer);
+          idleTimer = null;
+          if (warm.get(threadId) === runtime) warm.delete(threadId);
+          let resolveDone!: () => void;
+          const done = new Promise<void>((resolve) => {
+            resolveDone = resolve;
+          });
+          const run: RunningTurn = {
+            turn,
+            turnId: newId(),
+            text: "",
+            promptSent: false,
+            settled: false,
+            asks: new Map(),
+            interruptTimer: null,
+            done,
+            resolveDone,
+          };
+          current = run;
+          active.set(threadId, {
+            turnId: run.turnId,
+            asks: run.asks,
+            stop: () => settle(run, false, "interrupted", false),
+            interrupt: () => interrupt(run),
+          });
+          emit({ ...eventBase(run), type: "turn.started" });
+          void runPrompt(run, first);
+          return run.turnId;
+        };
+
+        runtime = {
+          signature,
+          lastUsed: Date.now(),
+          resume,
+          stop: () => {
+            const run = current;
+            if (run && !run.settled) settle(run, false, "interrupted", false);
+            else terminate();
+          },
+        };
+        sessions.add(runtime);
+        return runtime;
+      };
+
+      const sendTurn = async (turn: SendTurnInput) => {
+        const { threadId } = turn;
+        if (active.has(threadId)) throw new Error("a turn is already running on this thread");
+        const cwd = turn.cwd ?? config.workspace ?? homedir();
+        const mcpServers = acpMcpServers(turn);
+        const args = support.spawnArgs(config, turn);
+        const signature = signatureFor(cwd, args, mcpServers);
+        let runtime = warm.get(threadId);
+        // A rewind or poisoned-session recovery deliberately clears the
+        // persisted cursor. Do not let the warm-process optimization undo
+        // that signal by continuing the abandoned in-memory conversation.
+        if (runtime && typeof turn.resumeCursor !== "string" && (turn.transcript?.length ?? 0) > 0) {
+          runtime.stop();
+          runtime = undefined;
+        }
+        if (runtime && runtime.signature !== signature) {
+          runtime.stop();
+          runtime = undefined;
+        }
+        const first = !runtime;
+        runtime ??= createRuntime(turn, cwd, args, mcpServers, signature);
+        return { turnId: runtime.resume(turn, first) };
       };
 
       const snapshot = async (): Promise<ProviderSnapshot> => {
@@ -519,6 +736,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         });
         if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
         return { state: "available", version, authenticated: support.isAuthenticated(env) };
+      };
+
+      const stopAll = () => {
+        for (const session of [...sessions]) session.stop();
       };
 
       return {
@@ -537,19 +758,20 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             const turn = active.get(threadId);
             const finish = turn?.asks.get(requestId);
             if (!finish) throw new Error("no such pending request");
-            finish(decision.behavior === "allow" ? "allow" : "deny");
+            finish({
+              behavior: decision.behavior === "allow" ? "allow" : "deny",
+              scope: decision.scope,
+            });
           },
           hasSession: (threadId) => active.has(threadId),
-          stopAll: async () => {
-            for (const { stop } of active.values()) stop();
-          },
+          stopAll: async () => stopAll(),
           onEvent: (listener) => {
             listeners.add(listener);
             return () => listeners.delete(listener);
           },
         },
         dispose: async () => {
-          for (const { stop } of active.values()) stop();
+          stopAll();
           listeners.clear();
         },
       };

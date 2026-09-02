@@ -8,6 +8,11 @@ import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { useUpdaterState } from "@/lib/updater";
 import { WorkdayPulse } from "./WorkdayPulse";
 
+function macDoorKeys(): boolean {
+  const uaData = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData;
+  return /mac/i.test(uaData?.platform ?? navigator.platform);
+}
+
 function profileInitials(profile?: { name?: string; email?: string }): string {
   const name = profile?.name?.trim();
   if (name) {
@@ -59,7 +64,7 @@ function UpdateButton() {
       disabled={working}
       title={label}
       aria-label={label}
-      className="relative rounded-md p-2 text-accent hover:bg-raised disabled:opacity-60"
+      className="relative rounded-md p-2 text-accent hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-agency disabled:opacity-60"
     >
       {working ? (
         <Loader2 size={18} className="animate-spin" />
@@ -90,38 +95,42 @@ export function Sidebar() {
     [desk],
   );
 
+  const doorMod = macDoorKeys() ? "⌘" : "Ctrl+";
   const item = (
     view: typeof state.activeView,
     label: string,
     icon: React.ReactNode,
     action: () => void,
     extra?: ReactNode,
+    shortcut?: string,
   ) => (
     <button
       onClick={action}
+      aria-label={label}
+      title={shortcut ? `${label} (${shortcut})` : label}
       aria-current={state.activeView === view ? "page" : undefined}
       className={cn(
-        "flex w-full items-center gap-3 rounded px-3 py-2.5 text-left",
+        "rb-sidebar-item flex w-full items-center gap-3 rounded px-3 py-2.5 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-agency",
         state.activeView === view ? "bg-selected text-ink" : "text-ink hover:bg-raised/70",
       )}
     >
       {icon}
-      <span className="flex-1 text-[14px] font-medium">{label}</span>
-      {extra}
+      <span className="rb-sidebar-label flex-1 text-[14px] font-medium">{label}</span>
+      {extra ? <span className="rb-sidebar-extra">{extra}</span> : null}
     </button>
   );
 
   return (
-    <aside className="flex h-full w-[200px] shrink-0 flex-col border-r border-line bg-sheet">
+    <aside className="rb-sidebar flex h-full w-[200px] shrink-0 flex-col border-r border-line bg-sheet">
       <div
         className="px-4 pb-1 pt-3.5"
         style={macInset ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined}
       >
         <div className="flex items-center justify-between">
           {macInset ? (
-            <div className="w-14" />
+            <div className="rb-sidebar-traffic w-14" />
           ) : browser ? (
-            <div className="flex items-center gap-2">
+            <div className="rb-sidebar-traffic flex items-center gap-2">
               <span className="size-3 rounded-full bg-[#ff5f57]" />
               <span className="size-3 rounded-full bg-[#febc2e]" />
               <span className="size-3 rounded-full bg-[#28c840]" />
@@ -133,12 +142,11 @@ export function Sidebar() {
             <UpdateButton />
           </div>
         </div>
-        <div className="mt-2.5 flex items-center gap-2" aria-label="RealBud">
-          {/* The mark is alive: it blinks and settles with the office's rhythm. */}
+        <div className="mt-2.5 flex items-center justify-center gap-2 sm:justify-start" aria-label="RealBud">
           <MausAvatar color="green" state={state.connected ? "idle" : "sleeping"} size={26} label="RealBud" trackPointer={false} />
-          <div className="min-w-0">
+          <div className="rb-sidebar-brand min-w-0">
             <div className="text-[13.5px] font-semibold tracking-[-0.01em] text-ink">RealBud</div>
-            <div className="flex items-center gap-1.5 text-[10.5px] text-ink-muted">
+            <div className="flex items-center gap-1.5 text-[10.5px] text-ink-muted" role="status" aria-live="polite">
               <span className={cn("size-1.5 rounded-full", state.connected ? "bg-agency" : "animate-pulse bg-hold motion-reduce:animate-none")} />
               {state.connected ? "On this Mac" : "Reconnecting"}
             </div>
@@ -153,9 +161,15 @@ export function Sidebar() {
           <Building2 size={20} className={state.activeView === "desk" ? "text-agency" : "text-ink-muted"} />,
           () => dispatch({ type: "showDesk" }),
           needYou > 0 ? <span className="text-[11px] tabular-nums text-ink-muted">{needYou}</span> : null,
+          `${doorMod}1`,
         )}
-        {item("ask", "Ask", <MessageSquare size={20} className={state.activeView === "ask" ? "text-agency" : "text-ink-muted"} />, () =>
-          dispatch({ type: "showAsk" }),
+        {item(
+          "ask",
+          "Ask",
+          <MessageSquare size={20} className={state.activeView === "ask" ? "text-agency" : "text-ink-muted"} />,
+          () => dispatch({ type: "showAsk" }),
+          undefined,
+          `${doorMod}2`,
         )}
         {item(
           "schedule",
@@ -167,12 +181,20 @@ export function Sidebar() {
           ) : state.loopRuns.some((run) => run.status === "partial" && !run.seenAt) ? (
             <span className="size-2 rounded-full bg-hold" />
           ) : null,
+          `${doorMod}3`,
         )}
-        {item("you", "You", <InitialsAvatar initials={profileInitials(state.config?.profile)} size={20} />, () =>
-          dispatch({ type: "showYou" }),
+        {item(
+          "you",
+          "You",
+          <InitialsAvatar initials={profileInitials(state.config?.profile)} size={20} />,
+          () => dispatch({ type: "showYou" }),
+          undefined,
+          `${doorMod}4`,
         )}
       </nav>
-      <WorkdayPulse />
+      <div className="rb-sidebar-pulse">
+        <WorkdayPulse />
+      </div>
     </aside>
   );
 }

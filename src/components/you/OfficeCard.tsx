@@ -21,7 +21,7 @@ import { cn } from "@/lib/cn";
 import { Card } from "../SettingsPrimitives";
 
 const inputClass =
-  "w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none";
+  "w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:border-hairline";
 
 export function OfficeCard({
   agencyName,
@@ -82,7 +82,11 @@ export function OfficeCard({
   return (
     <Card
       title="This office"
-      subtitle={`${filled} of 8 visit fields. Training names do not count. Live portal and inbound stay off until a visit.`}
+      subtitle={
+        filled === 0
+          ? "Sample book works today. Fill these when you name a real shop — not before."
+          : `${filled} of 8 visit fields. Training names do not count. Live portal stays off until a visit.`
+      }
     >
       <div className="flex flex-col gap-3">
         <label className="text-[12.5px] text-ink-secondary">
@@ -103,6 +107,11 @@ export function OfficeCard({
             className={cn(inputClass, "mt-1")}
           />
         </label>
+        <details className="rounded-lg border border-line bg-inset/40" open={filled > 0}>
+          <summary className="cursor-pointer px-3 py-2 text-[12.5px] font-medium text-ink">
+            Needed before live portal · {filled}/8
+          </summary>
+          <div className="flex flex-col gap-3 border-t border-line px-3 py-3">
         <label className="text-[12.5px] text-ink-secondary">
           PMS brand
           <select
@@ -203,6 +212,8 @@ export function OfficeCard({
             className={cn(inputClass, "mt-1")}
           />
         </label>
+          </div>
+        </details>
         <p className="text-[12px] text-ink-muted">Timezone {timezone}. Passwords stay out of this form.</p>
         <ol className="grid grid-cols-2 gap-x-3 gap-y-1 text-[12px] text-ink-muted">
           {ticks.map((tick) => (

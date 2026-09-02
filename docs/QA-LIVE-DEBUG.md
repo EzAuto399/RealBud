@@ -1,6 +1,6 @@
 # QA and live debug
 
-Date: 2026-08-31  
+Date: 2026-08-31 · updated 2026-09-02  
 Canonical constraints: `docs/GOAL-PROMPT.md` wins.  
 Weekday map: `docs/PM-DAY.md`. Pickup list: `docs/NEXT-WAVE.md`.
 
@@ -114,6 +114,25 @@ Replay what `e2e-pm-exceptions.mjs` covers in the UI:
 - **Pause loop** — morning routine stops firing until resumed
 - **Recipe** — shadow card needs plan approval before clock runs it
 
+### Run beside me — live smoke (needs macOS, desktop helper, attached model)
+
+HTTP scripts do **not** replace this. Packaged or `pnpm dev:desktop`.
+
+1. Create a saved job — Schedule → Give Bud any recurring job, or say it in Ask ("log in to … and complete the routine").
+2. Approve the plan (Schedule or You → Bud's jobs).
+3. **Attach this site** — acknowledge: you sign in; Bud reads and prefills; Submit, Pay and Send stay with you.
+4. Press **Run beside me**. Ask opens. Sign in when the page asks.
+5. Answer Allow cards (Allow once / Allow for this task).
+6. Save a site rule from the card — third choice **Always allow reading on {origin}**. Confirm the next on-origin read does not ask (receipt tags **allowed by rule**).
+7. Try a password field — fence must say exactly: `You sign in yourself — Bud never types a password.`
+8. Try a Pay button — fence must say exactly: `Submit, Pay and Send stay with you.`
+9. With **Bud may press Submit** still off, a Submit click must say exactly: `This job cannot press Submit. Add 'Bud may press Submit' on the job if it should.`
+10. Turn on **Bud may press Submit** on the job card. A Save/Submit click must ask with exactly: `Bud wants to press '{label}' on {origin}. Check the form in the browser first.` Buttons: Allow this Submit / Deny / Stop this turn — no “Allow for this task”, no site-rule choice. A Pay click is still denied with `Submit, Pay and Send stay with you.`
+11. Finish. Receipt says **Done · read back from {site}** only when the last assistant text names an allowed origin and a read-back word. Otherwise **Unknown — check the site yourself**. Never "done" on a miss. Allowed Submit lines tag **Submit pressed with your approval**.
+12. Schedule the job. The clock must produce **Ready beside you** + **Start beside me** (detail `Ready to run beside you — press Start when you are at the screen.`) instead of launching a browser. Start calls `POST /api/recipes/:id/attend { runId }`. Not attached/approved: `Attach the site and approve the plan to run this beside you.`
+
+Off-origin navigate must say `That site is not on this job.` Ad-hoc Ask browsing with no saved job: `Only sites named in a saved job. Ask Bud to set the routine up as a job first.`
+
 ### What to log when something breaks
 
 Capture (no secrets in tickets):
@@ -144,6 +163,38 @@ Plain language the PM should see — if UI shows a stack trace or raw errno, fil
 | Partial ledger, properties held | Worker omitted ids | Honest hold — do not copy Demo values |
 | `ready: false` after install | Test hands not run | You → Test hands until OK |
 | Demo Recheck looks “finished” with miss | Bug — should say Missed | See worker honesty tests |
+| Attend 409 `Approve the plan first.` | Plan not approved on this revision | Approve the plan, then retry |
+| Attend 409 `Attach this site first: you sign in, Bud reads and prefills, Submit and Pay stay with you.` | No Attach acknowledgement | Attach this site on the job card |
+| Attend 409 `Add the portal site to this job before running it beside you.` | No origin or no portal capability | Name the site and a portal capability |
+| Attend 409 `Bud can drive a browser only on this Mac with RealBud's desktop helper running.` | Not darwin, or helper down | macOS + desktop helper |
+| Attend 409 `This job already has work waiting or running.` | Overlap | Wait or Stop, then retry |
+| Attend 409 `Bud is busy with another turn. Stop it or wait, then run again.` | Ask turn in flight | Stop, then Run beside me |
+| Attach 409 `Add the portal site and a portal capability before attaching it.` | Bare job | Add origin + `portal-read` / `portal-prefill` |
+| Submit click `This job cannot press Submit. Add 'Bud may press Submit' on the job if it should.` | Job has no `portal-submit` acknowledgement | Open the job card disclosure and turn it on (needs the capability) |
+| Submit PATCH 409 `Add 'Bud may press Submit' only on a job with the portal-submit capability.` | Acknowledgement without capability | Add `portal-prefill` + `portal-submit` (and an origin) first |
+| Rules POST 400 `Portal rules can only allow.` | Deny posted as a portal rule | Portal rules are allow-only; revoke instead |
+| Rules POST 400 `surface must be portal-read or portal-prefill` | Submit / other surface posted as a rule | Submit is never a rule |
+| Clock skip `Attach the site and approve the plan to run this beside you.` | Scheduled portal job not attached or not approved | Approve + Attach, then wait for the next tick |
+| Activity **Ready beside you** / Start beside me | Clock queued an attended run | Press Start beside me at the screen — do not expect Chrome to open by itself |
+| Activity **Not started — waited a day** / detail `Not started — the run waited a day for someone at the screen.` | Queued attended run older than 24 h | Start a new run; the missed receipt stays |
+
+---
+
+## Phone channel smoke (Telegram / Discord / Slack)
+
+Not Pocket. Same Bud, same book — remote Allow/Deny for courtesy wording only.
+
+1. **You → Phone** — compact Available roster: connect Telegram, Discord, or Slack
+   (bot token; Slack may also take an optional `xapp` Socket Mode token). DM the
+   bot once to pair. Later rows (WhatsApp / Teams / SMS) stay non-interactive.
+2. Desk chrome shows `Phone · Telegram` (or Discord / Slack) when paired.
+3. Recheck so a courtesy card lands in Now.
+4. On the phone: reply `allow` (or Discord button). Desk toast / case footer shows
+   `Allowed via …`.
+5. Copy still happens on Desk; RealBud never sends.
+6. Licensee cards must not get phone buttons — open Desk when at a screen.
+
+Unit coverage: `server/remote-decisions.test.ts`, `server/channels-telegram.test.ts`, `server/pulses.test.ts`, `src/lib/phone-label.test.ts`.
 
 ---
 
@@ -152,11 +203,16 @@ Plain language the PM should see — if UI shows a stack trace or raw errno, fil
 These need eight real fields on **You → This office** (`docs/PILOT-CONTRACT.md`):
 
 - Inbound mail (IMAP / Graph)
-- Live portal / PropertyMe API / Pocket
+- PropertyMe API / Pocket
 - Ask proposes clock change (PR C)
 - Graduate double-click installer (Windows stays CSV-only until bundled)
 
-QA proves the **training appliance** is honest. The visit unlocks the next wave.
+**2026-09-02:** live portal is no longer in this list. Attended saved-job
+runs ("Run beside me") need plan approval + Attach on this Mac with the
+desktop helper — smoke above. Do not rebuild a visit gate for them.
+
+QA proves the **training appliance** is honest. The visit unlocks inbound,
+Pocket, and the installer.
 
 ---
 
@@ -178,6 +234,8 @@ pnpm exec vitest run server/gates.test.ts server/desk.test.ts server/desk-v3-mat
 pnpm exec vitest run server/hermes-hands.test.ts server/hermes-status.test.ts
 pnpm exec vitest run server/channels-telegram.test.ts server/channels-discord.test.ts
 pnpm exec vitest run server/import-inspect.test.ts server/law-watch.test.ts
+pnpm exec vitest run server/portal-fence.test.ts server/attended-run.test.ts server/portal-job-intent.test.ts server/recipes.test.ts
+pnpm exec vitest run src/lib/job-run.test.ts src/lib/ask-next.test.ts
 ```
 
 Do not rebuild shipped rows listed in `docs/NEXT-WAVE.md`.

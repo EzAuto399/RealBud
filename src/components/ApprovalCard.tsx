@@ -5,12 +5,13 @@
 // and the actual command/path in monospace, and the choices carry their
 // own behavior instead of being matched by their label text.
 import { Check, ShieldCheck, X } from "lucide-react";
-import { type Bot, type Message } from "@/state/store";
+import { useStore, type Bot, type Message } from "@/state/store";
+import { approvalHeadline } from "@/lib/tool-label";
 import { cn } from "@/lib/cn";
 
 /** The tool's own name is noise to a human: mcp__ogb__computer_batch is
  * "computer batch", Bash is "run a command". */
-function toolLabel(tool?: string): string {
+function legacyToolLabel(tool?: string): string {
   if (!tool) return "an action";
   const bare = tool.replace(/^mcp__[^_]+__/, "").replace(/_/g, " ");
   const nice: Record<string, string> = {
@@ -27,34 +28,48 @@ function toolLabel(tool?: string): string {
 export function ApprovalCard({
   bot,
   message,
+  productAsk = false,
 }: {
   /** who is asking, for the "Name wants to …" line */
   bot?: Bot;
   message: Message;
+  productAsk?: boolean;
 }) {
+  const { state } = useStore();
   const card = message.card;
   if (!card) return null;
   const settled = card.answered;
+  const knownAddresses = productAsk ? (state.desk?.properties ?? []).map((row) => row.address) : [];
+  const headline = productAsk
+    ? approvalHeadline(card.tool ?? "", [card.subtitle, card.held, card.title].filter(Boolean).join("\n"), knownAddresses)
+    : `${bot ? `${bot.name} wants to ` : "Wants to "}${legacyToolLabel(card.tool)}`;
 
   return (
     <div
       className={cn(
-        "w-full max-w-[840px] rounded-2xl border bg-card p-4",
-        settled ? "border-hairline/30 opacity-70" : "border-accent/40",
+        "w-full max-w-[840px] rounded-2xl border p-4",
+        productAsk ? "bg-sheet" : "bg-card",
+        settled ? (productAsk ? "border-line opacity-70" : "border-hairline/30 opacity-70") : productAsk ? "border-agency/40" : "border-accent/40",
       )}
     >
       <div className="flex items-baseline justify-between gap-3">
-        <div className="text-[15px] font-semibold text-ink">
-          {bot ? `${bot.name} wants to ` : "Wants to "}
-          {toolLabel(card.tool)}
+        <div className="text-[15px] font-semibold text-ink" title={card.tool}>
+          {headline}
         </div>
-        {card.tool && <span className="shrink-0 font-mono text-[11px] text-ink-secondary">{card.tool}</span>}
+        {card.tool && !productAsk && <span className="shrink-0 font-mono text-[11px] text-ink-muted">{card.tool}</span>}
       </div>
 
-      {/* what, exactly */}
-      <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-inset px-3 py-2 font-mono text-[12.5px] leading-relaxed text-ink">
-        {card.subtitle}
-      </pre>
+      {card.fence?.surface === "portal-submit" ? (
+        <p className="mt-2 text-[15px] font-medium leading-relaxed text-ink">{card.subtitle}</p>
+      ) : (
+        <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-inset px-3 py-2 font-mono text-[12.5px] leading-relaxed text-ink">
+          {card.subtitle}
+        </pre>
+      )}
+
+      {card.fence?.surface === "portal-submit" ? (
+        <p className="mt-2 text-[12.5px] text-hold">Check the form in the browser before you allow.</p>
+      ) : null}
 
       {card.held && (
         <div className="mt-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12.5px] text-warning">

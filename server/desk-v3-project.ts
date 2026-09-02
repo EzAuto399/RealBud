@@ -121,7 +121,11 @@ export function projectDeskSnapshot(book: DeskFileV3, recovery: RecoveryState, n
       id: item.id,
       propertyId: item.propertyId ?? "",
       reason: "statutory-clock",
-      detail: item.holdReason ?? "",
+      // Books written before `detail` existed only kept the code; a plain
+      // fallback beats showing "statutory-clock" to the PM.
+      detail:
+        item.detail ??
+        "For the licensee. A licensed person decides whether any state notice is due — in the PMS. RealBud will not draft or send one.",
       periodDueAt: item.periodDueAt ?? 0,
       createdAt: item.createdAt,
     }));

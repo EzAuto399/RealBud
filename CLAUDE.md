@@ -6,7 +6,7 @@ Do not ship as PropertyMe (PMS trademark), Hermes, or OpenMausBot.
 
 - Data: `~/.realbud`
 - Goal prompt (paste into a new session): `docs/GOAL-PROMPT.md`
-- Next sessions: `docs/NEXT-WAVE.md` W1–W5 and You → This office shipped. Weekday map: `docs/PM-DAY.md`. Do not start inbound, PR C, live CUA, or a graduate installer until a visit types a real shop into You → This office.
+- Next sessions: `docs/NEXT-WAVE.md` W1–W5 and You → This office shipped. Weekday map: `docs/PM-DAY.md`. Do not start inbound, PR C, or a graduate installer until a visit types a real shop into You → This office. Live portal work is allowed as attended saved-job runs behind Attach (owner decision 2026-09-02).
 - Native PM design system + approved implementation plan: `DESIGN.md` + `docs/PRODUCT-DESIGN-PLAN.md`
 - Routines design (GUI + Ask, Hermes as hands): `docs/ROUTINES.md`
 - Identity: `docs/IDENTITY.md`
@@ -16,6 +16,7 @@ Do not ship as PropertyMe (PMS trademark), Hermes, or OpenMausBot.
 - Hermes worker pin: `server/hermes-pin.ts` (v0.20.3 / v2026.8.16.2). Do not track upstream main. Desk Recheck may call Hermes; any miss falls back to the training book.
 - OpenMausBot upstream: take harness/safety only (PATH, ports, redact, stall watchdog, proxy paths, permission broker). Do not take iOS, extra engines, teams, plugins, or their model shop. Models stay on `hermes -p property`.
 - Schedule = named loops on the RealBud clock (`server/routines.ts` + `/api/loops`): morning-arrears and owner-letter are built; inbound-triage is declared. No bot prompt-runner, no MAUS roster, no Hermes cron UI (`cron_mode: deny` stays). A loop is never a bot turn, a prompt, or a second agent.
+- Portal ("Run beside me"): `docs/PORTAL-WORK.md` + fence `server/portal-fence.ts`. Human signs in and presses Submit/Pay; Bud reads and prefills. Site rules (read/prefill) may auto-allow; Submit is a per-instance ask only on jobs with 'Bud may press Submit'; pay/sign/notice/send never.
 - QA: `docs/QA-LIVE-DEBUG.md` + `pnpm qa` / `scripts/qa-e2e.mjs` (four HTTP suites, no worker).
 
 ## Skill routing

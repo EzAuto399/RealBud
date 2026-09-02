@@ -13,6 +13,15 @@ export type {
   DraftStatus,
   Escalation,
   HandsSource,
+  JobCapability,
+  JobLimits,
+  JobRun,
+  JobRunEvidence,
+  JobRunEvidenceKind,
+  JobRunMode,
+  JobRunSpecSnapshot,
+  JobRunStatus,
+  JobRunTrigger,
   LedgerFacts,
   LevyFromRent,
   NotifyChannel,
@@ -27,4 +36,5 @@ export type {
   WorkState,
 } from "@shared/contracts";
 
-export { aud, COURTESY_DISCLAIMER, NEVER_ACTIONS, recipeClockRunnable } from "@shared/contracts";
+export { aud, COURTESY_DISCLAIMER, JOB_CAPABILITIES, NEVER_ACTIONS, recipeClockRunnable } from "@shared/contracts";
+export { isObservedStale } from "./observed-stale";

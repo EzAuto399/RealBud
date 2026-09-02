@@ -516,6 +516,7 @@ function decodeCase(value: unknown, field: string, errors: string[]): Case {
     importIssueId: typeof value.importIssueId === "string" ? value.importIssueId : undefined,
     origin,
     holdReason: typeof value.holdReason === "string" ? value.holdReason : undefined,
+    detail: typeof value.detail === "string" ? value.detail : undefined,
     periodDueAt: optNum(value.periodDueAt, `${field}.periodDueAt`, errors),
     occurrenceKey: typeof value.occurrenceKey === "string" ? value.occurrenceKey : undefined,
     sourceIds: Array.isArray(value.sourceIds) ? value.sourceIds.map(String) : undefined,

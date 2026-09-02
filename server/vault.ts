@@ -152,3 +152,26 @@ export function appendAllowedLine(id: string, line: string, book?: string, addre
   writeFileSync(log, `${prev.trimEnd()}\n${bullet}\n`, { mode: 0o600 });
   keepPrivateFile(log);
 }
+
+/** Bulk intake writes one decisions log append instead of repeatedly reading
+ * and rewriting the growing day file. Property notes remain independently
+ * addressable and private. */
+export function appendAllowedLines(
+  entries: ReadonlyArray<{ id: string; line: string; address?: string }>,
+  book?: string,
+): void {
+  if (!entries.length) return;
+  seedVault(book);
+  const bullets: string[] = [];
+  for (const entry of entries) {
+    const bullet = `- ${entry.line}`;
+    writePropertyNote(entry.id, `## Last allowed\n\n${bullet}`, { address: entry.address }, book);
+    bullets.push(bullet);
+  }
+  const day = new Date().toISOString().slice(0, 10);
+  const log = join(bookDir(book), "decisions", `${day}.md`);
+  ensurePrivateDir(dirname(log));
+  const prev = existsSync(log) ? readFileSync(log, "utf8") : `# ${day}\n\n`;
+  writeFileSync(log, `${prev.trimEnd()}\n${bullets.join("\n")}\n`, { mode: 0o600 });
+  keepPrivateFile(log);
+}
