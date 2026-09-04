@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { DeskSnapshot, Draft, Escalation, Property } from "../shared/contracts.ts";
 import {
@@ -11,6 +14,7 @@ import {
   parseRemoteDecisionText,
   pendingDraftId,
   resetRemoteDecisions,
+  sendPairedDigest,
   startRemoteDecisionFlush,
   type RemoteChannelAdapter,
   type RemoteDesk,
@@ -305,5 +309,79 @@ describe("parseRemoteDecisionText", () => {
     expect(parseRemoteDecisionText("no")).toEqual({ decision: "deny" });
     expect(parseRemoteDecisionText("no - too soon")).toEqual({ decision: "deny", reason: "too soon" });
     expect(parseRemoteDecisionText("what's late?")).toBeNull();
+  });
+});
+
+describe("durable digest receipts", () => {
+  it("keeps a quiet-hour digest across restart and sends once", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "realbud-digest-"));
+    const sent: string[] = [];
+    const digestChannel = (id: "telegram"): RemoteChannelAdapter => ({
+      id,
+      label: "Telegram",
+      pairedKey: () => "chat-1",
+      async sendDecision() {},
+      async sendDigest(text) {
+        sent.push(text);
+      },
+    });
+    let now = Date.UTC(2026, 7, 31, 8, 0, 0);
+    const desk = fakeDesk(snapshot([]));
+    bindRemoteDecisions({
+      desk,
+      commit: () => {},
+      channels: [digestChannel("telegram")],
+      now: () => now,
+      storeDir: dir,
+    });
+    await sendPairedDigest("Morning money: 3 checked · 1 needs you.", "Australia/Sydney");
+    expect(sent).toEqual([]);
+
+    resetRemoteDecisions();
+    now = Date.UTC(2026, 7, 31, 21, 1, 0);
+    bindRemoteDecisions({
+      desk,
+      commit: () => {},
+      channels: [digestChannel("telegram")],
+      now: () => now,
+      storeDir: dir,
+    });
+    await flushDeferredDecisions();
+    expect(sent).toEqual(["Morning money: 3 checked · 1 needs you."]);
+
+    await sendPairedDigest("Morning money: 3 checked · 1 needs you.", "Australia/Sydney");
+    expect(sent).toEqual(["Morning money: 3 checked · 1 needs you."]);
+  });
+
+  it("retries a failed digest and does not double-send after success", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "realbud-digest-fail-"));
+    const sent: string[] = [];
+    let fail = true;
+    const desk = fakeDesk(snapshot([]));
+    bindRemoteDecisions({
+      desk,
+      commit: () => {},
+      channels: [
+        {
+          id: "telegram",
+          label: "Telegram",
+          pairedKey: () => "chat-1",
+          async sendDecision() {},
+          async sendDigest(text) {
+            if (fail) throw new Error("net");
+            sent.push(text);
+          },
+        },
+      ],
+      now: () => Date.UTC(2026, 7, 31, 0, 0, 0),
+      storeDir: dir,
+    });
+    await sendPairedDigest("Morning money: 2 need you.", "Australia/Sydney");
+    expect(sent).toEqual([]);
+    fail = false;
+    await flushDeferredDecisions();
+    expect(sent).toEqual(["Morning money: 2 need you."]);
+    await flushDeferredDecisions();
+    expect(sent).toEqual(["Morning money: 2 need you."]);
   });
 });

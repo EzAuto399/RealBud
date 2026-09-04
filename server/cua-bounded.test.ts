@@ -28,6 +28,27 @@ describe("bounded Cua contract", () => {
     expect(toolAllowed(manifest, "click_semantic")).toBe(true);
     expect(originAllowed(manifest, "http://127.0.0.1:9/ledger")).toBe(true);
     expect(originAllowed(manifest, "https://evil.example/")).toBe(false);
+    expect(originAllowed(manifest, "http://127.0.0.1:9.evil.example/ledger")).toBe(false);
+    expect(originAllowed(manifest, "http://127.0.0.1:90/ledger")).toBe(false);
+    expect(originAllowed(manifest, "https://127.0.0.1:9/ledger")).toBe(false);
+  });
+
+  it("rejects prefix lookalikes, scheme changes, and port changes on https origins", () => {
+    const httpsManifest = buildManifest({
+      profile: "/tmp/realbud-chrome",
+      origins: ["https://portal.example.com"],
+      workItemId: "work-1",
+      recipeId: "fake-building-portal",
+      recipeVersion: 1,
+      now: 1_000,
+    });
+    expect(originAllowed(httpsManifest, "https://portal.example.com/ledger")).toBe(true);
+    expect(originAllowed(httpsManifest, "https://portal.example.com.evil.com/x")).toBe(false);
+    expect(originAllowed(httpsManifest, "http://portal.example.com/ledger")).toBe(false);
+    expect(originAllowed(httpsManifest, "https://portal.example.com:443/x")).toBe(true);
+    expect(originAllowed(httpsManifest, "https://evil-portal.example.com/x")).toBe(false);
+    expect(pinSupported("0.19.30")).toBe(false);
+    expect(pinSupported("0.19.3-rc")).toBe(false);
   });
 
   it("holds one shared computer lease", () => {

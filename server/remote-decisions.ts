@@ -2,6 +2,12 @@
 // channel; the in-memory push map is empty on boot and rebuilds from the
 // next commitDesk snapshot. Licensee / escalation rows never travel as
 // buttons. Quiet hours follow the book's timezone, not the machine's.
+// Digest queue + receipts survive restart when bind.storeDir is set.
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { writeFileAtomic } from "./atomic.ts";
 import type { DeskSnapshot, Draft, DraftKind } from "../shared/contracts.ts";
 
 export type RemoteChannelId = "telegram" | "discord" | "slack";
@@ -31,6 +37,8 @@ export type RemoteDecisionsBind = {
   channels: RemoteChannelAdapter[];
   commit: (snapshot: DeskSnapshot) => void | Promise<void>;
   now?: () => number;
+  /** When set, quiet-hour digest queue and delivery receipts survive restart. */
+  storeDir?: string;
 };
 
 const DECIDABLE: ReadonlySet<DraftKind> = new Set(["courtesy-rent", "levy-from-rent", "owner-letter"]);
@@ -47,16 +55,21 @@ let bound: RemoteDecisionsBind | null = null;
 // notifyDeskSnapshot rebuilds from the live snapshot.
 const pendingByChannel = new Map<RemoteChannelId, ChannelPending>();
 const deferredDigests: Array<{ text: string; timeZone: string }> = [];
+type DigestReceipt = { channel: RemoteChannelId; hash: string; at: number };
+const digestReceipts: DigestReceipt[] = [];
+const RECEIPT_MAX = 200;
 let flushTimer: ReturnType<typeof setInterval> | null = null;
 
 export function bindRemoteDecisions(opts: RemoteDecisionsBind): void {
   bound = opts;
+  loadDigestStore();
 }
 
 export function resetRemoteDecisions(): void {
   stopRemoteDecisionFlush();
   pendingByChannel.clear();
   deferredDigests.length = 0;
+  digestReceipts.length = 0;
   bound = null;
 }
 
@@ -187,33 +200,127 @@ export async function sendPairedDigest(text: string, timeZone: string): Promise<
   if (!bound) return;
   const zone = timeZone || "Australia/Sydney";
   if (isQuietHours(nowMs(), zone)) {
-    deferredDigests.push({ text, timeZone: zone });
+    queueDigest(text, zone);
     return;
   }
-  await deliverPairedDigest(text);
+  const delivered = await deliverPairedDigest(text);
+  if (!delivered) queueDigest(text, zone);
 }
 
 async function flushDeferredDigests(): Promise<void> {
   if (deferredDigests.length === 0) return;
   const still: Array<{ text: string; timeZone: string }> = [];
-  const ready: string[] = [];
+  const ready: Array<{ text: string; timeZone: string }> = [];
   for (const row of deferredDigests) {
     if (isQuietHours(nowMs(), row.timeZone)) still.push(row);
-    else ready.push(row.text);
+    else ready.push(row);
   }
   deferredDigests.length = 0;
   deferredDigests.push(...still);
-  for (const text of ready) await deliverPairedDigest(text);
+  persistDigestStore();
+  for (const row of ready) {
+    const delivered = await deliverPairedDigest(row.text);
+    if (!delivered) queueDigest(row.text, row.timeZone);
+  }
 }
 
-async function deliverPairedDigest(text: string): Promise<void> {
-  if (!bound) return;
+async function deliverPairedDigest(text: string): Promise<boolean> {
+  if (!bound) return true;
+  const hash = digestHash(text);
+  let pending = false;
   for (const channel of bound.channels) {
-    if (!channel.pairedKey()) continue;
+    if (!channel.pairedKey() || !channel.sendDigest) continue;
+    if (hasDigestReceipt(channel.id, hash)) continue;
     try {
-      await channel.sendDigest?.(text);
+      await channel.sendDigest(text);
+      recordDigestReceipt(channel.id, hash);
     } catch {
-      /* a channel miss must never fail a loop settle */
+      pending = true;
+    }
+  }
+  persistDigestStore();
+  return !pending;
+}
+
+function digestHash(text: string): string {
+  return createHash("sha256").update(text).digest("hex").slice(0, 32);
+}
+
+function hasDigestReceipt(channel: RemoteChannelId, hash: string): boolean {
+  return digestReceipts.some((row) => row.channel === channel && row.hash === hash);
+}
+
+function recordDigestReceipt(channel: RemoteChannelId, hash: string): void {
+  if (hasDigestReceipt(channel, hash)) return;
+  digestReceipts.push({ channel, hash, at: nowMs() });
+  if (digestReceipts.length > RECEIPT_MAX) digestReceipts.splice(0, digestReceipts.length - RECEIPT_MAX);
+}
+
+function queueDigest(text: string, timeZone: string): void {
+  if (!deferredDigests.some((row) => row.text === text && row.timeZone === timeZone)) {
+    deferredDigests.push({ text, timeZone });
+  }
+  persistDigestStore();
+}
+
+function digestStoreDir(): string | null {
+  const dir = bound?.storeDir?.trim();
+  return dir ? dir : null;
+}
+
+function persistDigestStore(): void {
+  const dir = digestStoreDir();
+  if (!dir) return;
+  mkdirSync(dir, { recursive: true });
+  writeFileAtomic(join(dir, "digest-queue.json"), JSON.stringify(deferredDigests));
+  writeFileAtomic(join(dir, "digest-receipts.json"), JSON.stringify(digestReceipts));
+}
+
+function loadDigestStore(): void {
+  deferredDigests.length = 0;
+  digestReceipts.length = 0;
+  const dir = digestStoreDir();
+  if (!dir) return;
+  const queuePath = join(dir, "digest-queue.json");
+  const receiptsPath = join(dir, "digest-receipts.json");
+  if (existsSync(queuePath)) {
+    try {
+      const raw = JSON.parse(readFileSync(queuePath, "utf8")) as unknown;
+      if (Array.isArray(raw)) {
+        for (const row of raw) {
+          if (!row || typeof row !== "object") continue;
+          const text = (row as { text?: unknown }).text;
+          const timeZone = (row as { timeZone?: unknown }).timeZone;
+          if (typeof text === "string" && text && typeof timeZone === "string" && timeZone) {
+            deferredDigests.push({ text, timeZone });
+          }
+        }
+      }
+    } catch {
+      /* a corrupt queue must not block Desk */
+    }
+  }
+  if (existsSync(receiptsPath)) {
+    try {
+      const raw = JSON.parse(readFileSync(receiptsPath, "utf8")) as unknown;
+      if (Array.isArray(raw)) {
+        for (const row of raw) {
+          if (!row || typeof row !== "object") continue;
+          const channel = (row as { channel?: unknown }).channel;
+          const hash = (row as { hash?: unknown }).hash;
+          const at = (row as { at?: unknown }).at;
+          if (
+            (channel === "telegram" || channel === "discord" || channel === "slack") &&
+            typeof hash === "string" &&
+            hash &&
+            typeof at === "number"
+          ) {
+            digestReceipts.push({ channel, hash, at });
+          }
+        }
+      }
+    } catch {
+      /* a corrupt receipt log must not block Desk */
     }
   }
 }

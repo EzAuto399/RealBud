@@ -1346,6 +1346,7 @@ bindRemoteDecisions({
   desk,
   commit: commitDesk,
   channels: [telegramDecisionAdapter(), discordDecisionAdapter(), slackDecisionAdapter()],
+  storeDir: DATA_DIR,
 });
 
 // Desk, Schedule, and a fast double-click all reach the same Recheck door.

@@ -60,12 +60,22 @@ export function toolAllowed(_manifest: BoundedManifest, tool: string): boolean {
 }
 
 export function originAllowed(manifest: BoundedManifest, url: string): boolean {
+  let parsed: URL;
   try {
-    const parsed = new URL(url);
-    return manifest.origins.some((origin) => url.startsWith(origin) || parsed.origin === origin);
+    parsed = new URL(url);
   } catch {
     return false;
   }
+  return manifest.origins.some((origin) => {
+    const allowed = origin.trim();
+    if (!allowed) return false;
+    try {
+      const allowedOrigin = new URL(allowed.includes("://") ? allowed : `https://${allowed}`).origin;
+      return parsed.origin === allowedOrigin;
+    } catch {
+      return false;
+    }
+  });
 }
 
 export function acquirePortalLease(workItemId: string, now: number): void {
@@ -77,5 +87,5 @@ export function revokePortalLease(): void {
 }
 
 export function pinSupported(version: string): boolean {
-  return version === CUA_PIN || version.startsWith(`${CUA_PIN}`);
+  return version === CUA_PIN;
 }
