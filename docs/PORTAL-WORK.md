@@ -2,8 +2,9 @@
 
 Date: 2026-09-01 · updated 2026-09-02
 Status: architecture updated; the general prepare-only job engine is built locally.
-Live portal attach still waits for the eight-field office in `docs/PILOT-CONTRACT.md` —
-the infrastructure does not.
+Attended live portal ("Run beside me") is gated by plan approval + per-job Attach,
+not by the eight visit fields. Inbound, Pocket, and the graduate installer still wait
+on You → This office naming a real shop.
 
 **2026-09-02:** owner decision — that visit gate is gone for portal work.
 A PM who asks Bud to log in and complete a portal routine must not be

@@ -346,6 +346,9 @@ describe("Desk morning check", () => {
 
   it("adds a property with quiet default facts and the shop options", () => {
     const { desk } = tempDesk();
+    const checked = desk.command({ type: "check-demo" });
+    const ranAt = checked.lastRunAt;
+    expect(ranAt).not.toBeNull();
     const snap = desk.addProperty({
       address: "9 Wattle Ct, O'Connor ACT",
       tenantName: "Morgan Lee",
@@ -361,6 +364,22 @@ describe("Desk morning check", () => {
     expect(row).toEqual({ propertyId: added!.id, daysSinceDue: 0, rentLanded: false, levyPaid: false, daysSinceCourtesy: null });
     // inside grace → quiet
     expect(snap.results.find((r) => r.propertyId === added!.id)?.outcome).toBe("skip");
+    // adding a row recomputes cards but is not a fresh Recheck
+    expect(snap.lastRunAt).toBe(ranAt);
+  });
+
+  it("does not invent a check when adding to an unchecked book", () => {
+    const { desk } = tempDesk();
+    expect(desk.snapshot().lastRunAt).toBeNull();
+    const snap = desk.addProperty({
+      address: "9 Wattle Ct, O'Connor ACT",
+      tenantName: "Morgan Lee",
+      tenantPhone: "0411 222 333",
+      weeklyRentCents: 61_000,
+    });
+    expect(snap.lastRunAt).toBeNull();
+    expect(snap.results).toEqual([]);
+    expect(snap.properties.some((p) => p.address.startsWith("9 Wattle"))).toBe(true);
   });
 
   it("rejects a property without address, tenant, or rent", () => {

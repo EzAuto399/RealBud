@@ -119,16 +119,16 @@ linux:
   icon: build/icon.svg
   category: Utility
   executableName: realbud
-  synopsis: A desk for real-estate agents and property managers
-  description: RealBud — local-first agents for rent, owners, and the building portal.
+  synopsis: A desk for Australian residential property managers
+  description: RealBud — a local-first property-management desk for rent, owners, and the building portal.
   maintainer: EzAuto399 <75935138+EzAuto399@users.noreply.github.com>
   vendor: RealBud
   syncDesktopName: true
   desktop:
     entry:
       Name: RealBud
-      Comment: A desk for real-estate agents and property managers
-      Keywords: AI;Agents;Chat;Productivity;
+      Comment: A desk for Australian residential property managers
+      Keywords: AI;PropertyManagement;Chat;Productivity;
 
 deb:
   packageCategory: utils

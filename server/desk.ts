@@ -407,7 +407,11 @@ export class Desk {
     this.store.runBatch(() => {
       for (const row of prepared) this.insertProperty(row);
       this.store.v3.bookProposals = this.store.v3.bookProposals.filter((proposal) => !proposalIds.has(proposal.id));
-      this.reevaluateOrKeepMiss();
+      if (this.store.data.lastRunAt != null) {
+        this.reevaluateOrKeepMiss({ stampRun: false });
+      } else {
+        this.store.persist();
+      }
     });
     try {
       appendAllowedLines(
@@ -683,7 +687,15 @@ export class Desk {
     const prepared = this.prepareProperty(input);
     this.insertProperty(prepared);
     writePropertyNote(prepared.property.id, "", { address: prepared.property.address }, this.vaultRoot);
-    return this.reevaluateOrKeepMiss();
+    // Book membership changed — recompute cards from facts already on the book.
+    // Do not stamp lastRunAt: adding a row is not a Recheck. Unchecked books
+    // stay empty of cards until a real check (same honesty as patchProperty).
+    if (this.store.data.lastRunAt != null) {
+      return this.reevaluateOrKeepMiss({ stampRun: false });
+    }
+    this.store.persist();
+    this.emit();
+    return this.snapshot();
   }
 
   private prepareProperty(
@@ -748,7 +760,12 @@ export class Desk {
     this.store.data.workItems = this.store.data.workItems.filter((w) => w.propertyId !== id);
     this.invalidateCapabilities({ propertyId: id });
     archivePropertyNote(id, this.vaultRoot);
-    return this.reevaluateOrKeepMiss();
+    if (this.store.data.lastRunAt != null) {
+      return this.reevaluateOrKeepMiss({ stampRun: false });
+    }
+    this.store.persist();
+    this.emit();
+    return this.snapshot();
   }
 
   writeNotes(id: string, body: string): { id: string; body: string } {

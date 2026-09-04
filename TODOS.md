@@ -11,7 +11,7 @@ Pickup list: `docs/NEXT-WAVE.md`.
 
 ## Open
 
-1. **Visit / office** — type eight real fields on You → This office (Dickson ACT strata pilot). Training names do not unlock live portal.
+1. **Visit / office** — type eight real fields on You → This office (Dickson ACT strata pilot). Training names do not unlock inbound, Pocket, or the graduate installer. Live attended portal is Attach + Run beside me (`docs/PORTAL-WORK.md`).
 2. **Strata Stage-0** — portal product name + base URL for the Dickson property; human Submit spike.
 3. **Windows Authenticode cert** — then `win.signtoolOptions` + signed NSIS.
 4. **Bundle pinned Hermes** — unlock `hermesInstallCommand` on win32; graduate double-click without Terminal.
@@ -20,4 +20,4 @@ Pickup list: `docs/NEXT-WAVE.md`.
 ## Parked
 
 - `T15` retention sweep — if disk/privacy comes up on the visit.
-- Inbound mail, Pocket, Ask clock (PR C), Bud Submit — after Stage-0 evidence.
+- Inbound mail, Pocket, Ask clock (PR C) — after Stage-0 evidence. Opt-in Submit asks already shipped for jobs with "Bud may press Submit"; do not widen to money/sign/notice or unattended.

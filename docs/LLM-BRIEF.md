@@ -1,8 +1,7 @@
 # RealBud — LLM briefing (handoff)
 
-Date: 2026-08-30
-HEAD: `511ad6a` (origin/main, PR #1) plus the worker-honesty follow-up on this tree
-Repo: EzAuto399/RealBud (local folder still /Users/yoda/projects/PropertyMe)
+Date: 2026-09-04
+Repo: EzAuto399/RealBud (local: `/Users/yoda/projects/RealBud`)
 Canonical spec: **docs/GOAL-PROMPT.md wins on conflict**. Pickup list: **docs/NEXT-WAVE.md**. Read next: DESIGN.md, docs/PRODUCT-DESIGN-PLAN.md, docs/ROUTINES.md, docs/PILOT-CONTRACT.md, pack/property/SOUL.md, TODOS.md.
 
 You are continuing RealBud: a supervised Australian property-management desktop app. Do not invent a PMS, a Hermes fork UI, a bot roster, or a 50-hour unsupervised agent. If a change does not make the worker more PM and less general agent, it is out.
@@ -48,13 +47,14 @@ RealBud is a native desktop app (Warm Operational Ledger design) for one PM. It 
 
 ## 5. The plan (do not jump)
 
-**Immediate code.** W1–W5, morning brief, Ask key refuse, morning-honesty, You → This office, and worker-readiness honesty shipped. Do not fake a Gmail read. Do not remount first-run or rebuild Allow-all. Do not invent an agency name. Do not start inbound, Ask-clock (PR C), live portal, or extra Hermes skills.
+**Immediate code.** W1–W5, morning brief, Ask key refuse, morning-honesty, You → This office, worker-readiness honesty, and attended portal (Attach + Run beside me, 2026-09-02) shipped. Do not fake a Gmail read. Do not remount first-run or rebuild Allow-all. Do not invent an agency name. Do not start inbound, Ask-clock (PR C), unattended CUA, or extra Hermes skills.
 
-**Human, not code.** Fund one model key to live-test conversational + image intake. On a visit, type the eight fields on You → This office.
+**Human, not code.** Fund one model key. Type eight real fields on You → This office. Recheck a real CSV. Optional: Dickson Stage-0 portal name + URL on Attach.
 
 **Gated on the pilot office**
-- Inbound-triage mail, vendor portal, graduate installer, PropertyMe read API, Pocket
+- Inbound-triage mail, graduate installer, PropertyMe read API, Pocket
 - Ask-proposes-clock-changes (PR C), property scope (PR D), Windows worker bundle
+- Attended portal already exists; do not ungate Submit for money/sign/notice
 
 **Do not start** inbound, a law shelf, Cmd+K, PropertyGroup UI, or a second agent to "finish" the product.
 

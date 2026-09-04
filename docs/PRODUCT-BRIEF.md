@@ -104,6 +104,6 @@ Dogfood path if we do not have an agency yet: the existing Dickson listing porta
 
 ## Open questions (need a human)
 
-1. First customer: a named agency PM, the Dickson owner book, or “we will sell later”?
-2. First PMS: PropertyMe, Property Tree, or no PMS (CSV + Gmail only)?
-3. Product name (cannot stay PropertyMe).
+1. **First customer** — a named agency PM on You → This office. Dickson is portal dogfood only, not the product.
+2. **First PMS** — confirm on the visit (PropertyMe / Tree / Reapit). Until then: CSV by address or property code.
+3. **Name** — RealBud. Do not ship as PropertyMe.

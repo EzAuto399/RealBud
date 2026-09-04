@@ -283,11 +283,11 @@ Build it when a named office asks, with their actual failure case choosing which
 proposable. Probably one field, not five. Until then, property options are edited by hand in
 Book mode, which already works.
 
-**Still gated on `docs/PILOT-CONTRACT.md`:** inbound-triage mail, live portal, Pocket, the
-graduate installer, and Ask proposing a clock change (ROUTINES PR C).
+**Still gated on `docs/PILOT-CONTRACT.md`:** inbound-triage mail, Pocket, the
+graduate installer, and Ask proposing a clock change (ROUTINES PR C). Live attended
+portal is Attach + Run beside me (`docs/PORTAL-WORK.md`), not the eight visit fields.
 
 ## Open
 
-`addProperty` and `removeProperty` still stamp `lastRunAt` through `evaluateBook`, so adding
-a property reads as a fresh check. `patchProperty` no longer does. That inconsistency is
-worth closing, and it is pre-existing rather than introduced here.
+None for this file. `addProperty` / `removeProperty` / bulk intake now match `patchProperty`:
+recompute cards without stamping `lastRunAt`; unchecked books stay empty of cards until Recheck.

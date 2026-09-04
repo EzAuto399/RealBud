@@ -39,9 +39,8 @@ until that spike is filled in.
 ## Required fields before this stops being a demo
 
 Every field below blocks with a name on it. The visit fills them in; until
-then RealBud stays a training appliance and the live CUA path stays off
-(`readyForLivePortal` requires `realAgencyNamed`). No code work past the
-installer spike starts until these are answered.
+then RealBud stays a training appliance for inbound, Pocket, and the graduate
+installer. No installer-spike code work starts until these are answered.
 
 **2026-09-02:** live portal runs no longer wait on these eight fields.
 They require plan approval + per-job Attach on this Mac with the desktop

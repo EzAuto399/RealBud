@@ -1,6 +1,6 @@
 # RealBud
 
-Local-first desk for real-estate agents and property managers.
+Local-first desk for Australian residential property managers.
 
 RealBud is our product. The app shell is a fork of [OpenMausBot](https://github.com/milind-soni/OpenMausBot) (MIT). Hermes Agent is a **pinned worker** inside this shell (v0.20.3), not the product name.
 
