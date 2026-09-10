@@ -9,6 +9,10 @@ export interface SavedBankBatch {
 export class BankReferenceStore {
   private db: WorkflowDatabase;
   constructor(db: WorkflowDatabase) { this.db = db; }
+  settings() {
+    const latest = this.db.list<SavedBankBatch>("bank")[0]?.value.batch.input;
+    return latest ? { columns: latest.columns, dateFormat: latest.dateFormat, rules: latest.rules } : null;
+  }
   list() { return this.db.list<SavedBankBatch>("bank").map(({ id, revision, value }) => ({ id, revision, createdAt: value.createdAt, reviewedAt: value.reviewedAt, rows: value.batch.rows.length, originalDigest: value.batch.originalDigest, outputDigest: value.result?.outputDigest })); }
   get(id: string) {
     const record = this.db.get<SavedBankBatch>("bank", id);

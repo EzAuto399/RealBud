@@ -65,6 +65,29 @@ describe("durable human sign-in handovers", () => {
     const restarted = new HumanHandoffs(db, host); restarted.recover();
     expect(restarted.get(held.id).value.state).toBe("recovery_required"); expect(host.verify).not.toHaveBeenCalled();
   });
+  it("dispatches only the selected reviewed step once with a durable claim", async () => {
+    const { db, host } = setup();
+    const resume = vi.fn(async (_handoff: unknown, _step: number) => "new-attempt");
+    const service = new HumanHandoffs(db, { ...host, resume });
+    const opened = await service.open({ ...input, steps: ["Download", "Review references"] });
+    const held = service.bind(opened.id, opened.revision, binding);
+    const verified = await service.continue(held.id, held.revision);
+    const done = await service.resumeStep(verified.id, verified.revision, 1);
+    expect(done.value).toMatchObject({ state: "closed", resumeStep: 1, resumedRunId: "new-attempt" });
+    expect(resume.mock.calls[0][1]).toBe(1);
+    await expect(service.resumeStep(verified.id, verified.revision, 1)).rejects.toThrow(/changed/);
+    expect(resume).toHaveBeenCalledTimes(1);
+  });
+  it("holds an uncertain dispatch and never replays it on recovery", async () => {
+    const { db, host } = setup();
+    const resume = vi.fn(async () => { throw new Error("uncertain response"); });
+    const service = new HumanHandoffs(db, { ...host, resume });
+    const opened = await service.open({ ...input, steps: ["Read payments"] });
+    const held = service.bind(opened.id, opened.revision, binding);
+    const verified = await service.continue(held.id, held.revision);
+    expect((await service.resumeStep(verified.id, verified.revision, 0)).value.state).toBe("recovery_required");
+    service.recover(); expect(resume).toHaveBeenCalledTimes(1);
+  });
   it("rejects invalid binding and expired checkpoints", async () => {
     const { service, db, host } = setup();
     expect(() => validateLoginBinding({ ...binding, origin: "https://bank.example/other" })).toThrow();

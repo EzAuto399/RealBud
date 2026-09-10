@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { api, useStore } from "@/state/store";
 
-type Hold = { id: string; revision: number; value: { state: string; reason: string; detail: string; runId: string; binding?: unknown } };
+type Hold = { id: string; revision: number; value: { state: string; reason: string; detail: string; runId: string; binding?: unknown; steps?: string[] } };
 export function HumanHandoffPanel() {
   const { state } = useStore();
+  const [nextSteps, setNextSteps] = useState<Record<string, string>>({});
   const [holds, setHolds] = useState<Hold[]>([]), [busy, setBusy] = useState(false), [error, setError] = useState("");
   const refresh = async () => { const result = await api("/api/human-handoffs"); setHolds(result.handoffs); };
   useEffect(() => {
@@ -19,7 +20,7 @@ export function HumanHandoffPanel() {
   const action = async (hold: Hold, name: string) => {
     if (busy) return;
     setBusy(true); setError("");
-    try { await api(`/api/human-handoffs/${hold.id}/${name}`, { method: "POST", body: JSON.stringify({ revision: hold.revision }) }, { timeoutMs: 30000 }); await refresh(); }
+    try { await api(`/api/human-handoffs/${hold.id}/${name}`, { method: "POST", body: JSON.stringify({ revision: hold.revision, ...(name === "resume-step" ? { step: Number(nextSteps[hold.id]) } : {}) }) }, { timeoutMs: 30000 }); await refresh(); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "This action could not be confirmed. Reload the request."); await refresh().catch(() => {}); }
     finally { setBusy(false); }
   };
@@ -30,6 +31,7 @@ export function HumanHandoffPanel() {
       <h2 className="text-sm font-semibold">{hold.value.reason === "mfa" ? "Verification code needs you" : "Sign-in needs you"} · {hold.value.state.replaceAll("_", " ")}</h2>
       <p className="text-sm text-ink-secondary">{hold.value.detail}</p>
       {hold.value.state === "awaiting_login" && !hold.value.binding && <p className="text-xs text-hold">The account and page check still needs setup. Enter passwords and verification codes only in the original application.</p>}
+      {hold.value.state === "verified" && hold.value.steps?.length ? <div className="space-y-2"><p className="text-xs">Review what finished before sign-in. Choose only the next step to run; nothing earlier will be replayed.</p><select aria-label="Next reviewed step" className="max-w-full rounded border border-line bg-sheet p-2 text-sm" value={nextSteps[hold.id] ?? ""} onChange={event => setNextSteps({ ...nextSteps, [hold.id]: event.target.value })}><option value="">Choose the next reviewed step…</option>{hold.value.steps.map((step, index) => <option key={index} value={index}>{index + 1}. {step}</option>)}</select><button type="button" className="rounded border border-line px-3 py-2 text-sm" disabled={busy || !state.connected || nextSteps[hold.id] === undefined || nextSteps[hold.id] === ""} onClick={() => void action(hold, "resume-step")}>Run this step only</button></div> : null}
       <div className="flex flex-wrap gap-2">{[
         ...(hold.value.state === "awaiting_login" ? [["continue", "Continue — check sign-in"]] : []),
         ...(["recovery_required", "releasing"].includes(hold.value.state) ? [["retry-release", "Retry computer release"]] : []),

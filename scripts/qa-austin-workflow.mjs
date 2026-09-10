@@ -115,6 +115,8 @@ try {
   assert.deepEqual(await pending(), first, "waiting does not create a replacement request");
   assert.equal((await runs("approval-wait"))[0].status, "running");
   assert.equal(JSON.parse(readFileSync(dumpPath, "utf8")).selectedPermissionOption, null);
+  assert.equal(JSON.parse(readFileSync(dumpPath, "utf8")).env.REALBUD_CUA_CONTROL_TOKEN, undefined);
+  assert.equal(JSON.parse(readFileSync(dumpPath, "utf8")).env.REALBUD_DESK_KEY, undefined);
   await screenshot("01-waiting-for-approval");
   record("Actual UI waits two seconds without granting or advancing");
 
@@ -178,6 +180,7 @@ try {
   assert.equal(hold.value.state,"awaiting_login");
   await page.getByRole("button", {name:"Continue — check sign-in",exact:true}).waitFor();
   await screenshot("04-durable-signin");
+  assert.equal((await api("POST", `/api/human-handoffs/${hold.id}/binding`, {revision:hold.revision,binding:{version:1,pid:123,windowId:456,origin:"https://other.example",accountMarker:"Fictional office",readyMarker:"Transaction history"}})).status,403);
   const bound = await api("POST", `/api/human-handoffs/${hold.id}/binding`, {revision:hold.revision,binding:{version:1,pid:123,windowId:456,origin:"https://app.reimasterapps.com.au",accountMarker:"Fictional office",readyMarker:"Transaction history"}});
   assert.equal(bound.status,200); hold=bound.body;
   await page.locator(`[data-handoff-revision="${hold.revision}"]`).waitFor();
@@ -186,10 +189,18 @@ try {
   await mobile.getByRole("button", {name:"Close handover · keep job interrupted",exact:true}).waitFor();
   assert.equal((await api("POST", `/api/human-handoffs/${hold.id}/continue`, {revision:hold.revision})).status,409);
   assert.equal((await runs("password-handover"))[0].status,"interrupted");
-  await mobile.getByRole("button", {name:"Close handover · keep job interrupted",exact:true}).click();
-  await until(async () => (await api("GET", "/api/human-handoffs")).body.handoffs[0]?.value.state === "closed", "handover closes");
-  record("Saved sign-in survives server restart, synchronizes two clients and rejects old Continue without replaying work");
-  gaps.push({id:"U03",expected:"Customer login and step recovery",observed:"Durable handover and Continue verified against a scripted host. Customer account calibration and per-step continuation remain open; earlier work is deliberately not replayed."});
+  writeFileSync(scriptPath, JSON.stringify({permission:false, reply:"app.reimasterapps.com.au shows the fictional review ready for Kevin. No import performed."}));
+  await mobile.getByLabel("Next reviewed step",{exact:true}).selectOption("1");
+  await mobile.getByRole("button",{name:"Run this step only",exact:true}).click();
+  await until(async () => (await api("GET", "/api/human-handoffs")).body.handoffs[0]?.value.state === "closed", "selected recovery step dispatched");
+  await until(async () => (await runs("password-handover")).length===2 && !(await runs("password-handover")).some(run=>run.status==="running"), "recovery step receipt");
+  const resumed = (await runs("password-handover"))[0];
+  assert.deepEqual(resumed.spec.steps,["Read only; leave import and processing to Kevin"]);
+  const finalHold=(await api("GET", "/api/human-handoffs")).body.handoffs[0];
+  assert.equal(finalHold.value.resumedRunId,resumed.id);
+  assert.equal((await api("POST",`/api/human-handoffs/${hold.id}/resume-step`,{revision:hold.revision,step:1})).status,409);
+  record("Saved sign-in survives restart, synchronizes clients, and resumes only the explicitly selected step with no replay");
+  gaps.push({id:"U03",expected:"Customer login and step recovery",observed:"Durable handover, Continue and selected-step recovery passed with a scripted host and worker. Customer account calibration and real Hermes/Cua workflow execution remain open."});
 
   await prepare("pay-fence", { tool: "click_semantic", title: "Pay now", rawInput: { label: "Pay now", url: "https://app.reimasterapps.com.au/pay" }, reply: "Stopped before payment." });
   await start("pay-fence"); const pay = await settled("pay-fence");
@@ -207,7 +218,7 @@ try {
   assert.equal((await runs("restart-pending")).length, 1);
   await screenshot("05-restart-recovery");
   record("Restart marks the unfinished run interrupted and rejects its stale approval");
-  gaps.push({ id: "U02", expected: "Recover a verified step checkpoint without replaying completed side effects", observed: "Current restart safety interrupts the whole run; a step checkpoint and safe login resume are not implemented." });
+  gaps.push({ id: "U02", expected: "Recover a verified step checkpoint without replaying completed side effects", observed: "Generic crashes keep a run interrupted. Sign-in recovery can launch one explicitly reviewed step; unknown side effects are never replayed automatically." });
 
   const bankCsv = "Date,Amount,Narrative,Reference\n2026-09-10,500.00,FICTIONAL RENT,P101\n2026-09-10,500.00,FICTIONAL TRANSFER,\n";
   assert.equal((await api("GET", "/api/bank-reference", undefined, "")).status, 401);

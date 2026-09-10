@@ -40,6 +40,7 @@ import {
   fenceDenialNote,
   fencePayload,
   isComputerTool,
+  originMatches,
   ruleAllowNote,
   submitPressSummary,
 } from "./portal-fence.ts";
@@ -327,18 +328,38 @@ function signInHandoffs() {
     release: async (threadId) => {
       const owner = store.botByThread(threadId);
       const instance = owner ? registry.get(owner.modelSelection.instanceId) : null;
-      if (instance?.adapter.hasSession(threadId)) {
+      const hadSession = Boolean(instance?.adapter.hasSession(threadId));
+      const ownsBusy = owner?.threadId === threadId || hadSession;
+      if (owner?.busy && ownsBusy) expectedStoppedThreads.add(threadId);
+      if (instance && hadSession) {
         expectedStoppedThreads.add(threadId);
         await denyPendingRequests(threadId, instance);
         await instance.adapter.interruptTurn(threadId);
         await waitUntilTurnStopped(instance, threadId);
       }
       watchdog.settle(threadId);
-      if (owner) { store.patchBot(owner.id, { busy: false }); broadcast({ kind: "bot", bot: store.bot(owner.id) }); }
+      if (owner && ownsBusy) { store.patchBot(owner.id, { busy: false }); broadcast({ kind: "bot", bot: store.bot(owner.id) }); }
       await cuaHumanControl("release");
     },
     verify: async (binding, requestId) => (await cuaHumanControl("verify", binding, requestId)).verified === true,
     restore: async () => { await cuaHumanControl("restore"); },
+    resume: async (handoff, step) => {
+      const old = jobRuns.get(handoff.value.runId);
+      const recipe = old ? getRecipe(old.jobId) : undefined;
+      const bud = store.botByThread(handoff.value.threadId);
+      if (!old || !recipe || !bud || recipe.revision !== handoff.value.jobRevision || recipe.approvedRevision !== recipe.revision || !recipe.attachment || recipe.status === "paused") throw Object.assign(new Error("The saved job changed. Review and approve its current plan before resuming."), { status: 409 });
+      const selected = old.spec.steps[step];
+      if (!selected || selected !== handoff.value.steps?.[step] || bud.busy) throw Object.assign(new Error("The selected step or worker is no longer available."), { status: 409 });
+      const oneStep = { ...recipe, steps: [selected], evidence: "Read back the result of this selected step only. Do not perform subsequent steps." };
+      const enqueued = jobRuns.enqueue(oneStep, { mode: "attended", trigger: "manual", threadId: handoff.value.threadId, idempotencyKey: `${handoff.id}:step:${step}` });
+      if (!enqueued.created) throw Object.assign(new Error("This recovery step already has an attempt. Review its receipt before starting more work."), { status: 409 });
+      const running = jobRuns.start(enqueued.run.id, `Human reviewed recovery: step ${step + 1} only. Earlier attempt ${old.id} is retained.`, { threadId: handoff.value.threadId });
+      setFenceContext(handoff.value.threadId, { runId: running.id, allowedOrigins: [...old.spec.allowedOrigins], capabilities: fenceCapabilitiesFor(oneStep) });
+      try {
+        await startTurn(bud.id, `Continue only reviewed step ${step + 1}: ${selected}`, { threadId: handoff.value.threadId, systemExtra: `${attendedJobSystemBlock(oneStep)}\nThis is recovery from an interrupted run. Earlier steps are outside this attempt. Never replay them or infer that they completed.`, computer: true, signInResumeId: handoff.id });
+      } catch (error) { settleAttendedTurn(handoff.value.threadId, { ok: false, stopReason: "error", detail: "The selected recovery step could not start. Check this receipt before retrying." }); throw error; }
+      return running.id;
+    },
   });
 }
 
@@ -350,7 +371,7 @@ async function pauseAttendedForLogin(threadId: string, reason: "login" | "mfa") 
   // completion cannot turn this human checkpoint into a successful run.
   jobRuns.settle(run.id, { status: "interrupted", detail: "Sign-in handover requested. Earlier actions will not be replayed automatically.", evidence: [{ at: Date.now(), kind: "note", note: "Human sign-in checkpoint saved; no credentials retained." }] });
   takeFenceContext(threadId);
-  return signInHandoffs().open({ runId: run.id, threadId, jobRevision: run.jobRevision, reason });
+  return signInHandoffs().open({ runId: run.id, threadId, jobRevision: run.jobRevision, reason, steps: [...run.spec.steps] });
 }
 
 function settleAttendedTurn(
@@ -1092,13 +1113,15 @@ async function startTurn(
     systemExtra?: string;
     /** Mount the host computer MCP for this turn. */
     computer?: boolean;
+    /** Internal recovery claim; never accepted from an Ask request body. */
+    signInResumeId?: string;
     /** Phone channel Ask — full Hermes Bud, not Desk FAQ shortcuts. */
     channelRelay?: boolean;
   },
 ) {
   const bot = store.bot(botId);
   if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
-  if (opts?.computer && signInHandoffs().isHolding()) throw Object.assign(new Error("Finish or stop the saved sign-in handover before starting more computer work."), { status: 409 });
+  if (opts?.computer && signInHandoffs().isHolding() && !signInHandoffs().canResume(opts.signInResumeId)) throw Object.assign(new Error("Finish the saved sign-in handover before starting more computer work."), { status: 409 });
   if (PRODUCT_MODE && containsCredential(text)) {
     throw Object.assign(
       new Error("Use the private key field in Set up Bud. Keep keys out of the conversation."),
@@ -1400,7 +1423,7 @@ async function startTurn(
             gmailReadOnlyMode(cfg) && allowedApps.includes("gmail") ? "This connection provides only GMAIL_GET_PROFILE, GMAIL_LIST_THREADS and GMAIL_FETCH_MESSAGE_BY_THREAD_ID. Use only the account and thread IDs allowed by the server. No alternate mail or computer route is allowed." : undefined,
             opts?.systemExtra].filter(Boolean).join("\n\n"),
           integrations,
-          ...(!signInHandoffs().isHolding() && (readCuaConnection() || opts?.computer) ? { computer: true } : {}),
+          ...((!signInHandoffs().isHolding() || signInHandoffs().canResume(opts?.signInResumeId)) && (readCuaConnection() || opts?.computer) ? { computer: true } : {}),
         });
         if (rewound) store.patchBot(bot.id, { rewound: false, resumeCursors: {} });
         return;
@@ -2424,22 +2447,28 @@ const server = createServer(async (req, res) => {
       if (path === "/api/human-handoffs" && method === "POST") {
         const body = await readBody(req);
         const run = typeof body.runId === "string" ? jobRuns.get(body.runId) : undefined;
-        if (!run?.threadId) return json(res, 404, { error: "No attended job is running." });
+        if (!run?.threadId || run.status !== "running" || fenceContextFor(run.threadId)?.runId !== run.id) return json(res, 409, { error: "That attended job is no longer running. Refresh Work activity." });
         return json(res, 200, await pauseAttendedForLogin(run.threadId, body.reason === "mfa" ? "mfa" : "login"));
       }
-      const match = path.match(/^\/api\/human-handoffs\/(handover:[\w-]+)\/(continue|stop|retry-release|binding|close)$/);
+      const match = path.match(/^\/api\/human-handoffs\/(handover:[\w-]+)\/(continue|stop|retry-release|binding|close|resume-step)$/);
       if (!match || method !== "POST") return json(res, 404, { error: "Unknown sign-in action." });
       const body = await readBody(req, 4096), [, id, action] = match;
       if (action === "continue") return json(res, 200, await handoffs.continue(id, body.revision));
       if (action === "stop") return json(res, 200, await handoffs.stop(id, body.revision));
       if (action === "close") return json(res, 200, await handoffs.close(id, body.revision));
+      if (action === "resume-step") return json(res, 200, await handoffs.resumeStep(id, body.revision, body.step));
       if (action === "retry-release") return json(res, 200, await handoffs.retryRelease(id, body.revision));
+      const sourceRun = jobRuns.get(handoffs.get(id).value.runId);
+      let bindingHost = "";
+      try { bindingHost = new URL(body.binding?.origin).hostname; } catch { /* rejected below */ }
+      if (!sourceRun || !bindingHost || !originMatches(bindingHost, sourceRun.spec.allowedOrigins)) return json(res, 403, { error: "The sign-in check must use a site in this saved job." });
       return json(res, 200, handoffs.bind(id, body.revision, body.binding));
     }
     if (path === "/api/bank-reference" || path.startsWith("/api/bank-reference/")) {
       const gate = sessionOk(req, PORT);
       if (!gate.ok) return json(res, gate.status, { error: gate.error });
       const banks = bankReferenceStore();
+      if (path === "/api/bank-reference/settings" && method === "GET") return json(res, 200, { settings: banks.settings() });
       if (path === "/api/bank-reference" && method === "GET") return json(res, 200, { batches: banks.list() });
       if (path === "/api/bank-reference" && method === "POST") return json(res, 200, banks.create(await readBody(req, 1_100_000)));
       const match = path.match(/^\/api\/bank-reference\/(bank:[a-f0-9]{64})(?:\/(review|export|original))?$/);

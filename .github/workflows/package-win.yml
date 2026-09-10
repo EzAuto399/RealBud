@@ -45,6 +45,7 @@ jobs:
         run: rm -rf dist dist-server release
       - run: pnpm package:win
       - name: Install and verify the actual NSIS artifact on Windows Server
+        timeout-minutes: 5
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -69,6 +70,7 @@ jobs:
           echo "commit:  $(git rev-parse HEAD)"
           ls -lh release/*.exe release/*.yml 2>/dev/null || true
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: windows-installer
           path: |
