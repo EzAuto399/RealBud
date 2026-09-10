@@ -27,6 +27,7 @@ import {
   attendedUserText,
   fenceContextFor,
   fenceEvidence,
+  humanSigninNeeded,
   portalRespondRuleError,
   READY_BESIDE_YOU_SKIP,
   setFenceContext,
@@ -316,10 +317,10 @@ function productHermesSelection(model = "default") {
 const sseClients = new Set<ServerResponse>();
 jobRuns.setEmit((payload) => broadcast(payload));
 
-function lastAssistantText(threadId: string): string {
+function lastAssistantText(threadId: string, since: number): string {
   const texts = store
     .messagesFor(threadId)
-    .filter((message) => message.role === "bot" && message.kind === "text" && message.text);
+    .filter((message) => message.role === "bot" && message.kind === "text" && message.text && message.at >= since);
   return texts.at(-1)?.text ?? "";
 }
 
@@ -378,12 +379,25 @@ function settleAttendedTurn(
   threadId: string,
   input: { ok: boolean; stopReason?: string | null; detail?: string },
 ) {
+  const activeContext = fenceContextFor(threadId);
+  const activeRun = activeContext ? jobRuns.get(activeContext.runId) : undefined;
+  const currentText = input.detail ?? lastAssistantText(threadId, activeRun?.startedAt ?? Date.now());
+  const signIn = input.ok && !["cancelled", "interrupted", "error", "timeout", "stall"].includes(input.stopReason ?? "")
+    ? humanSigninNeeded(currentText) : null;
+  if (signIn && fenceContextFor(threadId)) {
+    void pauseAttendedForLogin(threadId, signIn).catch(async error => {
+      await cuaHumanControl("release").catch(() => {});
+      reportJobHistoryFailure(error);
+      publishWorkerIssue({ source: "runtime", summary: "Sign-in handover needs attention", detail: "The sign-in request could not be saved or released safely. Close RealBud before entering credentials and review Work activity." });
+    });
+    return;
+  }
   const ctx = takeFenceContext(threadId);
   if (!ctx) return;
   try {
     const run = jobRuns.get(ctx.runId);
     if (!run || run.status !== "running") return;
-    const text = input.detail ?? lastAssistantText(threadId);
+    const text = currentText;
     const status = attendedSettleStatus({
       ok: input.ok,
       stopReason: input.stopReason,

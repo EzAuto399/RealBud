@@ -202,6 +202,15 @@ try {
   record("Saved sign-in survives restart, synchronizes clients, and resumes only the explicitly selected step with no replay");
   gaps.push({id:"U03",expected:"Customer login and step recovery",observed:"Durable handover, Continue and selected-step recovery passed with a scripted host and worker. Customer account calibration and real Hermes/Cua workflow execution remain open."});
 
+  await prepare("polite-signin", {permission:false, reply:"Please sign in to continue reading the bank export."});
+  await start("polite-signin");
+  await until(async () => (await api("GET", "/api/human-handoffs")).body.handoffs[0]?.value.state === "awaiting_login", "sign-in request without a password attempt");
+  const politeHold=(await api("GET", "/api/human-handoffs")).body.handoffs[0];
+  const politeStopped=await api("POST",`/api/human-handoffs/${politeHold.id}/stop`,{revision:politeHold.revision});
+  assert.equal(politeStopped.status,200);
+  assert.equal((await api("POST",`/api/human-handoffs/${politeHold.id}/close`,{revision:politeStopped.body.revision})).status,200);
+  record("A worker asking the person to sign in opens a saved handover without attempting a password tool");
+
   await prepare("pay-fence", { tool: "click_semantic", title: "Pay now", rawInput: { label: "Pay now", url: "https://app.reimasterapps.com.au/pay" }, reply: "Stopped before payment." });
   await start("pay-fence"); const pay = await settled("pay-fence");
   assert.ok(pay.evidence.some(e => e.kind === "denied" && /Submit, Pay and Send stay with you/.test(e.note)));

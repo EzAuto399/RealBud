@@ -33,6 +33,17 @@ export const RULE_ALLOW_ONLY = "A standing rule can only be saved when you Allow
 export const RULE_MISMATCH = "That rule does not match this request.";
 export const RULE_OFF_JOB = "That site is not on this job.";
 
+/** Also catch a well-behaved worker that asks the person to sign in instead
+ * of attempting a forbidden password tool. This opens a hold, never grants. */
+export function humanSigninNeeded(text: string): "login" | "mfa" | null {
+  const normalized = text.replace(/\s+/g, " ");
+  if (/\b(no (?:login|sign.in|mfa) (?:is )?(?:needed|required)|already (?:logged|signed) in|sign.in (?:is )?(?:complete|successful))\b/i.test(normalized)) return null;
+  const needed = /\b(?:please|you (?:need|must)|waiting (?:for|on)|requires?|need(?:s)? (?:you|a|to)|finish|complete)\b.{0,100}\b(?:sign[ -]?in|log[ -]?in|password|mfa|2fa|verification code|two.factor)\b/i.test(normalized)
+    || /\b(?:sign[ -]?in|log[ -]?in|mfa|2fa|verification code)\b.{0,60}\b(?:required|needed|expired|needs you)\b/i.test(normalized);
+  if (!needed) return null;
+  return /\bmfa\b|\b2fa\b|verification code|two.factor/i.test(normalized) ? "mfa" : "login";
+}
+
 export function fenceContextFor(threadId: string): AttendedFenceContext | undefined {
   return fences.get(threadId);
 }

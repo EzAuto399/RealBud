@@ -6,10 +6,15 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { Recipe } from "../shared/contracts.ts";
-import { ATTEND_ERRORS, attendBlocked, attendedSettleStatus, fenceEvidence, submitHoldLine } from "./attended-run.ts";
+import { ATTEND_ERRORS, attendBlocked, attendedSettleStatus, fenceEvidence, humanSigninNeeded, submitHoldLine } from "./attended-run.ts";
 import { JobRunStore } from "./job-runs.ts";
 import { startCuaControl } from "../electron/cua-control.mjs";
 let fixtureControl: Awaited<ReturnType<typeof startCuaControl>>;
+describe("worker sign-in handover requests", () => {
+  it.each(["Please sign in to continue.", "Login is required before I can read the bank export.", "Waiting for you to finish sign-in."])("recognizes a request without a password tool: %s", text => expect(humanSigninNeeded(text)).toBe("login"));
+  it("recognizes a verification-code request", () => expect(humanSigninNeeded("Please complete the verification code in the bank window.")).toBe("mfa"));
+  it.each(["Already signed in and the bank export is ready.", "No login is needed.", "References reviewed."])("does not reinterpret a completed observation: %s", text => expect(humanSigninNeeded(text)).toBeNull());
+});
 
 describe("fence evidence identity", () => {
   it("names the denied browser action in the retained receipt", () => {
