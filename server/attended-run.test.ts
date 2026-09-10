@@ -6,8 +6,26 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { Recipe } from "../shared/contracts.ts";
-import { ATTEND_ERRORS, attendBlocked, attendedSettleStatus, submitHoldLine } from "./attended-run.ts";
+import { ATTEND_ERRORS, attendBlocked, attendedSettleStatus, fenceEvidence, submitHoldLine } from "./attended-run.ts";
 import { JobRunStore } from "./job-runs.ts";
+import { startCuaControl } from "../electron/cua-control.mjs";
+let fixtureControl: Awaited<ReturnType<typeof startCuaControl>>;
+
+describe("fence evidence identity", () => {
+  it("names the denied browser action in the retained receipt", () => {
+    expect(
+      fenceEvidence(
+        { tool: "navigate", summary: "open arrears" },
+        { kind: "deny", reason: "Only sites named in a saved job. Ask Bud to set the routine up as a job first." },
+        42,
+      ),
+    ).toEqual({
+      at: 42,
+      kind: "denied",
+      note: "Tried to open a page. Only sites named in a saved job. Ask Bud to set the routine up as a job first.",
+    });
+  });
+});
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -90,9 +108,19 @@ describe("attend preconditions", () => {
       }),
     ).toBe("completed");
     expect(attendedSettleStatus({ ok: false, stopReason: "cancelled", text: "", allowedOrigins: [] })).toBe(
-      "interrupted",
+      "cancelled",
     );
     expect(submitHoldLine("Ready for you to Pay")).toEqual(["Submit/Pay/Send stay with you"]);
+  });
+
+  it("gives cancellation and interruption precedence over successful read-back", () => {
+    for (const ok of [true, false]) {
+      const readBack = { ok, text: "vantagestrata.com.au shows outstanding balance", allowedOrigins: ["vantagestrata.com.au"] };
+      expect(attendedSettleStatus({ ...readBack, stopReason: "cancelled" })).toBe("cancelled");
+      for (const stopReason of ["interrupted", "stall", "timeout"]) {
+        expect(attendedSettleStatus({ ...readBack, stopReason })).toBe("interrupted");
+      }
+    }
   });
 
   it("marks a queued attended run missed after a day", () => {
@@ -166,6 +194,7 @@ posixOnly("attended run route (fake ACP)", () => {
   }
 
   beforeAll(async () => {
+    fixtureControl = await startCuaControl({ release: async () => {}, verify: async () => false, restore: async () => {} });
     chmodSync(FAKE_CLI, 0o755);
     home = mkdtempSync(join(tmpdir(), "realbud-attend-"));
     mkdirSync(join(home, ".realbud"), { recursive: true });
@@ -205,6 +234,7 @@ posixOnly("attended run route (fake ACP)", () => {
         OMB_PORT: String(PORT),
         REALBUD_CUA_DESCRIPTOR_PATH: cuaPath,
         REALBUD_CUA_TEST_READY: "1",
+        ...fixtureControl.env,
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -227,6 +257,7 @@ posixOnly("attended run route (fake ACP)", () => {
   }, 30_000);
 
   afterAll(async () => {
+    await fixtureControl?.close();
     child?.kill("SIGTERM");
     await new Promise<void>((resolve) => {
       if (!child || child.exitCode !== null) return resolve();
@@ -336,6 +367,11 @@ posixOnly("attended run route (fake ACP)", () => {
     }, "the password fill to be denied and the turn to end");
     const denied = (await api("GET", "/api/job-runs?jobId=att-deny")).body.runs[0];
     expect(denied.evidence.some((item: { kind: string; note: string }) => item.kind === "denied" && item.note.includes("never types a password"))).toBe(true);
+    await waitFor(async () => (await api("GET", "/api/human-handoffs")).body.handoffs[0]?.value.state === "awaiting_login", "durable released sign-in checkpoint");
+    const held = (await api("GET", "/api/human-handoffs")).body.handoffs[0];
+    const stopped = await api("POST", `/api/human-handoffs/${held.id}/stop`, { revision: held.revision });
+    expect(stopped.status).toBe(200);
+    expect((await api("POST", `/api/human-handoffs/${held.id}/close`, { revision: stopped.body.revision })).status).toBe(200);
 
     await saveReadyJob("att-pay");
     writeScript({

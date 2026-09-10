@@ -5,6 +5,7 @@ import { parseConnectionIntent } from "./connection-intent.ts";
 describe("parseConnectionIntent", () => {
   it("recognises direct connection instructions and normalises common app names", () => {
     expect(parseConnectionIntent("connect me to notion")).toEqual({ slug: "notion", label: "Notion" });
+    expect(parseConnectionIntent("connect me to gmail")).toEqual({ slug: "gmail", label: "Gmail" });
     expect(parseConnectionIntent("Please link our Google Calendar account.")).toEqual({
       slug: "googlecalendar",
       label: "Google Calendar",

@@ -11,9 +11,19 @@ import type { InstanceConfigMap } from "./contracts.ts";
 export interface AppConfig {
   xai?: { key?: string; url?: string };
   /** key = ck_… Connect consumer key (connections + agent tools);
-   * apiKey = ak_… project API key — optional, unlocks the full toolkit
-   * catalog with official logos in the plugins marketplace. */
-  composio?: { key?: string; apiKey?: string; url?: string };
+   * apiKey = project API key — optional, used by the toolkit catalog and
+   * the explicitly selected Gmail read-only connection. */
+  composio?: { key?: string; apiKey?: string; url?: string;
+    mode?: "consumer" | "gmail-readonly";
+    officeApps?: string[];
+    excludedApps?: string[];
+    selectedAccounts?: Record<string, string>;
+    /** Provider account ownership is created by RealBud, never supplied by Bud. */
+    gmailReadOnly?: { authConfigId: string; userId: string; accountId?: string;
+      pendingLink?: { url: string; expiresAt: string };
+      /** Durable intent: never repeat link creation after an uncertain response. */
+      linkUnknown?: { startedAt: string; previousAccountId?: string } };
+  };
   box?: { token?: string };
   /** Voice (ElevenLabs). `key` is the credential and is never echoed back;
    * `voice` is the chosen voice id, which is a setting, not a secret. */
@@ -78,7 +88,7 @@ export function saveConfig(patch: Partial<AppConfig>): void {
     }
   }
   mkdirSync(DATA_DIR, { recursive: true });
-  writeFileAtomic(p, JSON.stringify(disk, null, 2));
+  writeFileAtomic(p, JSON.stringify(disk, null, 2), 0o600);
 }
 
 // Default fleet: one instance per built-in driver (upstream

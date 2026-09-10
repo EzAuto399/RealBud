@@ -344,6 +344,16 @@ describe("Desk morning check", () => {
     expect(() => desk.patchProperty("prop-oak", { notifyChannel: "carrier-pigeon" as never })).toThrow(/unknown notify channel/);
   });
 
+  it("does not partially change options when a later option is invalid", () => {
+    const { desk } = tempDesk();
+    const before = structuredClone(desk.snapshot());
+    expect(() => desk.patchProperty("prop-oak", { graceDays: 4, courtesyUntilDay: 2 })).toThrow(/after grace/);
+    expect(desk.snapshot().properties.find(p => p.id === "prop-oak")?.options).toEqual(before.properties.find(p => p.id === "prop-oak")?.options);
+    expect(desk.snapshot().revision).toBe(before.revision);
+    expect(() => desk.patchProperty("prop-oak", { graceDays: 2, notifyChannel: "invalid" as never })).toThrow(/unknown notify/);
+    expect(desk.snapshot().properties.find(p => p.id === "prop-oak")?.options.graceDays).toBe(3);
+  });
+
   it("adds a property with quiet default facts and the shop options", () => {
     const { desk } = tempDesk();
     const snap = desk.addProperty({
@@ -710,6 +720,26 @@ describe("Desk morning check", () => {
     expect(presented.book?.handoff?.allowedActions ?? []).not.toContain("submit");
   });
 
+  it("keeps the whole office unchanged when any field in a patch is invalid", () => {
+    const { desk } = tempDesk();
+    const before = desk.snapshot();
+    expect(() => desk.patchAgency({ name: "Changed agency", jurisdictions: ["QLD"], office: { pmsBrand: "unsupported" } })).toThrow(/pmsBrand/);
+    expect(desk.snapshot().book?.agency).toEqual(before.book?.agency);
+    expect(desk.snapshot().book?.office).toEqual(before.book?.office);
+    expect(desk.snapshot().revision).toBe(before.revision);
+  });
+
+  it("saves basics without optional setup metadata and preserves hidden fields on later edits", () => {
+    const { desk } = tempDesk();
+    desk.patchAgency({ name: "Harbour PM", jurisdictions: ["QLD"] });
+    expect(desk.snapshot().book?.office.pmsBrand).toBe("");
+    desk.patchAgency({ office: { pmsBrand: "propertyme", namedExporter: "Existing contact" } });
+    desk.patchAgency({ name: "Harbour Agency" });
+    expect(desk.snapshot().book?.office).toMatchObject({ pmsBrand: "propertyme", namedExporter: "Existing contact" });
+    desk.patchAgency({ office: { pmsBrand: "" } });
+    expect(desk.snapshot().book?.office).toMatchObject({ pmsBrand: "", namedExporter: "Existing contact" });
+  });
+
   it("persists office visit fields without inventing an agency", () => {
     const { desk } = tempDesk();
     const start = desk.snapshot();
@@ -736,5 +766,33 @@ describe("Desk morning check", () => {
     const onlyOffice = desk.patchAgency({ office: { pmUser: "Sam" } });
     expect(onlyOffice.book?.agency.name).toBe("Harbour PM");
     expect(onlyOffice.book?.office.pmUser).toBe("Sam");
+  });
+});
+
+describe("sample replay", () => {
+  it("replaces prior demo cases once, keeps office setup and survives reopening", () => {
+    const { desk, dir, now, setNow } = tempDesk();
+    desk.patchAgency({ name: "Example office", office: { pmUser: "Example PM" } });
+    const first = desk.resetFixtures();
+    for (let i = 0; i < 3; i++) {
+      setNow(now() + 60_000);
+      const replay = desk.resetFixtures();
+      expect(replay.book!.cases).toHaveLength(first.book!.cases.length);
+      expect(replay.drafts).toHaveLength(first.drafts.length);
+      expect(replay.book!.agency.name).toBe("Example office");
+      expect(replay.book!.office.pmUser).toBe("Example PM");
+      expect(replay.revision).toBe(first.revision + i + 1);
+    }
+    const reopened = new Desk({ file: join(dir, "desk.json"), now });
+    expect(reopened.snapshot().book!.cases).toHaveLength(first.book!.cases.length);
+    expect(reopened.snapshot().drafts).toHaveLength(first.drafts.length);
+  });
+  it("refuses to replace a live book", () => {
+    const { desk, dir } = tempDesk();
+    desk.importCsv("propertyId,daysSinceDue,rentLanded,levyPaid\nprop-oak,4,false,false");
+    const before = readFileSync(join(dir, "desk.json"), "utf8");
+    expect(desk.snapshot().mode).toBe("live");
+    expect(() => desk.resetFixtures()).toThrow(/office book has been kept/);
+    expect(readFileSync(join(dir, "desk.json"), "utf8")).toBe(before);
   });
 });

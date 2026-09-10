@@ -26,6 +26,15 @@ type SpawnCliOptions = SpawnOptions & {
   privateFiles?: boolean;
 };
 
+/** Harness-only authority must never reach a CLI, installer or its tools. */
+export function cliEnvironment(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env = { ...source };
+  delete env.REALBUD_CUA_CONTROL_TOKEN;
+  delete env.REALBUD_CUA_CONTROL_URL;
+  delete env.REALBUD_DESK_KEY;
+  return env;
+}
+
 function posixCommandExists(command: string, env: NodeJS.ProcessEnv | undefined): boolean {
   const paths = command.includes("/")
     ? [command]
@@ -63,6 +72,7 @@ export function spawnCli(
     : resolved.args;
   const child = spawn(command, spawnArgs, {
     ...spawnOptions,
+    env: cliEnvironment(spawnOptions.env),
     // posix: own process group so kill(-pid) reaps child MCP servers;
     // win32: taskkill /T does the reaping instead (see killCliTree)
     ...(process.platform === "win32" ? { windowsHide: true } : { detached: true }),
@@ -82,7 +92,7 @@ export function execCli(
   cb: (err: Error | null, stdout: string) => void,
 ): void {
   const resolved = resolveCli(cli, args);
-  execFile(resolved.command, resolved.args, { ...opts, windowsHide: true }, (err, stdout) =>
+  execFile(resolved.command, resolved.args, { ...opts, env: cliEnvironment(opts.env), windowsHide: true }, (err, stdout) =>
     cb(err, typeof stdout === "string" ? stdout : String(stdout)),
   );
 }
@@ -98,7 +108,7 @@ export function execFileCli(
   return execFile(
     resolved.command,
     resolved.args,
-    { ...opts, windowsHide: true },
+    { ...opts, env: cliEnvironment(opts.env), windowsHide: true },
     (err, stdout, stderr) =>
       cb(err, typeof stdout === "string" ? stdout : String(stdout), typeof stderr === "string" ? stderr : String(stderr)),
   );

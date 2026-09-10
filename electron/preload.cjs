@@ -42,6 +42,8 @@ contextBridge.exposeInMainWorld("ogb", {
   /** Copies an engine install command and opens a blank terminal. Resolves
    * false if no terminal could be launched; the clipboard still has it. */
   openInstallTerminal: (command) => ipcRenderer.invoke("engine:open-terminal", command),
+  /** Open a server-vetted HTTPS connection/auth link in the default browser. */
+  openExternal: (url) => ipcRenderer.invoke("external:open", url),
 
   /** In-app auto-update. State object:
    *  { status: "idle"|"checking"|"available"|"downloading"|"downloaded"|"error",

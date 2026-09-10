@@ -6,6 +6,9 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { writeFileAtomic } from "./atomic.ts";
+import { readLoopsFile, validTimezone, type LoopsFile } from "./routine-persistence.ts";
+import { MANUAL_JOB_REQUEST_ID } from "../shared/manual-job-request.ts";
+import { redactSecretsInText } from "./redact.ts";
 import { DATA_DIR } from "./config.ts";
 import { oplog } from "./oplog.ts";
 import { evaluatorForLoop } from "./workflow-catalog.ts";
@@ -15,6 +18,7 @@ export type { Loop, LoopId, LoopRun, LoopRunStatus, LoopSchedule };
 
 export interface LoopExecuteResult {
   ok: boolean;
+  status?: "completed" | "partial" | "awaiting-approval" | "failed";
   detail: string;
   covered?: number;
   uncovered?: number;
@@ -39,7 +43,8 @@ export interface LoopManagerOptions {
 }
 
 /** A worker that answered some addresses and held the rest is not a miss. */
-export function settleLoopRunStatus(result: Pick<LoopExecuteResult, "ok" | "covered" | "uncovered">): LoopRunStatus {
+export function settleLoopRunStatus(result: Pick<LoopExecuteResult, "ok" | "status" | "covered" | "uncovered">): LoopRunStatus {
+  if (result.status) return result.status;
   if ((result.covered ?? 0) > 0 && (result.uncovered ?? 0) > 0) return "partial";
   return result.ok ? "completed" : "failed";
 }
@@ -59,16 +64,6 @@ export function coverageFromUncoveredHeld(
   return { covered, uncovered };
 }
 
-interface LoopsFile {
-  version: 3;
-  timezone: string;
-  state: Record<
-    string,
-    { enabled: boolean; handledThrough: number; schedule?: { time: string; weekdays: number[] }; revision?: number }
-  >;
-  runs: LoopRun[];
-}
-
 const WEEKDAYS = [1, 2, 3, 4, 5];
 const CATCH_UP_MS = 12 * 60 * 60_000;
 
@@ -76,6 +71,12 @@ const CATCH_UP_MS = 12 * 60 * 60_000;
  * only catches a path that would otherwise hang forever. */
 const RUN_DEADLINE_MS = 5 * 60_000;
 const MAX_RUNS = 2_000;
+const HISTORY_RECOVERY = "The schedule needs recovery. Clockwork is paused and the saved history has been preserved. Restore a known-good schedule, then restart RealBud.";
+const WRITE_RECOVERY = "RealBud could not safely save the schedule. Clockwork is paused. Check disk space and file access, then restart RealBud before trying again.";
+const SOURCE_RECOVERY = "A saved job could not be read or updated. Clockwork is paused. Check the saved plan and schedule, then restart RealBud.";
+const cloneLoop = (loop: Loop): Loop => ({ ...loop, schedule: { ...loop.schedule, weekdays: [...loop.schedule.weekdays] } });
+interface ExecutionOutcome { result?: LoopExecuteResult; error?: unknown }
+
 
 /** Strict "HH:MM", 00-23 / 00-59. Returns null when it is not a clock time. */
 export function parseClockTime(value: unknown): string | null {
@@ -104,14 +105,14 @@ export function recipeIdFromLoopId(id: LoopId): string | null {
 }
 
 const RECIPE_LOOP_DESCRIPTION =
-  "A job you taught Bud. Once its current plan is approved, the RealBud clock runs it in prepare-only mode and records a receipt. Nothing is sent, submitted, or paid.";
+  "An approved job prepares work at its scheduled time and saves a result for your review. It does not send, submit or pay.";
 
 export const LOOP_CATALOG: ReadonlyArray<Omit<Loop, "enabled" | "nextRunAt" | "timezonePaused" | "revision">> = [
   {
     id: "morning-arrears",
     name: "Morning money check",
     description:
-      "The clock presses Desk Recheck. Sources are validated, shop rules run, and exception cards land on Desk. No portal session starts from the clock.",
+      "Checks the property book and puts tasks that need your review on Desk. Uses the current saved sources without opening websites.",
     available: true,
     schedule: { type: "daily", time: "07:30", weekdays: WEEKDAYS },
     evaluatorId: "morning-money",
@@ -121,7 +122,7 @@ export const LOOP_CATALOG: ReadonlyArray<Omit<Loop, "enabled" | "nextRunAt" | "t
     id: "owner-letter",
     name: "Friday owner letter",
     description:
-      "Every Friday the clock drafts each owner a factual catch-up from the Desk book and Notes. You approve the wording and copy it out yourself.",
+      "Prepares a Friday update for each owner using the property book and notes. Review and copy the wording yourself.",
     available: true,
     schedule: { type: "daily", time: "16:00", weekdays: [5] },
     evaluatorId: "owner-letter",
@@ -131,7 +132,7 @@ export const LOOP_CATALOG: ReadonlyArray<Omit<Loop, "enabled" | "nextRunAt" | "t
     id: "inbound-triage",
     name: "Inbound triage",
     description:
-      "Agency inbox (Microsoft 365 or Gmail) → classify → job + reply draft. Declared. Needs a named inbox on the visit. RealBud will not open mail until then.",
+      "Scheduled inbox sorting is not available yet. Use connected Gmail or Microsoft 365 in Ask.",
     available: false,
     schedule: { type: "daily", time: "09:00", weekdays: WEEKDAYS },
     evaluatorId: "inbound-triage",
@@ -203,6 +204,7 @@ export function nextOccurrence(schedule: LoopSchedule, after: number, timeZone?:
 }
 
 export class LoopManager {
+  private readonly generation = randomUUID();
   private readonly file: string;
   private readonly now: () => number;
   private readonly options: LoopManagerOptions;
@@ -223,28 +225,26 @@ export class LoopManager {
   private ticking = false;
   timezone: string;
   private readonly hostTz: string;
+  private recoveryDetail: string | null = null;
+  private executing = new Set<LoopId>();
 
   constructor(options: LoopManagerOptions) {
     this.options = options;
     this.file = options.file ?? join(DATA_DIR, "loops.json");
     this.now = options.now ?? Date.now;
-    this.hostTz = options.hostTimezone ?? hostTimezone();
-    let saved: Partial<LoopsFile> & { version?: number } = {};
+    const requestedHost = options.hostTimezone ?? hostTimezone();
+    this.hostTz = validTimezone(requestedHost) ? requestedHost : "UTC";
+    let saved: LoopsFile = { version: 3, timezone: this.hostTz, state: {}, runs: [] };
     try {
-      saved = JSON.parse(readFileSync(this.file, "utf8")) as Partial<LoopsFile>;
-    } catch {
-      /* first run */
+      saved = readLoopsFile(this.file, this.hostTz);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") this.recoveryDetail = HISTORY_RECOVERY;
     }
-    this.timezone = options.timezone ?? saved.timezone ?? this.hostTz;
-    this.runs = Array.isArray(saved.runs) ? saved.runs : [];
-    for (const run of this.runs) {
-      if (run.status === "queued" || run.status === "running") {
-        run.status = "interrupted";
-        run.finishedAt = this.now();
-        run.detail = run.detail ?? "Interrupted on startup — not resumed mid-action";
-      }
-    }
-    this.savedState = saved.state ?? {};
+    const timezone = options.timezone ?? saved.timezone;
+    if (!validTimezone(timezone) || !validTimezone(requestedHost)) this.recoveryDetail = HISTORY_RECOVERY;
+    this.timezone = validTimezone(timezone) ? timezone : this.hostTz;
+    this.runs = saved.runs;
+    this.savedState = saved.state;
     const savedState = this.savedState;
     const paused = this.timezone !== this.hostTz;
     this.loops = LOOP_CATALOG.map((loop) => {
@@ -253,7 +253,7 @@ export class LoopManager {
       const handled = Number.isFinite(savedState[loop.id]?.handledThrough)
         ? savedState[loop.id]!.handledThrough
         : this.now() - 1;
-      this.handledThrough.set(loop.id, Math.min(handled, this.now() - 1));
+      this.handledThrough.set(loop.id, handled);
       // v2 files carry no per-loop clock; the catalog schedule migrates as-is
       // and the first retune bumps revision from its initial 1.
       const savedSchedule = savedState[loop.id]?.schedule;
@@ -272,16 +272,37 @@ export class LoopManager {
         revision: this.revisions.get(loop.id)!,
         enabled,
         timezonePaused: paused,
-        nextRunAt: enabled && !paused ? nextOccurrence(schedule, this.now(), this.zoneForClock()) : null,
+        nextRunAt: enabled && !paused ? nextOccurrence(schedule, Math.max(this.now(), this.handledThrough.get(loop.id) ?? 0), this.zoneForClock()) : null,
       };
     });
     this.refreshRecipeLoops();
-    if (this.runs.some((r) => r.status === "interrupted")) this.save();
+    if (!this.recovery.active && this.runs.some((run) => run.status === "queued" || run.status === "running" ||
+      (!run.manual && run.scheduledFor > (this.handledThrough.get(run.loopId) ?? 0)))) {
+      try {
+        this.commit(() => {
+          for (const run of this.runs) {
+            if (run.status === "queued" || run.status === "running") {
+              run.status = "interrupted";
+              run.finishedAt = this.now();
+              run.detail = "Interrupted on startup — not resumed mid-action. Check saved results before trying again.";
+            }
+            // Old versions could save even completed receipts before advancing
+            // the bookmark. Every retained scheduled outcome claims its slot.
+            if (!run.manual) this.handledThrough.set(run.loopId, Math.max(this.handledThrough.get(run.loopId) ?? 0, run.scheduledFor));
+          }
+        });
+      } catch { /* recovery is visible; startup remains available */ }
+    }
+    if (this.recovery.active) this.emitRecovery();
+  }
+
+  get recovery(): { active: boolean; detail: string; generation: string } {
+    return { active: this.recoveryDetail !== null, detail: this.recoveryDetail ?? "", generation: this.generation };
   }
 
   listLoops(): Loop[] {
     this.refreshRecipeLoops();
-    return this.loops.map((loop) => ({ ...loop, schedule: { ...loop.schedule } }));
+    return this.loops.map((loop) => ({ ...cloneLoop(loop), ...(this.recovery.active ? { nextRunAt: null } : {}) }));
   }
 
   listRuns(from?: number, to?: number): LoopRun[] {
@@ -302,7 +323,9 @@ export class LoopManager {
    * (values identical to current) is acknowledged without touching the
    * bookmark or revision, so it can never swallow a pending slot. */
   patchClock(id: LoopId, patch: { enabled?: boolean; time?: string; weekdays?: number[] }): Loop {
+    this.assertWritable();
     this.refreshRecipeLoops();
+    this.assertWritable();
     const loop = this.loops.find((candidate) => candidate.id === id);
     if (!loop) throw Object.assign(new Error("no such loop"), { status: 404 });
     if (patch.enabled !== undefined && typeof patch.enabled !== "boolean") {
@@ -326,65 +349,99 @@ export class LoopManager {
     const clockChanged =
       (patch.time !== undefined || patch.weekdays !== undefined) &&
       (nextTime !== loop.schedule.time || nextDays.join(",") !== loop.schedule.weekdays.join(","));
-    if (clockChanged) {
-      this.overrides.set(id, { time: nextTime, weekdays: nextDays });
-      // the new clock starts from now: no backfill of earlier slots today
+    if (!clockChanged && !wantsEnable) return cloneLoop(loop);
+    this.commit(() => {
+      if (clockChanged) this.overrides.set(id, { time: nextTime, weekdays: nextDays });
+      // A deliberate clock change starts strictly forward, including resume.
       this.handledThrough.set(id, Math.max(this.handledThrough.get(id) ?? 0, this.now()));
-    }
-    if (!clockChanged && !wantsEnable) {
-      return { ...loop, schedule: { ...loop.schedule } };
-    }
+      if (wantsEnable) {
+        loop.enabled = patch.enabled!;
+        this.clockEnabled.set(id, loop.enabled);
+      }
+      const catalogSchedule = LOOP_CATALOG.find((item) => item.id === id)?.schedule ?? this.recipeBase.get(id);
+      loop.schedule = { type: "daily", ...(this.overrides.get(id) ?? catalogSchedule ?? loop.schedule) };
+      loop.revision = (this.revisions.get(id) ?? 1) + 1;
+      this.revisions.set(id, loop.revision);
+      loop.nextRunAt = loop.enabled && !loop.timezonePaused ? nextOccurrence(loop.schedule, this.now(), this.zoneForClock()) : null;
+    });
     if (wantsEnable) {
-      loop.enabled = patch.enabled!;
-      this.clockEnabled.set(id, loop.enabled);
       const recipeId = recipeIdFromLoopId(id);
-      if (recipeId) this.options.setRecipeEnabled?.(recipeId, loop.enabled);
+      if (recipeId) {
+        try { this.options.setRecipeEnabled?.(recipeId, loop.enabled); }
+        catch { this.hold(SOURCE_RECOVERY); this.assertWritable(); }
+      }
     }
-    const catalogSchedule = LOOP_CATALOG.find((l) => l.id === id)?.schedule ?? this.recipeBase.get(id);
-    loop.schedule = { type: "daily", ...(this.overrides.get(id) ?? catalogSchedule ?? loop.schedule) };
-    loop.revision = (this.revisions.get(id) ?? 1) + 1;
-    this.revisions.set(id, loop.revision);
-    loop.nextRunAt =
-      loop.enabled && !loop.timezonePaused ? nextOccurrence(loop.schedule, this.now(), this.zoneForClock()) : null;
-    this.save();
     this.emitLoop(loop);
-    return { ...loop, schedule: { ...loop.schedule } };
+    return cloneLoop(loop);
   }
 
   setEnabled(id: LoopId, enabled: boolean): Loop {
     return this.patchClock(id, { enabled });
   }
 
-  runNow(id: LoopId): LoopRun | null {
+  /** A reviewed job plan owns its time; older per-loop overrides cannot win. */
+  adoptRecipePlan(recipeId: string): void {
+    this.assertWritable();
+    const id = recipeLoopId(recipeId);
+    this.commit(() => {
+      this.overrides.set(id, null);
+      this.clockEnabled.set(id, true);
+      this.handledThrough.set(id, Math.max(this.handledThrough.get(id) ?? 0, this.now()));
+      this.revisions.set(id, this.revisions.has(id) ? this.revisions.get(id)! + 1 : 1);
+      this.refreshRecipeLoops();
+      this.assertWritable();
+    });
+  }
+
+  runNow(id: LoopId, request?: { requestId: string; expectedRevision: number }): LoopRun | null {
+    this.assertWritable();
+    if (request) {
+      if (typeof request.requestId !== "string" || !MANUAL_JOB_REQUEST_ID.test(request.requestId) ||
+        !Number.isSafeInteger(request.expectedRevision) || request.expectedRevision < 1) {
+        throw Object.assign(new Error("A valid request ID and saved schedule revision are required."), { status: 400 });
+      }
+      const existing = this.runs.find((run) => run.requestId === request.requestId.toLowerCase());
+      if (existing) {
+        if (existing.loopId !== id || existing.loopRevision !== request.expectedRevision) {
+          throw Object.assign(new Error("That request belongs to another schedule or version. Check its original result."), { status: 409 });
+        }
+        return { ...existing };
+      }
+    }
     this.refreshRecipeLoops();
+    this.assertWritable();
     const loop = this.loops.find((candidate) => candidate.id === id);
-    // A taught job awaiting plan approval is deliberately off the clock, but
-    // a person may still rehearse it manually in shadow mode. Catalog loops
-    // and explicitly paused jobs retain the ordinary enabled gate.
+    if (request && loop && request.expectedRevision !== loop.revision) {
+      throw Object.assign(new Error("This schedule changed. Reload it before starting a new run."), { status: 409 });
+    }
     if (!loop || !loop.available || (!loop.enabled && !loop.waitingForPlan)) return null;
-    if (this.activeRun(id)) throw Object.assign(new Error("this loop is already running"), { status: 409 });
-    const run = this.newRun(loop, this.now(), true);
-    this.save();
+    if (this.activeRun(id) || this.executing.has(id)) throw Object.assign(new Error("this loop is already running"), { status: 409 });
+    let run!: LoopRun;
+    this.commit(() => {
+      run = this.newRun(loop, this.now(), true);
+      if (request) run.requestId = request.requestId.toLowerCase();
+    });
     this.emitRun(run);
-    queueMicrotask(() => void this.tick());
+    queueMicrotask(() => this.tickSafely());
     return { ...run };
   }
 
   markSeen(id: string): LoopRun | null {
+    this.assertWritable();
     const run = this.runs.find((candidate) => candidate.id === id);
     if (!run) return null;
     if (!run.seenAt) {
-      run.seenAt = this.now();
-      this.save();
+      this.commit(() => { run.seenAt = this.now(); });
       this.emitRun(run);
     }
     return { ...run };
   }
 
   start() {
-    if (this.timer) return;
-    void this.tick();
-    this.timer = setInterval(() => void this.tick(), 10_000);
+    if (this.timer || this.recovery.active) return;
+    this.tickSafely();
+    if (this.recovery.active) return;
+    this.timer = setInterval(() => this.tickSafely(), 10_000);
     this.timer.unref?.();
   }
 
@@ -393,109 +450,129 @@ export class LoopManager {
     this.timer = null;
   }
 
+  private tickSafely(): void {
+    void this.tick().catch(() => this.hold(WRITE_RECOVERY));
+  }
+
   async tick(): Promise<void> {
-    if (this.ticking) return;
+    if (this.ticking || this.recovery.active) return;
     this.ticking = true;
     try {
       this.refreshRecipeLoops();
+      this.assertWritable();
       const now = this.now();
-      let changed = false;
       for (const loop of this.loops) {
-        if (!loop.enabled || !loop.available) continue;
-        if (loop.timezonePaused) {
-          loop.nextRunAt = null;
-          this.emitLoop(loop);
-          continue;
-        }
-        if (recipeIdFromLoopId(loop.id) && !this.recipeClockOk.has(loop.id)) {
-          loop.nextRunAt = nextOccurrence(loop.schedule, now, this.zoneForClock());
-          this.emitLoop(loop);
-          continue;
-        }
-        const handled = this.handledThrough.get(loop.id) ?? now - 1;
-        for (
-          let at = nextOccurrence(loop.schedule, handled, this.zoneForClock());
-          at != null && at <= now;
-          at = nextOccurrence(loop.schedule, at, this.zoneForClock())
-        ) {
-          const late = now - at;
-          if (late > CATCH_UP_MS) {
-            const missed = this.newRun(loop, at, false);
+        if (!loop.enabled || !loop.available || loop.timezonePaused) continue;
+        if (recipeIdFromLoopId(loop.id) && !this.recipeClockOk.has(loop.id)) continue;
+        let handled = this.handledThrough.get(loop.id) ?? now - 1;
+        const recent = now - CATCH_UP_MS;
+        // Compress ancient downtime into one explicit missed receipt per loop.
+        // Only the recent catch-up window is enumerated, irrespective of file age.
+        const first = nextOccurrence(loop.schedule, handled, this.zoneForClock());
+        if (handled < recent && first != null && first < recent) {
+          let missed!: LoopRun;
+          this.commit(() => {
+            missed = this.newRun(loop, first, false);
             missed.status = "missed";
             missed.finishedAt = now;
-            missed.detail = "This computer was offline for more than 12 hours after the scheduled time";
-            this.emitRun(missed);
-          } else if (!this.activeRun(loop.id)) {
-            const run = this.newRun(loop, at, false);
-            this.emitRun(run);
-            await this.executeRun(run, loop);
-          }
-          // never rewind the bookmark: a retune that landed mid-execution
-          // clamped it forward, and this slot's time is already stale
-          this.handledThrough.set(loop.id, Math.max(this.handledThrough.get(loop.id) ?? 0, at));
-          changed = true;
+            missed.detail = "One or more scheduled times were missed while this computer was offline for more than 12 hours. Older work was not replayed.";
+            this.handledThrough.set(loop.id, Math.max(this.handledThrough.get(loop.id) ?? 0, recent));
+          });
+          this.emitRun(missed);
+          handled = this.handledThrough.get(loop.id)!;
         }
-        loop.nextRunAt = loop.enabled
-          ? nextOccurrence(loop.schedule, Math.max(now, this.handledThrough.get(loop.id) ?? handled), this.zoneForClock())
-          : null;
+        for (let at = nextOccurrence(loop.schedule, handled, this.zoneForClock()); at != null && at <= now;
+          at = nextOccurrence(loop.schedule, Math.max(at, this.handledThrough.get(loop.id) ?? at), this.zoneForClock())) {
+          let run!: LoopRun;
+          this.commit(() => {
+            const occupied = Boolean(this.activeRun(loop.id)) || this.executing.has(loop.id);
+            run = this.newRun(loop, at!, false);
+            if (occupied) {
+              run.status = "missed";
+              run.finishedAt = this.now();
+              run.detail = "This scheduled time was skipped because the previous run was still waiting or working. Check that result before starting more work.";
+            }
+            // Claim the occurrence in the same durable write as its receipt,
+            // before any executor or observer can see runnable work.
+            this.handledThrough.set(loop.id, Math.max(this.handledThrough.get(loop.id) ?? 0, at!));
+          });
+          this.emitRun(run);
+          if (run.status === "queued") await this.executeRun(run, loop);
+          this.assertWritable();
+        }
+        loop.nextRunAt = loop.enabled && !loop.timezonePaused
+          ? nextOccurrence(loop.schedule, Math.max(now, this.handledThrough.get(loop.id) ?? handled), this.zoneForClock()) : null;
         this.emitLoop(loop);
       }
       for (const run of [...this.runs].reverse()) {
         if (run.status !== "queued") continue;
         const loop = this.loops.find((candidate) => candidate.id === run.loopId);
-        if (!loop || !loop.available) {
-          run.status = "failed";
-          run.finishedAt = now;
-          run.detail = "this loop no longer exists";
+        if (!loop || !loop.available || (!loop.enabled && !loop.waitingForPlan) || (run.loopRevision != null && run.loopRevision !== loop.revision)) {
+          this.commit(() => {
+            run.status = "interrupted";
+            run.finishedAt = this.now();
+            run.detail = "Not started because the saved job or schedule changed. Review its current plan before trying again.";
+          });
           this.emitRun(run);
           continue;
         }
-        await this.executeRun(run, loop);
+        if (!this.executing.has(loop.id)) await this.executeRun(run, loop);
       }
-      if (changed) this.save();
+    } catch {
+      this.hold(WRITE_RECOVERY);
     } finally {
       this.ticking = false;
     }
   }
 
-  private async executeRun(run: LoopRun, loop: Loop) {
-    run.startedAt = this.now();
-    run.status = "running";
-    this.save();
+  private async executeRun(run: LoopRun, loop: Loop): Promise<void> {
+    if (run.status !== "queued" || this.executing.has(loop.id)) return;
+    this.commit(() => { run.startedAt = this.now(); run.status = "running"; });
     this.emitRun(run);
-    try {
-      const result = await this.withDeadline(this.options.execute(loop, run));
-      run.status = settleLoopRunStatus(result);
-      run.detail = result.detail.slice(0, 500);
-      if (result.jobRunId) run.jobRunId = result.jobRunId;
-    } catch (error) {
-      run.status = "failed";
-      run.detail = (error instanceof Error ? error.message : String(error)).slice(0, 500);
-    }
-    run.finishedAt = this.now();
-    this.save();
-    this.emitRun(run);
-    oplog("routine", run.detail || run.status, {
-      loopId: loop.id,
-      runId: run.id,
-      status: run.status,
-      scheduledFor: new Date(run.scheduledFor).toISOString(),
-    });
-  }
-
-  /** A run that never settles would leave `ticking` true and silently stop
-   * every routine until the process restarts. The worker call has its own
-   * shorter timeout; this is the backstop for anything that does not. */
-  private withDeadline<T>(work: Promise<T>): Promise<T> {
-    let timer: ReturnType<typeof setTimeout>;
-    const deadline = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(
-        () => reject(new Error("The run took too long and was stopped. Nothing was sent.")),
-        this.options.runDeadlineMs ?? RUN_DEADLINE_MS,
-      );
+    this.executing.add(loop.id);
+    let work: Promise<LoopExecuteResult>;
+    try { work = Promise.resolve(this.options.execute(cloneLoop(loop), { ...run })); }
+    catch (error) { work = Promise.reject(error); }
+    const outcome: Promise<ExecutionOutcome> = work.then((result) => ({ result }), (error) => ({ error }));
+    const deadlineMarker = Symbol("deadline");
+    let timer!: ReturnType<typeof setTimeout>;
+    const deadline = new Promise<typeof deadlineMarker>((resolve) => {
+      timer = setTimeout(() => resolve(deadlineMarker), this.options.runDeadlineMs ?? RUN_DEADLINE_MS);
       timer.unref?.();
     });
-    return Promise.race([work, deadline]).finally(() => clearTimeout(timer)) as Promise<T>;
+    const first = await Promise.race([outcome, deadline]);
+    clearTimeout(timer);
+    if (first === deadlineMarker) {
+      // The deadline does not cancel the executor. Keep the receipt and lock
+      // running while other loops proceed; the eventual result settles this ID.
+      void outcome.then((late) => this.finishRun(run.id, loop.id, late)).catch(() => this.hold(WRITE_RECOVERY));
+      this.commit(() => {
+        run.detail = "This run is taking longer than expected. Its outcome is still unconfirmed; RealBud is waiting for the original work and will not start a second run.";
+      });
+      this.emitRun(run);
+      return;
+    }
+    this.finishRun(run.id, loop.id, first);
+  }
+
+  private finishRun(id: string, loopId: LoopId, outcome: ExecutionOutcome): void {
+    try {
+      if (this.recovery.active) return;
+      const run = this.runs.find((item) => item.id === id);
+      if (!run || run.status !== "running") return;
+      this.commit(() => {
+        run.status = outcome.result ? settleLoopRunStatus(outcome.result) : "failed";
+        run.detail = redactSecretsInText(outcome.result?.detail ?? (outcome.error instanceof Error ? outcome.error.message : "The work could not complete.")).slice(0, 500);
+        if (outcome.result?.jobRunId) run.jobRunId = outcome.result.jobRunId;
+        run.finishedAt = this.now();
+      });
+      this.emitRun(run);
+      try {
+        oplog("routine", run.detail || run.status, { loopId, runId: run.id, status: run.status, scheduledFor: new Date(run.scheduledFor).toISOString() });
+      } catch { console.warn("[schedule] A completed run diagnostic could not be saved."); }
+    } finally {
+      this.executing.delete(loopId);
+    }
   }
 
   private newRun(loop: Loop, scheduledFor: number, manual: boolean): LoopRun {
@@ -506,19 +583,24 @@ export class LoopManager {
       scheduledFor,
       status: "queued",
       manual,
+      loopRevision: loop.revision,
       createdAt: this.now(),
     };
     this.runs.push(run);
-    if (this.runs.length > MAX_RUNS) this.runs.splice(0, this.runs.length - MAX_RUNS);
+    while (this.runs.length > MAX_RUNS) {
+      const removable = this.runs.findIndex((item) => item.status !== "queued" && item.status !== "running");
+      if (removable < 0) break;
+      this.runs.splice(removable, 1);
+    }
     return run;
   }
 
   private emitLoop(loop: Loop) {
-    this.options.emit?.({ kind: "loop", loop: { ...loop, schedule: { ...loop.schedule } } });
+    this.safeEmit({ kind: "loop", loop: cloneLoop(loop) });
   }
 
   private emitRun(run: LoopRun) {
-    this.options.emit?.({ kind: "loop.run", run: { ...run } });
+    this.safeEmit({ kind: "loop.run", run: { ...run } });
   }
 
   /** Always an IANA zone. Gating this on `options.timezone` left production on
@@ -530,27 +612,69 @@ export class LoopManager {
     return this.timezone;
   }
 
-  private save() {
-    mkdirSync(dirname(this.file), { recursive: true });
+  private assertWritable(): void {
+    if (this.recoveryDetail) throw Object.assign(new Error(this.recoveryDetail), { status: 503 });
+  }
+
+  private hold(detail: string): void {
+    if (this.recoveryDetail) return;
+    this.recoveryDetail = detail;
+    this.stop();
+    this.emitRecovery();
+  }
+
+  private emitRecovery(): void { this.safeEmit({ kind: "loops.recovery", recovery: this.recovery }); }
+
+  private safeEmit(payload: unknown): void {
+    try { this.options.emit?.(payload); }
+    catch { console.warn("[schedule] A committed schedule update could not be delivered to an observer."); }
+  }
+
+  /** Synchronous mutations become executable and observable only after atomic
+   * persistence. Preserve the disk's actual state if rename succeeded but its
+   * durability confirmation failed; otherwise restore the known prior state. */
+  private commit(change: () => void): void {
+    this.assertWritable();
+    const before = {
+      loops: this.loops.map(cloneLoop), runs: this.runs.map((run) => ({ ...run })),
+      handledThrough: new Map(this.handledThrough), overrides: new Map(this.overrides),
+      revisions: new Map(this.revisions), savedState: this.savedState,
+      recipeBase: new Map(this.recipeBase), clockEnabled: new Map(this.clockEnabled), recipeClockOk: new Set(this.recipeClockOk),
+    };
+    const restore = () => {
+      this.loops = before.loops; this.runs = before.runs; this.handledThrough = before.handledThrough;
+      this.overrides = before.overrides; this.revisions = before.revisions; this.savedState = before.savedState;
+      this.recipeBase = before.recipeBase; this.clockEnabled = before.clockEnabled; this.recipeClockOk = before.recipeClockOk;
+    };
+    try { change(); } catch (error) { restore(); throw error; }
     const state: LoopsFile["state"] = {};
-    for (const loop of this.loops) {
-      state[loop.id] = {
-        enabled: recipeIdFromLoopId(loop.id) ? (this.clockEnabled.get(loop.id) ?? true) : loop.enabled,
-        handledThrough: this.handledThrough.get(loop.id) ?? 0,
-        schedule: this.overrides.get(loop.id) ?? undefined,
-        revision: this.revisions.get(loop.id) ?? 1,
-      };
+    for (const loop of this.loops) state[loop.id] = {
+      enabled: recipeIdFromLoopId(loop.id) ? (this.clockEnabled.get(loop.id) ?? true) : loop.enabled,
+      handledThrough: this.handledThrough.get(loop.id) ?? 0,
+      schedule: this.overrides.get(loop.id) ?? undefined,
+      revision: this.revisions.get(loop.id) ?? 1,
+    };
+    const contents = JSON.stringify({ version: 3, timezone: this.timezone, state, runs: this.runs } satisfies LoopsFile, null, 2);
+    try {
+      mkdirSync(dirname(this.file), { recursive: true });
+      writeFileAtomic(this.file, contents, 0o600);
+      this.savedState = state;
+    } catch {
+      let written = false;
+      try { written = readFileSync(this.file, "utf8") === contents; } catch { /* preserve known memory below */ }
+      if (written) this.savedState = state;
+      else restore();
+      this.hold(WRITE_RECOVERY);
+      this.assertWritable();
     }
-    this.savedState = state;
-    writeFileAtomic(
-      this.file,
-      JSON.stringify({ version: 3, timezone: this.timezone, state, runs: this.runs } satisfies LoopsFile, null, 2),
-    );
   }
 
   /** Catalog + current taught jobs. Recipes can be added, paused, or deleted between ticks. */
   private refreshRecipeLoops(): void {
-    const recipes = this.options.listRecipes?.() ?? [];
+    if (this.recovery.active) return;
+    let recipes: ReturnType<NonNullable<LoopManagerOptions["listRecipes"]>>;
+    try { recipes = this.options.listRecipes?.() ?? []; }
+    catch { this.hold(SOURCE_RECOVERY); return; }
     const paused = this.timezone !== this.hostTz;
     const wanted = new Map<
       LoopId,
@@ -578,7 +702,7 @@ export class LoopManager {
       const saved = this.savedState[id];
       if (!this.handledThrough.has(id)) {
         const handled = Number.isFinite(saved?.handledThrough) ? saved!.handledThrough : this.now() - 1;
-        this.handledThrough.set(id, Math.min(handled, this.now() - 1));
+        this.handledThrough.set(id, handled);
       }
       if (!this.overrides.has(id)) {
         const savedSchedule = saved?.schedule;
@@ -609,7 +733,7 @@ export class LoopManager {
         existing.enabled = enabled;
         existing.timezonePaused = paused;
         existing.waitingForPlan = waitingForPlan;
-        existing.nextRunAt = enabled && !paused ? nextOccurrence(schedule, this.now(), this.zoneForClock()) : null;
+        existing.nextRunAt = enabled && !paused ? nextOccurrence(schedule, Math.max(this.now(), this.handledThrough.get(id) ?? 0), this.zoneForClock()) : null;
         continue;
       }
       this.loops.push({
@@ -624,7 +748,7 @@ export class LoopManager {
         evaluatorVersion: 1,
         timezonePaused: paused,
         waitingForPlan,
-        nextRunAt: enabled && !paused ? nextOccurrence(schedule, this.now(), this.zoneForClock()) : null,
+        nextRunAt: enabled && !paused ? nextOccurrence(schedule, Math.max(this.now(), this.handledThrough.get(id) ?? 0), this.zoneForClock()) : null,
       });
     }
   }

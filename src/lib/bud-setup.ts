@@ -1,3 +1,5 @@
+import type { HermesStatus } from "@/state/store";
+
 export type BudSetupStage = "checking" | "install" | "safeguards" | "model" | "verify" | "ready";
 export type BudSetupStep = Exclude<BudSetupStage, "checking" | "ready">;
 export type BudSetupStepState = "complete" | "current" | "upcoming";
@@ -29,6 +31,7 @@ export function budFacingCopy(value: unknown, fallback: string): string {
   const raw = value instanceof Error ? value.message : typeof value === "string" ? value : "";
   if (!raw.trim()) return fallback;
   return raw
+    .replace(/~\/\.hermes\b/gi, "Bud's private setup")
     .replace(/Hermes Agent/gi, "Bud")
     .replace(/Hermes CLI/gi, "Bud")
     .replace(/\bHermes\b/gi, "Bud")
@@ -36,8 +39,7 @@ export function budFacingCopy(value: unknown, fallback: string): string {
     .replace(/property pack/gi, "property safeguards")
     .replace(/\bpack\b/gi, "safeguards")
     .replace(/\bprofile\b/gi, "private setup")
-    .replace(/\bpin\b/gi, "supported build")
-    .replace(/~\/\.hermes\b/gi, "Bud's private setup");
+    .replace(/\bpin\b/gi, "supported build");
 }
 
 /**
@@ -78,4 +80,34 @@ export function budSetupJourney(input: BudSetupInput): BudSetupJourney {
   ) as Record<BudSetupStep, BudSetupStepState>;
 
   return { stage, completed, total: BUD_SETUP_STEPS.length, stepState };
+}
+
+/** One dependency-ordered description for Ask and Schedule. A workroom alone
+ * never proves an installed worker, model connection or permission to run. */
+export function budAvailability(status: HermesStatus | null, connected: boolean, recovering = false) {
+  const unavailable = (label: string, detail: string, action: string | null = null, target = "you-worker") =>
+    ({ ready: false, label, detail, action, target, canVerify: false });
+  if (!connected) return unavailable("Reconnecting", "The local service is reconnecting. Keep drafting; new work can start when the connection returns.");
+  if (recovering) return unavailable("Recovery needed", "Unlock the property book before Bud starts new work. Your draft stays here.", "Open recovery", "you-recovery");
+  if (!status) return unavailable("Checking Bud", "Checking Bud's setup. You can prepare your request while this finishes.");
+  if (status.cli.probeState === "timeout" || status.cli.probeState === "error") {
+    return unavailable("Check Bud", "Bud's last setup check did not finish. Check the connection before trying new work.", "Check Bud");
+  }
+  const { stage } = budSetupJourney({
+    statusLoaded: true,
+    workerInstalled: status.cli.installed && !status.bootstrapPending,
+    workerPinned: status.cli.compatible ?? status.cli.matchesPin,
+    safeguardsInstalled: status.pack.installed,
+    approvalsManual: status.pack.approvalsManual,
+    workroomReady: status.pack.workroomReady,
+    modelChecked: Boolean(status.model),
+    modelAttached: Boolean(status.model?.attached),
+    verified: status.ready,
+  });
+  if (stage === "install") return unavailable("Setup needed", "Finish Bud's installation before starting work. You can prepare your request now.", status.cli.installed ? "Check Bud setup" : "Set up Bud");
+  if (stage === "safeguards") return unavailable("Setup needed", "Finish Bud's private workroom and property safeguards before starting work.", "Finish Bud setup");
+  if (stage === "model") return unavailable("Model needed", "Connect a model for Bud. Your request stays here while you finish setup.", "Connect a model", "attach-model");
+  if (stage === "verify") return { ...unavailable("Check needed", "Run the private readiness check to confirm Bud can answer with this connection.", "Run readiness check"), canVerify: true };
+  if (stage === "checking") return unavailable("Checking Bud", "The model connection has not been checked yet. Open setup to refresh its status.", "Check Bud");
+  return { ready: true, label: "Bud ready", detail: "Bud can prepare work using the book, files and permitted tools.", action: null, target: "you-worker", canVerify: false };
 }

@@ -1,3 +1,5 @@
+import { matchesPairingCode, clearPairingCode } from "../channel-pairing.ts";
+import { channelContinuation } from "../channel-continuation.ts";
 // RealBud owns the Slack channel: bot-token Web API poll (and Socket Mode when
 // an app-level token is also stored). Ordinary Ask turns on the canonical Bud
 // thread. Token never appears in API responses or logs.
@@ -12,9 +14,7 @@ import { redactSecretsInText } from "../redact.ts";
 import type { Message, Store } from "../store.ts";
 
 import {
-  decideRemotely,
-  parseRemoteDecisionText,
-  pendingDraftId,
+  decideRemoteText,
   type RemoteChannelAdapter,
 } from "../remote-decisions.ts";
 import type { ChannelAdapter, ChannelPublic } from "./types.ts";
@@ -43,6 +43,7 @@ export type StartTurnFn = (
   opts?: {
     userMessage?: Message;
     onDispatchError?: (message: string) => void;
+    channelRelay?: boolean;
   },
 ) => Promise<void>;
 
@@ -63,11 +64,10 @@ export type SlackSocketLike = {
 
 export type SlackWebSocketFactory = (url: string) => SlackSocketLike;
 
-const PAIR_REPLY = "Paired with RealBud on this Mac. Ask Bud anything. Reply allow or deny on Desk cards.";
+const PAIR_REPLY = "Paired with RealBud on this Mac. Send a task, /continue for your latest saved reply, or /help. Keep this Mac awake and online. Review cards include the exact reply to use.";
 const ELSEWHERE_REPLY = "This Bud is paired elsewhere.";
 const BAD_TOKEN = "that token did not answer — check it against the Slack app settings";
 const CLIP_AT = 2900;
-const MAX_QUEUE = 20;
 const POLL_MS = 3_000;
 const BACKOFF_START_MS = 1_000;
 const BACKOFF_CAP_MS = 30_000;
@@ -232,7 +232,8 @@ export async function sendDecisionMessage(
   channelId: string,
   text: string,
 ): Promise<void> {
-  await sendMessage(fetchFn, token, channelId, `${clipSlackText(text)}\n\nReply allow or deny.`);
+  const body = await slackApi(fetchFn, token, "chat.postMessage", { channel: channelId, text: clipSlackText(text) }, AbortSignal.timeout(15_000));
+  if (body.ok !== true) throw new Error("Slack did not accept that message");
 }
 
 function isTurnBusy(error: unknown): boolean {
@@ -260,31 +261,35 @@ function collectAssistantAfter(threadId: string, userMessageId: string, store: S
   return slice.filter((m) => m.role === "bot" && m.kind === "text" && m.text).map((m) => m.text as string);
 }
 
-async function relayPendingFromStore(deps: SlackDeps): Promise<void> {
-  if (!pendingRelay) return;
-  const texts = collectAssistantAfter(pendingRelay.threadId, pendingRelay.userMessageId, deps.store);
+async function relayPendingFromStore(deps: SlackDeps, relay: PendingRelay = pendingRelay!): Promise<void> {
+  const texts = collectAssistantAfter(relay.threadId, relay.userMessageId, deps.store);
   await relayText(texts.length ? texts.join("\n\n") : productAskFailure("Bud couldn't finish that request."), deps);
 }
 
 function queueAsk(item: QueuedAsk): void {
-  if (inboundQueue.length >= MAX_QUEUE) return;
-  inboundQueue.push(item);
+  inboundQueue = [item];
 }
 
 async function enqueueOrStart(prefixed: string, deps: SlackDeps, userMessage?: Message): Promise<void> {
-  const bot = deps.store.bot("bud");
+  const bot = deps.store.productBud();
   if (!bot) return;
-  if (bot.busy) {
-    queueAsk({ text: prefixed, userMessage });
-    return;
-  }
   const message =
     userMessage ?? deps.store.appendMessage(bot.threadId, { role: "user", kind: "text", text: prefixed });
   if (!userMessage) deps.broadcast?.({ kind: "message", threadId: bot.threadId, message });
+  if (bot.busy) {
+    const replaced = inboundQueue.length > 0;
+    queueAsk({ text: prefixed, userMessage: message });
+    await relayText(replaced
+      ? "Your latest follow-up replaces the waiting request. Both messages are saved in Ask on your Mac. Bud will pick up the latest one after the current work finishes."
+      : "Saved in Ask on your Mac. Bud is working and will pick this up next. If RealBud restarts first, open Ask to resume the saved request.", deps);
+    return;
+  }
   pendingRelay = { threadId: bot.threadId, userMessageId: message.id };
+  const modelText = prefixed.replace(/^\[Slack · [^\]]+\]\s*/i, "").trim() || prefixed;
   try {
-    await deps.startTurn("bud", prefixed, {
+    await deps.startTurn(bot.id, modelText, {
       userMessage: message,
+      channelRelay: true,
       onDispatchError: (errMsg) => {
         pendingRelay = null;
         if (/already running|already working/i.test(errMsg)) {
@@ -304,10 +309,11 @@ async function enqueueOrStart(prefixed: string, deps: SlackDeps, userMessage?: M
     await relayText(productAskFailure(raw), deps);
     return;
   }
-  const after = deps.store.bot("bud");
+  const after = deps.store.productBud();
   if (after && !after.busy && pendingRelay) {
-    await relayPendingFromStore(deps);
+    const relay = pendingRelay;
     pendingRelay = null;
+    await relayPendingFromStore(deps, relay);
   }
 }
 
@@ -316,7 +322,7 @@ async function flushQueue(deps: SlackDeps): Promise<void> {
   flushing = true;
   try {
     while (inboundQueue.length) {
-      const bot = deps.store.bot("bud");
+      const bot = deps.store.productBud();
       if (!bot || bot.busy) return;
       const next = inboundQueue.shift();
       if (!next) return;
@@ -328,16 +334,19 @@ async function flushQueue(deps: SlackDeps): Promise<void> {
 }
 
 export function onSlackRuntimeEvent(event: RuntimeEvent): void {
-  if (!bound) return;
-  const bot = bound.store.bot("bud");
-  if (!bot || event.threadId !== bot.threadId) return;
   if (event.type !== "turn.completed") return;
+  flushSlackRelayForThread(event.threadId);
+}
+
+export function flushSlackRelayForThread(threadId: string): void {
+  if (!bound) return;
+  const bot = bound.store.productBud();
+  if (!bot || bot.threadId !== threadId) return;
   const deps = bound;
+  const relay = pendingRelay?.threadId === threadId ? pendingRelay : null;
+  if (relay) pendingRelay = null;
   void (async () => {
-    if (pendingRelay) {
-      await relayPendingFromStore(deps);
-      pendingRelay = null;
-    }
+    if (relay) await relayPendingFromStore(deps, relay);
     await flushQueue(deps);
   })();
 }
@@ -373,6 +382,7 @@ export async function handleSlackInbound(items: InboundSlack[], deps: SlackDeps)
       continue;
     }
     if (next.pairedChannelId == null) {
+      if (!matchesPairingCode("slack", inbound.text, now())) { saveChannel(next); continue; }
       next = {
         ...next,
         pairedChannelId: inbound.channelId,
@@ -380,11 +390,13 @@ export async function handleSlackInbound(items: InboundSlack[], deps: SlackDeps)
         lastMessageAt: now(),
       };
       saveChannel(next);
+      clearPairingCode("slack");
       try {
         await sendMessage(fetchFn, next.botToken, inbound.channelId, PAIR_REPLY);
       } catch (error) {
         logQuiet(error instanceof Error ? error.message : String(error), next.botToken);
       }
+      deps.broadcast?.({ kind: "channels", channels: { slack: toPublic(next) } });
       continue;
     }
     if (inbound.channelId !== next.pairedChannelId) {
@@ -401,10 +413,10 @@ export async function handleSlackInbound(items: InboundSlack[], deps: SlackDeps)
     }
     next = { ...next, lastMessageAt: now() };
     saveChannel(next);
-    const pending = pendingDraftId("slack");
-    const parsed = pending ? parseRemoteDecisionText(inbound.text) : null;
-    if (pending && parsed) {
-      const result = await decideRemotely("slack", inbound.channelId, pending, parsed.decision, parsed.reason, inbound.name);
+    const continuation = channelContinuation(inbound.text, deps.store);
+    if (continuation !== null) { await relayText(continuation, deps); continue; }
+    const result = await decideRemoteText("slack", inbound.channelId, inbound.text, inbound.name);
+    if (result) {
       try {
         await sendMessage(fetchFn, next.botToken, inbound.channelId, result.ok ? result.stamp : result.message);
       } catch (error) {
@@ -646,6 +658,7 @@ export async function connectSlack(
     connectedAt: Date.now(),
     lastMessageAt: null,
   };
+  clearPairingCode("slack");
   saveChannel(record);
   startSlackBridge();
   return { slack: toPublic(record) };
@@ -653,6 +666,7 @@ export async function connectSlack(
 
 export function disconnectSlack(): { slack: { connected: false } } {
   stopSlackBridge();
+  clearPairingCode("slack");
   deleteChannel();
   return { slack: { connected: false } };
 }
@@ -667,11 +681,12 @@ export function slackDecisionAdapter(): RemoteChannelAdapter {
     },
     async sendDecision(text, _draftId) {
       const rec = loadChannel();
-      if (!rec?.botToken || rec.pairedChannelId == null) return;
+      if (!rec?.botToken || rec.pairedChannelId == null) throw new Error("Phone connection changed");
       try {
         await sendDecisionMessage(bound?.fetch ?? globalThis.fetch, rec.botToken, rec.pairedChannelId, text);
       } catch (error) {
         logQuiet(error instanceof Error ? error.message : String(error), rec.botToken);
+        throw new Error("Review card delivery was not confirmed");
       }
     },
     async sendDigest(text) {

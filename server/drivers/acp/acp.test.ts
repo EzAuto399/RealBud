@@ -10,9 +10,9 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ensureDirs } from "../../config.ts";
+import { ensureDirs, NATIVE_DIR } from "../../config.ts";
 import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { GrokAgentDriver } from "./grok.ts";
@@ -21,6 +21,8 @@ import { KimiAgentDriver } from "./kimi.ts";
 import { hardenHermesChildEnv, HermesAgentDriver } from "./hermes.ts";
 import { HERMES_PIN } from "../../hermes-pin.ts";
 import { seedVault } from "../../vault.ts";
+import { revokeConnectedAppsBrokers } from "../../connected-apps-broker.ts";
+import * as gmail from "../../composio-gmail.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 // The scripted fake CLI inherits process.env; under `--coverage` that would
@@ -61,7 +63,7 @@ describe("ACP decodeConfig", () => {
       SAFE_VALUE: "kept",
     };
     hardenHermesChildEnv(env);
-    expect(env).toEqual({ SAFE_VALUE: "kept", HERMES_ACP_SKIP_CONFIGURED_MCP: "1" });
+    expect(env).toEqual({ SAFE_VALUE: "kept", HERMES_ACP_SKIP_CONFIGURED_MCP: "1", HERMES_CODEX_EVENT_STALE_TIMEOUT_SECONDS: "60" });
   });
   it("fullAuto only when explicitly true", () => {
     expect(GrokAgentDriver.decodeConfig({ fullAuto: "yes" }).fullAuto).toBe(false);
@@ -74,14 +76,14 @@ describe("ACP turns (fake CLI)", () => {
   let recorder: EventRecorder;
   let scratch: string;
 
-  const create = async (driver = GrokAgentDriver, mode?: string) => {
+  const create = async (driver = GrokAgentDriver, mode?: string, fullAuto = false) => {
     if (mode) process.env.FAKE_ACP_MODE = mode;
     instance = await driver.create({
       instanceId: "acp-test",
       displayName: "ACP Test",
       environment: {},
       enabled: true,
-      config: { cli: FAKE_CLI, fullAuto: false },
+      config: { cli: FAKE_CLI, fullAuto },
     });
     recorder = recordEvents(instance.adapter);
   };
@@ -118,6 +120,9 @@ describe("ACP turns (fake CLI)", () => {
       "turn.completed",
     ]);
     expect(recorder.events.every((e) => e.turnId === turnId && e.provider === "grokAgent")).toBe(true);
+    expect(recorder.events.find((e) => e.type === "item.started")).toMatchObject({
+      toolFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
     const usage = recorder.events.find((e) => e.type === "thread.token-usage.updated")!;
     expect(usage).toMatchObject({ input: 10, output: 5 });
     const text = recorder.events.find((e) => e.type === "item.completed" && (e as any).itemType === "assistant_text")!;
@@ -125,6 +130,202 @@ describe("ACP turns (fake CLI)", () => {
     const done = recorder.events.at(-1)!;
     expect(done).toMatchObject({ type: "turn.completed", ok: true });
     expect(instance.adapter.hasSession("t-happy")).toBe(false);
+  });
+
+  it("reuses one warm process and ACP session for sequential turns", async () => {
+    const dump = join(scratch, "warm.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    await create();
+
+    const first = await instance.adapter.sendTurn({ threadId: "t-warm", text: "one", model: "grok-4.5" });
+    await recorder.until((event) => event.type === "turn.completed" && event.turnId === first.turnId);
+    const second = await instance.adapter.sendTurn({ threadId: "t-warm", text: "two", model: "grok-4.5" });
+    await recorder.until((event) => event.type === "turn.completed" && event.turnId === second.turnId);
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.promptCount).toBe(2);
+    expect(recorder.events.filter((event) => event.type === "session.started")).toHaveLength(1);
+    expect(recorder.events.filter((event) => event.type === "turn.started")).toHaveLength(2);
+    expect(recorder.events.filter((event) => event.type === "turn.completed")).toHaveLength(2);
+  });
+
+  it("drops a warm session when RealBud clears the cursor for a rewind or recovery", async () => {
+    const dump = join(scratch, "fresh-after-rewind.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    await create();
+
+    const first = await instance.adapter.sendTurn({ threadId: "t-rewind", text: "one", model: "grok-4.5" });
+    await recorder.until((event) => event.type === "turn.completed" && event.turnId === first.turnId);
+    const before = JSON.parse(readFileSync(dump, "utf8"));
+    const second = await instance.adapter.sendTurn({
+      threadId: "t-rewind",
+      text: "rewritten request",
+      model: "grok-4.5",
+      resumeCursor: undefined,
+      transcript: [{ role: "user", text: "replacement history" }],
+    });
+    await recorder.until((event) => event.type === "turn.completed" && event.turnId === second.turnId);
+    const after = JSON.parse(readFileSync(dump, "utf8"));
+
+    expect(after.pid).not.toBe(before.pid);
+    expect(after.promptCount).toBe(1);
+    expect(recorder.events.filter((event) => event.type === "session.started")).toHaveLength(2);
+  });
+
+  it("mounts the local app broker without handing upstream credentials to the worker or logs", async () => {
+    const dump = join(scratch, "connected-apps.json");
+    const key = `ck_${"connectedappsecret".repeat(3)}`;
+    process.env.FAKE_ACP_DUMP = dump;
+    await create();
+
+    await instance.adapter.sendTurn({
+      threadId: "t-connected-apps",
+      text: "read notion",
+      integrations: { composio: { key } },
+    });
+    await recorder.until((event) => event.type === "turn.completed");
+
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.mcpServers).toEqual(
+      expect.arrayContaining([
+        {
+          type: "http",
+          name: "connected-apps",
+            url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/),
+            headers: [{ name: "authorization", value: expect.stringMatching(/^Bearer /) }],
+        },
+      ]),
+    );
+    expect(JSON.stringify(seen.mcpServers)).not.toContain(key);
+    const native = readFileSync(join(NATIVE_DIR, "t-connected-apps.ndjson"), "utf8");
+    expect(native).not.toContain(key);
+    expect(native).toContain("redacted");
+  });
+
+  it("requires exact app review even in fullAuto and rejects a session-wide grant", async () => {
+    const dump = join(scratch, "app-approval.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    await create(HermesAgentDriver, "hang", true);
+    await instance.adapter.sendTurn({ threadId: "t-app-boundary", text: "prepare work", integrations: { composio: { key: "ck_fixture", url: "http://127.0.0.1:1/mcp" } } });
+    await vi.waitFor(() => expect(JSON.parse(readFileSync(dump, "utf8")).promptCount).toBe(1));
+    const descriptor = JSON.parse(readFileSync(dump, "utf8")).mcpServers.find((row: any) => row.name === "connected-apps");
+    const response = fetch(descriptor.url, { method: "POST", headers: Object.fromEntries(descriptor.headers.map((row: any) => [row.name, row.value])), body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "send_email", arguments: { to: "fixture@example.test", text: "Review the browser report" } } }) });
+    const opened = await recorder.until(event => event.type === "request.opened");
+    expect(opened).toMatchObject({ tool: "bud_connected_app_action", summary: expect.stringContaining("fixture@example.test") });
+    await instance.adapter.respondToRequest("t-app-boundary", opened.requestId!, { behavior: "allow", scope: "session" });
+    const body: any = await (await response).json();
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0].text).toContain("did not approve");
+    await instance.adapter.interruptTurn("t-app-boundary");
+  });
+
+  it.each([false, true])("revokes pending connected-app approval immediately when Stop is requested (Gmail readonly: %s)", async readOnly => {
+    const dump = join(scratch, "app-stop.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    await create(HermesAgentDriver, "hang", true);
+    const upstream = "http://127.0.0.1:1/mcp";
+    const localRequest = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "Fixture" }] });
+    const factory = vi.spyOn(gmail, "createGmailReadOnlyTransport").mockReturnValue({ request: localRequest });
+    const fetches = vi.spyOn(globalThis, "fetch");
+    try {
+      await instance.adapter.sendTurn({ threadId: "t-app-stop", text: "prepare work", integrations: { composio: { key: "ck_fixture", url: upstream,
+        ...(readOnly ? { gmailReadOnly: { authConfigId: "ac_fixture", userId: "realbud-fixture", accountId: "ca_fixture", requestId: "fixture-stop" } } : {}),
+      } } });
+      await vi.waitFor(() => expect(JSON.parse(readFileSync(dump, "utf8")).promptCount).toBe(1));
+      const descriptor = JSON.parse(readFileSync(dump, "utf8")).mcpServers.find((row: any) => row.name === "connected-apps");
+      const response = fetch(descriptor.url, { method: "POST", headers: Object.fromEntries(descriptor.headers.map((row: any) => [row.name, row.value])),
+        body: JSON.stringify({ jsonrpc: "2.0", id: 17, method: "tools/call", params: readOnly
+          ? { name: "GMAIL_LIST_THREADS", arguments: {} } : { name: "send_email", arguments: { to: "fixture@example.test" } } }) });
+      const opened = await recorder.until(event => event.type === "request.opened");
+      const stopped = instance.adapter.interruptTurn("t-app-stop");
+      // Resolve the old UI approval without waiting for the worker's cancel
+      // acknowledgement or the two-second grace period.
+      await expect(instance.adapter.respondToRequest("t-app-stop", opened.requestId!, { behavior: "allow", scope: "once" })).rejects.toThrow("no such pending request");
+      const body: any = await (await response).json();
+      expect(body.result.isError).toBe(true);
+      expect(fetches.mock.calls.filter(([url]) => url === upstream)).toHaveLength(0);
+      expect(localRequest).not.toHaveBeenCalled();
+      expect(factory).toHaveBeenCalledTimes(readOnly ? 1 : 0);
+      await stopped;
+    } finally { fetches.mockRestore(); factory.mockRestore(); }
+  });
+
+  it("replaces a revoked connected-app session on its next turn even with the same key", async () => {
+    const dump = join(scratch, "app-reconnect.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    await create(HermesAgentDriver);
+    const turn = { threadId: "t-app-reconnect", text: "prepare work", integrations: { composio: { key: "ck_fixture" } } };
+    const first = await instance.adapter.sendTurn(turn);
+    await recorder.until(event => event.type === "turn.completed" && event.turnId === first.turnId);
+    const before = JSON.parse(readFileSync(dump, "utf8"));
+    revokeConnectedAppsBrokers();
+    const second = await instance.adapter.sendTurn({ ...turn, resumeCursor: "existing-session" });
+    await recorder.until(event => event.type === "turn.completed" && event.turnId === second.turnId);
+    const after = JSON.parse(readFileSync(dump, "utf8"));
+    expect(after.pid).not.toBe(before.pid);
+    expect(after.mcpServers[0].url).not.toBe(before.mcpServers[0].url);
+  });
+
+  it("mounts the server-owned Gmail adapter and keeps project credentials and binding out of the worker", async () => {
+    const dump = join(scratch, "gmail-adapter.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    const key = "project_fixture_secret_for_gmail";
+    const binding = { authConfigId: "ac_fixture_gmail", userId: "realbud-fixture-user", accountId: "ca_fixture_account", requestId: "fixture-review-one" };
+    const request = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "Fixture read returned" }] });
+    const factory = vi.spyOn(gmail, "createGmailReadOnlyTransport").mockReturnValue({ request });
+    const ambientKey = process.env.COMPOSIO_API_KEY;
+    process.env.COMPOSIO_API_KEY = key;
+    try {
+      await create(HermesAgentDriver, "hang", true);
+      await instance.adapter.sendTurn({ threadId: "t-gmail-adapter", text: "review recent mail", integrations: { composio: { key, url: "http://127.0.0.1:1/mcp", gmailReadOnly: binding } } });
+      await vi.waitFor(() => expect(JSON.parse(readFileSync(dump, "utf8")).promptCount).toBe(1));
+      expect(factory).toHaveBeenCalledWith({ apiKey: key, authConfigId: binding.authConfigId, userId: binding.userId, accountId: binding.accountId });
+      const seen = JSON.parse(readFileSync(dump, "utf8"));
+      const descriptor = seen.mcpServers.find((row: any) => row.name === "connected-apps");
+      expect(descriptor.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
+      expect(JSON.stringify(seen)).not.toContain(key);
+      expect(JSON.stringify(seen.mcpServers)).not.toContain(binding.accountId);
+      expect(JSON.stringify(seen.mcpServers)).not.toContain(binding.authConfigId);
+      expect(readFileSync(join(NATIVE_DIR, "t-gmail-adapter.ndjson"), "utf8")).not.toContain(key);
+      const response = fetch(descriptor.url, { method: "POST", headers: Object.fromEntries(descriptor.headers.map((row: any) => [row.name, row.value])),
+        body: JSON.stringify({ jsonrpc: "2.0", id: 19, method: "tools/call", params: { name: "GMAIL_LIST_THREADS", arguments: {} } }) });
+      const opened = await recorder.until(event => event.type === "request.opened");
+      expect(opened).toMatchObject({ tool: "bud_connected_app_action", summary: expect.stringContaining("GMAIL_LIST_THREADS") });
+      if (opened.type !== "request.opened") throw new Error("Expected a Gmail permission request");
+      expect(opened.summary).toContain(`Account: ${binding.accountId}`);
+      expect(opened.summary).toContain("10 threads from the last 7 days");
+      expect(opened.summary).not.toContain(key);
+      expect(opened.summary).not.toContain(binding.userId);
+      expect(request).not.toHaveBeenCalled();
+      await instance.adapter.respondToRequest("t-gmail-adapter", opened.requestId!, { behavior: "allow", scope: "once" });
+      expect((await (await response).json() as any).result.isError).not.toBe(true);
+      expect(request).toHaveBeenCalledWith("tools/call", { name: "GMAIL_LIST_THREADS", arguments: {} }, expect.any(AbortSignal));
+      await instance.adapter.interruptTurn("t-gmail-adapter");
+    } finally {
+      factory.mockRestore();
+      if (ambientKey === undefined) delete process.env.COMPOSIO_API_KEY; else process.env.COMPOSIO_API_KEY = ambientKey;
+    }
+  });
+
+  it.each(["accountId", "requestId"] as const)("creates a fresh Gmail transport when %s changes", async field => {
+    const dump = join(scratch, `gmail-fresh-${field}.json`);
+    process.env.FAKE_ACP_DUMP = dump;
+    const factory = vi.spyOn(gmail, "createGmailReadOnlyTransport").mockImplementation(() => ({ request: vi.fn().mockResolvedValue({}) }));
+    try {
+      await create(HermesAgentDriver);
+      const gmailReadOnly = { authConfigId: "ac_fixture_gmail", userId: "realbud-fixture-user", accountId: "ca_fixture_one", requestId: "fixture-review-one" };
+      const turn = { threadId: `t-gmail-fresh-${field}`, text: "review mail", integrations: { composio: { key: "project_fixture", gmailReadOnly } } };
+      const first = await instance.adapter.sendTurn(turn);
+      await recorder.until(event => event.type === "turn.completed" && event.turnId === first.turnId);
+      const before = JSON.parse(readFileSync(dump, "utf8"));
+      const second = await instance.adapter.sendTurn({ ...turn, resumeCursor: "existing-session", integrations: { composio: { ...turn.integrations.composio,
+        gmailReadOnly: { ...gmailReadOnly, [field]: `${gmailReadOnly[field]}-changed` } } } });
+      await recorder.until(event => event.type === "turn.completed" && event.turnId === second.turnId);
+      const after = JSON.parse(readFileSync(dump, "utf8"));
+      expect(after.pid).not.toBe(before.pid);
+      expect(after.mcpServers[0].url).not.toBe(before.mcpServers[0].url);
+      expect(factory).toHaveBeenCalledTimes(2);
+    } finally { factory.mockRestore(); }
   });
 
   it("passes ACP stdio flags and strips XAI_API_KEY from the child env", async () => {
@@ -153,6 +354,56 @@ describe("ACP turns (fake CLI)", () => {
     const resolved = await recorder.until((e) => e.type === "request.resolved");
     expect(resolved).toMatchObject({ behavior: "allow", source: "user" });
     const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+  });
+
+  it("uses the provider's expiring session grant when the user allows similar steps for the task", async () => {
+    const dump = join(scratch, "session-approval.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    await create(GrokAgentDriver, "permission");
+    await instance.adapter.sendTurn({ threadId: "t-session-perm", text: "go" });
+    const opened = await recorder.until((event) => event.type === "request.opened");
+
+    await instance.adapter.respondToRequest("t-session-perm", (opened as any).requestId, {
+      behavior: "allow",
+      scope: "session",
+    });
+    await recorder.until((event) => event.type === "turn.completed");
+
+    expect(JSON.parse(readFileSync(dump, "utf8")).selectedPermissionOption).toBe("allow_session");
+  });
+
+  it("puts Hermes in workspace-scoped accept-edits mode before the prompt", async () => {
+    const dump = join(scratch, "hermes-mode.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    await create(HermesAgentDriver);
+
+    await instance.adapter.sendTurn({ threadId: "t-hermes-mode", text: "draft a file", cwd: scratch });
+    await recorder.until((event) => event.type === "turn.completed");
+
+    expect(JSON.parse(readFileSync(dump, "utf8")).sessionMode).toBe("accept_edits");
+  });
+
+  it("falls back to one-time approval when a provider has no session scope", async () => {
+    const dump = join(scratch, "approval-fallback.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    await create(GrokAgentDriver, "permission-once-only");
+    await instance.adapter.sendTurn({ threadId: "t-perm-fallback", text: "go" });
+    const opened = await recorder.until((event) => event.type === "request.opened");
+
+    await instance.adapter.respondToRequest("t-perm-fallback", (opened as any).requestId, {
+      behavior: "allow",
+      scope: "session",
+    });
+    await recorder.until((event) => event.type === "turn.completed");
+
+    expect(JSON.parse(readFileSync(dump, "utf8")).selectedPermissionOption).toBe("allow-once");
+  });
+
+  it("keeps manual approvals and continues if the optional Hermes mode cannot be applied", async () => {
+    await create(HermesAgentDriver, "mode-error");
+    await instance.adapter.sendTurn({ threadId: "t-hermes-mode-fallback", text: "draft a file", cwd: scratch });
+    const done = await recorder.until((event) => event.type === "turn.completed");
     expect(done).toMatchObject({ ok: true });
   });
 

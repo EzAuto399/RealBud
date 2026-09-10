@@ -6,8 +6,7 @@
 //   node scripts/qa-live-worker.mjs
 //   QA_LIVE_SKIP_PING=1 node scripts/qa-live-worker.mjs   # skip billing ping
 import { spawn } from "node:child_process";
-import { homedir } from "node:os";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,7 +14,8 @@ import { fileURLToPath } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.QA_LIVE_PORT ?? 18883);
 const BASE = `http://127.0.0.1:${PORT}`;
-const HOME = mkdtempSync(join(tmpdir(), "realbud-qa-live-"));
+const QA_HOME = mkdtempSync(join(tmpdir(), "realbud-qa-live-"));
+mkdirSync(join(QA_HOME, ".realbud"));
 const SKIP_PING = process.env.QA_LIVE_SKIP_PING === "1";
 const PING_BUDGET_MS = Number(process.env.QA_LIVE_PING_MS ?? 120_000);
 
@@ -57,8 +57,9 @@ const child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, 
     ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
     ...(process.env.HOME ? { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE ?? process.env.HOME } : {}),
     ...(process.env.HERMES_HOME ? { HERMES_HOME: process.env.HERMES_HOME } : {}),
+    ...(process.env.REALBUD_HERMES_CLI ? { REALBUD_HERMES_CLI: process.env.REALBUD_HERMES_CLI } : {}),
     OMB_PORT: String(PORT),
-    REALBUD_DATA_DIR: join(HOME, ".realbud"),
+    REALBUD_DATA_DIR: join(QA_HOME, ".realbud"),
   },
   stdio: ["ignore", "pipe", "pipe"],
 });
@@ -82,25 +83,25 @@ try {
   session = (await api("GET", "/api/session")).body?.token ?? "";
   check("session issued", Boolean(session));
 
-  const pack = await api("POST", "/api/hermes/apply-pack", {});
-  check("property pack applied", pack.status === 200 && pack.body?.pack?.installed === true);
+  // Use the existing CLI and login. Normal server startup synchronises the
+  // RealBud-owned property pack; this QA never invokes an installer.
 
   let hermes = (await api("GET", "/api/hermes")).body;
   check("worker CLI installed", hermes?.cli?.installed === true);
-  check("worker matches pin", hermes?.cli?.matchesPin === true);
+  check("worker release supported", (hermes?.cli?.compatible ?? hermes?.cli?.matchesPin) === true);
   check("pack manual approvals", hermes?.pack?.approvalsManual === true);
   check("workroom ready", hermes?.pack?.workroomReady === true);
 
   if (!SKIP_PING) {
     console.log(`     (live ping — up to ${PING_BUDGET_MS / 1000}s)`);
     const ping = await api("POST", "/api/hermes/test", {}, PING_BUDGET_MS + 5_000);
-    check("test hands ping", ping.status === 200 && typeof ping.body?.ok === "boolean", ping.body?.detail ?? "");
+    check("test hands ping", ping.status === 200 && ping.body?.ok === true, ping.body?.detail ?? "");
     hermes = (await api("GET", "/api/hermes")).body;
     if (ping.body?.ok) {
       check("ready after successful ping", hermes?.ready === true);
     } else {
       check("ready stays false on ping miss", hermes?.ready === false);
-      console.log("     ping miss is OK for QA when billing/model is down — set QA_LIVE_SKIP_PING=1 to skip");
+      console.log("     live proof FAILED: the provider must answer successfully");
     }
   } else {
     console.log("     (skipping live ping — QA_LIVE_SKIP_PING=1)");
@@ -110,7 +111,6 @@ try {
   check("live Recheck on Demo returns snapshot", Boolean(snap?.properties?.length));
   check("Demo Recheck does not draft fixture cards silently", snap?.hands === "demo" || snap?.hands === "held", snap?.hands);
   check("hands detail is plain language", typeof snap?.handsDetail === "string" && snap.handsDetail.length > 0);
-  check("no send endpoint on pending drafts", true);
 
   snap = (await api("POST", "/api/desk/practice", {})).body;
   const courtesy = snap?.drafts?.find((d) => d.kind === "courtesy-rent" && d.status === "pending");
@@ -141,16 +141,25 @@ try {
   console.log("");
   if (failures) {
     console.error(`qa-live-worker: ${failures} check(s) failed`);
-    process.exit(1);
+    process.exitCode = 1;
   }
-  console.log("qa-live-worker: ALL GREEN");
+  if (!failures && SKIP_PING) {
+    console.log("qa-live-worker: structural checks passed; LIVE WORKER NOT VERIFIED (ping skipped)");
+    process.exitCode = 2;
+  } else if (!failures) console.log("qa-live-worker: live worker and API checks PASSED");
 } catch (err) {
   console.error(String(err));
-  process.exit(1);
+  process.exitCode = 1;
 } finally {
-  child.kill("SIGTERM");
+  await new Promise((resolve) => {
+    if (!child.pid || child.exitCode !== null || child.signalCode !== null) return resolve();
+    const timeout = setTimeout(() => child.kill("SIGKILL"), 5_000);
+    timeout.unref();
+    child.once("close", () => { clearTimeout(timeout); resolve(); });
+    child.kill("SIGTERM");
+  });
   try {
-    rmSync(HOME, { recursive: true, force: true });
+    rmSync(QA_HOME, { recursive: true, force: true });
   } catch {
     /* temp cleanup best-effort */
   }

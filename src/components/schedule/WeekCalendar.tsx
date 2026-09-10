@@ -71,7 +71,7 @@ export function WeekCalendar({
     facts?.desk?.lastRunAt && days.some((day) => sameCalendarDay(day.dateMs, facts.desk!.lastRunAt!, timeZone)),
   );
   return (
-    <section className="min-w-0 rounded-xl border border-line bg-sheet" aria-label="This week on the clock">
+    <section className="min-w-0 rounded-xl border border-line bg-sheet" aria-label="This week’s scheduled jobs">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-line px-4 py-3">
         <h2 className="text-[14px] font-medium text-ink">This week</h2>
         <p className="min-w-0 text-[12px] text-ink-muted">{todayHint(days)}</p>
@@ -111,13 +111,14 @@ export function WeekCalendar({
         ))}
       </ol>
       {planned.length > 0 ? (
-        <ul className="space-y-1.5 border-t border-line px-4 py-2.5">
+        <details className="border-t border-line px-4 py-2.5"><summary className="cursor-pointer text-[12px] text-ink-muted">Planned features · not running</summary>
+        <ul className="mt-2 space-y-1.5">
           {planned.map((loop) => (
             <li key={loop.id} className="text-[12px] leading-relaxed text-ink-muted">
               {plannedLoopFootnote(loop)}
             </li>
           ))}
-        </ul>
+        </ul></details>
       ) : null}
     </section>
   );

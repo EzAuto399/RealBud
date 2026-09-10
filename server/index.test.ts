@@ -5,7 +5,7 @@
 // the shadow-instance behavior end to end while it's at it.
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,6 +32,9 @@ let slackStubPort = 0;
 let composioStub: Server;
 let composioStubPort = 0;
 const composioCalls: string[] = [];
+/** When a slug is in this set, list-status answers as already connected. */
+const composioForceConnected = new Set<string>();
+let composioStatusFailure = false;
 let home: string;
 let staticDir: string;
 let stderr = "";
@@ -52,6 +55,9 @@ const api = async (method: string, path: string, body?: unknown): Promise<{ stat
 beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), "omb-api-test-"));
   staticDir = join(home, "static");
+  const workerCli = join(home, "hermes.mjs");
+  writeFileSync(workerCli, `#!${process.execPath}\nconsole.log("Hermes Agent v0.21.0 (2026.8.31)");\n`);
+  chmodSync(workerCli, 0o755);
   // a fleet of exactly one unknown driver: no CLI probes, no network
   mkdirSync(join(home, ".realbud"), { recursive: true });
   mkdirSync(join(staticDir, "assets"), { recursive: true });
@@ -134,14 +140,68 @@ beforeAll(async () => {
     req.on("data", (chunk) => (body += chunk));
     req.on("end", () => {
       composioCalls.push(body);
+      const message = JSON.parse(body);
+      if (String(req.headers["x-consumer-api-key"]).includes("rejected")) { res.writeHead(401).end(); return; }
+      if (message.id === undefined) { res.writeHead(202).end(); return; }
       res.writeHead(200, { "content-type": "application/json" });
+      if (message.method === "initialize") {
+        res.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: {
+          protocolVersion: message.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "Fixture apps", version: "1" },
+        } })); return;
+      }
+      if (message.method === "tools/list") {
+        res.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { tools: [
+          "COMPOSIO_SEARCH_TOOLS", "COMPOSIO_GET_TOOL_SCHEMAS", "COMPOSIO_MULTI_EXECUTE_TOOL", "COMPOSIO_MANAGE_CONNECTIONS",
+        ].map(name => ({ name, inputSchema: { type: "object", properties: name === "COMPOSIO_MANAGE_CONNECTIONS" ? {
+          toolkits: { type: "array", items: { type: "object", properties: { name: { type: "string" }, action: { enum: ["list", "add"] } } } },
+        } : {} } })) } })); return;
+      }
+      let action = "add";
+      let slug = "gmail";
+      try {
+        const parsed = JSON.parse(body) as {
+          params?: { arguments?: { toolkits?: Array<{ name?: string; action?: string }> } };
+        };
+        const toolkit = parsed.params?.arguments?.toolkits?.[0];
+        action = toolkit?.action ?? "add";
+        slug = String(toolkit?.name ?? "gmail").toLowerCase();
+      } catch {
+        /* keep defaults */
+      }
+      if (action === "list") {
+        if (composioStatusFailure) {
+          res.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, error: { code: -32000, message: "Private provider failure" } })); return;
+        }
+        res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    data: {
+                      results: Object.fromEntries(message.params.arguments.toolkits.map((toolkit: { name: string }) => [toolkit.name, {
+                        status: composioForceConnected.has(toolkit.name) ? "ACTIVE" : "unknown",
+                        accounts: composioForceConnected.has(toolkit.name) ? [{ id: "acct-1", status: "ACTIVE" }] : [],
+                      }])) ,
+                    },
+                  }),
+                },
+              ],
+            },
+          }),
+        );
+        return;
+      }
       res.end(
         JSON.stringify({
           jsonrpc: "2.0",
-          id: 1,
+          id: message.id,
           result: {
             content: [
-              { type: "text", text: JSON.stringify({ url: "https://auth.example/connect/gmail" }) },
+              { type: "text", text: JSON.stringify({ authorization_url: `https://auth.example/connect/${slug}` }) },
             ],
           },
         }),
@@ -161,6 +221,7 @@ beforeAll(async () => {
       // The worker handshake is covered at its own boundary. Keep this HTTP
       // suite deterministic and offline while still exercising its receipt.
       VITEST: "true",
+      REALBUD_HERMES_CLI: workerCli,
       HOME: home,
       USERPROFILE: home,
       OMB_PORT: String(PORT),
@@ -206,6 +267,47 @@ afterAll(async () => {
 });
 
 describe("harness HTTP API", () => {
+  it("requires authenticated, current-revision rent settings and never updates payment facts", async () => {
+    const before = (await api("GET", "/api/desk")).body;
+    const office = { rentWorkflow: { receiptChannels: ["whatsapp", "email"], verificationMethod: "bank-allocation", checkingSteps: "Match the unit and period." } };
+    const unauthorized = await fetch(`${BASE}/api/desk/agency`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ office, expectedRevision: before.revision }) });
+    expect(unauthorized.status).toBe(401);
+    expect((await api("PATCH", "/api/desk/agency", { office })).status).toBe(400);
+    expect((await api("PATCH", "/api/desk/agency", { office, expectedRevision: String(before.revision) })).status).toBe(400);
+    const saved = await api("PATCH", "/api/desk/agency", { office, expectedRevision: before.revision });
+    expect(saved.status).toBe(200);
+    expect(saved.body.book.office.rentWorkflow).toEqual(office.rentWorkflow);
+    expect(saved.body.ledger).toEqual(before.ledger);
+    expect((await api("PATCH", "/api/desk/agency", { name: "Stale overwrite", office, expectedRevision: before.revision })).status).toBe(409);
+    expect((await api("PATCH", "/api/desk/agency", { office: { rentWorkflow: { ...office.rentWorkflow, verificationMethod: "receipt-is-paid" } }, expectedRevision: saved.body.revision })).status).toBe(400);
+    const after = (await api("GET", "/api/desk")).body;
+    expect(after.revision).toBe(saved.body.revision);
+    expect(after.book.agency).toEqual(before.book.agency);
+  });
+
+  it("protects batch history and validates bounded, idempotent preparation through HTTP", async () => {
+    const unauthorized = await fetch(`${BASE}/api/desk/batches`);
+    expect(unauthorized.status).toBe(401);
+    const unauthorizedWrite = await fetch(`${BASE}/api/desk/batches`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    expect(unauthorizedWrite.status).toBe(401);
+    const snapshot = (await api("GET", "/api/desk")).body;
+    const input = { task: "maintenance-brief", propertyIds: [snapshot.properties[0].id], instruction: "Draft only", requestKey: "http-batch-0001", expectedRevision: snapshot.revision };
+    expect((await api("POST", "/api/desk/batches", { ...input, expectedRevision: -1 })).status).toBe(409);
+    expect((await api("POST", "/api/desk/batches", { ...input, task: "send" })).status).toBe(400);
+    const created = await api("POST", "/api/desk/batches", input);
+    expect(created.status).toBe(202);
+    const duplicate = await api("POST", "/api/desk/batches", input);
+    expect(duplicate.body.batch.id).toBe(created.body.batch.id);
+    const history = await api("GET", "/api/desk/batches");
+    expect(history.body.batches).toHaveLength(1);
+    expect(history.body.batches[0]).not.toHaveProperty("items");
+    const detail = (await api("GET", `/api/desk/batches/${created.body.batch.id}`)).body.batch;
+    expect((await api("PATCH", `/api/desk/batches/${detail.id}`, { action: "send", expectedRevision: detail.revision })).status).toBe(400);
+    expect((await api("PATCH", `/api/desk/batches/${detail.id}`, { action: "pause", expectedRevision: -1 })).status).toBe(409);
+    expect(detail.items.every((item: { source: string }) => item.source === "")).toBe(true);
+    expect((await api("GET", `/api/desk/batches/${detail.id}?revision=bad`)).status).toBe(400);
+    expect((await api("GET", "/api/desk")).body.revision).toBe(snapshot.revision);
+  });
   it("identifies itself on /api/health", async () => {
     const { status, body } = await api("GET", "/api/health");
     expect(status).toBe(200);
@@ -238,7 +340,7 @@ describe("harness HTTP API", () => {
   it("rejects malformed and oversized JSON bodies without hanging", async () => {
     const malformed = await fetch(`${BASE}/api/config`, {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "x-realbud-session": session },
       body: "{",
     });
     expect(malformed.status).toBe(400);
@@ -246,7 +348,7 @@ describe("harness HTTP API", () => {
 
     const oversized = await fetch(`${BASE}/api/config`, {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "x-realbud-session": session },
       body: JSON.stringify({ profile: { name: "x".repeat(1_000_001) } }),
     });
     expect(oversized.status).toBe(413);
@@ -397,10 +499,18 @@ describe("harness HTTP API", () => {
   });
 
   it("gates worker repair and remove like the other hermes actions", async () => {
+    const noCancel = await api("POST", "/api/hermes/install/cancel");
+    expect(noCancel.status).toBe(415);
+    expect((await api("POST", "/api/hermes/install/cancel", {})).status).toBe(202);
     const noRepair = await api("POST", "/api/hermes/repair");
     expect(noRepair.status).toBe(415);
     const noRemove = await api("POST", "/api/hermes/uninstall");
     expect(noRemove.status).toBe(415);
+
+    const repaired = await api("POST", "/api/hermes/repair", {});
+    expect(repaired.status).toBe(200);
+    expect(repaired.body.install.state).toBe("done");
+    expect(repaired.body.hermes.cli).toMatchObject({ compatible: true, matchesPin: false });
 
     const removed = await api("POST", "/api/hermes/uninstall", {});
     expect(removed.status).toBe(200);
@@ -576,6 +686,14 @@ describe("harness HTTP API", () => {
     expect(ok.body.telegram).not.toHaveProperty("botToken");
     expect(ok.body.telegram).not.toHaveProperty("pairedChatId");
     expect(JSON.stringify(ok.body)).not.toContain(token);
+
+    expect((await fetch(`${BASE}/api/channels/telegram/pair`, { method: "POST" })).status).toBe(401);
+    const pair = await api("POST", "/api/channels/telegram/pair", {});
+    expect(pair.status).toBe(200);
+    expect(pair.body.command).toMatch(/^\/pair [A-F0-9]{16}$/);
+    expect(pair.body.expiresAt).toBeGreaterThan(Date.now());
+    expect(JSON.stringify((await api("GET", "/api/channels")).body)).not.toContain(pair.body.command);
+    expect((await api("POST", "/api/channels/slack/pair", {})).status).toBe(409);
 
     const listed = await api("GET", "/api/channels");
     expect(listed.status).toBe(200);
@@ -766,6 +884,118 @@ describe("harness HTTP API", () => {
     await api("DELETE", "/api/recipes/rec-distill-http");
   });
 
+  it("reuses manual job receipts after response loss and admits a deliberate new request", async () => {
+    const id = "manual-retry-http";
+    const requestId = "11111111-1111-4111-8111-111111111111";
+    const nextId = "22222222-2222-4222-8222-222222222222";
+    const created = await api("POST", "/api/recipes", { draft: {
+      id, title: "Owner report", description: "Fictional supplied owner notes",
+      steps: ["Prepare a private review draft"], allowedOrigins: [], evidence: "Complete draft",
+      capabilities: ["analyse", "draft"], status: "shadow", expectedRevision: 0,
+    } });
+    expect(created.status).toBe(201);
+    try {
+      expect((await api("PATCH", `/api/recipes/${id}`, { planApproved: true, expectedRevision: 1 })).status).toBe(200);
+      for (const mode of ["run", "prepare"]) {
+        expect((await api("POST", `/api/recipes/${id}/${mode}`, { requestId: "invalid", expectedRevision: 1 })).status).toBe(400);
+        expect((await api("POST", `/api/recipes/${id}/${mode}`, { requestId })).status).toBe(400);
+        const input = { requestId, expectedRevision: 1 };
+        const first = await api("POST", `/api/recipes/${id}/${mode}`, input);
+        expect(first.status).toBe(200);
+        const retry = await api("POST", `/api/recipes/${id}/${mode}`, input);
+        expect(retry.status).toBe(200);
+        expect(retry.body).toMatchObject({ reused: true, run: { id: first.body.run.id } });
+        const deliberate = await api("POST", `/api/recipes/${id}/${mode}`, { requestId: nextId, expectedRevision: 1 });
+        expect(deliberate.status).toBe(200);
+        expect(deliberate.body.run.id).not.toBe(first.body.run.id);
+      }
+      expect((await api("GET", `/api/job-runs?jobId=${id}`)).body.runs).toHaveLength(4);
+      await api("PATCH", `/api/recipes/${id}`, { status: "paused", expectedRevision: 1 });
+      const pausedRetry = await api("POST", `/api/recipes/${id}/prepare`, { requestId, expectedRevision: 1 });
+      expect(pausedRetry.status).toBe(200);
+      expect(pausedRetry.body.reused).toBe(true);
+      const firstPlan = created.body.recipes.find((row: { id: string }) => row.id === id);
+      const edited = await api("POST", "/api/recipes", { draft: { ...firstPlan, description: "New source inputs", expectedRevision: 1 } });
+      expect(edited.status).toBe(201);
+      // A known old request can recover its receipt after an edit; an unknown
+      // old request must not run against the replacement plan.
+      expect((await api("POST", `/api/recipes/${id}/prepare`, { requestId, expectedRevision: 1 })).body.reused).toBe(true);
+      expect((await api("POST", `/api/recipes/${id}/run`, {
+        requestId: "33333333-3333-4333-8333-333333333333", expectedRevision: 1,
+      })).status).toBe(409);
+      expect((await api("GET", `/api/job-runs?jobId=${id}`)).body.runs).toHaveLength(4);
+    } finally {
+      await api("DELETE", `/api/recipes/${id}`);
+    }
+  });
+
+  it("cancels a queued attended run whose approved plan changed before it could start", async () => {
+    const id = "queued-stale-http";
+    const created = await api("POST", "/api/recipes", { draft: {
+      id, title: "Review a portal", description: "Read only for the demo",
+      steps: ["Read the selected report"], allowedOrigins: ["portal.example.com"], evidence: "Observed rows",
+      capabilities: ["portal-read"], status: "shadow", expectedRevision: 0,
+      schedule: { time: "16:00", weekdays: [5] },
+    } });
+    expect(created.status).toBe(201);
+    try {
+      const approved = await api("PATCH", `/api/recipes/${id}`, { planApproved: true, attach: true, expectedRevision: 1 });
+      expect(approved.status).toBe(200);
+      expect((await api("POST", `/api/loops/recipe-${id}/run`, {})).status).toBe(201);
+      let queued: { id: string; status: string } | undefined;
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        queued = (await api("GET", `/api/job-runs?jobId=${id}`)).body.runs[0];
+        if (queued) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      expect(queued?.status).toBe("queued");
+      const saved = approved.body.recipes.find((row: { id: string }) => row.id === id);
+      expect((await api("POST", "/api/recipes", { draft: {
+        ...saved, steps: ["Read a different report"], expectedRevision: 1,
+      } })).status).toBe(201);
+      const result = await api("POST", `/api/recipes/${id}/attend`, { runId: queued!.id });
+      expect(result.status).toBe(409);
+      expect(result.body.error).toMatch(/older queued run was cancelled/i);
+      expect((await api("GET", `/api/job-runs?jobId=${id}`)).body.runs[0]).toMatchObject({
+        id: queued!.id, status: "cancelled", jobRevision: 1,
+      });
+    } finally {
+      await api("DELETE", `/api/recipes/${id}`);
+    }
+  });
+
+  it("keeps the edited plan, approval and effective clock on one version", async () => {
+    const id = "journey-review";
+    try {
+      const created = await api("POST", "/api/recipes", { draft: {
+        id, title: "Owner review", steps: ["Read the current book"], allowedOrigins: [], evidence: "Source date",
+        schedule: { time: "16:00", weekdays: [5] }, expectedRevision: 0,
+      } });
+      expect(created.status).toBe(201);
+      const first = created.body.recipes.find((recipe: { id: string }) => recipe.id === id);
+      expect((await api("PATCH", `/api/recipes/${id}`, { planApproved: true, expectedRevision: 1 })).status).toBe(200);
+      await api("PATCH", `/api/loops/recipe-${id}`, { time: "17:00", enabled: false });
+
+      const edited = await api("POST", "/api/recipes", { draft: { ...first, schedule: { time: "15:30", weekdays: [4] }, expectedRevision: 1 } });
+      expect(edited.status).toBe(201);
+      const second = edited.body.recipes.find((recipe: { id: string }) => recipe.id === id);
+      expect(second).toMatchObject({ revision: 2, approvedRevision: null });
+      expect((await api("POST", "/api/recipes", { draft: { ...first, expectedRevision: 1 } })).status).toBe(409);
+      expect((await api("PATCH", `/api/recipes/${id}`, { planApproved: true, expectedRevision: 1 })).status).toBe(409);
+      expect((await api("POST", `/api/recipes/${id}/run`, { expectedRevision: 1 })).status).toBe(409);
+      expect((await api("PATCH", `/api/recipes/${id}`, { planApproved: true, expectedRevision: 2 })).status).toBe(200);
+      expect((await api("POST", `/api/recipes/${id}/prepare`, { expectedRevision: 1 })).status).toBe(409);
+      const clock = (await api("GET", "/api/loops")).body.loops.find((loop: { id: string }) => loop.id === `recipe-${id}`);
+      expect(clock).toMatchObject({ enabled: true, waitingForPlan: false, schedule: { time: "15:30", weekdays: [4] } });
+
+      const manual = await api("POST", "/api/recipes", { draft: { ...second, schedule: null, expectedRevision: 2 } });
+      expect(manual.status).toBe(201);
+      expect((await api("GET", "/api/loops")).body.loops.some((loop: { id: string }) => loop.id === `recipe-${id}`)).toBe(false);
+    } finally {
+      await api("DELETE", `/api/recipes/${id}`);
+    }
+  });
+
   it("holds a scheduled job for one plan approval before admitting it onto the RealBud clock", async () => {
     const created = await api("POST", "/api/recipes", {
       draft: {
@@ -878,7 +1108,7 @@ describe("harness HTTP API", () => {
     const afterConnect = await api("GET", "/api/bots");
     const connectedBot = afterConnect.body.bots.find((b: { id: string }) => b.id === "bud");
     expect(connectedBot.busy).toBe(false);
-    expect(connectedBot.messages.at(-1).text).toMatch(/You → Connected apps/i);
+    expect(connectedBot.messages.at(-1).text).toMatch(/Save Connected apps key/i);
 
     // a free-form turn still fails loudly when the worker instance is a ghost
     const send = await api("POST", `/api/bots/${bot.id}/messages`, { text: "write a sonnet about trust accounts" });
@@ -887,11 +1117,13 @@ describe("harness HTTP API", () => {
   });
 
   it("opens provider sign-in directly for an explicit connection instruction", async () => {
+    composioForceConnected.clear();
     const saved = await api("PUT", "/api/config", {
       composio: { key: `ck_${"brokersecret".repeat(3)}`, url: `http://127.0.0.1:${composioStubPort}` },
     });
     expect(saved.status).toBe(200);
     expect(saved.body.composio).toMatchObject({ configured: true });
+    if (process.platform !== "win32") expect(statSync(join(home, ".realbud", "config.json")).mode & 0o777).toBe(0o600);
 
     const sent = await api("POST", "/api/bots/bud/messages", { text: "connect Gmail" });
     expect(sent.status).toBe(202);
@@ -908,6 +1140,121 @@ describe("harness HTTP API", () => {
     expect(bot.messages.at(-1).text).toContain("https://auth.example/connect/gmail");
     expect(composioCalls.some((body) => body.includes("COMPOSIO_MANAGE_CONNECTIONS") && body.includes("gmail"))).toBe(true);
     expect(JSON.stringify(bot.messages)).not.toContain("brokersecret");
+  });
+
+  it("does not re-open sign-in when the app is already connected", async () => {
+    composioForceConnected.clear();
+    composioForceConnected.add("gmail");
+    const saved = await api("PUT", "/api/config", {
+      composio: { key: `ck_${"alreadyconnected".repeat(2)}`, url: `http://127.0.0.1:${composioStubPort}` },
+    });
+    expect(saved.status).toBe(200);
+
+    const beforeCalls = composioCalls.length;
+    const sent = await api("POST", "/api/bots/bud/messages", { text: "connect me to gmail" });
+    expect(sent.status).toBe(202);
+    const deadline = Date.now() + 3_000;
+    let bot: any;
+    do {
+      bot = (await api("GET", "/api/bots")).body.bots.find((candidate: { id: string }) => candidate.id === "bud");
+      if (!bot.busy && /already connected/i.test(bot.messages.at(-1)?.text ?? "")) break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    } while (Date.now() < deadline);
+
+    expect(bot.busy).toBe(false);
+    expect(bot.messages.at(-1).text).toMatch(/Gmail is already connected/i);
+    expect(bot.messages.at(-1).text).not.toMatch(/auth\.example/);
+    const newCalls = composioCalls.slice(beforeCalls);
+    expect(newCalls.some((body) => body.includes('"action":"list"') || body.includes('"action": "list"'))).toBe(true);
+    expect(newCalls.every((body) => !body.includes('"action":"add"') && !body.includes('"action": "add"'))).toBe(true);
+    composioForceConnected.clear();
+  });
+
+  it("checks connection completion without starting a new OAuth flow", async () => {
+    const before = composioCalls.length;
+    const response = await api("POST", "/api/bots/bud/messages", { text: "check Gmail connection" });
+    expect(response.status).toBe(202);
+    let bot: any;
+    for (let i = 0; i < 100; i++) {
+      bot = (await api("GET", "/api/bots")).body.bots.find((row: any) => row.id === "bud");
+      if (!bot.busy) break;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    expect(bot.messages.at(-1).text).toContain("not connected yet");
+    expect(composioCalls.slice(before).some(body => body.includes('"action":"add"'))).toBe(false);
+  });
+
+  it("a failed connection check does not automatically create another sign-in", async () => {
+    composioStatusFailure = true;
+    const before = composioCalls.length;
+    try {
+      expect((await api("POST", "/api/bots/bud/messages", { text: "connect Gmail" })).status).toBe(202);
+      let bot: any;
+      for (let i = 0; i < 100; i++) {
+        bot = (await api("GET", "/api/bots")).body.bots.find((row: any) => row.id === "bud");
+        if (!bot.busy) break;
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      expect(bot.messages.at(-1).text).toContain("No new sign-in was started");
+      expect(composioCalls.slice(before).some(body => body.includes('"action":"add"'))).toBe(false);
+    } finally { composioStatusFailure = false; }
+  });
+
+  it("exposes authenticated product access checks without claiming an actual mailbox read", async () => {
+    expect((await fetch(`${BASE}/api/connected-apps/status`)).status).toBe(401);
+    expect((await fetch(`${BASE}/api/config`)).status).toBe(401);
+    expect((await api("GET", "/api/connected-apps/status")).body.tools.available).toBe(false);
+    composioForceConnected.add("gmail");
+    try {
+      const checked = await api("POST", "/api/connected-apps/check", {});
+      expect(checked.status).toBe(200);
+      expect(checked.body).toMatchObject({ configured: true, tools: { available: true }, services: {
+        gmail: { connected: true, accounts: [{ id: "acct-1", status: "ACTIVE" }], accountSelectionRequired: false },
+      } });
+      expect((await api("GET", "/api/connected-apps/operations")).body.operations).toEqual([]);
+      expect(JSON.stringify(checked.body)).not.toContain("alreadyconnected");
+    } finally { composioForceConnected.clear(); }
+  });
+
+  it("shares source state across Ask, settings and removal without a model or mailbox action", async () => {
+    composioForceConnected.add("gmail");
+    try {
+      expect((await api("PUT", "/api/config", { composio: { key: "ck_office_fixture", url: `http://127.0.0.1:${composioStubPort}` } })).status).toBe(200);
+      expect((await api("GET", "/api/connected-apps/status")).body.services.gmail.connected).toBe(true);
+      const before = composioCalls.length;
+      const unauthenticated = await fetch(`${BASE}/api/connected-apps/sources/gmail`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: false }) });
+      expect(unauthenticated.status).toBe(401);
+      expect((await api("PATCH", "/api/connected-apps/sources/gmail", { enabled: "no" })).status).toBe(400);
+      expect((await api("PATCH", "/api/connected-apps/sources/unknownfixture", { enabled: false })).status).toBe(400);
+      expect((await api("PATCH", "/api/connected-apps/sources/gmail", { accountId: "missing" })).status).toBe(409);
+      const off = await api("PATCH", "/api/connected-apps/sources/gmail", { enabled: false });
+      expect(off.status).toBe(200); expect(off.body.excludedApps).toContain("gmail");
+      expect((await api("PATCH", "/api/connected-apps/sources/gmail", { enabled: false })).body.excludedApps).toEqual(["gmail"]);
+      expect((await api("POST", "/api/bots/bud/messages", { text: "what are we connected to?" })).status).toBe(202);
+      let bot: any;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        bot = (await api("GET", "/api/bots")).body.bots.find((row: any) => row.id === "bud");
+        if (!bot.busy) break;
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      expect(bot.messages.at(-1).text).toMatch(/Gmail.*off in Ask/i);
+      const restored = await api("PATCH", "/api/connected-apps/sources/gmail", { enabled: true, accountId: "acct-1" });
+      expect(restored.body.services.gmail.selectedAccountId).toBe("acct-1");
+      expect(restored.body.excludedApps).toEqual([]);
+      expect(composioCalls.slice(before).map(body => JSON.parse(body)).filter(row => row.method === "tools/call").every(row =>
+        row.params.name === "COMPOSIO_MANAGE_CONNECTIONS" && row.params.arguments.toolkits.every((app: any) => app.action === "list"))).toBe(true);
+      expect((await api("POST", "/api/bots/bud/messages", { text: "what is scheduled?" })).status).toBe(202);
+      expect((await workshopBot()).messages.at(-1).text).toContain("**Schedule work**");
+    } finally { composioForceConnected.clear(); }
+  });
+
+  it("keeps the working key when replacement validation fails, and invalidates access on removal", async () => {
+    const rejected = await api("PUT", "/api/config", { composio: { key: "ck_rejected_secret" } });
+    expect(rejected.status).toBeGreaterThanOrEqual(400);
+    expect(JSON.stringify(rejected.body)).not.toContain("rejected_secret");
+    expect((await api("GET", "/api/config")).body.composio.configured).toBe(true);
+    expect((await api("PUT", "/api/config", { composio: { key: "" } })).status).toBe(200);
+    expect((await api("GET", "/api/connected-apps/status")).body).toMatchObject({ configured: false, tools: { available: false } });
   });
 
   it("refuses to fork a message when the provider is unavailable, without mutating", async () => {

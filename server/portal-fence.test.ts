@@ -111,7 +111,15 @@ describe("portal fence", () => {
         { tool: "fill" },
         { kind: "deny", reason: "You sign in yourself — Bud never types a password." },
       ),
-    ).toBe("You sign in yourself — Bud never types a password.");
+    ).toBe("Tried to fill a field. You sign in yourself — Bud never types a password.");
+    expect(
+      fenceEvidenceLine(
+        { tool: "mcp__computer__navigate" },
+        { kind: "deny", reason: "Only sites named in a saved job. Ask Bud to set the routine up as a job first." },
+      ),
+    ).toBe(
+      "Tried to open a page. Only sites named in a saved job. Ask Bud to set the routine up as a job first.",
+    );
   });
 
   it("treats shell and computer tools as computer actions", () => {

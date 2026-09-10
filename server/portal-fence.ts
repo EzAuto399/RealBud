@@ -282,9 +282,15 @@ export function ruleAllowNote(decision: FenceDecision): string {
   return `allowed by rule · ${portalRuleLabel(surface, origin)}`;
 }
 
+/** PM-facing denial that always names the attempted action. */
+export function fenceDenialNote(tool: string, reason: string): string {
+  const detail = reason.trim() || "Denied.";
+  return `Tried to ${actionWords(tool)}. ${detail}`;
+}
+
 export function fenceEvidenceLine(request: FenceRequest, decision: FenceDecision): string {
   const action = actionWords(request.tool);
-  if (decision.kind === "deny") return decision.reason ?? "Denied.";
+  if (decision.kind === "deny") return fenceDenialNote(request.tool, decision.reason ?? "Denied.");
   if (decision.kind === "allow") return `Allowed to ${action}.`;
   return `Asked to ${action}.`;
 }

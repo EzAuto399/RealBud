@@ -4,10 +4,11 @@ import { type ExecFileOptionsWithStringEncoding } from "node:child_process";
 import { randomUUID } from "node:crypto";
 
 import type { Recipe } from "../shared/contracts.ts";
+import { BUD_IDENTITY } from "../shared/bud-identity.ts";
 import { hardenHermesChildEnv } from "./drivers/acp/hermes.ts";
 import { augmentedPath } from "./env-path.ts";
 import { execFileCli } from "./procs.ts";
-import { HERMES_PIN, hermesMatchesPin } from "./hermes-pin.ts";
+import { HERMES_PIN, hermesCli, hermesIsCompatible } from "./hermes-pin.ts";
 import { approvalsAreManual, packInstalled } from "./hermes-pack.ts";
 import { probeHermesVersion } from "./hermes-status.ts";
 import { validateRecipe } from "./recipes.ts";
@@ -25,6 +26,8 @@ export type WorkerChatOpts = {
   root?: string;
   timeoutMs?: number;
   maxTurns?: number;
+  /** Cancel an owned preparation worker when its service shuts down. */
+  signal?: AbortSignal;
   /** Exact per-run Hermes tool boundary. Missing means model-only plus the
    * in-memory todo helper, never the profile's broad default toolsets. */
   toolsets?: WorkerToolset[];
@@ -43,31 +46,40 @@ function boundedToolsets(value: WorkerChatOpts["toolsets"]): WorkerToolset[] | n
 
 export function lastJsonObject(text: string): unknown | null {
   const clean = text.replace(/\x1b\[[0-9;]*m/g, "");
-  const starts: number[] = [];
-  for (let i = clean.length - 1; i >= 0; i--) {
-    if (clean[i] === "{") starts.push(i);
-  }
-  for (const start of starts) {
-    let raw = clean.slice(start).trim();
-    const fence = raw.indexOf("```");
-    if (fence > 0) raw = raw.slice(0, fence).trim();
-    const tryParse = (chunk: string): unknown | null => {
+  let start = -1;
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  let last: unknown | null = null;
+  // Quiet CLI replies can still include a fence or a stray closing brace.
+  // Extract complete objects without changing their contents. Braces and
+  // fences inside a quoted report are data, and a nested fragment must never
+  // be mistaken for the complete receipt when its outer object is truncated.
+  for (let i = 0; i < clean.length; i++) {
+    const char = clean[i];
+    if (start < 0) {
+      if (char === "{") { start = i; depth = 1; }
+      continue;
+    }
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') quoted = false;
+      continue;
+    }
+    if (char === '"') quoted = true;
+    else if (char === "{") depth++;
+    else if (char === "}" && --depth === 0) {
       try {
-        const parsed: unknown = JSON.parse(chunk);
-        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+        const parsed: unknown = JSON.parse(clean.slice(start, i + 1));
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) last = parsed;
       } catch {
-        return null;
+        // Malformed fields remain malformed; never repair or infer them.
       }
-    };
-    const full = tryParse(raw);
-    if (full) return full;
-    const close = raw.lastIndexOf("}");
-    if (close > 0) {
-      const clipped = tryParse(raw.slice(0, close + 1));
-      if (clipped) return clipped;
+      start = -1;
     }
   }
-  return null;
+  return last;
 }
 
 function cleanLines(text: string): string[] {
@@ -87,6 +99,7 @@ export async function askWorker(
   prompt: string,
   opts?: WorkerChatOpts,
 ): Promise<{ ok: true; stdout: string } | { ok: false; detail: string }> {
+  if (opts?.signal?.aborted) return { ok: false, detail: "Preparation cancelled." };
   if (process.env.VITEST && !opts?.cli) return { ok: false, detail: "tests do not use the live worker." };
   if (!packInstalled(opts?.root)) {
     return { ok: false, detail: `the "${HERMES_PIN.profile}" pack is missing.` };
@@ -94,10 +107,10 @@ export async function askWorker(
   if (!approvalsAreManual(opts?.root)) {
     return { ok: false, detail: `the "${HERMES_PIN.profile}" pack is not in manual approvals.` };
   }
-  const cli = opts?.cli ?? "hermes";
+  const cli = opts?.cli ?? hermesCli();
   const version = await probeHermesVersion(cli);
   if (!version) return { ok: false, detail: "the CLI is not available." };
-  if (!hermesMatchesPin(version)) {
+  if (!hermesIsCompatible(version)) {
     return {
       ok: false,
       detail: `installed ${version.trim()}, pin is v${HERMES_PIN.product} (${HERMES_PIN.tag}).`,
@@ -106,7 +119,9 @@ export async function askWorker(
   const toolsets = boundedToolsets(opts?.toolsets);
   if (!toolsets) return { ok: false, detail: "the worker tool boundary is not usable." };
 
+  if (opts?.signal?.aborted) return { ok: false, detail: "Preparation cancelled." };
   return new Promise((resolve) => {
+    let cancel: (() => void) | undefined;
     const env = { ...process.env, PATH: augmentedPath() };
     hardenHermesChildEnv(env);
     const execOpts: ExecFileOptionsWithStringEncoding & { detached?: boolean } = {
@@ -126,12 +141,14 @@ export async function askWorker(
         "--toolsets",
         toolsets.join(","),
         "-q",
-        prompt,
+        `${BUD_IDENTITY}\n\n${prompt}`,
         "--max-turns",
         String(Math.max(1, Math.min(12, opts?.maxTurns ?? 6))),
       ],
       execOpts,
       (err, stdout, stderr) => {
+        if (cancel) opts?.signal?.removeEventListener("abort", cancel);
+        if (opts?.signal?.aborted) return resolve({ ok: false, detail: "Preparation cancelled." });
         if (err) {
           const timedOut = (err as NodeJS.ErrnoException & { killed?: boolean }).killed;
           if (timedOut && process.platform !== "win32") {
@@ -152,6 +169,18 @@ export async function askWorker(
         resolve({ ok: true, stdout: String(stdout) });
       },
     );
+    cancel = () => {
+      // Stop the owned worker before shutdown removes its timeout. Prefer
+      // its process group where available, with a direct-child fallback.
+      try {
+        if (process.platform !== "win32" && child.pid) process.kill(-child.pid, "SIGKILL");
+        else child.kill("SIGKILL");
+      } catch {
+        try { child.kill("SIGKILL"); } catch { /* The worker has already exited. */ }
+      }
+    };
+    opts?.signal?.addEventListener("abort", cancel, { once: true });
+    if (opts?.signal?.aborted) cancel();
   });
 }
 

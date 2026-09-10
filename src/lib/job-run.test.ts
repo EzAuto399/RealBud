@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { JobRun } from "./desk";
 import {
+  activeAttendedRun,
   attendedEvidenceLine,
   attendedHeaderLabel,
   attendedRunLabel,
@@ -11,10 +12,15 @@ import {
   jobRunStatusChip,
   jobRunSummaryLine,
   latestAttendedFor,
+  latestRunForJob,
   loopRunStatusLabel,
   queuedAttended,
+  queuedAttendedRuns,
+  runStatusSuffix,
   runningAttended,
+  runsForJob,
   safeJobRunDetail,
+  preparedJobText,
 } from "./job-run";
 
 function run(partial: Partial<JobRun> = {}): JobRun {
@@ -48,8 +54,27 @@ function run(partial: Partial<JobRun> = {}): JobRun {
 }
 
 describe("job run copy", () => {
+  it("copies prepared output without mixing in observations or approval requests", () => {
+    const evidence: JobRun["evidence"] = [
+      { at: 1, kind: "observation", note: "Read the supplied export" },
+      { at: 2, kind: "output", note: "Draft update\nTwo items need review." },
+      { at: 3, kind: "approval", note: "Ask the PM before sending" },
+    ];
+    expect(preparedJobText(run({ evidence, status: "awaiting-approval" }))).toBe("Draft update\nTwo items need review.");
+    expect(preparedJobText(run({ evidence, status: "partial" }))).toContain("Draft update");
+  });
+
+  it("does not promote rehearsal or unfinished output into prepared work", () => {
+    const evidence: JobRun["evidence"] = [{ at: 1, kind: "output", note: "Narration only" }];
+    expect(preparedJobText(run({ mode: "shadow", evidence }))).toBe("");
+    for (const status of ["queued", "running", "failed", "interrupted"] as const) {
+      expect(preparedJobText(run({ status, evidence }))).toBe("");
+    }
+    expect(preparedJobText(run())).toBe("");
+  });
+
   it("uses calm PM-facing mode and status labels", () => {
-    expect(jobRunModeLabel("shadow")).toBe("Shadow rehearsal");
+    expect(jobRunModeLabel("shadow")).toBe("Rehearsal");
     expect(jobRunModeLabel("prepare")).toBe("Prepared by Bud");
     expect(jobRunStatusChip("awaiting-approval")).toMatchObject({ label: "Needs you" });
     expect(jobRunStatusChip("interrupted")).toMatchObject({ label: "Interrupted" });
@@ -122,6 +147,17 @@ describe("job run copy", () => {
       rule: false,
       submitApproved: false,
     });
+    expect(
+      attendedEvidenceLine({
+        kind: "denied",
+        note: "Tried to open a page. Only sites named in a saved job. Ask Bud to set the routine up as a job first.",
+      }),
+    ).toEqual({
+      label: "Tried to open a page. Only sites named in a saved job. Ask Bud to set the routine up as a job first.",
+      denied: true,
+      rule: false,
+      submitApproved: false,
+    });
     expect(attendedEvidenceLine({ kind: "observation", note: "open arrears" })).toEqual({
       label: "open",
       denied: false,
@@ -153,9 +189,25 @@ describe("job run copy", () => {
     expect(queuedAttended([queued, newer], "job-1")?.id).toBe("q");
   });
 
+  it("selects active attended runs and job-scoped lists", () => {
+    const olderRunning = { ...run(), id: "old", mode: "attended" as const, status: "running" as const, createdAt: 10 };
+    const newerRunning = { ...run(), id: "new", mode: "attended" as const, status: "running" as const, createdAt: 30 };
+    const queued = { ...run(), id: "q1", mode: "attended" as const, status: "queued" as const, jobId: "job-1", createdAt: 5 };
+    const queuedOther = { ...run(), id: "q2", mode: "attended" as const, status: "queued" as const, jobId: "job-2", createdAt: 6 };
+    const prepare = { ...run(), id: "p1", mode: "prepare" as const, jobId: "job-1", createdAt: 40 };
+
+    expect(activeAttendedRun([olderRunning, newerRunning])?.id).toBe("new");
+    expect(queuedAttendedRuns([queued, queuedOther, prepare]).map((item) => item.id)).toEqual(["q1", "q2"]);
+    expect(runsForJob([queued, prepare, queuedOther], "job-1").map((item) => item.id)).toEqual(["q1", "p1"]);
+    expect(latestRunForJob([queued, prepare], "job-1")?.id).toBe("p1");
+    expect(runStatusSuffix(true)).toBe("");
+    expect(runStatusSuffix(false)).toBe(" (last seen)");
+  });
+
   it("maps clock-run chips onto the StatusLabel tones", () => {
     expect(loopRunStatusLabel("queued")).toEqual({ label: "Queued", tone: "agency" });
     expect(loopRunStatusLabel("running")).toEqual({ label: "Running", tone: "agency" });
+    expect(loopRunStatusLabel("awaiting-approval")).toEqual({ label: "Needs you", tone: "hold" });
     expect(loopRunStatusLabel("partial")).toEqual({ label: "Partly done", tone: "hold" });
     expect(loopRunStatusLabel("completed")).toEqual({ label: "Finished", tone: "muted" });
     expect(loopRunStatusLabel("failed")).toEqual({ label: "Failed", tone: "danger" });

@@ -72,11 +72,18 @@ export function sessionOk(req: IncomingMessage, listenPort: number): { ok: true 
   return { ok: true };
 }
 
-export function needsSession(path: string): boolean {
+export function needsSession(path: string, method?: string): boolean {
   if (path === "/api/health" || path === "/api/session") return false;
   if (!path.startsWith("/api/")) return false;
   if (path.startsWith("/api/internal/")) return false;
+  // Ask can create a provider sign-in or execute an approved app operation.
+  // Protect every mutation of its bot/thread state, including queued work,
+  // edits, steering and approval responses. Keep legacy read-only views intact.
+  if (method && !["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase()) &&
+    /^\/api\/(?:bots|threads)(?:\/|$)/.test(path)) return true;
   return (
+    path === "/api/config" ||
+    path.startsWith("/api/connected-apps") ||
     path.startsWith("/api/desk") ||
     path.startsWith("/api/channels") ||
     path.startsWith("/api/rules") ||
@@ -84,6 +91,7 @@ export function needsSession(path: string): boolean {
     path.startsWith("/api/recipes") ||
     path.startsWith("/api/job-runs") ||
     path.startsWith("/api/computer-history") ||
+    path.startsWith("/api/worker-issues") ||
     path.startsWith("/api/loops") ||
     path.startsWith("/api/loop-runs") ||
     path.startsWith("/api/artifacts") ||

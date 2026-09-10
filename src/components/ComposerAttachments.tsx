@@ -113,7 +113,23 @@ export function ComposerAttachments({
       {items.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-2">
           {items.map((a) =>
-            a.kind === "paste" ? (
+            a.kind === "paste" && a.label ? (
+              <div key={a.id} className="flex w-full items-start gap-2 rounded-lg border border-agency/20 bg-agency/5 px-3 py-2">
+                <details className="min-w-0 flex-1">
+                  <summary className="flex cursor-pointer list-none items-start gap-2 rounded text-ink">
+                    <FileIcon size={16} className="mt-0.5 shrink-0 text-agency" aria-hidden />
+                    <span className="min-w-0">
+                      <span className="block text-[13px] font-medium">{a.label}</span>
+                      <span className="mt-0.5 block text-[12px] text-ink-secondary">{a.id.startsWith("recovered-queue:") ? "Your other draft is kept · Review this follow-up before starting" : "Reference attached · Review before starting"}</span>
+                    </span>
+                  </summary>
+                  <pre className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap break-words border-t border-agency/20 pt-2 font-sans text-[12px] leading-relaxed text-ink-secondary">{a.text}</pre>
+                </details>
+                <button type="button" onClick={() => onRemove(a.id)} aria-label={`Remove attached result: ${a.label}`} className="flex size-8 shrink-0 items-center justify-center rounded text-ink-secondary hover:bg-selected hover:text-ink">
+                  <X size={15} aria-hidden />
+                </button>
+              </div>
+            ) : a.kind === "paste" ? (
               <Chip
                 key={a.id}
                 label="PASTED"

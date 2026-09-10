@@ -1,3 +1,4 @@
+import { ApprovalScope } from "./ApprovalScope";
 // The approval box: what the bot wants to do, and three ways to answer.
 //
 // Deliberately not the lettered A/B/C list the onboarding card uses — an
@@ -71,6 +72,7 @@ export function ApprovalCard({
         <p className="mt-2 text-[12.5px] text-hold">Check the form in the browser before you allow.</p>
       ) : null}
 
+      {productAsk && !settled && <ApprovalScope kind="action" />}
       {card.held && (
         <div className="mt-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12.5px] text-warning">
           {card.held}
@@ -82,11 +84,11 @@ export function ApprovalCard({
       <div className="mt-3 flex items-center gap-1.5 text-[13px] text-ink-secondary">
         {settled === "allow" ? (
           <>
-            <Check size={14} className="text-success" /> Allowed
+            <Check size={14} className="text-success" /> Approved
           </>
         ) : settled ? (
           <>
-            <X size={14} /> Denied
+            <X size={14} /> Not approved
           </>
         ) : (
           <>

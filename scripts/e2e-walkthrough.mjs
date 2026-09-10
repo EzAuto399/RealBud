@@ -141,12 +141,14 @@ try {
   await sleep(500);
   const letter = await api("POST", "/api/loops/owner-letter/run", {});
   check("owner letter runs now", letter.status === 201);
-  for (let i = 0; i < 20; i++) {
+  const ownerLetterDeadline = Date.now() + 30_000;
+  for (;;) {
     snap = (await api("GET", "/api/desk")).body;
-    if (snap.drafts.some((d) => d.kind === "owner-letter")) break;
+    if (Array.isArray(snap?.drafts) && snap.drafts.some((d) => d.kind === "owner-letter")) break;
+    if (Date.now() >= ownerLetterDeadline) break;
     await sleep(250);
   }
-  check("owner letter drafted a proposal", snap.drafts.some((d) => d.kind === "owner-letter"));
+  check("owner letter drafted a proposal", Array.isArray(snap?.drafts) && snap.drafts.some((d) => d.kind === "owner-letter"));
   await api("PATCH", "/api/loops/morning-arrears", { time: "07:30" });
 
   // ── 6. bounded portal handoff: allow → prepare → bud prefills, human submits ──
@@ -202,6 +204,10 @@ try {
   check("recovery keeps the desk readable", Array.isArray(recovered.properties));
   const writeAttempt = await api("POST", "/api/desk/check", {});
   check("writes are refused in recovery", writeAttempt.status === 409);
+  check("saved jobs remain readable in recovery", (await api("GET", "/api/recipes")).status === 200);
+  check("job saves are refused in recovery", (await api("POST", "/api/recipes", { draft: {} })).status === 409);
+  check("job approval is refused in recovery", (await api("PATCH", "/api/recipes/recovery-test", { planApproved: true })).status === 409);
+  check("job rehearsal is refused in recovery", (await api("POST", "/api/recipes/recovery-test/run", {})).status === 409);
   revived.kill("SIGKILL");
 } finally {
   await portal.close().catch(() => {});

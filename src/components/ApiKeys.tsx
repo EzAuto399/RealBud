@@ -35,7 +35,7 @@ const CREDENTIALS: Record<
   composio: {
     label: "Connected apps key",
     placeholder: "ck_…",
-    description: "A private broker key lets Bud open provider sign-in for Notion, Gmail, Outlook, calendars, and other apps without seeing their passwords.",
+    description: "Save your connection key here, then sign in to the office apps you want Bud to use.",
     href: "https://docs.composio.dev/docs/composio-connect",
     linkLabel: "Open Composio setup guide",
     optional: true,
@@ -153,7 +153,7 @@ export function ApiKeyRow({
     api("/api/config", {
       method: "PUT",
       body: JSON.stringify(SECTIONS[section].body(value.trim())),
-    }, { timeoutMs: 15_000 })
+    }, { timeoutMs: section === "composio" ? 45_000 : 15_000 })
       .then((status: ConfigStatus) => {
         dispatch({ type: "configStatus", config: status });
         setValue("");
@@ -173,7 +173,7 @@ export function ApiKeyRow({
             Optional
           </span>
         )}
-        {configured && <span className="text-[11px] text-success">Connected</span>}
+        {configured && <span className="text-[11px] text-success">{section === "composio" ? "Saved" : "Connected"}</span>}
         <CredentialHelp section={section} />
       </div>
       <div className="flex gap-2">
@@ -203,6 +203,41 @@ export function ApiKeyRow({
         </button>
       </div>
       {error && <div className="mt-1 text-[12px] text-danger">{error}</div>}
+    </div>
+  );
+}
+
+const QUICK_CONNECT = [
+  { slug: "gmail", label: "Gmail" },
+  { slug: "outlook", label: "Outlook" },
+  { slug: "notion", label: "Notion" },
+  { slug: "googlecalendar", label: "Google Calendar" },
+] as const;
+
+/** Connection shortcuts use the canonical Ask broker, including its error recovery.
+ * They never poll the legacy connector routes, which product mode denies. */
+export function ConnectedAppQuickConnect() {
+  const { state, dispatch } = useStore();
+  const busy = Boolean(state.bots.find(bot => bot.id === "bud")?.busy);
+  if (!state.config?.composio?.configured) return null;
+  return (
+    <div className="mt-3">
+      <div className="text-[12px] text-ink-secondary">Connect an app with Bud</div>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {QUICK_CONNECT.map(row => (
+          <button key={row.slug} type="button" disabled={busy || !state.connected}
+            onClick={() => {
+              dispatch({ type: "showAsk" });
+              dispatch({ type: "send", botId: "bud", text: `connect ${row.label}` });
+            }}
+            className="pm-control rounded-lg border border-line bg-sheet px-3 py-1.5 text-[12.5px] text-ink hover:border-agency/35 hover:bg-raised disabled:cursor-not-allowed disabled:opacity-50">
+            Connect {row.label}
+          </button>
+        ))}
+      </div>
+      <p className="mt-2 text-[12px] leading-relaxed text-ink-muted">
+        {busy ? "Bud is finishing a task. Connect an app when it finishes." : "Bud checks the connection in Ask and guides you through sign-in. Your unsent draft stays saved."}
+      </p>
     </div>
   );
 }

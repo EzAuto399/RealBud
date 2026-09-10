@@ -22,7 +22,7 @@ function linuxSession(platform, env) {
 
 function localComputerReady(platform, connection) {
   return (
-    platform === "darwin" &&
+    (platform === "darwin" || platform === "win32") &&
     (connection?.mode === "embedded" || connection?.mode === "standalone")
   );
 }
@@ -69,7 +69,7 @@ function desktopCapabilities({
       ...(!localAvailable
         ? {
             reasonCode:
-              hostPlatform === "darwin" ? "cua-driver-unavailable" : "unsupported-platform",
+              ["darwin", "win32"].includes(hostPlatform) ? "cua-driver-unavailable" : "unsupported-platform",
           }
         : {}),
     },

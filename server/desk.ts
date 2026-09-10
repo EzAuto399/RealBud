@@ -1,3 +1,4 @@
+import { propertyPortalView } from "./property-portals.ts";
 // Desk spine: evaluate → proposal → human decision. Encrypted v2 store.
 // snapshot() is side-effect free. Approval never means sent.
 import { randomUUID } from "node:crypto";
@@ -233,6 +234,7 @@ export class Desk {
         jurisdictions: v3.agency.jurisdictions,
       },
       office: { ...(v3.office ?? emptyOffice()) },
+      propertyPortals: propertyPortalView(new Set(this.store.data.properties.map(p => p.id)), this.store.data.portalBindings, this.store.data.recipes),
       tenancies: v3.tenancies.map((item) => ({
         id: item.id,
         propertyId: item.propertyId,
@@ -289,7 +291,7 @@ export class Desk {
   /** Training / Demo book only. Never counts as a live check. */
   runMorningCheck(): DeskSnapshot {
     this.assertWritable();
-    return this.evaluateBook("demo", "Demo book — Recheck asks the worker or a CSV for live facts.");
+    return this.evaluateBook("demo", "Demo book — Recheck asks Bud or a CSV for live facts.");
   }
 
   /** Live recheck. A miss never fabricates rows or a finished morning. */
@@ -353,23 +355,36 @@ export class Desk {
     return this.store.runBatch(fn);
   }
 
-  patchAgency(input: { name?: string; jurisdictions?: string[]; office?: unknown }): DeskSnapshot {
+  patchAgency(input: { name?: string; jurisdictions?: string[]; office?: unknown; expectedRevision?: unknown }): DeskSnapshot {
     this.assertWritable();
-    if (input.name !== undefined) {
-      const name = String(input.name).trim();
+    // Validate the complete patch before changing any in-memory field.
+    const name = input.name !== undefined ? String(input.name).trim() : undefined;
+    if (name !== undefined) {
       if (!name) throw Object.assign(new Error("agency name required"), { status: 400 });
       if (name.length > 80) throw Object.assign(new Error("agency name is too long"), { status: 400 });
-      this.store.v3.agency.name = name;
     }
-    if (input.jurisdictions) {
-      this.store.v3.agency.jurisdictions = parseJurisdictions(input.jurisdictions);
+    const jurisdictions = input.jurisdictions ? parseJurisdictions(input.jurisdictions) : undefined;
+    const office = input.office !== undefined ? parseOfficePatch(input.office) : undefined;
+    if (office && !office.ok) throw Object.assign(new Error(office.error), { status: 400 });
+    const editsWorkflow = office?.ok && office.value.rentWorkflow !== undefined;
+    if ((editsWorkflow || input.expectedRevision !== undefined) &&
+      (typeof input.expectedRevision !== "number" || !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0)) {
+      throw Object.assign(new Error("A valid book revision is required to save these office settings."), { status: 400 });
     }
-    if (input.office !== undefined) {
-      const parsed = parseOfficePatch(input.office);
-      if (!parsed.ok) throw Object.assign(new Error(parsed.error), { status: 400 });
-      this.store.v3.office = { ...(this.store.v3.office ?? emptyOffice()), ...parsed.value };
+    if (input.expectedRevision !== undefined && input.expectedRevision !== this.revision) {
+      throw Object.assign(new Error("The book changed while you were editing. Your edits are kept. Reload saved settings before applying them again."), { status: 409, code: "revision-conflict" });
     }
-    this.store.persist();
+    const previousAgency = this.store.v3.agency;
+    const previousOffice = this.store.v3.office;
+    this.store.v3.agency = { ...previousAgency, ...(name !== undefined ? { name } : {}), ...(jurisdictions ? { jurisdictions } : {}) };
+    if (office?.ok) this.store.v3.office = { ...(this.store.v3.office ?? emptyOffice()), ...office.value };
+    try {
+      this.store.persist();
+    } catch (error) {
+      this.store.v3.agency = previousAgency;
+      this.store.v3.office = previousOffice;
+      throw error;
+    }
     this.emit();
     return this.snapshot();
   }
@@ -639,29 +654,22 @@ export class Desk {
     return { ok: true, needsRestart: true, preserved };
   }
 
-    resetFixtures(): DeskSnapshot {
+  resetFixtures(): DeskSnapshot {
     this.assertWritable();
-    const book = fixtureBook();
-    this.store.data.properties = book.properties;
-    this.store.data.ledger = book.ledger;
-    this.store.data.drafts = [];
-    this.store.data.escalations = [];
-    this.store.data.workItems = [];
-    this.store.data.results = [];
-    this.store.data.lastRunAt = null;
-    this.store.data.mode = "demo";
-    this.store.data.hands = "demo";
-    this.store.data.handsDetail = null;
-    this.store.data.capabilities = [];
-    this.store.persist();
-    return this.evaluateBook("demo", "Demo book reset.");
+    this.store.replaySample(fixtureBook(), this.now(), () => {
+      this.evaluateBook("demo", "Sample morning replayed.", undefined, { emit: false });
+    });
+    this.emit();
+    return this.snapshot();
   }
 
   patchProperty(id: string, patch: Partial<PropertyOptions>): Property {
     this.assertWritable();
     const property = this.store.data.properties.find((p) => p.id === id);
     if (!property) throw Object.assign(new Error("no such property"), { status: 404 });
-    applyOptions(property.options, patch);
+    const options = { ...property.options };
+    applyOptions(options, patch);
+    property.options = options;
     this.invalidateCapabilities({ propertyId: id });
     // A rule moved, so cards computed under the old rule are stale. Recompute
     // from the facts already on the book. An unchecked book has nothing to
@@ -919,7 +927,7 @@ export class Desk {
     hands: HandsSource,
     handsDetail: string | null,
     skipIds?: ReadonlySet<string>,
-    opts?: { stampRun?: boolean },
+    opts?: { stampRun?: boolean; emit?: boolean },
   ): DeskSnapshot {
     const now = this.now();
     const results = [];
@@ -967,7 +975,7 @@ export class Desk {
     this.store.data.hands = hands;
     this.store.data.handsDetail = handsDetail;
     this.store.persist();
-    this.emit();
+    if (opts?.emit !== false) this.emit();
     return this.snapshot();
   }
 

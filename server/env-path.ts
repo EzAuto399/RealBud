@@ -60,6 +60,7 @@ function windowsKnownDirs(): string[] {
     join(home, ".grok", "bin"), // x.ai installer
     join(localAppData, "agy", "bin"), // Antigravity installer
     join(home, ".local", "bin"), // claude native installer
+    join(process.env.HERMES_HOME ?? join(home, ".hermes"), "hermes-agent", "venv", "Scripts"),
     join(home, ".claude", "local"),
     join(home, ".bun", "bin"),
     join(home, ".deno", "bin"),

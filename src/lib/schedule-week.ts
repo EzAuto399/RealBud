@@ -235,6 +235,13 @@ function stampSlot(
   if (!loop.available) {
     return { outcome: "planned", stamp: "Planned", produced: 0, runId: null, openDesk: false };
   }
+  const run = latestRunOnDay(facts?.runs, loop.id, dateMs, timeZone);
+  const produced = run ? (facts?.desk?.producedByRunId[run.id] ?? 0) : 0;
+  // A prepared result still needs the PM after its future clock is paused
+  // or its plan edited. Keep that receipt distinct from approving a plan.
+  if (run?.status === "awaiting-approval") {
+    return { outcome: "review", stamp: "Needs you", produced, runId: run.id, openDesk: produced > 0 };
+  }
   if (loop.waitingForPlan) {
     return { outcome: "review", stamp: "Review plan", produced: 0, runId: null, openDesk: false };
   }
@@ -242,8 +249,6 @@ function stampSlot(
     return { outcome: "paused", stamp: "Paused", produced: 0, runId: null, openDesk: false };
   }
 
-  const run = latestRunOnDay(facts?.runs, loop.id, dateMs, timeZone);
-  const produced = run ? (facts?.desk?.producedByRunId[run.id] ?? 0) : 0;
   const deskToday = loop.id === "morning-arrears" && Boolean(facts?.desk?.lastRunAt && sameCalendarDay(facts.desk.lastRunAt, dateMs, timeZone));
   const miss = (deskToday && morningDeskMiss(facts?.desk)) || workerRecheckMissOnDay(facts, dateMs, timeZone);
 

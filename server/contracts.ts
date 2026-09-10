@@ -62,7 +62,7 @@ export type RuntimeEvent = RuntimeEventBase &
         cost?: number | null;
         denials?: string[];
       }
-    | { type: "item.started"; itemType: "tool" | "reasoning"; title?: string }
+    | { type: "item.started"; itemType: "tool" | "reasoning"; title?: string; toolFingerprint?: string }
     | { type: "item.updated"; itemType: "tool" | "reasoning"; tokens?: number | null }
     | { type: "item.completed"; itemType: "tool"; ok: boolean }
     | { type: "item.completed"; itemType: "assistant_text"; text: string }
@@ -109,7 +109,13 @@ export interface SendTurnInput {
   system?: string;
   /** Per-bot integrations the driver may hand to the agent as tools. */
   integrations?: {
-    composio?: { url?: string; key: string };
+    composio?: {
+      allowedApps?: string[];
+      url?: string;
+      key: string;
+      /** Server-owned project Gmail binding. Never sent to the worker. */
+      gmailReadOnly?: { authConfigId: string; userId: string; accountId: string; requestId: string };
+    };
     /** Cloud computer, reached through RealBud's REST-to-MCP adapter. */
     computer?: { kind?: "box"; boxId: string; token: string };
     /** Direct stdio connection to a Cua Driver MCP server (host or sandbox). */

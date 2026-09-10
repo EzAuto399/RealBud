@@ -228,6 +228,36 @@ describe("schedule week", () => {
     const friday = buildScheduleWeek([...loops, review], wed)[4]?.slots.find((slot) => slot.loopId === "recipe-review");
     expect(friday).toMatchObject({ outcome: "review", stamp: "Review plan", next: false });
   });
+
+  it.each([
+    { enabled: true, waitingForPlan: false },
+    { enabled: false, waitingForPlan: false },
+    { enabled: false, waitingForPlan: true },
+  ])("keeps a held result distinct from a future plan or clock (%j)", (state) => {
+    const friday = new Date(2026, 8, 4, 16, 5).getTime();
+    const job = {
+      id: "recipe-held" as const,
+      name: "Owner update",
+      available: true,
+      ...state,
+      schedule: { time: "16:00", weekdays: [5] },
+      nextRunAt: null,
+    };
+    const slot = buildScheduleWeek([job], friday, undefined, {
+      runs: [{ id: "held-result", loopId: job.id, scheduledFor: friday - 5 * 60_000, finishedAt: friday - 4 * 60_000, status: "awaiting-approval" }],
+    })[4]?.slots[0];
+    expect(slot).toMatchObject({ outcome: "review", stamp: "Needs you", runId: "held-result", produced: 0, openDesk: false });
+    expect(weekOutcomeTone(slot!.outcome)).toBe("hold");
+  });
+
+  it("keeps held-result Desk counts tied to its exact receipt", () => {
+    const friday = new Date(2026, 8, 4, 16, 5).getTime();
+    const slot = buildScheduleWeek(loops, friday, undefined, {
+      runs: [{ id: "held-owner", loopId: "owner-letter", scheduledFor: friday - 5 * 60_000, status: "awaiting-approval" }],
+      desk: { lastRunAt: null, needsYou: 8, checkedCount: 20, producedByRunId: { "held-owner": 2, unrelated: 6 } },
+    })[4]?.slots.find((item) => item.loopId === "owner-letter");
+    expect(slot).toMatchObject({ outcome: "review", stamp: "Needs you", runId: "held-owner", produced: 2, openDesk: true });
+  });
 });
 
 describe("recipeScheduleLine", () => {

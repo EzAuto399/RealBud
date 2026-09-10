@@ -9,7 +9,7 @@ import { augmentedPath } from "./env-path.ts";
 import { execFileCli } from "./procs.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { parseCsvTable } from "./csv-ledger.ts";
-import { HERMES_PIN, hermesMatchesPin } from "./hermes-pin.ts";
+import { HERMES_PIN, hermesCli, hermesIsCompatible } from "./hermes-pin.ts";
 import { approvalsAreManual, packInstalled } from "./hermes-pack.ts";
 import { probeHermesVersion } from "./hermes-status.ts";
 import { seedVault } from "./vault.ts";
@@ -125,10 +125,10 @@ export async function inspectLedgerColumns(
   if (!approvalsAreManual(opts?.root)) {
     return miss(`Bud is not answering — the "${HERMES_PIN.profile}" pack is not in manual approvals.`);
   }
-  const cli = opts?.cli ?? "hermes";
+  const cli = opts?.cli ?? hermesCli();
   const version = await probeHermesVersion(cli);
   if (!version) return miss("Bud is not answering — CLI not found.");
-  if (!hermesMatchesPin(version)) {
+  if (!hermesIsCompatible(version)) {
     return miss(`Bud is not answering — installed ${version.trim()}, pin is v${HERMES_PIN.product} (${HERMES_PIN.tag}).`);
   }
 

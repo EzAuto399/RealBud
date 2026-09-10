@@ -190,6 +190,42 @@ export class DeskStore {
     }
   }
 
+  /** Replay only the sample book. Publish one complete replacement or keep
+   * both in-memory projections and the durable book exactly as they were. */
+  replaySample(book: { properties: Property[]; ledger: LedgerFacts[] }, now: number, prepare: () => void): void {
+    if (this.recovery.active || this.data.mode !== "demo") {
+      throw Object.assign(new Error("Sample replay is only available on the sample book. Your office book has been kept."), { status: 409 });
+    }
+    if (this.batchDepth !== 0) throw new Error("Sample replay cannot run inside another book operation");
+    const previousData = this.data;
+    const previousV3 = this.v3;
+    const fresh = emptyV2(book);
+    fresh.revision = previousData.revision;
+    fresh.timezone = previousData.timezone;
+    fresh.retentionDays = previousData.retentionDays;
+    fresh.recipes = structuredClone(previousData.recipes);
+    const ids = new Set(book.properties.map(property => property.id));
+    fresh.portalBindings = structuredClone(previousData.portalBindings.filter(binding => ids.has(binding.propertyId)));
+    this.data = fresh;
+    this.v3 = ensureDemoBreadth(migrateV2ToV3(fresh, now), now);
+    this.v3.agency = structuredClone(previousV3.agency);
+    this.v3.office = structuredClone(previousV3.office);
+    this.batchDepth = 1;
+    try {
+      prepare();
+      this.batchDepth = 0;
+      this.batchNeedsBump = false;
+      this.commitWithBump();
+    } catch (error) {
+      this.data = previousData;
+      this.v3 = previousV3;
+      throw error;
+    } finally {
+      this.batchDepth = 0;
+      this.batchNeedsBump = false;
+    }
+  }
+
   private commitWithBump(): void {
     const previousRevision = this.data.revision;
     const previousV3 = this.v3;

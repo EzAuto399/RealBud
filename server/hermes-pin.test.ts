@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { HERMES_PIN, hermesInstallCommand, hermesMatchesPin, parseHermesVersion } from "./hermes-pin.ts";
+import { HERMES_PIN, hermesInstallCommand, hermesMatchesPin, hermesIsCompatible, parseHermesVersion } from "./hermes-pin.ts";
 
 describe("HERMES_PIN", () => {
   it("names a full commit, not main or latest", () => {
@@ -21,9 +21,23 @@ describe("parseHermesVersion", () => {
 });
 
 describe("hermesMatchesPin", () => {
-  it("accepts the pinned product or calendar stamp", () => {
+  it("requires the pinned product and calendar stamp together", () => {
     expect(hermesMatchesPin("Hermes Agent v0.20.3 (2026.8.16.2)")).toBe(true);
     expect(hermesMatchesPin("Hermes Agent v0.20.0 (2026.8.3)")).toBe(false);
+    expect(hermesMatchesPin("Hermes Agent v0.99.0 (2026.8.16.2)")).toBe(false);
+    expect(hermesMatchesPin("Hermes Agent v0.20.3 (2026.9.4)")).toBe(false);
+  });
+});
+
+describe("Hermes adapter compatibility", () => {
+  it("accepts the verified 0.21 release without pretending it is the rollback pin", () => {
+    const version = "Hermes Agent v0.21.0 (2026.8.31)";
+    expect(hermesIsCompatible(version)).toBe(true);
+    expect(hermesMatchesPin(version)).toBe(false);
+    expect(hermesIsCompatible("Hermes Agent v0.20.3 (2026.8.16.2)")).toBe(true);
+  });
+  it("fails closed for unknown releases and incomplete version output", () => {
+    for (const text of ["Hermes Agent v0.22.0 (2026.8.31)", "Hermes Agent v0.21.0 (2026.9.2)", "v0.21.0", "2026.8.31", ""]) expect(hermesIsCompatible(text)).toBe(false);
   });
 });
 

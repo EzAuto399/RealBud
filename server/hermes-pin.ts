@@ -10,6 +10,11 @@ export const HERMES_PIN = {
   profile: "property",
 } as const;
 
+/** All RealBud entry points resolve the same independently installed CLI. */
+export function hermesCli(): string {
+  return process.env.REALBUD_HERMES_CLI?.trim() || "hermes";
+}
+
 export function hermesInstallCommand(platform: NodeJS.Platform): string | null {
   if (platform === "win32") return null;
   return (
@@ -27,5 +32,20 @@ export function parseHermesVersion(text: string): { product?: string; calendar?:
 
 export function hermesMatchesPin(versionText: string): boolean {
   const parsed = parseHermesVersion(versionText);
-  return parsed.product === HERMES_PIN.product || parsed.calendar === HERMES_PIN.tag.slice(1);
+  return parsed.product === HERMES_PIN.product && parsed.calendar === HERMES_PIN.tag.slice(1);
+}
+
+// Hermes remains independently installed. This is an explicit adapter support
+// list, not permission to float to arbitrary future releases. The install pin
+// above remains the rollback build; support does not rewrite the user's CLI.
+export const HERMES_COMPATIBLE_RELEASES = [
+  { product: HERMES_PIN.product, calendar: HERMES_PIN.tag.slice(1) },
+  { product: "0.21.0", calendar: "2026.8.31" },
+] as const;
+
+export function hermesIsCompatible(versionText: string): boolean {
+  const parsed = parseHermesVersion(versionText);
+  return HERMES_COMPATIBLE_RELEASES.some((release) =>
+    release.product === parsed.product && release.calendar === parsed.calendar,
+  );
 }

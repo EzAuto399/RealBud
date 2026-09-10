@@ -3,15 +3,22 @@ import { describe, expect, it } from "vitest";
 import { askNextActions, isProductAskEmptyThread, isSeededAskGreeting, savedJobTitleFromReply } from "./ask-next";
 
 describe("ask next actions", () => {
+  it("checks sign-in completion without reauthorizing", () => {
+    const next = askNextActions({ miss: false, needsYou: 0, workerReady: true, lastRunAt: 100,
+      lastBotText: "I opened Gmail sign-in. Finish sign-in, then press Check connection." });
+    expect(next.find(row => row.id === "check-app-connection")).toMatchObject({ kind: "ask", text: "check Gmail connection" });
+    expect(next.some(row => row.id === "connect-app-again")).toBe(false);
+  });
   it("offers only recovery and already-prepared work after a worker miss", () => {
     const next = askNextActions({ miss: true, needsYou: 0, workerReady: false });
     expect(next.map((row) => row.id)).toEqual(["attach"]);
     expect(next.find((row) => row.id === "attach")?.label).toBe("Set up Bud");
   });
 
-  it("offers a Bud check after a miss even when hands already pinged", () => {
+  it("offers a new book check after the model has recovered", () => {
     const next = askNextActions({ miss: true, needsYou: 0, workerReady: true });
-    expect(next.find((row) => row.id === "attach")?.label).toBe("Check Bud");
+    expect(next.some((row) => row.id === "attach")).toBe(false);
+    expect(next.find((row) => row.id === "recheck")).toMatchObject({ kind: "recheck", description: "Bud is connected. Check the book again to refresh its facts." });
   });
 
   it("offers the final check when the workroom is already set up", () => {
@@ -36,7 +43,131 @@ describe("ask next actions", () => {
     expect(next[2]?.label).toBe("Brief me on 12 Oak St");
   });
 
-  it("offers Approve the plan when Bud asked the PM to approve on Schedule", () => {
+  it("offers in-Ask Connected apps key setup when the broker key is missing", () => {
+    const next = askNextActions({
+      miss: false,
+      needsYou: 0,
+      workerReady: true,
+      lastRunAt: 100,
+      composioConfigured: false,
+      lastBotText:
+        "Connected apps needs its private broker key once. Press **Save Connected apps key** here, then press **Connect Gmail**. Never paste the key into Ask.",
+    });
+    expect(next[0]).toMatchObject({
+      id: "connect-setup",
+      kind: "connect-setup",
+      label: "Save key · Connect Gmail",
+      connectLabel: "Gmail",
+    });
+  });
+
+  it("offers Connect Gmail once the broker key is saved", () => {
+    const next = askNextActions({
+      miss: false,
+      needsYou: 0,
+      workerReady: true,
+      lastRunAt: 100,
+      composioConfigured: true,
+      lastBotText:
+        "Connected apps needs its private broker key once. Press **Save Connected apps key** here, then press **Connect Gmail**. Never paste the key into Ask.",
+    });
+    expect(next[0]).toMatchObject({
+      id: "connect-app",
+      kind: "ask",
+      label: "Connect Gmail",
+      text: "connect Gmail",
+    });
+  });
+
+  it("approves the plan in Ask without redirecting", () => {
+    const pending = {
+      id: "job-pending",
+      title: "Building link payment review",
+      planApprovedAt: null,
+      revision: 1,
+      approvedRevision: null,
+      attachment: null,
+      capabilities: ["portal-read", "portal-prefill"],
+      allowedOrigins: ["buildinglink.com"],
+      updatedAt: 10,
+    };
+    const next = askNextActions({
+      miss: false,
+      needsYou: 0,
+      workerReady: true,
+      lastRunAt: 100,
+      threadIdle: true,
+      recipes: [pending],
+      lastBotText:
+        "I can take this over as a saved job. Here's the plan:\n**Building link payment review**\n1. Open\nPress **Approve the plan** here in Ask, then **Run beside me**.",
+    });
+    expect(next[0]).toMatchObject({
+      id: "approve-plan",
+      kind: "approve",
+      recipeId: "job-pending",
+      attach: true,
+      label: "Approve plan and attach",
+    });
+  });
+
+  it("offers Add portal site when the plan has no origin", () => {
+    const pending = {
+      id: "job-no-site",
+      title: "Levy check",
+      planApprovedAt: null,
+      revision: 1,
+      approvedRevision: null,
+      attachment: null,
+      capabilities: ["portal-read"],
+      allowedOrigins: [],
+      updatedAt: 10,
+    };
+    const next = askNextActions({
+      miss: false,
+      needsYou: 0,
+      workerReady: true,
+      lastRunAt: 100,
+      threadIdle: true,
+      recipes: [pending],
+      lastBotText: "Here's the plan:\n**Levy check**\nPress **Approve the plan** here in Ask.",
+    });
+    expect(next[0]).toMatchObject({
+      id: "set-site",
+      kind: "set-site",
+      recipeId: "job-no-site",
+    });
+  });
+
+  it("keeps Run beside me on Ask after approve via focusRecipeId", () => {
+    const ready = {
+      id: "job-focus",
+      title: "Levy check",
+      planApprovedAt: 1,
+      revision: 1,
+      approvedRevision: 1,
+      attachment: { attachedAt: 1, acknowledged: "human-login-and-submit" as const },
+      capabilities: ["portal-read"],
+      allowedOrigins: ["vantagestrata.com.au"],
+    };
+    const next = askNextActions({
+      miss: false,
+      needsYou: 1,
+      workerReady: true,
+      lastRunAt: 100,
+      threadIdle: true,
+      recipes: [ready],
+      focusRecipeId: "job-focus",
+      addresses: [{ address: "12 Oak St, Dickson ACT", attention: "held" }],
+    });
+    expect(next.map((row) => row.id)).toEqual(["attend-now"]);
+    expect(next[0]).toMatchObject({
+      kind: "attend",
+      recipeId: "job-focus",
+      label: "Run beside me now",
+    });
+  });
+
+  it("hides Approve the plan until a pending recipe is known", () => {
     const next = askNextActions({
       miss: false,
       needsYou: 0,
@@ -44,7 +175,7 @@ describe("ask next actions", () => {
       lastRunAt: 100,
       lastBotText: "Here is the plan. Approve the plan on Schedule, then press Run beside me.",
     });
-    expect(next[0]).toMatchObject({ id: "approve-plan", kind: "routines", label: "Approve the plan" });
+    expect(next.every((row) => row.id !== "approve-plan")).toBe(true);
   });
 
   it("offers to open an existing saved job where it lives", () => {
@@ -95,9 +226,9 @@ describe("ask next actions", () => {
       lastRunAt: 100,
       lastBotText,
       threadIdle: true,
-      recipes: [{ ...ready, planApprovedAt: null, approvedRevision: null, attachment: null }],
+      recipes: [{ ...ready, planApprovedAt: null, approvedRevision: null, attachment: null, allowedOrigins: [] }],
     });
-    expect(notReady[0]).toMatchObject({ id: "open-job", kind: "you-jobs" });
+    expect(notReady[0]).toMatchObject({ id: "set-site", kind: "set-site", recipeId: "job-ready" });
     const busy = askNextActions({
       miss: false,
       needsYou: 0,
@@ -107,7 +238,7 @@ describe("ask next actions", () => {
       threadIdle: false,
       recipes: [ready],
     });
-    expect(busy[0]).toMatchObject({ id: "open-job" });
+    expect(busy.every((row) => row.id !== "attend-now" && row.id !== "open-job")).toBe(true);
     const twoReady = askNextActions({
       miss: false,
       needsYou: 0,
@@ -120,7 +251,7 @@ describe("ask next actions", () => {
     expect(twoReady[0]).toMatchObject({ id: "open-job" });
   });
 
-  it("sends an unscheduled job's approval chip to You → Bud's jobs", () => {
+  it("does not send approval to You when no pending recipe is loaded", () => {
     const next = askNextActions({
       miss: false,
       needsYou: 0,
@@ -128,7 +259,7 @@ describe("ask next actions", () => {
       lastRunAt: 100,
       lastBotText: "Here is the plan. Approve the plan on You → Bud's jobs, then press Run beside me.",
     });
-    expect(next[0]).toMatchObject({ id: "approve-plan", kind: "you-jobs", label: "Approve the plan" });
+    expect(next.every((row) => row.id !== "approve-plan")).toBe(true);
   });
 
   it("offers Stop and Open Schedule while an attended run is active", () => {

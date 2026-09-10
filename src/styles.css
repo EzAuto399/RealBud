@@ -1,4 +1,8 @@
-@import "tailwindcss";
+@import "tailwindcss" source("./");
+@import "./ask.css";
+@import "./batch.css";
+@import "./desk.css";
+@import "./workspace.css";
 
 /* Warm Operational Ledger — DESIGN.md. Existing class names stay as aliases. */
 @theme {
@@ -777,4 +781,28 @@ body {
   }
 
   .maus-eyes { transform: none; }
+}
+
+/* Settings reveal optional configuration without unmounting unsaved fields. */
+.settings-section { flex-shrink: 0; border: 1px solid var(--color-line); border-radius: 8px; background: var(--color-sheet); }
+.settings-section > summary { cursor: pointer; list-style: none; padding: 14px 16px; font-size: 14px; font-weight: 600; color: var(--color-ink); }
+.settings-section > summary::-webkit-details-marker { display: none; }
+.settings-section-hint { display: block; margin-top: 4px; font-size: 12px; font-weight: 400; color: var(--color-ink-muted); }
+.settings-section-body { padding: 0 12px 12px; }
+.settings-section > summary:focus-visible { outline: 2px solid var(--color-agency); outline-offset: 2px; }
+
+/* Compact navigation keeps names visible and leaves the full width for work. */
+@media (max-width: 599px) {
+  .rb-app-shell { flex-direction: column; }
+  .rb-sidebar { width: 100%; height: auto; order: 2; border-right: 0; border-top: 1px solid var(--color-line); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .rb-sidebar > :not(.rb-sidebar-navigation) { display: none; }
+  .rb-sidebar-navigation { flex-direction: row; padding: 4px 6px; gap: 4px; }
+  .rb-sidebar-navigation > .rb-sidebar-section-label { display: none; }
+  .rb-sidebar-item { flex: 1; flex-direction: column; gap: 2px; min-height: 54px; padding: 5px 2px; }
+  .rb-sidebar-label { display: block; flex: none; }
+  .rb-sidebar-label > span:first-child { font-size: 11px; }
+  .rb-sidebar-label > span + span { display: none; }
+  .rb-sidebar-item[aria-current="page"]::before { display: none; }
+  .rb-app-shell > div { flex: 1; min-height: 0; }
+  .rb-app-shell input, .rb-app-shell textarea, .rb-app-shell select { font-size: 16px; }
 }

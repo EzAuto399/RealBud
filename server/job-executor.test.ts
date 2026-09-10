@@ -3,9 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { PortalSession, Recipe } from "../shared/contracts.ts";
+import type { DeskSnapshot, PortalSession, Recipe } from "../shared/contracts.ts";
 import { executeRecipeJob, jobWorkerToolsets, parsePrepareResult, prepareJobPrompt } from "./job-executor.ts";
 import { JobRunStore } from "./job-runs.ts";
+import { JOB_OUTPUT_MAX_CHARS } from "../shared/job-output.ts";
+import { deskContextMarkdown, DESK_CONTEXT_MAX_CHARS } from "./desk-context.ts";
 
 const dirs: string[] = [];
 
@@ -43,7 +45,24 @@ function job(overrides: Partial<Recipe> = {}): Recipe {
   };
 }
 
+function currentBook(): DeskSnapshot {
+  return {
+    version: 2, revision: 4, mode: "demo", demo: true,
+    recovery: { active: false, reason: null, quarantined: [] },
+    timezone: "Australia/Brisbane", retentionDays: 90,
+    properties: [], ledger: [], drafts: [], escalations: [], workItems: [], sources: [],
+    lastRunAt: null, results: [], hands: "demo", handsDetail: "Demo book",
+  };
+}
+
 describe("prepare result", () => {
+  it("preserves a complete multi-paragraph report and rejects oversized output instead of clipping it", () => {
+    const report = `Owner update\n\n${"A source-backed finding. ".repeat(80)}\n\nEND OF REPORT`;
+    const payload = { summary: "Report ready", evidence: ["quote-a.md"], outputs: [report], needsApproval: [] };
+    expect(parsePrepareResult(JSON.stringify(payload))?.outputs[0]).toBe(report);
+    expect(parsePrepareResult(JSON.stringify({ ...payload, outputs: ["x".repeat(JOB_OUTPUT_MAX_CHARS + 1)] }))).toBeNull();
+    expect(parsePrepareResult(JSON.stringify({ ...payload, outputs: Array(3).fill("x".repeat(JOB_OUTPUT_MAX_CHARS)) }))).toBeNull();
+  });
   it("parses the final bounded JSON object and rejects junk", () => {
     expect(
       parsePrepareResult(
@@ -54,12 +73,24 @@ describe("prepare result", () => {
     expect(parsePrepareResult('{"summary":"x","evidence":[],"outputs":[]}')).toBeNull();
   });
 
+  it("keeps a complete receipt with a stray final brace while enforcing its schema and limits", () => {
+    const payload = { summary: "Owner update ready", evidence: ["Fictional brief"], outputs: ["Quote AUD 1,250; Tuesday morning access."], needsApproval: ["Review before sending"] };
+    expect(parsePrepareResult(`${JSON.stringify(payload)}\n}`)).toEqual(payload);
+    expect(parsePrepareResult(`${JSON.stringify({ ...payload, needsApproval: null })}\n}`)).toBeNull();
+    expect(parsePrepareResult(`${JSON.stringify({ ...payload, outputs: ["x".repeat(JOB_OUTPUT_MAX_CHARS + 1)] })}\n}`)).toBeNull();
+  });
+
   it("keeps consequential actions outside the granted prepare prompt", () => {
-    const prompt = prepareJobPrompt(job());
+    const prompt = prepareJobPrompt(job(), deskContextMarkdown(currentBook()));
     expect(prompt).toMatch(/PREPARE-ONLY/);
     expect(prompt).toMatch(/must not send|must not.*submit/i);
     expect(prompt).toMatch(/propertyme\.com\.au/);
     expect(prompt).toMatch(/untrusted data/i);
+    expect(prompt).toContain("Use the inline Desk snapshot");
+    expect(prompt).toContain("not a live source refresh");
+    expect(() => prepareJobPrompt(job())).toThrow(/current Desk snapshot/);
+    expect(() => prepareJobPrompt(job(), "x".repeat(DESK_CONTEXT_MAX_CHARS + 1))).toThrow(/current Desk snapshot/);
+    expect(prepareJobPrompt(job({ capabilities: ["analyse", "draft"] }), "PRIVATE BOOK FACT")).not.toContain("PRIVATE BOOK FACT");
   });
 
   it("maps job capabilities to the narrow Hermes toolsets for that run", () => {
@@ -70,6 +101,88 @@ describe("prepare result", () => {
 });
 
 describe("executeRecipeJob", () => {
+  it("captures each new book revision at execution, freezes its prompt and retains the source stamp on retry", async () => {
+    const runs = store();
+    let snapshot = currentBook();
+    const readBookSnapshot = vi.fn(() => snapshot);
+    const prompts: string[] = [];
+    const ask = vi.fn(async (prompt: string) => {
+      prompts.push(prompt);
+      snapshot = { ...snapshot, revision: snapshot.revision + 1 };
+      return { ok: true as const, stdout: JSON.stringify({ summary: "Checked", evidence: [], outputs: ["No follow-up is needed in the supplied book."], needsApproval: [] }) };
+    });
+    const input = { mode: "prepare" as const, trigger: "schedule" as const, idempotencyKey: "day-one" };
+    const first = await executeRecipeJob(job(), input, { store: runs, readBookSnapshot, ask });
+    expect(prompts[0]).toContain("- Book stamp: 4");
+    expect(prompts[0]).not.toContain("- Book stamp: 5");
+    expect(first.run.evidence).toContainEqual(expect.objectContaining({ kind: "observation", note: expect.stringContaining("Desk snapshot revision 4") }));
+    const retried = await executeRecipeJob(job(), input, { store: runs, readBookSnapshot, ask });
+    expect(retried.reused).toBe(true);
+    expect(readBookSnapshot).toHaveBeenCalledTimes(1);
+    expect(ask).toHaveBeenCalledTimes(1);
+    await executeRecipeJob(job(), { ...input, idempotencyKey: "day-two" }, { store: runs, readBookSnapshot, ask });
+    expect(prompts[1]).toContain("- Book stamp: 5");
+    expect(readBookSnapshot).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops before the worker when the authoritative book is absent, unreadable, malformed or recovering", async () => {
+    const ask = vi.fn(async () => ({ ok: true as const, stdout: "should not run" }));
+    const providers = [
+      undefined,
+      () => { throw new Error("PRIVATE filesystem location and payload"); },
+      () => ({ ...currentBook(), revision: NaN }),
+      () => ({ ...currentBook(), recovery: { active: true, reason: "locked" as const, quarantined: [] } }),
+      (() => ({ ...currentBook(), ledger: undefined })) as unknown as () => DeskSnapshot,
+    ];
+    for (const readBookSnapshot of providers) {
+      const result = await executeRecipeJob(job(), { mode: "prepare", trigger: "manual", idempotencyKey: "no-book" }, { store: store(), ask, readBookSnapshot });
+      expect(result.run.status).toBe("failed");
+      expect(result.run.detail).toMatch(/Desk|book/);
+      expect(result.run.detail).not.toContain("PRIVATE");
+    }
+    expect(ask).not.toHaveBeenCalled();
+  });
+
+  it("does not read the office book for supplied-input-only jobs", async () => {
+    const readBookSnapshot = vi.fn(() => { throw new Error("not permitted"); });
+    const ask = vi.fn(async (_prompt: string) => ({ ok: true as const, stdout: JSON.stringify({ summary: "Compared supplied facts", evidence: [], outputs: ["The difference is AUD 35."], needsApproval: [] }) }));
+    const result = await executeRecipeJob(job({ capabilities: ["analyse", "draft"] }), { mode: "prepare", trigger: "manual", idempotencyKey: "supplied-only" }, { store: store(), readBookSnapshot, ask });
+    expect(result.run.status).toBe("completed");
+    expect(readBookSnapshot).not.toHaveBeenCalled();
+    expect(ask.mock.calls[0]?.[0]).not.toContain("Desk snapshot revision");
+  });
+
+  it("does not start preparation when its captured source stamp cannot be saved", async () => {
+    const runs = store();
+    vi.spyOn(runs, "appendEvidence").mockImplementation(() => { throw new Error("The source receipt could not be saved."); });
+    const ask = vi.fn(async () => ({ ok: true as const, stdout: "must not run" }));
+    const result = await executeRecipeJob(job(), { mode: "prepare", trigger: "schedule", idempotencyKey: "source-save-failed" }, { store: runs, readBookSnapshot: currentBook, ask });
+    expect(result.run).toMatchObject({ status: "failed", detail: "The source receipt could not be saved." });
+    expect(ask).not.toHaveBeenCalled();
+  });
+
+  it("keeps the complete prepared result after settling and reopening the durable store", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "realbud-full-output-"));
+    dirs.push(dir);
+    const file = join(dir, "runs.json");
+    const report = `Maintenance comparison\n\n${"A verified finding. ".repeat(100)}\n\nThe final recommendation is for review.`;
+    const result = await executeRecipeJob(job(), { mode: "prepare", trigger: "manual", idempotencyKey: "full-report" }, {
+      readBookSnapshot: currentBook, store: new JobRunStore({ file }),
+      ask: async () => ({ ok: true, stdout: JSON.stringify({ summary: "Report prepared", evidence: ["Supplied quotes"], outputs: [report], needsApproval: [] }) }),
+    });
+    expect(result.run.status).toBe("completed");
+    const loaded = new JobRunStore({ file }).get(result.run.id);
+    expect(loaded?.evidence.find((item) => item.kind === "output")?.note).toBe(report);
+  });
+
+  it("rejects an oversized store write before changing the run's state", () => {
+    const runs = store();
+    const queued = runs.enqueue(job(), { mode: "prepare", trigger: "manual", idempotencyKey: "oversized" });
+    runs.start(queued.run.id);
+    expect(() => runs.settle(queued.run.id, { status: "completed", detail: "Done", evidence: [{ at: 100, kind: "output", note: "x".repeat(JOB_OUTPUT_MAX_CHARS + 1) }] })).toThrow(/too large/);
+    expect(runs.get(queued.run.id)?.status).toBe("running");
+    expect(runs.settle(queued.run.id, { status: "failed", detail: "Result exceeded its limit" }).status).toBe("failed");
+  });
   it("records a successful prepare run and executes a duplicate key once", async () => {
     const runs = store();
     const ask = vi.fn(async () => ({
@@ -77,11 +190,11 @@ describe("executeRecipeJob", () => {
       stdout: '{"summary":"Owner pack prepared","evidence":["Book revision 4"],"outputs":["draft-owner.md"],"needsApproval":[]}',
     }));
     const input = { mode: "prepare" as const, trigger: "manual" as const, idempotencyKey: "manual-1" };
-    const first = await executeRecipeJob(job(), input, { store: runs, ask });
-    const again = await executeRecipeJob(job(), input, { store: runs, ask });
+    const first = await executeRecipeJob(job(), input, { readBookSnapshot: currentBook, store: runs, ask });
+    const again = await executeRecipeJob(job(), input, { readBookSnapshot: currentBook, store: runs, ask });
 
     expect(first.run).toMatchObject({ status: "completed", detail: "Owner pack prepared" });
-    expect(first.run.evidence.map((item) => item.kind)).toEqual(["observation", "output"]);
+    expect(first.run.evidence.map((item) => item.kind)).toEqual(["observation", "observation", "output"]);
     expect(again.reused).toBe(true);
     expect(again.run.id).toBe(first.run.id);
     expect(ask).toHaveBeenCalledTimes(1);
@@ -97,7 +210,7 @@ describe("executeRecipeJob", () => {
       job(),
       { mode: "prepare", trigger: "schedule", idempotencyKey: "slot-1", scheduledFor: 90 },
       {
-        store: runs,
+        readBookSnapshot: currentBook, store: runs,
         ask: async () => ({
           ok: true,
           stdout:
@@ -114,17 +227,36 @@ describe("executeRecipeJob", () => {
     const failed = await executeRecipeJob(
       job(),
       { mode: "prepare", trigger: "manual", idempotencyKey: "manual-fail" },
-      { store: store(), ask: async () => ({ ok: false, detail: "Bud took too long." }) },
+      { readBookSnapshot: currentBook, store: store(), ask: async () => ({ ok: false, detail: "Bud took too long." }) },
     );
     expect(failed.run).toMatchObject({ status: "failed", detail: "Bud took too long." });
 
     const malformed = await executeRecipeJob(
       job({ id: "job-2" }),
       { mode: "prepare", trigger: "manual", idempotencyKey: "manual-junk" },
-      { store: store(), ask: async () => ({ ok: true, stdout: "I did it" }) },
+      { readBookSnapshot: currentBook, store: store(), ask: async () => ({ ok: true, stdout: "I did it" }) },
     );
     expect(malformed.run.status).toBe("failed");
     expect(malformed.run.detail).toMatch(/usable job receipt/i);
+  });
+
+  it.each([{ outputs: [] }, { outputs: [" ", "\n"] }])("does not call an empty preparation complete: %j", async ({ outputs }) => {
+    const result = await executeRecipeJob(job(), { mode: "prepare", trigger: "manual", idempotencyKey: "empty-output" }, {
+      readBookSnapshot: currentBook, store: store(),
+      ask: async () => ({ ok: true, stdout: JSON.stringify({ summary: "Done", evidence: ["Supplied export"], outputs, needsApproval: [] }) }),
+    });
+    expect(result.run.status).toBe("failed");
+    expect(result.run.detail).toContain("without a usable result");
+    expect(result.run.evidence).toContainEqual(expect.objectContaining({ kind: "observation", note: "Supplied export" }));
+  });
+
+  it("keeps an explicit missing-input request without claiming completed preparation", async () => {
+    const result = await executeRecipeJob(job(), { mode: "prepare", trigger: "manual", idempotencyKey: "missing-input" }, {
+      readBookSnapshot: currentBook, store: store(),
+      ask: async () => ({ ok: true, stdout: JSON.stringify({ summary: "Need the current export", evidence: [], outputs: [], needsApproval: ["Provide this week's export"] }) }),
+    });
+    expect(result.run.status).toBe("awaiting-approval");
+    expect(result.run.approvalRequests).toEqual(["Provide this week's export"]);
   });
 
   it("records the existing shadow-session walkthrough without a second worker call", async () => {
@@ -145,7 +277,7 @@ describe("executeRecipeJob", () => {
     const result = await executeRecipeJob(
       job(),
       { mode: "shadow", trigger: "manual", idempotencyKey: "shadow-1" },
-      { store: runs, shadow },
+      { readBookSnapshot: currentBook, store: runs, shadow },
     );
     expect(result.session?.id).toBe("session-1");
     expect(result.run).toMatchObject({

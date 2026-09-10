@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
-import { LAW_REFERENCE_FILE, LAW_REFERENCE_MARKDOWN } from "./law-reference.ts";
+import { LAW_REFERENCE_FILE, LAW_REFERENCE_MARKDOWN, refreshBundledLawReference } from "./law-reference.ts";
 
 const SAFE_ID = /^[\w-]+$/;
 const hardenedDirs = new Set<string>();
@@ -79,10 +79,14 @@ export function seedVault(book?: string): string {
     );
   }
   keepPrivateFile(readme);
-  // The tenancy reference seeds once; the app's release train owns updates.
+  // Upgrade the known bundled reference atomically; office additions survive.
   const law = join(dir, LAW_REFERENCE_FILE);
   if (!existsSync(law)) {
     writeFileSync(law, LAW_REFERENCE_MARKDOWN, { mode: 0o600 });
+  } else {
+    const existing = readFileSync(law, "utf8");
+    const refreshed = refreshBundledLawReference(existing);
+    if (refreshed !== existing) writeFileAtomic(law, refreshed, 0o600);
   }
   keepPrivateFile(law);
   return dir;

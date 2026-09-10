@@ -126,4 +126,18 @@ describe("TurnWatchdog", () => {
     dog.noteTool("t1", "read: book.csv");
     expect(stalls).toHaveLength(0);
   });
+
+  it("allows repeated portal checks while running beside you", () => {
+    const { dog, stalls } = rig({ maxTools: 20, maxRepeatedTool: 3 });
+    dog.watch("t1", "bot1");
+    for (let i = 0; i < 8; i++) dog.noteTool("t1", "screenshot", { allowRepeat: true });
+    expect(stalls).toHaveLength(0);
+    expect(dog.watching("t1")).toBe(true);
+    dog.noteTool("t1", "screenshot");
+    dog.noteTool("t1", "screenshot");
+    dog.noteTool("t1", "screenshot");
+    expect(stalls).toHaveLength(0);
+    dog.noteTool("t1", "screenshot");
+    expect(stalls[0]?.reason).toBe("repeated-tool");
+  });
 });

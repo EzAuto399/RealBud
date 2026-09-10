@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { writeFileAtomic } from "./atomic.ts";
 
 export interface HandsLast {
+  workerFingerprint?: string;
   at: number;
   ok: boolean;
   detail: string;
@@ -23,7 +24,7 @@ export function readHandsLast(dir: string): HandsLast | null {
     const rec = raw as Record<string, unknown>;
     if (typeof rec.at !== "number" || typeof rec.ok !== "boolean" || typeof rec.detail !== "string") return null;
     if (rec.kind !== "ping" && rec.kind !== "recheck") return null;
-    return { at: rec.at, ok: rec.ok, detail: rec.detail, kind: rec.kind };
+    return { at: rec.at, ok: rec.ok, detail: rec.detail, ...(typeof rec.workerFingerprint === "string" ? { workerFingerprint: rec.workerFingerprint } : {}), kind: rec.kind };
   } catch {
     return null;
   }
@@ -50,7 +51,7 @@ export function readHandsPing(dir: string): HandsLast | null {
     const rec = raw as Record<string, unknown>;
     if (typeof rec.at !== "number" || typeof rec.ok !== "boolean" || typeof rec.detail !== "string") return null;
     if (rec.kind !== "ping") return null;
-    return { at: rec.at, ok: rec.ok, detail: rec.detail, kind: "ping" };
+    return { at: rec.at, ok: rec.ok, detail: rec.detail, ...(typeof rec.workerFingerprint === "string" ? { workerFingerprint: rec.workerFingerprint } : {}), kind: "ping" };
   } catch {
     return null;
   }

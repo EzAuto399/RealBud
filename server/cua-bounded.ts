@@ -62,7 +62,18 @@ export function toolAllowed(_manifest: BoundedManifest, tool: string): boolean {
 export function originAllowed(manifest: BoundedManifest, url: string): boolean {
   try {
     const parsed = new URL(url);
-    return manifest.origins.some((origin) => url.startsWith(origin) || parsed.origin === origin);
+    if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) return false;
+    return manifest.origins.some((origin) => {
+      try {
+        const allowed = new URL(origin);
+        return ["http:", "https:"].includes(allowed.protocol)
+          && !allowed.username
+          && !allowed.password
+          && allowed.origin === parsed.origin;
+      } catch {
+        return false;
+      }
+    });
   } catch {
     return false;
   }

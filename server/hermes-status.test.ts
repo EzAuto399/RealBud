@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -62,10 +62,14 @@ describe("hermesStatus", () => {
       ok: true,
       detail: "Worker answered OK.",
       kind: "ping",
+      workerFingerprint: status.workerFingerprint,
     });
     expect(afterPing.ready).toBe(true);
     expect(afterPing.detail).toMatch(/passed the hands test/i);
 
+    expect(applyHandsReadiness({ ...status, bootstrapPending: true }, {
+      at: 1, ok: true, detail: "previous successful check", kind: "ping", workerFingerprint: status.workerFingerprint,
+    }).ready).toBe(false);
     const afterFail = applyHandsReadiness(status, {
       at: 1,
       ok: false,
@@ -74,6 +78,36 @@ describe("hermesStatus", () => {
     });
     expect(afterFail.ready).toBe(false);
     expect(afterFail.detail).toMatch(/Run the hands test/i);
+    expect(applyHandsReadiness(status, { at: 1, ok: true, detail: "old setup", kind: "ping" }).ready).toBe(false);
+    expect(applyHandsReadiness(status, { at: 1, ok: true, detail: "different worker", kind: "ping", workerFingerprint: "different" }).ready).toBe(false);
+  });
+
+  it("supports an independently updated worker and invalidates proof after profile changes", async () => {
+    const cli = fakeHermesVersion("Hermes Agent v0.21.0 (2026.8.31)");
+    const before = await hermesStatus({ root: home, cli });
+    expect(before.cli).toMatchObject({ compatible: true, matchesPin: false, installed: true });
+    const ping = { at: 1, ok: true, detail: "OK", kind: "ping" as const, workerFingerprint: before.workerFingerprint };
+    expect(applyHandsReadiness(before, ping).ready).toBe(true);
+    const credentials = join(home, "profiles", HERMES_PIN.profile, ".env");
+    try {
+      writeFileSync(credentials, "TEST_CREDENTIAL=changed-fixture\n");
+      const changed = await hermesStatus({ root: home, cli });
+      expect(applyHandsReadiness(changed, ping).ready).toBe(false);
+      expect(JSON.stringify(changed)).not.toContain("changed-fixture");
+    } finally { rmSync(credentials, { force: true }); }
+  });
+
+  it("distinguishes a stalled version probe from a missing install and permits retry", async () => {
+    const cli = join(home, "slow-worker.mjs");
+    writeFileSync(cli, `#!${process.execPath}\nsetTimeout(() => console.log('Hermes Agent v0.21.0 (2026.8.31)'), 5000);\n`);
+    chmodSync(cli, 0o755);
+    const missed = await hermesStatus({ root: home, cli, probeTimeoutMs: 100 });
+    expect(missed.cli).toMatchObject({ installed: true, compatible: false, probeState: "timeout" });
+    expect(missed.detail).toMatch(/retry/i);
+    expect(missed.detail).not.toMatch(/not installed/i);
+    writeFileSync(cli, `#!${process.execPath}\nconsole.log('Hermes Agent v0.21.0 (2026.8.31)');\n`);
+    const retry = await hermesStatus({ root: home, cli, probeTimeoutMs: 5000 });
+    expect(retry.cli).toMatchObject({ compatible: true, probeState: "ok" });
   });
 
   it("flags the pack as missing when SOUL.md is absent", async () => {

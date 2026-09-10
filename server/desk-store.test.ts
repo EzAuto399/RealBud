@@ -131,3 +131,25 @@ describe("DeskStore", () => {
     expect(again.recovery.active).toBe(false);
   });
 });
+
+
+describe("atomic sample replay", () => {
+  it("keeps both projections and disk bytes if preparation or final persistence fails", () => {
+    const { file, key } = tempFile();
+    const store = new DeskStore({ file, book: fixtureBook(), key });
+    const beforeData = structuredClone(store.data), beforeV3 = structuredClone(store.v3);
+    const beforeBytes = readFileSync(file, "utf8");
+    expect(() => store.replaySample(fixtureBook(), 1, () => { store.data.results = []; store.persist(); throw new Error("interrupted preparation"); })).toThrow("interrupted preparation");
+    expect(store.data).toEqual(beforeData); expect(store.v3).toEqual(beforeV3);
+    expect(readFileSync(file, "utf8")).toBe(beforeBytes);
+    const write = DeskStore.atomicWrite;
+    DeskStore.atomicWrite = () => { throw Object.assign(new Error("full"), { code: "ENOSPC" }); };
+    try {
+      expect(() => store.replaySample(fixtureBook(), 2, () => store.persist())).toThrow(STORAGE_FULL_MESSAGE);
+      expect(store.data).toEqual(beforeData); expect(store.v3).toEqual(beforeV3);
+      expect(readFileSync(file, "utf8")).toBe(beforeBytes);
+    } finally { DeskStore.atomicWrite = write; }
+    store.replaySample(fixtureBook(), 3, () => store.persist());
+    expect(store.data.revision).toBe(beforeData.revision + 1);
+  });
+});

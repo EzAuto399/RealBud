@@ -1,5 +1,6 @@
 // Eight visit fields from docs/PILOT-CONTRACT.md. Empty until a named
 // office fills them. Training names do not count as an agency.
+import { parseRentWorkflow, type RentWorkflow } from "./rent-workflow.ts";
 
 export const AU_JURISDICTIONS = ["ACT", "NSW", "NT", "QLD", "SA", "TAS", "VIC", "WA"] as const;
 export const PMS_BRANDS = ["propertyme", "property-tree", "reapit-pm", "other"] as const;
@@ -21,6 +22,7 @@ export interface Office {
   exportIdentity: ExportIdentity | "";
   officeOs: OfficeOs | "";
   vendorTestAccount: string;
+  rentWorkflow?: RentWorkflow;
 }
 
 export const PMS_BRAND_LABELS: Record<PmsBrand, string> = {
@@ -72,10 +74,12 @@ export type OfficeInput = {
   exportIdentity?: string;
   officeOs?: string;
   vendorTestAccount?: string;
+  rentWorkflow?: RentWorkflow;
 };
 
 export function coerceOffice(value: OfficeInput | null | undefined): Office {
   const raw = value ?? emptyOffice();
+  const rentWorkflow = raw.rentWorkflow === undefined ? undefined : parseRentWorkflow(raw.rentWorkflow);
   return {
     pmUser: String(raw.pmUser ?? ""),
     pmsBrand: readClosed(String(raw.pmsBrand ?? ""), PMS_BRANDS),
@@ -84,6 +88,7 @@ export function coerceOffice(value: OfficeInput | null | undefined): Office {
     exportIdentity: readClosed(String(raw.exportIdentity ?? ""), EXPORT_IDENTITY_COLUMNS),
     officeOs: readClosed(String(raw.officeOs ?? ""), OFFICE_OS),
     vendorTestAccount: String(raw.vendorTestAccount ?? ""),
+    ...(rentWorkflow?.ok ? { rentWorkflow: rentWorkflow.value } : {}),
   };
 }
 
@@ -171,6 +176,11 @@ export function parseOfficePatch(input: unknown): { ok: true; value: Partial<Off
   }
   const rec = input as Record<string, unknown>;
   const value: Partial<Office> = {};
+  if ("rentWorkflow" in rec) {
+    const parsed = parseRentWorkflow(rec.rentWorkflow);
+    if (!parsed.ok) return parsed;
+    value.rentWorkflow = parsed.value;
+  }
   if ("pmUser" in rec) {
     const parsed = shortText(rec.pmUser, "pm user");
     if (!parsed.ok) return parsed;

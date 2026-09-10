@@ -77,21 +77,29 @@ export class TurnWatchdog {
     turn.lastEventAt = this.now();
   }
 
-  noteTool(threadId: string, fingerprint?: string): void {
+  noteTool(threadId: string, fingerprint?: string, opts?: { allowRepeat?: boolean }): void {
     const turn = this.turns.get(threadId);
     if (!turn || turn.waitingOnHuman) return;
     turn.toolCount += 1;
     turn.lastEventAt = this.now();
     const normalized = fingerprint?.trim();
     if (normalized) {
-      if (turn.lastToolFingerprint === normalized) turn.repeatedToolCount += 1;
-      else {
+      // Attended portal runs intentionally re-check the same page while the
+      // person signs in. Count the work toward the tool budget; do not treat
+      // that wait loop as a stuck provider, and do not bank repeats that would
+      // instantly trip the limit once the fence ends mid-turn.
+      if (opts?.allowRepeat) {
+        turn.lastToolFingerprint = undefined;
+        turn.repeatedToolCount = 0;
+      } else if (turn.lastToolFingerprint === normalized) {
+        turn.repeatedToolCount += 1;
+        if (this.opts.maxRepeatedTool !== undefined && turn.repeatedToolCount > this.opts.maxRepeatedTool) {
+          this.expire(turn, "repeated-tool");
+          return;
+        }
+      } else {
         turn.lastToolFingerprint = normalized;
         turn.repeatedToolCount = 1;
-      }
-      if (this.opts.maxRepeatedTool !== undefined && turn.repeatedToolCount > this.opts.maxRepeatedTool) {
-        this.expire(turn, "repeated-tool");
-        return;
       }
     } else {
       turn.lastToolFingerprint = undefined;

@@ -3,7 +3,8 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { startCua, stopCua, registerCuaIpc } from "./cua.mjs";
+import { startCua, stopCua, registerCuaIpc, releaseCuaForHuman, verifyCuaAfterHuman, restoreCuaAfterHuman, currentCuaConnection } from "./cua.mjs";
+import { startCuaControl } from "./cua-control.mjs";
 import { finishSpeech, startSpeech, stopSpeech } from "./speech.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { startUpdater, registerUpdaterIpc } from "./updater.mjs";
@@ -86,6 +87,10 @@ function deskKeyForChild() {
     const text = raw.toString("utf8").trim();
     return /^[0-9a-fA-F]{64}$/.test(text) ? text.toLowerCase() : null;
   };
+  // A fresh macOS Keychain can synchronously request authorization on the
+  // first safeStorage write. Package smoke has no user to answer that prompt,
+  // and its disposable data directory does not need a durable wrapped key.
+  if (smokeMode) return { hex: randomBytes(32).toString("hex"), production: false };
   if (safeStorage.isEncryptionAvailable()) {
     try {
       if (fs.existsSync(wrapPath)) {
@@ -120,6 +125,7 @@ async function startServerOn(port) {
       OMB_PORT: String(port),
       OMB_USER_DATA: app.getPath("userData"),
       REALBUD_DATA_DIR: realbudDataDir(),
+      ...(cuaControl?.env ?? {}),
       ...(deskKey.hex ? { REALBUD_DESK_KEY: deskKey.hex } : {}),
       ...(deskKey.production ? { REALBUD_PRODUCTION: "1" } : {}),
     },
@@ -181,6 +187,7 @@ const ERROR_PAGE =
   );
 
 let cuaReady = Promise.resolve({ mode: "unavailable", reason: "not-started" });
+let cuaControl;
 
 function writeSmokeResult(payload) {
   const file = process.env.OMB_SMOKE_RESULT_FILE;
@@ -310,6 +317,20 @@ ipcMain.handle("engine:open-terminal", async (_event, command) => {
   return openBlankTerminal();
 });
 
+// Server-issued connection links arrive after an async broker call, so they
+// cannot rely on a browser popup's user-gesture timing. Keep the bridge
+// narrow: only HTTPS links can leave the app.
+ipcMain.handle("external:open", async (_event, rawUrl) => {
+  try {
+    const url = new URL(String(rawUrl));
+    if (url.protocol !== "https:") return false;
+    await shell.openExternal(url.toString());
+    return true;
+  } catch {
+    return false;
+  }
+});
+
 ipcMain.handle("perm:status", () => ({
   mic:
     process.platform === "darwin"
@@ -361,7 +382,7 @@ ipcMain.handle("desktop:capabilities", async () =>
     platform: process.platform,
     env: process.env,
     packaged: app.isPackaged,
-    localConnection: await cuaReady,
+    localConnection: currentCuaConnection() ?? await cuaReady,
   }),
 );
 
@@ -383,12 +404,13 @@ app.whenReady().then(async () => {
     );
   }
   registerCuaIpc();
+  cuaControl = await startCuaControl({ release: releaseCuaForHuman, verify: verifyCuaAfterHuman, restore: restoreCuaAfterHuman });
   registerUpdaterIpc();
   // Start the CUA daemon before the window so the harness can pick up the
   // connection descriptor on first render. Never blocks window creation on
   // failure — computer use degrades to "unavailable", the rest still works.
   cuaReady =
-    process.platform === "darwin"
+    (process.platform === "darwin" || process.platform === "win32")
       ? startCua().catch((e) => {
           console.error("[cua] start failed:", e);
           return { mode: "unavailable", reason: String(e) };
@@ -422,6 +444,7 @@ app.on("before-quit", (e) => {
   // a live dictation session runs its own helper child that holds the mic —
   // stop it here so quitting never orphans a recording process
   stopSpeech();
+  void cuaControl?.close();
   const cleanup = Promise.race([
     stopCua().catch(() => {}),
     new Promise((resolve) => setTimeout(resolve, CUA_STOP_TIMEOUT_MS).unref()),

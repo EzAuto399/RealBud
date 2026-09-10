@@ -21,7 +21,7 @@ describe("desktop capabilities", () => {
     });
   });
 
-  it.each(["linux", "win32", "freebsd"])("fails closed on %s", (platform) => {
+  it.each(["linux", "freebsd"])("fails closed on %s", (platform) => {
     const capabilities = desktopCapabilities({
       platform,
       env: { DISPLAY: ":0" },
@@ -36,6 +36,15 @@ describe("desktop capabilities", () => {
       support: "unsupported",
       reasonCode: "unsupported-platform",
     });
+  });
+
+  it("requires the Windows helper and leaves macOS-only features unavailable", () => {
+    const unavailable = desktopCapabilities({ platform: "win32", localConnection: { mode: "unavailable" } });
+    expect(unavailable.localComputer.available).toBe(false);
+    const ready = desktopCapabilities({ platform: "win32", localConnection: { mode: "embedded" } });
+    expect(ready.localComputer.available).toBe(true);
+    expect(ready.screenPreview.available).toBe(false);
+    expect(ready.dictation.available).toBe(false);
   });
 
   it("detects Wayland before XWayland and distinguishes X11 and headless Linux", () => {

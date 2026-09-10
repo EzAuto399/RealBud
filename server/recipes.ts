@@ -282,12 +282,24 @@ export function getRecipe(id: string): Recipe | undefined {
   return loadRecipes().find((recipe) => recipe.id === id);
 }
 
+/** Optional for older callers; the plan editor always supplies its read version. */
+export function assertRecipeRevision(current: Recipe | undefined, expectedRevision: unknown): void {
+  if (expectedRevision === undefined) return;
+  if (!Number.isInteger(expectedRevision) || Number(expectedRevision) < 0) {
+    bad("The saved job version is invalid. Reload the job and try again.");
+  }
+  if ((current?.revision ?? 0) !== expectedRevision) {
+    throw Object.assign(new Error("This job changed elsewhere. Reload the saved plan before saving or approving it."), { status: 409 });
+  }
+}
+
 export function saveRecipe(input: unknown): Recipe[] {
   const fields = validateRecipe(input);
   const row = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const id = typeof row.id === "string" && row.id.trim() ? row.id.trim() : randomUUID();
   const recipes = loadRecipes();
   const existing = recipes.find((item) => item.id === id);
+  assertRecipeRevision(existing, row.expectedRevision);
   const now = Date.now();
   const createdAt = existing?.createdAt ??
     (typeof row.createdAt === "number" && Number.isFinite(row.createdAt) ? row.createdAt : now);
@@ -336,19 +348,38 @@ export function saveRecipe(input: unknown): Recipe[] {
 
 export function patchRecipe(
   id: string,
-  patch: { status?: unknown; planApproved?: unknown; attach?: unknown; submitAcknowledged?: unknown },
+  patch: {
+    expectedRevision?: unknown;
+    status?: unknown;
+    planApproved?: unknown;
+    attach?: unknown;
+    submitAcknowledged?: unknown;
+    /** Replace authorised portal hosts (normalised). Clears attachment when changed. */
+    allowedOrigins?: unknown;
+    /** When setting a portal site from Ask, ensure read/prefill capabilities exist. */
+    ensurePortal?: unknown;
+  },
 ): Recipe[] {
   const wantsStatus = patch.status !== undefined && patch.status !== "";
   const wantsApprove = patch.planApproved === true;
   const wantsAttach = patch.attach === true;
   const wantsDetach = patch.attach === false;
   const wantsSubmitAck = patch.submitAcknowledged === true;
-  // Turning Submit asks off is always allowed: it only narrows what Bud may ask.
   const wantsSubmitOff = patch.submitAcknowledged === false;
+  const wantsOrigins = Array.isArray(patch.allowedOrigins);
+  const wantsEnsurePortal = patch.ensurePortal === true;
   if (wantsStatus && !isStatus(patch.status)) {
     throw Object.assign(new Error("Status must be shadow, active, or paused."), { status: 400 });
   }
-  if (!wantsStatus && !wantsApprove && !wantsAttach && !wantsDetach && !wantsSubmitAck && !wantsSubmitOff) {
+  if (
+    !wantsStatus &&
+    !wantsApprove &&
+    !wantsAttach &&
+    !wantsDetach &&
+    !wantsSubmitAck &&
+    !wantsSubmitOff &&
+    !wantsOrigins
+  ) {
     throw Object.assign(new Error("Status must be shadow, active, or paused."), { status: 400 });
   }
   const recipes = loadRecipes();
@@ -356,36 +387,109 @@ export function patchRecipe(
   if (idx < 0) throw Object.assign(new Error("no such recipe"), { status: 404 });
   const current = recipes[idx];
   if (!current) throw Object.assign(new Error("no such recipe"), { status: 404 });
-  if (wantsAttach && (!current.allowedOrigins.length || !recipeHasPortalCapability(current.capabilities))) {
+  assertRecipeRevision(current, patch.expectedRevision);
+
+  let allowedOrigins = current.allowedOrigins;
+  let capabilities = [...current.capabilities];
+  let materialChanged = false;
+
+  if (wantsOrigins) {
+    const nextOrigins: string[] = [];
+    for (const raw of patch.allowedOrigins as unknown[]) {
+      if (typeof raw !== "string") continue;
+      const host = normalizeOrigin(raw);
+      if (!host) {
+        throw Object.assign(new Error("Use a portal hostname like propertyme.com.au — no path or port."), {
+          status: 400,
+        });
+      }
+      if (!nextOrigins.includes(host)) nextOrigins.push(host);
+    }
+    if (nextOrigins.length > MAX_ORIGINS) {
+      throw Object.assign(new Error("Name at most 5 portal sites."), { status: 400 });
+    }
+    if (nextOrigins.length < 1) {
+      throw Object.assign(new Error("Name the portal site this job may open."), { status: 400 });
+    }
+    if (JSON.stringify(current.allowedOrigins) !== JSON.stringify(nextOrigins)) {
+      allowedOrigins = nextOrigins;
+      materialChanged = true;
+    }
+  }
+
+  if (wantsEnsurePortal || (wantsOrigins && !recipeHasPortalCapability(capabilities))) {
+    for (const cap of ["portal-read", "portal-prefill"] as const) {
+      if (!capabilities.includes(cap)) {
+        capabilities.push(cap);
+        materialChanged = true;
+      }
+    }
+  }
+
+  if (wantsAttach && (!allowedOrigins.length || !recipeHasPortalCapability(capabilities))) {
     throw Object.assign(new Error("Add the portal site and a portal capability before attaching it."), {
       status: 409,
     });
   }
-  if (wantsSubmitAck && !current.capabilities.includes("portal-submit")) {
+  if (wantsSubmitAck && !capabilities.includes("portal-submit")) {
     throw Object.assign(new Error("Add 'Bud may press Submit' only on a job with the portal-submit capability."), {
       status: 409,
     });
   }
+
+  const now = Date.now();
   recipes[idx] = {
     ...current,
-    // Approving a plan is the one deliberate action that puts its current
-    // revision on the clock. Callers may still explicitly choose paused.
+    allowedOrigins,
+    capabilities,
     status: wantsStatus && isStatus(patch.status) ? patch.status : wantsApprove ? "active" : current.status,
-    planApprovedAt: wantsApprove
-      ? (current.approvedRevision === current.revision ? (current.planApprovedAt ?? Date.now()) : Date.now())
-      : current.planApprovedAt,
-    approvedRevision: wantsApprove ? current.revision : current.approvedRevision,
+    planApprovedAt: materialChanged
+      ? null
+      : wantsApprove
+        ? (current.approvedRevision === current.revision ? (current.planApprovedAt ?? now) : now)
+        : current.planApprovedAt,
+    approvedRevision: materialChanged ? null : wantsApprove ? current.revision : current.approvedRevision,
+    revision: materialChanged ? current.revision + 1 : current.revision,
+    updatedAt:
+      materialChanged || wantsApprove || wantsAttach || wantsDetach || wantsSubmitAck || wantsSubmitOff || wantsStatus
+        ? now
+        : current.updatedAt,
     attachment: wantsAttach
-      ? (current.attachment ?? { attachedAt: Date.now(), acknowledged: "human-login-and-submit" })
-      : wantsDetach
+      ? ({ attachedAt: now, acknowledged: "human-login-and-submit" } as const)
+      : wantsDetach || materialChanged
         ? null
         : current.attachment,
     submitAcknowledgedAt: wantsSubmitAck
-      ? (current.submitAcknowledgedAt ?? Date.now())
-      : wantsSubmitOff
+      ? (current.submitAcknowledgedAt ?? now)
+      : wantsSubmitOff || materialChanged
         ? null
         : current.submitAcknowledgedAt,
   };
+
+  // Approve after a same-request origin set: stamp the new revision.
+  if (wantsApprove && materialChanged) {
+    const row = recipes[idx]!;
+    recipes[idx] = {
+      ...row,
+      planApprovedAt: now,
+      approvedRevision: row.revision,
+      status: wantsStatus && isStatus(patch.status) ? patch.status : "active",
+    };
+  }
+  // Attach after a same-request origin set (and optional approve).
+  if (wantsAttach) {
+    const row = recipes[idx]!;
+    if (!row.allowedOrigins.length || !recipeHasPortalCapability(row.capabilities)) {
+      throw Object.assign(new Error("Add the portal site and a portal capability before attaching it."), {
+        status: 409,
+      });
+    }
+    recipes[idx] = {
+      ...row,
+      attachment: row.attachment ?? { attachedAt: now, acknowledged: "human-login-and-submit" },
+    };
+  }
+
   persist(recipes);
   return recipes;
 }

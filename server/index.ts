@@ -1,3 +1,5 @@
+import { askControlReply, parseAskControlIntent } from "./ask-control-intent.ts";
+import { createPairingCode } from "./channel-pairing.ts";
 // RealBud server — the harness host. Clients hold no transports
 // (upstream rule): the React app dispatches typed commands over HTTP and
 // folds one SSE event stream; every provider process runs here.
@@ -5,15 +7,18 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, unlinkSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join } from "node:path";
+import { askMessageSizeError } from "../shared/ask-message.ts";
 
 import { approvalKey, autoDecision } from "./auto-approve.ts";
 import { applyLawDrift, lawWatchView, persistLawWatchResult, runLawWatch, setLawWatchScheduled } from "./law-watch.ts";
 import { addPortalRule, addRule, evaluateRules, isPortalRuleSurface, loadRules, parsePortalRuleKey, removeRule } from "./rules.ts";
 import { appendHistory, listHistory } from "./computer-history.ts";
-import { deleteRecipe, fenceCapabilitiesFor, getRecipe, listRecipes, normalizeOrigin, patchRecipe, patchRecipeStatus, recipeClockRunnable, recipeHasPortalCapability, saveRecipe } from "./recipes.ts";
+import { listWorkerIssues, noteWorkerIssue, setWorkerIssueListener } from "./worker-issues.ts";
+import { assertRecipeRevision, deleteRecipe, fenceCapabilitiesFor, getRecipe, listRecipes, normalizeOrigin, patchRecipe, patchRecipeStatus, recipeClockRunnable, recipeHasPortalCapability, saveRecipe } from "./recipes.ts";
 import { distillRecipe } from "./recipe-distill.ts";
 import { shapeRecipeDraft } from "./recipe-draft.ts";
 import { portalJobIntentReply } from "./portal-job-intent.ts";
+import { scheduleIntentReply } from "./schedule-intent.ts";
 import {
   ATTEND_ERRORS,
   attendBlocked,
@@ -32,6 +37,7 @@ import {
 import {
   clickControlLabel,
   fenceDecision,
+  fenceDenialNote,
   fencePayload,
   isComputerTool,
   ruleAllowNote,
@@ -39,9 +45,17 @@ import {
 } from "./portal-fence.ts";
 import { getSession, grantLease, listSessions, revokeLease } from "./portal-sessions.ts";
 import { executeRecipeJob } from "./job-executor.ts";
+import { manualRecipeRequestKey } from "./manual-job-request.ts";
+import { BatchService } from "./batches.ts";
 import { jobRuns, READY_BESIDE_YOU } from "./job-runs.ts";
+import { bankReferenceStore, humanHandoffs } from "./workflow-services.ts";
+import { cuaHumanControl } from "./cua-human-control.ts";
 import * as box from "./box.ts";
 import * as composio from "./composio.ts";
+import { ConnectedAppAccessCache, connectedAppConfigPatch, connectedAppsConfigured, gmailReadOnlyBinding, gmailReadOnlyMode, checkSelectedConnectionAccess } from "./connected-app-access.ts";
+import { authorizeGmailReadOnly, getGmailReadOnlyAccess, isGmailReadOnlyAuthorizationUrl, listGmailReadOnlyAccounts, verifyGmailReadOnlyConfig } from "./composio-gmail.ts";
+import { listConnectedAppOperations } from "./connected-app-operations.ts";
+import { revokeConnectedAppsBrokers } from "./connected-apps-broker.ts";
 import { chiefOfStaffSystemPrompt } from "./chief-of-staff.ts";
 import {
   containerComputerAction,
@@ -69,9 +83,9 @@ import {
 import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { cuaAttendedReady, readCuaConnection } from "./local-computer.ts";
-import { applyPropertyPack } from "./hermes-pack.ts";
+import { applyPropertyPack, hermesHome } from "./hermes-pack.ts";
 import { applyHandsReadiness, hermesStatus } from "./hermes-status.ts";
-import { hermesInstallCommand } from "./hermes-pin.ts";
+import { bootstrapPlan, bootstrapPending } from "./worker-bootstrap.ts";
 import { tryHermesPing } from "./hermes-hands.ts";
 import { ASK_ATTACH_MAX_BYTES, saveAskAttachment } from "./ask-attach.ts";
 import { answerAskFromDesk, productAskFailure, productBudSystemPrompt, productWorkerDump } from "./ask-book.ts";
@@ -82,15 +96,19 @@ import { inspectLedgerColumns } from "./import-inspect.ts";
 import { Desk } from "./desk.ts";
 import { seedVault } from "./vault.ts";
 import { openTerminalAndRun, setupCommandFor } from "./engine-setup.ts";
-import { attachModel, installInFlight, installStatus, listModelOptions, listModels, modelStatus, preflight, PROVIDER_OPTIONS, startInstall, type PreflightResult } from "./hermes-bridge.ts";
-import { startRepair, uninstallWorker } from "./hermes-lifecycle.ts";
+import { attachModel, installInFlight, installStatus, listModelOptions, listModels, modelStatus, PROVIDER_OPTIONS, startBootstrapInstall, cancelBootstrapInstall, waitForBootstrapStop } from "./hermes-bridge.ts";
+import { cancelOAuth, oauthStatus, startOAuth } from "./hermes-oauth.ts";
+import { workerLoginMethods, WORKER_OAUTH_LOGINS } from "../shared/worker-providers.ts";
+import { repairExistingProfile, uninstallWorker } from "./hermes-lifecycle.ts";
 import { installCrashHandlers, oplog } from "./oplog.ts";
 import { CANONICAL_BUD_ID, CANONICAL_BUD_NAME, PRODUCT_MODE, PRODUCT_TURN_DEFAULTS, isCanonicalBud, productDenied, productRuntimeEventVisible } from "./product-mode.ts";
 import { coverageFromUncoveredHeld, LoopManager, type LoopId } from "./routines.ts";
 import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
 import { evaluatorForLoop } from "./workflow-catalog.ts";
 import { containsCredential } from "./redact.ts";
+import { officeAppsForTurn, officeSourceTurnContext } from "./office-source-turn.ts";
 import { parseConnectionIntent } from "./connection-intent.ts";
+import { formatConnectedAppsReply, parseConnectedStatusIntent } from "./connected-status-intent.ts";
 import { parseRequestDecision } from "./request-decision.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import { TurnWatchdog, type TurnExpiryReason } from "./turn-watchdog.ts";
@@ -102,6 +120,7 @@ import {
   disconnectDiscord,
   discordAdapter,
   discordDecisionAdapter,
+  flushDiscordRelayForThread,
   startDiscordBridge,
   stopDiscordBridge,
 } from "./channels/discord.ts";
@@ -109,6 +128,7 @@ import {
   bindSlackBridge,
   connectSlack,
   disconnectSlack,
+  flushSlackRelayForThread,
   slackAdapter,
   slackDecisionAdapter,
   startSlackBridge,
@@ -118,6 +138,7 @@ import {
   bindTelegramBridge,
   connectTelegram,
   disconnectTelegram,
+  flushTelegramRelayForThread,
   startTelegramBridge,
   stopTelegramBridge,
   telegramAdapter,
@@ -145,7 +166,6 @@ const MIME: Record<string, string> = {
   ".woff2": "font/woff2",
 };
 const CSV_IMPORT_MAX_BYTES = 750_000;
-const ASK_MESSAGE_MAX_CHARS = 50_000;
 
 function csvDigest(csv: string): string {
   return createHash("sha256").update(csv, "utf8").digest("hex");
@@ -302,30 +322,61 @@ function lastAssistantText(threadId: string): string {
   return texts.at(-1)?.text ?? "";
 }
 
+function signInHandoffs() {
+  return humanHandoffs({
+    release: async (threadId) => {
+      const owner = store.botByThread(threadId);
+      const instance = owner ? registry.get(owner.modelSelection.instanceId) : null;
+      if (instance?.adapter.hasSession(threadId)) {
+        expectedStoppedThreads.add(threadId);
+        await denyPendingRequests(threadId, instance);
+        await instance.adapter.interruptTurn(threadId);
+        await waitUntilTurnStopped(instance, threadId);
+      }
+      watchdog.settle(threadId);
+      if (owner) { store.patchBot(owner.id, { busy: false }); broadcast({ kind: "bot", bot: store.bot(owner.id) }); }
+      await cuaHumanControl("release");
+    },
+    verify: async (binding, requestId) => (await cuaHumanControl("verify", binding, requestId)).verified === true,
+    restore: async () => { await cuaHumanControl("restore"); },
+  });
+}
+
+async function pauseAttendedForLogin(threadId: string, reason: "login" | "mfa") {
+  const context = fenceContextFor(threadId);
+  const run = context ? jobRuns.get(context.runId) : undefined;
+  if (!run || run.status !== "running") throw Object.assign(new Error("No attended job is running at this checkpoint."), { status: 409 });
+  // Preserve the interruption before cancelling the model. Its eventual
+  // completion cannot turn this human checkpoint into a successful run.
+  jobRuns.settle(run.id, { status: "interrupted", detail: "Sign-in handover requested. Earlier actions will not be replayed automatically.", evidence: [{ at: Date.now(), kind: "note", note: "Human sign-in checkpoint saved; no credentials retained." }] });
+  takeFenceContext(threadId);
+  return signInHandoffs().open({ runId: run.id, threadId, jobRevision: run.jobRevision, reason });
+}
+
 function settleAttendedTurn(
   threadId: string,
   input: { ok: boolean; stopReason?: string | null; detail?: string },
 ) {
   const ctx = takeFenceContext(threadId);
   if (!ctx) return;
-  const run = jobRuns.get(ctx.runId);
-  if (!run || run.status !== "running") return;
-  const text = input.detail ?? lastAssistantText(threadId);
-  const status = attendedSettleStatus({
-    ok: input.ok,
-    stopReason: input.stopReason,
-    text,
-    allowedOrigins: ctx.allowedOrigins,
-  });
   try {
+    const run = jobRuns.get(ctx.runId);
+    if (!run || run.status !== "running") return;
+    const text = input.detail ?? lastAssistantText(threadId);
+    const status = attendedSettleStatus({
+      ok: input.ok,
+      stopReason: input.stopReason,
+      text,
+      allowedOrigins: ctx.allowedOrigins,
+    });
     jobRuns.settle(ctx.runId, {
       status,
       detail: text || (input.ok ? "Turn ended." : "The turn did not finish."),
       evidence: [{ at: Date.now(), kind: "note", note: turnEndedNote(input.ok, input.stopReason) }],
       approvalRequests: submitHoldLine(text),
     });
-  } catch {
-    /* already settled */
+  } catch (error) {
+    reportJobHistoryFailure(error);
   }
 }
 
@@ -334,8 +385,27 @@ function recordFenceEvidence(threadId: string, item: ReturnType<typeof fenceEvid
   if (!ctx) return;
   try {
     jobRuns.appendEvidence(ctx.runId, [item]);
+  } catch (error) {
+    reportJobHistoryFailure(error);
+  }
+}
+
+function reportJobHistoryFailure(error: unknown): void {
+  // A finished run can race a final evidence event. Storage failures need a
+  // visible recovery message, but must never escape the driver's callback.
+  if ((error as { status?: number } | null)?.status !== 503) return;
+  const issue = {
+    source: "runtime" as const,
+    summary: "Job history needs attention",
+    detail: "RealBud could not safely read or save the job receipt. More job runs are paused. Check disk space and history recovery before restarting.",
+  };
+  try {
+    publishWorkerIssue(issue);
   } catch {
-    /* run already settled */
+    // A full disk may also prevent saving the diagnostic. The open app must
+    // still show the failure; this event does not claim a durable receipt.
+    console.warn("[job-history] Receipt storage needs recovery; the diagnostic could not be saved.");
+    broadcast({ kind: "worker.issue", issue: { ...issue, id: "job-history-recovery", at: Date.now() } });
   }
 }
 
@@ -350,12 +420,28 @@ function broadcast(payload: unknown) {
   }
 }
 
+function publishWorkerIssue(input: Parameters<typeof noteWorkerIssue>[0]): void {
+  noteWorkerIssue(input);
+}
+
 function positiveEnvInt(name: string, fallback: number): number {
   const value = Number(process.env[name]);
   return Number.isInteger(value) && value > 0 ? value : fallback;
 }
 
-function productTurnStopMessage(reason: TurnExpiryReason): string {
+function productTurnStopMessage(
+  reason: TurnExpiryReason,
+  opts?: { besideYou?: boolean },
+): string {
+  if (opts?.besideYou) {
+    if (reason === "repeated-tool" || reason === "tool-budget") {
+      return "I paused this run beside you. Sign in if the page is waiting, then press **Run beside me** again — Submit, Pay and Send stay with you.";
+    }
+    if (reason === "deadline") {
+      return "I paused because this run beside you was taking too long. Press **Run beside me** again when you are at the screen.";
+    }
+    return "I paused this run beside you. Press **Run beside me** again when you are ready.";
+  }
   if (reason === "repeated-tool") {
     return "I stopped after the same step repeated without progress. Nothing else will run until you ask again.";
   }
@@ -371,6 +457,17 @@ function productTurnStopMessage(reason: TurnExpiryReason): string {
 const expectedStoppedThreads = new Set<string>();
 const steeringBots = new Set<string>();
 const connectionOperations = new Map<string, string>();
+const connectedAppAccess = new ConnectedAppAccessCache();
+async function refreshOfficeSources() {
+  const access = await connectedAppAccess.refresh(cfg);
+  broadcast({ kind: "office-sources", access });
+  return access;
+}
+async function officeSourcesChanged() {
+  broadcast({ kind: "office-sources-changed" });
+  await refreshOfficeSources().catch(() => { /* a newer settings generation owns refresh */ });
+}
+let savingConnectedApps = false;
 
 const watchdog = new TurnWatchdog({
   stallMs: Number(process.env.OMB_TURN_STALL_MS) || 20 * 60_000,
@@ -383,12 +480,17 @@ const watchdog = new TurnWatchdog({
   onStall: (turn, reason) => {
     const bot = store.bot(turn.botId);
     const instance = bot ? registry.get(bot.modelSelection.instanceId) : null;
+    const besideYou = Boolean(fenceContextFor(turn.threadId));
     if (PRODUCT_MODE) expectedStoppedThreads.add(turn.threadId);
     void instance?.adapter.interruptTurn(turn.threadId).catch(() => {});
     if (!bot) return;
     store.patchBot(bot.id, { busy: false });
     const message = PRODUCT_MODE
-      ? store.appendMessage(turn.threadId, { role: "bot", kind: "text", text: productTurnStopMessage(reason) })
+      ? store.appendMessage(turn.threadId, {
+          role: "bot",
+          kind: "text",
+          text: productTurnStopMessage(reason, { besideYou }),
+        })
       : store.appendMessage(turn.threadId, {
           role: "bot",
           kind: "activity",
@@ -436,6 +538,11 @@ async function denyPendingRequests(threadId: string, instance: ProviderInstance 
 const groupSpeakers = new Map<string, { botId: string; name: string; color: string }>();
 let loops: LoopManager | null = null;
 const desk = new Desk();
+const batches = new BatchService({
+  snapshot: () => desk.snapshot(),
+  notes: id => desk.notesFor(id).body,
+  available: async () => applyHandsReadiness(await hermesStatus(), readHandsPing(DATA_DIR)).ready,
+});
 try {
   writeDeskContext(desk.snapshot());
 } catch {
@@ -449,6 +556,7 @@ let localVmLifecycleBusy = false;
 
 function attachFenceToOpened(event: RuntimeEvent): RuntimeEvent {
   if (event.type !== "request.opened" || event.requestType !== "permission") return event;
+  if (event.tool === "bud_connected_app_action") return event;
   if (!isComputerTool(event.tool, event.summary)) return event;
   const fence = fenceContextFor(event.threadId);
   if (!fence) return event;
@@ -514,8 +622,13 @@ bus.subscribe((raw: RuntimeEvent) => {
         // drop the resume cursor so the next turn gets a fresh session.
         const dump = PRODUCT_MODE ? productWorkerDump(event.text) : null;
         pushMessage({ role: "bot", kind: "text", text: dump ?? event.text });
-        if (dump && bot) {
+        if (dump && bot && isProductBud(bot.id)) {
           store.clearResumeCursor(bot.id, event.providerInstanceId ?? bot.modelSelection.instanceId, event.threadId);
+          publishWorkerIssue({
+            source: "ask",
+            summary: "Bud could not answer",
+            detail: dump,
+          });
         }
       } else if (event.itemType === "tool" && event.itemId) {
         const itemKey = `${event.threadId}:${event.itemId}`;
@@ -558,7 +671,9 @@ bus.subscribe((raw: RuntimeEvent) => {
       break;
     case "item.started":
       if (event.itemType === "tool") {
-        watchdog.noteTool(event.threadId, event.title);
+        watchdog.noteTool(event.threadId, event.toolFingerprint ?? event.title, {
+          allowRepeat: fenceContextFor(event.threadId) != null,
+        });
         if (event.itemId) toolNameByItem.set(`${event.threadId}:${event.itemId}`, event.title ?? "tool");
         // Raw provider tool names are implementation noise in the single-Bud
         // product. Permission cards remain visible and authoritative.
@@ -585,15 +700,32 @@ bus.subscribe((raw: RuntimeEvent) => {
       // whole point of asking is that a person decides — and anything that
       // looks destructive stops even in auto mode.
       const asker = bot ?? (speaker ? store.bot(speaker.botId) : undefined);
-      if (permission && asker && event.requestId && isComputerTool(event.tool, event.summary)) {
+      if (permission && asker && event.requestId && event.tool !== "bud_connected_app_action" && isComputerTool(event.tool, event.summary)) {
         const fence = fenceContextFor(event.threadId);
         const request = { tool: event.tool, params: event.params, summary: event.summary };
         const instance = event.providerInstanceId
           ? registry.get(event.providerInstanceId)
           : registry.get(asker.modelSelection.instanceId);
         const requestId = event.requestId;
+        if (fence && /password|passcode|\botp\b|one.time|verification code|\bmfa\b|\b2fa\b/i.test(`${event.summary ?? ""} ${JSON.stringify(event.params ?? {})}`)) {
+          recordFenceEvidence(event.threadId, { at: Date.now(), kind: "denied", note: "You sign in yourself — Bud never types a password. Human sign-in handover requested." });
+          void (async () => {
+            try {
+              const paused = pauseAttendedForLogin(event.threadId, /mfa|2fa|otp|verification|one.time/i.test(event.summary ?? "") ? "mfa" : "login");
+              await instance?.adapter.respondToRequest(event.threadId, requestId, { behavior: "deny", message: "Human sign-in is required. Do not read or type credentials." }).catch(() => {});
+              await paused;
+            } catch (error) {
+              await cuaHumanControl("release").catch(() => {});
+              reportJobHistoryFailure(error);
+              publishWorkerIssue({ source: "runtime", summary: "Sign-in handover needs attention", detail: "The saved sign-in checkpoint could not be confirmed. Close RealBud before entering credentials, then check saved work with your setup person." });
+            }
+          })();
+          break;
+        }
         if (!fence) {
           const reason = "Only sites named in a saved job. Ask Bud to set the routine up as a job first.";
+          const toolId = event.tool || "computer";
+          const spoken = fenceDenialNote(toolId, reason);
           void (async () => {
             try {
               if (!instance) throw new Error("provider unavailable");
@@ -601,9 +733,17 @@ bus.subscribe((raw: RuntimeEvent) => {
                 behavior: "deny",
                 message: reason,
               });
-              pushMessage({ role: "bot", kind: "activity", tool: { name: reason, ok: false } });
+              pushMessage({
+                role: "bot",
+                kind: "activity",
+                tool: { name: toolId, ok: false, spoken },
+              });
             } catch {
-              pushMessage({ role: "bot", kind: "activity", tool: { name: reason, ok: false } });
+              pushMessage({
+                role: "bot",
+                kind: "activity",
+                tool: { name: toolId, ok: false, spoken },
+              });
             }
           })();
           break;
@@ -618,6 +758,9 @@ bus.subscribe((raw: RuntimeEvent) => {
         );
         if (decision.kind === "deny" || decision.kind === "allow") {
           const reason = decision.kind === "deny" ? (decision.reason ?? "Denied.") : allowNote!;
+          const toolId = event.tool || "computer";
+          const spoken =
+            decision.kind === "deny" ? fenceDenialNote(toolId, reason) : allowNote!;
           void (async () => {
             try {
               if (!instance) throw new Error("provider unavailable");
@@ -629,7 +772,7 @@ bus.subscribe((raw: RuntimeEvent) => {
               pushMessage({
                 role: "bot",
                 kind: "activity",
-                tool: { name: reason, ok: decision.kind === "allow" },
+                tool: { name: toolId, ok: decision.kind === "allow", spoken },
               });
             } catch {
               const card = pushMessage({
@@ -655,7 +798,7 @@ bus.subscribe((raw: RuntimeEvent) => {
       // Product mode uses standing rules (guards still win).
       let settled: string | null = null;
       let ruleDeny = false;
-      if (permission && asker && event.requestId) {
+      if (permission && asker && event.requestId && event.tool !== "bud_connected_app_action") {
         if (!PRODUCT_MODE) {
           settled = autoDecision(asker, event.tool, event.summary);
         } else {
@@ -767,6 +910,13 @@ bus.subscribe((raw: RuntimeEvent) => {
     }
     case "runtime.error":
       if (PRODUCT_MODE && expectedStoppedThreads.has(event.threadId)) break;
+      if (bot && isProductBud(bot.id)) {
+        publishWorkerIssue({
+          source: "runtime",
+          summary: "Bud hit a worker error",
+          detail: productAskFailure(event.message),
+        });
+      }
       pushMessage({
         role: "bot",
         kind: "activity",
@@ -774,7 +924,9 @@ bus.subscribe((raw: RuntimeEvent) => {
       });
       break;
     case "turn.completed": {
-      settleAttendedTurn(event.threadId, { ok: Boolean(event.ok), stopReason: event.stopReason });
+      settleAttendedTurn(event.threadId, intentionallyStopped
+        ? { ok: false, stopReason: "cancelled", detail: "Stopped by you. Check the last result before running again." }
+        : { ok: Boolean(event.ok), stopReason: event.stopReason });
       if (bot && isProductBud(bot.id)) {
         const turnKey = event.turnId ? `${event.threadId}:${event.turnId}` : "";
         const started = turnKey ? turnStartedAt.get(turnKey) : undefined;
@@ -797,6 +949,13 @@ bus.subscribe((raw: RuntimeEvent) => {
         } catch {
           /* history must not take the desk down */
         }
+        if (!event.ok) {
+          publishWorkerIssue({
+            source: "ask",
+            summary: "Bud's turn did not finish",
+            detail: productAskFailure(event.stopReason ?? "Bud's turn stopped before it finished."),
+          });
+        }
       }
       if (activeVmThreadId === event.threadId) activeVmThreadId = null;
       if (PRODUCT_MODE && expectedStoppedThreads.delete(event.threadId)) {
@@ -806,6 +965,11 @@ bus.subscribe((raw: RuntimeEvent) => {
       if (bot) {
         const queued = store.takeQueuedMessage(bot.id, event.threadId);
         store.patchBot(bot.id, { busy: false, unread: true });
+        // Phone Ask relays also subscribe on the bus; flush here so a lost
+        // channel subscription still pushes the reply back to the paired chat.
+        flushTelegramRelayForThread(event.threadId);
+        flushDiscordRelayForThread(event.threadId);
+        flushSlackRelayForThread(event.threadId);
         if (queued) {
           // Starting the next instruction matters more than capturing an
           // intermediate screenshot. A final capture would contend with the
@@ -928,13 +1092,16 @@ async function startTurn(
     systemExtra?: string;
     /** Mount the host computer MCP for this turn. */
     computer?: boolean;
+    /** Phone channel Ask — full Hermes Bud, not Desk FAQ shortcuts. */
+    channelRelay?: boolean;
   },
 ) {
   const bot = store.bot(botId);
   if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
+  if (opts?.computer && signInHandoffs().isHolding()) throw Object.assign(new Error("Finish or stop the saved sign-in handover before starting more computer work."), { status: 409 });
   if (PRODUCT_MODE && containsCredential(text)) {
     throw Object.assign(
-      new Error("Provider keys go on You → Attach model. Ask never sees the secret."),
+      new Error("Use the private key field in Set up Bud. Keep keys out of the conversation."),
       { status: 400 },
     );
   }
@@ -975,9 +1142,62 @@ async function startTurn(
     } catch {
       /* no intercept — continue to the model turn */
     }
+    const control = parseAskControlIntent(text);
+    const scheduleReply = control ? askControlReply(control, loops?.listLoops() ?? []) : scheduleIntentReply(text);
+    if (scheduleReply) {
+      let userMessage = opts?.userMessage;
+      if (!userMessage) {
+        userMessage = store.appendMessage(threadId, { role: "user", kind: "text", text });
+        broadcast({ kind: "message", threadId, message: userMessage });
+      }
+      const reply = store.appendMessage(threadId, { role: "bot", kind: "text", text: scheduleReply });
+      broadcast({ kind: "message", threadId, message: reply });
+      return;
+    }
+    if (parseConnectedStatusIntent(text)) {
+      let userMessage = opts?.userMessage;
+      if (!userMessage) {
+        userMessage = store.appendMessage(threadId, { role: "user", kind: "text", text });
+        broadcast({ kind: "message", threadId, message: userMessage });
+      }
+      const operationId = newId();
+      connectionOperations.set(bot.id, operationId);
+      store.patchBot(bot.id, { busy: true, unread: false });
+      broadcast({ kind: "bot", bot: store.bot(bot.id) });
+      void (async () => {
+        try {
+          const access = await refreshOfficeSources();
+          if (connectionOperations.get(bot.id) !== operationId) return;
+          const reply = store.appendMessage(threadId, {
+            role: "bot",
+            kind: "text",
+            text: formatConnectedAppsReply(access),
+          });
+          broadcast({ kind: "message", threadId, message: reply });
+        } catch (error) {
+          if (connectionOperations.get(bot.id) !== operationId) return;
+          const reply = store.appendMessage(threadId, {
+            role: "bot",
+            kind: "text",
+            text: productAskFailure(error instanceof Error ? error.message : String(error)),
+          });
+          broadcast({ kind: "message", threadId, message: reply });
+        } finally {
+          if (connectionOperations.get(bot.id) !== operationId) return;
+          connectionOperations.delete(bot.id);
+          const queued = store.takeQueuedMessage(bot.id, threadId);
+          store.patchBot(bot.id, { busy: false, unread: true });
+          if (queued) void dispatchQueuedMessage(bot.id, queued);
+          else broadcast({ kind: "bot", bot: store.bot(bot.id) });
+        }
+      })();
+      return;
+    }
   }
 
-  const connectionIntent = PRODUCT_MODE && isProductBud(bot.id) ? parseConnectionIntent(text) : null;
+  const checkConnection = /^\s*check\s+(.+?)\s+connection[.!]?\s*$/i.exec(text);
+  const connectionIntent = PRODUCT_MODE && isProductBud(bot.id)
+    ? parseConnectionIntent(checkConnection ? `connect ${checkConnection[1]}` : text) : null;
   if (connectionIntent) {
     let userMessage = opts?.userMessage;
     if (!userMessage) {
@@ -989,17 +1209,52 @@ async function startTurn(
     connectionOperations.set(bot.id, connectionOperationId);
     broadcast({ kind: "bot", bot: store.bot(bot.id) });
     void (async () => {
+      let openingSignIn = false;
       try {
-        if (!cfg.composio?.key) {
+        if (!connectedAppsConfigured(cfg)) {
           const message = store.appendMessage(threadId, {
             role: "bot",
             kind: "text",
-            text: `Connected apps needs its private broker key once. Open You → Connected apps, save it there, then say “connect ${connectionIntent.label}” again. Never paste the key into Ask.`,
+            text: gmailReadOnlyMode(cfg)
+              ? "Gmail read-only setup still needs its private fields. Tap **Add** here to finish setup, then ask **Connect Gmail**."
+              : `Connected apps needs its private connection key once. Press **Save Connected apps key** here, then **Connect ${connectionIntent.label}**. Never paste the key into Ask.`,
           });
           broadcast({ kind: "message", threadId, message });
           return;
         }
-        const authorized = await composio.authorizeService(cfg, connectionIntent.slug);
+        if (gmailReadOnlyMode(cfg) && connectionIntent.slug !== "gmail") throw new Error("This connection supports Gmail only. Choose another connection in Add. No new sign-in was started.");
+        // Prefer an honest "already connected" over minting another OAuth window.
+          if (!composio.CURATED_SLUGS.includes(connectionIntent.slug) && !cfg.composio?.officeApps?.includes(connectionIntent.slug)) {
+            if (savingConnectedApps || creatingGmailLink) throw new Error("App setup is still finishing. Try again shortly.");
+            const officeApps = [...(cfg.composio?.officeApps ?? []), connectionIntent.slug];
+            if (officeApps.length > 74) throw new Error("The office app list is full. Remove an unused connection first.");
+            saveConfig({ composio: { officeApps } });
+            Object.assign(cfg, loadConfig());
+            connectedAppAccess.invalidate();
+          }
+          const checked = await refreshOfficeSources();
+          if (checked.error) throw new Error("The connection could not be checked. Try again in Add.");
+          const status = checked.services;
+          if (connectionOperations.get(bot.id) !== connectionOperationId) return;
+          if (status[connectionIntent.slug]?.connected || checkConnection) {
+            const access = checked;
+            const connected = Boolean(status[connectionIntent.slug]?.connected);
+            const account = status[connectionIntent.slug]?.accounts.find((row) => /^active$/i.test(row.status));
+            const tools = access.excludedApps?.includes(connectionIntent.slug) ? "It is off in Ask. Use Add to enable it." : officeAppsForTurn(access).includes(connectionIntent.slug)
+              ? `${access.tools.names.length} tools ready.`
+              : "Choose an account or check access in Add before starting work.";
+            const message = store.appendMessage(threadId, {
+              role: "bot",
+              kind: "text",
+              text: connected
+                ? `${connectionIntent.label} is already connected${account?.label ? ` (${account.label})` : ""}. ${tools}`
+                : `${connectionIntent.label} is not connected yet. Finish any open provider sign-in in the browser — I’ll refresh when you’re back. To start a new sign-in, ask **Connect ${connectionIntent.label}**.`,
+            });
+            broadcast({ kind: "message", threadId, message });
+            return;
+          }
+        openingSignIn = true;
+        const authorized = await authorizeSelectedConnection(connectionIntent.slug);
         if (connectionOperations.get(bot.id) !== connectionOperationId) return;
         const authorizationUrl = new URL(String(authorized.url));
         if (authorizationUrl.protocol !== "https:") throw new Error("the connection broker returned an unsafe link");
@@ -1007,7 +1262,7 @@ async function startTurn(
         const message = store.appendMessage(threadId, {
           role: "bot",
           kind: "text",
-          text: `I opened ${connectionIntent.label} sign-in. Finish the provider's own sign-in in your browser. If it did not open, [continue connecting ${connectionIntent.label}](${authorizationUrl.toString()}).`,
+          text: `I opened ${connectionIntent.label} sign-in. Finish it in your browser — when you come back I’ll refresh the connection and tools automatically. If the window didn’t open, [continue connecting ${connectionIntent.label}](${authorizationUrl.toString()}).`,
         });
         broadcast({ kind: "message", threadId, message });
         broadcast({
@@ -1015,14 +1270,20 @@ async function startTurn(
           requestId,
           service: connectionIntent.slug,
           url: authorizationUrl.toString(),
+          autoRefresh: true,
         });
       } catch (error) {
         if (connectionOperations.get(bot.id) !== connectionOperationId) return;
         const raw = error instanceof Error ? error.message : String(error);
+        // Only this server's fixed recovery messages bypass the general worker
+        // formatter. Provider payloads and credentials never become UI copy.
+        const recovery = (error as { code?: unknown })?.code === "GMAIL_CONNECTION_RECOVERY";
         const message = store.appendMessage(threadId, {
           role: "bot",
           kind: "text",
-          text: `I couldn't open ${connectionIntent.label} sign-in. ${productAskFailure(raw)}`,
+          text: recovery ? raw : openingSignIn
+            ? `I couldn't confirm ${connectionIntent.label} sign-in. Finish any sign-in window already open, then open **Add** to check the result.`
+            : `I couldn't verify ${connectionIntent.label} connection. No new sign-in was started. Open **Add** to try again.`,
         });
         broadcast({ kind: "message", threadId, message });
       } finally {
@@ -1038,7 +1299,12 @@ async function startTurn(
     return;
   }
 
-  const bookReply = PRODUCT_MODE && isProductBud(bot.id) ? answerAskFromDesk(text, desk.snapshot()) : null;
+  // Desktop Ask can answer a few Desk facts without the worker. Phone is the
+  // same Bud/Hermes agent as Ask — never short-circuit those turns to FAQ.
+  const bookReply =
+    PRODUCT_MODE && isProductBud(bot.id) && !opts?.channelRelay && !opts?.systemExtra
+      ? answerAskFromDesk(text, desk.snapshot())
+      : null;
   if (bookReply) {
     let userMessage = opts?.userMessage;
     if (!userMessage) {
@@ -1114,7 +1380,14 @@ async function startTurn(
   void (async () => {
     try {
       const integrations: NonNullable<Parameters<typeof instance.adapter.sendTurn>[0]["integrations"]> = {};
-      if (cfg.composio?.key) integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
+      const access = PRODUCT_MODE && !opts?.systemExtra ? await refreshOfficeSources() : null;
+      if (PRODUCT_MODE && expectedStoppedThreads.has(threadId)) throw new Error("This request was stopped before app access finished checking.");
+      const allowedApps = officeAppsForTurn(access, Boolean(opts?.systemExtra));
+      const gmailBinding = gmailReadOnlyMode(cfg) ? gmailReadOnlyBinding(cfg) : null;
+      if (gmailBinding?.accountId && (!PRODUCT_MODE || allowedApps.includes("gmail"))) integrations.composio = { ...(PRODUCT_MODE ? { allowedApps } : {}), key: gmailBinding.apiKey, gmailReadOnly: {
+        authConfigId: gmailBinding.authConfigId, userId: gmailBinding.userId, accountId: gmailBinding.accountId, requestId: newId(),
+      } };
+      else if (!gmailReadOnlyMode(cfg) && cfg.composio?.key && (!PRODUCT_MODE || allowedApps.length)) integrations.composio = { ...(PRODUCT_MODE ? { allowedApps } : {}), key: cfg.composio.key, url: cfg.composio.url };
       if (PRODUCT_MODE) {
         await instance.adapter.sendTurn({
           threadId,
@@ -1122,9 +1395,12 @@ async function startTurn(
           model,
           resumeCursor: rewound ? undefined : task.resumeCursors[instanceId],
           transcript,
-          system: [productBudSystemPrompt(), opts?.systemExtra].filter(Boolean).join("\n\n"),
+          system: [productBudSystemPrompt(), officeSourceTurnContext(allowedApps),
+            allowedApps.length ? `Selected office account IDs: ${JSON.stringify(Object.fromEntries(allowedApps.map(slug => [slug, cfg.composio?.selectedAccounts?.[slug] ?? access?.services[slug]?.accounts.find(account => /^active$/i.test(account.status))?.id])))}. Use only these accounts. If the tool cannot target an account unambiguously, ask before proceeding.` : undefined,
+            gmailReadOnlyMode(cfg) && allowedApps.includes("gmail") ? "This connection provides only GMAIL_GET_PROFILE, GMAIL_LIST_THREADS and GMAIL_FETCH_MESSAGE_BY_THREAD_ID. Use only the account and thread IDs allowed by the server. No alternate mail or computer route is allowed." : undefined,
+            opts?.systemExtra].filter(Boolean).join("\n\n"),
           integrations,
-          ...(readCuaConnection() || opts?.computer ? { computer: true } : {}),
+          ...(!signInHandoffs().isHolding() && (readCuaConnection() || opts?.computer) ? { computer: true } : {}),
         });
         if (rewound) store.patchBot(bot.id, { rewound: false, resumeCursors: {} });
         return;
@@ -1275,6 +1551,13 @@ async function startTurn(
       }
       const raw = e instanceof Error ? e.message : String(e);
       const message = PRODUCT_MODE ? productAskFailure(raw) : raw;
+      if (PRODUCT_MODE && isProductBud(bot.id)) {
+        publishWorkerIssue({
+          source: "ask",
+          summary: "Bud could not answer",
+          detail: message,
+        });
+      }
       const failure = store.appendMessage(threadId, {
         role: "bot",
         kind: PRODUCT_MODE ? "text" : "activity",
@@ -1363,8 +1646,6 @@ function runDeskCheck(origin?: Parameters<Desk["withRoutineOrigin"]>[0]) {
   });
 }
 
-let installPreflight: PreflightResult | null = null;
-
 function emitLoopAndPulse(payload: unknown) {
   broadcast(payload);
   if (process.env.VITEST) return;
@@ -1382,16 +1663,12 @@ loops = new LoopManager({
   emit: emitLoopAndPulse,
   listRecipes,
   setRecipeEnabled: (recipeId, enabled) => {
-    try {
-      const current = getRecipe(recipeId);
-      if (!current) return;
-      if (!enabled) patchRecipeStatus(recipeId, "paused");
-      else if (current.status === "paused") {
-        const approved = current.planApprovedAt != null && current.approvedRevision === current.revision;
-        patchRecipeStatus(recipeId, approved ? "active" : "shadow");
-      }
-    } catch {
-      /* job already gone — the clock drop is enough */
+    const current = getRecipe(recipeId);
+    if (!current) return;
+    if (!enabled) patchRecipeStatus(recipeId, "paused");
+    else if (current.status === "paused") {
+      const approved = current.planApprovedAt != null && current.approvedRevision === current.revision;
+      patchRecipeStatus(recipeId, approved ? "active" : "shadow");
     }
   },
   execute: async (loop, run) => {
@@ -1423,9 +1700,11 @@ loops = new LoopManager({
         scheduledFor: run.scheduledFor,
         loopRunId: run.id,
         idempotencyKey: `${recipe.id}:${recipe.revision}:${run.manual ? `manual:${run.id}` : `schedule:${run.scheduledFor}`}`,
-      });
+      }, { readBookSnapshot: () => desk.snapshot() });
       const ok = executed.run.status === "completed" || executed.run.status === "awaiting-approval";
-      return { ok, detail: executed.run.detail, jobRunId: executed.run.id };
+      const status = executed.run.status === "awaiting-approval" ? "awaiting-approval"
+        : executed.run.status === "partial" ? "partial" : ok ? "completed" : "failed";
+      return { ok, status, detail: executed.run.detail, jobRunId: executed.run.id };
     }
     const spec = evaluatorForLoop(loop.id);
     if (spec && spec.mayLaunchCua) return { ok: false, detail: "the clock must not launch a browser" };
@@ -1609,7 +1888,10 @@ function startGroupTurn(groupId: string, text: string) {
 function configStatus() {
   return {
     xai: { configured: Boolean(cfg.xai?.key) },
-    composio: { configured: Boolean(cfg.composio?.key), apiKeyConfigured: Boolean(cfg.composio?.apiKey) },
+    composio: { configured: Boolean(cfg.composio?.key), apiKeyConfigured: Boolean(cfg.composio?.apiKey),
+      mode: gmailReadOnlyMode(cfg) ? "gmail-readonly" : "consumer", readOnlyConfigured: Boolean(gmailReadOnlyBinding(cfg)),
+      ...(cfg.composio?.gmailReadOnly?.authConfigId ? { readOnlyAuthConfigId: cfg.composio.gmailReadOnly.authConfigId } : {}),
+    },
     box: { configured: Boolean(cfg.box?.token) },
     // the chosen voice is a setting, not a secret; the key is reported the
     // same configured-or-not way as every other credential
@@ -1617,6 +1899,138 @@ function configStatus() {
     // not a secret — the sidebar shows it
     profile: { name: cfg.profile?.name ?? "", email: cfg.profile?.email ?? "" },
   };
+}
+
+function invalidateConnectedAppAuthority() {
+  connectedAppAccess.invalidate();
+  revokeConnectedAppsBrokers();
+  broadcast({ kind: "office-sources-changed" });
+  for (const bot of store.bots) {
+    if (bot.queuedMessage) { store.holdQueuedMessage(bot.id, "connected-app-settings-changed"); broadcast({ kind: "bot", bot: store.bot(bot.id) }); }
+  }
+  for (const botId of connectionOperations.keys()) {
+    const bot = store.bot(botId);
+    if (!bot) continue;
+    // Persist the hold before marking the operation idle. A restart or late
+    // completion must not replay an instruction against changed app access.
+    const held = store.holdQueuedMessage(botId, "connected-app-settings-changed");
+    watchdog.settle(bot.threadId);
+    store.patchBot(botId, { busy: false, unread: true });
+    const message = store.appendMessage(bot.threadId, {
+      role: "bot", kind: "text",
+      text: held
+        ? "Connected-app settings changed during the connection check. Your queued follow-up is saved and paused. Use Edit queued to review it, then send it again when you are ready."
+        : "Connected-app settings changed during the connection check. Check the current connection in Add before trying again.",
+    });
+    broadcast({ kind: "message", threadId: bot.threadId, message });
+    broadcast({ kind: "bot", bot: store.bot(botId) });
+  }
+  connectionOperations.clear();
+}
+
+async function selectedConnectionStatus(slugs: string[]): Promise<Record<string, composio.ConnectionServiceStatus>> {
+  if (!gmailReadOnlyMode(cfg)) return composio.connectionStatus(cfg, slugs);
+  if (slugs.some(slug => slug !== "gmail")) throw Object.assign(new Error("This connection supports Gmail read-only. Choose Composio Connect in Add to use other apps."), { status: 400 });
+  const binding = gmailReadOnlyBinding(cfg);
+  if (!binding) throw Object.assign(new Error("Finish Gmail read-only setup in Add first."), { status: 409 });
+  return (await getGmailReadOnlyAccess(binding)).services;
+}
+
+let creatingGmailLink = false;
+async function authorizeSelectedConnection(slug: string): Promise<{ url: string }> {
+  if (!gmailReadOnlyMode(cfg)) return composio.authorizeService(cfg, slug);
+  if (slug !== "gmail") throw Object.assign(new Error("The selected connection supports Gmail read-only."), { status: 400 });
+  const binding = gmailReadOnlyBinding(cfg);
+  const saved = cfg.composio?.gmailReadOnly;
+  if (!binding || !saved) throw Object.assign(new Error("Finish Gmail read-only setup in Add first."), { status: 409 });
+  if (creatingGmailLink || savingConnectedApps) throw Object.assign(new Error("Gmail setup is already in progress. Check its result before starting again."), { status: 409 });
+  creatingGmailLink = true;
+  const identity = JSON.stringify(cfg.composio);
+  try {
+    const hold = (message: string) => Object.assign(new Error(message), { status: 409, code: "GMAIL_CONNECTION_RECOVERY" });
+    const terminal = new Set(["FAILED", "EXPIRED", "INACTIVE", "REVOKED"]);
+    if (Object.hasOwn(saved, "linkUnknown")) {
+      const unknown = saved.linkUnknown;
+      if (!unknown || typeof unknown.startedAt !== "string" || !Number.isFinite(Date.parse(unknown.startedAt)) ||
+        Date.parse(unknown.startedAt) > Date.now() + 60_000 ||
+        (unknown.previousAccountId !== undefined && (typeof unknown.previousAccountId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(unknown.previousAccountId)))) {
+        throw hold("The previous Gmail sign-in receipt needs recovery. Check the account in the Composio dashboard; RealBud will not create another sign-in automatically.");
+      }
+      let accounts: Awaited<ReturnType<typeof listGmailReadOnlyAccounts>>;
+      try { accounts = await listGmailReadOnlyAccounts(binding); }
+      catch { throw hold("The previous Gmail sign-in outcome is still unknown. Check the connection in Composio and try Connect Gmail again to reconcile it. No new sign-in was started."); }
+      if (JSON.stringify(cfg.composio) !== identity) throw hold("The connection changed during sign-in recovery. Check settings before continuing.");
+      const candidates = accounts.filter(account => account.id !== unknown.previousAccountId && !terminal.has(account.status));
+      if (candidates.length !== 1 || !["ACTIVE", "INITIATED", "INITIALIZING"].includes(candidates[0]!.status)) {
+        throw hold("The previous Gmail sign-in outcome is still unknown or more than one account may belong to it. Resolve that attempt in the Composio dashboard, then try Connect Gmail again to reconcile it. No new sign-in was started.");
+      }
+      const account = candidates[0]!;
+      if (account.status === "ACTIVE") {
+        try { await getGmailReadOnlyAccess({ ...binding, accountId: account.id }); }
+        catch { throw hold("The recovered Gmail account could not yet be verified for read-only access. Check it in Composio, then try Connect Gmail again. No new sign-in was started."); }
+      }
+      if (JSON.stringify(cfg.composio) !== identity) throw hold("The connection changed during sign-in recovery. Check settings before continuing.");
+      const recovered = { ...saved, accountId: account.id };
+      delete recovered.linkUnknown;
+      delete recovered.pendingLink;
+      connectedAppAccess.invalidate();
+      revokeConnectedAppsBrokers();
+      saveConfig({ composio: { gmailReadOnly: recovered } });
+      cfg.composio = { ...cfg.composio, gmailReadOnly: recovered };
+      throw hold(account.status === "ACTIVE"
+        ? "The previous Gmail sign-in was recovered and its account verified. Press Add to refresh the connection to refresh its account and tools. No new sign-in was started."
+        : "The previous Gmail sign-in account was recovered, but its original link was not received. Finish its original provider sign-in or resolve that pending account in the Composio dashboard, then check connection. No new sign-in was started.");
+    }
+    if (binding.accountId) {
+      let access: Awaited<ReturnType<typeof getGmailReadOnlyAccess>>;
+      try { access = await getGmailReadOnlyAccess(binding); }
+      catch {
+        throw hold("The previous Gmail sign-in could not be verified. Add to refresh the connection and resolve the existing account in Composio before trying Connect Gmail again. No new sign-in was started.");
+      }
+      if (JSON.stringify(cfg.composio) !== identity) throw hold("The connection changed while sign-in was being checked. Check settings before continuing.");
+      const account = access.services.gmail?.accounts.find(row => row.id === binding.accountId);
+      if (!account) throw hold("The saved Gmail account could not be confirmed. Check the existing connection in Composio before starting another sign-in.");
+      if (account.status === "ACTIVE") throw hold("Gmail is already connected. Press Add to refresh the connection to refresh its account and tools.");
+      if (["INITIATED", "INITIALIZING"].includes(account.status)) {
+        const pending = saved.pendingLink;
+        const expiry = pending && typeof pending.expiresAt === "string" ? Date.parse(pending.expiresAt) : NaN;
+        if (!pending || !isGmailReadOnlyAuthorizationUrl(pending.url, binding.apiKey) || !Number.isFinite(expiry) || expiry > Date.now() + 86_400_000) {
+          throw hold("The existing Gmail sign-in has no safe saved link. Resolve that pending connection in Composio, then check connection before starting again.");
+        }
+        if (expiry <= Date.now() + 30_000) throw hold("The saved Gmail sign-in link has expired while its account is still pending. Resolve the pending connection in Composio, then check connection before starting again.");
+        return { url: pending.url };
+      }
+      if (!terminal.has(account.status)) {
+        throw hold("The saved Gmail account is disabled or its state is unconfirmed. Resolve it in Composio and check connection before starting another sign-in.");
+      }
+      // A confirmed terminal attempt can be replaced only by this explicit
+      // Connect request. Keep its receipt until the new link is durable.
+    } else if (saved.pendingLink) {
+      throw hold("The saved Gmail sign-in is missing its account identity. Check the connection settings before starting another sign-in.");
+    }
+    // Verify before recording intent so a known invalid configuration does
+    // not create an unnecessary recovery hold. No provider mutation yet.
+    await verifyGmailReadOnlyConfig(binding);
+    if (JSON.stringify(cfg.composio) !== identity) throw hold("The connection changed while sign-in was being prepared. Check settings before continuing.");
+    const marked = { ...saved, linkUnknown: { startedAt: new Date().toISOString(), ...(binding.accountId ? { previousAccountId: binding.accountId } : {}) } };
+    connectedAppAccess.invalidate();
+    revokeConnectedAppsBrokers();
+    // Keep the in-memory hold even if the atomic save has an uncertain result.
+    // Upstream link creation may start only after this receipt is durable.
+    cfg.composio = { ...cfg.composio, gmailReadOnly: marked };
+    saveConfig({ composio: { gmailReadOnly: marked } });
+    const markedIdentity = JSON.stringify(cfg.composio);
+    let link: Awaited<ReturnType<typeof authorizeGmailReadOnly>>;
+    try { link = await authorizeGmailReadOnly(binding); }
+    catch { throw hold("The Gmail sign-in result could not be confirmed. Finish any provider window that opened, then try Connect Gmail again to reconcile the saved attempt. RealBud will not create another sign-in while its outcome is unknown."); }
+    if (JSON.stringify(cfg.composio) !== markedIdentity) throw hold("The connection changed while sign-in was being prepared. Check settings before continuing.");
+    // Keep the provider's exact account and link before opening its consent page.
+    const connected = { ...saved, accountId: link.accountId, pendingLink: { url: link.url, expiresAt: link.expiresAt } };
+    delete connected.linkUnknown;
+    saveConfig({ composio: { gmailReadOnly: connected } });
+    cfg.composio = { ...cfg.composio, gmailReadOnly: connected };
+    return { url: link.url };
+  } finally { creatingGmailLink = false; }
 }
 
 /** Rebuild the provider fleet after a config change so new keys take
@@ -1691,7 +2105,7 @@ const server = createServer(async (req, res) => {
   const path = url.pathname;
   const method = req.method ?? "GET";
   try {
-    if (needsSession(path)) {
+    if (needsSession(path, method)) {
       const gate = sessionOk(req, PORT);
       if (!gate.ok) return json(res, gate.status, { error: gate.error });
     } else if (path.startsWith("/api/") && path !== "/api/health" && path !== "/api/session" && !path.startsWith("/api/internal/")) {
@@ -1813,17 +2227,23 @@ const server = createServer(async (req, res) => {
       const to = toParam == null ? undefined : Number(toParam);
       return json(res, 200, {
         loops: loops!.listLoops(),
+        recovery: loops!.recovery,
         runs: loops!.listRuns(from != null && Number.isFinite(from) ? from : undefined, to != null && Number.isFinite(to) ? to : undefined),
       });
     }
     let loopMatch = path.match(/^\/api\/loops\/([\w-]+)\/run$/);
     if (loopMatch && method === "POST") {
-      const loop = loops!.listLoops().find((candidate) => candidate.id === loopMatch![1]);
-      if (!loop) return json(res, 404, { error: "no such routine" });
-      if (!loop.available) return json(res, 409, { error: "that routine is declared but not built yet" });
+      const body = await readBody(req);
       try {
-        const run = loops!.runNow(loopMatch[1] as LoopId);
-        return run ? json(res, 201, { run }) : json(res, 409, { error: "turn this routine on before running it" });
+        if (desk.recovery.active) return json(res, 503, { error: "The book is in recovery. Scheduled work is paused; keep the previous request until its result can be checked." });
+        const request = body.requestId === undefined ? undefined : {
+          requestId: body.requestId, expectedRevision: body.expectedRevision,
+        };
+        const run = loops!.runNow(loopMatch[1] as LoopId, request);
+        if (run) return json(res, 201, { run });
+        const loop = loops!.listLoops().find((candidate) => candidate.id === loopMatch![1]);
+        if (!loop) return json(res, 404, { error: "no such routine" });
+        return json(res, 409, { error: loop.available ? "turn this routine on before running it" : "that routine is declared but not built yet" });
       } catch (error) {
         const status = (error as { status?: number }).status ?? 500;
         return json(res, status, { error: error instanceof Error ? error.message : String(error) });
@@ -1849,8 +2269,12 @@ const server = createServer(async (req, res) => {
     }
     const loopRunSeen = path.match(/^\/api\/loop-runs\/([\w-]+)\/seen$/);
     if (loopRunSeen && method === "POST") {
-      const run = loops!.markSeen(loopRunSeen[1]);
-      return run ? json(res, 200, { run }) : json(res, 404, { error: "no such run" });
+      try {
+        const run = loops!.markSeen(loopRunSeen[1]);
+        return run ? json(res, 200, { run }) : json(res, 404, { error: "no such run" });
+      } catch (error) {
+        return json(res, (error as { status?: number }).status ?? 500, { error: error instanceof Error ? error.message : "The schedule result could not be saved." });
+      }
     }
 
     // ── standing rules (Ask Always-allow; You → Bud's rules) ──────────
@@ -1938,6 +2362,14 @@ const server = createServer(async (req, res) => {
     if (path === "/api/channels" && method === "GET") {
       return json(res, 200, channelsStatus());
     }
+    const pairMatch = path.match(/^\/api\/channels\/(telegram|discord|slack)\/pair$/);
+    if (pairMatch && method === "POST") {
+      const platform = pairMatch[1] as "telegram" | "discord" | "slack";
+      const status = channelsStatus()[platform];
+      if (!status.connected) return json(res, 409, { error: "Connect this messaging app first." });
+      if (status.paired) return json(res, 409, { error: "Already paired. Disconnect first to change the paired account." });
+      return json(res, 200, createPairingCode(platform));
+    }
     const channelMatch = path.match(/^\/api\/channels\/([^/]+)$/);
     if (channelMatch && (method === "POST" || method === "DELETE")) {
       const platform = channelMatch[1];
@@ -1967,7 +2399,60 @@ const server = createServer(async (req, res) => {
       return json(res, 200, channelsStatus());
     }
 
+    // Portfolio preparation uses the same authenticated Desk boundary.
+    if (path === "/api/desk/batches" && method === "GET") {
+      return json(res, 200, { batches: batches.summaries() });
+    }
+    if (path === "/api/desk/batches" && method === "POST") {
+      const created = batches.create(await readBody(req));
+      return json(res, 202, { batch: batches.view(created.id) });
+    }
+    const batchPath = path.match(/^\/api\/desk\/batches\/([\w-]+)$/);
+    if (batchPath && method === "GET") return json(res, 200, { batch: batches.view(batchPath[1], url.searchParams.has("revision") ? Number(url.searchParams.get("revision")) : undefined) });
+    if (batchPath && method === "PATCH") {
+      const body = await readBody(req);
+      batches.control(batchPath[1], body.action, body.expectedRevision, body.propertyId);
+      return json(res, 200, { batch: batches.view(batchPath[1]) });
+    }
+
     // ── taught jobs + durable prepare receipts ───────────────────────
+    if (path === "/api/human-handoffs" || path.startsWith("/api/human-handoffs/")) {
+      const gate = sessionOk(req, PORT);
+      if (!gate.ok) return json(res, gate.status, { error: gate.error });
+      const handoffs = signInHandoffs();
+      if (path === "/api/human-handoffs" && method === "GET") return json(res, 200, { handoffs: handoffs.list() });
+      if (path === "/api/human-handoffs" && method === "POST") {
+        const body = await readBody(req);
+        const run = typeof body.runId === "string" ? jobRuns.get(body.runId) : undefined;
+        if (!run?.threadId) return json(res, 404, { error: "No attended job is running." });
+        return json(res, 200, await pauseAttendedForLogin(run.threadId, body.reason === "mfa" ? "mfa" : "login"));
+      }
+      const match = path.match(/^\/api\/human-handoffs\/(handover:[\w-]+)\/(continue|stop|retry-release|binding|close)$/);
+      if (!match || method !== "POST") return json(res, 404, { error: "Unknown sign-in action." });
+      const body = await readBody(req, 4096), [, id, action] = match;
+      if (action === "continue") return json(res, 200, await handoffs.continue(id, body.revision));
+      if (action === "stop") return json(res, 200, await handoffs.stop(id, body.revision));
+      if (action === "close") return json(res, 200, await handoffs.close(id, body.revision));
+      if (action === "retry-release") return json(res, 200, await handoffs.retryRelease(id, body.revision));
+      return json(res, 200, handoffs.bind(id, body.revision, body.binding));
+    }
+    if (path === "/api/bank-reference" || path.startsWith("/api/bank-reference/")) {
+      const gate = sessionOk(req, PORT);
+      if (!gate.ok) return json(res, gate.status, { error: gate.error });
+      const banks = bankReferenceStore();
+      if (path === "/api/bank-reference" && method === "GET") return json(res, 200, { batches: banks.list() });
+      if (path === "/api/bank-reference" && method === "POST") return json(res, 200, banks.create(await readBody(req, 1_100_000)));
+      const match = path.match(/^\/api\/bank-reference\/(bank:[a-f0-9]{64})(?:\/(review|export|original))?$/);
+      if (!match) return json(res, 404, { error: "Unknown bank review." });
+      const [, id, action] = match;
+      if (!action && method === "GET") return json(res, 200, banks.get(id));
+      if (action === "review" && method === "POST") {
+        const body = await readBody(req, 2_000_000);
+        return json(res, 200, banks.review(id, body.revision, body.decisions));
+      }
+      if ((action === "export" || action === "original") && method === "POST") return json(res, 200, banks.export(id, action === "original"));
+      return json(res, 405, { error: "Unsupported bank review action." });
+    }
     if (path === "/api/job-runs" && method === "GET") {
       const jobId = url.searchParams.get("jobId")?.trim() || undefined;
       const requested = Number(url.searchParams.get("limit") ?? 100);
@@ -1984,6 +2469,9 @@ const server = createServer(async (req, res) => {
       }
     }
     // ── recipes + compatibility portal sessions (never submit) ───────
+    if (desk.recovery.active && path.startsWith("/api/recipes") && method !== "GET") {
+      return json(res, 409, { error: "The book is in recovery. Job changes and runs are paused until it is unlocked." });
+    }
     if (path === "/api/recipes" && method === "GET") {
       return json(res, 200, { recipes: listRecipes() });
     }
@@ -2006,22 +2494,41 @@ const server = createServer(async (req, res) => {
         return json(res, 415, { error: "content-type must be application/json" });
       }
       const body = await readBody(req);
-      return json(res, 201, { recipes: saveRecipe(body.draft) });
+      if (loops.recovery.active) return json(res, 503, { error: loops.recovery.detail });
+      const before = typeof body.draft?.id === "string" ? getRecipe(body.draft.id) : undefined;
+      const recipes = saveRecipe(body.draft);
+      const saved = recipes.find((recipe) => recipe.id === body.draft?.id);
+      if (saved && (!before || saved.revision !== before.revision)) loops.adoptRecipePlan(saved.id);
+      return json(res, 201, { recipes });
     }
     if (path === "/api/computer-history" && method === "GET") {
       return json(res, 200, { entries: listHistory(50) });
     }
+    if (path === "/api/worker-issues" && method === "GET") {
+      return json(res, 200, { issues: listWorkerIssues(20) });
+    }
     const recipeRun = path.match(/^\/api\/recipes\/([\w-]+)\/run$/);
     if (recipeRun && method === "POST") {
+      const body = await readBody(req);
       const recipe = getRecipe(recipeRun[1]);
       if (!recipe) return json(res, 404, { error: "no such recipe" });
       try {
+        const idempotencyKey = manualRecipeRequestKey(recipe, body, "shadow");
+        const existing = jobRuns.list(recipe.id).find((run) => run.idempotencyKey === idempotencyKey);
+        if (existing) return json(res, ["queued", "running"].includes(existing.status) ? 202 : 200, {
+          run: existing,
+          reused: true,
+          ...(existing.legacySessionId ? { session: getSession(existing.legacySessionId) } : {}),
+        });
+        assertRecipeRevision(recipe, body.expectedRevision);
         const executed = await executeRecipeJob(recipe, {
           mode: "shadow",
           trigger: "manual",
-          idempotencyKey: `${recipe.id}:${recipe.revision}:shadow:${randomBytes(16).toString("hex")}`,
+          idempotencyKey,
         });
-        return json(res, 200, { run: executed.run, session: executed.session });
+        return json(res, ["queued", "running"].includes(executed.run.status) ? 202 : 200, {
+          run: executed.run, session: executed.session, reused: executed.reused,
+        });
       } catch (error) {
         const status = (error as { status?: number }).status ?? 500;
         return json(res, status, { error: error instanceof Error ? error.message : String(error) });
@@ -2038,6 +2545,10 @@ const server = createServer(async (req, res) => {
         : undefined;
       if (runId && (!queued || queued.mode !== "attended" || queued.status !== "queued" || queued.jobId !== recipeAttend[1])) {
         return json(res, 404, { error: ATTEND_ERRORS.gone });
+      }
+      if (queued && recipe && queued.jobRevision !== recipe.revision) {
+        jobRuns.cancel(queued.id);
+        return json(res, 409, { error: "The older queued run was cancelled. Review and approve the current plan, then start it again." });
       }
       const blocked = attendBlocked(recipe, {
         cuaReady: cuaAttendedReady(),
@@ -2095,18 +2606,27 @@ const server = createServer(async (req, res) => {
     }
     const recipePrepare = path.match(/^\/api\/recipes\/([\w-]+)\/prepare$/);
     if (recipePrepare && method === "POST") {
+      const body = await readBody(req);
       const recipe = getRecipe(recipePrepare[1]);
       if (!recipe) return json(res, 404, { error: "no such recipe" });
-      if (!recipeClockRunnable(recipe)) {
-        return json(res, 409, { error: "Approve the current plan and activate the job before preparing it." });
-      }
       try {
+        const idempotencyKey = manualRecipeRequestKey(recipe, body, "prepare");
+        const existing = jobRuns.list(recipe.id).find((run) => run.idempotencyKey === idempotencyKey);
+        if (existing) return json(res, ["queued", "running"].includes(existing.status) ? 202 : 200, {
+          run: existing, reused: true,
+        });
+        assertRecipeRevision(recipe, body.expectedRevision);
+        if (!recipeClockRunnable(recipe)) {
+          return json(res, 409, { error: "Approve the current plan and activate the job before preparing it." });
+        }
         const executed = await executeRecipeJob(recipe, {
           mode: "prepare",
           trigger: "manual",
-          idempotencyKey: `${recipe.id}:${recipe.revision}:prepare:${randomBytes(16).toString("hex")}`,
+          idempotencyKey,
+        }, { readBookSnapshot: () => desk.snapshot() });
+        return json(res, ["queued", "running"].includes(executed.run.status) ? 202 : 200, {
+          run: executed.run, reused: executed.reused,
         });
-        return json(res, 200, { run: executed.run });
       } catch (error) {
         const status = (error as { status?: number }).status ?? 500;
         return json(res, status, { error: error instanceof Error ? error.message : String(error) });
@@ -2123,7 +2643,12 @@ const server = createServer(async (req, res) => {
       }
       const body = await readBody(req);
       try {
-        return json(res, 200, { recipes: patchRecipe(recipeMatch[1], body) });
+        if ((body.planApproved === true || body.status === "active") && loops.recovery.active) {
+          return json(res, 503, { error: loops.recovery.detail });
+        }
+        const recipes = patchRecipe(recipeMatch[1], body);
+        if (body.planApproved === true || body.status === "active") loops.adoptRecipePlan(recipeMatch[1]);
+        return json(res, 200, { recipes });
       } catch (error) {
         const status = (error as { status?: number }).status ?? 500;
         return json(res, status, { error: error instanceof Error ? error.message : String(error) });
@@ -2186,6 +2711,7 @@ const server = createServer(async (req, res) => {
           name: typeof body.name === "string" ? body.name : undefined,
           jurisdictions: Array.isArray(body.jurisdictions) ? body.jurisdictions : undefined,
           office: body.office,
+          expectedRevision: body.expectedRevision,
         });
         commitDesk(snapshot);
         return json(res, 200, snapshot);
@@ -2472,7 +2998,14 @@ const server = createServer(async (req, res) => {
       }
       await readBody(req);
       const ping = await tryHermesPing();
-      writeHandsPing(DATA_DIR, { at: Date.now(), ok: ping.ok, detail: ping.detail, kind: "ping" });
+      writeHandsPing(DATA_DIR, { at: Date.now(), ok: ping.ok, detail: ping.detail, kind: "ping", workerFingerprint: ping.workerFingerprint });
+      if (!ping.ok) {
+        publishWorkerIssue({
+          source: "hands",
+          summary: "Bud readiness check missed",
+          detail: productAskFailure(ping.detail),
+        });
+      }
       return json(res, 200, ping);
     }
     if (path === "/api/hermes/model" && method === "POST") {
@@ -2496,7 +3029,7 @@ const server = createServer(async (req, res) => {
         // Connecting a model performs the same authoritative hands check as
         // the standalone action. Persist it so a reload cannot forget a
         // successful check or falsely present a failed one as ready.
-        writeHandsPing(DATA_DIR, { at: Date.now(), ok: ping.ok, detail: ping.detail, kind: "ping" });
+        writeHandsPing(DATA_DIR, { at: Date.now(), ok: ping.ok, detail: ping.detail, kind: "ping", workerFingerprint: ping.workerFingerprint });
         return json(res, 200, { ok: true, model: status, ping });
       } catch (e) {
         const status = (e as { status?: number }).status ?? 500;
@@ -2504,7 +3037,52 @@ const server = createServer(async (req, res) => {
       }
     }
     if (path === "/api/hermes/providers" && method === "GET") {
-      return json(res, 200, { providers: PROVIDER_OPTIONS });
+      return json(res, 200, {
+        providers: PROVIDER_OPTIONS.map((provider) => ({
+          ...provider,
+          loginMethods: workerLoginMethods(provider.id),
+          oauth: WORKER_OAUTH_LOGINS[provider.id]
+            ? {
+                providerId: WORKER_OAUTH_LOGINS[provider.id].oauthId,
+                signInLabel: WORKER_OAUTH_LOGINS[provider.id].signInLabel,
+              }
+            : null,
+        })),
+      });
+    }
+    if (path === "/api/hermes/oauth/start" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      try {
+        const session = startOAuth(String(body.providerId ?? ""));
+        return json(res, 200, { ok: true, oauth: session });
+      } catch (e) {
+        const status = (e as { status?: number }).status ?? 500;
+        return json(res, status, { error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    if (path === "/api/hermes/oauth/status" && method === "GET") {
+      const sessionId = url.searchParams.get("sessionId") ?? "";
+      try {
+        return json(res, 200, { oauth: oauthStatus(sessionId) });
+      } catch (e) {
+        const status = (e as { status?: number }).status ?? 500;
+        return json(res, status, { error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    if (path === "/api/hermes/oauth/cancel" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      try {
+        return json(res, 200, { ok: true, oauth: cancelOAuth(String(body.sessionId ?? "")) });
+      } catch (e) {
+        const status = (e as { status?: number }).status ?? 500;
+        return json(res, status, { error: e instanceof Error ? e.message : String(e) });
+      }
     }
     if (path === "/api/hermes/models" && method === "GET") {
       const provider = url.searchParams.get("provider") ?? "";
@@ -2535,53 +3113,33 @@ const server = createServer(async (req, res) => {
         lastPing: readHandsPing(DATA_DIR),
       });
     }
-    if (path === "/api/hermes/install" && method === "POST") {
+    if ((path === "/api/hermes/install" || path === "/api/hermes/repair") && method === "POST") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
         return json(res, 415, { error: "content-type must be application/json" });
       }
       await readBody(req);
-      // zero-terminal: the harness spawns the pinned installer and streams
-      // progress to /api/hermes/install/status — no Terminal window.
-      const command = hermesInstallCommand(process.platform);
-      if (!command) return json(res, 400, { error: "no installer for this platform — CSV-only mode" });
-      installPreflight = await preflight();
-      if (!installPreflight.ok) {
-        return json(res, 409, { error: "missing dependencies", install: installStatus(), preflight: installPreflight });
+      if (installInFlight()) return json(res, 202, { install: installStatus() });
+      // A partially installed, RealBud-owned runtime must finish its stages
+      // before a working version command can be treated as a successful install.
+      const existingProfile = bootstrapPending(hermesHome()) ? null : await repairExistingProfile();
+      if (existingProfile) {
+        writeHandsPing(DATA_DIR, { at: Date.now(), ok: false, detail: "Property profile repaired. Run the readiness check again.", kind: "ping" });
+        return json(res, 200, { install: { state: "done", lines: ["Private setup repaired."], startedAt: Date.now(), finishedAt: Date.now(), error: null }, hermes: existingProfile });
       }
-      const job = startInstall(command);
-      writeHandsPing(DATA_DIR, {
-        at: Date.now(),
-        ok: false,
-        detail: "The worker install changed. Run the private readiness check again when it finishes.",
-        kind: "ping",
-      });
-      return json(res, 202, { install: job, preflight: installPreflight });
+      if (!bootstrapPlan(process.platform)) return json(res, 400, { error: "Automatic Bud setup is not available on this computer yet." });
+      const job = startBootstrapInstall({ onSuccess: () => { applyPropertyPack(); } });
+      writeHandsPing(DATA_DIR, { at: Date.now(), ok: false, detail: "Bud setup changed. Its private readiness check is still needed.", kind: "ping" });
+      return json(res, 202, { install: job });
     }
     if (path === "/api/hermes/install/status" && method === "GET") {
-      return json(res, 200, { install: installStatus(), preflight: installPreflight });
+      return json(res, 200, { install: installStatus() });
     }
-    if (path === "/api/hermes/repair" && method === "POST") {
+    if (path === "/api/hermes/install/cancel" && method === "POST") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
         return json(res, 415, { error: "content-type must be application/json" });
       }
       await readBody(req);
-      if (installInFlight()) {
-        return json(res, 409, { error: "an install is already running", install: installStatus(), preflight: installPreflight });
-      }
-      const command = hermesInstallCommand(process.platform);
-      if (!command) return json(res, 400, { error: "no installer for this platform — CSV-only mode" });
-      installPreflight = await preflight();
-      if (!installPreflight.ok) {
-        return json(res, 409, { error: "missing dependencies", install: installStatus(), preflight: installPreflight });
-      }
-      const job = startRepair(command);
-      writeHandsPing(DATA_DIR, {
-        at: Date.now(),
-        ok: false,
-        detail: "The worker repair changed. Run the private readiness check again when it finishes.",
-        kind: "ping",
-      });
-      return json(res, 202, { install: job, preflight: installPreflight });
+      return json(res, 202, { install: cancelBootstrapInstall() });
     }
     if (path === "/api/hermes/uninstall" && method === "POST") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
@@ -2829,7 +3387,8 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const text = String(body.text ?? "").trim();
       if (!text) return json(res, 400, { error: "text required" });
-      if (text.length > ASK_MESSAGE_MAX_CHARS) return json(res, 413, { error: "message is too long" });
+      const sizeError = askMessageSizeError(text);
+      if (sizeError) return json(res, 413, { error: sizeError });
       await startTurn(m[1], text);
       return json(res, 202, { ok: true });
     }
@@ -2844,9 +3403,10 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const text = String(body.text ?? "").trim();
       if (!text) return json(res, 400, { error: "text required" });
-      if (text.length > ASK_MESSAGE_MAX_CHARS) return json(res, 413, { error: "message is too long" });
+      const sizeError = askMessageSizeError(text);
+      if (sizeError) return json(res, 413, { error: sizeError });
       if (PRODUCT_MODE && containsCredential(text)) {
-        return json(res, 400, { error: "Provider keys go on You → Attach model. Ask never sees the secret." });
+        return json(res, 400, { error: "Use the private key field in Set up Bud. Keep keys out of the conversation." });
       }
       if (!bot.busy) {
         await startTurn(bot.id, text);
@@ -2880,9 +3440,10 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const text = String(body.text ?? "").trim();
       if (!text) return json(res, 400, { error: "text required" });
-      if (text.length > ASK_MESSAGE_MAX_CHARS) return json(res, 413, { error: "message is too long" });
+      const sizeError = askMessageSizeError(text);
+      if (sizeError) return json(res, 413, { error: sizeError });
       if (PRODUCT_MODE && containsCredential(text)) {
-        return json(res, 400, { error: "Provider keys go on You → Attach model. Ask never sees the secret." });
+        return json(res, 400, { error: "Use the private key field in Set up Bud. Keep keys out of the conversation." });
       }
       if (!bot.busy) {
         await startTurn(bot.id, text);
@@ -2971,6 +3532,9 @@ const server = createServer(async (req, res) => {
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
       const { requestId, decision } = parseRequestDecision(await readBody(req));
+      if (!askMessageByRequest.has(`${bot.threadId}:${requestId}`)) {
+        return json(res, 409, { error: "This request is no longer waiting. Refresh the conversation to see its result." });
+      }
       const instance = registry.get(bot.modelSelection.instanceId);
       if (!instance) return json(res, 409, { error: "provider unavailable" });
       await instance.adapter.respondToRequest(bot.threadId, requestId, decision);
@@ -2985,6 +3549,11 @@ const server = createServer(async (req, res) => {
       const parsed = parseRequestDecision(await readBody(req));
       const { requestId } = parsed;
       let { decision } = parsed;
+      // Check the live request before saving a rule or calling the provider.
+      // Persisted cards from another client or an earlier process are not grants.
+      if (!askMessageByRequest.has(`${threadId}:${requestId}`)) {
+        return json(res, 409, { error: "This request is no longer waiting. Refresh the conversation to see its result." });
+      }
       const card = store
         .messagesFor(threadId)
         .find((message) => message.card?.requestId === requestId);
@@ -3178,6 +3747,23 @@ const server = createServer(async (req, res) => {
         if (body[key] && typeof body[key] === "object") patch[key] = body[key];
       }
       if (!Object.keys(patch).length) return json(res, 400, { error: "nothing to save" });
+      if (Object.hasOwn(body, "composio")) patch.composio = connectedAppConfigPatch(body.composio);
+      if (patch.composio && (savingConnectedApps || creatingGmailLink)) return json(res, 409, { error: "Connected apps setup is in progress. Wait for the result before saving again." });
+      if (patch.composio) savingConnectedApps = true;
+      try {
+      const appPatch = patch.composio as Partial<NonNullable<typeof cfg.composio>> | undefined;
+      const changesAppAccess = appPatch && (Object.hasOwn(appPatch, "key") || Object.hasOwn(appPatch, "url") || Object.hasOwn(appPatch, "apiKey"));
+      const candidateApp = appPatch ? { ...cfg.composio, ...appPatch } : undefined;
+      if (changesAppAccess && candidateApp && connectedAppsConfigured({ composio: candidateApp })) {
+        // Check credentials and actual discovery before replacing a working key.
+        // Provider errors are sanitized by the client; never echo a submitted key.
+        if (gmailReadOnlyMode({ composio: candidateApp })) {
+          await verifyGmailReadOnlyConfig(gmailReadOnlyBinding({ composio: candidateApp })!);
+        } else {
+          const access = await checkSelectedConnectionAccess({ composio: candidateApp });
+          if (!access.tools.available) return json(res, 400, { error: "This connection did not expose the app tools Bud needs. Check the Connected apps key and endpoint." });
+        }
+      }
       // check a box token against the provider before storing it: a
       // rejected token used to save happily and only surface as a 401 in
       // another panel later, with nothing the user could act on
@@ -3194,6 +3780,9 @@ const server = createServer(async (req, res) => {
         const check = await tts.verifyKey(newTts.key.trim());
         if (!check.ok) return json(res, 400, { error: check.message });
       }
+      if (changesAppAccess) {
+        invalidateConnectedAppAuthority();
+      }
       saveConfig(patch);
       Object.assign(cfg, loadConfig());
       // Only a model-provider key changes the fleet's child environment.
@@ -3202,7 +3791,100 @@ const server = createServer(async (req, res) => {
       if (Object.hasOwn(patch, "xai")) await reloadProviders();
       const status = configStatus();
       broadcast({ kind: "config", ...status });
+      if (changesAppAccess) await officeSourcesChanged();
       return json(res, 200, status);
+      } finally { if (patch.composio) savingConnectedApps = false; }
+    }
+
+    if (method === "POST" && path === "/api/connected-apps/gmail-readonly/setup") {
+      const body = await readBody(req);
+      if (!body || Array.isArray(body) || Object.keys(body).some(key => !["apiKey", "authConfigId"].includes(key)) ||
+        typeof body.authConfigId !== "string" || !/^ac_[A-Za-z0-9_-]{1,200}$/.test(body.authConfigId.trim()) ||
+        (body.apiKey !== undefined && (typeof body.apiKey !== "string" || body.apiKey.length > 4096 || /[\u0000-\u001f\u007f]/.test(body.apiKey)))) {
+        return json(res, 400, { error: "Use the private project key and Gmail auth config fields in Add." });
+      }
+      if (savingConnectedApps || creatingGmailLink) return json(res, 409, { error: "Connected apps setup is in progress. Check its result first." });
+      const apiKey = body.apiKey?.trim() || cfg.composio?.apiKey;
+      if (!apiKey || apiKey.startsWith("ck_")) return json(res, 400, { error: "This setup needs the API key from your Composio project, rather than a consumer Connect key." });
+      savingConnectedApps = true;
+      try {
+        const authConfigId = body.authConfigId.trim();
+        const previous = cfg.composio?.gmailReadOnly;
+        const sameBinding = cfg.composio?.apiKey === apiKey && previous?.authConfigId === authConfigId;
+        const saved = sameBinding ? previous! : { userId: `realbud_${newId()}`, authConfigId };
+        await verifyGmailReadOnlyConfig({ apiKey, userId: saved.userId, authConfigId });
+        invalidateConnectedAppAuthority();
+        saveConfig({ composio: { apiKey, gmailReadOnly: saved } });
+        Object.assign(cfg, loadConfig());
+        const status = configStatus();
+        broadcast({ kind: "config", ...status });
+        await officeSourcesChanged();
+        return json(res, 200, status);
+      } finally { savingConnectedApps = false; }
+    }
+    if (method === "POST" && path === "/api/connected-apps/mode") {
+      const body = await readBody(req);
+      if (!body || Array.isArray(body) || Object.keys(body).some(key => key !== "mode") || !["consumer", "gmail-readonly"].includes(body.mode)) {
+        return json(res, 400, { error: "Choose Composio Connect or Gmail read-only." });
+      }
+      if (savingConnectedApps || creatingGmailLink) return json(res, 409, { error: "Connected apps setup is in progress. Check its result first." });
+      savingConnectedApps = true;
+      try {
+        if (body.mode === "gmail-readonly") {
+          const binding = gmailReadOnlyBinding(cfg);
+          if (!binding) return json(res, 409, { error: "Save and verify Gmail read-only setup first." });
+          await verifyGmailReadOnlyConfig(binding);
+        } else {
+          if (!cfg.composio?.key) return json(res, 409, { error: "Save a Composio Connect key first." });
+          const access = await composio.checkConnectionAccess(cfg);
+          if (!access.tools.available) return json(res, 409, { error: "Check your Composio Connect key and tools before switching." });
+        }
+        invalidateConnectedAppAuthority();
+        saveConfig({ composio: { mode: body.mode } });
+        Object.assign(cfg, loadConfig());
+        const status = configStatus();
+        broadcast({ kind: "config", ...status });
+        await officeSourcesChanged();
+        return json(res, 200, status);
+      } finally { savingConnectedApps = false; }
+    }
+    m = path.match(/^\/api\/connected-apps\/sources\/([a-z][a-z0-9_]{0,63})$/);
+    if (m && method === "PATCH") {
+      const body = await readBody(req);
+      if (!body || Array.isArray(body) || Object.keys(body).some(key => !["enabled", "accountId"].includes(key)) || (body.enabled !== undefined && typeof body.enabled !== "boolean") || (body.accountId !== undefined && (typeof body.accountId !== "string" || body.accountId.length > 300)) || (body.enabled === undefined && body.accountId === undefined)) return json(res, 400, { error: "Choose whether this source is available in Ask." });
+      if (savingConnectedApps || creatingGmailLink) return json(res, 409, { error: "App setup is still finishing. Try again shortly." });
+      const slug = m[1];
+      const known = new Set([...composio.CURATED_SLUGS, ...(cfg.composio?.officeApps ?? []), ...Object.keys(connectedAppAccess.status(connectedAppsConfigured(cfg)).services)]);
+      if (!known.has(slug)) return json(res, 400, { error: "Choose an office app shown in Add." });
+      const selectedAccounts = { ...cfg.composio?.selectedAccounts };
+      if (body.accountId !== undefined) {
+        const observed = connectedAppAccess.status(connectedAppsConfigured(cfg));
+        if (!observed.services[slug]?.connected || !observed.services[slug]?.accounts.some(account => account.id === body.accountId && /^active$/i.test(account.status))) return json(res, 409, { error: "That account is no longer available. Refresh and choose again." });
+        selectedAccounts[slug] = body.accountId;
+      }
+      const excluded = new Set(cfg.composio?.excludedApps ?? []);
+      if (body.enabled === true) excluded.delete(slug); else if (body.enabled === false) excluded.add(slug);
+      const changed = JSON.stringify([...excluded].sort()) !== JSON.stringify([...(cfg.composio?.excludedApps ?? [])].sort()) ||
+        Object.entries(selectedAccounts).some(([app, account]) => cfg.composio?.selectedAccounts?.[app] !== account);
+      if (!changed) return json(res, 200, await refreshOfficeSources());
+      invalidateConnectedAppAuthority();
+      saveConfig({ composio: { excludedApps: [...excluded], selectedAccounts } });
+      Object.assign(cfg, loadConfig());
+      return json(res, 200, await refreshOfficeSources());
+    }
+    // Product connections: these observations never authorize a provider mutation.
+    if (method === "GET" && path === "/api/connected-apps/status") {
+      return json(res, 200, connectedAppAccess.status(connectedAppsConfigured(cfg)));
+    }
+    if (method === "POST" && path === "/api/connected-apps/check") {
+      await readBody(req);
+      return json(res, 200, await refreshOfficeSources());
+    }
+    if (method === "GET" && path === "/api/connected-apps/operations") {
+      return json(res, 200, { operations: listConnectedAppOperations().map(row => ({ ...row,
+        startedAt: new Date(row.startedAt).toISOString(),
+        ...(row.finishedAt === undefined ? {} : { finishedAt: new Date(row.finishedAt).toISOString() }),
+      })) });
     }
 
     // ── voice ─────────────────────────────────────────────────────────
@@ -3255,14 +3937,22 @@ const server = createServer(async (req, res) => {
     }
     if (method === "GET" && path === "/api/connectors") {
       const services = (url.searchParams.get("services") ?? "").split(",").filter(Boolean);
-      if (!cfg.composio?.key) return json(res, 200, { configured: false, services: {} });
-      const status = await composio.connectionStatus(cfg, services.length ? services : composio.CURATED_SLUGS);
+      if (!connectedAppsConfigured(cfg)) return json(res, 200, { configured: false, services: {} });
+      const status = await selectedConnectionStatus(services.length ? services : gmailReadOnlyMode(cfg) ? ["gmail"] : composio.CURATED_SLUGS);
       return json(res, 200, { configured: true, services: status });
     }
     m = path.match(/^\/api\/connectors\/([\w-]+)\/authorize$/);
-    if (m && method === "POST") return json(res, 200, await composio.authorizeService(cfg, m[1]));
+    if (m && method === "POST") return json(res, 200, await authorizeSelectedConnection(m[1]));
     m = path.match(/^\/api\/connectors\/([\w-]+)$/);
-    if (m && method === "DELETE") return json(res, 200, await composio.removeService(cfg, m[1]));
+    if (m && method === "DELETE") {
+      if (gmailReadOnlyMode(cfg)) return json(res, 409, { error: "Remove Gmail access in the provider's connection settings. RealBud's read-only connection cannot change the provider account." });
+      // Revoke before a potentially partial/uncertain upstream disconnect.
+      invalidateConnectedAppAuthority();
+      saveConfig({ composio: { excludedApps: [...new Set([...(cfg.composio?.excludedApps ?? []), m[1]])] } });
+      Object.assign(cfg, loadConfig());
+      try { return json(res, 200, await composio.removeService(cfg, m[1])); }
+      finally { await officeSourcesChanged(); }
+    }
 
     // ── the bot's cloud computer (Box) ──
     m = path.match(/^\/api\/bots\/([\w-]+)\/computer$/);
@@ -3358,6 +4048,7 @@ bindSlackBridge({
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`realbud server on http://127.0.0.1:${PORT}`);
   oplog("boot", `listening on 127.0.0.1:${PORT}`);
+  setWorkerIssueListener((issue) => broadcast({ kind: "worker.issue", issue }));
   // A renderer/server restart must not silently drop a follow-up the user
   // already scheduled. Claim and resume each durable slot once at boot.
   for (const bot of store.bots) {
@@ -3381,7 +4072,9 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     stopSlackBridge();
     stopRemoteDecisionFlush();
     loops?.stop();
+    batches.stop();
     watchdog.stop();
-    void registry.disposeAll().finally(() => process.exit(0));
+    cancelBootstrapInstall();
+    void Promise.allSettled([registry.disposeAll(), waitForBootstrapStop()]).finally(() => process.exit(0));
   });
 }

@@ -1,4 +1,8 @@
-import { Component, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useConversationFollow, useWorkspaceScroll } from "@/lib/workspace-view-state";
+import { openWorkspaceSetup } from "@/lib/workspace-setup";
+import { AskWorkspaceSheet } from "./AskWorkspaceSheet";
+import { RoutinesPage } from "./RoutinesPage";
+import { Component, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import {
   AlertTriangle,
   ArrowDown,
@@ -28,9 +32,11 @@ import {
   type Message,
 } from "@/state/store";
 import { askNextActions, isProductAskEmptyThread, type AskNext } from "@/lib/ask-next";
-import { attendedHeaderLabel, runningAttended } from "@/lib/job-run";
+import { activeAttendedRun, attendedHeaderLabel, runStatusSuffix } from "@/lib/job-run";
 import type { JobRun, Recipe } from "@/lib/desk";
 import { toolLabel } from "@/lib/tool-label";
+
+import { selectedConnectedAppsConfigured } from "./GmailReadOnlySetup";
 import { morningBrief } from "@/lib/morning-brief";
 import { fmtDateTime } from "@/lib/au";
 import { EngineSetup } from "./EngineSetup";
@@ -49,6 +55,14 @@ import { CallButton, CallOverlay } from "./CallView";
 import { cn } from "@/lib/cn";
 import { scrollChatToEnd } from "@/lib/chat-scroll";
 import { useStreamPreview } from "@/lib/use-stream-preview";
+import { budAvailability } from "@/lib/bud-setup";
+import { PmTaskStarters } from "./PmTaskStarters";
+import { AskMessage } from "./AskMessage";
+import { channelMessage } from "@/lib/channel-message";
+import { AskReadiness } from "./AskReadiness";
+import { AskContext } from "./AskContext";
+import { hasUnfinishedJobDraft, repeatableJobDescription } from "@/lib/work-continuation";
+import { EMPTY_JOB_DRAFT } from "@/lib/job-plan";
 
 /** Long user messages collapse behind a fade so pasted walls of text don't
  * bury the conversation; bots get full markdown. */
@@ -198,7 +212,7 @@ class MessageBoundary extends Component<{ children: ReactNode; fallbackText: str
   render() {
     if (this.state.failed) {
       return (
-        <div className="max-w-[70%] rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-ink">
+        <div className="min-w-0 rounded-lg bg-card px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words text-ink">
           {this.props.fallbackText}
         </div>
       );
@@ -213,10 +227,12 @@ function BubbleEditor({
   initial,
   onCancel,
   onSubmit,
+  productAsk = false,
 }: {
   initial: string;
   onCancel: () => void;
   onSubmit: (text: string) => void;
+  productAsk?: boolean;
 }) {
   const [draft, setDraft] = useState(initial);
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -230,12 +246,15 @@ function BubbleEditor({
     if (draft.trim()) onSubmit(draft.trim());
   };
   return (
-    <div className="w-full max-w-[70%] rounded-2xl border border-hairline/40 bg-bubble-user px-4 py-3">
+    <div className={productAsk ? "ask-request ask-message-editor" : "w-full max-w-[70%] rounded-2xl border border-hairline/40 bg-bubble-user px-4 py-3"}>
+      {productAsk && <p className="ask-edit-hint">Sending starts a new version from here. Your original stays saved.</p>}
       <textarea
+        aria-label="Edit request"
         ref={ref}
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => {
+          if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
           // isComposing: an IME confirm-Enter must not submit the edit
           if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();
@@ -249,16 +268,16 @@ function BubbleEditor({
       <div className="mt-2 flex items-center justify-end gap-2">
         <button
           onClick={onCancel}
-          className="rounded-full px-3 py-1 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
+          className={productAsk ? "ask-text-button" : "rounded-full px-3 py-1 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"}
         >
           Cancel
         </button>
         <button
           onClick={submit}
           disabled={!draft.trim()}
-          className="rounded-full bg-accent px-3 py-1 text-[13px] font-medium text-white disabled:opacity-40"
+          className={productAsk ? "ask-button ask-button-primary" : "rounded-full bg-accent px-3 py-1 text-[13px] font-medium text-white disabled:opacity-40"}
         >
-          Send
+          {productAsk ? "Send edited request" : "Send"}
         </button>
       </div>
     </div>
@@ -274,7 +293,9 @@ function Bubble({
   onCancelEdit,
   onSubmitEdit,
   onRegenerate,
+  onMakeRepeatable,
   productAsk = false,
+  versionFocus,
 }: {
   bot: Bot;
   message: Message;
@@ -284,10 +305,25 @@ function Bubble({
   onCancelEdit: () => void;
   onSubmitEdit: (text: string) => void;
   onRegenerate?: () => void;
+  onMakeRepeatable?: () => void;
   productAsk?: boolean;
+  versionFocus?: RefObject<string | null>;
 }) {
   const { dispatch } = useStore();
   const user = message.role === "user";
+  const editButtonRef = useRef<HTMLButtonElement>(null);
+  const versionsRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (versionFocus?.current === message.id && versionsRef.current) {
+      versionsRef.current.focus();
+      versionFocus.current = null;
+    }
+  }, [message.id, versionFocus]);
+  const wasEditing = useRef(editing);
+  useEffect(() => {
+    if (wasEditing.current && !editing && productAsk) editButtonRef.current?.focus();
+    wasEditing.current = editing;
+  }, [editing, productAsk]);
   const [expanded, setExpanded] = useState(false);
   const text = message.text ?? "";
   const collapsible =
@@ -296,7 +332,7 @@ function Bubble({
   if (user && editing) {
     return (
       <div className="flex w-full justify-end">
-        <BubbleEditor initial={text} onCancel={onCancelEdit} onSubmit={onSubmitEdit} />
+        <BubbleEditor initial={productAsk ? channelMessage(text)?.body ?? text : text} productAsk={productAsk} onCancel={onCancelEdit} onSubmit={onSubmitEdit} />
       </div>
     );
   }
@@ -305,8 +341,24 @@ function Bubble({
   const versions = user ? messageVersions(bot, message) : [message];
   const versionIndex = versions.findIndex((v) => v.id === message.id);
   const switchTo = (v: Message | undefined) => {
-    if (v && !bot.busy) dispatch({ type: "switchBranch", botId: bot.id, messageId: v.id });
+    if (v && !bot.busy) {
+      if (productAsk && versionFocus) versionFocus.current = v.id;
+      dispatch({ type: "switchBranch", botId: bot.id, messageId: v.id });
+    }
   };
+
+  if (productAsk) return (
+    <AskMessage key={message.id} text={text} at={message.at} user={user} editButtonRef={editButtonRef} versionsRef={versionsRef}
+      versions={user && versions.length > 1 ? {
+        current: versionIndex + 1, total: versions.length,
+        onPrevious: versionIndex > 0 && !bot.busy ? () => switchTo(versions[versionIndex - 1]) : undefined,
+        onNext: versionIndex < versions.length - 1 && !bot.busy ? () => switchTo(versions[versionIndex + 1]) : undefined,
+      } : undefined}
+      onEdit={user && message.kind === "text" && !bot.busy ? onStartEdit : undefined}
+      onMakeRepeatable={!user && isLastBotText && !bot.busy && text.trim() ? onMakeRepeatable : undefined}>
+      <MessageBoundary key={text} fallbackText={text}><ChatMarkdown text={text} /></MessageBoundary>
+    </AskMessage>
+  );
 
   return (
     <div className={cn("group animate-msg-in flex w-full flex-col", user ? "items-end" : "items-start")}>
@@ -327,7 +379,8 @@ function Bubble({
         {user && <CopyButton text={text} />}
         <div
           className={cn(
-            "max-w-[70%] rounded-lg px-4 py-2.5 text-[15px] leading-relaxed",
+            "min-w-0 rounded-lg px-4 py-2.5 text-[15px] leading-relaxed",
+            productAsk && !user ? "max-w-[90%]" : "max-w-[70%]",
             user ? "whitespace-pre-wrap bg-bubble-user text-ink" : "bg-card text-ink",
           )}
           title={fmtDateTime(message.at)}
@@ -435,6 +488,9 @@ function ActivityChip({ message }: { message: Message }) {
     );
   }
   const failed = tool.ok === false;
+  const spoken = tool.spoken?.trim();
+  const label = spoken || toolLabel(tool.name);
+  const title = spoken && spoken !== tool.name ? `${tool.name} · ${spoken}` : tool.name;
   return (
     <div className="flex justify-start">
       <div
@@ -450,8 +506,8 @@ function ActivityChip({ message }: { message: Message }) {
         ) : (
           <Check size={13} className="text-success" />
         )}
-        <span className="max-w-[480px] truncate" title={tool.name}>
-          {toolLabel(tool.name)}
+        <span className="max-w-[480px] truncate" title={title}>
+          {label}
         </span>
       </div>
     </div>
@@ -552,6 +608,23 @@ function WorkingTimer({ since }: { since: number }) {
  * every markdown tree, every code block — bails out of React work and only
  * the streaming tail below it commits. This is the t3code structural-sharing
  * idea at component granularity. */
+type AskChipRowProps = {
+  next: AskNext[];
+  disabled?: boolean;
+  align?: "center" | "start";
+  onAsk: (text: string) => void;
+  onRecheck: () => void;
+  onDesk: () => void;
+  onYou: () => void;
+  onYouJobs?: () => void;
+  onRoutines?: () => void;
+  onInterrupt?: () => void;
+  onAttend?: (recipeId: string) => void;
+  onApprove?: (recipeId: string, attach: boolean) => void;
+  onSetSite?: (recipeId: string) => void;
+  onConnectSetup?: (connectLabel?: string) => void;
+};
+
 function AskChipRow({
   next,
   disabled,
@@ -564,19 +637,10 @@ function AskChipRow({
   onRoutines,
   onInterrupt,
   onAttend,
-}: {
-  next: AskNext[];
-  disabled?: boolean;
-  align?: "center" | "start";
-  onAsk: (text: string) => void;
-  onRecheck: () => void;
-  onDesk: () => void;
-  onYou: () => void;
-  onYouJobs?: () => void;
-  onRoutines?: () => void;
-  onInterrupt?: () => void;
-  onAttend?: (recipeId: string) => void;
-}) {
+  onApprove,
+  onSetSite,
+  onConnectSetup,
+}: AskChipRowProps) {
   if (next.length === 0) return null;
   return (
     <div
@@ -586,31 +650,70 @@ function AskChipRow({
         align === "center" && "mx-auto",
       )}
       role="list"
-      aria-label="Tailored work suggestions"
+      aria-label="Next actions"
     >
-      {next.map((row) => (
-        <button
-          key={row.id}
-          type="button"
-          disabled={Boolean(disabled) && row.kind !== "interrupt" && row.kind !== "routines"}
-          onClick={() => {
-            if (row.kind === "ask") onAsk(row.text);
-            else if (row.kind === "recheck") onRecheck();
-            else if (row.kind === "desk") onDesk();
-            else if (row.kind === "routines") onRoutines?.();
-            else if (row.kind === "interrupt") onInterrupt?.();
-            else if (row.kind === "you-jobs") onYouJobs?.();
-            else if (row.kind === "attend") onAttend?.(row.recipeId);
-            else onYou();
-          }}
-          className="pm-control rounded-lg border border-line bg-sheet px-3 py-2.5 text-left hover:border-agency/35 hover:bg-raised disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <span className="block text-[13px] font-medium text-ink">{row.label}</span>
-          <span className="mt-0.5 block text-[11.5px] leading-relaxed text-ink-muted">{row.description}</span>
-        </button>
-      ))}
+      {next.map((row) => {
+        const primary =
+          row.kind === "approve" || row.kind === "attend" || row.kind === "set-site" || row.kind === "connect-setup" || row.id === "check-app-connection";
+        return (
+          <button
+            key={row.id}
+            type="button"
+            disabled={Boolean(disabled) && row.kind !== "interrupt" && row.kind !== "routines"}
+            onClick={() => {
+              if (row.kind === "ask") onAsk(row.text);
+              else if (row.kind === "recheck") onRecheck();
+              else if (row.kind === "desk") onDesk();
+              else if (row.kind === "routines") onRoutines?.();
+              else if (row.kind === "interrupt") onInterrupt?.();
+              else if (row.kind === "you-jobs") onYouJobs?.();
+              else if (row.kind === "connect-setup") onConnectSetup?.(row.connectLabel);
+              else if (row.kind === "attend") onAttend?.(row.recipeId);
+              else if (row.kind === "approve") onApprove?.(row.recipeId, row.attach);
+              else if (row.kind === "set-site") onSetSite?.(row.recipeId);
+              else onYou();
+            }}
+            className={cn(
+              "pm-control rounded-lg px-3 py-2.5 text-left disabled:cursor-not-allowed disabled:opacity-40",
+              primary
+                ? "border border-agency/30 bg-agency text-white hover:bg-agency-hover"
+                : "border border-line bg-sheet hover:border-agency/35 hover:bg-raised",
+            )}
+          >
+            <span className={cn("block text-[13px] font-medium", primary ? "text-white" : "text-ink")}>{row.label}</span>
+            <span
+              className={cn(
+                "mt-0.5 block text-[11.5px] leading-relaxed",
+                primary ? "text-white/85" : "text-ink-muted",
+              )}
+            >
+              {row.description}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
+}
+
+/** A reply's sign-in follow-up must be visible without opening the task menu. */
+export function AskNextActionPanel({
+  next, panelRef, expanded, children, ...actions
+}: AskChipRowProps & { panelRef?: RefObject<HTMLDetailsElement | null>; expanded?: boolean; children?: ReactNode }) {
+  const connection = next.filter(row => row.id === "check-app-connection");
+  const tasks = next.filter(row => row.id !== "check-app-connection");
+  return <>
+    {connection.length ? <div className="mx-auto w-full max-w-[900px] shrink-0 px-5 py-2" aria-label="Connection follow-up">
+      <AskChipRow {...actions} next={connection} />
+    </div> : null}
+    <details ref={panelRef} className="ask-next-actions mx-auto w-full max-w-[900px] shrink-0" open={expanded || undefined}>
+      <summary className="ask-next-summary">Tasks, book &amp; saved jobs<ChevronDown size={14} aria-hidden /></summary>
+      <div className="max-h-[40vh] overflow-y-auto">
+        <AskChipRow {...actions} next={tasks} />
+        {children}
+      </div>
+    </details>
+  </>;
 }
 
 const MessagesList = memo(function MessagesList({
@@ -627,11 +730,11 @@ const MessagesList = memo(function MessagesList({
   onRegenerate,
   productAsk = false,
   askWorkerReady = true,
-  askWorkerSetupComplete = false,
-  askNeedsModel = false,
   askNext = [],
   askActionsDisabled = false,
   onAskStarter,
+  onAskExample,
+  onMakeRepeatable,
   onAskRecheck,
   onAskDesk,
   onAskYou,
@@ -639,6 +742,9 @@ const MessagesList = memo(function MessagesList({
   onAskYouJobs,
   onAskInterrupt,
   onAskAttend,
+  onAskApprove,
+  onAskSetSite,
+  onAskConnectSetup,
 }: {
   bot: Bot;
   messages: Message[];
@@ -654,12 +760,11 @@ const MessagesList = memo(function MessagesList({
   onRegenerate: () => void;
   productAsk?: boolean;
   askWorkerReady?: boolean;
-  askWorkerSetupComplete?: boolean;
-  /** The model is the one missing piece — say so, same as the composer strip. */
-  askNeedsModel?: boolean;
   askNext?: AskNext[];
   askActionsDisabled?: boolean;
   onAskStarter?: (text: string) => void;
+  onAskExample?: (text: string) => void;
+  onMakeRepeatable?: (messageId: string) => void;
   onAskRecheck?: () => void;
   onAskDesk?: () => void;
   onAskYou?: () => void;
@@ -667,37 +772,28 @@ const MessagesList = memo(function MessagesList({
   onAskYouJobs?: () => void;
   onAskInterrupt?: () => void;
   onAskAttend?: (recipeId: string) => void;
+  onAskApprove?: (recipeId: string, attach: boolean) => void;
+  onAskSetSite?: (recipeId: string) => void;
+  onAskConnectSetup?: (connectLabel?: string) => void;
 }) {
   const askEmpty = productAsk && isProductAskEmptyThread(messages);
+  const versionFocus = useRef<string | null>(null);
   const showEmpty = (messages.length === 0 || askEmpty) && !bot.busy;
   return (
     <>
       {showEmpty && (
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 py-24 text-center">
+        <div className={cn("flex flex-1 flex-col items-center justify-center gap-3 text-center", productAsk ? "ask-welcome py-6" : "py-24")}>
           {productAsk ? (
-            !askWorkerReady ? (
               <>
-                <h2 className="pm-case-title text-ink">Finish Bud on You</h2>
-                <div className="max-w-[360px] text-[14px] text-ink-muted">
-                  {askWorkerSetupComplete
-                    ? "One private readiness check left. Desk still works on the sample book."
-                    : "Connect a model, then run the private readiness check. Desk still works while you finish."}
+                <div className="ask-welcome-mark"><MausAvatar color="green" state="idle" size={44} trackPointer={false} /></div>
+                <p className="ask-eyebrow">A little less admin. More room for your day.</p>
+                <h2 className="ask-welcome-title">What can I take off your plate?</h2>
+                <div className="ask-welcome-description">
+                  Give Bud an outcome. Get back prepared work you can review, refine and use again.
                 </div>
-                <button
-                  type="button"
-                  onClick={() => onAskYou?.()}
-                  className="mt-2 rounded bg-agency px-3.5 py-2 text-[13px] font-medium text-white hover:bg-agency-hover"
-                >
-                  {askWorkerSetupComplete ? "Run readiness check" : askNeedsModel ? "Connect a model" : "Set up Bud"}
-                </button>
-              </>
-            ) : (
-              <>
-                <h2 className="pm-case-title text-ink">Tell Bud the outcome</h2>
-                <div className="max-w-[360px] text-[14px] text-ink-muted">
-                  Bud handles the steps, prepares the work, and puts only real decisions on Desk.
-                </div>
-                <div className="mt-2">
+                <PmTaskStarters onChoose={(text) => onAskExample?.(text)} disabled={askActionsDisabled} />
+                {askWorkerReady ? <details className="mt-2 w-full max-w-[48rem] text-left">
+                  <summary className="cursor-pointer py-2 text-[14px] text-ink-muted">Desk and saved jobs</summary>
                   <AskChipRow
                     next={askNext}
                     disabled={askActionsDisabled}
@@ -709,10 +805,12 @@ const MessagesList = memo(function MessagesList({
                     onRoutines={() => onAskRoutines?.()}
                     onInterrupt={() => onAskInterrupt?.()}
                     onAttend={(recipeId) => onAskAttend?.(recipeId)}
+                    onApprove={(recipeId, attach) => onAskApprove?.(recipeId, attach)}
+                    onSetSite={(recipeId) => onAskSetSite?.(recipeId)}
+                    onConnectSetup={(label) => onAskConnectSetup?.(label)}
                   />
-                </div>
+                </details> : null}
               </>
-            )
           ) : (
             <>
               <MausAvatar color={bot.color} state="idle" size={64} motion="none" motionKey={0} />
@@ -763,7 +861,9 @@ const MessagesList = memo(function MessagesList({
                   onCancelEdit={onCancelEdit}
                   onSubmitEdit={(text) => onSubmitEdit(m.id, text)}
                   onRegenerate={onRegenerate}
+                  onMakeRepeatable={onMakeRepeatable ? () => onMakeRepeatable(m.id) : undefined}
                   productAsk={productAsk}
+                  versionFocus={versionFocus}
                 />
               );
           }
@@ -782,15 +882,38 @@ const MessagesList = memo(function MessagesList({
 
 export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: boolean }) {
   const { state, dispatch, refreshHermes } = useStore();
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const [askAction, setAskAction] = useState<"recheck" | "attend" | null>(null);
+  const scrollRef = useWorkspaceScroll(`ask-${bot.threadId}`);
+  const [askAction, setAskAction] = useState<"recheck" | "attend" | "approve" | "set-site" | null>(null);
   const [askActionNotice, setAskActionNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const [focusRecipeId, setFocusRecipeId] = useState<string | null>(null);
+  const [setSiteRecipeId, setSetSiteRecipeId] = useState<string | null>(null);
+  const [setSiteUrl, setSetSiteUrl] = useState("");
+  const [workspaceSheet, setWorkspaceSheet] = useState<"schedule" | null>(null);
+  const [composerStarter, setComposerStarter] = useState<{ id: number; text: string } | undefined>();
+  const taskPanelRef = useRef<HTMLDetailsElement>(null);
+  const chooseExample = useCallback((text: string) => {
+    setComposerStarter((last) => ({ id: (last?.id ?? 0) + 1, text }));
+    if (taskPanelRef.current) taskPanelRef.current.open = false;
+  }, []);
 
   const provisioning = state.provisioning[bot.id];
   const mascotMotion = state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
 
   // only the active branch is rendered; forks stay reachable via ‹ › nav
   const messages = useMemo(() => visibleMessages(bot), [bot]);
+  const makeRepeatable = (messageId: string) => {
+    if (state.jobDraftBusy || hasUnfinishedJobDraft(state.jobDraft)) {
+      setAskActionNotice({ ok: false, text: "Your unfinished job plan is kept. Save or close it on Schedule before making another." });
+      return;
+    }
+    const index = messages.findIndex((message) => message.id === messageId);
+    const answer = messages[index]?.text;
+    const request = messages.slice(0, index).reverse().find((message) => message.role === "user" && message.kind === "text")?.text;
+    if (!answer || !request || bot.busy) return;
+    dispatch({ type: "jobDraft", draft: { ...EMPTY_JOB_DRAFT, text: repeatableJobDescription(request, answer) } });
+    location.hash = "bud-job-builder";
+    setWorkspaceSheet("schedule");
+  };
   useEffect(() => {
     if (!productAsk) return;
     void api("/api/desk")
@@ -801,33 +924,25 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
   const askBrief = productAsk && state.desk ? morningBrief(state.desk) : null;
   const askMiss = Boolean(askBrief?.headline.startsWith("Recheck missed"));
   const askNeedsYou = askBrief?.needsYou ?? 0;
-  const askWorkerKnown = state.hermes != null;
-  const askWorkerReady = Boolean(state.hermes?.ready);
-  const askWorkroomReady = Boolean(state.hermes?.pack.workroomReady);
-  const askNeedsModel = Boolean(state.hermes?.model && !state.hermes.model.attached);
+  const availability = budAvailability(state.hermes, state.connected, Boolean(state.desk?.recovery?.active));
+  const askWorkerReady = availability.ready;
+  const askWorkroomReady = Boolean(state.hermes?.cli.installed && (state.hermes.cli.compatible ?? state.hermes.cli.matchesPin) && state.hermes.pack.installed && state.hermes.pack.approvalsManual && state.hermes.pack.workroomReady);
   const askWaitingForYou = productAsk && pendingApprovals(messages).length > 0;
   const askEmptyThread = productAsk && isProductAskEmptyThread(messages);
-  const [jobRuns, setJobRuns] = useState<JobRun[]>([]);
   const [savedRecipes, setSavedRecipes] = useState<Recipe[]>([]);
-  const attendedRun = useMemo(() => runningAttended(jobRuns), [jobRuns]);
+  const attendedRun = useMemo(() => activeAttendedRun(state.jobRuns), [state.jobRuns]);
   const lastBotText = useMemo(
     () => [...messages].reverse().find((message) => message.role === "bot" && message.kind === "text")?.text ?? null,
     [messages],
   );
   useEffect(() => {
-    if (!productAsk) return;
-    let alive = true;
-    void api("/api/job-runs?limit=20")
-      .then((body: { runs?: JobRun[] }) => {
-        if (alive && Array.isArray(body.runs)) setJobRuns(body.runs);
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [productAsk]);
-  useEffect(() => {
-    if (!productAsk || !lastBotText?.includes("is already a saved job")) return;
+    if (!productAsk || !lastBotText) return;
+    const needsRecipes =
+      lastBotText.includes("is already a saved job") ||
+      /Approve the plan/i.test(lastBotText) ||
+      /Here's the plan/i.test(lastBotText) ||
+      /Run beside me/i.test(lastBotText);
+    if (!needsRecipes) return;
     let alive = true;
     void api("/api/recipes")
       .then((body: { recipes?: Recipe[] }) => {
@@ -838,53 +953,33 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
       alive = false;
     };
   }, [lastBotText, productAsk]);
-  useEffect(() => {
-    if (!productAsk || !attendedRun) return;
-    const id = window.setInterval(() => {
-      void api("/api/job-runs?limit=20")
-        .then((body: { runs?: JobRun[] }) => {
-          if (Array.isArray(body.runs)) setJobRuns(body.runs);
-        })
-        .catch(() => {});
-    }, 3_000);
-    return () => window.clearInterval(id);
-  }, [attendedRun, productAsk]);
   const askStatus = attendedRun
-    ? { label: attendedHeaderLabel(attendedRun.jobTitle), className: "border-agency/25 bg-agency/10 text-agency" }
+    ? {
+        label: `${attendedHeaderLabel(attendedRun.jobTitle)}${runStatusSuffix(state.connected)}`,
+        className: "border-agency/25 bg-agency/10 text-agency",
+      }
     : askWaitingForYou
     ? { label: "Waiting for you", className: "border-hold/25 bg-hold/10 text-hold" }
-    : !state.connected
-    ? { label: "Reconnecting", className: "border-hold/25 bg-hold/10 text-hold" }
-    : !askWorkerKnown
-      ? { label: "Checking Bud", className: "border-line bg-inset text-ink-muted" }
-      : askWorkerReady
-        ? { label: "Bud ready", className: "border-agency/25 bg-agency/10 text-agency" }
-        : askWorkroomReady
-          ? { label: "Workroom ready", className: "border-hold/25 bg-hold/10 text-hold" }
-          : { label: "Setup needed", className: "border-hold/25 bg-hold/10 text-hold" };
-  const askRepairCopy = !state.connected
-    ? "RealBud's local service is reconnecting. You can read this thread; new work will resume when it is back."
-    : !state.hermes
-      ? "RealBud is checking Bud's local setup."
-      : !state.hermes.cli.installed || !state.hermes.cli.matchesPin
-      ? "Bud needs to be installed or updated before tool work can run."
-      : !state.hermes.pack.installed || !state.hermes.pack.approvalsManual || !state.hermes.pack.workroomReady
-        ? "Bud's private workroom needs setup before files, research, calculations, or code can run."
-        : askNeedsModel
-          ? "Bud needs a model connection before Ask can run tool work."
-          : "Bud needs a private readiness check before Ask relies on the model connection.";
+    : bot.busy
+    ? { label: state.connected ? "Working" : "Reconnecting", className: "border-agency/25 bg-agency/10 text-agency" }
+    : { label: availability.label, className: askWorkerReady ? "border-agency/25 bg-agency/10 text-agency" : "border-hold/25 bg-hold/10 text-hold" };
   const sendAsk = useCallback((text: string) => dispatch({ type: "send", botId: bot.id, text }), [bot.id, dispatch]);
   const goDesk = useCallback(() => dispatch({ type: "showDesk" }), [dispatch]);
-  const goRoutines = useCallback(() => dispatch({ type: "showRoutines" }), [dispatch]);
-  const goYouJobs = useCallback(() => {
-    location.hash = "you-jobs";
-    dispatch({ type: "showYou" });
-  }, [dispatch]);
+  const goRoutines = useCallback(() => {
+    if (lastBotText?.includes("**Schedule work**") && !state.jobDraftBusy && !hasUnfinishedJobDraft(state.jobDraft)) {
+      const request = [...messages].reverse().find(message => message.role === "user" && message.kind === "text")?.text;
+      if (request && !/^(?:what|show|list)/i.test(request.trim())) dispatch({ type: "jobDraft", draft: { ...EMPTY_JOB_DRAFT, text: request } });
+    }
+    location.hash = focusRecipeId ? `job-${focusRecipeId}` : "bud-job-builder";
+    setWorkspaceSheet("schedule");
+  }, [dispatch, focusRecipeId, lastBotText, messages, state.jobDraft, state.jobDraftBusy]);
+  const goYouJobs = goRoutines;
   const stopTurn = useCallback(() => dispatch({ type: "interrupt", botId: bot.id }), [bot.id, dispatch]);
   const goYouSetup = useCallback(() => {
-    location.hash = askNeedsModel ? "attach-model" : "you-worker";
-    dispatch({ type: "showYou" });
-  }, [askNeedsModel, dispatch]);
+    if (availability.target === "you-recovery") { location.hash = availability.target; dispatch({ type: "showYou" }); return; }
+    setWorkspaceSheet(null);
+    openWorkspaceSetup("bud");
+  }, [availability.target, dispatch]);
   const askNext = useMemo(
     () => askNextActions({
       miss: askMiss,
@@ -897,8 +992,10 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
       attendedRunActive: Boolean(attendedRun),
       threadIdle: !bot.busy,
       recipes: savedRecipes,
+      composioConfigured: Boolean(state.config?.composio?.configured),
+      focusRecipeId,
     }),
-    [askBrief?.addresses, askBrief?.lastRunAt, askMiss, askNeedsYou, askWorkerReady, askWorkroomReady, attendedRun, bot.busy, lastBotText, savedRecipes],
+    [askBrief?.addresses, askBrief?.lastRunAt, askMiss, askNeedsYou, askWorkerReady, askWorkroomReady, attendedRun, bot.busy, focusRecipeId, lastBotText, savedRecipes, state.config?.composio?.configured],
   );
   const runAskRecheck = useCallback(async () => {
     if (askAction || bot.busy) return;
@@ -926,7 +1023,8 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
     try {
       const body = (await api(`/api/recipes/${recipeId}/attend`, { method: "POST" })) as { run?: JobRun };
       if (!body.run) throw new Error("Bud could not start that run.");
-      setJobRuns((prev) => [body.run!, ...prev.filter((item) => item.id !== body.run!.id)]);
+      dispatch({ type: "jobRun", run: body.run });
+      setFocusRecipeId(recipeId);
       setAskActionNotice({
         ok: true,
         text: `Running ${body.run.jobTitle} beside you — answer Bud's requests in Ask; sign in when the page asks.`,
@@ -941,6 +1039,91 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
       setAskAction(null);
     }
   }, [askAction, bot.busy, dispatch]);
+  const runAskApprove = useCallback(async (recipeId: string, attach: boolean) => {
+    if (askAction || bot.busy) return;
+    setAskAction("approve");
+    setAskActionNotice(null);
+    try {
+      const approved = (await api(`/api/recipes/${recipeId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ planApproved: true, status: "active" }),
+      })) as { recipes?: Recipe[] };
+      let recipes = approved.recipes ?? [];
+      if (attach) {
+        const attached = (await api(`/api/recipes/${recipeId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ attach: true }),
+        })) as { recipes?: Recipe[] };
+        recipes = attached.recipes ?? recipes;
+      }
+      if (Array.isArray(recipes)) setSavedRecipes(recipes);
+      setFocusRecipeId(recipeId);
+      setAskActionNotice({
+        ok: true,
+        text: attach
+          ? "Plan approved and site attached. Press Run beside me now when you are at the screen."
+          : "Plan approved here. Add the portal site below, then Run beside me.",
+      });
+    } catch (cause) {
+      setAskActionNotice({
+        ok: false,
+        text: cause instanceof Error ? cause.message : String(cause),
+      });
+    } finally {
+      setAskAction(null);
+    }
+  }, [askAction, bot.busy]);
+  const openAskSetSite = useCallback((recipeId: string) => {
+    setSetSiteRecipeId(recipeId);
+    setSetSiteUrl("");
+    setAskActionNotice(null);
+  }, []);
+  const runAskSetSite = useCallback(async () => {
+    if (!setSiteRecipeId || askAction || bot.busy) return;
+    const raw = setSiteUrl.trim();
+    if (!raw) {
+      setAskActionNotice({ ok: false, text: "Paste the portal address first — for example vantagestrata.com.au." });
+      return;
+    }
+    setAskAction("set-site");
+    setAskActionNotice(null);
+    try {
+      const body = (await api(`/api/recipes/${setSiteRecipeId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          allowedOrigins: [raw],
+          ensurePortal: true,
+          planApproved: true,
+          attach: true,
+          status: "active",
+        }),
+      })) as { recipes?: Recipe[] };
+      if (Array.isArray(body.recipes)) setSavedRecipes(body.recipes);
+      setFocusRecipeId(setSiteRecipeId);
+      setSetSiteRecipeId(null);
+      setSetSiteUrl("");
+      setAskActionNotice({
+        ok: true,
+        text: "Portal site saved, plan approved, and attached. Press Run beside me now.",
+      });
+    } catch (cause) {
+      setAskActionNotice({
+        ok: false,
+        text: cause instanceof Error ? cause.message : String(cause),
+      });
+    } finally {
+      setAskAction(null);
+    }
+  }, [askAction, bot.busy, setSiteRecipeId, setSiteUrl]);
+  const openAskConnectSetup = useCallback((connectLabel?: string) => {
+    if (selectedConnectedAppsConfigured(state.config?.composio) && connectLabel && !bot.busy) {
+      sendAsk(`connect ${connectLabel}`);
+      return;
+    }
+    setWorkspaceSheet(null);
+    openWorkspaceSetup("apps");
+  }, [sendAsk, state.config?.composio, bot.busy]);
+
   const lastBotTextId = useMemo(
     () => [...messages].reverse().find((m) => m.role === "bot" && m.kind === "text")?.id,
     [messages],
@@ -987,13 +1170,16 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
   // scroll position checks — streamed content growth flickers "at bottom"
   // false for a frame, and breaking there kills follow permanently
   // (upstream-verified failure). Scrolling back to the end re-arms it.
-  const [follow, setFollow] = useState(true);
+  const [follow, setFollow] = useConversationFollow(bot.threadId);
   const touchY = useRef(0);
 
-  useEffect(() => setFollow(true), [bot.id]);
   const followLatest = useCallback(() => {
-    if (follow && scrollRef.current) scrollChatToEnd(scrollRef.current);
-  }, [follow]);
+    if (!follow || !scrollRef.current) return;
+    // Welcome content is read from the top. Conversation follow behaviour
+    // starts only when there is work to follow.
+    if (productAsk && askEmptyThread && !bot.busy) scrollRef.current.scrollTop = 0;
+    else scrollChatToEnd(scrollRef.current);
+  }, [follow, productAsk, askEmptyThread, bot.busy]);
   useEffect(() => {
     followLatest();
   }, [bot.id, bot.busy, followLatest, messages.length]);
@@ -1002,11 +1188,12 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
   // follow like an upward wheel; the at-end onScroll check re-arms it
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (document.querySelector('[aria-modal="true"]')) return;
       if (e.key === "PageUp" || (e.key === "Home" && !(e.target instanceof HTMLTextAreaElement))) setFollow(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [setFollow]);
 
   const atEnd = () => {
     const el = scrollRef.current;
@@ -1029,24 +1216,25 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
   const noDrag = isWin ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
   return (
-    <main className="relative flex h-full min-w-0 flex-1 flex-col bg-paper">
+    <main className={cn("relative flex h-full min-w-0 flex-1 flex-col bg-paper", productAsk && "ask-workspace")}>
       {/* Call mode covers the thread while the bot is on the line */}
       <CallOverlay bot={bot} />
       {/* Header */}
       <div
-        className={cn("flex items-center justify-between border-b border-line px-5 py-3", isWin && "pr-[148px]")}
+        className={cn("flex items-center justify-between border-b border-line px-5 py-3", productAsk && "ask-header", isWin && "pr-[148px]")}
         style={drag}
       >
         {productAsk ? (
-          <div className="flex min-w-0 flex-1 flex-col gap-0.5 px-1.5 py-1" style={noDrag}>
+          <div className="ask-header-title" style={noDrag}>
             <div className="flex items-center gap-2.5">
-              <h1 className="pm-screen-title text-ink">Ask</h1>
-              <span className={cn("rounded-full border px-2 py-0.5 text-[10.5px] font-medium", askStatus.className)}>
+              <h1 className="pm-screen-title text-ink">Ask Bud</h1>
+              <span className={cn("ask-status", askStatus.className)}>
+                <span className="ask-status-dot" aria-hidden />
                 {askStatus.label}
               </span>
               {bot.busy && !askWaitingForYou && <Loader2 size={14} className="animate-spin text-ink-muted" />}
             </div>
-            <p className="text-[12.5px] text-ink-muted">Name the outcome. Bud handles the steps; sends, payments, and statutory actions stay with you.</p>
+            <p className="ask-header-description">Your work, a few steps ahead.</p>
           </div>
         ) : (
         <button
@@ -1072,6 +1260,7 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
         </button>
         )}
         <div className="flex items-center gap-2" style={noDrag}>
+          {productAsk && <AskContext desk={state.desk} missed={askMiss} onDesk={goDesk} />}
           {bot.busy && (
             <button
               onClick={() => dispatch({ type: "interrupt", botId: bot.id })}
@@ -1100,7 +1289,7 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
         </div>
       </div>
 
-      {askMiss ? (
+      {!productAsk && askMiss ? (
         <p className="border-b border-line px-5 py-2 text-[12.5px] text-hold">{askBrief?.headline}</p>
       ) : null}
 
@@ -1111,7 +1300,7 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
       {/* Messages */}
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto px-5 [overflow-anchor:none]"
+        className={cn("flex-1 overflow-y-auto px-5 [overflow-anchor:none]", productAsk && "ask-thread")}
         onWheel={(e) => {
           if (e.deltaY < 0) setFollow(false);
           else if (atEnd()) setFollow(true);
@@ -1127,7 +1316,7 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
         }}
       >
         <div
-          className="mx-auto flex max-w-[900px] flex-col gap-3 pb-4"
+          className={cn("mx-auto flex max-w-[900px] flex-col gap-3 pb-4", productAsk && "ask-thread-content")}
           role="log"
           aria-live="polite"
           aria-label={`Conversation with ${bot.name}`}
@@ -1146,11 +1335,11 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
             onRegenerate={regenerate}
             productAsk={productAsk}
             askWorkerReady={askWorkerReady}
-            askWorkerSetupComplete={askWorkroomReady && !askNeedsModel}
-            askNeedsModel={askNeedsModel}
             askNext={askNext}
             askActionsDisabled={Boolean(askAction) || bot.busy}
             onAskStarter={sendAsk}
+            onAskExample={chooseExample}
+            onMakeRepeatable={makeRepeatable}
             onAskRecheck={() => void runAskRecheck()}
             onAskDesk={goDesk}
             onAskYou={goYouSetup}
@@ -1158,6 +1347,9 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
             onAskYouJobs={goYouJobs}
             onAskInterrupt={stopTurn}
             onAskAttend={(recipeId) => void runAskAttend(recipeId)}
+            onAskApprove={(recipeId, attach) => void runAskApprove(recipeId, attach)}
+            onAskSetSite={openAskSetSite}
+            onAskConnectSetup={openAskConnectSetup}
           />
           {provisioning && !productAsk && (
             <div className="flex justify-start">
@@ -1182,7 +1374,7 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
         <button
           onClick={jumpToLatest}
           aria-label="Jump to latest messages"
-          className="animate-pop-in absolute bottom-24 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-hairline/40 bg-raised px-3 py-1.5 text-[12.5px] text-ink shadow-lg hover:bg-raised-hover"
+          className={cn("animate-pop-in absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-hairline/40 bg-raised px-3 py-1.5 text-[12.5px] text-ink shadow-lg hover:bg-raised-hover", productAsk ? "ask-jump-latest" : "bottom-24")}
         >
           <ArrowDown size={13} /> Jump to latest
         </button>
@@ -1205,9 +1397,49 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
         </div>
       ) : null}
 
+      {productAsk && setSiteRecipeId ? (
+        <form
+          className="mx-auto flex w-full max-w-[900px] shrink-0 flex-wrap items-end gap-2 border-t border-line px-5 py-2.5"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void runAskSetSite();
+          }}
+        >
+          <label className="min-w-[12rem] flex-1 text-left">
+            <span className="mb-1 block text-[11.5px] font-medium text-ink-muted">Portal site</span>
+            <input
+              value={setSiteUrl}
+              onChange={(event) => setSetSiteUrl(event.target.value)}
+              placeholder="vantagestrata.com.au"
+              autoComplete="off"
+              aria-label="Portal site hostname"
+              className="w-full rounded-lg border border-line bg-sheet px-3 py-2 text-[13px] text-ink placeholder:text-ink-muted focus:border-agency/40"
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={Boolean(askAction) || bot.busy}
+            className="rounded-lg bg-agency px-3.5 py-2 text-[13px] font-medium text-white hover:bg-agency-hover disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Save, approve, attach
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSetSiteRecipeId(null);
+              setSetSiteUrl("");
+            }}
+            className="rounded-lg border border-line bg-sheet px-3 py-2 text-[13px] text-ink-muted hover:bg-raised"
+          >
+            Cancel
+          </button>
+        </form>
+      ) : null}
+
       {productAsk && !askEmptyThread && askWorkerReady && (!bot.busy || Boolean(attendedRun)) ? (
-        <div className="mx-auto w-full max-w-[900px] shrink-0 border-t border-line px-5 py-2.5">
-          <AskChipRow
+        <AskNextActionPanel
+            panelRef={taskPanelRef}
+            expanded={Boolean(attendedRun) || askNext.some((row) => ["approve", "attend", "set-site", "connect-setup"].includes(row.kind))}
             next={askNext}
             disabled={Boolean(askAction) || bot.busy}
             align="start"
@@ -1219,18 +1451,36 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
             onRoutines={goRoutines}
             onInterrupt={stopTurn}
             onAttend={(recipeId) => void runAskAttend(recipeId)}
-          />
-        </div>
+            onApprove={(recipeId, attach) => void runAskApprove(recipeId, attach)}
+            onSetSite={openAskSetSite}
+            onConnectSetup={openAskConnectSetup}
+          >
+          <div className="px-1 pb-3 pt-2">
+            <PmTaskStarters onChoose={chooseExample} disabled={Boolean(askAction) || bot.busy} />
+          </div>
+        </AskNextActionPanel>
       ) : null}
+
+      {workspaceSheet ? <AskWorkspaceSheet title="Schedule work" onClose={() => setWorkspaceSheet(null)}>
+        <RoutinesPage onSetup={goYouSetup} onShowAsk={() => setWorkspaceSheet(null)} />
+      </AskWorkspaceSheet> : null}
+      {productAsk ? <div className="mx-auto flex w-full max-w-[900px] shrink-0 justify-end gap-4 px-5 py-1">
+        <button type="button" className="min-h-9 text-[12px] text-ink-secondary hover:text-ink" onClick={goRoutines}>Schedule work</button>
+        <button type="button" className="pm-control text-[12px] text-ink-secondary" onClick={() => openWorkspaceSetup("phone")}>Continue on phone</button>
+        {!askWorkerReady ? <button type="button" className="min-h-9 text-[12px] text-agency" onClick={goYouSetup}>Set up Bud</button> : null}
+      </div> : null}
 
       <Composer
         key={bot.id}
         bot={bot}
         productAsk={productAsk}
-        askReady={!productAsk || (askWorkerReady && state.connected)}
-        askBlockedDetail={productAsk ? askRepairCopy : undefined}
-        askSetupLabel={productAsk && askNeedsModel ? "Connect a model" : undefined}
-        onAskSetup={productAsk && state.connected ? goYouSetup : undefined}
+        askReady={!productAsk || askWorkerReady}
+        askBlockedDetail={productAsk ? availability.detail : undefined}
+        askSetupLabel={availability.action ?? undefined}
+        onAskSetup={productAsk && availability.action ? goYouSetup : undefined}
+        readiness={productAsk ? <AskReadiness onSetup={goYouSetup} /> : undefined}
+        starter={productAsk ? composerStarter : undefined}
+        onConnectApp={productAsk ? openAskConnectSetup : undefined}
         onEditLast={lastUserMessage && !bot.busy ? () => setEditingId(lastUserMessage.id) : undefined}
       />
 

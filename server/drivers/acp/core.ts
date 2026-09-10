@@ -33,6 +33,9 @@ import { newEventId, newId } from "../../contracts.ts";
 import { computerProxyEnv } from "../../container-computer.ts";
 import { augmentedPath } from "../../env-path.ts";
 import { readCuaConnection } from "../../local-computer.ts";
+import { CONNECTED_APP_APPROVAL, connectedAppsBrokerGeneration, startConnectedAppsBroker, type ConnectedAppsBroker } from "../../connected-apps-broker.ts";
+import { createGmailReadOnlyTransport } from "../../composio-gmail.ts";
+import { toolFingerprint } from "../../tool-fingerprint.ts";
 
 const COMPUTER_PROXY_PATH = SPAWNED_PROXIES.computer;
 import { appendNative } from "../native.ts";
@@ -97,6 +100,7 @@ type AcpStdioMcpServer = {
   env: Array<{ name: string; value: string }>;
 };
 type AcpHttpMcpServer = {
+  type: "http";
   name: string;
   url: string;
   headers: Array<{ name: string; value: string }>;
@@ -150,6 +154,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         text: string;
         promptSent: boolean;
         settled: boolean;
+        cancellationRequested: boolean;
         asks: Map<string, (decision: { behavior: string; scope?: "once" | "session" }) => void>;
         interruptTimer: ReturnType<typeof setTimeout> | null;
         done: Promise<void>;
@@ -176,6 +181,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           ...input.environment,
           PATH: augmentedPath(),
         };
+        delete env.COMPOSIO_KEY;
+        delete env.COMPOSIO_API_KEY;
+        delete env.REALBUD_CUA_CONTROL_TOKEN;
+        delete env.REALBUD_CUA_CONTROL_URL;
+        delete env.REALBUD_DESK_KEY;
         support.transformEnv?.(env);
         return env;
       };
@@ -187,9 +197,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const composio = turn.integrations?.composio;
         if (composio) {
           servers.push({
+            type: "http",
             name: "connected-apps",
-            url: composio.url || "https://connect.composio.dev/mcp",
-            headers: [{ name: "x-consumer-api-key", value: composio.key }],
+            // Replaced with the private broker before session/new or load.
+            url: composio.gmailReadOnly ? "http://127.0.0.1/realbud-gmail-readonly" : composio.url || "https://connect.composio.dev/mcp",
+            headers: composio.gmailReadOnly ? [] : [{ name: "x-consumer-api-key", value: composio.key }],
           });
         }
         const agents = turn.integrations?.agents;
@@ -222,8 +234,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         return servers;
       };
 
-      const signatureFor = (cwd: string, args: string[], mcpServers: AcpMcpServer[]) =>
-        createHash("sha256").update(JSON.stringify({ cli: config.cli, cwd, args, mcpServers })).digest("hex");
+      const signatureFor = (cwd: string, args: string[], mcpServers: AcpMcpServer[], composio?: NonNullable<SendTurnInput["integrations"]>["composio"]) =>
+        createHash("sha256").update(JSON.stringify({ cli: config.cli, cwd, args, mcpServers,
+          ...(composio?.allowedApps ? { allowedApps: composio.allowedApps } : {}),
+          ...(composio?.gmailReadOnly ? { gmailReadOnly: composio.gmailReadOnly, appKey: composio.key } : {}),
+          ...(mcpServers.some(server => server.name === "connected-apps") ? { appGeneration: connectedAppsBrokerGeneration() } : {}),
+        })).digest("hex");
 
       const replayOnFreshSession = (turn: SendTurnInput): SendTurnInput => {
         const transcript = turn.transcript ?? [];
@@ -264,6 +280,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         let idleTimer: ReturnType<typeof setTimeout> | null = null;
         let stderr = "";
         let runtime!: SessionRuntime;
+        let appBroker: ConnectedAppsBroker | undefined;
         const rpcPending = new Map<
           number,
           { resolve: (value: any) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> | null }
@@ -293,6 +310,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           });
 
         const removeRuntime = () => {
+          appBroker?.close();
           if (idleTimer) clearTimeout(idleTimer);
           idleTimer = null;
           if (warm.get(threadId) === runtime) warm.delete(threadId);
@@ -326,6 +344,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const settle = (run: RunningTurn, ok: boolean, stopReason: string | null, keepWarm: boolean) => {
           if (run.settled) return;
           run.settled = true;
+          appBroker?.cancelPending();
           if (run.interruptTimer) clearTimeout(run.interruptTimer);
           for (const finish of [...run.asks.values()]) finish({ behavior: "cancel" });
           const tracked = active.get(threadId);
@@ -342,7 +361,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
 
         const handleServerRequest = (message: any) => {
           const run = current;
-          if (!run || run.settled || message.method !== "session/request_permission") {
+          if (!run || run.settled || run.cancellationRequested || message.method !== "session/request_permission") {
             return send({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "method not found" } });
           }
           const params = message.params ?? {};
@@ -468,6 +487,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 itemType: "tool",
                 itemId: update.toolCallId,
                 title: String(update.rawInput?.command ?? update.title ?? "tool").slice(0, 80),
+                toolFingerprint: toolFingerprint(String(update.title ?? "tool"), update.rawInput ?? update.content),
               });
               break;
             case "tool_call_update":
@@ -548,6 +568,40 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         });
 
         const ready = (async () => {
+          if (firstTurn.integrations?.composio) {
+            const { key, url, gmailReadOnly, allowedApps } = firstTurn.integrations.composio;
+            if (gmailReadOnly && (typeof gmailReadOnly.requestId !== "string" || !gmailReadOnly.requestId.trim())) throw new Error("Gmail review needs a fresh request identity.");
+            appBroker = await startConnectedAppsBroker({
+              key, url, allowedApps,
+              ...(gmailReadOnly ? { readOnlyAccountId: gmailReadOnly.accountId, localTransport: createGmailReadOnlyTransport({
+                apiKey: key, authConfigId: gmailReadOnly.authConfigId, userId: gmailReadOnly.userId, accountId: gmailReadOnly.accountId,
+              }) } : {}),
+              threadId,
+              isActive: () => Boolean(current && !current.settled && !current.cancellationRequested && !closed),
+              approve: (summary, signal) => new Promise<boolean>((resolve) => {
+                const run = current;
+                if (!run || run.settled || run.cancellationRequested || !run.promptSent || closed || signal.aborted) { resolve(false); return; }
+                const requestId = newId();
+                const finish = (decision: { behavior: string; scope?: "once" | "session" }) => {
+                  if (!run.asks.delete(requestId)) return;
+                  clearTimeout(timer);
+                  signal.removeEventListener("abort", aborted);
+                  // Broad/session grants cannot authorize an external action.
+                  const allowed = decision.behavior === "allow" && decision.scope !== "session" &&
+                    !run.settled && !run.cancellationRequested && !signal.aborted && !closed;
+                  emit({ ...eventBase(run), type: "request.resolved", requestId, behavior: allowed ? "allow" : "deny", source: "user" });
+                  resolve(allowed);
+                };
+                const aborted = () => finish({ behavior: "deny" });
+                const timer = setTimeout(aborted, 15 * 60_000); timer.unref();
+                run.asks.set(requestId, finish);
+                signal.addEventListener("abort", aborted, { once: true });
+                emit({ ...eventBase(run), type: "request.opened", requestId, requestType: "permission", tool: CONNECTED_APP_APPROVAL, summary });
+              }),
+            });
+            if (closed) { appBroker.close(); throw new Error("Bud's app session stopped."); }
+            mcpServers = mcpServers.map(server => server.name === "connected-apps" ? appBroker!.descriptor : server);
+          }
           const init = await request(
             "initialize",
             { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } } },
@@ -645,6 +699,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
 
         const interrupt = async (run: RunningTurn) => {
           if (run.settled) return run.done;
+          run.cancellationRequested = true;
+          appBroker?.cancelPending();
+          for (const finish of [...run.asks.values()]) finish({ behavior: "cancel" });
           if (sessionId && run.promptSent) {
             send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
             if (run.interruptTimer) clearTimeout(run.interruptTimer);
@@ -672,6 +729,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             text: "",
             promptSent: false,
             settled: false,
+            cancellationRequested: false,
             asks: new Map(),
             interruptTimer: null,
             done,
@@ -709,7 +767,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const cwd = turn.cwd ?? config.workspace ?? homedir();
         const mcpServers = acpMcpServers(turn);
         const args = support.spawnArgs(config, turn);
-        const signature = signatureFor(cwd, args, mcpServers);
+        const signature = signatureFor(cwd, args, mcpServers, turn.integrations?.composio);
         let runtime = warm.get(threadId);
         // A rewind or poisoned-session recovery deliberately clears the
         // persisted cursor. Do not let the warm-process optimization undo

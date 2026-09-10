@@ -3,6 +3,7 @@
 // next commitDesk snapshot. Licensee / escalation rows never travel as
 // buttons. Quiet hours follow the book's timezone, not the machine's.
 import type { DeskSnapshot, Draft, DraftKind } from "../shared/contracts.ts";
+import { createHash, randomBytes } from "node:crypto";
 
 export type RemoteChannelId = "telegram" | "discord" | "slack";
 
@@ -34,13 +35,15 @@ export type RemoteDecisionsBind = {
 };
 
 const DECIDABLE: ReadonlySet<DraftKind> = new Set(["courtesy-rent", "levy-from-rent", "owner-letter"]);
-const BOOK_MOVED = "the book moved — open Desk to review";
+const BOOK_MOVED = "This work changed. Review the current wording on Desk before deciding.";
 const LICENSEE_REFUSAL = "that card needs the licensee — open Desk when you're at a screen";
 const ELSEWHERE = "This Bud is paired elsewhere.";
 const FLUSH_MS = 60_000;
 const PUSH_MAX = 500;
+const REVIEW_MAX = 1800;
+const STALE_CARD = "This review card is no longer current. Use the latest card, or review the wording on Desk. Nothing was changed by this reply.";
 
-type ChannelPending = { draftId: string; deferred: boolean };
+type ChannelPending = { draftId: string; decisionId: string; fingerprint: string; pairedKey: string; deferred: boolean; previewOnly: boolean };
 
 let bound: RemoteDecisionsBind | null = null;
 // Pushed-but-undecided draft ids. Lost on process start — the next
@@ -48,8 +51,11 @@ let bound: RemoteDecisionsBind | null = null;
 const pendingByChannel = new Map<RemoteChannelId, ChannelPending>();
 const deferredDigests: Array<{ text: string; timeZone: string }> = [];
 let flushTimer: ReturnType<typeof setInterval> | null = null;
+let pushFlight: Promise<void> | null = null;
+let pushRequested = false;
 
 export function bindRemoteDecisions(opts: RemoteDecisionsBind): void {
+  resetRemoteDecisions();
   bound = opts;
 }
 
@@ -58,11 +64,18 @@ export function resetRemoteDecisions(): void {
   pendingByChannel.clear();
   deferredDigests.length = 0;
   bound = null;
+  pushFlight = null;
+  pushRequested = false;
 }
 
 export function pendingDraftId(channel: RemoteChannelId): string | null {
   const row = pendingByChannel.get(channel);
   return row && !row.deferred ? row.draftId : null;
+}
+
+export function pendingDecisionId(channel: RemoteChannelId): string | null {
+  const row = pendingByChannel.get(channel);
+  return row && !row.deferred && !row.previewOnly ? row.decisionId : null;
 }
 
 export function isDecidableDraft(draft: Draft): boolean {
@@ -74,13 +87,26 @@ export function isQuietHours(now: number, timeZone: string): boolean {
   return minutes < 7 * 60 + 1 || minutes >= 18 * 60;
 }
 
-export function parseRemoteDecisionText(text: string): { decision: "allow" | "deny"; reason?: string } | null {
+export function parseRemoteDecisionText(text: string): { decision: "allow" | "deny"; decisionId?: string; reason?: string } | null {
   const trimmed = text.trim();
+  const scoped = /^(allow|deny)\s+([a-f0-9]{12})(?:\s*[-–—:]\s*(.{1,1000}))?$/i.exec(trimmed);
+  if (scoped) return { decision: scoped[1]!.toLowerCase() as "allow" | "deny", decisionId: scoped[2]!.toLowerCase(), ...(scoped[3] && scoped[1]!.toLowerCase() === "deny" ? { reason: scoped[3].trim() } : {}) };
   if (/^(yes|y|allow)$/i.test(trimmed)) return { decision: "allow" };
   const deny = trimmed.match(/^(no|n|deny)(?:\s*[-–—:]\s*(.+))?$/i);
   if (!deny) return null;
   const reason = deny[2]?.trim();
   return reason ? { decision: "deny", reason } : { decision: "deny" };
+}
+
+/** Bare yes/no can refer to a conversation or an older card. Never guess. */
+export async function decideRemoteText(channel: RemoteChannelId, chatKey: string, text: string, byName: string): Promise<RemoteDecideResult | null> {
+  const parsed = parseRemoteDecisionText(text);
+  if (!parsed) return null;
+  if (bound?.channels.find(item => item.id === channel)?.pairedKey() !== chatKey) return { ok: false, message: ELSEWHERE };
+  if (parsed.decisionId) return decideRemotely(channel, chatKey, parsed.decisionId, parsed.decision, parsed.reason, byName);
+  const current = pendingDecisionId(channel);
+  if (!current) return null;
+  return { ok: false, message: `Review the card, then use its buttons or reply “allow ${current}” or “deny ${current}”. Nothing has changed.` };
 }
 
 export function parseDecisionCallback(data: string): { draftId: string; decision: "allow" | "deny" } | null {
@@ -106,17 +132,29 @@ export function decisionPushText(address: string, kind: DraftKind): string {
   return text.length <= PUSH_MAX ? text : `${text.slice(0, PUSH_MAX - 1)}…`;
 }
 
-export function notifyDeskSnapshot(snapshot: DeskSnapshot): Promise<void> {
+export function notifyDeskSnapshot(_snapshot: DeskSnapshot): Promise<void> {
   if (!bound) return Promise.resolve();
-  return pushFromSnapshot(snapshot).catch(() => {
-    /* a channel miss must never fail a Desk write */
+  pushRequested = true;
+  if (pushFlight) return pushFlight;
+  const owner = bound;
+  const flight = Promise.resolve().then(async () => {
+    while (bound === owner && pushRequested) {
+      pushRequested = false;
+      await pushFromSnapshot(owner.desk.snapshot());
+    }
+  }).catch(() => {
+    console.warn("[remote-decisions] Review notifications could not be refreshed; Desk work is kept.");
+  }).finally(() => {
+    if (pushFlight === flight) pushFlight = null;
   });
+  pushFlight = flight;
+  return flight;
 }
 
 export async function decideRemotely(
   channel: RemoteChannelId,
   chatKey: string,
-  draftId: string,
+  decisionId: string,
   decision: "allow" | "deny",
   reason: string | undefined,
   byName: string,
@@ -126,12 +164,22 @@ export async function decideRemotely(
   if (!adapter || adapter.pairedKey() !== chatKey) return { ok: false, message: ELSEWHERE };
 
   const snapshot = bound.desk.snapshot();
-  if (snapshot.escalations.some((item) => item.id === draftId)) {
+  if (snapshot.escalations.some((item) => item.id === decisionId)) {
     return { ok: false, message: LICENSEE_REFUSAL };
   }
+  const shown = pendingByChannel.get(channel);
+  if (!shown || shown.deferred || shown.previewOnly || shown.decisionId !== decisionId || shown.pairedKey !== chatKey) {
+    void notifyDeskSnapshot(snapshot);
+    return { ok: false, message: STALE_CARD };
+  }
+  const draftId = shown.draftId;
   const draft = snapshot.drafts.find((item) => item.id === draftId);
   if (!draft || draft.status !== "pending") return { ok: false, message: BOOK_MOVED };
   if (!DECIDABLE.has(draft.kind)) return { ok: false, message: LICENSEE_REFUSAL };
+  if (snapshot.recovery.active || reviewFingerprint(snapshot, draft) !== shown.fingerprint) {
+    void notifyDeskSnapshot(snapshot);
+    return { ok: false, message: STALE_CARD };
+  }
 
   const via = `via ${adapter.label} · ${byName}`;
   let decided: Draft;
@@ -148,7 +196,10 @@ export async function decideRemotely(
 
   pendingByChannel.delete(channel);
   const nextSnap = bound.desk.snapshot();
-  await Promise.resolve(bound.commit(nextSnap));
+  // The Desk command has already persisted the decision. A notification miss
+  // cannot turn that success into an invitation to repeat the decision.
+  try { await Promise.resolve(bound.commit(nextSnap)); }
+  catch { console.warn("[remote-decisions] Decision saved; its notification update failed."); }
   const at = decided.decidedAt ?? nowMs();
   return {
     ok: true,
@@ -262,15 +313,28 @@ function addressFor(snapshot: DeskSnapshot, propertyId: string): string {
   return snapshot.properties.find((property) => property.id === propertyId)?.address ?? propertyId;
 }
 
+function reviewFingerprint(snapshot: DeskSnapshot, draft: Draft): string {
+  return createHash("sha256").update(JSON.stringify([snapshot.mode, addressFor(snapshot, draft.propertyId), draft])).digest("hex");
+}
+
+function reviewText(snapshot: DeskSnapshot, draft: Draft, decisionId: string): string | null {
+  const text = `${decisionPushText(addressFor(snapshot, draft.propertyId), draft.kind)}\n\nTo: ${draft.to} (${draft.channel})\n\n${draft.body}\n\nReply allow ${decisionId} or deny ${decisionId}.`;
+  // Never attach approval controls to truncated wording.
+  return text.length <= REVIEW_MAX ? text : null;
+}
+
 async function pushFromSnapshot(snapshot: DeskSnapshot): Promise<void> {
   if (!bound) return;
+  const owner = bound;
+  if (snapshot.recovery.active) { pendingByChannel.clear(); return; }
   const quiet = isQuietHours(nowMs(), snapshot.timezone || "Australia/Sydney");
   for (const channel of bound.channels) {
-    if (!channel.pairedKey()) continue;
+    if (bound !== owner) return;
+    if (!channel.pairedKey()) { pendingByChannel.delete(channel.id); continue; }
     const tracked = pendingByChannel.get(channel.id);
     if (tracked) {
       const live = snapshot.drafts.find((item) => item.id === tracked.draftId);
-      if (!live || !isDecidableDraft(live)) {
+      if (!live || !isDecidableDraft(live) || tracked.pairedKey !== channel.pairedKey() || tracked.fingerprint !== reviewFingerprint(snapshot, live)) {
         pendingByChannel.delete(channel.id);
       } else if (!tracked.deferred) {
         continue;
@@ -284,7 +348,7 @@ async function pushFromSnapshot(snapshot: DeskSnapshot): Promise<void> {
     const next = oldestDecidable(snapshot);
     if (!next) continue;
     if (quiet) {
-      pendingByChannel.set(channel.id, { draftId: next.id, deferred: true });
+      pendingByChannel.set(channel.id, { draftId: next.id, decisionId: randomBytes(6).toString("hex"), fingerprint: reviewFingerprint(snapshot, next), pairedKey: channel.pairedKey()!, deferred: true, previewOnly: false });
       continue;
     }
     await sendPush(channel, next, snapshot);
@@ -292,10 +356,29 @@ async function pushFromSnapshot(snapshot: DeskSnapshot): Promise<void> {
 }
 
 async function sendPush(channel: RemoteChannelAdapter, draft: Draft, snapshot: DeskSnapshot): Promise<void> {
+  const owner = bound;
+  const pairedKey = channel.pairedKey();
+  if (!owner || !pairedKey) return;
+  const fingerprint = reviewFingerprint(snapshot, draft);
+  const prior = pendingByChannel.get(channel.id);
+  const decisionId = prior?.fingerprint === fingerprint && prior.pairedKey === pairedKey ? prior.decisionId : randomBytes(6).toString("hex");
+  const text = reviewText(snapshot, draft, decisionId);
+  const pending: ChannelPending = { draftId: draft.id, decisionId, fingerprint, pairedKey, deferred: true, previewOnly: text === null };
+  pendingByChannel.set(channel.id, pending);
   try {
-    await channel.sendDecision(decisionPushText(addressFor(snapshot, draft.propertyId), draft.kind), draft.id);
-    pendingByChannel.set(channel.id, { draftId: draft.id, deferred: false });
+    if (text !== null) await channel.sendDecision(text, decisionId);
+    else if (channel.sendDigest) await channel.sendDigest(`${decisionPushText(addressFor(snapshot, draft.propertyId), draft.kind)}\n\nThe full wording is too long for this review card. Open its draft on Desk to review before deciding.`);
+    else return;
+    if (bound !== owner || channel.pairedKey() !== pairedKey || pendingByChannel.get(channel.id) !== pending) return;
+    const latest = owner.desk.snapshot();
+    const live = latest.drafts.find(item => item.id === draft.id);
+    if (latest.recovery.active || !live || !isDecidableDraft(live) || reviewFingerprint(latest, live) !== fingerprint) {
+      pendingByChannel.delete(channel.id); pushRequested = true; return;
+    }
+    pending.deferred = false;
   } catch {
-    pendingByChannel.set(channel.id, { draftId: draft.id, deferred: true });
+    // Retain the same card identity for a later delivery attempt. It is not
+    // actionable until delivery is confirmed, and cannot approve another card.
+    console.warn(`[remote-decisions] ${channel.id} review card delivery was not confirmed.`);
   }
 }

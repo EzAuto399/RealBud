@@ -7,6 +7,8 @@ export type PasteAttachment = {
   text: string;
   size: number;
   lines: number;
+  /** A selected work result can be attached with a useful human title. */
+  label?: string;
 };
 
 export type FileAttachment = {
@@ -25,6 +27,7 @@ export function isAttachment(value: unknown): value is Attachment {
   if (typeof attachment.id !== "string" || !validSize(attachment.size)) return false;
   if (attachment.kind === "paste") {
     return (
+      (attachment.label === undefined || (typeof attachment.label === "string" && attachment.label.length <= 120)) &&
       typeof attachment.text === "string" &&
       typeof attachment.lines === "number" &&
       Number.isInteger(attachment.lines) &&

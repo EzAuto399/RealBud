@@ -20,9 +20,9 @@ const fences = new Map<string, AttendedFenceContext>();
 export const ATTEND_ERRORS = {
   unknown: "no such recipe",
   plan: "Approve the plan first.",
-  attach: "Attach this site first: you sign in, Bud reads and prefills, Submit and Pay stay with you.",
+  attach: "Attach this site first: you sign in, Bud reads and prefills, Submit, Pay and Send stay with you.",
   origins: "Add the portal site to this job before running it beside you.",
-  cua: "Bud can drive a browser only on this Mac with RealBud's desktop helper running.",
+  cua: "Bud needs RealBud's desktop helper running on this Mac or Windows PC before controlling the browser.",
   overlap: "This job already has work waiting or running.",
   busy: "Bud is busy with another turn. Stop it or wait, then run again.",
   gone: "That run is no longer waiting.",
@@ -69,7 +69,7 @@ export function attendedJobSystemBlock(recipe: Pick<Recipe, "title" | "steps" | 
   const origins = recipe.allowedOrigins.join(", ");
   const steps = recipe.steps.map((step, index) => `${index + 1}. ${step}`).join("\n");
   return [
-    "You are running a saved job beside the person on this Mac's browser.",
+    "You are running a saved job beside the person in this computer's browser.",
     `Job: ${recipe.title}`,
     `Allowed sites: ${origins}`,
     `Steps:\n${steps}`,
@@ -97,11 +97,12 @@ export function attendedSettleStatus(input: {
   text: string;
   allowedOrigins: string[];
 }): Exclude<JobRunStatus, "queued" | "running"> {
+  const reason = (input.stopReason ?? "").toLowerCase();
+  // ACP can report a successful protocol exchange for a cancelled turn.
+  // The stop reason must take precedence over success and any old read-back.
+  if (reason === "cancelled") return "cancelled";
+  if (reason === "interrupted" || reason === "stall" || reason === "timeout") return "interrupted";
   if (!input.ok) {
-    const reason = (input.stopReason ?? "").toLowerCase();
-    if (reason === "cancelled" || reason === "interrupted" || reason === "stall" || reason === "timeout") {
-      return "interrupted";
-    }
     return "failed";
   }
   return hasReadBack(input.text, input.allowedOrigins) ? "completed" : "partial";
@@ -112,7 +113,7 @@ export function submitHoldLine(text: string): string[] {
 }
 
 export function turnEndedNote(ok: boolean, stopReason?: string | null): string {
-  return `Turn ended — ${ok ? "ok" : stopReason || "stop"}`;
+  return `Turn ended — ${stopReason || (ok ? "ok" : "stop")}`;
 }
 
 export function portalRespondRuleError(

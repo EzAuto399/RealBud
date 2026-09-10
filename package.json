@@ -2,8 +2,8 @@
   "name": "realbud",
   "productName": "RealBud",
   "private": true,
-  "version": "0.1.17",
-  "description": "RealBud — a local-first desk for real-estate agents and property managers.",
+  "version": "0.1.18",
+  "description": "RealBud \u2014 a local-first desk for real-estate agents and property managers.",
   "homepage": "https://github.com/EzAuto399/RealBud",
   "repository": {
     "type": "git",
@@ -31,6 +31,7 @@
     "test:coverage": "vitest run --coverage",
     "qa:e2e": "node scripts/qa-e2e.mjs",
     "qa:e2e:quick": "node scripts/qa-e2e.mjs --quick",
+    "qa:austin": "node scripts/qa-austin-workflow.mjs",
     "qa:live-worker": "node scripts/qa-live-worker.mjs",
     "qa:scale": "node --experimental-strip-types scripts/simulate-scale.mjs",
     "qa:full": "pnpm qa && pnpm qa:scale && pnpm qa:live-worker",
@@ -53,10 +54,11 @@
     "package:mac:release": "pnpm package:mac && pnpm package:mac:notarize && pnpm clean:release",
     "clean:release": "node scripts/clean-release.mjs",
     "notary:store": "bash scripts/store-notary-credentials.sh",
-    "package:win": "pnpm package:prepare && electron-builder --win --publish never",
+    "package:win": "pnpm package:prepare && pnpm build:cua && electron-builder --win --publish never",
     "package:linux": "pnpm package:prepare && electron-builder --linux --x64 --publish never",
     "package:linux:dir": "pnpm package:prepare && electron-builder --linux dir --x64 --publish never",
-    "package": "pnpm package:mac"
+    "package": "pnpm package:mac",
+    "qa:hermes-contract": "node --experimental-strip-types scripts/qa-hermes-contract.mjs"
   },
   "dependencies": {
     "@trycua/cua-driver": "0.19.3",

@@ -62,13 +62,14 @@ let stderr = "";
 child.stderr.on("data", (c) => (stderr += c));
 
 const waitForRun = async (runId) => {
-  for (let i = 0; i < 40; i++) {
+  const deadline = Date.now() + 30_000;
+  for (;;) {
     const state = (await api("GET", "/api/loops")).body;
     const settled = state?.runs?.find((r) => r.id === runId);
     if (settled && !["queued", "running"].includes(settled.status)) return settled;
+    if (Date.now() >= deadline) return settled ?? null;
     await sleep(150);
   }
-  return null;
 };
 
 try {

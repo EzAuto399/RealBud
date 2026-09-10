@@ -84,6 +84,17 @@ dmg:
   artifactName: RealBud-${version}.dmg
 
 win:
+  extraResources:
+    - from: dist-native
+      to: .
+      filter:
+        - cua-driver.exe
+        - cua-driver-uia.exe
+        - cua-cursor-theme.exe
+        - cua_driver_sdk.dll
+        - cua_driver_node_runtime.node
+    - from: dist-native/cua-sdk
+      to: cua-sdk
   target:
     - target: nsis
       arch: x64
