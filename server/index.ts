@@ -75,6 +75,7 @@ import { hermesInstallCommand } from "./hermes-pin.ts";
 import { tryHermesPing } from "./hermes-hands.ts";
 import { ASK_ATTACH_MAX_BYTES, saveAskAttachment } from "./ask-attach.ts";
 import { answerAskFromDesk, productAskFailure, productBudSystemPrompt, productWorkerDump } from "./ask-book.ts";
+import { buildHandoffPayload, deliverToPairedPhone } from "./channel-handoff.ts";
 import { readHandsLast, readHandsPing, writeHandsPing } from "./hands-last.ts";
 import { readArtifact } from "./audit-artifacts.ts";
 import { readCsvMapping } from "./csv-ledger.ts";
@@ -1938,6 +1939,34 @@ const server = createServer(async (req, res) => {
     // ── Channels (RealBud owns the door; Ask owns the turn) ──
     if (path === "/api/channels" && method === "GET") {
       return json(res, 200, channelsStatus());
+    }
+
+    if (path === "/api/channels/handoff" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      const mode = body.mode === "summary" ? "summary" : body.mode === "result" ? "result" : null;
+      if (!mode) return json(res, 400, { error: "mode must be result or summary" });
+      const messageId = typeof body.messageId === "string" && body.messageId.trim() ? body.messageId.trim() : undefined;
+      const built = buildHandoffPayload(store, { mode, messageId });
+      if (!built.ok) return json(res, 409, { error: built.error });
+      const channels = [telegramDecisionAdapter(), discordDecisionAdapter(), slackDecisionAdapter()];
+      const delivered = await deliverToPairedPhone(built.text, channels);
+      if (!delivered.ok) return json(res, 409, { error: delivered.error });
+      const bud = store.productBud();
+      if (bud) {
+        const label = mode === "summary" ? `Sent summary to ${delivered.label}` : `Sent to ${delivered.label}`;
+        const stamp = store.appendMessage(bud.threadId, {
+          role: "bot",
+          kind: "activity",
+          text: label,
+          tool: { name: label, ok: true },
+        });
+        broadcast({ kind: "message", threadId: bud.threadId, message: stamp });
+        broadcast({ kind: "bot", bot: store.bot(bud.id) });
+      }
+      return json(res, 200, { ok: true, deliveredVia: delivered.deliveredVia, label: delivered.label });
     }
     const channelMatch = path.match(/^\/api\/channels\/([^/]+)$/);
     if (channelMatch && (method === "POST" || method === "DELETE")) {

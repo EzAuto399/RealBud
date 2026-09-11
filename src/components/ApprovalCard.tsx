@@ -1,3 +1,4 @@
+import { ApprovalScope } from "./ApprovalScope";
 // The approval box: what the bot wants to do, and three ways to answer.
 //
 // Deliberately not the lettered A/B/C list the onboarding card uses — an
@@ -5,9 +6,13 @@
 // and the actual command/path in monospace, and the choices carry their
 // own behavior instead of being matched by their label text.
 import { Check, ShieldCheck, X } from "lucide-react";
+import { useId, useState } from "react";
 import { useStore, type Bot, type Message } from "@/state/store";
 import { approvalHeadline } from "@/lib/tool-label";
 import { cn } from "@/lib/cn";
+
+const LONG_DETAIL_CHARS = 400;
+const LONG_DETAIL_LINES = 8;
 
 /** The tool's own name is noise to a human: mcp__ogb__computer_batch is
  * "computer batch", Bash is "run a command". */
@@ -36,6 +41,8 @@ export function ApprovalCard({
   productAsk?: boolean;
 }) {
   const { state } = useStore();
+  const detailId = useId();
+  const [expanded, setExpanded] = useState(false);
   const card = message.card;
   if (!card) return null;
   const settled = card.answered;
@@ -43,6 +50,8 @@ export function ApprovalCard({
   const headline = productAsk
     ? approvalHeadline(card.tool ?? "", [card.subtitle, card.held, card.title].filter(Boolean).join("\n"), knownAddresses)
     : `${bot ? `${bot.name} wants to ` : "Wants to "}${legacyToolLabel(card.tool)}`;
+  const detail = card.subtitle ?? "";
+  const longDetail = detail.length > LONG_DETAIL_CHARS || detail.split("\n").length > LONG_DETAIL_LINES;
 
   return (
     <div
@@ -62,15 +71,35 @@ export function ApprovalCard({
       {card.fence?.surface === "portal-submit" ? (
         <p className="mt-2 text-[15px] font-medium leading-relaxed text-ink">{card.subtitle}</p>
       ) : (
-        <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-inset px-3 py-2 font-mono text-[12.5px] leading-relaxed text-ink">
-          {card.subtitle}
-        </pre>
+        <div className="mt-2">
+          <pre
+            id={detailId}
+            className={cn(
+              "whitespace-pre-wrap break-words rounded-lg bg-inset px-3 py-2 font-mono text-[12.5px] leading-relaxed text-ink",
+              longDetail && !expanded ? "max-h-40 overflow-hidden" : undefined,
+            )}
+          >
+            {card.subtitle}
+          </pre>
+          {longDetail && (
+            <button
+              type="button"
+              className="mt-2 text-[12.5px] text-ink-secondary hover:text-ink"
+              aria-controls={detailId}
+              aria-expanded={expanded}
+              onClick={() => setExpanded((open) => !open)}
+            >
+              {expanded ? "Show less" : "Show full operation"}
+            </button>
+          )}
+        </div>
       )}
 
       {card.fence?.surface === "portal-submit" ? (
         <p className="mt-2 text-[12.5px] text-hold">Check the form in the browser before you allow.</p>
       ) : null}
 
+      {productAsk && !settled && <ApprovalScope kind="action" />}
       {card.held && (
         <div className="mt-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12.5px] text-warning">
           {card.held}
@@ -82,11 +111,11 @@ export function ApprovalCard({
       <div className="mt-3 flex items-center gap-1.5 text-[13px] text-ink-secondary">
         {settled === "allow" ? (
           <>
-            <Check size={14} className="text-success" /> Allowed
+            <Check size={14} className="text-success" /> Approved
           </>
         ) : settled ? (
           <>
-            <X size={14} /> Denied
+            <X size={14} /> Not approved
           </>
         ) : (
           <>

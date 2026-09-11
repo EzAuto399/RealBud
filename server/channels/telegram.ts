@@ -52,7 +52,7 @@ export type TelegramDeps = {
   now?: () => number;
 };
 
-const PAIR_REPLY = "Paired with RealBud on this Mac. Ask Bud anything.";
+const PAIR_REPLY = "Paired with RealBud on this Mac. Send a task, /continue for your latest saved reply, /summary for a short handoff, or /help. Keep this Mac awake and online.";
 const ELSEWHERE_REPLY = "This Bud is paired elsewhere.";
 const BAD_TOKEN = "that token did not answer — check it against BotFather";
 const CLIP_AT = 3900;

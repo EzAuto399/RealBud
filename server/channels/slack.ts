@@ -63,7 +63,7 @@ export type SlackSocketLike = {
 
 export type SlackWebSocketFactory = (url: string) => SlackSocketLike;
 
-const PAIR_REPLY = "Paired with RealBud on this Mac. Ask Bud anything. Reply allow or deny on Desk cards.";
+const PAIR_REPLY = "Paired with RealBud on this Mac. Send a task, /continue for your latest saved reply, /summary for a short handoff, or /help. Keep this Mac awake and online. Review cards include the exact reply to use.";
 const ELSEWHERE_REPLY = "This Bud is paired elsewhere.";
 const BAD_TOKEN = "that token did not answer — check it against the Slack app settings";
 const CLIP_AT = 2900;
