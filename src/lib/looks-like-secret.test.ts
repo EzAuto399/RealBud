@@ -7,6 +7,7 @@ describe("looksLikeProviderKey", () => {
     const alpha = "abcdefghijklmnopqrstuvwxyz0123456789";
     expect(looksLikeProviderKey(`sk-ant-api03-${alpha}`)).toBe(true);
     expect(looksLikeProviderKey(`xai-${alpha}${alpha}`)).toBe(true);
+    expect(looksLikeProviderKey(`rbk_live_${alpha}`)).toBe(true);
     expect(looksLikeProviderKey("What needs me on Oak?")).toBe(false);
     expect(looksLikeProviderKey("the keyboard shortcut is cmd-k")).toBe(false);
   });

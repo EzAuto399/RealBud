@@ -49,6 +49,7 @@ describe("redactSecretsInText", () => {
     const alpha = "abcdefghijklmnopqrstuvwxyz0123456789";
     expect(containsCredential(`sk-ant-api03-${alpha}`)).toBe(true);
     expect(containsCredential(`xai-${alpha}${alpha}`)).toBe(true);
+    expect(containsCredential(`rbk_live_${alpha}`)).toBe(true);
     expect(containsCredential("What needs me on Oak?")).toBe(false);
     expect(containsCredential("the keyboard shortcut is cmd-k")).toBe(false);
   });

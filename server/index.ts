@@ -89,6 +89,20 @@ import { installCrashHandlers, oplog } from "./oplog.ts";
 import { CANONICAL_BUD_ID, CANONICAL_BUD_NAME, PRODUCT_MODE, PRODUCT_TURN_DEFAULTS, isCanonicalBud, productDenied, productRuntimeEventVisible } from "./product-mode.ts";
 import { coverageFromUncoveredHeld, LoopManager, type LoopId } from "./routines.ts";
 import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
+import {
+  billedHermesAttachInput,
+  confirmStripeCheckoutSession,
+  createStripeCheckoutSession,
+  creditBalanceLocked,
+  defaultBilledModel,
+  gatewayBaseUrl,
+  issueOfficeKeyLocked,
+  publicBillingView,
+  revokeHermesLabeledKeys,
+  revokeOfficeKeyLocked,
+  verifyStripeSignature,
+} from "./llm-billing.ts";
+import { handleLlmGateway } from "./llm-proxy.ts";
 import { evaluatorForLoop } from "./workflow-catalog.ts";
 import { containsCredential } from "./redact.ts";
 import { parseConnectionIntent } from "./connection-intent.ts";
@@ -1688,20 +1702,52 @@ function readBody(req: IncomingMessage, maxBytes = 1_000_000): Promise<any> {
   });
 }
 
+function readRawBody(req: IncomingMessage, maxBytes = 1_000_000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    let done = false;
+    const fail = (status: number, msg: string) => {
+      if (done) return;
+      done = true;
+      reject(Object.assign(new Error(msg), { status }));
+    };
+    req.on("data", (c) => {
+      if (done) return;
+      const buf = Buffer.isBuffer(c) ? c : Buffer.from(c);
+      bytes += buf.length;
+      if (bytes > maxBytes) return fail(413, "body too large");
+      chunks.push(buf);
+    });
+    req.on("end", () => {
+      if (done) return;
+      done = true;
+      resolve(Buffer.concat(chunks).toString("utf8"));
+    });
+    req.on("error", (e) => fail(400, e instanceof Error ? e.message : String(e)));
+  });
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
   const path = url.pathname;
   const method = req.method ?? "GET";
   try {
+    const stripeWebhook = path === "/api/billing/stripe/webhook";
     if (needsSession(path)) {
       const gate = sessionOk(req, PORT);
       if (!gate.ok) return json(res, gate.status, { error: gate.error });
-    } else if (path.startsWith("/api/") && path !== "/api/health" && path !== "/api/session" && !path.startsWith("/api/internal/")) {
+    } else if (path.startsWith("/api/") && path !== "/api/health" && path !== "/api/session" && !path.startsWith("/api/internal/") && !stripeWebhook) {
       const gate = sessionOk(req, PORT);
       if (!gate.ok && gate.status === 403) return json(res, 403, { error: gate.error });
     }
     const denied = productDenied(method, path);
     if (denied) return json(res, 403, { error: denied });
+
+    if (path === "/v1" || path.startsWith("/v1/")) {
+      await handleLlmGateway(req, res, { port: PORT, path, method });
+      return;
+    }
 
     if (path === "/api/session" && method === "GET") {
       const host = typeof req.headers.host === "string" ? req.headers.host : undefined;
@@ -2613,6 +2659,118 @@ const server = createServer(async (req, res) => {
       });
       return json(res, 202, { install: job, preflight: installPreflight });
     }
+    if (path === "/api/billing" && method === "GET") {
+      return json(res, 200, publicBillingView(undefined, PORT));
+    }
+    if (path === "/api/billing/keys" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      const issued = await issueOfficeKeyLocked(body.label);
+      return json(res, 200, { id: issued.id, key: issued.key, hint: issued.hint, label: issued.label, billing: publicBillingView(undefined, PORT) });
+    }
+    const billingKeyMatch = path.match(/^\/api\/billing\/keys\/([\w-]+)$/);
+    if (billingKeyMatch && method === "DELETE") {
+      const ok = await revokeOfficeKeyLocked(billingKeyMatch[1]);
+      if (!ok) return json(res, 404, { error: "no such key" });
+      return json(res, 200, publicBillingView(undefined, PORT));
+    }
+    if (path === "/api/billing/topup" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      const amountUsd = Number(body.amountUsd);
+      if (process.env.REALBUD_BILLING_MOCK === "1") {
+        await creditBalanceLocked({ usd: amountUsd, label: "mock" });
+        return json(res, 200, { mock: true, billing: publicBillingView(undefined, PORT) });
+      }
+      if (process.env.STRIPE_SECRET_KEY?.trim().startsWith("sk_")) {
+        const checkout = await createStripeCheckoutSession(amountUsd);
+        return json(res, 200, { url: checkout.url, sessionId: checkout.sessionId, billing: publicBillingView(undefined, PORT) });
+      }
+      return json(res, 501, {
+        error: "Payment capture is not configured.",
+        code: "stripe_unconfigured",
+        todo: "Set STRIPE_SECRET_KEY for Stripe Checkout, or REALBUD_BILLING_MOCK=1 for a local practice top-up.",
+      });
+    }
+    if (path === "/api/billing/topup/confirm" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      await confirmStripeCheckoutSession(String(body.sessionId ?? ""));
+      return json(res, 200, publicBillingView(undefined, PORT));
+    }
+    if (path === "/api/billing/connect-hermes" && method === "POST") {
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const body = await readBody(req);
+      revokeHermesLabeledKeys();
+      const issued = await issueOfficeKeyLocked(body.label || "Hermes");
+      const attach = billedHermesAttachInput({
+        apiKey: issued.key,
+        model: typeof body.model === "string" ? body.model : defaultBilledModel(),
+        baseUrl: gatewayBaseUrl(PORT),
+      });
+      try {
+        const status = attachModel(attach);
+        const bud = PRODUCT_MODE
+          ? store.adoptBud(productHermesSelection(status.model || "default"))
+          : null;
+        if (bud) broadcast({ kind: "bot", bot: publicBot(bud) });
+        const ping = await tryHermesPing();
+        writeHandsPing(DATA_DIR, { at: Date.now(), ok: ping.ok, detail: ping.detail, kind: "ping" });
+        return json(res, 200, {
+          ok: true,
+          key: issued.key,
+          hint: issued.hint,
+          model: status,
+          ping,
+          billing: publicBillingView(undefined, PORT),
+        });
+      } catch (e) {
+        const status = (e as { status?: number }).status ?? 500;
+        return json(res, status, {
+          error: e instanceof Error ? e.message : String(e),
+          key: issued.key,
+          hint: issued.hint,
+          billing: publicBillingView(undefined, PORT),
+        });
+      }
+    }
+    if (path === "/api/billing/stripe/webhook" && method === "POST") {
+      const raw = await readRawBody(req);
+      const secret = process.env.STRIPE_WEBHOOK_SECRET?.trim() ?? "";
+      const signature = typeof req.headers["stripe-signature"] === "string" ? req.headers["stripe-signature"] : "";
+      if (!secret.startsWith("whsec_")) {
+        return json(res, 501, {
+          error: "Stripe webhooks are not configured.",
+          todo: "Set STRIPE_WEBHOOK_SECRET, or confirm a Checkout session with POST /api/billing/topup/confirm. On this loopback server, prefer confirm — Stripe cannot reach 127.0.0.1.",
+        });
+      }
+      if (!verifyStripeSignature(raw, signature, secret)) {
+        return json(res, 400, { error: "invalid Stripe signature" });
+      }
+      let event: { type?: string; data?: { object?: { id?: string; payment_status?: string; metadata?: { amountUsd?: string } } } };
+      try {
+        event = JSON.parse(raw);
+      } catch {
+        return json(res, 400, { error: "invalid JSON body" });
+      }
+      if (event.type === "checkout.session.completed") {
+        const session = event.data?.object;
+        const usd = Number(session?.metadata?.amountUsd);
+        if (session?.id && Number.isFinite(usd) && usd >= 1) {
+          await creditBalanceLocked({ usd, stripeSessionId: session.id, label: "stripe" });
+        }
+      }
+      return json(res, 200, { received: true });
+    }
+
     if (path === "/api/hermes/uninstall" && method === "POST") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
         return json(res, 415, { error: "content-type must be application/json" });

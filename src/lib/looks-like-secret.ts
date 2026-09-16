@@ -4,6 +4,7 @@ export function looksLikeProviderKey(text: string): boolean {
   if (!text || text.length < 8) return false;
   return (
     /\bsk-(?:ant-|proj-|live-|test-)?[A-Za-z0-9_-]{16,}/.test(text) ||
+    /\brbk_(?:live|test)_[A-Za-z0-9_-]{16,}/.test(text) ||
     /\bxai-[A-Za-z0-9_-]{16,}/.test(text) ||
     /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/.test(text) ||
     /\bgithub_pat_[A-Za-z0-9_]{20,}/.test(text) ||

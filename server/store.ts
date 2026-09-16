@@ -703,6 +703,11 @@ export class Store {
     return bot;
   }
 
+  /** The one visible Bud thread. Channel handoff and Ask stamp against this. */
+  productBud(): BotRecord | null {
+    return this.bot("bud") ?? this.bots[0] ?? null;
+  }
+
   /** Set or replace the one queued follow-up for a task. */
   setQueuedMessage(botId: string, text: string, threadId?: string): QueuedMessage | null {
     const bot = this.bot(botId);

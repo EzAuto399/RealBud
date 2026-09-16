@@ -23,6 +23,7 @@ const mask = (value: string) => `«redacted ${value.length} chars»`;
 
 const KEY_PREFIXES: RegExp[] = [
   /\bsk-(?:ant-|proj-|live-|test-)?[A-Za-z0-9_-]{16,}/g,
+  /\brbk_(?:live|test)_[A-Za-z0-9_-]{16,}/g,
   /\bxai-[A-Za-z0-9_-]{16,}/g,
   /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/g,
   /\bgithub_pat_[A-Za-z0-9_]{20,}/g,
