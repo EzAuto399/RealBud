@@ -1,0 +1,9 @@
+SYNTHETIC INVOICE — NOT PAYABLE
+Supplier ID: SYN-SUP002
+Invoice ID: SYN-INV002
+Property code: SYN-CODE02
+Amount: 180.00
+Currency: AUD
+Due date: 2026-09-20
+Cost type: gardening
+

@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "kind": "accounts-anz-reference-candidates",
+  "sourceReference": "QA-SYN-ANZ-REFERENCE-PREP-AMBIGUOUS-AND-SHORT-STAY-45fc18b6-b41c-4560-9e60-d9bf0cfcfcea",
+  "status": "complete",
+  "coverageComplete": true,
+  "originalDigest": "0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544",
+  "rows": [
+    {
+      "sourceRow": 1,
+      "rowId": "0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544:1",
+      "decision": "hold",
+      "propertyId": null,
+      "proposedReference": null,
+      "reason": "Shared-payer credit: two candidates (SYN-P01, SYN-P02) and two approved rules claim the same alias; payer identity unresolved."
+    },
+    {
+      "sourceRow": 2,
+      "rowId": "0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544:2",
+      "decision": "hold",
+      "propertyId": null,
+      "proposedReference": null,
+      "reason": "Combined short-stay (Airbnb) payout, no property match; not split or allocated."
+    },
+    {
+      "sourceRow": 3,
+      "rowId": "0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544:3",
+      "decision": "hold",
+      "propertyId": null,
+      "proposedReference": null,
+      "reason": "Possible duplicate of source row 4; both rows preserved as distinct, neither allocated."
+    },
+    {
+      "sourceRow": 4,
+      "rowId": "0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544:4",
+      "decision": "hold",
+      "propertyId": null,
+      "proposedReference": null,
+      "reason": "Possible duplicate of source row 3; both rows preserved as distinct, neither allocated."
+    },
+    {
+      "sourceRow": 5,
+      "rowId": "0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544:5",
+      "decision": "keep",
+      "propertyId": null,
+      "proposedReference": null,
+      "reason": "Existing reference on the row (OLD-SYN-REFERENCE); kept unchanged, no correction proposed."
+    },
+    {
+      "sourceRow": 6,
+      "rowId": "0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544:6",
+      "decision": "keep",
+      "propertyId": null,
+      "proposedReference": null,
+      "reason": "Debit (-25.00), not an incoming payment; kept unchanged for separate review."
+    },
+    {
+      "sourceRow": 7,
+      "rowId": "0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544:7",
+      "decision": "hold",
+      "propertyId": null,
+      "proposedReference": null,
+      "reason": "Blank narrative, empty reference, no candidate or rule match; amount alone cannot identify a tenancy."
+    },
+    {
+      "sourceRow": 8,
+      "rowId": "0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544:8",
+      "decision": "assign",
+      "propertyId": "SYN-P03",
+      "proposedReference": "000789",
+      "reason": "Positive incoming 1000.00, empty reference, exactly one candidate (SYN-P03) and no issues, matching exactly one approved rule."
+    },
+    {
+      "sourceRow": 9,
+      "rowId": "0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544:9",
+      "decision": "hold",
+      "propertyId": null,
+      "proposedReference": null,
+      "reason": "Unmatched credit with no approved rule; narrative text treated as untrusted data, not as authority."
+    }
+  ],
+  "hostValidation": {
+    "required": true,
+    "batchId": "bank:0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544",
+    "batchRevision": 1,
+    "originalDigest": "0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544",
+    "applied": false
+  },
+  "holds": [
+    {
+      "itemId": "0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544:1",
+      "reason": "Unknown which tenancy the 650.00 shared-payer credit belongs to; supplier of payer evidence unresolved."
+    },
+    {
+      "itemId": "0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544:2",
+      "reason": "Per-tenancy split of the 1850.00 combined Airbnb payout unresolved."
+    },
+    {
+      "itemId": "0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544:3",
+      "reason": "Whether the two identical 650.00 'Synthetic Alex Tenant' credits on 12/09/2026 are one duplicate or two genuine payments is unresolved."
+    },
+    {
+      "itemId": "0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544:4",
+      "reason": "Same unresolved duplicate question as source row 3; kept as a distinct row."
+    },
+    {
+      "itemId": "0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544:7",
+      "reason": "Payer identity for the 650.00 blank-narrative credit is unknown; no candidate and no reference."
+    },
+    {
+      "itemId": "0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544:9",
+      "reason": "Origin of the 99.00 unmatched credit is unknown; no approved rule mapping."
+    },
+    {
+      "itemId": "formatConfirmationSource",
+      "reason": "Approved mapping and format confirmation rest on a synthetic test layout only; the real ANZ banking service, login/export route and customer CSV layout are unverified until the office fit check."
+    }
+  ],
+  "actionsPerformed": []
+}

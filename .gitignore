@@ -15,4 +15,6 @@ argv-*.txt
 
 # build outputs (new layout)
 dist-server/
+dist-postgres/
+.postgres-cache/
 electron/resources/

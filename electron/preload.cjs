@@ -42,6 +42,19 @@ contextBridge.exposeInMainWorld("ogb", {
   /** Copies an engine install command and opens a blank terminal. Resolves
    * false if no terminal could be launched; the clipboard still has it. */
   openInstallTerminal: (command) => ipcRenderer.invoke("engine:open-terminal", command),
+  /** Open a server-vetted HTTPS connection/auth link in the default browser. */
+  openExternal: (url) => ipcRenderer.invoke("external:open", url),
+
+  /** Lifecycle of the desk service child. { state, restarts, lastExitCode,
+   * exhausted }. Read from the main process because a dead service cannot
+   * answer the HTTP API that would otherwise report it. */
+  serviceStatus: () => ipcRenderer.invoke("service:status"),
+  /** Ask supervision to try the service again after it gave up. */
+  serviceRetry: () => ipcRenderer.invoke("service:retry"),
+  /** Start the office service if it is not already running. */
+  serviceStart: () => ipcRenderer.invoke("service:start"),
+  /** Explicitly stop the office service. Closing the window never does this. */
+  serviceStop: () => ipcRenderer.invoke("service:stop"),
 
   /** In-app auto-update. State object:
    *  { status: "idle"|"checking"|"available"|"downloading"|"downloaded"|"error",

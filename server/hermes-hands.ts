@@ -2,6 +2,7 @@
 // Any failure returns null rows plus a one-line reason. Desk holds —
 // it never copies Demo values into a live check.
 // Never passes --yolo. Never opens Desktop.
+import { managedServiceFailure } from "./managed-service.ts";
 import { type ExecFileOptionsWithStringEncoding } from "node:child_process";
 
 import { hardenHermesChildEnv } from "./drivers/acp/hermes.ts";
@@ -10,9 +11,10 @@ import { execFileCli } from "./procs.ts";
 
 import type { LedgerFacts } from "../shared/contracts.ts";
 import { asBoolean, asFiniteNumber, asNonEmptyString, asNullableNumber } from "./decode.ts";
-import { HERMES_PIN, hermesMatchesPin } from "./hermes-pin.ts";
+import { hermesCli, hermesIsCompatible } from "./hermes-pin.ts";
+import { baseWorkerProfile } from "./hermes-profile.ts";
 import { approvalsAreManual, packInstalled } from "./hermes-pack.ts";
-import { probeHermesVersion } from "./hermes-status.ts";
+import { probeHermesVersion, hermesReadinessFingerprint, workerSetupPending } from "./hermes-status.ts";
 import { seedVault } from "./vault.ts";
 
 export type HandsSource = "demo" | "hermes" | "held" | "csv" | "fixture";
@@ -24,12 +26,13 @@ export interface HermesLedgerAttempt {
 }
 
 export interface HermesPing {
+  workerFingerprint?: string;
   ok: boolean;
   detail: string;
   elapsedMs: number;
 }
 
-const TIMEOUT_MS = 20_000;
+const TIMEOUT_MS = 60_000;
 const LEDGER_TIMEOUT_MS = 60_000;
 
 /** Worker chatter that explains nothing about the miss to a PM. */
@@ -66,21 +69,28 @@ export async function tryHermesPing(opts?: {
   cwd?: string;
 }): Promise<HermesPing> {
   const started = Date.now();
-  const done = (ok: boolean, detail: string): HermesPing => ({ ok, detail, elapsedMs: Date.now() - started });
+  let workerFingerprint: string | undefined;
+  const done = (ok: boolean, detail: string): HermesPing => ({ ok, detail, elapsedMs: Date.now() - started, ...(workerFingerprint ? { workerFingerprint } : {}) });
+  const serviceFailure = managedServiceFailure("reasoning");
+  if (serviceFailure) return done(false, serviceFailure);
   if (process.env.VITEST && !opts?.cli) return done(false, "tests do not ping the live worker");
-  if (!packInstalled(opts?.root)) return done(false, `the "${HERMES_PIN.profile}" pack is missing from ~/.hermes.`);
+  if (workerSetupPending(opts?.root)) return done(false, "Bud setup did not finish. Finish setup before checking the connection.");
+  if (!packInstalled(opts?.root)) return done(false, "Bud is not set up — open Bud on You.");
   if (!approvalsAreManual(opts?.root)) {
-    return done(false, `the "${HERMES_PIN.profile}" pack is not in manual approvals — re-apply the pack.`);
+    return done(false, "Bud's safeguards need attention — open Bud on You.");
   }
-  const cli = opts?.cli ?? "hermes";
+  const cli = opts?.cli ?? hermesCli();
   const version = await probeHermesVersion(cli);
-  if (!version) return done(false, "Hermes CLI not found.");
-  if (!hermesMatchesPin(version)) {
-    return done(false, `installed ${version.trim()}, pin is v${HERMES_PIN.product} (${HERMES_PIN.tag}).`);
+  if (!version) return done(false, "Bud is not installed — install Bud on You.");
+  if (!hermesIsCompatible(version)) {
+    return done(false, "Bud needs an update — open Bud on You.");
   }
 
+  workerFingerprint = hermesReadinessFingerprint(version, opts?.root);
   return new Promise((resolve) => {
     const env = { ...process.env, PATH: augmentedPath() };
+    const serviceFailure = managedServiceFailure("reasoning");
+    if (serviceFailure) return resolve(done(false, serviceFailure));
     hardenHermesChildEnv(env);
     const execOpts: ExecFileOptionsWithStringEncoding & { detached?: boolean } = {
       timeout: opts?.timeoutMs ?? TIMEOUT_MS,
@@ -91,7 +101,7 @@ export async function tryHermesPing(opts?: {
     };
     const child = execFileCli(
       cli,
-      ["--profile", HERMES_PIN.profile, "chat", "-Q", "-q", "Reply with exactly one word: OK", "--max-turns", "1"],
+      ["--profile", baseWorkerProfile(), "chat", "-Q", "--toolsets", "todo", "-q", "Reply with exactly one word: OK. Do not use tools.", "--max-turns", "1"],
       execOpts,
       (err, stdout, stderr) => {
         const clean = (s: string) =>
@@ -107,13 +117,13 @@ export async function tryHermesPing(opts?: {
               process.kill(-child.pid!, "SIGTERM");
             } catch {}
           }
-          if (timedOut) return resolve(done(false, "The worker took too long to answer."));
+          if (timedOut) return resolve(done(false, "Bud took too long to answer."));
           const reason = workerMissReason(stdout, stderr);
-          return resolve(done(false, reason ? `The worker could not answer — ${reason}.` : "The worker could not answer."));
+          return resolve(done(false, reason ? `Bud could not answer — ${reason}.` : "Bud could not answer."));
         }
         const answer = clean(stdout).find((line) => line.trim().toUpperCase() === "OK");
-        if (!answer) return resolve(done(false, "The worker answered, but not with OK — check the model."));
-        resolve(done(true, "Worker answered OK — Desk Recheck can ask it for the ledger."));
+        if (!answer) return resolve(done(false, "Bud answered, but not with OK — open the model connection on You."));
+        resolve(done(true, "Bud answered OK — Recheck can ask for the morning ledger."));
       },
     );
   });
@@ -180,18 +190,21 @@ export async function tryHermesLedger(
   opts?: { cli?: string; timeoutMs?: number; root?: string; cwd?: string },
 ): Promise<HermesLedgerAttempt> {
   const miss = (detail: string): HermesLedgerAttempt => ({ rows: null, detail });
+  const serviceFailure = managedServiceFailure("reasoning");
+  if (serviceFailure) return miss(serviceFailure);
   if (process.env.VITEST && !opts?.cli) return miss("tests do not use the live worker — unknown facts stay held");
+  if (workerSetupPending(opts?.root)) return miss("Bud setup did not finish. Finish setup before checking property facts.");
   if (!packInstalled(opts?.root)) {
-    return miss(`The worker is not answering — the "${HERMES_PIN.profile}" pack is missing from ~/.hermes.`);
+    return miss("Bud is not set up — open Bud on You. Facts stay held.");
   }
   if (!approvalsAreManual(opts?.root)) {
-    return miss(`The worker is not answering — the "${HERMES_PIN.profile}" pack is not in manual approvals. Re-apply the pack.`);
+    return miss("Bud's safeguards need attention — open Bud on You. Facts stay held.");
   }
-  const cli = opts?.cli ?? "hermes";
+  const cli = opts?.cli ?? hermesCli();
   const version = await probeHermesVersion(cli);
-  if (!version) return miss("The worker is not answering — CLI not found.");
-  if (!hermesMatchesPin(version)) {
-    return miss(`The worker is not answering — installed ${version.trim()}, pin is v${HERMES_PIN.product} (${HERMES_PIN.tag}).`);
+  if (!version) return miss("Bud is not installed — install Bud on You. Facts stay held.");
+  if (!hermesIsCompatible(version)) {
+    return miss("Bud needs an update — open Bud on You. Facts stay held.");
   }
 
   const ids = propertyIds.length ? propertyIds.join(", ") : "(none)";
@@ -204,6 +217,8 @@ export async function tryHermesLedger(
 
   return new Promise((resolve) => {
     const env = { ...process.env, PATH: augmentedPath() };
+    const serviceFailure = managedServiceFailure("reasoning");
+    if (serviceFailure) return resolve(miss(serviceFailure));
     hardenHermesChildEnv(env);
     const execOpts: ExecFileOptionsWithStringEncoding & { detached?: boolean } = {
       timeout: opts?.timeoutMs ?? LEDGER_TIMEOUT_MS,
@@ -214,7 +229,7 @@ export async function tryHermesLedger(
     };
     const child = execFileCli(
       cli,
-      ["--profile", HERMES_PIN.profile, "chat", "-Q", "-q", prompt, "--max-turns", "6"],
+      ["--profile", baseWorkerProfile(), "chat", "-Q", "-q", prompt, "--max-turns", "6"],
       execOpts,
       (err, stdout, stderr) => {
         if (err) {
@@ -224,20 +239,20 @@ export async function tryHermesLedger(
               process.kill(-child.pid!, "SIGTERM");
             } catch {}
           }
-          if (timedOut) return resolve(miss("The worker took too long — facts stay held."));
+          if (timedOut) return resolve(miss("Bud took too long — facts stay held."));
           const reason = workerMissReason(stdout, stderr);
           return resolve(
             miss(
               reason
-                ? `The worker could not answer — ${reason}. Facts stay held.`
-                : "The worker could not answer — facts stay held.",
+                ? `Bud could not answer — ${reason}. Facts stay held.`
+                : "Bud could not answer — facts stay held.",
             ),
           );
         }
         const rows = parseLedgerFacts(String(stdout));
-        if (!rows) return resolve(miss("The worker answered without ledger JSON — facts stay held."));
-        if (rows.length === 0) return resolve(miss("The worker found no observed ledger facts — facts stay held."));
-        resolve({ rows, detail: `Worker ${HERMES_PIN.product} answered with ${rows.length} ledger rows.` });
+        if (!rows) return resolve(miss("Bud answered without ledger facts — facts stay held."));
+        if (rows.length === 0) return resolve(miss("Bud found no ledger facts — facts stay held."));
+        resolve({ rows, detail: `Bud answered with ${rows.length} ledger rows.` });
       },
     );
   });

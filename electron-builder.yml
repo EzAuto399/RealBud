@@ -28,8 +28,10 @@ files:
   - "!electron/**/*.test.*"
   - "!electron/resources/speech-helper"
   - "!electron/resources/speech-helper.swift"
+  - "!electron/resources/speech-helper-win.cs"
   - "!electron/resources/speech-helper-Info.plist"
   - "!electron/resources/RealBud Speech.app/**"
+  - "!electron/resources/RealBud Speech.exe"
   - "!**/node_modules/**"
   - package.json
 
@@ -46,6 +48,12 @@ extraResources:
     to: src
   - from: pack/property
     to: pack/property
+  # Admitted PostgreSQL 16 runtime for "Set up this office". Staged by
+  # `pnpm build:postgres`, which fails the build rather than shipping an
+  # installer whose Set up button cannot provision storage. Resolved at setup
+  # time by server/company/postgres-runtime.ts as <resources>/postgres/bin.
+  - from: dist-postgres
+    to: postgres
 
 mac:
   target:
@@ -84,6 +92,19 @@ dmg:
   artifactName: RealBud-${version}.dmg
 
 win:
+  extraResources:
+    - from: electron/resources/RealBud Speech.exe
+      to: RealBud Speech.exe
+    - from: dist-native
+      to: .
+      filter:
+        - cua-driver.exe
+        - cua-driver-uia.exe
+        - cua-cursor-theme.exe
+        - cua_driver_sdk.dll
+        - cua_driver_node_runtime.node
+    - from: dist-native/cua-sdk
+      to: cua-sdk
   target:
     - target: nsis
       arch: x64
