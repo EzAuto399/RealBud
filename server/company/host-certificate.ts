@@ -10,7 +10,7 @@ export async function createHostCertificate(hostname: string) {
   // selfsigned@5 breaks BasicConstraints under current @peculiar; 2.4.1 is sync RSA.
   const material = generate([{ name: 'commonName', value: hostname }], {
     keySize: 2048, algorithm: 'sha256',
-    notBeforeDate: new Date(now - 60_000), notAfterDate: new Date(now + 365 * 86_400_000),
+    days: 365, notBeforeDate: new Date(now - 60_000),
     extensions: [
       { name: 'basicConstraints', cA: false, critical: true },
       { name: 'keyUsage', digitalSignature: true, critical: true },
