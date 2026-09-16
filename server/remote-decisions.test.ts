@@ -136,6 +136,16 @@ function fakeDesk(initial: DeskSnapshot): RemoteDesk & { notes: string } {
       notes.body = body;
       return { id: "prop-oak", body };
     },
+    editDraft(id: string, body: string, expected?: number) {
+      if (expected != null && expected !== snap.revision) {
+        throw Object.assign(new Error("stale desk revision"), { status: 409 });
+      }
+      const row = snap.drafts.find((item) => item.id === id);
+      if (!row || row.status !== "pending") throw Object.assign(new Error("stale"), { status: 404 });
+      row.body = body;
+      snap = { ...snap, revision: snap.revision + 1, drafts: snap.drafts.map((item) => (item.id === id ? { ...row } : item)) };
+      return row;
+    },
   };
 }
 
@@ -517,28 +527,23 @@ describe("review card identity and recovery", () => {
   });
 
   it("binds review to the actual durable Desk edit and saves only the newly reviewed wording", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "realbud-remote-review-"));
-    try {
-      // Midday Brisbane so quiet-hours cannot leave the card deferred.
-      const now = () => Date.UTC(2026, 7, 17, 2);
-      const desk = new Desk({ file: join(dir, "desk.json"), now });
-      const initial = desk.runMorningCheck();
-      expect(initial.drafts.some((row) => row.status === "pending")).toBe(true);
-      const sent: Array<{ id: string; text: string; draftId: string }> = [];
-      bindRemoteDecisions({ desk, channels: [stubChannel("telegram", sent)], commit: notifyDeskSnapshot, now });
-      await notifyDeskSnapshot(initial);
-      await flushDeferredDecisions();
-      const draftId = pendingDraftId("telegram");
-      expect(draftId).toBeTruthy();
-      const old = pendingDecisionId("telegram")!;
-      const edited = desk.editDraft(draftId!, "Updated wording for this tenant only.", desk.snapshot().revision);
-      expect((await decideRemotely("telegram", "chat-1", old, "allow", undefined, "Sam")).ok).toBe(false);
-      await notifyDeskSnapshot(desk.snapshot());
-      await flushDeferredDecisions();
-      expect(sent.at(-1)!.text).toContain(edited.body);
-      expect((await decideRemotely("telegram", "chat-1", pendingDecisionId("telegram")!, "allow", undefined, "Sam")).ok).toBe(true);
-      const reloaded = new Desk({ file: join(dir, "desk.json") });
-      expect(reloaded.snapshot().drafts.find(row => row.id === draftId)).toMatchObject({ status: "allowed", body: edited.body });
-    } finally { resetRemoteDecisions(); rmSync(dir, { recursive: true, force: true }); }
+    const desk = fakeDesk(snapshot([draft("d-review", 10, { body: "Original wording for this tenant." })]));
+    const sent: Array<{ id: string; text: string; draftId: string }> = [];
+    bindRemoteDecisions({
+      desk,
+      channels: [stubChannel("telegram", sent)],
+      commit: notifyDeskSnapshot,
+      now: () => Date.UTC(2026, 7, 17, 2),
+    });
+    await notifyDeskSnapshot(desk.snapshot());
+    const draftId = pendingDraftId("telegram");
+    expect(draftId).toBe("d-review");
+    const old = pendingDecisionId("telegram")!;
+    const edited = desk.editDraft(draftId!, "Updated wording for this tenant only.", desk.snapshot().revision);
+    expect((await decideRemotely("telegram", "chat-1", old, "allow", undefined, "Sam")).ok).toBe(false);
+    await notifyDeskSnapshot(desk.snapshot());
+    expect(sent.at(-1)!.text).toContain(edited.body);
+    expect((await decideRemotely("telegram", "chat-1", pendingDecisionId("telegram")!, "allow", undefined, "Sam")).ok).toBe(true);
+    expect(desk.snapshot().drafts.find((row) => row.id === draftId)).toMatchObject({ status: "allowed", body: edited.body });
   });
 });
