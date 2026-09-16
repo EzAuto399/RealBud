@@ -28,6 +28,14 @@ describe("redactSecrets", () => {
     expect(out).toContain("«redacted 24 chars»");
   });
 
+  it("masks Notion integration tokens before chat, cards, or logs can persist them", () => {
+    const token = `ntn_${"abcdefghijklmnopqrstuvwxyz0123456789"}`;
+    const out = redactSecretsInText(`connect notion ${token}`);
+    expect(out).not.toContain(token);
+    expect(out).toMatch(/redacted/i);
+    expect(containsCredential(`connect notion ${token}`)).toBe(true);
+  });
+
   it("leaves ordinary protocol traffic alone", () => {
     const update = {
       method: "session/update",

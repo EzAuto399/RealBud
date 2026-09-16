@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "syntheticOnly": true,
+  "recipes": [
+    {
+      "id": "wf-two-profile-morning",
+      "title": "Synthetic morning priorities",
+      "description": "Review only the supplied fictional inbox, calendar and case notes. Mark missing or stale sources as unchecked. Do not send any message.",
+      "steps": [
+        "Check the supplied synthetic source coverage",
+        "Prepare findings with source references",
+        "Hold ambiguity for human review"
+      ],
+      "evidence": "Synthetic findings and unresolved source gaps",
+      "capabilities": [
+        "read-files",
+        "analyse",
+        "draft"
+      ],
+      "allowedOrigins": [],
+      "limits": {
+        "maxRuntimeMinutes": 2,
+        "maxTurns": 6
+      },
+      "schedule": null
+    },
+    {
+      "id": "wf-two-profile-bills",
+      "title": "Synthetic expected bills",
+      "description": "Compare the supplied fictional bill register and covered documents. Distinguish not checked, not found and received. Do not infer payment or invent a due date.",
+      "steps": [
+        "Check the supplied synthetic source coverage",
+        "Prepare findings with source references",
+        "Hold ambiguity for human review"
+      ],
+      "evidence": "Synthetic findings and unresolved source gaps",
+      "capabilities": [
+        "read-files",
+        "analyse",
+        "draft"
+      ],
+      "allowedOrigins": [],
+      "limits": {
+        "maxRuntimeMinutes": 2,
+        "maxTurns": 6
+      },
+      "schedule": null
+    },
+    {
+      "id": "wf-two-profile-references",
+      "title": "Synthetic payment references",
+      "description": "Review the supplied fictional bank rows and verified reference mapping. Preserve amounts and original identity; hold ambiguous matches. Do not import, pay or send.",
+      "steps": [
+        "Check the supplied synthetic source coverage",
+        "Prepare findings with source references",
+        "Hold ambiguity for human review"
+      ],
+      "evidence": "Synthetic findings and unresolved source gaps",
+      "capabilities": [
+        "read-files",
+        "analyse",
+        "draft"
+      ],
+      "allowedOrigins": [],
+      "limits": {
+        "maxRuntimeMinutes": 2,
+        "maxTurns": 6
+      },
+      "schedule": null
+    }
+  ]
+}

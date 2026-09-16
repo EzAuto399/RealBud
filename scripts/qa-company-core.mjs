@@ -230,10 +230,7 @@ try {
   // personal runtime paths. Test setup supplies its own disposable home per file.
   const env = {
     PATH: `${dirname(process.execPath)}${delimiter}${process.env.PATH ?? ''}`,
-    HOME: temporary, USERPROFILE: temporary,
     TMPDIR: temporary, TMP: temporary, TEMP: temporary, LANG: process.env.LANG ?? 'C.UTF-8', CI: '1',
-    REALBUD_DATA_DIR: temporary, OMB_DATA_DIR: temporary,
-    REALBUD_HERMES_HOME: join(temporary, 'hermes'), HERMES_HOME: join(temporary, 'hermes'),
     REALBUD_COMPANY_TEST_URL: fixture.adminUrl, REALBUD_TEST_POSTGRES: '1', REALBUD_TEST_POSTGRES_BIN: pgBin,
   };
   log(`Running ${TEST_FILES.length} exact files with ${process.version} and ${fixture.version}; skips are failures.`);

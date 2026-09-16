@@ -187,6 +187,43 @@ describe("Store", () => {
     expect(store.bots).toHaveLength(1);
   });
 
+  it("productBud prefers id bud, then a bot named Bud, then bots[0]", () => {
+    const store = new Store(selection);
+    const other = store.createBot();
+    store.patchBot(other.id, { name: "Other" });
+    const legacy = store.createBot();
+    store.patchBot(legacy.id, { name: "Bud" });
+    expect(store.productBud()?.id).toBe(legacy.id);
+    expect(store.productBud()?.name).toBe("Bud");
+  });
+
+  it("adopts a legacy assistant as Bud and safely rebinds its worker without losing history", () => {
+    const store = new Store(selection);
+    const legacy = store.createBot();
+    store.patchBot(legacy.id, {
+      modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
+      resumeCursors: { claude: "legacy-session" },
+      computer: "local",
+    });
+    store.setResumeCursor(legacy.id, "claude", "task-session");
+    const message = store.appendMessage(legacy.threadId, { role: "user", kind: "text", text: "Keep this history" });
+
+    const adopted = store.adoptBud({ instanceId: "hermes", model: "default" });
+
+    expect(adopted).toMatchObject({
+      id: legacy.id,
+      threadId: legacy.threadId,
+      name: "Bud",
+      computer: "off",
+      modelSelection: { instanceId: "hermes", model: "default" },
+      resumeCursors: {},
+      rewound: true,
+    });
+    expect(adopted?.tasks?.[0]?.resumeCursors).toEqual({});
+    expect(store.messagesFor(legacy.threadId)).toContainEqual(expect.objectContaining({ id: message.id, text: "Keep this history" }));
+    expect(new Store(selection).bot(legacy.id)).toMatchObject({ name: "Bud", modelSelection: { instanceId: "hermes" } });
+  });
+
   it("settles orphaned approvals after a stop or restart", () => {
     const store = new Store(selection);
     store.seedIfEmpty();
@@ -306,5 +343,93 @@ describe("Store", () => {
 
     const reloaded = new Store(selection);
     expect(reloaded.bot(bot.id)?.busy).toBe(false);
+  });
+
+  it("persists one queued follow-up and replaces it without duplicate delivery", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const first = store.setQueuedMessage(bot.id, "first follow-up")!;
+    const replacement = store.setQueuedMessage(bot.id, "replacement follow-up")!;
+
+    expect(replacement.id).not.toBe(first.id);
+    expect(new Store(selection).bot(bot.id)?.queuedMessage).toEqual(replacement);
+
+    const reloaded = new Store(selection);
+    expect(reloaded.takeQueuedMessage(bot.id, bot.threadId)).toEqual(replacement);
+    expect(reloaded.takeQueuedMessage(bot.id, bot.threadId)).toBeNull();
+    expect(new Store(selection).bot(bot.id)?.queuedMessage).toBeUndefined();
+  });
+
+  it("guards queued edits by id and task, and can restore a failed dispatch", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const other = store.createTask(bot.id, "Other", false)!;
+    const queued = store.setQueuedMessage(bot.id, "stay with this task", other.threadId)!;
+
+    expect(store.clearQueuedMessage(bot.id, "stale-id")).toBeNull();
+    expect(store.takeQueuedMessage(bot.id, bot.threadId)).toBeNull();
+    expect(store.takeQueuedMessage(bot.id, other.threadId)).toEqual(queued);
+    expect(store.restoreQueuedMessage(bot.id, queued)).toBe(true);
+    expect(store.restoreQueuedMessage(bot.id, queued)).toBe(false);
+    expect(store.deleteTask(bot.id, other.threadId)?.queuedMessage).toBeUndefined();
+  });
+
+  it("persists a held follow-up before idle and refuses completion or restart dispatch", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    store.patchBot(bot.id, { busy: true });
+    const queued = store.setQueuedMessage(bot.id, "Review Gmail repair replies; keep drafts local.")!;
+    const held = store.holdQueuedMessage(bot.id, "connected-app-settings-changed", queued.id)!;
+    expect(held).toEqual({ ...queued, heldReason: "connected-app-settings-changed" });
+    expect(store.takeQueuedMessage(bot.id, bot.threadId)).toBeNull();
+
+    // A crash after the hold write but before busy:false is safe: restart
+    // clears busy, while the original text/id/task and hold remain durable.
+    const restarted = new Store(selection);
+    expect(restarted.bot(bot.id)).toMatchObject({ busy: false, queuedMessage: held });
+    expect(restarted.takeQueuedMessage(bot.id, bot.threadId)).toBeNull();
+    expect(restarted.takeQueuedMessage(bot.id)).toBeNull();
+    expect(new Store(selection).bot(bot.id)?.queuedMessage).toEqual(held);
+  });
+
+  it("requires explicit guarded recovery before held work can be sent again", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const first = store.setQueuedMessage(bot.id, "Original queued follow-up")!;
+    const replacement = store.setQueuedMessage(bot.id, "Review the selected account's maintenance replies.")!;
+    expect(store.holdQueuedMessage(bot.id, "connected-app-settings-changed", first.id)).toBeNull();
+    expect(store.bot(bot.id)?.queuedMessage?.heldReason).toBeUndefined();
+    const held = store.holdQueuedMessage(bot.id, "connected-app-settings-changed", replacement.id)!;
+    expect(store.holdQueuedMessage(bot.id, "connected-app-settings-changed", replacement.id)).toEqual(held);
+    expect(store.clearQueuedMessage(bot.id, first.id)).toBeNull();
+    expect(store.takeQueuedMessage(bot.id)).toBeNull();
+
+    // Existing Edit queued removes only the expected slot and recovers this
+    // exact text into the draft. It does not start a turn or release a queue.
+    expect(store.clearQueuedMessage(bot.id, held.id)).toEqual(held);
+    expect(store.takeQueuedMessage(bot.id)).toBeNull();
+    expect(new Store(selection).bot(bot.id)?.queuedMessage).toBeUndefined();
+    // Even restoring that same item after a failed operation keeps its hold.
+    expect(store.restoreQueuedMessage(bot.id, held)).toBe(true);
+    expect(store.takeQueuedMessage(bot.id)).toBeNull();
+    expect(store.clearQueuedMessage(bot.id, held.id)?.text).toBe(replacement.text);
+    const reviewed = store.setQueuedMessage(bot.id, `${held.text} Reviewed for the new connection.`)!;
+    expect(reviewed.id).not.toBe(held.id);
+    expect(reviewed.heldReason).toBeUndefined();
+    expect(store.takeQueuedMessage(bot.id, bot.threadId)).toEqual(reviewed);
+    expect(store.takeQueuedMessage(bot.id, bot.threadId)).toBeNull();
+  });
+
+  it("keeps an unknown saved hold reason paused with a sanitized generic reason", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const queued = store.setQueuedMessage(bot.id, "Keep this saved request for review.")!;
+    const raw = JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8"));
+    raw.find((record: BotRecord) => record.id === bot.id).queuedMessage.heldReason = { future: "unrecognized metadata" };
+    writeFileSync(join(DATA_DIR, "bots.json"), JSON.stringify(raw));
+    const restarted = new Store(selection);
+    expect(restarted.bot(bot.id)?.queuedMessage).toEqual({ ...queued, heldReason: "review-required" });
+    expect(restarted.takeQueuedMessage(bot.id)).toBeNull();
+    expect(readFileSync(join(DATA_DIR, "bots.json"), "utf8")).not.toContain("unrecognized metadata");
   });
 });

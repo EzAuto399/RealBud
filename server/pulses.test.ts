@@ -73,7 +73,7 @@ function snapshot(patch?: Partial<DeskSnapshot>): DeskSnapshot {
       { propertyId: "prop-king", outcome: "escalate", reason: "statutory-clock", daysLate: 10 },
     ],
     hands: "demo",
-    handsDetail: "Demo book — Recheck asks the worker or a CSV for live facts.",
+    handsDetail: "Demo book — Recheck asks Bud or a CSV for live facts.",
     sources: [],
     demo: true,
     ...patch,
@@ -131,8 +131,8 @@ describe("pulseLoopSettled", () => {
     bind(sent, () => Date.UTC(2026, 7, 31, 0, 0, 0));
     await pulseLoopSettled("morning-arrears", needsYouSnap());
     expect(sent).toEqual([
-      "Morning money: 3 checked · 2 need you · 1 for the licensee. Review on Desk, or decide here as cards arrive.",
-      "Morning money: 3 checked · 2 need you · 1 for the licensee. Review on Desk, or decide here as cards arrive.",
+      "Morning Recheck: 3 checked · 2 need you · 1 for the licensee. Review on Desk, or decide here as cards arrive.",
+      "Morning Recheck: 3 checked · 2 need you · 1 for the licensee. Review on Desk, or decide here as cards arrive.",
     ]);
   });
 
@@ -166,12 +166,12 @@ describe("pulseLoopSettled", () => {
     expect(isQuietHours(now, "Australia/Sydney")).toBe(false);
     await flushDeferredDecisions();
     expect(sent).toEqual([
-      "Morning money: 3 checked · 2 need you · 1 for the licensee. Review on Desk, or decide here as cards arrive.",
-      "Morning money: 3 checked · 2 need you · 1 for the licensee. Review on Desk, or decide here as cards arrive.",
+      "Morning Recheck: 3 checked · 2 need you · 1 for the licensee. Review on Desk, or decide here as cards arrive.",
+      "Morning Recheck: 3 checked · 2 need you · 1 for the licensee. Review on Desk, or decide here as cards arrive.",
     ]);
   });
 
-  it("sends nothing on a miss with zero needs-you", async () => {
+  it("pushes an honest miss digest when Recheck returns no live facts", async () => {
     const sent: string[] = [];
     bind(sent, () => Date.UTC(2026, 7, 31, 0, 0, 0));
     await pulseLoopSettled(
@@ -181,9 +181,12 @@ describe("pulseLoopSettled", () => {
         escalations: [],
         results: [],
         hands: "demo",
-        handsDetail: "Recheck missed. The worker did not return live facts.",
+        handsDetail: "Recheck missed. Bud did not return live facts.",
       }),
     );
-    expect(sent).toEqual([]);
+    expect(sent).toEqual([
+      "Morning Recheck: Recheck missed — facts held. Open Desk.",
+      "Morning Recheck: Recheck missed — facts held. Open Desk.",
+    ]);
   });
 });

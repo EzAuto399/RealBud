@@ -325,7 +325,7 @@ try {
     weeklyRentCents: 50_000,
   });
   check("empty address is refused", badAdd.status === 400, String(badAdd.status));
-  check(`book still under the 200 cap (${have})`, have < 200, String(have));
+  check(`book is within the 1,000-property cap (${have})`, have <= 1_000, String(have));
   void filled;
 
   // ── Friday letter still Copy-only after the messy morning ──

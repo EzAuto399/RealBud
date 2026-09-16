@@ -25,8 +25,12 @@ if (!existsSync(executable)) {
 const sandbox = mkdtempSync(path.join(tmpdir(), "realbud-mac-smoke-"));
 const home = path.join(sandbox, "home");
 const dataDir = path.join(home, ".realbud");
+const hermesHome = path.join(home, ".hermes");
+const userDataDir = path.join(sandbox, "electron-user-data");
 const resultFile = path.join(sandbox, "smoke-result.json");
 mkdirSync(dataDir, { recursive: true });
+mkdirSync(hermesHome, { recursive: true });
+mkdirSync(userDataDir, { recursive: true });
 writeFileSync(
   path.join(dataDir, "config.json"),
   JSON.stringify({ instances: { ghost: { driver: "not-a-real-driver", displayName: "Ghost" } } }),
@@ -34,6 +38,8 @@ writeFileSync(
 
 let output = "";
 let smokeResult = null;
+let spawnError = null;
+let succeeded = false;
 function readSmokeFile() {
   if (!existsSync(resultFile)) return null;
   try {
@@ -43,31 +49,9 @@ function readSmokeFile() {
   }
 }
 
-const child = spawn(executable, [], {
-  cwd: root,
-  detached: true,
-  env: {
-    ...process.env,
-    HOME: home,
-    REALBUD_DATA_DIR: dataDir,
-    OMB_SMOKE_TEST: "1",
-    OMB_SMOKE_RESULT_FILE: resultFile,
-  },
-  stdio: ["ignore", "pipe", "pipe"],
-});
-
-for (const stream of [child.stdout, child.stderr]) {
-  stream.setEncoding("utf8");
-  stream.on("data", (chunk) => {
-    output += chunk;
-    const match = output.match(/\[smoke\] renderer-ready (\{.*\})\r?\n/);
-    if (match && !smokeResult) smokeResult = JSON.parse(match[1]);
-  });
-}
-
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function waitForPortsFree(ports, timeoutMs = 15_000) {
+async function waitForPortCandidate(ports, timeoutMs = 15_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const busy = await Promise.all(
@@ -80,23 +64,89 @@ async function waitForPortsFree(ports, timeoutMs = 15_000) {
         }
       }),
     );
-    if (!busy.some(Boolean)) return;
+    if (busy.some((value) => !value)) return;
     await delay(200);
   }
-  throw new Error(`ports still busy after ${timeoutMs}ms: ${ports.join(", ")}`);
+  throw new Error(`no RealBud port candidate became free after ${timeoutMs}ms: ${ports.join(", ")}`);
 }
 
-await waitForPortsFree([8799, 18799, 28799]);
+try {
+  await waitForPortCandidate([8799, 18799, 28799]);
+} catch (error) {
+  rmSync(sandbox, { recursive: true, force: true });
+  throw error;
+}
+
+const childEnv = {
+  ...process.env,
+  HOME: home,
+  HERMES_HOME: hermesHome,
+  REALBUD_DATA_DIR: dataDir,
+  OMB_USER_DATA: userDataDir,
+  OMB_SMOKE_TEST: "1",
+  OMB_SMOKE_RESULT_FILE: resultFile,
+};
+for (const key of [
+  "XAI_API_KEY",
+  "OPENAI_API_KEY",
+  "OPENROUTER_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "GOOGLE_API_KEY",
+  "GEMINI_API_KEY",
+  "DEEPSEEK_API_KEY",
+  "GROQ_API_KEY",
+  "KIMI_API_KEY",
+  "MOONSHOT_API_KEY",
+  "AWS_ACCESS_KEY_ID",
+  "AWS_SECRET_ACCESS_KEY",
+  "AWS_SESSION_TOKEN",
+  "AWS_SECURITY_TOKEN",
+  "AWS_PROFILE",
+  "AWS_DEFAULT_PROFILE",
+  "AWS_BEARER_TOKEN_BEDROCK",
+]) {
+  delete childEnv[key];
+}
+
+const child = spawn(executable, [`--user-data-dir=${userDataDir}`], {
+  cwd: root,
+  detached: true,
+  env: childEnv,
+  stdio: ["ignore", "pipe", "pipe"],
+});
+child.on("error", (error) => {
+  spawnError = error;
+});
+
+for (const stream of [child.stdout, child.stderr]) {
+  stream.setEncoding("utf8");
+  stream.on("data", (chunk) => {
+    output += chunk;
+    const match = output.match(/\[smoke\] renderer-ready (\{.*\})\r?\n/);
+    if (match && !smokeResult) {
+      try {
+        smokeResult = JSON.parse(match[1]);
+      } catch {}
+    }
+  });
+}
+
+function hasExited() {
+  return child.exitCode !== null || child.signalCode !== null;
+}
 
 async function until(probe, description) {
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     const value = await probe().catch(() => null);
     if (value) return value;
-    if (child.exitCode !== null) {
+    if (spawnError) throw spawnError;
+    if (hasExited()) {
       const filePayload = readSmokeFile();
       if (filePayload?.ok === false) throw new Error(filePayload.error);
-      throw new Error(`Electron exited ${child.exitCode} while waiting for ${description}.\n${output}`);
+      throw new Error(
+        `Electron exited ${child.exitCode ?? child.signalCode} while waiting for ${description}.\n${output}`,
+      );
     }
     await delay(100);
   }
@@ -107,18 +157,18 @@ async function until(probe, description) {
 
 async function waitForExit() {
   const deadline = Date.now() + 15_000;
-  while (child.exitCode === null && Date.now() < deadline) await delay(50);
-  if (child.exitCode === null) throw new Error(`Electron did not exit after its window closed.\n${output}`);
+  while (!hasExited() && Date.now() < deadline) await delay(50);
+  if (!hasExited()) throw new Error(`Electron did not exit after its window closed.\n${output}`);
 }
 
 async function stopProcess() {
-  if (child.exitCode !== null) return;
+  if (hasExited()) return;
   try {
     process.kill(-child.pid, "SIGTERM");
   } catch {}
   const stopDeadline = Date.now() + 5_000;
-  while (child.exitCode === null && Date.now() < stopDeadline) await delay(50);
-  if (child.exitCode === null) {
+  while (!hasExited() && Date.now() < stopDeadline) await delay(50);
+  if (!hasExited()) {
     try {
       process.kill(-child.pid, "SIGKILL");
     } catch {}
@@ -145,9 +195,13 @@ try {
   const staleHealth = await fetch(new URL("/api/health", location)).catch(() => null);
   if (staleHealth?.ok) throw new Error("embedded harness remained reachable after Electron quit");
 
+  succeeded = true;
   console.log("[smoke-mac-package] OK: renderer, capabilities, embedded harness, and shutdown");
 } finally {
   await stopProcess();
-  if (process.env.OMB_KEEP_SMOKE_DIR !== "1") rmSync(sandbox, { recursive: true, force: true });
-  else console.log(`[smoke-mac-package] kept ${sandbox}`);
+  if (succeeded && process.env.OMB_KEEP_SMOKE_DIR !== "1") {
+    rmSync(sandbox, { recursive: true, force: true });
+  } else {
+    console.error(`[smoke-mac-package] kept diagnostics: ${sandbox}`);
+  }
 }

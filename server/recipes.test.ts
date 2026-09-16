@@ -42,6 +42,34 @@ const card = {
   evidence: "arrears rows and the URL",
 };
 
+describe("reviewed job versions", () => {
+  it("rejects stale saves and approvals without changing the newer plan", () => {
+    const [first] = saveRecipe({ ...card, id: "reviewed", expectedRevision: 0 });
+    patchRecipe(first.id, { planApproved: true, expectedRevision: first.revision });
+    const [changed] = saveRecipe({ ...first, steps: ["Check the revised source"], expectedRevision: first.revision });
+    expect(changed.revision).toBe(2);
+    expect(changed.planApprovedAt).toBeNull();
+    expect(() => saveRecipe({ ...first, title: "Stale window", expectedRevision: first.revision })).toThrow(/changed elsewhere/);
+    expect(() => patchRecipe(first.id, { planApproved: true, expectedRevision: first.revision })).toThrow(/changed elsewhere/);
+    expect(getRecipe(first.id)).toEqual(changed);
+    expect(patchRecipe(first.id, { planApproved: true, expectedRevision: changed.revision })[0].approvedRevision).toBe(2);
+  });
+
+  it("rejects duplicate creation and does not recreate a deleted plan", () => {
+    const [saved] = saveRecipe({ ...card, id: "once", expectedRevision: 0 });
+    expect(() => saveRecipe({ ...card, id: "once", title: "Duplicate", expectedRevision: 0 })).toThrow(/changed elsewhere/);
+    expect(listRecipes()).toEqual([saved]);
+    deleteRecipe(saved.id);
+    expect(() => saveRecipe({ ...saved, expectedRevision: saved.revision })).toThrow(/changed elsewhere/);
+    expect(listRecipes()).toEqual([]);
+  });
+
+  it.each([null, -1, 1.5, "1", true])("rejects an invalid expected version %s", (expectedRevision) => {
+    expect(() => saveRecipe({ ...card, id: "invalid", expectedRevision })).toThrow(/version is invalid/);
+    expect(listRecipes()).toEqual([]);
+  });
+});
+
 describe("validateRecipe", () => {
   it("normalizes a portal URL to a bare host", () => {
     expect(validateRecipe(card)).toEqual({
@@ -343,5 +371,30 @@ describe("recipe store", () => {
       expect(statusOf(err)).toBe(409);
       expect(String(err)).toMatch(/Add the portal site and a portal capability before attaching it/);
     }
+  });
+
+  it("sets portal site, approves, and attaches in one Ask patch", () => {
+    saveRecipe({
+      ...card,
+      id: "rec-ask-site",
+      allowedOrigins: [],
+      capabilities: ["read-book"],
+      createdAt: 12,
+    });
+    const [row] = patchRecipe("rec-ask-site", {
+      allowedOrigins: ["https://www.VantageStrata.com.au/login"],
+      ensurePortal: true,
+      planApproved: true,
+      attach: true,
+      status: "active",
+    });
+    expect(row).toMatchObject({
+      allowedOrigins: ["vantagestrata.com.au"],
+      status: "active",
+      approvedRevision: 2,
+      capabilities: expect.arrayContaining(["portal-read", "portal-prefill"]),
+    });
+    expect(row?.planApprovedAt).toEqual(expect.any(Number));
+    expect(row?.attachment).toMatchObject({ acknowledged: "human-login-and-submit" });
   });
 });

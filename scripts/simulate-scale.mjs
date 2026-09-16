@@ -5,9 +5,9 @@
 // practice morning check, CSV preview + import of N rows, loops list.
 //
 //   node --experimental-strip-types scripts/simulate-scale.mjs [sizes...]
-//   default sizes: 20 50 80 100
+//   default sizes: 150 300 600
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,7 +17,7 @@ const PORT = Number(process.env.OMB_SIM_PORT ?? 18890);
 const BASE = `http://127.0.0.1:${PORT}`;
 const SIZES = process.argv.slice(2).map(Number).filter(Boolean).length
   ? process.argv.slice(2).map(Number)
-  : [20, 50, 80, 100];
+  : [150, 300, 600];
 
 let session = "";
 const api = async (method, path, body) => {
@@ -57,6 +57,7 @@ function csvFor(n, props) {
 
 async function boot() {
   const home = mkdtempSync(join(tmpdir(), "realbud-scale-"));
+  mkdirSync(join(home, ".realbud"), { recursive: true });
   const child = spawn(process.execPath, ["--experimental-strip-types", "server/index.ts"], {
     cwd: ROOT,
     env: { ...process.env, REALBUD_DATA_DIR: join(home, ".realbud"), OMB_PORT: String(PORT), NODE_ENV: "production" },
