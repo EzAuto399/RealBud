@@ -519,17 +519,22 @@ describe("review card identity and recovery", () => {
   it("binds review to the actual durable Desk edit and saves only the newly reviewed wording", async () => {
     const dir = mkdtempSync(join(tmpdir(), "realbud-remote-review-"));
     try {
-      const desk = new Desk({ file: join(dir, "desk.json"), now: () => Date.UTC(2026, 7, 17, 0) });
+      // Midday Brisbane so quiet-hours cannot leave the card deferred.
+      const now = () => Date.UTC(2026, 7, 17, 2);
+      const desk = new Desk({ file: join(dir, "desk.json"), now });
       const initial = desk.runMorningCheck();
+      expect(initial.drafts.some((row) => row.status === "pending")).toBe(true);
       const sent: Array<{ id: string; text: string; draftId: string }> = [];
-      bindRemoteDecisions({ desk, channels: [stubChannel("telegram", sent)], commit: notifyDeskSnapshot, now: () => Date.UTC(2026, 7, 17, 0) });
+      bindRemoteDecisions({ desk, channels: [stubChannel("telegram", sent)], commit: notifyDeskSnapshot, now });
       await notifyDeskSnapshot(initial);
-      const draftId = pendingDraftId("telegram")!;
+      await flushDeferredDecisions();
+      const draftId = pendingDraftId("telegram");
       expect(draftId).toBeTruthy();
       const old = pendingDecisionId("telegram")!;
-      const edited = desk.editDraft(draftId, "Updated wording for this tenant only.", desk.snapshot().revision);
+      const edited = desk.editDraft(draftId!, "Updated wording for this tenant only.", desk.snapshot().revision);
       expect((await decideRemotely("telegram", "chat-1", old, "allow", undefined, "Sam")).ok).toBe(false);
       await notifyDeskSnapshot(desk.snapshot());
+      await flushDeferredDecisions();
       expect(sent.at(-1)!.text).toContain(edited.body);
       expect((await decideRemotely("telegram", "chat-1", pendingDecisionId("telegram")!, "allow", undefined, "Sam")).ok).toBe(true);
       const reloaded = new Desk({ file: join(dir, "desk.json") });
