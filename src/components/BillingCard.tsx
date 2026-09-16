@@ -84,11 +84,12 @@ export function BillingCard() {
     });
 
   return (
+    <div id="you-billing">
     <Card
       title="Model spend"
       subtitle="Issue a RealBud key so Bud's model calls settle here, with a margin, instead of a raw provider key this office does not bill."
     >
-      <div id="you-billing" className="space-y-4">
+      <div className="space-y-4">
         {view ? (
           <>
             <dl className="grid gap-3 sm:grid-cols-3">
@@ -105,7 +106,7 @@ export function BillingCard() {
                 <dd className="mt-0.5 font-medium tabular-nums text-ink">
                   {view.usage.promptTokens + view.usage.completionTokens}
                   <span className="ml-1 text-[12px] font-normal text-ink-muted">
-                    {view.usage.calls} {view.usage.calls === 1 ? "call" : "calls"}
+                    tok · {view.usage.calls} {view.usage.calls === 1 ? "call" : "calls"}
                   </span>
                 </dd>
               </div>
@@ -256,5 +257,6 @@ export function BillingCard() {
         {error ? <p className="text-[12.5px] text-danger">{error}</p> : null}
       </div>
     </Card>
+    </div>
   );
 }
