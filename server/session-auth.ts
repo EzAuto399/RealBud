@@ -76,6 +76,7 @@ export function needsSession(path: string): boolean {
   if (path === "/api/health" || path === "/api/session") return false;
   if (!path.startsWith("/api/")) return false;
   if (path.startsWith("/api/internal/")) return false;
+  if (path === "/api/billing/stripe/webhook") return false;
   return (
     path.startsWith("/api/desk") ||
     path.startsWith("/api/channels") ||
@@ -89,6 +90,7 @@ export function needsSession(path: string): boolean {
     path.startsWith("/api/artifacts") ||
     path.startsWith("/api/portal") ||
     path.startsWith("/api/imports") ||
-    path.startsWith("/api/events")
+    path.startsWith("/api/events") ||
+    path.startsWith("/api/billing")
   );
 }

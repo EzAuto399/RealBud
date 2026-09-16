@@ -697,10 +697,21 @@ export function BudSetupCard({ id = "you-worker" }: { id?: string }) {
               <div className="text-[14px] font-medium text-ink">Connect Bud's model</div>
               <p className="mt-0.5 text-[12.5px] text-ink-muted">Choose the provider your office already uses. RealBud stores the key only in Bud's private storage.</p>
             </div>
-            <button type="button" onClick={openModelSheet} disabled={locked} className={primaryButton}>
-              <KeyRound size={14} />
-              Connect model
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={openModelSheet} disabled={locked} className={primaryButton}>
+                <KeyRound size={14} />
+                Connect model
+              </button>
+              <button
+                type="button"
+                className={secondaryButton}
+                onClick={() => {
+                  location.hash = "you-billing";
+                }}
+              >
+                Use RealBud credits
+              </button>
+            </div>
           </div>
         ) : null}
 

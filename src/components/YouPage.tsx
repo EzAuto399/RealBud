@@ -43,6 +43,7 @@ import { GoLiveCard } from "./desk/GoLiveCard";
 import { MorningBrief } from "./desk/MorningBrief";
 import { LawWatchCard } from "./you/LawWatchCard";
 import { OfficeCard } from "./you/OfficeCard";
+import { BillingCard } from "./BillingCard";
 
 function YouLoadLines({ label }: { label: string }) {
   return (
@@ -81,8 +82,9 @@ function workerDiagnosticsText(hermes: HermesStatus | null | undefined, version?
   return lines.join("\n");
 }
 
-function youHashTarget(hash: string): "you-worker" | "you-recovery" | "you-jobs" | null {
+function youHashTarget(hash: string): "you-worker" | "you-recovery" | "you-jobs" | "you-billing" | null {
   if (hash === "#you-worker" || hash === "#attach-model") return "you-worker";
+  if (hash === "#you-billing") return "you-billing";
   if (hash === "#you-recovery") return "you-recovery";
   if (hash === "#you-jobs") return "you-jobs";
   return null;
@@ -290,6 +292,7 @@ export function YouPage() {
           <Card title="This office" subtitle="Open Desk once to load the book." />
         )}
         {workerFirst ? null : <BudSetupCard />}
+        <BillingCard />
         <Card
           title="Connected apps"
           subtitle="Save the private broker key once. Then tell Bud “connect Notion” or another app; Bud opens the provider sign-in directly."

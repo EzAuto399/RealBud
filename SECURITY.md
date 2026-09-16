@@ -12,7 +12,8 @@ response as soon as possible, normally within a few days.
   local user. Anything that makes it reachable from off-machine, or lets one local *unprivileged
   other user* drive it, is a vulnerability.
 - API keys live in `~/.realbud/config.json` and are write-only through the API (`configured`
-  booleans out, never values). Any path that echoes a stored secret back — API response, SSE event,
+  booleans out, never values). Office model-spend keys live hashed in `~/.realbud/billing.json`
+  and are shown once at create. Any path that echoes a stored secret back — API response, SSE event,
   log line, argv visible in `ps` — is a vulnerability.
 - Agents run real CLIs (`claude`, `codex`) with the user's own privileges, and the permission broker
   is the consent layer for risky actions. Bypasses of the broker (approving without a user decision,

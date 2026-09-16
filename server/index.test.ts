@@ -169,6 +169,7 @@ beforeAll(async () => {
       REALBUD_DISCORD_API: `http://127.0.0.1:${discordStubPort}`,
       REALBUD_SLACK_API: `http://127.0.0.1:${slackStubPort}`,
       OMB_STATIC_DIR: staticDir,
+      REALBUD_BILLING_MOCK: "1",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -1114,5 +1115,59 @@ describe("harness HTTP API", () => {
       expect(staleEdit.status).toBe(409);
       expect(String(staleEdit.body.error)).toMatch(/revision/);
     }
+  });
+
+  it("issues office keys, mocks a top-up, and keeps the billed gateway off raw OpenRouter secrets", async () => {
+    const unauth = await fetch(`${BASE}/api/billing`);
+    expect(unauth.status).toBe(401);
+
+    const listed = await api("GET", "/api/billing");
+    expect(listed.status).toBe(200);
+    expect(listed.body.payments).toMatchObject({ mockEnabled: true, stripeConfigured: false, currency: "USD" });
+    expect(listed.body.gateway.baseUrl).toBe(`${BASE}/v1`);
+    expect(listed.body.hermes.steps.join(" ")).toMatch(/OpenRouter/);
+
+    const created = await api("POST", "/api/billing/keys", { label: "Hermes" });
+    expect(created.status).toBe(200);
+    expect(created.body.key).toMatch(/^rbk_live_/);
+    const afterCreate = await api("GET", "/api/billing");
+    expect(JSON.stringify(afterCreate.body)).not.toContain(created.body.key);
+    expect(afterCreate.body.keys.some((row: { hint: string }) => row.hint.startsWith("rbk_live_"))).toBe(true);
+
+    const noCredit = await fetch(`${BASE}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${created.body.key}` },
+      body: JSON.stringify({ model: "anthropic/claude-sonnet-5", messages: [] }),
+    });
+    expect(noCredit.status).toBe(402);
+
+    const topup = await api("POST", "/api/billing/topup", { amountUsd: 10 });
+    expect(topup.status).toBe(200);
+    expect(topup.body.mock).toBe(true);
+    expect(topup.body.billing.remainingUsd).toBe(10);
+
+    const unconfigured = await fetch(`${BASE}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${created.body.key}` },
+      body: JSON.stringify({ model: "anthropic/claude-sonnet-5", messages: [] }),
+    });
+    expect(unconfigured.status).toBe(503);
+    expect(String((await unconfigured.json() as { error?: { message?: string } }).error?.message)).toMatch(/REALBUD_OPENROUTER_API_KEY/);
+
+    const revoked = await api("DELETE", `/api/billing/keys/${created.body.id}`);
+    expect(revoked.status).toBe(200);
+    const afterRevoke = await fetch(`${BASE}/v1/models`, {
+      headers: { authorization: `Bearer ${created.body.key}` },
+    });
+    expect(afterRevoke.status).toBe(401);
+
+    const hook = await fetch(`${BASE}/api/billing/stripe/webhook`, { method: "POST", body: "{}" });
+    expect(hook.status).toBe(501);
+
+    const connect = await api("POST", "/api/billing/connect-hermes", {});
+    expect(connect.status).toBe(200);
+    expect(connect.body.model).toMatchObject({ provider: "openrouter", keyPresent: true });
+    expect(connect.body.key).toMatch(/^rbk_live_/);
+    expect(connect.body.billing.gateway.baseUrl).toBe(`${BASE}/v1`);
   });
 });

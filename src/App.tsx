@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { StoreProvider, useStore } from "@/state/store";
 import { Sidebar } from "@/components/Sidebar";
-import { ChatView } from "@/components/ChatView";
+const ChatView = lazy(() => import("@/components/ChatView").then((mod) => ({ default: mod.ChatView })));
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { DesktopCapabilitiesProvider } from "@/components/DesktopCapabilities";
 import { RoutinesPage } from "@/components/RoutinesPage";
@@ -82,7 +82,15 @@ function Shell() {
           ) : state.activeView === "you" ? (
             <YouPage />
           ) : bud ? (
-            <ChatView bot={bud} productAsk />
+            <Suspense
+              fallback={
+                <main className="flex h-full min-w-0 flex-1 items-center justify-center bg-paper text-ink-muted">
+                  <Loader2 size={20} className="animate-spin" />
+                </main>
+              }
+            >
+              <ChatView bot={bud} productAsk />
+            </Suspense>
           ) : (
             <main className="flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-app text-ink-secondary">
               <Loader2 size={20} className="animate-spin" />
