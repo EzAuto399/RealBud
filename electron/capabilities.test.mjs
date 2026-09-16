@@ -21,7 +21,7 @@ describe("desktop capabilities", () => {
     });
   });
 
-  it.each(["linux", "win32", "freebsd"])("fails closed on %s", (platform) => {
+  it.each(["linux", "freebsd"])("fails closed on %s", (platform) => {
     const capabilities = desktopCapabilities({
       platform,
       env: { DISPLAY: ":0" },
@@ -35,6 +35,19 @@ describe("desktop capabilities", () => {
       available: false,
       support: "unsupported",
       reasonCode: "unsupported-platform",
+    });
+  });
+
+  it("keeps Windows local computer when the helper is ready and enables on-device dictation", () => {
+    const unavailable = desktopCapabilities({ platform: "win32", localConnection: { mode: "unavailable" } });
+    expect(unavailable.localComputer.available).toBe(false);
+    const ready = desktopCapabilities({ platform: "win32", localConnection: { mode: "embedded" } });
+    expect(ready.localComputer.available).toBe(true);
+    expect(ready.screenPreview.available).toBe(false);
+    expect(ready.dictation).toMatchObject({
+      available: true,
+      engine: "windows-speech",
+      onDevice: true,
     });
   });
 

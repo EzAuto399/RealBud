@@ -15,6 +15,7 @@ const { join } = await import("node:path");
 const { Store } = await import("./store.ts");
 const discord = await import("./channels/discord.ts");
 const remote = await import("./remote-decisions.ts");
+const { createPairingCode } = await import("./channel-pairing.ts");
 import type { Draft } from "../shared/contracts.ts";
 
 const TOKEN = "SuperSecretDiscordBotTokenXYZ";
@@ -182,7 +183,7 @@ describe("verifyToken", () => {
 });
 
 describe("gateway pairing and relay", () => {
-  it("pairs on first DM, refuses another user once, and prefixes the Bud turn", async () => {
+  it("pairs with the Mac code, refuses another user once, and preserves channel attribution while routing the raw request", async () => {
     const store = new Store(() => ({ instanceId: "", model: "" }));
     store.seedIfEmpty();
     saveConnected();
@@ -201,9 +202,9 @@ describe("gateway pairing and relay", () => {
     expect(identify.d.properties.browser).toBe("RealBud");
     expect(identify.d.token).toBe(TOKEN);
 
-    socket.dispatch("MESSAGE_CREATE", dm("99", "hi", "Sam"));
+    socket.dispatch("MESSAGE_CREATE", dm("99", createPairingCode("discord").command, "Sam"));
     await vi.waitFor(() => {
-      expect(sent).toEqual([{ channelId: "99", text: "Paired with RealBud on this Mac. Ask Bud anything." }]);
+      expect(sent).toEqual([{ channelId: "99", text: "Paired with RealBud on this Mac. Send a task, /continue for your latest saved reply, /summary for a short handoff, or /help. Keep this Mac awake and online." }]);
     });
     expect(discord.loadChannel()).toMatchObject({ pairedChannelId: "99", pairedName: "Sam" });
     expect(startTurn).not.toHaveBeenCalled();
@@ -222,8 +223,8 @@ describe("gateway pairing and relay", () => {
     expect(last).toMatchObject({ role: "user", kind: "text", text: "[Discord · Sam] what's late?" });
     expect(startTurn).toHaveBeenCalledWith(
       "bud",
-      "[Discord · Sam] what's late?",
-      expect.objectContaining({ userMessage: last }),
+      "what's late?",
+      expect.objectContaining({ userMessage: last, channelRelay: true, onDispatchError: expect.any(Function) }),
     );
   });
 
@@ -485,7 +486,7 @@ describe("remote decisions", () => {
     });
     const store = await bindPairedDesk(decided, fetchFn);
     const startTurn = vi.fn(async () => {});
-    await discord.handleInteraction(interaction("d:d-oak:allow"), deps(store, startTurn, fetchFn));
+    await discord.handleInteraction(interaction(`d:${remote.pendingDecisionId("discord")}:allow`), deps(store, startTurn, fetchFn));
     expect(callbacks).toEqual([{ type: 6 }]);
     expect(decided).toEqual([{ id: "d-oak", via: "via Discord · Yoda", status: "allowed" }]);
     expect(patches[0]?.url).toContain("/channels/99/messages/msg-9");
@@ -504,7 +505,7 @@ describe("remote decisions", () => {
     expect(decided).toEqual([]);
   });
 
-  it("treats yes/no in the paired DM as the pending decision", async () => {
+  it("uses a card-specific reply in the paired DM", async () => {
     const decided: Array<{ id: string; via?: string; status: string; reason?: string }> = [];
     const sent: string[] = [];
     const fetchFn = stubFetch({ onSend: (_id, text) => sent.push(text) });
@@ -512,7 +513,7 @@ describe("remote decisions", () => {
     expect(remote.pendingDraftId("discord")).toBe("d-oak");
     const startTurn = vi.fn(async () => {});
     const wired = deps(store, startTurn, fetchFn);
-    await discord.handleInbound(dm("99", "deny", "Sam"), wired);
+    await discord.handleInbound(dm("99", `deny ${remote.pendingDecisionId("discord")}`, "Sam"), wired);
     expect(decided[0]).toMatchObject({ id: "d-oak", status: "denied", via: "via Discord · Sam" });
     expect(sent.some((text) => /^Denied via Discord · Sam · /.test(text))).toBe(true);
     expect(startTurn).not.toHaveBeenCalled();
@@ -523,4 +524,3 @@ describe("remote decisions", () => {
     expect(last).toMatchObject({ text: "[Discord · Sam] what's late?" });
   });
 });
-

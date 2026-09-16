@@ -45,11 +45,12 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
   let child: ChildProcess;
   let home: string;
   let stderr = "";
+  let sessionToken = "";
 
   const api = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
     const res = await fetch(`${BASE}${path}`, {
       method,
-      headers: body ? { "content-type": "application/json" } : undefined,
+      headers: { "x-realbud-session": sessionToken, ...(body ? { "content-type": "application/json" } : {}) },
       body: body ? JSON.stringify(body) : undefined,
     });
     return { status: res.status, body: await res.json() };
@@ -78,6 +79,11 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
           hang: {
             driver: "grokAgent",
             environment: { FAKE_ACP_MODE: "hang" },
+            config: { cli: FAKE_CLI, fullAuto: true },
+          },
+          slow: {
+            driver: "grokAgent",
+            environment: { FAKE_ACP_MODE: "slow" },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
         },
@@ -111,6 +117,10 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       if (child.exitCode !== null) throw new Error(`server exited ${child.exitCode}. stderr:\n${stderr}`);
       await new Promise((r) => setTimeout(r, 150));
     }
+    const handshake = await fetch(`${BASE}/api/session`);
+    expect(handshake.ok).toBe(true);
+    sessionToken = (await handshake.json() as { token: string }).token;
+    expect(sessionToken).toBeTruthy();
   }, 30_000);
 
   afterAll(async () => {
@@ -223,6 +233,56 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       // and only one copy of each attempt ever exists — no duplicated turns
       expect(bot.messages.filter((m: Msg) => m.text === "first try")).toHaveLength(1);
       expect(bot.messages.filter((m: Msg) => m.text === "second try")).toHaveLength(1);
+    },
+    45_000,
+  );
+
+  it(
+    "replaces and drains one durable follow-up, then steers a live turn atomically",
+    async () => {
+      const created = (await api("POST", "/api/bots")).body.bot;
+      await api("PATCH", `/api/bots/${created.id}`, {
+        modelSelection: { instanceId: "slow", model: "fake-model" },
+      });
+
+      expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "slow first" })).status).toBe(202);
+      await waitFor(async () => (await getBot(created.id)).busy === true, "the slow turn to start");
+      const firstQueued = await api("PUT", `/api/bots/${created.id}/queued-message`, { text: "old follow-up" });
+      expect(firstQueued.status).toBe(200);
+      const replacement = await api("PUT", `/api/bots/${created.id}/queued-message`, { text: "final follow-up" });
+      expect(replacement.status).toBe(200);
+      expect(replacement.body.queued.id).not.toBe(firstQueued.body.queued.id);
+      const staleDelete = await api("DELETE", `/api/bots/${created.id}/queued-message`, {
+        id: firstQueued.body.queued.id,
+      });
+      expect(staleDelete.status).toBe(409);
+      expect((await getBot(created.id)).queuedMessage.text).toBe("final follow-up");
+
+      await waitFor(async () => {
+        const bot = await getBot(created.id);
+        return !bot.busy && !bot.queuedMessage && bot.messages.some((message: Msg) => message.text === "final follow-up");
+      }, "the replacement follow-up to drain");
+      let bot = await getBot(created.id);
+      expect(bot.messages.filter((message: Msg) => message.text === "old follow-up")).toHaveLength(0);
+      expect(bot.messages.filter((message: Msg) => message.text === "final follow-up")).toHaveLength(1);
+
+      await api("PATCH", `/api/bots/${created.id}`, {
+        modelSelection: { instanceId: "hang", model: "fake-model" },
+      });
+      expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "direction one" })).status).toBe(202);
+      await waitFor(async () => (await getBot(created.id)).busy === true, "the turn to steer");
+      const steered = await api("POST", `/api/bots/${created.id}/steer`, { text: "direction two" });
+      expect(steered.status).toBe(202);
+      await waitFor(async () => {
+        const current = await getBot(created.id);
+        return current.busy && current.messages.some((message: Msg) => message.text === "direction two");
+      }, "the steered turn to replace the old one");
+      bot = await getBot(created.id);
+      expect(bot.messages.filter((message: Msg) => message.text === "direction two")).toHaveLength(1);
+      expect(bot.messages.some((message: Msg) => /Stopped\. Bud/.test(message.text ?? ""))).toBe(false);
+
+      expect((await api("POST", `/api/bots/${created.id}/interrupt`)).status).toBe(200);
+      await waitFor(async () => (await getBot(created.id)).busy === false, "the steered turn to stop");
     },
     45_000,
   );

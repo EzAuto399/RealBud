@@ -1,0 +1,4 @@
+
+> realbud@0.1.18 typecheck /Users/yoda/projects/realbud-managed-gateway
+> tsc -b && tsc -p tsconfig.server.json
+

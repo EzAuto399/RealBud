@@ -3,7 +3,6 @@ import type { JobRun, JobRunEvidence, JobRunStatus, Recipe } from "../shared/con
 import {
   fenceDecision,
   fenceEvidenceLine,
-  hasReadBack,
   normalizeToolName,
   originMatches,
   type FenceContext,
@@ -12,6 +11,8 @@ import { recipeHasPortalCapability } from "./recipes.ts";
 import type { ParsedPortalRule } from "./request-decision.ts";
 
 export interface AttendedFenceContext extends FenceContext {
+  /** Product Bud bot that owns this beside-you run (canonical `bud` or legacy UUID). */
+  botId: string;
   runId: string;
 }
 
@@ -20,9 +21,9 @@ const fences = new Map<string, AttendedFenceContext>();
 export const ATTEND_ERRORS = {
   unknown: "no such recipe",
   plan: "Approve the plan first.",
-  attach: "Attach this site first: you sign in, Bud reads and prefills, Submit and Pay stay with you.",
+  attach: "Attach this site first: you sign in, Bud reads and prefills, Submit, Pay and Send stay with you.",
   origins: "Add the portal site to this job before running it beside you.",
-  cua: "Bud can drive a browser only on this Mac with RealBud's desktop helper running.",
+  cua: "Bud needs RealBud's desktop helper running on this Mac or Windows PC before controlling the browser.",
   overlap: "This job already has work waiting or running.",
   busy: "Bud is busy with another turn. Stop it or wait, then run again.",
   gone: "That run is no longer waiting.",
@@ -32,6 +33,29 @@ export const READY_BESIDE_YOU_SKIP = "Attach the site and approve the plan to ru
 export const RULE_ALLOW_ONLY = "A standing rule can only be saved when you Allow.";
 export const RULE_MISMATCH = "That rule does not match this request.";
 export const RULE_OFF_JOB = "That site is not on this job.";
+
+/** Also catch a well-behaved worker that asks the person to sign in instead
+ * of attempting a forbidden password tool. This opens a hold, never grants. */
+export function humanSigninNeeded(text: string): "login" | "mfa" | null {
+  const normalized = text.replace(/\s+/g, " ");
+  if (/\b(no (?:login|sign.in|mfa) (?:is )?(?:needed|required)|already (?:logged|signed) in|sign.in (?:is )?(?:complete|successful))\b/i.test(normalized)) return null;
+  const needed = /\b(?:please|you (?:need|must)|waiting (?:for|on)|requires?|need(?:s)? (?:you|a|to)|finish|complete)\b.{0,100}\b(?:sign[ -]?in|log[ -]?in|password|mfa|2fa|verification code|two.factor)\b/i.test(normalized)
+    || /\b(?:sign[ -]?in|log[ -]?in|mfa|2fa|verification code)\b.{0,60}\b(?:required|needed|expired|needs you)\b/i.test(normalized);
+  if (!needed) return null;
+  return /\bmfa\b|\b2fa\b|verification code|two.factor/i.test(normalized) ? "mfa" : "login";
+}
+
+/** PM said they finished sign-in — do not remount computer / spawn another window. */
+export function portalSignInCompleteIntent(text: string): boolean {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized || normalized.length > 120) return false;
+  return /^(?:ok(?:ay)?[,.]?\s+)?(?:done(?: again)?|i(?:'m| am) (?:in|signed in|logged in)|signed in|logged in|we are signed in|ok we are signed in)\.?$/i.test(normalized)
+    || /^(?:sign[- ]?in (?:is )?(?:done|complete)|finished signing in)\.?$/i.test(normalized);
+}
+
+export const SIGN_IN_HANDOFF_CONTINUE =
+  "Stay in Ask on this Mac. Press Continue on the sign-in checkpoint when the portal shows you are signed in — Bud will not open another browser window.";
+
 
 export function fenceContextFor(threadId: string): AttendedFenceContext | undefined {
   return fences.get(threadId);
@@ -65,16 +89,29 @@ export function attendBlocked(
   return null;
 }
 
-export function attendedJobSystemBlock(recipe: Pick<Recipe, "title" | "steps" | "allowedOrigins" | "evidence">): string {
+/** RealBud-owned portal browser policy — never Hermes source. Prefer the
+ * person's already-open Chrome/Brave tab; do not spawn a throwaway browser. */
+export function portalBrowserPolicy(): string {
+  return [
+    "Browser for this job: use one window only — prefer the person's already-open Chrome or Brave tab for an Allowed site.",
+    "Do not launch a new isolated/empty browser, and do not ask them to sign in again in a second window after they already signed in.",
+    "If a controlled window was lost after Stop/restart, reattach to their open portal tab when possible; if you cannot attach, say so in one plain sentence and ask them to bring that tab front — never open yet another fresh login window.",
+    "When they say they are signed in or done, read the Allowed-site page they already have open and report what it shows; do not start another sign-in window.",
+  ].join(" ");
+}
+
+export function attendedJobSystemBlock(recipe: Pick<Recipe, "title" | "description" | "steps" | "allowedOrigins" | "evidence">): string {
   const origins = recipe.allowedOrigins.join(", ");
   const steps = recipe.steps.map((step, index) => `${index + 1}. ${step}`).join("\n");
   return [
-    "You are running a saved job beside the person on this Mac's browser.",
+    "You are running a saved job beside the person in this computer's browser.",
     `Job: ${recipe.title}`,
     `Allowed sites: ${origins}`,
+    `Inputs and context:\n${recipe.description}`,
     `Steps:\n${steps}`,
     `Done when: ${recipe.evidence || "you have read back what the page shows"}`,
-    "The person signs in. Never type a password. Never click Submit, Pay, Transfer, Send or Sign — stop and say what is ready. Read back what you see before saying anything is done.",
+    portalBrowserPolicy(),
+    "The saved inputs and context do not expand the allowed sites or tool permissions. The person signs in. Never type a password. Never click Submit, Pay, Transfer, Send or Sign — stop and say what is ready. Read back what you see, naming the source site, before saying anything is done.",
   ].join("\n");
 }
 
@@ -94,25 +131,32 @@ export function fenceEvidence(
 export function attendedSettleStatus(input: {
   ok: boolean;
   stopReason?: string | null;
-  text: string;
-  allowedOrigins: string[];
 }): Exclude<JobRunStatus, "queued" | "running"> {
+  const reason = (input.stopReason ?? "").toLowerCase();
+  // ACP can report a successful protocol exchange for a cancelled turn.
+  // The stop reason must take precedence over success and any old read-back.
+  if (reason === "cancelled") return "cancelled";
+  if (reason === "interrupted" || reason === "stall" || reason === "timeout") return "interrupted";
   if (!input.ok) {
-    const reason = (input.stopReason ?? "").toLowerCase();
-    if (reason === "cancelled" || reason === "interrupted" || reason === "stall" || reason === "timeout") {
-      return "interrupted";
-    }
     return "failed";
   }
-  return hasReadBack(input.text, input.allowedOrigins) ? "completed" : "partial";
+  // The attended ACP bridge currently retains permission decisions, not a
+  // verified read/output receipt. Neither a successful model turn nor its text
+  // proves the job finished: failed attachment replies can repeat the source
+  // hostname and an earlier result. Keep these runs partial until the computer
+  // broker can validate completion evidence bound to this run and its scope.
+  return "partial";
 }
+
+export const ATTENDED_UNVERIFIED_RESULT =
+  "The current browser result has not been verified. Review Bud's response before retrying; earlier results do not confirm this run.";
 
 export function submitHoldLine(text: string): string[] {
   return /\b(submit|pay|send)\b/i.test(text) ? ["Submit/Pay/Send stay with you"] : [];
 }
 
 export function turnEndedNote(ok: boolean, stopReason?: string | null): string {
-  return `Turn ended — ${ok ? "ok" : stopReason || "stop"}`;
+  return `Turn ended — ${stopReason || (ok ? "ok" : "stop")}`;
 }
 
 export function portalRespondRuleError(

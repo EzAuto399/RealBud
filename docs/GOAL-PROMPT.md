@@ -1,24 +1,49 @@
 # RealBud — complete goal prompt
 
-Date: 2026-09-04 (next wave in `docs/NEXT-WAVE.md`)  
-Repo: `EzAuto399/RealBud` (local: `/Users/yoda/projects/RealBud`)  
-Use: paste this whole file into a new session, or point an agent at it. If a later idea fights this document, **this document wins**.
+Date: 2026-09-04 · architecture direction updated 2026-09-12
+
+Repo: `EzAuto399/RealBud` (local: `/Users/yoda/projects/PropertyMe`)
+Use: start with the current direction below and `docs/NEXT-WAVE.md`.
+
+**15 September sharing decision:** staff retain private Desks, conversations, memory, files and individual app accounts. Share reviewed results, review requests or handoffs deliberately with named participants; a shared database is not permission to merge personal workspaces. Follow the [selective-sharing implementation sequence](REALBUD-SELECTIVE-SHARING-2026-09-15.md). Company/department work still needs durable ownership and continuity; sharing a result does not grant account access, worker execution or remote computer control. This is the approved product direction, not installed-platform acceptance.
+
+**15 September coverage plan:** use the [two-device completion and acceptance plan](REALBUD-TWO-DEVICE-ACCEPTANCE-2026-09-15.md) for connection semantics, build order, departmental rehearsal and 40 installed acceptance cases. It records the current shared-workflow/managed-worker gaps and separate Mac/Windows proof gates; it is planning, not new test passes. The active 65-task register below remains authoritative.
+
+**Latest physical two-Mac checkpoint (14 September):** two working desktops, two private profiles and one company PostgreSQL host passed 15 synthetic checks on the MacBook and Mac mini, including atomic initial sign-in, pinned TLS, invitation/username retry, private-scope denial, dormant plan import and host/peer restart. [Current kit, receipts and remaining work](../outputs/realbud-physical-macs-2026-09-14/README.md): 470 company tests passed; final kit v2.1 rendered on both Macs. This does not establish shared Desk/Ask/Schedule execution, Hermes/Composio/Cua, installed background services, Windows or live office readiness. Retain the host's admitted PostgreSQL directory during kit changes. A separate business brain remains optional.
+
+**14 September implementation checkpoint:** execution is on `codex/company-core-foundation`. Use the [65-task active checklist](REALBUD-CORE-EXECUTION-2026-09-14.md), [initial foundation evidence](../outputs/realbud-core-implementation-2026-09-14/README.md) and [host setup/joining checkpoint](../outputs/realbud-host-orchestration-2026-09-14/README.md). Owned PostgreSQL setup, company-only pinned HTTPS joining and persistent member sign-in/recovery now have source and local integration proof (450 tests); the rendered source app also created a fresh host/company. Two Grok 4.6 xhigh workers completed; a third delivered partial authentication code that was independently completed and tested. Native installers/services, device identity, migration, confined workers, complete native integrations, managed billing and installed Windows/macOS acceptance remain open. Service administration cannot impersonate a member. Historical registers remain dated snapshots; the active register governs progress.
+
+**14 September core-completion handoff:** the [self-contained GPT-6 Pro brief](REALBUD-GPT6-PRO-CORE-BRIEF-2026-09-14.md) consolidates the full company/QM/native-integration scope, current evidence, missing work and completion gates. Use the [build meta-prompt](REALBUD-GPT6-PRO-BUILD-META-PROMPT-2026-09-14.md) to obtain an execution prompt. The [update strategy](REALBUD-UPDATE-STRATEGY-2026-09-14.md) requires automatic discovery of stable releases, verified staging and owner-configured idle activation with durable recovery; no floating upstream main/latest. The 61 tasks remain planned. This handoff supersedes the older Pro audit scope, not current runtime safeguards.
+
+**Architecture precedence:** [Computer-connected work and durable routines](REALBUD-COMPUTER-WORK-ARCHITECTURE-2026-09-12.md) is the current recommendation for source ownership, computer capabilities, operational memory and delivery order. It supersedes older portfolio-centred, permanently browser-only and single-person-only planning here. It does not declare those runtime changes implemented or relax existing action prohibitions. Dated build and rollout claims below are historical; verify current code and office evidence before reusing them.
+
+**14 September company-platform planning:** the latest request requires all three proposal outcomes for each authorised member, easy Set up/Join/Move company, Windows and macOS desktops, a shared operational database and cooperating private Bud contexts. Follow [the company platform plan](REALBUD-COMPANY-PLATFORM-PLAN-2026-09-14.md) and [61-task dependency register](REALBUD-COMPANY-PLATFORM-TASKS-2026-09-14.json). Recommended architecture: one RealBud service/Postgres authority and clock, isolated stock-Hermes workers, authenticated native companions, and selected QM patterns/code rather than the full QM runtime. One Bud identity means one product persona, not one globally shared private conversation. This supersedes older planning deferrals and the open-ended QM adoption assessment; it is not implemented team support or a changed customer quote. Existing action prohibitions remain.
+
+**Native integration requirement:** Composio is the first-class tool/service connection provider; Cua Driver is the computer-use backend; Hermes browser/site-to-CLI and local utility capabilities are admitted behind RealBud authority. Follow [the native integration contract](REALBUD-NATIVE-INTEGRATIONS-2026-09-14.md) for account lifecycle, hard operation denial, device-owned cookie/session storage, driver/version compatibility and both-OS acceptance. Do not infer a secure browser route from safe mode or a native Hermes wrapper from the current Cua 0.19.3 pin.
+
+**14 September post-meeting direction:** the user reports proceeding with RealBud and requests planning for two desktops, profiles and one main host. Follow [the two-desktop plan](AUSTIN-TWO-DESKTOP-PLAN-2026-09-14.md). This supersedes the Kevin-only deferral below for architecture planning, without claiming team implementation or an agreed additional-user price. CRM is undecided; RealBud and any CRM retainers remain under negotiation. Assess the identified QM candidate and confirm whether the PCs serve one or two people. Preserve one office clock, one Bud persona, private staff state and unmodified Hermes.
+
+**Host preference:** one existing staff desktop hosts the office service while both PCs remain usable. No extra host hardware or mandatory cloud-server subscription in the baseline. Build repeatable Set up office / Join office / Move or restore office journeys; validate capacity and availability before promising a cadence. QM is now identified as yc-software/qm: use [the assessment](AUSTIN-QM-HOST-ASSESSMENT-2026-09-14.md) to evaluate reuse before building a fresh team layer. It is not an installed or approved engine migration; staff count and the particular host remain unconfirmed.
+
+**13 September delivery checkpoint:** Kevin is the sole initial operator and reviewer; a second staff rollout is deferred. The local signed app now uses admitted stock Hermes **0.21.2**, with 0.21.0 retained for rollback. Installed Ask and one synthetic bill Prepare passed; selected four-stage source QA, earlier failures and remaining Windows/live-source acceptance are recorded in [the accounts QA handoff](AUSTIN-ACCOUNTS-WORKFLOW-QA-2026-09-13.md). Profiles and remote backends remain engine capabilities, not permission to add another office clock or promise shared-user access.
 
 Related: `DESIGN.md`, `docs/OFFICE-DESIGN.md`, `docs/PRODUCT-DESIGN-PLAN.md`, `docs/NEXT-WAVE.md`, `docs/IDENTITY.md`, `docs/PRODUCT-BRIEF.md`, `docs/WORKFLOW-PLAN.md`, `docs/PILOT-CONTRACT.md`, `docs/APPROACH.md`, `pack/property/SOUL.md`, `CLAUDE.md`
 
 ---
 
+**Later team direction:** RealBud is the command centre for work, permissions, one clock and results; staff may use private messaging or the app as entry points. Reusable packs and private customer configuration stay separate. Follow the [team contract](REALBUD-TEAM-USAGE-2026-09-13.md); current paired channels share one Bud thread and do not yet supply private staff access. Kevin-only delivery remains first.
+
 ## Paste block (short)
 
-You are building **RealBud**, a vertical Australian property-management desk. Not a PMS. Not Hermes. Not an agent OS.
+You are building **RealBud**, a local work assistant for an Australian property office. It uses the office's approved computer, files, apps and websites to complete work and repeat proven workflows.
 
 **Wall line:** The PM talks to RealBud. RealBud does the routine work. It only reaches someone else when asked — and never sends a notice or moves trust.
 
-RealBud owns the window (Desk · Ask · Schedule · You). Pinned Hermes profile `property` is the only worker, headless. Models attach on that profile. One user: the PM. One thread: Ask (and later the PM’s own WhatsApp/Telegram). Named loops on RealBud’s clock. Computer use is a trained portal adapter after Allow, not a playground. The book (`~/.realbud/vault`) is the only memory Hermes may use. `desk.json` is shop rules; evaluate never reads the book. PMS is the legal/money record; we operate it (CSV first, then API/click).
+RealBud owns the window (Desk · Ask · Schedule · You), durable jobs, permissions, receipts and the clock. Keep one Bud identity and the pinned headless Hermes worker. Start with one operator/device, but agency records and source access must have explicit ownership. PMS/bank/mail/files remain authoritative for their respective records. Bud retains source references, expected obligations, workflow state and decisions; it does not ask staff to maintain another portfolio. Use file/API/browser/native adapters through the same job boundary. Broader native actions and live-source schedules are a staged implementation target, not permission to bypass today's fence.
 
 Hard gates: no send, no trust, no statutory draft, no invented legal clock, no Hermes.app, no Hermes source edits, no extra RealBud agents, no tenant-facing bot, no law crawler.
 
-Current software is a training appliance (fixture book + CSV + fake portal) whose **beta door is done**: their export matches by address or their property code, morning cards land on Desk, the PM Copies into their PMS. Notes, Ask→Desk, intake, editable clocks, Friday owner letter v0, in-app worker attach, recovery-key unlock, first-run + go-live, worker-coverage holds, batch persist, last-checked times, and You → This office (eight visit fields, empty until typed) also shipped. A named office on that form still gates inbound, Pocket, and the graduate installer. Attended portal is Attach + Run beside me (2026-09-02) — not that form. Do not add surfaces. Do not rebuild PropertyMe.
+Current foundations include saved-source preparation, a job queue and clock, attended portal work, connected-app brokerage and checked bank-file preparation. These are distinct proof levels; templates and model summaries do not prove a live office workflow. Next: one source-bound REI/bills path without a mandatory portfolio import, durable bill observations, broader scoped computer adapters, then tested schedules. Keep sample properties for practice and preserve existing records during migration. See the architecture review for specific code gaps and acceptance tests.
 
 ---
 
@@ -43,7 +68,7 @@ Do not ship under the names **PropertyMe**, **Hermes**, **OpenMausBot**, or **Op
 
 ## 2. Who talks to it
 
-**The PM is the only user.**
+**Start with one named staff operator.** Keep one Bud identity. Agency data belongs to the agency; later shared-source and CRM workflows require separate staff identities and explicit access. The interview does not justify making all records permanently personal to one PM.
 
 ```
 PM  ── Desk or Ask or (later) phone ──▶  RealBud.app
@@ -63,40 +88,34 @@ When pocket exists: RealBud starts the `property` gateway, allowlist = that PM o
 
 ---
 
-## 3. Topology (locked)
+## 3. Target topology (2026-09-12)
 
 ```
-                 PM (only user)
-          Desk app          phone later
-               \                /
-                ▼              ▼
-           RealBud.app
-           Desk · Ask · Schedule · You
-                    │
-                    │  ACP / CLI / trained CUA
-                    ▼
-           Hermes `property`   pin v0.20.3 / tag v2026.8.16.2
-           SOUL · PM skills · model on the profile
-           cwd = ~/.realbud/vault
-           approvals.mode: manual   cron_mode: deny
-                    │
-         ┌──────────┼──────────────┐
-         ▼          ▼              ▼
-   desk.json      the book        PMS
-   shop rules     notes/SOP       money + legal file
-   evaluate       preferences     we read / operate
-                  not law         human sends
+Named staff → Ask / Desk / Schedule / paired phone
+                       │
+             RealBud durable job controller
+              ↔ jobs, decisions, evidence
+                       │
+             Bud worker → capability broker
+                       │
+          file / API / browser / native adapters
+                       │
+              existing agency systems
+                       │
+           verified results → Desk exceptions
 ```
 
 | Store | Holds | May override |
 |---|---|---|
-| PMS | Money, legal file | Nothing we invent |
-| `~/.realbud/desk.json` | Properties, options, drafts, ledger, evaluate | Notes cannot |
-| `~/.realbud/vault` | Narrative: `properties/<id>.md`, later owners/, decisions/, empty sop/ + reference/ | Preferences only |
+| Existing PMS / financial systems | Current property/tenancy and financial records | Bud cannot silently replace their authority |
+| RealBud operational state | Source index, expected obligations, jobs, decisions, evidence and policies | Only through validated operations and current authority |
+| Existing `desk.json` / notes | Legacy records, drafts and preferences retained during migration | Notes cannot override source facts or evaluator rules |
+
+The index is refreshable; obligations and operation receipts are durable. A selected-file job must not require a manually created property catalogue. Office-wide coverage still requires a complete, current source scope. The target adapters are not all implemented; preserve today's runtime restrictions until each is wired and verified.
 
 **Hard rule:** `evaluateProperty` never reads the vault. Notes colour a draft. They do not change `draft` / `escalate` / `clear` / `skip` / `hold`.
 
-Worker identity stays in `pack/property/SOUL.md` → `~/.hermes/profiles/property/`. Do not put a second SOUL in the vault. Ignore Hermes `memories/`. Two brains is the failure mode.
+Worker identity stays in `pack/property/SOUL.md` and the RealBud-owned Hermes home (`~/.realbud/hermes` in the intended product configuration). Verify every launch path resolves there; do not share the personal Hermes Desktop home. Operational records belong to RealBud, not hidden worker memory.
 
 ---
 
@@ -208,7 +227,7 @@ Same objects, different door. “Run money check at 8 instead of 7:30.” “Pau
 | Piece | Rule |
 |---|---|
 | Window | This repo (OpenMausBot MIT fork). We own chrome. |
-| Worker | Hermes Agent **v0.20.3** (`v2026.8.16.2`, commit in `server/hermes-pin.ts`). Profile `property`. Pin and bump when **we** choose. Do not track `main`. |
+| Worker | Admitted stock Hermes release from `server/hermes-releases.ts` and the runtime selector; local 13 September selection **0.21.2 / v2026.9.11**, prior 0.21.0 retained. `server/hermes-pin.ts` retains the older baseline. Profile `property`. Promote only after compatibility checks; never track `main`. |
 | Models | `hermes -p property model`. Not RealBud agents. |
 | Computer use | Bundled Cua, pin in `server/cua-bounded.ts` (0.19.3). macOS host for live. Bounded session + recipe. Linux/Windows: CSV + fake portal only until the contract says otherwise. |
 | OpenMausBot upstream | Harness/safety only (PATH, ports, redact, stall watchdog, proxy paths, permission broker). Not iOS, extra engines, teams, plugins, model shop. |

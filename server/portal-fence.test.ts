@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { fenceDecision, fenceEvidenceLine, hasReadBack, isComputerTool, normalizeToolName, type FenceContext } from "./portal-fence.ts";
+import { fenceBrowserPrepare, fenceDecision, fenceEvidenceLine, hasReadBack, isComputerTool, normalizeToolName, type FenceContext } from "./portal-fence.ts";
 
 const ctx: FenceContext = {
   allowedOrigins: ["vantagestrata.com.au"],
@@ -111,7 +111,15 @@ describe("portal fence", () => {
         { tool: "fill" },
         { kind: "deny", reason: "You sign in yourself — Bud never types a password." },
       ),
-    ).toBe("You sign in yourself — Bud never types a password.");
+    ).toBe("Tried to fill a field. You sign in yourself — Bud never types a password.");
+    expect(
+      fenceEvidenceLine(
+        { tool: "mcp__computer__navigate" },
+        { kind: "deny", reason: "Only sites named in a saved job. Ask Bud to set the routine up as a job first." },
+      ),
+    ).toBe(
+      "Tried to open a page. Only sites named in a saved job. Ask Bud to set the routine up as a job first.",
+    );
   });
 
   it("treats shell and computer tools as computer actions", () => {
@@ -195,6 +203,41 @@ describe("standing rules and submit", () => {
     expect(
       fenceDecision(ctx, { tool: "click_semantic", params: { label: "Tab", url: "https://vantagestrata.com.au" } }).surface,
     ).toBe("portal-read");
+  });
+
+  it("denies isolated browser_prepare and allow_launch", () => {
+    expect(
+      fenceDecision(ctx, {
+        tool: "mcp__computer__browser_prepare",
+        params: { profile: { mode: "isolated_new" }, allow_launch: true },
+      }),
+    ).toMatchObject({ kind: "deny", surface: "portal-read" });
+    expect(
+      fenceBrowserPrepare({ tool: "prepare", params: { allowLaunch: true } }),
+    ).toMatchObject({ kind: "deny" });
+  });
+
+  it("asks only for existing_profile with pid and window_id", () => {
+    expect(
+      fenceDecision(ctx, {
+        tool: "browser_prepare",
+        params: { strategy: { kind: "existing_profile" }, pid: 4242, window_id: 7 },
+      }),
+    ).toEqual({ kind: "ask", surface: "portal-read" });
+    expect(
+      fenceDecision(ctx, {
+        tool: "browser_prepare",
+        params: { strategy: { kind: "existing_profile" }, pid: 4242 },
+      }),
+    ).toMatchObject({ kind: "deny", surface: "portal-read" });
+  });
+
+  it("allows read-only browser discovery so Bud can find the open window", () => {
+    expect(fenceDecision(ctx, { tool: "get_browser_state" })).toEqual({ kind: "allow", surface: "portal-read" });
+    expect(fenceDecision(ctx, { tool: "mcp__computer__list_windows" })).toEqual({
+      kind: "allow",
+      surface: "portal-read",
+    });
   });
 });
 

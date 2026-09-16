@@ -1,0 +1,72 @@
+# Copy into GPT-6 Pro
+
+**Historical audit prompt:** use the [14 September build-completion request](REALBUD-GPT6-PRO-BUILD-META-PROMPT-2026-09-14.md) with the [current brief](REALBUD-GPT6-PRO-CORE-BRIEF-2026-09-14.md). The current task is a full implementation prompt for company/QM/native integration and both platforms, rather than this older audit-only scope.
+
+Revision 5 workflow extension: [guided routines, daily bank/inbox work and shared approvals](AUSTIN-ROUTINES-AND-APPROVALS-2026-09-10.md). Daily inbox organisation is now Phase 1; mailbox changes and sending remain separately scoped. This controls conflicting earlier scope statements.
+
+Consolidated Windows delivery and commercial plan: [Austin operating plan](AUSTIN-OPERATING-PLAN-2026-09-10.md). Its revision 4 decisions supersede earlier Mac-only scope and pricing.
+
+**Accepted direction:** Windows 11 website and native-app control through Hermes + Cua. Exact apps/CPU architecture remain to confirm. Build the exact reviewed source including required local changes via Package Windows / pnpm package:win, then test the actual installer on the matching architecture. Cover clean install, Hermes setup/login, persistence, restart/update, approvals, Stop, takeover and failure recovery. An ARM VM does not replace x64 proof. Defer an additional Codex engine and hardware commitments until one customer Windows workflow is demonstrated. API billing is separate from engine choice and customer-paid usage is never charged twice.
+
+You are helping me design a rigorous audit of my business and product, RealBud. Your main deliverable is **one complete prompt that I can give to a repository-enabled coding agent to perform the audit**. First challenge the framing and identify missing perspectives. Then write that audit prompt. Do not substitute a generic checklist or an unsupported audit verdict for the requested prompt.
+
+## Context
+
+I am Yoda, the founder/developer. RealBud is intended to be a reusable workspace for real-estate agencies, built as a product harness over Hermes Agent. Austin Realty is our first design partner, a family friend's business with potential referrals. Kevin is the main operator and Danny the boss/reviewer. We need an economically sustainable product, not a separate custom codebase for every agency. Referrals are possible upside, not assumed revenue.
+
+**Phase 1:** use RealBud for property-management work: prepare bank CSV/Excel files with clearer property payment references, hold ambiguous matches for staff, check expected bills and levies, integrate agreed Gmail sources, and show schedules/exceptions with phone reminders. REI already performs some matching/receipting and remains the final financial system. Preserve original bank files, amounts, dates and row accounting; export an approved copy. An export is not proof of successful REI reconciliation. An expected bill is not an invoice due date; a missing bill is not necessarily unpaid; payment arranged is not verified paid. Incomplete source coverage must remain visibly incomplete.
+
+**Phase 2:** a separately scoped Twenty-based CRM, with useful views and approved actions native in RealBud. Twenty owns CRM records; REI owns financial records. The CRM module should be reusable for future agencies and optional for each customer. Disabling it must not break PM work or erase records.
+
+**Architecture goal:** RealBud owns agency context, business records, permissions, approvals, schedules, operation history and commercial entitlements. Hermes is replaceable task execution behind a supported adapter. Agencies get configuration and selected modules, not forks. Installing, updating, repairing or removing an engine/module must preserve unrelated records/settings. Data erasure is separate. We want a practical path from one office to multiple agencies, without pretending isolated folders alone create secure multi-tenancy.
+
+**Current stack, source-reviewed on 10 September 2026:** RealBud package 0.1.18; Electron 43, React 19, TypeScript 5.8, Vite 7, Tailwind 4; Node >=24 and pnpm 10.33.0; custom local Node HTTP/SSE service; JSON/file persistence with an encrypted Desk store and Electron safeStorage key handling, plus SQLite bootstrap locking. Do not assume all stores or credentials are encrypted. Hermes connects through ACP and existing ProviderDriver/ProviderAdapter abstractions. The source pins Hermes 0.20.3 and explicitly admits 0.21.0. RealBud has a controlled connected-app broker and operation receipts, Composio integration, Telegram/Discord/Slack adapters, bounded desktop automation and speech helpers. Vitest, TypeScript, E2E and Electron packaging/update tooling exist. PostHog is a dependency, but the inspected analytics wrapper is disabled. These are source/dependency facts, not blanket production proof.
+
+**Important current limitations:** the bounded Gmail Ask path lists at most 10 threads from seven days, without mailbox pagination or attachment bodies. Recurring bill intake and the specific REI exporter still need implementation/validation. Worker removal deletes the property profile, risking settings/credential loss; startup reapplies the pack; a complete lifecycle drain is missing. Fixed profile/home use, concurrent workers, credential refresh ownership and process-wide broker revocation need review. No complete independent module lifecycle/entitlement system or hosted tenant boundary has been established. A desktop must be awake/online for its local work. CRM, continuous ingestion, reliable billing/alerts and seamless module management are plans, not proven customer integrations.
+
+An earlier targeted harness run recorded 153 passing tests in nine files. A separate workflow run recorded 44 passed and one failed, involving recovery-message expectations. Neither proves office readiness. The repository has existing uncommitted work; HEAD alone cannot reproduce the reviewed state. Recheck evidence, do not inherit a readiness verdict.
+
+**Working pricing hypothesis, open to challenge:** A$1,750 guided onboarding; A$299/month plus actual usage at cost; a proposed A$75 usage budget; we absorb usage above that budget in the first billing month without charging it later. Proposed onboarding includes two one-hour training sessions, a guide and accepted handover; monthly scope includes one hour of product help, with defects our responsibility. CRM is separately quoted. These are not signed terms. Earlier A$250/month discussions are not a locked decision. Assess setup labour, support, hosting/connectors, payment fees, development investment, incident burden and first-month downside. At-cost usage itself provides no margin. Do not invent market prices or savings.
+
+## What the audit prompt must require
+
+1. **Evidence before conclusions.** Inspect the current tree, relevant instructions, actual entrypoints, tests and release evidence. Separate user requirements, interview evidence, proposed design, implemented behavior and assumptions. Classify each capability as configured, callable, guarded, tested, packaged, installed, verified with the named office, or commercially validated. Explain what each claim proves and what remains unknown. No repository access means no pretend code inspection.
+
+2. **Business and product judgment.** Examine target customer, strongest recurring problem, differentiation from existing REI/CRM functions, scope boundaries, product versus services, onboarding, customer value, retention, support capacity and pricing. Compare a few proportionate pricing options with low/base/high workload assumptions and unit economics. Measure review burden and error reduction as well as time saved. Distinguish observed inputs from estimates. Include a simple customer-facing before/after explanation with Phase 1 and Phase 2 separated.
+
+3. **Architecture and lifecycle.** Trace UI → server authority → job/agent → broker → external system → durable result. Test ownership of state, credentials, approvals and records. Examine supported Hermes versions, module contracts, native UI integration, dependency compatibility, install/disable/remove/repair/update, rollback after schema changes and retained-data recovery. Inspect concurrent tasks, process crashes, stale approvals, cancellation, duplicate/reordered events, unknown external outcomes and safe retries. Reuse working abstractions; challenge our architecture if a simpler design meets the goal.
+
+4. **Agency boundaries and AI authority.** Review office identity, user roles, separate agency deployments versus shared hosting, source/account selection, tenant-scoped storage/cache/jobs/receipts, credential refresh ownership and revocation. Examine local HTTP, Electron IPC, browser/desktop tools, provider access and phone approvals. Treat email, PDFs, imported files and tool output as untrusted data. Cover prompt injection, fabricated evidence, excessive authority, model/version regressions, deterministic financial validation and human review. A paid entitlement or a connected account is not permission for every action.
+
+5. **Real workflow correctness.** Follow a bank upload through validation, proposed edits, approval, export and verified REI outcome. Follow an expected bill through inbox coverage, attachment handling, deduplication, missing/received/arranged/paid states, calendar and notification delivery. Follow a CRM import/edit through permissions, conflict handling and sync. Test file-format changes, overlapping imports, split/reversed payments, missing attachments, stale sources, rate limits, provider outages, sleep/restart, missed schedules, timezones and notification uncertainty. Identify where actual authorized samples or office acceptance are necessary.
+
+6. **Enterprise procedures and accountability.** Review customer qualification, scope and change control, procurement questions, contracting, account provisioning, training, handover acceptance, support triage, escalation, incident communication, backups, restoration, recovery objectives, release/change management, vendor outages, billing reconciliation/disputes, renewal, cancellation and data export/offboarding. Include admin access, access reviews and continuity if the founder is unavailable. For each necessary procedure, propose a minimum checklist, owner, trigger/cadence and evidence retained. Identify legal/privacy/licensing questions requiring jurisdiction-specific verification or professional advice; do not invent compliance requirements or certification status.
+
+7. **Operational and commercial reliability.** Audit sanitized observability, usage attribution, cost reservation/settlement, duplicate or late provider charges, budgets, first-month waiver, BYO-provider billing, entitlement changes and service degradation when budgets or vendors fail. Show what support/service commitments are affordable. Distinguish app removal, module disable, subscription cancellation and data deletion. A rollback plan needs a restore test, not just an old binary.
+
+8. **Proportionate delivery.** Rank fixes before Austin's pilot, before agency two, and before larger enterprise customers. Provide dependency order, effort ranges, accountable roles, acceptance tests and residual risks. Distinguish launch blockers, manageable risks, experiments and optional improvements. Do not prescribe microservices, Kubernetes, SSO or certifications without a demonstrated need. Include explicit “do not build yet” recommendations.
+
+## Required execution-audit outputs
+
+Ask the executing agent to produce:
+
+- An evidence-based current-state inventory and readiness assessment, with source/test references and unknowns.
+- A concrete finding register: evidence/reproduction, customer impact, severity, likelihood, priority, remedy, effort/dependencies, owner and acceptance check. Distinguish defects, missing scope, design options and business unknowns.
+- Mermaid diagrams for current versus target ownership, Phase 1 before/after, optional CRM and lifecycle/data preservation. Label implemented versus proposed elements; avoid unreadable diagrams.
+- A revised offer/pricing model, sensitivity analysis and a pilot measurement/acceptance plan; no invented savings or comparator rates.
+- A minimum operating-procedure pack and enterprise-question gap list, scaled to the actual business.
+- A staged implementation backlog with decision gates and a conditional 30/60/90-day outline, not unsupported delivery promises.
+
+Repository starting point: `/Users/yoda/projects/PropertyMe`. Read `docs/REALBUD-HERMES-HARNESS-2026-09-10.md`, `docs/AUSTIN-ROLLOUT-DESIGN-2026-09-10.md`, `package.json`, then actual owners under `server/`, `shared/`, `src/`, `electron/`, `pack/property/` and `.github/workflows/`. Treat source/tests as authority and historical documents as claims to verify. The companion business/stack briefing contains a more detailed source map.
+
+Keep the audit read-only except isolated disposable test artifacts and its report. Preserve existing work. Do not connect live customer accounts, send messages, modify financial records, deploy, install/uninstall production components, print secrets or upload private interview/customer data. A broader permission needed for later implementation should become a concrete next-step request, not a reason to stop authorized read-only work. Use synthetic fixtures where possible. Check current primary sources when vendor behavior, pricing, licensing or legal requirements materially affect a conclusion.
+
+## Your response to me now
+
+Return, in this order:
+
+1. A concise assessment of my framing and the most consequential perspectives I am missing. Label hypotheses rather than presenting them as discovered defects.
+2. **One standalone, paste-ready audit prompt** containing the necessary context, investigation method, constraints, evidence standards and outputs above, improved with your judgment. Do not rely on “the previous conversation” or require another round of prompt generation. The next agent should perform the audit.
+3. Only the few missing inputs that materially change the audit, with safe assumptions so non-blocking work can proceed. Separate facts only I can supply from facts the repository or official documentation can answer.
+
+Be candid and practical. I want a sound, profitable and maintainable product, a realistic Austin offer and a repeatable way to serve future agencies—not a reassuring review or an enterprise checklist for its own sake.

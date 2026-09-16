@@ -12,8 +12,6 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { build } from "esbuild";
 
-if (process.platform !== "darwin") throw new Error("prepare-cua is macOS-only");
-
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const run = promisify(execFile);
 const stage = join(root, "dist-native");
@@ -22,7 +20,16 @@ const sdkRoot = realpathSync(join(dirname(sdkEntry), ".."));
 const dependencyRoot = join(sdkRoot, "..", "..");
 const sdkPackage = JSON.parse(await readFile(join(sdkRoot, "package.json"), "utf8"));
 const expectedVersion = String(sdkPackage.version);
-const release = {
+const isWindows = process.platform === "win32";
+if (!isWindows && process.platform !== "darwin") throw new Error("CUA packaging supports macOS and Windows only.");
+if (isWindows && process.arch !== "x64") throw new Error("This Windows installer currently requires an x64 build host.");
+const executable = isWindows ? "cua-driver.exe" : "cua-driver";
+const nativeLibrary = isWindows ? "cua_driver_sdk.dll" : "libcua_driver_sdk.dylib";
+const release = isWindows ? {
+  version: "0.19.3",
+  file: "cua-driver-rs-0.19.3-windows-x86_64-binary.zip",
+  sha256: "51a316b14ec9667c04106d8aff80d696ded427cb64cef48de09095e4709f583d",
+} : {
   version: "0.19.3",
   file: "cua-driver-rs-0.19.3-darwin-universal-binary.tar.gz",
   sha256: "733e28a3782ac8d325f8fce8b5d97486c1054af755b40dfd086151b34c79377e",
@@ -44,9 +51,10 @@ async function binaryVersion(candidate) {
 }
 
 async function officialBinary() {
-  const cache = join(root, "node_modules", ".cache", "realbud", `cua-driver-${release.version}`);
-  const cachedBinary = join(cache, "cua-driver");
-  if ((await binaryVersion(cachedBinary)) === expectedVersion) return cachedBinary;
+  const cache = join(root, "node_modules", ".cache", "realbud", `cua-driver-${release.version}${isWindows ? "-win32-x64" : ""}`);
+  const cachedBinary = join(cache, executable);
+  const companionsReady = !isWindows || ["cua-driver-uia.exe", "cua-cursor-theme.exe", "cua_driver_sdk.dll", "cua_driver_node_runtime.node"].every(file => existsSync(join(cache, file)));
+  if (companionsReady && (await binaryVersion(cachedBinary)) === expectedVersion) return cachedBinary;
 
   await rm(cache, { recursive: true, force: true });
   await mkdir(cache, { recursive: true });
@@ -61,8 +69,11 @@ async function officialBinary() {
   }
   const archive = join(cache, release.file);
   await writeFile(archive, bytes);
-  await run("/usr/bin/tar", ["-xzf", archive, "-C", cache, "cua-driver"]);
-  await chmod(cachedBinary, 0o755);
+  if (isWindows) await run("tar.exe", ["-xf", archive, "-C", cache, executable, "cua-driver-uia.exe", "cua-cursor-theme.exe", "cua_driver_sdk.dll", "cua_driver_node_runtime.node"]);
+  else {
+    await run("/usr/bin/tar", ["-xzf", archive, "-C", cache, executable]);
+    await chmod(cachedBinary, 0o755);
+  }
   if ((await binaryVersion(cachedBinary)) !== expectedVersion) {
     throw new Error(`downloaded CUA Driver does not report version ${expectedVersion}`);
   }
@@ -79,23 +90,28 @@ if (process.env.CUA_DRIVER_PATH) {
   }
   binary = process.env.CUA_DRIVER_PATH;
 } else {
-  const installed = "/Applications/CuaDriver.app/Contents/MacOS/cua-driver";
+  const installed = isWindows ? "" : "/Applications/CuaDriver.app/Contents/MacOS/cua-driver";
   binary = (await binaryVersion(installed)) === expectedVersion ? installed : await officialBinary();
 }
 const details = await stat(binary);
-if (!details.isFile() || (details.mode & 0o111) === 0) {
+if (!details.isFile() || (!isWindows && (details.mode & 0o111) === 0)) {
   throw new Error(`cua-driver is not an executable file: ${binary}`);
 }
 
 await rm(stage, { recursive: true, force: true });
 await mkdir(stage, { recursive: true });
-await copyFile(binary, join(stage, "cua-driver"));
-await chmod(join(stage, "cua-driver"), 0o755);
+await copyFile(binary, join(stage, executable));
+if (isWindows) {
+  for (const companion of ["cua-driver-uia.exe", "cua-cursor-theme.exe", "cua_driver_sdk.dll", "cua_driver_node_runtime.node"]) {
+    await copyFile(join(dirname(binary), companion), join(stage, companion));
+  }
+}
+if (!isWindows) await chmod(join(stage, executable), 0o755);
 // A binary copied out of CuaDriver.app retains a bundle-relative signature
 // whose Info.plist no longer exists at the new path. Give the staged file a
 // valid temporary signature; electron-builder replaces it with the enclosing
 // app's identity during its nested-code signing pass.
-await run("/usr/bin/codesign", [
+if (!isWindows) await run("/usr/bin/codesign", [
   "--force",
   "--sign",
   "-",
@@ -110,19 +126,20 @@ await run("/usr/bin/codesign", [
 // files staged beside the bundle.
 const cuaSdkDir = join(stage, "cua-sdk");
 const nativeDir = join(cuaSdkDir, "native");
-const nativePackage = join(dependencyRoot, "@trycua", "cua-driver-darwin-arm64");
-if (!existsSync(nativePackage)) throw new Error("required CUA darwin-arm64 native package is missing");
+const nativePackage = join(dependencyRoot, "@trycua", isWindows ? "cua-driver-win32-x64-msvc" : "cua-driver-darwin-arm64");
+if (!existsSync(nativePackage)) throw new Error("required CUA native package is missing for this platform");
 await mkdir(nativeDir, { recursive: true });
 await Promise.all([
-  copyFile(join(realpathSync(nativePackage), "libcua_driver_sdk.dylib"), join(nativeDir, "libcua_driver_sdk.dylib")),
+  copyFile(join(realpathSync(nativePackage), nativeLibrary), join(nativeDir, nativeLibrary)),
   copyFile(join(realpathSync(nativePackage), "cua_driver_node_runtime.node"), join(nativeDir, "cua_driver_node_runtime.node")),
+  copyFile(join(realpathSync(nativePackage), "node-runtime-NOTICE.md"), join(nativeDir, "node-runtime-NOTICE.md")),
 ]);
 const bundle = join(cuaSdkDir, "cua-sdk.mjs");
 await build({
   stdin: {
     contents: [
-      'export { EmbeddedCuaDriverHost } from "@trycua/cua-driver/embedded";',
-      'export { requestMacOSPermissions, hasRequiredMacOSPermissions } from "@trycua/cua-driver/electron";',
+      'export { EmbeddedCuaDriverHost, CuaDriver } from "@trycua/cua-driver";',
+      ...(isWindows ? [] : ['export { requestMacOSPermissions, hasRequiredMacOSPermissions } from "@trycua/cua-driver/electron";']),
     ].join("\n"),
     resolveDir: root,
     sourcefile: "openmausbot-cua-entry.mjs",

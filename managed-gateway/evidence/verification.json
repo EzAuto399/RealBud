@@ -1,0 +1,87 @@
+{
+  "recordedAt": "2026-09-15T02:35:01.918125+00:00",
+  "baseHead": "058aceabe04aed77c285f2f52f7803fc19bc7ee9",
+  "branch": "codex/managed-ai-billing",
+  "worktree": "/Users/yoda/projects/realbud-managed-gateway",
+  "baselineTransferredCount": 611,
+  "baselineChangedPaths": [],
+  "checks": [
+    {
+      "check": "typecheck-gateway",
+      "command": [
+        "pnpm",
+        "exec",
+        "tsc",
+        "-p",
+        "managed-gateway/tsconfig.json"
+      ],
+      "exitCode": 0
+    },
+    {
+      "check": "tests",
+      "command": [
+        "node",
+        "--experimental-strip-types",
+        "--test",
+        "managed-gateway/billing.test.ts",
+        "managed-gateway/concurrency.test.ts",
+        "managed-gateway/gateway.test.ts",
+        "managed-gateway/http.test.ts",
+        "managed-gateway/ledger.test.ts",
+        "managed-gateway/provider.test.ts"
+      ],
+      "exitCode": 0
+    },
+    {
+      "check": "typecheck-app",
+      "command": [
+        "pnpm",
+        "typecheck"
+      ],
+      "exitCode": 0
+    },
+    {
+      "check": "demo",
+      "command": [
+        "node",
+        "--experimental-strip-types",
+        "managed-gateway/demo.ts"
+      ],
+      "exitCode": 0
+    }
+  ],
+  "focusedTests": 55,
+  "ownedWhitespaceCheck": "passed",
+  "inheritedDiffWhitespace": "pre-existing src/lib/telegram-channel.test.ts:215 extra EOF blank line",
+  "sourceHashes": {
+    "docs/REALBUD-MANAGED-AI-BILLING-2026-09-15.md": "da6dbdf216126b0b9497f98909d55906d54ba127cddd56ffcb7a82dd18b3bbf5",
+    "managed-gateway/README.md": "a41a15c161be578b7e59d5c95f39f96a1e47389a6d6bc28a4b6024feb2c047d0",
+    "managed-gateway/abort.ts": "1cb5649c9b002a0f3f2d5e72a6dec815f30d7a67df9cab57d3c544c4d9a06735",
+    "managed-gateway/auth.ts": "57b763ea9d250e0c8fb6174f4d9c0cb06765f0e2bbabde6f9724021b80a03b59",
+    "managed-gateway/billing.test.ts": "4212a097b31ed3df59a7d43501037bd43566a754ca35d0fa6d543ce695147809",
+    "managed-gateway/billing.ts": "085460feb7f7cbd57ba09705c5097f0711b3515c4a0afe53886f423674cf65e1",
+    "managed-gateway/concurrency.test.ts": "7d7d7c1250198cdb720cb0c65056f0a975dac26c71dffa09fe32f35c446304f1",
+    "managed-gateway/contracts.ts": "031f98b4096334944ca2df5c6f99058d6c910bde63a87b928346a7da69896507",
+    "managed-gateway/database.ts": "1f2ce6cb0067d4bd7df856dc937c668d9c5859690c4118140caa4921ce61e852",
+    "managed-gateway/demo.ts": "c6d885a939570df232453511b148dabe8718f769b061e37d39ce97f0c46bb8ef",
+    "managed-gateway/gateway.test.ts": "06a177bc9e5567a538f5e823e5e6273ad688440765667ace0bd3f57dfe679c7b",
+    "managed-gateway/gateway.ts": "5faee1e126129b91ee84faf77c61d22d8c931d2de45bae21cefbab7d21da444d",
+    "managed-gateway/http.test.ts": "771f2287611afdf274225a1a270dfe89bcbfa862c89c553cc88459e46b724787",
+    "managed-gateway/http.ts": "40a3ca837e034b1f7cabb45932afaed8396c7afd796854419aff4676cf6b4720",
+    "managed-gateway/invoice-html.ts": "d747577fba02de71ffc6edb52df9daf02dca6624001f501cfc5f98c89267ee5f",
+    "managed-gateway/ledger.test.ts": "d733d072efa5ea3208179cdd90afc0b6d23154c8fa3435704afa9d89fd23ad10",
+    "managed-gateway/ledger.ts": "0c660b9e92f1616da78474c3aa72e498dd463e077d604d7d56de62b28e5d304f",
+    "managed-gateway/local-payment.ts": "f3f2e2d42a5f442338cd30d9738765418a8ed6f4414eba32230f51a4f0c8b9da",
+    "managed-gateway/money.ts": "9f745cf976d0414a4fa0c81176cf4741f3e2d910349ed4d8d02f46804d095b1f",
+    "managed-gateway/openai-provider.ts": "65edae67e360ecdc702cbcfae6a8347eb8d7c4c21e1e1e7fc226b4fb113495da",
+    "managed-gateway/private-costs.ts": "5e355bf5e07517b03caf0bbca396c399baa49a2bf320ce6402cf1b8cf992b76b",
+    "managed-gateway/provider.test.ts": "92bd40e96a857489f6fcaa2799a0dd8163b7844a9ba9c41afd1a526ca34aa16c",
+    "managed-gateway/testing.ts": "6623f4d1d0f06ac267fa1242dfef338c23d303f9f502667f16480264e7ae8d57",
+    "managed-gateway/tsconfig.json": "03c996b8f7558c67a01522cf7679268581c5fb31f1ed470ec5a6e3829ad63261"
+  },
+  "visualPreview": "blocked by browser file URL policy; no screenshot or visual proof",
+  "realProviderCalls": 0,
+  "realPayments": 0,
+  "customerMessagesSent": 0,
+  "productionDeployment": false
+}

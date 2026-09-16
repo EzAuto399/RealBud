@@ -1,0 +1,2037 @@
+{
+  "schema": 1,
+  "measuredAt": "2026-09-15T04:03:01.214Z",
+  "scope": "Offline HTTP loopback, injected timed SSE provider, authenticated v2 gateway and durable SQLite WAL/FULL ledger. No real provider, deployment, office channel or Square calls.",
+  "host": {
+    "node": "v26.8.2",
+    "platform": "darwin",
+    "release": "25.6.0",
+    "cpu": "Apple M4 Pro"
+  },
+  "method": {
+    "meaningful": "first non-empty content delta, excluding reservation and reasoning",
+    "completion": "first model call response end including continuation and settlement",
+    "workflow": "three sequential signed child calls with full preserved reasoning/tool replies; includes client signing and JSON work",
+    "warmup": "six batches per concurrency, alternating direct/gateway",
+    "coldLimit": "No process-cold or OS-cache-cold measurement; first-server and database-reopen measurements are labelled separately",
+    "pairedP95": "pairedOverheadMs pairs samples by matching batch position across alternating route runs; differences of route p95 are separately labelled; pairs are sequential, not simultaneous",
+    "throughput": "Not inferred from short synthetic timer chunks; matched live token-throughput measurement remains required",
+    "seed": "Real synthetic settled request/evidence/event rows, not empty filler",
+    "square": "Separate class with no gateway import or call"
+  },
+  "startup": [
+    {
+      "seedRequests": 0,
+      "kind": "database reopen in a warm process; includes schema check and ledger hash verification; excludes OS-cold/process-cold startup",
+      "milliseconds": {
+        "n": 6,
+        "mean": 1.2167848333333329,
+        "p50": 1.2999590000000012,
+        "p95": 1.442582999999999
+      }
+    },
+    {
+      "seedRequests": 0,
+      "kind": "first workflow on new HTTP servers in warm process",
+      "direct": {
+        "firstMeaningfulMs": 16.911666999999994,
+        "completionMs": 24.616124999999997,
+        "workflowMs": 59.993125000000006
+      },
+      "gateway": {
+        "firstMeaningfulMs": 11.142583000000002,
+        "completionMs": 21.809291,
+        "workflowMs": 64.202167
+      }
+    },
+    {
+      "seedRequests": 1000,
+      "kind": "database reopen in a warm process; includes schema check and ledger hash verification; excludes OS-cold/process-cold startup",
+      "milliseconds": {
+        "n": 6,
+        "mean": 8.698395666666935,
+        "p50": 8.59112499999992,
+        "p95": 9.480000000000473
+      }
+    },
+    {
+      "seedRequests": 1000,
+      "kind": "first workflow on new HTTP servers in warm process",
+      "direct": {
+        "firstMeaningfulMs": 10.19812499999989,
+        "completionMs": 18.48474999999962,
+        "workflowMs": 52.50508300000001
+      },
+      "gateway": {
+        "firstMeaningfulMs": 13.44354199999998,
+        "completionMs": 22.251374999999825,
+        "workflowMs": 67.20558299999993
+      }
+    }
+  ],
+  "scenarios": [
+    {
+      "seedRequests": 0,
+      "requestsBeforeWarmup": 3,
+      "requestsAfter": 84,
+      "concurrency": 1,
+      "warmupBatches": 6,
+      "measuredWorkflowsPerRoute": 24,
+      "modelCallsPerWorkflow": 3,
+      "direct": {
+        "firstMeaningfulMs": {
+          "n": 24,
+          "mean": 7.355203083333312,
+          "p50": 7.5317079999999805,
+          "p95": 7.937874999999622
+        },
+        "completionMs": {
+          "n": 24,
+          "mean": 16.143989541666674,
+          "p50": 16.057749999999942,
+          "p95": 17.08283300000005
+        },
+        "workflowMs": {
+          "n": 24,
+          "mean": 49.786126833333306,
+          "p50": 49.647457999999915,
+          "p95": 52.38108399999999
+        }
+      },
+      "gateway": {
+        "firstMeaningfulMs": {
+          "n": 24,
+          "mean": 9.698316125000014,
+          "p50": 9.611041999999998,
+          "p95": 10.79141699999991
+        },
+        "completionMs": {
+          "n": 24,
+          "mean": 19.36581087500001,
+          "p50": 19.462749999999687,
+          "p95": 22.745625000000018
+        },
+        "workflowMs": {
+          "n": 24,
+          "mean": 57.84067012500001,
+          "p50": 57.865291999999954,
+          "p95": 60.90087499999993
+        }
+      },
+      "addedMs": {
+        "firstMeaningfulMean": 2.343113041666702,
+        "firstMeaningfulP95Difference": 2.8535420000002887,
+        "completionMean": 3.221821333333338,
+        "completionP95Difference": 5.662791999999968,
+        "workflowMean": 8.054543291666704,
+        "workflowP95Difference": 8.519790999999941
+      },
+      "pairedOverheadMs": {
+        "firstMeaningful": {
+          "n": 24,
+          "mean": 2.3431130416667023,
+          "p50": 2.353874999999789,
+          "p95": 4.106667000000016
+        },
+        "completion": {
+          "n": 24,
+          "mean": 3.221821333333338,
+          "p50": 2.9239589999997406,
+          "p95": 6.941208999999844
+        },
+        "workflow": {
+          "n": 24,
+          "mean": 8.054543291666704,
+          "p50": 7.611000000000331,
+          "p95": 13.108207999999877
+        }
+      },
+      "raw": {
+        "direct": [
+          {
+            "firstMeaningfulMs": 7.6849580000000515,
+            "completionMs": 17.08283300000005,
+            "workflowMs": 52.38108399999999
+          },
+          {
+            "firstMeaningfulMs": 7.705040999999937,
+            "completionMs": 15.951040999999918,
+            "workflowMs": 49.85679200000004
+          },
+          {
+            "firstMeaningfulMs": 6.571833999999967,
+            "completionMs": 14.813750000000027,
+            "workflowMs": 47.79266700000005
+          },
+          {
+            "firstMeaningfulMs": 7.5317079999999805,
+            "completionMs": 15.670917000000031,
+            "workflowMs": 49.025916999999936
+          },
+          {
+            "firstMeaningfulMs": 7.733499999999935,
+            "completionMs": 15.883916999999997,
+            "workflowMs": 49.515625
+          },
+          {
+            "firstMeaningfulMs": 8.125708999999915,
+            "completionMs": 17.287374999999884,
+            "workflowMs": 52.43720899999994
+          },
+          {
+            "firstMeaningfulMs": 7.899832999999944,
+            "completionMs": 16.220207999999957,
+            "workflowMs": 51.87312500000007
+          },
+          {
+            "firstMeaningfulMs": 7.632959000000028,
+            "completionMs": 17.04300000000012,
+            "workflowMs": 50.658500000000004
+          },
+          {
+            "firstMeaningfulMs": 6.488166000000092,
+            "completionMs": 15.804416000000174,
+            "workflowMs": 49.23675000000003
+          },
+          {
+            "firstMeaningfulMs": 7.596540999999888,
+            "completionMs": 16.94224999999983,
+            "workflowMs": 48.89237500000013
+          },
+          {
+            "firstMeaningfulMs": 7.411499999999933,
+            "completionMs": 15.568625000000111,
+            "workflowMs": 49.760458999999855
+          },
+          {
+            "firstMeaningfulMs": 7.5721249999999145,
+            "completionMs": 15.770457999999962,
+            "workflowMs": 49.05683299999987
+          },
+          {
+            "firstMeaningfulMs": 7.923749999999927,
+            "completionMs": 16.096208999999817,
+            "workflowMs": 50.965374999999995
+          },
+          {
+            "firstMeaningfulMs": 6.389833000000181,
+            "completionMs": 14.735541000000012,
+            "workflowMs": 46.28837499999986
+          },
+          {
+            "firstMeaningfulMs": 7.40954099999999,
+            "completionMs": 16.609375,
+            "workflowMs": 49.213374999999814
+          },
+          {
+            "firstMeaningfulMs": 7.531084000000192,
+            "completionMs": 16.813959000000068,
+            "workflowMs": 49.647457999999915
+          },
+          {
+            "firstMeaningfulMs": 7.435750000000098,
+            "completionMs": 16.81954199999973,
+            "workflowMs": 50.950374999999894
+          },
+          {
+            "firstMeaningfulMs": 6.383041999999932,
+            "completionMs": 14.589542000000165,
+            "workflowMs": 49.35779199999979
+          },
+          {
+            "firstMeaningfulMs": 7.754167000000052,
+            "completionMs": 16.057749999999942,
+            "workflowMs": 49.887459000000035
+          },
+          {
+            "firstMeaningfulMs": 7.436165999999957,
+            "completionMs": 16.85754100000031,
+            "workflowMs": 52.12174999999979
+          },
+          {
+            "firstMeaningfulMs": 6.365125000000262,
+            "completionMs": 15.964917000000241,
+            "workflowMs": 50.121083
+          },
+          {
+            "firstMeaningfulMs": 7.937874999999622,
+            "completionMs": 16.150916000000052,
+            "workflowMs": 48.12979200000018
+          },
+          {
+            "firstMeaningfulMs": 6.452041999999892,
+            "completionMs": 15.817666999999801,
+            "workflowMs": 46.5869160000002
+          },
+          {
+            "firstMeaningfulMs": 7.552624999999807,
+            "completionMs": 16.903999999999996,
+            "workflowMs": 51.109958000000006
+          }
+        ],
+        "gateway": [
+          {
+            "firstMeaningfulMs": 9.548541999999998,
+            "completionMs": 18.976832999999942,
+            "workflowMs": 58.907917
+          },
+          {
+            "firstMeaningfulMs": 10.095667000000049,
+            "completionMs": 20.35800000000006,
+            "workflowMs": 59.91441599999996
+          },
+          {
+            "firstMeaningfulMs": 10.093915999999922,
+            "completionMs": 19.735415999999987,
+            "workflowMs": 60.90087499999993
+          },
+          {
+            "firstMeaningfulMs": 9.041999999999916,
+            "completionMs": 18.486291999999935,
+            "workflowMs": 58.456792000000064
+          },
+          {
+            "firstMeaningfulMs": 10.79141699999991,
+            "completionMs": 19.47891699999991,
+            "workflowMs": 58.29724999999996
+          },
+          {
+            "firstMeaningfulMs": 7.606667000000016,
+            "completionMs": 16.761334000000033,
+            "workflowMs": 52.03645800000004
+          },
+          {
+            "firstMeaningfulMs": 10.533500000000004,
+            "completionMs": 20.140333000000055,
+            "workflowMs": 58.80737500000009
+          },
+          {
+            "firstMeaningfulMs": 9.223375000000033,
+            "completionMs": 18.54708400000004,
+            "workflowMs": 55.89220900000009
+          },
+          {
+            "firstMeaningfulMs": 10.192915999999968,
+            "completionMs": 22.745625000000018,
+            "workflowMs": 66.48891600000002
+          },
+          {
+            "firstMeaningfulMs": 9.611041999999998,
+            "completionMs": 20.005584,
+            "workflowMs": 59.596500000000106
+          },
+          {
+            "firstMeaningfulMs": 12.088792000000012,
+            "completionMs": 22.939124999999876,
+            "workflowMs": 59.99883299999988
+          },
+          {
+            "firstMeaningfulMs": 8.552584000000024,
+            "completionMs": 17.482291999999916,
+            "workflowMs": 57.865291999999954
+          },
+          {
+            "firstMeaningfulMs": 10.250541999999996,
+            "completionMs": 20.477041999999983,
+            "workflowMs": 55.833709
+          },
+          {
+            "firstMeaningfulMs": 8.74370799999997,
+            "completionMs": 17.243791999999985,
+            "workflowMs": 55.377792
+          },
+          {
+            "firstMeaningfulMs": 8.066874999999982,
+            "completionMs": 16.779791999999816,
+            "workflowMs": 51.58549999999968
+          },
+          {
+            "firstMeaningfulMs": 8.887417000000369,
+            "completionMs": 18.582167000000027,
+            "workflowMs": 53.30541600000015
+          },
+          {
+            "firstMeaningfulMs": 9.450834000000214,
+            "completionMs": 18.543292000000292,
+            "workflowMs": 58.561375000000226
+          },
+          {
+            "firstMeaningfulMs": 8.751624999999876,
+            "completionMs": 17.73066599999993,
+            "workflowMs": 56.88833300000033
+          },
+          {
+            "firstMeaningfulMs": 10.555916999999681,
+            "completionMs": 19.462749999999687,
+            "workflowMs": 57.239374999999654
+          },
+          {
+            "firstMeaningfulMs": 9.794084000000112,
+            "completionMs": 19.78150000000005,
+            "workflowMs": 57.51304200000004
+          },
+          {
+            "firstMeaningfulMs": 9.459791000000223,
+            "completionMs": 18.573333000000275,
+            "workflowMs": 56.95912499999986
+          },
+          {
+            "firstMeaningfulMs": 10.275542000000314,
+            "completionMs": 20.83362500000021,
+            "workflowMs": 57.78491699999995
+          },
+          {
+            "firstMeaningfulMs": 10.558708999999908,
+            "completionMs": 21.425500000000284,
+            "workflowMs": 59.61374999999998
+          },
+          {
+            "firstMeaningfulMs": 10.584124999999858,
+            "completionMs": 19.689166999999998,
+            "workflowMs": 60.350916000000325
+          }
+        ]
+      }
+    },
+    {
+      "seedRequests": 0,
+      "requestsBeforeWarmup": 84,
+      "requestsAfter": 174,
+      "concurrency": 2,
+      "warmupBatches": 6,
+      "measuredWorkflowsPerRoute": 24,
+      "modelCallsPerWorkflow": 3,
+      "direct": {
+        "firstMeaningfulMs": {
+          "n": 24,
+          "mean": 7.47721683333333,
+          "p50": 7.542957999999999,
+          "p95": 7.722999999999956
+        },
+        "completionMs": {
+          "n": 24,
+          "mean": 16.515414833333278,
+          "p50": 16.84570799999983,
+          "p95": 17.26970799999981
+        },
+        "workflowMs": {
+          "n": 24,
+          "mean": 49.798980833333246,
+          "p50": 50.00516599999992,
+          "p95": 51.47212499999932
+        }
+      },
+      "gateway": {
+        "firstMeaningfulMs": {
+          "n": 24,
+          "mean": 10.465775999999948,
+          "p50": 10.27108300000009,
+          "p95": 12.591500000000451
+        },
+        "completionMs": {
+          "n": 24,
+          "mean": 19.99079691666655,
+          "p50": 19.800249999999778,
+          "p95": 22.22362500000054
+        },
+        "workflowMs": {
+          "n": 24,
+          "mean": 58.042562499999995,
+          "p50": 57.7118330000003,
+          "p95": 63.9292089999999
+        }
+      },
+      "addedMs": {
+        "firstMeaningfulMean": 2.9885591666666187,
+        "firstMeaningfulP95Difference": 4.868500000000495,
+        "completionMean": 3.4753820833332725,
+        "completionP95Difference": 4.953917000000729,
+        "workflowMean": 8.24358166666675,
+        "workflowP95Difference": 12.457084000000577
+      },
+      "pairedOverheadMs": {
+        "firstMeaningful": {
+          "n": 24,
+          "mean": 2.9885591666666187,
+          "p50": 2.797958999999537,
+          "p95": 5.075959000000694
+        },
+        "completion": {
+          "n": 24,
+          "mean": 3.4753820833332725,
+          "p50": 2.959292000000005,
+          "p95": 6.286624999999731
+        },
+        "workflow": {
+          "n": 24,
+          "mean": 8.243581666666747,
+          "p50": 7.251916000000165,
+          "p95": 14.092708999999559
+        }
+      },
+      "raw": {
+        "direct": [
+          {
+            "firstMeaningfulMs": 7.676832999999988,
+            "completionMs": 16.04304200000024,
+            "workflowMs": 51.064290999999685
+          },
+          {
+            "firstMeaningfulMs": 7.577832999999828,
+            "completionMs": 16.272875000000113,
+            "workflowMs": 50.96716699999979
+          },
+          {
+            "firstMeaningfulMs": 7.722999999999956,
+            "completionMs": 17.124499999999898,
+            "workflowMs": 50.43795799999998
+          },
+          {
+            "firstMeaningfulMs": 7.622833000000355,
+            "completionMs": 17.24220800000012,
+            "workflowMs": 50.320624999999836
+          },
+          {
+            "firstMeaningfulMs": 7.569707999999991,
+            "completionMs": 15.763832999999977,
+            "workflowMs": 50.00516599999992
+          },
+          {
+            "firstMeaningfulMs": 7.472457999999733,
+            "completionMs": 15.89562500000011,
+            "workflowMs": 49.880167000000256
+          },
+          {
+            "firstMeaningfulMs": 7.851374999999734,
+            "completionMs": 17.24341699999968,
+            "workflowMs": 50.46674999999959
+          },
+          {
+            "firstMeaningfulMs": 7.701250000000073,
+            "completionMs": 17.33566699999983,
+            "workflowMs": 50.45991700000013
+          },
+          {
+            "firstMeaningfulMs": 6.488209000000097,
+            "completionMs": 14.75870900000018,
+            "workflowMs": 48.94758300000012
+          },
+          {
+            "firstMeaningfulMs": 6.392707999999857,
+            "completionMs": 14.866415999999845,
+            "workflowMs": 48.811791000000085
+          },
+          {
+            "firstMeaningfulMs": 7.481707999999799,
+            "completionMs": 16.840957999999773,
+            "workflowMs": 49.82133299999987
+          },
+          {
+            "firstMeaningfulMs": 7.395791999999801,
+            "completionMs": 16.99670900000001,
+            "workflowMs": 49.73283299999957
+          },
+          {
+            "firstMeaningfulMs": 7.555041999999958,
+            "completionMs": 17.101459000000432,
+            "workflowMs": 47.513582999999926
+          },
+          {
+            "firstMeaningfulMs": 7.515540999999757,
+            "completionMs": 17.26970799999981,
+            "workflowMs": 49.83650000000034
+          },
+          {
+            "firstMeaningfulMs": 7.542957999999999,
+            "completionMs": 16.84570799999983,
+            "workflowMs": 50.825417000000016
+          },
+          {
+            "firstMeaningfulMs": 7.441041000000041,
+            "completionMs": 16.948832999999468,
+            "workflowMs": 50.72270899999967
+          },
+          {
+            "firstMeaningfulMs": 7.571415999999772,
+            "completionMs": 16.863415999999233,
+            "workflowMs": 50.1854170000006
+          },
+          {
+            "firstMeaningfulMs": 7.472250000000713,
+            "completionMs": 16.994916000000558,
+            "workflowMs": 50.05762499999946
+          },
+          {
+            "firstMeaningfulMs": 7.574166000000332,
+            "completionMs": 15.792833000000428,
+            "workflowMs": 47.322832999999264
+          },
+          {
+            "firstMeaningfulMs": 7.4988750000002256,
+            "completionMs": 15.995625000000473,
+            "workflowMs": 47.2318750000004
+          },
+          {
+            "firstMeaningfulMs": 7.67608300000029,
+            "completionMs": 17.05070799999976,
+            "workflowMs": 51.65833300000031
+          },
+          {
+            "firstMeaningfulMs": 7.538083999999799,
+            "completionMs": 17.192666999999346,
+            "workflowMs": 51.47212499999932
+          },
+          {
+            "firstMeaningfulMs": 7.617957999999817,
+            "completionMs": 15.883165999999619,
+            "workflowMs": 48.777249999999185
+          },
+          {
+            "firstMeaningfulMs": 7.496082999999999,
+            "completionMs": 16.046957999999904,
+            "workflowMs": 48.656292000000576
+          }
+        ],
+        "gateway": [
+          {
+            "firstMeaningfulMs": 10.472583000000213,
+            "completionMs": 18.713291000000027,
+            "workflowMs": 56.79774999999972
+          },
+          {
+            "firstMeaningfulMs": 12.892249999999876,
+            "completionMs": 22.045916999999918,
+            "workflowMs": 60.69958399999996
+          },
+          {
+            "firstMeaningfulMs": 8.75570800000014,
+            "completionMs": 19.403416000000107,
+            "workflowMs": 55.33999999999969
+          },
+          {
+            "firstMeaningfulMs": 9.947375000000193,
+            "completionMs": 19.520792000000256,
+            "workflowMs": 59.199333000000024
+          },
+          {
+            "firstMeaningfulMs": 10.888667000000169,
+            "completionMs": 21.991167000000132,
+            "workflowMs": 60.62166699999989
+          },
+          {
+            "firstMeaningfulMs": 12.174666999999772,
+            "completionMs": 22.18224999999984,
+            "workflowMs": 61.10604200000034
+          },
+          {
+            "firstMeaningfulMs": 8.877250000000004,
+            "completionMs": 17.912249999999858,
+            "workflowMs": 52.35533299999997
+          },
+          {
+            "firstMeaningfulMs": 12.386749999999665,
+            "completionMs": 21.60995899999989,
+            "workflowMs": 57.7118330000003
+          },
+          {
+            "firstMeaningfulMs": 10.869333000000097,
+            "completionMs": 18.644124999999804,
+            "workflowMs": 62.53512499999988
+          },
+          {
+            "firstMeaningfulMs": 10.704749999999876,
+            "completionMs": 22.378374999999778,
+            "workflowMs": 67.50391599999966
+          },
+          {
+            "firstMeaningfulMs": 9.121165999999903,
+            "completionMs": 19.800249999999778,
+            "workflowMs": 56.25437499999998
+          },
+          {
+            "firstMeaningfulMs": 10.27108300000009,
+            "completionMs": 19.886207999999897,
+            "workflowMs": 57.822415999999976
+          },
+          {
+            "firstMeaningfulMs": 11.305292000000009,
+            "completionMs": 22.06304199999977,
+            "workflowMs": 61.10541700000067
+          },
+          {
+            "firstMeaningfulMs": 12.591500000000451,
+            "completionMs": 22.22362500000054,
+            "workflowMs": 63.9292089999999
+          },
+          {
+            "firstMeaningfulMs": 9.05608299999949,
+            "completionMs": 19.658332999999402,
+            "workflowMs": 57.95750000000044
+          },
+          {
+            "firstMeaningfulMs": 10.238999999999578,
+            "completionMs": 19.807041999999456,
+            "workflowMs": 57.84979199999998
+          },
+          {
+            "firstMeaningfulMs": 11.156291999999667,
+            "completionMs": 20.900166999999783,
+            "workflowMs": 57.07270799999969
+          },
+          {
+            "firstMeaningfulMs": 12.426915999999437,
+            "completionMs": 21.12445800000023,
+            "workflowMs": 59.85875000000033
+          },
+          {
+            "firstMeaningfulMs": 8.689833000000363,
+            "completionMs": 16.609416999999667,
+            "workflowMs": 54.88324999999986
+          },
+          {
+            "firstMeaningfulMs": 9.94195899999977,
+            "completionMs": 19.332791999999245,
+            "workflowMs": 54.794042000000445
+          },
+          {
+            "firstMeaningfulMs": 9.624416999999994,
+            "completionMs": 17.44562500000029,
+            "workflowMs": 52.38233299999956
+          },
+          {
+            "firstMeaningfulMs": 10.917957999999999,
+            "completionMs": 20.088208000000122,
+            "workflowMs": 56.26524999999947
+          },
+          {
+            "firstMeaningfulMs": 7.725625000000036,
+            "completionMs": 16.83191699999952,
+            "workflowMs": 53.64237500000036
+          },
+          {
+            "firstMeaningfulMs": 10.142166999999972,
+            "completionMs": 19.60649999999987,
+            "workflowMs": 55.33349999999973
+          }
+        ]
+      }
+    },
+    {
+      "seedRequests": 0,
+      "requestsBeforeWarmup": 174,
+      "requestsAfter": 282,
+      "concurrency": 4,
+      "warmupBatches": 6,
+      "measuredWorkflowsPerRoute": 24,
+      "modelCallsPerWorkflow": 3,
+      "direct": {
+        "firstMeaningfulMs": {
+          "n": 24,
+          "mean": 7.4810693749999855,
+          "p50": 7.547541999999339,
+          "p95": 7.715750000000298
+        },
+        "completionMs": {
+          "n": 24,
+          "mean": 16.605468708333394,
+          "p50": 16.691291000000092,
+          "p95": 17.30670800000007
+        },
+        "workflowMs": {
+          "n": 24,
+          "mean": 49.151776041666686,
+          "p50": 48.9403340000008,
+          "p95": 51.82329200000004
+        }
+      },
+      "gateway": {
+        "firstMeaningfulMs": {
+          "n": 24,
+          "mean": 13.879171874999997,
+          "p50": 13.173165999999583,
+          "p95": 18.955542000000605
+        },
+        "completionMs": {
+          "n": 24,
+          "mean": 24.002675374999967,
+          "p50": 22.04699999999957,
+          "p95": 28.388291999999637
+        },
+        "workflowMs": {
+          "n": 24,
+          "mean": 63.67849641666677,
+          "p50": 63.227208000000246,
+          "p95": 70.49070800000027
+        }
+      },
+      "addedMs": {
+        "firstMeaningfulMean": 6.398102500000012,
+        "firstMeaningfulP95Difference": 11.239792000000307,
+        "completionMean": 7.397206666666573,
+        "completionP95Difference": 11.081583999999566,
+        "workflowMean": 14.526720375000082,
+        "workflowP95Difference": 18.66741600000023
+      },
+      "pairedOverheadMs": {
+        "firstMeaningful": {
+          "n": 24,
+          "mean": 6.398102500000012,
+          "p50": 5.566915999999765,
+          "p95": 11.582334000000628
+        },
+        "completion": {
+          "n": 24,
+          "mean": 7.397206666666572,
+          "p50": 5.943623999999545,
+          "p95": 11.85229199999958
+        },
+        "workflow": {
+          "n": 24,
+          "mean": 14.526720375000082,
+          "p50": 15.439666000000216,
+          "p95": 22.008834000001116
+        }
+      },
+      "raw": {
+        "direct": [
+          {
+            "firstMeaningfulMs": 6.374749999999949,
+            "completionMs": 14.87341699999979,
+            "workflowMs": 44.01274999999987
+          },
+          {
+            "firstMeaningfulMs": 7.594208999999864,
+            "completionMs": 16.456041999999798,
+            "workflowMs": 48.589208000000326
+          },
+          {
+            "firstMeaningfulMs": 7.55516599999919,
+            "completionMs": 16.53533299999981,
+            "workflowMs": 48.53791599999931
+          },
+          {
+            "firstMeaningfulMs": 7.514040999999452,
+            "completionMs": 16.691291000000092,
+            "workflowMs": 48.50075000000015
+          },
+          {
+            "firstMeaningfulMs": 7.674708999999893,
+            "completionMs": 17.088416999999936,
+            "workflowMs": 50.83399999999983
+          },
+          {
+            "firstMeaningfulMs": 7.5888330000007045,
+            "completionMs": 17.140416000000187,
+            "workflowMs": 50.74266599999919
+          },
+          {
+            "firstMeaningfulMs": 7.543875000000298,
+            "completionMs": 17.175000000000182,
+            "workflowMs": 50.69262500000059
+          },
+          {
+            "firstMeaningfulMs": 7.511916000000383,
+            "completionMs": 17.30670800000007,
+            "workflowMs": 50.67266699999982
+          },
+          {
+            "firstMeaningfulMs": 7.547541999999339,
+            "completionMs": 16.981917000000067,
+            "workflowMs": 47.867458000000624
+          },
+          {
+            "firstMeaningfulMs": 7.467125000000124,
+            "completionMs": 17.04029200000059,
+            "workflowMs": 47.78754200000003
+          },
+          {
+            "firstMeaningfulMs": 7.415334000000257,
+            "completionMs": 17.081624999999804,
+            "workflowMs": 48.98433300000033
+          },
+          {
+            "firstMeaningfulMs": 7.373207999999977,
+            "completionMs": 17.23937500000011,
+            "workflowMs": 48.9403340000008
+          },
+          {
+            "firstMeaningfulMs": 7.674833999999464,
+            "completionMs": 17.092666999999892,
+            "workflowMs": 51.90358399999968
+          },
+          {
+            "firstMeaningfulMs": 7.603374999999687,
+            "completionMs": 17.125500000000102,
+            "workflowMs": 51.82329200000004
+          },
+          {
+            "firstMeaningfulMs": 7.553082999999788,
+            "completionMs": 17.16583300000002,
+            "workflowMs": 51.76375000000007
+          },
+          {
+            "firstMeaningfulMs": 7.523541000000478,
+            "completionMs": 17.48741599999994,
+            "workflowMs": 51.716457999999875
+          },
+          {
+            "firstMeaningfulMs": 7.159040999999888,
+            "completionMs": 14.482332999999926,
+            "workflowMs": 44.565583000000515
+          },
+          {
+            "firstMeaningfulMs": 7.071874999999636,
+            "completionMs": 15.932834000000184,
+            "workflowMs": 46.82987500000036
+          },
+          {
+            "firstMeaningfulMs": 7.02770800000053,
+            "completionMs": 16.06408300000021,
+            "workflowMs": 48.00529199999983
+          },
+          {
+            "firstMeaningfulMs": 8.233124999999745,
+            "completionMs": 16.254541999999674,
+            "workflowMs": 47.95629199999985
+          },
+          {
+            "firstMeaningfulMs": 7.715750000000298,
+            "completionMs": 15.97229200000038,
+            "workflowMs": 48.02674999999999
+          },
+          {
+            "firstMeaningfulMs": 7.644500000000335,
+            "completionMs": 16.375166000000718,
+            "workflowMs": 50.336207999999715
+          },
+          {
+            "firstMeaningfulMs": 7.606249999999818,
+            "completionMs": 16.432749999999942,
+            "workflowMs": 50.29399999999987
+          },
+          {
+            "firstMeaningfulMs": 7.571875000000546,
+            "completionMs": 16.536000000000058,
+            "workflowMs": 50.25929199999973
+          }
+        ],
+        "gateway": [
+          {
+            "firstMeaningfulMs": 15.12816600000042,
+            "completionMs": 23.289832999999817,
+            "workflowMs": 66.4331659999998
+          },
+          {
+            "firstMeaningfulMs": 15.01520900000014,
+            "completionMs": 26.833999999999833,
+            "workflowMs": 66.33095799999955
+          },
+          {
+            "firstMeaningfulMs": 17.49395800000002,
+            "completionMs": 27.01458300000013,
+            "workflowMs": 70.54675000000043
+          },
+          {
+            "firstMeaningfulMs": 19.99629200000072,
+            "completionMs": 31.645917000000736,
+            "workflowMs": 70.49070800000027
+          },
+          {
+            "firstMeaningfulMs": 10.56524999999965,
+            "completionMs": 19.904625000000124,
+            "workflowMs": 56.46229200000016
+          },
+          {
+            "firstMeaningfulMs": 10.439582999999402,
+            "completionMs": 20.411041000000296,
+            "workflowMs": 59.38141700000051
+          },
+          {
+            "firstMeaningfulMs": 12.938750000000255,
+            "completionMs": 23.032208999999966,
+            "workflowMs": 61.31316599999991
+          },
+          {
+            "firstMeaningfulMs": 12.891749999999774,
+            "completionMs": 24.997875000000022,
+            "workflowMs": 61.27662499999951
+          },
+          {
+            "firstMeaningfulMs": 13.00566600000002,
+            "completionMs": 21.77758300000005,
+            "workflowMs": 59.011999999999716
+          },
+          {
+            "firstMeaningfulMs": 12.890792000000147,
+            "completionMs": 22.03949999999986,
+            "workflowMs": 63.227208000000246
+          },
+          {
+            "firstMeaningfulMs": 15.323374999999942,
+            "completionMs": 27.502166999999645,
+            "workflowMs": 65.02300000000014
+          },
+          {
+            "firstMeaningfulMs": 18.955542000000605,
+            "completionMs": 27.744834000000083,
+            "workflowMs": 68.92833299999984
+          },
+          {
+            "firstMeaningfulMs": 8.782374999999774,
+            "completionMs": 16.759874999999738,
+            "workflowMs": 55.85899999999947
+          },
+          {
+            "firstMeaningfulMs": 12.457999999999629,
+            "completionMs": 21.00537499999973,
+            "workflowMs": 61.35570800000005
+          },
+          {
+            "firstMeaningfulMs": 12.3872080000001,
+            "completionMs": 21.141375000000153,
+            "workflowMs": 62.91204199999993
+          },
+          {
+            "firstMeaningfulMs": 14.800750000000335,
+            "completionMs": 27.685749999999643,
+            "workflowMs": 65.56704200000058
+          },
+          {
+            "firstMeaningfulMs": 12.226833000000624,
+            "completionMs": 21.79120800000055,
+            "workflowMs": 60.60670800000025
+          },
+          {
+            "firstMeaningfulMs": 12.119416999999885,
+            "completionMs": 21.87645799999973,
+            "workflowMs": 64.95633300000009
+          },
+          {
+            "firstMeaningfulMs": 15.754500000000007,
+            "completionMs": 27.64770900000076,
+            "workflowMs": 64.93299999999999
+          },
+          {
+            "firstMeaningfulMs": 15.697709000000032,
+            "completionMs": 27.81224999999995,
+            "workflowMs": 68.93366700000024
+          },
+          {
+            "firstMeaningfulMs": 13.358666999999514,
+            "completionMs": 21.812958999999864,
+            "workflowMs": 61.66166599999997
+          },
+          {
+            "firstMeaningfulMs": 13.237249999999221,
+            "completionMs": 21.90179099999932,
+            "workflowMs": 61.56287500000053
+          },
+          {
+            "firstMeaningfulMs": 13.173165999999583,
+            "completionMs": 22.04699999999957,
+            "workflowMs": 65.77370800000062
+          },
+          {
+            "firstMeaningfulMs": 14.459917000000132,
+            "completionMs": 28.388291999999637,
+            "workflowMs": 65.73654200000055
+          }
+        ]
+      }
+    },
+    {
+      "seedRequests": 1000,
+      "requestsBeforeWarmup": 1003,
+      "requestsAfter": 1084,
+      "concurrency": 1,
+      "warmupBatches": 6,
+      "measuredWorkflowsPerRoute": 24,
+      "modelCallsPerWorkflow": 3,
+      "direct": {
+        "firstMeaningfulMs": {
+          "n": 24,
+          "mean": 7.27297912500012,
+          "p50": 7.323416000001089,
+          "p95": 7.395708000000013
+        },
+        "completionMs": {
+          "n": 24,
+          "mean": 16.20556587499982,
+          "p50": 16.542916000000332,
+          "p95": 16.659208000000945
+        },
+        "workflowMs": {
+          "n": 24,
+          "mean": 49.189036416666795,
+          "p50": 49.112042000000656,
+          "p95": 50.248459000000366
+        }
+      },
+      "gateway": {
+        "firstMeaningfulMs": {
+          "n": 24,
+          "mean": 15.39344962499998,
+          "p50": 14.824000000000524,
+          "p95": 17.83833400000003
+        },
+        "completionMs": {
+          "n": 24,
+          "mean": 25.053741375000072,
+          "p50": 25.188333000000057,
+          "p95": 28.05895799999962
+        },
+        "workflowMs": {
+          "n": 24,
+          "mean": 72.14582987499982,
+          "p50": 72.5406669999993,
+          "p95": 76.843832999999
+        }
+      },
+      "addedMs": {
+        "firstMeaningfulMean": 8.12047049999986,
+        "firstMeaningfulP95Difference": 10.442626000000018,
+        "completionMean": 8.848175500000252,
+        "completionP95Difference": 11.399749999998676,
+        "workflowMean": 22.956793458333024,
+        "workflowP95Difference": 26.59537399999863
+      },
+      "pairedOverheadMs": {
+        "firstMeaningful": {
+          "n": 24,
+          "mean": 8.12047049999986,
+          "p50": 7.486458000001221,
+          "p95": 10.619833000000654
+        },
+        "completion": {
+          "n": 24,
+          "mean": 8.848175500000252,
+          "p50": 9.03175000000192,
+          "p95": 11.459541000000172
+        },
+        "workflow": {
+          "n": 24,
+          "mean": 22.95679345833302,
+          "p50": 22.942415999999866,
+          "p95": 27.671124999998938
+        }
+      },
+      "raw": {
+        "direct": [
+          {
+            "firstMeaningfulMs": 7.2984579999993,
+            "completionMs": 16.627166000000216,
+            "workflowMs": 50.267165999999634
+          },
+          {
+            "firstMeaningfulMs": 7.361791999999696,
+            "completionMs": 15.494832999998835,
+            "workflowMs": 48.88362500000039
+          },
+          {
+            "firstMeaningfulMs": 7.205707999999504,
+            "completionMs": 16.442041000000245,
+            "workflowMs": 49.90312500000073
+          },
+          {
+            "firstMeaningfulMs": 7.558375000000524,
+            "completionMs": 15.751207999999679,
+            "workflowMs": 49.39137499999924
+          },
+          {
+            "firstMeaningfulMs": 7.323416000001089,
+            "completionMs": 16.64195800000016,
+            "workflowMs": 48.33545799999956
+          },
+          {
+            "firstMeaningfulMs": 7.337541999999303,
+            "completionMs": 16.56237499999952,
+            "workflowMs": 49.855375000001004
+          },
+          {
+            "firstMeaningfulMs": 7.074083999999857,
+            "completionMs": 15.224041999999827,
+            "workflowMs": 48.75908300000083
+          },
+          {
+            "firstMeaningfulMs": 7.3145000000004075,
+            "completionMs": 15.205582999999024,
+            "workflowMs": 47.11449999999968
+          },
+          {
+            "firstMeaningfulMs": 7.339874999999665,
+            "completionMs": 16.59941699999945,
+            "workflowMs": 50.136875000000146
+          },
+          {
+            "firstMeaningfulMs": 7.368500000000495,
+            "completionMs": 15.4917089999999,
+            "workflowMs": 47.787459000001036
+          },
+          {
+            "firstMeaningfulMs": 7.390958000001774,
+            "completionMs": 15.533250000000407,
+            "workflowMs": 49.076624999999694
+          },
+          {
+            "firstMeaningfulMs": 7.395708000000013,
+            "completionMs": 16.704791000000114,
+            "workflowMs": 49.03479100000004
+          },
+          {
+            "firstMeaningfulMs": 7.332833000000392,
+            "completionMs": 16.639000000001033,
+            "workflowMs": 49.112042000000656
+          },
+          {
+            "firstMeaningfulMs": 7.389500000001135,
+            "completionMs": 16.659208000000945,
+            "workflowMs": 50.248459000000366
+          },
+          {
+            "firstMeaningfulMs": 7.303375000001324,
+            "completionMs": 16.618583999999828,
+            "workflowMs": 49.17270800000006
+          },
+          {
+            "firstMeaningfulMs": 7.347707999999329,
+            "completionMs": 16.565582999999606,
+            "workflowMs": 49.946124999998574
+          },
+          {
+            "firstMeaningfulMs": 7.3408329999983835,
+            "completionMs": 16.559207999998762,
+            "workflowMs": 50.01958299999933
+          },
+          {
+            "firstMeaningfulMs": 7.2997919999997976,
+            "completionMs": 16.562167000000045,
+            "workflowMs": 49.99754100000064
+          },
+          {
+            "firstMeaningfulMs": 7.340957999998864,
+            "completionMs": 16.597124999998414,
+            "workflowMs": 49.09508300000016
+          },
+          {
+            "firstMeaningfulMs": 6.238333999999668,
+            "completionMs": 15.486708999998882,
+            "workflowMs": 46.76350000000093
+          },
+          {
+            "firstMeaningfulMs": 7.250042000001486,
+            "completionMs": 16.52808300000106,
+            "workflowMs": 49.88216700000157
+          },
+          {
+            "firstMeaningfulMs": 7.234207999999853,
+            "completionMs": 16.514624999999796,
+            "workflowMs": 48.65058399999907
+          },
+          {
+            "firstMeaningfulMs": 7.248792000000321,
+            "completionMs": 15.381999999999607,
+            "workflowMs": 49.05025000000023
+          },
+          {
+            "firstMeaningfulMs": 7.256208000000697,
+            "completionMs": 16.542916000000332,
+            "workflowMs": 50.053374999999505
+          }
+        ],
+        "gateway": [
+          {
+            "firstMeaningfulMs": 17.066999999999098,
+            "completionMs": 27.173666999999114,
+            "workflowMs": 73.45883399999911
+          },
+          {
+            "firstMeaningfulMs": 14.195709000001443,
+            "completionMs": 23.877834000000803,
+            "workflowMs": 71.54058299999997
+          },
+          {
+            "firstMeaningfulMs": 16.357207999999446,
+            "completionMs": 26.379500000000917,
+            "workflowMs": 75.09950000000026
+          },
+          {
+            "firstMeaningfulMs": 14.759665999999925,
+            "completionMs": 25.188333000000057,
+            "workflowMs": 71.91337500000009
+          },
+          {
+            "firstMeaningfulMs": 17.265583000000333,
+            "completionMs": 27.600374999999985,
+            "workflowMs": 76.30258299999878
+          },
+          {
+            "firstMeaningfulMs": 14.824000000000524,
+            "completionMs": 25.1981250000008,
+            "workflowMs": 73.36250000000109
+          },
+          {
+            "firstMeaningfulMs": 17.69391700000051,
+            "completionMs": 28.44854200000009,
+            "workflowMs": 75.74549999999908
+          },
+          {
+            "firstMeaningfulMs": 14.031791999999768,
+            "completionMs": 24.237333000000945,
+            "workflowMs": 73.269624999999
+          },
+          {
+            "firstMeaningfulMs": 19.110208000000057,
+            "completionMs": 28.05895799999962,
+            "workflowMs": 73.07929100000001
+          },
+          {
+            "firstMeaningfulMs": 13.898707999998805,
+            "completionMs": 22.722999999999956,
+            "workflowMs": 69.70637499999975
+          },
+          {
+            "firstMeaningfulMs": 15.860209000000395,
+            "completionMs": 25.80895899999996,
+            "workflowMs": 74.02820899999824
+          },
+          {
+            "firstMeaningfulMs": 14.060165999999299,
+            "completionMs": 24.06933299999946,
+            "workflowMs": 70.2163330000003
+          },
+          {
+            "firstMeaningfulMs": 16.477584000000206,
+            "completionMs": 26.486917000000176,
+            "workflowMs": 74.66525000000001
+          },
+          {
+            "firstMeaningfulMs": 14.751000000000204,
+            "completionMs": 24.76708399999916,
+            "workflowMs": 71.98033399999986
+          },
+          {
+            "firstMeaningfulMs": 17.181291000000783,
+            "completionMs": 27.15258300000096,
+            "workflowMs": 76.843832999999
+          },
+          {
+            "firstMeaningfulMs": 14.980916999998954,
+            "completionMs": 23.820082999998704,
+            "workflowMs": 69.80304100000103
+          },
+          {
+            "firstMeaningfulMs": 17.83833400000003,
+            "completionMs": 27.888999999999214,
+            "workflowMs": 77.05283400000008
+          },
+          {
+            "firstMeaningfulMs": 14.466707999999926,
+            "completionMs": 24.281042000000525,
+            "workflowMs": 71.31645800000115
+          },
+          {
+            "firstMeaningfulMs": 16.763041000000158,
+            "completionMs": 25.672083000001294,
+            "workflowMs": 72.5406669999993
+          },
+          {
+            "firstMeaningfulMs": 13.165125000001353,
+            "completionMs": 21.920125000000553,
+            "workflowMs": 69.56704200000058
+          },
+          {
+            "firstMeaningfulMs": 16.508832999999868,
+            "completionMs": 26.399750000000495,
+            "workflowMs": 72.86099999999897
+          },
+          {
+            "firstMeaningfulMs": 13.047542000000249,
+            "completionMs": 21.67833299999984,
+            "workflowMs": 68.16841700000077
+          },
+          {
+            "firstMeaningfulMs": 13.10149999999885,
+            "completionMs": 21.735709000000497,
+            "workflowMs": 63.94862499999908
+          },
+          {
+            "firstMeaningfulMs": 12.036749999999302,
+            "completionMs": 20.723124999998618,
+            "workflowMs": 65.02970800000003
+          }
+        ]
+      }
+    },
+    {
+      "seedRequests": 1000,
+      "requestsBeforeWarmup": 1084,
+      "requestsAfter": 1174,
+      "concurrency": 2,
+      "warmupBatches": 6,
+      "measuredWorkflowsPerRoute": 24,
+      "modelCallsPerWorkflow": 3,
+      "direct": {
+        "firstMeaningfulMs": {
+          "n": 24,
+          "mean": 7.036149333333317,
+          "p50": 7.27533300000141,
+          "p95": 7.404167000000598
+        },
+        "completionMs": {
+          "n": 24,
+          "mean": 16.15755383333347,
+          "p50": 16.218249999999898,
+          "p95": 16.827707999998893
+        },
+        "workflowMs": {
+          "n": 24,
+          "mean": 48.879354250000006,
+          "p50": 49.0688339999997,
+          "p95": 50.535791999998764
+        }
+      },
+      "gateway": {
+        "firstMeaningfulMs": {
+          "n": 24,
+          "mean": 18.5888680416665,
+          "p50": 18.595707999998922,
+          "p95": 22.241041999999652
+        },
+        "completionMs": {
+          "n": 24,
+          "mean": 29.039946166666596,
+          "p50": 29.673665999998775,
+          "p95": 34.92204099999981
+        },
+        "workflowMs": {
+          "n": 24,
+          "mean": 79.2226301249998,
+          "p50": 79.29458300000078,
+          "p95": 86.9541250000002
+        }
+      },
+      "addedMs": {
+        "firstMeaningfulMean": 11.552718708333185,
+        "firstMeaningfulP95Difference": 14.836874999999054,
+        "completionMean": 12.882392333333126,
+        "completionP95Difference": 18.094333000000915,
+        "workflowMean": 30.34327587499979,
+        "workflowP95Difference": 36.41833300000144
+      },
+      "pairedOverheadMs": {
+        "firstMeaningful": {
+          "n": 24,
+          "mean": 11.552718708333183,
+          "p50": 11.313500000002023,
+          "p95": 14.928667000000132
+        },
+        "completion": {
+          "n": 24,
+          "mean": 12.882392333333124,
+          "p50": 12.919458000002123,
+          "p95": 18.20979200000147
+        },
+        "workflow": {
+          "n": 24,
+          "mean": 30.34327587499979,
+          "p50": 29.5902079999978,
+          "p95": 37.50004100000115
+        }
+      },
+      "raw": {
+        "direct": [
+          {
+            "firstMeaningfulMs": 7.485624999999345,
+            "completionMs": 16.72400000000016,
+            "workflowMs": 49.328583000000435
+          },
+          {
+            "firstMeaningfulMs": 7.370542000000569,
+            "completionMs": 16.779709000000366,
+            "workflowMs": 49.223916999999346
+          },
+          {
+            "firstMeaningfulMs": 6.522750000000087,
+            "completionMs": 14.790832999999111,
+            "workflowMs": 47.38575000000128
+          },
+          {
+            "firstMeaningfulMs": 6.4490420000001905,
+            "completionMs": 14.910250000000815,
+            "workflowMs": 47.247292000000016
+          },
+          {
+            "firstMeaningfulMs": 7.304041999999754,
+            "completionMs": 15.478042000000642,
+            "workflowMs": 46.98162500000035
+          },
+          {
+            "firstMeaningfulMs": 7.25445899999977,
+            "completionMs": 15.544749999999112,
+            "workflowMs": 46.912083999999595
+          },
+          {
+            "firstMeaningfulMs": 7.373750000000655,
+            "completionMs": 16.71075000000019,
+            "workflowMs": 50.62424999999894
+          },
+          {
+            "firstMeaningfulMs": 7.288582999999562,
+            "completionMs": 16.79266699999971,
+            "workflowMs": 50.535791999998764
+          },
+          {
+            "firstMeaningfulMs": 7.404167000000598,
+            "completionMs": 16.698625000000902,
+            "workflowMs": 49.45808299999953
+          },
+          {
+            "firstMeaningfulMs": 7.31237499999952,
+            "completionMs": 16.827707999998893,
+            "workflowMs": 49.388958999999886
+          },
+          {
+            "firstMeaningfulMs": 6.17804199999955,
+            "completionMs": 15.439792000001034,
+            "workflowMs": 47.648959000000104
+          },
+          {
+            "firstMeaningfulMs": 6.080665999999837,
+            "completionMs": 15.46875,
+            "workflowMs": 47.55224999999882
+          },
+          {
+            "firstMeaningfulMs": 6.831958000000668,
+            "completionMs": 16.14704200000051,
+            "workflowMs": 49.913125000000946
+          },
+          {
+            "firstMeaningfulMs": 6.775624999998399,
+            "completionMs": 16.218249999999898,
+            "workflowMs": 49.849083000000974
+          },
+          {
+            "firstMeaningfulMs": 7.379917000000205,
+            "completionMs": 16.675875000000815,
+            "workflowMs": 48.168666999999914
+          },
+          {
+            "firstMeaningfulMs": 7.310290999999779,
+            "completionMs": 16.834124999999403,
+            "workflowMs": 48.11445800000001
+          },
+          {
+            "firstMeaningfulMs": 6.430958000000828,
+            "completionMs": 15.798292000001311,
+            "workflowMs": 50.25920800000131
+          },
+          {
+            "firstMeaningfulMs": 6.3619999999991705,
+            "completionMs": 16.143165999999837,
+            "workflowMs": 50.17662500000006
+          },
+          {
+            "firstMeaningfulMs": 7.376666000000114,
+            "completionMs": 15.594624999999724,
+            "workflowMs": 49.0688339999997
+          },
+          {
+            "firstMeaningfulMs": 7.297833999999057,
+            "completionMs": 15.667749999998705,
+            "workflowMs": 48.98058300000048
+          },
+          {
+            "firstMeaningfulMs": 7.27533300000141,
+            "completionMs": 16.58470800000032,
+            "workflowMs": 49.26087499999994
+          },
+          {
+            "firstMeaningfulMs": 7.216500000000451,
+            "completionMs": 16.68304200000057,
+            "workflowMs": 49.20570800000132
+          },
+          {
+            "firstMeaningfulMs": 7.33179200000086,
+            "completionMs": 16.60570800000096,
+            "workflowMs": 48.95287499999904
+          },
+          {
+            "firstMeaningfulMs": 7.254666999999245,
+            "completionMs": 16.66283300000032,
+            "workflowMs": 48.866916999999376
+          }
+        ],
+        "gateway": [
+          {
+            "firstMeaningfulMs": 18.799125000001368,
+            "completionMs": 26.75850000000173,
+            "workflowMs": 79.29458300000078
+          },
+          {
+            "firstMeaningfulMs": 20.0500409999986,
+            "completionMs": 34.052082999998674,
+            "workflowMs": 83.1119579999995
+          },
+          {
+            "firstMeaningfulMs": 17.54845899999964,
+            "completionMs": 25.27520900000127,
+            "workflowMs": 76.97595799999908
+          },
+          {
+            "firstMeaningfulMs": 18.709917000000132,
+            "completionMs": 31.045874999999796,
+            "workflowMs": 80.78279099999963
+          },
+          {
+            "firstMeaningfulMs": 18.595707999998922,
+            "completionMs": 27.816791999999623,
+            "workflowMs": 80.60662500000035
+          },
+          {
+            "firstMeaningfulMs": 20.96020800000042,
+            "completionMs": 34.92204099999981,
+            "workflowMs": 84.41212500000074
+          },
+          {
+            "firstMeaningfulMs": 16.484291000000667,
+            "completionMs": 24.18279099999927,
+            "workflowMs": 73.01729100000011
+          },
+          {
+            "firstMeaningfulMs": 17.718457999999373,
+            "completionMs": 30.260582999999315,
+            "workflowMs": 75.72820800000045
+          },
+          {
+            "firstMeaningfulMs": 18.748250000000553,
+            "completionMs": 27.683625000001484,
+            "workflowMs": 79.4828749999997
+          },
+          {
+            "firstMeaningfulMs": 22.241041999999652,
+            "completionMs": 35.037500000000364,
+            "workflowMs": 81.02900000000045
+          },
+          {
+            "firstMeaningfulMs": 14.528916999999637,
+            "completionMs": 24.334874999998647,
+            "workflowMs": 72.66424999999981
+          },
+          {
+            "firstMeaningfulMs": 17.799999999999272,
+            "completionMs": 30.293499999999767,
+            "workflowMs": 76.43158299999959
+          },
+          {
+            "firstMeaningfulMs": 20.24354200000016,
+            "completionMs": 31.015834000001632,
+            "workflowMs": 86.9541250000002
+          },
+          {
+            "firstMeaningfulMs": 21.517625000000407,
+            "completionMs": 31.214125000000422,
+            "workflowMs": 86.87383399999999
+          },
+          {
+            "firstMeaningfulMs": 15.252542000000176,
+            "completionMs": 24.0301670000008,
+            "workflowMs": 72.29175000000032
+          },
+          {
+            "firstMeaningfulMs": 18.743917000001602,
+            "completionMs": 29.753583000001527,
+            "workflowMs": 76.09370899999885
+          },
+          {
+            "firstMeaningfulMs": 17.609958999999435,
+            "completionMs": 26.442584000000352,
+            "workflowMs": 79.47412500000064
+          },
+          {
+            "firstMeaningfulMs": 21.123999999999796,
+            "completionMs": 33.57366699999875,
+            "workflowMs": 83.33816699999988
+          },
+          {
+            "firstMeaningfulMs": 15.744665999998688,
+            "completionMs": 26.044874999999593,
+            "workflowMs": 73.13816599999882
+          },
+          {
+            "firstMeaningfulMs": 16.990915999998833,
+            "completionMs": 26.124957999998514,
+            "workflowMs": 78.10620899999958
+          },
+          {
+            "firstMeaningfulMs": 21.112291999999798,
+            "completionMs": 31.80974999999853,
+            "workflowMs": 86.54479099999844
+          },
+          {
+            "firstMeaningfulMs": 22.38537499999984,
+            "completionMs": 31.980541999999332,
+            "workflowMs": 89.22545799999898
+          },
+          {
+            "firstMeaningfulMs": 14.881250000000364,
+            "completionMs": 23.63158300000032,
+            "workflowMs": 71.0005829999991
+          },
+          {
+            "firstMeaningfulMs": 18.34233299999869,
+            "completionMs": 29.673665999998775,
+            "workflowMs": 74.76495900000009
+          }
+        ]
+      }
+    },
+    {
+      "seedRequests": 1000,
+      "requestsBeforeWarmup": 1174,
+      "requestsAfter": 1282,
+      "concurrency": 4,
+      "warmupBatches": 6,
+      "measuredWorkflowsPerRoute": 24,
+      "modelCallsPerWorkflow": 3,
+      "direct": {
+        "firstMeaningfulMs": {
+          "n": 24,
+          "mean": 7.316382166666472,
+          "p50": 7.447125000000597,
+          "p95": 7.62329200000022
+        },
+        "completionMs": {
+          "n": 24,
+          "mean": 16.245829999999916,
+          "p50": 16.07158299999901,
+          "p95": 17.034417000000758
+        },
+        "workflowMs": {
+          "n": 24,
+          "mean": 49.01808504166646,
+          "p50": 48.350500000000466,
+          "p95": 51.07170799999949
+        }
+      },
+      "gateway": {
+        "firstMeaningfulMs": {
+          "n": 24,
+          "mean": 26.82199491666673,
+          "p50": 26.714500000000044,
+          "p95": 32.44316600000093
+        },
+        "completionMs": {
+          "n": 24,
+          "mean": 39.40504516666662,
+          "p50": 37.457042,
+          "p95": 50.76800000000003
+        },
+        "workflowMs": {
+          "n": 24,
+          "mean": 93.85864058333361,
+          "p50": 93.6540410000016,
+          "p95": 103.81049999999959
+        }
+      },
+      "addedMs": {
+        "firstMeaningfulMean": 19.505612750000257,
+        "firstMeaningfulP95Difference": 24.81987400000071,
+        "completionMean": 23.1592151666667,
+        "completionP95Difference": 33.73358299999927,
+        "workflowMean": 44.84055554166715,
+        "workflowP95Difference": 52.7387920000001
+      },
+      "pairedOverheadMs": {
+        "firstMeaningful": {
+          "n": 24,
+          "mean": 19.505612750000257,
+          "p50": 19.313874999999825,
+          "p95": 24.894791000000623
+        },
+        "completion": {
+          "n": 24,
+          "mean": 23.1592151666667,
+          "p50": 21.558124999999563,
+          "p95": 34.78470799999923
+        },
+        "workflow": {
+          "n": 24,
+          "mean": 44.84055554166715,
+          "p50": 43.23674900000151,
+          "p95": 54.287334000000556
+        }
+      },
+      "raw": {
+        "direct": [
+          {
+            "firstMeaningfulMs": 7.6617089999999735,
+            "completionMs": 15.940042000000176,
+            "workflowMs": 48.350500000000466
+          },
+          {
+            "firstMeaningfulMs": 7.5914169999996375,
+            "completionMs": 15.962084000000687,
+            "workflowMs": 48.25141699999949
+          },
+          {
+            "firstMeaningfulMs": 7.548375000000306,
+            "completionMs": 15.983292000000802,
+            "workflowMs": 48.215125000000626
+          },
+          {
+            "firstMeaningfulMs": 7.492166999998517,
+            "completionMs": 16.07158299999901,
+            "workflowMs": 48.1533330000002
+          },
+          {
+            "firstMeaningfulMs": 6.57129200000054,
+            "completionMs": 14.856500000001688,
+            "workflowMs": 47.37308299999859
+          },
+          {
+            "firstMeaningfulMs": 6.514208999999028,
+            "completionMs": 14.841999999998734,
+            "workflowMs": 47.254000000000815
+          },
+          {
+            "firstMeaningfulMs": 6.460791999999856,
+            "completionMs": 14.851999999998952,
+            "workflowMs": 47.19154200000048
+          },
+          {
+            "firstMeaningfulMs": 6.4192499999990105,
+            "completionMs": 14.942708999999013,
+            "workflowMs": 47.153958999999304
+          },
+          {
+            "firstMeaningfulMs": 7.400625000000218,
+            "completionMs": 16.609333000000333,
+            "workflowMs": 49.714208000001236
+          },
+          {
+            "firstMeaningfulMs": 7.356583999999202,
+            "completionMs": 16.727874999998676,
+            "workflowMs": 49.671542000000045
+          },
+          {
+            "firstMeaningfulMs": 7.323207999999795,
+            "completionMs": 16.802207999999155,
+            "workflowMs": 49.6567500000001
+          },
+          {
+            "firstMeaningfulMs": 7.29083300000093,
+            "completionMs": 16.853124999999636,
+            "workflowMs": 49.63462499999878
+          },
+          {
+            "firstMeaningfulMs": 7.60162500000115,
+            "completionMs": 16.927875000001222,
+            "workflowMs": 50.12220900000102
+          },
+          {
+            "firstMeaningfulMs": 7.509083999999348,
+            "completionMs": 16.94958399999996,
+            "workflowMs": 50.009665999999925
+          },
+          {
+            "firstMeaningfulMs": 7.4785830000000715,
+            "completionMs": 17.034417000000758,
+            "workflowMs": 49.97641599999952
+          },
+          {
+            "firstMeaningfulMs": 7.447125000000597,
+            "completionMs": 17.061375000001135,
+            "workflowMs": 49.93824999999924
+          },
+          {
+            "firstMeaningfulMs": 7.62329200000022,
+            "completionMs": 15.866124999998647,
+            "workflowMs": 47.9927919999991
+          },
+          {
+            "firstMeaningfulMs": 7.544416999999157,
+            "completionMs": 15.898917000000438,
+            "workflowMs": 47.8784169999999
+          },
+          {
+            "firstMeaningfulMs": 7.504749999998239,
+            "completionMs": 15.925999999999476,
+            "workflowMs": 47.82512499999939
+          },
+          {
+            "firstMeaningfulMs": 7.476042000000234,
+            "completionMs": 16.038958999999522,
+            "workflowMs": 47.789708000000246
+          },
+          {
+            "firstMeaningfulMs": 7.523250000000189,
+            "completionMs": 16.889250000000175,
+            "workflowMs": 51.161040999999386
+          },
+          {
+            "firstMeaningfulMs": 7.446416999999201,
+            "completionMs": 16.905124999999316,
+            "workflowMs": 51.07170799999949
+          },
+          {
+            "firstMeaningfulMs": 7.416833999999653,
+            "completionMs": 16.93079200000102,
+            "workflowMs": 51.03595899999891
+          },
+          {
+            "firstMeaningfulMs": 7.391292000000249,
+            "completionMs": 17.02874999999949,
+            "workflowMs": 51.01266599999872
+          }
+        ],
+        "gateway": [
+          {
+            "firstMeaningfulMs": 28.50458299999991,
+            "completionMs": 38.43999999999869,
+            "workflowMs": 94.17383300000074
+          },
+          {
+            "firstMeaningfulMs": 28.730916000000434,
+            "completionMs": 38.54479100000026,
+            "workflowMs": 98.25358299999971
+          },
+          {
+            "firstMeaningfulMs": 32.44316600000093,
+            "completionMs": 50.76800000000003,
+            "workflowMs": 102.24770900000112
+          },
+          {
+            "firstMeaningfulMs": 33.729457999999795,
+            "completionMs": 50.92637500000092,
+            "workflowMs": 103.81049999999959
+          },
+          {
+            "firstMeaningfulMs": 20.186999999999898,
+            "completionMs": 28.204499999999825,
+            "workflowMs": 80.70712500000081
+          },
+          {
+            "firstMeaningfulMs": 23.8924590000006,
+            "completionMs": 34.42066700000032,
+            "workflowMs": 84.8322500000013
+          },
+          {
+            "firstMeaningfulMs": 23.853124999999636,
+            "completionMs": 34.60329199999978,
+            "workflowMs": 88.81254200000149
+          },
+          {
+            "firstMeaningfulMs": 26.31920899999932,
+            "completionMs": 44.95537499999955,
+            "workflowMs": 90.39070800000081
+          },
+          {
+            "firstMeaningfulMs": 26.714500000000044,
+            "completionMs": 37.14283299999988,
+            "workflowMs": 95.0503749999989
+          },
+          {
+            "firstMeaningfulMs": 26.674166999999215,
+            "completionMs": 37.234582999999475,
+            "workflowMs": 103.53812500000095
+          },
+          {
+            "firstMeaningfulMs": 31.46691699999974,
+            "completionMs": 44.12524999999914,
+            "workflowMs": 99.10320799999863
+          },
+          {
+            "firstMeaningfulMs": 31.42308299999968,
+            "completionMs": 44.228250000000116,
+            "workflowMs": 103.85283400000117
+          },
+          {
+            "firstMeaningfulMs": 22.19391700000051,
+            "completionMs": 30.43104200000016,
+            "workflowMs": 83.82250000000022
+          },
+          {
+            "firstMeaningfulMs": 22.103542000000743,
+            "completionMs": 30.511000000000422,
+            "workflowMs": 86.6357079999998
+          },
+          {
+            "firstMeaningfulMs": 25.663375000000087,
+            "completionMs": 40.85083300000042,
+            "workflowMs": 92.06862499999988
+          },
+          {
+            "firstMeaningfulMs": 28.100791999999274,
+            "completionMs": 41.023291999999856,
+            "workflowMs": 92.05445800000052
+          },
+          {
+            "firstMeaningfulMs": 26.87816699999894,
+            "completionMs": 37.326999999999316,
+            "workflowMs": 93.76800000000003
+          },
+          {
+            "firstMeaningfulMs": 26.830542000001515,
+            "completionMs": 37.457042,
+            "workflowMs": 97.92058299999917
+          },
+          {
+            "firstMeaningfulMs": 31.663375000000087,
+            "completionMs": 49.46545800000058,
+            "workflowMs": 102.11245899999994
+          },
+          {
+            "firstMeaningfulMs": 31.62145899999996,
+            "completionMs": 49.59558399999878,
+            "workflowMs": 102.06191600000056
+          },
+          {
+            "firstMeaningfulMs": 21.37041700000009,
+            "completionMs": 29.239125000000058,
+            "workflowMs": 83.78108400000019
+          },
+          {
+            "firstMeaningfulMs": 21.26274999999987,
+            "completionMs": 35.019500000000335,
+            "workflowMs": 87.92683299999953
+          },
+          {
+            "firstMeaningfulMs": 24.816459000001487,
+            "completionMs": 35.11083400000098,
+            "workflowMs": 92.02837499999987
+          },
+          {
+            "firstMeaningfulMs": 27.284499999999753,
+            "completionMs": 46.096457999999984,
+            "workflowMs": 93.6540410000016
+          }
+        ]
+      }
+    }
+  ],
+  "failures": [],
+  "manifest": {
+    "abort.ts": "1cb5649c9b002a0f3f2d5e72a6dec815f30d7a67df9cab57d3c544c4d9a06735",
+    "attempts.ts": "07fc1f720e6c529abd7d6300eb068c53247820fde41bd8126f1e376db66ab748",
+    "auth.ts": "bf259a2fd2f4e353ca8560d16f4d120caa5bb50f9a6428f41653fe6312f2db47",
+    "benchmark.ts": "57367be4a2ff29a71faaea3c197a2f6ae7aa9ab80bbeb5fb9b7165a8d7149802",
+    "billing.ts": "599e2ddde98997298050a0c60d83a53c70fea1467e28c42db6d9dc02b95f709d",
+    "contracts.ts": "f5a7a175aabab8ff9151ae7618dfff9fa6645b5958cff853c2eeb56663f95001",
+    "database.ts": "577aa305be902e164efd34ee0438d0c584f8573b165523be88d85e63e145d0b2",
+    "deepseek-balance.ts": "928450da9054b8fd3d7b7d502d7b0461ed78746590a76583714daa62c633a976",
+    "demo.ts": "c6d885a939570df232453511b148dabe8718f769b061e37d39ce97f0c46bb8ef",
+    "direct-provider.ts": "c87a6add8903a89330d09de74747e573fdfa525b11afdbb992e0626042e668e3",
+    "gateway.ts": "6dd4f543b774ef18fdee6cc9e16d93b45e6b466a3667d63278df82a9816cedc3",
+    "http.ts": "40a3ca837e034b1f7cabb45932afaed8396c7afd796854419aff4676cf6b4720",
+    "invoice-html.ts": "d747577fba02de71ffc6edb52df9daf02dca6624001f501cfc5f98c89267ee5f",
+    "ledger.ts": "7f3722e239faed8e0b12754ab5cc8a0bbb6362d3c24a3b6f5313472051a543f0",
+    "local-payment.ts": "f3f2e2d42a5f442338cd30d9738765418a8ed6f4414eba32230f51a4f0c8b9da",
+    "messages.ts": "4a428032ac719cffd53af89683f96b0e1d0920b5ab654a6975ff749dc101a49b",
+    "money.ts": "9f745cf976d0414a4fa0c81176cf4741f3e2d910349ed4d8d02f46804d095b1f",
+    "openai-provider.ts": "1601b2be4afd5f9f13bddb01277bf441cf1822ef9bb64aee3f88f167f5b50d56",
+    "private-costs.ts": "5e355bf5e07517b03caf0bbca396c399baa49a2bf320ce6402cf1b8cf992b76b",
+    "report-import.ts": "58cfbf0beaf38e69f33a4976bac1e5b580a2e59d96d899e7760eaedfa9a50aad",
+    "square.ts": "681f97d3ffba1b02dd8ecdf4d7385e4283649c29939826dfa245b33241188f64",
+    "testing.ts": "6623f4d1d0f06ac267fa1242dfef338c23d303f9f502667f16480264e7ae8d57"
+  }
+}

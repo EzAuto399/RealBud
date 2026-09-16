@@ -133,7 +133,7 @@ function ChatMarkdownComponent({ text, streaming = false }: { text: string; stre
           },
           table({ children }: { children?: ReactNode }) {
             return (
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Response table">
                 <table className="w-full border-collapse text-[13.5px]">{children}</table>
               </div>
             );

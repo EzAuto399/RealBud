@@ -127,7 +127,7 @@ function watchPrompt(jurisdictions: string[]): string {
   const named = jurisdictions.length ? jurisdictions.join(", ") : "not named";
   const hosts = officialHosts(jurisdictions).join(", ");
   return (
-    `The workroom has AU-RENTAL-LAW.md — the shop reference, dated August 2026. ` +
+    `The workroom has AU-RENTAL-LAW.md — a verification guide, not a source of legal deadlines. ` +
     `Do not edit that file. Report only.\n` +
     `The book's jurisdictions: ${named}.\n` +
     `Using web research on ONLY these official legislation sites (${hosts}), ` +
@@ -161,7 +161,11 @@ export async function runLawWatch(
 ): Promise<{ drift: DriftItem[]; checkedSources: string[] } | null> {
   // Re-reading several legislation sites is real research, not a one-shot
   // answer — the check gets a wider budget than a draft or a narration.
-  const result = await askWorker(watchPrompt(opts?.jurisdictions ?? []), { timeoutMs: 300_000, ...opts });
+  const result = await askWorker(watchPrompt(opts?.jurisdictions ?? []), {
+    timeoutMs: 300_000,
+    ...opts,
+    toolsets: ["file", "web"],
+  });
   if (!result.ok) return null;
   return parseWatchReply(lastJsonObject(result.stdout));
 }

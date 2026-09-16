@@ -1,35 +1,44 @@
-// One shared computer lease. Ask, setup, and a portal run cannot overlap.
+// In-process ownership for the bounded portal adapter. This is not an OS lock.
+import { randomUUID } from "node:crypto";
 
 export type LeaseOwner = "portal" | "ask" | "setup";
 
 export interface ComputerLease {
-  owner: LeaseOwner;
-  workItemId?: string;
-  expiresAt: number;
+  readonly id: string;
+  readonly owner: LeaseOwner;
+  readonly workItemId: string;
+  readonly revision: number;
+  readonly expiresAt: number;
 }
 
 export class ComputerLeaseManager {
   private lease: ComputerLease | null = null;
 
-  hold(owner: LeaseOwner, now: number, ttlMs: number, workItemId?: string): ComputerLease {
-    if (this.lease && this.lease.expiresAt > now && this.lease.owner !== owner) {
+  hold(owner: LeaseOwner, now: number, ttlMs: number, workItemId: string, revision: number): ComputerLease {
+    if (!workItemId?.trim() || workItemId.length > 180 || !Number.isSafeInteger(revision) || revision < 1 ||
+      !Number.isSafeInteger(now) || now < 0 || !Number.isSafeInteger(ttlMs) || ttlMs <= 0 || ttlMs > 15 * 60_000 || !Number.isSafeInteger(now + ttlMs)) {
+      throw Object.assign(new Error("invalid computer lease binding"), { status: 400 });
+    }
+    // Expiry does not prove the previous adapter stopped. Only its matching
+    // release permits a replacement; callers must bound their operations.
+    if (this.lease) {
       throw Object.assign(new Error(`computer lease held by ${this.lease.owner}`), { status: 409 });
     }
-    this.lease = { owner, workItemId, expiresAt: now + ttlMs };
+    this.lease = Object.freeze({ id: randomUUID(), owner, workItemId, revision, expiresAt: now + ttlMs });
     return this.lease;
   }
 
-  release(owner: LeaseOwner): void {
-    if (this.lease?.owner === owner) this.lease = null;
+  release(lease: ComputerLease): void {
+    if (this.lease?.id === lease.id) this.lease = null;
   }
 
   current(): ComputerLease | null {
     return this.lease;
   }
 
-  assertFreeOr(owner: LeaseOwner, now: number): void {
-    if (this.lease && this.lease.expiresAt > now && this.lease.owner !== owner) {
-      throw Object.assign(new Error(`computer lease held by ${this.lease.owner}`), { status: 409 });
+  assertHeld(lease: ComputerLease, now: number): void {
+    if (!Number.isSafeInteger(now) || this.lease?.id !== lease.id || this.lease.expiresAt <= now) {
+      throw Object.assign(new Error("computer lease is stale or expired"), { status: 409 });
     }
   }
 }

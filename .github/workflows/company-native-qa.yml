@@ -1,0 +1,60 @@
+name: Company native acceptance
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  company:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install isolated-runner PostgreSQL 16 tools (Mac)
+        if: runner.os == 'macOS'
+        run: |
+          brew install postgresql@16
+          echo "REALBUD_TEST_POSTGRES_BIN=$(brew --prefix postgresql@16)/bin" >> "$GITHUB_ENV"
+      - name: Install pinned PostgreSQL 16 tools (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Package checksum/publisher: https://community.chocolatey.org/packages/postgresql16/16.15.0
+          # The runner's preinstalled PG17 is intentionally not reused.
+          choco install postgresql16 --version=16.15.0 --yes --no-progress --params '/Password:RealBud-CI-fixture-only-2026 /Port:55433 /NoPath' --ia '--enable-components server,commandlinetools'
+          if ($LASTEXITCODE -ne 0) { throw 'PostgreSQL 16 installation failed' }
+          Stop-Service -Name postgresql-x64-16 -ErrorAction Stop
+          "REALBUD_TEST_POSTGRES_BIN=$env:ProgramFiles\PostgreSQL\16\bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - run: pnpm typecheck
+      - name: Native storage, two identities, concurrent ownership and restart
+        run: node scripts/qa-company-portable.mjs
+        env:
+          REALBUD_TEST_OUTPUT: outputs/company-native
+      - name: TLS and template contracts
+        run: pnpm exec vitest run server/company/host-transport.test.ts server/company/host-certificate.test.ts server/company/member-credentials.test.ts server/company/workflow-template.test.ts src/lib/company-api.test.ts
+      - run: pnpm build:server
+      - name: Compiled service without development dependencies
+        run: node scripts/smoke-company-bundle.mjs outputs/company-bundle-proof.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: company-${{ matrix.os }}-evidence
+          path: |
+            outputs/company-native/result.json
+            outputs/company-bundle-proof.json
+          if-no-files-found: error
+          retention-days: 14
+# These receipts name the executing OS. Windows Server evidence is not
+# Windows 11 desktop/Cua/installer/customer acceptance. No cloud run is implied
+# by this file; dispatch from the reviewed source commit to obtain evidence.

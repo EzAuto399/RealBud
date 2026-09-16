@@ -1,3 +1,8 @@
+import { serviceAdminHeaders, clearServiceAdminSession, refreshServiceAdminExpiry } from "@/lib/service-admin-session";
+import { ensureSession } from "@/lib/local-session";
+export { ensureSession } from "@/lib/local-session";
+import type { ServiceAdminStatus } from "../../shared/service-admin";
+import { officeSources, watchOfficeSources } from "@/lib/connected-apps-refresh";
 // Server-backed store. The React app holds no transports of its own:
 // it dispatches typed commands over HTTP and folds the one SSE event
 // stream from the harness server into local state. The reducer stays
@@ -14,13 +19,18 @@ import {
   type ReactNode,
 } from "react";
 import type { MausColor, MausMotion } from "@/lib/mascot";
-import type { Loop, LoopId, LoopRun } from "@/lib/routines";
-import type { DeskSnapshot } from "@/lib/desk";
+import type { Loop, LoopRun } from "@/lib/routines";
+import type { ScheduleRecovery } from "@shared/contracts";
+import { mergeLoopRuns, mergeLoopClock, mergeLoopClocks, mergeScheduleRecovery, mergeJobRuns } from "@/lib/schedule-state";
+import type { DeskSnapshot, JobRun } from "@/lib/desk";
+import { EMPTY_JOB_DRAFT, type JobDraftState } from "@/lib/job-plan";
 import { currentCall } from "@/lib/call";
 import { speaker } from "@/lib/tts";
 import { SERVICE_UNAVAILABLE_EVENT, isLocalServiceProxyFailure, localServiceError } from "@/lib/api-error";
 import { notifyDeskNeedsYou } from "@/lib/notify-desktop";
 import { STREAM_COMMIT_INTERVAL_MS } from "@/lib/chat-scroll";
+import { readWorkerIssues, type WorkerIssue } from "@/lib/worker-issues";
+import type { AskWorkContext } from "@/lib/work-continuation";
 
 export type { MausColor } from "@/lib/mascot";
 
@@ -125,7 +135,7 @@ export interface Bot {
   unread: boolean;
   busy?: boolean;
   /** One server-persisted follow-up waiting behind the active turn. */
-  queuedMessage?: { id: string; text: string; at: number; threadId: string };
+  queuedMessage?: { id: string; text: string; at: number; threadId: string; heldReason?: "connected-app-settings-changed" | "review-required" };
   modelSelection: ModelSelection;
   /** Where this bot's computer runs; unset = auto (cloud box if one exists, else local). */
   computer?: "cloud" | "vm" | "local" | "off";
@@ -176,7 +186,14 @@ export function messageVersions(bot: Bot, message: Message): Message[] {
 /** GET /api/config — configured flags only; secrets are never echoed. */
 export interface ConfigStatus {
   xai?: { configured: boolean };
-  composio: { configured: boolean; apiKeyConfigured?: boolean };
+  composio: {
+    configured: boolean;
+    apiKeyConfigured?: boolean;
+    /** Older servers omit mode; the existing consumer connection remains the default. */
+    mode?: "consumer" | "gmail-readonly";
+    readOnlyConfigured?: boolean;
+    readOnlyAuthConfigId?: string;
+  };
   box: { configured: boolean };
   /** Voice (ElevenLabs). `configured` = a key is saved; `ready` = a key AND
    * a voice, which is what it takes to actually speak. The key itself is
@@ -184,6 +201,9 @@ export interface ConfigStatus {
   tts?: { configured: boolean; ready: boolean; voice: string };
   /** who's using the app — collected in onboarding, shown in the sidebar */
   profile?: { name: string; email: string };
+  /** Care-managed credential lock. Offices connect apps; care owns keys. */
+  care?: { credentialsLocked: boolean; unlockAvailable: boolean };
+  serviceAdmin?: ServiceAdminStatus;
 }
 
 /** How an engine gets installed — declared by its driver, mirrors
@@ -217,11 +237,15 @@ export type AppSettingsSection = "general" | "connections" | "voice" | "computer
 /** GET /api/hermes — how the pinned worker is doing. Never any secrets. */
 export interface HermesStatus {
   pin: { product: string; tag: string; commit: string; profile: string };
-  cli: { installed: boolean; versionText: string | null; matchesPin: boolean };
+  /** Office-facing name for the worker profile (`property` stays internal). */
+  handsLabel?: string;
+  cli: { installed: boolean; versionText: string | null; matchesPin: boolean; compatible?: boolean; probeState?: "ok" | "missing" | "timeout" | "error" };
   pack: { installed: boolean; approvalsManual: boolean; workroomReady: boolean };
   homeDir: string;
   profileDir: string;
   installCommand: string | null;
+  installerAvailable?: boolean;
+  bootstrapPending?: boolean;
   signInCommand: string;
   detail: string;
   ready: boolean;
@@ -235,7 +259,10 @@ interface AppState {
   groups: Group[];
   instances: InstanceInfo[];
   config: ConfigStatus | null;
+  serviceAdmin: ServiceAdminStatus | null;
   hermes: HermesStatus | null;
+  /** Recent Bud / worker / phone failures, newest first. */
+  workerIssues: WorkerIssue[];
   /** selected chat — a bot id OR a group id */
   selectedId: string;
   activeView: "chat" | "schedule" | "desk" | "ask" | "you";
@@ -243,6 +270,13 @@ interface AppState {
   deskBookNonce: number;
   loops: Loop[];
   loopRuns: LoopRun[];
+  scheduleRecovery: ScheduleRecovery;
+  /** Attended and prepared job receipts, newest first (SSE + hydrate). */
+  jobRuns: JobRun[];
+  activityLoad: { jobs: "loading" | "ready" | "error"; routines: "loading" | "ready" | "error" };
+  jobDraft: JobDraftState;
+  jobDraftBusy: boolean;
+  askWorkContext: AskWorkContext | null;
   /** latest Desk snapshot pushed by the server (a clock loop pressed Recheck) */
   desk: DeskSnapshot | null;
   settingsOpen: boolean;
@@ -268,11 +302,19 @@ type Action =
   | { type: "showRoutines" }
   | { type: "showDesk"; book?: boolean }
   | { type: "showAsk" }
+  | { type: "stageAskContext"; context: AskWorkContext }
+  | { type: "consumeAskContext"; id: string }
   | { type: "showYou" }
-  | { type: "loopsHydrated"; loops: Loop[]; runs: LoopRun[] }
+  | { type: "loopsHydrated"; loops: Loop[]; runs: LoopRun[]; recovery?: ScheduleRecovery }
+  | { type: "scheduleRecovery"; recovery: ScheduleRecovery }
+  | { type: "jobRuns"; runs: JobRun[] }
+  | { type: "activityLoading" }
+  | { type: "activityLoadFailed"; source: "jobs" | "routines" }
+  | { type: "jobRun"; run: JobRun }
+  | { type: "jobDraft"; draft: JobDraftState }
+  | { type: "jobDraftBusy"; busy: boolean }
   | { type: "loopPatched"; loop: Loop }
   | { type: "loopRunPatched"; run: LoopRun }
-  | { type: "runLoop"; loopId: LoopId }
   | { type: "markLoopRunSeen"; runId: string }
   | { type: "deskSnapshot"; snapshot: DeskSnapshot }
   | { type: "groupPatched"; group: Partial<Group> & { id: string } }
@@ -289,9 +331,12 @@ type Action =
   | { type: "interruptGroup"; groupId: string }
   | { type: "instances"; instances: InstanceInfo[] }
   | { type: "configStatus"; config: ConfigStatus }
+  | { type: "serviceAdminStatus"; status: ServiceAdminStatus }
   | { type: "hermesStatus"; status: HermesStatus }
+  | { type: "workerIssues"; issues: WorkerIssue[] }
+  | { type: "workerIssue"; issue: WorkerIssue }
   | { type: "select"; id: string }
-  | { type: "send"; botId: string; text: string }
+  | { type: "send"; botId: string; text: string; onSettled?: (error?: unknown) => void }
   | { type: "editMessage"; botId: string; messageId: string; text: string }
   | { type: "switchBranch"; botId: string; messageId: string }
   | { type: "threadActive"; threadId: string; activeLeafId: string }
@@ -387,6 +432,10 @@ function patchCard(state: AppState, botId: string, messageId: string, patch: Par
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
+    case "jobDraft":
+      return { ...state, jobDraft: action.draft };
+    case "jobDraftBusy":
+      return { ...state, jobDraftBusy: action.busy };
     case "hydrate": {
       const known = (id: string) => action.bots.some((b) => b.id === id) || action.groups.some((g) => g.id === id);
       const selectedId =
@@ -412,11 +461,15 @@ function reducer(state: AppState, action: Action): AppState {
         appSettingsOpen: false,
         pluginsOpen: false,
       };
+    case "consumeAskContext":
+      return state.askWorkContext?.id === action.id ? { ...state, askWorkContext: null } : state;
+    case "stageAskContext":
     case "showAsk": {
       const bud = state.bots.find((b) => b.id === "bud" || b.name === "Bud") ?? state.bots[0];
       return {
         ...state,
         activeView: "ask",
+        askWorkContext: action.type === "stageAskContext" ? action.context : state.askWorkContext,
         selectedId: bud?.id ?? state.selectedId,
         settingsOpen: false,
         computerOpen: false,
@@ -433,24 +486,35 @@ function reducer(state: AppState, action: Action): AppState {
         appSettingsOpen: false,
         pluginsOpen: false,
       };
-    case "loopsHydrated":
-      return { ...state, loops: action.loops, loopRuns: action.runs };
+    case "scheduleRecovery": {
+      const recovery = mergeScheduleRecovery(state.scheduleRecovery, action.recovery);
+      return { ...state, scheduleRecovery: recovery, loops: recovery.active ? state.loops.map((loop) => ({ ...loop, nextRunAt: null })) : state.loops };
+    }
+    case "loopsHydrated": {
+      const recovery = mergeScheduleRecovery(state.scheduleRecovery, action.recovery ?? { active: false, detail: "" });
+      const loops = mergeLoopClocks(state.loops, action.loops);
+      return { ...state, loops: recovery.active ? loops.map((loop) => ({ ...loop, nextRunAt: null })) : loops,
+        loopRuns: mergeLoopRuns(state.loopRuns, action.runs), scheduleRecovery: recovery, activityLoad: { ...state.activityLoad, routines: "ready" } };
+    }
+    case "activityLoading":
+      return { ...state, activityLoad: { jobs: "loading", routines: "loading" } };
+    case "activityLoadFailed":
+      return { ...state, activityLoad: { ...state.activityLoad, [action.source]: "error" } };
+    case "jobRuns":
+      return { ...state, jobRuns: mergeJobRuns(state.jobRuns, action.runs), activityLoad: { ...state.activityLoad, jobs: "ready" } };
+    case "jobRun":
+      return { ...state, jobRuns: mergeJobRuns(state.jobRuns, [action.run]) };
     case "loopPatched": {
       const exists = state.loops.some((loop) => loop.id === action.loop.id);
       return {
         ...state,
         loops: exists
-          ? state.loops.map((loop) => (loop.id === action.loop.id ? action.loop : loop))
+          ? state.loops.map((loop) => (loop.id === action.loop.id ? mergeLoopClock(loop, action.loop) : loop))
           : [action.loop, ...state.loops],
       };
     }
-    case "loopRunPatched": {
-      const exists = state.loopRuns.some((run) => run.id === action.run.id);
-      const runs = exists
-        ? state.loopRuns.map((run) => (run.id === action.run.id ? action.run : run))
-        : [action.run, ...state.loopRuns];
-      return { ...state, loopRuns: runs.sort((a, b) => b.scheduledFor - a.scheduledFor) };
-    }
+    case "loopRunPatched":
+      return { ...state, loopRuns: mergeLoopRuns(state.loopRuns, [action.run]) };
     case "deskSnapshot":
       return { ...state, desk: action.snapshot };
     case "groupPatched": {
@@ -467,10 +531,18 @@ function reducer(state: AppState, action: Action): AppState {
     }
     case "instances":
       return { ...state, instances: action.instances };
+    case "serviceAdminStatus":
+      return { ...state, serviceAdmin: action.status };
     case "configStatus":
       return { ...state, config: action.config };
     case "hermesStatus":
       return { ...state, hermes: action.status };
+    case "workerIssues":
+      return { ...state, workerIssues: action.issues };
+    case "workerIssue": {
+      const issues = [action.issue, ...state.workerIssues.filter((row) => row.id !== action.issue.id)].slice(0, 20);
+      return { ...state, workerIssues: issues };
+    }
     case "select": {
       if (state.groups.some((g) => g.id === action.id)) {
         return {
@@ -740,7 +812,6 @@ function reducer(state: AppState, action: Action): AppState {
     case "sendGroup":
     case "deleteGroup":
     case "interruptGroup":
-    case "runLoop":
     case "markLoopRunSeen":
       return state;
   }
@@ -748,18 +819,25 @@ function reducer(state: AppState, action: Action): AppState {
 
 /** Newest screen frames whose pixels stay in memory per thread. */
 const MAX_KEPT_SCREEN_FRAMES = 8;
-
 const initialState: AppState = {
   bots: [],
   groups: [],
   instances: [],
   config: null,
+  serviceAdmin: null,
   hermes: null,
+  workerIssues: [],
   selectedId: "",
   activeView: "desk",
   deskBookNonce: 0,
   loops: [],
   loopRuns: [],
+  scheduleRecovery: { active: false, detail: "" },
+  jobRuns: [],
+  activityLoad: { jobs: "loading", routines: "loading" },
+  jobDraft: EMPTY_JOB_DRAFT,
+  jobDraftBusy: false,
+  askWorkContext: null,
   desk: null,
   settingsOpen: false,
   pluginsOpen: false,
@@ -774,19 +852,8 @@ const initialState: AppState = {
 };
 
 // ── API client ─────────────────────────────────────────────────────────
-let sessionToken = "";
-
-export async function ensureSession(force = false): Promise<string> {
-  if (sessionToken && !force) return sessionToken;
-  sessionToken = "";
-  const res = await fetch("/api/session");
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error ?? "session refused");
-  sessionToken = String(body.token ?? "");
-  return sessionToken;
-}
-
 export async function api(path: string, init?: RequestInit, opts?: { timeoutMs?: number }): Promise<any> {
+  let administratorRequestToken: string | null = null;
   const unavailable = (cause?: unknown): never => {
     if (typeof window !== "undefined") window.dispatchEvent(new Event(SERVICE_UNAVAILABLE_EVENT));
     throw localServiceError(cause);
@@ -794,31 +861,39 @@ export async function api(path: string, init?: RequestInit, opts?: { timeoutMs?:
   const call = async () => {
     const token = await ensureSession().catch(() => "");
     const headers = new Headers(init?.headers);
+    if (/^\/api\//.test(path)) for (const [name, value] of Object.entries(serviceAdminHeaders())) headers.set(name, value);
     if (!headers.has("content-type")) headers.set("content-type", "application/json");
     if (token) headers.set("x-realbud-session", token);
     // A hung service must surface as a failure the PM can retry, never as a
     // permanent "Saving…". Callers with a known budget pass it; worker calls
     // (Recheck can take a minute) keep the default of no client-side limit.
     const signal = init?.signal ?? (opts?.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined);
-    return fetch(path, { ...init, headers, signal });
+    const response = await fetch(path, { ...init, headers, signal });
+    administratorRequestToken = headers.get("x-realbud-service-admin");
+    refreshServiceAdminExpiry(headers.get("x-realbud-service-admin"), response.headers.get("x-realbud-service-admin-expires"));
+    return response;
   };
   const request = async () => {
     try {
       return await call();
     } catch (cause) {
+      // Leaving a view cancels its read; that is not a service outage.
+      if (init?.signal?.aborted) throw cause;
       return unavailable(cause);
     }
   };
   let res = await request();
   // a harness restart mints a new session token; re-handshake once and retry
   // so the desk survives a server bounce without a blank page
-  if (res.status === 401) {
+  let body = await res.json().catch(() => ({}));
+  if (res.status === 401 && body.error === "session required") {
     await ensureSession(true).catch(() => "");
     res = await request();
+    body = await res.json().catch(() => ({}));
   }
-  const body = await res.json().catch(() => ({}));
+  if (body.code === "service_admin_required") clearServiceAdminSession(administratorRequestToken);
   if (isLocalServiceProxyFailure(res.status, body.error)) unavailable();
-  if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
+  if (!res.ok) throw Object.assign(new Error(body.error ?? `${res.status} ${res.statusText}`), { status: res.status });
   return body;
 }
 
@@ -846,12 +921,28 @@ const StoreContext = createContext<{
   refreshInstances: () => Promise<void>;
   /** Re-probe the pinned Hermes worker (version, pack, approvals). */
   refreshHermes: () => Promise<void>;
+  /** Reload activity without dropping the last usable results. */
+  refreshActivity: () => Promise<void>;
 } | null>(null);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, rawDispatch] = useReducer(reducer, initialState);
   const stateRef = useRef(state);
   stateRef.current = state;
+  const activityRequest = useRef(0);
+  const refreshActivity = useCallback(async () => {
+    const request = ++activityRequest.current;
+    const current = () => request === activityRequest.current;
+    rawDispatch({ type: "activityLoading" });
+    await Promise.allSettled([
+      api("/api/job-runs", undefined, { timeoutMs: 15_000 })
+        .then(({ runs }) => current() && rawDispatch({ type: "jobRuns", runs: runs ?? [] }))
+        .catch(() => current() && rawDispatch({ type: "activityLoadFailed", source: "jobs" })),
+      api("/api/loops", undefined, { timeoutMs: 15_000 })
+        .then(({ loops, runs, recovery }) => current() && rawDispatch({ type: "loopsHydrated", loops, runs: runs ?? [], recovery }))
+        .catch(() => current() && rawDispatch({ type: "activityLoadFailed", source: "routines" })),
+    ]);
+  }, []);
   // per-frame stream-delta batching (see the "runtime" SSE case); stream
   // state is intentionally OUTSIDE the reducer so token frames re-render
   // only StreamContext consumers
@@ -901,7 +992,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const dispatch = useMemo(() => {
     const showError = (e: unknown) => {
       rawDispatch({ type: "error", message: e instanceof Error ? e.message : String(e) });
-      setTimeout(() => rawDispatch({ type: "error", message: null }), 6000);
     };
     // fire-and-forget card persistence; the route is optional server-side
     const persistCard = (botId: string, messageId: string, patch: Partial<OptionCardData>) => {
@@ -935,16 +1025,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     const wrapped: React.Dispatch<Action> = (action) => {
       if (action.type === "send") {
-        if (sending.has(action.botId)) return;
+        if (sending.has(action.botId)) {
+          action.onSettled?.(new Error("A request is already being submitted. Your draft is kept."));
+          return;
+        }
         sending.add(action.botId);
       }
       rawDispatch(action);
       switch (action.type) {
-        case "runLoop":
-          api(`/api/loops/${action.loopId}/run`, { method: "POST" })
-            .then(({ run }) => run && rawDispatch({ type: "loopRunPatched", run }))
-            .catch(showError);
-          break;
         case "markLoopRunSeen":
           api(`/api/loop-runs/${action.runId}/seen`, { method: "POST" }).catch(showError);
           break;
@@ -953,8 +1041,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             method: "POST",
             body: JSON.stringify({ text: action.text }),
           })
-            .then(() => void pollTurnUntilSettled(action.botId))
-            .catch(showError)
+            .then(() => {
+              action.onSettled?.();
+              void pollTurnUntilSettled(action.botId);
+            }, (error) => {
+              action.onSettled?.(error);
+              showError(error);
+            })
             .finally(() => sending.delete(action.botId));
           break;
         case "editMessage":
@@ -1177,7 +1270,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // ── initial load + SSE fold ──────────────────────────────────────────
   useEffect(() => {
     let alive = true;
+    const stopOfficeSources = watchOfficeSources();
     const loadAll = () => {
+      void refreshActivity();
       api("/api/bots")
         .then(({ bots, groups }) => alive && rawDispatch({ type: "hydrate", bots, groups: groups ?? [] }))
         .catch(() => {});
@@ -1190,8 +1285,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       api("/api/hermes")
         .then((status) => alive && rawDispatch({ type: "hermesStatus", status }))
         .catch(() => {});
-      api("/api/loops")
-        .then(({ loops, runs }) => alive && rawDispatch({ type: "loopsHydrated", loops, runs: runs ?? [] }))
+      api("/api/worker-issues")
+        .then((body) => alive && rawDispatch({ type: "workerIssues", issues: readWorkerIssues(body) }))
         .catch(() => {});
     };
     const onFrame = (raw: MessageEvent) => {
@@ -1202,6 +1297,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return;
       }
       switch (frame.kind) {
+        case "office-sources":
+          try { officeSources.accept(frame.access); } catch { officeSources.invalidate(); }
+          break;
+        case "office-sources-changed":
+          window.dispatchEvent(new CustomEvent("realbud:connected-apps-refresh"));
+          break;
         case "external.open": {
           const requestId = typeof frame.requestId === "string" ? frame.requestId : "";
           if (!requestId || openedExternalRequests.current.has(requestId)) break;
@@ -1219,6 +1320,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }
           if (window.ogb?.openExternal) void window.ogb.openExternal(url.toString());
           else window.open(url.toString(), "_blank", "noopener,noreferrer");
+          if (frame.autoRefresh) {
+            window.dispatchEvent(
+              new CustomEvent("realbud:connected-apps-refresh", {
+                detail: { service: typeof frame.service === "string" ? frame.service : "" },
+              }),
+            );
+          }
           break;
         }
         case "message": {
@@ -1261,7 +1369,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               body: JSON.stringify({ unread: false }),
             }).catch(() => {});
           }
-          rawDispatch({ type: "botPatched", bot });
+          // Server bot frames are complete snapshots. JSON omits an absent
+          // queue, but the reducer merges patches: explicitly clear the old
+          // slot when a follow-up has started or been discarded.
+          rawDispatch({ type: "botPatched", bot: { ...bot, queuedMessage: bot.queuedMessage } });
           break;
         }
         case "group": {
@@ -1284,15 +1395,35 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "loop":
           rawDispatch({ type: "loopPatched", loop: frame.loop });
           break;
+        case "loops.recovery":
+          rawDispatch({ type: "scheduleRecovery", recovery: frame.recovery });
+          break;
         case "loop.run":
           rawDispatch({ type: "loopRunPatched", run: frame.run });
+          break;
+        case "job.run":
+          rawDispatch({ type: "jobRun", run: frame.run });
           break;
         case "desk":
           rawDispatch({ type: "deskSnapshot", snapshot: frame.snapshot });
           notifyDeskNeedsYou(frame.snapshot);
           break;
+        case "channels":
+          // Phone pairing lives in You/Desk local state; fan out so Pair chat
+          // flips without a full reload once the first phone message lands.
+          window.dispatchEvent(new CustomEvent("realbud:channels", { detail: frame.channels }));
+          break;
+        case "worker.issue":
+          if (frame.issue) rawDispatch({ type: "workerIssue", issue: frame.issue });
+          break;
         case "runtime": {
           const event = frame.event;
+          if (event.type === "item.started" && event.itemType === "tool") {
+            // Drop pre-tool narration from the live bubble; the finished
+            // answer streams after the tool work.
+            clearStream(event.threadId);
+            break;
+          }
           if (event.type === "content.delta") {
             // Batch token deltas to ~30fps. A 60fps token loop makes live
             // Markdown parsing and bottom-follow compete with wheel scrolling;
@@ -1398,11 +1529,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     void connect();
     return () => {
       alive = false;
+      stopOfficeSources();
+      activityRequest.current += 1;
       if (retryTimer) clearTimeout(retryTimer);
       es?.close();
       window.removeEventListener(SERVICE_UNAVAILABLE_EVENT, onServiceUnavailable);
     };
-  }, []);
+  }, [refreshActivity]);
 
   // Re-probe the engines on demand. A CLI installed while the app is running
   // is invisible until something asks again — the setup screens expose this
@@ -1418,8 +1551,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const refreshHermes = useCallback(async () => {
     try {
-      const status = await api("/api/hermes");
+      const [status, issuesBody] = await Promise.all([api("/api/hermes"), api("/api/worker-issues")]);
       rawDispatch({ type: "hermesStatus", status });
+      rawDispatch({ type: "workerIssues", issues: readWorkerIssues(issuesBody) });
     } catch {
       /* offline or server down — the existing status stays */
     }
@@ -1443,8 +1577,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [refreshInstances, refreshHermes]);
 
   const value = useMemo(
-    () => ({ state, dispatch, refreshInstances, refreshHermes }),
-    [state, dispatch, refreshInstances, refreshHermes],
+    () => ({ state, dispatch, refreshInstances, refreshHermes, refreshActivity }),
+    [state, dispatch, refreshInstances, refreshHermes, refreshActivity],
   );
   return (
     <StoreContext.Provider value={value}>

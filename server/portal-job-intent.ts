@@ -16,6 +16,10 @@ const ACTION =
 /** A login verb is the one signal strong enough to carry a weak target
  * ("login to it and finish the routine"). */
 const LOGIN_VERB = /\b(?:log[\s-]?in|login|sign[\s-]?in)\b/i;
+const PREPARATION_START = /^(?:(?:please|ok|okay|so)\s+)*(?:draft|write|prepare|compare|analy[sz]e|research|summari[sz]e|review|calculate)\b/i;
+// Explicit tool transport/discovery belongs to the real worker, even when
+// its scope mentions a portal or says not to sign in to an account.
+const CONNECTED_TOOL_REQUEST = /\b(?:mcp|model\s+context\s+protocol|composio(?:_[a-z0-9_]+)?|apis?|connected[\s-]+apps?|(?:gmail|outlook)_[a-z0-9_]+)\b/i;
 
 /** Unambiguously a website. */
 const STRONG_TARGET =
@@ -35,22 +39,20 @@ const HOST_TOKEN = /(?:https?:\/\/)?(?:www\.)?[a-z0-9][a-z0-9.-]*\.[a-z]{2,}/gi;
 const PROPER_SITE =
   /\b((?:[A-Z][A-Za-z0-9&'.-]*(?:\s+[A-Z][A-Za-z0-9&'.-]*)*))\s+(?:command\s+centr(?:e|er)|portal|centre|center|online|bank|strata)\b/;
 
-/** Where the PM will find the job card: scheduled jobs sit on Schedule,
- * unscheduled ones under You → Bud's jobs. The reply must point at the
- * right door or the chip lands on an empty page. */
-function placeFor(recipe: Pick<Recipe, "schedule">): string {
-  return recipe.schedule ? "Schedule" : "You → Bud's jobs";
+/** Schedule owns both recurring and on-demand job plans. */
+function placeFor(_recipe: Pick<Recipe, "schedule">): string {
+  return "Schedule";
 }
 
 const EXISTING_JOB =
   (title: string, site: string, place: string) =>
-    `**${title}** is already a saved job for ${site}. Open ${place} and press **Run beside me** — you sign in when the page asks, I do the steps, and Submit or Pay stays with you.`;
+    `**${title}** is already a saved job for ${site}. Open ${place} and press **Run beside me** — you sign in when the page asks, I do the steps, and Submit, Pay and Send stay with you.`;
 
 const DRAFT_INTRO = "I can take this over as a saved job. Here's the plan:";
-const BOUNDARY = (place: string) =>
-  `You sign in yourself, I read and prefill, and Submit, Pay and Send stay with you. Approve the plan on ${place}, then press **Run beside me**.`;
+const BOUNDARY =
+  "You sign in yourself, I read and prefill, and Submit, Pay and Send stay with you. Press **Approve the plan** here in Ask, then **Run beside me**.";
 const DRAFT_DOWN =
-  "I can take this over as a saved job, but Bud's model isn't answering right now. Finish Bud on You, then say this again or describe it on Schedule → Give Bud any recurring job.";
+  "I can take this over as a saved job, but Bud's model isn't answering right now. Finish Bud on You, then say this again or open Schedule → Teach Bud a job to write the steps yourself.";
 
 /** Strip pasted tokens and anything after password/pass: — never echo secrets. */
 function stripPortalSecrets(text: string): string {
@@ -102,20 +104,32 @@ function formatSteps(steps: string[]): string {
 export function parsePortalJobIntent(text: string): PortalJobIntent | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
+  // Rich requests belong to the worker. Quoted results and attachments must
+  // not create or select a portal job through a keyword shortcut.
+  if (/<pasted-text\b|<attached-file\b/i.test(trimmed)) return null;
+  if (CONNECTED_TOOL_REQUEST.test(trimmed)) return null;
+  if (PREPARATION_START.test(trimmed) || /^(?:please\s+)?(?:do not|don't|never)\b/i.test(trimmed)) return null;
   if (askBookIntent(trimmed)) return null;
   if (parseConnectionIntent(trimmed)) return null;
   if (isQuestion(trimmed)) return null;
-  if (!ACTION.test(trimmed)) return null;
+  // A prohibition such as "Do not call tools" is not a request to do portal
+  // work, even when the surrounding draft mentions a supplier's bank details.
+  // Route from the opening request, never verbs or portal names buried in
+  // subsequent receipts, bank extracts or other pasted prose. Keep dots in
+  // hostnames intact. Longer instructions still reach the real worker.
+  const openingRequest = trimmed.split(/[.!?](?=\s)|[\r\n]/, 1)[0];
+  const positiveRequest = openingRequest.replace(/\b(?:do\s+not|don't|never)\b[^.!?;\n]*(?:[.!?;]|$)/gi, "");
+  if (!ACTION.test(positiveRequest)) return null;
 
-  const origins = originsIn(trimmed);
+  const origins = originsIn(positiveRequest);
   const named =
     origins.length > 0 ||
-    STRONG_TARGET.test(trimmed) ||
-    PROPER_SITE.test(trimmed) ||
-    (LOGIN_VERB.test(trimmed) && WEAK_TARGET.test(trimmed));
+    STRONG_TARGET.test(positiveRequest) ||
+    PROPER_SITE.test(positiveRequest) ||
+    (LOGIN_VERB.test(positiveRequest) && WEAK_TARGET.test(positiveRequest));
   if (!named) return null;
 
-  const site = origins[0] ?? siteFromPhrase(trimmed);
+  const site = origins[0] ?? siteFromPhrase(positiveRequest);
   return { site, task: trimmed, origins };
 }
 
@@ -139,14 +153,14 @@ export async function portalJobIntentReply(
   try {
     const saved = deps.save(await deps.draft(text));
     const origins = saved.allowedOrigins.length ? saved.allowedOrigins : intent.origins;
-    const place = placeFor(saved);
-    const siteLine = origins.length ? origins.join(", ") : `add the portal address on ${place}`;
+    const siteLine = origins.length ? origins.join(", ") : "add the portal address on the job card before Run beside me";
     const reply = [
       DRAFT_INTRO,
+      `**${saved.title}**`,
       formatSteps(saved.steps),
       `Site: ${siteLine}`,
       `Done when: ${saved.evidence}`,
-      BOUNDARY(place),
+      BOUNDARY,
     ].join("\n");
     return { reply: stripPortalSecrets(reply), recipeId: saved.id };
   } catch {

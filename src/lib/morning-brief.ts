@@ -36,15 +36,15 @@ export function isDemoWorkerMiss(hands: string | undefined, handsDetail: string 
   return !/^Demo book/.test(handsDetail);
 }
 
-const INBOX_LABEL = "Inbox not connected";
-const INBOX_DETAIL = "Overnight mail is Planned. This build does not read Gmail or Microsoft 365.";
+const INBOX_LABEL = "Inbox planned";
+const INBOX_DETAIL = "This morning review does not include an overnight inbox check. Use Ask with a connected email source for email tasks.";
 
 const LABEL: Record<MorningAttention, string> = {
   unchecked: "Not checked",
   quiet: "Checked",
   "needs-you": "Needs you",
   held: "Waiting",
-  licensee: "Licensee",
+  licensee: "For licensee",
 };
 
 const TONE: Record<MorningAttention, MorningTone> = {
@@ -81,7 +81,7 @@ function attentionFor(
 
 function headlineFor(brief: Omit<MorningBrief, "headline">, snap: MorningSnap): string {
   if (brief.lastRunAt != null && isDemoWorkerMiss(snap.hands, snap.handsDetail)) {
-    return "Recheck missed. The worker did not return live facts.";
+    return "Recheck missed. Bud did not return live facts.";
   }
   const n = brief.addresses.length;
   if (brief.lastRunAt == null) {

@@ -1,0 +1,10 @@
+{
+  "fixtureOnly": true,
+  "issuerRevoked": true,
+  "rejected": true,
+  "privateContinuationForwardedAfterRevocation": false,
+  "eventTypes": [
+    "reserved"
+  ],
+  "ledgerState": "settled"
+}

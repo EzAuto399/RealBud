@@ -1,6 +1,6 @@
 # Locked RealBud worker. Do not flip approvals to off/smart/yolo.
-# model.default / model.provider are attached at install from this machine's
-# Hermes login. Change them with: hermes -p property model
+# Attach Bud's own model login from RealBud (You → Bud). Do not inherit a
+# Hermes Desktop profile login. Change with: hermes -p property model
 # Bud gets a private working home and starts in RealBud's property vault.
 # Safe reads, research, calculations, code, and working-file edits may run;
 # dangerous commands still route through the manual approval callback below.
@@ -12,9 +12,17 @@ approvals:
 agent:
   max_turns: 60
   verbose: false
-# Purpose-built surface for RealBud. Terminal retains guarded code and
-# calculations; the ACP execute_code shortcut is intentionally omitted until
-# Hermes can route its whole-script approval through ACP's permission card.
+# Keep a long CSV/JSON line intact within the overall read budget. Upstream's
+# smaller per-line default can hide the tail without a resumable line offset.
+# Larger reads must still report partial coverage; this is not unlimited input.
+file_read_max_chars: 32000
+tool_output:
+  max_line_length: 32000
+  max_lines: 2000
+  max_bytes: 50000
+# Prepare CLI jobs use this bounded toolset. Hermes ACP supplies its own native
+# bundle; this list does not disable ACP execute_code. RealBud's adapter forces
+# upstream HERMES_EXEC_ASK so native scripts require a whole-script decision.
 toolsets:
   - web
   - terminal

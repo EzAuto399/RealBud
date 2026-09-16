@@ -19,16 +19,7 @@ export function sourceLabel(source: RentSource): string {
   return RENT_SOURCE_LABELS[source];
 }
 
-export const CASE_KIND_LABELS: Record<string, string> = {
-  "money-arrears": "Money",
-  "owner-update": "Owner update",
-  "inbound-triage": "Inbound",
-  "maintenance-intake": "Maintenance",
-  "lease-review": "Lease review",
-  "inspection-prep": "Inspection",
-  "licensee-required": "Licensee",
-  "import-issue": "Import issue",
-};
+export { CASE_KIND_LABELS } from "@/lib/desk-queue";
 
 export const CONTACT_ROLE_LABELS: Record<string, string> = {
   tenant: "Tenant",

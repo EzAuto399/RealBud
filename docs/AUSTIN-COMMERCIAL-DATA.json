@@ -1,0 +1,59 @@
+{
+  "phaseOneSetup": 4500,
+  "phaseOneEstimate": 11000,
+  "phaseOneCredit": 6500,
+  "phaseOneMonthly": 299,
+  "phaseOneMonthlyEstimate": 399,
+  "phaseOneMonthlyCredit": 100,
+  "founderMonths": 12,
+  "usageBudget": 75,
+  "phaseTwoSetup": 1500,
+  "phaseTwoEstimate": 6000,
+  "phaseTwoCredit": 4500,
+  "phaseTwoMonthly": 149,
+  "phaseTwoMonthlyEstimate": 199,
+  "phaseTwoMonthlyCredit": 50,
+  "cloudAllowance": 60,
+  "macAllowance": 1500,
+  "macSetup": 450,
+  "macBackupAllowance": 15,
+  "currency": "AUD",
+  "status": "Post-meeting planning: RealBud selected in principle; CRM undecided; RealBud and any CRM retainers under negotiation. Revision 32 prices below remain reference quotes. Two-desktop scope and host costs require confirmation; hardware/infrastructure figures remain budgets.",
+  "post_meeting_update": {
+    "date": "2026-09-14",
+    "realbud_direction": "proceed_in_principle",
+    "crm_decision": "undecided",
+    "realbud_retainer": "under_negotiation",
+    "crm_retainer": "under_negotiation_if_crm_proceeds",
+    "host_baseline": "one_existing_office_desktop_subject_to_capacity_and_availability",
+    "qm_repository": "https://github.com/yc-software/qm",
+    "qm_adoption": "requested_candidate_feasibility_pending",
+    "additional_host_hardware_required_by_baseline": false,
+    "mandatory_cloud_server_required_by_baseline": false,
+    "plan": "docs/AUSTIN-TWO-DESKTOP-PLAN-2026-09-14.md",
+    "accepted_revised_prices": false
+  },
+  "usageIncluded": 75,
+  "includedCareMonths": 2,
+  "retainerStartsMonth": 3,
+  "revision": 32,
+  "updated": "2026-09-14",
+  "phaseTwoEstimateRange": [
+    6000,
+    8000
+  ],
+  "phaseTwoCreditRange": [
+    4500,
+    6500
+  ],
+  "phaseTwoListBasis": "Owner-specified standard external CRM implementation: A$6,000 to A$8,000, fully built, configured, tested and taken live for the agreed scope. This is our list range, not a verified market average. Hardware, recurring hosting, licences and care remain separately agreed.",
+  "phaseTwoScalarBasis": "implementation_estimate and founding_credit hold the lower bounds for numeric compatibility. Display their full ranges. The credit range is the nominal difference from Austin setup, not a fixed scope-equivalent discount or invoice credit.",
+  "projectDeposit": 1500,
+  "usageReview": "Initial A$75/month allowance reviewable by mutual written agreement during first 30-day review after handover and accepted go-live; no automatic rate change, no retrospective increase; unchanged without agreement.",
+  "hostingTotals": {
+    "crmCarePlusLocalBackup": 164,
+    "crmCarePlusCloud": 209,
+    "budAndCrmCarePlusLocalBackup": 463,
+    "budAndCrmCarePlusCloud": 508
+  }
+}

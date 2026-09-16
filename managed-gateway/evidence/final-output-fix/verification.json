@@ -1,0 +1,391 @@
+{
+  "capturedAt": "2026-09-15T04:28:14.416600+00:00",
+  "status": "local_review_repairs_verified",
+  "worktree": "/Users/yoda/projects/realbud-managed-gateway",
+  "branch": "codex/managed-ai-billing",
+  "baseHead": "058aceabe04aed77c285f2f52f7803fc19bc7ee9",
+  "checks": [
+    {
+      "name": "typecheck-gateway",
+      "command": [
+        "pnpm",
+        "exec",
+        "tsc",
+        "-p",
+        "managed-gateway/tsconfig.json"
+      ],
+      "exitCode": 0
+    },
+    {
+      "name": "tests",
+      "command": [
+        "node",
+        "--experimental-strip-types",
+        "--test",
+        "managed-gateway/billing.test.ts",
+        "managed-gateway/concurrency.test.ts",
+        "managed-gateway/deepseek-effort.test.ts",
+        "managed-gateway/final-output.test.ts",
+        "managed-gateway/gateway.test.ts",
+        "managed-gateway/http.test.ts",
+        "managed-gateway/ledger.test.ts",
+        "managed-gateway/phase2.test.ts",
+        "managed-gateway/provider.test.ts",
+        "managed-gateway/refund-credit.test.ts",
+        "managed-gateway/report-import.test.ts",
+        "managed-gateway/square.test.ts"
+      ],
+      "exitCode": 0
+    }
+  ],
+  "focusedTests": {
+    "total": 99,
+    "passed": 99,
+    "failed": 0,
+    "skipped": 0
+  },
+  "additionalChecks": [
+    {
+      "command": [
+        "node",
+        "--experimental-strip-types",
+        "--test",
+        "managed-gateway/refund-credit.test.ts"
+      ],
+      "exitCode": 0,
+      "passed": 6,
+      "log": "refund-credit-regression.log"
+    },
+    {
+      "command": [
+        "node",
+        "--experimental-strip-types",
+        "managed-gateway/evidence/final-output-fix/reproduction.mts"
+      ],
+      "exitCode": 0,
+      "receipt": {
+        "fixtureOnly": true,
+        "issuerRevoked": true,
+        "rejected": true,
+        "privateContinuationForwardedAfterRevocation": false,
+        "eventTypes": [
+          "reserved"
+        ],
+        "ledgerState": "settled"
+      }
+    },
+    {
+      "command": [
+        "node",
+        "--experimental-strip-types",
+        "managed-gateway/evidence/final-output-fix/refund-credit-reproduction.mts"
+      ],
+      "exitCode": 0,
+      "receipt": {
+        "fixtureOnly": true,
+        "originalBillCents": 2,
+        "creditAlreadyAppliedNanoAud": "10000000",
+        "laterFullRefundCents": 2,
+        "nextStatementTotalCents": 12499,
+        "netReceivedCents": 0,
+        "reconciliationRequired": true
+      }
+    }
+  ],
+  "negativeEvidence": {
+    "before.log": "14 new authorization/accounting/type tests, 11 failed before repair",
+    "refund-credit-before.log": "first five financial regressions, all failed before financial repair"
+  },
+  "sourceFiles": [
+    {
+      "path": "docs/REALBUD-MANAGED-AI-BILLING-2026-09-15.md",
+      "sha256": "73135d0666bdf552bc0e550f8e7048b7a0e8ddbfc96c84675f3cd98241f270a2",
+      "bytes": 30107
+    },
+    {
+      "path": "managed-gateway/FINAL-OUTPUT-FIX.md",
+      "sha256": "1511332003232b8490d4962d2c5378bd65c5e80c15abefc85e9b99498364f886",
+      "bytes": 7491
+    },
+    {
+      "path": "managed-gateway/PHASE2.md",
+      "sha256": "bda6f0c3b1b5912669efd86f54bd0012594d52ae74c2d11ed975e44b664bbd69",
+      "bytes": 17016
+    },
+    {
+      "path": "managed-gateway/README.md",
+      "sha256": "f9fd0300b0421d688150df3ca56b7719d1341f96dc5e679806aa5f0d8f06a992",
+      "bytes": 3586
+    },
+    {
+      "path": "managed-gateway/abort.ts",
+      "sha256": "1cb5649c9b002a0f3f2d5e72a6dec815f30d7a67df9cab57d3c544c4d9a06735",
+      "bytes": 1065
+    },
+    {
+      "path": "managed-gateway/attempts.ts",
+      "sha256": "07fc1f720e6c529abd7d6300eb068c53247820fde41bd8126f1e376db66ab748",
+      "bytes": 1649
+    },
+    {
+      "path": "managed-gateway/auth.ts",
+      "sha256": "83a3c684069749c883777fdfa390280beb69a36a43f9164ad62cdd11f328ac61",
+      "bytes": 4575
+    },
+    {
+      "path": "managed-gateway/benchmark.ts",
+      "sha256": "57367be4a2ff29a71faaea3c197a2f6ae7aa9ab80bbeb5fb9b7165a8d7149802",
+      "bytes": 12625
+    },
+    {
+      "path": "managed-gateway/billing-reconciliation.ts",
+      "sha256": "920566689809be7a42bc0175117d751e87e3104cb58c6c3d3242e57b87de1339",
+      "bytes": 2365
+    },
+    {
+      "path": "managed-gateway/billing.test.ts",
+      "sha256": "4212a097b31ed3df59a7d43501037bd43566a754ca35d0fa6d543ce695147809",
+      "bytes": 9659
+    },
+    {
+      "path": "managed-gateway/billing.ts",
+      "sha256": "39aa461e6d61582f4761430f78bb6e485692af2abe8a7011988bbbeeec13f09a",
+      "bytes": 19409
+    },
+    {
+      "path": "managed-gateway/concurrency.test.ts",
+      "sha256": "8c7099c612986ff7c78ad3bb40ebe113d3d58b0ab5125d457f2fc715b4569f01",
+      "bytes": 5766
+    },
+    {
+      "path": "managed-gateway/contracts.ts",
+      "sha256": "f5a7a175aabab8ff9151ae7618dfff9fa6645b5958cff853c2eeb56663f95001",
+      "bytes": 6725
+    },
+    {
+      "path": "managed-gateway/database.ts",
+      "sha256": "577aa305be902e164efd34ee0438d0c584f8573b165523be88d85e63e145d0b2",
+      "bytes": 9378
+    },
+    {
+      "path": "managed-gateway/deepseek-balance.ts",
+      "sha256": "928450da9054b8fd3d7b7d502d7b0461ed78746590a76583714daa62c633a976",
+      "bytes": 4457
+    },
+    {
+      "path": "managed-gateway/deepseek-effort.test.ts",
+      "sha256": "9034e3c9988754decb4124a28feb5e52ecabc4d4711c6532a3bcd789a2eb2ce3",
+      "bytes": 3857
+    },
+    {
+      "path": "managed-gateway/demo.ts",
+      "sha256": "c6d885a939570df232453511b148dabe8718f769b061e37d39ce97f0c46bb8ef",
+      "bytes": 1779
+    },
+    {
+      "path": "managed-gateway/direct-provider.ts",
+      "sha256": "a0d43cb634dbaf43e7177495969413739ea5deaecbfdefb523e2dfbccfb27153",
+      "bytes": 10564
+    },
+    {
+      "path": "managed-gateway/final-output.test.ts",
+      "sha256": "5c27d617bf49a63286299b6d1f853c9509d1ff9967b353080c3a7c8c5d24a222",
+      "bytes": 5992
+    },
+    {
+      "path": "managed-gateway/gateway.test.ts",
+      "sha256": "dd018f0c473b28d1253069316ff519721d4bcb59a7e56f8e1938ef57f0a99abd",
+      "bytes": 7573
+    },
+    {
+      "path": "managed-gateway/gateway.ts",
+      "sha256": "b4a042588326c2a3a77b90c1b331395080261efbecd083f332fd2ec1c370302a",
+      "bytes": 6249
+    },
+    {
+      "path": "managed-gateway/http.test.ts",
+      "sha256": "771f2287611afdf274225a1a270dfe89bcbfa862c89c553cc88459e46b724787",
+      "bytes": 5909
+    },
+    {
+      "path": "managed-gateway/http.ts",
+      "sha256": "40a3ca837e034b1f7cabb45932afaed8396c7afd796854419aff4676cf6b4720",
+      "bytes": 7348
+    },
+    {
+      "path": "managed-gateway/invoice-html.ts",
+      "sha256": "d747577fba02de71ffc6edb52df9daf02dca6624001f501cfc5f98c89267ee5f",
+      "bytes": 3045
+    },
+    {
+      "path": "managed-gateway/ledger.test.ts",
+      "sha256": "588118c6b15341da2d8204f8332ff3796e9d2151eacfc388540594b19bdc421a",
+      "bytes": 12809
+    },
+    {
+      "path": "managed-gateway/ledger.ts",
+      "sha256": "658f5721e8b4f423dafd6ed29fc4811894c02bb8fae034e8c8b800a6e5862f53",
+      "bytes": 20362
+    },
+    {
+      "path": "managed-gateway/local-payment.ts",
+      "sha256": "f3f2e2d42a5f442338cd30d9738765418a8ed6f4414eba32230f51a4f0c8b9da",
+      "bytes": 3033
+    },
+    {
+      "path": "managed-gateway/messages.ts",
+      "sha256": "4a428032ac719cffd53af89683f96b0e1d0920b5ab654a6975ff749dc101a49b",
+      "bytes": 4273
+    },
+    {
+      "path": "managed-gateway/money.ts",
+      "sha256": "9f745cf976d0414a4fa0c81176cf4741f3e2d910349ed4d8d02f46804d095b1f",
+      "bytes": 4658
+    },
+    {
+      "path": "managed-gateway/openai-provider.ts",
+      "sha256": "1601b2be4afd5f9f13bddb01277bf441cf1822ef9bb64aee3f88f167f5b50d56",
+      "bytes": 6905
+    },
+    {
+      "path": "managed-gateway/phase2.test.ts",
+      "sha256": "c213a7778b348bccf24b918fcf72ea1cc1cf9496f35729ce7601a52aea764853",
+      "bytes": 10033
+    },
+    {
+      "path": "managed-gateway/private-costs.ts",
+      "sha256": "5e355bf5e07517b03caf0bbca396c399baa49a2bf320ce6402cf1b8cf992b76b",
+      "bytes": 4436
+    },
+    {
+      "path": "managed-gateway/provider.test.ts",
+      "sha256": "92bd40e96a857489f6fcaa2799a0dd8163b7844a9ba9c41afd1a526ca34aa16c",
+      "bytes": 4871
+    },
+    {
+      "path": "managed-gateway/refund-credit.test.ts",
+      "sha256": "3f5586752ecbb8cc93f5ca7e5578aaa88439ed2254b4c8ab3f99228d1c4c77b6",
+      "bytes": 9882
+    },
+    {
+      "path": "managed-gateway/report-import.test.ts",
+      "sha256": "2badccd6e19f2bc5b6276d4319ca66555c6405104d49b149281d872de844edb6",
+      "bytes": 7664
+    },
+    {
+      "path": "managed-gateway/report-import.ts",
+      "sha256": "58cfbf0beaf38e69f33a4976bac1e5b580a2e59d96d899e7760eaedfa9a50aad",
+      "bytes": 11389
+    },
+    {
+      "path": "managed-gateway/square.test.ts",
+      "sha256": "f564066f644673a7ab2fe082fc046aa7fcb5d8e6400dcf56c9bf1629562f99c8",
+      "bytes": 10727
+    },
+    {
+      "path": "managed-gateway/square.ts",
+      "sha256": "47d36f18900af8bdc5cc690e31883953bcbec91ad129ef9e0eba71b4b7d964e4",
+      "bytes": 23675
+    },
+    {
+      "path": "managed-gateway/testing.ts",
+      "sha256": "6623f4d1d0f06ac267fa1242dfef338c23d303f9f502667f16480264e7ae8d57",
+      "bytes": 4938
+    },
+    {
+      "path": "managed-gateway/tsconfig.json",
+      "sha256": "03c996b8f7558c67a01522cf7679268581c5fb31f1ed470ec5a6e3829ad63261",
+      "bytes": 383
+    }
+  ],
+  "currentEvidenceFiles": [
+    {
+      "path": "managed-gateway/evidence/final-output-fix/before.log",
+      "sha256": "8c853f9ca8ef006b5fc07139b662ee32b27461ad6e1095bf639ee91761e66365",
+      "bytes": 9663
+    },
+    {
+      "path": "managed-gateway/evidence/final-output-fix/checks.json",
+      "sha256": "b8ade5d59192daf42a96066498fbe2fc87dd7136cb1f36697f144c1a8558c406",
+      "bytes": 831
+    },
+    {
+      "path": "managed-gateway/evidence/final-output-fix/refund-credit-before.log",
+      "sha256": "c955f63652efa397ae249cd46ff55489998fefd7193597b70f5a7fa57809043e",
+      "bytes": 5295
+    },
+    {
+      "path": "managed-gateway/evidence/final-output-fix/refund-credit-regression.log",
+      "sha256": "ef0c778c2138096dfe0231dec432d2455d8f3848bf1542d742dc86407b2b7200",
+      "bytes": 851
+    },
+    {
+      "path": "managed-gateway/evidence/final-output-fix/refund-credit-reproduction.json",
+      "sha256": "a188e26ff510b8f589a0ad4b3b3b16da243f728775bb7dfedca274d05a66de26",
+      "bytes": 221
+    },
+    {
+      "path": "managed-gateway/evidence/final-output-fix/refund-credit-reproduction.mts",
+      "sha256": "a0998eb9d4c301e2a7b405feba581e86d570a85c5a5264d8e1f8e4cc16cab02f",
+      "bytes": 3565
+    },
+    {
+      "path": "managed-gateway/evidence/final-output-fix/refund-credit-reproduction.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "managed-gateway/evidence/final-output-fix/regression.log",
+      "sha256": "af3ad39f4a92aadbeaa60c5c76c6729a9c6ae45d1c3c2e04cfac81b6439f5a6b",
+      "bytes": 1715
+    },
+    {
+      "path": "managed-gateway/evidence/final-output-fix/reproduction.json",
+      "sha256": "615cc7234e51fe65641bf89978b4b1b4d635647f3a4509319b0a89efed449094",
+      "bytes": 193
+    },
+    {
+      "path": "managed-gateway/evidence/final-output-fix/reproduction.mts",
+      "sha256": "475645af649aec9eedb8a98a881eb89f7521a7bd80d2c5f299999f9c9b05f45d",
+      "bytes": 1731
+    },
+    {
+      "path": "managed-gateway/evidence/final-output-fix/reproduction.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "managed-gateway/evidence/final-output-fix/tests.log",
+      "sha256": "64ac141cffa87adad4cd03d22132d7b36bdfe1b5d1a0531210281ac1bfd5b3e8",
+      "bytes": 10549
+    },
+    {
+      "path": "managed-gateway/evidence/final-output-fix/typecheck-gateway.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    }
+  ],
+  "immutability": {
+    "copiedBaselinePath": "/Users/yoda/.codex/tmp/realbud-managed-gateway-baseline/baseline.json",
+    "copiedBaselineSha256": "ab87ffb0313e72c9a72c8258da4b8720e9db1a54f01d5f7d663859ae0efa5d99",
+    "transferredPathsChecked": 611,
+    "changedTransferredPaths": [],
+    "frozen74Snapshot": "/Users/yoda/.codex/tmp/realbud-managed-gateway-baseline/review-74-before/snapshot.json",
+    "frozen74SnapshotSha256": "b10045e422a03c888a43451b85ec4f270a49ef91066267964b25a4b46fd60d58",
+    "frozenSourceFilesChecked": 55,
+    "priorEvidenceFilesChecked": 20,
+    "priorEvidenceFilesUnchanged": true,
+    "priorArtifacts": {
+      "managed-gateway-complete-v2.patch": "f379d16617f8a0c989044309d986b26e4dc0b7ee9fc68ea0788d9f28492c9518",
+      "managed-gateway-phase2.patch": "84ba5eb4e696b924a6327429e8d1345a59a83aa235aaf14a7bb8788a690c01eb",
+      "phase2-patch-receipt.json": "1041f62baafd052962b3eb0d4f5c4ae28d891fa19906a6286bffa4ccc52a7daa"
+    }
+  },
+  "limits": [
+    "Only injected provider and Square transports used; no live accounts, credentials, payment writes or deployments.",
+    "No core/shared checkout, website or customer artifact edits.",
+    "Refund/credit hold requires reviewed repair; there is no automatic allocation or clearing policy.",
+    "Historical 74-test latency is not a measurement of this repaired source.",
+    "Independent broader core review and actual core/Hermes/device/website integration remain separate gates."
+  ]
+}

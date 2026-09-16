@@ -1,0 +1,116 @@
+✖ refund_then_credit: preserve real refund and immutable statements, flag allocation and hold further affected billing (18.978209ms)
+✖ credit_then_refund: preserve real refund and immutable statements, flag allocation and hold further affected billing (4.282667ms)
+✖ applied_credit_then_refund: preserve real refund and immutable statements, flag allocation and hold further affected billing (3.5335ms)
+✖ refund readback racing with credit close across two SQLite connections remains visible after restart (15.201792ms)
+✖ refund arriving during Square draft preflight blocks the write at its transaction boundary (4.463375ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 0
+ℹ fail 5
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 125.810209
+
+✖ failing tests:
+
+test at managed-gateway/refund-credit.test.ts:53:3
+✖ refund_then_credit: preserve real refund and immutable statements, flag allocation and hold further affected billing (18.978209ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + undefined
+  - true
+  
+      at TestContext.<anonymous> (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/refund-credit.test.ts:62:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at managed-gateway/refund-credit.test.ts:53:3
+✖ credit_then_refund: preserve real refund and immutable statements, flag allocation and hold further affected billing (4.282667ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + undefined
+  - true
+  
+      at TestContext.<anonymous> (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/refund-credit.test.ts:62:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at managed-gateway/refund-credit.test.ts:53:3
+✖ applied_credit_then_refund: preserve real refund and immutable statements, flag allocation and hold further affected billing (3.5335ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + undefined
+  - true
+  
+      at TestContext.<anonymous> (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/refund-credit.test.ts:62:14)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at managed-gateway/refund-credit.test.ts:81:1
+✖ refund readback racing with credit close across two SQLite connections remains visible after restart (15.201792ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + undefined
+  - true
+  
+      at TestContext.<anonymous> (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/refund-credit.test.ts:89:12)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at managed-gateway/refund-credit.test.ts:101:1
+✖ refund arriving during Square draft preflight blocks the write at its transaction boundary (4.463375ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /refund_credit_allocation_required/. Input:
+  
+  'Error: square_reconciliation_required'
+  
+      at async TestContext.<anonymous> (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/refund-credit.test.ts:108:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: square_reconciliation_required
+        at requireThat (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/contracts.ts:8:21)
+        at SquareBilling.perform (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/square.ts:79:115)
+        at async SquareBilling.createDraft (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/square.ts:105:30)
+        at async waitForActual (node:assert:615:5)
+        at async strict.rejects (node:assert:738:25)
+        at async TestContext.<anonymous> (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/refund-credit.test.ts:108:5)
+        at async Test.run (node:internal/test_runner/test:1409:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:974:7),
+    expected: /refund_credit_allocation_required/,
+    operator: 'rejects',
+    diff: 'simple'
+  }

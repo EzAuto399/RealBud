@@ -1,0 +1,137 @@
+{
+  "recordedAt": "2026-09-15T04:04:37.143906+00:00",
+  "scope": "Local synthetic phase 2; no live integration or automatic per-key historical-cost connector",
+  "worktree": "/Users/yoda/projects/realbud-managed-gateway",
+  "branch": "codex/managed-ai-billing",
+  "baseHead": "058aceabe04aed77c285f2f52f7803fc19bc7ee9",
+  "focusedTests": 74,
+  "checks": [
+    {
+      "name": "typecheck-gateway",
+      "command": [
+        "pnpm",
+        "exec",
+        "tsc",
+        "-p",
+        "managed-gateway/tsconfig.json"
+      ],
+      "exitCode": 0
+    },
+    {
+      "name": "tests",
+      "command": [
+        "node",
+        "--experimental-strip-types",
+        "--test",
+        "managed-gateway/billing.test.ts",
+        "managed-gateway/concurrency.test.ts",
+        "managed-gateway/gateway.test.ts",
+        "managed-gateway/http.test.ts",
+        "managed-gateway/ledger.test.ts",
+        "managed-gateway/phase2.test.ts",
+        "managed-gateway/provider.test.ts",
+        "managed-gateway/report-import.test.ts",
+        "managed-gateway/square.test.ts"
+      ],
+      "exitCode": 0
+    }
+  ],
+  "benchmark": {
+    "command": [
+      "node",
+      "--experimental-strip-types",
+      "managed-gateway/benchmark.ts"
+    ],
+    "exitCode": 0,
+    "scenarios": 6,
+    "measuredWorkflowsPerRoutePerScenario": 24,
+    "modelCallsPerWorkflow": 3,
+    "failures": 0,
+    "manifestMatchesCurrentSources": true
+  },
+  "baselineTransferredCount": 611,
+  "baselineChangedPaths": [],
+  "preservedOriginalEvidence": {
+    "managed-gateway/evidence/typecheck-app.log": "54c571734d855ea49ebad9062b4e28b8d50ba3d9ed76a8779796212e551688f2",
+    "managed-gateway/evidence/coordination-2026-09-15.json": "75a9563cf9008f54be19876add3ac875d8eac8f5dc0736171383c8138da9ccd6",
+    "managed-gateway/evidence/README.md": "4e91984fb9ce72106c9164a061eeb67aae145590cd78f5a463fc2239fdd1c545",
+    "managed-gateway/evidence/typecheck-gateway.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "managed-gateway/evidence/demo.log": "3864d910bc2bac8bb29d7d2659c9c33e22735ba2389847b22c2217e48e1b4885",
+    "managed-gateway/evidence/tests.log": "4cfc21133a733e2af6765983e0915b75d5b74ffba6ff3cbfddf83ee65baabe1b",
+    "managed-gateway/evidence/verification.json": "97f42c1beaf3587e86cdca74e25d95431bf038e329ce00f3982780fbe003a300",
+    "managed-gateway/evidence/demo/result.json": "22de92cdfa48df762090a6a3cf0c6d6627a62e700a0b5cfdb0acf1964430b3ae",
+    "managed-gateway/evidence/demo/invoice.html": "675e54c99a423335c3f6e20ce73eee4ac72bf97876cdde10e2e4ccece435252a",
+    "managed-gateway/evidence/demo/invoice.json": "27f2fdedcb45aa45816c030806161f2f8137dfa83ec228356740146fcd99a3da"
+  },
+  "preservedOriginalPatchSha256": "bb7b409e38a543be6fe3b3d86cb5ee0514c74dd469c09f21c26437d27f351299",
+  "sourceHashes": {
+    "managed-gateway/provider.test.ts": "92bd40e96a857489f6fcaa2799a0dd8163b7844a9ba9c41afd1a526ca34aa16c",
+    "managed-gateway/concurrency.test.ts": "8c7099c612986ff7c78ad3bb40ebe113d3d58b0ab5125d457f2fc715b4569f01",
+    "managed-gateway/testing.ts": "6623f4d1d0f06ac267fa1242dfef338c23d303f9f502667f16480264e7ae8d57",
+    "managed-gateway/demo.ts": "c6d885a939570df232453511b148dabe8718f769b061e37d39ce97f0c46bb8ef",
+    "managed-gateway/local-payment.ts": "f3f2e2d42a5f442338cd30d9738765418a8ed6f4414eba32230f51a4f0c8b9da",
+    "managed-gateway/square.ts": "681f97d3ffba1b02dd8ecdf4d7385e4283649c29939826dfa245b33241188f64",
+    "managed-gateway/http.test.ts": "771f2287611afdf274225a1a270dfe89bcbfa862c89c553cc88459e46b724787",
+    "managed-gateway/direct-provider.ts": "c87a6add8903a89330d09de74747e573fdfa525b11afdbb992e0626042e668e3",
+    "managed-gateway/square.test.ts": "0c92ca7d20a8166bcc1696e10974f57128896104033d2b58f9b96dea8cef20db",
+    "managed-gateway/billing.test.ts": "4212a097b31ed3df59a7d43501037bd43566a754ca35d0fa6d543ce695147809",
+    "managed-gateway/contracts.ts": "f5a7a175aabab8ff9151ae7618dfff9fa6645b5958cff853c2eeb56663f95001",
+    "managed-gateway/messages.ts": "4a428032ac719cffd53af89683f96b0e1d0920b5ab654a6975ff749dc101a49b",
+    "managed-gateway/http.ts": "40a3ca837e034b1f7cabb45932afaed8396c7afd796854419aff4676cf6b4720",
+    "managed-gateway/attempts.ts": "07fc1f720e6c529abd7d6300eb068c53247820fde41bd8126f1e376db66ab748",
+    "managed-gateway/report-import.test.ts": "2badccd6e19f2bc5b6276d4319ca66555c6405104d49b149281d872de844edb6",
+    "managed-gateway/ledger.test.ts": "588118c6b15341da2d8204f8332ff3796e9d2151eacfc388540594b19bdc421a",
+    "managed-gateway/PHASE2.md": "bda6f0c3b1b5912669efd86f54bd0012594d52ae74c2d11ed975e44b664bbd69",
+    "managed-gateway/money.ts": "9f745cf976d0414a4fa0c81176cf4741f3e2d910349ed4d8d02f46804d095b1f",
+    "managed-gateway/README.md": "2e70a1c327dd6877619ea69560375ac888cb22aec8a45f7a26cd2b15920fdab5",
+    "managed-gateway/openai-provider.ts": "1601b2be4afd5f9f13bddb01277bf441cf1822ef9bb64aee3f88f167f5b50d56",
+    "managed-gateway/ledger.ts": "7f3722e239faed8e0b12754ab5cc8a0bbb6362d3c24a3b6f5313472051a543f0",
+    "managed-gateway/abort.ts": "1cb5649c9b002a0f3f2d5e72a6dec815f30d7a67df9cab57d3c544c4d9a06735",
+    "managed-gateway/database.ts": "577aa305be902e164efd34ee0438d0c584f8573b165523be88d85e63e145d0b2",
+    "managed-gateway/private-costs.ts": "5e355bf5e07517b03caf0bbca396c399baa49a2bf320ce6402cf1b8cf992b76b",
+    "managed-gateway/phase2.test.ts": "c213a7778b348bccf24b918fcf72ea1cc1cf9496f35729ce7601a52aea764853",
+    "managed-gateway/report-import.ts": "58cfbf0beaf38e69f33a4976bac1e5b580a2e59d96d899e7760eaedfa9a50aad",
+    "managed-gateway/gateway.test.ts": "dd018f0c473b28d1253069316ff519721d4bcb59a7e56f8e1938ef57f0a99abd",
+    "managed-gateway/tsconfig.json": "03c996b8f7558c67a01522cf7679268581c5fb31f1ed470ec5a6e3829ad63261",
+    "managed-gateway/deepseek-balance.ts": "928450da9054b8fd3d7b7d502d7b0461ed78746590a76583714daa62c633a976",
+    "managed-gateway/billing.ts": "599e2ddde98997298050a0c60d83a53c70fea1467e28c42db6d9dc02b95f709d",
+    "managed-gateway/benchmark.ts": "57367be4a2ff29a71faaea3c197a2f6ae7aa9ab80bbeb5fb9b7165a8d7149802",
+    "managed-gateway/gateway.ts": "6dd4f543b774ef18fdee6cc9e16d93b45e6b466a3667d63278df82a9816cedc3",
+    "managed-gateway/invoice-html.ts": "d747577fba02de71ffc6edb52df9daf02dca6624001f501cfc5f98c89267ee5f",
+    "managed-gateway/auth.ts": "bf259a2fd2f4e353ca8560d16f4d120caa5bb50f9a6428f41653fe6312f2db47",
+    "docs/REALBUD-MANAGED-AI-BILLING-2026-09-15.md": "d9f733865a55f911a25db6c4758e2004fd7ff89a13a3ead6cd93a4fb6c0aee92"
+  },
+  "evidenceHashes": {
+    "managed-gateway/evidence/phase2/initial-test-failure.log": "7704e225d924fc5b28b3d62e1adbd6f83aa5d68486666160d808ed08e8789b15",
+    "managed-gateway/evidence/phase2/benchmark.log": "c28bd498bf48105b22d8298759879f1a4ae6200d302a1ab1e13e783a13384543",
+    "managed-gateway/evidence/phase2/checks.json": "eef750e7dbf3235a05023700b81c1f0499f93605f907d07a88d6bf094ce3b353",
+    "managed-gateway/evidence/phase2/typecheck-gateway.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "managed-gateway/evidence/phase2/benchmark-initial.log": "70a7d3d81c0169e40bb5a162945e88d603d4c29e6fe68c3bcee4a007c50d4054",
+    "managed-gateway/evidence/phase2/latency-initial.json": "0fb349f058270d72940a79697bcca3300137da3a1a405b619a698a7ee4932b0f",
+    "managed-gateway/evidence/phase2/tests.log": "f4b7883cc45e18bb35693f615c4a0269426b4b1bc48967e71611fcca7aacfade",
+    "managed-gateway/evidence/phase2/latency.json": "35630d64acc7e050b5ca2ca6591874460933f3c4da883380a45b04588cd05d55",
+    "managed-gateway/evidence/phase2/history-connector-research.json": "dfbc31e304a37cd3280d86a13aba722defafd8cbb9799597bab0d28d4432d81b"
+  },
+  "developmentCorrections": [
+    "Preserved legacy attempt-conflict behavior while adding child identity",
+    "Fixed synthetic duplicate provider IDs between two legitimate continuation calls",
+    "Moved the late-usage fixture forward from the fixture rate effective date",
+    "Used a typed stream reader for loopback benchmark response parsing",
+    "Required non-null DeepSeek assistant tool content per current official integration guidance"
+  ],
+  "sourceWhitespaceCheck": "passed",
+  "rawEvidenceWhitespace": "Original failure log retains two whitespace-only lines verbatim; no test evidence was rewritten to silence them",
+  "realProviderInferenceCalls": 0,
+  "supplierAccountReads": 0,
+  "squareApiCalls": 0,
+  "customerMessagesSent": 0,
+  "deployment": false,
+  "limits": [
+    "No website changes or visual proof",
+    "No live model/Hermes/device integration",
+    "Automatic per-key historical cost connector unsupported/unconfigured",
+    "Synthetic JSON report parser only; actual DeepSeek exports unverified",
+    "Square refunds are read/reconciled only; refund-credit allocation and issued invoice export remain gates",
+    "No production rate or markup selected"
+  ]
+}

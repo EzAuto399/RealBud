@@ -1,0 +1,96 @@
+✔ monthly invoice is sequential, itemised, GST-inclusive and care never adds a usage surcharge (23.256167ms)
+✔ no usage produces no AI usage fee, and care requires its own explicit agreement reference (1.275084ms)
+✔ open month and unreconciled provider usage block invoice close (1.303875ms)
+✔ receipt exists only after signed matching verified settlement, never from a browser return (4.934334ms)
+✔ webhook raw bytes, environment, timestamp and amount are authenticated (3.038625ms)
+✔ duplicate event IDs and distinct events for one settlement do not duplicate receipts (3.427375ms)
+✔ uncertain checkout creation is durable and never automatically retried (2.246541ms)
+✔ late settlement can reconcile a lost checkout response using the persisted exact attempt (2.47175ms)
+✔ credits after month close become an adjustment and never rewrite the paid invoice (3.095542ms)
+✔ refunds require settled payment and an unapplied credit, and signed success is idempotent (3.327666ms)
+✔ payment adapter selection cannot enable production collection in this build (0.83175ms)
+✔ printable invoice escapes tenant content and does not expose payment/provider secrets (2.142875ms)
+✔ two independent processes cannot reserve more than one shared monthly cap (93.696792ms)
+✔ gateway streams verified measured usage once and idempotent retries never call provider again (18.405ms)
+✔ issuer signature binds model, tenant, installation, audience, exact request and expiry (2.336667ms)
+✔ missing device/job authority cannot be replaced with an otherwise valid signature (1.177875ms)
+✔ revoked issuer or service entitlement blocks requests before provider dispatch (1.306084ms)
+✔ revocation between reservation and dispatch releases only the undispatched reservation (1.420125ms)
+✔ authority revocation during a stream cancels further output and retains unknown usage (1.643667ms)
+✔ cancellation before admission makes no reservation or provider call (0.968708ms)
+✔ provider failure, missing or duplicate usage retains reservation and cannot auto-retry (7.448125ms)
+✔ known failed request usage is measured; unused token ceiling is released (1.546042ms)
+✔ unreviewed provider terms, unselected model and excessive output limit fail closed (1.446208ms)
+✔ client-supplied provider URLs, identities and arbitrary tools are rejected (1.595125ms)
+✔ stored usage and portal responses contain no prompts, grants, private costs or upstream accounts (2.065ms)
+✔ stuck authority acquisition ends on cancellation before reservation (0.955459ms)
+✔ stuck provider iterators end on cancellation and retain uncertain usage (1.692041ms)
+✔ reconciliation cannot substitute another provider for the saved route (1.873875ms)
+✔ HTTP model dispatch and scoped portal read persist one actual simulated request (25.808167ms)
+✔ generic headers, office sessions, cookies and execution grants cannot impersonate a portal account (7.182458ms)
+✔ portal readers cannot change caps or accept rates; invoices enforce tenant scope (6.442834ms)
+✔ HTTP errors are generic and deny oversized bodies, prototype extras and unauthorized webhook data (3.694875ms)
+✔ private source cost/FX/margin versions persist and never enter tenant views (5.203416ms)
+✔ exact decimal metering separates cached input and reasoning-inclusive output (6.986667ms)
+✔ rate cards cannot silently omit tax or mutate published amounts (1.230583ms)
+✔ customer rate acceptance is tenant scoped, owner-only and digest-bound (2.609666ms)
+✔ private margin and FX helper requires explicit inputs and does not publish (2.473125ms)
+✔ two included months are anchored to accepted go-live and Brisbane civil dates (3.133208ms)
+✔ concurrent reservations cannot exceed cap, including unknown prior-month exposure (1.814709ms)
+✖ idempotency rejects changed bodies, member crossover, jti and attempt reuse (1.552542ms)
+✔ dispatch claims are once-only and undispatched release never erases uncertain cost (1.128875ms)
+✔ unknown usage requires independent reconciliation; zero confirmed usage costs zero (1.131125ms)
+✔ late provider overruns are audited and absorbed above the customer authorisation (1.508834ms)
+✔ evidence is immutable/idempotent and provider request IDs cannot bill two tenants (1.428333ms)
+✔ credits cannot exceed settled charges or mutate prior ledger events (3.065416ms)
+✔ restart preserves reservations and history without retaining prompt text (7.713833ms)
+✔ monthly rounding preserves total cents and fractional caps never permit excess (0.240667ms)
+✔ lowered caps and revoked entitlements block admission without deleting history (1.256542ms)
+✔ foreign databases and unknown schema versions are rejected without migration (5.297459ms)
+✔ tampered ledger history fails startup verification (8.437416ms)
+✔ a provider request cannot be rebilled through a different model route (2.704041ms)
+✔ OpenAI adapter uses explicit route, bounded output, upstream secret only and exact disjoint usage (22.820458ms)
+✔ missing/extra/unsupported provider usage and truncated streams fail instead of estimating (2.193583ms)
+✔ upstream failures are not retried or echoed with provider account details (1.454708ms)
+✔ cancellation aborts a stuck transport read (1.096625ms)
+ℹ tests 55
+ℹ suites 0
+ℹ pass 54
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 184.020167
+
+✖ failing tests:
+
+test at managed-gateway/ledger.test.ts:59:1
+✖ idempotency rejects changed bodies, member crossover, jti and attempt reuse (1.552542ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /attempt_already_reserved/. Input:
+  
+  'Error: idempotency_conflict'
+  
+      at TestContext.<anonymous> (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/ledger.test.ts:63:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: idempotency_conflict
+        at requireThat (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/contracts.ts:7:21)
+        at file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/ledger.ts:113:9
+        at LedgerDatabase.transaction (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/database.ts:71:26)
+        at UsageLedger.reserve (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/ledger.ts:98:20)
+        at file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/ledger.test.ts:63:30
+        at getActual (node:assert:580:5)
+        at strict.throws (node:assert:728:24)
+        at TestContext.<anonymous> (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/ledger.test.ts:63:10)
+        at Test.runInAsyncScope (node:async_hooks:226:14)
+        at Test.run (node:internal/test_runner/test:1402:25),
+    expected: /attempt_already_reserved/,
+    operator: 'throws',
+    diff: 'simple'
+  }

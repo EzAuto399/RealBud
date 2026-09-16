@@ -1,97 +1,34 @@
 ---
 name: windows-release
-description: Build, verify, and publish the Windows desktop build (NSIS installer + latest.yml) to EzAuto399/RealBud. Use when cutting a release, shipping a new version to Windows users, or when a Windows user reports they are stuck on an old version. Windows only — does not cover the macOS dmg/notarization flow (see docs/GRADUATE-RELEASE.md).
+description: Build, verify or publish RealBud Windows installers and update feeds. Use for a Windows release or Windows update-delivery failure.
 ---
 
-# Windows release
+# RealBud Windows release
 
-Ships `RealBud-<version>-setup.exe` and its update feed to
-[EzAuto399/RealBud](https://github.com/EzAuto399/RealBud).
+Use this checkout's `package.json`, `electron-builder.yml`, `.github/workflows/package-win.yml` when present, and `docs/GRADUATE-RELEASE.md` to resolve the current pipeline. Build on Windows or its existing Windows CI runner. Read the installed Node/pnpm requirements; avoid a macOS Wine workaround.
 
-**Scope: Windows only.** The macOS build is a separate flow (dmg + notarytool +
-staple via `pnpm package:mac:release`) that must run on a Mac. This skill never
-touches mac artifacts — but see [Every release ships both](#every-release-ships-both)
-before you finish.
+A request to build an installer authorizes preparation and checks. Uploading a release or changing an update feed requires the corresponding release authority. Continue through already authorized stages; do not ask again merely because the workflow has several steps.
 
-## Preconditions
+## Prepare and build
 
-- **Run on Windows.** NSIS packaging from macOS needs Wine; don't.
-- **Node 24+** (`package.json` `engines`).
-- **pnpm** via `corepack pnpm`.
-- Graduate path: `docs/GRADUATE-RELEASE.md`. Until Hermes is bundled, Windows
-  stays CSV-only for worker attach (`hermesInstallCommand` is null on win32).
+Resolve the requested version and target repository from current source and the release request. This project's existing release destination is `EzAuto399/RealBud`; confirm the selected checkout matches it. A proof build does not need a version bump. For a versioned release, align package version and tag using the existing process.
 
-## 1. Version
+Use `pnpm typecheck` and `pnpm package:win` with the checkout's lockfile and Windows environment. Inspect what the script actually includes: Hermes installation, Cua/native controls and speech packaging have changed across checkouts. Do not assume CSV-only operation, no Windows speech helper, or successful native control from an old instruction file.
 
-Bump `version` in `package.json`. It must match the tag on the GitHub release you
-upload to, and it becomes the version electron-updater compares against.
+## Verify artifacts and installation
 
-## 2. Build
+Check the unpacked resources contain `server/index.js`, `ui/index.html` and the expected `app-update.yml`. Verify the generated update configuration targets the intended repository/channel. Missing server code can prevent service startup; missing UI can produce a blank window.
 
-```powershell
-pnpm install
-pnpm typecheck
-pnpm package:win
-```
+Check the emitted versioned installer, blockmap, portable artifact when configured, and `latest.yml`. The generated feed must point to the correct installer and digest. Never hand-edit `latest.yml` or substitute an unverified binary.
 
-`package:win` deliberately omits `build:speech` — the dictation helper is a signed
-macOS Swift binary and has no Windows counterpart.
+Exercise per-user installation and startup on Windows, Desk rendering, update behavior and relevant native/worker flows. Keep local logs sanitized. A Windows CI build or a Mac test does not prove a clean Windows install or customer workflow.
 
-Output in `release/`:
+Resolve signing state from this build's configuration and signature verification. If unsigned, do not add an unsupported `publisherName` or claim signing. For signed updates, preserve the accepted certificate subject or a deliberately supported subject transition. Never expose signing credentials.
 
-| File | Purpose |
-|---|---|
-| `RealBud-<version>-setup.exe` | the installer |
-| `latest.yml` | **the update feed** — see step 4 |
-| `RealBud-<version>-setup.exe.blockmap` | differential updates |
-| `RealBud-<version>-x64.zip` | portable, not used by the updater |
+## Publish only within release scope
 
-## 3. Verify before uploading
+For an authorized customer release, keep Mac notarized and Windows artifacts on the same version/tag according to the current release policy. If Windows cannot ship, hold the customer release or explicitly disclose the Windows freeze in release notes. A local proof build does not require publishing another platform.
 
-```powershell
-Test-Path release\win-unpacked\resources\server\index.js
-Test-Path release\win-unpacked\resources\ui\index.html
-Get-Content release\win-unpacked\resources\app-update.yml
-```
+Upload the generated versioned installer, stable `RealBud-setup.exe` alias when used by the website, blockmap and update feed to the intended tag. Verify actual download URLs and feed hashes after upload. Publishing the feed is an external customer-facing effect; do not infer permission from the presence of `gh` credentials.
 
-- Missing `server/index.js` → harness fails → "Couldn't start the desk service".
-- Missing `ui/index.html` → black window.
-- `app-update.yml` must point at `EzAuto399/RealBud` and, while the build is
-  unsigned, **must not contain `publisherName`**.
-
-Then smoke-test the installer: per-user install, Desk renders, logs under
-`%APPDATA%\RealBud\logs\server.log`, no surprise update popup on first launch.
-
-## 4. Publish
-
-Upload to the **same tag** as the macOS release for that version.
-
-```powershell
-Copy-Item release/RealBud-<version>-setup.exe release/RealBud-setup.exe
-gh release upload v<version> --repo EzAuto399/RealBud `
-  release/RealBud-<version>-setup.exe `
-  release/RealBud-setup.exe `
-  release/RealBud-<version>-setup.exe.blockmap `
-  release/latest.yml
-```
-
-- **`RealBud-<version>-setup.exe`** is what `latest.yml` references.
-- **`RealBud-setup.exe`** is a stable `/releases/latest/download/` URL.
-
-**Never hand-edit `latest.yml`.** It pins the installer's sha512.
-
-## Every release ships both
-
-Whenever a new version goes out, Mac notarized artifacts and Windows artifacts
-land on the same tag. If Windows can't ship, don't publish a mac-only tag as a
-customer release — or say Windows is frozen in the release notes.
-
-## Signing (T17 Win)
-
-No certificate is configured today, so SmartScreen shows "unknown publisher".
-Auto-update still works while unsigned (no `publisherName`).
-
-When signing is added: `win.signtoolOptions` or `win.azureSignOptions` in
-`electron-builder.yml` (electron-builder 26 — no top-level `win.certificateFile`).
-Only then set `publisherName`. Keep the certificate subject stable forever, or
-list both old and new in `publisherName`.
+Report source/version, packaged files, signature status, uploaded/feed status and actual Windows installation/worker evidence separately. Preserve failed build/release state and use the current recovery path instead of blindly bumping a second version.

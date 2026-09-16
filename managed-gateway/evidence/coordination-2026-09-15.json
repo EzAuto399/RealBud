@@ -1,0 +1,20 @@
+{
+  "recordedAt": "2026-09-15T03:28:23.990647+00:00",
+  "kind": "documentation-only-coordination",
+  "coreTaskId": "01a09daf-87ab-7e60-9ad3-23f8313c4cd6",
+  "contracts": [
+    "H09",
+    "W05",
+    "S02"
+  ],
+  "originalPatch": "/Users/yoda/.codex/tmp/realbud-managed-gateway-baseline/managed-gateway.patch",
+  "originalPatchSha256": "bb7b409e38a543be6fe3b3d86cb5ee0514c74dd469c09f21c26437d27f351299",
+  "originalVerificationSha256": "97f42c1beaf3587e86cdca74e25d95431bf038e329ce00f3982780fbe003a300",
+  "changedSourceFile": "docs/REALBUD-MANAGED-AI-BILLING-2026-09-15.md",
+  "beforeSha256": "da6dbdf216126b0b9497f98909d55906d54ba127cddd56ffcb7a82dd18b3bbf5",
+  "afterSha256": "a9ee3fa0400ee21e41b6a7ba52d3f096ec46f0b663a6f24ec206a6eb2247728b",
+  "otherOriginalSourceHashes": "all unchanged",
+  "originalFocusedTestCount": 55,
+  "testsRerun": false,
+  "productionAuthorityExpanded": false
+}

@@ -1,0 +1,20 @@
+{
+  "checkedAt": "2026-09-15T04:01:51.024016+00:00",
+  "officialReference": "https://api-docs.deepseek.com/api/deepseek-api/",
+  "officialBalance": "https://api-docs.deepseek.com/api/get-user-balance/",
+  "officialFaq": "https://static.deepseek.com/faq/index.html?lang=en",
+  "publicFaqBundle": "https://static.deepseek.com/faq/static/main.d7e066fb1b.js",
+  "bundleSha256": "ef697a614021c8f949816f30058a1d3443e8a07849edeb7a895770741b7a9d75",
+  "method": "Read public API reference and FAQ JavaScript; primary-domain searches for historical usage/billing endpoints. No login/account/private endpoint request.",
+  "finding": "Documented per-request response usage and account-wide balance; FAQ supports dashboard per-key filter and report export. No supported automatic per-key historical cost endpoint or schema was verified. This is a documentation gap, not proof that a private/partner API cannot exist.",
+  "requiredDependency": [
+    "Provider-supported read-only historical usage/cost API or contracted automatic report feed",
+    "Documented authentication/scopes and nonsecret key identity mapping",
+    "Interval timezone, units, cache buckets, model/version, currency/tax and cost semantics",
+    "Pagination/cursors, finality/late adjustments, retention and rate limits",
+    "Provider-approved access and explicitly authorized test fixtures/account reads"
+  ],
+  "connectorStatus": "unsupported_unconfigured",
+  "automaticBillingStatus": "not_complete",
+  "externalAuthenticatedCalls": 0
+}

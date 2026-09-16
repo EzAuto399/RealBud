@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Property } from "./desk";
-import { buildingKey, groupBySuburb, sortBook, suburbOf } from "./book-groups";
+import { buildingKey, groupProperties, groupBySuburb, sortBook, suburbOf } from "./book-groups";
 
 function prop(id: string, address: string, weeklyRentCents = 50_000): Property {
   return {
@@ -65,5 +65,43 @@ describe("sortBook", () => {
   it("orders by days late with unknown facts last, never as zero", () => {
     const ledger = [{ propertyId: "b", daysSinceDue: 9, rentLanded: false, levyPaid: false, daysSinceCourtesy: null }];
     expect(sortBook(book, ledger, "late").map((p) => p.id)).toEqual(["b", "a"]);
+  });
+});
+
+describe("compact portfolio groups", () => {
+  it("handles explicit unit prefixes, spacing, street suffix and case consistently", () => {
+    const groups = groupProperties([prop("a", "Unit 3, 12 Oak Street, Dickson ACT"), prop("b", "4/12 oak st,Dickson ACT"), prop("c", "Unit 5 12 Oak St, Dickson ACT")], "building");
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.properties).toHaveLength(3);
+    expect(suburbOf("Unit 3, 12 Oak St, Dickson ACT")).toBe("Dickson ACT");
+    expect(suburbOf("Unit 3, 12 Oak St")).toBe("No suburb");
+  });
+  it("never merges uncertain localities, different streets or different suburbs", () => {
+    expect(groupProperties([prop("a", "1/12 Oak St"), prop("b", "2/12 Oak St"), prop("c", "1/12 Oak St, Dickson ACT"), prop("d", "2/12 Oak St, Kingston ACT"), prop("e", "3/14 Oak St, Dickson ACT")], "building")).toHaveLength(5);
+  });
+  it.each([20, 50, 100, 150, 200, 500])("counts all %i properties before UI pagination", count => {
+    const properties = Array.from({ length: count }, (_, i) => prop(`p${i}`, `${i + 1}/12 Oak St, Dickson ACT`));
+    const groups = groupProperties(properties, "building");
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.properties).toHaveLength(count);
+    expect(groups[0]!.weeklyRentCents).toBe(count * 50_000);
+    expect(properties[0]!.id).toBe("p0");
+  });
+  it("groups explicit portal links once per property, separating unresolved and unlinked", () => {
+    const properties = [prop("a", "1 Oak"), prop("b", "2 Oak"), prop("c", "3 Oak"), prop("d", "4 Oak")];
+    properties[3]!.options.notifyChannel = "portal";
+    const groups = groupProperties(properties, "portal", [
+      { propertyId: "a", origins: ["https://portal.test", "https://other.test"], unresolved: false },
+      { propertyId: "b", origins: ["https://other.test", "https://portal.test"], unresolved: false },
+      { propertyId: "c", origins: ["https://portal.test"], unresolved: true },
+    ]);
+    expect(groups).toHaveLength(3);
+    expect(groups.flatMap(g => g.properties)).toHaveLength(4);
+    expect(groups.find(g => g.label === "No portal linked")!.properties[0]!.id).toBe("d");
+    expect(groups.find(g => g.properties.length === 2)!.properties.map(p => p.id)).toEqual(["a", "b"]);
+  });
+  it("handles empty and older books without portal metadata", () => {
+    expect(groupProperties([], "building")).toEqual([]);
+    expect(groupProperties([prop("a", "12 Oak")], "portal")[0]!.label).toBe("No portal linked");
   });
 });

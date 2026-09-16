@@ -54,20 +54,43 @@ export function readChannels(body: unknown): ChannelsState {
   };
 }
 
+/** Merge a partial SSE/API channels patch onto the current roster. */
+export function mergeChannelsPatch(prev: ChannelsState | null, patch: unknown): ChannelsState {
+  const base = prev ?? {
+    telegram: { connected: false } as ChannelStatus,
+    discord: { connected: false } as ChannelStatus,
+    slack: { connected: false } as ChannelStatus,
+  };
+  if (!patch || typeof patch !== "object") return base;
+  const rec = patch as Record<string, unknown>;
+  return {
+    telegram: "telegram" in rec ? readChannelStatus(rec.telegram) : base.telegram,
+    discord: "discord" in rec ? readChannelStatus(rec.discord) : base.discord,
+    slack: "slack" in rec ? readChannelStatus(rec.slack) : base.slack,
+  };
+}
+
+export function channelsAwaitingPair(channels: ChannelsState | null | undefined): boolean {
+  if (!channels) return false;
+  return LIVE_CHANNEL_PLATFORMS.some((platform) => {
+    const row = channels[platform];
+    return row.connected && !row.paired;
+  });
+}
+
+export const CHANNELS_UPDATED_EVENT = "realbud:channels";
+
 export function readTelegramChannel(body: unknown): TelegramChannel {
   return readChannels(body).telegram;
 }
 
 export function channelStatusLine(
-  platform: ChannelPlatform,
+  _platform: ChannelPlatform,
   status: Pick<ChannelConnected, "paired" | "pairedName" | "lastMessageAt">,
   now = Date.now(),
 ): string {
   if (!status.paired) {
-    if (platform === "discord" || platform === "slack") {
-      return "Now DM the bot once — the first chat to write pairs with this Mac.";
-    }
-    return "Now message the bot once from your phone — the first chat to write pairs with this Mac.";
+    return "Create a pairing code on this Mac, then send it to the bot in a private chat.";
   }
   const who = status.pairedName?.trim() ? `Paired with ${status.pairedName.trim()}` : "Paired";
   return status.lastMessageAt ? `${who} · last message ${relativeAgo(status.lastMessageAt, now)}` : who;

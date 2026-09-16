@@ -1,8 +1,8 @@
 # Worker lifecycle — the hidden spine
 
-Date: 2026-08-31
-Status: install / apply-pack / attach / test are shipped (You → Bud). Repair and
-Remove build now. Update policy below is the decision of record.
+Historical design: 2026-08-31. Reviewed 2026-09-10.
+
+**This page is superseded by [RealBud as a modular harness over Hermes](REALBUD-HERMES-HARNESS-2026-09-10.md).** The current source preserves the independently installed Hermes runtime during repair/removal, admits an explicit compatibility list, and still deletes the RealBud property profile on removal. Startup also reapplies the pack. Persistent disable state, non-destructive profile recovery and independent module lifecycle are proposed work, not shipped guarantees. The text below is retained as historical context and must not be used as an installation or deletion contract.
 
 Hermes is the spine, and the spine stays hidden: the user knows Bud, and the
 machinery appears only under Advanced diagnostics. The lifecycle has four verbs.

@@ -1,0 +1,78 @@
+{
+  "artifact": "latency.json",
+  "scenarios": [
+    {
+      "seed": 0,
+      "concurrency": 1,
+      "addedMs": {
+        "firstMeaningfulMean": 2.939836958333278,
+        "firstMeaningfulP95Difference": 5.829416999999921,
+        "completionMean": 4.010949791666647,
+        "completionP95Difference": 7.699707999999873,
+        "workflowMean": 13.991234375000055,
+        "workflowP95Difference": 27.35529200000019
+      }
+    },
+    {
+      "seed": 0,
+      "concurrency": 2,
+      "addedMs": {
+        "firstMeaningfulMean": 3.185124833333191,
+        "firstMeaningfulP95Difference": 10.250208999999813,
+        "completionMean": 3.123725416666673,
+        "completionP95Difference": 9.80116599999974,
+        "workflowMean": 6.27489591666675,
+        "workflowP95Difference": 10.839834000000337
+      }
+    },
+    {
+      "seed": 0,
+      "concurrency": 4,
+      "addedMs": {
+        "firstMeaningfulMean": 4.962204874999921,
+        "firstMeaningfulP95Difference": 7.239624999999251,
+        "completionMean": 5.832218916666722,
+        "completionP95Difference": 10.167124000000513,
+        "workflowMean": 15.464404625000078,
+        "workflowP95Difference": 30.81658199999947
+      }
+    },
+    {
+      "seed": 1000,
+      "concurrency": 1,
+      "addedMs": {
+        "firstMeaningfulMean": 5.330984458332978,
+        "firstMeaningfulP95Difference": 5.280708999998751,
+        "completionMean": 5.962218791666601,
+        "completionP95Difference": 5.887958999999682,
+        "workflowMean": 16.50091829166665,
+        "workflowP95Difference": 17.479333000001134
+      }
+    },
+    {
+      "seed": 1000,
+      "concurrency": 2,
+      "addedMs": {
+        "firstMeaningfulMean": 7.961885500000183,
+        "firstMeaningfulP95Difference": 10.416998999999123,
+        "completionMean": 9.26987508333347,
+        "completionP95Difference": 12.56116800000018,
+        "workflowMean": 23.145397625000143,
+        "workflowP95Difference": 24.721583000000464
+      }
+    },
+    {
+      "seed": 1000,
+      "concurrency": 4,
+      "addedMs": {
+        "firstMeaningfulMean": 17.502362875000017,
+        "firstMeaningfulP95Difference": 20.494666000000507,
+        "completionMean": 21.68624133333325,
+        "completionP95Difference": 33.64916699999958,
+        "workflowMean": 45.723531166666746,
+        "workflowP95Difference": 51.99499999999898
+      }
+    }
+  ],
+  "failures": []
+}

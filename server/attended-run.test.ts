@@ -6,8 +6,68 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { Recipe } from "../shared/contracts.ts";
-import { ATTEND_ERRORS, attendBlocked, attendedSettleStatus, submitHoldLine } from "./attended-run.ts";
+import { ATTEND_ERRORS, ATTENDED_UNVERIFIED_RESULT, attendBlocked, attendedJobSystemBlock, attendedSettleStatus, fenceEvidence, humanSigninNeeded, portalBrowserPolicy, portalSignInCompleteIntent, submitHoldLine } from "./attended-run.ts";
 import { JobRunStore } from "./job-runs.ts";
+import { startCuaControl } from "../electron/cua-control.mjs";
+let fixtureControl: Awaited<ReturnType<typeof startCuaControl>>;
+describe("worker sign-in handover requests", () => {
+  it.each(["Please sign in to continue.", "Login is required before I can read the bank export.", "Waiting for you to finish sign-in."])("recognizes a request without a password tool: %s", text => expect(humanSigninNeeded(text)).toBe("login"));
+  it("recognizes a verification-code request", () => expect(humanSigninNeeded("Please complete the verification code in the bank window.")).toBe("mfa"));
+  it.each(["Already signed in and the bank export is ready.", "No login is needed.", "References reviewed."])("does not reinterpret a completed observation: %s", text => expect(humanSigninNeeded(text)).toBeNull());
+});
+
+describe("portal browser policy (RealBud layer)", () => {
+  it("prefers the person's open browser and forbids a second isolated login window", () => {
+    const policy = portalBrowserPolicy();
+    expect(policy).toMatch(/already-open Chrome or Brave/i);
+    expect(policy).toMatch(/Do not launch a new isolated/i);
+    expect(policy).toMatch(/never open yet another fresh login window/i);
+    expect(policy).toMatch(/When they say they are signed in or done/i);
+  });
+
+  it("embeds that policy in the attended job system block", () => {
+    const block = attendedJobSystemBlock({
+      title: "Vantage login",
+      description: "Read only the supplied account; do not use connected apps.",
+      steps: ["Open portal", "Read dashboard"],
+      allowedOrigins: ["vantagestrata.residentportal.au.resvu.io"],
+      evidence: "Dashboard read-back",
+    });
+    expect(block).toContain("Vantage login");
+    expect(block).toContain("vantagestrata.residentportal.au.resvu.io");
+    expect(block).toMatch(/already-open Chrome or Brave/i);
+    expect(block).toMatch(/Do not launch a new isolated/i);
+    expect(block).toContain("Inputs and context:\nRead only the supplied account; do not use connected apps.");
+    expect(block).toContain("do not expand the allowed sites or tool permissions");
+    expect(block).toContain("naming the source site");
+  });
+
+  it.each(["done", "Done.", "signed in", "I'm signed in", "ok we are signed in", "finished signing in"])(
+    "treats sign-in complete chat as handoff Continue, not a new computer turn: %s",
+    (text) => expect(portalSignInCompleteIntent(text)).toBe(true),
+  );
+
+  it.each(["please check the dashboard", "done with the levy export for unit 12", "Already signed in and the bank export is ready."])(
+    "does not hijack ordinary Ask text: %s",
+    (text) => expect(portalSignInCompleteIntent(text)).toBe(false),
+  );
+});
+
+describe("fence evidence identity", () => {
+  it("names the denied browser action in the retained receipt", () => {
+    expect(
+      fenceEvidence(
+        { tool: "navigate", summary: "open arrears" },
+        { kind: "deny", reason: "Only sites named in a saved job. Ask Bud to set the routine up as a job first." },
+        42,
+      ),
+    ).toEqual({
+      at: 42,
+      kind: "denied",
+      note: "Tried to open a page. Only sites named in a saved job. Ask Bud to set the routine up as a job first.",
+    });
+  });
+});
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -74,25 +134,33 @@ describe("attend preconditions", () => {
     expect(attendBlocked(recipe(), { cuaReady: true, busy: false, inFlight: false })).toBeNull();
   });
 
-  it("never marks a turn completed without read-back", () => {
-    expect(
-      attendedSettleStatus({
-        ok: true,
-        text: "All done.",
-        allowedOrigins: ["vantagestrata.com.au"],
-      }),
-    ).toBe("partial");
-    expect(
-      attendedSettleStatus({
-        ok: true,
-        text: "vantagestrata.com.au shows outstanding balance",
-        allowedOrigins: ["vantagestrata.com.au"],
-      }),
-    ).toBe("completed");
-    expect(attendedSettleStatus({ ok: false, stopReason: "cancelled", text: "", allowedOrigins: [] })).toBe(
-      "interrupted",
+  it.each([
+    "All done.",
+    "vantagestrata.com.au shows outstanding balance",
+    "Couldn't attach with the computer tools alone this run. Bring realbud-qa.localhost:60090 to the front. What the same page showed on the last read: invoice QA-B104, AUD 420.00.",
+  ])("does not certify completion from assistant prose: %s", text => {
+    // Extra model fields must not become completion authority. The current
+    // attended bridge has no validated result receipt, even when ACP says ok.
+    const turn = { ok: true, text, allowedOrigins: ["vantagestrata.com.au", "realbud-qa.localhost"] };
+    expect(attendedSettleStatus(turn)).toBe("partial");
+  });
+
+  it("retains unsuccessful outcomes and review boundaries", () => {
+    expect(attendedSettleStatus({ ok: false })).toBe("failed");
+    expect(attendedSettleStatus({ ok: false, stopReason: "cancelled" })).toBe(
+      "cancelled",
     );
     expect(submitHoldLine("Ready for you to Pay")).toEqual(["Submit/Pay/Send stay with you"]);
+  });
+
+  it("gives cancellation and interruption precedence over successful read-back", () => {
+    for (const ok of [true, false]) {
+      const readBack = { ok, text: "vantagestrata.com.au shows outstanding balance", allowedOrigins: ["vantagestrata.com.au"] };
+      expect(attendedSettleStatus({ ...readBack, stopReason: "cancelled" })).toBe("cancelled");
+      for (const stopReason of ["interrupted", "stall", "timeout"]) {
+        expect(attendedSettleStatus({ ...readBack, stopReason })).toBe("interrupted");
+      }
+    }
   });
 
   it("marks a queued attended run missed after a day", () => {
@@ -166,6 +234,7 @@ posixOnly("attended run route (fake ACP)", () => {
   }
 
   beforeAll(async () => {
+    fixtureControl = await startCuaControl({ release: async () => {}, verify: async () => false, restore: async () => {} });
     chmodSync(FAKE_CLI, 0o755);
     home = mkdtempSync(join(tmpdir(), "realbud-attend-"));
     mkdirSync(join(home, ".realbud"), { recursive: true });
@@ -205,6 +274,7 @@ posixOnly("attended run route (fake ACP)", () => {
         OMB_PORT: String(PORT),
         REALBUD_CUA_DESCRIPTOR_PATH: cuaPath,
         REALBUD_CUA_TEST_READY: "1",
+        ...fixtureControl.env,
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -227,6 +297,7 @@ posixOnly("attended run route (fake ACP)", () => {
   }, 30_000);
 
   afterAll(async () => {
+    await fixtureControl?.close();
     child?.kill("SIGTERM");
     await new Promise<void>((resolve) => {
       if (!child || child.exitCode !== null) return resolve();
@@ -320,6 +391,22 @@ posixOnly("attended run route (fake ACP)", () => {
     }, "the navigate run to settle");
   });
 
+  it("persists a failed browser attachment with old source text as partial, never completed", async () => {
+    await saveReadyJob("att-stale-read");
+    const reply = "Couldn't attach with the computer tools alone this run. Bring vantagestrata.com.au to the front. What the same page showed on the last read: invoice QA-B104, AUD 420.00.";
+    writeScript({ permission: false, reply });
+    expect((await api("POST", "/api/recipes/att-stale-read/attend", {})).status).toBe(202);
+    await waitFor(async () => {
+      const runs = await api("GET", "/api/job-runs?jobId=att-stale-read");
+      return runs.body.runs[0]?.status !== "running";
+    }, "the unsuccessful current observation to settle");
+    const run = (await api("GET", "/api/job-runs?jobId=att-stale-read")).body.runs[0];
+    expect(run).toMatchObject({ status: "partial", detail: reply });
+    expect(run.evidence).toContainEqual(expect.objectContaining({ kind: "note", note: ATTENDED_UNVERIFIED_RESULT }));
+    const persisted = JSON.parse(readFileSync(join(home, ".realbud", "job-runs.json"), "utf8"));
+    expect(persisted.runs.find((row: { id: string }) => row.id === run.id)).toMatchObject({ status: "partial", detail: reply });
+  });
+
   it("auto-denies a password fill and a Pay click", async () => {
     await saveReadyJob("att-deny");
     writeScript({
@@ -336,6 +423,11 @@ posixOnly("attended run route (fake ACP)", () => {
     }, "the password fill to be denied and the turn to end");
     const denied = (await api("GET", "/api/job-runs?jobId=att-deny")).body.runs[0];
     expect(denied.evidence.some((item: { kind: string; note: string }) => item.kind === "denied" && item.note.includes("never types a password"))).toBe(true);
+    await waitFor(async () => (await api("GET", "/api/human-handoffs")).body.handoffs[0]?.value.state === "awaiting_login", "durable released sign-in checkpoint");
+    const held = (await api("GET", "/api/human-handoffs")).body.handoffs[0];
+    const stopped = await api("POST", `/api/human-handoffs/${held.id}/stop`, { revision: held.revision });
+    expect(stopped.status).toBe(200);
+    expect((await api("POST", `/api/human-handoffs/${held.id}/close`, { revision: stopped.body.revision })).status).toBe(200);
 
     await saveReadyJob("att-pay");
     writeScript({
@@ -354,7 +446,7 @@ posixOnly("attended run route (fake ACP)", () => {
     expect(pay.evidence.some((item: { kind: string; note: string }) => item.kind === "denied" && item.note.includes("Submit, Pay and Send stay with you"))).toBe(true);
   });
 
-  it("completes only when the final text has read-back", async () => {
+  it("keeps unverified claims partial whether or not they name the source", async () => {
     await saveReadyJob("att-done");
     writeScript({
       permission: false,
@@ -363,8 +455,11 @@ posixOnly("attended run route (fake ACP)", () => {
     expect((await api("POST", "/api/recipes/att-done/attend", {})).status).toBe(202);
     await waitFor(async () => {
       const runs = await api("GET", "/api/job-runs?jobId=att-done");
-      return runs.body.runs[0]?.status === "completed";
-    }, "read-back completion");
+      return runs.body.runs[0]?.status === "partial";
+    }, "an unverified read-back claim");
+    expect((await api("GET", "/api/job-runs?jobId=att-done")).body.runs[0].evidence).toContainEqual(
+      expect.objectContaining({ kind: "note", note: ATTENDED_UNVERIFIED_RESULT }),
+    );
 
     await saveReadyJob("att-partial");
     writeScript({ permission: false, reply: "I finished the steps." });
@@ -374,7 +469,7 @@ posixOnly("attended run route (fake ACP)", () => {
       const status = runs.body.runs[0]?.status;
       return status && status !== "running" && status !== "queued";
     }, "a settle without read-back");
-    expect((await api("GET", "/api/job-runs?jobId=att-partial")).body.runs[0].status).not.toBe("completed");
+    expect((await api("GET", "/api/job-runs?jobId=att-partial")).body.runs[0].status).toBe("partial");
   });
 
   it("accepts a portal standing rule on POST /api/rules and rejects deny", async () => {

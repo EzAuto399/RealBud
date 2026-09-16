@@ -81,11 +81,12 @@ describe("comms e2e (fake ACP fleet)", () => {
   let child: ChildProcess;
   let home: string;
   let stderr = "";
+  let sessionToken = "";
 
   const api = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
     const res = await fetch(`${BASE}${path}`, {
       method,
-      headers: body ? { "content-type": "application/json" } : undefined,
+      headers: { "x-realbud-session": sessionToken, ...(body ? { "content-type": "application/json" } : {}) },
       body: body ? JSON.stringify(body) : undefined,
     });
     return { status: res.status, body: await res.json() };
@@ -137,6 +138,10 @@ describe("comms e2e (fake ACP fleet)", () => {
       if (child.exitCode !== null) throw new Error(`server exited ${child.exitCode}. stderr:\n${stderr}`);
       await new Promise((r) => setTimeout(r, 150));
     }
+    const handshake = await fetch(`${BASE}/api/session`);
+    expect(handshake.ok).toBe(true);
+    sessionToken = (await handshake.json() as { token: string }).token;
+    expect(sessionToken).toBeTruthy();
   }, 30_000);
 
   afterAll(async () => {

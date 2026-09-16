@@ -19,6 +19,7 @@ export function AskPhoneContinueCard({
   onSendLatest,
   onSendSummary,
   sendBusy = false,
+  sendNotice = null,
 }: {
   open: boolean;
   onClose: () => void;
@@ -27,11 +28,13 @@ export function AskPhoneContinueCard({
   onSendLatest?: () => void;
   onSendSummary?: () => void;
   sendBusy?: boolean;
+  sendNotice?: { ok: boolean; text: string } | null;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  const dialogId = useId();
   const { channels, error, refresh } = usePhoneConnections(open);
-  useDialogKeyboard(ref, onClose);
+  useDialogKeyboard(ref, onClose, sendBusy, open);
   useEffect(() => {
     if (!open) return;
     void refresh();
@@ -47,11 +50,12 @@ export function AskPhoneContinueCard({
     <div
       className="ask-phone-continue"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (event.target === event.currentTarget && !sendBusy) onClose();
       }}
     >
       <div
         ref={ref}
+        id={dialogId}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -72,13 +76,19 @@ export function AskPhoneContinueCard({
               </p>
             </div>
           </div>
-          <button type="button" aria-label="Close" className="pm-control flex size-9 shrink-0 items-center justify-center rounded" onClick={onClose}>
+          <button type="button" aria-label="Close" disabled={sendBusy} className="pm-control flex size-9 shrink-0 items-center justify-center rounded" onClick={onClose}>
             <X size={16} />
           </button>
         </div>
 
         {error ? (
           <p role="alert" className="mt-3 text-[12.5px] text-danger">{error}</p>
+        ) : null}
+
+        {sendNotice ? (
+          <p role={sendNotice.ok ? "status" : "alert"} className={`mt-3 text-[12.5px] ${sendNotice.ok ? "text-agency" : "text-danger"}`}>
+            {sendNotice.text}
+          </p>
         ) : null}
 
         {!error && channels == null ? (
@@ -130,6 +140,12 @@ export function AskPhoneContinueCard({
           </p>
         ) : null}
 
+        {ready && !onSendLatest && !onSendSummary ? (
+          <p className="mt-3 text-[13px] leading-5 text-ink-muted">
+            Ask Bud for a reply first — then you can send it or a short summary to your phone.
+          </p>
+        ) : null}
+
         <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
           {ready ? (
             <>
@@ -137,12 +153,12 @@ export function AskPhoneContinueCard({
                 Manage connections
               </button>
               {onSendSummary ? (
-                <button type="button" className="pm-control min-h-10 px-3 text-[13px] text-ink-secondary" disabled={sendBusy} onClick={onSendSummary}>
+                <button type="button" className="pm-control min-h-10 px-3 text-[13px] text-ink-secondary" disabled={sendBusy} aria-busy={sendBusy || undefined} onClick={onSendSummary}>
                   {sendBusy ? "Sending…" : "Send summary"}
                 </button>
               ) : null}
               {onSendLatest ? (
-                <button type="button" className="ask-button min-h-10 px-4 text-[13px]" disabled={sendBusy} onClick={onSendLatest}>
+                <button type="button" className="ask-button min-h-10 px-4 text-[13px]" disabled={sendBusy} aria-busy={sendBusy || undefined} onClick={onSendLatest}>
                   {sendBusy ? "Sending…" : "Send latest reply"}
                 </button>
               ) : (

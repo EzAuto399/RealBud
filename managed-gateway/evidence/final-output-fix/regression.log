@@ -1,0 +1,22 @@
+✔ issuer_revocation after_final_usage: no later output, incurred usage settled once, no inference replay (8.580708ms)
+✔ grant_expiry after_final_usage: no later output, incurred usage settled once, no inference replay (3.966334ms)
+✔ lease_revocation after_final_usage: no later output, incurred usage settled once, no inference replay (2.587833ms)
+✔ lease_abort after_final_usage: no later output, incurred usage settled once, no inference replay (2.534ms)
+✔ client_abort after_final_usage: no later output, incurred usage settled once, no inference replay (2.5485ms)
+✔ issuer_revocation between_final_callbacks: no later output, incurred usage settled once, no inference replay (2.3225ms)
+✔ grant_expiry between_final_callbacks: no later output, incurred usage settled once, no inference replay (2.370917ms)
+✔ lease_revocation between_final_callbacks: no later output, incurred usage settled once, no inference replay (2.590792ms)
+✔ lease_abort between_final_callbacks: no later output, incurred usage settled once, no inference replay (2.659625ms)
+✔ client_abort between_final_callbacks: no later output, incurred usage settled once, no inference replay (2.790625ms)
+✔ cancellation inside the final authority check never eagerly invokes the output callback (2.488834ms)
+✔ cancellation after invalid usage retains its reservation instead of recording fabricated settlement (1.937625ms)
+✔ string schema/grantVersion 1 is rejected before v2 validation can be bypassed (1.376042ms)
+✔ string schema/grantVersion 2 is rejected before v2 validation can be bypassed (1.136ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 114.477958

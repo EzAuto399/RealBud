@@ -1,10 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, Plus, RotateCcw, ShieldAlert, Trash2, X } from "lucide-react";
+import { useDeskViewState } from "@/lib/desk-view-state";
+import { useDialogKeyboard } from "@/lib/use-dialog-keyboard";
+import { usePropertyEdits, propertyEdits, changePropertyEdits, discardPropertyEdits, savePropertyEdits, hasPropertyEdits } from "@/lib/property-edits";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { FileUp, Loader2, Plus, RotateCcw, ShieldAlert, Trash2, X } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { fmtDate } from "@/lib/au";
 import { aud, type CsvColumnMapping, type CsvImportPreview, type DeskSnapshot, type LedgerFacts, type NotifyChannel, type Property, type PropertyOptions, type RentSource } from "@/lib/desk";
-import { groupBySuburb, sortBook } from "@/lib/book-groups";
+import { useWorkspacePreferences, portfolioLayout } from "@/lib/workspace-preferences";
+import { groupBySuburb, groupProperties, sortBook, type PropertyScope } from "@/lib/book-groups";
 import { completenessLine, propertyCompleteness } from "@/lib/completeness";
 import { handsFactSource } from "@/lib/hands-label";
 import { CONTACT_ROLE_LABELS, NOTIFY_LABELS, RENT_SOURCE_LABELS } from "./labels";
@@ -54,6 +58,7 @@ type ImportReview = {
   mapping?: CsvColumnMapping;
 };
 
+
 export function DeskBook({
   snap,
   busy,
@@ -68,12 +73,17 @@ export function DeskBook({
   onAllowBookProposal,
   onDenyBookProposal,
   onAllowAllBookProposals,
+  onOpenTasks,
+  onGroupTasks,
+  onGroupBatch,
+  operationError,
 }: {
   snap: DeskSnapshot;
+  operationError: string;
   busy: string | null;
-  onAdd: (input: { address: string; tenantName: string; tenantPhone: string; weeklyRentCents: number; propertyCode?: string }) => void;
-  onSave: (id: string, options: Partial<PropertyOptions>) => void;
-  onNotes: (id: string, body: string) => void;
+  onAdd: (input: { address: string; tenantName: string; tenantPhone: string; weeklyRentCents: number; propertyCode?: string }) => Promise<boolean>;
+  onSave: (id: string, options: Partial<PropertyOptions>) => Promise<boolean>;
+  onNotes: (id: string, body: string) => Promise<boolean>;
   onDelete: (id: string) => void;
   onReset: () => void;
   onPreviewImport: (csv: string, mapping?: CsvColumnMapping) => Promise<CsvImportPreview>;
@@ -82,13 +92,25 @@ export function DeskBook({
   onAllowBookProposal: (id: string) => void;
   onDenyBookProposal: (id: string) => void;
   onAllowAllBookProposals: () => void;
+  onOpenTasks: (property: Property) => void;
+  onGroupTasks: (scope: PropertyScope) => void;
+  onGroupBatch: (scope: PropertyScope) => void;
 }) {
   const [adding, setAdding] = useState(false);
-  const [arrange, setArrange] = useState<"suburb" | "address" | "rent" | "late">("suburb");
-  const [filter, setFilter] = useState("");
+  const { preferences, update } = useWorkspacePreferences();
+  const PROPERTY_PAGE_SIZE = preferences.pageSize;
+  const arrange = preferences.propertySort;
+  const setArrange = (propertySort: typeof arrange) => update({ propertySort });
+  const { table } = portfolioLayout(preferences, snap.properties.length);
+  const [expandedProperty, setExpandedProperty] = useDeskViewState("bookExpanded");
+  const [filter, setFilter] = useDeskViewState("bookFilter");
+  const [groupKey, setGroupKey] = useDeskViewState("bookGroup");
+  const grouping = preferences.propertyGrouping;
   const [importReview, setImportReview] = useState<ImportReview | null>(null);
   const [importBusy, setImportBusy] = useState(false);
   const [importError, setImportError] = useState("");
+  const [page, setPage] = useDeskViewState("bookPage");
+  const [proposalShown, setProposalShown] = useState(50);
   const visible = useMemo(() => {
     const q = filter.trim().toLowerCase();
     if (!q) return snap.properties;
@@ -96,28 +118,104 @@ export function DeskBook({
       `${p.address} ${p.tenantName} ${p.propertyCode ?? ""}`.toLowerCase().includes(q),
     );
   }, [snap.properties, filter]);
+  const groups = useMemo(() => grouping === "none" ? [] : groupProperties(visible, grouping, snap.book?.propertyPortals), [visible, grouping, snap.book?.propertyPortals]);
+  const activeGroup = groups.find(group => group.key === groupKey);
+  const browsingGroups = grouping !== "none" && groupKey === null;
+  // A vanished group stays empty until the PM explicitly returns to the overview.
+  const scoped = grouping === "none" ? visible : activeGroup?.properties ?? [];
+  const ordered = useMemo(
+    () =>
+      arrange === "suburb"
+        ? groupBySuburb(scoped).flatMap((group) => group.properties)
+        : sortBook(scoped, snap.ledger, arrange),
+    [arrange, snap.ledger, scoped],
+  );
+  const totalShown = browsingGroups ? groups.length : ordered.length;
+  const pageCount = Math.max(1, Math.ceil(totalShown / PROPERTY_PAGE_SIZE));
+  const effectivePage = Math.min(page, pageCount - 1);
+  const pageProperties = ordered.slice(effectivePage * PROPERTY_PAGE_SIZE, (effectivePage + 1) * PROPERTY_PAGE_SIZE);
+  const ledgerByProperty = useMemo(() => new Map(snap.ledger.map((row) => [row.propertyId, row])), [snap.ledger]);
+  const tenanciesByProperty = useMemo(() => {
+    const map = new Map<string, NonNullable<DeskSnapshot["book"]>["tenancies"]>();
+    for (const row of snap.book?.tenancies ?? []) map.set(row.propertyId, [...(map.get(row.propertyId) ?? []), row]);
+    return map;
+  }, [snap.book?.tenancies]);
+  const contactsByProperty = useMemo(() => {
+    const map = new Map<string, NonNullable<DeskSnapshot["book"]>["contacts"]>();
+    for (const row of snap.book?.contacts ?? []) map.set(row.propertyId, [...(map.get(row.propertyId) ?? []), row]);
+    return map;
+  }, [snap.book?.contacts]);
+  const resultByProperty = useMemo(() => new Map(snap.results.map((row) => [row.propertyId, row])), [snap.results]);
+
+  const pageContext = JSON.stringify([arrange, filter, PROPERTY_PAGE_SIZE, grouping, groupKey]);
+  const previousPageContext = useRef(pageContext);
+  useEffect(() => {
+    if (previousPageContext.current !== pageContext) { previousPageContext.current = pageContext; setPage(0); }
+  }, [pageContext]);
+  const groupContext = JSON.stringify([grouping, filter]);
+  const previousGroupContext = useRef(groupContext);
+  useEffect(() => {
+    if (previousGroupContext.current !== groupContext) { previousGroupContext.current = groupContext; setGroupKey(null); setExpandedProperty(null); }
+  }, [groupContext]);
+  useEffect(() => setPage((current) => Math.min(current, pageCount - 1)), [pageCount]);
+  useEffect(() => setProposalShown(50), [snap.book?.bookProposals.length]);
+
   const cardFor = (property: Property) => (
     <PropertyCard
       key={property.id}
       property={property}
-      facts={snap.ledger.find((row) => row.propertyId === property.id)}
-      tenancies={snap.book?.tenancies.filter((row) => row.propertyId === property.id) ?? []}
-      contacts={snap.book?.contacts.filter((row) => row.propertyId === property.id) ?? []}
+      facts={resultByProperty.has(property.id) ? ledgerByProperty.get(property.id) : undefined}
+      tenancies={tenanciesByProperty.get(property.id) ?? []}
+      contacts={contactsByProperty.get(property.id) ?? []}
       hands={snap.hands}
-      result={snap.results.find((row) => row.propertyId === property.id)}
+      result={resultByProperty.get(property.id)}
       onSave={(options) => onSave(property.id, options)}
       onNotes={(body) => onNotes(property.id, body)}
       onDelete={() => onDelete(property.id)}
+      onOpenTasks={() => onOpenTasks(property)}
     />
   );
+
+  const readImportFile = async (file: File) => {
+    setImportError("");
+    if (file.size === 0) {
+      setImportError("That CSV is empty.");
+      return;
+    }
+    if (file.size > 750_000) {
+      setImportError("That CSV is too large. Use a file under 750 KB.");
+      return;
+    }
+    setImportBusy(true);
+    try {
+      const csv = await file.text();
+      const headers = csvHeaderCells(csv);
+      try {
+        const preview = await onPreviewImport(csv);
+        setImportReview({ fileName: file.name, fileSize: file.size, csv, preview, headers: preview.headers.length ? preview.headers : headers });
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        if (isMissingColumnError(message) && headers.length) {
+          setImportError(message);
+          setImportReview({ fileName: file.name, fileSize: file.size, csv, preview: null, headers });
+        } else {
+          setImportError(message);
+        }
+      }
+    } catch (cause) {
+      setImportError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setImportBusy(false);
+    }
+  };
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-8">
-      <div className="mb-4 flex items-center justify-between">
+    <div className="desk-property-book min-h-0 flex-1 overflow-y-auto px-5 pb-8 pt-4">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-[15px] font-semibold text-ink">Book</h2>
-          <p className="mt-1 text-[13px] text-ink-muted">Properties, tenancies and policies. Recheck stamps each address. This is not the case queue.</p>
+          <h2 className="text-[15px] font-semibold text-ink">Properties</h2>
+          <p className="mt-1 text-[13px] text-ink-muted">Find a property, update its notes and options, or open its tasks.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <input
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
@@ -146,15 +244,53 @@ export function DeskBook({
             <Plus size={14} />
             Add property
           </button>
+          <label className="pm-control flex cursor-pointer items-center gap-1.5 rounded border border-line bg-sheet px-3 text-[13px] font-medium text-ink hover:bg-raised">
+            {importBusy ? <Loader2 size={14} className="animate-spin" /> : <FileUp size={14} />}
+            Import CSV
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              className="sr-only"
+              disabled={importBusy || busy !== null}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+                if (file) void readImportFile(file);
+              }}
+            />
+          </label>
         </div>
       </div>
-      {visible.length === 0 ? (
+      <nav className="property-group-tabs" aria-label="Group properties">
+        {([ ["none", "All properties"], ["building", "Buildings"], ["suburb", "Suburbs"], ["portal", "Portals"] ] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={grouping === value} onClick={() => { update({ propertyGrouping: value }); setGroupKey(null); setPage(0); }}>{label}</button>)}
+        <span>{visible.length} properties{grouping !== "none" ? ` · ${groups.length} groups` : ""}</span>
+      </nav>
+      {grouping !== "none" && !browsingGroups && <div className="property-group-path">
+        <button type="button" onClick={() => { setGroupKey(null); setPage(0); }}>← All groups</button>
+        <strong>{activeGroup?.label ?? "Group no longer available"}</strong>
+        {activeGroup && <><span>{activeGroup.properties.length} properties · {aud(activeGroup.weeklyRentCents)}/wk</span><div><button type="button" onClick={() => onGroupTasks({ label: activeGroup.label, ids: activeGroup.properties.map(p => p.id) })}>View group tasks</button><button type="button" onClick={() => onGroupBatch({ label: activeGroup.label, ids: activeGroup.properties.map(p => p.id) })}>Prepare group work</button></div></>}
+      </div>}
+      {browsingGroups && groups.length > 0 ? <div className="property-group-grid" aria-label="Property groups">
+        {groups.slice(effectivePage * PROPERTY_PAGE_SIZE, (effectivePage + 1) * PROPERTY_PAGE_SIZE).map(group => <button type="button" className="property-group-card" key={group.key} onClick={() => { setGroupKey(group.key); setPage(0); }}>
+          <strong>{group.label}</strong><span>{group.properties.length} {group.properties.length === 1 ? "property" : "properties"} <span aria-hidden="true">→</span></span><small>{aud(group.weeklyRentCents)}/wk · {group.detail}</small>
+        </button>)}
+      </div> : (browsingGroups ? groups.length === 0 : ordered.length === 0) ? (
         <p className="rounded-lg border border-line bg-sheet px-4 py-6 text-center text-[13px] text-ink-muted">
-          Nothing on the book matches “{filter.trim()}”.
+          {filter.trim() ? `Nothing on the book matches “${filter.trim()}”.` : groupKey ? "No properties remain in this group. Return to all groups to continue." : "No properties yet. Add a property to get started."}
+          {filter.trim() && <button type="button" onClick={() => setFilter("")} className="ml-3 text-agency underline">Clear search</button>}
         </p>
+      ) : table ? (
+        <div className="desk-property-table-wrap"><table className="desk-property-table"><caption className="sr-only">Property book</caption><thead><tr><th>Property</th><th>Tenant</th><th>Weekly rent</th><th>Recorded status</th><th>Actions</th></tr></thead><tbody>
+          {pageProperties.map(property => {
+            const facts = resultByProperty.has(property.id) ? ledgerByProperty.get(property.id) : undefined;
+            return <Fragment key={property.id}><tr><th scope="row">{property.address}<span>{property.propertyCode}</span>{(propertyEdits(property.id).notes !== undefined || propertyEdits(property.id).options) && <span className="text-hold">Unsaved edits</span>}</th><td>{property.tenantName || "Not recorded"}</td><td>{aud(property.weeklyRentCents)}</td><td>{!facts ? "Not checked" : facts.rentLanded ? "Rent recorded" : `${facts.daysSinceDue}d since due`}</td><td><div className="desk-table-actions"><button type="button" onClick={() => onOpenTasks(property)}>View tasks</button><button type="button" aria-expanded={expandedProperty === property.id} aria-label={`Manage ${property.address}`} onClick={() => setExpandedProperty(current => current === property.id ? null : property.id)}>{expandedProperty === property.id ? "Close" : "Manage"}</button></div></td></tr>
+              {expandedProperty === property.id && <tr><td colSpan={5}>{cardFor(property)}</td></tr>}
+            </Fragment>;
+          })}
+        </tbody></table></div>
       ) : arrange === "suburb" ? (
         <div className="space-y-6">
-          {groupBySuburb(visible).map((group) => (
+          {groupBySuburb(pageProperties).map((group) => (
             <section key={group.suburb}>
               <h3 className="mb-2 flex items-baseline gap-2 text-[13px] font-semibold text-ink">
                 {group.suburb}
@@ -167,8 +303,36 @@ export function DeskBook({
           ))}
         </div>
       ) : (
-        <div className="grid gap-3 xl:grid-cols-2">{sortBook(visible, snap.ledger, arrange).map(cardFor)}</div>
+        <div className="grid gap-3 xl:grid-cols-2">{pageProperties.map(cardFor)}</div>
       )}
+      {totalShown > 0 ? (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3 text-[12px] text-ink-muted">
+          <span>
+            Showing {effectivePage * PROPERTY_PAGE_SIZE + 1}–{Math.min((effectivePage + 1) * PROPERTY_PAGE_SIZE, totalShown)} of {totalShown}{browsingGroups ? " groups" : ""}
+          </span>
+          {pageCount > 1 ? (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={effectivePage === 0}
+                onClick={() => setPage((current) => Math.max(0, current - 1))}
+                className="pm-control rounded border border-line bg-sheet px-3 text-[12px] text-ink disabled:opacity-40"
+              >
+                Previous
+              </button>
+              <span className="tabular-nums">Page {effectivePage + 1} of {pageCount}</span>
+              <button
+                type="button"
+                disabled={effectivePage >= pageCount - 1}
+                onClick={() => setPage((current) => Math.min(pageCount - 1, current + 1))}
+                className="pm-control rounded border border-line bg-sheet px-3 text-[12px] text-ink disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {(snap.book?.archivedProperties.length ?? 0) > 0 ? (
         <section className="mt-6">
           <h3 className="text-[13px] font-semibold text-ink">Archived</h3>
@@ -195,7 +359,7 @@ export function DeskBook({
           </div>
           <p className="mt-1 text-[12px] text-ink-muted">From what you gave Bud. Nothing is in the book until you allow it.</p>
           <ul className="mt-2 space-y-2">
-            {snap.book.bookProposals.map((proposal) => (
+            {snap.book.bookProposals.slice(0, proposalShown).map((proposal) => (
               <li key={proposal.id} className="rounded-xl border border-line bg-sheet px-3 py-2.5">
                 <div className="text-[13px] font-medium text-ink">{proposal.address}</div>
                 <div className="text-[12px] text-ink-muted">
@@ -222,6 +386,15 @@ export function DeskBook({
               </li>
             ))}
           </ul>
+          {snap.book.bookProposals.length > proposalShown ? (
+            <button
+              type="button"
+              onClick={() => setProposalShown((current) => current + 50)}
+              className="pm-control mt-2 rounded border border-line bg-sheet px-3 text-[12px] text-ink"
+            >
+              Show 50 more ({snap.book.bookProposals.length - proposalShown} hidden)
+            </button>
+          ) : null}
         </section>
       )}
       {(snap.book?.importIssues.length ?? 0) > 0 ? (
@@ -237,66 +410,24 @@ export function DeskBook({
           </ul>
         </section>
       ) : null}
-      <button
+      {snap.demo && <button
         type="button"
+        disabled={busy !== null || hasPropertyEdits()}
         onClick={onReset}
         className="mt-4 flex items-center gap-1.5 text-[12px] text-ink-muted hover:text-ink"
       >
         {busy === "reset" ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />}
         Replay sample morning
-      </button>
-      <label className="mt-3 flex cursor-pointer items-center gap-1.5 text-[12px] text-ink-muted hover:text-ink">
-        Import CSV
-        <input
-          type="file"
-          accept=".csv,text/csv"
-          className="sr-only"
-          disabled={importBusy || busy !== null}
-          onChange={async (event) => {
-            const file = event.target.files?.[0];
-            if (!file) return;
-            event.target.value = "";
-            setImportError("");
-            if (file.size === 0) {
-              setImportError("That CSV is empty.");
-              return;
-            }
-            if (file.size > 750_000) {
-              setImportError("That CSV is too large. Use a file under 750 KB.");
-              return;
-            }
-            setImportBusy(true);
-            try {
-              const csv = await file.text();
-              const headers = csvHeaderCells(csv);
-              try {
-                const preview = await onPreviewImport(csv);
-                setImportReview({ fileName: file.name, fileSize: file.size, csv, preview, headers: preview.headers.length ? preview.headers : headers });
-              } catch (cause) {
-                const message = cause instanceof Error ? cause.message : String(cause);
-                if (isMissingColumnError(message) && headers.length) {
-                  setImportError(message);
-                  setImportReview({ fileName: file.name, fileSize: file.size, csv, preview: null, headers });
-                } else {
-                  setImportError(message);
-                }
-              }
-            } catch (cause) {
-              setImportError(cause instanceof Error ? cause.message : String(cause));
-            } finally {
-              setImportBusy(false);
-            }
-          }}
-        />
-        {importBusy ? <Loader2 size={12} className="animate-spin" /> : null}
-      </label>
+      </button>}
       {importError && !importReview ? <p role="alert" className="mt-1 text-[12px] text-danger">{importError}</p> : null}
       {adding ? (
         <AddPropertyModal
+          saveError={operationError}
           onClose={() => setAdding(false)}
-          onAdd={(input) => {
-            setAdding(false);
-            onAdd(input);
+          onAdd={async (input) => {
+            const saved = await onAdd(input);
+            if (saved) setAdding(false);
+            return saved;
           }}
         />
       ) : null}
@@ -393,23 +524,7 @@ function CsvImportReviewModal({
   const [rentLanded, setRentLanded] = useState(review.mapping?.rentLanded ?? "");
   const [levyPaid, setLevyPaid] = useState(review.mapping?.levyPaid ?? "");
   const [budNote, setBudNote] = useState("");
-  useEffect(() => {
-    const root = dialogRef.current;
-    if (!root) return;
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    root.focus();
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) {
-        event.preventDefault();
-        onClose();
-      }
-    };
-    root.addEventListener("keydown", onKey);
-    return () => {
-      root.removeEventListener("keydown", onKey);
-      previous?.focus();
-    };
-  }, [busy, onClose]);
+  useDialogKeyboard(dialogRef, onClose, busy);
   const { preview } = review;
   const mappingReady = Boolean(identity && daysSinceDue && rentLanded && levyPaid);
   const inputClass = "mt-1 w-full rounded border border-line bg-inset px-3 py-2 text-[13.5px] text-ink outline-none";
@@ -522,6 +637,7 @@ function PropertyCard({
   onSave,
   onNotes,
   onDelete,
+  onOpenTasks,
 }: {
   property: Property;
   facts?: LedgerFacts;
@@ -529,31 +645,29 @@ function PropertyCard({
   contacts: NonNullable<DeskSnapshot["book"]>["contacts"];
   hands: DeskSnapshot["hands"];
   result?: DeskSnapshot["results"][number];
-  onSave: (options: Partial<PropertyOptions>) => void;
-  onNotes: (body: string) => void;
+  onSave: (options: Partial<PropertyOptions>) => Promise<boolean>;
+  onNotes: (body: string) => Promise<boolean>;
   onDelete: () => void;
+  onOpenTasks: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [graceDays, setGraceDays] = useState(String(property.options.graceDays));
-  const [courtesyUntilDay, setCourtesyUntilDay] = useState(String(property.options.courtesyUntilDay));
-  const [levyOn, setLevyOn] = useState(Boolean(property.options.levyFromRent));
-  const [levyAmount, setLevyAmount] = useState(
-    property.options.levyFromRent ? String(property.options.levyFromRent.amountCents / 100) : "420",
-  );
-  const [rentSource, setRentSource] = useState<RentSource>(property.options.rentSource);
-  const [notifyChannel, setNotifyChannel] = useState<NotifyChannel>(property.options.notifyChannel);
+  const edits = usePropertyEdits(property.id);
+  const [open, setOpen] = useState(Boolean(edits.options));
+  const optionEdits = edits.options ?? {};
+  const graceDays = optionEdits.graceDays ?? String(property.options.graceDays);
+  const courtesyUntilDay = optionEdits.courtesyUntilDay ?? String(property.options.courtesyUntilDay);
+  const levyOn = optionEdits.levyOn ?? Boolean(property.options.levyFromRent);
+  const levyAmount = optionEdits.levyAmount ?? String((property.options.levyFromRent?.amountCents ?? 42000) / 100);
+  const rentSource = optionEdits.rentSource ?? property.options.rentSource;
+  const notifyChannel = optionEdits.notifyChannel ?? property.options.notifyChannel;
+  const notes = edits.notes ?? property.notes ?? "";
+  const setGraceDays = (value: string) => changePropertyEdits(property.id, { options: { graceDays: value } });
+  const setCourtesyUntilDay = (value: string) => changePropertyEdits(property.id, { options: { courtesyUntilDay: value } });
+  const setLevyOn = (value: boolean) => changePropertyEdits(property.id, { options: { levyOn: value } });
+  const setLevyAmount = (value: string) => changePropertyEdits(property.id, { options: { levyAmount: value } });
+  const setRentSource = (value: RentSource) => changePropertyEdits(property.id, { options: { rentSource: value } });
+  const setNotifyChannel = (value: NotifyChannel) => changePropertyEdits(property.id, { options: { notifyChannel: value } });
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [notes, setNotes] = useState(property.notes ?? "");
-
-  useEffect(() => {
-    setGraceDays(String(property.options.graceDays));
-    setCourtesyUntilDay(String(property.options.courtesyUntilDay));
-    setLevyOn(Boolean(property.options.levyFromRent));
-    setLevyAmount(property.options.levyFromRent ? String(property.options.levyFromRent.amountCents / 100) : "420");
-    setRentSource(property.options.rentSource);
-    setNotifyChannel(property.options.notifyChannel);
-    setNotes(property.notes ?? "");
-  }, [property]);
+  const validOptions = graceDays.trim() !== "" && courtesyUntilDay.trim() !== "" && Number.isInteger(Number(graceDays)) && Number.isInteger(Number(courtesyUntilDay)) && Number(graceDays) >= 0 && Number(graceDays) <= 28 && Number(courtesyUntilDay) > Number(graceDays) && Number(courtesyUntilDay) <= 60 && (!levyOn || (Number.isFinite(Number(levyAmount)) && Number(levyAmount) > 0));
 
   const resultLabel = result
     ? {
@@ -574,7 +688,7 @@ function PropertyCard({
     : "Not checked yet";
 
   return (
-    <article className="border border-line bg-sheet p-4">
+    <article className="desk-property-card rounded-lg border border-line bg-sheet p-4" aria-label={property.address}>
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-[14px] font-semibold text-ink">{property.address}</div>
@@ -629,21 +743,25 @@ function PropertyCard({
         </div>
       ) : null}
 
-      <label className="mt-3 block text-[12px] text-ink-muted">
-        Notes
+      <details open={edits.notes !== undefined} className="desk-property-notes mt-3 text-[12px] text-ink-muted">
+        <summary className="cursor-pointer py-1.5">{notes.trim() ? "View or edit notes" : "Add a note"}</summary>
+        <label className="block"><span className="sr-only">Notes for {property.address}</span>
         <textarea
           value={notes}
-          onChange={(event) => setNotes(event.target.value)}
-          onBlur={() => {
-            if (notes !== (property.notes ?? "")) onNotes(notes);
-          }}
+          onChange={(event) => changePropertyEdits(property.id, { notes: event.target.value })}
+          disabled={edits.pending}
+          maxLength={20000}
           rows={3}
-          placeholder="How they like to be contacted. Hardship or deals. Anything the PMS does not keep."
+          placeholder="Useful context for this property, such as access instructions or contact preferences."
           className="mt-1 w-full resize-y rounded border border-line bg-inset px-3 py-2 text-[13px] text-ink outline-none"
         />
-      </label>
+        </label>
+        <div className="mt-2 flex flex-wrap items-center gap-3"><button type="button" disabled={edits.pending || edits.notes === undefined} onClick={() => void savePropertyEdits(property.id, "notes", () => onNotes(notes))} className="pm-control rounded bg-agency px-3 text-white disabled:opacity-40">{edits.pending ? "Saving…" : "Save notes"}</button>{edits.notes !== undefined && <button type="button" disabled={edits.pending} onClick={() => discardPropertyEdits(property.id, "notes")}>Discard note edits</button>}</div>
+        <p className="mt-1 text-[11px] text-ink-muted">Unsaved edits stay while you move around RealBud. Save before closing the app.</p>
+      </details>
 
-      <div className="mt-3 flex items-center gap-3">
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <button type="button" onClick={onOpenTasks} className="pm-control rounded border border-line px-3 text-[12px] font-medium text-agency hover:bg-raised">View tasks</button>
         <button type="button" onClick={() => setOpen((value) => !value)} className="text-[12px] text-agency hover:underline">
           {open ? "Hide options" : "Edit options"}
         </button>
@@ -651,7 +769,7 @@ function PropertyCard({
           {confirmDelete ? (
             <span className="flex items-center gap-1.5 text-[12px]">
               <span className="text-ink-muted">Remove from book?</span>
-              <button type="button" onClick={onDelete} className="rounded bg-danger px-2 py-1 font-medium text-white">
+              <button type="button" disabled={Boolean(edits.pending || edits.notes !== undefined || edits.options)} onClick={onDelete} className="rounded bg-danger px-2 py-1 font-medium text-white">
                 Remove
               </button>
               <button type="button" onClick={() => setConfirmDelete(false)} className="rounded px-2 py-1 text-ink-muted hover:bg-raised">
@@ -659,7 +777,7 @@ function PropertyCard({
               </button>
             </span>
           ) : (
-            <button type="button" onClick={() => setConfirmDelete(true)} className="flex items-center gap-1 text-[11.5px] text-ink-muted hover:text-danger">
+            <button type="button" disabled={Boolean(edits.pending || edits.notes !== undefined || edits.options)} title={edits.notes !== undefined || edits.options ? "Save or discard edits before removing this property" : undefined} onClick={() => setConfirmDelete(true)} className="flex items-center gap-1 text-[11.5px] text-ink-muted hover:text-danger">
               <Trash2 size={12} />
               Remove
             </button>
@@ -667,22 +785,26 @@ function PropertyCard({
         </div>
       </div>
 
+      {(edits.notes !== undefined || edits.options) && <p className="mt-2 text-[12px] text-hold">Unsaved {edits.notes !== undefined && edits.options ? "notes and options" : edits.options ? "options" : "notes"} · kept for this session</p>}
+      {edits.error && <p role="alert" className="mt-2 text-[12px] text-danger">{edits.error}</p>}
+      {edits.notice && <p role="status" className="mt-2 text-[12px] text-agency">{edits.notice}</p>}
       {open ? (
         <form
           className="mt-3 space-y-3 border-t border-line pt-3"
           onSubmit={(event) => {
             event.preventDefault();
-            onSave({
-              graceDays: Number(graceDays),
-              courtesyUntilDay: Number(courtesyUntilDay),
-              levyFromRent: levyOn
-                ? { amountCents: Math.round(Number(levyAmount) * 100), cadence: property.options.levyFromRent?.cadence ?? "quarterly" }
-                : null,
-              rentSource,
-              notifyChannel,
-            });
+            if (!validOptions) return;
+            const patch: Partial<PropertyOptions> = {
+              ...(optionEdits.graceDays !== undefined ? { graceDays: Number(graceDays) } : {}),
+              ...(optionEdits.courtesyUntilDay !== undefined ? { courtesyUntilDay: Number(courtesyUntilDay) } : {}),
+              ...(optionEdits.levyOn !== undefined || optionEdits.levyAmount !== undefined ? { levyFromRent: levyOn ? { amountCents: Math.round(Number(levyAmount) * 100), cadence: property.options.levyFromRent?.cadence ?? "quarterly" } : null } : {}),
+              ...(optionEdits.rentSource !== undefined ? { rentSource } : {}),
+              ...(optionEdits.notifyChannel !== undefined ? { notifyChannel } : {}),
+            };
+            void savePropertyEdits(property.id, "options", () => onSave(patch));
           }}
         >
+          <fieldset disabled={edits.pending} className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <label className="block text-[12px] text-ink-muted">
               Rent source
@@ -723,11 +845,12 @@ function PropertyCard({
           ) : null}
           <div className="flex items-center gap-2 text-[11.5px] text-ink-muted">
             <ShieldAlert size={13} className="text-hold" />
-            Never allowed: {property.options.never.join(" · ")}
+            Formal notices and trust payments need separate handling.
           </div>
-          <button type="submit" className="rounded bg-agency px-3 py-1.5 text-[12px] font-medium text-white hover:bg-agency-hover">
-            Save options
-          </button>
+          {!validOptions && <p role="alert" className="text-[12px] text-danger">Use whole days, with the courtesy limit later than the grace period. Any levy amount must be positive.</p>}
+          <button type="submit" disabled={edits.pending || !edits.options || !validOptions} className="rounded bg-agency px-3 py-1.5 text-[12px] font-medium text-white disabled:opacity-40">{edits.pending ? "Saving…" : "Save options"}</button>
+          {edits.options && <button type="button" disabled={edits.pending} onClick={() => discardPropertyEdits(property.id, "options")} className="ml-3 text-[12px] text-ink-muted">Discard option edits</button>}
+          </fieldset>
         </form>
       ) : null}
     </article>
@@ -735,11 +858,13 @@ function PropertyCard({
 }
 
 function AddPropertyModal({
+  saveError,
   onClose,
   onAdd,
 }: {
+  saveError: string;
   onClose: () => void;
-  onAdd: (input: { address: string; tenantName: string; tenantPhone: string; weeklyRentCents: number; propertyCode?: string }) => void;
+  onAdd: (input: { address: string; tenantName: string; tenantPhone: string; weeklyRentCents: number; propertyCode?: string }) => Promise<boolean>;
 }) {
   const [address, setAddress] = useState("");
   const [tenantName, setTenantName] = useState("");
@@ -747,65 +872,38 @@ function AddPropertyModal({
   const [propertyCode, setPropertyCode] = useState("");
   const [rent, setRent] = useState("");
   const dialogRef = useRef<HTMLDivElement>(null);
-  const valid = Boolean(address.trim() && tenantName.trim() && Number(rent) > 0);
-  useEffect(() => {
-    const root = dialogRef.current;
-    if (!root) return;
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusables = () => [...root.querySelectorAll<HTMLElement>("button, input, textarea, select")];
-    focusables()[0]?.focus();
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const list = focusables();
-      const first = list[0];
-      const last = list[list.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last?.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first?.focus();
-      }
-    };
-    root.addEventListener("keydown", onKey);
-    return () => {
-      root.removeEventListener("keydown", onKey);
-      previous?.focus();
-    };
-  }, [onClose]);
-  const submit = () => {
-    if (!valid) return;
-    onAdd({
-      address: address.trim(),
-      tenantName: tenantName.trim(),
-      tenantPhone: tenantPhone.trim(),
-      weeklyRentCents: Math.round(Number(rent) * 100),
-      ...(propertyCode.trim() ? { propertyCode: propertyCode.trim() } : {}),
-    });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const saving = useRef(false);
+  const valid = Boolean(address.trim() && tenantName.trim() && Number.isFinite(Number(rent)) && Number(rent) > 0);
+  useDialogKeyboard(dialogRef, onClose, busy);
+  const submit = async () => {
+    if (!valid || saving.current) return;
+    saving.current = true; setBusy(true); setError("");
+    try {
+      const saved = await onAdd({ address: address.trim(), tenantName: tenantName.trim(), tenantPhone: tenantPhone.trim(), weeklyRentCents: Math.round(Number(rent) * 100), ...(propertyCode.trim() ? { propertyCode: propertyCode.trim() } : {}) });
+      if (!saved) setError("Could not add the property. Your details are kept here. Check the connection and try again.");
+    } catch { setError("Could not add the property. Your details are kept here; try again."); }
+    finally { saving.current = false; setBusy(false); }
   };
   const inputClass = "mt-1 w-full rounded border border-line bg-inset px-3 py-2 text-[13.5px] text-ink outline-none";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-5" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="add-property-title" className="w-full max-w-[440px] border border-line bg-sheet p-5 shadow-lg">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-5" onMouseDown={(event) => event.target === event.currentTarget && !busy && onClose()}>
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="add-property-title" className="max-h-[85vh] overflow-y-auto w-full max-w-[440px] border border-line bg-sheet p-5 shadow-lg">
         <div className="flex items-start justify-between gap-3">
           <div>
             <div id="add-property-title" className="text-[16px] font-semibold text-ink">Add a property</div>
-            <p className="mt-0.5 text-[12px] text-ink-muted">Shop defaults apply. Quiet until the hands report real numbers.</p>
+            <p className="mt-0.5 text-[12px] text-ink-muted">Add the property and tenant details. You can review its options and add notes next.</p>
           </div>
-          <button type="button" onClick={onClose} className="rounded p-1 text-ink-muted hover:bg-raised" aria-label="Close">
+          <button type="button" disabled={busy} onClick={onClose} className="rounded p-1 text-ink-muted hover:bg-raised" aria-label="Close">
             <X size={16} />
           </button>
         </div>
-        <div className="mt-4 space-y-3">
+        <fieldset disabled={busy} className="mt-4 min-w-0 space-y-3">
           <label className="block text-[12px] text-ink-muted">
             Address
-            <input autoFocus value={address} onChange={(event) => setAddress(event.target.value)} className={inputClass} />
+            <input data-dialog-autofocus maxLength={160} value={address} onChange={(event) => setAddress(event.target.value)} className={inputClass} />
           </label>
           <div className="grid grid-cols-2 gap-3">
             <label className="block text-[12px] text-ink-muted">
@@ -823,15 +921,16 @@ function AddPropertyModal({
           </label>
           <label className="block text-[12px] text-ink-muted">
             Property code in your PMS (optional — your export can match on it)
-            <input value={propertyCode} onChange={(event) => setPropertyCode(event.target.value)} className={inputClass} />
+            <input maxLength={80} value={propertyCode} onChange={(event) => setPropertyCode(event.target.value)} className={inputClass} />
           </label>
-        </div>
+        </fieldset>
+        {error && <p role="alert" className="mt-3 text-[12px] text-danger">{saveError || error} Your details are kept here. If a previous attempt was interrupted, check the book before retrying.</p>}
         <div className="mt-5 flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="pm-control rounded px-4 text-[13px] text-ink-muted hover:bg-raised">
+          <button type="button" disabled={busy} onClick={onClose} className="pm-control rounded px-4 text-[13px] text-ink-muted hover:bg-raised">
             Cancel
           </button>
-          <button type="button" onClick={submit} disabled={!valid} className="pm-control rounded bg-agency px-4 text-[13px] font-medium text-white hover:bg-agency-hover disabled:opacity-40">
-            Add to book
+          <button type="button" onClick={() => void submit()} disabled={!valid || busy} className="pm-control rounded bg-agency px-4 text-[13px] font-medium text-white hover:bg-agency-hover disabled:opacity-40">
+            {busy ? "Adding…" : "Add to book"}
           </button>
         </div>
       </div>

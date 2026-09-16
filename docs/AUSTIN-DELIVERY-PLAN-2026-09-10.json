@@ -1,0 +1,1496 @@
+{
+  "version": 6,
+  "updated": "2026-09-11",
+  "title": "Austin delivery plan",
+  "scope": "Windows-first planning register; decisions are recorded, implementation and installed-office acceptance remain open.",
+  "stages": {
+    "scope": "01 · Confirm the Windows pilot",
+    "foundation": "02 · Preserve setup and agency identity",
+    "windows": "03 · Demonstrate one Windows workflow",
+    "phase1": "04 · Complete Phase 1",
+    "handover": "05 · Prove and hand over",
+    "crm": "06 · Optional CRM",
+    "repeat": "07 · Repeat for agencies",
+    "later": "Outside the initial offer"
+  },
+  "statuses": {
+    "decision": "Decision / input needed",
+    "build": "Build / extend",
+    "verify": "Verification still required",
+    "deferred": "Deferred · not included"
+  },
+  "next": [
+    "W01",
+    "D02",
+    "F01",
+    "W02"
+  ],
+  "tasks": [
+    {
+      "id": "D01",
+      "title": "Agree the office and pilot boundary",
+      "stage": "scope",
+      "stream": "Setup",
+      "owner": "Yoda + Danny + Kevin",
+      "status": "decision",
+      "depends": [],
+      "inputs": "Office timezone, property/bill volumes, Windows 11 workstation and CPU architecture, native apps, reviewer, operating hours and support contact.",
+      "work": "Record one-office scope, who reviews finance, supported formats/accounts/channel and which work stays outside Phase 1. Confirm delivery feasibility before accepting payment.",
+      "proof": "A dated scope record and named decision owner; no implied multi-user or always-on promise.",
+      "recovery": "New format, role or volume triggers a reviewed scope change, not an expanded permission.",
+      "code": [
+        "shared/office.ts",
+        "docs/AUSTIN-ROLLOUT-DESIGN-2026-09-10.md"
+      ],
+      "evidenceUpdate": "Office preparation and interview discovery are reported complete by Yoda. Reuse the clips and existing decisions; confirm only deployment facts absent from that evidence."
+    },
+    {
+      "id": "D02",
+      "title": "Collect one representative bank and REI sample",
+      "stage": "scope",
+      "stream": "Bank",
+      "owner": "Kevin + Yoda",
+      "status": "decision",
+      "depends": [
+        "D01"
+      ],
+      "inputs": "An authorised bank file, accepted REI import example/schema, reference map and ordinary plus ambiguous rows.",
+      "work": "Confirm actual CSV/XLSX parsing needs, amount/date conventions, reference field length, account identity and REI acceptance route. Store the original safely.",
+      "proof": "One documented input/output contract with all rows accounted for and an agreed way to verify destination totals.",
+      "recovery": "Unsupported format or missing REI evidence holds that format; never infer it from a screenshot.",
+      "code": [
+        "server/import-inspect.ts",
+        "shared/rent-workflow.ts"
+      ],
+      "evidenceUpdate": "Clip 1 describes CSV download; clip 2 shows bank-derived Excel narratives and REI Bulk Receipting. Obtain one de-identified export and its corresponding corrected/imported copy; do not ask Kevin to specify a technical schema."
+    },
+    {
+      "id": "D03",
+      "title": "Confirm bill cycles and reminder ownership",
+      "stage": "scope",
+      "stream": "Bills",
+      "owner": "Kevin + Danny + Yoda",
+      "status": "decision",
+      "depends": [
+        "D01"
+      ],
+      "inputs": "Examples of received and missing council/water/levy bills, recurring windows, staff responsibilities and payment follow-up rules.",
+      "work": "Create the seed register; record expected arrival separately from due date, partial evidence, issuer identity, advance/funding exceptions, quiet hours and escalation owner.",
+      "proof": "Kevin confirms the initial register and Danny confirms the review/escalation route. Unknown dates remain unknown.",
+      "recovery": "Disputed cycle or unknown payment evidence creates a review item, never an invented deadline or paid status.",
+      "code": [
+        "server/desk-store.ts",
+        "shared/office.ts"
+      ]
+    },
+    {
+      "id": "D04",
+      "title": "Choose the execution and account ownership model",
+      "stage": "scope",
+      "stream": "Setup",
+      "owner": "Yoda + Danny",
+      "status": "decision",
+      "depends": [
+        "D01",
+        "W01"
+      ],
+      "inputs": "Desktop operating hours, mobile channel, model/provider billing owner, Gmail consent owners and backup destination.",
+      "work": "Use Hermes + Cua on a suitable existing Windows 11 machine for the initial pilot. Confirm account/provider billing ownership, session/operating hours and mobile access. Hardware is optional; a Mac mini could host later CRM but cannot replace Windows applications. Defer another Codex engine until measured task reliability/cost or a customer need justifies it.",
+      "proof": "Written ownership, hours, costs and outage behavior; customer-facing setup contains no shared vendor project secret.",
+      "recovery": "If hosted access is not ready, scope a verified channel interaction and honest offline behavior before promising phone case access.",
+      "code": [
+        "server/config.ts",
+        "server/composio.ts",
+        "server/channels/",
+        "electron/main.mjs"
+      ]
+    },
+    {
+      "id": "F01",
+      "title": "Bind one agency to one explicit engine identity",
+      "stage": "foundation",
+      "stream": "Platform",
+      "owner": "Yoda",
+      "status": "build",
+      "depends": [
+        "D04"
+      ],
+      "inputs": "Supported runtime/version policy and chosen isolation boundary.",
+      "work": "Make agency, data root, engine executable/version, profile/home, generation and credential owner explicit. Resolve Ask, status, OAuth and lifecycle through the same binding.",
+      "proof": "Wrong agency/binding is rejected; no personal-login fallback. Concurrent threads use a proved isolated-home policy or supported serialization.",
+      "recovery": "Missing/unsupported engine leaves retained records readable and presents one repair action.",
+      "code": [
+        "server/contracts.ts",
+        "server/config.ts",
+        "server/harness/registry.ts",
+        "server/drivers/acp/",
+        "server/hermes-oauth.ts"
+      ]
+    },
+    {
+      "id": "F02",
+      "title": "Preserve setup through engine changes",
+      "stage": "foundation",
+      "stream": "Platform",
+      "owner": "Yoda",
+      "status": "build",
+      "depends": [
+        "F01"
+      ],
+      "inputs": "Owned-file inventory, retained-state policy and supported engine versions.",
+      "work": "Persist enabled intent; stop unconditional pack reactivation. Drain active work and use a durable operation/generation before repair, update or uninstall. Remove only owned code; retain settings and data.",
+      "proof": "Off survives restart; update and remove/reinstall preserve setup; crash recovery, active jobs and stale/duplicate lifecycle requests are exercised.",
+      "recovery": "Reconcile unknown external outcomes before replay; restore a compatible snapshot when a schema change prevents binary rollback.",
+      "code": [
+        "server/hermes-lifecycle.ts",
+        "server/hermes-pack.ts",
+        "server/index.ts",
+        "server/worker-bootstrap.ts",
+        "server/drivers/acp/core.ts"
+      ]
+    },
+    {
+      "id": "F03",
+      "title": "Register reusable capabilities and scoped activation",
+      "stage": "foundation",
+      "stream": "Platform",
+      "owner": "Yoda",
+      "status": "build",
+      "depends": [
+        "F01",
+        "F02",
+        "W06"
+      ],
+      "inputs": "Small first-party PM/CRM contract and host compatibility policy.",
+      "work": "Add durable module registration, activation, permission/version checks and agency/module-scoped revocation. Reuse the existing broker and scheduler. Keep entitlement separate from action authority. Start with small first-party contracts after the demonstrated Windows slice; do not build a marketplace or another engine first.",
+      "proof": "A fake CRM can install/update/disable/remove/reinstall without changing PM data, jobs or permissions. Unknown modules remain retained and unavailable.",
+      "recovery": "Failed activation stays off with an actionable reason; an update requesting wider access cannot silently inherit it.",
+      "code": [
+        "server/harness/registry.ts",
+        "server/connected-apps-broker.ts",
+        "server/connected-app-operations.ts",
+        "pack/property/"
+      ]
+    },
+    {
+      "id": "F04",
+      "title": "Prove backup, key recovery and data retention",
+      "stage": "foundation",
+      "stream": "Platform",
+      "owner": "Yoda",
+      "status": "verify",
+      "depends": [
+        "F01",
+        "F02"
+      ],
+      "inputs": "Approved backup destination, retention, recovery target and account ownership.",
+      "work": "Inventory encrypted/plain stores and key owners. Document backup/restore, exports, disconnect versus delete, and a safe recovery procedure without secrets in guides.",
+      "proof": "Restore synthetic agency records/configuration with the required key on an isolated installation; document what cannot be recovered and who owns that risk.",
+      "recovery": "Lost/corrupt key or backup must not overwrite retained records with an empty book. Keep evidence of the failed recovery.",
+      "code": [
+        "server/desk-key.ts",
+        "server/desk-store.ts",
+        "server/store.ts",
+        "server/vault.ts",
+        "electron/main.mjs"
+      ]
+    },
+    {
+      "id": "S01",
+      "title": "Provision connections before Kevin opens setup",
+      "stage": "foundation",
+      "stream": "Setup",
+      "owner": "Yoda; account owners consent",
+      "status": "build",
+      "depends": [
+        "D04",
+        "F01"
+      ],
+      "inputs": "Agreed provider, Composio account/project ownership, Gmail accounts and least-privilege consent.",
+      "work": "Separate technician provisioning from office consent. Store secret references at the owning boundary, bind the selected account and show verified capability/coverage instead of project IDs.",
+      "proof": "Kevin connects the correct office account without entering our project secret. Wrong account, revoked scope and interrupted OAuth stay unready.",
+      "recovery": "Resolve an unknown OAuth result before creating another connection; reconnect only the affected account and invalidate dependent checks.",
+      "code": [
+        "src/components/GmailReadOnlySetup.tsx",
+        "src/components/ConnectedAppsCard.tsx",
+        "server/composio-gmail.ts",
+        "shared/office-sources.ts"
+      ]
+    },
+    {
+      "id": "S02",
+      "title": "Persist a resumable outcome-based setup",
+      "stage": "foundation",
+      "stream": "Setup",
+      "owner": "Yoda",
+      "status": "build",
+      "depends": [
+        "D01",
+        "S01"
+      ],
+      "inputs": "The agreed office checklist and versioned workflow/account bindings.",
+      "work": "Use the existing setup sheet for Office → Sources → Rent sample → Bill cycles → Reminders → Handover. Persist non-secret progress server-side, preserve current drafts and show a single next action. Keep the initial office setup guided; the Phase 1 routine editor then uses approved templates and retained sample proof.",
+      "proof": "Reload/restart/cancel resumes at the correct step. A changed source, map or scope invalidates affected proof only; clicking a checkbox never makes access ready.",
+      "recovery": "Loading, partial, offline, stale and failed checks remain distinct; a failed step does not reset completed unrelated work.",
+      "code": [
+        "src/components/WorkspaceSetup.tsx",
+        "src/lib/workspace-setup.ts",
+        "src/components/PmTaskStarters.tsx",
+        "shared/office.ts"
+      ]
+    },
+    {
+      "id": "P01",
+      "title": "Create the bank batch and reference-review contract",
+      "stage": "phase1",
+      "stream": "Bank",
+      "owner": "Yoda",
+      "status": "build",
+      "depends": [
+        "D02",
+        "F01",
+        "W06",
+        "P00"
+      ],
+      "inputs": "Verified sample/schema and a versioned property/tenancy reference map.",
+      "work": "Parse deterministically into an immutable batch with original hash, account, row IDs, minor-unit totals, proposed reference edits and held reasons. Preserve leading zeros and date/money semantics.",
+      "proof": "Invalid formats, repeated/overlapping uploads, ambiguous matches, tenancy changes, splits and reversals are handled without dropped or duplicated money.",
+      "recovery": "Malformed input is rejected with a useful row/schema error; uncertain mapping stays held for Kevin.",
+      "code": [
+        "server/import-inspect.ts",
+        "shared/rent-workflow.ts",
+        "server/desk-store.ts"
+      ],
+      "evidenceUpdate": "The existing ledger importer rejects an illustrative bank transaction CSV (400, missing daysSinceDue). Build the separate bank-reference preparation contract; do not change bank fixtures into ledger snapshots to obtain a passing test.",
+      "implementationEvidence": {
+        "date": "2026-09-11",
+        "report": "docs/AUSTIN-IMPLEMENTATION-2026-09-11.md",
+        "note": "Bank reference-only review/export implemented and tested. Actual export mapping, scheduled acquisition and REI acceptance pending."
+      }
+    },
+    {
+      "id": "P02",
+      "title": "Review changes and export the approved REI copy",
+      "stage": "phase1",
+      "stream": "Bank",
+      "owner": "Yoda",
+      "status": "build",
+      "depends": [
+        "P01",
+        "F03"
+      ],
+      "inputs": "Current batch, map revision and verified REI export rules.",
+      "work": "Add a Desk review showing old/new references, evidence, unchanged totals and held rows. Recheck approval/version at the server, then create a separate versioned export.",
+      "proof": "Stale or incomplete review cannot export. Every input row has a visible disposition; exported amounts/dates/totals match the original and accepted schema.",
+      "recovery": "Duplicate clicks return the same operation; changed data invalidates approval. A failed write leaves the original intact and no misleading finished result.",
+      "code": [
+        "src/components/desk/",
+        "server/desk-store.ts",
+        "server/connected-app-operations.ts"
+      ]
+    },
+    {
+      "id": "P03",
+      "title": "Close the loop on the actual REI import",
+      "stage": "phase1",
+      "stream": "Bank",
+      "owner": "Kevin + Yoda",
+      "status": "verify",
+      "depends": [
+        "P02"
+      ],
+      "inputs": "Authorised test batch and a way to inspect REI import results.",
+      "work": "Record export identity, staff import action, accepted/rejected row counts, ledger totals and destination evidence. Keep exported, imported and reconciled separate.",
+      "proof": "Kevin verifies an ordinary and exception batch in REI, with no duplicate receipts or unexplained total difference.",
+      "recovery": "Partial/unknown import results are reconciled at REI before a retry. Keep unresolved rows open; do not assume an REI API.",
+      "code": [
+        "docs/AUSTIN-ROLLOUT-DESIGN-2026-09-10.md",
+        "server/connected-app-operations.ts"
+      ]
+    },
+    {
+      "id": "M01",
+      "title": "Add consented recurring Gmail intake",
+      "stage": "phase1",
+      "stream": "Gmail",
+      "owner": "Yoda",
+      "status": "build",
+      "depends": [
+        "S01",
+        "F03"
+      ],
+      "inputs": "Explicit recurring read permission, backfill window, account binding and run limits.",
+      "work": "Extend the bounded Ask-only path with permitted pagination, durable per-account checkpoints, deduplication, rate limits and scoped revocation. Keep source coverage visible.",
+      "proof": "Restart, partial pages, duplicate messages, expiry and outages cannot skip unseen mail or turn an incomplete check into no bill found.",
+      "recovery": "Advance checkpoints only for processed data; bounded retry/catch-up and a clear last-success/coverage range are retained.",
+      "code": [
+        "server/composio-gmail.ts",
+        "server/connected-apps-broker.ts",
+        "server/routines.ts",
+        "server/routine-persistence.ts"
+      ]
+    },
+    {
+      "id": "M02",
+      "title": "Read invoice evidence with attachment coverage",
+      "stage": "phase1",
+      "stream": "Gmail",
+      "owner": "Yoda",
+      "status": "build",
+      "depends": [
+        "M01"
+      ],
+      "inputs": "Agreed invoice formats, size limits and representative authorised examples.",
+      "work": "Fetch allowed attachments; validate file type/size, extract invoice fields with source provenance, preserve originals and quarantine unreadable or conflicting evidence. Treat all document text as untrusted.",
+      "proof": "Missing attachments, repeated forwarded invoices, revisions, extraction errors and conflicting totals stay visible for review; no model output alone confirms payment.",
+      "recovery": "Unreadable/encrypted/oversized files become a manual-evidence task. Failed extraction cannot silently mark the bill checked.",
+      "code": [
+        "server/composio-gmail.ts",
+        "server/vault.ts",
+        "server/desk-store.ts"
+      ]
+    },
+    {
+      "id": "B01",
+      "title": "Model recurring bills and individual occurrences",
+      "stage": "phase1",
+      "stream": "Bills",
+      "owner": "Yoda",
+      "status": "build",
+      "depends": [
+        "D03",
+        "F01",
+        "W06"
+      ],
+      "inputs": "Confirmed obligation register and source identity rules.",
+      "work": "Add obligation, occurrence, evidence and payment-evidence records with agency + obligation + period uniqueness. Project one case into Desk and Schedule.",
+      "proof": "Expected window, invoice due date, missing, received, arranged and verified paid remain distinct; duplicate occurrences and invoice revisions are controlled.",
+      "recovery": "Retired/changed obligations preserve history; cancelled/disputed cases need a reason. Unknown dates stay unknown.",
+      "code": [
+        "server/desk-store.ts",
+        "shared/contracts.ts",
+        "src/components/desk/"
+      ]
+    },
+    {
+      "id": "B02",
+      "title": "Turn bill evidence into reviewed exceptions",
+      "stage": "phase1",
+      "stream": "Bills",
+      "owner": "Yoda",
+      "status": "build",
+      "depends": [
+        "B01",
+        "M02",
+        "F03"
+      ],
+      "inputs": "Invoice evidence, source coverage and permitted review/payment evidence.",
+      "work": "Match bills to occurrences and expose missing, duplicate, amount/property conflict and funding/advance exceptions. Record a staff-authorised company advance/recovery follow-up where required; keep REI authoritative.",
+      "proof": "Ordinary, missing, amended, duplicate, disputed and advance-funded examples retain provenance and review history; arranged never auto-closes as paid.",
+      "recovery": "An inbox outage changes coverage confidence, not financial facts. Changed invoice evidence invalidates any affected approval.",
+      "code": [
+        "server/desk-store.ts",
+        "server/connected-apps-broker.ts",
+        "src/components/desk/DeskCase.tsx"
+      ]
+    },
+    {
+      "id": "B03",
+      "title": "Put the same bill cases in the existing calendar",
+      "stage": "phase1",
+      "stream": "Bills",
+      "owner": "Yoda",
+      "status": "build",
+      "depends": [
+        "B01",
+        "B02"
+      ],
+      "inputs": "Office timezone, expected windows, due dates and staff follow-up cadence.",
+      "work": "Extend the existing Schedule/WeekCalendar with bill occurrences and source/run freshness. Open the same case from Desk, Ask and Schedule; use clear text as well as colour.",
+      "proof": "All views show the current case revision; timezone/DST, overdue and missed-run examples remain accurate. Schedule completion never implies paid.",
+      "recovery": "Sleep/restart catches up without duplicate runs; expired source coverage remains visible on calendar items.",
+      "code": [
+        "src/components/schedule/WeekCalendar.tsx",
+        "src/lib/schedule-week.ts",
+        "server/routines.ts"
+      ]
+    },
+    {
+      "id": "A01",
+      "title": "Deliver alerts through a durable outbox",
+      "stage": "phase1",
+      "stream": "Alerts",
+      "owner": "Yoda",
+      "status": "build",
+      "depends": [
+        "B02",
+        "F03",
+        "D03"
+      ],
+      "inputs": "Agreed severity, owner, quiet hours, digest and escalation rules.",
+      "work": "Commit case changes and alert intent reliably; deduplicate/coalesce, revalidate recipient/current case, track provider outcomes and expose retry/failure states.",
+      "proof": "Repeated events do not spam; resolved/stale cases are not sent; accepted, acknowledged and resolved are separate. Failed/unknown delivery remains visible.",
+      "recovery": "Bound retries and reconcile unknown provider outcomes before replay; retain an office-visible delivery exception when exhausted.",
+      "code": [
+        "server/channels/",
+        "server/remote-decisions.ts",
+        "server/routines.ts",
+        "server/desk-store.ts"
+      ]
+    },
+    {
+      "id": "A02",
+      "title": "Verify the phone route and recipient authority",
+      "stage": "phase1",
+      "stream": "Alerts",
+      "owner": "Yoda + Danny + Kevin",
+      "status": "verify",
+      "depends": [
+        "A01",
+        "D04",
+        "A03"
+      ],
+      "inputs": "One agreed channel, paired recipient and approved route to current case detail.",
+      "work": "Verify minimal lock-screen copy, delivery, actor binding and the case-opening/review route from an actual phone. Use authenticated reachable access or a proved bounded channel flow.",
+      "proof": "The intended person receives the test and can reach current case information; expired/wrong-person approvals fail safely. A localhost link does not pass.",
+      "recovery": "Lost phone, removed staff, revoked pairing or offline Windows workstation has a documented recovery and visible missed-check state.",
+      "code": [
+        "server/channel-pairing.ts",
+        "server/channel-continuation.ts",
+        "server/remote-decisions.ts",
+        "src/lib/phone-connections.ts"
+      ]
+    },
+    {
+      "id": "C01",
+      "title": "Implement attributable usage and budget behavior",
+      "stage": "phase1",
+      "stream": "Commercial",
+      "owner": "Yoda",
+      "status": "build",
+      "depends": [
+        "D04",
+        "F03"
+      ],
+      "inputs": "Billing owner, agreed budget, first billing period and written waiver terms.",
+      "work": "Reserve and settle chargeable work against a deduplicated usage ledger. Attribute connector/model costs; avoid billing customer-direct usage twice; separate entitlement, support and action permission. Keep API/provider billing separate from Hermes/Cua or any future engine. For customer-direct usage, do not charge the same calls again; apply the first-month excess benefit as a verified credit/reimbursement. Track eligible phase, billing period and currency.",
+      "proof": "Budget boundary, concurrent cost reservations, duplicate/late charges and restart are tested. First-month excess is absorbed once, never recovered later or reset on reconnect. Low usage is charged as actual usage, not the full budget; managed and customer-direct examples reconcile to one cost owner.",
+      "recovery": "Pause extra chargeable work at the ongoing limit and show coverage impact; handle delayed provider costs and disputes without hidden invoices.",
+      "code": [
+        "server/connected-app-operations.ts",
+        "server/config.ts",
+        "docs/AUSTIN-ROLLOUT-DESIGN-2026-09-10.md"
+      ]
+    },
+    {
+      "id": "Q01",
+      "title": "Run the joined workflow and failure checks",
+      "stage": "handover",
+      "stream": "Release",
+      "owner": "Yoda",
+      "status": "verify",
+      "depends": [
+        "S02",
+        "P03",
+        "B03",
+        "A02",
+        "C01",
+        "F04",
+        "P00",
+        "U01",
+        "U02",
+        "M03",
+        "A03",
+        "U03"
+      ],
+      "inputs": "Integrated implementation, synthetic fixtures and authorised acceptance examples.",
+      "work": "Exercise the full bank/bill/setup paths and failure matrix. bind results to the exact working tree, fixtures and build. Prove recurring acquisition, daily inbox organisation and simultaneous desktop/mobile approval settlement, including the exact source checks recorded in the routines plan. Exercise every login/MFA human-handover case in U03, including privacy and uncertain-resume recovery.",
+      "proof": "Relevant tests/typecheck/build pass, and failure output is preserved. No feature is called ready solely from a screenshot or fixture result.",
+      "recovery": "Cover crash, cancellation, duplicate upload/approval, stale source, revoked consent, disk failure, corrupted persistence and unknown external result.",
+      "code": [
+        "server/routines-recovery.test.ts",
+        "scripts/qa-first-install.mjs",
+        "scripts/qa-connected-apps.mjs",
+        "package.json"
+      ],
+      "evidenceUpdate": "2026-09-11: 181 focused tests, all five PM API suites and 50 browser checks passed. Fixed Stop classification, stale approval conflicts, a test-server restart timer and batched connected-app test fixture. See AUSTIN-REHEARSAL-2026-09-11.md. This is partial foundation proof, not completed bank/MFA/Windows acceptance."
+    },
+    {
+      "id": "Q02",
+      "title": "Verify the final Windows 11 release and operating recovery",
+      "stage": "handover",
+      "stream": "Release",
+      "owner": "Yoda",
+      "status": "verify",
+      "depends": [
+        "Q01",
+        "W05",
+        "W07"
+      ],
+      "inputs": "Signed supported package, matching Windows 11 test environment, operating-hours and backup plan.",
+      "work": "Rebuild the completed Phase 1 changes through the same exact-source Windows workflow. Verify the final installer on the customer architecture, repeat affected browser/native, approvals, Stop/takeover, restart/update and restore checks, and retain the exact artifact receipt. Verify a real sign-in/MFA pause, host handover and checkpoint continuation on the named app, plus the selected actual phone.",
+      "proof": "Installed-version receipt and repeatable clean-machine/recovery evidence. Source or browser success does not substitute for this.",
+      "recovery": "Wrong permissions, missing engine, expired account or offline state leaves work recoverable with one documented next action.",
+      "code": [
+        ".github/workflows/package-win.yml",
+        "electron-builder.yml",
+        "electron/main.mjs",
+        "electron/cua.mjs",
+        "electron/updater.mjs",
+        "server/hermes-lifecycle.ts"
+      ],
+      "implementationEvidence": {
+        "date": "2026-09-11",
+        "report": "docs/AUSTIN-IMPLEMENTATION-2026-09-11.md",
+        "note": "Source, browser, real Hermes, real Cua component and Windows Server installer evidence recorded separately. Full Windows11 workflow remains open."
+      }
+    },
+    {
+      "id": "Q03",
+      "title": "Rehearse Austin’s working day and measure it",
+      "stage": "handover",
+      "stream": "Release",
+      "owner": "Kevin + Yoda; Danny reviews",
+      "status": "verify",
+      "depends": [
+        "Q02"
+      ],
+      "inputs": "Comparable real batches/bill cases, agreed sample size and success thresholds.",
+      "work": "Record active time, review, rework, false alerts, missed cases, waiting, runtime/cost and correct outcome before/after. Include failures and ongoing upkeep; no double counting.",
+      "proof": "Kevin completes routine and exception paths with acceptable correctness and review burden; Danny accepts the evidence and remaining limitations.",
+      "recovery": "Missed criteria keep the pilot in review. Record the defect/workaround and rerun affected samples; do not invent a saving percentage.",
+      "code": [
+        "docs/AUSTIN-ROLLOUT-DESIGN-2026-09-10.md"
+      ]
+    },
+    {
+      "id": "Q04",
+      "title": "Complete handover, support and billing acceptance",
+      "stage": "handover",
+      "stream": "Commercial",
+      "owner": "Yoda + Danny + Kevin",
+      "status": "verify",
+      "depends": [
+        "Q03"
+      ],
+      "inputs": "Accepted results, named support/escalation owner and final written commercial scope.",
+      "work": "Deliver two training sessions, quick guide, source/phone recovery, backup/restore and incident runbooks. Agree change requests, support hours, billing start, waiver, export and cancellation/retention procedure.",
+      "proof": "Dated handover acceptance records installed version, accounts, scope, run cadence, known limits and owners. Subscription starts at accepted go-live only.",
+      "recovery": "If handover is incomplete, record obligations and remedy under agreed terms. Founder absence and urgent incidents have a named fallback.",
+      "code": [
+        "docs/AUSTIN-ROLLOUT-DESIGN-2026-09-10.md",
+        "docs/REALBUD-GPT6-PRO-AUDIT-BRIEF-2026-09-10.md"
+      ]
+    },
+    {
+      "id": "R01",
+      "title": "Scope the Twenty workspace and CRM offer",
+      "stage": "crm",
+      "stream": "CRM",
+      "owner": "Yoda + Danny + sales operator",
+      "status": "decision",
+      "depends": [
+        "Q04"
+      ],
+      "inputs": "Users/roles, sample workbook, required entities, hosting owner, edition and migration volume.",
+      "work": "Agree CRM acceptance, licence/vendor costs, migration cleanup, hosting/backup/support and separate price. Verify selected Twenty schema/API/version.",
+      "proof": "Signed scope/ownership/mapping and cost model before promising seamless CRM delivery; no assumed REI finance write authority.",
+      "recovery": "Unsupported edition/schema or incomplete data is a scoped decision with an estimate, not hidden setup work.",
+      "code": [
+        "docs/REALBUD-HERMES-HARNESS-2026-09-10.md"
+      ]
+    },
+    {
+      "id": "R02",
+      "title": "Build native CRM views and governed sync",
+      "stage": "crm",
+      "stream": "CRM",
+      "owner": "Yoda",
+      "status": "build",
+      "depends": [
+        "R01",
+        "F03"
+      ],
+      "inputs": "Verified Twenty workspace, least-privilege API binding and mapped record identities.",
+      "work": "Register native record views and shared UI/Bud action handlers. Add bounded sync, cursors, conflict checks, deletion handling and operation reconciliation. Webhooks require agreed reachable ingress.",
+      "proof": "Wrong workspace/role, stale edits, duplicate/reordered events and uncertain writes cannot corrupt records. Disable/remove CRM leaves PM operational and Twenty data retained.",
+      "recovery": "Reconnect/reinstall resumes from retained state; do not resurrect deleted records or claim an upstream idempotency guarantee without proof.",
+      "code": [
+        "server/connected-apps-broker.ts",
+        "server/connected-app-operations.ts",
+        "src/components/desk/",
+        "docs/REALBUD-HERMES-HARNESS-2026-09-10.md"
+      ]
+    },
+    {
+      "id": "R03",
+      "title": "Migrate and accept the CRM with staff",
+      "stage": "crm",
+      "stream": "CRM",
+      "owner": "Yoda + Austin sales team",
+      "status": "verify",
+      "depends": [
+        "R02"
+      ],
+      "inputs": "Approved import, duplicate decisions, record counts and a staff training sample.",
+      "work": "Rehearse migration/rollback, verify counts and relationships, then test buyer/listing/follow-up work with actual roles. Keep outreach review and sending authority explicit.",
+      "proof": "Data totals/relationships and staff usability accepted; cost/support scope confirmed. Measure combined Bud + CRM work without double counting.",
+      "recovery": "Partial imports and conflicting edits are reconciled before retry; retain original workbook and reviewed mapping.",
+      "code": [
+        "docs/REALBUD-HERMES-HARNESS-2026-09-10.md"
+      ]
+    },
+    {
+      "id": "N01",
+      "title": "Prove the same release serves agency two",
+      "stage": "repeat",
+      "stream": "Platform",
+      "owner": "Yoda",
+      "status": "verify",
+      "depends": [
+        "Q04",
+        "F03",
+        "F04"
+      ],
+      "inputs": "A separate synthetic agency and chosen deployment boundary.",
+      "work": "Configure the same artifacts with separate identity, credentials, mappings, data and module selections. Exercise update, restore and usage allocation independently.",
+      "proof": "No code fork, cross-agency record/credential access or invoice leakage; one agency’s module disable does not disrupt the other.",
+      "recovery": "A failed update or exhausted budget remains isolated. Shared hosting is withheld until tenant-aware authoritative controls pass.",
+      "code": [
+        "server/config.ts",
+        "server/contracts.ts",
+        "server/connected-apps-broker.ts",
+        "docs/REALBUD-HERMES-HARNESS-2026-09-10.md"
+      ]
+    },
+    {
+      "id": "N02",
+      "title": "Review enterprise operating requirements at the right scale",
+      "stage": "repeat",
+      "stream": "Commercial",
+      "owner": "Yoda + relevant specialist",
+      "status": "decision",
+      "depends": [
+        "N01"
+      ],
+      "inputs": "Actual customer procurement needs, support load, volumes and deployment requirements.",
+      "work": "Revisit privacy/vendor terms, data retention, access reviews, incident ownership, recovery objectives and founder continuity. Cost hosted operations, additional roles and required enterprise controls.",
+      "proof": "Each necessary control has an owner, cadence, evidence and funded scope; defer unsupported certification, SSO or infrastructure promises.",
+      "recovery": "Vendor/contract changes trigger a scoped review; do not infer legal compliance from package metadata.",
+      "code": [
+        "docs/REALBUD-GPT6-PRO-AUDIT-BRIEF-2026-09-10.md"
+      ]
+    },
+    {
+      "id": "X01",
+      "title": "Arrears notices and sent-evidence filing",
+      "stage": "later",
+      "stream": "Notices",
+      "owner": "Yoda + relevant Austin operator",
+      "status": "deferred",
+      "depends": [],
+      "inputs": "REI notice examples, retrieval problem and authorised evidence storage.",
+      "work": "Scope evidence preparation/filing and staff review. REI already generates notices; legal judgment and sending remain with staff. Interview pointer: C1 06:07–07:01; C2 03:45–05:57",
+      "proof": "A reviewed notice can be traced to its original evidence without duplicate sending or inferred delivery.",
+      "recovery": "Remain outside current handover scope until selected, estimated and accepted. No automatic activation.",
+      "code": [
+        "docs/AUSTIN-ROLLOUT-DESIGN-2026-09-10.md"
+      ]
+    },
+    {
+      "id": "X02",
+      "title": "Airbnb payout allocation",
+      "stage": "later",
+      "stream": "Airbnb",
+      "owner": "Yoda + relevant Austin operator",
+      "status": "deferred",
+      "depends": [],
+      "inputs": "Payout/booking exports, split rules, fees and destination checks.",
+      "work": "Validate allocation rules and an import/review route before including this in the offer. Interview pointer: C1 13:15–14:14",
+      "proof": "Same payout reconciles across bookings, fees and destination totals; uncertainty is held.",
+      "recovery": "Remain outside current handover scope until selected, estimated and accepted. No automatic activation.",
+      "code": [
+        "docs/AUSTIN-ROLLOUT-DESIGN-2026-09-10.md"
+      ]
+    },
+    {
+      "id": "X03",
+      "title": "Maintenance and trade handoffs",
+      "stage": "later",
+      "stream": "Maintenance",
+      "owner": "Yoda + relevant Austin operator",
+      "status": "deferred",
+      "depends": [],
+      "inputs": "A PM walkthrough of ordinary, emergency, owner-approval and completion cases.",
+      "work": "Observe the real handoff and authority limits before designing automation or quoting it. Interview pointer: C1 10:55–12:51; high-level account only",
+      "proof": "PM confirms dispatch, emergency escalation, spend authority and close-out evidence; no unsupported savings estimate.",
+      "recovery": "Remain outside current handover scope until selected, estimated and accepted. No automatic activation.",
+      "code": [
+        "docs/AUSTIN-ROLLOUT-DESIGN-2026-09-10.md"
+      ]
+    },
+    {
+      "id": "X04",
+      "title": "Outgoing inbox follow-up and mailbox changes",
+      "stage": "later",
+      "stream": "Gmail",
+      "owner": "Yoda + relevant Austin operator",
+      "status": "deferred",
+      "depends": [],
+      "inputs": "Selected mailbox-write/outreach scope, owner, recipients and reviewed action authority.",
+      "work": "Daily read-only inbox review and internal task organisation are included through M03. Sending replies, mailbox label changes, archive/delete and wider outreach remain separately scoped.",
+      "proof": "Read access and internal task organisation never silently authorise mailbox changes or outgoing messages.",
+      "recovery": "Remain outside current handover scope until selected, estimated and accepted. No automatic activation.",
+      "code": [
+        "docs/AUSTIN-ROLLOUT-DESIGN-2026-09-10.md"
+      ]
+    },
+    {
+      "id": "W01",
+      "title": "Confirm Windows apps, architecture and one real workflow",
+      "stage": "scope",
+      "stream": "Windows",
+      "owner": "Kevin + Yoda",
+      "status": "decision",
+      "depends": [
+        "D01"
+      ],
+      "inputs": "Exact native applications/versions, website, Windows 11 version, CPU/app architecture, standard/elevated rights, display scaling, session setup and a representative authorised sample.",
+      "work": "Walk the current task with Kevin; record the website-to-native-app sequence, expected output and approval boundary. Match the test environment to Austin. ARM VM evidence is supplementary if Austin is x64.",
+      "proof": "Named app and workflow contract, architecture inventory and expected result agreed. Generic test apps do not count as customer workflow acceptance.",
+      "recovery": "Keep unknown apps/architecture as pending; do not assume Excel or buy hardware to resolve an unconfirmed requirement.",
+      "code": [
+        "docs/AUSTIN-OPERATING-PLAN-2026-09-10.md",
+        "electron-builder.yml"
+      ],
+      "evidenceUpdate": "Clip 1 at 17:30 visibly shows REI Cloud Member Login; clip 2 shows Excel, REI Bulk Receipting and a Windows desktop. Windows 11 appearance is an inference; exact CPU architecture, Excel version and any additional native apps remain unconfirmed."
+    },
+    {
+      "id": "W02",
+      "title": "Package the Windows Cua driver and SDK",
+      "stage": "windows",
+      "stream": "Windows",
+      "owner": "Yoda",
+      "status": "build",
+      "depends": [
+        "W01",
+        "F01"
+      ],
+      "inputs": "Supported, licensed Windows driver/SDK assets with the agreed architecture, version and digest.",
+      "work": "Extend staging beyond the macOS-only preparation script. Bundle Windows native resources outside ASAR and include them in package:win. Validate architecture/integrity and fail when required assets are missing.",
+      "proof": "Inspect the resulting installer contents and run the packaged Windows driver/SDK; no developer-installed dependency or macOS library fallback.",
+      "recovery": "Unavailable, incompatible or altered assets block the build/control capability with a useful error; preserve the prior working runtime.",
+      "code": [
+        "scripts/prepare-cua.mjs",
+        "package.json",
+        "electron-builder.yml",
+        "electron/cua.mjs"
+      ]
+    },
+    {
+      "id": "W03",
+      "title": "Wire Windows startup, permissions and bounded control",
+      "stage": "windows",
+      "stream": "Windows",
+      "owner": "Yoda",
+      "status": "build",
+      "depends": [
+        "W02",
+        "F01"
+      ],
+      "inputs": "Admitted Hermes/Cua contracts, user/session model, approved website and native-app identities.",
+      "work": "Replace the macOS-only Cua startup gate with a verified Windows path, transport and health checks. Scope browser origins and native app/window actions; wire approvals, Stop, human takeover and process cleanup without unrestricted fallback.",
+      "proof": "A packaged control session executes only the approved action on the intended surface. Denied/stale/wrong-app actions fail; Stop prevents queued actions and takeover revokes the agent lease.",
+      "recovery": "Handle crash, missing driver, login/session loss, UAC/secure desktop and unknown outcome explicitly. Human intervention is required where automation is unsupported; reconcile before retry.",
+      "code": [
+        "electron/main.mjs",
+        "electron/cua.mjs",
+        "electron/cua-connection.cjs",
+        "server/cua-bounded.ts",
+        "server/hermes-hands.ts",
+        "server/attended-run.ts"
+      ]
+    },
+    {
+      "id": "W04",
+      "title": "Build the exact intended Windows source through Actions",
+      "stage": "windows",
+      "stream": "Windows",
+      "owner": "Yoda",
+      "status": "verify",
+      "depends": [
+        "W02",
+        "W03"
+      ],
+      "inputs": "Reviewed release source including necessary local changes, lockfile, runtime pins and source manifest.",
+      "work": "Preserve unrelated work; prepare and push an isolated reviewed revision. Dispatch the existing active Package Windows workflow with its ref set to that full SHA. Inspect the actual checkout and download the artifact.",
+      "proof": "Record intended/actual SHA, run URL/ID, installer version/architecture, artifact identity and SHA-256. A stale main build is rejected as proof of the current work.",
+      "recovery": "Failed CI or missing assets stays open. Do not silently substitute another artifact or publish it; archive accepted candidates before the current 14-day retention expires.",
+      "code": [
+        ".github/workflows/package-win.yml",
+        "package.json",
+        "pnpm-lock.yaml",
+        "electron-builder.yml"
+      ]
+    },
+    {
+      "id": "W07",
+      "title": "Resolve Windows signing and customer update delivery",
+      "stage": "windows",
+      "stream": "Windows",
+      "owner": "Yoda",
+      "status": "build",
+      "depends": [
+        "W04"
+      ],
+      "inputs": "Signing identity/policy, artifact distribution owner and a customer-accessible update route.",
+      "work": "Resolve unsigned Windows packaging and the updater target that currently points at the private source repository. Keep source tokens off customer PCs; verify update metadata and the delivered replacement package.",
+      "proof": "Document expected installer trust behavior and verify update from the exact previous installer to a candidate without losing data. Customer release uses the agreed signing/distribution policy.",
+      "recovery": "Unsigned internal tests are labelled; blocked SmartScreen, inaccessible feed, wrong signature or failed update must not report success or delete the existing installation.",
+      "code": [
+        "electron-builder.yml",
+        "electron/updater.mjs",
+        ".github/workflows/package-win.yml"
+      ]
+    },
+    {
+      "id": "W05",
+      "title": "Verify the actual installer on matching Windows 11",
+      "stage": "windows",
+      "stream": "Windows",
+      "owner": "Yoda",
+      "status": "verify",
+      "depends": [
+        "W04",
+        "W07",
+        "F02",
+        "F04",
+        "S01"
+      ],
+      "inputs": "The downloaded installer digest and a clean interactive Windows 11 environment matching Austin’s CPU architecture.",
+      "work": "Exercise clean installation, Hermes setup, provider login, persistent data, close/reopen, OS restart, update/repair, browser/native control, approvals, Stop, takeover and failure recovery. Label ARM, emulated x64 and native x64 evidence separately.",
+      "proof": "Dated installer acceptance matrix tied to the exact artifact, OS/CPU/app versions and observable outcomes. If Austin is x64, an ARM VM or CI build alone cannot close the gate.",
+      "recovery": "Keep failed cases and diagnostics, retry only after a remedy and recheck affected paths for a rebuilt artifact. Preserve records on failed repair/update.",
+      "code": [
+        "docs/AUSTIN-OPERATING-PLAN-2026-09-10.md",
+        "electron/main.mjs",
+        "electron/cua.mjs",
+        "server/worker-bootstrap.ts"
+      ]
+    },
+    {
+      "id": "W06",
+      "title": "Demonstrate one Austin browser-and-native workflow",
+      "stage": "windows",
+      "stream": "Windows",
+      "owner": "Kevin + Yoda",
+      "status": "verify",
+      "depends": [
+        "W05",
+        "D02",
+        "W01"
+      ],
+      "inputs": "Confirmed Windows app/site, authorised sample, expected output and staff review boundary.",
+      "work": "Run one useful task through RealBud → Hermes → Cua across the website and named native app. Demonstrate ordinary and held/ambiguous outcomes, approval, Stop, takeover and a recoverable failure before broadening automation.",
+      "proof": "Kevin observes the correct application-owned result with recorded time, review, retries and attributable cost. This proves the selected slice, not the full future bank exporter or all Windows apps.",
+      "recovery": "If the selected task fails, narrow/fix that path and repeat. Defer additional engines, CRM expansion and hardware commitments until this demonstration passes.",
+      "code": [
+        "docs/AUSTIN-OPERATING-PLAN-2026-09-10.md",
+        "server/drivers/acp/hermes.ts",
+        "electron/cua.mjs"
+      ],
+      "implementationEvidence": {
+        "date": "2026-09-11",
+        "report": "docs/AUSTIN-IMPLEMENTATION-2026-09-11.md",
+        "note": "Pinned Windows Cua companions and SDK packaged. Actual installer runtime passed on Windows Server; Windows11 UI acceptance pending."
+      }
+    },
+    {
+      "id": "P00",
+      "title": "Acquire the bank export on a reviewed recurring schedule",
+      "stage": "phase1",
+      "stream": "Bank",
+      "owner": "Yoda",
+      "status": "build",
+      "depends": [
+        "W06",
+        "U01",
+        "U02",
+        "D02"
+      ],
+      "inputs": "Approved bank/account/download route, sample format, cadence semantics, timezone and coverage range.",
+      "work": "Download daily or at the agreed one-to-two-day interval through the owned Windows job stage. Verify a completed export, preserve its original and range, deduplicate overlapping data without discarding genuinely identical payments. Keep source coverage distinct from REI posting.",
+      "proof": "Late/repeated/overlapping exports, source identity, no-new-data vs failed check, partial files and MFA/manual-upload fallback are tested. The actual bank route is demonstrated; a manual upload does not prove automatic acquisition.",
+      "recovery": "Pause for login/MFA or unsupported steps; bounded re-download after verified failure. Unknown import outcomes require reconciliation; never repeat an external write blindly.",
+      "code": [
+        "server/routines.ts",
+        "server/job-executor.ts",
+        "server/attended-run.ts",
+        "server/import-inspect.ts",
+        "shared/rent-workflow.ts"
+      ]
+    },
+    {
+      "id": "U01",
+      "title": "Deliver a prepared workflow pack and Austin configuration",
+      "stage": "phase1",
+      "stream": "Routines",
+      "owner": "Yoda",
+      "status": "build",
+      "depends": [
+        "W06",
+        "S02"
+      ],
+      "inputs": "Payment, daily inbox and expected-bill templates; selected sources, cadence, reviewer, limits and notification route.",
+      "work": "We configure first-party versioned payment, inbox and bill packs with typed steps, input/output contracts, prerequisite checks, retries, human handovers and acceptance fixtures. Keep agency accounts, cadence, references, reviewers and budgets separate. Rehearse and test before handover; Kevin connects accounts, confirms rules and accepts activation. Optional Ask edits produce the same reviewed draft, not a prerequisite for initial setup.",
+      "proof": "Install leaves routines off. Drafting never schedules. Changed source/action/schedule invalidates approval; stale save/activation is refused. Daily, selected weekdays and anchored two-day intervals are explicitly distinguished.",
+      "recovery": "Missing connections or sample proof leave the draft resumable and inactive; explain one next action. Stop/pause survives restart.",
+      "code": [
+        "server/recipes.ts",
+        "server/recipe-draft.ts",
+        "server/schedule-intent.ts",
+        "src/components/schedule/JobWorkspace.tsx",
+        "src/components/WorkspaceSetup.tsx"
+      ],
+      "implementationEvidence": {
+        "date": "2026-09-11",
+        "report": "docs/AUSTIN-IMPLEMENTATION-2026-09-11.md",
+        "note": "Bank reference preparation screen implemented with saved mapping and explicit row review. Real automatic source download remains open."
+      }
+    },
+    {
+      "id": "U02",
+      "title": "Resume routine steps with bounded recovery and no duplicate effects",
+      "stage": "phase1",
+      "stream": "Routines",
+      "owner": "Yoda",
+      "status": "build",
+      "depends": [
+        "W06",
+        "F01",
+        "F04"
+      ],
+      "inputs": "Versioned routine/run/stage contract; operation identity, coverage checkpoint, retry and time/cost ceilings.",
+      "work": "Persist stage progress and failure type. Proposed default: two automatic transient retries after the initial attempt, respecting provider delays and total limits. Diagnose only inside approved read scope; permission expansion or uncertain effects require human review. Release computer control while waiting. Persist the waiting checkpoint without an active model polling loop. Distinguish human waiting, approval, transient failure and uncertain dispatch; U03 supplies sign-in verification and handover.",
+      "proof": "Crash, missed slots, overlap, timeout with still-running work, exhausted budget, cancellation, Stop/takeover and unknown side effects preserve truthful outcomes and do not duplicate imports or approvals.",
+      "recovery": "Show what failed, what was tried and one next action. Keep safe unrelated work available; catch up missing source coverage rather than blindly replaying all missed runs.",
+      "code": [
+        "server/routines.ts",
+        "server/routine-persistence.ts",
+        "server/job-runs.ts",
+        "server/job-executor.ts",
+        "server/attended-run.ts"
+      ],
+      "evidenceUpdate": "Selected-step recovery implemented; unknown outcomes remain held. Fictional end-to-end test passed; actual customer acceptance pending.",
+      "implementationEvidence": {
+        "date": "2026-09-11",
+        "report": "docs/AUSTIN-IMPLEMENTATION-2026-09-11.md",
+        "note": "Selected-step recovery implemented; unknown outcomes remain held. Fictional end-to-end test passed; actual customer acceptance pending."
+      }
+    },
+    {
+      "id": "U03",
+      "title": "Pause for login or MFA and verify before continuing",
+      "stage": "phase1",
+      "stream": "Routines",
+      "owner": "Yoda",
+      "status": "build",
+      "depends": [
+        "U02",
+        "S02",
+        "A03"
+      ],
+      "inputs": "Named Windows apps and account bindings, prerequisite detectors, actor policy, capture/input controls, durable checkpoint and selected phone route.",
+      "work": "Implement the typed Needs you contract: quiesce owned calls and sensitive capture, persist a scoped intervention and notification intent, let the person sign in in the original app, then validate Continue and verify the correct account before one safe resume dispatch. Keep this in RealBud and the existing Hermes adapter.",
+      "proof": "Correct/incomplete/wrong-account login, MFA, duplicate cross-device Continue, stale scope, expiry, Stop during verification, crash/update and notification failure preserve the checkpoint and permission boundary. Prove no credential capture or active model polling during the handover. Verify the actual Windows installer and phone route.",
+      "recovery": "Failed access checks keep the same run waiting. Unknown prior effects require reconciliation; never replay blindly. Offline/busy host, unconfirmed control release or adapter incompatibility stays visibly paused. A fresh callback cannot revive stopped work.",
+      "code": [
+        "docs/AUSTIN-HUMAN-HANDOFF-2026-09-10.md",
+        "shared/contracts.ts",
+        "server/job-runs.ts",
+        "server/attended-run.ts",
+        "server/turn-watchdog.ts",
+        "server/drivers/acp/hermes.ts",
+        "server/remote-decisions.ts",
+        "electron/cua.mjs"
+      ],
+      "evidenceUpdate": "Saved login/MFA pause and read-only Continue implemented; real Cua account checks passed on macOS. Austin binding and Windows11 pending.",
+      "implementationEvidence": {
+        "date": "2026-09-11",
+        "report": "docs/AUSTIN-IMPLEMENTATION-2026-09-11.md",
+        "note": "Saved login/MFA pause and read-only Continue implemented; real Cua account checks passed on macOS. Austin binding and Windows11 pending."
+      }
+    },
+    {
+      "id": "M03",
+      "title": "Organise the daily inbox into a single internal work list",
+      "stage": "phase1",
+      "stream": "Gmail",
+      "owner": "Yoda",
+      "status": "build",
+      "depends": [
+        "M01",
+        "M02",
+        "U01",
+        "U02"
+      ],
+      "inputs": "Agreed mailboxes, coverage window, read consent, task categories, ownership and evidenced due-date rules.",
+      "work": "Read daily and suggest internal payment/bill/maintenance/follow-up items linked to source threads and properties. Share evidence with bill cases; preserve Kevin’s edits, completion and dismissal. Labels/archive/delete/send require separate authority.",
+      "proof": "Repeat reads do not duplicate tasks; new replies update/reopen only with an explained material change. Unreadable attachments, multi-account threads, uncertain dates and partial coverage remain visible.",
+      "recovery": "Do not announce inbox clear after partial failure. Preserve checkpoints and human edits on retry/reconnect; hold ambiguous property/owner/date suggestions.",
+      "code": [
+        "server/composio-gmail.ts",
+        "server/connected-apps-broker.ts",
+        "server/desk-store.ts",
+        "src/components/desk/DeskBook.tsx"
+      ]
+    },
+    {
+      "id": "A03",
+      "title": "Resolve approvals once across desktop and mobile",
+      "stage": "phase1",
+      "stream": "Approvals",
+      "owner": "Yoda",
+      "status": "build",
+      "depends": [
+        "A01",
+        "F01",
+        "U02"
+      ],
+      "inputs": "Decision kinds/permissions, actor identity, current evidence/revision/expiry, reachable phone route and notification message IDs.",
+      "work": "Persist one authoritative decision plus outbox intents. Compare-and-set pending revision; use one operation ID for any resulting action. Broadcast desktop state; mark all mobile copies resolved and remove controls using durable delivery receipts. Retry UI delivery independently of the decision.",
+      "proof": "Simultaneous allow/deny, duplicate taps, wrong actor, expiry, changed evidence, restart and cleanup failure cannot execute twice. Actual Windows and phone views settle to the same record; stale buttons return the existing result.",
+      "recovery": "A failed card edit cannot undo a saved decision. Retry supported cleanup and show delivery issues; OS banners may remain but never grant stale authority. Offline-host replies wait or use an explicitly verified relay.",
+      "code": [
+        "server/remote-decisions.ts",
+        "server/channels/telegram.ts",
+        "server/channels/discord.ts",
+        "server/channels/slack.ts",
+        "server/index.ts",
+        "src/lib/notify-desktop.ts",
+        "server/desk-store.ts"
+      ],
+      "implementationEvidence": {
+        "date": "2026-09-11",
+        "report": "docs/AUSTIN-IMPLEMENTATION-2026-09-11.md",
+        "note": "Two-client state convergence tested; no live phone push delivery claimed."
+      }
+    }
+  ],
+  "workflows": [
+    {
+      "id": "rent",
+      "title": "Recurring bank download → reviewed REI result",
+      "phase": "Phase 1",
+      "evidence": "C1 01:26–06:07; C2 00:00–03:42; C3 10:07–10:10",
+      "before": "Download bank data, look up unclear references, edit the file and check REI receipts.",
+      "after": "Download the agreed export daily or every one-to-two days; prepare references and held exceptions; Kevin approves the copy, and the REI recognition/import result is verified.",
+      "retained": "Kevin owns ambiguous matches, import approval and final financial checking.",
+      "tasks": [
+        "D02",
+        "P00",
+        "U01",
+        "U02",
+        "P01",
+        "P02",
+        "P03",
+        "A03"
+      ],
+      "maps": "rent"
+    },
+    {
+      "id": "bills",
+      "title": "Expected bills → verified follow-up",
+      "phase": "Phase 1",
+      "evidence": "C1 07:33–10:53; C2 05:57–10:14",
+      "before": "Look for arrivals, maintain expectations and manually track payment arrangements.",
+      "after": "One evidence-linked bill case shows missing/received/arranged/verified states and funding exceptions, with shared calendar and reminders.",
+      "retained": "Staff confirm cycles, funding/advance decisions, disputes and authoritative payment evidence.",
+      "tasks": [
+        "D03",
+        "M01",
+        "M02",
+        "B01",
+        "B02",
+        "B03",
+        "A01",
+        "A02"
+      ],
+      "maps": "bills"
+    },
+    {
+      "id": "gmail",
+      "title": "Daily inbox → organised work and bill evidence",
+      "phase": "Phase 1",
+      "evidence": "Kevin’s connection request; C1 17:26–17:46 and C3 08:38–10:15 plus subsequent Phase 1 direction",
+      "before": "Open messages and attachments repeatedly to find bill and receipt context.",
+      "after": "Consented daily reads organise internal payment, bill, maintenance and follow-up work with source links, owners and visible gaps. Mailbox changes and sending require separate authority.",
+      "retained": "Account owners consent; Kevin reviews unreadable or conflicting evidence. Email access is not sending authority.",
+      "tasks": [
+        "S01",
+        "M01",
+        "M02",
+        "M03",
+        "U01",
+        "U02"
+      ],
+      "maps": "gmail"
+    },
+    {
+      "id": "buyers",
+      "title": "Buyer/listing work → optional shared CRM",
+      "phase": "Phase 2",
+      "evidence": "C2 11:57–18:21; C3 00:00–03:52, 10:15–14:34; Twenty is Yoda’s subsequent proposal",
+      "before": "Consolidate spreadsheet records, search price groups and prepare audiences manually.",
+      "after": "Twenty holds shared records; native RealBud views and Bud prepare reviewed updates and follow-up.",
+      "retained": "Staff resolve duplicates, confirm budgets, approve audiences and own customer relationships.",
+      "tasks": [
+        "R01",
+        "R02",
+        "R03"
+      ],
+      "maps": "crm"
+    },
+    {
+      "id": "notices",
+      "title": "Arrears notices and sent evidence",
+      "phase": "Later · scope first",
+      "evidence": "C1 06:07–07:01; C2 03:45–05:57",
+      "before": "Generate notices in REI and retain or recover the sent evidence manually.",
+      "after": "Potential evidence gathering and filing assistance around staff-approved notices.",
+      "retained": "Legal eligibility, hardship judgment, sending and delivery verification stay with staff.",
+      "tasks": [
+        "X01"
+      ],
+      "maps": "notices"
+    },
+    {
+      "id": "airbnb",
+      "title": "Airbnb payout allocation",
+      "phase": "Later · scope first",
+      "evidence": "C1 13:15–14:14",
+      "before": "Look up bookings and split a combined payout for entry/checking.",
+      "after": "Potential allocation preparation using verified booking/payout data and reviewed rules.",
+      "retained": "Staff resolve exceptions and verify final REI/owner totals.",
+      "tasks": [
+        "X02"
+      ],
+      "maps": "airbnb"
+    },
+    {
+      "id": "maintenance",
+      "title": "Maintenance handoffs",
+      "phase": "Later · walkthrough needed",
+      "evidence": "C1 10:55–12:51; high-level discussion only",
+      "before": "Gather the issue, contact the responsible people and follow through to completion.",
+      "after": "Potential context/quote summaries and follow-up assistance after a PM walkthrough.",
+      "retained": "Emergency judgment, trade dispatch, owner/spend approval and completion checks.",
+      "tasks": [
+        "X03"
+      ],
+      "maps": "maintenance"
+    },
+    {
+      "id": "triage",
+      "title": "Outgoing follow-up and mailbox changes",
+      "phase": "Later · separate from bill intake",
+      "evidence": "C1 17:26–17:46; C3 08:38–10:15",
+      "before": "Sort messages and look up context before deciding the handoff.",
+      "after": "Separately agree authority for replies, labels/archive and broader outreach. Daily internal inbox organisation is covered by the Phase 1 Gmail workflow.",
+      "retained": "Staff approve recipients and consequential mailbox/outgoing actions; read consent alone does not permit them.",
+      "tasks": [
+        "X04"
+      ],
+      "maps": "triage"
+    }
+  ],
+  "setup": [
+    {
+      "title": "Prepare the office",
+      "us": "Yoda records scope, deployment, costs and a supported release path.",
+      "austin": "Danny confirms ownership; Kevin supplies the native app names, PC architecture, bank sample, REI format and bill examples.",
+      "proof": "Scope, sample contract and seed bill register accepted.",
+      "tasks": [
+        "D01",
+        "D02",
+        "D03",
+        "D04",
+        "W01"
+      ]
+    },
+    {
+      "title": "Make the foundation safe",
+      "us": "Bind agency/runtime, preserve settings and prove backups. Keep first-party module work small and complete its independent lifecycle after the Windows slice.",
+      "austin": "Confirm who owns credentials, backups and the support route.",
+      "proof": "Engine change and restore exercises pass without resetting office data.",
+      "tasks": [
+        "F01",
+        "F02",
+        "F04"
+      ]
+    },
+    {
+      "title": "Prove one Windows workflow",
+      "us": "Package and wire Hermes + Cua, build the intended source in GitHub Actions and test the actual installer on matching Windows 11.",
+      "austin": "Kevin demonstrates the selected website/native-app task and confirms the reviewed output.",
+      "proof": "Clean install/login/persistence plus browser/native control, approval, Stop, takeover, update and recovery have recorded results.",
+      "tasks": [
+        "W02",
+        "W03",
+        "W04",
+        "W07",
+        "W05",
+        "W06"
+      ]
+    },
+    {
+      "title": "Connect and resume",
+      "us": "Provision technician settings; present one clear consent/recovery step.",
+      "austin": "Account owners consent to the selected Gmail/provider/channel access.",
+      "proof": "Correct account, actual read scope and coverage verified; setup resumes after restart.",
+      "tasks": [
+        "S01",
+        "S02",
+        "M01",
+        "M02"
+      ]
+    },
+    {
+      "title": "Verify rent and bills",
+      "us": "Build the review cases and run ordinary/exception samples together.",
+      "austin": "Kevin confirms mappings/cycles and checks the result in REI.",
+      "proof": "Balanced import result, trustworthy bill states and shared calendar cases.",
+      "tasks": [
+        "P01",
+        "P02",
+        "P03",
+        "B01",
+        "B02",
+        "B03"
+      ]
+    },
+    {
+      "title": "Test reminders and recovery",
+      "us": "Verify actual phone delivery, budgets, missed runs and installed Windows recovery.",
+      "austin": "Confirm the recipient can reach the current case and understands incomplete checks.",
+      "proof": "Phone, outage, restart, restore and budget tests recorded. Kevin rehearses the routine and resolves one desktop/phone approval, with both views updated. Kevin signs in in the original app and uses Continue; premature/wrong-account continuation is held.",
+      "tasks": [
+        "A01",
+        "A02",
+        "C01",
+        "Q01",
+        "Q02",
+        "U01",
+        "M03",
+        "A03",
+        "U03"
+      ]
+    },
+    {
+      "title": "Hand over with evidence",
+      "us": "Train, measure, provide runbooks and record the accepted version/scope.",
+      "austin": "Kevin demonstrates daily use; Danny accepts outcomes and commercial terms.",
+      "proof": "Dated handover acceptance; only then start the agreed subscription.",
+      "tasks": [
+        "Q03",
+        "Q04"
+      ]
+    }
+  ],
+  "gates": [
+    {
+      "id": "G0",
+      "title": "Scope and feasibility agreed",
+      "tasks": [
+        "D01",
+        "D02",
+        "D03",
+        "D04",
+        "W01"
+      ],
+      "proof": "Scope, representative samples, account/deployment ownership and commercial assumptions accepted. Any missing product work is named before taking payment."
+    },
+    {
+      "id": "GW",
+      "title": "One Windows workflow demonstrated",
+      "tasks": [
+        "W01",
+        "W02",
+        "W03",
+        "W04",
+        "W07",
+        "W05",
+        "W06"
+      ],
+      "proof": "Exact-source installer, matching Windows 11 architecture, named native app plus website, correct result, approvals, Stop/takeover and failure recovery. ARM VM evidence does not replace x64 acceptance."
+    },
+    {
+      "id": "G1",
+      "title": "Foundation preserves the office",
+      "tasks": [
+        "F01",
+        "F02",
+        "F03",
+        "F04",
+        "S01",
+        "S02"
+      ],
+      "proof": "Explicit agency/engine binding; preserved settings; module isolation; restored backup; resumable setup and least-privilege connection proof. Retain Hermes + Cua; additional Codex engine deferred."
+    },
+    {
+      "id": "G2",
+      "title": "Joined Phase 1 works",
+      "tasks": [
+        "P03",
+        "B03",
+        "A02",
+        "C01",
+        "Q01",
+        "P00",
+        "U01",
+        "U02",
+        "M03",
+        "A03",
+        "U03"
+      ],
+      "proof": "Verified REI outcome, reliable bill evidence, actual phone route and budget/recovery proof, using the joined product. Recurring downloads, approved routine activation, daily inbox task deduplication and cross-device single-decision recovery are demonstrated. Login/MFA handover, correct-account verification, stopped/stale continuation and restart recovery are demonstrated."
+    },
+    {
+      "id": "G3",
+      "title": "Austin accepts handover",
+      "tasks": [
+        "Q02",
+        "Q03",
+        "Q04"
+      ],
+      "proof": "Installed Windows 11 checks, comparable measurements, two trainings, support/restore guide and dated acceptance with known limits."
+    },
+    {
+      "id": "G4",
+      "title": "CRM is accepted separately",
+      "tasks": [
+        "R01",
+        "R02",
+        "R03"
+      ],
+      "proof": "Agreed edition/workspace/migration/price, native governed actions and staff-accepted data/sync/recovery."
+    },
+    {
+      "id": "G5",
+      "title": "Repeat without a code fork",
+      "tasks": [
+        "N01",
+        "N02"
+      ],
+      "proof": "Second-agency configuration and isolation demonstrated; operating obligations are owned and affordable."
+    }
+  ],
+  "validation": {
+    "report": "AUSTIN-REHEARSAL-2026-09-11.md",
+    "status": "Earlier rehearsal baseline; superseded by implementation evidence below",
+    "focusedTests": 181,
+    "browserChecks": 50,
+    "pmSuites": 5,
+    "scope": "Real built UI/API/persistence with scripted ACP and Cua availability. No customer login, real Cua, native Windows app or phone push proof.",
+    "historical": true
+  },
+  "implementation": {
+    "date": "2026-09-11",
+    "report": "docs/AUSTIN-IMPLEMENTATION-2026-09-11.md",
+    "sourceRevision": "a3561c1b82c6c4e14488c48e5d7af1987af15009",
+    "implemented": [
+      "Encrypted login/MFA handover and Continue verification",
+      "Explicit reviewed-step recovery with no earlier-step replay",
+      "Encrypted bank-reference review and checked-copy export",
+      "Windows Cua packaging and installed-runtime CI verification"
+    ],
+    "verified": [
+      "215 focused tests across 14 files",
+      "15 browser checks using scripted worker/host and fictional bank data",
+      "Real Hermes synthetic-work canary on macOS",
+      "Real Cua account readback, wrong-account rejection and private restart on macOS",
+      "Final intended-source NSIS installer installed and runtime-tested on Windows Server 2025 x64"
+    ],
+    "remaining": [
+      "Actual Windows 11 test environment matching Austin architecture",
+      "Austin bank/export/reference/account calibration",
+      "Daily bank acquisition and REI import preview acceptance",
+      "Full Hermes + Cua customer workflow and native Windows application control",
+      "Real mobile alert delivery and resolution"
+    ],
+    "handoverReady": false,
+    "windowsReceipt": {
+      "runnerOS": "Microsoft Windows Server 2025 Datacenter",
+      "architecture": "AMD64",
+      "installerSha256": "6C0B754399C35F5628244CA9006E5D339B7DFF7D471CB80051CEA17B9E93E007",
+      "windows11Verified": false,
+      "sourceRevision": "a3561c1b82c6c4e14488c48e5d7af1987af15009",
+      "runUrl": "https://github.com/EzAuto399/RealBud/actions/runs/34495517086",
+      "artifactUrl": "https://github.com/EzAuto399/RealBud/actions/runs/34495517086/artifacts/10159877132"
+    }
+  },
+  "commercialUpdate": {
+    "date": "2026-09-13",
+    "revision": 22,
+    "brief": "AUSTIN-COMMERCIAL-AND-WORKFLOW-BRIEF-2026-09-11.md",
+    "phaseOneSetup": 4500,
+    "phaseOneEstimate": 11000,
+    "phaseOneCredit": 6500,
+    "phaseOneMonthly": 299,
+    "phaseOneMonthlyEstimate": 399,
+    "phaseOneMonthlyCredit": 100,
+    "founderMonths": 12,
+    "fitCheck": 1500,
+    "usageBudget": 75,
+    "phaseTwoSetup": 2000,
+    "phaseTwoEstimate": 6000,
+    "phaseTwoCredit": 4000,
+    "phaseTwoMonthly": 149,
+    "phaseTwoMonthlyEstimate": 199,
+    "phaseTwoMonthlyCredit": 50,
+    "cloudAllowance": 60,
+    "macAllowance": 1500,
+    "macSetup": 450,
+    "macBackupAllowance": 15,
+    "currency": "AUD",
+    "status": "Lean founding target; Stage 1 Agent OS A$4,500; Stage 2 CRM A$2,000 lean Twenty setup",
+    "usageIncluded": 75,
+    "includedCareMonths": 2,
+    "retainerStartsMonth": 3,
+    "careMonth1": "Training and guided handover",
+    "careMonth2": "Monitoring and stabilisation",
+    "phaseTwoEstimateRange": [
+      6000,
+      8000
+    ],
+    "phaseTwoCreditRange": [
+      4000,
+      6000
+    ],
+    "phaseTwoListBasis": "Owner-specified standard external CRM implementation: A$6,000 to A$8,000, fully built, configured, tested and taken live for the agreed scope. This is our list range, not a verified market average. Hardware, recurring hosting, licences and care remain separately agreed.",
+    "phaseTwoScalarBasis": "implementation_estimate and founding_credit hold the lower bounds for numeric compatibility. Display their full ranges. The credit range is the nominal difference from Austin setup, not a fixed scope-equivalent discount or invoice credit."
+  },
+  "closeWorkingMonth": {
+    "start": "Accepted go-live; first operator training occurs before activation",
+    "days_after_go_live": 30,
+    "owner": "Yoda / RealBud",
+    "guided_hours_total": 8,
+    "training_sessions": 2,
+    "training_hours_each": 1,
+    "weekly_checkins": 4,
+    "checkin_minutes_each": 30,
+    "guided_tuning_hours": 4,
+    "scope": "Agreed Phase 1 routines. Two training hours plus two check-in hours plus up to four guided-help/tuning hours. Training is part of this total, not an extra allowance. The first session precedes activation; the rest is delivered during the first 30 days after accepted go-live.",
+    "channel": "One agreed direct support channel to Yoda/RealBud, weekdays during Brisbane business hours; target initial response by the next business day. No 24/7 or guaranteed resolution time.",
+    "week_1": "Supervised daily work, private sign-in, reviews, Stop and safe recovery; record baseline active minutes and representative volumes.",
+    "week_2": "Train the backup reviewer; tune references, priorities and reminders within agreed scope.",
+    "week_3": "Review missed/held work, safe retries, actual provider costs and follow-up ownership.",
+    "week_4": "Compare representative before/after staff effort, review confidence and visibility, deliver the quick guide and open-issue list, then agree ongoing care.",
+    "completion": "30-day review, agreed training and guide delivered, original-scope acceptance confirmed and any unresolved items documented with an agreed remedy. Final A$1,500 milestone follows this review; the calendar alone does not trigger acceptance.",
+    "defects": "Fixes required to meet the original agreed scope remain RealBud responsibility and do not consume the guided-help allowance. Additional scope requires an estimate and approval.",
+    "monthly_help": "Month 1 included care is the implementation-funded guided training programme. Month 2 included care is monitoring and light tuning. Ordinary one-hour help allowance applies from month three with paid retainer. Routine upkeep remains in monthly care.",
+    "status": "Proposed; not delivered or customer accepted",
+    "billing_start": "Accepted go-live; first two care months included in implementation; retainer from month three",
+    "final_payment": 1500
+  }
+}

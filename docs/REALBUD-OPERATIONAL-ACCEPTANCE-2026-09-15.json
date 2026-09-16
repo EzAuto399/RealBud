@@ -1,0 +1,932 @@
+{
+  "schema": 1,
+  "scope": "Two private RealBud desktops, one company service, three proposal workflows; deliberate sharing; macOS and Windows",
+  "status": "not-operationally-accepted",
+  "caseCount": 71,
+  "note": "Coverage catalogue and acceptance targets. Existing automated suite passes are supporting evidence, not per-case installed acceptance. No unexecuted case is marked passed. CRM and autonomous organisations are excluded from the core.",
+  "cases": [
+    {
+      "id": "OP-001",
+      "area": "Installation and joining",
+      "perspective": "Owner",
+      "action": "Install on a clean Mac and Windows host",
+      "expected": "Set up company without a terminal; signed binaries, durable storage and clear prerequisite recovery",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-002",
+      "area": "Installation and joining",
+      "perspective": "Colleague",
+      "action": "Join from the other OS using a valid invitation",
+      "expected": "Join the intended company with a separate person and device identity",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-003",
+      "area": "Installation and joining",
+      "perspective": "Colleague",
+      "action": "Use expired, reused, wrong-company and malformed invitations",
+      "expected": "Reject safely; retain existing local work and offer a new invitation",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-004",
+      "area": "Installation and joining",
+      "perspective": "Owner",
+      "action": "Interrupt setup, retry, or open setup twice",
+      "expected": "One owned service/database; no duplicate company or lost state",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-005",
+      "area": "Installation and joining",
+      "perspective": "Owner",
+      "action": "Restart, change network, encounter a port conflict or stale host certificate",
+      "expected": "Reconnect to the paired host or present an explicit repair; never trust a different host silently",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-006",
+      "area": "Installation and joining",
+      "perspective": "Colleague",
+      "action": "Join with existing private records and imported packs",
+      "expected": "Preserve private records; joining does not publish them or activate schedules",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-007",
+      "area": "Identity, privacy and managed service",
+      "perspective": "Two staff",
+      "action": "Open both profiles simultaneously with different private canary notes",
+      "expected": "No cross-person chat, memory, counters, search, notifications or local-file leakage",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-008",
+      "area": "Identity, privacy and managed service",
+      "perspective": "Staff",
+      "action": "Sign out or change membership while requests and uploads are pending",
+      "expected": "Clear private UI and refuse stale writes/results; cancel or safely retain owned work",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-009",
+      "area": "Identity, privacy and managed service",
+      "perspective": "Administrator",
+      "action": "Try accessing an unshared staff case or impersonating a member",
+      "expected": "Deny; admin service credentials do not become a member session",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-010",
+      "area": "Identity, privacy and managed service",
+      "perspective": "Service operator",
+      "action": "Expire entitlement or exhaust quota while work is pending",
+      "expected": "Gateway denies new work with a clear reason; receipts remain available and no fallback master key is used",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-011",
+      "area": "Identity, privacy and managed service",
+      "perspective": "Service operator",
+      "action": "Update a model/API key or recover a managed connection",
+      "expected": "Preserve member account ownership; never distribute master keys in packs, logs or worker environments",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-012",
+      "area": "Identity, privacy and managed service",
+      "perspective": "Staff",
+      "action": "Recover a forgotten sign-in or revoke a stolen device",
+      "expected": "Authorized recovery restores only the same identity; revoked sessions/devices cannot continue",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-013",
+      "area": "Connected accounts",
+      "perspective": "Two staff",
+      "action": "Connect separate Gmail and Calendar accounts under one managed project",
+      "expected": "Each member lists and uses only their own bound account IDs",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-014",
+      "area": "Connected accounts",
+      "perspective": "Staff",
+      "action": "Cancel OAuth, leave consent pending, retry after a lost response",
+      "expected": "Show pending/cancelled/unknown accurately; avoid duplicate connections",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-015",
+      "area": "Connected accounts",
+      "perspective": "Staff",
+      "action": "Disconnect, expire consent, or revoke access mid-job",
+      "expected": "Stop the affected operation, keep work, and show reconnect; never switch to a colleague account",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-016",
+      "area": "Connected accounts",
+      "perspective": "Staff",
+      "action": "Approve a company-shared app account and later remove its grant",
+      "expected": "Current grant governs discovery and execution independently of shared text visibility",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-017",
+      "area": "Connected accounts",
+      "perspective": "Staff",
+      "action": "Receive timeout, 429, 5xx, pagination failure or an unknown execution outcome",
+      "expected": "Bound retries; retain coverage/checkpoint; reconcile uncertain effects before another write",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-018",
+      "area": "Connected accounts",
+      "perspective": "Staff",
+      "action": "Attempt a denied tool through alternate tool names or raw parameters",
+      "expected": "The server denies send/pay/sign and out-of-scope operations, regardless of assistant prose",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-019",
+      "area": "Inbox priorities",
+      "perspective": "Accounts",
+      "action": "Read a defined mailbox and coverage window, classify, review and save priorities",
+      "expected": "Source-linked work list with explicit coverage, owner, uncertainty and next action; no outgoing mail",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-020",
+      "area": "Inbox priorities",
+      "perspective": "Property",
+      "action": "Run the same inbox workflow on the second account",
+      "expected": "Read that account only; same workflow capability without the first user account",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-021",
+      "area": "Inbox priorities",
+      "perspective": "Staff",
+      "action": "Encounter a dangerous maintenance report, ambiguous address or missing attachment",
+      "expected": "Human escalation/source hold; no invented resolution, booking or source fact",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-022",
+      "area": "Inbox priorities",
+      "perspective": "Staff",
+      "action": "Read duplicate messages, forwarded threads and a new material reply",
+      "expected": "Link/update the correct work; do not duplicate completed work or erase human edits",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-023",
+      "area": "Inbox priorities",
+      "perspective": "Staff",
+      "action": "Read a suspicious instruction embedded in an email or attachment",
+      "expected": "Treat it as content; do not change permissions, pay, send or disclose unrelated data",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-024",
+      "area": "Inbox priorities",
+      "perspective": "Staff",
+      "action": "Read a newsletter, rent dispute and owner update request",
+      "expected": "No invented task for newsletter; verify ledger before an arrears claim; select privacy-appropriate output",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-025",
+      "area": "Inbox priorities",
+      "perspective": "Staff",
+      "action": "Lose page 2 or restart during mailbox scan",
+      "expected": "Retain checkpoint and show partial coverage; never call the mailbox fully checked",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-026",
+      "area": "Expected bills",
+      "perspective": "Accounts",
+      "action": "Read selected expectations and invoices, prepare review and record human decision",
+      "expected": "Source-backed received/missing/uncertain classification; distinguish preparation from saved board records",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-027",
+      "area": "Expected bills",
+      "perspective": "Property",
+      "action": "Receive a bill review, inspect permitted evidence and return the missing fact",
+      "expected": "Explicit handoff and private Bud preparation; sender reviews the returned result",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-028",
+      "area": "Expected bills",
+      "perspective": "Staff",
+      "action": "Encounter duplicate invoice, credit, revised amount, ambiguous property or date",
+      "expected": "Preserve originals and uncertainty; no duplicate obligation or guessed mapping",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-029",
+      "area": "Expected bills",
+      "perspective": "Staff",
+      "action": "Check a bill before its arrival window or with incomplete source coverage",
+      "expected": "Do not mark missing merely because the scan did not see it",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-030",
+      "area": "Expected bills",
+      "perspective": "Staff",
+      "action": "Mark payment arranged without verified PMS evidence",
+      "expected": "Keep follow-up open; arranged is not paid and review closed is not financial completion",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-031",
+      "area": "Expected bills",
+      "perspective": "Staff",
+      "action": "Edit concurrently, revoke source access or load a corrupt bill record",
+      "expected": "Reject stale edits/access; preserve corrupt data and show recovery rather than an empty board",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-032",
+      "area": "Bank reference preparation",
+      "perspective": "Accounts",
+      "action": "Select bank file, confirm format/rules, prepare, review and export a checked copy",
+      "expected": "Preserve original bytes, row order, totals, leading zeros and every column except approved references",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-033",
+      "area": "Bank reference preparation",
+      "perspective": "Property",
+      "action": "Run the same bank workflow on their own selected file",
+      "expected": "Use that local selection; same filename on another device is not the same source",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-034",
+      "area": "Bank reference preparation",
+      "perspective": "Staff",
+      "action": "Use unmatched/ambiguous payer, duplicate date window or a partial account export",
+      "expected": "Hold ambiguity and flag overlap/coverage; no automatic assignment by name alone",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-035",
+      "area": "Bank reference preparation",
+      "perspective": "Staff",
+      "action": "Use malformed CSV, quoted commas, Unicode, empty input, credit/refund or duplicate rows",
+      "expected": "Parse deterministically or explain rejection; never silently drop or coerce financial rows",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-036",
+      "area": "Bank reference preparation",
+      "perspective": "Staff",
+      "action": "Export before review, repeat review, or change source after approval",
+      "expected": "Deny until the current exact revision is reviewed; reject stale approval",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-037",
+      "area": "Bank reference preparation",
+      "perspective": "Staff",
+      "action": "Compare totals in the PMS preview and confirm final import manually",
+      "expected": "Record human/PMS evidence separately; Bud preparation never claims a bank transfer or posted receipt",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-038",
+      "area": "Sharing and continuity",
+      "perspective": "Sender",
+      "action": "Preview and share selected text to a named colleague",
+      "expected": "Only selected material becomes visible; show sender, audience and purpose",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-039",
+      "area": "Sharing and continuity",
+      "perspective": "Recipient",
+      "action": "Open a view-only item and a writable item",
+      "expected": "View-only explains restriction with no Save response; writable item permits the current authorized action",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-040",
+      "area": "Sharing and continuity",
+      "perspective": "Two staff",
+      "action": "Retry a lost successful share or race two responses",
+      "expected": "One creation per request ID; one current revision wins; no silent overwrite",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-041",
+      "area": "Sharing and continuity",
+      "perspective": "Recipient",
+      "action": "Lose write permission while drafting or receive a closed item",
+      "expected": "Server rechecks authority; preserve draft where appropriate and explain why action stopped",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-042",
+      "area": "Sharing and continuity",
+      "perspective": "Recipient",
+      "action": "Accept responsibility and return a reviewed Bud result with usable evidence",
+      "expected": "Durable owner/acceptance/result; selected source has independent access, not a sender-only path",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-043",
+      "area": "Sharing and continuity",
+      "perspective": "Owner",
+      "action": "Remove or replace an absent responsible person",
+      "expected": "Reassign permitted business work before losing continuity; private chat remains private",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-044",
+      "area": "Sharing and continuity",
+      "perspective": "Staff",
+      "action": "Browse older pages or return after a long disconnect",
+      "expected": "Recover older open work and current state; distinguish loading, empty, connection error and corrupt record",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-045",
+      "area": "Private worker and computer use",
+      "perspective": "Two staff",
+      "action": "Run private workers simultaneously with distinct file nonces and memories",
+      "expected": "Correct authenticated member, Hermes home, account and execution device for each run",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-046",
+      "area": "Private worker and computer use",
+      "perspective": "Staff",
+      "action": "Select Word, Excel, CSV and PDF sources with the same names on both devices",
+      "expected": "Read the selected version on the intended device; originals unchanged and unrelated folders unavailable",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-047",
+      "area": "Private worker and computer use",
+      "perspective": "Staff",
+      "action": "Encounter missing worker, unsupported release or a model timeout",
+      "expected": "Clear setup/recovery; no fabricated output or substitution of a personal Hermes checkout",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-048",
+      "area": "Private worker and computer use",
+      "perspective": "Staff",
+      "action": "Attach an approved site and perform a bounded read/prefill",
+      "expected": "Only the saved job/origin/account; verify the actual adapter result",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-049",
+      "area": "Private worker and computer use",
+      "perspective": "Staff",
+      "action": "Navigate off origin, switch browser account or request send/pay/sign",
+      "expected": "Deny or require the existing exact authorized human step; no permission inherited from company join",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-050",
+      "area": "Private worker and computer use",
+      "perspective": "Staff",
+      "action": "Stop while a tool is pending; retry after confirmed stop",
+      "expected": "Revoke execution, acknowledge process/control release and preserve partial receipts before retry",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-051",
+      "area": "Private worker and computer use",
+      "perspective": "Staff",
+      "action": "Lock or sleep desktop, revoke accessibility, disconnect Cua or take manual control",
+      "expected": "Pause/release safely; visible repair at the task; no phantom completed run",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-052",
+      "area": "Packs and schedules",
+      "perspective": "Owner",
+      "action": "Import, export, re-import and move a pack to a fresh profile",
+      "expected": "Procedures survive; credentials, source files, approvals and active schedules do not travel",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-053",
+      "area": "Packs and schedules",
+      "perspective": "Staff",
+      "action": "Import invalid, oversized, conflicting, old-version or partially damaged packs",
+      "expected": "Validate whole input before changes; preserve existing procedures and explain conflicts",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-054",
+      "area": "Packs and schedules",
+      "perspective": "Two staff",
+      "action": "Schedule the same shared occurrence or trigger manual work twice",
+      "expected": "One authoritative occurrence/claim; bounded capacity, no duplicate execution",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-055",
+      "area": "Packs and schedules",
+      "perspective": "Staff",
+      "action": "Miss a time due to sleep, DST, timezone change or host outage",
+      "expected": "Explicit catch-up policy and correct next occurrence; no burst of unintended work",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-056",
+      "area": "Packs and schedules",
+      "perspective": "Staff",
+      "action": "Edit/disable a schedule with an existing run or pending approval",
+      "expected": "Approval remains tied to its exact revision; stop and future scheduling are separate",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-057",
+      "area": "Packs and schedules",
+      "perspective": "Staff",
+      "action": "Schedule a job that needs an attended computer",
+      "expected": "Queue a clear Start beside me step rather than silently controlling a sleeping/unattended desktop",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-058",
+      "area": "Recovery, maintenance and departure",
+      "perspective": "Owner",
+      "action": "Back up and restore onto a replacement host",
+      "expected": "Verify restored records, memberships, grants, job history and source references; prevent two active hosts",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-059",
+      "area": "Recovery, maintenance and departure",
+      "perspective": "Staff",
+      "action": "Disk full, file lock, permission denied, lost removable drive or corrupt record",
+      "expected": "Preserve old data; actionable recovery without presenting success or empty data",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-060",
+      "area": "Recovery, maintenance and departure",
+      "perspective": "Owner",
+      "action": "Install an app/worker update during queued work or revert a failed update",
+      "expected": "Compatible staged version, retained profiles and data, atomic selection and bounded recovery",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-061",
+      "area": "Recovery, maintenance and departure",
+      "perspective": "Owner",
+      "action": "Quit app, restart OS or crash during pending work",
+      "expected": "Owned child processes and service lifecycle are explicit; recover receipt without assuming effect did not happen",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-062",
+      "area": "Recovery, maintenance and departure",
+      "perspective": "Staff",
+      "action": "Export/leave company or uninstall/reinstall the application",
+      "expected": "Clear data-retention choice, scoped export and revoked device; no accidental deletion of company records",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-063",
+      "area": "Usability and accessibility",
+      "perspective": "First-time staff",
+      "action": "Complete setup, join, connect, import and start work without technical assistance",
+      "expected": "Plain-language navigation and one useful next action; no master-key/engine configuration for staff",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-064",
+      "area": "Usability and accessibility",
+      "perspective": "Keyboard user",
+      "action": "Tab through forms, review, cancel, errors and return focus",
+      "expected": "Named controls, visible focus and usable keyboard order; modal/async changes are announced",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-065",
+      "area": "Usability and accessibility",
+      "perspective": "Staff",
+      "action": "Use narrow window, enlarged text, long names and large task queues",
+      "expected": "No lost controls or horizontal clipping; scannable state, pagination and visible pending/error feedback",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-066",
+      "area": "Usability and accessibility",
+      "perspective": "Staff",
+      "action": "Refresh, close a form, navigate away or retry after slow response",
+      "expected": "Prevent double actions, explain unsaved/uncertain state and preserve work as specified",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-067",
+      "area": "Usability and accessibility",
+      "perspective": "Staff",
+      "action": "See Demo, synthetic, real-source, partial and reviewed output together",
+      "expected": "Every layer is clearly labelled; no sample result masquerades as office completion",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-068",
+      "area": "Platform and capacity",
+      "perspective": "Release operator",
+      "action": "Run Mac-host/Mac-peer, Windows-host/Windows-peer and both mixed pairs",
+      "expected": "Record actual versions, runtime, TLS, identity, worker, file and computer-control receipts for each pairing",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-069",
+      "area": "Platform and capacity",
+      "perspective": "Windows user",
+      "action": "Use standard account, firewall, antivirus, paths with spaces/Unicode and native file picker",
+      "expected": "Supported installer and driver work without weakening OS protections or relying on macOS path semantics",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-070",
+      "area": "Platform and capacity",
+      "perspective": "Two staff",
+      "action": "Run simultaneous tasks plus a third queued job and revoke one worker",
+      "expected": "Fair bounded capacity; no profile collision; unaffected member can continue",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "OP-071",
+      "area": "Platform and capacity",
+      "perspective": "Service operator",
+      "action": "Inspect logs/diagnostics and a support export",
+      "expected": "Useful correlation and recovery data; no credentials or other members private content",
+      "acceptanceStatus": "open",
+      "requiredEvidence": [
+        "case-specific execution receipt",
+        "source/build and environment identity"
+      ],
+      "evidence": []
+    }
+  ]
+}

@@ -51,11 +51,20 @@ describe("bounded Cua contract", () => {
     expect(pinSupported("0.19.3-rc")).toBe(false);
   });
 
+  it("requires an exact scheme, host, and port match for portal origins", () => {
+    expect(originAllowed(manifest, "http://127.0.0.1:9.evil.example/ledger")).toBe(false);
+    expect(originAllowed(manifest, "http://127.0.0.1:90/ledger")).toBe(false);
+    expect(originAllowed(manifest, "https://127.0.0.1:9/ledger")).toBe(false);
+    expect(originAllowed({ ...manifest, origins: ["not a URL"] }, "http://127.0.0.1:9/ledger")).toBe(false);
+    expect(originAllowed({ ...manifest, origins: ["file:///tmp/portal"] }, "data:text/plain,portal")).toBe(false);
+    expect(originAllowed(manifest, "http://user:pass@127.0.0.1:9/ledger")).toBe(false);
+  });
+
   it("holds one shared computer lease", () => {
-    acquirePortalLease("work-1", 2_000);
-    expect(() => computerLease.hold("ask", 2_000, 1_000)).toThrow(/lease/);
-    revokePortalLease();
-    expect(() => computerLease.hold("ask", 2_000, 1_000)).not.toThrow();
-    computerLease.release("ask");
+    const portal = acquirePortalLease("work-1", 2_000, 1);
+    expect(() => computerLease.hold("ask", 2_000, 1_000, "ask-1", 1)).toThrow(/lease/);
+    revokePortalLease(portal);
+    const ask = computerLease.hold("ask", 2_000, 1_000, "ask-1", 1);
+    computerLease.release(ask);
   });
 });

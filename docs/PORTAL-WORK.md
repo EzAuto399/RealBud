@@ -122,12 +122,13 @@ Do not rebuild. Lifecycle:
    job via the recipe-draft path (`server/portal-job-intent.ts`, pre-model;
    parser yields to ask-book and connection intents). Reply names the plan
    and: "You sign in yourself, I read and prefill, and Submit, Pay and Send
-   stay with you. Approve the plan on {Schedule | You → Bud's jobs}, then
-   press Run beside me." Existing job → "is already a saved job for {site}.
+   stay with you. Press Approve the plan here in Ask, then Run beside me."
+   Existing job → "is already a saved job for {site}.
    Open {place} and press Run beside me…". Weak targets (account / site /
    online / the routine) count only with a login verb. Model down → honest
    fallback. Do not refuse.
-2. **Approve one revision** — same as the prepare-only engine.
+2. **Approve one revision** — from Ask (primary **Approve the plan** /
+   **Approve plan and attach** action) or on the job card. No redirect.
 3. **Attach this site** — GUI acknowledgement (`PortalJobActions.tsx` on
    Schedule recipe loops and You → Bud's jobs `#you-jobs`): you sign in;
    Bud reads and prefills; Submit, Pay and Send stay with you. 409:
@@ -142,7 +143,7 @@ Do not rebuild. Lifecycle:
 4. **Run beside me** — `POST /api/recipes/:id/attend` → 202 `{ run }`.
    Same ACP turn Ask uses, `computer: true`, attended-job prompt block.
    409s in order: "Approve the plan first." / "Attach this site first: you
-   sign in, Bud reads and prefills, Submit and Pay stay with you." /
+   sign in, Bud reads and prefills, Submit, Pay and Send stay with you." /
    "Add the portal site to this job before running it beside you." /
    "Bud can drive a browser only on this Mac with RealBud's desktop helper
    running." / "This job already has work waiting or running." /

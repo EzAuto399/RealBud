@@ -1,0 +1,196 @@
+✖ issuer_revocation after_final_usage: no later output, incurred usage settled once, no inference replay (7.840417ms)
+✖ grant_expiry after_final_usage: no later output, incurred usage settled once, no inference replay (2.349083ms)
+✖ lease_revocation after_final_usage: no later output, incurred usage settled once, no inference replay (2.951333ms)
+✖ lease_abort after_final_usage: no later output, incurred usage settled once, no inference replay (2.491125ms)
+✖ client_abort after_final_usage: no later output, incurred usage settled once, no inference replay (2.494166ms)
+✖ issuer_revocation between_final_callbacks: no later output, incurred usage settled once, no inference replay (2.196167ms)
+✖ grant_expiry between_final_callbacks: no later output, incurred usage settled once, no inference replay (2.126084ms)
+✖ lease_revocation between_final_callbacks: no later output, incurred usage settled once, no inference replay (1.973209ms)
+✔ lease_abort between_final_callbacks: no later output, incurred usage settled once, no inference replay (2.330791ms)
+✔ client_abort between_final_callbacks: no later output, incurred usage settled once, no inference replay (2.485333ms)
+✖ cancellation inside the final authority check never eagerly invokes the output callback (2.441542ms)
+✔ cancellation after invalid usage retains its reservation instead of recording fabricated settlement (2.020334ms)
+✖ string schema/grantVersion 1 is rejected before v2 validation can be bypassed (1.252542ms)
+✖ string schema/grantVersion 2 is rejected before v2 validation can be bypassed (1.090791ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 3
+ℹ fail 11
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 111.251541
+
+✖ failing tests:
+
+test at managed-gateway/final-output.test.ts:9:5
+✖ issuer_revocation after_final_usage: no later output, incurred usage settled once, no inference replay (7.840417ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/final-output.test.ts:44:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at managed-gateway/final-output.test.ts:9:5
+✖ grant_expiry after_final_usage: no later output, incurred usage settled once, no inference replay (2.349083ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/final-output.test.ts:44:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at managed-gateway/final-output.test.ts:9:5
+✖ lease_revocation after_final_usage: no later output, incurred usage settled once, no inference replay (2.951333ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/final-output.test.ts:44:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at managed-gateway/final-output.test.ts:9:5
+✖ lease_abort after_final_usage: no later output, incurred usage settled once, no inference replay (2.491125ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'unknown'
+  - 'settled'
+  
+      at TestContext.<anonymous> (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/final-output.test.ts:53:16)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'unknown',
+    expected: 'settled',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at managed-gateway/final-output.test.ts:9:5
+✖ client_abort after_final_usage: no later output, incurred usage settled once, no inference replay (2.494166ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'unknown'
+  - 'settled'
+  
+      at TestContext.<anonymous> (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/final-output.test.ts:53:16)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'unknown',
+    expected: 'settled',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at managed-gateway/final-output.test.ts:9:5
+✖ issuer_revocation between_final_callbacks: no later output, incurred usage settled once, no inference replay (2.196167ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/final-output.test.ts:44:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at managed-gateway/final-output.test.ts:9:5
+✖ grant_expiry between_final_callbacks: no later output, incurred usage settled once, no inference replay (2.126084ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/final-output.test.ts:44:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at managed-gateway/final-output.test.ts:9:5
+✖ lease_revocation between_final_callbacks: no later output, incurred usage settled once, no inference replay (1.973209ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/final-output.test.ts:44:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at managed-gateway/final-output.test.ts:68:1
+✖ cancellation inside the final authority check never eagerly invokes the output callback (2.441542ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/final-output.test.ts:83:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at managed-gateway/final-output.test.ts:105:34
+✖ string schema/grantVersion 1 is rejected before v2 validation can be bypassed (1.252542ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/final-output.test.ts:109:12)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /invalid_grant_scope/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at managed-gateway/final-output.test.ts:105:34
+✖ string schema/grantVersion 2 is rejected before v2 validation can be bypassed (1.090791ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///Users/yoda/projects/realbud-managed-gateway/managed-gateway/final-output.test.ts:109:12)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /invalid_grant_scope/,
+    operator: 'throws',
+    diff: 'simple'
+  }

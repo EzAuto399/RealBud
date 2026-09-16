@@ -1,0 +1,14 @@
+✔ refund_then_credit: preserve real refund and immutable statements, flag allocation and hold further affected billing (18.978666ms)
+✔ credit_then_refund: preserve real refund and immutable statements, flag allocation and hold further affected billing (4.981917ms)
+✔ applied_credit_then_refund: preserve real refund and immutable statements, flag allocation and hold further affected billing (4.53ms)
+✔ refund readback racing with credit close across two SQLite connections remains visible after restart (13.762709ms)
+✔ refund arriving during Square draft preflight blocks the write at its transaction boundary (4.06025ms)
+✔ refund arriving after the outbox claim but before transport prevents the pending POST (4.098292ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 124.795709

@@ -1,0 +1,34 @@
+[
+  {
+    "name": "typecheck-gateway",
+    "command": [
+      "pnpm",
+      "exec",
+      "tsc",
+      "-p",
+      "managed-gateway/tsconfig.json"
+    ],
+    "exitCode": 0
+  },
+  {
+    "name": "tests",
+    "command": [
+      "node",
+      "--experimental-strip-types",
+      "--test",
+      "managed-gateway/billing.test.ts",
+      "managed-gateway/concurrency.test.ts",
+      "managed-gateway/deepseek-effort.test.ts",
+      "managed-gateway/final-output.test.ts",
+      "managed-gateway/gateway.test.ts",
+      "managed-gateway/http.test.ts",
+      "managed-gateway/ledger.test.ts",
+      "managed-gateway/phase2.test.ts",
+      "managed-gateway/provider.test.ts",
+      "managed-gateway/refund-credit.test.ts",
+      "managed-gateway/report-import.test.ts",
+      "managed-gateway/square.test.ts"
+    ],
+    "exitCode": 0
+  }
+]

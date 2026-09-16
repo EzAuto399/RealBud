@@ -35,6 +35,8 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: focused workflow safety checks
+        run: pnpm exec vitest run server/bank-reference.test.ts server/human-handoffs.test.ts server/local-computer.test.ts electron/capabilities.test.mjs electron/perm-settings.test.mjs
       # the packaged app ships compiled JS, so a stale dist/ or dist-server/
       # would ride along unsigned-for and unsealed (the 0.1.15 "damaged"
       # incident) — a fresh checkout is clean, but be explicit
@@ -42,6 +44,25 @@ jobs:
         shell: bash
         run: rm -rf dist dist-server release
       - run: pnpm package:win
+      - name: Install and verify the actual NSIS artifact on Windows Server
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:REALBUD_BUILD_SHA = (git rev-parse HEAD).Trim()
+          $installer = Get-ChildItem release/*-setup.exe | Select-Object -First 1
+          if (!$installer) { throw 'No installer produced' }
+          $destination = Join-Path $env:RUNNER_TEMP 'RealBudInstallerProof'
+          $install = Start-Process -FilePath $installer.FullName -ArgumentList "/S /D=$destination" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "NSIS failed: $($install.ExitCode)" }
+          $app = Join-Path $destination 'RealBud.exe'
+          if (!(Test-Path $app)) { throw 'Installed application missing' }
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          & $app scripts/smoke-windows-package.mjs "$destination/resources" release/windows-runtime-proof.json
+          if ($LASTEXITCODE -ne 0) { throw 'Installed runtime proof failed' }
+          Remove-Item Env:ELECTRON_RUN_AS_NODE
+          $manifest = @{ sourceRevision = $env:REALBUD_BUILD_SHA; runnerOS = (Get-CimInstance Win32_OperatingSystem).Caption; architecture = $env:PROCESSOR_ARCHITECTURE; installerSha256 = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash; windows11Verified = $false }
+          $manifest | ConvertTo-Json | Set-Content release/windows-build-proof.json
       - name: report what was built
         shell: bash
         run: |
@@ -49,11 +70,14 @@ jobs:
           echo "commit:  $(git rev-parse HEAD)"
           ls -lh release/*.exe release/*.yml 2>/dev/null || true
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: windows-installer
           path: |
             release/*.exe
             release/*.exe.blockmap
             release/latest.yml
+            release/windows-runtime-proof.json
+            release/windows-build-proof.json
           if-no-files-found: error
           retention-days: 14

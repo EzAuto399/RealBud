@@ -1,0 +1,62 @@
+{
+  "id": "RB-LOCAL-000001",
+  "kind": "Tax Invoice",
+  "mode": "local",
+  "companyId": "company-a",
+  "period": "2026-09",
+  "issuedAt": 1790812800000,
+  "supplier": {
+    "legalName": "Yo-Da Lai",
+    "product": "RealBud",
+    "abn": "84992526369",
+    "gstRegistered": true
+  },
+  "customer": {
+    "name": "Fictional Agency A",
+    "address": "1 Example Street, Brisbane QLD"
+  },
+  "currency": "AUD",
+  "gstInclusive": true,
+  "lines": [
+    {
+      "description": "AI usage — Synthetic test model",
+      "amountNanoAud": "19250000",
+      "requestId": "cc955e7c-104c-4717-8ced-3af0fbbeee48",
+      "model": "fixture-text",
+      "rateVersion": "fixture-r1",
+      "units": {
+        "cache_read_tokens": 5,
+        "input_tokens": 10,
+        "output_tokens": 4
+      },
+      "rates": {
+        "cache_read_tokens": {
+          "nanoAud": "250000",
+          "perUnits": 1
+        },
+        "input_tokens": {
+          "nanoAud": "1000000",
+          "perUnits": 1
+        },
+        "output_tokens": {
+          "nanoAud": "2000000",
+          "perUnits": 1
+        }
+      },
+      "amountCents": "2",
+      "gstCents": "0"
+    },
+    {
+      "description": "RealBud software and routine maintenance — monthly care",
+      "amountNanoAud": "125000000000",
+      "amountCents": "12500",
+      "gstCents": "1137"
+    }
+  ],
+  "totalCents": "12502",
+  "gstCents": "1137",
+  "careAgreementRef": "synthetic-care-agreement",
+  "sourceEventIds": [
+    7
+  ]
+}

@@ -35,6 +35,7 @@ Individual suites (each uses its own temp home and port):
 | `scripts/e2e-desk.mjs` | Desk CRUD, send 403, loops, hands status |
 | `scripts/e2e-pm-day.mjs` | Happy weekday: clock, practice Allow, Ask→Desk, Friday letter, CSV, office fields |
 | `scripts/e2e-pm-exceptions.mjs` | Messy day: Deny/Edit/stale Allow, evaluate matrix, money holds, notes isolation, pause, recipe gate, rules, law watch flag |
+| `scripts/e2e-portal-jobs.mjs` | Portal jobs journey: Ask intake, recipe validation, fence/rules, fake-worker attended runs, ready-beside-you clock, receipts, Composio connect, recovery |
 | `scripts/e2e-walkthrough.mjs` | Partner demo + fake portal + recovery |
 | `scripts/qa-live-worker.mjs` | Real worker: Test hands ping, live Recheck, CSV, send 403 |
 | `scripts/simulate-scale.mjs` | Book at 20–100 properties; desk/import latency |
@@ -164,7 +165,7 @@ Plain language the PM should see — if UI shows a stack trace or raw errno, fil
 | `ready: false` after install | Test hands not run | You → Test hands until OK |
 | Demo Recheck looks “finished” with miss | Bug — should say Missed | See worker honesty tests |
 | Attend 409 `Approve the plan first.` | Plan not approved on this revision | Approve the plan, then retry |
-| Attend 409 `Attach this site first: you sign in, Bud reads and prefills, Submit and Pay stay with you.` | No Attach acknowledgement | Attach this site on the job card |
+| Attend 409 `Attach this site first: you sign in, Bud reads and prefills, Submit, Pay and Send stay with you.` | No Attach acknowledgement | Attach this site on the job card |
 | Attend 409 `Add the portal site to this job before running it beside you.` | No origin or no portal capability | Name the site and a portal capability |
 | Attend 409 `Bud can drive a browser only on this Mac with RealBud's desktop helper running.` | Not darwin, or helper down | macOS + desktop helper |
 | Attend 409 `This job already has work waiting or running.` | Overlap | Wait or Stop, then retry |

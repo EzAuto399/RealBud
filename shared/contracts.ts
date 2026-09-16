@@ -1,5 +1,6 @@
 // Dependency-free contracts shared by the RealBud server and UI.
 // Discriminated `kind` only — no workflow DSL. Money/arrears is the first kind.
+import type { RentWorkflow } from "./rent-workflow.ts";
 
 export const NEVER_ACTIONS = ["statutory-send", "trust-pay"] as const;
 
@@ -66,6 +67,7 @@ export type LoopSchedule = { type: "daily"; time: string; weekdays: number[] };
 export type LoopRunStatus =
   | "queued"
   | "running"
+  | "awaiting-approval"
   | "completed"
   | "partial"
   | "failed"
@@ -224,6 +226,8 @@ export interface RecoveryState {
 }
 
 export interface DeskBookView {
+  /** Display-only portal origins. No remote account IDs or action capabilities. */
+  propertyPortals?: Array<{ propertyId: string; origins: string[]; unresolved: boolean }>;
   bookProposals: Array<{
     id: string;
     address: string;
@@ -242,6 +246,7 @@ export interface DeskBookView {
     exportIdentity: string;
     officeOs: string;
     vendorTestAccount: string;
+    rentWorkflow?: RentWorkflow;
   };
   tenancies: Array<{
     id: string;
@@ -359,6 +364,10 @@ export interface Loop {
 
 export interface LoopRun {
   id: string;
+  /** Device-generated identity for recovering a manual request after a lost response. */
+  requestId?: string;
+  /** Clock revision reviewed when this manual request was made. */
+  loopRevision?: number;
   loopId: LoopId;
   loopName: string;
   scheduledFor: number;
@@ -371,6 +380,13 @@ export interface LoopRun {
   finishedAt?: number;
   seenAt?: number;
   createdAt: number;
+}
+
+export interface ScheduleRecovery {
+  /** Per-process identity so an old HTTP response cannot clear a live recovery hold. */
+  generation?: string;
+  active: boolean;
+  detail: string;
 }
 
 export type RecipeStatus = "shadow" | "active" | "paused";

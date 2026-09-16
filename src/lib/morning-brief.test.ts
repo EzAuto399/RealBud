@@ -59,7 +59,7 @@ describe("morning brief", () => {
     expect(brief.checkedCount).toBe(0);
     expect(brief.headline).toBe("6 addresses on the book. Recheck has not run.");
     expect(brief.inboxConnected).toBe(false);
-    expect(brief.inboxLabel).toBe("Inbox not connected");
+    expect(brief.inboxLabel).toBe("Inbox planned");
     expect(brief.inboxDetail).not.toMatch(/Gmail read that actually returns mail/i);
     expect(JSON.stringify(brief)).not.toMatch(/Hermes|100%|Verify the live book/i);
   });
@@ -183,7 +183,7 @@ describe("morning brief", () => {
       snap({
         lastRunAt: 1_700_000_000_000,
         hands: "demo",
-        handsDetail: "The worker answered without ledger JSON — facts stay held.",
+        handsDetail: "Bud answered without ledger facts — facts stay held.",
         drafts: [
           {
             id: "d-oak",
@@ -201,7 +201,7 @@ describe("morning brief", () => {
     );
     expect(brief.checkedCount).toBe(0);
     expect(brief.addresses.every((row) => row.attention === "unchecked")).toBe(true);
-    expect(brief.headline).toBe("Recheck missed. The worker did not return live facts.");
+    expect(brief.headline).toBe("Recheck missed. Bud did not return live facts.");
   });
 
   it("still lands training Recheck as checked when the detail is the Demo book", () => {
@@ -209,7 +209,7 @@ describe("morning brief", () => {
       snap({
         lastRunAt: 1,
         hands: "demo",
-        handsDetail: "Demo book — Recheck asks the worker or a CSV for live facts.",
+        handsDetail: "Demo book — Recheck asks Bud or a CSV for live facts.",
         results: [{ propertyId: "prop-oak", outcome: "clear", reason: "rent-landed", daysLate: 0 }],
       }),
     );

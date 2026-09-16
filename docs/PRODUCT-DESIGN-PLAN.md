@@ -119,7 +119,7 @@ Current `DeskFileV2` combines the asset, current tenancy and tenant contact insi
 16. During screen migration, generate the current DeskSnapshot shape from V3 in memory. Commands write only V3; no V2 dual-write exists.
 17. On any failure, leave original V2 bytes at `desk.json`, enter read-only recovery, and keep schedules/browser work stopped.
 
-Migration tests cover empty/demo/live books, 200 properties, missing optional fields, V1→V2→V3, deterministic IDs, every WorkState, orphan/duplicate references, capability expiry/invalidation, interrupted writes at every commit phase, corrupt/encrypted records, idempotent reload and all hard-gate invariants.
+Migration tests cover empty/demo/live books, a 600-property operating book, the 1,000-property capacity boundary, missing optional fields, V1→V2→V3, deterministic IDs, every WorkState, orphan/duplicate references, capability expiry/invalidation, interrupted writes at every commit phase, corrupt/encrypted records, idempotent reload and all hard-gate invariants.
 
 ### Evidence authority and current projections
 
@@ -410,7 +410,7 @@ Keys live only in the profile auth files. They never enter desk.json, snapshots,
 
 ## Known V3 perf bottleneck
 
-`addProperty` runs the full encrypted commit protocol per call (~38ms: serialize + encrypt + fsync + backup rotation), so bulk adds (194-property onboarding, CSV-backed imports) are linear-slow. The 200-property test now carries a 30s budget and a tracked fix: **batch persists for bulk operations** (single commit at the end of a bulk add/import transaction) before the pilot office loads a real book. Snapshot read path is unaffected (58ms / 182KB at 200 properties). Tracked under T2 follow-up.
+Bulk intake preflights every row and the 1,000-property capacity boundary before mutation, then evaluates and persists once. The Properties UI renders 50 cards per page so a 600-property book does not create hundreds of live editors at once. Scale simulation covers 150, 300, and 600 properties; books above 1,000 require a scoped rollout.
 
 ## Blind-spot register (2026-08-25 sweep)
 
@@ -449,7 +449,7 @@ Checked and fine: port-collision fallback chain, Ask retry/failure UX, demo seed
 - `server/case-evaluator.ts`: structured DTO evaluation; no Notes/filesystem access.
 - `server/handoff-auth.ts`: immutable handoff authorization and exact-origin enforcement.
 
-Avoid a generic repository/service layer. Each module owns one trust boundary and remains file-backed until the 200-property benchmark proves otherwise.
+Avoid a generic repository/service layer. Each module owns one trust boundary and remains file-backed while the 600-property benchmark and 1,000-property capacity gate remain green.
 
 ## Engineering test matrix
 
@@ -468,7 +468,7 @@ Avoid a generic repository/service layer. Each module owns one trust boundary an
 | Browser | Exact origin, prefix lookalike denied, recipe-step actions, all views share one authorization |
 | Routines | runId origin link, recovery pause, no CUA mint/launch from clock |
 | Groups | assign/unassign/archive PropertyGroup, per-group counts, inherited defaults, migration of ungrouped books |
-| Scale | 200 properties, 18k–36k Evidence rows, <2 MB queue snapshot, bounded evaluate latency |
+| Scale | 600-property operating proof, 1,000-property capacity gate, paged UI, bounded evaluate latency |
 
 ## Implementation Tasks
 

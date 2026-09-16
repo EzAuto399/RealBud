@@ -18,6 +18,8 @@ import { homedir } from "node:os";
 
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../../procs.ts";
 import { SPAWNED_PROXIES } from "../../proxy-paths.ts";
+import { stripServiceSecrets } from "../../service-child-env.ts";
+import { managedService } from "../../managed-service.ts";
 
 import type {
   DriverCreateInput,
@@ -33,6 +35,9 @@ import { newEventId, newId } from "../../contracts.ts";
 import { computerProxyEnv } from "../../container-computer.ts";
 import { augmentedPath } from "../../env-path.ts";
 import { readCuaConnection } from "../../local-computer.ts";
+import { CONNECTED_APP_APPROVAL, connectedAppsBrokerGeneration, startConnectedAppsBroker, type ConnectedAppsBroker } from "../../connected-apps-broker.ts";
+import { createGmailReadOnlyTransport } from "../../composio-gmail.ts";
+import { toolFingerprint } from "../../tool-fingerprint.ts";
 
 const COMPUTER_PROXY_PATH = SPAWNED_PROXIES.computer;
 import { appendNative } from "../native.ts";
@@ -97,6 +102,7 @@ type AcpStdioMcpServer = {
   env: Array<{ name: string; value: string }>;
 };
 type AcpHttpMcpServer = {
+  type: "http";
   name: string;
   url: string;
   headers: Array<{ name: string; value: string }>;
@@ -148,8 +154,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         turn: SendTurnInput;
         turnId: string;
         text: string;
+        /** Assistant text after the latest tool call — preferred final reply. */
+        answerText: string;
+        sawTool: boolean;
         promptSent: boolean;
         settled: boolean;
+        cancellationRequested: boolean;
         asks: Map<string, (decision: { behavior: string; scope?: "once" | "session" }) => void>;
         interruptTimer: ReturnType<typeof setTimeout> | null;
         done: Promise<void>;
@@ -176,6 +186,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           ...input.environment,
           PATH: augmentedPath(),
         };
+        delete env.COMPOSIO_KEY;
+        delete env.COMPOSIO_API_KEY;
+        delete env.REALBUD_CUA_CONTROL_TOKEN;
+        delete env.REALBUD_CUA_CONTROL_URL;
+        delete env.REALBUD_DESK_KEY;
+        stripServiceSecrets(env);
         support.transformEnv?.(env);
         return env;
       };
@@ -187,9 +203,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const composio = turn.integrations?.composio;
         if (composio) {
           servers.push({
+            type: "http",
             name: "connected-apps",
-            url: composio.url || "https://connect.composio.dev/mcp",
-            headers: [{ name: "x-consumer-api-key", value: composio.key }],
+            // Replaced with the private broker before session/new or load.
+            url: composio.gmailReadOnly ? "http://127.0.0.1/realbud-gmail-readonly" : composio.url || "https://backend.composio.dev/v3/mcp",
+            headers: composio.gmailReadOnly ? [] : Object.entries(composio.headers ?? { "x-api-key": composio.key })
+              .map(([name, value]) => ({ name, value: String(value) })),
           });
         }
         const agents = turn.integrations?.agents;
@@ -222,8 +241,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         return servers;
       };
 
-      const signatureFor = (cwd: string, args: string[], mcpServers: AcpMcpServer[]) =>
-        createHash("sha256").update(JSON.stringify({ cli: config.cli, cwd, args, mcpServers })).digest("hex");
+      const signatureFor = (cwd: string, args: string[], mcpServers: AcpMcpServer[], composio?: NonNullable<SendTurnInput["integrations"]>["composio"]) =>
+        createHash("sha256").update(JSON.stringify({ cli: config.cli, cwd, args, mcpServers,
+          ...(composio?.allowedApps ? { allowedApps: composio.allowedApps } : {}),
+          ...(composio?.gmailReadOnly ? { gmailReadOnly: composio.gmailReadOnly, appKey: composio.key } : {}),
+          ...(mcpServers.some(server => server.name === "connected-apps") ? { appGeneration: connectedAppsBrokerGeneration() } : {}),
+        })).digest("hex");
 
       const replayOnFreshSession = (turn: SendTurnInput): SendTurnInput => {
         const transcript = turn.transcript ?? [];
@@ -264,6 +287,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         let idleTimer: ReturnType<typeof setTimeout> | null = null;
         let stderr = "";
         let runtime!: SessionRuntime;
+        let appBroker: ConnectedAppsBroker | undefined;
         const rpcPending = new Map<
           number,
           { resolve: (value: any) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> | null }
@@ -293,6 +317,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           });
 
         const removeRuntime = () => {
+          appBroker?.close();
           if (idleTimer) clearTimeout(idleTimer);
           idleTimer = null;
           if (warm.get(threadId) === runtime) warm.delete(threadId);
@@ -326,13 +351,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const settle = (run: RunningTurn, ok: boolean, stopReason: string | null, keepWarm: boolean) => {
           if (run.settled) return;
           run.settled = true;
+          appBroker?.cancelPending();
           if (run.interruptTimer) clearTimeout(run.interruptTimer);
           for (const finish of [...run.asks.values()]) finish({ behavior: "cancel" });
           const tracked = active.get(threadId);
           if (tracked?.turnId === run.turnId) active.delete(threadId);
           if (current === run) current = null;
-          if (run.text.trim()) {
-            emit({ ...eventBase(run), type: "item.completed", itemType: "assistant_text", text: run.text });
+          if (run.text.trim() || run.answerText.trim()) {
+            const text = (run.sawTool ? run.answerText || run.text : run.text).trim();
+            if (text) emit({ ...eventBase(run), type: "item.completed", itemType: "assistant_text", text });
           }
           emit({ ...eventBase(run), type: "turn.completed", ok, stopReason, cost: null });
           run.resolveDone();
@@ -342,7 +369,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
 
         const handleServerRequest = (message: any) => {
           const run = current;
-          if (!run || run.settled || message.method !== "session/request_permission") {
+          if (!run || run.settled || run.cancellationRequested || message.method !== "session/request_permission") {
             return send({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "method not found" } });
           }
           const params = message.params ?? {};
@@ -368,7 +395,22 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             });
 
           const toolCall = params.toolCall ?? {};
-          if (config.fullAuto) {
+          const rawInput = toolCall.rawInput;
+          const kind = String(toolCall.kind ?? "");
+          const command = typeof rawInput?.command === "string" ? rawInput.command : "";
+          const actionName = typeof rawInput?.name === "string" ? rawInput.name : typeof rawInput?.tool === "string" ? rawInput.tool : "";
+          const scriptRequest = [rawInput?.name, rawInput?.tool, kind, toolCall.title, command]
+            .some(value => typeof value === "string" && /^\s*execute_code\b/i.test(value)) ||
+            typeof rawInput?.code === "string";
+          // Hermes exposes arbitrary Python via a whole-script callback. Never
+          // convert it (or an unidentified action) into blanket session trust.
+          // Its established, clearly identified terminal command flow retains
+          // its existing session approvals; other engines are unchanged.
+          const singleApproval = DRIVER_KIND === "hermesAgent" &&
+            (scriptRequest || kind !== "execute" || !command.trim() ||
+              (Boolean(actionName) && !["terminal", "shell"].includes(actionName)));
+          const onceOption = () => options.find(option => option.kind === "allow_once" && typeof option.optionId === "string")?.optionId ?? null;
+          if (config.fullAuto && !singleApproval) {
             const allow = optionFor("allow");
             if (!allow) missing("allow");
             return send({
@@ -377,18 +419,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               result: allow ? { outcome: { outcome: "selected", optionId: allow } } : cancelled,
             });
           }
-          const kind = String(toolCall.kind ?? "");
-          const rawInput = toolCall.rawInput;
-          const named =
-            rawInput && typeof rawInput === "object"
-              ? typeof rawInput.name === "string"
-                ? rawInput.name
-                : typeof rawInput.tool === "string"
-                  ? rawInput.tool
-                  : ""
-              : "";
-          const tool = named
-            ? named
+          const tool = actionName
+            ? actionName
             : kind === "execute"
               ? "shell"
               : kind === "edit"
@@ -405,10 +437,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             const optionId =
               decision.behavior === "cancel"
                 ? null
-                : decision.behavior === "allow" && decision.scope === "session"
-                  ? sessionAllowOption() ?? optionFor("allow")
-                  : optionFor(want);
-            if (decision.behavior !== "cancel" && !optionId) missing(want);
+                : decision.behavior === "allow" && singleApproval
+                  ? onceOption()
+                  : decision.behavior === "allow" && decision.scope === "session"
+                    ? sessionAllowOption() ?? optionFor("allow")
+                    : optionFor(want);
+            if (decision.behavior !== "cancel" && !optionId) missing(singleApproval && want === "allow" ? "allow_once" : want);
             send({
               jsonrpc: "2.0",
               id: message.id,
@@ -434,7 +468,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             requestId,
             requestType: "permission",
             tool,
-            summary,
+            summary: singleApproval ? `${summary.slice(0, 165)} (approval applies once)` : summary,
             ...(rawInput !== undefined ? { params: rawInput } : {}),
           });
         };
@@ -450,6 +484,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               const delta = update.content?.text;
               if (typeof delta === "string" && delta) {
                 run.text += delta;
+                if (run.sawTool) run.answerText += delta;
                 emit({ ...eventBase(run), type: "content.delta", streamKind: "assistant_text", delta });
               }
               break;
@@ -462,12 +497,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               break;
             }
             case "tool_call":
+              run.sawTool = true;
+              run.answerText = "";
               emit({
                 ...eventBase(run),
                 type: "item.started",
                 itemType: "tool",
                 itemId: update.toolCallId,
                 title: String(update.rawInput?.command ?? update.title ?? "tool").slice(0, 80),
+                toolFingerprint: toolFingerprint(String(update.title ?? "tool"), update.rawInput ?? update.content),
               });
               break;
             case "tool_call_update":
@@ -548,6 +586,40 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         });
 
         const ready = (async () => {
+          if (firstTurn.integrations?.composio) {
+            const { key, url, headers, gmailReadOnly, allowedApps } = firstTurn.integrations.composio;
+            if (gmailReadOnly && (typeof gmailReadOnly.requestId !== "string" || !gmailReadOnly.requestId.trim())) throw new Error("Gmail review needs a fresh request identity.");
+            appBroker = await startConnectedAppsBroker({
+              key, url, headers, allowedApps,
+              ...(gmailReadOnly ? { readOnlyAccountId: gmailReadOnly.accountId, localTransport: createGmailReadOnlyTransport({
+                apiKey: key, authConfigId: gmailReadOnly.authConfigId, userId: gmailReadOnly.userId, accountId: gmailReadOnly.accountId,
+              }) } : {}),
+              threadId,
+              isActive: () => Boolean(current && !current.settled && !current.cancellationRequested && !closed),
+              approve: (summary, signal) => new Promise<boolean>((resolve) => {
+                const run = current;
+                if (!run || run.settled || run.cancellationRequested || !run.promptSent || closed || signal.aborted) { resolve(false); return; }
+                const requestId = newId();
+                const finish = (decision: { behavior: string; scope?: "once" | "session" }) => {
+                  if (!run.asks.delete(requestId)) return;
+                  clearTimeout(timer);
+                  signal.removeEventListener("abort", aborted);
+                  // Broad/session grants cannot authorize an external action.
+                  const allowed = decision.behavior === "allow" && decision.scope !== "session" &&
+                    !run.settled && !run.cancellationRequested && !signal.aborted && !closed;
+                  emit({ ...eventBase(run), type: "request.resolved", requestId, behavior: allowed ? "allow" : "deny", source: "user" });
+                  resolve(allowed);
+                };
+                const aborted = () => finish({ behavior: "deny" });
+                const timer = setTimeout(aborted, 15 * 60_000); timer.unref();
+                run.asks.set(requestId, finish);
+                signal.addEventListener("abort", aborted, { once: true });
+                emit({ ...eventBase(run), type: "request.opened", requestId, requestType: "permission", tool: CONNECTED_APP_APPROVAL, summary });
+              }),
+            });
+            if (closed) { appBroker.close(); throw new Error("Bud's app session stopped."); }
+            mcpServers = mcpServers.map(server => server.name === "connected-apps" ? appBroker!.descriptor : server);
+          }
           const init = await request(
             "initialize",
             { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } } },
@@ -600,6 +672,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           try {
             const readyState = await ready;
             if (run.settled || current !== run || !sessionId) return;
+            // Initialization/authentication can outlast a grant. Check the
+            // resolved session capabilities at the actual prompt boundary,
+            // including a computer mounted through the CUA fallback.
+            managedService.assertCapability("reasoning");
+            if (mcpServers.some(server => server.name === "computer")) managedService.assertCapability("computer-use");
             if (!sessionAnnounced) {
               sessionAnnounced = true;
               emit({
@@ -645,6 +722,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
 
         const interrupt = async (run: RunningTurn) => {
           if (run.settled) return run.done;
+          run.cancellationRequested = true;
+          appBroker?.cancelPending();
+          for (const finish of [...run.asks.values()]) finish({ behavior: "cancel" });
           if (sessionId && run.promptSent) {
             send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
             if (run.interruptTimer) clearTimeout(run.interruptTimer);
@@ -670,8 +750,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             turn,
             turnId: newId(),
             text: "",
+            answerText: "",
+            sawTool: false,
             promptSent: false,
             settled: false,
+            cancellationRequested: false,
             asks: new Map(),
             interruptTimer: null,
             done,
@@ -704,12 +787,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       };
 
       const sendTurn = async (turn: SendTurnInput) => {
+        managedService.assertCapability("reasoning");
         const { threadId } = turn;
         if (active.has(threadId)) throw new Error("a turn is already running on this thread");
         const cwd = turn.cwd ?? config.workspace ?? homedir();
         const mcpServers = acpMcpServers(turn);
+        if (mcpServers.some(server => server.name === "computer")) managedService.assertCapability("computer-use");
         const args = support.spawnArgs(config, turn);
-        const signature = signatureFor(cwd, args, mcpServers);
+        const signature = signatureFor(cwd, args, mcpServers, turn.integrations?.composio);
         let runtime = warm.get(threadId);
         // A rewind or poisoned-session recovery deliberately clears the
         // persisted cursor. Do not let the warm-process optimization undo

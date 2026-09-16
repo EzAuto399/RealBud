@@ -57,10 +57,19 @@ describe("recipeSitesLine", () => {
   it("does not imply a live website when none was authorised", () => {
     expect(recipeSitesLine([])).toBe("No website is authorised");
     expect(recipeSourceLine({ allowedOrigins: [], capabilities: ["read-book", "read-files"] })).toBe(
-      "Reads: current Desk book, private workroom files; no website login is authorised",
+      "Reads: current Desk book; private workroom files; no website login is authorised",
     );
     expect(recipeSourceLine({ allowedOrigins: ["propertyme.com.au"], capabilities: ["read-book"] })).toBe(
-      "Reads only: propertyme.com.au",
+      "Reads: current Desk book; no website login is authorised",
+    );
+  });
+
+  it("shows all permitted sources when a plan combines the book and a portal", () => {
+    expect(recipeSourceLine({ allowedOrigins: ["propertyme.com.au"], capabilities: ["read-book", "portal-read"] })).toBe(
+      "Reads: current Desk book; portal: propertyme.com.au",
+    );
+    expect(recipeSourceLine({ allowedOrigins: [], capabilities: ["portal-read"] })).toBe(
+      "Reads: portal site still needed",
     );
   });
 });
@@ -114,10 +123,10 @@ describe("plan approval helpers", () => {
     expect(recipeNeedsPlanApproval({ planApprovedAt: 12, revision: 2, approvedRevision: 1 })).toBe(true);
   });
 
-  it("tells the PM a scheduled job waits on You after save", () => {
-    expect(recipeSavedLine(false)).toBe("Saved on You → Bud's jobs");
+  it("keeps scheduled and on-demand jobs in Schedule after save", () => {
+    expect(recipeSavedLine(false)).toBe("Saved in Schedule for review and on-demand runs");
     expect(recipeSavedLine(true)).toBe(
-      "Saved. It joins the clock after you approve the plan on You → Bud's jobs.",
+      "Saved. Review and rehearse it in Schedule, then approve the plan to put it on the clock.",
     );
   });
 });

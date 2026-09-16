@@ -1,5 +1,11 @@
+import { usePhoneConnections } from "@/lib/phone-connections";
+import { budAvailability } from "@/lib/bud-setup";
+import { useWorkspaceScroll, useWorkspaceViewState } from "@/lib/workspace-view-state";
+import { openWorkspaceSetup } from "@/lib/workspace-setup";
+import { useDeskViewState } from "@/lib/desk-view-state";
+import type { PropertyScope } from "@/lib/book-groups";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Building2, CircleAlert, Loader2, X } from "lucide-react";
+import { Building2, CircleAlert, Loader2, MessageSquare, X } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import type { CsvColumnMapping, CsvImportPreview, DeskSnapshot, Draft, Property } from "@/lib/desk";
@@ -14,19 +20,25 @@ import {
 } from "@/lib/desk-queue";
 import { handsChip, missAction } from "@/lib/hands-label";
 import { draftViaLine, phoneChip, phoneChipTone, phonePaired } from "@/lib/phone-label";
-import { readChannels, type ChannelsState } from "@/lib/telegram-channel";
 import { CaseQueueRow, RecoveryNotice, SplitView, StatusLabel } from "./pm";
 import { DeskBook } from "./desk/DeskBook";
-import { DeskCase } from "./desk/DeskCase";
+import { DeskCase, type CaseEdit } from "./desk/DeskCase";
+import { propertyEdits } from "@/lib/property-edits";
+import { deskAskContext, type DeskAskIntent } from "@/lib/desk-ask-context";
+import { useWorkspacePreferences, portfolioLayout } from "@/lib/workspace-preferences";
+import { WorkspaceLayout } from "./desk/WorkspaceLayout";
+import { DeskBud } from "./desk/DeskBud";
 import { DeskEvidence } from "./desk/DeskEvidence";
 import { GoLiveCard } from "./desk/GoLiveCard";
 import { JobRunFeed } from "./desk/JobRunFeed";
+import { SharedWorkPanel } from "./desk/SharedWorkPanel";
+import { ExpectedBillsBoard } from "./desk/ExpectedBillsBoard";
+import { BatchWorkspace } from "./desk/BatchWorkspace";
 import { CASE_KIND_LABELS } from "./desk/labels";
 import { MorningBrief, MorningEmpty } from "./desk/MorningBrief";
 import { isDemoWorkerMiss, morningBrief } from "@/lib/morning-brief";
-import { workdayGuide } from "@/lib/workday";
+import { deskCheckAction, workdayGuide } from "@/lib/workday";
 import { recheckProgress } from "@/lib/task-progress";
-import { COMPACT_WINDOW_QUERY, useMediaQuery } from "@/lib/use-media-query";
 import { api, useStore } from "@/state/store";
 
 function deskFacingError(cause: unknown): string {
@@ -35,8 +47,10 @@ function deskFacingError(cause: unknown): string {
   return raw;
 }
 
-export function DeskPage() {
+export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
   const { state, dispatch, refreshHermes } = useStore();
+  const { preferences } = useWorkspacePreferences();
+  const layout = portfolioLayout(preferences, state.desk?.properties.length ?? 0);
   // Paint instantly from the SSE-pushed snapshot when we have one; the
   // effect below still refreshes from the server on mount.
   const [snap, setSnap] = useState<DeskSnapshot | null>(state.desk ?? null);
@@ -45,25 +59,29 @@ export function DeskPage() {
   const [recheckStartedAt, setRecheckStartedAt] = useState<number | null>(null);
   const [recheckElapsed, setRecheckElapsed] = useState(0);
   const [ready, setReady] = useState(state.desk != null);
-  const [mode, setMode] = useState<"cases" | "book">("cases");
-  const [jobRunsOpen, setJobRunsOpen] = useState(false);
+  const [mode, setMode] = useDeskViewState("mode");
+  const [jobRunsOpen, setJobRunsOpen] = useWorkspaceViewState("deskResults");
+  const [bookNonce, setBookNonce] = useDeskViewState("bookNonce");
   // A "Connect your export" entry elsewhere in the app lands here in Book mode.
   useEffect(() => {
-    if (state.deskBookNonce > 0) setMode("book");
+    if (state.deskBookNonce > bookNonce) { setMode("book"); setBookNonce(state.deskBookNonce); }
   }, [state.deskBookNonce]);
-  const [filter, setFilter] = useState<QueueFilter>("now");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  // Case stays primary under 1280; queue opens only when something needs you
+  const [filter, setFilter] = useDeskViewState("filter");
+  const [selectedId, setSelectedId] = useDeskViewState("selectedId");
+  // On narrow windows the queue opens when something needs you
   // (or the PM taps Open Queue). Wide desks keep the side pane always visible.
   const [queueOpen, setQueueOpen] = useState(false);
   const autoOpenedForNeedRef = useRef(false);
   const [railOpen, setRailOpen] = useState(false);
+  const [railTab, setRailTab] = useState<"bud" | "evidence">("bud");
   const [announce, setAnnounce] = useState("");
-  const [query, setQuery] = useState("");
-  const [channels, setChannels] = useState<ChannelsState | null>(null);
-  // Short windows (Electron floor is 600px) fold the brief to one line so the
-  // case wording stays visible; the PM can still expand it for the day.
-  const compact = useMediaQuery(COMPACT_WINDOW_QUERY);
+  const [query, setQuery] = useDeskViewState("query");
+  const [taskScope, setTaskScope] = useDeskViewState("taskScope");
+  const [batchScope, setBatchScope] = useDeskViewState("batchScope");
+  const [openNewBatchDraft, setOpenNewBatchDraft] = useState(false);
+  const [caseKind, setCaseKind] = useDeskViewState("caseKind");
+  const { channels } = usePhoneConnections(state.connected);
+  // Keep the overview compact until the PM asks for the day details.
   const [briefExpanded, setBriefExpanded] = useState(false);
   const [keysHint, setKeysHint] = useState(() => {
     try {
@@ -88,13 +106,6 @@ export function DeskPage() {
     );
     return () => window.clearInterval(id);
   }, [busy, recheckStartedAt]);
-
-  useEffect(() => {
-    if (!state.connected) return;
-    void api("/api/channels")
-      .then((body) => setChannels(readChannels(body)))
-      .catch(() => setChannels(null));
-  }, [state.connected, state.desk?.revision]);
 
   const dismissKeysHint = () => {
     setKeysHint(false);
@@ -162,8 +173,10 @@ export function DeskPage() {
         dispatch({ type: "deskSnapshot", snapshot: next });
       } else await load();
       if (spoken) setAnnounce(spoken);
+      return true;
     } catch (cause) {
       setError(deskFacingError(cause));
+      return false;
     } finally {
       setBusy(null);
       if (key === "check") setRecheckStartedAt(null);
@@ -208,9 +221,20 @@ export function DeskPage() {
   };
 
   const rows = useMemo(() => (snap ? buildDeskQueue(snap) : []), [snap]);
-  const visible = useMemo(() => filterDeskQueue(rows, filter, query), [rows, filter, query]);
+  const scopedRows = useMemo(() => {
+    if (!taskScope) return rows;
+    const ids = new Set(taskScope.ids);
+    return rows.filter(row => row.propertyId && ids.has(row.propertyId));
+  }, [rows, taskScope]);
+  const visible = useMemo(() => filterDeskQueue(scopedRows, filter, query).filter(row => caseKind === "all" || row.kind === caseKind), [scopedRows, filter, query, caseKind]);
   const selected = visible.find((row) => row.id === selectedId) ?? visible[0];
-  const counts = queueCounts(rows);
+  const counts = queueCounts(scopedRows);
+  const bud = state.bots.find(bot => bot.name.trim().toLowerCase() === "bud") ?? state.bots[0];
+  const askAboutCase = (intent: DeskAskIntent = "next") => {
+    if (!snap || !selected) return;
+    dispatch({ type: "stageAskContext", context: deskAskContext(snap, selected, crypto.randomUUID(), selected.draftId ? caseEdits.get(selected.draftId)?.body : undefined, { intent, unsavedNotes: selected.propertyId ? propertyEdits(selected.propertyId).notes : undefined }) });
+    setAnnounce("Case attached in Ask. Review the request before sending.");
+  };
 
   const recoverCase = useCallback(
     (item: DeskQueueItem, plan: DeskRecoveryPlan) => {
@@ -220,20 +244,15 @@ export function DeskPage() {
         return;
       }
       if (plan.action === "you") {
-        dispatch({ type: "showYou" });
+        openWorkspaceSetup("apps");
         return;
       }
       if (plan.action !== "ask" || !plan.prompt) return;
-      const bud = state.bots.find((bot) => bot.name.trim().toLowerCase() === "bud") ?? state.bots[0];
-      if (!bud) {
-        setError("Bud is not ready yet. Open You to finish setup.");
-        return;
-      }
-      dispatch({ type: "showAsk" });
-      dispatch({ type: "send", botId: bud.id, text: plan.prompt });
-      setAnnounce(`Bud is investigating ${item.address.split(",")[0]?.trim() || "this case"}`);
+      if (!snap) return;
+      dispatch({ type: "stageAskContext", context: deskAskContext(snap, item, crypto.randomUUID(), item.draftId ? caseEdits.get(item.draftId)?.body : undefined, { intent: "investigate", unsavedNotes: item.propertyId ? propertyEdits(item.propertyId).notes : undefined }) });
+      setAnnounce("Case attached in Ask. Review the request before sending.");
     },
-    [dispatch, state.bots],
+    [dispatch, snap, caseEdits],
   );
 
   useEffect(() => {
@@ -242,7 +261,7 @@ export function DeskPage() {
       return;
     }
     if (autoOpenedForNeedRef.current) return;
-    if (typeof window === "undefined" || window.matchMedia("(min-width: 1280px)").matches) return;
+    if (typeof window === "undefined" || window.matchMedia("(min-width: 980px)").matches) return;
     autoOpenedForNeedRef.current = true;
     setQueueOpen(true);
     setFilter("now");
@@ -254,6 +273,7 @@ export function DeskPage() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (document.querySelector('[aria-modal="true"]')) return;
       if (mode !== "cases" || !visible.length) return;
       const target = event.target;
       if (target instanceof HTMLElement) {
@@ -284,6 +304,7 @@ export function DeskPage() {
         setQueueOpen((value) => !value);
       }
       if (event.key === "]") {
+        setRailTab("evidence");
         event.preventDefault();
         setRailOpen((value) => !value);
       }
@@ -326,21 +347,25 @@ export function DeskPage() {
   const brief = morningBrief(snap);
   const timezone = snap.book?.agency.timezone || snap.timezone;
   const miss = snap.handsDetail && isDemoWorkerMiss(snap.hands, snap.handsDetail) ? missAction(snap.handsDetail) : null;
+  const checkAction = deskCheckAction(snap);
+  // Empty book already shows the primary check in MorningEmpty — keep the
+  // header control secondary so the page has one agency CTA.
+  const headerCheckPrimary = snap.lastRunAt != null;
   const empty =
     snap.lastRunAt == null ? (
-      <MorningEmpty brief={brief} />
+      <MorningEmpty checkLabel={checkAction.label} brief={brief} busy={busy !== null} onAction={() => { if (!busy) void run(checkAction.path, "POST", undefined, "check", checkAction.path.endsWith("practice") ? "Sample morning ready" : "Recheck ran"); }} />
     ) : visible.length === 0 ? (
       query.trim() ? (
-        <MorningEmpty brief={{ ...brief, headline: "No cases match that search." }} />
+        <MorningEmpty brief={{ ...brief, headline: "No cases match that search." }} actionLabel="Clear search" onAction={() => setQuery("")} />
       ) : filter === "now" ? (
         <MorningEmpty brief={{ ...brief, headline: brief.headline }} />
       ) : (
-        <MorningEmpty brief={{ ...brief, headline: "No cases in this filter." }} />
+        <MorningEmpty brief={{ ...brief, headline: "No cases in this filter." }} actionLabel="Show all tasks" onAction={() => { setFilter("all"); setCaseKind("all"); }} />
       )
     ) : null;
 
   return (
-    <main className="flex h-full min-w-0 flex-1 flex-col bg-paper">
+    <main className="desk-workspace flex h-full min-w-0 flex-1 flex-col bg-paper" data-density={layout.compact ? "compact" : "comfortable"} data-bud-pinned={preferences.showBud} style={{ "--desk-queue-width": `${preferences.queueWidth}px` } as React.CSSProperties}>
       <div aria-live="polite" className="sr-only">
         {announce}
       </div>
@@ -365,69 +390,83 @@ export function DeskPage() {
             {phonePaired(channels) ? (
               <StatusLabel
                 tone={phoneChipTone(channels)}
-                title="Pair Telegram, Discord, or Slack under You → Phone to Allow courtesy wording from your phone"
+                title="Your paired messaging app can receive supported review requests"
               >
                 {phoneChip(channels)}
               </StatusLabel>
             ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              aria-pressed={mode === "book"}
-              title="Addresses, options, and CSV import"
-              onClick={() => setMode((value) => (value === "book" ? "cases" : "book"))}
-              className={cn("pm-control rounded border px-3 text-[13px]", mode === "book" ? "border-agency bg-selected text-ink" : "border-line bg-sheet text-ink")}
-            >
-              Properties
-            </button>
-            <button
-              type="button"
-              aria-expanded={jobRunsOpen}
-              onClick={() => setJobRunsOpen((value) => !value)}
-              className={cn("pm-control rounded border px-3 text-[13px]", jobRunsOpen ? "border-agency bg-selected text-ink" : "border-line bg-sheet text-ink")}
-            >
-              Activity
-            </button>
-            <button
-              type="button"
-              className="pm-control rounded border border-line bg-sheet px-3 text-[13px] text-ink min-[960px]:hidden"
-              aria-expanded={railOpen}
-              onClick={() => setRailOpen((value) => !value)}
-            >
-              Evidence
-            </button>
-            <button
-              type="button"
-              className="pm-control rounded border border-line bg-sheet px-3 text-[13px] text-ink xl:hidden"
-              aria-expanded={queueOpen}
-              onClick={() => setQueueOpen((value) => !value)}
-            >
-              {queueOpen ? "Hide queue" : `Queue · ${counts.now}`}
-            </button>
+            {mode === "cases" ? (
+              <button
+                type="button"
+                className="desk-queue-toggle pm-control rounded border border-line bg-sheet px-3 text-[13px] text-ink"
+                aria-expanded={queueOpen}
+                onClick={() => setQueueOpen((value) => !value)}
+              >
+                {queueOpen ? "Hide queue" : `Queue · ${counts.now}`}
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => {
-                // Second press while a check is in flight is a no-op, not a second run.
                 if (busy === "check") return;
-                void run("/api/desk/check", "POST", undefined, "check", "Recheck ran");
+                void run(checkAction.path, "POST", undefined, "check", checkAction.path.endsWith("practice") ? "Sample morning ready" : "Recheck ran");
               }}
+              disabled={busy !== null}
               aria-busy={busy === "check"}
               className={cn(
-                "pm-control flex items-center gap-2 rounded bg-agency px-3.5 text-[14px] font-medium text-white hover:bg-agency-hover",
+                "pm-control flex items-center gap-2 rounded px-3.5 text-[14px] font-medium",
+                headerCheckPrimary
+                  ? "bg-agency text-white hover:bg-agency-hover"
+                  : "border border-line bg-sheet text-ink hover:bg-selected",
                 busy === "check" && "cursor-progress opacity-80",
               )}
             >
               {busy === "check" ? <Loader2 size={14} className="animate-spin" /> : null}
-              Recheck
+              {checkAction.label}
             </button>
+            <button type="button" onClick={() => dispatch({ type: "showAsk" })} className="desk-secondary-button desk-chat-button">
+              <MessageSquare size={16} aria-hidden />Ask Bud
+            </button>
+            <details className="desk-more">
+              <summary className="desk-secondary-button">More</summary>
+              <div className="desk-more-panel" role="group" aria-label="More Desk tools">
+                <button type="button" className="desk-more-item" aria-pressed={jobRunsOpen} onClick={() => setJobRunsOpen((value) => !value)}>
+                  {jobRunsOpen ? "Hide activity" : "Activity"}
+                </button>
+                {mode === "cases" ? (
+                  <button
+                    type="button"
+                    className={cn("desk-more-item", preferences.showBud && "min-[1320px]:hidden")}
+                    aria-expanded={railOpen}
+                    onClick={() => setRailOpen((value) => !value)}
+                  >
+                    Bud & evidence
+                  </button>
+                ) : null}
+                <button type="button" className="desk-more-item" aria-pressed={mode === "book"} onClick={() => setMode("book")}>
+                  Book · import & addresses
+                </button>
+                <button type="button" className="desk-more-item" aria-pressed={mode === "batch"} onClick={() => setMode("batch")}>
+                  Batch prepare
+                </button>
+                <div className="desk-more-layout">
+                  <WorkspaceLayout />
+                </div>
+              </div>
+            </details>
           </div>
         </div>
         <p className="pm-desk-subtitle mt-1 max-w-[46rem] text-[12.5px] text-ink-muted">
           {snap.demo || snap.mode === "demo" ? "Sample book. " : ""}
-          Queue → case → Allow → Copy into your PMS. Recheck asks Bud; a miss stays a miss.
+          {mode === "batch"
+            ? "Prepare the same check across a few addresses, then review exceptions."
+            : mode === "book"
+              ? "Import or tidy the book when an address is missing — daily work stays on Needs you."
+              : "Recheck the office systems, clear what needs you, let Bud assist. No second property catalogue."}
         </p>
-        {isDemoWorkerMiss(snap.hands, snap.handsDetail) && snap.handsDetail ? (
+        {mode !== "batch" && isDemoWorkerMiss(snap.hands, snap.handsDetail) && snap.handsDetail ? (
           <div role="status" className="mt-2 flex max-w-full flex-wrap items-center gap-2 border border-hold/30 bg-hold/10 px-3 py-2 text-[13px] text-hold">
             <span className="min-w-0 flex-1">Missed — facts held. {snap.handsDetail}</span>
             {miss ? (
@@ -435,8 +474,8 @@ export function DeskPage() {
                 type="button"
                 className="pm-control rounded border border-hold/40 bg-sheet px-3 text-[13px] text-ink"
                 onClick={() => {
-                  location.hash = miss.hash;
-                  dispatch({ type: "showYou" });
+                  if (miss.hash.includes("recovery")) { location.hash = miss.hash; dispatch({ type: "showYou" }); }
+                  else openWorkspaceSetup("bud");
                 }}
               >
                 {miss.label}
@@ -479,55 +518,90 @@ export function DeskPage() {
             </button>
           </div>
         ) : null}
-        {keysHint ? (
-          <p className="pm-desk-hint mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-ink-muted">
-            <span>↑↓ move the queue · [ ] toggle Queue / Evidence</span>
-            <button type="button" onClick={dismissKeysHint} className="text-agency hover:underline">
-              Got it
-            </button>
-          </p>
-        ) : null}
-        <MorningBrief
+        {mode !== "batch" && <MorningBrief
           brief={brief}
           timezone={timezone}
           interactive
-          collapsed={compact && !briefExpanded}
-          onToggle={compact ? () => setBriefExpanded((value) => !value) : undefined}
+          collapsed={!briefExpanded}
+          onToggle={() => setBriefExpanded((value) => !value)}
           onOpenAddress={(propertyId) => {
             const row = rows.find((item) => item.propertyId === propertyId);
             if (!row) return;
             setMode("cases");
             setFilter(row.bucket);
+            setCaseKind("all");
+            setQuery("");
+            setTaskScope(null);
             setSelectedId(row.id);
             setQueueOpen(false);
           }}
-        />
-        {/* In a short window with a case open, the case wins the space; the same
-            go-live journey stays on You and in the sidebar pulse. */}
-        {compact && selected && mode === "cases" ? null : (
+        />}
+        {mode !== "batch" ? <div className="mt-3"><ExpectedBillsBoard /><SharedWorkPanel /></div> : null}
+        {/* Setup stays available with the expanded overview and on You. */}
+        {mode === "batch" || !briefExpanded ? null : (
           <GoLiveCard
             mode={snap.mode}
             agencyName={snap.book?.agency.name ?? ""}
             workerReady={Boolean(state.hermes?.ready)}
             compact
             onConnectExport={() => setMode("book")}
-            onAttachWorker={() => dispatch({ type: "showYou" })}
-            onNameAgency={() => dispatch({ type: "showYou" })}
+            onAttachWorker={() => { openWorkspaceSetup("bud"); }}
+            onNameAgency={() => { openWorkspaceSetup("office"); }}
           />
         )}
-        {jobRunsOpen ? <JobRunFeed limit={6} className="mt-3" /> : null}
+        {briefExpanded && keysHint && mode === "cases" ? (
+          <p className="pm-desk-hint mt-2 flex items-center gap-3 text-[12px] text-ink-muted"><span>↑↓ move the queue · [ ] toggle Queue / Evidence</span><button type="button" onClick={dismissKeysHint} className="text-agency">Got it</button></p>
+        ) : null}
+        <nav className="desk-workspace-nav" aria-label="Desk workspace">
+          <div className="desk-workspace-tabs">
+            <button type="button" aria-pressed={mode === "cases"} onClick={() => setMode("cases")}>
+              Needs you{counts.now > 0 ? <span>{counts.now}</span> : null}
+            </button>
+            {mode !== "cases" ? (
+              <button type="button" aria-pressed={true} onClick={() => setMode("cases")} className="desk-workspace-back">
+                Back to Needs you
+              </button>
+            ) : null}
+          </div>
+          <span className="desk-workspace-help">
+            {mode === "cases"
+              ? "Exceptions and wording from Recheck — Bud helps, you decide"
+              : mode === "book"
+                ? "Book tools for import and missing addresses"
+                : "Batch prepare across a few addresses"}
+          </span>
+        </nav>
+        {jobRunsOpen ? <div className="desk-activity-feed"><JobRunFeed limit={6} /></div> : null}
       </header>
 
-      {mode === "book" ? (
+      {mode === "batch" ? <BatchWorkspace snapshot={snap} scope={batchScope} onClearScope={() => setBatchScope(null)} openNewDraft={openNewBatchDraft} onDraftOpened={() => setOpenNewBatchDraft(false)}/> : mode === "book" ? (
         <DeskBook
+          operationError={error}
           snap={snap}
           busy={busy}
-          onAdd={(input) => void run("/api/desk/properties", "POST", input, "add", "Property added")}
+          onGroupTasks={(scope) => {
+            setTaskScope(scope); setFilter("all"); setCaseKind("all"); setQuery("");
+            const ids = new Set(scope.ids);
+            setSelectedId(rows.find(row => row.propertyId && ids.has(row.propertyId))?.id ?? null);
+            setMode("cases"); setQueueOpen(true);
+          }}
+          onGroupBatch={(scope) => { setBatchScope(scope); setOpenNewBatchDraft(true); setMode("batch"); }}
+          onOpenTasks={(property) => {
+            const first = rows.find(row => row.propertyId === property.id);
+            setMode("cases");
+            setFilter("all");
+            setCaseKind("all");
+            setTaskScope({ label: property.address, ids: [property.id] });
+            setQuery("");
+            setSelectedId(first?.id ?? null);
+            setQueueOpen(!first);
+          }}
+          onAdd={(input) => run("/api/desk/properties", "POST", input, "add", "Property added")}
           onAllowBookProposal={(id) => void run(`/api/desk/book-proposals/${id}/allow`, "POST", {}, id, "Property added to the book")}
           onDenyBookProposal={(id) => void run(`/api/desk/book-proposals/${id}/deny`, "POST", {}, id)}
           onAllowAllBookProposals={() => void run("/api/desk/book-proposals/allow-all", "POST", {}, "allow-all", "Properties added to the book")}
-          onSave={(id, options) => void run(`/api/desk/properties/${id}`, "PATCH", options, id, "Options saved")}
-          onNotes={(id, body) => void run(`/api/desk/properties/${id}/notes`, "PUT", { body }, `notes-${id}`, "Notes saved")}
+          onSave={(id, options) => run(`/api/desk/properties/${id}`, "PATCH", options, id, "Options saved")}
+          onNotes={(id, body) => run(`/api/desk/properties/${id}/notes`, "PUT", { body }, `notes-${id}`, "Notes saved")}
           onDelete={(id) => void run(`/api/desk/properties/${id}`, "DELETE", undefined, `delete-${id}`, "Property removed")}
           onReset={() => void run("/api/desk/reset", "POST", undefined, "reset", "Sample morning replayed")}
           onPreviewImport={previewImport}
@@ -536,11 +610,16 @@ export function DeskPage() {
         />
       ) : (
         <SplitView
+          className="desk-task-split"
           queueOpen={queueOpen}
           railOpen={railOpen}
           onCloseQueue={() => setQueueOpen(false)}
           queue={
             <QueuePane
+              scope={taskScope}
+              onClearScope={() => setTaskScope(null)}
+              caseKind={caseKind}
+              onCaseKind={setCaseKind}
               filter={filter}
               onFilter={setFilter}
               query={query}
@@ -558,6 +637,8 @@ export function DeskPage() {
           }
           canvas={
             <DeskCase
+              key={selected?.id ?? "empty"}
+              edits={caseEdits}
               snap={snap}
               item={selected}
               busy={busy}
@@ -572,22 +653,33 @@ export function DeskPage() {
                   "Wording denied",
                 )
               }
-              onEdit={(draft, body) => void run(`/api/desk/drafts/${draft.id}`, "PATCH", { body }, draft.id, "Wording saved")}
+              onEdit={(draft, body, expectedRevision) => run(`/api/desk/drafts/${draft.id}`, "PATCH", { body, expectedRevision }, draft.id, "Wording saved")}
+              onAsk={() => askAboutCase()}
+              onEvidence={() => { setRailTab("evidence"); setRailOpen(true); }}
               onCopy={(body) => {
-                void navigator.clipboard.writeText(body);
                 const street = selected?.address ? selected.address.split(",")[0]?.trim() : "";
-                setAnnounce(street ? `Copied… ${street}` : "Copied…");
+                void navigator.clipboard.writeText(body).then(
+                  () => setAnnounce(street ? `Copied… ${street}` : "Copied…"),
+                  () => setError("Copy was unavailable. Select the wording and copy it manually."),
+                );
               }}
               onPrepare={(draft) => void run(`/api/desk/drafts/${draft.id}/prepare`, "POST", undefined, `prepare-${draft.id}`, "Portal prepared")}
               onRecover={recoverCase}
             />
           }
           rail={
-            <DeskEvidence
-              snap={snap}
-              item={selected}
-              onPresent={(presentation) => void run("/api/desk/handoff/present", "POST", { presentation }, "present", "Browser view changed")}
-            />
+            <div className="desk-assistant-rail">
+              <div className="desk-rail-tabs" role="group" aria-label="Case support">
+                <button type="button" aria-pressed={railTab === "bud"} onClick={() => setRailTab("bud")}>Bud</button>
+                <button type="button" aria-pressed={railTab === "evidence"} onClick={() => setRailTab("evidence")}>Evidence</button>
+                <button type="button" className="desk-rail-close desk-icon-button" aria-label="Close case support" onClick={() => setRailOpen(false)}><X size={16} /></button>
+              </div>
+              {railTab === "bud" ? <DeskBud availability={budAvailability(state.hermes, state.connected, Boolean(state.desk?.recovery?.active))} item={selected} connected={state.connected} ready={Boolean(state.hermes?.ready)} working={Boolean(bud?.busy)} onAsk={askAboutCase} onOpenChat={() => dispatch({ type: "showAsk" })} onSetup={() => { openWorkspaceSetup("bud"); }} /> : <DeskEvidence
+                snap={snap}
+                item={selected}
+                onPresent={(presentation) => void run("/api/desk/handoff/present", "POST", { presentation }, "present", "Browser view changed")}
+              />}
+            </div>
           }
         />
       )}
@@ -600,6 +692,10 @@ function queueRowId(id: string): string {
 }
 
 function QueuePane({
+  scope,
+  onClearScope,
+  caseKind,
+  onCaseKind,
   filter,
   onFilter,
   query,
@@ -611,6 +707,10 @@ function QueuePane({
   onSelect,
   onClose,
 }: {
+  scope: PropertyScope | null;
+  onClearScope: () => void;
+  caseKind: string;
+  onCaseKind: (kind: string) => void;
   filter: QueueFilter;
   onFilter: (filter: QueueFilter) => void;
   query: string;
@@ -622,8 +722,13 @@ function QueuePane({
   onSelect: (id: string) => void;
   onClose: () => void;
 }) {
+  const { preferences } = useWorkspacePreferences();
+  const pageSize = preferences.pageSize;
+  const page = Math.floor(Math.max(0, rows.findIndex(row => row.id === selectedId)) / pageSize);
+  const pageRows = rows.slice(page * pageSize, (page + 1) * pageSize);
+  useEffect(() => { document.getElementById(queueRowId(selectedId ?? ""))?.scrollIntoView({ block: "nearest" }); }, [selectedId]);
   const filters: Array<[QueueFilter, string]> = [
-    ["now", "Now"],
+    ["now", "Needs you"],
     ["next", "Next"],
     ["waiting", "Waiting"],
     ["done", "Done"],
@@ -633,22 +738,11 @@ function QueuePane({
     onHighlight(id);
     document.getElementById(queueRowId(id))?.scrollIntoView({ block: "nearest" });
   };
+  const scrollRef = useWorkspaceScroll("desk-queue");
   return (
     <div className="flex h-full min-h-0 flex-col bg-sheet">
       <div className="flex flex-wrap items-center gap-1.5 border-b border-line px-3 py-2.5">
-        <h2 className="mr-1 text-[14px] font-semibold text-ink">Queue</h2>
-        <button type="button" onClick={() => onFilter("now")} className="rounded-full">
-          <StatusLabel tone="agency">{counts.now} need you</StatusLabel>
-        </button>
-        <button type="button" onClick={() => onFilter("waiting")} className="rounded-full">
-          <StatusLabel tone="hold">{counts.waiting} waiting</StatusLabel>
-        </button>
-        {counts.next > 0 ? (
-          <button type="button" onClick={() => onFilter("next")} className="rounded-full">
-            <StatusLabel tone="muted">{counts.next} next</StatusLabel>
-          </button>
-        ) : null}
-        {counts.done > 0 ? <StatusLabel tone="muted">{counts.done} done today</StatusLabel> : null}
+        <h2 className="mr-1 text-[14px] font-semibold text-ink">Task queue</h2>
         {counts.licensee > 0 ? (
           <StatusLabel tone="danger" title="For the licensed person — RealBud will not draft a notice">
             {counts.licensee} licensee
@@ -657,14 +751,14 @@ function QueuePane({
         <button
           type="button"
           onClick={onClose}
-          className="pm-control ml-auto inline-flex items-center gap-1.5 rounded border border-line bg-paper px-2.5 text-[12px] text-ink xl:hidden"
+          className="desk-queue-toggle pm-control ml-auto inline-flex items-center gap-1.5 rounded border border-line bg-paper px-2.5 text-[12px] text-ink"
           aria-label="Close queue"
         >
           <X size={14} aria-hidden />
           Close
         </button>
       </div>
-      <div className="flex flex-wrap gap-1.5 border-b border-line px-3 py-2.5" role="toolbar" aria-label="Queue filters">
+      <div className="desk-queue-filters" role="toolbar" aria-label="Queue filters">
         {filters.map(([value, label]) => (
           <button
             key={value}
@@ -676,7 +770,7 @@ function QueuePane({
               filter === value ? "border-agency bg-selected text-ink" : "border-line bg-paper text-ink-muted",
             )}
           >
-            {label}
+            {label}{value !== "all" ? ` · ${counts[value]}` : ""}
           </button>
         ))}
       </div>
@@ -689,7 +783,10 @@ function QueuePane({
           className="mt-1 w-full rounded border border-line bg-paper px-2 py-1.5 text-[13px] text-ink"
         />
       </label>
+      {scope && <div className="property-scope-banner"><strong>{scope.label}</strong><button type="button" onClick={onClearScope}>Show all properties</button></div>}
+      <label className="desk-case-kind">Type<select value={caseKind} onChange={e => onCaseKind(e.target.value)}><option value="all">All case types</option>{Object.entries(CASE_KIND_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <div
+        ref={scrollRef}
         className="min-h-0 flex-1 overflow-y-auto"
         role="listbox"
         tabIndex={0}
@@ -720,7 +817,9 @@ function QueuePane({
         }}
       >
         {rows.length === 0 ? (
-          filter === "now" ? (
+          query.trim() ? (
+            <div className="px-3 py-4 text-[13px] text-ink-muted"><p>No cases match “{query}”.</p><button type="button" className="pm-control text-agency" onClick={() => onQuery("")}>Clear search</button></div>
+          ) : filter === "now" ? (
             <div className="space-y-3 px-3 py-4 text-[13px] text-ink-muted">
               <p>Nothing needs you right now.</p>
               <button
@@ -732,10 +831,10 @@ function QueuePane({
               </button>
             </div>
           ) : (
-            <p className="px-3 py-4 text-[13px] text-ink-muted">No cases in this filter.</p>
+            <p className="px-3 py-4 text-[13px] text-ink-muted">No cases in this filter. Try another filter above.</p>
           )
         ) : (
-          rows.map((row) => (
+          pageRows.map((row) => (
             <CaseQueueRow
               key={row.id}
               id={queueRowId(row.id)}
@@ -748,6 +847,7 @@ function QueuePane({
           ))
         )}
       </div>
+      {rows.length > 0 && <div className="desk-pagination" aria-label="Task pages"><span>{page * pageSize + 1}–{Math.min(rows.length, (page + 1) * pageSize)} of {rows.length}</span><button type="button" disabled={page === 0} onClick={() => onHighlight(rows[(page - 1) * pageSize]!.id)}>Previous</button><button type="button" disabled={(page + 1) * pageSize >= rows.length} onClick={() => onHighlight(rows[(page + 1) * pageSize]!.id)}>Next</button></div>}
     </div>
   );
 }

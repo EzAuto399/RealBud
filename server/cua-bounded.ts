@@ -1,5 +1,5 @@
 // Per-workflow Cua bounded session contract. Typed browser tools only.
-import { computerLease } from "./computer-lease.ts";
+import { computerLease, type ComputerLease } from "./computer-lease.ts";
 
 export const CUA_PIN = "0.19.3";
 
@@ -60,30 +60,31 @@ export function toolAllowed(_manifest: BoundedManifest, tool: string): boolean {
 }
 
 export function originAllowed(manifest: BoundedManifest, url: string): boolean {
-  let parsed: URL;
   try {
-    parsed = new URL(url);
+    const parsed = new URL(url);
+    if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) return false;
+    return manifest.origins.some((origin) => {
+      try {
+        const allowed = new URL(origin);
+        return ["http:", "https:"].includes(allowed.protocol)
+          && !allowed.username
+          && !allowed.password
+          && allowed.origin === parsed.origin;
+      } catch {
+        return false;
+      }
+    });
   } catch {
     return false;
   }
-  return manifest.origins.some((origin) => {
-    const allowed = origin.trim();
-    if (!allowed) return false;
-    try {
-      const allowedOrigin = new URL(allowed.includes("://") ? allowed : `https://${allowed}`).origin;
-      return parsed.origin === allowedOrigin;
-    } catch {
-      return false;
-    }
-  });
 }
 
-export function acquirePortalLease(workItemId: string, now: number): void {
-  computerLease.hold("portal", now, 15 * 60_000, workItemId);
+export function acquirePortalLease(workItemId: string, now: number, revision: number): ComputerLease {
+  return computerLease.hold("portal", now, 15 * 60_000, workItemId, revision);
 }
 
-export function revokePortalLease(): void {
-  computerLease.release("portal");
+export function revokePortalLease(lease: ComputerLease): void {
+  computerLease.release(lease);
 }
 
 export function pinSupported(version: string): boolean {

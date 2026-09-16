@@ -2,6 +2,7 @@
 import type { PortalCapability, PortalRecipe } from "../shared/contracts.ts";
 import { acquirePortalLease, revokePortalLease } from "./cua-bounded.ts";
 import { recipeAllows } from "./portal-recipe.ts";
+import { computerLease } from "./computer-lease.ts";
 
 export type PortalActor = "bud" | "human";
 
@@ -13,6 +14,7 @@ async function portalFetch(
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const res = await fetch(`${baseUrl}${path}`, {
     ...init,
+    signal: AbortSignal.timeout(30_000),
     headers: {
       "content-type": "application/json",
       "x-realbud-actor": actor,
@@ -51,10 +53,11 @@ export async function runBoundedPrefill(opts: {
   }
   if (opts.capability.expiresAt <= opts.now) return { ok: false, error: "portal capability expired" };
   if (!recipeAllows(opts.recipe, "prefill-courtesy")) return { ok: false, error: "recipe forbids prefill" };
-  acquirePortalLease(opts.capability.workItemId, opts.now);
+  const lease = acquirePortalLease(opts.capability.workItemId, opts.now, opts.capability.revision);
   try {
     const read = await portalRead(opts.baseUrl, "bud");
     if (read.status !== 200) return { ok: false, error: "portal read failed" };
+    computerLease.assertHeld(lease, Date.now());
     const prefill = await portalPrefill(opts.baseUrl, opts.body, "bud");
     if (prefill.status !== 200) return { ok: false, error: "portal prefill failed" };
     await portalRevoke(opts.baseUrl);
@@ -62,7 +65,7 @@ export async function runBoundedPrefill(opts: {
     if (forbidden.status !== 403) return { ok: false, error: "Bud submit was not refused" };
     return { ok: true };
   } finally {
-    revokePortalLease();
+    revokePortalLease(lease);
   }
 }
 

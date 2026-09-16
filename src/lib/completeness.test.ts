@@ -25,6 +25,9 @@ function bookWith(flags?: { owner?: boolean; current?: boolean }) {
 }
 
 describe("propertyCompleteness", () => {
+  it("does not nag for optional notes and property codes", () => {
+    expect(completenessLine(propertyCompleteness(prop(), bookWith({ owner: true, current: true })))).toBeNull();
+  });
   it("counts the four core fields plus the four book details", () => {
     const bare = propertyCompleteness(prop(), bookWith());
     expect(bare).toEqual({ have: 4, total: 8, missing: ["owner contact", "current tenancy", "property code", "notes"] });
@@ -41,6 +44,6 @@ describe("propertyCompleteness", () => {
 
   it("names the missing piece in PM language", () => {
     const c = propertyCompleteness(prop({ tenantPhone: "" }), bookWith({ owner: true, current: true }));
-    expect(completenessLine(c)).toBe("5 of 8 details — missing: tenant phone, property code, notes");
+    expect(completenessLine(c)).toBe("Not recorded: tenant phone");
   });
 });

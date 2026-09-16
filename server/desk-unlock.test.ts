@@ -35,14 +35,59 @@ describe("recovery key escrow + unlock", () => {
     // escrowed hex unlocks: key file restored, real book back at desk.json
     const result = locked.unlockWithKey(realHex);
     expect(result.ok).toBe(true);
+    expect(result.needsRestart).toBe(false);
     expect(existsSync(result.restoredFrom.replace("desk.json", "desk.key")) || existsSync(join(dir, "desk.key"))).toBe(true);
     expect(existsSync(result.restoredFrom)).toBe(false); // quarantine renamed back
+    expect(locked.snapshot().recovery.active).toBe(false);
+    expect(locked.snapshot().properties.some((p) => p.address === "1 Escrow St, Braddon ACT")).toBe(true);
 
-    // restart with the restored on-disk key: the book opens
+    // restart with the restored on-disk key: the book still opens
     const keyOnDisk = loadDeskKey({ dir }).key;
     const reopened = new Desk({ file, key: keyOnDisk });
     expect(reopened.snapshot().recovery.active).toBe(false);
     expect(reopened.snapshot().properties.some((p) => p.address === "1 Escrow St, Braddon ACT")).toBe(true);
+  });
+
+  it("auto-unlocks with the key already on this Mac when it still opens the book", async () => {
+    const { Desk } = await import("./desk.ts");
+    const { writeFileSync } = await import("node:fs");
+    const dir = mkdtempSync(join(tmpdir(), "realbud-auto-unlock-"));
+    dirs.push(dir);
+    const file = join(dir, "desk.json");
+    const realKey = Buffer.alloc(32, 5);
+    const real = new Desk({ file, key: realKey });
+    real.addProperty({ address: "2 Auto Heal Ave", tenantName: "Heal", tenantPhone: "0400 222 333", weeklyRentCents: 55_000 });
+    const realHex = real.recoveryKeyHex();
+
+    const locked = new Desk({ file, key: Buffer.alloc(32, 6) });
+    expect(locked.snapshot().recovery.active).toBe(true);
+    expect(locked.tryAutoUnlock().ok).toBe(false);
+
+    // Leftover desk.key from before the wrap/session drift still opens the book.
+    writeFileSync(join(dir, "desk.key"), realKey, { mode: 0o600 });
+    const healed = locked.tryAutoUnlock();
+    expect(healed.ok).toBe(true);
+    expect(locked.snapshot().recovery.active).toBe(false);
+    expect(locked.snapshot().properties.some((p) => p.address === "2 Auto Heal Ave")).toBe(true);
+    expect(realHex).toHaveLength(64);
+  });
+
+  it("restores a missing desk.json from quarantine on open when the key still matches", async () => {
+    const { Desk } = await import("./desk.ts");
+    const { renameSync } = await import("node:fs");
+    const dir = mkdtempSync(join(tmpdir(), "realbud-missing-restore-"));
+    dirs.push(dir);
+    const file = join(dir, "desk.json");
+    const key = Buffer.alloc(32, 8);
+    const original = new Desk({ file, key });
+    original.addProperty({ address: "3 Quiet Restore Rd", tenantName: "Restored", tenantPhone: "0400 333 444", weeklyRentCents: 40_000 });
+    renameSync(file, `${file}.quarantine-${Date.now()}`);
+    expect(existsSync(file)).toBe(false);
+
+    const reopened = new Desk({ file, key });
+    expect(reopened.snapshot().recovery.active).toBe(false);
+    expect(reopened.snapshot().properties.some((p) => p.address === "3 Quiet Restore Rd")).toBe(true);
+    expect(existsSync(file)).toBe(true);
   });
 
   it("preserves a locked book when the user explicitly starts again", async () => {

@@ -118,6 +118,10 @@ The user interacts only with RealBud. RealBud takes their input and delivers it 
 - PM-first by default: case context, factual citations, proposed Desk work and per-turn approvals.
 - Remove mascot dominance, reactions, branching, regeneration, agent mentions and generic code-tool chrome from the default surface.
 - Advanced diagnostics may expose technical traces and provider health, but never extra agents, always-allow or arbitrary browsing.
+- The Ask workspace uses a lighter paper (`#F6F5F1`) and sheet (`#FFFEFB`) with quiet dividers (`#DADFD4`). Green stays the action colour. Answer surfaces use 8px corners, author/time framing, accessible tables and visible Copy / Make this repeatable actions.
+- Keep worker readiness separate from book freshness. The header names the current worker state; the book control reveals sample/office context, source timing and historical check failures. A recovered worker offers a new book check instead of another model setup loop.
+- A connection check runs beside the draft and continues across Ask/You navigation. It never submits the draft. Failure keeps an explicit retry and settings route. The composer stays available for drafting while sending remains gated.
+- On smaller desktop windows, the conversation scrolls independently, source context opens on demand, and secondary book/job shortcuts collapse. Active approvals and attended-work controls remain visible.
 
 ## Responsive desktop
 

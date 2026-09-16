@@ -1,10 +1,57 @@
 # Routines — product design (GUI + Ask, Hermes as hands)
 
 Date: 2026-08-21  
-Status: **design locked** — implement PR A–D below; do not skip to “create any routine”  
+Status: **superseded 2026-09-01** — the named-loop work below is retained as history and as starter-fixture guidance
 Related: `docs/GOAL-PROMPT.md` §5, `docs/WORKFLOW-PLAN.md`
 
-Four reviews (code, usability, engineering, Hermes capability) agree: **PMs retune named loops. They do not author jobs.** Hermes fetches facts. RealBud is the clock, the cards, and Allow.
+## 2026-09-01 amendment — teach Bud any prepare-only job
+
+The product is no longer limited to a code-owned workflow catalog. Named
+morning-money and owner-letter routines remain useful starters and regression
+fixtures, but a PM may describe a recurring or one-off job in Ask, edit the
+shaped plan, rehearse it in shadow, approve that exact plan version, and put it
+on RealBud's clock.
+
+The ownership boundary stays strict:
+
+- **RealBud owns** the job definition, current approved revision, schedule,
+  origin/capability scope, runtime limits, idempotency, overlap prevention,
+  restart recovery, and durable JobRun receipts.
+- **Hermes operates as Bud** inside the already-minted prepare-only scope. It
+  may read, research, analyse, and draft in its private workroom. It does not
+  own a second clock or a canonical job store. RealBud passes an explicit
+  per-run Hermes toolset: `file` only for declared book/working-file access,
+  `web` only for declared research, and neither terminal, browser, memory,
+  delegation, messaging, nor cron.
+- **A PM still owns consequential action.** Send, portal submit, payment/trust,
+  signing, statutory/legal notices, and PMS/portal record mutation are absent
+  from `JobCapability`. If preparation reaches one, the JobRun becomes
+  `awaiting-approval` and records what is held.
+- **Edits never inherit trust.** Every material plan edit creates a new
+  revision and invalidates the prior revision's approval. In-flight runs keep
+  an immutable plan snapshot.
+- **Templates are starters, not limits.** The system can shape jobs from plain
+  language without turning every PM task into a new hardcoded workflow.
+
+Current path:
+
+```text
+PM description -> editable Recipe/JobSpec vN -> shadow rehearsal
+  -> approve vN -> RealBud schedule/manual prepare -> JobRun receipt on Desk
+  -> held approval request or completed preparation
+```
+
+`cron_mode: deny` remains mandatory. RealBud's `loops.json` is the only clock;
+`job-runs.json` is its execution receipt ledger. A Hermes-owned `jobs.json`
+remains a gate failure.
+
+---
+
+## Historical named-loop decision (2026-08-21)
+
+The remainder records the earlier catalog-only design. It explains the safety
+and clock foundations still in use, but statements that PMs cannot author jobs
+are no longer current product requirements.
 
 ---
 

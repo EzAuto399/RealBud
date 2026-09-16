@@ -1,0 +1,92 @@
+{
+  "mode": "synthetic-local-only",
+  "realProviderCalls": 0,
+  "realPayments": 0,
+  "stream": [
+    {
+      "type": "reserved",
+      "data": {
+        "requestId": "cc955e7c-104c-4717-8ced-3af0fbbeee48",
+        "rateVersion": "fixture-r1",
+        "reservedNanoAud": "165000000",
+        "included": false
+      }
+    },
+    {
+      "type": "delta",
+      "data": {
+        "text": "Synthetic reply"
+      }
+    },
+    {
+      "type": "settled",
+      "data": {
+        "requestId": "cc955e7c-104c-4717-8ced-3af0fbbeee48",
+        "state": "settled",
+        "units": {
+          "input_tokens": 10,
+          "cache_read_tokens": 5,
+          "output_tokens": 4
+        },
+        "chargedNanoAud": "19250000",
+        "included": false
+      }
+    }
+  ],
+  "invoiceId": "RB-LOCAL-000001",
+  "receipt": {
+    "mode": "local",
+    "invoiceId": "RB-LOCAL-000001",
+    "receiptId": "receipt-RB-LOCAL-000001",
+    "currency": "AUD",
+    "amountCents": "12502",
+    "refundedCents": "0",
+    "settledAt": 1790812800000
+  },
+  "duplicateWebhook": {
+    "duplicate": true
+  },
+  "ledgerIntegrity": "passed",
+  "portal": {
+    "companyId": "company-a",
+    "period": "2026-10",
+    "currency": "AUD",
+    "gstInclusive": true,
+    "includedUntil": 1785542400000,
+    "includedRemainingMs": 0,
+    "monthlyCapNanoAud": "100000000000",
+    "requestCapNanoAud": "1000000000",
+    "maxConcurrent": 4,
+    "committedRetailNanoAud": "0",
+    "remainingNanoAud": "100000000000",
+    "acceptances": [
+      {
+        "acceptedAt": 1789430400000,
+        "companyId": "company-a",
+        "digest": "8119a2a99798de922c0af32b87962e5dd6df85bc219c501730b3d214572681e4",
+        "subject": "portal-owner-a",
+        "version": "fixture-r1"
+      }
+    ],
+    "requests": [
+      {
+        "id": "cc955e7c-104c-4717-8ced-3af0fbbeee48",
+        "memberId": "member-a",
+        "model": "fixture-text",
+        "rateVersion": "fixture-r1",
+        "period": "2026-09",
+        "state": "settled",
+        "included": false,
+        "units": {
+          "cache_read_tokens": 5,
+          "input_tokens": 10,
+          "output_tokens": 4
+        },
+        "reservedNanoAud": "165000000",
+        "chargedNanoAud": "19250000",
+        "createdAt": 1789430400000,
+        "outcome": "succeeded"
+      }
+    ]
+  }
+}

@@ -1,0 +1,301 @@
+{
+  "revision": 32,
+  "updated": "2026-09-14",
+  "status": "Post-meeting planning: RealBud selected in principle; two-desktop scope and host to be confirmed; CRM undecided and both retainers under negotiation. Revision 32 amounts remain quoted reference terms, not evidence of accepted pricing.",
+  "post_meeting_update": {
+    "date": "2026-09-14",
+    "source": "User-reported meeting outcome in Codex",
+    "realbud_direction": "proceed_in_principle",
+    "crm_decision": "undecided",
+    "realbud_retainer": "under_negotiation",
+    "crm_retainer": "under_negotiation_if_crm_proceeds",
+    "desktop_count_for_planning": 2,
+    "staff_count": null,
+    "host_selection": "one_existing_office_desktop_specific_pc_pending_validation",
+    "additional_host_hardware_required_by_baseline": false,
+    "mandatory_cloud_server_required_by_baseline": false,
+    "setup_journeys": ["set_up_office", "join_office", "move_or_restore_office"],
+    "qm_meaning": "yc-software/qm multiplayer agent harness",
+    "qm_repository": "https://github.com/yc-software/qm",
+    "qm_adoption": "requested_candidate_feasibility_pending",
+    "plan": "docs/AUSTIN-TWO-DESKTOP-PLAN-2026-09-14.md",
+    "contract_or_deposit_evidence": "not_recorded_in_this_update"
+  },
+  "currency": "AUD",
+  "onboarding": 4500,
+  "monthly": 299,
+  "usage_budget": 75,
+  "usage_example": 120,
+  "training_sessions": 2,
+  "training_hours_each": 1,
+  "support_hours_monthly": 1,
+  "billing_start": "Accepted go-live follows teaching and acceptance. Two included care months: month 1 observation and fine-tuning, month 2 stabilisation; A$299 retainer starts month three.",
+  "billing_mode": "A$299 care includes an initial A$75 pooled monthly AI/API/connector allowance. First 30-day review after handover/go-live may revise future allowance by mutual written agreement, stating fee effect and effective date. No automatic or retrospective increase; current terms continue without agreement. Approved excess at cost from month three; no double billing. Two included Stage1 care months remain.",
+  "first_month": "All attributable Phase 1 usage above the A$75 included allowance in each of the first two included care months is absorbed by RealBud, with no later recovery. Verified customer-direct eligible costs receive the corresponding allowance credit and excess credit/reimbursement; never bill the same usage twice.",
+  "tax": "AUD; GST additional where applicable",
+  "scope": "One Austin office, one agreed Windows 11 workstation, Kevin as operator and reviewer. Two core accounts routines: expected-bill follow-through and ANZ reference preparation. Included connected-service preparation (initial Google examples): prioritised morning inbox, calendar preparation and source-linked file/draft assistance. Proposed limits: two approved Gmail accounts, one Calendar, one Drive source folder tree and one draft-output folder, one ANZ/REI format and one phone route. Source IDs, volumes, actions, timing and formats are agreed in Schedule A. Internal calendar changes need exact item approval; new draft outputs use an accepted job's authority and saved-result verification. No sending, invitations, mailbox/source-file changes, blanket domain access or additional staff sessions. Airbnb/Form 11 remain excluded; CRM and hosting are separate orders. Kickoff validation and actual-device acceptance remain required.",
+  "decisions": [
+    {
+      "id": "DEC-01",
+      "decision": "Windows is a delivery requirement",
+      "effect": "Browser and native Windows application control must be verified on Windows 11; a Mac-only delivery does not satisfy Austin."
+    },
+    {
+      "id": "DEC-02",
+      "decision": "Hermes + Cua is the initial execution stack",
+      "effect": "Retain the existing adapter and broker; implement Windows packaging, startup, account/session permissions, approvals and Stop without assuming upstream support proves RealBud integration."
+    },
+    {
+      "id": "DEC-03",
+      "decision": "An additional Codex engine is deferred",
+      "effect": "Keep the architecture replaceable. Revisit only with evidence of better reliability, lower total cost per successful task or a concrete customer need. Existing provider/auth options are a separate concern."
+    },
+    {
+      "id": "DEC-04",
+      "decision": "Build Windows through the existing GitHub Actions workflow",
+      "effect": "Use Package Windows and pnpm package:win from the exact reviewed source revision including required local changes. Preserve run ID, actual checkout SHA and installer digest; do not build stale remote main and call it current."
+    },
+    {
+      "id": "DEC-05",
+      "decision": "Windows 11 installer acceptance is mandatory",
+      "effect": "Clean install, Hermes setup, login, persistence, restart/update, browser/native control, approval, Stop, takeover and failure recovery require evidence on the actual artifact."
+    },
+    {
+      "id": "DEC-06",
+      "decision": "Test the customer architecture",
+      "effect": "A Windows ARM VM on Apple silicon is supplementary. If Austin is x64, Windows 11 x64 evidence remains required; x64-on-ARM emulation is labelled separately."
+    },
+    {
+      "id": "DEC-07",
+      "decision": "Hardware stays optional",
+      "effect": "Use a suitable existing Windows PC first. A dedicated Windows device may be appropriate after demonstration. A Mac mini may host Phase 2 CRM but cannot substitute for Windows applications; no purchase is included or assumed."
+    },
+    {
+      "id": "DEC-08",
+      "decision": "AI billing is independent of the execution engine",
+      "effect": "An API-based provider route can avoid an additional AI subscription while remaining paid usage. Charge the RealBud workflow/support fee separately and attribute each provider cost once."
+    },
+    {
+      "id": "DEC-09",
+      "decision": "Demonstrate one Windows workflow first",
+      "effect": "Sequence the Windows vertical slice before completing broader automation, adding engines or recommending hardware. Use the named customer app for acceptance; generic test apps provide preliminary evidence only."
+    },
+    {
+      "id": "DEC-10",
+      "decision": "Deliver prepared workflow packs; Kevin confirms and accepts",
+      "effect": "We configure, rehearse and test the payment, inbox and expected-bill routines before handover. Kevin connects accounts, confirms business rules and accepts activation. Plain-language routine changes remain an optional later draft/review path, not an onboarding dependency."
+    },
+    {
+      "id": "DEC-11",
+      "decision": "Acquire bank exports on a reviewed daily or one-to-two-day schedule",
+      "effect": "Track source coverage and overlapping transactions, preserve originals, propose property references, hold uncertainty and verify the reviewed result in REI. REI retains its existing recognition and reconciliation."
+    },
+    {
+      "id": "DEC-12",
+      "decision": "One durable approval across desktop and mobile",
+      "effect": "Resolve at the RealBud server once, invalidate other actions immediately, then update mirrored cards with retry. Retain history; do not promise removal of every OS banner."
+    },
+    {
+      "id": "DEC-13",
+      "decision": "Recovery and routine ownership stay in RealBud",
+      "effect": "Use bounded retries and authorised diagnosis, pause unknown external outcomes for reconciliation, and retain checkpoints across restart. Keep Hermes behind its adapter; no source fork or duplicate Hermes scheduler is planned."
+    },
+    {
+      "id": "DEC-14",
+      "decision": "Pause for sign-in, verify access, then resume the saved step",
+      "effect": "RealBud owns a durable Needs you intervention for login/MFA and human-only prerequisites. Release agent control and sensitive capture; the person uses the original app. Continue validates current authority and correct-account access before safe checkpoint resume. Stale or duplicate replies never authorise payment or blind replay. Prove this on matching Windows and the selected phone without a Hermes source fork."
+    },
+    {
+      "id": "DEC-15",
+      "decision": "Commercial offer is two separate stages",
+      "effect": "Stage 1 Agent OS (bills + payment prep) and Stage 2 CRM are separately approved, delivered and billed. No Stage 2 fee until its own accepted go-live."
+    }
+  ],
+  "phase_two": {
+    "setup": 1500,
+    "monthly": 149,
+    "status": "Scoped planning proposal; firm after sample migration and integration review",
+    "users": 3,
+    "records": 2000,
+    "pipelines": 1,
+    "custom_objects": 1,
+    "bud_workflows": 2,
+    "cloud_budget": 60,
+    "backup_budget": 15,
+    "support_minutes": 30,
+    "training_hours": 2,
+    "payment_milestones": [
+      500,
+      500,
+      500
+    ],
+    "implementation_estimate": 6000,
+    "founding_credit": 4500,
+    "monthly_estimate": 199,
+    "monthly_founding_credit": 50,
+    "founding_months": 12,
+    "implementation_estimate_range": [
+      6000,
+      8000
+    ],
+    "founding_credit_range": [
+      4500,
+      6500
+    ],
+    "list_price_basis": "Owner-specified standard external CRM implementation: A$6,000 to A$8,000, fully built, configured, tested and taken live for the agreed scope. This is our list range, not a verified market average. Hardware, recurring hosting, licences and care remain separately agreed.",
+    "legacy_scalar_basis": "implementation_estimate and founding_credit hold the lower bounds for numeric compatibility. Display their full ranges. The credit range is the nominal difference from Austin setup, not a fixed scope-equivalent discount or invoice credit."
+  },
+  "hardware": {
+    "mac_mini_allowance": 1500,
+    "mac_mini_setup": 450,
+    "status": "Revision32 priced planning options for discussion: hardware and provider budgets require exact quotes before order; A$450 Mac provisioning is proposed supplier fee.",
+    "currency": "AUD",
+    "hardware_tax": "A$1500 allowance includes GST; service fees exclude GST where applicable",
+    "recommended": "Existing Windows baseline; optional compatible Mac for Bud and CRM subject to validated substitution. Choose local CRM backup or cloud CRM hosting; no hardware or service ordered.",
+    "mac_spec": "Suitable Apple-silicon Mac mini; exact memory/storage, capacity, stock and total approved before purchase.",
+    "cloud_budget_note": "A$60/month planning budget for CRM hosting and backups; provider, capacity and location confirmed before ordering. CRM deployment is included in CRM setup.",
+    "mac_budget_note": "A$15/month off-site backup planning budget; electricity, internet, UPS and replacement separate. No duplicate hardware/provisioning charge when the same Mac supports Bud and CRM."
+  },
+  "included_extras": [
+    "Prioritised morning inbox work list with Kevin's filters, sources, incomplete-check warnings and unfinished-work carry-forward",
+    "One approved Google Calendar for daily preparation and exact-approved internal entries without attendees, invitations or outgoing notifications",
+    "Initially one approved Drive source folder tree for supported file lookup/summaries, including agreed Docs and Sheets; one output folder for new formatted draft copies",
+    "Five reusable drafting templates and one weekly work summary",
+    "Configured workflow pack, operating/recovery guide and access/backup register delivered in the teaching week"
+  ],
+  "extras_boundary": "Included within the proposed Stage 1 fee after kickoff and implementation-plan confirmation. Same usage allowance. Additional sources, integrations, staff, historical migration, source-file edits or expanded actions require an approved variation; locked prohibitions stay locked. RealBud is not restricted to Google Workspace; wider catalogue services remain available to assess and scope, without automatically expanding the fixed-fee implementation. Later departments reuse the paid core; quotes charge incremental work and do not re-charge existing foundation setup. Savings depend on complexity.",
+  "service_terms": {
+    "support": "Teaching week and care months 1-2: agreed direct channel in weekday Brisbane hours, target initial response next business day. Teaching and handover precede activation; month 1 observes and fine-tunes, month 2 stabilises. From month three: one help hour/month, target initial response within two business days. No 24/7 or guaranteed resolution time. Original-scope defects do not consume help allowances.",
+    "extra_work_rate": 130,
+    "rate_hold_months": 12,
+    "cancellation": "Month to month after accepted go-live; 30 days notice. Data export and connection revocation included; new migration work quoted separately.",
+    "phase_two_start": "After Stage 1 / Phase 1 acceptance and a separate written approval. No Stage 2 / Phase 2 monthly charge until its own accepted go-live.",
+    "renewal": "Each stage receives its stated monthly credit for its first 12 billing months. Review before month 13 with at least 30 days notice; no silent automatic increase. Monthly cancellation rights remain.",
+    "change_control": "Agree an estimate before new scope. Our underestimation, rework and fixes needed to meet the accepted original scope are not automatic extra customer charges.",
+    "founder_collaboration": "The family-friend relationship, early participation, testing time, candid feedback and being our first Mandarin-speaking office inform this founding offer. Introductions are appreciated, never guaranteed or required. No referral quota or positive review condition; any case study requires separate permission. Please tell referred offices that A$4,500 Agent OS, A$1,500 CRM, and two included care months are not our usual package.",
+    "allowance": "A$299 care includes an initial A$75 pooled monthly AI/API/connector allowance. First 30-day review after handover/go-live may revise future allowance by mutual written agreement, stating fee effect and effective date. No automatic or retrospective increase; current terms continue without agreement. Approved excess at cost from month three; no double billing. Two included Stage1 care months remain. No rollover or cash redemption.",
+    "price_validation": "Stage1 A$4500 includes A$1500 deposit; CRM A$1500 is separately ordered after scope and sample-migration confirmation. Reference estimates are for planning, not verified prior sales or equivalent-scope savings. Hardware/provider budgets need exact quotes.",
+    "project_start": "Signing orders the A$4,500 Stage 1 project with an A$1,500 deposit before work. Kickoff validation and planning are included; Schedule A confirms details before build, not a separate order. Clause 9.1 itemises completed work and approved commitments and refunds unused prepayments."
+  },
+  "implementation_estimate": 11000,
+  "founding_credit": 6500,
+  "monthly_estimate": 399,
+  "monthly_founding_credit": 100,
+  "founding_months": 12,
+  "payment_milestones": [
+    1500,
+    1000,
+    1000,
+    1000
+  ],
+  "payment_milestone_labels": [
+    "Project-start deposit after signing",
+    "Confirmed implementation plan and build start",
+    "Successful pilot, teaching and accepted go-live",
+    "Completed 30-day observation review and close-out"
+  ],
+  "pricing_basis": "Owner-selected Austin offer: Stage 1 A$4,500 against a RealBud standard setup estimate of A$11,000 (A$6,500 reduction); Stage 1 care A$299/month against A$399 (A$100/month reduction). The first two care months after accepted go-live are included, paid care starts in month three and the reduced rate applies for its first 12 paid months. Optional CRM setup A$1,500 is a separately scoped order; the A$6,000-A$8,000 standalone CRM reference is a different scope, not a like-for-like discount. CRM care A$149/month against A$199 (A$50/month reduction) starts at CRM acceptance for its own first 12 paid months, with no free-care period. Estimates do not imply prior sales or invoice credits. Schedule E records these comparisons; existing approval, rate-change, usage and cancellation terms remain. Stage1 deposit is part-payment, not a separate paid fit check. Initial usage allowance reviewable by mutual written variation. Hosting budgets are not supplier quotes.",
+  "planning_delivery_hours": [
+    80,
+    120
+  ],
+  "target_calendar": "After signing/deposit, kickoff validation, confirmed Schedule A and access readiness: 2-3 weeks build/test, one teaching/handover week, accepted go-live then 30-day observation and usage review. Second included care month stabilises.",
+  "usage_included": 75,
+  "close_working_month": {
+    "start": "Teaching week before accepted go-live, then 30-day observation from accepted go-live",
+    "days_after_go_live": 30,
+    "owner": "Yoda / RealBud",
+    "guided_hours_total": 8,
+    "training_sessions": 2,
+    "training_hours_each": 1,
+    "weekly_checkins": 4,
+    "checkin_minutes_each": 30,
+    "guided_tuning_hours": 4,
+    "scope": "Eight assistance hours total: two one-hour training sessions and up to four guided-practice/handover hours during teaching week, then four half-hour observation check-ins. Not five full-time on-site days. Original-scope defect corrections are separate.",
+    "channel": "One agreed direct support channel to Yoda/RealBud, weekdays during Brisbane business hours; target initial response by the next business day. No 24/7 or guaranteed resolution time.",
+    "week_1": "Observation: check priority filters, full source coverage, readiness before arrival, missed or held work and baseline handling/review effort.",
+    "week_2": "Observation: check calendar timezones, sources/versions, duplicate-safe draft outputs and corrections within scope.",
+    "week_3": "Observation: review recovery, missed/held work, usage costs and follow-up ownership.",
+    "week_4": "30-day close-out: compare representative effort, confirm original-scope acceptance, update handover records and agree remedies for unresolved items.",
+    "completion": "Completed 30-day observation review, teaching and guide already delivered, original-scope acceptance confirmed and unresolved items covered by an agreed remedy. Final A$1,000 follows completed review, not elapsed time alone.",
+    "defects": "Fixes required to meet the original agreed scope remain RealBud responsibility and do not consume the guided-help allowance. Additional scope requires an estimate and approval.",
+    "monthly_help": "Six assistance hours available during teaching week; two hours of observation check-ins in month one. Month two supplies stabilisation with elevated weekday support. Standard one-hour monthly help starts month three. Original-scope defects remain separate.",
+    "billing_note": "Care months 1–2 are included in the Stage 1 project fee; A$299 retainer invoices begin month three."
+  },
+  "planning_close_month_incremental_hours": 6,
+  "included_care_months": 2,
+  "included_care": {
+    "months": 2,
+    "month_1": "30-day observation and fine-tuning of accepted routines, four half-hour check-ins, usage/exception review and close-out. Teaching and initial handover occur before go-live.",
+    "month_2": "Continued stabilisation, monitoring and light tuning of the agreed scope with elevated weekday support.",
+    "retainer_starts": "Month three after accepted go-live"
+  },
+  "optional_deployment": {
+    "native_macos": "Optional compatible Mac for Bud and CRM: A$1500 GST-inclusive hardware budget at approved quote, plus A$450 provisioning with GST where applicable. Keep Windows baseline unless written tested substitution. No shared staff sessions or remote Windows-control promise.",
+    "crm_hosting": "Choose local backup A$15/month planning budget or cloud hosting/backup A$60/month planning budget. Add A$149 CRM care: indicative A$164 local or A$209 cloud. With paid A$299 Bud care: A$463 or A$508. CRM deployment to a ready selected host included in A$1500 setup. Confirm dates, licences, provider and recovery responsibilities before order.",
+    "selection": "Not ordered; no hardware purchase or deployment authorised."
+  },
+  "agreement_draft": {
+    "path": "AUSTIN-IMPLEMENTATION-AND-CARE-AGREEMENT-DRAFT-2026-09-13.md",
+    "status": "Revision 32: deposit order, usage review, CRM price, hosting options and reusable foundation aligned. 17 pages and 63 editable fields; customer and marked terms remain to complete.",
+    "revision": 32,
+    "pdf": "../outputs/austin-monday-2026-09-14/customer/03-RealBud-Austin-Agreement-FILLABLE-DRAFT.pdf",
+    "fields": 63,
+    "pages": 17,
+    "prefilled_fields": 8,
+    "blank_fields": 55
+  },
+  "customer_pack": {
+    "revision": 32,
+    "folder": "../outputs/austin-monday-2026-09-14/customer/",
+    "proposal": "01-RealBud-Austin-Proposal.pdf",
+    "proposal_pages": 7,
+    "faq": "01-RealBud-Austin-Proposal.pdf",
+    "faq_pages": 1,
+    "agreement": "03-RealBud-Austin-Agreement-FILLABLE-DRAFT.pdf",
+    "status": "Revision 32 seven-page proposal/FAQ and 17-page fillable agreement. Project deposit, usage review, A$1,500 CRM, hosting budgets and incremental expansion align.",
+    "presentation_pages": 6,
+    "faq_page": 7,
+    "faq_embedded": true
+  },
+  "delivery_plan": {
+    "status": "Proposed Stage1 project ordered on signature; implementation details confirmed in Schedule A",
+    "starts_when": "Agreement signed, deposit paid, kickoff validation complete, implementation plan confirmed and access ready",
+    "build_weeks": [
+      2,
+      3
+    ],
+    "teaching_handover_weeks": 1,
+    "observation_days": 30,
+    "go_live_gate": "Required source/device/recovery tests passed, teaching and handover completed, written acceptance and exact routine schedule approval",
+    "handover": "Configured pack, templates, guide, permission/provider register and backup/recovery responsibilities in teaching week; refreshed at observation close-out",
+    "dependency_change": "Notify cause, impact and revised plan; no automatic extra charges or deemed acceptance",
+    "optional_services": "CRM and optional Mac/hosting have their own orders and timelines"
+  },
+  "product_positioning": {
+    "name": "RealBud",
+    "message": "RealBud is a computer program with an assistant called Bud. Bud prepares office work; Kevin checks it and decides what happens.",
+    "centralises": [
+      "Requests and priorities",
+      "Prepared drafts and results",
+      "Review and approvals",
+      "Agreed schedules",
+      "Source-linked work history"
+    ],
+    "records": "PMS, bank, mail, files and other services retain their authoritative records.",
+    "connector_ecosystem": "1,500+ app integrations advertised by Composio; a toolkit can contain many actions.",
+    "source": "https://composio.dev/toolkits",
+    "checked": "2026-09-13",
+    "boundary": "Catalogue availability is not proof that every integration is included, connected, permitted or accepted in RealBud.",
+    "initial_delivery": "Current Schedule D Gmail/Calendar/Drive resources for Kevin; additional services or substitutions require scoped agreement and testing.",
+    "other_routes": "Approved local files, websites and computer work through the same RealBud job/permission boundary.",
+    "expansion": "RealBud can extend into other departments and systems, including property management, sales and administration. If Austin proceeds with the optional CRM, scoped integration can use approved records for summaries and follow-up tasks. Each additional workflow, integration and staff access needs agreed scope, permissions and testing."
+  },
+  "project_start_deposit": 1500,
+  "usage_review": {
+    "window": "First 30 days after handover and accepted go-live",
+    "initial_monthly_allowance": 75,
+    "change_rule": "Both authorised representatives must agree future allowance, effective date, fee effect and excess rules in writing. No retrospective change; current rates and allowance remain absent agreement.",
+    "core_care_rate": 299
+  }
+}

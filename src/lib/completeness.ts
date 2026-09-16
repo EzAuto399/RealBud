@@ -38,8 +38,8 @@ export function propertyCompleteness(property: Property, book?: CompletenessBook
   return { have: 8 - missing.length, total: 8, missing };
 }
 
-/** One quiet line for the card: null when the record is complete. */
+/** Highlight useful missing facts without turning optional notes/codes into chores. */
 export function completenessLine(c: Completeness): string | null {
-  if (c.missing.length === 0) return null;
-  return `${c.have} of ${c.total} details — missing: ${c.missing.join(", ")}`;
+  const missing = c.missing.filter(field => field !== "notes" && field !== "property code");
+  return missing.length ? `Not recorded: ${missing.join(", ")}` : null;
 }

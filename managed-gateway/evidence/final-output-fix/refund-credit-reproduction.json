@@ -1,0 +1,9 @@
+{
+  "fixtureOnly": true,
+  "originalBillCents": 2,
+  "creditAlreadyAppliedNanoAud": "10000000",
+  "laterFullRefundCents": 2,
+  "nextStatementTotalCents": 12499,
+  "netReceivedCents": 0,
+  "reconciliationRequired": true
+}

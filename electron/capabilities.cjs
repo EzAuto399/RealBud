@@ -22,7 +22,7 @@ function linuxSession(platform, env) {
 
 function localComputerReady(platform, connection) {
   return (
-    platform === "darwin" &&
+    (platform === "darwin" || platform === "win32") &&
     (connection?.mode === "embedded" || connection?.mode === "standalone")
   );
 }
@@ -35,6 +35,8 @@ function desktopCapabilities({
 } = {}) {
   const hostPlatform = normalizedPlatform(platform);
   const isMac = hostPlatform === "darwin";
+  const isWin = hostPlatform === "win32";
+  const dictationAvailable = isMac || isWin;
   const localAvailable = localComputerReady(hostPlatform, localConnection);
 
   return {
@@ -58,10 +60,10 @@ function desktopCapabilities({
       ...(!isMac ? { reasonCode: "unsupported-platform" } : {}),
     },
     dictation: {
-      available: isMac,
-      engine: isMac ? "apple-speech" : "none",
-      onDevice: isMac,
-      ...(!isMac ? { reasonCode: "unsupported-platform" } : {}),
+      available: dictationAvailable,
+      engine: isMac ? "apple-speech" : isWin ? "windows-speech" : "none",
+      onDevice: dictationAvailable,
+      ...(!dictationAvailable ? { reasonCode: "unsupported-platform" } : {}),
     },
     localComputer: {
       available: localAvailable,
@@ -69,7 +71,7 @@ function desktopCapabilities({
       ...(!localAvailable
         ? {
             reasonCode:
-              hostPlatform === "darwin" ? "cua-driver-unavailable" : "unsupported-platform",
+              ["darwin", "win32"].includes(hostPlatform) ? "cua-driver-unavailable" : "unsupported-platform",
           }
         : {}),
     },

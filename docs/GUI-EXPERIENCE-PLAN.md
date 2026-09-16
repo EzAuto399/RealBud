@@ -334,6 +334,13 @@ Proposed adapter tidy-up (no behaviour change): move `hermesStatus`, `applyHands
 - Owner boundary: Submit is the one relaxation of the former hard line — opt-in per job, per instance, non-money only. Bank sites: read and export only.
 - Gates: `pnpm typecheck` clean; `pnpm test` 123 files / 923 tests; `pnpm qa:e2e:quick` green.
 
+### Journey wave (2026-09-02, later the same day)
+
+- **Journey e2e suite** `scripts/e2e-portal-jobs.mjs` (83 checks, in the full battery): product fences, Ask intake (model-down fallback, existing job by door, weak targets, questions, secret stripping), job validation edges, approve/attach/Submit-ack clearing rules, site rules, attended runs with the fake worker (allow, password deny, Pay deny, off-origin deny, submit ask, session→once, rule save + auto-allow, read-back, interrupt, overlap, ad-hoc deny), Ready beside you (queue, start by runId, unattached skip, restart survival), receipts, connected tools (with/without key, compound sentence), recovery honesty.
+- **Job runs over SSE**: `state.jobRuns` hydrated once and fed by `job.run` frames; all six polling loops removed; Attend/Start upsert immediately; offline chips say "(last seen)".
+- **Copy pass**: one next step on every empty/held/missed state; canonical safety line "Submit, Pay and Send stay with you."; "Rehearsal" replaces "shadow"; "Bud" replaces "worker" in all PM-facing sentences; duplicate attended status pill removed from job cards.
+- Gates: typecheck clean · 123 files / 925 tests · full e2e battery ALL GREEN.
+
 ### Remaining quick wins (each ≤ 1 file)
 
 - Ask header chip should read "Model needed" (hold) rather than "Workroom ready" while `model.attached` is false.
