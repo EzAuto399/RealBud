@@ -7,8 +7,9 @@ export async function createHostCertificate(hostname: string) {
   if (typeof hostname !== 'string' || hostname.length > 253 || (!isIP(hostname) &&
     !/^(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i.test(hostname))) throw new Error('Enter this computer’s network name or IP address.');
   const now = Date.now();
-  const material = await generate([{ name: 'commonName', value: hostname }], {
-    keyType: 'ec', curve: 'P-256', algorithm: 'sha256',
+  // selfsigned@5 breaks BasicConstraints under current @peculiar; 2.4.1 is sync RSA.
+  const material = generate([{ name: 'commonName', value: hostname }], {
+    keySize: 2048, algorithm: 'sha256',
     notBeforeDate: new Date(now - 60_000), notAfterDate: new Date(now + 365 * 86_400_000),
     extensions: [
       { name: 'basicConstraints', cA: false, critical: true },
