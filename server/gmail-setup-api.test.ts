@@ -5,7 +5,7 @@ import { createServer, type Server, type ServerResponse } from "node:http";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -116,7 +116,7 @@ async function startFixture() {
   const port = (reservation.address() as { port: number }).port;
   await new Promise<void>(resolve => reservation.close(() => resolve()));
   base = `http://127.0.0.1:${port}`;
-  child = spawn(process.execPath, ["--import", preload, join(SERVER_DIR, "index.ts")], { cwd: join(SERVER_DIR, ".."),
+  child = spawn(process.execPath, ["--import", pathToFileURL(preload).href, join(SERVER_DIR, "index.ts")], { cwd: join(SERVER_DIR, ".."),
     env: { ...(process.env.PATH ? { PATH: process.env.PATH } : {}), ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
       VITEST: "true", REALBUD_DATA_DIR: dataDir, REALBUD_HERMES_CLI: cli, OMB_PORT: String(port), TZ: "UTC" },
     stdio: ["ignore", "ignore", "pipe"],

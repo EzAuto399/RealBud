@@ -8,7 +8,7 @@ import { createServer } from "node:http";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { redactSecretsInText } from "../server/redact.ts";
 import { pmInboxCases } from "./lib/pm-inbox-fixture.mjs";
@@ -206,7 +206,7 @@ try {
   const reservation = createServer(); await new Promise(resolve => reservation.listen(0, "127.0.0.1", resolve));
   const port = reservation.address().port; await new Promise(resolve => reservation.close(resolve));
   assert.notEqual(port, 18989, "never use the live QA port"); base = `http://127.0.0.1:${port}`;
-  child = spawn(process.execPath, ["--import", preloader, join(root, "server/index.ts")], { cwd: root, env: {
+  child = spawn(process.execPath, ["--import", pathToFileURL(preloader).href, join(root, "server/index.ts")], { cwd: root, env: {
     PATH: process.env.PATH || "/usr/bin:/bin", ...(process.env.HOME ? { HOME: process.env.HOME } : {}), ...(process.env.USERPROFILE ? { USERPROFILE: process.env.USERPROFILE } : {}),
     ...(interactive ? {} : { VITEST: "true" }), TZ: "UTC", REALBUD_DATA_DIR: dataDir, REALBUD_HERMES_CLI: cli, HERMES_HOME: interactive ? actualHermesHome : join(scratch, "server-hermes"), OMB_PORT: String(port),
     ...(interactive ? { OMB_STATIC_DIR: join(root, "dist") } : {}),
