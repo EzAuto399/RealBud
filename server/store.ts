@@ -131,6 +131,9 @@ export interface QueuedMessage {
   text: string;
   at: number;
   threadId: ThreadId;
+  /** Held follow-ups require explicit Edit → Send; completion and restart
+   * drains must never replay them under changed connection settings. */
+  heldReason?: "connected-app-settings-changed" | "review-required";
 }
 
 /** What a task is called before its first message names it. */
@@ -328,6 +331,11 @@ export class Store {
           typeof queued.threadId !== "string")
       ) {
         delete b.queuedMessage;
+        botsMigrated = true;
+      } else if (queued?.heldReason !== undefined &&
+        queued.heldReason !== "connected-app-settings-changed" && queued.heldReason !== "review-required") {
+        // Unknown future/corrupt hold metadata must not release saved work.
+        queued.heldReason = "review-required";
         botsMigrated = true;
       }
     }
@@ -615,6 +623,15 @@ export class Store {
     return this.bots.find((b) => b.id === id) ?? null;
   }
 
+  /** Fresh installs use id `bud`; upgraded installs keep the old id (often a
+   * UUID) with name Bud. Channels and Ask both talk to this one worker. */
+  productBud() {
+    return this.bot("bud")
+      ?? this.bots.find((b) => b.name === "Bud")
+      ?? this.bots[0]
+      ?? null;
+  }
+
   botByThread(threadId: string) {
     return this.bots.find((b) => b.threadId === threadId || b.tasks?.some((t) => t.threadId === threadId)) ?? null;
   }
@@ -731,12 +748,24 @@ export class Store {
     return queued;
   }
 
+  /** Preserve the instruction while removing automatic dispatch authority.
+   * The id guard prevents an old caller from holding a replacement. */
+  holdQueuedMessage(botId: string, reason: NonNullable<QueuedMessage["heldReason"]>, expectedId?: string): QueuedMessage | null {
+    const queued = this.bot(botId)?.queuedMessage;
+    if (!queued || (expectedId && queued.id !== expectedId)) return null;
+    if (queued.heldReason !== reason) {
+      queued.heldReason = reason;
+      this.saveBots();
+    }
+    return queued;
+  }
+
   /** Atomically claim the queued follow-up before dispatching it. Callers may
    * restore the same item if dispatch fails before a turn is accepted. */
   takeQueuedMessage(botId: string, threadId?: string): QueuedMessage | null {
     const bot = this.bot(botId);
     const queued = bot?.queuedMessage;
-    if (!bot || !queued || (threadId && queued.threadId !== threadId)) return null;
+    if (!bot || !queued || queued.heldReason !== undefined || (threadId && queued.threadId !== threadId)) return null;
     delete bot.queuedMessage;
     this.saveBots();
     return queued;

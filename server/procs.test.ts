@@ -3,9 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { spawnCli } from "./procs.ts";
+import { spawnCli, cliEnvironment } from "./procs.ts";
 
 const dirs: string[] = [];
+it("does not give a CLI the workflow encryption key or private desktop authority", () => {
+  const source = { PATH: "/fictional/bin", PROVIDER_SETTING: "keep", REALBUD_DESK_KEY: "secret", REALBUD_CUA_CONTROL_TOKEN: "secret", REALBUD_CUA_CONTROL_URL: "http://127.0.0.1:1234" };
+  expect(cliEnvironment(source)).toEqual({ PATH: "/fictional/bin", PROVIDER_SETTING: "keep" });
+  expect(source.REALBUD_DESK_KEY).toBe("secret");
+});
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });

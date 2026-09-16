@@ -46,6 +46,7 @@ import {
   type Office,
 } from "../shared/office.ts";
 import { migrateV1ToV2 } from "./desk-v3-migrate.ts";
+import { parseRentWorkflow } from "../shared/rent-workflow.ts";
 
 export class DeskDecodeError extends Error {
   readonly errors: string[];
@@ -350,6 +351,8 @@ function decodeOffice(value: unknown, errors: string[]): Office {
     errors.push("office must be an object");
     return emptyOffice();
   }
+  const workflow = value.rentWorkflow === undefined ? undefined : parseRentWorkflow(value.rentWorkflow);
+  if (workflow && !workflow.ok) errors.push(workflow.error);
   return {
     pmUser: typeof value.pmUser === "string" ? value.pmUser : "",
     pmsBrand: closedOrEmpty(value.pmsBrand, PMS_BRANDS, "office.pmsBrand", errors),
@@ -358,6 +361,7 @@ function decodeOffice(value: unknown, errors: string[]): Office {
     exportIdentity: closedOrEmpty(value.exportIdentity, EXPORT_IDENTITY_COLUMNS, "office.exportIdentity", errors),
     officeOs: closedOrEmpty(value.officeOs, OFFICE_OS, "office.officeOs", errors),
     vendorTestAccount: typeof value.vendorTestAccount === "string" ? value.vendorTestAccount : "",
+    ...(workflow?.ok ? { rentWorkflow: workflow.value } : {}),
   };
 }
 

@@ -16,9 +16,23 @@ export interface WorkerProvider {
  * key configuration. */
 export const WORKER_PROVIDER_ALIASES: Readonly<Record<string, string>> = {
   "xai-oauth": "xai",
+  /** Hermes device-code / ChatGPT subscription login id. */
+  "openai-codex": "openai-api",
+  /** Legacy RealBud alias — prefer openai-codex. */
   "openai-oauth": "openai-api",
   "google-oauth": "google",
 };
+
+/** Device-code OAuth RealBud can start from Connect model. Keyed by the
+ * curated API-key provider id shown in the picker. */
+export const WORKER_OAUTH_LOGINS: Readonly<
+  Record<string, { oauthId: string; signInLabel: string }>
+> = {
+  "openai-api": { oauthId: "openai-codex", signInLabel: "Sign in with ChatGPT" },
+  xai: { oauthId: "xai-oauth", signInLabel: "Sign in with xAI" },
+};
+
+export type WorkerLoginMethod = "oauth" | "api_key";
 
 export const WORKER_PROVIDERS: WorkerProvider[] = [
   {
@@ -94,4 +108,10 @@ export function workerProvider(providerId: string | null | undefined): WorkerPro
   if (!providerId) return null;
   const canonical = WORKER_PROVIDER_ALIASES[providerId] ?? providerId;
   return WORKER_PROVIDERS.find((provider) => provider.id === canonical) ?? null;
+}
+
+export function workerLoginMethods(providerId: string | null | undefined): WorkerLoginMethod[] {
+  const canonical = workerProvider(providerId)?.id ?? providerId;
+  if (canonical && WORKER_OAUTH_LOGINS[canonical]) return ["oauth", "api_key"];
+  return ["api_key"];
 }

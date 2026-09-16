@@ -1,10 +1,15 @@
+import { matchesPairingCode, clearPairingCode } from "../channel-pairing.ts";
+import { channelContinuation } from "../channel-continuation.ts";
 // RealBud owns the Telegram channel: Bot API long-poll over HTTPS, then
 // ordinary Ask turns on the canonical Bud thread. The Hermes worker stays
 // per-turn and untouched. Token never appears in API responses or logs.
 import { mkdirSync, readFileSync, unlinkSync } from "node:fs";
+import { request as httpsRequest } from "node:https";
 import { join } from "node:path";
+import { URL } from "node:url";
 
 import { productAskFailure } from "../ask-book.ts";
+import { noteWorkerIssue } from "../worker-issues.ts";
 import { writeFileAtomic } from "../atomic.ts";
 import { DATA_DIR } from "../config.ts";
 import type { RuntimeEvent } from "../contracts.ts";
@@ -14,8 +19,7 @@ import type { Message, Store } from "../store.ts";
 import {
   decideRemotely,
   parseDecisionCallback,
-  parseRemoteDecisionText,
-  pendingDraftId,
+  decideRemoteText,
   type RemoteChannelAdapter,
 } from "../remote-decisions.ts";
 import type { ChannelAdapter, ChannelPublic } from "./types.ts";
@@ -40,6 +44,7 @@ export type StartTurnFn = (
   opts?: {
     userMessage?: Message;
     onDispatchError?: (message: string) => void;
+    channelRelay?: boolean;
   },
 ) => Promise<void>;
 
@@ -56,7 +61,6 @@ const PAIR_REPLY = "Paired with RealBud on this Mac. Send a task, /continue for 
 const ELSEWHERE_REPLY = "This Bud is paired elsewhere.";
 const BAD_TOKEN = "that token did not answer — check it against BotFather";
 const CLIP_AT = 3900;
-const MAX_QUEUE = 20;
 const POLL_TIMEOUT_SEC = 25;
 const BACKOFF_START_MS = 1_000;
 const BACKOFF_CAP_MS = 30_000;
@@ -152,6 +156,41 @@ export function clipTelegramText(text: string): string {
   return `${text.slice(0, CLIP_AT - 20).trimEnd()}…\n(trimmed)`;
 }
 
+/** Telegram HTML parse_mode — escape user/book text before wrapping tags. */
+export function escapeTelegramHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/**
+ * Default-on “response card” formatting for phone outbound.
+ * Known Desk review / Ask handoff shapes get a bold title; everything else is
+ * escaped plain text so parse_mode HTML stays safe.
+ */
+export function formatTelegramHtmlMessage(plain: string): string {
+  const clipped = clipTelegramText(plain);
+  const reply = /^(Reply from Ask:|Bud is still working\. Saved reply from Ask:)\n\n([\s\S]*)$/.exec(clipped);
+  if (reply) {
+    const title = reply[1]!.startsWith("Bud is still") ? "Saved reply · Bud still working" : "Reply from Ask";
+    return `<b>${escapeTelegramHtml(title)}</b>\n\n${escapeTelegramHtml(reply[2]!.trimEnd())}`;
+  }
+  const summary = /^Ask handoff summary:\n\n([\s\S]*)$/.exec(clipped);
+  if (summary) {
+    return `<b>Ask handoff</b>\n\n${escapeTelegramHtml(summary[1]!.trimEnd())}`;
+  }
+  const review =
+    /^(.+ — .+)\n\nTo: (.+)\n\n([\s\S]+?)\n\nReply allow ([a-f0-9]{12}) or deny \4\.$/i.exec(clipped);
+  if (review) {
+    const id = review[4]!;
+    return (
+      `<b>${escapeTelegramHtml(review[1]!)}</b>\n` +
+      `<i>To: ${escapeTelegramHtml(review[2]!)}</i>\n\n` +
+      `${escapeTelegramHtml(review[3]!.trim())}\n\n` +
+      `<i>Or reply allow ${id} / deny ${id}</i>`
+    );
+  }
+  return escapeTelegramHtml(clipped);
+}
+
 export async function verifyToken(fetchFn: TelegramFetch, token: string): Promise<{ id: number; username: string }> {
   const trimmed = token.trim();
   if (!trimmed) throw new Error(BAD_TOKEN);
@@ -189,13 +228,63 @@ export async function getUpdates(
   return body.ok === true && Array.isArray(body.result) ? body.result : [];
 }
 
-export async function sendMessage(fetchFn: TelegramFetch, token: string, chatId: number, text: string): Promise<void> {
-  const res = await fetchFn(telegramMethodUrl(token, "sendMessage"), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text: clipTelegramText(text) }),
+function postJsonHttps(url: string, body: string): Promise<{ ok: boolean }> {
+  return new Promise((resolve, reject) => {
+    const target = new URL(url);
+    const req = httpsRequest(
+      {
+        protocol: target.protocol,
+        hostname: target.hostname,
+        path: `${target.pathname}${target.search}`,
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(body),
+        },
+      },
+      (res) => {
+        res.resume();
+        const status = res.statusCode ?? 0;
+        resolve({ ok: status >= 200 && status < 300 });
+      },
+    );
+    req.on("error", reject);
+    req.write(body);
+    req.end();
   });
-  if (!res.ok) throw new Error("Telegram did not accept that message");
+}
+
+export async function sendMessage(fetchFn: TelegramFetch, token: string, chatId: number, text: string): Promise<void> {
+  const url = telegramMethodUrl(token, "sendMessage");
+  const body = JSON.stringify({
+    chat_id: chatId,
+    text: formatTelegramHtmlMessage(text),
+    parse_mode: "HTML",
+  });
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetchFn(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      });
+      if (!res.ok) throw new Error("Telegram did not accept that message");
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+    }
+  }
+  // Electron's utilityProcess fetch occasionally throws "fetch failed" while
+  // Node https still reaches api.telegram.org — keep the phone reply moving.
+  try {
+    const res = await postJsonHttps(url, body);
+    if (res.ok) return;
+    throw new Error("Telegram did not accept that message");
+  } catch (error) {
+    throw lastError instanceof Error ? lastError : error instanceof Error ? error : new Error(String(error));
+  }
 }
 
 export async function sendDecisionMessage(
@@ -207,10 +296,12 @@ export async function sendDecisionMessage(
 ): Promise<void> {
   const res = await fetchFn(telegramMethodUrl(token, "sendMessage"), {
     method: "POST",
+    signal: AbortSignal.timeout(15_000),
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       chat_id: chatId,
-      text: clipTelegramText(text),
+      text: formatTelegramHtmlMessage(text),
+      parse_mode: "HTML",
       reply_markup: {
         inline_keyboard: [
           [
@@ -221,7 +312,7 @@ export async function sendDecisionMessage(
       },
     }),
   });
-  if (!res.ok) throw new Error("Telegram did not accept that message");
+  if (!res.ok || (await res.json() as { ok?: boolean }).ok !== true) throw new Error("Telegram did not accept that message");
 }
 
 async function answerCallbackQuery(fetchFn: TelegramFetch, token: string, callbackId: string, text?: string): Promise<void> {
@@ -246,7 +337,8 @@ async function editMessageText(
     body: JSON.stringify({
       chat_id: chatId,
       message_id: messageId,
-      text: clipTelegramText(text),
+      text: formatTelegramHtmlMessage(text),
+      parse_mode: "HTML",
       reply_markup: { inline_keyboard: [] },
     }),
   });
@@ -317,6 +409,32 @@ function asCallbackQuery(value: unknown): {
   };
 }
 
+async function sendChatAction(fetchFn: TelegramFetch, token: string, chatId: number, action = "typing"): Promise<void> {
+  const url = telegramMethodUrl(token, "sendChatAction");
+  const body = JSON.stringify({ chat_id: chatId, action });
+  try {
+    const res = await fetchFn(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    });
+    if (res.ok) return;
+  } catch {
+    /* fall through */
+  }
+  try {
+    await postJsonHttps(url, body);
+  } catch {
+    /* typing is best-effort */
+  }
+}
+
+async function showTyping(deps: TelegramDeps): Promise<void> {
+  const record = loadChannel();
+  if (!record?.botToken || record.pairedChatId == null) return;
+  await sendChatAction(deps.fetch ?? globalThis.fetch, record.botToken, record.pairedChatId);
+}
+
 async function relayText(text: string, deps: TelegramDeps): Promise<void> {
   const record = loadChannel();
   if (!record?.botToken || record.pairedChatId == null) return;
@@ -325,6 +443,11 @@ async function relayText(text: string, deps: TelegramDeps): Promise<void> {
   } catch (error) {
     const raw = error instanceof Error ? error.message : String(error);
     logQuiet(raw, record.botToken);
+    noteWorkerIssue({
+      source: "channel",
+      summary: "Telegram reply missed",
+      detail: productAskFailure(raw),
+    });
   }
 }
 
@@ -335,31 +458,38 @@ function collectAssistantAfter(threadId: string, userMessageId: string, store: S
   return slice.filter((m) => m.role === "bot" && m.kind === "text" && m.text).map((m) => m.text as string);
 }
 
-async function relayPendingFromStore(deps: TelegramDeps): Promise<void> {
-  if (!pendingRelay) return;
-  const texts = collectAssistantAfter(pendingRelay.threadId, pendingRelay.userMessageId, deps.store);
+async function relayPendingFromStore(deps: TelegramDeps, relay: PendingRelay = pendingRelay!): Promise<void> {
+  const texts = collectAssistantAfter(relay.threadId, relay.userMessageId, deps.store);
   await relayText(texts.length ? texts.join("\n\n") : productAskFailure("Bud couldn't finish that request."), deps);
 }
 
 function queueAsk(item: QueuedAsk): void {
-  if (inboundQueue.length >= MAX_QUEUE) return;
-  inboundQueue.push(item);
+  // Rapid phone taps should not stack replies — keep only the newest ask.
+  inboundQueue = [item];
 }
 
 async function enqueueOrStart(prefixed: string, deps: TelegramDeps, userMessage?: Message): Promise<void> {
-  const bot = deps.store.bot("bud");
+  const bot = deps.store.productBud();
   if (!bot) return;
-  if (bot.busy) {
-    queueAsk({ text: prefixed, userMessage });
-    return;
-  }
   const message =
     userMessage ?? deps.store.appendMessage(bot.threadId, { role: "user", kind: "text", text: prefixed });
   if (!userMessage) deps.broadcast?.({ kind: "message", threadId: bot.threadId, message });
+  if (bot.busy) {
+    const replaced = inboundQueue.length > 0;
+    queueAsk({ text: prefixed, userMessage: message });
+    await relayText(replaced
+      ? "Your latest follow-up replaces the waiting request. Both messages are saved in Ask on your Mac. Bud will pick up the latest one after the current work finishes."
+      : "Saved in Ask on your Mac. Bud is working and will pick this up next. If RealBud restarts first, open Ask to resume the saved request.", deps);
+    return;
+  }
   pendingRelay = { threadId: bot.threadId, userMessageId: message.id };
+  // Ask transcript keeps the [Telegram · …] stamp; Hermes sees the bare ask.
+  const modelText = prefixed.replace(/^\[Telegram · [^\]]+\]\s*/i, "").trim() || prefixed;
+  void showTyping(deps);
   try {
-    await deps.startTurn("bud", prefixed, {
+    await deps.startTurn(bot.id, modelText, {
       userMessage: message,
+      channelRelay: true,
       onDispatchError: (errMsg) => {
         pendingRelay = null;
         if (/already running|already working/i.test(errMsg)) {
@@ -379,10 +509,21 @@ async function enqueueOrStart(prefixed: string, deps: TelegramDeps, userMessage?
     await relayText(productAskFailure(raw), deps);
     return;
   }
-  const after = deps.store.bot("bud");
+  const after = deps.store.productBud();
   if (after && !after.busy && pendingRelay) {
-    await relayPendingFromStore(deps);
+    const relay = pendingRelay;
     pendingRelay = null;
+    await relayPendingFromStore(deps, relay);
+    return;
+  }
+  if (after?.busy && pendingRelay) {
+    const token = pendingRelay.userMessageId;
+    void (async () => {
+      while (pendingRelay?.userMessageId === token && deps.store.productBud()?.busy) {
+        await showTyping(deps);
+        await sleep(4_000, new AbortController().signal);
+      }
+    })();
   }
 }
 
@@ -390,11 +531,11 @@ async function flushQueue(deps: TelegramDeps): Promise<void> {
   if (flushing) return;
   flushing = true;
   try {
-    while (inboundQueue.length && !deps.store.bot("bud")?.busy) {
+    while (inboundQueue.length && !deps.store.productBud()?.busy) {
       const next = inboundQueue.shift();
       if (!next) break;
       await enqueueOrStart(next.text, deps, next.userMessage);
-      if (deps.store.bot("bud")?.busy) break;
+      if (deps.store.productBud()?.busy) break;
     }
   } finally {
     flushing = false;
@@ -402,16 +543,21 @@ async function flushQueue(deps: TelegramDeps): Promise<void> {
 }
 
 export function onTelegramRuntimeEvent(event: RuntimeEvent): void {
-  if (!bound) return;
-  const bot = bound.store.bot("bud");
-  if (!bot || event.threadId !== bot.threadId) return;
   if (event.type !== "turn.completed") return;
+  flushTelegramRelayForThread(event.threadId);
+}
+
+/** Ask finished on Bud's thread — push the pending phone reply even if the
+ * bus subscription was lost mid-session. */
+export function flushTelegramRelayForThread(threadId: string): void {
+  if (!bound) return;
+  const bot = bound.store.productBud();
+  if (!bot || bot.threadId !== threadId) return;
   const deps = bound;
+  const relay = pendingRelay?.threadId === threadId ? pendingRelay : null;
+  if (relay) pendingRelay = null;
   void (async () => {
-    if (pendingRelay) {
-      await relayPendingFromStore(deps);
-      pendingRelay = null;
-    }
+    if (relay) await relayPendingFromStore(deps, relay);
     await flushQueue(deps);
   })();
 }
@@ -424,6 +570,8 @@ export async function handleTelegramUpdates(updates: unknown[], deps: TelegramDe
   const now = deps.now ?? Date.now;
   let next = { ...record };
   for (const raw of updates) {
+    const updateId = (raw as { update_id?: unknown } | null)?.update_id;
+    if (typeof updateId !== "number" || !Number.isSafeInteger(updateId) || updateId < next.offset) continue;
     const callback = asCallbackQuery(raw);
     if (callback) {
       if (callback.update_id >= next.offset) next.offset = callback.update_id + 1;
@@ -441,6 +589,7 @@ export async function handleTelegramUpdates(updates: unknown[], deps: TelegramDe
       continue;
     }
     if (next.pairedChatId == null) {
+      if (!matchesPairingCode("telegram", inbound.text, now())) { saveChannel(next); continue; }
       next = {
         ...next,
         pairedChatId: inbound.chatId,
@@ -448,12 +597,14 @@ export async function handleTelegramUpdates(updates: unknown[], deps: TelegramDe
         lastMessageAt: now(),
       };
       saveChannel(next);
+      clearPairingCode("telegram");
       try {
         await sendMessage(fetchFn, next.botToken, inbound.chatId, PAIR_REPLY);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         logQuiet(msg, next.botToken);
       }
+      deps.broadcast?.({ kind: "channels", channels: { telegram: toPublic(next) } });
       continue;
     }
     if (inbound.chatId !== next.pairedChatId) {
@@ -468,10 +619,10 @@ export async function handleTelegramUpdates(updates: unknown[], deps: TelegramDe
     }
     next = { ...next, lastMessageAt: now() };
     saveChannel(next);
-    const pending = pendingDraftId("telegram");
-    const parsed = pending ? parseRemoteDecisionText(inbound.text) : null;
-    if (pending && parsed) {
-      const result = await decideRemotely("telegram", String(inbound.chatId), pending, parsed.decision, parsed.reason, inbound.name);
+    const continuation = channelContinuation(inbound.text, deps.store);
+    if (continuation !== null) { await relayText(continuation, deps); continue; }
+    const result = await decideRemoteText("telegram", String(inbound.chatId), inbound.text, inbound.name);
+    if (result) {
       try {
         await sendMessage(fetchFn, next.botToken, inbound.chatId, result.ok ? result.stamp : result.message);
       } catch (error) {
@@ -581,6 +732,7 @@ export async function connectTelegram(token: string, fetchFn?: TelegramFetch): P
     connectedAt: Date.now(),
     lastMessageAt: null,
   };
+  clearPairingCode("telegram");
   saveChannel(record);
   startTelegramBridge();
   return { telegram: toPublic(record) };
@@ -588,6 +740,7 @@ export async function connectTelegram(token: string, fetchFn?: TelegramFetch): P
 
 export function disconnectTelegram(): { telegram: { connected: false } } {
   stopTelegramBridge();
+  clearPairingCode("telegram");
   deleteChannel();
   return { telegram: { connected: false } };
 }
@@ -602,12 +755,13 @@ export function telegramDecisionAdapter(): RemoteChannelAdapter {
     },
     async sendDecision(text, draftId) {
       const rec = loadChannel();
-      if (!rec?.botToken || rec.pairedChatId == null) return;
+      if (!rec?.botToken || rec.pairedChatId == null) throw new Error("Phone connection changed");
       try {
         await sendDecisionMessage(bound?.fetch ?? globalThis.fetch, rec.botToken, rec.pairedChatId, text, draftId);
       } catch (error) {
         const raw = error instanceof Error ? error.message : String(error);
         logQuiet(raw, rec.botToken);
+        throw new Error("Review card delivery was not confirmed");
       }
     },
     async sendDigest(text) {

@@ -273,8 +273,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (turn.integrations?.composio?.key) {
         mcpServers.composio = {
           type: "http",
-          url: turn.integrations.composio.url || "https://connect.composio.dev/mcp",
-          headers: { "x-consumer-api-key": turn.integrations.composio.key },
+          url: turn.integrations.composio.url || "https://backend.composio.dev/v3/mcp",
+          headers: turn.integrations.composio.headers ?? { "x-api-key": turn.integrations.composio.key },
         };
         allowed.push("mcp__composio");
       }

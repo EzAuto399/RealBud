@@ -127,14 +127,14 @@ describe("tryHermesLedger (fake pinned CLI)", () => {
     const { dir, script } = stubHermes("Sure, here are the rows I would check!");
     const attempt = await tryHermesLedger(["prop-oak"], { cli: script, root: dir });
     expect(attempt.rows).toBeNull();
-    expect(attempt.detail).toMatch(/without ledger JSON/);
+    expect(attempt.detail).toMatch(/without ledger facts/);
   });
 
   it("explains when the worker correctly observed no ledger facts", async () => {
     const { dir, script } = stubHermes("[]");
     const attempt = await tryHermesLedger(["prop-oak"], { cli: script, root: dir });
     expect(attempt.rows).toBeNull();
-    expect(attempt.detail).toMatch(/no observed ledger facts/);
+    expect(attempt.detail).toMatch(/no ledger facts/);
   });
 
   it("surfaces the provider's own error words (billing, auth) in the detail", async () => {
@@ -173,7 +173,7 @@ describe("tryHermesPing (fake pinned CLI)", () => {
   it("fails cleanly when the pack is missing", async () => {
     const ping = await tryHermesPing({ cli: "/bin/false", root: "/tmp/realbud-no-such-home" });
     expect(ping.ok).toBe(false);
-    expect(ping.detail).toMatch(/pack is missing/);
+    expect(ping.detail).toMatch(/Bud is not set up/);
   });
 
   it("refuses to spawn when the pack's approvals are not manual", async () => {
@@ -182,11 +182,11 @@ describe("tryHermesPing (fake pinned CLI)", () => {
     writeFileSync(join(profile, "config.yaml"), "approvals:\n  mode: yolo\n");
     const attempt = await tryHermesLedger(["prop-oak"], { cli: script, root: dir });
     expect(attempt.rows).toBeNull();
-    expect(attempt.detail).toMatch(/manual approvals/);
+    expect(attempt.detail).toMatch(/safeguards need attention/);
 
     const ping = await tryHermesPing({ cli: script, root: dir });
     expect(ping.ok).toBe(false);
-    expect(ping.detail).toMatch(/manual approvals/);
+    expect(ping.detail).toMatch(/safeguards need attention/);
   });
 });
 
@@ -254,4 +254,12 @@ describe.skipIf(process.platform === "win32")("hermes CLI argv contract", () => 
     expect(HermesAgentDriver.defaultConfig().workspace).toBe(book);
     expect(HermesAgentDriver.decodeConfig({}).workspace).toBe(book);
   });
+});
+
+
+it("holds an interrupted installation before pinging or reading property facts", async () => {
+  const root = mkdtempSync(join(tmpdir(), "bud-interrupted-hands-")); dirs.push(root);
+  writeFileSync(join(root, ".realbud-bootstrap.json"), JSON.stringify({ version: 1, pending: true, childPid: null }));
+  expect(await tryHermesPing({ root, cli: "must-not-be-spawned" })).toMatchObject({ ok: false, detail: expect.stringContaining("setup did not finish") });
+  expect(await tryHermesLedger(["fictional-property"], { root, cli: "must-not-be-spawned" })).toMatchObject({ rows: null, detail: expect.stringContaining("setup did not finish") });
 });

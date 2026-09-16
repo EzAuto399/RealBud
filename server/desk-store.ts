@@ -15,6 +15,7 @@ import { idleRecovery } from "./desk-v3-recovery.ts";
 import { ensureDemoBreadth } from "./desk-v3-demo-breadth.ts";
 import { syncWorkingV2IntoV3 } from "./desk-v3-sync.ts";
 import { validateDeskV3 } from "./desk-v3-decode.ts";
+import { findRestorableQuarantine, restoreQuarantineToDesk } from "./desk-auto-restore.ts";
 
 export type { DeskFileV2 };
 
@@ -109,49 +110,80 @@ export class DeskStore {
     this.recovery = loaded.recovery;
   }
 
+  /** Re-read desk.json after an unlock restored files on disk. */
+  reopen(book: { properties: Property[]; ledger: LedgerFacts[] }, key?: Buffer): void {
+    this.keyInfo = key && key.length === 32
+      ? { key, source: "inline", production: this.keyInfo.production }
+      : loadDeskKey({ dir: dirname(this.file) });
+    const loaded = this.read(book);
+    this.data = loaded.data;
+    this.v3 = loaded.v3;
+    this.recovery = loaded.recovery;
+    this.keyInfo = loaded.key;
+  }
+
   private read(book: { properties: Property[]; ledger: LedgerFacts[] }): LoadedDesk {
-    if (!existsSync(this.file)) {
-      const fresh = emptyV2(book);
-      const v3 = ensureDemoBreadth(migrateV2ToV3(fresh, Date.now()), Date.now());
-      this.writeV3(v3);
-      return { data: projectWorkingV2(v3), v3, recovery: idleRecovery(), key: this.keyInfo };
-    }
-    const result = commitOrRecover({
-      file: this.file,
-      key: this.keyInfo.key,
-      migratedAt: Date.now(),
-      book,
-      timezone: "Australia/Sydney",
-    });
-    if (!result.ok) {
-      const quarantined: string[] = [...result.recovery.quarantined];
-      if (result.phase === "decode" || result.phase === "retain-bytes") {
-        const quarantine = `${this.file}.quarantine-${Date.now()}`;
-        try {
-          renameSync(this.file, quarantine);
-          quarantined.push(quarantine);
-        } catch {
-          /* already gone */
+    let restoredOnce = false;
+    for (;;) {
+      if (!existsSync(this.file)) {
+        if (!restoredOnce) {
+          const candidate = findRestorableQuarantine(this.keyInfo.key, this.file);
+          if (candidate) {
+            restoreQuarantineToDesk(candidate, this.file);
+            restoredOnce = true;
+            continue;
+          }
         }
+        const fresh = emptyV2(book);
+        const v3 = ensureDemoBreadth(migrateV2ToV3(fresh, Date.now()), Date.now());
+        this.writeV3(v3);
+        return { data: projectWorkingV2(v3), v3, recovery: idleRecovery(), key: this.keyInfo };
       }
-      const empty = emptyV2({ properties: [], ledger: [] });
-      empty.mode = "live";
-      empty.hands = "held";
-      empty.handsDetail = "Desk is in recovery — the book was not replaced with Demo data.";
-      return {
-        data: empty,
-        v3: emptyV3({ name: "", timezone: hostTimezone(), jurisdictions: [] }),
-        recovery: { ...result.recovery, quarantined },
-        key: this.keyInfo,
-      };
+      const result = commitOrRecover({
+        file: this.file,
+        key: this.keyInfo.key,
+        migratedAt: Date.now(),
+        book,
+        timezone: "Australia/Sydney",
+      });
+      if (!result.ok) {
+        const quarantined: string[] = [...result.recovery.quarantined];
+        if (result.phase === "decode" || result.phase === "retain-bytes") {
+          const quarantine = `${this.file}.quarantine-${Date.now()}`;
+          try {
+            renameSync(this.file, quarantine);
+            quarantined.push(quarantine);
+          } catch {
+            /* already gone */
+          }
+        }
+        if (!restoredOnce) {
+          const candidate = findRestorableQuarantine(this.keyInfo.key, this.file, quarantined);
+          if (candidate) {
+            restoreQuarantineToDesk(candidate, this.file);
+            restoredOnce = true;
+            continue;
+          }
+        }
+        const empty = emptyV2({ properties: [], ledger: [] });
+        empty.mode = "live";
+        empty.hands = "held";
+        empty.handsDetail = "Desk is in recovery — the book was not replaced with Demo data.";
+        return {
+          data: empty,
+          v3: emptyV3({ name: "", timezone: hostTimezone(), jurisdictions: [] }),
+          recovery: { ...result.recovery, quarantined },
+          key: this.keyInfo,
+        };
+      }
+      const opened = result.v3.mode === "demo" ? ensureDemoBreadth(result.v3, Date.now()) : result.v3;
+      if (opened !== result.v3 || opened.mode === "demo") {
+        const before = result.v3.cases.length + result.v3.contacts.length + result.v3.tenancies.length;
+        const after = opened.cases.length + opened.contacts.length + opened.tenancies.length;
+        if (after !== before) this.writeV3(opened);
+      }
+      return { data: projectWorkingV2(opened), v3: opened, recovery: idleRecovery(), key: this.keyInfo };
     }
-    const opened = result.v3.mode === "demo" ? ensureDemoBreadth(result.v3, Date.now()) : result.v3;
-    if (opened !== result.v3 || opened.mode === "demo") {
-      const before = result.v3.cases.length + result.v3.contacts.length + result.v3.tenancies.length;
-      const after = opened.cases.length + opened.contacts.length + opened.tenancies.length;
-      if (after !== before) this.writeV3(opened);
-    }
-    return { data: projectWorkingV2(opened), v3: opened, recovery: idleRecovery(), key: this.keyInfo };
   }
 
   persist(): void {
@@ -187,6 +219,42 @@ export class DeskStore {
         this.batchNeedsBump = false;
         if (!this.recovery.active) this.commitWithBump();
       }
+    }
+  }
+
+  /** Replay only the sample book. Publish one complete replacement or keep
+   * both in-memory projections and the durable book exactly as they were. */
+  replaySample(book: { properties: Property[]; ledger: LedgerFacts[] }, now: number, prepare: () => void): void {
+    if (this.recovery.active || this.data.mode !== "demo") {
+      throw Object.assign(new Error("Sample replay is only available on the sample book. Your office book has been kept."), { status: 409 });
+    }
+    if (this.batchDepth !== 0) throw new Error("Sample replay cannot run inside another book operation");
+    const previousData = this.data;
+    const previousV3 = this.v3;
+    const fresh = emptyV2(book);
+    fresh.revision = previousData.revision;
+    fresh.timezone = previousData.timezone;
+    fresh.retentionDays = previousData.retentionDays;
+    fresh.recipes = structuredClone(previousData.recipes);
+    const ids = new Set(book.properties.map(property => property.id));
+    fresh.portalBindings = structuredClone(previousData.portalBindings.filter(binding => ids.has(binding.propertyId)));
+    this.data = fresh;
+    this.v3 = ensureDemoBreadth(migrateV2ToV3(fresh, now), now);
+    this.v3.agency = structuredClone(previousV3.agency);
+    this.v3.office = structuredClone(previousV3.office);
+    this.batchDepth = 1;
+    try {
+      prepare();
+      this.batchDepth = 0;
+      this.batchNeedsBump = false;
+      this.commitWithBump();
+    } catch (error) {
+      this.data = previousData;
+      this.v3 = previousV3;
+      throw error;
+    } finally {
+      this.batchDepth = 0;
+      this.batchNeedsBump = false;
     }
   }
 

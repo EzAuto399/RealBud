@@ -31,7 +31,9 @@ export interface FencePayload {
 }
 
 const ALLOWED = new Set<string>(ALLOWED_TOOLS);
-const COMPUTER = new Set<string>([...ALLOWED_TOOLS, ...FORBIDDEN_TOOLS, "shell"]);
+/** Read-only discovery so Bud can find an open Chrome/Brave pid + window. */
+const DISCOVERY = new Set(["get_browser_state", "list_windows", "verify_state"]);
+const COMPUTER = new Set<string>([...ALLOWED_TOOLS, ...FORBIDDEN_TOOLS, "shell", "prepare", ...DISCOVERY]);
 const PASSWORD_RE = /password|passcode|otp|one-time|verification code|mfa|2fa/i;
 const MONEY_RE =
   /\b(pay|payment|transfer|remit|bpay|direct debit|authori[sz]e|approve payment|sign|send|delete|remove|notice|terminate|evict)\b/i;
@@ -42,6 +44,10 @@ const HOST_RE = /(?:^|[\s"'=:])(?:https?:\/\/)?((?:[a-z0-9-]+\.)+[a-z]{2,})(?:[/
 const UNCONFIRMABLE = "Bud could not confirm which site or control this touches.";
 export const SUBMIT_STAYS_WITH_YOU = "Submit, Pay and Send stay with you.";
 export const SUBMIT_JOB_DENY = "This job cannot press Submit. Add 'Bud may press Submit' on the job if it should.";
+export const USE_OPEN_BROWSER =
+  "Use the person's already-open Chrome or Brave window for this job (existing profile with pid and window). Do not launch a new isolated browser.";
+export const ISOLATED_BROWSER_DENY =
+  "Do not launch a new isolated browser for this job. Prefer the person's already-open Chrome or Brave tab.";
 
 export function normalizeToolName(tool: string): string {
   let name = tool.trim().toLowerCase();
@@ -148,11 +154,12 @@ function actionWords(tool: string): string {
   if (name === "read") return "read the page";
   if (name === "fill") return "fill a field";
   if (name === "click_semantic") return "click a control";
+  if (name === "prepare") return "attach the browser";
   return "use the browser";
 }
 
 function surfaceForTool(tool: string): PortalFenceSurface | undefined {
-  if (tool === "read" || tool === "navigate") return "portal-read";
+  if (tool === "read" || tool === "navigate" || tool === "prepare") return "portal-read";
   if (tool === "fill") return "portal-prefill";
   if (tool === "click_semantic") return "portal-read";
   return undefined;
@@ -178,8 +185,43 @@ function ruleAllows(ctx: FenceContext, surface: PortalRuleSurface, origin: strin
   return (ctx.rules ?? []).some((rule) => rule.decision === "allow" && keys.has(rule.key));
 }
 
+function prepareParams(params: unknown): Record<string, unknown> {
+  if (!params || typeof params !== "object" || Array.isArray(params)) return {};
+  return params as Record<string, unknown>;
+}
+
+/** RealBud policy for browser_prepare: existing open browser only. */
+export function fenceBrowserPrepare(request: FenceRequest): FenceDecision {
+  const row = prepareParams(request.params);
+  const strategy = row.strategy && typeof row.strategy === "object" && !Array.isArray(row.strategy)
+    ? (row.strategy as Record<string, unknown>)
+    : null;
+  const profile = row.profile && typeof row.profile === "object" && !Array.isArray(row.profile)
+    ? (row.profile as Record<string, unknown>)
+    : null;
+  const allowLaunch = row.allow_launch === true || row.allowLaunch === true;
+  const profileMode = typeof profile?.mode === "string" ? profile.mode.toLowerCase() : "";
+  if (allowLaunch || profileMode.startsWith("isolated")) {
+    return { kind: "deny", reason: ISOLATED_BROWSER_DENY, surface: "portal-read" };
+  }
+  const existing = strategy?.kind === "existing_profile" || strategy?.kind === "existing-profile";
+  const pid = Number(row.pid);
+  const windowId = Number(row.window_id ?? row.windowId);
+  if (existing && Number.isSafeInteger(pid) && pid > 0 && Number.isSafeInteger(windowId) && windowId > 0) {
+    return { kind: "ask", surface: "portal-read" };
+  }
+  return { kind: "deny", reason: USE_OPEN_BROWSER, surface: "portal-read" };
+}
+
 export function fenceDecision(ctx: FenceContext, request: FenceRequest): FenceDecision {
   const tool = normalizeToolName(request.tool);
+  // browser_prepare → prepare after normalize; never treat as a free desktop tool.
+  if (tool === "prepare") {
+    return fenceBrowserPrepare(request);
+  }
+  if (DISCOVERY.has(tool)) {
+    return { kind: "allow", surface: "portal-read" };
+  }
   if (!ALLOWED.has(tool)) {
     return { kind: "deny", reason: "Bud can only open, read, fill and click on this job's site." };
   }
@@ -282,9 +324,15 @@ export function ruleAllowNote(decision: FenceDecision): string {
   return `allowed by rule · ${portalRuleLabel(surface, origin)}`;
 }
 
+/** PM-facing denial that always names the attempted action. */
+export function fenceDenialNote(tool: string, reason: string): string {
+  const detail = reason.trim() || "Denied.";
+  return `Tried to ${actionWords(tool)}. ${detail}`;
+}
+
 export function fenceEvidenceLine(request: FenceRequest, decision: FenceDecision): string {
   const action = actionWords(request.tool);
-  if (decision.kind === "deny") return decision.reason ?? "Denied.";
+  if (decision.kind === "deny") return fenceDenialNote(request.tool, decision.reason ?? "Denied.");
   if (decision.kind === "allow") return `Allowed to ${action}.`;
   return `Asked to ${action}.`;
 }

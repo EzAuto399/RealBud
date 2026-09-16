@@ -1,80 +1,53 @@
-// The Australian residential-tenancy reference Bud reads in the workroom.
-// This is a shop-reminder reference, dated and sourced — never legal advice,
-// never a legal clock. The licensee owns statutory process. When the law
-// matters, the answer ends with: verify against the current Act.
-//
-// Update policy: the content rides the app's release train like the worker
-// pin. A rule change is a RealBud release, not a silent edit.
+import { createHash } from "node:crypto";
 
 export const LAW_REFERENCE_FILE = "AU-RENTAL-LAW.md";
 
-export const LAW_REFERENCE_MARKDOWN = `# Australian residential tenancy — shop reference
+export const LAW_REFERENCE_MARKDOWN = `# Australian residential tenancy — verification guide
 
-> RealBud's working reference for Australian residential tenancy. Reviewed
-> August 2026 against the sources below. This is a shop-reminder sheet, not
-> legal advice. Rules change; before anything statutory, verify against the
-> current Act or ask the licensee. When you use this, say so and say to verify.
->
-> Sources: the current Acts on the official legislation sites —
-> legislation.gov.au (ACT), legislation.nsw.gov.au, legislation.vic.gov.au,
-> legislation.qld.gov.au — plus each state bond authority. The Law watch check
-> on You → Bud's jobs re-reads them and flags drift; confirmed drift lands
-> here with a date stamp.
+> RealBud reference revision 2026-09-08. This guide identifies questions and
+> official sources. It does not establish a notice period or statutory deadline.
 
-## The frame
+## Before using any legal rule
 
-- Residential tenancy is **state and territory law** — each jurisdiction has
-  its own Act. Answer in the book's jurisdiction, never a national blur.
-- Bonds are lodged with the state bond authority; the cap is commonly four
-  weeks' rent.
-- Rent increases are frequency-limited in most jurisdictions (commonly once
-  in 12 months) and need written notice (commonly 60 days / two months).
-- Entry needs notice (commonly 24–48 hours, emergencies excepted).
-- Arrears run a remedy/notice sequence before any termination question, and
-  termination itself belongs to the tribunal or court — never to this desk.
-- Urgent repairs (no hot water, dangerous faults, serious leaks) have their
-  own fast lane in every jurisdiction.
+- Confirm the property's actual jurisdiction, tenancy type, proposed action
+  and relevant dates. An email label or the sample book does not establish them.
+- Entry requirements differ for routine inspections, repairs, emergencies,
+  prospective tenants and prospective purchasers. Never reuse one category's
+  notice period for another.
+- Do not quote numerical notice periods, rent-increase limits, bond caps or
+  arrears thresholds from memory or older workroom notes. Verify the applicable
+  provision in a current official source and identify the action it covers.
+- If no current source has been checked, say the requirement is unverified and
+  leave it with the PM/licensee. A generic disclaimer does not verify a rule.
+- For an inbox review, identify missing notice verification without supplying
+  an unsolicited legal deadline. Prepare administrative next steps only.
+- Serious leaks and possible electrical hazards need immediate human triage;
+  missing routine access details must not delay that escalation.
+- Do not draft or issue statutory notices, authorize entry, pay trust money,
+  or treat a courtesy reminder as a legal notice.
 
-## ACT — Residential Tenancies Act 1997
+## Official sources to check
 
-- Rent increases: commonly once per 12 months, with 8 weeks' written notice.
-- Arrears: termination needs an ACAT order; the sequence runs through notices
-  and the tribunal. Never draft a notice here — the licensee owns it.
-- Entry: commonly 48 hours' notice for inspections, with limits on frequency.
+- ACT: https://www.legislation.act.gov.au/a/1997-84/
+  Practical entry categories: https://www.act.gov.au/housing-planning-and-property/renting/during-a-tenancy
+- NSW: https://legislation.nsw.gov.au/
+- Victoria: https://www.legislation.vic.gov.au/
+- Queensland: https://www.legislation.qld.gov.au/
+- For another state or territory, use its official legislation and tenancy
+  authority. Do not extrapolate from another jurisdiction.
 
-## NSW — Residential Tenancies Act 2010
+## Historical notes
 
-- Rent increases: once per 12 months (periodic agreements), 60 days' written
-  notice.
-- Arrears: commonly 14 days behind before a termination notice can issue;
-  the notice itself runs 14 days. Tribunal order ends a tenancy.
-- Entry: commonly 48 hours' notice.
-
-## VIC — Residential Tenancies Act 1997 (as amended 2021)
-
-- Rent increases: once per 12 months, 60 days' written notice.
-- Arrears: commonly 14 days behind before a notice to vacate can issue.
-- Entry: commonly 48 hours' notice (24 hours in some cases).
-- Bond: commonly capped at one month's rent.
-
-## QLD — Residential Tenancies and Rooming Accommodation Act 2008
-
-- Rent increases: once per 12 months, 2 months' written notice.
-- Arrears: commonly 7 days behind → notice to remedy (7 days to pay);
-  unresolved → notice to leave. The sequence is statutory — licensee owns it.
-- Entry: commonly 24 hours' notice.
-
-## SA, WA, TAS, NT
-
-Same national frame; the detail differs. When a book names one of these,
-answer from the frame and say to verify against that jurisdiction's current
-Act before anything statutory.
-
-## Using this sheet
-
-- Cite the jurisdiction and the Act when you use a rule.
-- End with: "Verify against the current Act — the licensee owns statutory
-  process."
-- If the book's jurisdiction is not covered above, say so and stay general.
-- Never invent a threshold you are not sure of; unknown stays unknown.
+Any appended drift notes are historical leads to verify, not authority for a
+current deadline. The licensee owns statutory process. This guide does not
+claim that a background job has checked any source during this task.
 `;
+
+// Replace only the known bundled legacy prefix. Preserve appended office/drift
+// notes and independently authored files; no user-authored content is deleted.
+export function refreshBundledLawReference(existing: string): string {
+  const legacyLength = 3197;
+  const prefix = existing.slice(0, legacyLength);
+  if (createHash("sha256").update(prefix).digest("hex") !== "423851e6a64a97fa11c03cab9f8e0247512d2ee2d97bfeced1e9b5c041f7ae41") return existing;
+  return LAW_REFERENCE_MARKDOWN + existing.slice(legacyLength);
+}

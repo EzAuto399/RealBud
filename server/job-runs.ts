@@ -20,6 +20,7 @@ import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 import { oplog } from "./oplog.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { JOB_OUTPUT_MAX_CHARS, JOB_OUTPUT_TOTAL_CHARS, JOB_OUTPUT_TOO_LARGE } from "../shared/job-output.ts";
 
 export type {
   JobRun,
@@ -65,6 +66,15 @@ export interface JobRunStoreOptions {
   now?: () => number;
   emit?: (payload: { kind: "job.run"; run: JobRun }) => void;
 }
+
+export interface JobRunRecovery {
+  active: boolean;
+  detail: string | null;
+}
+
+const HISTORY_RECOVERY = "Job history needs recovery. The original history has been preserved and new job runs are paused. Restore a known-good history file, then restart RealBud.";
+const WRITE_FAILED = "RealBud could not save the job receipt. Check available disk space and file access before trying again.";
+const WRITE_UNCERTAIN = "The job receipt changed on disk but its durable save could not be confirmed. Job runs are paused; check disk space and restart RealBud before continuing.";
 
 export interface EnqueueJobRunInput {
   mode: JobRunMode;
@@ -141,13 +151,20 @@ function cleanText(value: unknown, max: number): string {
   return redactSecretsInText(typeof value === "string" ? value : "").trim().slice(0, max);
 }
 
-function cleanEvidence(items: ReadonlyArray<JobRunEvidence> | undefined, now: number): JobRunEvidence[] {
+function cleanEvidence(items: ReadonlyArray<JobRunEvidence> | undefined, now: number, requireComplete = false): JobRunEvidence[] {
   if (!items) return [];
   const out: JobRunEvidence[] = [];
+  let outputChars = 0;
   for (const item of items.slice(0, MAX_EVIDENCE)) {
     if (!item || !["observation", "output", "approval", "action", "denied", "asked", "note"].includes(item.kind)) continue;
-    const note = cleanText(item.note, MAX_NOTE);
+    const limit = item.kind === "output" ? Math.min(JOB_OUTPUT_MAX_CHARS, JOB_OUTPUT_TOTAL_CHARS - outputChars) : MAX_NOTE;
+    const cleaned = redactSecretsInText(typeof item.note === "string" ? item.note : "").trim();
+    if (requireComplete && item.kind === "output" && cleaned.length > limit) throw new Error(JOB_OUTPUT_TOO_LARGE);
+    const note = cleaned.length > limit && item.kind === "output"
+      ? "[Saved output exceeds the supported size. Review the original receipt before using it.]"
+      : cleaned.slice(0, limit);
     if (!note) continue;
+    if (item.kind === "output") outputChars += note.length;
     out.push({ at: finite(item.at) ? item.at : now, note, kind: item.kind });
   }
   return out;
@@ -251,26 +268,48 @@ export class JobRunStore {
   private readonly now: () => number;
   private emit?: JobRunStoreOptions["emit"];
   private runs: JobRun[];
+  private recoveryDetail: string | null = null;
 
   constructor(options: JobRunStoreOptions = {}) {
     this.file = options.file ?? join(DATA_DIR, "job-runs.json");
     this.now = options.now ?? Date.now;
     this.emit = options.emit;
     this.runs = this.load();
-    let recovered = false;
-    for (const run of this.runs) {
+    if (this.recovery.active) return;
+    const recovered = this.runs.map(cloneRun);
+    const now = this.now();
+    let changed = false;
+    for (const run of recovered) {
+      if (run.status === "queued" && run.mode === "attended" && run.createdAt <= now - QUEUED_ATTENDED_MAX_AGE_MS) {
+        run.status = "missed";
+        run.finishedAt = now;
+        run.detail = QUEUED_ATTENDED_MISSED;
+        changed = true;
+      }
       if (run.status === "queued" && run.mode === "attended") continue;
       if (run.status !== "queued" && run.status !== "running") continue;
       run.status = "interrupted";
-      run.finishedAt = this.now();
+      run.finishedAt = now;
       run.detail = "Interrupted on startup — no action was resumed.";
-      recovered = true;
+      changed = true;
     }
-    if (recovered) this.persist();
-    this.sweepQueuedAttended();
+    if (changed) {
+      try {
+        this.commit(recovered);
+      } catch {
+        // Keep the app available for recovery, but never start work from an
+        // uncommitted restart transition.
+        this.recoveryDetail ??= "RealBud could not save interrupted job history. Job runs are paused; check disk space and file access, then restart RealBud.";
+      }
+    }
+  }
+
+  get recovery(): JobRunRecovery {
+    return { active: this.recoveryDetail !== null, detail: this.recoveryDetail };
   }
 
   list(jobId?: string): JobRun[] {
+    this.assertWritable();
     return this.runs
       .filter((run) => !jobId || run.jobId === jobId)
       .sort((a, b) => b.createdAt - a.createdAt)
@@ -278,11 +317,13 @@ export class JobRunStore {
   }
 
   get(id: string): JobRun | undefined {
+    this.assertWritable();
     const run = this.runs.find((item) => item.id === id);
     return run ? cloneRun(run) : undefined;
   }
 
   enqueue(recipe: Recipe, input: EnqueueJobRunInput): { run: JobRun; created: boolean } {
+    this.assertWritable();
     const key = input.idempotencyKey.trim();
     if (!key || key.length > 300) {
       throw Object.assign(new Error("A bounded idempotency key is required."), { status: 400 });
@@ -316,15 +357,13 @@ export class JobRunStore {
       detail: cleanText(input.detail ?? "Queued by RealBud.", MAX_DETAIL) || "Queued by RealBud.",
       createdAt: now,
     };
-    this.runs.push(run);
-    if (this.runs.length > MAX_RUNS) this.runs.splice(0, this.runs.length - MAX_RUNS);
-    this.persist();
+    this.commit([...this.runs, run].slice(-MAX_RUNS));
     this.emitRun(run);
     return { run: cloneRun(run), created: true };
   }
 
   start(id: string, detail = "Bud is preparing the job.", extra?: { threadId?: string }): JobRun {
-    const run = this.require(id);
+    const run = cloneRun(this.requireWritable(id));
     if (run.status !== "queued") {
       throw Object.assign(new Error("Only a queued job run can start."), { status: 409 });
     }
@@ -332,33 +371,37 @@ export class JobRunStore {
     run.startedAt = this.now();
     run.detail = cleanText(detail, MAX_DETAIL) || "Bud is preparing the job.";
     if (extra?.threadId) run.threadId = extra.threadId;
-    this.persist();
+    this.replace(run);
     this.emitRun(run);
     return cloneRun(run);
   }
 
   sweepQueuedAttended(maxAgeMs = QUEUED_ATTENDED_MAX_AGE_MS): JobRun[] {
+    this.assertWritable();
     const cutoff = this.now() - maxAgeMs;
     const missed: JobRun[] = [];
-    for (const run of this.runs) {
+    const next = this.runs.map(cloneRun);
+    for (const run of next) {
       if (run.mode !== "attended" || run.status !== "queued" || run.createdAt > cutoff) continue;
       run.status = "missed";
       run.finishedAt = this.now();
       run.detail = QUEUED_ATTENDED_MISSED;
-      this.emitRun(run);
       missed.push(cloneRun(run));
     }
-    if (missed.length) this.persist();
+    if (missed.length) {
+      this.commit(next);
+      for (const run of missed) this.emitRun(run);
+    }
     return missed;
   }
 
   appendEvidence(id: string, items: ReadonlyArray<JobRunEvidence>): JobRun {
-    const run = this.require(id);
+    const run = cloneRun(this.requireWritable(id));
     if (run.status !== "running") {
       throw Object.assign(new Error("Only a running job can take evidence."), { status: 409 });
     }
-    run.evidence = cleanEvidence([...run.evidence, ...items], this.now());
-    this.persist();
+    run.evidence = cleanEvidence([...run.evidence, ...items], this.now(), true);
+    this.replace(run);
     this.emitRun(run);
     return cloneRun(run);
   }
@@ -368,7 +411,7 @@ export class JobRunStore {
   }
 
   settle(id: string, result: SettleJobRunInput): JobRun {
-    const run = this.require(id);
+    const run = cloneRun(this.requireWritable(id));
     if (run.status !== "running") {
       throw Object.assign(new Error("Only a running job can settle."), { status: 409 });
     }
@@ -376,16 +419,20 @@ export class JobRunStore {
       throw Object.assign(new Error("That is not a settled job-run state."), { status: 400 });
     }
     const now = this.now();
-    run.status = result.status;
-    run.detail = cleanText(result.detail, MAX_DETAIL) || "Job run settled.";
-    run.evidence = cleanEvidence(
+    // Validate before changing status: an oversized result must not leave a
+    // half-settled in-memory run that the failure path cannot finish.
+    const evidence = cleanEvidence(
       result.evidence !== undefined ? [...run.evidence, ...result.evidence] : run.evidence,
       now,
+      true,
     );
+    run.status = result.status;
+    run.detail = cleanText(result.detail, MAX_DETAIL) || "Job run settled.";
+    run.evidence = evidence;
     run.approvalRequests = cleanApprovals(result.approvalRequests);
     run.finishedAt = now;
     if (result.legacySessionId) run.legacySessionId = result.legacySessionId;
-    this.persist();
+    this.replace(run);
     this.emitRun(run);
     oplog("routine", run.detail, {
       jobId: run.jobId,
@@ -399,27 +446,32 @@ export class JobRunStore {
   }
 
   cancel(id: string): JobRun {
-    const run = this.require(id);
+    const run = cloneRun(this.requireWritable(id));
     if (!IN_FLIGHT.has(run.status)) return cloneRun(run);
     run.status = "cancelled";
     run.finishedAt = this.now();
     run.detail = "Cancelled in RealBud. Nothing pending was resumed.";
-    this.persist();
+    this.replace(run);
     this.emitRun(run);
     return cloneRun(run);
   }
 
   markSeen(id: string): JobRun {
-    const run = this.require(id);
+    const run = cloneRun(this.requireWritable(id));
     if (!run.seenAt) {
       run.seenAt = this.now();
-      this.persist();
+      this.replace(run);
       this.emitRun(run);
     }
     return cloneRun(run);
   }
 
-  private require(id: string): JobRun {
+  private assertWritable(): void {
+    if (this.recoveryDetail) throw Object.assign(new Error(this.recoveryDetail), { status: 503 });
+  }
+
+  private requireWritable(id: string): JobRun {
+    this.assertWritable();
     const run = this.runs.find((item) => item.id === id);
     if (!run) throw Object.assign(new Error("no such job run"), { status: 404 });
     return run;
@@ -429,24 +481,56 @@ export class JobRunStore {
     try {
       const parsed: unknown = JSON.parse(readFileSync(this.file, "utf8"));
       const list =
-        parsed && typeof parsed === "object" && Array.isArray((parsed as { runs?: unknown }).runs)
+        parsed && typeof parsed === "object" &&
+          ((parsed as { version?: unknown }).version === undefined || (parsed as { version?: unknown }).version === 1) &&
+          Array.isArray((parsed as { runs?: unknown }).runs)
           ? (parsed as { runs: unknown[] }).runs
           : Array.isArray(parsed)
             ? parsed
-            : [];
-      return list.map(asRun).filter((run): run is JobRun => Boolean(run)).slice(-MAX_RUNS);
-    } catch {
+            : null;
+      if (!list) {
+        this.recoveryDetail = HISTORY_RECOVERY;
+        return [];
+      }
+      const parsedRuns = list.map(asRun);
+      const valid = parsedRuns.filter((run): run is JobRun => Boolean(run));
+      const ids = new Set(valid.map((run) => run.id));
+      const keys = new Set(valid.map((run) => run.idempotencyKey));
+      if (valid.length !== list.length || ids.size !== valid.length || keys.size !== valid.length) {
+        this.recoveryDetail = HISTORY_RECOVERY;
+      }
+      return valid.slice(-MAX_RUNS);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") this.recoveryDetail = HISTORY_RECOVERY;
       return [];
     }
   }
 
-  private persist(): void {
-    mkdirSync(dirname(this.file), { recursive: true });
-    writeFileAtomic(
-      this.file,
-      `${JSON.stringify({ version: 1, runs: this.runs } satisfies JobRunsFile, null, 2)}\n`,
-      0o600,
-    );
+  private replace(run: JobRun): void {
+    this.commit(this.runs.map((item) => item.id === run.id ? run : item));
+  }
+
+  private commit(next: JobRun[]): void {
+    this.assertWritable();
+    const contents = `${JSON.stringify({ version: 1, runs: next } satisfies JobRunsFile, null, 2)}\n`;
+    try {
+      mkdirSync(dirname(this.file), { recursive: true });
+      writeFileAtomic(this.file, contents, 0o600);
+    } catch {
+      // writeFileAtomic can fail during the directory fsync after rename.
+      // Preserve the actual receipt in that case and stop further work until
+      // restart, rather than reporting an old state or retrying its actions.
+      try {
+        if (readFileSync(this.file, "utf8") === contents) {
+          this.runs = next;
+          this.recoveryDetail = WRITE_UNCERTAIN;
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") this.recoveryDetail = HISTORY_RECOVERY;
+      }
+      throw Object.assign(new Error(this.recoveryDetail ?? WRITE_FAILED), { status: 503 });
+    }
+    this.runs = next;
   }
 
   private emitRun(run: JobRun): void {
