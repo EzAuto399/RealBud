@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Desk } from "./desk.ts";
 
 import type { DeskSnapshot, Draft, Escalation, Property } from "../shared/contracts.ts";
 import {
@@ -93,7 +92,7 @@ function stubChannel(id: "telegram" | "discord", sent: Array<{ id: string; text:
   };
 }
 
-function fakeDesk(initial: DeskSnapshot): RemoteDesk & { notes: string } {
+function fakeDesk(initial: DeskSnapshot): RemoteDesk & { notes: string; editDraft: (id: string, body: string, expected?: number) => Draft } {
   let snap = initial;
   const notes = { body: "" };
   return {
