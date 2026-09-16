@@ -1,3 +1,4 @@
+import { ApprovalScope } from "./ApprovalScope";
 // Pending approval, ported from the upstream pattern: an approval does
 // not sit in the transcript waiting to be noticed — it takes over the
 // composer. The prompt is disabled, a strip above it says exactly what
@@ -96,6 +97,7 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
       {isSubmit ? (
         <p className="mt-2 text-[12.5px] text-hold">Check the form in the browser before you allow.</p>
       ) : null}
+      {productAsk && <ApprovalScope kind="action" />}
       {pending.held && <div className="mt-2 text-[12px] text-hold">{pending.held}</div>}
     </div>
   );
@@ -161,7 +163,7 @@ export function PendingApprovalActions({
             {/* On a fenced browser step a task-wide grant would stop the worker
                 asking, and the fence only sees what it asks. The server coerces it
                 to once anyway; the honest offer here is the site rule below. */}
-            {productBud && !pending.fence && (
+            {productBud && !pending.fence && pending.tool !== "bud_connected_app_action" && (
               <button
                 type="button"
                 onClick={() => decide("allow", { scope: "session" })}
@@ -173,7 +175,7 @@ export function PendingApprovalActions({
             )}
           </>
         )}
-        {alwaysAllowable && bot && pending.allowKey && !productBud && (
+        {alwaysAllowable && bot && pending.allowKey && !productBud && pending.tool !== "bud_connected_app_action" && (
           <button
             type="button"
             onClick={() => decide("allow", { always: true })}

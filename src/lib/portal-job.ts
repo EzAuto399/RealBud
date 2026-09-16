@@ -5,7 +5,7 @@ export const AWAITING_REVIEW_COPY =
   "Ready — review and submit in the portal yourself. A one-time submit lease for Bud lands with the desktop app.";
 
 export const PORTAL_JOB_PATH_COPY =
-  "Describe a portal routine in Ask or here; approve the plan; attach the site; then Run beside me — you sign in, Bud does the steps, Submit and Pay stay with you.";
+  "Describe a portal routine in Ask or here; approve the plan; attach the site; then Run beside me — you sign in, Bud does the steps, Submit, Pay and Send stay with you.";
 
 /** Assumed while shared contracts land: includes `"portal-submit"`. */
 export const PORTAL_JOB_CAPABILITIES = ["portal-read", "portal-prefill", "portal-submit"] as const;
@@ -108,12 +108,13 @@ export function recipeSitesLine(origins: string[]): string {
 }
 
 export function recipeSourceLine(recipe: Pick<Recipe, "allowedOrigins" | "capabilities">): string {
-  if (recipe.allowedOrigins.length) return `Reads only: ${recipe.allowedOrigins.join(", ")}`;
-  const local: string[] = [];
-  if (recipe.capabilities.includes("read-book")) local.push("current Desk book");
-  if (recipe.capabilities.includes("read-files")) local.push("private workroom files");
-  if (recipe.capabilities.includes("web-research")) local.push("public web research");
-  if (local.length) return `Reads: ${local.join(", ")}; no website login is authorised`;
+  const sources: string[] = [];
+  if (recipe.capabilities.includes("read-book")) sources.push("current Desk book");
+  if (recipe.capabilities.includes("read-files")) sources.push("private workroom files");
+  if (recipe.capabilities.includes("web-research")) sources.push("public web research");
+  const hasPortal = recipeHasPortalCapability(recipe);
+  if (hasPortal) sources.push(recipe.allowedOrigins.length ? `portal: ${recipe.allowedOrigins.join(", ")}` : "portal site still needed");
+  if (sources.length) return `Reads: ${sources.join("; ")}${hasPortal ? "" : "; no website login is authorised"}`;
   return "No live source is authorised — rehearsal uses the saved description only";
 }
 
@@ -135,8 +136,8 @@ export function recipeNeedsPlanApproval(
 
 export function recipeSavedLine(hasSchedule: boolean): string {
   return hasSchedule
-    ? "Saved. It joins the clock after you approve the plan on You → Bud's jobs."
-    : "Saved on You → Bud's jobs";
+    ? "Saved. Review and rehearse it in Schedule, then approve the plan to put it on the clock."
+    : "Saved in Schedule for review and on-demand runs";
 }
 
 export function sessionSummaryLine(session: PortalSession, now = Date.now()): string {

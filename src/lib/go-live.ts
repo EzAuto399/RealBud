@@ -26,7 +26,7 @@ export function goLiveRows(input: GoLiveInput): GoLiveRow[] {
       id: "export",
       title: "Connect your export",
       state: exportDone ? "done" : "action",
-      detail: exportDone ? "CSV is live. Morning cards use those facts." : "Drop a PMS export on Book. Rows match by address or property code.",
+      detail: exportDone ? "CSV is live. Morning cards use those facts." : "Drop a PMS export on Properties. Rows match by address or property code.",
     },
     {
       id: "worker",

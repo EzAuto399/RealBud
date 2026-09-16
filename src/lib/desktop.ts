@@ -34,6 +34,8 @@ export function initialDesktopCapabilities(): DesktopCapabilities {
   const platform = window.ogb?.platform;
   if (!platform) return browserCapabilities;
   const isMac = platform === "darwin";
+  const isWin = platform === "win32";
+  const dictationAvailable = isMac || isWin;
   return {
     ...browserCapabilities,
     host: {
@@ -43,10 +45,10 @@ export function initialDesktopCapabilities(): DesktopCapabilities {
     },
     windowChrome: isMac ? "mac-inset" : "native",
     dictation: {
-      available: isMac,
-      engine: isMac ? "apple-speech" : "none",
-      onDevice: isMac,
-      ...(!isMac ? { reasonCode: "unsupported-platform" } : {}),
+      available: dictationAvailable,
+      engine: isMac ? "apple-speech" : isWin ? "windows-speech" : "none",
+      onDevice: dictationAvailable,
+      ...(!dictationAvailable ? { reasonCode: "unsupported-platform" } : {}),
     },
   };
 }

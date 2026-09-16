@@ -4,7 +4,8 @@ import { AskPhoneContinueCard } from "./AskPhoneContinueCard";
 import { AskScheduleCard } from "./AskScheduleCard";
 import { useChannelHandoff } from "@/lib/channel-handoff";
 import { usePhoneConnections } from "@/lib/phone-connections";
-import { phonePaired } from "@/lib/phone-label";
+import { phoneContinuePair, phonePaired } from "@/lib/phone-label";
+import { ChannelMark } from "./ChannelMark";
 import { Component, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import {
   AlertTriangle,
@@ -20,6 +21,7 @@ import {
   Monitor,
   Pencil,
   RefreshCw,
+  Smartphone,
   Square,
   X,
 } from "lucide-react";
@@ -312,6 +314,7 @@ function Bubble({
   onSubmitEdit: (text: string) => void;
   onRegenerate?: () => void;
   onMakeRepeatable?: () => void;
+  /** Already bound to this message's id by the caller. */
   onSendToPhone?: () => void;
   onSendSummary?: () => void;
   phoneHandoffBusy?: boolean;
@@ -366,7 +369,7 @@ function Bubble({
       onEdit={user && message.kind === "text" && !bot.busy ? onStartEdit : undefined}
       onMakeRepeatable={!user && isLastBotText && !bot.busy && text.trim() ? onMakeRepeatable : undefined}
       onSendToPhone={!user && isLastBotText && !bot.busy && text.trim() ? onSendToPhone : undefined}
-      onSendSummary={!user && isLastBotText && !bot.busy ? onSendSummary : undefined}
+      onSendSummary={!user && isLastBotText && !bot.busy && text.trim() ? onSendSummary : undefined}
       phoneHandoffBusy={phoneHandoffBusy}>
       <MessageBoundary key={text} fallbackText={text}><ChatMarkdown text={text} /></MessageBoundary>
     </AskMessage>
@@ -950,10 +953,18 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
   };
   const { channels: phoneChannels, refresh: refreshPhone } = usePhoneConnections(productAsk);
   const phoneReady = phonePaired(phoneChannels);
+  const phonePair = phoneContinuePair(phoneChannels);
   const { busy: phoneHandoffBusy, notice: phoneHandoffNotice, send: sendPhoneHandoff } = useChannelHandoff();
   useEffect(() => {
-    if (phoneHandoffNotice) setAskActionNotice(phoneHandoffNotice);
-  }, [phoneHandoffNotice]);
+    if (phoneHandoffBusy) {
+      setAskActionNotice(null);
+      return;
+    }
+    if (phoneHandoffNotice) {
+      setAskActionNotice(phoneHandoffNotice);
+      if (phoneHandoffNotice.ok) setPhoneContinueOpen(false);
+    }
+  }, [phoneHandoffBusy, phoneHandoffNotice]);
   useEffect(() => {
     if (!productAsk) return;
     void refreshPhone();
@@ -1541,8 +1552,8 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
             onConnectSetup={openAskConnectSetup}
             trailing={
               <>
-                <button type="button" className="min-h-8 text-[12px] text-ink-secondary hover:text-ink" aria-expanded={scheduleContinueOpen} onClick={goRoutines}>Schedule work</button>
-                <button type="button" className="pm-control min-h-8 text-[12px] text-ink-secondary" aria-expanded={phoneContinueOpen} onClick={() => setPhoneContinueOpen(true)}>Continue on phone</button>
+                <button type="button" className="min-h-8 text-[12px] text-ink-secondary hover:text-ink" onClick={goRoutines}>Schedule work</button>
+                <button type="button" className="pm-control min-h-8 text-[12px] text-ink-secondary" aria-haspopup="dialog" aria-expanded={phoneContinueOpen} onClick={() => setPhoneContinueOpen(true)}>Continue on phone</button>
               </>
             }
           >
@@ -1552,9 +1563,27 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
         </AskNextActionPanel>
       ) : productAsk ? (
         <div className="mx-auto flex w-full max-w-[900px] shrink-0 justify-end gap-3 px-5 py-0.5">
-          <button type="button" className="min-h-8 text-[12px] text-ink-secondary hover:text-ink" aria-expanded={scheduleContinueOpen} onClick={goRoutines}>Schedule work</button>
-          <button type="button" className="pm-control min-h-8 text-[12px] text-ink-secondary" aria-expanded={phoneContinueOpen} onClick={() => setPhoneContinueOpen(true)}>Continue on phone</button>
+          <button type="button" className="min-h-8 text-[12px] text-ink-secondary hover:text-ink" onClick={goRoutines}>Schedule work</button>
+          <button type="button" className="pm-control min-h-8 text-[12px] text-ink-secondary" aria-haspopup="dialog" aria-expanded={phoneContinueOpen} onClick={() => setPhoneContinueOpen(true)}>Continue on phone</button>
           {!askWorkerReady ? <button type="button" className="min-h-8 text-[12px] text-agency" onClick={goYouSetup}>Set up Bud</button> : null}
+        </div>
+      ) : null}
+
+      {productAsk && phoneReady && phonePair && lastBotText?.trim() && !bot.busy ? (
+        <div className="ask-phone-handoff-bar mx-auto mb-2 flex w-full max-w-[900px] shrink-0 flex-wrap items-center gap-2 px-5" role="region" aria-label="Send reply to phone">
+          <span className="flex min-w-0 flex-1 items-center gap-2 text-[12.5px] text-ink-secondary">
+            <Smartphone size={14} className="shrink-0 text-agency" aria-hidden />
+            <ChannelMark channel={phonePair.label as "Telegram" | "Discord" | "Slack"} />
+            <span className="min-w-0 truncate">
+              {phonePair.label} ready{phonePair.pairedName ? ` · ${phonePair.pairedName}` : ""} — send this reply to your phone
+            </span>
+          </span>
+          <button type="button" className="pm-control min-h-8 px-3 text-[12px] text-ink-secondary" disabled={phoneHandoffBusy} aria-busy={phoneHandoffBusy || undefined} onClick={() => void sendPhoneHandoff({ mode: "summary" })}>
+            {phoneHandoffBusy ? "Sending…" : "Send summary"}
+          </button>
+          <button type="button" className="ask-button min-h-8 px-3 text-[12px]" disabled={phoneHandoffBusy} aria-busy={phoneHandoffBusy || undefined} onClick={() => void sendPhoneHandoff({ mode: "result" })}>
+            {phoneHandoffBusy ? "Sending…" : "Send to phone"}
+          </button>
         </div>
       ) : null}
 
@@ -1570,6 +1599,7 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
         starter={productAsk ? composerStarter : undefined}
         onConnectApp={productAsk ? openAskConnectSetup : undefined}
         onEditLast={lastUserMessage && !bot.busy ? () => setEditingId(lastUserMessage.id) : undefined}
+        onBackToDesk={productAsk ? goDesk : undefined}
       />
 
       {productAsk ? (
@@ -1577,9 +1607,10 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
           <AskPhoneContinueCard
             open={phoneContinueOpen}
             onClose={() => setPhoneContinueOpen(false)}
-            onSendLatest={() => void sendPhoneHandoff({ mode: "result" })}
-            onSendSummary={() => void sendPhoneHandoff({ mode: "summary" })}
+            onSendLatest={lastBotText?.trim() ? () => void sendPhoneHandoff({ mode: "result" }) : undefined}
+            onSendSummary={lastBotText?.trim() ? () => void sendPhoneHandoff({ mode: "summary" }) : undefined}
             sendBusy={phoneHandoffBusy}
+            sendNotice={!phoneHandoffBusy ? phoneHandoffNotice : null}
             onManage={() => {
               setPhoneContinueOpen(false);
               openWorkspaceSetup("phone");

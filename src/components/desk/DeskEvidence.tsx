@@ -67,7 +67,7 @@ export function DeskEvidence({
               expiry={fmtTimeOfDay(handoff.expiresAt)}
               submitter="You submit in the PMS"
             >
-              <p>Prepare only. Submit, Send and Pay stay with you. View cannot widen origin or actions.</p>
+              <p>Prepare only. Submit, Pay and Send stay with you. View cannot widen the site or actions.</p>
               <p className="mt-1 text-[12px] text-ink-muted">Allowed: {handoff.allowedActions.join(", ") || "none"}</p>
               <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label="Browser presentation">
                 {PRESENTATIONS.map((value) => (
@@ -85,7 +85,7 @@ export function DeskEvidence({
             </HandoffPanel>
           ) : draft?.status === "allowed" && draft.channel === "portal" ? (
             <HandoffPanel caseLabel={item.address} origin="portal" submitter="You submit in the PMS">
-              <p>Prepare only. Submit, Send and Pay stay with you.</p>
+              <p>Prepare only. Submit, Pay and Send stay with you.</p>
             </HandoffPanel>
           ) : null}
         </>

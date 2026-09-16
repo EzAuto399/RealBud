@@ -7,6 +7,7 @@ const LABELED_PLACE =
   /\b(?:for|at|property|address|case)\s*[:#]\s*([^\n,;]{2,48})/i;
 
 const ALIAS: Record<string, string> = {
+  bud_connected_app_action: "reviewing Bud's connected-app action",
   read_file: "reading a file",
   read: "reading a file",
   write_file: "writing a file",
@@ -23,6 +24,15 @@ const ALIAS: Record<string, string> = {
   terminal: "running a command in the workroom",
   browser: "using the bounded browser",
   computer: "using the bounded browser",
+  todo: "organising the steps",
+  todo_write: "updating the work plan",
+  session_search: "finding previous work",
+  session_search_tool: "finding previous work",
+  session_read: "reading previous work",
+  delegate_task: "checking part of the work in parallel",
+  vision_analyze: "reading an image",
+  image: "reading an image",
+  execute_code: "calculating in the workroom",
 };
 
 function normalizeToolId(name: string): string {

@@ -93,13 +93,23 @@ export function MorningBrief({
   );
 }
 
-export function MorningEmpty({ brief }: { brief: MorningBriefModel }) {
+export function MorningEmpty({ brief, checkLabel = "Recheck", onAction, actionLabel, busy = false }: { brief: MorningBriefModel; checkLabel?: string; onAction?: () => void; actionLabel?: string; busy?: boolean }) {
   const clearWin =
+    !onAction &&
     brief.lastRunAt != null &&
     brief.needsYou === 0 &&
     brief.held === 0 &&
     brief.licensee === 0 &&
     !brief.headline.startsWith("Recheck missed");
+
+  const nextStep =
+    brief.headline.startsWith("Recheck missed")
+      ? "Open Bud setup here, then check the task again."
+      : brief.lastRunAt == null && brief.addresses.length > 0
+        ? `Press ${checkLabel} in the header when you're ready.`
+        : brief.lastRunAt == null && brief.addresses.length === 0
+          ? "Add an address under More → Book, or drop an export there."
+          : null;
 
   return (
     <div className="flex h-full flex-col items-center justify-center px-6 text-center">
@@ -118,7 +128,8 @@ export function MorningEmpty({ brief }: { brief: MorningBriefModel }) {
           ))}
         </ul>
       ) : null}
-      <p className="mt-3 max-w-[28rem] text-[12.5px] text-ink-muted">{brief.inboxLabel}. {brief.inboxDetail}</p>
+      {onAction ? <button type="button" className="desk-primary-button mt-4" disabled={busy} onClick={onAction}>{busy ? "Checking…" : actionLabel || checkLabel}</button> : nextStep ? <p className="mt-3 max-w-[28rem] text-[13px] font-medium text-ink">{nextStep}</p> : null}
+      <details className="mt-3 max-w-[28rem] text-[12.5px] text-ink-muted"><summary className="pm-control cursor-pointer">About this morning’s checks</summary><p>{brief.inboxDetail}</p></details>
     </div>
   );
 }

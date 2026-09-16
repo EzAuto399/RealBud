@@ -1,4 +1,4 @@
-import { CHANNEL_PLATFORM_LABEL, LIVE_CHANNEL_PLATFORMS, type ChannelsState } from "./telegram-channel";
+import { CHANNEL_PLATFORM_LABEL, LIVE_CHANNEL_PLATFORMS, type ChannelPlatform, type ChannelsState } from "./telegram-channel";
 
 /** A live platform is paired when the bot is connected and a chat is bound. */
 export function phonePaired(channels: ChannelsState | null | undefined): boolean {
@@ -7,6 +7,36 @@ export function phonePaired(channels: ChannelsState | null | undefined): boolean
     const row = channels[id];
     return row.connected && row.paired;
   });
+}
+
+/** First paired channel for Ask “continue on phone” guidance. */
+export function phoneContinuePair(
+  channels: ChannelsState | null | undefined,
+): { platform: ChannelPlatform; label: string; botUsername: string; pairedName: string | null; lastMessageAt: number | null } | null {
+  if (!channels) return null;
+  for (const id of LIVE_CHANNEL_PLATFORMS) {
+    const row = channels[id];
+    if (row.connected && row.paired) {
+      return {
+        platform: id,
+        label: CHANNEL_PLATFORM_LABEL[id],
+        botUsername: row.botUsername,
+        pairedName: row.pairedName,
+        lastMessageAt: row.lastMessageAt,
+      };
+    }
+  }
+  return null;
+}
+
+/** Connected but not yet paired — Ask card should push pairing, not the full setup sheet alone. */
+export function phoneNeedsPair(channels: ChannelsState | null | undefined): ChannelPlatform | null {
+  if (!channels) return null;
+  for (const id of LIVE_CHANNEL_PLATFORMS) {
+    const row = channels[id];
+    if (row.connected && !row.paired) return id;
+  }
+  return null;
 }
 
 /** User chrome for Desk / You — which phone door is live. */

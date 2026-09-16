@@ -69,7 +69,7 @@ describe("missAction", () => {
   });
 
   it("returns null when the detail has no implied next step", () => {
-    expect(missAction("The worker answered without ledger JSON — facts stay held.")).toBeNull();
+    expect(missAction("Bud answered without ledger facts — facts stay held.")).toBeNull();
     expect(missAction("")).toBeNull();
   });
 });

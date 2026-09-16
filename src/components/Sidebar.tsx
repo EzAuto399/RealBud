@@ -1,5 +1,6 @@
+import { openWorkspaceSetup } from "@/lib/workspace-setup";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ArrowDownToLine, Building2, CalendarDays, Check, Loader2, MessageSquare, RefreshCw } from "lucide-react";
+import { ArrowDownToLine, Building2, CalendarDays, Check, Loader2, MessageSquare, RefreshCw, User } from "lucide-react";
 import { useStore } from "@/state/store";
 import { InitialsAvatar, MausAvatar } from "./Avatar";
 import { cn } from "@/lib/cn";
@@ -115,7 +116,7 @@ export function Sidebar() {
       )}
     >
       {icon}
-      <span className="rb-sidebar-label flex-1 text-[14px] font-medium">{label}</span>
+      <span className="rb-sidebar-label flex-1"><span className="block text-[14px] font-medium">{label}</span><span className="mt-0.5 block text-[12px] text-ink-muted">{{ desk: "Tasks & properties", ask: "Work with Bud", schedule: "Jobs & routines", you: "Office & settings", chat: "Conversation" }[view]}</span></span>
       {extra ? <span className="rb-sidebar-extra">{extra}</span> : null}
     </button>
   );
@@ -146,15 +147,16 @@ export function Sidebar() {
           <MausAvatar color="green" state={state.connected ? "idle" : "sleeping"} size={26} label="RealBud" trackPointer={false} />
           <div className="rb-sidebar-brand min-w-0">
             <div className="text-[13.5px] font-semibold tracking-[-0.01em] text-ink">RealBud</div>
-            <div className="flex items-center gap-1.5 text-[10.5px] text-ink-muted" role="status" aria-live="polite">
+            <div className="flex items-center gap-1.5 text-[12px] text-ink-muted" role="status" aria-live="polite">
               <span className={cn("size-1.5 rounded-full", state.connected ? "bg-agency" : "animate-pulse bg-hold motion-reduce:animate-none")} />
-              {state.connected ? "On this Mac" : "Reconnecting"}
+              {state.connected ? "App connected" : "Reconnecting"}
             </div>
           </div>
         </div>
       </div>
 
-      <nav className="flex flex-1 flex-col gap-0.5 px-3 pt-2">
+      <nav className="rb-sidebar-navigation flex flex-1 flex-col gap-0.5 px-3 pt-2" aria-label="Main navigation">
+        <p className="rb-sidebar-label rb-sidebar-section-label">Workspace</p>
         {item(
           "desk",
           "Desk",
@@ -178,7 +180,7 @@ export function Sidebar() {
           () => dispatch({ type: "showRoutines" }),
           state.loopRuns.some((run) => ["failed", "missed", "interrupted"].includes(run.status) && !run.seenAt) ? (
             <span className="size-2 rounded-full bg-danger" />
-          ) : state.loopRuns.some((run) => run.status === "partial" && !run.seenAt) ? (
+          ) : state.loopRuns.some((run) => ["partial", "awaiting-approval"].includes(run.status) && !run.seenAt) ? (
             <span className="size-2 rounded-full bg-hold" />
           ) : null,
           `${doorMod}3`,
@@ -186,13 +188,18 @@ export function Sidebar() {
         {item(
           "you",
           "You",
-          <InitialsAvatar initials={profileInitials(state.config?.profile)} size={20} />,
+          profileInitials(state.config?.profile) === "?" ? (
+            <User size={20} className={state.activeView === "you" ? "text-agency" : "text-ink-muted"} aria-hidden />
+          ) : (
+            <InitialsAvatar initials={profileInitials(state.config?.profile)} size={20} />
+          ),
           () => dispatch({ type: "showYou" }),
           undefined,
           `${doorMod}4`,
         )}
       </nav>
       <div className="rb-sidebar-pulse">
+        <div className="px-3 pb-2"><button type="button" className="pm-control w-full border border-line" onClick={() => openWorkspaceSetup("apps")}>Connections</button></div>
         <WorkdayPulse />
       </div>
     </aside>

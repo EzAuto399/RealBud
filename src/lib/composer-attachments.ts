@@ -7,6 +7,8 @@ export type PasteAttachment = {
   text: string;
   size: number;
   lines: number;
+  /** A selected work result can be attached with a useful human title. */
+  label?: string;
 };
 
 export type FileAttachment = {
@@ -25,6 +27,7 @@ export function isAttachment(value: unknown): value is Attachment {
   if (typeof attachment.id !== "string" || !validSize(attachment.size)) return false;
   if (attachment.kind === "paste") {
     return (
+      (attachment.label === undefined || (typeof attachment.label === "string" && attachment.label.length <= 120)) &&
       typeof attachment.text === "string" &&
       typeof attachment.lines === "number" &&
       Number.isInteger(attachment.lines) &&
@@ -77,8 +80,8 @@ export const INLINE_DROP_LIMIT = 512 * 1024;
 
 export type DroppedFile = Pick<File, "name" | "size" | "type" | "text">;
 
-/** Turn a browser drop into composer attachments. Electron-backed files
- * keep their disk path; small pathless text drops keep their contents.
+/** A supplied saver owns selected-file handling on desktop and browser alike.
+ * Without a saver, legacy callers can still attach paths or inline small text.
  * Promise.all preserves the user's drop order even when text reads finish
  * in a different order. */
 export async function attachmentsFromDroppedFiles<T extends DroppedFile>(
@@ -88,6 +91,13 @@ export async function attachmentsFromDroppedFiles<T extends DroppedFile>(
 ): Promise<{ attachments: Attachment[]; rejectedNames: string[] }> {
   const results = await Promise.all(
     files.map(async (file) => {
+      if (persist) {
+        try {
+          const saved = await persist(file);
+          if (saved) return { attachment: saved };
+        } catch { /* Do not fall back to an unchecked original path. */ }
+        return { rejectedName: file.name };
+      }
       let path = "";
       try {
         path = getPath(file);
@@ -95,14 +105,6 @@ export async function attachmentsFromDroppedFiles<T extends DroppedFile>(
         // A browser or older desktop shell has no disk path to expose.
       }
       if (path) return { attachment: fileAttachment(file.name, path, file.size) };
-      if (persist) {
-        try {
-          const saved = await persist(file);
-          if (saved) return { attachment: saved };
-        } catch {
-          // Fall through to inline text or reject.
-        }
-      }
       if (isInlineText(file) && file.size <= INLINE_DROP_LIMIT) {
         try {
           return { attachment: pasteAttachment(await file.text()) };

@@ -1,6 +1,6 @@
 import { useCopyText } from "@/lib/use-copy-text";
 import { useEffect, useId, useState, type ReactNode, type Ref } from "react";
-import { Check, ChevronLeft, ChevronRight, Copy, Pencil, Repeat2 } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Copy, Pencil, Repeat2, Send, TextQuote } from "lucide-react";
 import { fmtDateTime } from "@/lib/au";
 import { channelMessage } from "@/lib/channel-message";
 import { formatTime } from "@/state/store";
@@ -8,7 +8,7 @@ import { MausAvatar } from "./Avatar";
 import { ChannelMark } from "./ChannelMark";
 
 /** The channel stamp is presentation metadata; saved history stays untouched. */
-export function AskMessage({ text, at, user, children, onEdit, onMakeRepeatable, versions, editButtonRef, versionsRef }: {
+export function AskMessage({ text, at, user, children, onEdit, onMakeRepeatable, onSendToPhone, onSendSummary, phoneHandoffBusy, versions, editButtonRef, versionsRef }: {
   text: string;
   at: number;
   user: boolean;
@@ -17,6 +17,10 @@ export function AskMessage({ text, at, user, children, onEdit, onMakeRepeatable,
   editButtonRef?: Ref<HTMLButtonElement>;
   versionsRef?: Ref<HTMLElement>;
   onMakeRepeatable?: () => void;
+  /** Send this reply to the paired phone channel. Absent when no phone is paired. */
+  onSendToPhone?: () => void;
+  onSendSummary?: () => void;
+  phoneHandoffBusy?: boolean;
   versions?: { current: number; total: number; onPrevious?: () => void; onNext?: () => void };
 }) {
   const origin = user ? channelMessage(text) : null;
@@ -51,6 +55,8 @@ export function AskMessage({ text, at, user, children, onEdit, onMakeRepeatable,
         </button>}
         {user && onEdit && body.trim() && <button ref={editButtonRef} type="button" onClick={onEdit} className="ask-text-button"><Pencil size={14} aria-hidden />Edit & resend</button>}
         {onMakeRepeatable && <button type="button" className="ask-text-button ask-repeat-action" onClick={onMakeRepeatable} title="Carry this request and result into an editable job plan"><Repeat2 size={15} aria-hidden />Make this repeatable</button>}
+        {onSendToPhone && <button type="button" className="ask-button min-h-8 px-3 text-[12px]" disabled={phoneHandoffBusy} aria-busy={phoneHandoffBusy || undefined} onClick={onSendToPhone} title="Send this reply to your phone"><Send size={14} aria-hidden />{phoneHandoffBusy ? "Sending…" : "Send to phone"}</button>}
+        {onSendSummary && <button type="button" className="ask-text-button" disabled={phoneHandoffBusy} aria-busy={phoneHandoffBusy || undefined} onClick={onSendSummary} title="Send a short summary to your phone"><TextQuote size={14} aria-hidden />{phoneHandoffBusy ? "Sending…" : "Send summary"}</button>}
         {versions && versions.total > 1 && <nav ref={versionsRef} tabIndex={-1} className="ask-message-versions" aria-label={`Request versions, ${versions.current} of ${versions.total}`}>
           <button type="button" className="ask-text-button" aria-label="Previous request version" disabled={!versions.onPrevious} onClick={versions.onPrevious}><ChevronLeft size={16} aria-hidden /></button>
           <span aria-live="polite">{versions.current} of {versions.total}</span>

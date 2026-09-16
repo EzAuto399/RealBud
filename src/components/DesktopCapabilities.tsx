@@ -19,8 +19,15 @@ export function DesktopCapabilitiesProvider({ children }: { children: ReactNode 
 
   useEffect(() => {
     let alive = true;
-    void loadDesktopCapabilities().then((capabilities) => {
-      if (alive) setState({ capabilities, ready: true });
+    void loadDesktopCapabilities().then(async (capabilities) => {
+      if (!alive) return;
+      setState({ capabilities, ready: true });
+      // Warm the mic prompt once at boot when dictation ships with this build,
+      // so Hold to speak does not fail with a banner on first use.
+      if (capabilities.dictation.available) {
+        const { warmMicrophoneAccess } = await import("@/lib/boot-heal");
+        if (alive) void warmMicrophoneAccess();
+      }
     });
     return () => {
       alive = false;

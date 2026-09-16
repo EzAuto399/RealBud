@@ -37,9 +37,9 @@ function rememberStep(step: 0 | 1 | null): void {
 
 type BusyState = "profile" | "finish" | null;
 
-// First run establishes the person and the product boundary. Bud's engine,
-// model, recovery, and operational controls remain in You after this journey.
-export function Onboarding({ onDone }: { onDone: () => void }) {
+// First run establishes the person and leads directly into the same Bud
+// setup used in settings. Sample-only exploration remains available.
+export function Onboarding({ onDone }: { onDone: (setup?: "bud") => void }) {
   const { state, dispatch } = useStore();
   const [step, setStep] = useState<0 | 1>(resumedStep);
   const [name, setName] = useState(
@@ -86,12 +86,17 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     }
   };
 
-  const enterDesk = (emailStatus: "submitted" | "skipped") => {
+  const enterWorkspace = (emailStatus: "submitted" | "skipped", destination: "desk" | "bud") => {
     setEmailGateDone(emailStatus);
     rememberStep(null);
     markFirstRunDone();
-    dispatch({ type: "showDesk" });
-    onDone();
+    if (destination === "bud") {
+      history.replaceState(null, "", location.pathname + location.search);
+      dispatch({ type: "showAsk" });
+    } else {
+      dispatch({ type: "showDesk" });
+    }
+    onDone(destination === "bud" ? "bud" : undefined);
   };
 
   const exploreSampleDesk = () => {
@@ -101,7 +106,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     setStep(1);
   };
 
-  const finish = async () => {
+  const finish = async (destination: "desk" | "bud") => {
     if (!name.trim() || busy !== null) return;
     setBusy("finish");
     setError("");
@@ -115,13 +120,13 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       dispatch({ type: "deskSnapshot", snapshot });
       track("onboarding_completed", { engines_available: -1, mic: "n/a" });
       enteredDesk = true;
-      enterDesk(email.trim() ? "submitted" : "skipped");
+      enterWorkspace(email.trim() ? "submitted" : "skipped", destination);
     } catch (cause) {
       if (isRecoveryWriteError(cause)) {
         setRecoveryBlocked(true);
-        setError("A protected book is already on this Mac. Open recovery to unlock it or preserve it before starting again.");
+        setError("A protected book is already on this computer. Open recovery to unlock it or preserve it before starting again.");
       } else {
-        setError(cause instanceof Error ? cause.message : "RealBud could not prepare the sample desk.");
+        setError(cause instanceof Error ? cause.message : "RealBud could not save your office setup.");
       }
     } finally {
       if (!enteredDesk) setBusy(null);
@@ -307,14 +312,15 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                   ) : (
                     <button
                       type="button"
-                      onClick={() => void finish()}
+                      onClick={() => void finish("bud")}
                       disabled={busy !== null || !name.trim()}
                       className="pm-decision flex w-full items-center justify-center gap-2 rounded bg-agency px-4 text-[14px] font-medium text-white transition-transform hover:bg-agency-hover active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       {busy === "finish" ? <Loader2 size={15} className="animate-spin motion-reduce:animate-none" /> : <BookOpen size={15} />}
-                      Open the sample desk
+                      Continue to Bud setup
                     </button>
                   )}
+                  {!recoveryBlocked && <button type="button" onClick={() => void finish("desk")} disabled={busy !== null || !name.trim()} className="pm-control mt-2 w-full rounded text-[13px] text-ink-secondary hover:bg-raised/60 disabled:opacity-40">Open the sample desk first</button>}
                   <button
                     type="button"
                     onClick={() => {
