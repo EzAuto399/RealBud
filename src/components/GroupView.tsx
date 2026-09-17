@@ -2,7 +2,7 @@
 // carry the personality; avatars inside the room stay still so a busy group
 // does not become a wall of competing motion. Plain messages go to the room's
 // default responder; @mentions override that routing.
-import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ChevronDown, Pin } from "lucide-react";
 import {
   useStore,
@@ -21,6 +21,8 @@ import { GroupCallButton, GroupCallOverlay } from "./GroupCallView";
 import { ReactionBar, ReactionChips } from "./Reactions";
 import { ApprovalCard } from "./ApprovalCard";
 import { cn } from "@/lib/cn";
+import { scrollChatToEnd } from "@/lib/chat-scroll";
+import { useStreamPreview } from "@/lib/use-stream-preview";
 
 function dayLabel(at: number): string {
   const d = new Date(at);
@@ -127,14 +129,47 @@ const Transcript = memo(function Transcript({
 });
 
 function StreamingBubble({ text }: { text: string }) {
-  const deferred = useDeferredValue(text);
+  const preview = useStreamPreview(text);
   return (
     <div className="flex w-full justify-start">
       <div className="max-w-[70%] rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
-        <ChatMarkdown text={deferred} streaming />
+        <ChatMarkdown text={preview} streaming />
         <span className="animate-caret ml-0.5 inline-block h-[14px] w-[2px] bg-ink align-middle" />
       </div>
     </div>
+  );
+}
+
+function GroupStreamTail({
+  threadId,
+  speaker,
+  onGrowth,
+}: {
+  threadId: string;
+  speaker?: Bot;
+  onGrowth: () => void;
+}) {
+  const stream = useStreaming();
+  const streaming = stream.streaming[threadId];
+
+  useEffect(() => onGrowth(), [onGrowth, speaker, streaming]);
+  if (!speaker) return null;
+
+  return (
+    <>
+      <ClusterLabel bot={speaker} name={speaker.name} color={speaker.color} />
+      {streaming ? (
+        <StreamingBubble text={streaming} />
+      ) : (
+        <div className="flex justify-start">
+          <div className="flex items-center gap-1.5 rounded-2xl bg-raised px-4 py-3">
+            <span className="size-1.5 animate-bounce rounded-full bg-ink-secondary [animation-delay:0ms] motion-reduce:animate-none" />
+            <span className="size-1.5 animate-bounce rounded-full bg-ink-secondary [animation-delay:150ms] motion-reduce:animate-none" />
+            <span className="size-1.5 animate-bounce rounded-full bg-ink-secondary [animation-delay:300ms] motion-reduce:animate-none" />
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -189,8 +224,6 @@ function DefaultResponderSelect({ group, members }: { group: Group; members: Bot
 
 export function GroupView({ group }: { group: Group }) {
   const { state, dispatch } = useStore();
-  const stream = useStreaming();
-  const streaming = stream.streaming[group.threadId];
   const scrollRef = useRef<HTMLDivElement>(null);
   const [follow, setFollow] = useState(true);
   const touchY = useRef(0);
@@ -205,9 +238,12 @@ export function GroupView({ group }: { group: Group }) {
 
   useEffect(() => setFollow(true), [group.id]);
   useEffect(() => setBulletinDraft(group.bulletin), [group.id, group.bulletin]);
+  const followLatest = useCallback(() => {
+    if (follow && scrollRef.current) scrollChatToEnd(scrollRef.current);
+  }, [follow]);
   useEffect(() => {
-    if (follow) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [group.id, group.messages.length, streaming, group.busyBotId, follow]);
+    followLatest();
+  }, [followLatest, group.busyBotId, group.id, group.messages.length]);
 
   const atEnd = () => {
     const el = scrollRef.current;
@@ -338,24 +374,7 @@ export function GroupView({ group }: { group: Group }) {
             </div>
           )}
           <Transcript group={group} members={members} />
-          {speaker && !streaming && (
-            <>
-              <ClusterLabel bot={speaker} name={speaker.name} color={speaker.color} />
-              <div className="flex justify-start">
-                <div className="flex items-center gap-1.5 rounded-2xl bg-raised px-4 py-3">
-                  <span className="size-1.5 animate-bounce rounded-full bg-ink-secondary [animation-delay:0ms]" />
-                  <span className="size-1.5 animate-bounce rounded-full bg-ink-secondary [animation-delay:150ms]" />
-                  <span className="size-1.5 animate-bounce rounded-full bg-ink-secondary [animation-delay:300ms]" />
-                </div>
-              </div>
-            </>
-          )}
-          {speaker && streaming && (
-            <>
-              <ClusterLabel bot={speaker} name={speaker.name} color={speaker.color} />
-              <StreamingBubble text={streaming} />
-            </>
-          )}
+          <GroupStreamTail threadId={group.threadId} speaker={speaker} onGrowth={followLatest} />
         </div>
       </div>
 
@@ -363,7 +382,12 @@ export function GroupView({ group }: { group: Group }) {
         <button
           onClick={() => {
             setFollow(true);
-            scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+            if (scrollRef.current) {
+              scrollChatToEnd(scrollRef.current, {
+                animate: true,
+                reducedMotion: Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches),
+              });
+            }
           }}
           aria-label="Jump to latest messages"
           className="animate-pop-in absolute bottom-24 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-hairline/40 bg-raised px-3 py-1.5 text-[12.5px] text-ink shadow-lg hover:bg-raised-hover"

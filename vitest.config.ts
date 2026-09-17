@@ -1,10 +1,13 @@
-import { defineConfig } from "vitest/config";
+import { defineConfig, mergeConfig } from "vitest/config";
+import viteConfig from "./vite.config";
 
 // Coverage is opt-in (pnpm test:coverage) and measured over server/ only.
 // server/index.ts and the modules it runs as child processes are exercised
 // behaviorally by the spawned-server e2e tests (index/branching/comms) but
 // cannot be measured in-process, so they are excluded from the thresholds.
-export default defineConfig({
+// Keep the application aliases, isolation setup and intended test discovery.
+// A standalone Vitest config otherwise replaces those settings entirely.
+export default mergeConfig(viteConfig, defineConfig({
   test: {
     coverage: {
       provider: "v8",
@@ -14,7 +17,6 @@ export default defineConfig({
         "server/testing/**",
         // child-process-only (measured by e2e behavior, not instrumentation)
         "server/index.ts",
-        "server/composio.ts",
         "server/box.ts",
         "server/computer-proxy.ts",
         "server/container-mcp.ts",
@@ -28,4 +30,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

@@ -1,11 +1,12 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { HERMES_PIN } from "./hermes-pin.ts";
 import { installInFlight, startInstall } from "./hermes-bridge.ts";
-import { startRepair, uninstallWorker } from "./hermes-lifecycle.ts";
+import { repairExistingProfile, startRepair, uninstallWorker } from "./hermes-lifecycle.ts";
+import { fakeHermesVersion } from "./testing/fake-hermes.ts";
 
 const dirs: string[] = [];
 const tempDir = (prefix: string) => {
@@ -23,7 +24,7 @@ afterEach(async () => {
 });
 
 describe("uninstallWorker", () => {
-  it("deletes only the worker dirs and readiness stamps", async () => {
+  it("removes RealBud's profile and stamps while preserving the shared runtime", async () => {
     const home = tempDir("realbud-life-home-");
     const data = tempDir("realbud-life-data-");
     const agent = join(home, "hermes-agent");
@@ -47,7 +48,8 @@ describe("uninstallWorker", () => {
     const status = await uninstallWorker({ root: home, dataDir: data });
     expect(status.pack.installed).toBe(false);
     expect(status.ready).toBe(false);
-    expect(existsSync(agent)).toBe(false);
+    expect(existsSync(agent)).toBe(true);
+    expect(readFileSync(join(agent, "bin", "hermes"), "utf8")).toBe("#!/bin/sh\n");
     expect(existsSync(profile)).toBe(false);
     expect(existsSync(join(data, "hands-ping.json"))).toBe(false);
     expect(existsSync(join(data, "hands-last.json"))).toBe(false);
@@ -81,6 +83,36 @@ describe("uninstallWorker", () => {
 });
 
 describe("startRepair", () => {
+  it("repairs the property pack without replacing an independent 0.21 runtime or model", async () => {
+    const home = tempDir("realbud-repair-profile-");
+    const profile = join(home, "profiles", HERMES_PIN.profile);
+    const agent = join(home, "hermes-agent");
+    mkdirSync(profile, { recursive: true });
+    mkdirSync(agent, { recursive: true });
+    writeFileSync(join(agent, "keep.txt"), "independent runtime");
+    writeFileSync(join(profile, "config.yaml"), "model:\n  default: fixture-model\n");
+    writeFileSync(join(profile, ".env"), "FIXTURE_KEY=keep-this-fixture\n");
+    const cli = fakeHermesVersion("Hermes Agent v0.21.0 (2026.8.31)");
+    dirs.push(dirname(cli));
+    const status = await repairExistingProfile({ root: home, cli });
+    expect(status?.cli).toMatchObject({ compatible: true, matchesPin: false });
+    expect(status?.pack.workroomReady).toBe(true);
+    expect(readFileSync(join(agent, "keep.txt"), "utf8")).toBe("independent runtime");
+    expect(readFileSync(join(profile, "config.yaml"), "utf8")).toContain("fixture-model");
+    expect(readFileSync(join(profile, ".env"), "utf8")).toContain("keep-this-fixture");
+  });
+
+  it("holds an unknown release without altering its profile", async () => {
+    const home = tempDir("realbud-repair-unsupported-");
+    const profile = join(home, "profiles", HERMES_PIN.profile);
+    mkdirSync(profile, { recursive: true });
+    writeFileSync(join(profile, "config.yaml"), "keep this unchanged");
+    const cli = fakeHermesVersion("Hermes Agent v0.22.0 (2026.9.9)");
+    dirs.push(dirname(cli));
+    await expect(repairExistingProfile({ root: home, cli })).rejects.toMatchObject({ status: 409 });
+    expect(readFileSync(join(profile, "config.yaml"), "utf8")).toBe("keep this unchanged");
+  });
+
   it("returns 409 while an install job is running", async () => {
     const job = startInstall("sleep 3", { timeoutMs: 8_000 });
     expect(["running", "verifying", "preflight"]).toContain(job.state);

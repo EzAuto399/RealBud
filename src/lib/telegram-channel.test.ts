@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   channelStatusLine,
+  channelsAwaitingPair,
+  mergeChannelsPatch,
   readChannels,
   readTelegramChannel,
   telegramPairingLine,
@@ -104,7 +106,7 @@ describe("telegram pairing line", () => {
   it("asks the first chat to write when unpaired", () => {
     expect(
       telegramPairingLine({ paired: false, pairedName: null, lastMessageAt: null }),
-    ).toBe("Now message the bot once from your phone — the first chat to write pairs with this Mac.");
+    ).toBe("Create a pairing code on this Mac, then send it to the bot in a private chat.");
   });
 
   it("names the pair and a last-message stamp when present", () => {
@@ -124,13 +126,13 @@ describe("channelStatusLine", () => {
   it("asks Discord for a first DM when unpaired", () => {
     expect(
       channelStatusLine("discord", { paired: false, pairedName: null, lastMessageAt: null }),
-    ).toBe("Now DM the bot once — the first chat to write pairs with this Mac.");
+    ).toBe("Create a pairing code on this Mac, then send it to the bot in a private chat.");
   });
 
   it("asks Slack for a first DM when unpaired", () => {
     expect(
       channelStatusLine("slack", { paired: false, pairedName: null, lastMessageAt: null }),
-    ).toBe("Now DM the bot once — the first chat to write pairs with this Mac.");
+    ).toBe("Create a pairing code on this Mac, then send it to the bot in a private chat.");
   });
 
   it("keeps Telegram copy and a last-message stamp", () => {
@@ -143,3 +145,71 @@ describe("channelStatusLine", () => {
     ).toBe("Paired with Sam · last message 2 min ago");
   });
 });
+
+describe("mergeChannelsPatch", () => {
+  it("overlays only the platforms present in the patch", () => {
+    const prev = readChannels({
+      telegram: {
+        connected: true,
+        botUsername: "realbud_bot",
+        pairedName: null,
+        paired: false,
+        lastMessageAt: null,
+      },
+    });
+    expect(
+      mergeChannelsPatch(prev, {
+        telegram: {
+          connected: true,
+          botUsername: "realbud_bot",
+          pairedName: "Yoda",
+          paired: true,
+          lastMessageAt: 9,
+        },
+      }),
+    ).toEqual({
+      telegram: {
+        connected: true,
+        botUsername: "realbud_bot",
+        pairedName: "Yoda",
+        paired: true,
+        lastMessageAt: 9,
+      },
+      discord: { connected: false },
+      slack: { connected: false },
+    });
+  });
+});
+
+describe("channelsAwaitingPair", () => {
+  it("is true only while a live channel is connected and unpaired", () => {
+    expect(channelsAwaitingPair(null)).toBe(false);
+    expect(
+      channelsAwaitingPair(
+        readChannels({
+          telegram: {
+            connected: true,
+            botUsername: "realbud_bot",
+            pairedName: null,
+            paired: false,
+            lastMessageAt: null,
+          },
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      channelsAwaitingPair(
+        readChannels({
+          telegram: {
+            connected: true,
+            botUsername: "realbud_bot",
+            pairedName: "Yoda",
+            paired: true,
+            lastMessageAt: 1,
+          },
+        }),
+      ),
+    ).toBe(false);
+  });
+});
+

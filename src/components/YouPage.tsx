@@ -1,11 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { usePhoneConnections } from "@/lib/phone-connections";
+import { useServiceAdminAccess } from "@/lib/use-service-admin-access";
+import { useWorkspaceScroll } from "@/lib/workspace-view-state";
+import { ChannelMark } from "./ChannelMark";
+import { CopyButton } from "./CopyButton";
+import { scrollYouTarget, youHashTarget } from "@/lib/you-navigation";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Loader2, User } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { fmtDateTime, relativeAgo } from "@/lib/au";
 import { activityLabel, activityResult, type ActivityEntry } from "@/lib/computer-activity";
 import { sourceKindLabel } from "@/lib/hands-label";
-import { morningBrief } from "@/lib/morning-brief";
 import {
   AWAITING_REVIEW_COPY,
   isPortalSiteRule,
@@ -19,8 +24,9 @@ import {
   sessionSummaryLine,
 } from "@/lib/portal-job";
 import { sourceCheckCopy } from "@/lib/source-check";
-import { attendedRunLabel, jobRunStatusChip, jobRunSummaryLine, latestAttendedFor, queuedAttended, runningAttended, safeJobRunDetail } from "@/lib/job-run";
+import { attendedRunLabel, jobRunStatusChip, jobRunSummaryLine, safeJobRunDetail } from "@/lib/job-run";
 import { PortalJobActions } from "./schedule/PortalJobActions";
+import { WorkflowPacksCard } from "./schedule/WorkflowPacksCard";
 import {
   CHANNEL_PLATFORM_LABEL,
   LIVE_CHANNEL_PLATFORMS,
@@ -31,16 +37,18 @@ import {
   type ChannelStatus,
   type ChannelsState,
 } from "@/lib/telegram-channel";
-import { recipeClockRunnable, type JobRun, type PortalSession, type Recipe } from "@/lib/desk";
+import { type JobRun, type PortalSession, type Recipe } from "@/lib/desk";
 import { readLawWatch, type LawWatch } from "@/lib/law-watch";
 import { api, useStore, type HermesStatus } from "@/state/store";
 import { AdvancedDiagnostics, RecoveryNotice, StatusLabel, type StatusTone } from "./pm";
 import { BudSetupCard } from "./BudSetupCard";
-import { ApiKeyRow } from "./ApiKeys";
+import { ConnectedAppsCard } from "./ConnectedAppsCard";
+import { ServiceAdministration } from "./ServiceAdministration";
+import { ServiceStatusCard } from "./ServiceStatusCard";
+import { CompanySetupCard } from "./CompanySetupCard";
 import { Card } from "./SettingsPrimitives";
 import { ProfileFields } from "./SettingsModal";
 import { GoLiveCard } from "./desk/GoLiveCard";
-import { MorningBrief } from "./desk/MorningBrief";
 import { LawWatchCard } from "./you/LawWatchCard";
 import { OfficeCard } from "./you/OfficeCard";
 
@@ -50,6 +58,52 @@ function YouLoadLines({ label }: { label: string }) {
       <div className="h-3 w-[75%] max-w-[16rem] animate-pulse rounded bg-raised motion-reduce:animate-none" />
       <div className="h-3 w-[50%] max-w-[10rem] animate-pulse rounded bg-raised motion-reduce:animate-none" />
     </div>
+  );
+}
+
+const YOU_JUMP_LINKS = [
+  { id: "you-worker", label: "Bud" },
+  { id: "you-office", label: "Office" },
+  { id: "you-connected-apps", label: "Apps" },
+  { id: "you-phone", label: "Phone" },
+  { id: "you-profile", label: "Profile" },
+  { id: "you-advanced", label: "Advanced" },
+  { id: "you-service-admin", label: "Service" },
+] as const;
+
+function YouJumpNav() {
+  return (
+    <nav
+      aria-label="Jump to a settings group"
+      className="sticky top-0 z-20 -mx-5 mb-1 border-b border-line bg-paper/95 px-5 py-2 backdrop-blur-sm"
+    >
+      <ul className="flex flex-wrap gap-1.5">
+        {YOU_JUMP_LINKS.map((link) => (
+          <li key={link.id}>
+            <button
+              type="button"
+              className="pm-control rounded border border-transparent px-2.5 py-1 text-[12.5px] font-medium text-ink-secondary hover:border-line hover:bg-sheet hover:text-ink"
+              onClick={() => {
+                const hash = link.id === "you-worker" ? "you-worker" : link.id;
+                if (location.hash.replace(/^#/, "") === hash) scrollYouTarget(link.id);
+                else location.hash = hash;
+              }}
+            >
+              {link.label}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+}
+
+function YouGroup({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <section className="flex flex-col gap-3" aria-label={label}>
+      <h2 className="px-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-muted">{label}</h2>
+      {children}
+    </section>
   );
 }
 
@@ -67,7 +121,7 @@ function workerDiagnosticsText(hermes: HermesStatus | null | undefined, version?
     return lines.join("\n");
   }
   lines.push(
-    `worker ${hermes.cli.installed ? "installed" : "not installed"} · ${hermes.cli.matchesPin ? "matches supported build" : "does not match supported build"}`,
+    `worker ${hermes.cli.installed ? "installed" : "not installed"} · ${(hermes.cli.compatible ?? hermes.cli.matchesPin) ? "matches supported build" : "does not match supported build"}`,
   );
   lines.push(
     `pack ${hermes.pack.installed ? "installed" : "missing"} · approvals ${hermes.pack.approvalsManual ? "manual" : "not manual"} · workroom ${hermes.pack.workroomReady ? "ready" : "needs repair"}`,
@@ -77,19 +131,13 @@ function workerDiagnosticsText(hermes: HermesStatus | null | undefined, version?
   if (hermes.lastPing) lines.push(`lastPing ${fmtDateTime(hermes.lastPing.at)} · ${hermes.lastPing.ok ? "ok" : "miss"}`);
   if (hermes.lastTest) lines.push(`lastTest ${fmtDateTime(hermes.lastTest.at)} · ${hermes.lastTest.ok ? "ok" : "miss"}`);
   if (hermes.homeDir) lines.push(`data dir ${hermes.homeDir}`);
-  if (hermes.profileDir) lines.push(`profile dir ${hermes.profileDir}`);
+  if (hermes.profileDir) lines.push(`${hermes.handsLabel ?? "Bud's hands"} · ${hermes.profileDir}`);
   return lines.join("\n");
 }
 
-function youHashTarget(hash: string): "you-worker" | "you-recovery" | "you-jobs" | null {
-  if (hash === "#you-worker" || hash === "#attach-model") return "you-worker";
-  if (hash === "#you-recovery") return "you-recovery";
-  if (hash === "#you-jobs") return "you-jobs";
-  return null;
-}
-
-export function YouPage() {
+export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
   const { state, dispatch, refreshHermes } = useStore();
+  const scrollRef = useWorkspaceScroll("you", !section);
   const [session, setSession] = useState<{ product?: boolean; nonProduction?: boolean } | null>(null);
   const [deskError, setDeskError] = useState("");
   const [agencyError, setAgencyError] = useState("");
@@ -103,15 +151,12 @@ export function YouPage() {
   const [rulesError, setRulesError] = useState("");
   const [recipes, setRecipes] = useState<Recipe[] | null>(null);
   const [sessions, setSessions] = useState<PortalSession[]>([]);
-  const [jobRuns, setJobRuns] = useState<JobRun[]>([]);
   const [jobsError, setJobsError] = useState("");
-  const [channels, setChannels] = useState<ChannelsState | null>(null);
-  const [channelsError, setChannelsError] = useState("");
+  const { channels, error: channelsError, update: setChannels, refresh: loadChannels } = usePhoneConnections(section !== "office" && state.connected);
   const [lawWatch, setLawWatch] = useState<LawWatch | null>(null);
   const [lawWatchError, setLawWatchError] = useState("");
   const [announce, setAnnounce] = useState("");
   const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
-  const advancedRef = useRef<HTMLDetailsElement>(null);
   const announceTimer = useRef<number | null>(null);
 
   const loadDesk = useCallback(() => {
@@ -130,20 +175,12 @@ export function YouPage() {
 
   const loadJobs = useCallback(() => {
     setJobsError("");
-    void Promise.all([api("/api/recipes"), api("/api/portal-sessions"), api("/api/job-runs?limit=100")])
-      .then(([recipesBody, sessionsBody, runsBody]) => {
+    void Promise.all([api("/api/recipes"), api("/api/portal-sessions")])
+      .then(([recipesBody, sessionsBody]) => {
         setRecipes(Array.isArray(recipesBody.recipes) ? recipesBody.recipes : []);
         setSessions(Array.isArray(sessionsBody.sessions) ? sessionsBody.sessions : []);
-        setJobRuns(Array.isArray(runsBody.runs) ? runsBody.runs : []);
       })
       .catch((cause: unknown) => setJobsError(cause instanceof Error ? cause.message : String(cause)));
-  }, []);
-
-  const loadChannels = useCallback(() => {
-    setChannelsError("");
-    void api("/api/channels")
-      .then((body) => setChannels(readChannels(body)))
-      .catch((cause: unknown) => setChannelsError(cause instanceof Error ? cause.message : String(cause)));
   }, []);
 
   const loadLawWatch = useCallback(() => {
@@ -157,39 +194,18 @@ export function YouPage() {
     void api("/api/session")
       .then((body) => setSession(body))
       .catch(() => setSession(null));
-    loadDesk();
-    loadRules();
-    loadJobs();
-    loadChannels();
-    loadLawWatch();
-    void refreshHermes();
-  }, [dispatch, loadChannels, loadDesk, loadJobs, loadLawWatch, loadRules, refreshHermes]);
+    if (section !== "phone") loadDesk();
+    if (!section) { loadRules(); loadJobs(); loadLawWatch(); void refreshHermes(); }
+  }, [dispatch, loadChannels, loadDesk, loadJobs, loadLawWatch, loadRules, refreshHermes, section]);
 
   useEffect(() => {
+    if (section) return;
     let frame = 0;
-    const scrollToId = (id: string) => {
-      const target = document.getElementById(id);
-      const scroller = document.querySelector<HTMLElement>("[data-you-scroll]");
-      if (!target || !scroller) return;
-      const top = scroller.scrollTop + target.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-      scroller.scrollTo({
-        top,
-        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
-      });
-    };
     const run = () => {
       const id = youHashTarget(location.hash);
       if (!id) return;
-      // Both live inside the Advanced disclosure; open it before measuring.
-      const insideAdvanced = id === "you-recovery" || id === "you-jobs";
-      if (insideAdvanced && advancedRef.current) advancedRef.current.open = true;
-      frame = window.requestAnimationFrame(() => {
-        if (insideAdvanced) {
-          frame = window.requestAnimationFrame(() => scrollToId(id));
-          return;
-        }
-        scrollToId(id);
-      });
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => scrollYouTarget(id));
     };
     run();
     window.addEventListener("hashchange", run);
@@ -197,7 +213,7 @@ export function YouPage() {
       window.cancelAnimationFrame(frame);
       window.removeEventListener("hashchange", run);
     };
-  }, []);
+  }, [section]);
 
   useEffect(
     () => () => {
@@ -211,7 +227,7 @@ export function YouPage() {
   const recovery = desk?.recovery?.active;
   const agency = desk?.book?.agency;
   const timezone = agency?.timezone || desk?.timezone || "Australia/Sydney";
-  const workerFirst = Boolean(hermes && !hermes.ready);
+  const budReady = Boolean(hermes?.ready);
 
   const copyDiagnostics = () => {
     const text = workerDiagnosticsText(hermes, configVersion(state.config));
@@ -231,45 +247,35 @@ export function YouPage() {
     );
   };
 
-  return (
-    <main className="flex h-full min-w-0 flex-1 flex-col bg-paper">
-      <header className="px-5 pb-3 pt-4">
-        <div className="flex items-center gap-2.5">
-          <User size={21} className="text-agency" />
-          <h1 className="pm-screen-title text-ink">You</h1>
-        </div>
-        <p className="mt-1 max-w-[40rem] text-[12.5px] text-ink-secondary">
-          This office, Bud, go-live, and phone. Jobs, rules, and engine internals sit under Advanced.
-        </p>
-      </header>
-      <div data-you-scroll className="flex flex-1 flex-col gap-4 overflow-y-auto px-5 pb-6">
-        {session?.nonProduction && (
-          <div className="rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-[13px] text-warning">
-            Source-run key. This is not a production distribution. Agency data stays local.
-          </div>
-        )}
-        <div className="sr-only" aria-live="polite">
-          {announce}
-        </div>
-        {recovery && (
-          <RecoveryNotice>
-            Desk is in recovery. Writes, schedules and browser work are paused. The book was not replaced with Demo data.
-          </RecoveryNotice>
-        )}
-        {workerFirst ? <BudSetupCard /> : null}
+  const officeSection = (
+    <details open={section === "office" || undefined} id={section ? undefined : "you-office"} className="settings-section">
+      <summary>
+        <span>This office</span>
+        <span className="settings-section-hint">
+          {deskError
+            ? "Could not load · open to retry"
+            : desk?.demo
+              ? "Agency basics · optional setup details"
+              : agency?.name || "Agency and property settings"}
+        </span>
+      </summary>
+      <div className="settings-section-body">
+        <CompanySetupCard />
         {desk ? (
           <OfficeCard
             agencyName={agency?.name ?? ""}
             timezone={timezone}
             jurisdictions={agency?.jurisdictions ?? []}
             office={desk.book?.office}
+            revision={desk.revision}
             profileName={state.config?.profile?.name}
+            onReload={() => api("/api/desk", undefined, { timeoutMs: 15_000 }).then(snapshot => dispatch({ type: "deskSnapshot", snapshot }))}
             onSave={(input) =>
               api(
                 "/api/desk/agency",
                 {
                   method: "PATCH",
-                  body: JSON.stringify({ name: input.name, jurisdictions: input.jurisdictions, office: input.office }),
+                  body: JSON.stringify({ name: input.name, jurisdictions: input.jurisdictions, office: input.office, expectedRevision: input.expectedRevision }),
                 },
                 { timeoutMs: 15_000 },
               ).then((snapshot) => dispatch({ type: "deskSnapshot", snapshot }))
@@ -289,180 +295,266 @@ export function YouPage() {
         ) : (
           <Card title="This office" subtitle="Open Desk once to load the book." />
         )}
-        {workerFirst ? null : <BudSetupCard />}
-        <Card
-          title="Connected apps"
-          subtitle="Save the private broker key once. Then tell Bud “connect Notion” or another app; Bud opens the provider sign-in directly."
-        >
-          <ApiKeyRow section="composio" />
-          <p className="mt-2 text-[12px] leading-relaxed text-ink-muted">
-            App passwords and provider tokens stay with the provider. Never paste them into Ask.
-          </p>
-        </Card>
-        {desk ? (
-          <GoLiveCard
-            mode={desk.mode}
-            agencyName={agency?.name ?? ""}
-            workerReady={Boolean(hermes?.ready)}
-            compact={desk.lastRunAt != null}
-            onConnectExport={() => dispatch({ type: "showDesk", book: true })}
-            attachWorkerLabel="Set up Bud"
-            onAttachWorker={() => {
-              const target = document.getElementById("you-worker");
-              const scroller = document.querySelector<HTMLElement>("[data-you-scroll]");
-              if (!target || !scroller) return;
-              const top = scroller.scrollTop + target.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-              scroller.scrollTo({
-                top,
-                behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
-              });
-            }}
-            onSaveAgency={(name) => {
-              void api("/api/desk/agency", { method: "PATCH", body: JSON.stringify({ name }) }, { timeoutMs: 15_000 })
-                .then((snapshot) => {
-                  dispatch({ type: "deskSnapshot", snapshot });
-                  setAgencyError("");
-                })
-                .catch((cause: unknown) => setAgencyError(cause instanceof Error ? cause.message : String(cause)));
-            }}
-          />
-        ) : null}
-        {agencyError ? <div className="text-[12.5px] text-danger">{agencyError}</div> : null}
-        <div id="you-phone">
-          <ChannelsCard channels={channels} error={channelsError} onChannels={setChannels} onRetry={loadChannels} />
-        </div>
+      </div>
+    </details>
+  );
+
+  const goLiveSection = desk ? (
+    <GoLiveCard
+      mode={desk.mode}
+      agencyName={agency?.name ?? ""}
+      workerReady={budReady}
+      compact
+      onConnectExport={() => dispatch({ type: "showDesk", book: true })}
+      attachWorkerLabel="Set up Bud"
+      onAttachWorker={() => scrollYouTarget("you-worker")}
+      onSaveAgency={(name) => {
+        void api("/api/desk/agency", { method: "PATCH", body: JSON.stringify({ name }) }, { timeoutMs: 15_000 })
+          .then((snapshot) => {
+            dispatch({ type: "deskSnapshot", snapshot });
+            setAgencyError("");
+          })
+          .catch((cause: unknown) => setAgencyError(cause instanceof Error ? cause.message : String(cause)));
+      }}
+    />
+  ) : null;
+
+  const appsSection = (
+    <details id="you-connected-apps" className="settings-section">
+      <summary>
+        <span>Connected apps</span>
+        <span className="settings-section-hint">Optional · bring email and files into a task</span>
+      </summary>
+      <div className="settings-section-body">
+        <ConnectedAppsCard />
+      </div>
+    </details>
+  );
+
+  const phoneSection = (
+    <details id="you-phone" className="settings-section">
+      <summary>
+        <span>Bud on your phone</span>
+        <span className="settings-section-hint">
+          {channelsError ? "Connection status unavailable · open to retry" : "Optional · connect a messaging app"}
+        </span>
+      </summary>
+      <div className="settings-section-body">
+        <ChannelsCard channels={channels} error={channelsError} onChannels={setChannels} onRetry={loadChannels} />
+      </div>
+    </details>
+  );
+
+  const profileSection = (
+    <details id="you-profile" className="settings-section">
+      <summary>
+        <span>Your profile</span>
+        <span className="settings-section-hint">Name and office email</span>
+      </summary>
+      <div className="settings-section-body">
         <Card title="Profile" subtitle="Shown in the sidebar. Saved as you go.">
           <ProfileFields />
         </Card>
-        {desk ? (
-          <MorningBrief
-            brief={morningBrief(desk)}
-            timezone={timezone}
-            onOpenAddress={() => dispatch({ type: "showDesk" })}
-            interactive
-          />
-        ) : null}
-        <details ref={advancedRef} className="rounded-lg border border-line bg-sheet open:pb-0">
-          <summary className="cursor-pointer px-4 py-3 text-[14px] font-medium text-ink">
-            Advanced — jobs, rules, recovery
-          </summary>
-          <div className="flex flex-col gap-4 border-t border-line px-4 py-4">
-            <Card title="Bud's rules" subtitle="Previously saved standing permissions. New approvals can stay scoped to one task.">
-              {rulesError ? (
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="text-[12.5px] text-danger">{rulesError}</p>
-                  <button type="button" onClick={loadRules} className="text-[12px] text-agency hover:underline">
-                    Retry
+      </div>
+    </details>
+  );
+
+  const advancedSection = (
+    <details id="you-advanced" className="settings-section">
+      <summary>
+        <span>Advanced</span>
+        <span className="settings-section-hint">Jobs, rules, recovery, and diagnostics</span>
+      </summary>
+      <div className="settings-section-body flex flex-col gap-4">
+        <Card title="Bud's rules" subtitle="Previously saved standing permissions. New approvals can stay scoped to one task.">
+          {rulesError ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-[12.5px] text-danger">{rulesError}</p>
+              <button type="button" onClick={loadRules} className="text-[12px] text-agency hover:underline">
+                Retry
+              </button>
+            </div>
+          ) : null}
+          {!rulesError && rules == null ? <YouLoadLines label="Loading rules" /> : null}
+          {!rulesError && rules && rules.length === 0 ? (
+            <p className="text-[13px] text-ink-secondary">
+              No standing rules. Allow for this task reduces repeat prompts for one run; 'Always allow reading on a site' saves a rule for that site only.
+            </p>
+          ) : null}
+          {!rulesError && rules && rules.length > 0 ? (
+            <ul className="text-[13px] text-ink">
+              {rules.map((rule) => (
+                <li key={rule.id} className="flex flex-wrap items-baseline justify-between gap-2 py-1">
+                  <span className="flex flex-wrap items-baseline gap-2">
+                    {portalRuleLabel(rule)}
+                    {isPortalSiteRule(rule) ? <StatusLabel tone="agency">Site rule</StatusLabel> : (
+                      <span className="font-mono text-[11px] text-ink-muted">{rule.key}</span>
+                    )}
+                  </span>
+                  <button
+                    type="button"
+                    className="text-[12px] text-ink-muted underline-offset-2 hover:text-ink hover:underline"
+                    onClick={() => {
+                      void api(`/api/rules/${rule.id}`, { method: "DELETE" })
+                        .then(() => loadRules())
+                        .catch((cause: unknown) =>
+                          setRulesError(cause instanceof Error ? cause.message : String(cause)),
+                        );
+                    }}
+                  >
+                    Revoke
                   </button>
-                </div>
-              ) : null}
-              {!rulesError && rules == null ? <YouLoadLines label="Loading rules" /> : null}
-              {!rulesError && rules && rules.length === 0 ? (
-                <p className="text-[13px] text-ink-secondary">
-                  No standing rules. Allow for this task reduces repeat prompts for one run; 'Always allow reading on a site' saves a rule for that site only.
-                </p>
-              ) : null}
-              {!rulesError && rules && rules.length > 0 ? (
-                <ul className="text-[13px] text-ink">
-                  {rules.map((rule) => (
-                    <li key={rule.id} className="flex flex-wrap items-baseline justify-between gap-2 py-1">
-                      <span className="flex flex-wrap items-baseline gap-2">
-                        {portalRuleLabel(rule)}
-                        {isPortalSiteRule(rule) ? <StatusLabel tone="agency">Site rule</StatusLabel> : (
-                          <span className="font-mono text-[11px] text-ink-muted">{rule.key}</span>
-                        )}
-                      </span>
-                      <button
-                        type="button"
-                        className="text-[12px] text-ink-muted underline-offset-2 hover:text-ink hover:underline"
-                        onClick={() => {
-                          void api(`/api/rules/${rule.id}`, { method: "DELETE" })
-                            .then(() => loadRules())
-                            .catch((cause: unknown) =>
-                              setRulesError(cause instanceof Error ? cause.message : String(cause)),
-                            );
-                        }}
-                      >
-                        Revoke
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </Card>
-            <LawWatchCard watch={lawWatch} error={lawWatchError} onWatch={setLawWatch} onError={setLawWatchError} />
-            <div id="you-jobs">
-              <BudJobsCard
-                recipes={recipes}
-                sessions={sessions}
-                runs={jobRuns}
-                error={jobsError}
-                onRecipes={setRecipes}
-                onSessions={setSessions}
-                onRuns={setJobRuns}
-                onError={setJobsError}
-              />
-            </div>
-            <div id="you-recovery">
-              <RecoveryKeyCard recoveryActive={Boolean(recovery)} />
-            </div>
-            <Card
-              title="Sources"
-              subtitle={
-                desk
-                  ? `${desk.mode === "demo" ? "Demo book" : "Live book"} · ${desk.timezone}`
-                  : "Open Desk once to load the book."
-              }
-            >
-              <ul className="text-[13px] text-ink-secondary">
-                {(desk?.sources ?? []).map((source) => (
-                  <li key={source.id} className="flex flex-wrap items-baseline justify-between gap-2 py-1">
-                    <span>
-                      {source.label} · {sourceKindLabel(source.kind)}
-                    </span>
-                    <span className="text-[12px] text-ink-muted">
-                      {sourceCheckCopy(source, hermes?.lastTest ?? null, (at) => fmtDateTime(at, timezone))}
-                    </span>
-                  </li>
-                ))}
-                {!desk?.sources?.length && <li>No sources yet.</li>}
-              </ul>
-            </Card>
-            <Card title="Browser profile" subtitle="Dedicated ~/.realbud/chrome-profile. You sign in. Passwords and cookies never enter config, recipes, or Ask.">
-              <div className="text-[13px] text-ink-secondary">
-                Retention: {desk?.retentionDays ?? "not set"} days. Full captures stay off the event stream.
-              </div>
-              {recovery ? (
-                <p className="mt-2 text-[13px] text-hold">Browser work is paused in recovery. Prepare is refused until you resume.</p>
-              ) : (
-                <p className="mt-2 text-[13px] text-ink-secondary">Handoffs stay case-scoped. You submit in the PMS.</p>
-              )}
-            </Card>
-            <AdvancedDiagnostics>
-              {hermes ? (
-                <>
-                  <div>pin {hermes.pin.product} / {hermes.pin.tag}</div>
-                  <div>profile {hermes.pin.profile}</div>
-                  <div>pack {hermes.pack.installed ? "installed" : "missing"} · workroom {hermes.pack.workroomReady ? "ready" : "needs repair"} · approvals {hermes.pack.approvalsManual ? "manual" : "not manual"}</div>
-                  <div>private-workroom edits run automatically · sensitive and consequential steps still ask · scheduling stays on RealBud's clock</div>
-                  <div>{hermes.detail}</div>
-                </>
-              ) : (
-                <div>Engine status is not available yet.</div>
-              )}
-              <div className="mt-3 flex flex-wrap items-center gap-2 font-sans">
-                <button
-                  type="button"
-                  onClick={copyDiagnostics}
-                  className="pm-control rounded border border-line bg-sheet px-3 text-[13px] text-ink hover:bg-raised"
-                >
-                  Copy diagnostics
-                </button>
-                {diagnosticsCopied ? <span className="text-[12px] text-agency">Copied</span> : null}
-              </div>
-            </AdvancedDiagnostics>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </Card>
+        <LawWatchCard watch={lawWatch} error={lawWatchError} onWatch={setLawWatch} onError={setLawWatchError} />
+        <div id="you-packs">
+          <WorkflowPacksCard
+            onInstalled={() => {
+              void api("/api/recipes")
+                .then((body) => setRecipes(Array.isArray(body.recipes) ? body.recipes : []))
+                .catch(() => {});
+            }}
+          />
+        </div>
+        <div id="you-jobs">
+          <BudJobsCard
+            recipes={recipes}
+            sessions={sessions}
+            runs={state.jobRuns}
+            error={jobsError}
+            onRecipes={setRecipes}
+            onError={setJobsError}
+          />
+        </div>
+        <div id="you-recovery">
+          <RecoveryKeyCard recoveryActive={Boolean(recovery)} />
+        </div>
+        <Card
+          title="Sources"
+          subtitle={
+            desk
+              ? `${desk.mode === "demo" ? "Demo book" : "Live book"} · ${desk.timezone}`
+              : "Open Desk once to load the book."
+          }
+        >
+          <ul className="text-[13px] text-ink-secondary">
+            {(desk?.sources ?? []).map((source) => (
+              <li key={source.id} className="flex flex-wrap items-baseline justify-between gap-2 py-1">
+                <span>
+                  {source.label} · {sourceKindLabel(source.kind)}
+                </span>
+                <span className="text-[12px] text-ink-muted">
+                  {sourceCheckCopy(source, hermes?.lastTest ?? null, (at) => fmtDateTime(at, timezone))}
+                </span>
+              </li>
+            ))}
+            {!desk?.sources?.length && <li>No sources yet.</li>}
+          </ul>
+        </Card>
+        <Card title="Browser profile" subtitle="Dedicated ~/.realbud/chrome-profile. You sign in. Passwords and cookies never enter config, recipes, or Ask.">
+          <div className="text-[13px] text-ink-secondary">
+            Retention: {desk?.retentionDays ?? "not set"} days. Full captures stay off the event stream.
           </div>
-        </details>
+          {recovery ? (
+            <p className="mt-2 text-[13px] text-hold">Browser work is paused in recovery. Prepare is refused until you resume.</p>
+          ) : (
+            <p className="mt-2 text-[13px] text-ink-secondary">Handoffs stay case-scoped. You submit in the PMS.</p>
+          )}
+        </Card>
+        <AdvancedDiagnostics>
+          {hermes ? (
+            <>
+              <div>pin {hermes.pin.product} / {hermes.pin.tag}</div>
+              <div>profile {hermes.pin.profile}</div>
+              <div>pack {hermes.pack.installed ? "installed" : "missing"} · workroom {hermes.pack.workroomReady ? "ready" : "needs repair"} · approvals {hermes.pack.approvalsManual ? "manual" : "not manual"}</div>
+              <div>private-workroom edits run automatically · sensitive and consequential steps still ask · scheduling stays on RealBud's clock</div>
+              <div>{hermes.detail}</div>
+            </>
+          ) : (
+            <div>Engine status is not available yet.</div>
+          )}
+          <div className="mt-3 flex flex-wrap items-center gap-2 font-sans">
+            <button
+              type="button"
+              onClick={copyDiagnostics}
+              className="pm-control rounded border border-line bg-sheet px-3 text-[13px] text-ink hover:bg-raised"
+            >
+              Copy diagnostics
+            </button>
+            {diagnosticsCopied ? <span className="text-[12px] text-agency">Copied</span> : null}
+          </div>
+        </AdvancedDiagnostics>
+      </div>
+    </details>
+  );
+
+  if (section === "phone") return <ChannelsCard channels={channels} error={channelsError} onChannels={setChannels} onRetry={loadChannels} />;
+  if (section === "office") return officeSection;
+
+  return (
+    <main className="flex h-full min-w-0 flex-1 flex-col bg-paper">
+      <header className="px-5 pb-3 pt-4">
+        <div className="flex items-center gap-2.5">
+          <User size={21} className="text-agency" />
+          <h1 className="pm-screen-title text-ink">You</h1>
+        </div>
+        <p className="mt-1 max-w-[40rem] text-[12.5px] text-ink-secondary">
+          Jump to a group below, or scroll. Set up only what you need for the work ahead.
+        </p>
+      </header>
+      <div ref={scrollRef} data-you-scroll className="flex flex-1 flex-col gap-5 overflow-y-auto px-5 pb-6">
+        <YouJumpNav />
+        {session?.nonProduction && (
+          <div className="rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-[13px] text-warning">
+            Source-run key. This is not a production distribution. Agency data stays local.
+          </div>
+        )}
+        <div className="sr-only" aria-live="polite">
+          {announce}
+        </div>
+        {recovery && (
+          <RecoveryNotice>
+            Desk is in recovery. Writes, schedules and browser work are paused. The book was not replaced with Demo data.
+          </RecoveryNotice>
+        )}
+
+        <YouGroup label={budReady ? "Office" : "Bud setup"}>
+          {budReady ? (
+            <>
+              {officeSection}
+              {goLiveSection}
+              {agencyError ? <div className="text-[12.5px] text-danger">{agencyError}</div> : null}
+              <BudSetupCard />
+            </>
+          ) : (
+            <>
+              <BudSetupCard />
+              {officeSection}
+              {goLiveSection}
+              {agencyError ? <div className="text-[12.5px] text-danger">{agencyError}</div> : null}
+            </>
+          )}
+        </YouGroup>
+
+        <YouGroup label="Connections">
+          {appsSection}
+          {phoneSection}
+        </YouGroup>
+
+        <YouGroup label="Account">
+          {profileSection}
+          <ServiceStatusCard />
+        </YouGroup>
+
+        <YouGroup label="More">
+          {advancedSection}
+          <ServiceAdministration>
+            <ChannelsCard administration channels={channels} error={channelsError} onChannels={setChannels} onRetry={loadChannels} />
+          </ServiceAdministration>
+        </YouGroup>
       </div>
     </main>
   );
@@ -474,8 +566,6 @@ function BudJobsCard({
   runs,
   error,
   onRecipes,
-  onSessions,
-  onRuns,
   onError,
 }: {
   recipes: Recipe[] | null;
@@ -483,13 +573,9 @@ function BudJobsCard({
   runs: JobRun[];
   error: string;
   onRecipes: (recipes: Recipe[]) => void;
-  onSessions: (update: (prev: PortalSession[]) => PortalSession[]) => void;
-  onRuns: (update: (prev: JobRun[]) => JobRun[]) => void;
   onError: (message: string) => void;
 }) {
   const { dispatch } = useStore();
-  const [runningId, setRunningId] = useState<string | null>(null);
-  const [preparingId, setPreparingId] = useState<string | null>(null);
   const [distillId, setDistillId] = useState<string | null>(null);
   const [distillNote, setDistillNote] = useState<Record<string, { ok: boolean; text: string }>>({});
   const [activity, setActivity] = useState<ActivityEntry[] | null>(null);
@@ -500,58 +586,19 @@ function BudJobsCard({
       .catch(() => setActivity([]));
   }, []);
 
-  const attendedLive = Boolean(runningAttended(runs));
-  useEffect(() => {
-    if (!attendedLive) return;
-    const id = window.setInterval(() => {
-      void api("/api/job-runs?limit=100")
-        .then((body: { runs?: JobRun[] }) => {
-          if (Array.isArray(body.runs)) onRuns(() => body.runs!);
-        })
-        .catch(() => {});
-    }, 3_000);
-    return () => window.clearInterval(id);
-  }, [attendedLive, onRuns]);
-
   const fail = (cause: unknown) => onError(cause instanceof Error ? cause.message : String(cause));
-
-  const runShadow = (id: string) => {
-    setRunningId(id);
-    onError("");
-    void api(`/api/recipes/${id}/run`, { method: "POST" })
-      .then((body: { session?: PortalSession; run?: JobRun }) => {
-        if (!body.session) throw new Error("Bud could not start that check.");
-        const next = body.session;
-        onSessions((prev) => [next, ...prev.filter((session) => session.id !== next.id)]);
-        if (body.run) onRuns((prev) => [body.run!, ...prev.filter((run) => run.id !== body.run!.id)]);
-      })
-      .catch(fail)
-      .finally(() => setRunningId(null));
-  };
-
-  const prepareNow = (id: string) => {
-    setPreparingId(id);
-    onError("");
-    void api(`/api/recipes/${id}/prepare`, { method: "POST" })
-      .then((body: { run?: JobRun }) => {
-        if (!body.run) throw new Error("Bud did not return a job receipt.");
-        const next = body.run;
-        onRuns((prev) => [next, ...prev.filter((run) => run.id !== next.id)]);
-      })
-      .catch(fail)
-      .finally(() => setPreparingId(null));
-  };
+  const expectedRevision = (id: string) => recipes?.find((recipe) => recipe.id === id)?.revision ?? -1;
 
   const patchStatus = (id: string, status: Recipe["status"]) => {
     onError("");
-    void api(`/api/recipes/${id}`, { method: "PATCH", body: JSON.stringify({ status }) })
+    void api(`/api/recipes/${id}`, { method: "PATCH", body: JSON.stringify({ status, expectedRevision: expectedRevision(id) }) })
       .then((body) => onRecipes(Array.isArray(body.recipes) ? body.recipes : []))
       .catch(fail);
   };
 
   const approvePlan = (id: string) => {
     onError("");
-    void api(`/api/recipes/${id}`, { method: "PATCH", body: JSON.stringify({ planApproved: true }) })
+    void api(`/api/recipes/${id}`, { method: "PATCH", body: JSON.stringify({ planApproved: true, expectedRevision: expectedRevision(id) }) })
       .then((body) => onRecipes(Array.isArray(body.recipes) ? body.recipes : []))
       .catch(fail);
   };
@@ -588,7 +635,8 @@ function BudJobsCard({
   };
 
   return (
-    <Card title="Bud's jobs" subtitle="Built in Schedule from a plain-language outcome. First runs stay bounded and receipt-backed.">
+    <Card title="Bud's jobs" subtitle="Create, edit, rehearse, and schedule jobs in Schedule. These advanced controls remain available for diagnostics.">
+      <button type="button" onClick={() => dispatch({ type: "showRoutines" })} className="pm-control mb-3 rounded border border-line px-3 text-[13px] text-ink hover:bg-selected">Open Schedule</button>
       {error ? <p className="text-[12.5px] text-danger">{error}</p> : null}
       {!error && recipes == null ? <YouLoadLines label="Loading jobs" /> : null}
       {!error && recipes && recipes.length === 0 ? (
@@ -602,12 +650,9 @@ function BudJobsCard({
             const chip = recipeStatusChip(recipe.status);
             const session = latestSessionFor(sessions, recipe.id);
             const latestRun = runs.find((run) => run.jobId === recipe.id);
-            const runChip = latestRun ? jobRunStatusChip(latestRun.status) : null;
-            const latestAttended = queuedAttended(runs, recipe.id) ?? latestAttendedFor(runs, recipe.id);
-            const attendedChip = latestAttended ? attendedRunLabel(latestAttended) : null;
+            const runChip = latestRun ? attendedRunLabel(latestRun) ?? jobRunStatusChip(latestRun.status) : null;
             const nextStatus = nextRecipeStatus(recipe.status);
             const needsPlan = recipeNeedsPlanApproval(recipe);
-            const canPrepare = recipeClockRunnable(recipe);
             return (
               <li key={recipe.id} className="border-t border-line py-3 first:border-t-0 first:pt-0">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -617,7 +662,6 @@ function BudJobsCard({
                     {needsPlan ? (
                       <span className="rounded px-2 py-0.5 text-[11px] bg-hold/10 text-hold">Plan needs approval</span>
                     ) : null}
-                    {attendedChip ? <StatusLabel tone={attendedChip.tone}>{attendedChip.label}</StatusLabel> : null}
                   </span>
                   <span className="flex flex-wrap items-center gap-3">
                     {needsPlan ? (
@@ -631,28 +675,14 @@ function BudJobsCard({
                     ) : null}
                     <button
                       type="button"
-                      disabled={runningId === recipe.id}
-                      className="inline-flex items-center gap-1 text-[12px] text-ink-muted underline-offset-2 hover:text-ink hover:underline disabled:opacity-40"
-                      onClick={() => runShadow(recipe.id)}
+                      className="pm-control rounded border border-line px-3 text-[12px] font-medium text-agency hover:bg-selected"
+                      onClick={() => {
+                        location.hash = `job-${recipe.id}`;
+                        dispatch({ type: "showRoutines" });
+                      }}
                     >
-                      {runningId === recipe.id ? (
-                        <Loader2 size={12} className="animate-spin motion-reduce:animate-none" />
-                      ) : null}
-                      Rehearse (nothing is browsed)
+                      Review or run in Schedule
                     </button>
-                    {canPrepare ? (
-                      <button
-                        type="button"
-                        disabled={preparingId === recipe.id}
-                        className="inline-flex items-center gap-1 text-[12px] font-medium text-agency underline-offset-2 hover:underline disabled:opacity-40"
-                        onClick={() => prepareNow(recipe.id)}
-                      >
-                        {preparingId === recipe.id ? (
-                          <Loader2 size={12} className="animate-spin motion-reduce:animate-none" />
-                        ) : null}
-                        Prepare now
-                      </button>
-                    ) : null}
                     <button
                       type="button"
                       disabled={distillId === recipe.id}
@@ -691,7 +721,7 @@ function BudJobsCard({
                       onRecipes(recipes.map((item) => (item.id === next.id ? next : item)));
                     }
                   }}
-                  onRun={(run) => onRuns((prev) => [run, ...prev.filter((item) => item.id !== run.id)])}
+                  onRun={(run) => dispatch({ type: "jobRun", run })}
                   onShowAsk={() => dispatch({ type: "showAsk" })}
                 />
                 {distillNote[recipe.id] ? (
@@ -770,12 +800,12 @@ const CHANNEL_SETUP: Record<
   { explainer: string; tokenLabel: string; connectLabel: string; appTokenLabel?: string }
 > = {
   telegram: {
-    explainer: "Paste a BotFather token, then message the bot once to pair.",
+    explainer: "Connect your bot, then generate a pairing code here and send it privately to the bot.",
     tokenLabel: "Bot token from @BotFather",
     connectLabel: "Connect",
   },
   discord: {
-    explainer: "Paste a Discord bot token (Message Content Intent on), then DM once to pair.",
+    explainer: "Connect your Discord bot (Message Content Intent on), then pair using a code from this Mac.",
     tokenLabel: "Bot token from the Discord developer portal",
     connectLabel: "Connect",
   },
@@ -789,9 +819,9 @@ const CHANNEL_SETUP: Record<
 };
 
 const LATER_CHANNELS: Array<{ name: string; reason: string }> = [
-  { name: "WhatsApp", reason: "Needs a named office and a public relay — local Mac has no ingress alone." },
-  { name: "Microsoft Teams", reason: "Bot Framework wiring comes after Slack proves itself." },
-  { name: "SMS", reason: "Needs a provider account (Twilio or similar) — not local-first yet." },
+  { name: "WhatsApp", reason: "Not available to connect yet." },
+  { name: "Microsoft Teams", reason: "Not available to connect yet." },
+  { name: "SMS", reason: "Not available to connect yet." },
 ];
 
 function ChannelsCard({
@@ -799,19 +829,22 @@ function ChannelsCard({
   error,
   onChannels,
   onRetry,
+  administration = false,
 }: {
   channels: ChannelsState | null;
   error: string;
   onChannels: (channels: ChannelsState) => void;
   onRetry?: () => void;
+  administration?: boolean;
 }) {
   const [expanded, setExpanded] = useState<ChannelPlatform | null>(null);
 
   return (
-    <Card title="Phone" subtitle="Allow courtesy wording from your phone. Notices stay on Desk.">
+    <Card title="Continue on your phone" subtitle="The same Bud conversation, wherever you pick it up.">
       <p className="mb-2 text-[12px] text-ink-muted">
-        Same Bud, same book. Pocket stays off until this office is named.
+        Send a task from your messaging app and pick it up in Ask. Keep this computer awake with RealBud open.
       </p>
+      <details className="mb-3 text-[12px] text-ink-muted"><summary className="pm-control cursor-pointer">Using Bud from your phone</summary><p>Send /continue for the latest saved reply or /status for progress. Files and full review controls are available on this computer.</p></details>
       {error ? (
         <div className="flex flex-wrap items-center gap-2">
           <p className="text-[12.5px] text-danger">{error}</p>
@@ -830,6 +863,7 @@ function ChannelsCard({
             {LIVE_CHANNEL_PLATFORMS.map((platform) => (
               <li key={platform}>
                 <ChannelRow
+                  administration={administration}
                   platform={platform}
                   status={channels[platform]}
                   expanded={expanded === platform}
@@ -839,7 +873,7 @@ function ChannelsCard({
               </li>
             ))}
           </ul>
-          <p className="mb-1 mt-3 text-[11px] font-medium uppercase tracking-wide text-ink-muted">Later</p>
+          <details className="mt-3"><summary className="cursor-pointer text-[12px] text-ink-muted">Other messaging apps · not available yet</summary>
           <ul className="divide-y divide-line border-y border-line">
             {LATER_CHANNELS.map((row) => (
               <li key={row.name} className="flex items-baseline justify-between gap-3 py-2.5">
@@ -850,7 +884,7 @@ function ChannelsCard({
                 <StatusLabel tone="muted">Later</StatusLabel>
               </li>
             ))}
-          </ul>
+          </ul></details>
         </div>
       ) : null}
     </Card>
@@ -869,24 +903,32 @@ function ChannelRow({
   expanded,
   onExpand,
   onChannels,
+  administration,
 }: {
   platform: ChannelPlatform;
   status: ChannelStatus;
   expanded: boolean;
   onExpand: () => void;
   onChannels: (channels: ChannelsState) => void;
+  administration: boolean;
 }) {
+  const { state } = useStore();
+  const allowed = useServiceAdminAccess(state.serviceAdmin ?? state.config?.serviceAdmin) && administration;
   const copy = CHANNEL_SETUP[platform];
   const [token, setToken] = useState("");
   const [appToken, setAppToken] = useState("");
-  const [busy, setBusy] = useState<"connect" | "disconnect" | null>(null);
+  const [busy, setBusy] = useState<"connect" | "disconnect" | "pair" | null>(null);
   const [actionError, setActionError] = useState("");
+  const [pairing, setPairing] = useState<{ command: string; expiresAt: number } | null>(null);
+  useEffect(() => { if (!status.connected || status.paired) setPairing(null); }, [status]);
+  useEffect(() => { if (!pairing) return; const timer = setTimeout(() => setPairing(null), Math.max(0, pairing.expiresAt - Date.now())); return () => clearTimeout(timer); }, [pairing]);
+
 
   const fail = (cause: unknown) => setActionError(cause instanceof Error ? cause.message : String(cause));
 
   const connect = () => {
     const botToken = token.trim();
-    if (!botToken || busy) return;
+    if (!allowed || !botToken || busy) return;
     setBusy("connect");
     setActionError("");
     const body: { botToken: string; appToken?: string } = { botToken };
@@ -902,8 +944,19 @@ function ChannelRow({
       .finally(() => setBusy(null));
   };
 
-  const disconnect = () => {
+  const pair = async () => {
     if (busy) return;
+    setBusy("pair"); setActionError(""); setPairing(null);
+    try {
+      const result = await api(`/api/channels/${platform}/pair`, { method: "POST" });
+      if (typeof result.command !== "string" || typeof result.expiresAt !== "number") throw new Error("Pairing code unavailable. Try again.");
+      setPairing({ command: result.command, expiresAt: result.expiresAt });
+    } catch (error) { fail(error); }
+    finally { setBusy(null); }
+  };
+
+  const disconnect = () => {
+    if (!allowed || busy) return;
     setBusy("disconnect");
     setActionError("");
     void api(`/api/channels/${platform}`, { method: "DELETE" }, { timeoutMs: 15_000 })
@@ -916,10 +969,10 @@ function ChannelRow({
     <section className="py-2.5" aria-label={CHANNEL_PLATFORM_LABEL[platform]}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="text-[13px] font-medium text-ink">{CHANNEL_PLATFORM_LABEL[platform]}</span>
+          <ChannelMark channel={CHANNEL_PLATFORM_LABEL[platform] as "Telegram" | "Discord" | "Slack"} /><span className="text-[13px] font-medium text-ink">{CHANNEL_PLATFORM_LABEL[platform]}</span>
           <StatusLabel tone={channelTone(status)}>{channelRowChip(status)}</StatusLabel>
         </div>
-        {status.connected ? (
+        {!allowed ? <span className="text-[12px] text-ink-muted">{status.connected ? "Service configured" : "Administrator setup needed"}</span> : status.connected ? (
           <button
             type="button"
             disabled={busy !== null}
@@ -944,7 +997,15 @@ function ChannelRow({
           @{status.botUsername} · {channelStatusLine(platform, status)}
         </p>
       ) : null}
-      {!status.connected && expanded ? (
+      {status.connected && !status.paired ? <div className="mt-3 space-y-2">
+        <button type="button" onClick={() => void pair()} disabled={busy !== null} className="pm-control rounded border border-line px-3 text-[13px] text-agency disabled:opacity-40">{busy === "pair" ? "Creating code…" : pairing ? "Create a new pairing code" : "Create pairing code"}</button>
+        {pairing ? <div className="rounded border border-line bg-sheet p-3" role="status">
+          <p className="text-[12px] text-ink-muted">Send this privately to @{status.botUsername} from your phone. Expires in 10 minutes. Only someone with this code can pair.</p>
+          <code className="my-2 block select-all break-all text-[14px]">{pairing.command}</code>
+          <CopyButton text={pairing.command} label="Copy pairing command" />
+        </div> : null}
+      </div> : null}
+      {allowed && !status.connected && expanded ? (
         <form
           className="mt-2 space-y-2"
           onSubmit={(event) => {
@@ -1091,7 +1152,7 @@ function RecoveryKeyCard({ recoveryActive }: { recoveryActive: boolean }) {
       {recoveryActive && (
         <div className="mt-3 rounded-xl border border-warning/30 bg-warning/5 px-3 py-2.5">
           <div className="text-[13px] font-medium text-ink">Book locked</div>
-          <p className="mt-0.5 text-[12px] text-ink-muted">Paste your recovery key to restore the quarantined book. RealBud restarts afterwards.</p>
+          <p className="mt-0.5 text-[12px] text-ink-muted">Paste your recovery key only if automatic restore did not open the book.</p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <input
               type="text"

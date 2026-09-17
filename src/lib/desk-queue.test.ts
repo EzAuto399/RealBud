@@ -178,6 +178,16 @@ describe("desk queue model", () => {
     expect(recoveryPlanFor({ ...base, kind: "maintenance-intake" }).prompt).toMatch(/do not dispatch/i);
   });
 
+  it.each(["maintenance-intake", "lease-review", "inspection-prep"] as const)("preserves the selected %s case when the property also has money work", (kind) => {
+    const plan = recoveryPlanFor({ id: "case-oak", workItemId: "work-17", propertyId: "prop-oak", kind, bucket: "next", state: "held", address: "12 Oak St, Dickson ACT", action: "Prepare", meta: "On the book", updatedAt: 1 });
+    expect(plan.prompt).toContain(`"kind":"${kind}"`);
+    expect(plan.prompt).toContain('"caseId":"work-17"');
+    expect(plan.prompt).toContain('"state":"held"');
+    expect(plan.prompt).toContain(plan.missing);
+    expect(plan.prompt).toContain("Check availability before claiming access");
+    expect(plan.prompt).toContain("Missing case details mean an incomplete intake, not a different task");
+  });
+
   it("renders every case kind from the V3 book, including historic-only records", () => {
     const rows = buildDeskQueue(
       snap({

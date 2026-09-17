@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DeskSnapshot } from "../../shared/contracts.ts";
-import { workdayGuide } from "./workday";
+import { deskCheckAction, workdayGuide } from "./workday";
 
 function snapshot(patch: Partial<DeskSnapshot> = {}): DeskSnapshot {
   return {
@@ -19,7 +19,7 @@ function snapshot(patch: Partial<DeskSnapshot> = {}): DeskSnapshot {
     lastRunAt: null,
     results: [],
     hands: "demo",
-    handsDetail: "Demo book — Recheck asks the worker or a CSV for live facts.",
+    handsDetail: "Demo book — Recheck asks Bud or a CSV for live facts.",
     sources: [],
     demo: true,
     ...patch,
@@ -44,7 +44,7 @@ describe("workdayGuide", () => {
 
   it("offers a labelled practice check on the sample book", () => {
     const guide = workdayGuide({ connected: true, desk: snapshot(), workerReady: false });
-    expect(guide).toMatchObject({ phase: "unchecked", action: "practice", actionLabel: "Recheck" });
+    expect(guide).toMatchObject({ phase: "unchecked", action: "practice", actionLabel: "Run sample morning" });
     expect(guide.detail).toContain("training facts");
   });
 
@@ -62,7 +62,7 @@ describe("workdayGuide", () => {
       actionLabel: "Run the sample morning",
     });
     expect(guide.detail).toBe(
-      "Bud did not return live facts. Fix the model connection on You, or keep practising on the sample morning.",
+      "The last check did not return live facts. Bud is connected now; you can recheck from Desk or practise with the sample.",
     );
   });
 
@@ -114,5 +114,17 @@ describe("workdayGuide", () => {
       }),
     });
     expect(guide).toMatchObject({ phase: "clear", title: "You are clear for now" });
+  });
+});
+
+describe("Desk first action", () => {
+  it("offers explicitly labelled practice only for an unchecked sample book", () => {
+    expect(deskCheckAction(snapshot())).toEqual({ path: "/api/desk/practice", label: "Run sample morning" });
+  });
+  it.each([null, 0, 1])("keeps a live book on the live check endpoint (last run %s)", (lastRunAt) => {
+    expect(deskCheckAction(snapshot({ mode: "live", demo: false, lastRunAt }))).toEqual({ path: "/api/desk/check", label: "Recheck" });
+  });
+  it.each([0, 1])("does not silently replay samples after a prior check (%s)", (lastRunAt) => {
+    expect(deskCheckAction(snapshot({ lastRunAt, handsDetail: "Worker timed out" })).path).toBe("/api/desk/check");
   });
 });

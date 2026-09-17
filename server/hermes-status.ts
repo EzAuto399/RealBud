@@ -1,122 +1,132 @@
-// One place the app asks "how is the pinned Hermes worker doing?"
-// Pure probing — no install, no Hermes Desktop, no source edits. Every
-// check is cheap (one --version exec + file reads), so the GUI can ask on
-// focus and after a Desk Recheck without a spinner.
-
+import { bootstrapPending } from "./worker-bootstrap.ts";
+// Read-only worker checks. Hermes is independently installed; RealBud owns
+// the supported adapter contract and its private property profile.
+import { createHash } from "node:crypto";
+import { readFileSync, realpathSync } from "node:fs";
+import { join } from "node:path";
 import { augmentedPath } from "./env-path.ts";
 import { execCli } from "./procs.ts";
-import { HERMES_PIN, hermesInstallCommand, hermesMatchesPin } from "./hermes-pin.ts";
+import { HERMES_PIN, HERMES_COMPATIBLE_RELEASES, hermesCli, hermesInstallCommand, hermesMatchesPin, hermesIsCompatible, parseHermesVersion } from "./hermes-pin.ts";
 import { approvalsAreManual, hermesHome, packInstalled, propertyProfileDir, propertyWorkroomReady } from "./hermes-pack.ts";
 import type { HandsLast } from "./hands-last.ts";
+import { readRuntimeSelection } from "./hermes-runtime-selection.ts";
+
+export function workerSetupPending(root?: string): boolean {
+  return !readRuntimeSelection(hermesHome(root)).selected && bootstrapPending(hermesHome(root));
+}
+
+export type VersionProbe = { state: "ok" | "missing" | "timeout" | "error"; text: string | null };
+
+/** Product-facing name for the Hermes `property` profile — never rename the pin. */
+export const BUD_HANDS_LABEL = "Bud's hands";
 
 export interface HermesStatus {
   pin: { product: string; tag: string; commit: string; profile: string };
-  cli: { installed: boolean; versionText: string | null; matchesPin: boolean };
+  /** Office-facing label for the worker profile (`property` stays internal). */
+  handsLabel: string;
+  cli: { installed: boolean; versionText: string | null; matchesPin: boolean; compatible?: boolean; probeState?: VersionProbe["state"] };
   pack: { installed: boolean; approvalsManual: boolean; workroomReady: boolean };
   homeDir: string;
   profileDir: string;
   installCommand: string | null;
+  installerAvailable?: boolean;
+  bootstrapPending?: boolean;
   signInCommand: string;
-  /** One human sentence: what is missing, or that the hands test passed. */
   detail: string;
   ready: boolean;
-  /** Present on GET /api/hermes. Never includes key material. */
+  workerFingerprint?: string;
   model?: { attached: boolean; provider: string | null; model: string | null };
 }
 
-/** Pin+pack is not ready. Ready means Test hands returned OK. */
+/** A passing check belongs to this worker and profile, never an earlier setup.
+ * Only the digest leaves this function; file contents and keys stay private. */
+export function hermesReadinessFingerprint(version: string, root?: string): string {
+  const hash = createHash("sha256").update(version.trim());
+  const profile = propertyProfileDir(root);
+  let location = profile;
+  try { location = realpathSync(profile); } catch { /* Missing profiles remain unready. */ }
+  hash.update(`\0${process.platform}\0${process.arch}\0${location}\0`);
+  for (const file of ["config.yaml", ".env", "auth.json", "SOUL.md"]) {
+    hash.update(`\0${file}\0`);
+    try { hash.update(readFileSync(join(propertyProfileDir(root), file))); }
+    catch { hash.update("missing"); }
+  }
+  return hash.digest("hex");
+}
+
 export function applyHandsReadiness(status: HermesStatus, lastPing: HandsLast | null): HermesStatus {
-  if (
-    !status.cli.installed ||
-    !status.cli.matchesPin ||
-    !status.pack.installed ||
-    !status.pack.approvalsManual ||
-    !status.pack.workroomReady
-  ) {
-    return status;
+  if (status.bootstrapPending || !status.cli.installed || !(status.cli.compatible ?? status.cli.matchesPin) ||
+      !status.pack.installed || !status.pack.approvalsManual || !status.pack.workroomReady) return { ...status, ready: false };
+  const version = parseHermesVersion(status.cli.versionText ?? "").product ?? "supported";
+  if (lastPing?.kind === "ping" && lastPing.ok && status.workerFingerprint &&
+      lastPing.workerFingerprint === status.workerFingerprint) {
+    return { ...status, ready: true, detail: `Worker ${version} passed the hands test for this setup. Desk Recheck can ask it for the morning ledger.` };
   }
-  if (lastPing?.kind === "ping" && lastPing.ok) {
-    return {
-      ...status,
-      ready: true,
-      detail: `Worker ${HERMES_PIN.product} passed the hands test. Desk Recheck can ask it for the morning ledger.`,
-    };
-  }
-  return {
-    ...status,
-    ready: false,
-    detail: `Worker ${HERMES_PIN.product} and the pack are installed. Run the hands test before Recheck or Ask.`,
-  };
+  return { ...status, ready: false, detail: `Worker ${version} and the pack are installed. Run the hands test before Recheck or Ask.` };
 }
 
-// The version string only changes when the worker is reinstalled, so a short
-// cache keeps focus refetches and status polls from spawning a process per call.
 const VERSION_CACHE_MS = 60_000;
-let versionCache: { cli: string; at: number; text: string | null } | null = null;
-
+let cacheGeneration = 0;
+const versionCache = new Map<string, { at: number; result: VersionProbe }>();
+const inFlight = new Map<string, Promise<VersionProbe>>();
 export function clearHermesVersionCache(): void {
-  versionCache = null;
+  cacheGeneration++;
+  versionCache.clear();
+  inFlight.clear();
 }
 
-export function probeHermesVersion(cli: string): Promise<string | null> {
-  if (!process.env.VITEST && versionCache && versionCache.cli === cli && Date.now() - versionCache.at < VERSION_CACHE_MS) {
-    return Promise.resolve(versionCache.text);
-  }
-  return new Promise((resolve) => {
-    // Finder-launched apps inherit a stub PATH; the worker lives in
-    // ~/.local/bin or Homebrew, so probes use the augmented login PATH.
-    execCli(cli, ["--version"], { timeout: 8_000, env: { ...process.env, PATH: augmentedPath() } }, (err, stdout) => {
-      const text = err ? null : String(stdout);
-      versionCache = { cli, at: Date.now(), text };
-      resolve(text);
+export function probeHermesCli(cli: string, timeoutMs = 8_000): Promise<VersionProbe> {
+  const key = `${cli}\0${timeoutMs}`;
+  const cached = versionCache.get(key);
+  if (!process.env.VITEST && cached && Date.now() - cached.at < VERSION_CACHE_MS) return Promise.resolve(cached.result);
+  const pending = inFlight.get(key);
+  if (pending) return pending;
+  const generation = cacheGeneration;
+  const probe = new Promise<VersionProbe>((resolve) => {
+    execCli(cli, ["--version"], { timeout: timeoutMs, env: { ...process.env, PATH: augmentedPath() } }, (err, stdout) => {
+      const failure = err as (NodeJS.ErrnoException & { killed?: boolean }) | null;
+      const result: VersionProbe = failure
+        ? { state: failure.code === "ENOENT" ? "missing" : failure.killed ? "timeout" : "error", text: null }
+        : stdout.trim() ? { state: "ok", text: String(stdout) } : { state: "error", text: null };
+      // A transient miss must be retryable immediately, not sticky for a minute.
+      if (result.state === "ok" && cacheGeneration === generation) {
+        if (versionCache.size >= 8) versionCache.clear();
+        versionCache.set(key, { at: Date.now(), result });
+      }
+      resolve(result);
     });
-  });
+  }).finally(() => { if (inFlight.get(key) === probe) inFlight.delete(key); });
+  inFlight.set(key, probe);
+  return probe;
 }
 
-export async function hermesStatus(
-  opts?: { root?: string; cli?: string; platform?: NodeJS.Platform },
-): Promise<HermesStatus> {
-  const platform = opts?.platform ?? process.platform;
-  const cli = opts?.cli ?? "hermes";
-  const versionText = await probeHermesVersion(cli);
+export async function probeHermesVersion(cli: string): Promise<string | null> {
+  return (await probeHermesCli(cli)).text;
+}
+
+export async function hermesStatus(opts?: { root?: string; cli?: string; platform?: NodeJS.Platform; probeTimeoutMs?: number }): Promise<HermesStatus> {
+  const probe = await probeHermesCli(opts?.cli ?? hermesCli(), opts?.probeTimeoutMs);
+  const versionText = probe.text;
   const matchesPin = versionText != null && hermesMatchesPin(versionText);
-  const pack = {
-    installed: packInstalled(opts?.root),
-    approvalsManual: approvalsAreManual(opts?.root),
-    workroomReady: propertyWorkroomReady(opts?.root),
-  };
-
+  const compatible = versionText != null && hermesIsCompatible(versionText);
+  const version = parseHermesVersion(versionText ?? "").product ?? "supported";
+  const pack = { installed: packInstalled(opts?.root), approvalsManual: approvalsAreManual(opts?.root), workroomReady: propertyWorkroomReady(opts?.root) };
   let detail: string;
-  let ready: boolean;
-  if (!versionText) {
-    detail = `The worker is not installed — install the pinned v${HERMES_PIN.product} worker, then run the install.`;
-    ready = false;
-  } else if (!matchesPin) {
-    detail = `Installed worker is ${versionText.trim()} but the pin is v${HERMES_PIN.product} (${HERMES_PIN.tag}). Install the pinned worker.`;
-    ready = false;
-  } else if (!pack.installed) {
-    detail = `Worker ${HERMES_PIN.product} matches the pin, but the "${HERMES_PIN.profile}" pack is not installed. Apply the property pack.`;
-    ready = false;
-  } else if (!pack.approvalsManual) {
-    detail = `Worker ${HERMES_PIN.product} and the pack are in, but approvals are not manual on the "${HERMES_PIN.profile}" profile. Re-apply the pack.`;
-    ready = false;
-  } else if (!pack.workroomReady) {
-    detail = `Worker ${HERMES_PIN.product} needs the current private workroom policy. Re-apply the property pack.`;
-    ready = false;
-  } else {
-    detail = `Worker ${HERMES_PIN.product} and the pack are installed. Run the hands test before Recheck or Ask.`;
-    ready = false;
-  }
-
+  if (probe.state === "missing") detail = `The worker is not installed. Install the supported v${HERMES_PIN.product} worker, then apply Bud's hands safeguards.`;
+  else if (probe.state === "timeout") detail = "The installed worker took too long to report its version. Retry the check; reinstalling is not required by this result.";
+  else if (probe.state === "error") detail = "The worker could not report its version. Check that Bud starts, then retry the check.";
+  else if (!compatible) detail = `This worker release has not been checked with RealBud. Supported releases are ${HERMES_COMPATIBLE_RELEASES.map(release => `${release.product} (${release.calendar})`).join(", ")}; the fallback pin is v${HERMES_PIN.product}.`;
+  else if (!pack.installed) detail = `Worker ${version} is supported, but Bud's hands safeguards are not installed. Apply them in You → This office.`;
+  else if (!pack.approvalsManual) detail = `Worker ${version} needs manual approvals on Bud's hands. Re-apply the safeguards.`;
+  else if (!pack.workroomReady) detail = `Worker ${version} needs the current private workroom policy. Re-apply Bud's hands safeguards.`;
+  else detail = `Worker ${version} and Bud's hands are installed. Run the hands test before Recheck or Ask.`;
   return {
     pin: { ...HERMES_PIN },
-    cli: { installed: versionText != null, versionText, matchesPin },
-    pack,
-    homeDir: hermesHome(opts?.root),
-    profileDir: propertyProfileDir(opts?.root),
-    installCommand: hermesInstallCommand(platform),
-    signInCommand: `hermes -p ${HERMES_PIN.profile} model`,
-    detail,
-    ready,
+    handsLabel: BUD_HANDS_LABEL,
+    cli: { installed: probe.state !== "missing", versionText, matchesPin, compatible, probeState: probe.state },
+    pack, homeDir: hermesHome(opts?.root), profileDir: propertyProfileDir(opts?.root),
+    installCommand: hermesInstallCommand(opts?.platform ?? process.platform), bootstrapPending: workerSetupPending(opts?.root),
+    installerAvailable: ["darwin", "linux", "win32"].includes(opts?.platform ?? process.platform), signInCommand: `hermes -p ${HERMES_PIN.profile} model`,
+    detail, ready: false, ...(versionText ? { workerFingerprint: hermesReadinessFingerprint(versionText, opts?.root) } : {}),
   };
 }

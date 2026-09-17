@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,8 @@ import type { DeskSnapshot, Draft, Escalation, Property } from "../shared/contra
 import {
   bindRemoteDecisions,
   decideRemotely,
+  decideRemoteText,
+  pendingDecisionId,
   decisionPushText,
   flushDeferredDecisions,
   isQuietHours,
@@ -14,7 +16,6 @@ import {
   parseRemoteDecisionText,
   pendingDraftId,
   resetRemoteDecisions,
-  sendPairedDigest,
   startRemoteDecisionFlush,
   type RemoteChannelAdapter,
   type RemoteDesk,
@@ -91,7 +92,7 @@ function stubChannel(id: "telegram" | "discord", sent: Array<{ id: string; text:
   };
 }
 
-function fakeDesk(initial: DeskSnapshot): RemoteDesk & { notes: string } {
+function fakeDesk(initial: DeskSnapshot): RemoteDesk & { notes: string; editDraft: (id: string, body: string, expected?: number) => Draft } {
   let snap = initial;
   const notes = { body: "" };
   return {
@@ -134,6 +135,16 @@ function fakeDesk(initial: DeskSnapshot): RemoteDesk & { notes: string } {
       notes.body = body;
       return { id: "prop-oak", body };
     },
+    editDraft(id: string, body: string, expected?: number) {
+      if (expected != null && expected !== snap.revision) {
+        throw Object.assign(new Error("stale desk revision"), { status: 409 });
+      }
+      const row = snap.drafts.find((item) => item.id === id);
+      if (!row || row.status !== "pending") throw Object.assign(new Error("stale"), { status: 404 });
+      row.body = body;
+      snap = { ...snap, revision: snap.revision + 1, drafts: snap.drafts.map((item) => (item.id === id ? { ...row } : item)) };
+      return row;
+    },
   };
 }
 
@@ -159,7 +170,9 @@ describe("notifyDeskSnapshot", () => {
       now: () => Date.UTC(2026, 7, 31, 0, 0, 0),
     });
     await notifyDeskSnapshot(desk.snapshot());
-    expect(sent.map((row) => row.draftId)).toEqual(["d-older", "d-older"]);
+    expect(sent).toHaveLength(2);
+    expect(sent[0]!.draftId).toBe(pendingDecisionId("telegram"));
+    expect(sent[1]!.draftId).toBe(pendingDecisionId("discord"));
     expect(pendingDraftId("telegram")).toBe("d-older");
     expect(pendingDraftId("discord")).toBe("d-older");
 
@@ -188,9 +201,64 @@ describe("notifyDeskSnapshot", () => {
     expect(sent).toEqual([]);
     expect(pendingDraftId("telegram")).toBeNull();
   });
+  it("does not re-send the same review card after a restart with storeDir", async () => {
+    const sent: Array<{ id: string; text: string; draftId: string }> = [];
+    const dir = mkdtempSync(join(tmpdir(), "realbud-decision-push-"));
+    const drafts = [draft("d-harbour", 10)];
+    const desk = fakeDesk(snapshot(drafts));
+    bindRemoteDecisions({
+      desk,
+      commit: () => {},
+      channels: [stubChannel("telegram", sent)],
+      now: () => Date.UTC(2026, 7, 31, 0, 0, 0),
+      storeDir: dir,
+    });
+    await notifyDeskSnapshot(desk.snapshot());
+    expect(sent).toHaveLength(1);
+    const firstId = pendingDecisionId("telegram");
+    expect(firstId).toBeTruthy();
+
+    // Simulate process restart: new bind, same storeDir + same pending draft.
+    bindRemoteDecisions({
+      desk,
+      commit: () => {},
+      channels: [stubChannel("telegram", sent)],
+      now: () => Date.UTC(2026, 7, 31, 0, 5, 0),
+      storeDir: dir,
+    });
+    await notifyDeskSnapshot(desk.snapshot());
+    expect(sent).toHaveLength(1);
+    expect(pendingDecisionId("telegram")).toBe(firstId);
+  });
 });
 
 describe("decideRemotely", () => {
+  it("does not approve wording changed after the phone card was delivered", async () => {
+    const desk = fakeDesk(snapshot([draft("d-1", 10)]));
+    bindRemoteDecisions({ desk, commit: () => {}, channels: [stubChannel("telegram", [])], now: () => Date.UTC(2026, 7, 31, 0) });
+    await notifyDeskSnapshot(desk.snapshot());
+    const decisionId = pendingDecisionId("telegram")!;
+    desk.snapshot().drafts[0]!.body = "Different wording";
+    const result = await decideRemotely("telegram", "chat-1", decisionId, "allow", undefined, "Sam");
+    expect(result.ok).toBe(false);
+    expect(desk.snapshot().drafts[0]!.status).toBe("pending");
+  });
+  it("does not approve a card that was never delivered to this channel", async () => {
+    const desk = fakeDesk(snapshot([draft("d-1", 10)]));
+    bindRemoteDecisions({ desk, commit: () => {}, channels: [stubChannel("telegram", [])] });
+    expect((await decideRemotely("telegram", "chat-1", "d-1", "allow", undefined, "Sam")).ok).toBe(false);
+    expect(desk.snapshot().drafts[0]!.status).toBe("pending");
+  });
+  it("coalesces overlapping snapshots while delivery is pending", async () => {
+    let finish!: () => void;
+    const send = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
+    const desk = fakeDesk(snapshot([draft("d-1", 10)]));
+    bindRemoteDecisions({ desk, commit: () => {}, channels: [{ ...stubChannel("telegram", []), sendDecision: send }], now: () => Date.UTC(2026, 7, 31, 0) });
+    const first = notifyDeskSnapshot(desk.snapshot()); await Promise.resolve();
+    const second = notifyDeskSnapshot(desk.snapshot()); await Promise.resolve();
+    expect(send).toHaveBeenCalledTimes(1);
+    finish(); await Promise.all([first, second]);
+  });
   it("allows with the current revision and stamps via on the draft", async () => {
     const sent: Array<{ id: string; text: string; draftId: string }> = [];
     const desk = fakeDesk(snapshot([draft("d-1", 10), draft("d-2", 20)]));
@@ -205,13 +273,15 @@ describe("decideRemotely", () => {
       now: () => Date.UTC(2026, 7, 31, 0, 0, 0),
     });
     await notifyDeskSnapshot(desk.snapshot());
-    const result = await decideRemotely("telegram", "chat-1", "d-1", "allow", undefined, "Yoda");
+    const result = await decideRemotely("telegram", "chat-1", pendingDecisionId("telegram")!, "allow", undefined, "Yoda");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.draft.status).toBe("allowed");
     expect(result.draft.via).toBe("via Telegram · Yoda");
     expect(result.stamp).toMatch(/^Allowed via Telegram · Yoda · /);
-    expect(sent.map((row) => row.draftId)).toEqual(["d-1", "d-2"]);
+    expect(sent).toHaveLength(2);
+    expect(pendingDraftId("telegram")).toBe("d-2");
+    expect(sent[0]!.draftId).not.toBe(sent[1]!.draftId);
     expect(commits.length).toBeGreaterThan(0);
   });
 
@@ -223,7 +293,8 @@ describe("decideRemotely", () => {
       channels: [stubChannel("telegram", [])],
       now: () => Date.UTC(2026, 7, 31, 0, 0, 0),
     });
-    const result = await decideRemotely("telegram", "chat-1", "d-1", "deny", "too soon", "Sam");
+    await notifyDeskSnapshot(desk.snapshot());
+    const result = await decideRemotely("telegram", "chat-1", pendingDecisionId("telegram")!, "deny", "too soon", "Sam");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.draft.status).toBe("denied");
@@ -241,9 +312,11 @@ describe("decideRemotely", () => {
       desk,
       commit: () => {},
       channels: [stubChannel("telegram", [])],
+      now: () => Date.UTC(2026, 7, 31, 0),
     });
-    const result = await decideRemotely("telegram", "chat-1", "d-1", "allow", undefined, "Yoda");
-    expect(result).toEqual({ ok: false, message: "the book moved — open Desk to review" });
+    await notifyDeskSnapshot(desk.snapshot());
+    const result = await decideRemotely("telegram", "chat-1", pendingDecisionId("telegram")!, "allow", undefined, "Yoda");
+    expect(result).toEqual({ ok: false, message: "This work changed. Review the current wording on Desk before deciding." });
     desk.allowDraft = original;
     expect(desk.snapshot().drafts[0]?.status).toBe("pending");
   });
@@ -289,7 +362,8 @@ describe("quiet hours", () => {
     now = Date.UTC(2026, 7, 31, 21, 1, 0);
     expect(isQuietHours(now, "Australia/Sydney")).toBe(false);
     await flushDeferredDecisions();
-    expect(sent.map((row) => row.draftId)).toEqual(["d-1"]);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.draftId).toBe(pendingDecisionId("telegram"));
     expect(pendingDraftId("telegram")).toBe("d-1");
   });
 
@@ -312,76 +386,163 @@ describe("parseRemoteDecisionText", () => {
   });
 });
 
-describe("durable digest receipts", () => {
-  it("keeps a quiet-hour digest across restart and sends once", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "realbud-digest-"));
-    const sent: string[] = [];
-    const digestChannel = (id: "telegram"): RemoteChannelAdapter => ({
-      id,
-      label: "Telegram",
-      pairedKey: () => "chat-1",
-      async sendDecision() {},
-      async sendDigest(text) {
-        sent.push(text);
-      },
-    });
-    let now = Date.UTC(2026, 7, 31, 8, 0, 0);
-    const desk = fakeDesk(snapshot([]));
-    bindRemoteDecisions({
-      desk,
-      commit: () => {},
-      channels: [digestChannel("telegram")],
-      now: () => now,
-      storeDir: dir,
-    });
-    await sendPairedDigest("Morning money: 3 checked · 1 needs you.", "Australia/Sydney");
-    expect(sent).toEqual([]);
+describe("review card identity and recovery", () => {
+  function setup(patch: Partial<RemoteChannelAdapter> = {}, rows = [draft("d-1", 10), draft("d-2", 20)]) {
+    const desk = fakeDesk(snapshot(rows));
+    const sent: Array<{ id: string; text: string; draftId: string }> = [];
+    const channel = { ...stubChannel("telegram", sent), ...patch };
+    const options = { desk, channels: [channel], commit: (snap: DeskSnapshot) => notifyDeskSnapshot(snap), now: () => Date.UTC(2026, 7, 31, 0) };
+    bindRemoteDecisions(options);
+    return { desk, sent, channel, options };
+  }
 
-    resetRemoteDecisions();
-    now = Date.UTC(2026, 7, 31, 21, 1, 0);
-    bindRemoteDecisions({
-      desk,
-      commit: () => {},
-      channels: [digestChannel("telegram")],
-      now: () => now,
-      storeDir: dir,
-    });
-    await flushDeferredDecisions();
-    expect(sent).toEqual(["Morning money: 3 checked · 1 needs you."]);
-
-    await sendPairedDigest("Morning money: 3 checked · 1 needs you.", "Australia/Sydney");
-    expect(sent).toEqual(["Morning money: 3 checked · 1 needs you."]);
+  it.each([
+    { body: "Changed wording" }, { to: "another@example.test" }, { propertyId: "prop-other" },
+    { channel: "email" as const }, { kind: "owner-letter" as const }, { periodDueAt: 42 },
+  ])("replaces a changed card and refuses the old approval: %j", async patch => {
+    const { desk, sent } = setup();
+    await notifyDeskSnapshot(desk.snapshot());
+    const old = pendingDecisionId("telegram")!;
+    Object.assign(desk.snapshot().drafts[0]!, patch);
+    await notifyDeskSnapshot(desk.snapshot());
+    const current = pendingDecisionId("telegram")!;
+    expect(current).not.toBe(old);
+    expect(sent).toHaveLength(2);
+    expect((await decideRemotely("telegram", "chat-1", old, "allow", undefined, "Sam")).ok).toBe(false);
+    expect(desk.snapshot().drafts[0]!.status).toBe("pending");
+    expect((await decideRemotely("telegram", "chat-1", current, "allow", undefined, "Sam")).ok).toBe(true);
   });
 
-  it("retries a failed digest and does not double-send after success", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "realbud-digest-fail-"));
-    const sent: string[] = [];
-    let fail = true;
-    const desk = fakeDesk(snapshot([]));
+  it("shows exact recipient and wording, and does not invalidate review for an unrelated revision", async () => {
+    const { desk, sent } = setup();
+    await notifyDeskSnapshot(desk.snapshot());
+    expect(sent[0]!.text).toContain("To: 0400555666 (sms)\n\nHi\n\n");
+    expect(sent[0]!.text).toContain("Allow sends nothing");
+    const id = pendingDecisionId("telegram")!;
+    desk.snapshot().revision++;
+    expect((await decideRemotely("telegram", "chat-1", id, "allow", undefined, "Sam")).ok).toBe(true);
+  });
+
+  it("does not guess what yes means or apply a repeated coded reply to the next card", async () => {
+    const { desk } = setup(); await notifyDeskSnapshot(desk.snapshot());
+    const id = pendingDecisionId("telegram")!;
+    expect(await decideRemoteText("telegram", "chat-1", "yes", "Sam")).toMatchObject({ ok: false, message: expect.stringContaining(`allow ${id}`) });
+    expect(desk.snapshot().drafts[0]!.status).toBe("pending");
+    expect((await decideRemoteText("telegram", "chat-1", `allow ${id}`, "Sam"))?.ok).toBe(true);
+    expect((await decideRemoteText("telegram", "chat-1", `allow ${id}`, "Sam"))?.ok).toBe(false);
+    expect(desk.snapshot().drafts[1]!.status).toBe("pending");
+  });
+
+  it("admits only one decision across two paired channels", async () => {
+    const { desk, options } = setup();
+    bindRemoteDecisions({ ...options, channels: [...options.channels, stubChannel("discord", [])] });
+    await notifyDeskSnapshot(desk.snapshot());
+    const first = pendingDecisionId("telegram")!, second = pendingDecisionId("discord")!;
+    const outcomes = await Promise.all([
+      decideRemotely("telegram", "chat-1", first, "allow", undefined, "Sam"),
+      decideRemotely("discord", "chat-1", second, "deny", undefined, "Sam"),
+    ]);
+    expect(outcomes.filter(result => result.ok)).toHaveLength(1);
+    expect(desk.snapshot().revision).toBe(2);
+  });
+
+  it("keeps a saved decision successful when notification fails", async () => {
+    const { desk, options } = setup();
+    bindRemoteDecisions({ ...options, commit: () => { throw new Error("notification failed"); } });
+    await notifyDeskSnapshot(desk.snapshot());
+    expect((await decideRemotely("telegram", "chat-1", pendingDecisionId("telegram")!, "allow", undefined, "Sam")).ok).toBe(true);
+    expect(desk.snapshot().drafts[0]!.status).toBe("allowed");
+  });
+
+  it("does not approve truncated wording", async () => {
+    const sendDecision = vi.fn(), sendDigest = vi.fn();
+    const { desk } = setup({ sendDecision, sendDigest }, [draft("long", 1, { body: "x".repeat(1900) })]);
+    await notifyDeskSnapshot(desk.snapshot());
+    expect(sendDecision).not.toHaveBeenCalled();
+    expect(sendDigest).toHaveBeenCalledWith(expect.stringContaining("full wording"));
+    expect(pendingDecisionId("telegram")).toBeNull();
+    expect((await decideRemotely("telegram", "chat-1", "long", "allow", undefined, "Sam")).ok).toBe(false);
+  });
+
+  it("recovers failed delivery using the same card identity", async () => {
+    const sendDecision = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue(undefined);
+    const { desk } = setup({ sendDecision });
+    await notifyDeskSnapshot(desk.snapshot());
+    const id = sendDecision.mock.calls[0]![1];
+    expect(pendingDecisionId("telegram")).toBeNull();
+    await notifyDeskSnapshot(desk.snapshot());
+    expect(sendDecision.mock.calls[1]![1]).toBe(id);
+    expect(pendingDecisionId("telegram")).toBe(id);
+  });
+
+  it("refreshes an old card after restart and rejects a re-paired account", async () => {
+    let paired = "chat-1";
+    const { desk, options } = setup({ pairedKey: () => paired });
+    await notifyDeskSnapshot(desk.snapshot());
+    const old = pendingDecisionId("telegram")!;
+    bindRemoteDecisions(options);
+    expect((await decideRemotely("telegram", "chat-1", old, "allow", undefined, "Sam")).ok).toBe(false);
+    await notifyDeskSnapshot(desk.snapshot());
+    expect(pendingDecisionId("telegram")).not.toBe(old);
+    const current = pendingDecisionId("telegram")!;
+    paired = "chat-2";
+    expect((await decideRemotely("telegram", "chat-2", current, "allow", undefined, "Other")).ok).toBe(false);
+    expect(desk.snapshot().drafts[0]!.status).toBe("pending");
+  });
+
+  it("does not publish late delivery into a replacement binding", async () => {
+    let finish!: () => void;
+    const { desk } = setup({ sendDecision: () => new Promise<void>(resolve => { finish = resolve; }) });
+    const old = notifyDeskSnapshot(desk.snapshot()); await Promise.resolve();
+    const replacement = setup({}, [draft("new", 1)]);
+    await notifyDeskSnapshot(replacement.desk.snapshot());
+    const current = pendingDecisionId("telegram");
+    finish(); await old;
+    expect(pendingDraftId("telegram")).toBe("new");
+    expect(pendingDecisionId("telegram")).toBe(current);
+  });
+
+  it("refreshes wording that changed while the old card was being delivered", async () => {
+    let finish!: () => void;
+    const sendDecision = vi.fn().mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; })).mockResolvedValue(undefined);
+    const { desk } = setup({ sendDecision });
+    const sending = notifyDeskSnapshot(desk.snapshot()); await Promise.resolve();
+    const old = sendDecision.mock.calls[0]![1];
+    desk.snapshot().drafts[0]!.body = "Updated before delivery completed";
+    finish(); await sending;
+    expect(sendDecision).toHaveBeenCalledTimes(2);
+    expect(pendingDecisionId("telegram")).toBe(sendDecision.mock.calls[1]![1]);
+    expect(pendingDecisionId("telegram")).not.toBe(old);
+    expect((await decideRemotely("telegram", "chat-1", old, "allow", undefined, "Sam")).ok).toBe(false);
+  });
+
+  it("holds decisions during book recovery and does not disclose reply codes to another pairing", async () => {
+    const { desk } = setup(); await notifyDeskSnapshot(desk.snapshot());
+    const id = pendingDecisionId("telegram")!;
+    expect(await decideRemoteText("telegram", "other", "yes", "Other")).toEqual({ ok: false, message: "This Bud is paired elsewhere." });
+    desk.snapshot().recovery.active = true;
+    expect((await decideRemotely("telegram", "chat-1", id, "allow", undefined, "Sam")).ok).toBe(false);
+    expect(desk.snapshot().drafts[0]!.status).toBe("pending");
+  });
+
+  it("binds review to the actual durable Desk edit and saves only the newly reviewed wording", async () => {
+    const desk = fakeDesk(snapshot([draft("d-review", 10, { body: "Original wording for this tenant." })]));
+    const sent: Array<{ id: string; text: string; draftId: string }> = [];
     bindRemoteDecisions({
       desk,
-      commit: () => {},
-      channels: [
-        {
-          id: "telegram",
-          label: "Telegram",
-          pairedKey: () => "chat-1",
-          async sendDecision() {},
-          async sendDigest(text) {
-            if (fail) throw new Error("net");
-            sent.push(text);
-          },
-        },
-      ],
-      now: () => Date.UTC(2026, 7, 31, 0, 0, 0),
-      storeDir: dir,
+      channels: [stubChannel("telegram", sent)],
+      commit: notifyDeskSnapshot,
+      now: () => Date.UTC(2026, 7, 17, 2),
     });
-    await sendPairedDigest("Morning money: 2 need you.", "Australia/Sydney");
-    expect(sent).toEqual([]);
-    fail = false;
-    await flushDeferredDecisions();
-    expect(sent).toEqual(["Morning money: 2 need you."]);
-    await flushDeferredDecisions();
-    expect(sent).toEqual(["Morning money: 2 need you."]);
+    await notifyDeskSnapshot(desk.snapshot());
+    const draftId = pendingDraftId("telegram");
+    expect(draftId).toBe("d-review");
+    const old = pendingDecisionId("telegram")!;
+    const edited = desk.editDraft(draftId!, "Updated wording for this tenant only.", desk.snapshot().revision);
+    expect((await decideRemotely("telegram", "chat-1", old, "allow", undefined, "Sam")).ok).toBe(false);
+    await notifyDeskSnapshot(desk.snapshot());
+    expect(sent.at(-1)!.text).toContain(edited.body);
+    expect((await decideRemotely("telegram", "chat-1", pendingDecisionId("telegram")!, "allow", undefined, "Sam")).ok).toBe(true);
+    expect(desk.snapshot().drafts.find((row) => row.id === draftId)).toMatchObject({ status: "allowed", body: edited.body });
   });
 });

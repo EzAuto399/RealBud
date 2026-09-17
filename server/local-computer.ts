@@ -72,7 +72,7 @@ export function readCuaConnection({
   if (platform === "linux") return null;
 
   const candidates = userData ? [join(userData, "cua-connection.json")] : [];
-  if (platform === "darwin") {
+  if (platform === "darwin" && !userData) {
     // Legacy/dev fallback. Packaged Electron passes its exact userData path.
     for (const dir of ["RealBud", "realbud", "OpenMausBot", "openmausbot", "OpenGrokBot", "opengrokbot"]) {
       candidates.push(join(home, "Library", "Application Support", dir, "cua-connection.json"));
@@ -90,9 +90,9 @@ export function readCuaConnection({
   return null;
 }
 
-/** Attended portal runs need a Mac plus a live desktop helper. */
+/** Attended portal runs require a supported host and a desktop helper. */
 export function cuaAttendedReady(): boolean {
   if (testOverride !== undefined) return testOverride !== null;
-  if (process.platform !== "darwin" && process.env.REALBUD_CUA_TEST_READY !== "1") return false;
+  if (!["darwin", "win32"].includes(process.platform) && process.env.REALBUD_CUA_TEST_READY !== "1") return false;
   return readCuaConnection() !== null;
 }

@@ -1,21 +1,45 @@
 // Install the locked `property` profile into a Hermes home. File copy only —
 // we never edit Hermes source or launch Hermes.app.
-import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 
 import { writeFileAtomic } from "./atomic.ts";
 import { HERMES_PIN } from "./hermes-pin.ts";
+import { hermesHome } from "./hermes-paths.ts";
+export { hermesHome } from "./hermes-paths.ts";
 
 export const PACK_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "pack", "property");
 
-export function hermesHome(root?: string): string {
-  return root ?? process.env.HERMES_HOME ?? join(homedir(), ".hermes");
-}
-
 export function propertyProfileDir(root?: string): string {
   return join(hermesHome(root), "profiles", HERMES_PIN.profile);
+}
+
+/** One-shot: if Bud's hands are missing in the RealBud-owned home but still
+ * live under the personal Hermes Desktop home, copy that profile only (never
+ * personal / property-manager / other sibling profiles). */
+export function migratePropertyProfileFromLegacyHermes(root?: string): { migrated: boolean; from?: string; to?: string } {
+  const dest = propertyProfileDir(root);
+  if (packInstalled(root)) return { migrated: false };
+  const legacyHome = join(homedir(), ".hermes");
+  const owned = hermesHome(root);
+  if (resolvedPath(owned) === resolvedPath(legacyHome)) return { migrated: false };
+  const from = join(legacyHome, "profiles", HERMES_PIN.profile);
+  if (!existsSync(join(from, "SOUL.md"))) return { migrated: false };
+  mkdirSync(dirname(dest), { recursive: true });
+  cpSync(from, dest, { recursive: true });
+  // Stamp so Advanced can show the split happened once.
+  try {
+    writeFileSync(
+      join(dest, ".realbud-migrated-from-legacy-hermes"),
+      `${new Date().toISOString()}\nfrom=${from}\n`,
+      { flag: "wx" },
+    );
+  } catch {
+    /* already stamped or unwritable */
+  }
+  return { migrated: true, from, to: dest };
 }
 
 /** Official installer checkout — Hermes status calls this "Install directory". */
@@ -46,6 +70,19 @@ export function isInsideHermesHome(target: string, root?: string): boolean {
 
 export function packInstalled(root?: string): boolean {
   return existsSync(join(propertyProfileDir(root), "SOUL.md"));
+}
+
+function ensurePrivateRootAuth(root?: string): void {
+  // An empty owned-home root prevents fallback to personal Hermes auth.
+  const path = join(hermesHome(root), "auth.json");
+  if (!existsSync(path)) writeFileAtomic(path, `${JSON.stringify({ version: 1, providers: {}, credential_pool: {} }, null, 2)}\n`);
+}
+
+/** Startup is initialization only. Existing profiles change through Repair. */
+export function ensurePropertyPack(root?: string): { dir: string; wrote: string[] } {
+  if (!packInstalled(root)) return applyPropertyPack(root);
+  ensurePrivateRootAuth(root);
+  return { dir: propertyProfileDir(root), wrote: [] };
 }
 
 /** Indented YAML map under `key:` (Hermes config style). */
@@ -79,25 +116,51 @@ function readIf(path: string): string {
   }
 }
 
+/** Replace only RealBud-owned policy blocks; keep all other upstream settings. */
+export function mergePropertyPolicy(existing: string, defaults: string): string {
+  if (!existing.trim()) return defaults;
+  const keys = ["approvals", "agent", "toolsets", "security", "delegation", "terminal", "file_read_max_chars", "tool_output"];
+  let result = existing.replace(/\r\n/g, "\n");
+  if (!/^[A-Za-z_][\w-]*:/m.test(result)) throw new Error("Bud’s profile settings could not be read. The existing file has been kept.");
+  for (const key of keys) {
+    const lines = result.split("\n");
+    const starts = lines.flatMap((line, index) => line.startsWith(`${key}:`) ? [index] : []);
+    if (starts.length > 1) throw new Error("Bud’s profile contains duplicate settings. The existing file has been kept.");
+    const replacement = yamlBlock(defaults, key);
+    if (!replacement) continue;
+    if (starts.length) {
+      const start = starts[0]!;
+      let end = start + 1;
+      while (end < lines.length && !/^[A-Za-z_][\w-]*:/.test(lines[end]!)) end++;
+      lines.splice(start, end - start, replacement.trimEnd());
+      result = lines.join("\n");
+    } else result = `${result.trimEnd()}\n${replacement.trimEnd()}\n`;
+  }
+  return `${result.trimEnd()}\n`;
+}
+
 export function applyPropertyPack(root?: string): { dir: string; wrote: string[] } {
-  const home = hermesHome(root);
   const dest = propertyProfileDir(root);
-  mkdirSync(dest, { recursive: true });
-  const wrote: string[] = [];
   const destConfig = join(dest, "config.yaml");
-  const existingModel = yamlBlock(readIf(destConfig), "model") ?? yamlBlock(readIf(join(home, "config.yaml")), "model");
+  let existing = "";
+  try { existing = readFileSync(destConfig, "utf8"); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("Bud’s existing profile could not be read. Its files have been kept."); }
+  const config = mergePropertyPolicy(existing, readFileSync(join(PACK_DIR, "config.yaml"), "utf8"));
+  mkdirSync(dest, { recursive: true });
+  ensurePrivateRootAuth(root);
+  const wrote: string[] = [];
 
   for (const name of ["SOUL.md", "config.yaml", "distribution.yaml", "profile.yaml"]) {
     const from = join(PACK_DIR, name);
     if (!existsSync(from)) continue;
     let body = readFileSync(from, "utf8");
-    if (name === "config.yaml") body = withYamlBlock(body, "model", existingModel);
+    if (name === "config.yaml") body = config;
     writeFileAtomic(join(dest, name), body);
     wrote.push(name);
   }
   const skillsFrom = join(PACK_DIR, "skills");
   if (existsSync(skillsFrom)) {
-    cpSync(skillsFrom, join(dest, "skills"), { recursive: true });
+    cpSync(skillsFrom, join(dest, "skills"), { recursive: true, force: false, errorOnExist: false });
     wrote.push("skills/");
   }
   return { dir: dest, wrote };

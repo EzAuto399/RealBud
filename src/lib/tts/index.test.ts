@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("../local-session", () => ({ localSessionFetch: (path: string, init: RequestInit) => fetch(path, init) }));
 
 import { Speaker } from "./index";
 

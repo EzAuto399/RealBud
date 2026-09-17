@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { draftViaLine, phoneChip, phoneChipTone, phonePaired } from "./phone-label";
+import { draftViaLine, phoneChip, phoneChipTone, phoneContinuePair, phoneNeedsPair, phonePaired } from "./phone-label";
 import type { ChannelsState } from "./telegram-channel";
 
 const off: ChannelsState = {
@@ -94,6 +94,23 @@ describe("phone labels", () => {
       },
     };
     expect(phoneChip(state)).toBe("Phone · Telegram + Slack");
+  });
+
+  it("picks the first paired channel for the Ask continue card", () => {
+    expect(phoneContinuePair(off)).toBeNull();
+    expect(phoneNeedsPair(off)).toBeNull();
+    expect(
+      phoneContinuePair({
+        ...off,
+        telegram: { connected: true, botUsername: "realbud09bot", pairedName: "Yoda", paired: true, lastMessageAt: 1 },
+      }),
+    ).toMatchObject({ platform: "telegram", label: "Telegram", pairedName: "Yoda" });
+    expect(
+      phoneNeedsPair({
+        ...off,
+        telegram: { connected: true, botUsername: "realbud09bot", pairedName: null, paired: false, lastMessageAt: null },
+      }),
+    ).toBe("telegram");
   });
 });
 

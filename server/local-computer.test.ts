@@ -5,6 +5,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import { __setCuaConnectionForTests, cuaAttendedReady, readCuaConnection } from "./local-computer.ts";
 
 describe("local computer descriptor", () => {
+  it("does not escape a paused packaged host through a legacy standalone descriptor", () => {
+    const home = join(process.env.HOME!, "paused-host");
+    const userData = join(home, "exact-app");
+    const legacy = join(home, "Library", "Application Support", "RealBud");
+    mkdirSync(userData, { recursive: true }); mkdirSync(legacy, { recursive: true });
+    writeFileSync(join(userData, "cua-connection.json"), JSON.stringify({ mode: "unavailable", reason: "human-signin-paused" }));
+    writeFileSync(join(legacy, "cua-connection.json"), JSON.stringify({ mode: "standalone", mcpCommand: "/fictional/other-driver", mcpArgs: ["mcp"] }));
+    expect(readCuaConnection({ platform: "darwin", userData, home })).toBeNull();
+  });
   it("fails closed on Linux even when a valid-looking descriptor exists", () => {
     const userData = join(process.env.HOME!, "linux-user-data");
     mkdirSync(userData, { recursive: true });

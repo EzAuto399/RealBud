@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   PASTE_CHARS,
@@ -113,4 +113,16 @@ describe("composer paste attachments", () => {
     expect(isAttachment({ kind: "file", id: "a", text: "wrong kind", size: 2 })).toBe(false);
     expect(isAttachment({ kind: "file", id: "f", name: "empty", path: "", size: 0 })).toBe(false);
   });
+});
+
+
+it("copies selected native files when a saver is supplied and never falls back on a failed copy", async () => {
+  const file = { name: "accounts.xlsx", size: 20, type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", text: async () => "must not be read" };
+  const getPath = vi.fn(() => "C:\\Accounts\\accounts.xlsx");
+  const saved = fileAttachment(file.name, "/private/workroom/ask-uploads/accounts.xlsx", file.size);
+  expect((await attachmentsFromDroppedFiles([file], getPath, async () => saved)).attachments).toEqual([saved]);
+  expect(getPath).not.toHaveBeenCalled();
+  const rejected = await attachmentsFromDroppedFiles([file], getPath, async () => { throw new Error("disk unavailable"); });
+  expect(rejected).toEqual({ attachments: [], rejectedNames: [file.name] });
+  expect(getPath).not.toHaveBeenCalled();
 });

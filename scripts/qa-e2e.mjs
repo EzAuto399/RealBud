@@ -12,10 +12,11 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const quick = process.argv.includes("--quick");
 
 const SUITES = [
-  { name: "desk", script: "scripts/e2e-desk.mjs", quick: true },
-  { name: "pm-day", script: "scripts/e2e-pm-day.mjs", quick: false },
-  { name: "pm-exceptions", script: "scripts/e2e-pm-exceptions.mjs", quick: true },
-  { name: "walkthrough", script: "scripts/e2e-walkthrough.mjs", quick: false },
+  { name: "desk", script: "scripts/e2e-desk.mjs", quick: true, port: 18880 },
+  { name: "pm-day", script: "scripts/e2e-pm-day.mjs", quick: false, port: 18881 },
+  { name: "pm-exceptions", script: "scripts/e2e-pm-exceptions.mjs", quick: true, port: 18882 },
+  { name: "portal-jobs", script: "scripts/e2e-portal-jobs.mjs", quick: false, port: 18883 },
+  { name: "walkthrough", script: "scripts/e2e-walkthrough.mjs", quick: false, port: 18884 },
 ].filter((s) => !quick || s.quick);
 
 let failed = 0;
@@ -27,7 +28,7 @@ for (const suite of SUITES) {
   const result = spawnSync(process.execPath, [join(ROOT, suite.script)], {
     cwd: ROOT,
     stdio: "inherit",
-    env: process.env,
+    env: { ...process.env, OMB_E2E_PORT: String(suite.port) },
   });
   if (result.status !== 0) {
     console.error(`\nFAIL  ${suite.name} exited ${result.status ?? "signal"}`);

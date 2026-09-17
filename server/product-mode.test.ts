@@ -58,6 +58,7 @@ describe("product mode denials", () => {
     expect(productRuntimeEventVisible({ type: "turn.completed" })).toBe(true);
     expect(productRuntimeEventVisible({ type: "content.delta", streamKind: "reasoning_text" })).toBe(false);
     expect(productRuntimeEventVisible({ type: "item.started" })).toBe(false);
+    expect(productRuntimeEventVisible({ type: "item.started", itemType: "tool" })).toBe(true);
     expect(productRuntimeEventVisible({ type: "runtime.error" })).toBe(false);
   });
 

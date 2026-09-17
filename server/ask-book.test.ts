@@ -175,6 +175,8 @@ describe("ask book", () => {
   it("lets Bud drive a named portal page through computer tools and stop before submit", () => {
     const prompt = productBudSystemPrompt();
     expect(prompt).toMatch(/drive this Mac's browser through the computer tools/i);
+    expect(prompt).toMatch(/already-open Chrome or Brave/i);
+    expect(prompt).toMatch(/do not launch a new isolated browser/i);
     expect(prompt).toMatch(/Every computer action asks the user first/i);
     expect(prompt).toMatch(/Only visit sites named in a saved job/i);
     expect(prompt).toMatch(/prepare and stop/i);

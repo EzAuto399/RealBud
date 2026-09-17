@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildScheduleMonth,
   buildScheduleWeek,
   calendarShortName,
   mondayOfWeek,
   plannedLoopFootnote,
   recipeScheduleLine,
   scheduleSummary,
+  shiftMonth,
+  shiftWeek,
   splitPlannedLoops,
   weekOutcomeTone,
 } from "./schedule-week";
@@ -57,6 +60,14 @@ describe("schedule week", () => {
     expect(week[4]?.slots.find((slot) => slot.loopId === "owner-letter")?.next).toBe(true);
     expect(week[2]?.slots.find((slot) => slot.loopId === "morning-arrears")?.outcome).toBe("next");
     expect(week.every((day) => day.slots.every((slot) => slot.loopId !== "inbound-triage"))).toBe(true);
+  });
+
+  it("can render a neighbouring week while keeping today on the current week only", () => {
+    const wed = new Date(2026, 8, 2, 10, 0, 0).getTime();
+    const next = shiftWeek(wed, 1);
+    const week = buildScheduleWeek(loops, wed, undefined, undefined, next);
+    expect(week.some((day) => day.isToday)).toBe(false);
+    expect(new Date(week[0]!.dateMs).getDate()).toBe(7);
   });
 
   it("stamps a clock run and Desk cards on that day", () => {
@@ -228,6 +239,36 @@ describe("schedule week", () => {
     const friday = buildScheduleWeek([...loops, review], wed)[4]?.slots.find((slot) => slot.loopId === "recipe-review");
     expect(friday).toMatchObject({ outcome: "review", stamp: "Review plan", next: false });
   });
+
+  it.each([
+    { enabled: true, waitingForPlan: false },
+    { enabled: false, waitingForPlan: false },
+    { enabled: false, waitingForPlan: true },
+  ])("keeps a held result distinct from a future plan or clock (%j)", (state) => {
+    const friday = new Date(2026, 8, 4, 16, 5).getTime();
+    const job = {
+      id: "recipe-held" as const,
+      name: "Owner update",
+      available: true,
+      ...state,
+      schedule: { time: "16:00", weekdays: [5] },
+      nextRunAt: null,
+    };
+    const slot = buildScheduleWeek([job], friday, undefined, {
+      runs: [{ id: "held-result", loopId: job.id, scheduledFor: friday - 5 * 60_000, finishedAt: friday - 4 * 60_000, status: "awaiting-approval" }],
+    })[4]?.slots[0];
+    expect(slot).toMatchObject({ outcome: "review", stamp: "Needs you", runId: "held-result", produced: 0, openDesk: false });
+    expect(weekOutcomeTone(slot!.outcome)).toBe("hold");
+  });
+
+  it("keeps held-result Desk counts tied to its exact receipt", () => {
+    const friday = new Date(2026, 8, 4, 16, 5).getTime();
+    const slot = buildScheduleWeek(loops, friday, undefined, {
+      runs: [{ id: "held-owner", loopId: "owner-letter", scheduledFor: friday - 5 * 60_000, status: "awaiting-approval" }],
+      desk: { lastRunAt: null, needsYou: 8, checkedCount: 20, producedByRunId: { "held-owner": 2, unrelated: 6 } },
+    })[4]?.slots.find((item) => item.loopId === "owner-letter");
+    expect(slot).toMatchObject({ outcome: "review", stamp: "Needs you", runId: "held-owner", produced: 2, openDesk: true });
+  });
 });
 
 describe("recipeScheduleLine", () => {
@@ -255,6 +296,25 @@ describe("planned loops stay off the day chips", () => {
     expect(week[5]?.slots).toEqual([]);
     expect(week[6]?.slots).toEqual([]);
     expect(week[0]?.slots.map((slot) => slot.loopId)).toEqual(["morning-arrears"]);
+  });
+});
+
+describe("schedule month", () => {
+  it("builds a Monday-first 42-day grid for the month", () => {
+    const mid = new Date(2026, 8, 15, 12, 0, 0).getTime();
+    const month = buildScheduleMonth(loops, mid);
+    expect(month).toHaveLength(42);
+    expect(new Date(month[0]!.dateMs).getDay()).toBe(1);
+    const inMonth = month.filter((day) => day.inMonth);
+    expect(inMonth).toHaveLength(30);
+    expect(inMonth.some((day) => day.isToday)).toBe(true);
+  });
+
+  it("shifts months from the first of the month", () => {
+    const mid = new Date(2026, 8, 15, 12, 0, 0).getTime();
+    const next = shiftMonth(mid, 1);
+    expect(new Date(next).getMonth()).toBe(9);
+    expect(new Date(next).getDate()).toBe(1);
   });
 });
 

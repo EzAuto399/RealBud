@@ -52,8 +52,16 @@ export function isCanonicalBud(id: string): boolean {
 
 /** Product clients need the answer stream and the terminal completion event,
  * not provider reasoning, raw tool names, or runtime diagnostics. Permission
- * cards and settled messages are projected separately by the server. */
-export function productRuntimeEventVisible(event: { type: string; streamKind?: string }): boolean {
-  return event.type === "turn.completed" ||
-    (event.type === "content.delta" && event.streamKind === "assistant_text");
+ * cards and settled messages are projected separately by the server. A tool
+ * start is forwarded only so Ask can drop pre-tool narration from the live
+ * bubble — the chip itself stays hidden in product UI. */
+export function productRuntimeEventVisible(event: {
+  type: string;
+  streamKind?: string;
+  itemType?: string;
+}): boolean {
+  if (event.type === "turn.completed") return true;
+  if (event.type === "content.delta" && event.streamKind === "assistant_text") return true;
+  if (event.type === "item.started" && event.itemType === "tool") return true;
+  return false;
 }

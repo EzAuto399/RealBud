@@ -18,6 +18,8 @@ export interface WeekSlot {
   available: boolean;
   enabled: boolean;
   next: boolean;
+  /** Calendar day this slot sits on (agency wall clock). */
+  dayMs: number;
   outcome: WeekOutcome;
   stamp: string | null;
   produced: number;
@@ -47,6 +49,11 @@ export interface WeekDay {
   dateMs: number;
   isToday: boolean;
   slots: WeekSlot[];
+}
+
+export interface MonthDay extends WeekDay {
+  /** False for leading/trailing days from adjacent months. */
+  inMonth: boolean;
 }
 
 export interface CalendarLoop {
@@ -189,10 +196,33 @@ export function mondayOfWeek(nowMs: number, timeZone?: string): number {
   return new Date(today.year, today.month - 1, today.day + offset).getTime();
 }
 
+/** First day of the calendar month containing `anchorMs` (local/zoned wall date). */
+export function startOfMonth(anchorMs: number, timeZone?: string): number {
+  const wall = zonedYmd(anchorMs, timeZone);
+  return new Date(wall.year, wall.month - 1, 1).getTime();
+}
+
+export function shiftMonth(anchorMs: number, delta: number, timeZone?: string): number {
+  const wall = zonedYmd(anchorMs, timeZone);
+  return new Date(wall.year, wall.month - 1 + delta, 1).getTime();
+}
+
+export function shiftWeek(anchorMs: number, delta: number, timeZone?: string): number {
+  const monday = mondayOfWeek(anchorMs, timeZone);
+  const wall = zonedYmd(monday, timeZone);
+  return new Date(wall.year, wall.month - 1, wall.day + delta * 7).getTime();
+}
+
 export function sameCalendarDay(aMs: number, bMs: number, timeZone?: string): boolean {
   const a = zonedYmd(aMs, timeZone);
   const b = zonedYmd(bMs, timeZone);
   return a.year === b.year && a.month === b.month && a.day === b.day;
+}
+
+export function sameCalendarMonth(aMs: number, bMs: number, timeZone?: string): boolean {
+  const a = zonedYmd(aMs, timeZone);
+  const b = zonedYmd(bMs, timeZone);
+  return a.year === b.year && a.month === b.month;
 }
 
 export function producedByRunId(items: ReadonlyArray<{ origin?: { runId?: string } | null }>): Record<string, number> {
@@ -235,6 +265,13 @@ function stampSlot(
   if (!loop.available) {
     return { outcome: "planned", stamp: "Planned", produced: 0, runId: null, openDesk: false };
   }
+  const run = latestRunOnDay(facts?.runs, loop.id, dateMs, timeZone);
+  const produced = run ? (facts?.desk?.producedByRunId[run.id] ?? 0) : 0;
+  // A prepared result still needs the PM after its future clock is paused
+  // or its plan edited. Keep that receipt distinct from approving a plan.
+  if (run?.status === "awaiting-approval") {
+    return { outcome: "review", stamp: "Needs you", produced, runId: run.id, openDesk: produced > 0 };
+  }
   if (loop.waitingForPlan) {
     return { outcome: "review", stamp: "Review plan", produced: 0, runId: null, openDesk: false };
   }
@@ -242,8 +279,6 @@ function stampSlot(
     return { outcome: "paused", stamp: "Paused", produced: 0, runId: null, openDesk: false };
   }
 
-  const run = latestRunOnDay(facts?.runs, loop.id, dateMs, timeZone);
-  const produced = run ? (facts?.desk?.producedByRunId[run.id] ?? 0) : 0;
   const deskToday = loop.id === "morning-arrears" && Boolean(facts?.desk?.lastRunAt && sameCalendarDay(facts.desk.lastRunAt, dateMs, timeZone));
   const miss = (deskToday && morningDeskMiss(facts?.desk)) || workerRecheckMissOnDay(facts, dateMs, timeZone);
 
@@ -273,39 +308,94 @@ function stampSlot(
   return { outcome: "scheduled", stamp: null, produced: 0, runId: null, openDesk: false };
 }
 
+function slotsForDay(
+  scheduled: ReadonlyArray<CalendarLoop>,
+  dateMs: number,
+  weekday: number,
+  facts: WeekFacts | undefined,
+  timeZone?: string,
+): WeekSlot[] {
+  return scheduled
+    .filter((loop) => loop.schedule.weekdays.includes(weekday))
+    .map((loop) => {
+      const next = Boolean(
+        loop.available && loop.enabled && loop.nextRunAt && sameCalendarDay(loop.nextRunAt, dateMs, timeZone),
+      );
+      return {
+        loopId: loop.id,
+        name: loop.name,
+        shortName: calendarShortName(loop.id),
+        time: loop.schedule.time,
+        available: loop.available,
+        enabled: loop.enabled,
+        next,
+        dayMs: dateMs,
+        ...stampSlot(loop, dateMs, next, facts, timeZone),
+      };
+    })
+    .sort((a, b) => a.time.localeCompare(b.time));
+}
+
 export function buildScheduleWeek(
   loops: ReadonlyArray<CalendarLoop>,
   nowMs: number,
   timeZone?: string,
   facts?: WeekFacts,
+  /** Any instant in the week to show; defaults to `nowMs`. */
+  anchorMs = nowMs,
 ): WeekDay[] {
   const { scheduled } = splitPlannedLoops(loops);
   const today = zonedYmd(nowMs, timeZone);
+  const anchor = zonedYmd(anchorMs, timeZone);
   const todayIndex = today.weekday === 0 ? 6 : today.weekday - 1;
-  const mondayDay = today.day + (today.weekday === 0 ? -6 : 1 - today.weekday);
+  const mondayDay = anchor.day + (anchor.weekday === 0 ? -6 : 1 - anchor.weekday);
+  const todayMondayDay = today.day + (today.weekday === 0 ? -6 : 1 - today.weekday);
+  const sameWeek =
+    new Date(anchor.year, anchor.month - 1, mondayDay).getTime() ===
+    new Date(today.year, today.month - 1, todayMondayDay).getTime();
   const days = WEEKDAYS_MON_FIRST.map((weekday, index) => {
-    const dateMs = new Date(today.year, today.month - 1, mondayDay + index).getTime();
-    const slots = scheduled
-      .filter((loop) => loop.schedule.weekdays.includes(weekday))
-      .map((loop) => {
-        const next = Boolean(
-          loop.available && loop.enabled && loop.nextRunAt && sameCalendarDay(loop.nextRunAt, dateMs, timeZone),
-        );
-        return {
-          loopId: loop.id,
-          name: loop.name,
-          shortName: calendarShortName(loop.id),
-          time: loop.schedule.time,
-          available: loop.available,
-          enabled: loop.enabled,
-          next,
-          ...stampSlot(loop, dateMs, next, facts, timeZone),
-        };
-      })
-      .sort((a, b) => a.time.localeCompare(b.time));
-    return { weekday, dateMs, isToday: index === todayIndex, slots };
+    const dateMs = new Date(anchor.year, anchor.month - 1, mondayDay + index).getTime();
+    return {
+      weekday,
+      dateMs,
+      isToday: sameWeek && index === todayIndex,
+      slots: slotsForDay(scheduled, dateMs, weekday, facts, timeZone),
+    };
   });
   return injectDeskRecheck(days, scheduled, facts, timeZone);
+}
+
+/** Monday-first 6×7 grid covering the month that contains `anchorMs`. */
+export function buildScheduleMonth(
+  loops: ReadonlyArray<CalendarLoop>,
+  nowMs: number,
+  timeZone?: string,
+  facts?: WeekFacts,
+  anchorMs = nowMs,
+): MonthDay[] {
+  const { scheduled } = splitPlannedLoops(loops);
+  const today = zonedYmd(nowMs, timeZone);
+  const month = zonedYmd(startOfMonth(anchorMs, timeZone), timeZone);
+  const mondayDay = month.day + (month.weekday === 0 ? -6 : 1 - month.weekday);
+  const daysInMonth = new Date(month.year, month.month, 0).getDate();
+  const days: MonthDay[] = [];
+  for (let index = 0; index < 42; index++) {
+    const dayNum = mondayDay + index;
+    const dateMs = new Date(month.year, month.month - 1, dayNum).getTime();
+    const weekday = WEEKDAYS_MON_FIRST[index % 7]!;
+    const inMonth = dayNum >= 1 && dayNum <= daysInMonth;
+    days.push({
+      weekday,
+      dateMs,
+      isToday: inMonth && month.year === today.year && month.month === today.month && dayNum === today.day,
+      inMonth,
+      slots: slotsForDay(scheduled, dateMs, weekday, facts, timeZone),
+    });
+  }
+  return injectDeskRecheck(days, scheduled, facts, timeZone).map((day, index) => ({
+    ...day,
+    inMonth: days[index]!.inMonth,
+  }));
 }
 
 function padClock(hour: number, minute: number): string {
@@ -313,7 +403,7 @@ function padClock(hour: number, minute: number): string {
 }
 
 /** A Desk Recheck can land on a quiet day. Show that press on the map. */
-function injectDeskRecheck(days: WeekDay[], loops: ReadonlyArray<CalendarLoop>, facts: WeekFacts | undefined, timeZone?: string): WeekDay[] {
+function injectDeskRecheck<T extends WeekDay>(days: T[], loops: ReadonlyArray<CalendarLoop>, facts: WeekFacts | undefined, timeZone?: string): T[] {
   const at = facts?.desk?.lastRunAt;
   const morning = loops.find((loop) => loop.id === "morning-arrears");
   if (!at || !morning) return days;
@@ -333,6 +423,7 @@ function injectDeskRecheck(days: WeekDay[], loops: ReadonlyArray<CalendarLoop>, 
           available: true,
           enabled: true,
           next: false,
+          dayMs: day.dateMs,
           ...stamped,
         },
         ...day.slots,

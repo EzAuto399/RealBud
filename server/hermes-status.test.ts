@@ -1,9 +1,9 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, cpSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { applyHandsReadiness, hermesStatus } from "./hermes-status.ts";
+import { applyHandsReadiness, hermesReadinessFingerprint, hermesStatus } from "./hermes-status.ts";
 import { HERMES_PIN } from "./hermes-pin.ts";
 import { fakeHermesVersion } from "./testing/fake-hermes.ts";
 
@@ -35,7 +35,7 @@ describe("hermesStatus", () => {
     expect(status.cli.matchesPin).toBe(false);
     expect(status.ready).toBe(false);
     expect(status.detail).toMatch(/not installed/i);
-    expect(status.installCommand).toContain(`--commit ${HERMES_PIN.commit}`);
+    expect(status.installCommand).toBeNull();
   });
 
   it("flags a version mismatch against the pin", async () => {
@@ -44,6 +44,7 @@ describe("hermesStatus", () => {
     expect(status.cli.matchesPin).toBe(false);
     expect(status.ready).toBe(false);
     expect(status.detail).toMatch(/pin is v0\.20\.3/i);
+    expect(status.detail).toContain("0.21.2 (2026.9.11)");
   });
 
   it("is not ready until the hands test passes", async () => {
@@ -62,10 +63,14 @@ describe("hermesStatus", () => {
       ok: true,
       detail: "Worker answered OK.",
       kind: "ping",
+      workerFingerprint: status.workerFingerprint,
     });
     expect(afterPing.ready).toBe(true);
     expect(afterPing.detail).toMatch(/passed the hands test/i);
 
+    expect(applyHandsReadiness({ ...status, bootstrapPending: true }, {
+      at: 1, ok: true, detail: "previous successful check", kind: "ping", workerFingerprint: status.workerFingerprint,
+    }).ready).toBe(false);
     const afterFail = applyHandsReadiness(status, {
       at: 1,
       ok: false,
@@ -74,6 +79,36 @@ describe("hermesStatus", () => {
     });
     expect(afterFail.ready).toBe(false);
     expect(afterFail.detail).toMatch(/Run the hands test/i);
+    expect(applyHandsReadiness(status, { at: 1, ok: true, detail: "old setup", kind: "ping" }).ready).toBe(false);
+    expect(applyHandsReadiness(status, { at: 1, ok: true, detail: "different worker", kind: "ping", workerFingerprint: "different" }).ready).toBe(false);
+  });
+
+  it("supports an independently updated worker and invalidates proof after profile changes", async () => {
+    const cli = fakeHermesVersion("Hermes Agent v0.21.0 (2026.8.31)");
+    const before = await hermesStatus({ root: home, cli });
+    expect(before.cli).toMatchObject({ compatible: true, matchesPin: false, installed: true });
+    const ping = { at: 1, ok: true, detail: "OK", kind: "ping" as const, workerFingerprint: before.workerFingerprint };
+    expect(applyHandsReadiness(before, ping).ready).toBe(true);
+    const credentials = join(home, "profiles", HERMES_PIN.profile, ".env");
+    try {
+      writeFileSync(credentials, "TEST_CREDENTIAL=changed-fixture\n");
+      const changed = await hermesStatus({ root: home, cli });
+      expect(applyHandsReadiness(changed, ping).ready).toBe(false);
+      expect(JSON.stringify(changed)).not.toContain("changed-fixture");
+    } finally { rmSync(credentials, { force: true }); }
+  });
+
+  it("distinguishes a stalled version probe from a missing install and permits retry", async () => {
+    const cli = join(home, "slow-worker.mjs");
+    writeFileSync(cli, `#!${process.execPath}\nsetTimeout(() => console.log('Hermes Agent v0.21.0 (2026.8.31)'), 5000);\n`);
+    chmodSync(cli, 0o755);
+    const missed = await hermesStatus({ root: home, cli, probeTimeoutMs: 100 });
+    expect(missed.cli).toMatchObject({ installed: true, compatible: false, probeState: "timeout" });
+    expect(missed.detail).toMatch(/retry/i);
+    expect(missed.detail).not.toMatch(/not installed/i);
+    writeFileSync(cli, `#!${process.execPath}\nconsole.log('Hermes Agent v0.21.0 (2026.8.31)');\n`);
+    const retry = await hermesStatus({ root: home, cli, probeTimeoutMs: 5000 });
+    expect(retry.cli).toMatchObject({ compatible: true, probeState: "ok" });
   });
 
   it("flags the pack as missing when SOUL.md is absent", async () => {
@@ -83,9 +118,24 @@ describe("hermesStatus", () => {
       expect(status.cli.matchesPin).toBe(true);
       expect(status.pack.installed).toBe(false);
       expect(status.ready).toBe(false);
-      expect(status.detail).toMatch(/pack is not installed/i);
+      expect(status.handsLabel).toBe("Bud's hands");
+      expect(status.detail).toMatch(/Bud's hands safeguards are not installed/i);
+      expect(status.pin.profile).toBe("property");
     } finally {
       rmSync(bare, { recursive: true, force: true });
     }
   });
+});
+
+
+it("does not reuse readiness proof for another profile or a changed OAuth login", () => {
+  const other = mkdtempSync(join(tmpdir(), "realbud-other-profile-"));
+  try {
+    cpSync(home, other, { recursive: true });
+    const original = hermesReadinessFingerprint("fixture-version", home);
+    expect(hermesReadinessFingerprint("fixture-version", other)).not.toBe(original);
+    const before = hermesReadinessFingerprint("fixture-version", other);
+    writeFileSync(join(other, "profiles", HERMES_PIN.profile, "auth.json"), '{"syntheticLogin":"changed"}');
+    expect(hermesReadinessFingerprint("fixture-version", other)).not.toBe(before);
+  } finally { rmSync(other, { recursive: true, force: true }); }
 });

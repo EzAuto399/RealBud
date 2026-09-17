@@ -9,6 +9,9 @@ const REVIEW = "Review on Desk, or decide here as cards arrive.";
 
 export function pulseDigestText(loopId: string, snapshot: DeskSnapshot): string | null {
   const brief = morningBrief(snapshot);
+  if (brief.headline.startsWith("Recheck missed")) {
+    return `${pulseTitle(loopId)}: Recheck missed — facts held. Open Desk.`;
+  }
   if (brief.needsYou <= 0 && brief.licensee <= 0) return null;
   const bits = [`${brief.checkedCount} checked`];
   if (brief.needsYou) bits.push(brief.needsYou === 1 ? "1 needs you" : `${brief.needsYou} need you`);
@@ -28,5 +31,5 @@ export async function pulseLoopSettled(loopId: string, snapshot: DeskSnapshot): 
 
 function pulseTitle(loopId: string): string {
   if (loopId === "owner-letter") return "Friday owner letter";
-  return "Morning money";
+  return "Morning Recheck";
 }

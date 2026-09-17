@@ -111,7 +111,7 @@ function scriptedTurn() {
   let rawInput = {};
   let reply = process.env.FAKE_ACP_REPLY ?? "";
   let title = "";
-  let permission = mode === "permission" || mode === "permission-once-only";
+  let permission = mode === "permission" || mode === "permission-once-only" || mode === "permission-session-only";
   if (process.env.FAKE_ACP_SCRIPT) {
     try {
       const script = JSON.parse(readFileSync(process.env.FAKE_ACP_SCRIPT, "utf8"));
@@ -255,7 +255,12 @@ function handle(msg: any) {
                 }
               : { kind: "execute", rawInput: { command: "echo hi" }, title: "echo hi" },
             options:
-              mode === "permission-once-only"
+              mode === "permission-session-only"
+                ? [
+                    { optionId: "allow_session", kind: "allow_always", name: "Allow for session" },
+                    { optionId: "reject", kind: "reject_once" },
+                  ]
+                : mode === "permission-once-only"
                 ? [
                     { optionId: "allow-once", kind: "allow_once" },
                     { optionId: "reject", kind: "reject_once" },

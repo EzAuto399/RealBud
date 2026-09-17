@@ -1,3 +1,5 @@
+import { ChevronLeft, ChevronRight } from "lucide-react";
+
 import { cn } from "@/lib/cn";
 import { fmtTimeOfDay } from "@/lib/au";
 import {
@@ -5,6 +7,7 @@ import {
   DAY_NAMES,
   plannedLoopFootnote,
   sameCalendarDay,
+  shiftWeek,
   splitPlannedLoops,
   weekOutcomeTone,
   type WeekDay,
@@ -27,9 +30,10 @@ function weekRangeLabel(days: { dateMs: number }[]): string {
   return `${start} – ${end}`;
 }
 
-function todayHint(days: WeekDay[]): string {
-  const today = days.find((day) => day.isToday);
+function todayHint(days: WeekDay[], viewingCurrentWeek: boolean): string {
   const range = weekRangeLabel(days);
+  if (!viewingCurrentWeek) return range;
+  const today = days.find((day) => day.isToday);
   if (!today) return range;
   const missed = today.slots.find((slot) => slot.outcome === "missed");
   if (missed) return `${range} · Recheck missed`;
@@ -55,6 +59,8 @@ export function WeekCalendar({
   deskNote,
   selectedId,
   onSelect,
+  anchorMs,
+  onAnchorChange,
 }: {
   loops: Loop[];
   nowMs: number;
@@ -63,18 +69,50 @@ export function WeekCalendar({
   deskNote?: string | null;
   selectedId: string | null;
   onSelect: (slot: WeekSlot) => void;
+  /** Any instant in the week to show. */
+  anchorMs: number;
+  onAnchorChange: (ms: number) => void;
 }) {
   const { scheduled, planned } = splitPlannedLoops(loops);
-  const days = buildScheduleWeek(scheduled, nowMs, timeZone, facts);
+  const days = buildScheduleWeek(scheduled, nowMs, timeZone, facts, anchorMs);
+  const viewingCurrentWeek = days.some((day) => day.isToday);
   const missed = days.some((day) => day.slots.some((slot) => slot.outcome === "missed"));
   const lastRunOnWeek = Boolean(
     facts?.desk?.lastRunAt && days.some((day) => sameCalendarDay(day.dateMs, facts.desk!.lastRunAt!, timeZone)),
   );
   return (
-    <section className="min-w-0 rounded-xl border border-line bg-sheet" aria-label="This week on the clock">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-line px-4 py-3">
-        <h2 className="text-[14px] font-medium text-ink">This week</h2>
-        <p className="min-w-0 text-[12px] text-ink-muted">{todayHint(days)}</p>
+    <section className="flex h-full min-w-0 flex-col rounded-lg border border-line bg-sheet" aria-label="This week’s scheduled jobs">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-line px-4 py-3">
+        <div className="min-w-0">
+          <h2 className="text-[14px] font-medium text-ink">This week</h2>
+          <p className="min-w-0 text-[12px] text-ink-muted">{todayHint(days, viewingCurrentWeek)}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-0.5">
+          <button
+            type="button"
+            className="pm-control inline-flex h-8 w-8 items-center justify-center rounded-lg"
+            aria-label="Previous week"
+            onClick={() => onAnchorChange(shiftWeek(anchorMs, -1, timeZone))}
+          >
+            <ChevronLeft size={16} aria-hidden />
+          </button>
+          <button
+            type="button"
+            className="pm-control h-8 rounded-lg px-2 text-[12px] disabled:opacity-40"
+            disabled={viewingCurrentWeek}
+            onClick={() => onAnchorChange(nowMs)}
+          >
+            Today
+          </button>
+          <button
+            type="button"
+            className="pm-control inline-flex h-8 w-8 items-center justify-center rounded-lg"
+            aria-label="Next week"
+            onClick={() => onAnchorChange(shiftWeek(anchorMs, 1, timeZone))}
+          >
+            <ChevronRight size={16} aria-hidden />
+          </button>
+        </div>
       </div>
       {(missed || lastRunOnWeek) && deskNote ? (
         <p className={cn("border-b border-line px-4 py-2 text-[12.5px]", missed ? "text-hold" : "text-ink-muted")}>
@@ -111,13 +149,14 @@ export function WeekCalendar({
         ))}
       </ol>
       {planned.length > 0 ? (
-        <ul className="space-y-1.5 border-t border-line px-4 py-2.5">
+        <details className="border-t border-line px-4 py-2.5"><summary className="cursor-pointer text-[12px] text-ink-muted">Planned features · not running</summary>
+        <ul className="mt-2 space-y-1.5">
           {planned.map((loop) => (
             <li key={loop.id} className="text-[12px] leading-relaxed text-ink-muted">
               {plannedLoopFootnote(loop)}
             </li>
           ))}
-        </ul>
+        </ul></details>
       ) : null}
     </section>
   );

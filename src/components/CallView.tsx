@@ -1,16 +1,17 @@
 // Call mode — the bot on the line.
 //
 // The loop is deliberately HALF-DUPLEX: the microphone is live only when
-// the bot is not speaking. The dictation helper is Apple's SFSpeechRecognizer
-// running on raw AVAudioEngine input with no acoustic echo cancellation, so
-// a mic left open through playback transcribes the bot's own voice back into
-// the conversation and the two of them talk forever. Interrupting is a tap
-// or Escape instead, which is honest and cannot feed back. (Full-duplex
-// barge-in needs AEC on the capture path — a follow-up, not a footnote.)
+// the bot is not speaking. Dictation is the native on-device helper
+// (Apple Speech on macOS, System.Speech on Windows) with no acoustic echo
+// cancellation, so a mic left open through playback transcribes the bot's
+// own voice back into the conversation and the two of them talk forever.
+// Interrupting is a tap or Escape instead, which is honest and cannot feed
+// back. (Full-duplex barge-in needs AEC on the capture path — a follow-up,
+// not a footnote.)
 //
-// Turn-taking uses a small silence endpointer in the native helper. Apple's
-// buffer-backed recognizer does not finalize on silence by itself: the helper
-// has to end the audio stream, which then produces the final transcript.
+// Turn-taking uses a small silence endpointer in the native helper. The
+// recognizer does not finalize on silence by itself: the helper has to end
+// the audio stream, which then produces the final transcript.
 //
 // The other half of making a call bearable is narration. An agent turn is
 // 5-60 seconds of tool calls; silence that long reads as a dropped call. So
@@ -90,7 +91,7 @@ export function CallTargetButton({
   const reason = !capabilitiesReady
     ? "Checking whether this device can make calls."
     : !capabilities.dictation.available
-      ? "Calls require RealBud for macOS because speech recognition runs on-device."
+      ? "Calls require RealBud for Mac or Windows because speech recognition runs on-device."
       : !window.ogb?.speechStart
         ? "The speech service is unavailable in this app build. Restart or update RealBud."
         : !configured

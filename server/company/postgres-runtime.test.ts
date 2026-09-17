@@ -109,10 +109,12 @@ describe('runtime discovery order', () => {
   });
 
   it('names the missing runtime without telling staff to use a terminal', async () => {
+    // Use a platform with no system fallback so CI Linux hosts that already
+    // have /usr/lib/postgresql cannot satisfy this "absent" case.
     await expect(resolvePostgresRuntime({
       resourcesDirectory: join(tmpdir(), 'rb-absent-resources'),
       configuredDirectory: join(tmpdir(), 'rb-absent-configured'),
-      platform: 'linux',
+      platform: 'win32',
     })).rejects.toThrow(/Reinstall RealBud|service support/);
   });
 });

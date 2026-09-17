@@ -15,6 +15,7 @@ const { join } = await import("node:path");
 const { Store } = await import("./store.ts");
 const telegram = await import("./channels/telegram.ts");
 const remote = await import("./remote-decisions.ts");
+const { createPairingCode } = await import("./channel-pairing.ts");
 import type { Draft } from "../shared/contracts.ts";
 
 const TOKEN = "999001:SuperSecretTelegramTokenXYZ";
@@ -106,7 +107,7 @@ describe("verifyToken", () => {
 });
 
 describe("pairing and relay", () => {
-  it("pairs on first contact and refuses another chat", async () => {
+  it("requires the Mac pairing code and refuses another chat", async () => {
     const store = new Store(() => ({ instanceId: "", model: "" }));
     store.seedIfEmpty();
     telegram.saveChannel({
@@ -121,8 +122,11 @@ describe("pairing and relay", () => {
     const sent: Array<{ chatId: number; text: string }> = [];
     const fetchFn = stubFetch({ onSend: (chatId, text) => sent.push({ chatId, text }) });
     const startTurn = vi.fn(async () => {});
-    await telegram.handleTelegramUpdates([update(10, 111, "hi", "Sam")], deps(store, startTurn, fetchFn));
-    expect(sent).toEqual([{ chatId: 111, text: "Paired with RealBud on this Mac. Ask Bud anything." }]);
+    await telegram.handleTelegramUpdates([update(8, 222, "hi", "Other")], deps(store, startTurn, fetchFn));
+    expect(telegram.loadChannel()?.pairedChatId).toBeNull();
+    expect(sent).toHaveLength(0);
+    await telegram.handleTelegramUpdates([update(10, 111, createPairingCode("telegram").command, "Sam")], deps(store, startTurn, fetchFn));
+    expect(sent).toEqual([{ chatId: 111, text: "Paired with RealBud on this Mac. Send a task, /continue for your latest saved reply, /summary for a short handoff, or /help. Keep this Mac awake and online." }]);
     expect(telegram.loadChannel()).toMatchObject({ pairedChatId: 111, pairedName: "Sam", offset: 11 });
     expect(startTurn).not.toHaveBeenCalled();
 
@@ -153,7 +157,59 @@ describe("pairing and relay", () => {
     const bot = store.bot("bud")!;
     const last = store.messagesFor(bot.threadId).at(-1);
     expect(last).toMatchObject({ role: "user", kind: "text", text: "[Telegram · Sam] what's late?" });
-    expect(startTurn).toHaveBeenCalledWith("bud", "[Telegram · Sam] what's late?", expect.objectContaining({ userMessage: last }));
+    expect(startTurn).toHaveBeenCalledWith("bud", "what's late?", expect.objectContaining({ userMessage: last, channelRelay: true }));
+    await telegram.handleTelegramUpdates([update(21, 111, "what's late?", "Sam")], deps(store, startTurn, stubFetch()));
+    expect(startTurn).toHaveBeenCalledTimes(1);
+
+  });
+
+  it("starts Ask when Bud still has a legacy upgraded id", async () => {
+    const store = new Store(() => ({ instanceId: "", model: "" }));
+    store.seedIfEmpty();
+    const legacyId = "c634d570-adaa-420d-b3d2-fee96ac63523";
+    const bud = store.bot("bud")!;
+    bud.id = legacyId;
+    telegram.saveChannel({
+      botToken: TOKEN,
+      botUsername: "realbud_bot",
+      pairedChatId: 111,
+      pairedName: "Yoda",
+      offset: 20,
+      connectedAt: 1,
+      lastMessageAt: null,
+    });
+    const startTurn = vi.fn(async () => {});
+    await telegram.handleTelegramUpdates(
+      [update(21, 111, "hi bud", "Yoda")],
+      deps(store, startTurn, stubFetch()),
+    );
+    expect(store.bot("bud")).toBeNull();
+    expect(store.productBud()?.id).toBe(legacyId);
+    const last = store.messagesFor(bud.threadId).at(-1);
+    expect(last).toMatchObject({ role: "user", kind: "text", text: "[Telegram · Yoda] hi bud" });
+    expect(startTurn).toHaveBeenCalledWith(legacyId, "hi bud", expect.objectContaining({ userMessage: last, channelRelay: true }));
+  });
+
+  it("relays a sync Ask reply without waiting for turn.completed", async () => {
+    const store = new Store(() => ({ instanceId: "", model: "" }));
+    store.seedIfEmpty();
+    const bot = store.bot("bud")!;
+    telegram.saveChannel({
+      botToken: TOKEN,
+      botUsername: "realbud_bot",
+      pairedChatId: 111,
+      pairedName: "Sam",
+      offset: 0,
+      connectedAt: 1,
+      lastMessageAt: null,
+    });
+    const sent: string[] = [];
+    const startTurn = vi.fn(async () => {
+      store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: "I'm Bud. What needs you?" });
+    });
+    const fetchFn = stubFetch({ onSend: (_chatId, text) => sent.push(text) });
+    await telegram.handleTelegramUpdates([update(1, 111, "hi", "Sam")], deps(store, startTurn, fetchFn));
+    expect(sent).toEqual(["I'm Bud. What needs you?"]);
   });
 
   it("relays joined assistant text on turn.completed", async () => {
@@ -429,6 +485,61 @@ async function bindPairedDesk(
 }
 
 describe("remote decisions", () => {
+  it("does not report failed delivery as an actionable card", async () => {
+    const store = await bindPairedDesk([], stubFetch({ sendError: new Error("offline") }));
+    expect(store.productBud()).toBeDefined();
+    expect(remote.pendingDecisionId("telegram")).toBeNull();
+  });
+  it("rejects a provider-level failure despite HTTP success", async () => {
+    await expect(telegram.sendDecisionMessage(async () => jsonRes({ ok: false }), TOKEN, 111, "Fictional review", "abcdef123456")).rejects.toThrow(/did not accept/);
+  });
+  it("formats Desk review and Ask handoff copy as HTML response cards", () => {
+    expect(telegram.escapeTelegramHtml("a <b> & c")).toBe("a &lt;b&gt; &amp; c");
+    const review = telegram.formatTelegramHtmlMessage(
+      "12 Oak St — Courtesy SMS wording is ready. Allow sends nothing; it approves the wording for you to copy.\n\nTo: Sam (sms)\n\nPlease pay rent.\n\nReply allow abcdef123456 or deny abcdef123456.",
+    );
+    expect(review).toContain("<b>12 Oak St — Courtesy SMS wording is ready.");
+    expect(review).toContain("<i>To: Sam (sms)</i>");
+    expect(review).toContain("Please pay rent.");
+    expect(review).toContain("allow abcdef123456");
+    expect(review).not.toContain("<script>");
+    const handoff = telegram.formatTelegramHtmlMessage("Reply from Ask:\n\nHello <world>");
+    expect(handoff).toBe("<b>Reply from Ask</b>\n\nHello &lt;world&gt;");
+    const summary = telegram.formatTelegramHtmlMessage("Ask handoff summary:\n\nYou: hi\nBud: hello");
+    expect(summary).toContain("<b>Ask handoff</b>");
+    expect(summary).toContain("You: hi");
+  });
+  it("sendDecisionMessage defaults to HTML parse_mode for the review card", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const fetchFn: TelegramFetch = async (_input, init) => {
+      requests.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+      return jsonRes({ ok: true, result: { message_id: 1 } });
+    };
+    await telegram.sendDecisionMessage(
+      fetchFn,
+      TOKEN,
+      111,
+      "12 Oak St — Courtesy SMS wording is ready. Allow sends nothing; it approves the wording for you to copy.\n\nTo: Sam (sms)\n\nPlease pay rent.\n\nReply allow abcdef123456 or deny abcdef123456.",
+      "abcdef123456",
+    );
+    expect(requests).toHaveLength(1);
+    const payload = requests[0];
+    expect(payload?.parse_mode).toBe("HTML");
+    expect(String(payload?.text)).toContain("<b>12 Oak St");
+    expect(payload?.reply_markup).toEqual({
+      inline_keyboard: [[{ text: "Allow", callback_data: "d:abcdef123456:allow" }, { text: "Deny", callback_data: "d:abcdef123456:deny" }]],
+    });
+  });
+  it("a bare yes asks which card without changing work or starting the model", async () => {
+    const decided: Array<{ id: string; status: string }> = [], sent: string[] = [];
+    const fetchFn = stubFetch({ onSend: (_chat, text) => sent.push(text) });
+    const store = await bindPairedDesk(decided, fetchFn);
+    const startTurn = vi.fn(async () => {});
+    await telegram.handleTelegramUpdates([update(29, 111, "yes")], deps(store, startTurn, fetchFn));
+    expect(decided).toEqual([]);
+    expect(startTurn).not.toHaveBeenCalled();
+    expect(sent.at(-1)).toContain(`allow ${remote.pendingDecisionId("telegram")}`);
+  });
   it("answers a paired callback and edits the card", async () => {
     const decided: Array<{ id: string; via?: string; status: string }> = [];
     const answered: string[] = [];
@@ -439,7 +550,7 @@ describe("remote decisions", () => {
     });
     const store = await bindPairedDesk(decided, fetchFn);
     const startTurn = vi.fn(async () => {});
-    await telegram.handleTelegramUpdates([callbackUpdate(30, 111, "d:d-oak:allow", "Yoda")], deps(store, startTurn, fetchFn));
+    await telegram.handleTelegramUpdates([callbackUpdate(30, 111, `d:${remote.pendingDecisionId("telegram")}:allow`, "Yoda")], deps(store, startTurn, fetchFn));
     expect(answered).toEqual(["cb-30"]);
     expect(decided).toEqual([{ id: "d-oak", via: "via Telegram · Yoda", status: "allowed" }]);
     expect(edited[0]).toMatch(/^Allowed via Telegram · Yoda · /);
@@ -452,14 +563,14 @@ describe("remote decisions", () => {
     const fetchFn = stubFetch({ onAnswer: (id) => answered.push(id) });
     const store = await bindPairedDesk(decided, fetchFn);
     await telegram.handleTelegramUpdates(
-      [callbackUpdate(31, 222, "d:d-oak:allow", "Other")],
+      [callbackUpdate(31, 222, `d:${remote.pendingDecisionId("telegram")}:allow`, "Other")],
       deps(store, async () => {}, fetchFn),
     );
     expect(answered).toEqual([]);
     expect(decided).toEqual([]);
   });
 
-  it("treats yes/no as the pending decision and keeps other text on the Bud relay", async () => {
+  it("uses a card-specific reply for the pending decision and keeps other text on the Bud relay", async () => {
     const decided: Array<{ id: string; via?: string; status: string; reason?: string }> = [];
     const sent: string[] = [];
     const fetchFn = stubFetch({ onSend: (_chat, text) => sent.push(text) });
@@ -467,7 +578,7 @@ describe("remote decisions", () => {
     expect(remote.pendingDraftId("telegram")).toBe("d-oak");
     const startTurn = vi.fn(async () => {});
     const wired = deps(store, startTurn, fetchFn);
-    await telegram.handleTelegramUpdates([update(40, 111, "no - too soon", "Sam")], wired);
+    await telegram.handleTelegramUpdates([update(40, 111, `deny ${remote.pendingDecisionId("telegram")} - too soon`, "Sam")], wired);
     expect(decided).toEqual(
       expect.arrayContaining([
         { id: "d-oak", via: "via Telegram · Sam", status: "denied" },
@@ -485,3 +596,28 @@ describe("remote decisions", () => {
 });
 
 
+
+
+describe("phone continuation and busy recovery", () => {
+  it("returns saved desktop work and preserves a waiting request in the durable transcript", async () => {
+    const store = new Store(() => ({ instanceId: "", model: "" })); store.seedIfEmpty();
+    telegram.saveChannel({ botToken: TOKEN, botUsername: "realbud_bot", pairedChatId: 111, pairedName: "Sam", offset: 0, connectedAt: 1, lastMessageAt: null });
+    const bot = store.productBud()!;
+    store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: "Owner update prepared on desktop. Approval still required." });
+    const sent: string[] = []; const startTurn = vi.fn(async () => {});
+    const wired = deps(store, startTurn, stubFetch({ onSend: (_id, text) => sent.push(text) }));
+    await telegram.handleTelegramUpdates([update(1, 111, "/continue")], wired);
+    expect(sent.at(-1)).toContain("Owner update prepared on desktop"); expect(startTurn).not.toHaveBeenCalled();
+    store.patchBot(bot.id, { busy: true });
+    await telegram.handleTelegramUpdates([update(2, 111, "Include the new access question")], wired);
+    expect(sent.at(-1)).toContain("Saved in Ask");
+    const reopened = new Store(() => ({ instanceId: "", model: "" }));
+    expect(reopened.messagesFor(bot.threadId).some(message => message.text?.includes("Include the new access question"))).toBe(true);
+    expect(startTurn).not.toHaveBeenCalled();
+    store.patchBot(bot.id, { busy: false });
+    telegram.flushTelegramRelayForThread(bot.threadId);
+    await vi.waitFor(() => expect(startTurn).toHaveBeenCalledTimes(1));
+    expect(startTurn).toHaveBeenCalledWith(bot.id, "Include the new access question", expect.anything());
+
+  });
+});

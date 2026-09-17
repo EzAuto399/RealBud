@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://realbud.invalid/contracts/accounts-anz-reference-candidates.schema.json",
+  "title": "accounts-anz-reference-candidates",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "kind": {
+      "const": "accounts-anz-reference-candidates"
+    },
+    "sourceReference": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "complete",
+        "partial",
+        "blocked"
+      ]
+    },
+    "coverageComplete": {
+      "type": "boolean"
+    },
+    "originalDigest": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "sourceRow": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rowId": {
+            "type": "string"
+          },
+          "decision": {
+            "enum": [
+              "assign",
+              "keep",
+              "hold"
+            ]
+          },
+          "propertyId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "proposedReference": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceRow",
+          "rowId",
+          "decision",
+          "propertyId",
+          "proposedReference",
+          "reason"
+        ]
+      }
+    },
+    "hostValidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "required": {
+          "const": true
+        },
+        "batchId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "batchRevision": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "originalDigest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "applied": {
+          "const": false
+        }
+      },
+      "required": [
+        "required",
+        "batchId",
+        "batchRevision",
+        "originalDigest",
+        "applied"
+      ]
+    },
+    "holds": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "itemId": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "itemId",
+          "reason"
+        ]
+      }
+    },
+    "actionsPerformed": {
+      "type": "array",
+      "maxItems": 0
+    }
+  },
+  "required": [
+    "version",
+    "kind",
+    "sourceReference",
+    "status",
+    "coverageComplete",
+    "originalDigest",
+    "rows",
+    "hostValidation",
+    "holds",
+    "actionsPerformed"
+  ]
+}

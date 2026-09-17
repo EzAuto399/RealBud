@@ -14,6 +14,8 @@
 // transcripts, and keeping it in one place is the same reasoning as the
 // server-computed approval key.
 
+import { localSessionFetch } from "../local-session";
+
 export type SpeechStatus = "idle" | "preparing" | "speaking";
 
 export interface SpeechSnapshot {
@@ -156,7 +158,7 @@ export class Speaker {
   }
 
   private async prepare(text: string, voiceId: string | undefined, signal: AbortSignal): Promise<string[]> {
-    const res = await fetch("/api/tts/prepare", {
+    const res = await localSessionFetch("/api/tts/prepare", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text, voiceId }),
@@ -164,12 +166,12 @@ export class Speaker {
     });
     const body = (await res.json().catch(() => ({}))) as { ready?: boolean; utterances?: string[]; error?: string };
     if (!res.ok) throw new Error(body.error ?? `the voice service returned ${res.status}`);
-    if (!body.ready) throw new Error("Add an ElevenLabs key and pick a voice in App Settings to turn on voice.");
+    if (!body.ready) throw new Error("Voice is not available. Check its status in settings or contact your service administrator.");
     return body.utterances ?? [];
   }
 
   private async render(text: string, voiceId: string | undefined, signal: AbortSignal): Promise<Blob> {
-    const res = await fetch("/api/tts/speak", {
+    const res = await localSessionFetch("/api/tts/speak", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text, voiceId }),

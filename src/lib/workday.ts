@@ -17,6 +17,13 @@ export type WorkdayPhase =
 export type WorkdayAction = "desk" | "you" | "practice" | "recheck" | null;
 export type WorkdayTone = "agency" | "hold" | "danger" | "muted";
 
+/** Only the untouched sample book starts with practice; never replace a live check with sample facts. */
+export function deskCheckAction(desk: Pick<DeskSnapshot, "demo" | "mode" | "lastRunAt">) {
+  return (desk.demo || desk.mode === "demo") && desk.lastRunAt == null
+    ? { path: "/api/desk/practice", label: "Run sample morning" }
+    : { path: "/api/desk/check", label: "Recheck" };
+}
+
 export interface WorkdayGuide {
   phase: WorkdayPhase;
   tone: WorkdayTone;
@@ -110,7 +117,7 @@ export function workdayGuide(input: {
         title: "Run the sample morning",
         detail: "Use labelled training facts to learn the full Desk flow. Nothing touches a PMS or leaves this Mac.",
         action: "practice",
-        actionLabel: "Recheck",
+        actionLabel: "Run sample morning",
         ...meta,
       };
     }
@@ -137,7 +144,9 @@ export function workdayGuide(input: {
         title: "Facts stay held",
         // The button replays labelled training facts, so it must not be called
         // Recheck: a live Recheck would miss again until the model is fixed.
-        detail: "Bud did not return live facts. Fix the model connection on You, or keep practising on the sample morning.",
+        detail: input.workerReady
+          ? "The last check did not return live facts. Bud is connected now; you can recheck from Desk or practise with the sample."
+          : "Bud did not return live facts. Set up Bud on You, or practise with the sample morning.",
         action: "practice",
         actionLabel: "Run the sample morning",
         ...meta,
@@ -148,7 +157,7 @@ export function workdayGuide(input: {
       tone: "hold",
       eyebrow: "Check incomplete",
       title: "Bud needs attention",
-      detail: "The last check did not return live facts. The sample book was not treated as current.",
+      detail: "Recheck missed — facts stay held. Open You → Bud to fix the connection, then Recheck again.",
       action: "you",
       actionLabel: "Check Bud",
       ...meta,

@@ -7,17 +7,19 @@ import { join } from "node:path";
 
 import { HERMES_PIN } from "../hermes-pin.ts";
 
-export type FakeHermes = { dir: string; script: string; root: string };
+export type FakeHermes = { dir: string; script: string; root: string; argsFile: string };
 
-function writeRunner(path: string, answer: string, exitCode: number, stderr: string): void {
+function writeRunner(path: string, argsFile: string, answer: string, exitCode: number, stderr: string): void {
   writeFileSync(
     path,
     [
       "#!/usr/bin/env node",
+      'import { writeFileSync } from "node:fs";',
       'if (process.argv.includes("--version")) {',
       '  process.stdout.write("Hermes Agent v0.20.3 (2026.8.16.2)\\n");',
       "  process.exit(0);",
       "}",
+      `writeFileSync(${JSON.stringify(argsFile)}, process.argv.slice(2).join("\\n"));`,
       stderr ? `process.stderr.write(${JSON.stringify(stderr)});` : "",
       `process.stdout.write(${JSON.stringify(answer)});`,
       `process.exit(${exitCode});`,
@@ -30,6 +32,7 @@ function writeRunner(path: string, answer: string, exitCode: number, stderr: str
 /** A fake `hermes`: --version prints the pin; chat prints `answer`. */
 export function fakeHermes(answer: string, exitCode = 0, stderr = ""): FakeHermes {
   const dir = mkdtempSync(join(tmpdir(), "omb-fake-hermes-"));
+  const argsFile = join(dir, "args.txt");
   const profile = join(dir, "profiles", HERMES_PIN.profile);
   mkdirSync(profile, { recursive: true });
   writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
@@ -37,18 +40,19 @@ export function fakeHermes(answer: string, exitCode = 0, stderr = ""): FakeHerme
 
   if (process.platform === "win32") {
     const script = join(dir, "fake-hermes-runner.mjs");
-    writeRunner(script, answer, exitCode, stderr);
-    return { dir, script, root: dir };
+    writeRunner(script, argsFile, answer, exitCode, stderr);
+    return { dir, script, root: dir, argsFile };
   }
 
   const script = join(dir, "hermes");
   writeFileSync(
     script,
     `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Hermes Agent v0.20.3 (2026.8.16.2)"; exit 0; fi\n` +
+      `printf '%s\\n' "$@" > '${argsFile.replace(/'/g, "'\\''")}'\n` +
       `printf '%s' '${answer.replace(/'/g, "'\\''")}'\n${stderr ? `echo '${stderr.replace(/'/g, "'\\''")}' >&2` : ""}\nexit ${exitCode}\n`,
   );
   chmodSync(script, 0o755);
-  return { dir, script, root: dir };
+  return { dir, script, root: dir, argsFile };
 }
 
 /** Version-only stub for hermes-status tests. */

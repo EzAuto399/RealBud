@@ -15,6 +15,7 @@ const dataDir = vi.hoisted(() => {
 const { Store } = await import("./store.ts");
 const slack = await import("./channels/slack.ts");
 const remote = await import("./remote-decisions.ts");
+const { createPairingCode } = await import("./channel-pairing.ts");
 
 const TOKEN = "xoxb-SuperSecretSlackBotTokenXYZ";
 
@@ -92,7 +93,7 @@ describe("Slack channel", () => {
     expect(slack.loadChannel()).toBeNull();
   });
 
-  it("connects, pairs on the first DM, and refuses a second chat", async () => {
+  it("connects, pairs with the Mac code, and refuses a second chat", async () => {
     const posts: Array<{ channel: string; text: string }> = [];
     const d = deps({
       fetch: stubFetch({
@@ -103,7 +104,7 @@ describe("Slack channel", () => {
     await slack.connectSlack(TOKEN, null, d.fetch);
 
     await slack.handleSlackInbound(
-      [{ channelId: "D_PAIR", userId: "U_SAM", name: "Sam Office", text: "hello", ts: "10.1" }],
+      [{ channelId: "D_PAIR", userId: "U_SAM", name: "Sam Office", text: createPairingCode("slack", d.now!()).command, ts: "10.1" }],
       d,
     );
     expect(slack.loadChannel()?.pairedChannelId).toBe("D_PAIR");
@@ -138,7 +139,7 @@ describe("Slack channel", () => {
     slack.bindSlackBridge(d);
     await slack.connectSlack(TOKEN, null, fetchFn);
     await slack.handleSlackInbound(
-      [{ channelId: "D_PAIR", userId: "U_SAM", name: "Sam", text: "hi", ts: "1.0" }],
+      [{ channelId: "D_PAIR", userId: "U_SAM", name: "Sam", text: createPairingCode("slack", d.now!()).command, ts: "1.0" }],
       d,
     );
 
@@ -227,7 +228,7 @@ describe("Slack channel", () => {
     expect(remote.pendingDraftId("slack")).toBe("d-oak");
     const startTurn = vi.fn(async () => {});
     await slack.handleSlackInbound(
-      [{ channelId: "D_PAIR", userId: "U_SAM", name: "Sam", text: "allow", ts: "2.0" }],
+      [{ channelId: "D_PAIR", userId: "U_SAM", name: "Sam", text: `allow ${remote.pendingDecisionId("slack")}`, ts: "2.0" }],
       { ...d, startTurn },
     );
     expect(decided[0]).toMatchObject({ id: "d-oak", status: "allowed", via: "via Slack · Sam" });

@@ -5,6 +5,8 @@ export function looksLikeProviderKey(text: string): boolean {
   return (
     /\bsk-(?:ant-|proj-|live-|test-)?[A-Za-z0-9_-]{16,}/.test(text) ||
     /\bxai-[A-Za-z0-9_-]{16,}/.test(text) ||
+    /\bntn_[A-Za-z0-9_-]{16,}/.test(text) ||
+    /\bsecret_[A-Za-z0-9_-]{24,}/.test(text) ||
     /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/.test(text) ||
     /\bgithub_pat_[A-Za-z0-9_]{20,}/.test(text) ||
     /api[_-]?key\s*[=:]\s*["']?[A-Za-z0-9._~+/=-]{12,}/i.test(text)
@@ -12,4 +14,4 @@ export function looksLikeProviderKey(text: string): boolean {
 }
 
 export const KEY_ON_YOU =
-  "Provider keys go on You → Attach model. Ask never sees the secret.";
+  "Use the private key field in Set up Bud. Keep keys out of the conversation.";

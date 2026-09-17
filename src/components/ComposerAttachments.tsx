@@ -1,7 +1,7 @@
 // Chips for what is attached to the next message, plus the window-wide
 // file drop that creates them. A long paste collapses into a card of its
 // first lines instead of flooding the composer; a file dropped anywhere
-// on the window attaches by path.
+// on the window copies the selected file into this desktop's workroom.
 import { useEffect, useRef, useState } from "react";
 import { ClipboardPaste, File as FileIcon, X } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -23,11 +23,13 @@ export function ComposerAttachments({
   onAdd,
   onRemove,
   persist,
+  onCopyChange,
 }: {
   items: Attachment[];
   onAdd: (attachments: Attachment[]) => void;
   onRemove: (id: string) => void;
   persist?: (file: File) => Promise<FileAttachment | null>;
+  onCopyChange?: (delta: number) => void;
 }) {
   const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -60,6 +62,8 @@ export function ComposerAttachments({
       depth.current = 0;
       setDragging(false);
       const files = Array.from(e.dataTransfer?.files ?? []);
+      onCopyChange?.(1);
+      try {
       const { attachments, rejectedNames } = await attachmentsFromDroppedFiles(
         files,
         pathForFile,
@@ -69,9 +73,10 @@ export function ComposerAttachments({
       if (attachments.length) onAdd(attachments);
       setNotice(
         rejectedNames.length
-          ? `${rejectedNames.join(", ")} — that drag carried no file on disk. Save it first, then drop it from Finder.`
+          ? `${rejectedNames.join(", ")} — could not copy the file. Use a PDF, image, Word document, spreadsheet or text file up to 8 MB, then try again.`
           : null,
       );
+      } finally { onCopyChange?.(-1); }
     };
 
     window.addEventListener("dragenter", onEnter);
@@ -85,14 +90,14 @@ export function ComposerAttachments({
       window.removeEventListener("dragover", onOver);
       window.removeEventListener("drop", onDrop);
     };
-  }, [onAdd, persist]);
+  }, [onAdd, persist, onCopyChange]);
 
   return (
     <>
       {dragging && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-10">
           <div className="rounded-2xl border-2 border-dashed border-accent/70 bg-panel/90 px-8 py-6 text-[14px] font-medium text-ink shadow-2xl">
-            Drop to attach — the bot gets the file path
+            Drop to attach a copy — your original stays unchanged
           </div>
         </div>
       )}
@@ -113,7 +118,23 @@ export function ComposerAttachments({
       {items.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-2">
           {items.map((a) =>
-            a.kind === "paste" ? (
+            a.kind === "paste" && a.label ? (
+              <div key={a.id} className="flex w-full items-start gap-2 rounded-lg border border-agency/20 bg-agency/5 px-3 py-2">
+                <details className="min-w-0 flex-1">
+                  <summary className="flex cursor-pointer list-none items-start gap-2 rounded text-ink">
+                    <FileIcon size={16} className="mt-0.5 shrink-0 text-agency" aria-hidden />
+                    <span className="min-w-0">
+                      <span className="block text-[13px] font-medium">{a.label}</span>
+                      <span className="mt-0.5 block text-[12px] text-ink-secondary">{a.id.startsWith("recovered-queue:") ? "Your other draft is kept · Review this follow-up before starting" : "Reference attached · Review before starting"}</span>
+                    </span>
+                  </summary>
+                  <pre className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap break-words border-t border-agency/20 pt-2 font-sans text-[12px] leading-relaxed text-ink-secondary">{a.text}</pre>
+                </details>
+                <button type="button" onClick={() => onRemove(a.id)} aria-label={`Remove attached result: ${a.label}`} className="flex size-8 shrink-0 items-center justify-center rounded text-ink-secondary hover:bg-selected hover:text-ink">
+                  <X size={15} aria-hidden />
+                </button>
+              </div>
+            ) : a.kind === "paste" ? (
               <Chip
                 key={a.id}
                 label="PASTED"
@@ -121,12 +142,12 @@ export function ComposerAttachments({
                 onRemove={() => onRemove(a.id)}
               >
                 <div className="relative h-[76px] overflow-hidden">
-                  <pre className="whitespace-pre-wrap break-words font-mono text-[10.5px] leading-[1.45] text-ink-secondary">
+                  <pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-[1.45] text-ink-secondary">
                     {a.text.slice(0, 400)}
                   </pre>
                   <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-b from-transparent to-raised" />
                 </div>
-                <div className="mt-1 text-[10.5px] text-ink-secondary/70">{pasteSummary(a)}</div>
+                <div className="mt-1 text-[12px] text-ink-secondary/70">{pasteSummary(a)}</div>
               </Chip>
             ) : (
               <Chip key={a.id} label="FILE" title={a.path} onRemove={() => onRemove(a.id)}>
@@ -134,7 +155,7 @@ export function ComposerAttachments({
                   <FileIcon size={16} className="shrink-0 text-ink-secondary" />
                   <div className="min-w-0">
                     <div className="truncate text-[12px] text-ink">{a.name}</div>
-                    <div className="text-[10.5px] text-ink-secondary/70">{formatSize(a.size)}</div>
+                    <div className="text-[12px] text-ink-secondary/70">{formatSize(a.size)}</div>
                   </div>
                 </div>
               </Chip>

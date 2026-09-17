@@ -3,7 +3,7 @@ import { CheckCircle2, Link2, Loader2, Play } from "lucide-react";
 
 import { fmtDate } from "@/lib/au";
 import type { JobRun, Recipe } from "@/lib/desk";
-import { attendedRunLabel, latestAttendedFor, queuedAttended, runningAttended } from "@/lib/job-run";
+import { attendedRunLabel, latestAttendedFor, queuedAttended, runStatusSuffix, runningAttended } from "@/lib/job-run";
 import {
   isLiveCapableHost,
   recipeAttachment,
@@ -13,7 +13,7 @@ import {
   recipePortalSiteLine,
   recipeSubmitAcknowledged,
 } from "@/lib/portal-job";
-import { api } from "@/state/store";
+import { api, useStore } from "@/state/store";
 import { useDesktopCapabilities } from "../DesktopCapabilities";
 import { StatusLabel } from "../pm";
 
@@ -34,6 +34,7 @@ export function PortalJobActions({
   onRun: (run: JobRun) => void;
   onShowAsk: () => void;
 }) {
+  const { state } = useStore();
   const { capabilities } = useDesktopCapabilities();
   const [ackOpen, setAckOpen] = useState(false);
   const [busy, setBusy] = useState<"attach" | "detach" | "attend" | "approve" | "submit" | null>(null);
@@ -58,7 +59,7 @@ export function PortalJobActions({
   const patchRecipe = async (body: Record<string, unknown>): Promise<Recipe> => {
     const nextBody = (await api(
       `/api/recipes/${recipe.id}`,
-      { method: "PATCH", body: JSON.stringify(body) },
+      { method: "PATCH", body: JSON.stringify({ ...body, expectedRevision: recipe.revision }) },
       { timeoutMs: 15_000 },
     )) as { recipe?: Recipe; recipes?: Recipe[] };
     const next = recipeFromPatch(nextBody, recipe.id);
@@ -154,12 +155,15 @@ export function PortalJobActions({
       <p className="text-[12.5px] text-ink-muted">{recipePortalSiteLine(recipe)}</p>
       {status ? (
         <StatusLabel tone={status.tone}>
-          {status.tone === "agency" && live ? (
+          {status.tone === "agency" && live && state.connected ? (
             <Loader2 size={12} className="animate-spin motion-reduce:animate-none" aria-hidden />
           ) : status.tone === "agency" ? (
             <CheckCircle2 size={12} aria-hidden />
           ) : null}
           {status.label}
+          {runStatusSuffix(state.connected) ? (
+            <span className="text-ink-muted">{runStatusSuffix(state.connected)}</span>
+          ) : null}
         </StatusLabel>
       ) : null}
 

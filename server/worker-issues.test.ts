@@ -57,4 +57,13 @@ describe("worker issues", () => {
     expect(resolveWorkerIssues("hands")).toBe(1);
     expect(listWorkerIssues().map((row) => row.source)).toEqual(["ask"]);
   });
+
+  it("redacts secrets from detail", () => {
+    noteWorkerIssue({
+      source: "runtime",
+      summary: "Worker error",
+      detail: "token sk-live-abcdefghijklmnopqrstuvwxyz1234567890 failed",
+    });
+    expect(listWorkerIssues()[0]?.detail).not.toMatch(/sk-live/);
+  });
 });

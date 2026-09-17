@@ -163,6 +163,19 @@ describe("attachModel", () => {
       attachModel({ providerId: "xai-oauth", apiKey: "must-not-be-stored", model: "grok-4.6" }, { root: dir }),
     ).toThrow(/does not accept a pasted API key/);
   });
+
+  it("attaches openai-codex after a fresh Hermes OAuth login without a prior config provider", () => {
+    const { dir, profile } = tempHome();
+    writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
+    writeFileSync(
+      join(profile, "auth.json"),
+      JSON.stringify({ version: 1, credential_pool: { "openai-codex": [{ opaque: "device" }] } }),
+    );
+    const status = attachModel({ providerId: "openai-codex", apiKey: "", model: "gpt-5.5" }, { root: dir });
+    expect(status).toMatchObject({ provider: "openai-codex", model: "gpt-5.5", keyPresent: true });
+    expect(readFileSync(join(profile, "config.yaml"), "utf8")).toMatch(/provider: openai-codex/);
+    expect(existsSync(join(profile, ".env"))).toBe(false);
+  });
 });
 
 describe("listModels", () => {
@@ -185,6 +198,32 @@ describe("listModels", () => {
       JSON.stringify({ openai: { models: { "gpt-5": {}, "gpt-image-1": {} } } }),
     );
     expect(listModels("openai-api", dir)).toEqual(["gpt-5"]);
+  });
+
+  it("prefers Hermes provider_models_cache over models.dev + curated fallbacks", () => {
+    const { dir, profile } = tempHome();
+    writeFileSync(
+      join(profile, "models_dev_cache.json"),
+      JSON.stringify({
+        openai: {
+          models: {
+            "gpt-old": { name: "Old", release_date: "2025-01-01", tool_call: true, modalities: { output: ["text"] } },
+          },
+        },
+      }),
+    );
+    writeFileSync(
+      join(profile, "provider_models_cache.json"),
+      JSON.stringify({
+        "openai-codex": {
+          models: ["gpt-5.6-terra", "gpt-5.5", "gpt-imagine-image"],
+        },
+      }),
+    );
+    expect(listModels("openai-codex", dir)).toEqual(["gpt-5.5", "gpt-5.6-terra"]);
+    const options = listModelOptions("openai-codex", dir);
+    expect(options.map((option) => option.id)).toEqual(["gpt-5.6-terra", "gpt-5.5"]);
+    expect(options.every((option) => option.recommended === false)).toBe(true);
   });
 
   it("offers recommended fallbacks plus the newest Hermes text/tool models", () => {
