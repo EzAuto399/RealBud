@@ -1,9 +1,15 @@
 # RealBud website — offsite backup, 2026-09-17
 
-`website/` is a **separate git repository with no remote configured**, and its
-working tree contains 39 uncommitted paths — including the entire billing portal,
-magic-link auth, `/start`, `/download`, `/admin` and `middleware.ts`. Before this
-backup, none of that existed anywhere except this one Mac.
+`website/` is a **separate git repository with no remote configured**. When this
+backup was first taken its working tree held 39 uncommitted paths — including the
+entire billing portal, magic-link auth, `/start`, `/download`, `/admin` and
+`middleware.ts` — and none of it existed anywhere except this one Mac.
+
+**Refreshed later the same day** (HEAD moved `e1387f7` → `9da34f4`). The 39 paths
+have since been committed in the website repo locally, and two fixes landed on
+top: the `/account/support` auth guard, and refusing a checkout URL that cannot
+take money. Both are in these artifacts. The website repo still has **no remote**,
+so this directory remains the only offsite copy.
 
 These two artifacts are a complete, verified snapshot. They are temporary: delete
 this directory once `website/` has a real remote of its own (see below).
@@ -12,12 +18,12 @@ this directory once `website/` has a real remote of its own (see below).
 
 | File | What it holds |
 |---|---|
-| `realbud-website-history.bundle` | Every ref in the website repo — complete git history, HEAD = `e1387f7` |
-| `realbud-website-working-tree.tar.gz` | The working tree *as it is on disk*, including the uncommitted files |
+| `realbud-website-history.bundle` | Every ref in the website repo — complete git history, HEAD = `9da34f4` |
+| `realbud-website-working-tree.tar.gz` | The working tree *as it is on disk*, including anything uncommitted |
 
-The bundle alone would **not** have been enough: a bundle only carries committed
-content, and the billing portal was never committed. The tar is the part that
-matters.
+The bundle alone would **not** have been enough at first: a bundle only carries
+committed content, and the billing portal was never committed. The tar is why
+nothing was lost.
 
 `.env.local` is deliberately excluded from the tar — it holds an auth secret and a
 Supabase service-role key. Recreate it from `website/.env.example`.
