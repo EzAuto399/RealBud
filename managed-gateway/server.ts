@@ -1,0 +1,210 @@
+/**
+ * Production/local entry for the managed AI gateway.
+ * Secrets via env; SQLite on a durable volume. Never import testing.ts here.
+ */
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { randomBytes } from "node:crypto";
+import { LedgerDatabase } from "./database.ts";
+import { UsageLedger } from "./ledger.ts";
+import { ManagedGateway } from "./gateway.ts";
+import { BillingService } from "./billing.ts";
+import { LocalPaymentAdapter } from "./local-payment.ts";
+import { createGatewayServer } from "./http.ts";
+import { verifyPortalToken } from "./portal-token.ts";
+import { GatewayError, requireThat } from "./contracts.ts";
+import { directProvider } from "./direct-provider.ts";
+import { createSquareBilling } from "./square-live.ts";
+import { OpenAICostsPoller } from "./openai-costs.ts";
+
+function loadLocalEnv() {
+  const file = resolve(dirname(fileURLToPath(import.meta.url)), ".env.local");
+  if (!existsSync(file)) return;
+  for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) continue;
+    const cut = trimmed.indexOf("=");
+    const key = trimmed.slice(0, cut).trim();
+    const value = trimmed.slice(cut + 1);
+    if (key && process.env[key] === undefined) process.env[key] = value;
+  }
+}
+loadLocalEnv();
+
+const port = Number(process.env.PORT || 8787);
+const dataDir = resolve(process.env.REALBUD_GATEWAY_DATA || "./data");
+const dbPath = resolve(dataDir, "ledger.sqlite");
+const portalSecret = process.env.REALBUD_GATEWAY_PORTAL_SECRET || "";
+const paymentMode = (process.env.REALBUD_PAYMENT_MODE || "local") as
+  | "local"
+  | "sandbox"
+  | "live";
+const siteOrigins = new Set(
+  (
+    process.env.REALBUD_ALLOWED_ORIGINS ||
+    "https://realbud.app,https://www.realbud.app"
+  )
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
+);
+
+requireThat(
+  portalSecret.length >= 32,
+  "REALBUD_GATEWAY_PORTAL_SECRET required (>=32 chars)",
+);
+mkdirSync(dirname(dbPath), { recursive: true });
+
+const db = new LedgerDatabase(dbPath);
+const ledger = new UsageLedger(db, Date.now);
+const paymentKey = Buffer.from(
+  process.env.REALBUD_PAYMENT_WEBHOOK_KEY ||
+    randomBytes(32).toString("hex"),
+  "hex",
+);
+requireThat(paymentKey.byteLength >= 32, "REALBUD_PAYMENT_WEBHOOK_KEY invalid");
+
+const payment = new LocalPaymentAdapter(paymentKey, Date.now);
+const authorizeCollection =
+  paymentMode === "sandbox" || paymentMode === "live"
+    ? process.env.REALBUD_AUTHORIZE_COLLECTION === "1"
+    : false;
+if (paymentMode !== "local") {
+  requireThat(
+    authorizeCollection,
+    "Set REALBUD_AUTHORIZE_COLLECTION=1 to enable sandbox/live payment collection",
+  );
+}
+
+const billing = new BillingService(ledger, payment, { authorizeCollection });
+
+const squareToken = process.env.SQUARE_ACCESS_TOKEN || "";
+const squareNotify = process.env.SQUARE_NOTIFICATION_URL || "";
+const squareSig = process.env.SQUARE_WEBHOOK_SIGNATURE_KEY || "";
+export const square =
+  squareToken && squareNotify && squareSig
+    ? createSquareBilling({
+        ledger,
+        accessToken: squareToken,
+        notificationUrl: squareNotify,
+        signatureKey: squareSig,
+      })
+    : null;
+
+const routes = new Map();
+const deepseekKey = process.env.DEEPSEEK_API_KEY;
+const kimiKey = process.env.KIMI_API_KEY;
+if (deepseekKey && process.env.REALBUD_ENABLE_PROVIDER === "1") {
+  routes.set(
+    "deepseek-chat",
+    directProvider({
+      provider: "deepseek",
+      model: "deepseek-chat",
+      upstreamModel: process.env.DEEPSEEK_MODEL || "deepseek-chat",
+      maximumOutputTokens: Number(process.env.DEEPSEEK_MAX_OUTPUT || 8192),
+      enforcedContextTokens: Number(process.env.DEEPSEEK_CONTEXT || 128000),
+      terms: {
+        reviewReference: process.env.DEEPSEEK_TERMS_REF || "operator-admitted",
+        approvedUntil: Date.now() + 365 * 86400000,
+      },
+      secret: async () => deepseekKey,
+      fetch,
+    }),
+  );
+}
+if (kimiKey && process.env.REALBUD_ENABLE_PROVIDER === "1") {
+  routes.set(
+    "kimi-k3",
+    directProvider({
+      provider: "kimi",
+      model: "kimi-k3",
+      upstreamModel: process.env.KIMI_MODEL || "kimi-k3",
+      maximumOutputTokens: Number(process.env.KIMI_MAX_OUTPUT || 8192),
+      enforcedContextTokens: Number(process.env.KIMI_CONTEXT || 128000),
+      terms: {
+        reviewReference: process.env.KIMI_TERMS_REF || "operator-admitted",
+        approvedUntil: Date.now() + 365 * 86400000,
+      },
+      secret: async () => kimiKey,
+      fetch,
+    }),
+  );
+}
+
+const authority = {
+  async acquire() {
+    const signal = AbortSignal.timeout(300_000);
+    return {
+      signal,
+      async assertCurrent() {
+        signal.throwIfAborted();
+      },
+      async release() {},
+    };
+  },
+};
+
+const gateway = new ManagedGateway({
+  ledger,
+  routes,
+  authority,
+  fingerprintKey: Buffer.from(
+    process.env.REALBUD_FINGERPRINT_KEY || randomBytes(32).toString("hex"),
+    "hex",
+  ),
+});
+
+const openaiAdmin = process.env.OPENAI_ADMIN_KEY || "";
+const openaiCosts = new OpenAICostsPoller({
+  secret: async () => openaiAdmin,
+  fetch: openaiAdmin ? fetch : undefined,
+});
+if (openaiAdmin) {
+  const tick = () => {
+    void openaiCosts.poll();
+  };
+  tick();
+  setInterval(tick, 60_000).unref();
+}
+
+const server = createGatewayServer({
+  gateway,
+  billing,
+  allowedOrigins: siteOrigins,
+  health: {
+    squareConfigured: !!square,
+    openaiCostsConfigured: openaiCosts.status().configured,
+  },
+  portal: {
+    async authenticate(bearer) {
+      try {
+        return verifyPortalToken(bearer, portalSecret);
+      } catch {
+        throw new GatewayError("unauthenticated", 401);
+      }
+    },
+  },
+});
+
+server.listen(port, "0.0.0.0", () => {
+  console.log(
+    JSON.stringify({
+      listening: port,
+      data: dbPath,
+      origins: [...siteOrigins],
+      routes: [...routes.keys()],
+      paymentMode,
+      squareConfigured: !!square,
+    }),
+  );
+});
+
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.on(signal, () => {
+    server.close(() => {
+      db.close();
+      process.exit(0);
+    });
+  });
+}

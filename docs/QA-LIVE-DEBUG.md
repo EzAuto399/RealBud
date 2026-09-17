@@ -36,6 +36,7 @@ Individual suites (each uses its own temp home and port):
 | `scripts/e2e-pm-day.mjs` | Happy weekday: clock, practice Allow, Ask→Desk, Friday letter, CSV, office fields |
 | `scripts/e2e-pm-exceptions.mjs` | Messy day: Deny/Edit/stale Allow, evaluate matrix, money holds, notes isolation, pause, recipe gate, rules, law watch flag |
 | `scripts/e2e-walkthrough.mjs` | Partner demo + fake portal + recovery |
+| `scripts/qa-company-core.mjs` | Isolated-home core contract for a second office (`pnpm qa:company`) |
 | `scripts/qa-live-worker.mjs` | Real worker: Test hands ping, live Recheck, CSV, send 403 |
 | `scripts/simulate-scale.mjs` | Book at 20–100 properties; desk/import latency |
 

@@ -14,7 +14,7 @@ import { approvalKey, autoDecision } from "./auto-approve.ts";
 import { applyLawDrift, lawWatchView, persistLawWatchResult, runLawWatch, setLawWatchScheduled } from "./law-watch.ts";
 import { addPortalRule, addRule, evaluateRules, isPortalRuleSurface, loadRules, parsePortalRuleKey, removeRule } from "./rules.ts";
 import { appendHistory, listHistory } from "./computer-history.ts";
-import { listWorkerIssues, noteWorkerIssue, setWorkerIssueListener } from "./worker-issues.ts";
+import { listWorkerIssues, noteWorkerIssue, resolveWorkerIssues, setWorkerIssueListener } from "./worker-issues.ts";
 import { assertRecipeRevision, deleteRecipe, fenceCapabilitiesFor, getRecipe, listRecipes, normalizeOrigin, patchRecipe, patchRecipeStatus, recipeClockRunnable, recipeHasPortalCapability, saveRecipe } from "./recipes.ts";
 import { distillRecipe } from "./recipe-distill.ts";
 import { shapeRecipeDraft } from "./recipe-draft.ts";
@@ -493,6 +493,34 @@ function broadcast(payload: unknown) {
 
 function publishWorkerIssue(input: Parameters<typeof noteWorkerIssue>[0]): void {
   noteWorkerIssue(input);
+}
+
+/** Clear a recovered hands miss, or retry the ping when the last receipt failed. Reload still does not invent ready. */
+async function healHandsReadiness(): Promise<void> {
+  const last = readHandsPing(DATA_DIR);
+  if (last?.ok) {
+    resolveWorkerIssues("hands");
+    return;
+  }
+  const status = await hermesStatus();
+  if (
+    !status.cli.installed ||
+    !status.cli.matchesPin ||
+    !status.pack.installed ||
+    !status.pack.approvalsManual ||
+    !status.pack.workroomReady
+  ) {
+    return;
+  }
+  const ping = await tryHermesPing();
+  writeHandsPing(DATA_DIR, {
+    at: Date.now(),
+    ok: ping.ok,
+    detail: ping.detail,
+    kind: "ping",
+    workerFingerprint: ping.workerFingerprint,
+  });
+  if (ping.ok) resolveWorkerIssues("hands");
 }
 
 function positiveEnvInt(name: string, fallback: number): number {
@@ -3318,7 +3346,9 @@ const server = createServer(async (req, res) => {
       await readBody(req);
       const ping = await tryHermesPing();
       writeHandsPing(DATA_DIR, { at: Date.now(), ok: ping.ok, detail: ping.detail, kind: "ping", workerFingerprint: ping.workerFingerprint });
-      if (!ping.ok) {
+      if (ping.ok) {
+        resolveWorkerIssues("hands");
+      } else {
         publishWorkerIssue({
           source: "hands",
           summary: "Bud readiness check missed",
@@ -3349,6 +3379,7 @@ const server = createServer(async (req, res) => {
         // the standalone action. Persist it so a reload cannot forget a
         // successful check or falsely present a failed one as ready.
         writeHandsPing(DATA_DIR, { at: Date.now(), ok: ping.ok, detail: ping.detail, kind: "ping", workerFingerprint: ping.workerFingerprint });
+        if (ping.ok) resolveWorkerIssues("hands");
         return json(res, 200, { ok: true, model: status, ping });
       } catch (e) {
         const status = (e as { status?: number }).status ?? 500;
@@ -4405,6 +4436,7 @@ server.listen(PORT, "127.0.0.1", () => {
     startDiscordBridge();
     startSlackBridge();
     startRemoteDecisionFlush();
+    void healHandsReadiness();
   }
 });
 

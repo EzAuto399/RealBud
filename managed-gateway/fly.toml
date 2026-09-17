@@ -1,0 +1,28 @@
+# fly.toml app configuration file generated for realbud-managed-gateway
+app = 'realbud-managed-gateway'
+primary_region = 'syd'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[env]
+  PORT = '8787'
+  REALBUD_GATEWAY_DATA = '/data'
+  REALBUD_ALLOWED_ORIGINS = 'https://realbud.app,https://www.realbud.app'
+  REALBUD_PAYMENT_MODE = 'local'
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  auto_stop_machines = 'off'
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ['app']
+
+[[vm]]
+  size = 'shared-cpu-2x'
+  memory = '1024mb'
+
+[mounts]
+  source = 'gateway_data'
+  destination = '/data'

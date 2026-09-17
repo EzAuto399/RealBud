@@ -18,3 +18,7 @@ dist-server/
 dist-postgres/
 .postgres-cache/
 electron/resources/
+
+# scratch: generated documents, PDFs and salvage copies — not product code
+output/
+tmp/

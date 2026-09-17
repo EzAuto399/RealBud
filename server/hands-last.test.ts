@@ -32,4 +32,17 @@ describe("hands-last", () => {
     expect(readHandsPing(dir)?.ok).toBe(true);
     expect(readHandsLast(dir)?.ok).toBe(false);
   });
+
+  it("keeps the worker fingerprint on a ping receipt", () => {
+    const dir = mkdtempSync(join(tmpdir(), "realbud-hands-"));
+    dirs.push(dir);
+    writeHandsPing(dir, {
+      at: 1,
+      ok: true,
+      detail: "ok",
+      kind: "ping",
+      workerFingerprint: "abc",
+    });
+    expect(readHandsPing(dir)?.workerFingerprint).toBe("abc");
+  });
 });
