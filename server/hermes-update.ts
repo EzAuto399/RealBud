@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { hermesHome, runtimeCli } from "./hermes-paths.ts";
 import { applyPropertyPack, packInstalled } from "./hermes-pack.ts";
-import { HERMES_RECOMMENDED, HERMES_RELEASES } from "./hermes-releases.ts";
+import { HERMES_RECOMMENDED, HERMES_RELEASES, type HermesRelease } from "./hermes-releases.ts";
 import { hermesCli } from "./hermes-pin.ts";
 import { adoptFirstRuntime, readRuntimeSelection, releaseHome, runtimeCommit, saveRuntimeSelection } from "./hermes-runtime-selection.ts";
 import { installInFlight, startBootstrapInstall, type InstallJob } from "./hermes-bridge.ts";
@@ -28,6 +28,22 @@ export function runtimeUpdateStatus(home = hermesHome()) {
 /** Official installer, isolated runtime, no PATH stage or personal CLI writes. */
 export function startRuntimeUpdate(options: {
   home?: string; run?: typeof runWorkerBootstrap; verify?: typeof verifyRuntime; timeoutMs?: number; firstInstall?: boolean; repair?: boolean;
+  /**
+   * Which catalog release to stage. Defaults to HERMES_RECOMMENDED, which is the
+   * only thing a person ever installs.
+   *
+   * This exists to break a circular dependency in the promotion procedure: the
+   * procedure says smoke a candidate before recommending it, but staging used to be
+   * hardcoded to HERMES_RECOMMENDED and line below refuses when that release is
+   * already selected — so the only way to stage 0.21.3 was to make it recommended
+   * first, i.e. promote the thing the smoke is supposed to gate. A release engineer
+   * can now stage a catalog entry that is *not* recommended, smoke it, and only then
+   * move HERMES_RECOMMENDED_VERSION.
+   *
+   * Deliberately not reachable from an HTTP route: a caller must not be able to
+   * choose an arbitrary worker. The entry must already exist in the catalog.
+   */
+  release?: HermesRelease;
 } = {}): InstallJob {
   if (installInFlight()) throw Object.assign(new Error("Bud setup is already running."), { status: 409 });
   if (process.env.REALBUD_HERMES_CLI?.trim()) throw Object.assign(new Error("This installation uses a custom agent path. Update that installation separately or remove the custom setting first."), { status: 409 });
@@ -36,7 +52,10 @@ export function startRuntimeUpdate(options: {
   if (bootstrapChildRunning(home)) throw Object.assign(new Error("An earlier agent setup is still running. Wait for it to stop before starting a new installation."), { status: 409 });
   // Freeze this process's executable before preparing the next launch.
   hermesCli();
-  const release = HERMES_RECOMMENDED;
+  const release: HermesRelease = options.release ?? HERMES_RECOMMENDED;
+  if (!HERMES_RELEASES.some(entry => entry.commit === release.commit && entry.product === release.product && entry.tag === release.tag)) {
+    throw new BootstrapError(`Hermes ${release.product} is not in the install catalog. Admit it there before staging it.`);
+  }
   if (runtimeCommit(before.selected) === release.commit && !options.repair) throw Object.assign(new Error("The recommended agent is already selected. Restart RealBud if the update is waiting."), { status: 409 });
   // Retry in a new directory. Upstream's repository stage updates existing
   // checkouts via main; it must never run over a selected or failed candidate.

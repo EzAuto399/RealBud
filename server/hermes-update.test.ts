@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { checkUpstreamRelease, restorePreviousRuntime, runtimeUpdateStatus, startRuntimeUpdate } from "./hermes-update.ts";
 import { cancelBootstrapInstall, installStatus, waitForBootstrapStop } from "./hermes-bridge.ts";
-import { HERMES_RECOMMENDED } from "./hermes-releases.ts";
+import { HERMES_RECOMMENDED, HERMES_RELEASES } from "./hermes-releases.ts";
 import { applyPropertyPack, propertyProfileDir } from "./hermes-pack.ts";
 import { readRuntimeSelection, releaseHome, resetRuntimeSelectionForTests, saveRuntimeSelection, selectedHermesCli } from "./hermes-runtime-selection.ts";
 import { runtimeCli } from "./hermes-paths.ts";
@@ -149,6 +149,28 @@ it("keeps a custom CLI outside managed installation", () => {
   vi.stubEnv("REALBUD_HERMES_CLI", "/custom/hermes");
   expect(selectedHermesCli()).toBe("/custom/hermes");
   expect(() => start()).toThrow(/custom agent path/);
+});
+
+// The promotion procedure says smoke a candidate before recommending it, but staging
+// used to be hardcoded to HERMES_RECOMMENDED and refused once that was selected — so
+// staging 0.21.3 required promoting it first, which is the thing the smoke gates.
+// These pin that a catalog release can now be staged without becoming recommended.
+const candidateRelease = HERMES_RELEASES.find(release => release.product === "0.21.3")!;
+
+it("stages a catalog candidate while RECOMMENDED stays on the shipped release", async () => {
+  applyPropertyPack(home);
+  expect(HERMES_RECOMMENDED.product).toBe("0.21.2");
+  start({ release: candidateRelease, verify: async () => `Hermes Agent v${candidateRelease.product} (${candidateRelease.tag.slice(1)})` });
+  await waitForBootstrapStop();
+  expect(installStatus().state).toBe("done");
+  // Staged and selectable, and still not what a fresh office receives.
+  expect(readRuntimeSelection(home).selected).toContain(candidateRelease.commit);
+  expect(HERMES_RECOMMENDED.product).not.toBe(candidateRelease.product);
+});
+
+it("refuses to stage a release that is not in the install catalog", () => {
+  const forged = { product: "9.9.9", tag: "v2099.1.1", commit: "f".repeat(40), installers: { unix: "x", windows: "y" } };
+  expect(() => start({ release: forged })).toThrow(/not in the install catalog/);
 });
 
 it.each(["darwin", "linux", "win32"] as const)("never rewrites the shared launcher in a private %s installation", platform => {
