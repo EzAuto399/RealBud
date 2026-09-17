@@ -36,6 +36,7 @@
     "qa:company": "node --experimental-strip-types scripts/qa-company-core.mjs",
     "qa:second-office": "node --experimental-strip-types scripts/qa-second-office-contract.mjs",
     "qa:seat-isolation": "node scripts/qa-seat-isolation.mjs",
+    "qa:acp-smoke": "node scripts/qa-acp-smoke.mjs",
     "qa:austin-packs": "node scripts/qa-austin-pack-roundtrip.mjs",
     "qa:kevin-day": "node scripts/qa-kevin-day.mjs",
     "qa:live-worker": "node scripts/qa-live-worker.mjs",
