@@ -60,7 +60,24 @@ Picking a side would have lost real work in three of them:
 
 ## Still open
 
-- `scripts/qa-second-office-contract.mjs` has no npm script. Add one (e.g.
-  `qa:second-office`) or fold it into `qa`.
 - The pin-vs-compatible readiness split needed no separate patch: the branch's
   `hermes-status.ts:58` already gates on `(status.cli.compatible ?? status.cli.matchesPin)`.
+
+Both items previously listed here have since been closed:
+
+- `scripts/qa-second-office-contract.mjs` is now `pnpm qa:second-office` and runs as
+  part of `qa:full`. It passes 16/16.
+- `website/` now has a remote — `EzAuto399/RealBud-website` (private), added
+  2026-09-17 — so the emergency `backup/website-2026-09-17/` directory was deleted
+  as its own README instructed. That repo had no remote when this recovery started,
+  which is why a hand-made bundle and tar were the only offsite copy of the billing
+  portal. The website working tree has also since been committed and pushed, and its
+  docs corrected (`91ff47a`).
+
+## Related, same day
+
+`website/docs/DOMAIN-SETUP.md` had prescribed `A @ → 10.0.1.2` — a private RFC1918
+address — and it had been applied to the live zone, which is why `realbud.app` and
+therefore the entire public site was unreachable. Corrected with the measured Vercel
+addresses and verification steps. See that file.
+
