@@ -33,7 +33,7 @@ async function streamWrite(res:ServerResponse,data:string,signal:AbortSignal) {
 /** Dedicated service, never mount on the desktop's loopback/per-boot-token API.
  * TLS termination, request concurrency/rate limits and external identity admission are
  * explicit deployment gates. No cookie auth or permissive CORS is installed. */
-export function createGatewayServer(options:{gateway:ManagedGateway;billing:BillingService;portal:PortalIdentity;allowedOrigins:ReadonlySet<string>;health?:{squareConfigured?:boolean;openaiCostsConfigured?:boolean}}) {
+export function createGatewayServer(options:{gateway:ManagedGateway;billing:BillingService;portal:PortalIdentity;allowedOrigins:ReadonlySet<string>;health?:{squareConfigured?:boolean;openaiCostsConfigured?:boolean;paymentMode?:'local'|'sandbox'|'live'}}) {
   const server=createServer(async(req,res)=>{
     const abort=new AbortController(); res.once('close',()=>{if(!res.writableEnded) abort.abort();});
     res.setHeader('Cache-Control','no-store'); res.setHeader('X-Content-Type-Options','nosniff');

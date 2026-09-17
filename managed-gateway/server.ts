@@ -40,6 +40,13 @@ const paymentMode = (process.env.REALBUD_PAYMENT_MODE || "local") as
   | "local"
   | "sandbox"
   | "live";
+// An unrecognised value used to fall through the two `!== "local"` / `=== "live"`
+// comparisons below: it required no REALBUD_AUTHORIZE_COLLECTION, and the gateway
+// then advertised a payment mode it was not actually in. Refuse at boot instead.
+requireThat(
+  paymentMode === "local" || paymentMode === "sandbox" || paymentMode === "live",
+  "REALBUD_PAYMENT_MODE must be local, sandbox or live",
+);
 const siteOrigins = new Set(
   (
     process.env.REALBUD_ALLOWED_ORIGINS ||
@@ -65,20 +72,6 @@ const paymentKey = Buffer.from(
 );
 requireThat(paymentKey.byteLength >= 32, "REALBUD_PAYMENT_WEBHOOK_KEY invalid");
 
-const payment = new LocalPaymentAdapter(paymentKey, Date.now);
-const authorizeCollection =
-  paymentMode === "sandbox" || paymentMode === "live"
-    ? process.env.REALBUD_AUTHORIZE_COLLECTION === "1"
-    : false;
-if (paymentMode !== "local") {
-  requireThat(
-    authorizeCollection,
-    "Set REALBUD_AUTHORIZE_COLLECTION=1 to enable sandbox/live payment collection",
-  );
-}
-
-const billing = new BillingService(ledger, payment, { authorizeCollection });
-
 const squareToken = process.env.SQUARE_ACCESS_TOKEN || "";
 const squareNotify = process.env.SQUARE_NOTIFICATION_URL || "";
 const squareSig = process.env.SQUARE_WEBHOOK_SIGNATURE_KEY || "";
@@ -91,6 +84,31 @@ export const square =
         signatureKey: squareSig,
       })
     : null;
+
+const authorizeCollection =
+  paymentMode === "sandbox" || paymentMode === "live"
+    ? process.env.REALBUD_AUTHORIZE_COLLECTION === "1"
+    : false;
+if (paymentMode !== "local") {
+  requireThat(
+    authorizeCollection,
+    "Set REALBUD_AUTHORIZE_COLLECTION=1 to enable sandbox/live payment collection",
+  );
+  // NOTE: SquareBilling above is a statement/draft-invoice manager. It does NOT
+  // implement HostedPaymentAdapter (no id/mode/createCheckout/verifyWebhook), so it
+  // cannot serve /v1/portal/.../checkout. BillingService is therefore still handed
+  // the local simulator, and a checkout URL from it is https://checkout.invalid/...
+  // Do not set REALBUD_AUTHORIZE_COLLECTION=1 unless a real HostedPaymentAdapter is
+  // wired here first: sandbox/live collection fails closed on this flag below.
+  requireThat(
+    !authorizeCollection,
+    "sandbox/live payment collection is not wired: BillingService has no Square HostedPaymentAdapter, so checkout would return a simulator URL (https://checkout.invalid/...). Keep REALBUD_AUTHORIZE_COLLECTION unset until Square checkout is implemented.",
+  );
+}
+
+const payment = new LocalPaymentAdapter(paymentKey, Date.now);
+
+const billing = new BillingService(ledger, payment, { authorizeCollection });
 
 const routes = new Map();
 const deepseekKey = process.env.DEEPSEEK_API_KEY;
@@ -174,6 +192,9 @@ const server = createGatewayServer({
   allowedOrigins: siteOrigins,
   health: {
     squareConfigured: !!square,
+    // Which mode the gateway is in, so an operator can see that a sandbox/live
+    // deployment is real rather than reading squareConfigured alone.
+    paymentMode,
     openaiCostsConfigured: openaiCosts.status().configured,
   },
   portal: {
