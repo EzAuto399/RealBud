@@ -64,6 +64,19 @@ export interface AcpSupport {
   install?: EngineInstall;
   /** CLI argv AFTER the binary name to enter ACP stdio mode. */
   spawnArgs(config: AcpConfig, turn: SendTurnInput): string[];
+  /**
+   * Which worker profile this execution runs as.
+   *
+   * Omitted means the shared base profile — correct for a single-seat install,
+   * and the only behaviour that existed before per-seat isolation. A multi-seat
+   * office host supplies a resolver that reads the *authenticated* seat, so one
+   * seat's memory, skills store and session database are never shared with
+   * another (see `server/hermes-profile.ts`).
+   *
+   * The resolver is configured when the driver is constructed, never per
+   * request: a caller must not be able to name its own profile.
+   */
+  workerProfile?(config: AcpConfig, turn: SendTurnInput): string;
   /** Mutate the child env in place (e.g. strip a key). Optional. */
   transformEnv?(env: Record<string, string | undefined>): void;
   /** Pick the ACP authenticate methodId from initialize's advertised

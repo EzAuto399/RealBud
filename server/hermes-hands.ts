@@ -12,7 +12,7 @@ import { execFileCli } from "./procs.ts";
 import type { LedgerFacts } from "../shared/contracts.ts";
 import { asBoolean, asFiniteNumber, asNonEmptyString, asNullableNumber } from "./decode.ts";
 import { hermesCli, hermesIsCompatible } from "./hermes-pin.ts";
-import { baseWorkerProfile } from "./hermes-profile.ts";
+import { baseWorkerProfile, hermesProfileFor } from "./hermes-profile.ts";
 import { approvalsAreManual, packInstalled } from "./hermes-pack.ts";
 import { probeHermesVersion, hermesReadinessFingerprint, workerSetupPending } from "./hermes-status.ts";
 import { seedVault } from "./vault.ts";
@@ -67,6 +67,12 @@ export async function tryHermesPing(opts?: {
   timeoutMs?: number;
   root?: string;
   cwd?: string;
+  /**
+   * The authenticated seat this execution acts for. Omitted means the shared
+   * base profile, which is correct for a single-seat install. Callers pass the
+   * seat identity — never a model- or request-supplied name.
+   */
+  memberKey?: string | null;
 }): Promise<HermesPing> {
   const started = Date.now();
   let workerFingerprint: string | undefined;
@@ -101,7 +107,7 @@ export async function tryHermesPing(opts?: {
     };
     const child = execFileCli(
       cli,
-      ["--profile", baseWorkerProfile(), "chat", "-Q", "--toolsets", "todo", "-q", "Reply with exactly one word: OK. Do not use tools.", "--max-turns", "1"],
+      ["--profile", hermesProfileFor(baseWorkerProfile(), opts?.memberKey).profile, "chat", "-Q", "--toolsets", "todo", "-q", "Reply with exactly one word: OK. Do not use tools.", "--max-turns", "1"],
       execOpts,
       (err, stdout, stderr) => {
         const clean = (s: string) =>
@@ -187,7 +193,14 @@ function parseLedgerRows(raw: string): LedgerFacts[] | null {
 
 export async function tryHermesLedger(
   propertyIds: string[],
-  opts?: { cli?: string; timeoutMs?: number; root?: string; cwd?: string },
+  opts?: {
+    cli?: string;
+    timeoutMs?: number;
+    root?: string;
+    cwd?: string;
+    /** See `tryHermesPing.memberKey`: the authenticated seat, never a supplied name. */
+    memberKey?: string | null;
+  },
 ): Promise<HermesLedgerAttempt> {
   const miss = (detail: string): HermesLedgerAttempt => ({ rows: null, detail });
   const serviceFailure = managedServiceFailure("reasoning");
@@ -229,7 +242,7 @@ export async function tryHermesLedger(
     };
     const child = execFileCli(
       cli,
-      ["--profile", baseWorkerProfile(), "chat", "-Q", "-q", prompt, "--max-turns", "6"],
+      ["--profile", hermesProfileFor(baseWorkerProfile(), opts?.memberKey).profile, "chat", "-Q", "-q", prompt, "--max-turns", "6"],
       execOpts,
       (err, stdout, stderr) => {
         if (err) {

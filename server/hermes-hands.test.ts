@@ -163,6 +163,68 @@ describe("tryHermesPing (fake pinned CLI)", () => {
     expect(ping.elapsedMs).toBeGreaterThanOrEqual(0);
   });
 
+  // Per-seat isolation: the whole point of the office host is that two seats never
+  // share one Hermes profile, because a profile carries one memory, skills store
+  // and session database. These pin that execution resolves the profile it was
+  // given rather than always the shared base — the regression would be silent,
+  // since every seat would keep working while quietly sharing each other's state.
+  describe("per-seat worker profiles", () => {
+    const profileArg = (argsFile: string): string => {
+      const args = readFileSync(argsFile, "utf8").split("\n");
+      const at = args.indexOf("--profile");
+      expect(at, `no --profile in: ${args.join(" ")}`).toBeGreaterThanOrEqual(0);
+      return args[at + 1] ?? "";
+    };
+
+    it("runs the base profile when no seat is given, so single-seat installs are unchanged", async () => {
+      const { dir, script, argsFile } = stubHermes("OK");
+      await tryHermesPing({ cli: script, root: dir });
+      expect(profileArg(argsFile)).toBe(HERMES_PIN.profile);
+    });
+
+    it("runs the seat's own profile once a seat is given", async () => {
+      const { dir, script, argsFile } = stubHermes("OK");
+      await tryHermesPing({ cli: script, root: dir, memberKey: "dana" });
+      expect(profileArg(argsFile)).toBe(`${HERMES_PIN.profile}-dana`);
+    });
+
+    it("never resolves two seats to one profile", async () => {
+      const seen: string[] = [];
+      for (const seat of ["dana", "sam"]) {
+        const { dir, script, argsFile } = stubHermes("OK");
+        await tryHermesPing({ cli: script, root: dir, memberKey: seat });
+        seen.push(profileArg(argsFile));
+      }
+      expect(new Set(seen).size).toBe(2);
+      expect(seen).not.toContain(HERMES_PIN.profile);
+    });
+
+    it("resolves the same seat to the same profile every time", async () => {
+      const first = stubHermes("OK");
+      await tryHermesPing({ cli: first.script, root: first.dir, memberKey: "dana" });
+      const second = stubHermes("OK");
+      await tryHermesPing({ cli: second.script, root: second.dir, memberKey: "dana" });
+      expect(profileArg(first.argsFile)).toBe(profileArg(second.argsFile));
+    });
+
+    it("carries the seat through the ledger read too, not just the ping", async () => {
+      const { dir, script, argsFile } = stubHermes(JSON.stringify(fixture));
+      await tryHermesLedger(["prop-oak"], { cli: script, root: dir, memberKey: "sam" });
+      expect(profileArg(argsFile)).toBe(`${HERMES_PIN.profile}-sam`);
+    });
+
+    it("normalises a hostile seat string instead of letting it name a profile", async () => {
+      // A seat key reaches the profile name, which is a directory name. It must be
+      // sanitised, so a caller cannot climb out of the profiles directory.
+      const { dir, script, argsFile } = stubHermes("OK");
+      await tryHermesPing({ cli: script, root: dir, memberKey: "../../etc/passwd" });
+      const profile = profileArg(argsFile);
+      expect(profile).not.toContain("/");
+      expect(profile).not.toContain("..");
+      expect(profile.startsWith(`${HERMES_PIN.profile}-`)).toBe(true);
+    });
+  });
+
   it("fails with the provider's words when the model cannot answer", async () => {
     const { dir, script } = stubHermes("Billing or credits exhausted: HTTP 402", 1);
     const ping = await tryHermesPing({ cli: script, root: dir });

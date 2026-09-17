@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { hermesCli, hermesInstallCommand } from "../../hermes-pin.ts";
-import { baseWorkerProfile } from "../../hermes-profile.ts";
+import { baseWorkerProfile, hermesProfileFor } from "../../hermes-profile.ts";
 import { seedVault } from "../../vault.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 import { BUD_IDENTITY } from "../../../shared/bud-identity.ts";
@@ -82,13 +82,20 @@ const support: AcpSupport = {
     signInCommand: `hermes -p ${baseWorkerProfile()} model`,
   },
 
-  spawnArgs: (_config, turn) => [
-    "-p",
-    baseWorkerProfile(),
-    "--toolsets", HERMES_CONFIGURED_MCP_FILTER,
-    ...(turn.model && turn.model !== "default" ? ["-m", turn.model] : []),
-    "acp",
-  ],
+  spawnArgs(config, turn) {
+    // A multi-seat office host installs `workerProfile` so this session gets the
+    // seat's own profile; without it every seat would share one memory, skills
+    // store and session database. The resolver is fixed at construction — this
+    // path never accepts a caller-supplied profile name.
+    const profile = support.workerProfile?.(config, turn) ?? hermesProfileFor(baseWorkerProfile()).profile;
+    return [
+      "-p",
+      profile,
+      "--toolsets", HERMES_CONFIGURED_MCP_FILTER,
+      ...(turn.model && turn.model !== "default" ? ["-m", turn.model] : []),
+      "acp",
+    ];
+  },
 
   // A leftover provider key can reroute Hermes; globally configured MCP
   // servers would bypass RealBud's explicit connection boundary.
