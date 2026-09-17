@@ -26,17 +26,25 @@ describe("what a fresh install receives", () => {
     expect(HERMES_RECOMMENDED.commit).not.toBe(HERMES_PIN.commit);
   });
 
-  it("does not admit 0.21.3 anywhere", () => {
-    // Widened deliberately: the literal types already prove 0.21.3 is absent, so
-    // a direct comparison is a compile error. This still guards the runtime
-    // catalog, which is what a future edit actually changes.
-    const catalog: readonly { product: string; tag: string }[] = HERMES_RELEASES;
+  // Replaces "does not admit 0.21.3 anywhere". 0.21.3 is now admitted as an
+  // installable, supported candidate so it can be staged and smoked, but it must
+  // not yet be what a fresh office receives — the pin procedure still requires an
+  // ACP smoke against the new worker. The guard moves from "absent" to
+  // "present but never recommended", which is the invariant that actually matters.
+  it("admits 0.21.3 as a candidate but never recommends or defaults to it", () => {
+    const catalog: readonly { product: string; tag: string; commit: string }[] = HERMES_RELEASES;
     const compatible: readonly { product: string; calendar: string }[] = HERMES_COMPATIBLE_RELEASES;
-    expect(catalog.some(release => release.product === "0.21.3")).toBe(false);
-    expect(catalog.some(release => release.tag === "v2026.9.14")).toBe(false);
-    expect(compatible.some(release => release.product === "0.21.3")).toBe(false);
-    // And it is not reachable by calendar stamp either.
-    expect(compatible.some(release => release.calendar === "2026.9.14")).toBe(false);
+    const candidate = catalog.find(release => release.product === "0.21.3");
+    expect(candidate, "0.21.3 must be installable so it can be evaluated").toBeDefined();
+    expect(candidate?.tag).toBe("v2026.9.14");
+    // The v2026.9.14 TAG commit, not a main-branch head. This machine's personal
+    // Hermes also says "v0.21.3 (2026.9.14)" but is built from upstream 6005aa1f,
+    // 1653 commits ahead of the tag.
+    expect(candidate?.commit).toBe("345cd2b057a452236de401d3534b8502a7465e8d");
+    expect(compatible.some(release => release.product === "0.21.3" && release.calendar === "2026.9.14")).toBe(true);
+    // The two things that would actually ship it to a new office:
+    expect(HERMES_RECOMMENDED_VERSION).not.toBe("0.21.3");
+    expect(HERMES_RECOMMENDED.product).not.toBe("0.21.3");
   });
 
   it("keeps the rollback/floor release installable rather than deleting it", () => {

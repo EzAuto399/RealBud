@@ -47,6 +47,10 @@ export function hermesMatchesPin(versionText: string): boolean {
 export const HERMES_COMPATIBLE_RELEASES = [
   { product: HERMES_PIN.product, calendar: HERMES_PIN.tag.slice(1) },
   { product: "0.21.0", calendar: "2026.8.31" },
+  // Admitted 2026-09-17 as installable and supported, but not yet the recommended
+  // build: it still needs an ACP smoke against the new worker. See the catalog entry
+  // in hermes-releases.ts for the commit and installer provenance.
+  { product: "0.21.3", calendar: "2026.9.14" },
   { product: "0.21.2", calendar: "2026.9.11" },
 ] as const;
 

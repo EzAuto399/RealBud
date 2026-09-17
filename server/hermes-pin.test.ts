@@ -46,12 +46,14 @@ describe("Hermes adapter compatibility", () => {
     expect(hermesIsCompatible("Hermes Agent v0.21.2 (2026.9.11) · local 939e45c9")).toBe(true);
     expect(hermesIsCompatible("Hermes Agent v0.21.2 (2026.9.12)")).toBe(false);
   });
-  it("does not admit 0.21.3 under any calendar stamp", () => {
-    // The real upstream line for 0.21.3. An earlier assertion only used the
-    // 0.21.2 calendar, so it passed for the wrong reason: the calendar alone
-    // already made it false, which would have hidden a 0.21.3 product entry
-    // being added to the compatibility list.
-    expect(hermesIsCompatible("Hermes Agent v0.21.3 (2026.9.14)")).toBe(false);
+  it("admits 0.21.3 only by its exact product and calendar pair", () => {
+    // Inverted 2026-09-17: 0.21.3 is now an admitted candidate so it can be staged
+    // and smoked (see hermes-releases.ts). What must NOT change is that admission
+    // requires the exact upstream pair — a matching product with the wrong calendar
+    // stamp, or a calendar with no product, still fails closed. The assertion below
+    // on the 0.21.2 calendar is the one that previously caught a 0.21.3 product
+    // entry being added by itself; keep it.
+    expect(hermesIsCompatible("Hermes Agent v0.21.3 (2026.9.14)")).toBe(true);
     expect(hermesIsCompatible("Hermes Agent v0.21.3 (2026.9.11)")).toBe(false);
     expect(hermesIsCompatible("Hermes Agent v0.21.3")).toBe(false);
   });
