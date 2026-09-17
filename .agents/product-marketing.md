@@ -1,6 +1,6 @@
 # Product Marketing Context
 
-**Document version:** v2
+**Document version:** v3
 **Last updated:** 2026-09-17
 
 > **Grounding note.** Every claim below is taken from the canonical docs in this
@@ -127,9 +127,24 @@ no office rules, and no audit trail of what was read.
 **Adjacent, not competitive:** general agent tools — Codex, Claude Code, OpenCode and
 similar. They are strong at owning a repository or a codebase and are deliberately
 general. For property-management work they lack the book, the office rules, the clock,
-the audit receipt and, most importantly, the fence. Do not feature-count against them;
-position on focus. Claiming to be "better than Codex" at being Codex would be a
+the audit receipt and, most importantly, the fence. Do not feature-count against
+them; position on focus. Claiming to be "better than Codex" at being Codex would be a
 category error, and it would walk straight into the "Not an agent OS" line.
+
+**The concrete version of that argument, and the one to actually use.** On
+2026-09-17 the morning check was returning *"Worker answered 1 of 6 properties"* —
+and the cause was not the model, the provider, or agent capability. The prompt asked
+the worker for facts it had "actually observed" while naming **no book**: no file to
+read and no id-to-address mapping. Meanwhile `DESK-CONTEXT.md` in the workroom already
+tabulated all six properties with address, days since due, rent landed, levy and
+courtesy. One prompt line fixed it.
+
+That is the whole product in miniature. A general agent has no office book to be
+pointed at — you would have to assemble the data, the rules, the clock and the
+receipt yourself, and then keep them current. RealBud's advantage is not that its
+model is smarter; it is that **the office's own context is already in the room, in a
+form the worker is instructed to read and a PM can audit.** Lead with that, and never
+with model superiority.
 
 **Not a competitor to fight:** the PMS. The sales line is *"it works the system they
 already have."* RealBud must never look like a replacement.
@@ -298,6 +313,9 @@ the natural first pair is enquiry → workflow review, and review → signed pil
 
 ## Changelog
 *Newest first. One line per revision: what changed and why.*
+- v3 (2026-09-17) — Added the concrete Codex differentiator to Competitive Landscape:
+  the one-of-six morning check was a missing book pointer, not a weak model, which is
+  the product's focus argument in miniature.
 - v2 (2026-09-17) — Consolidated the positioning as "the focused agentic OS for the
   property-management office" and added The multi-instance argument (one office, many
   seats), with an explicit reading of "Not an agent OS" as forbidding a *general*
