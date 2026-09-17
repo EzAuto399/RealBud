@@ -13,6 +13,22 @@ let fixtureControl: Awaited<ReturnType<typeof startCuaControl>>;
 describe("worker sign-in handover requests", () => {
   it.each(["Please sign in to continue.", "Login is required before I can read the bank export.", "Waiting for you to finish sign-in."])("recognizes a request without a password tool: %s", text => expect(humanSigninNeeded(text)).toBe("login"));
   it("recognizes a verification-code request", () => expect(humanSigninNeeded("Please complete the verification code in the bank window.")).toBe("mfa"));
+  // Session expiry is the realistic mid-run case: the person signed in earlier, the
+  // portal dropped them, and the worker says so instead of trying a password tool.
+  // This must hold for sign-in and never fall through to a settle that could submit.
+  it.each([
+    "Your session has expired. Sign in again to continue.",
+    "The portal session expired — please sign in.",
+    "Session timed out, log in again to view the arrears report.",
+    "Your login has expired. Please sign in to PropertyMe.",
+  ])("treats an expired session as a sign-in hold, not a failure: %s", text => expect(humanSigninNeeded(text)).toBe("login"));
+  it("still calls an expired session with a code an mfa hold", () => {
+    expect(humanSigninNeeded("Your session expired — a verification code is required to continue.")).toBe("mfa");
+  });
+  it("does not invent a sign-in hold when the worker reports the session is fine", () => {
+    expect(humanSigninNeeded("Session is active and the arrears report is open.")).toBeNull();
+    expect(humanSigninNeeded("Signed in successfully; reading the ledger now.")).toBeNull();
+  });
   it.each(["Already signed in and the bank export is ready.", "No login is needed.", "References reviewed."])("does not reinterpret a completed observation: %s", text => expect(humanSigninNeeded(text)).toBeNull());
 });
 
