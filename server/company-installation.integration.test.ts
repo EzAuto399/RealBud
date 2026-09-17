@@ -12,6 +12,7 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === '1')('owned host setup and 
   let owner = '';
   let member = '';
   let memberId = '';
+  let ownerMemberId = '';
   let sharedScope = '';
   const admin = { headers: { 'x-test-admin': 'synthetic' } };
   const request = (token = '', isAdmin = false) => ({ headers: { 'x-realbud-member-session': token, ...(isAdmin ? admin.headers : {}) } });
@@ -48,7 +49,7 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === '1')('owned host setup and 
     finally { vi.unstubAllEnvs(); }
     expect(setup).toMatchObject({ status: 200, body: { ok: true } });
     const created = await call(host, 'create', { name: 'Synthetic host office', ownerName: 'Alice', credential: { loginName: 'alice', password: 'Synthetic-owner-password-2026' } }, '', true);
-    expect(created.status).toBe(201); owner = created.body.memberToken;
+    expect(created.status).toBe(201); owner = created.body.memberToken; ownerMemberId = created.body.member.id;
     expect(created.body.recoveryKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
     const scopes = await call(host, 'scopes', undefined, owner);
     sharedScope = scopes.body.scopes.find((s: any) => s.kind === 'company').id;
@@ -70,8 +71,7 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === '1')('owned host setup and 
     // The joining seat adopts the identity it was just issued, so its desk can
     // resolve that seat's own worker profile. Without this a joined seat has no
     // identity at all and would fall back to the shared base profile.
-    expect(seatIdentities).toContain(memberId);
-    expect((await call(client, 'join', { invitationToken: invitation.body.invitationToken, credential: { loginName: 'bob', password: 'Synthetic-member-password-2026' } })).status).toBe(401);
+    expect(seatIdentities).toContain(memberId);    expect((await call(client, 'join', { invitationToken: invitation.body.invitationToken, credential: { loginName: 'bob', password: 'Synthetic-member-password-2026' } })).status).toBe(401);
     expect(joined.body.recoveryKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect((await call(client, 'knowledge/read', { scopeId: sharedScope, key: 'office-guide' }, member)).body.knowledge.content).toBe('Synthetic shared instructions');
     const ownerScopes = await call(host, 'scopes', undefined, owner);
@@ -140,6 +140,10 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === '1')('owned host setup and 
     host = installation('host'); client = installation('client');
     const hostState = await call(host, 'status');
     expect(hostState.body.configured).toBe(true); expect(hostState.body.networkEnabled).toBe(true);
+    // The seat identity must survive a restart. Writing seat.json without reading it
+    // back left a host whose owner had signed in running as the shared base worker
+    // profile after every launch, while the screen still showed them signed in.
+    expect(await host.seatIdentity()).toBe(ownerMemberId);
     const signedIn = await call(client, 'sign-in', { loginName: 'BOB', password: 'Synthetic-member-password-2026' });
     expect(signedIn.status).toBe(200); member = signedIn.body.memberToken;
     expect((await call(client, 'status', undefined, member)).body.transport).toBe('encrypted-company');

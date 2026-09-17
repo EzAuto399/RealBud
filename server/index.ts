@@ -4466,6 +4466,16 @@ server.listen(PORT, "127.0.0.1", () => {
     startDiscordBridge();
     startSlackBridge();
     startRemoteDecisionFlush();
+    // Adopt a seat identity recorded on an earlier run before the readiness ping, so
+    // a host whose owner signed in last time pings as that seat's worker rather than
+    // the shared base. The desk was built before the company host existed, so it is
+    // told here; a failure to read is not fatal, it just leaves the base profile.
+    void companyHost.seatIdentity().then(memberId => {
+      if (memberId) {
+        desk.setMemberKey(memberId);
+        oplog("seat", `resumed member identity ${memberId.slice(0, 8)}…`);
+      }
+    }).catch(() => {});
     void healHandsReadiness();
   }
 });

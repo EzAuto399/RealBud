@@ -77,6 +77,21 @@ export function createCompanyInstallation(options: {
     await persist(seatPath, { version: 1, memberId, adoptedAt: new Date().toISOString() });
     options.onSeatIdentity?.(memberId);
   }
+
+  /**
+   * The seat identity this computer recorded earlier, for boot.
+   *
+   * `adoptSeatIdentity` writing seat.json is not enough on its own: nothing read it
+   * back, so after a restart a host whose owner had signed in lost its seat identity
+   * and fell back to the shared base worker profile — the screen still showed them
+   * signed in while their desk ran as the wrong Bud. Returns null when this computer
+   * has never adopted an identity, which is every single-seat install.
+   */
+  async function seatIdentity(): Promise<string | null> {
+    const saved = await readPrivate(seatPath) as { version?: number; memberId?: string } | undefined;
+    const memberId = typeof saved?.memberId === 'string' ? saved.memberId.trim() : '';
+    return saved?.version === 1 && /^[A-Za-z0-9_-]{8,64}$/.test(memberId) ? memberId : null;
+  }
   const local = () => createCompanyHost({ kernel, authorizeAdmin: options.authorizeAdmin, hasAdminSession: options.hasAdminSession });
   async function privateDirectory() {
     const created = await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -182,6 +197,8 @@ export function createCompanyInstallation(options: {
     try { return await operation; } finally { if (pending === operation) pending = undefined; }
   }
   return {
+    /** The seat identity recorded on a previous run, or null. See `seatIdentity`. */
+    seatIdentity,
     async handle(path: string, method: string, request: Request, body?: unknown): Promise<Reply> {
       await ready;
       if (abort.signal.aborted) return { status: 503, body: { error: 'The company service is stopping. Try again after restart.' } };
@@ -246,13 +263,19 @@ export function createCompanyInstallation(options: {
         // A signed-in member is this seat's identity. Record it whenever the host
         // hands back a session, so the desk can resolve a per-seat worker profile.
         // Without this the only seat identity was an operator-set environment
-        // variable, and a seat that joined a host never got one — so every joined
-        // seat would run as the shared base profile and share one memory with the
-        // others. Only the routes that establish a session are intercepted; the
-        // rest keep the existing proxy-or-local handling below.
-        const establishesSession = path === '/api/company/sign-in' || path === '/api/company/join' || path === '/api/company/recover-member';
-        if (peer && establishesSession) {
-          const response = await requestCompanyHost({ ...peer, path, method, memberToken: companyMemberToken(request) || undefined, body, signal: abort.signal });
+        // variable, so a seat would run as the shared base profile and share one
+        // memory with the others.
+        //
+        // `create` is included because the owner who sets up the office is the first
+        // seat: it establishes their session too. Omitting it meant the host's own
+        // owner had no seat identity, so after a restart their desk fell back to the
+        // shared base profile while the screen still showed them signed in.
+        const createsOrResumesSession = path === '/api/company/create' || path === '/api/company/sign-in'
+          || path === '/api/company/join' || path === '/api/company/recover-member';
+        if (createsOrResumesSession) {
+          const response = peer
+            ? await requestCompanyHost({ ...peer, path, method, memberToken: companyMemberToken(request) || undefined, body, signal: abort.signal })
+            : await local().handle(path, method, request, body);
           if (response.status < 300) await adoptSeatIdentity(response.body);
           return response;
         }
