@@ -267,6 +267,32 @@ afterAll(async () => {
 });
 
 describe("harness HTTP API", () => {
+  // /api/session hands out the token guarding the whole local API. It is reached
+  // without the session gate, and hostAllowed/originAllowed treat a missing Origin
+  // as allowed — so a browser fetch started by another site could collect the token.
+  it("refuses the session token to a cross-site browser request but still bootstraps this app", async () => {
+    // Node's fetch sends sec-fetch-mode: cors with no sec-fetch-site. That shape
+    // must keep working: it is this app's own bootstrap, and an earlier version of
+    // this gate refused it.
+    const own = await fetch(`${BASE}/api/session`);
+    expect(own.status).toBe(200);
+    const token = ((await own.json()) as { token: string }).token;
+    expect(token.length).toBeGreaterThan(0);
+
+    for (const site of ["cross-site", "same-site"]) {
+      const refused = await fetch(`${BASE}/api/session`, { headers: { "sec-fetch-site": site, "sec-fetch-mode": "cors" } });
+      expect(refused.status, site).toBe(403);
+      expect(JSON.stringify(await refused.json())).not.toContain(token);
+    }
+
+    for (const headers of [
+      { "sec-fetch-site": "same-origin", "sec-fetch-mode": "cors" },
+      { "sec-fetch-site": "none", "sec-fetch-mode": "navigate" },
+    ]) {
+      expect((await fetch(`${BASE}/api/session`, { headers })).status).toBe(200);
+    }
+  });
+
   it("requires authenticated, current-revision rent settings and never updates payment facts", async () => {
     const before = (await api("GET", "/api/desk")).body;
     const office = { rentWorkflow: { receiptChannels: ["whatsapp", "email"], verificationMethod: "bank-allocation", checkingSteps: "Match the unit and period." } };

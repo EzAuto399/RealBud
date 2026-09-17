@@ -2322,6 +2322,23 @@ const server = createServer(async (req, res) => {
       if (!hostAllowed(host, PORT) || !originAllowed(origin, PORT)) {
         return json(res, 403, { error: "refused host or origin" });
       }
+      // This route hands out the session token that guards the whole local API, so
+      // it is the one place worth being strict. `originAllowed` treats a missing
+      // Origin as allowed, which is right for the server's own clients but wrong
+      // for a browser request started by another site: `fetch(..., {mode:"no-cors"})`
+      // sends no readable response but still reaches here, and a token obtained
+      // that way would unlock the desk for anything that could read it. Refuse the
+      // browser shapes that are not this app or a top-level navigation to it.
+      const fetchSite = typeof req.headers["sec-fetch-site"] === "string" ? req.headers["sec-fetch-site"] : undefined;
+      const fetchMode = typeof req.headers["sec-fetch-mode"] === "string" ? req.headers["sec-fetch-mode"] : undefined;
+      // Refuse only when the request *affirmatively* says it came from elsewhere.
+      // `sec-fetch-site` is the discriminating header; `sec-fetch-mode` is not,
+      // because Node's own fetch sends `mode: cors` with no `site` at all, and
+      // treating that as cross-site refused this app's own bootstrap.
+      const fromElsewhere = fetchSite === "cross-site" || fetchSite === "same-site";
+      if (fromElsewhere && fetchMode !== "navigate") {
+        return json(res, 403, { error: "refused cross-site session request" });
+      }
       return json(res, 200, { token: SESSION_TOKEN, product: PRODUCT_MODE, nonProduction: process.env.REALBUD_PRODUCTION !== "1" });
     }
 
