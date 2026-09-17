@@ -224,8 +224,7 @@ describe("tryHermesPing (fake pinned CLI)", () => {
       expect(profile.startsWith(`${HERMES_PIN.profile}-`)).toBe(true);
     });
 
-    it("carries an office-host member uuid through to the spawned profile", async () => {
-      // The seat identity from realbud_company.members.id is a uuid. This is the
+    it("carries an office-host member uuid through to the spawned profile", async () => {      // The seat identity from realbud_company.members.id is a uuid. This is the
       // shape the office host will pass, so pin it end to end rather than only
       // through the resolver's own unit test.
       const memberId = "3fa85f64-5717-4562-b3fc-2c963f66afa6";
@@ -305,6 +304,13 @@ describe.skipIf(process.platform === "win32")("hermes CLI argv contract", () => 
     expect(prompt).toContain("prop-oak");
     expect(prompt).toContain("Do not copy sample values");
     expect(prompt).toContain("return [] exactly");
+    // The worker is told to report only facts it observed, so the prompt must say
+    // what to observe. Ask has always pointed at DESK-CONTEXT.md (ask-book.ts:101);
+    // this path did not, so the morning check asked for book facts while naming no
+    // book — every run returned a one-of-six answer with the rest held, and nothing
+    // in the suite noticed.
+    expect(prompt).toContain("DESK-CONTEXT.md");
+    expect(prompt).toContain("properties/");
     expect(prompt).not.toContain("training book");
     expect(prompt).not.toContain("copy fixture");
   });

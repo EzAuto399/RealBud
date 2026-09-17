@@ -221,8 +221,18 @@ export async function tryHermesLedger(
   }
 
   const ids = propertyIds.length ? propertyIds.join(", ") : "(none)";
+  // The worker is asked for facts "you actually observed", so it has to be told what
+  // to look at. Ask has always pointed the worker at DESK-CONTEXT.md
+  // (ask-book.ts:101); this path did not, so the morning check asked for book facts
+  // while naming no book, no property file and no id-to-address mapping. The honest
+  // result was a one-of-six answer with the rest held — a missing input, not a weak
+  // model, and not something a better provider would have fixed.
   const prompt =
     `Morning arrears check. Use skill morning-arrears.\n` +
+    `The office book for this run is the working directory. Read DESK-CONTEXT.md there for the\n` +
+    `book facts, and the property notes under properties/ (or owners/) for preferences. Notes are\n` +
+    `preferences only — they never change balances, day counts, or create a notice. If the book\n` +
+    `does not cover a property, say so by omitting it; do not guess a fact to fill the row.\n` +
     `Return JSON only — one object per property id you actually observed: ${ids}.\n` +
     `If a fact is unknown, omit that property. If none are observable, return [] exactly. Do not guess. Do not copy sample values.\n` +
     `The last line of your reply must be the JSON array (at minimum []), with no text after it.\n` +
