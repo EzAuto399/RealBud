@@ -1,6 +1,7 @@
 // The packaged server has no node_modules. Bundle only its new external
 // dependencies, preserving every compiled module's existing relative paths.
 import { build } from 'esbuild';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +11,65 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const server = join(root, 'dist-server/server');
 const vendor = join(server, 'vendor');
 await mkdir(vendor, { recursive: true });
+
+// tsc emits only what it compiles. Hand-written .mjs, .d.mts and fixture data are
+// runtime inputs it leaves behind, so the packaged server crashed on boot with
+// "Cannot find module dist-server/shared/service-identity.mjs" — the compiled
+// server/index.js imports that path and nothing ever put it there. Copy the
+// non-TypeScript inputs the server actually loads, preserving relative paths.
+const NON_TS = /\.(mjs|d\.mts|json|ya?ml|md|txt|csv|html)$/;
+async function copyRuntimeInputs(sourceDir, targetDir) {
+  let copied = 0;
+  for (const entry of await readdir(sourceDir, { withFileTypes: true })) {
+    const from = join(sourceDir, entry.name);
+    const to = join(targetDir, entry.name);
+    if (entry.isDirectory()) {
+      // Mirrors tsconfig.server.build.json: the test tree is not shipped.
+      if (from === join(root, 'server/testing')) continue;
+      await mkdir(to, { recursive: true });
+      copied += await copyRuntimeInputs(from, to);
+    } else if (NON_TS.test(entry.name)) {
+      await mkdir(dirname(to), { recursive: true });
+      await writeFile(to, await readFile(from));
+      copied += 1;
+    }
+  }
+  return copied;
+}
+const runtimeInputs = await Promise.all(
+  [['server', server], ['shared', join(root, 'dist-server/shared')]].map(([name, target]) =>
+    copyRuntimeInputs(join(root, name), target),
+  ),
+);
+const copiedRuntimeInputs = runtimeInputs.reduce((total, count) => total + count, 0);
+
+// Every relative specifier the compiled server still resolves at runtime must exist
+// in dist-server. Catch a missing runtime input at build time rather than as a crash
+// on a customer's Mac, which is how the service-identity omission reached a release.
+const REQUIRED = [/\.mjs$/, /\.json$/];
+async function verifyRuntimeInputs(directory) {
+  let missing = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const file = join(directory, entry.name);
+    if (entry.isDirectory()) { if (file !== vendor) missing = missing.concat(await verifyRuntimeInputs(file)); continue; }
+    if (!entry.name.endsWith('.js')) continue;
+    const body = await readFile(file, 'utf8');
+    for (const match of body.matchAll(/(?:from\s*|import\s*\(\s*)(['"])(\.[^'"]+)\1/g)) {
+      const specifier = match[2];
+      if (!REQUIRED.some(pattern => pattern.test(specifier))) continue;
+      if (!existsSync(resolve(dirname(file), specifier))) missing.push(`${relative(root, file)} -> ${specifier}`);
+    }
+  }
+  return missing;
+}
+const missingRuntimeInputs = await verifyRuntimeInputs(server);
+if (missingRuntimeInputs.length) {
+  console.error('Packaged server would fail at runtime; missing inputs:');
+  for (const item of missingRuntimeInputs.slice(0, 20)) console.error(`  ${item}`);
+  process.exit(1);
+}
+
+
 const bundles = { pg: 'Pool', selfsigned: 'generate' };
 const receipt = { node: process.version, bundles: {}, rewritten: [] };
 for (const [name, exports] of Object.entries(bundles)) {
