@@ -33,6 +33,12 @@ export interface LoopManagerOptions {
   hostTimezone?: string;
   /** Ceiling on one run. Tests shorten it; production uses RUN_DEADLINE_MS. */
   runDeadlineMs?: number;
+  /**
+   * The worker identity to stamp on each run as it starts, for provenance. Returns
+   * undefined when no worker is established yet, in which case nothing is recorded
+   * rather than a misleading placeholder.
+   */
+  workerIdentity?: () => string | undefined;
   execute: (loop: Loop, run: LoopRun) => Promise<LoopExecuteResult>;
   /** Taught jobs. Re-read each tick so a save, pause, or delete lands without a restart. */
   listRecipes?: () => ReadonlyArray<
@@ -533,7 +539,14 @@ export class LoopManager {
 
   private async executeRun(run: LoopRun, loop: Loop): Promise<void> {
     if (run.status !== "queued" || this.executing.has(loop.id)) return;
-    this.commit(() => { run.startedAt = this.now(); run.status = "running"; });
+    // Stamp the worker before the work starts, so a receipt says what produced it
+    // even if the worker is upgraded or the model changed while the run was open.
+    const worker = this.options.workerIdentity?.();
+    this.commit(() => {
+      run.startedAt = this.now();
+      run.status = "running";
+      if (worker) run.workerFingerprint = worker;
+    });
     this.emitRun(run);
     this.executing.add(loop.id);
     let work: Promise<LoopExecuteResult>;

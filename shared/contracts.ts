@@ -374,6 +374,17 @@ export interface LoopRun {
   status: LoopRunStatus;
   manual: boolean;
   detail?: string;
+  /**
+   * Which worker produced this run, captured when it started.
+   *
+   * The desk keeps an audit trail a PM is expected to trust, and "which Bud
+   * answered this, with which model and skills" is part of that. Without it a
+   * scheduled result has no provenance: after a worker upgrade, a model change or a
+   * pack re-apply, nothing in the receipt says what actually ran. The value is the
+   * readiness fingerprint (worker version + profile state), so two runs carrying
+   * different values were produced by materially different workers.
+   */
+  workerFingerprint?: string;
   /** Taught-job loops link to the durable general execution receipt. */
   jobRunId?: string;
   startedAt?: number;

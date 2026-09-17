@@ -1802,6 +1802,11 @@ function emitLoopAndPulse(payload: unknown) {
 loops = new LoopManager({
   emit: emitLoopAndPulse,
   listRecipes,
+  // Provenance for a scheduled receipt: which worker, model and profile produced it.
+  // Read from the readiness receipt rather than probing, because this runs on every
+  // loop start and must not spawn a process. hands-ping.json specifically, not
+  // hands-last.json: a Recheck overwrites the latter and carries no fingerprint.
+  workerIdentity: () => readHandsPing(DATA_DIR)?.workerFingerprint,
   setRecipeEnabled: (recipeId, enabled) => {
     const current = getRecipe(recipeId);
     if (!current) return;

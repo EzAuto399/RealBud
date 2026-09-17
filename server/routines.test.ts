@@ -80,6 +80,7 @@ function makeManager(options: Partial<LoopManagerOptions> & { execute?: LoopMana
     },
     listRecipes: options.listRecipes,
     setRecipeEnabled: options.setRecipeEnabled,
+    workerIdentity: options.workerIdentity,
     execute:
       options.execute ??
       (async (loop) => {
@@ -160,6 +161,25 @@ describe("LoopManager runs", () => {
     expect(settled?.status).toBe("completed");
     expect(settled?.detail).toBe("desk check done — 2 drafts waiting");
     expect(runs.some((r) => r.id === run!.id && r.status === "completed")).toBe(true);
+  });
+
+  // A scheduled receipt is part of the audit trail a PM is asked to trust, so it has
+  // to say which worker produced it. After a worker upgrade or a model change there
+  // is otherwise nothing in the record that distinguishes the runs.
+  it("stamps the worker identity on a run so the receipt has provenance", async () => {
+    const { manager } = makeManager({ workerIdentity: () => "worker-fingerprint-abc" });
+    const run = manager.runNow("morning-arrears");
+    await manager.tick();
+    expect(manager.listRuns().find((r) => r.id === run!.id)?.workerFingerprint).toBe("worker-fingerprint-abc");
+  });
+
+  it("records no worker identity rather than a placeholder when none is established", async () => {
+    const { manager } = makeManager({ workerIdentity: () => undefined });
+    const run = manager.runNow("morning-arrears");
+    await manager.tick();
+    const settled = manager.listRuns().find((r) => r.id === run!.id);
+    expect(settled?.status).toBe("completed");
+    expect(settled?.workerFingerprint).toBeUndefined();
   });
 
   it("classifies full / partial / none coverage without changing those counts", async () => {
