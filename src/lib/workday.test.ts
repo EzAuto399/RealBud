@@ -128,3 +128,27 @@ describe("Desk first action", () => {
     expect(deskCheckAction(snapshot({ lastRunAt, handsDetail: "Worker timed out" })).path).toBe("/api/desk/check");
   });
 });
+
+// The book label is the only thing telling a PM whether the addresses and money
+// in front of them are a training book or their own office. It is a one-line
+// ternary that nothing asserted, so a change to `demo`/`mode` could quietly start
+// presenting sample facts as a real book.
+describe("book label", () => {
+  const guide = (patch: Partial<DeskSnapshot> = {}) =>
+    workdayGuide({ connected: true, desk: snapshot(patch), workerReady: true }).bookLabel;
+
+  it("calls a pristine book a sample", () => {
+    expect(guide()).toBe("Sample book");
+  });
+  it("stays a sample while only one of demo/mode says so", () => {
+    // Either flag alone is enough: a partly-updated snapshot must not read as real.
+    expect(guide({ demo: true, mode: "live" })).toBe("Sample book");
+    expect(guide({ demo: false, mode: "demo" })).toBe("Sample book");
+  });
+  it("only reads as the office book once both say it is real", () => {
+    expect(guide({ mode: "live", demo: false })).toBe("Office book");
+  });
+  it("never claims a book it has not loaded", () => {
+    expect(workdayGuide({ connected: true, desk: null, workerReady: false }).bookLabel).toBe("Book loading");
+  });
+});
