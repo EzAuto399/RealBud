@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { authorizeService, checkConnectionAccess, composioTool, connectionStatus } from "./composio.ts";
+import { authorizeService, checkConnectionAccess, composioTool, connectionStatus, platformProjectKey } from "./composio.ts";
 
 const cfg = { composio: { key: "ak_test_private_value", url: "https://broker.example/mcp" } };
 const envelope = (result: unknown, id: string | number = 1) => ({ jsonrpc: "2.0", id, result });
@@ -23,6 +23,19 @@ const call = () => composioTool(cfg, "COMPOSIO_MANAGE_CONNECTIONS", { toolkits: 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("Composio connection boundary", () => {
+  // Composio keeps developer and consumer as separate project surfaces with separate
+  // connected accounts, so which key is saved decides which connections exist at all.
+  // A ck_ key is not a wrong-prefix nuisance: accepting it would show an office none
+  // of its connections, and the fix is a different action than re-pasting the key.
+  it("accepts a Platform project key and refuses a consumer key with the reason", () => {
+    expect(platformProjectKey({ composio: { key: "ak_live_example_value" } })).toBe("ak_live_example_value");
+    expect(() => platformProjectKey({ composio: { key: "ck_consumer_example" } }))
+      .toThrow(/consumer \(ck_…\) key for For You \/ Connect/);
+    expect(() => platformProjectKey({ composio: { key: "ck_consumer_example" } }))
+      .toThrow(/will not appear in a project/);
+    expect(() => platformProjectKey({})).toThrow(/No Connected apps key/);
+  });
+
   it.each(["INACTIVE", "EXPIRED", "REVOKED", "DISCONNECTED", "PENDING", "not active"])("does not call %s connected", async (status) => {
     respond(envelope(content({ data: { results: { gmail: { accounts: [{ status }] } } } })));
     expect((await connectionStatus(cfg, ["gmail"])).gmail.connected).toBe(false);

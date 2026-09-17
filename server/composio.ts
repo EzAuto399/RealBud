@@ -109,7 +109,15 @@ export function platformProjectKey(cfg: AppConfig): string {
   if (!key) throw new ComposioError("No Connected apps key — save the Platform project API key (ak_…) in You.");
   if (typeof key !== "string") throw new ComposioError("Use the Platform project API key from Composio (ak_…).");
   if (key.startsWith("ck_")) {
-    throw new ComposioError("Use the Platform project API key (ak_…). For You / Connect consumer keys are not used.");
+    // Composio keeps developer and consumer as separate project surfaces with
+    // separate connected accounts: an account connected in For You / Connect is not
+    // visible to a Platform project, and vice versa. So a ck_ key is not merely the
+    // wrong prefix here — pointing RealBud at the consumer surface would silently
+    // show none of the office's connections. Say the practical consequence, because
+    // the fix is a different action than re-pasting the same key.
+    throw new ComposioError(
+      "That is a consumer (ck_…) key for For You / Connect. RealBud needs the Platform project API key (ak_…) from the developer dashboard, and accounts must be connected there — a connection made in For You / Connect will not appear in a project.",
+    );
   }
   if (!PROJECT_KEY.test(key)) throw new ComposioError("Use the Platform project API key from Composio (ak_…).");
   return key;
