@@ -22,3 +22,9 @@ electron/resources/
 # scratch: generated documents, PDFs and salvage copies — not product code
 output/
 tmp/
+
+# Regenerable artifact of `managed-gateway/demo.ts` (its default output path).
+# Dated evidence is committed deliberately under managed-gateway/evidence/ as
+# phase2/ and coordination-*.json; a fresh demo run should not be swept in by
+# `git add -A`.
+managed-gateway/evidence/demo/
