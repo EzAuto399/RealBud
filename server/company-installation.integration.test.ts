@@ -15,9 +15,14 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === '1')('owned host setup and 
   let sharedScope = '';
   const admin = { headers: { 'x-test-admin': 'synthetic' } };
   const request = (token = '', isAdmin = false) => ({ headers: { 'x-realbud-member-session': token, ...(isAdmin ? admin.headers : {}) } });
-  function installation(name: string) {
+  // A seat needs its own member identity to resolve its own worker profile, and a
+  // seat that only ever joins a host has no operator to set REALBUD_MEMBER. The
+  // identity therefore has to arrive from the host session.
+  const seatIdentities: string[] = [];
+  function installation(name: string, onSeatIdentity?: (memberId: string) => void) {
     return createCompanyInstallation({ dataDirectory: join(directory, name), binaryDirectory: process.env.REALBUD_TEST_POSTGRES_BIN,
       previewEnabled: true, hasAdminSession: req => req.headers['x-test-admin'] === 'synthetic',
+      ...(onSeatIdentity ? { onSeatIdentity } : {}),
       authorizeAdmin: req => req.headers['x-test-admin'] === 'synthetic' ? { ok: true, expiresAt: Date.now() + 60_000 } : { ok: false, status: 401, error: 'Service administration required' },
     });
   }
@@ -27,7 +32,7 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === '1')('owned host setup and 
   }
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), 'rb-host-join-'));
-    host = installation('host'); client = installation('client');
+    host = installation('host'); client = installation('client', memberId => seatIdentities.push(memberId));
   });
   afterAll(async () => {
     await client?.close(); await host?.close();
@@ -62,6 +67,10 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === '1')('owned host setup and 
     const invitation = await call(host, 'invitations', { displayName: 'Bob' }, owner);
     const joined = await call(client, 'join', { invitationToken: invitation.body.invitationToken, credential: { loginName: 'bob', password: 'Synthetic-member-password-2026' } });
     expect(joined.status).toBe(201); member = joined.body.memberToken; memberId = joined.body.member.id;
+    // The joining seat adopts the identity it was just issued, so its desk can
+    // resolve that seat's own worker profile. Without this a joined seat has no
+    // identity at all and would fall back to the shared base profile.
+    expect(seatIdentities).toContain(memberId);
     expect((await call(client, 'join', { invitationToken: invitation.body.invitationToken, credential: { loginName: 'bob', password: 'Synthetic-member-password-2026' } })).status).toBe(401);
     expect(joined.body.recoveryKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect((await call(client, 'knowledge/read', { scopeId: sharedScope, key: 'office-guide' }, member)).body.knowledge.content).toBe('Synthetic shared instructions');
