@@ -127,6 +127,7 @@ export class Desk {
   private store: DeskStore;
   private now: () => number;
   private hermes: (ids: string[]) => Promise<HermesLedgerAttempt>;
+  private memberKey: string;
   private onCommit: ((snap: DeskSnapshot) => void) | null;
   private portalUrl: string | null;
   private vaultRoot: string;
@@ -141,9 +142,16 @@ export class Desk {
     onCommit?: (snap: DeskSnapshot) => void;
     portalUrl?: string;
     vaultDir?: string;
+    /**
+     * The seat this desk serves. Empty/omitted means the shared base worker
+     * profile, which is every single-seat install. See `server/config.ts`
+     * MEMBER_KEY for why this is a uuid and not a display name.
+     */
+    memberKey?: string;
   }) {
     this.now = opts?.now ?? Date.now;
-    this.hermes = opts?.hermes ?? ((ids) => tryHermesLedger(ids));
+    this.memberKey = (opts?.memberKey ?? "").trim();
+    this.hermes = opts?.hermes ?? ((ids) => tryHermesLedger(ids, { memberKey: this.memberKey }));
     this.onCommit = opts?.onCommit ?? null;
     this.portalUrl = opts?.portalUrl ?? process.env.FAKE_PORTAL_URL ?? null;
     const file = opts?.file ?? join(DATA_DIR, "desk.json");

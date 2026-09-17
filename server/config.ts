@@ -37,6 +37,23 @@ export interface AppConfig {
 // OMB_DATA_DIR / REALBUD_DATA_DIR isolate test/soak rigs from the real fleet.
 export const DATA_DIR =
   process.env.REALBUD_DATA_DIR ?? process.env.OMB_DATA_DIR ?? join(homedir(), ".realbud");
+
+/**
+ * Which seat this process is. Empty means single-seat, which is every install
+ * today and keeps the shared base worker profile.
+ *
+ * REALBUD_DATA_DIR isolates one *office* from another; this isolates one *seat*
+ * inside an office. A seat runs as its own process with its own data dir, so the
+ * identity is a launch-time fact rather than something a request can assert.
+ *
+ * The value must be the seat's stable member id from the office host
+ * (`realbud_company.members.id`, a uuid). That id is immutable and offboarding
+ * sets `active = false` rather than reusing it — a natural key such as an email
+ * or login name would be reassigned to a colleague and silently hand them the
+ * previous holder's worker memory, skills and session history.
+ */
+export const MEMBER_KEY = (process.env.REALBUD_MEMBER ?? "").trim();
+
 const LEGACY_DATA_DIRS = [join(homedir(), ".openmausbot"), join(homedir(), ".opengrokbot")];
 export const EVENTS_DIR = join(DATA_DIR, "events");
 export const NATIVE_DIR = join(DATA_DIR, "native");

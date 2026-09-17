@@ -79,7 +79,7 @@ import {
   setupCommands,
   type LifecycleAction,
 } from "./container-computer.ts";
-import { DATA_DIR, ensureDirs, instanceConfigs, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.ts";
+import { DATA_DIR, MEMBER_KEY, ensureDirs, instanceConfigs, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.ts";
 import { resetPathCache } from "./env-path.ts";
 import { newId, type ProviderInstance, type RuntimeEvent } from "./contracts.ts";
 
@@ -512,7 +512,7 @@ async function healHandsReadiness(): Promise<void> {
   ) {
     return;
   }
-  const ping = await tryHermesPing();
+  const ping = await tryHermesPing({ memberKey: MEMBER_KEY });
   writeHandsPing(DATA_DIR, {
     at: Date.now(),
     ok: ping.ok,
@@ -636,7 +636,7 @@ async function denyPendingRequests(threadId: string, instance: ProviderInstance 
 // records the active member here before dispatching its turn.
 const groupSpeakers = new Map<string, { botId: string; name: string; color: string }>();
 let loops: LoopManager | null = null;
-const desk = new Desk();
+const desk = new Desk({ memberKey: MEMBER_KEY });
 const batches = new BatchService({
   snapshot: () => desk.snapshot(),
   notes: id => desk.notesFor(id).body,
@@ -3344,7 +3344,7 @@ const server = createServer(async (req, res) => {
         return json(res, 415, { error: "content-type must be application/json" });
       }
       await readBody(req);
-      const ping = await tryHermesPing();
+      const ping = await tryHermesPing({ memberKey: MEMBER_KEY });
       writeHandsPing(DATA_DIR, { at: Date.now(), ok: ping.ok, detail: ping.detail, kind: "ping", workerFingerprint: ping.workerFingerprint });
       if (ping.ok) {
         resolveWorkerIssues("hands");
@@ -3374,7 +3374,7 @@ const server = createServer(async (req, res) => {
           ? store.adoptBud(productHermesSelection(status.model || "default"))
           : null;
         if (bud) broadcast({ kind: "bot", bot: publicBot(bud) });
-        const ping = await tryHermesPing();
+        const ping = await tryHermesPing({ memberKey: MEMBER_KEY });
         // Connecting a model performs the same authoritative hands check as
         // the standalone action. Persist it so a reload cannot forget a
         // successful check or falsely present a failed one as ready.

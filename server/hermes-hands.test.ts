@@ -223,6 +223,22 @@ describe("tryHermesPing (fake pinned CLI)", () => {
       expect(profile).not.toContain("..");
       expect(profile.startsWith(`${HERMES_PIN.profile}-`)).toBe(true);
     });
+
+    it("carries an office-host member uuid through to the spawned profile", async () => {
+      // The seat identity from realbud_company.members.id is a uuid. This is the
+      // shape the office host will pass, so pin it end to end rather than only
+      // through the resolver's own unit test.
+      const memberId = "3fa85f64-5717-4562-b3fc-2c963f66afa6";
+      const { dir, script, argsFile } = stubHermes("OK");
+      await tryHermesPing({ cli: script, root: dir, memberKey: memberId });
+      expect(profileArg(argsFile)).toBe(`${HERMES_PIN.profile}-${memberId}`);
+    });
+
+    it("a blank seat is no seat, so a desk that never resolved one keeps the base", async () => {
+      const { dir, script, argsFile } = stubHermes("OK");
+      await tryHermesPing({ cli: script, root: dir, memberKey: "" });
+      expect(profileArg(argsFile)).toBe(HERMES_PIN.profile);
+    });
   });
 
   it("fails with the provider's words when the model cannot answer", async () => {
