@@ -36,6 +36,12 @@ export function createCompanyInstallation(options: {
   resolveBinaryDirectory?: () => Promise<{ binaryDirectory: string }>;
   authorizeAdmin: (request: Request) => ServiceAdminGate;
   hasAdminSession: (request: Request) => boolean;
+  /**
+   * Called when this seat learns its member identity from a host session, so the
+   * running desk can switch to that seat's worker profile without a restart. The
+   * argument is the member id, never a display or login name.
+   */
+  onSeatIdentity?: (memberId: string) => void;
 }) {
   const configured = configuredCompanyKernel();
   let kernel = configured.kernel;
@@ -52,6 +58,25 @@ export function createCompanyInstallation(options: {
   const directory = join(options.dataDirectory, 'company-installation');
   const settingsPath = join(directory, 'host.json');
   const peerPath = join(directory, 'peer.json');
+  const seatPath = join(directory, 'seat.json');
+
+  /**
+   * Record this seat's member identity from a host session response.
+   *
+   * Only the member id is kept. It is the stable, immutable identity
+   * (`realbud_company.members.id`), and it is what the desk turns into a worker
+   * profile — so a display name or login name must never be substituted here, and
+   * the token itself is deliberately not stored.
+   */
+  async function adoptSeatIdentity(responseBody: unknown): Promise<void> {
+    const member = (responseBody as { member?: { id?: unknown } } | null)?.member;
+    const memberId = typeof member?.id === 'string' ? member.id.trim() : '';
+    if (!/^[A-Za-z0-9_-]{8,64}$/.test(memberId)) return;
+    const existing = await readPrivate(seatPath) as { version?: number; memberId?: string } | undefined;
+    if (existing?.version === 1 && existing.memberId === memberId) return;
+    await persist(seatPath, { version: 1, memberId, adoptedAt: new Date().toISOString() });
+    options.onSeatIdentity?.(memberId);
+  }
   const local = () => createCompanyHost({ kernel, authorizeAdmin: options.authorizeAdmin, hasAdminSession: options.hasAdminSession });
   async function privateDirectory() {
     const created = await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -187,6 +212,7 @@ export function createCompanyInstallation(options: {
             if (response.status !== 200 || !(response.body as { configured?: boolean })?.configured) throw new Error('The company host is not ready. Check its address and try again.');
             if (abort.signal.aborted) throw new Error('Company setup stopped.');
             await persist(peerPath, code); peer = target;
+            await adoptSeatIdentity(response.body);
             return { status: 200, body: { ok: true } };
           });
         }
@@ -216,6 +242,19 @@ export function createCompanyInstallation(options: {
           const network = settings.network;
           const hostname = network.hostname.includes(':') ? `[${network.hostname}]` : network.hostname;
           return { status: 200, body: { hostCode: encodeCompanyPairing({ version: 1, origin: `https://${hostname}:${network.port}`, certificatePem: network.cert, companyId: actor.companyId }) } };
+        }
+        // A signed-in member is this seat's identity. Record it whenever the host
+        // hands back a session, so the desk can resolve a per-seat worker profile.
+        // Without this the only seat identity was an operator-set environment
+        // variable, and a seat that joined a host never got one — so every joined
+        // seat would run as the shared base profile and share one memory with the
+        // others. Only the routes that establish a session are intercepted; the
+        // rest keep the existing proxy-or-local handling below.
+        const establishesSession = path === '/api/company/sign-in' || path === '/api/company/join' || path === '/api/company/recover-member';
+        if (peer && establishesSession) {
+          const response = await requestCompanyHost({ ...peer, path, method, memberToken: companyMemberToken(request) || undefined, body, signal: abort.signal });
+          if (response.status < 300) await adoptSeatIdentity(response.body);
+          return response;
         }
         if (peer) {
           const response = await requestCompanyHost({ ...peer, path, method, memberToken: companyMemberToken(request) || undefined, body, signal: abort.signal });

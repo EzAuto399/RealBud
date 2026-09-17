@@ -134,6 +134,15 @@ export class Desk {
   private presentation: BrowserPresentation = "side-by-side";
   private pendingOrigin?: RoutineOrigin;
 
+  /**
+   * Adopt a seat identity learned after boot (a member signing in to an office
+   * host). Empty means the shared base worker profile. The value is the member
+   * id — never a display or login name, which are mutable and reassignable.
+   */
+  setMemberKey(memberKey: string): void {
+    this.memberKey = (memberKey ?? "").trim();
+  }
+
   constructor(opts?: {
     file?: string;
     now?: () => number;

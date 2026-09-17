@@ -2257,6 +2257,14 @@ const companyHost = createCompanyInstallation({ dataDirectory: DATA_DIR,
   // not expose the legacy API or enable shared workers. Storage creation still
   // needs an admitted database runtime and service-administrator authority.
   previewEnabled: process.env.REALBUD_COMPANY_HOST_PREVIEW !== "0",
+  // A member signing in to an office host is this seat's identity. Adopt it on the
+  // running desk so the next worker spawn uses that seat's profile, without a
+  // restart. The env var stays the operator override for a seat launched with a
+  // known member id; this is the path a seat that *joins* a host takes.
+  onSeatIdentity: memberId => {
+    desk.setMemberKey(memberId);
+    oplog("seat", `adopted member identity ${memberId.slice(0, 8)}…`);
+  },
   authorizeAdmin: req => serviceAdmin.authorize(req), hasAdminSession: req => serviceAdmin.status(req).authenticated });
 
 const server = createServer(async (req, res) => {

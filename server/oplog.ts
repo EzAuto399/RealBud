@@ -12,7 +12,7 @@ import { redactSecretsInText } from "./redact.ts";
  * mornings, not forever. */
 const MAX_BYTES = 1_000_000;
 
-export type OpEvent = "boot" | "shutdown" | "routine" | "crash" | "rejection";
+export type OpEvent = "boot" | "shutdown" | "routine" | "crash" | "rejection" | "seat";
 
 let logPath: string | null = null;
 
