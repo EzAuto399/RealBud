@@ -6,6 +6,8 @@ Related: `docs/GOAL-PROMPT.md` §5, `docs/WORKFLOW-PLAN.md`
 
 Four reviews (code, usability, engineering, Hermes capability) agree: **PMs retune named loops. They do not author jobs.** Hermes fetches facts. RealBud is the clock, the cards, and Allow.
 
+> **Superseded on the authoring question (2026-09-17).** The line above is still right about *named catalog loops* — a kind is born in code + skill + catalog, and a PM cannot invent one from English (see §Product below). But since 2026-08-31 a PM *does* author a **described, bounded job**: shadow-first, origin-locked, evidence per run, plan approved before it goes on the clock. That is `docs/PM-DAY.md:4` and `docs/PORTAL-WORK.md` §"teach Bud a job", and `docs/EFFORTLESS-DAY.md:77-79` records the change. Read this file as the design of the *catalog* clock; read PM-DAY/PORTAL-WORK as the design of *taught* jobs. Do not cite this line to block a taught job.
+
 ---
 
 ## Wall line
