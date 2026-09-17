@@ -332,7 +332,13 @@ export class LoopManager {
       throw Object.assign(new Error("enabled must be true or false"), { status: 400 });
     }
     const wantsEnable = patch.enabled !== undefined && patch.enabled !== loop.enabled;
-    if (wantsEnable && !loop.available) throw new Error("that loop is declared but not built yet");
+    // Declared-but-not-built is a state conflict, not malformed input: it is 409 here
+    // and 409 on run (index.ts, "that routine is declared but not built yet"). This
+    // throw carried no status, so the PATCH handler's `?? 400` default made the two
+    // paths disagree — docs/ROUTINES.md:56 is what the pair is now brought back to.
+    if (wantsEnable && !loop.available) {
+      throw Object.assign(new Error("that loop is declared but not built yet"), { status: 409 });
+    }
     if (patch.enabled === undefined && patch.time === undefined && patch.weekdays === undefined) {
       throw Object.assign(new Error("nothing to change — send enabled, time, or weekdays"), { status: 400 });
     }

@@ -17,7 +17,12 @@
 //   E2  Stale Allow on an old revision is 409
 //   E3  Two sequential homes do not leak the extra property
 //
-//   node --experimental-strip-types scripts/qa-company-core.mjs
+//   pnpm qa:second-office
+//   node --experimental-strip-types scripts/qa-second-office-contract.mjs
+//
+// Recovered from the codex/company-qa-slice merge: this file and a Postgres
+// company harness had collided at scripts/qa-company-core.mjs. Both are kept —
+// this one is the second-office contract, the other is `pnpm qa:company`.
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";

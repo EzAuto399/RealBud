@@ -54,6 +54,7 @@ Clock stays CLI one-shot. Ask stays ACP. Same profile, different door. `cron_mod
 - Time/scope change: `handledThrough = now-1` so we **do not backfill** a missed old slot. Run now is explicit catch-up. Enable-only toggle keeps today’s 12h catch-up.
 - Scope is a **loop** attribute. Desk Recheck stays the whole book.
 - Invalid kind / catalog fields / empty weekday list / empty id list → 400. Planned enable/run → 409. Stale revision → 409.
+  Verified live 2026-09-17 (`pnpm qa:second-office`, plus a direct probe): `PATCH /api/loops/inbound-triage {enabled:true}` → **409** and `POST /api/loops/inbound-triage/run` → **409**, both "declared but not built yet"; a genuine input error (`{"time":"99:99"}`) still → **400**. The enable path used to answer 400 because `patchClock` threw without a status and the PATCH handler defaults to 400 — the code was corrected to the 409 this line always specified.
 
 ### Product
 

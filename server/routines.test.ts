@@ -445,6 +445,16 @@ describe("LoopManager clock retune (PR A)", () => {
     expect(patched.schedule.time).toBe("09:15");
     expect(patched.enabled).toBe(false);
     expect(() => manager.patchClock("inbound-triage", { enabled: true })).toThrow(/not built yet/);
+    // Declared-but-not-built is a state conflict, not malformed input, so it must be
+    // 409 — the same code the run route returns. It used to surface as 400 because
+    // this throw carried no status and the PATCH handler defaults to 400.
+    let status: number | undefined;
+    try {
+      manager.patchClock("inbound-triage", { enabled: true });
+    } catch (error) {
+      status = (error as { status?: number }).status;
+    }
+    expect(status).toBe(409);
   });
 
   it("rejects malformed clock patches with a 400 status", () => {

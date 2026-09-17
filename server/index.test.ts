@@ -413,7 +413,9 @@ describe("harness HTTP API", () => {
     const planned = await api("PATCH", "/api/loops/inbound-triage", { time: "09:15" });
     expect(planned.status).toBe(200);
     const enablePlanned = await api("PATCH", "/api/loops/inbound-triage", { enabled: true });
-    expect(enablePlanned.status).toBe(400);
+    // 409, not 400: a declared-but-not-built loop is a state conflict, and the run
+    // route answers 409 for the same loop. Retuning its clock above still succeeds.
+    expect(enablePlanned.status).toBe(409);
     expect(String(enablePlanned.body.error)).toMatch(/not built yet/);
 
     const empty = await api("PATCH", "/api/loops/morning-arrears", {});
