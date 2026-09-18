@@ -123,9 +123,25 @@ export function platformProjectKey(cfg: AppConfig): string {
   return key;
 }
 
-export function platformUserId(cfg: AppConfig): string {
+/**
+ * The Composio `user_id` for this machine — i.e. whose connected accounts these are.
+ *
+ * Resolution order matters, because the wrong binding silently shares accounts:
+ *   1. an explicit configured `userId` (operator override, and what onboarding sets)
+ *   2. the seat's member id, when this process is a seat of an office host
+ *   3. the configured profile email, for a single-seat desk that set one
+ *   4. a hash of the project key — last resort only
+ *
+ * Step 4 is why this argument exists. It hashes the *project* key, so in a
+ * multi-seat office every seat computed the same id and consequently shared one set
+ * of connected accounts: one PM's Gmail would appear to be another's. The seat
+ * binding has to be supplied, not inferred.
+ */
+export function platformUserId(cfg: AppConfig, memberKey?: string | null): string {
   const saved = cfg.composio?.userId;
   if (typeof saved === "string" && /^[A-Za-z0-9._@:+-]{1,128}$/.test(saved)) return saved;
+  const seat = typeof memberKey === "string" ? memberKey.trim() : "";
+  if (seat && /^[A-Za-z0-9._@:+-]{1,128}$/.test(seat)) return `seat-${seat}`;
   const email = cfg.profile?.email?.trim();
   if (email && email.length <= 128 && /^[A-Za-z0-9._@:+-]+$/.test(email)) return email;
   // Compatibility only for an already configured legacy profile. First setup
@@ -160,7 +176,7 @@ function sanitizeMcpHeaders(value: unknown, fallbackKey: string): Record<string,
 }
 
 /** Resolve the Platform session MCP endpoint (or an explicit test/stub URL). */
-export async function resolveConnectedAppsMcp(cfg: AppConfig): Promise<{ key: string; url: string; headers: Record<string, string> }> {
+export async function resolveConnectedAppsMcp(cfg: AppConfig, memberKey?: string | null): Promise<{ key: string; url: string; headers: Record<string, string> }> {
   const key = platformProjectKey(cfg);
   if (cfg.composio?.url) {
     return { key, url: checkedEndpoint(cfg.composio.url), headers: { "x-api-key": key } };
@@ -172,7 +188,7 @@ export async function resolveConnectedAppsMcp(cfg: AppConfig): Promise<{ key: st
       method: "POST", redirect: "error", signal,
       headers: { "x-api-key": key, "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({
-        user_id: platformUserId(cfg),
+        user_id: platformUserId(cfg, memberKey),
         manage_connections: { enable: true, enable_wait_for_connections: true, enable_connection_removal: true },
         mcp: true,
       }),
@@ -362,9 +378,9 @@ const listConnections = (session: ConnectSession, slugs: string[]) => session.ca
   toolkits: slugs.map((name) => ({ name, action: "list" })),
 });
 
-async function listAccountsByToolkit(cfg: AppConfig, slugs: string[]): Promise<Record<string, ConnectionServiceStatus>> {
+async function listAccountsByToolkit(cfg: AppConfig, slugs: string[], memberKey?: string | null): Promise<Record<string, ConnectionServiceStatus>> {
   const key = platformProjectKey(cfg);
-  const userId = platformUserId(cfg);
+  const userId = platformUserId(cfg, memberKey);
   const signal = AbortSignal.timeout(30_000);
   const params = new URLSearchParams();
   params.set("limit", "100");

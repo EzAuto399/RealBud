@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { authorizeService, checkConnectionAccess, composioTool, connectionStatus, platformProjectKey } from "./composio.ts";
+import { authorizeService, checkConnectionAccess, composioTool, connectionStatus, platformProjectKey, platformUserId } from "./composio.ts";
 
 const cfg = { composio: { key: "ak_test_private_value", url: "https://broker.example/mcp" } };
 const envelope = (result: unknown, id: string | number = 1) => ({ jsonrpc: "2.0", id, result });
@@ -51,6 +51,22 @@ describe("Composio connection boundary", () => {
     expect(await connectionStatus(cfg, ["gmail", "outlook"])).toEqual({
       gmail: { connected: true, status: "ACTIVE", accounts: [], accountSelectionRequired: false }, outlook: { connected: false, status: "unknown", accounts: [], accountSelectionRequired: false },
     });
+  });
+
+  // Without a seat binding this hashed the *project* key, so every seat in one
+  // office computed the same user_id and shared one set of connected accounts —
+  // one PM's Gmail appearing to be another's. Two seats must never resolve alike.
+  it("binds connected accounts per seat, not per office", () => {
+    const office = { composio: { key: "ak_shared_project_key" } };
+    const a = platformUserId(office, "3fa85f64-5717-4562-b3fc-2c963f66afa6");
+    const b = platformUserId(office, "7c9e6679-7425-40de-944b-e07fc1f90ae7");
+    expect(a).not.toBe(b);
+    // Same seat resolves stably across calls, or a PM would lose their own accounts.
+    expect(platformUserId(office, "3fa85f64-5717-4562-b3fc-2c963f66afa6")).toBe(a);
+    // An explicit operator value still wins, so onboarding can pin an identity.
+    expect(platformUserId({ composio: { key: "ak_x", userId: "office-pinned" } }, "seat-a")).toBe("office-pinned");
+    // No seat means the legacy single-desk fallback, unchanged.
+    expect(platformUserId(office)).toMatch(/^realbud-[0-9a-f]{16}$/);
   });
 
   it("rejects malformed account collections with a safe error", async () => {

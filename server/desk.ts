@@ -143,6 +143,15 @@ export class Desk {
     this.memberKey = (memberKey ?? "").trim();
   }
 
+  /**
+   * The seat identity this desk serves, for anything that must be bound per seat
+   * rather than per office — currently the Composio `user_id`, so two PMs in one
+   * office do not share one set of connected accounts. Empty for a single-seat desk.
+   */
+  memberKeyForWorker(): string {
+    return this.memberKey;
+  }
+
   constructor(opts?: {
     file?: string;
     now?: () => number;

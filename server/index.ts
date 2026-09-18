@@ -1518,7 +1518,7 @@ async function startTurn(
         authConfigId: gmailBinding.authConfigId, userId: gmailBinding.userId, accountId: gmailBinding.accountId, requestId: newId(),
       } };
       else if (!gmailReadOnlyMode(cfg) && cfg.composio?.key && (!PRODUCT_MODE || allowedApps.length)) {
-        const mcp = await composio.resolveConnectedAppsMcp(cfg);
+        const mcp = await composio.resolveConnectedAppsMcp(cfg, desk.memberKeyForWorker());
         integrations.composio = { ...(PRODUCT_MODE ? { allowedApps } : {}), key: mcp.key, url: mcp.url, headers: mcp.headers };
       }
       if (PRODUCT_MODE) {
