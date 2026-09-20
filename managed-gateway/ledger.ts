@@ -7,6 +7,8 @@ import { modelRate, periodAt, price, twoMonthsAfter, validateRateCard, validateU
 export const digest = (value: unknown) => createHash('sha256').update(canonical(value)).digest('hex');
 type Body = { body: string };
 const parse = <T>(row: Body | undefined): T | undefined => row ? JSON.parse(row.body) as T : undefined;
+/** Key-authenticated calls must dispatch within this window; a stale reservation is not a debt. */
+const KEY_CALL_TTL_MS = 10 * 60 * 1000;
 export class UsageLedger {
   readonly db: LedgerDatabase;
   readonly now: () => number;
@@ -67,6 +69,14 @@ export class UsageLedger {
     const found = parse<RateCard>(this.db.get<Body>('SELECT body FROM cards WHERE id=?',version)); requireThat(found,'unknown_rate_card',409); return found;
   }
   cards(): {card:RateCard;digest:string}[] { return this.db.all<Body & {digest:string}>('SELECT body,digest FROM cards ORDER BY id').map(row => ({card:JSON.parse(row.body),digest:row.digest})); }
+  /** The card a key-authenticated call is priced on: most recently published,
+   * effective now, accepted by the tenant. No acceptance means no service. */
+  activeCard(companyId: string): RateCard {
+    const now = this.now();
+    const accepted = new Set(this.db.all<{version:string}>('SELECT version FROM acceptances WHERE tenant=?',companyId).map(r=>r.version));
+    const card = this.cards().map(entry=>entry.card).filter(c=>c.effectiveAt<=now && accepted.has(c.version)).sort((a,b)=>(b.publishedAt-a.publishedAt)||(a.version<b.version?1:-1))[0];
+    requireThat(card,'rates_not_accepted',409); return card;
+  }
   acceptCard(actor: PortalPrincipal, version: string, expectedDigest: string) {
     requireThat(actor.role === 'billing_owner','forbidden',403); this.tenant(actor.companyId); const card = this.card(version);
     requireThat(digest(card) === expectedDigest,'rate_card_changed',409);
@@ -148,6 +158,54 @@ export class UsageLedger {
       r.state = 'dispatched'; r.providerId=providerId; r.providerNamespace=usageNamespace; this.save(r); this.db.append(r.companyId,'dispatched',r.id,this.now(),{providerId,usageNamespace});
     });
   }
+  /** Key-authenticated admission — the `reserve` equivalent for a customer
+   * application holding a scoped project key instead of the worker's signed
+   * grant. Same tenant checks, same caps, same billing boundary; the
+   * provenance (member/job/attribution) is what differs. */
+  reserveKey(auth: {companyId:string;keyId:string;project:string}, model: string, rateVersion: string, fingerprint: string, bound: Units): RequestRecord {
+    [model,rateVersion,fingerprint].forEach(id); validateUnits(bound);
+    return this.db.transaction(() => {
+      const row = this.db.get<Body>('SELECT body FROM project_keys WHERE id=?',auth.keyId);
+      requireThat(row,'invalid_key',401);
+      const key = JSON.parse(row.body) as {companyId:string;project:string;revokedAt?:number;expiresAt?:number};
+      requireThat(key.companyId===auth.companyId && key.project===auth.project,'invalid_key',401);
+      requireThat(key.revokedAt===undefined,'key_revoked',401);
+      const now = this.now();
+      requireThat(key.expiresAt===undefined || key.expiresAt>now,'key_expired',401);
+      const tenant = this.tenant(auth.companyId);
+      requireThat(tenant.active && tenant.serviceExpiresAt>now && now>=tenant.goLiveAt,'service_unavailable',403);
+      const card = this.card(rateVersion);
+      requireThat(card.effectiveAt<=now,'rate_card_not_effective',409);
+      requireThat(this.db.get('SELECT body FROM acceptances WHERE tenant=? AND version=?',auth.companyId,card.version),'rates_not_accepted',409);
+      const reserve = price(modelRate(card,model),bound); const period = periodAt(now);
+      const source=this.db.get<{mode:string}>('SELECT mode FROM billing_sources WHERE tenant=? AND period=?',tenant.companyId,period);
+      requireThat(!source || source.mode==='meter','billing_source_conflict',409);
+      if(!source)this.db.run("INSERT INTO billing_sources(tenant,period,mode) VALUES(?,?,'meter')",tenant.companyId,period);
+      requireThat(reserve <= nano(tenant.requestCapNanoAud),'request_cap_exceeded',402);
+      requireThat(this.exposure(tenant.companyId,period) + reserve <= nano(tenant.monthlyCapNanoAud), 'monthly_cap_exceeded',402);
+      requireThat(this.requests(tenant.companyId).filter(r => ['reserved','dispatched','unknown'].includes(r.state)).length < tenant.maxConcurrent,'concurrency_limit',429);
+      const jti = randomUUID();
+      const record: RequestRecord = {id:randomUUID(),companyId:tenant.companyId,memberId:`key:${auth.keyId}`,jobId:`project:${auth.project}`,attemptId:`call:${jti}`,kid:auth.keyId,jti,idempotencyKey:jti,fingerprint,model,rateVersion:card.version,period,createdAt:now,deadline:now+KEY_CALL_TTL_MS,state:'reserved',included:now<tenant.includedUntil,bound,reservedNanoAud:reserve.toString(),retailNanoAud:'0',chargedNanoAud:'0',units:{},project:auth.project,keyId:auth.keyId};
+      this.db.run('INSERT INTO requests(id,tenant,member,job,attempt,model_call,idem,kid,jti,body) VALUES(?,?,?,?,?,?,?,?,?,?)',record.id,record.companyId,record.memberId,record.jobId,record.attemptId,'direct',record.idempotencyKey,auth.keyId,jti,canonical(record));
+      this.db.append(record.companyId,'reserved',record.id,now,{rateVersion:record.rateVersion,bound,reservedNanoAud:record.reservedNanoAud,included:record.included,period,project:auth.project,keyId:auth.keyId});
+      return record;
+    });
+  }
+  /** Dispatch for key-authenticated calls: no attempt envelope to verify, but the
+   * key binding, the TTL and the billing boundary are re-checked under the same
+   * transaction discipline as the grant path. */
+  dispatchKey(requestId: string, auth: {companyId:string;keyId:string}, providerId:string, usageNamespace=providerId) {
+    id(providerId); id(usageNamespace);
+    this.db.transaction(() => { const r = this.request(requestId);
+      requireThat(r.state === 'reserved','dispatch_already_claimed',409);
+      requireThat(r.companyId===auth.companyId && r.keyId===auth.keyId && !r.modelCallId,'dispatch_scope_conflict',403);
+      const now = this.now(); requireThat(now<r.deadline,'call_expired',403);
+      const t = this.tenant(r.companyId); requireThat(t.active && t.serviceExpiresAt>now && now>=t.goLiveAt,'service_unavailable',403);
+      requireThat(r.period === periodAt(now) && r.included === (now < t.includedUntil), 'billing_boundary_changed',409);
+      r.state='dispatched'; r.providerId=providerId; r.providerNamespace=usageNamespace; this.save(r);
+      this.db.append(r.companyId,'dispatched',r.id,now,{providerId,usageNamespace,keyId:auth.keyId});
+    });
+  }
   releaseUndispatched(requestId: string) {
     this.db.transaction(() => { const r = this.request(requestId); if (r.state !== 'reserved') return;
       r.state = 'released'; this.save(r); this.db.append(r.companyId,'released_before_dispatch',r.id,this.now(),{}); });
@@ -202,6 +260,6 @@ export class UsageLedger {
   }
   portalUsage(actor: PortalPrincipal) {
     const t = this.tenant(actor.companyId); const period = periodAt(this.now()); const records = this.requests(t.companyId);
-    return {companyId:t.companyId,period,currency:'AUD',gstInclusive:true,includedUntil:t.includedUntil,includedRemainingMs:Math.max(0,t.includedUntil-this.now()),monthlyCapNanoAud:t.monthlyCapNanoAud,requestCapNanoAud:t.requestCapNanoAud,maxConcurrent:t.maxConcurrent,committedRetailNanoAud:this.exposure(t.companyId,period).toString(),remainingNanoAud:(nano(t.monthlyCapNanoAud)>this.exposure(t.companyId,period)?nano(t.monthlyCapNanoAud)-this.exposure(t.companyId,period):0n).toString(),acceptances:this.db.all<Body>('SELECT body FROM acceptances WHERE tenant=?',t.companyId).map(r=>JSON.parse(r.body)),requests:records.map(r=>({id:r.id,memberId:r.memberId,model:r.model,rateVersion:r.rateVersion,period:r.period,state:r.state,included:r.included,units:r.units,reservedNanoAud:r.reservedNanoAud,chargedNanoAud:r.chargedNanoAud,createdAt:r.createdAt,outcome:r.outcome}))};
+    return {companyId:t.companyId,period,currency:'AUD',gstInclusive:true,includedUntil:t.includedUntil,includedRemainingMs:Math.max(0,t.includedUntil-this.now()),monthlyCapNanoAud:t.monthlyCapNanoAud,requestCapNanoAud:t.requestCapNanoAud,maxConcurrent:t.maxConcurrent,committedRetailNanoAud:this.exposure(t.companyId,period).toString(),remainingNanoAud:(nano(t.monthlyCapNanoAud)>this.exposure(t.companyId,period)?nano(t.monthlyCapNanoAud)-this.exposure(t.companyId,period):0n).toString(),acceptances:this.db.all<Body>('SELECT body FROM acceptances WHERE tenant=?',t.companyId).map(r=>JSON.parse(r.body)),requests:records.map(r=>({id:r.id,memberId:r.memberId,model:r.model,rateVersion:r.rateVersion,period:r.period,state:r.state,included:r.included,units:r.units,reservedNanoAud:r.reservedNanoAud,chargedNanoAud:r.chargedNanoAud,createdAt:r.createdAt,outcome:r.outcome,...(r.project===undefined?{}:{project:r.project,keyId:r.keyId})}))};
   }
 }

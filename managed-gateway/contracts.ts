@@ -109,4 +109,7 @@ export interface RequestRecord {
   chargedNanoAud: string; units: Units; outcome?: UsageEvidence['outcome'];
   providerId?:string;
   providerNamespace?:string;
+  /** Set for key-authenticated calls: the billing attribution chain is
+   * company → project → key, carried on the record and its events. */
+  project?: string; keyId?: string;
 }
