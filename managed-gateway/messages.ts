@@ -20,7 +20,12 @@ export function validateAssistant(value:unknown):asserts value is AssistantMessa
     }
   }
 }
-export function validateMessages(request:ModelRequest) {
+/** The fields `validateMessages` actually reads. Widened so callers that have
+ * not assembled a full request yet (the OpenAI wire) can still run the same
+ * structural validators as the signed-grant path. */
+type MessageCarrier = Pick<ModelRequest, 'messages'>
+  & Partial<Pick<ModelRequest, 'protocol' | 'tools' | 'thinking' | 'reasoningEffort'>>;
+export function validateMessages(request: MessageCarrier) {
   let pending=new Set<string>(); const allIds=new Set<string>();
   for(const raw of request.messages) {
     const message:unknown=raw; object(message);
