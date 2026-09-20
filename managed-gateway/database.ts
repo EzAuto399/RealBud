@@ -65,6 +65,8 @@ export class LedgerDatabase {
       CREATE TABLE IF NOT EXISTS payments (id TEXT PRIMARY KEY, invoice TEXT NOT NULL UNIQUE REFERENCES invoices(id), body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS refunds (id TEXT PRIMARY KEY, payment TEXT NOT NULL, body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS refund_intents (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, payment TEXT NOT NULL, credit_event INTEGER NOT NULL UNIQUE REFERENCES events(seq), body TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS project_keys (id TEXT PRIMARY KEY, company TEXT NOT NULL, body TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS project_keys_company ON project_keys(company);
     `);
     for (const table of ['billing_sources','report_key_mappings','report_policies','report_imports','report_rows','square_mappings','statements','statement_events','statement_acceptances','square_events','square_payments','square_refunds','attempts','events','cards','acceptances','evidence','provider_requests','invoices','invoice_events','payment_events','payments','refunds','refund_intents']) {
       for (const action of ['UPDATE','DELETE']) this.sql.exec(`CREATE TRIGGER IF NOT EXISTS immutable_${table}_${action} BEFORE ${action} ON ${table} BEGIN SELECT RAISE(ABORT,'immutable_record'); END;`);

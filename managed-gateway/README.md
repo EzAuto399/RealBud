@@ -25,6 +25,7 @@ The demo is finite and offline. It writes an explicitly labelled local invoice a
 | `gateway.ts`, `abort.ts` | Admission, reservation, once-only dispatch, streaming, deadline/revocation/cancellation |
 | `direct-provider.ts`, `messages.ts` | Fixed DeepSeek/Kimi text/thinking/tool stream fixtures; full supported assistant continuation; default-off transport |
 | `attempts.ts` | Immutable v2 parent identity, deadline and budget, with signed child calls |
+| `keys.ts` | Project-scoped API keys: minted once, stored as a hash, verify/revoke/rotate; operator provisioning only |
 | `square.ts` | Accepted usage statements, order then draft invoice, raw signed webhooks, retrieved partial/manual payments and refunds |
 | `report-import.ts`, `deepseek-balance.ts`, `openai-costs.ts` | Synthetic report fallback; operator-only DeepSeek balance and OpenAI org-costs polling; neither is a client invoice |
 | `openai-provider.ts` | Explicit pinned text model, hard context/output ceilings, strict usage parser; no retries |
