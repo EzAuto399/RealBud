@@ -736,3 +736,32 @@ pass from source on macOS; the Windows installed result is run 35759211257.
 
 Tier: hosted `windows-latest` runner with the unsigned NSIS installer. Not a customer machine, not
 signed, no restart or uninstall-with-data claim.
+
+## 2026-09-23 (evening) — private backup restore works on Windows
+
+What this does not establish: a signed build, a customer machine, restart or uninstall with data,
+or any data folder created by an older build (those keep inherited descriptors and still refuse).
+
+Chain of causes, each found from Windows CI evidence and fixed in source:
+1. The product created most data-folder files with inherited descriptors (desk, config, bots,
+   messages, vault seed, desk key, workflow database, log, backup storage, workflow packs,
+   multi-level private folders). It now restricts each object it creates before content;
+   existing objects stay verify-only. Fresh boot: 22 PowerShell admissions (was 11); installed
+   service ready in 6.9–7.9 s.
+2. SQLite created the backup preparation store's rollback journal itself. The store now uses a
+   TRUNCATE journal created empty and protected before SQLite opens it; hot-journal recovery and
+   older stores are covered by tests.
+3. Two vaults on one folder raced on the development key; they now share the in-flight creation.
+4. The department scan entered the worker context even when idle and could wait behind a
+   workspace pause, holding restore readiness as "busy". An idle scan is now a database read.
+   The readiness hold also names what is still running.
+5. The backup QA planted its own folders without protection and read a stale restore file name;
+   both fixed, and it now lists unprotected entries on a Windows refusal.
+
+Evidence: `Windows probe` run 35776835477 @ f5433db — ACL admission 30/30, six ACL suites 6/6,
+private backup boundaries from source 6 PASS (the POSIX key-permission check is skipped on
+Windows by design). Installed-package result: Package Windows run 35776819019.
+
+Cost to watch: every atomic private write on Windows pays one PowerShell admission (about
+0.2–0.4 s), and one restore attempt took 27 s on a runner because restore verifies files one
+launch at a time. Batching those verifications is the next Windows performance item.
