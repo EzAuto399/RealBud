@@ -1,5 +1,5 @@
-import { lstat, mkdir, readFile, open, rename, unlink } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { lstat, mkdir, readFile, open, rename, rmdir, unlink } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { windowsFilePrivacy } from './windows-file-privacy.ts';
 import { fsyncDir } from './atomic.ts';
@@ -19,11 +19,43 @@ export function privateDirectory(path: string): Promise<void> {
 }
 
 async function admitDirectory(path: string): Promise<void> {
-  const created = await mkdir(path, { recursive: true, mode: 0o700 });
+  const created = await mkdirPrivate(path);
   const stat = await lstat(path);
   if (!stat.isDirectory() || stat.isSymbolicLink() || (process.platform !== 'win32' &&
       ((stat.mode & 0o077) !== 0 || stat.uid !== process.getuid?.()))) throw new Error('Private state directory needs recovery.');
-  await windowsFilePrivacy(path, 'directory', created !== undefined);
+  if (!created) await windowsFilePrivacy(path, 'directory');
+}
+
+/** Create `path` and its missing parents top-down; each level this call creates
+ * gets its own protected Windows descriptor before anything is created inside
+ * it, and an existing level is never touched. The missing levels are listed
+ * first (walking up while absent), never inferred from mkdir's return value,
+ * which Windows can report in its \\?\ form. On a refusal the empty levels
+ * made here are removed so a retry creates them again. Resolves true when the
+ * requested folder itself was created by this call. */
+export async function mkdirPrivate(path: string, mode = 0o700): Promise<boolean> {
+  const leaf = resolve(path), missing: string[] = [];
+  for (let at = leaf; ; at = dirname(at)) {
+    try { await lstat(at); break; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    missing.unshift(at);
+    if (dirname(at) === at) break;
+  }
+  // Nothing missing: keep mkdir's own answer for a non-folder at the path.
+  if (!missing.length) { await mkdir(leaf, { recursive: true, mode }); return false; }
+  const created: string[] = [];
+  try {
+    for (const folder of missing) {
+      try { await mkdir(folder, { mode }); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') continue; throw error; }
+      created.push(folder);
+      await windowsFilePrivacy(folder, 'directory', true);
+    }
+  } catch (error) {
+    for (const folder of created.reverse()) await rmdir(folder).catch(() => {});
+    throw error;
+  }
+  return created.at(-1) === leaf;
 }
 
 export async function readPrivateJson(path: string, maxBytes = 64_000): Promise<unknown | undefined> {

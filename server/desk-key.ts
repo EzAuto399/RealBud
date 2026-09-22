@@ -1,10 +1,11 @@
 // Desk / artifact encryption key. Production Electron wraps this with
 // safeStorage and passes the unwrapped key to the server child. Source
 // runs generate a 0600 development key and stay labelled non-production.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 
+import { mkdirPrivateSync, writeFilePrivateSync } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 
 const KEY_FILE = "desk.key";
@@ -25,7 +26,7 @@ export function loadDeskKey(opts?: { dir?: string; key?: Buffer }): DeskKey {
     return { key: Buffer.from(hex, "hex"), source: "env", production: process.env.REALBUD_PRODUCTION === "1" };
   }
   const dir = opts?.dir ?? DATA_DIR;
-  mkdirSync(dir, { recursive: true });
+  mkdirPrivateSync(dir);
   const path = join(dir, KEY_FILE);
   if (existsSync(path)) {
     const raw = readFileSync(path);
@@ -35,7 +36,8 @@ export function loadDeskKey(opts?: { dir?: string; key?: Buffer }): DeskKey {
     }
   }
   const key = randomBytes(32);
-  writeFileSync(path, key, { mode: 0o600 });
+  // A new key file is restricted on Windows before the key is written.
+  writeFilePrivateSync(path, key, 0o600);
   return { key, source: "generated", production: false };
 }
 

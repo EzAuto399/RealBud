@@ -1,10 +1,11 @@
 // Prepared workflow state belongs to RealBud, outside any engine profile.
 // SQLite provides cross-process compare-and-swap; payloads reuse Desk encryption.
-import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { decryptJson, encryptJson, isEncryptedEnvelope } from "./desk-crypto.ts";
 import { loadDeskKey } from "./desk-key.ts";
+import { createEmptyFileSync, mkdirPrivateSync, restrictNewSync } from "./atomic.ts";
 
 export interface WorkflowRecord<T> { id: string; revision: number; value: T }
 export const WORKFLOW_MAX_ENCRYPTED_RECORD_LENGTH = 8_000_000;
@@ -20,7 +21,7 @@ export class WorkflowDatabase {
   private transactionDepth = 0;
   private writeEpoch = 0;
   constructor(options: { dir: string; key?: Buffer }) {
-    mkdirSync(options.dir, { recursive: true });
+    mkdirPrivateSync(options.dir);
     const file = join(options.dir, "workflow-state.sqlite");
     const keyFile = join(options.dir, "desk.key");
     // loadDeskKey's development fallback must not replace a lost/corrupt key
@@ -35,6 +36,13 @@ export class WorkflowDatabase {
     if (options.key && options.key.length !== 32) throw unavailable();
     if (process.env.REALBUD_DESK_KEY && !/^[a-fA-F0-9]{64}$/.test(process.env.REALBUD_DESK_KEY)) throw unavailable();
     this.key = loadDeskKey(options).key;
+    // SQLite would create the file with an inherited Windows descriptor. A new
+    // database is created empty and restricted before its first page; an
+    // existing one is never re-permissioned. DELETE-mode journals are transient
+    // siblings that inherit the data folder's descriptor and are removed on commit.
+    if (!existsSync(file) && createEmptyFileSync(file, 0o600)) {
+      try { restrictNewSync([{ path: file, kind: "file" }]); } catch { throw unavailable(); }
+    }
     try {
       this.db = new DatabaseSync(file);
       chmodSync(file, 0o600);

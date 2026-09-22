@@ -7,7 +7,7 @@ import { link, lstat, mkdir, open, opendir, unlink } from 'node:fs/promises';
 import { join, parse, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { decryptJson, encryptJson, isEncryptedEnvelope } from './desk-crypto.ts';
-import { fsyncDir } from './atomic.ts';
+import { fsyncDir, restrictNewSync } from './atomic.ts';
 import { windowsFilePrivacy } from './windows-file-privacy.ts';
 import { readBackupColdCompletion } from './private-backup-completion.ts';
 import { parsePrivateBackupTransferOperation, privateBackupTransferDigest, privateBackupTransferId, type PrivateBackupTransferOperation, type PrivateBackupTransferPhase } from '../shared/private-backup-transfers.ts';
@@ -141,15 +141,24 @@ function validate(v: unknown, workspaceId: string): BackupOperationRecord {
   return { version: 1, revision: v.revision, operation: op, reservedBytes: v.reservedBytes, restoreHeld: v.restoreHeld, references: structuredClone(v.references), ...(parsedAllocations ? { allocations: parsedAllocations } : {}), ...(v.cleanupHold ? { cleanupHold: structuredClone(v.cleanupHold) } : {}) } as BackupOperationRecord;
 }
 async function privateDirectory(directory: string): Promise<void> {
-  const root = parse(directory).root; let current = root;
+  const root = parse(directory).root; let current = root; const missing: string[] = [];
   for (const part of directory.slice(root.length).split(/[\\/]/).filter(Boolean)) {
     current = join(current, part);
     try { const s = await lstat(current); if (!s.isDirectory() || s.isSymbolicLink()) fail(); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; missing.push(current); }
   }
-  const made = await mkdir(directory, { recursive: true, mode: 0o700 }), stat = await lstat(directory);
+  // Every level created here, on first use the shared private-backup-v2 root as
+  // well as this store's own folder, gets its own protected Windows descriptor
+  // in one process; a folder that already existed stays verify-only.
+  const created: string[] = [];
+  for (const folder of missing) {
+    try { await mkdir(folder, { mode: 0o700 }); created.push(folder); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+  }
+  const stat = await lstat(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink() || process.platform !== 'win32' && ((stat.mode & 0o077) || stat.uid !== process.getuid?.())) fail();
-  await windowsFilePrivacy(directory, 'directory', made !== undefined);
+  if (created.length) restrictNewSync(created.map(path => ({ path, kind: 'directory' as const })));
+  else await windowsFilePrivacy(directory, 'directory');
 }
 
 /** Publish a complete, private database with an exclusive hard link. The fixed

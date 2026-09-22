@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, readFile, writeFile, unlink, readdir } from 'node:fs/promises';
+import { lstat, open, readFile, unlink, readdir } from 'node:fs/promises';
 import { basename, dirname, join, parse, resolve } from 'node:path';
 import type { Recipe } from '../shared/contracts.ts';
 import type { CustomerPack, CustomerPackCheck, CustomerPackCheckId, CustomerPackInstallation, CustomerPackPreview, CustomerPackArchivePreview, CustomerPackArchivedHistory, CustomerPackHistoryItem, PackSkillProposal, PackSkillRevisionMetadata, PackSkillHistorySummary, PackSkillArchivePreview, PackSkillArchiveConfirmation, PackSkillHistoryPage, PackSkillHistorySelection, PackSkillRevertPreview } from '../shared/customer-packs.ts';
 import { loadRecipes, resetRecipeApprovalsAtomically, saveRecipesAtomically, validateRecipe } from './recipes.ts';
-import { privateDirectory, readPrivateJson, writePrivateJson } from './private-json.ts';
+import { mkdirPrivate, privateDirectory, readPrivateJson, writePrivateJson } from './private-json.ts';
 import { windowsFilePrivacy } from './windows-file-privacy.ts';
 import { austinCustomerPack } from './customer-pack-definition.ts';
 import { officeCoreCustomerPack } from './office-core-pack.ts';
@@ -312,8 +312,11 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
       try {
         for (const artifact of artifacts(entry.pack, entry.overrides)) {
           if (await artifactState(artifact.path, artifact.contents) !== 'missing') continue;
-          await safeAncestors(dirname(artifact.path)); await mkdir(dirname(artifact.path), { recursive: true, mode: 0o700 });
-          await writeFile(artifact.path, artifact.contents, { flag: 'wx', mode: 0o600 }); created.push(artifact.path);
+          // Folders and files created here get their own protected Windows
+          // descriptor before any content; existing folders are left as they are.
+          await safeAncestors(dirname(artifact.path)); await mkdirPrivate(dirname(artifact.path));
+          const file = await open(artifact.path, 'wx', 0o600); created.push(artifact.path);
+          try { await windowsFilePrivacy(artifact.path, 'file', true); await file.writeFile(artifact.contents); } finally { await file.close(); }
         }
         // All plans are validated before the one atomic recipe-store mutation.
         assertIdle(entry);
@@ -503,7 +506,7 @@ export function createCustomerPackService(options: CustomerPackServiceOptions) {
       await safeAncestors(dirname(current.path)); assertCurrent();
       if(artifact.after===null) { await unlink(current.path); fsyncDir(dirname(current.path)); }
       else {
-        await mkdir(dirname(current.path),{recursive:true,mode:0o700});
+        await mkdirPrivate(dirname(current.path));
         // Only the exact reviewed before/after state is replaceable.
         const checked=await state(artifact); if(!checked.next) writeFileAtomic(current.path,artifact.after,0o600);
       }

@@ -463,7 +463,8 @@ async function pushFromSnapshot(snapshot: DeskSnapshot): Promise<void> {
   const quiet = isQuietHours(nowMs(), snapshot.timezone || "Australia/Sydney");
   for (const channel of bound.channels) {
     if (bound !== owner) return;
-    if (!channel.pairedKey()) { pendingByChannel.delete(channel.id); persistDecisionPushStore(); continue; }
+    // Persist only a real change: each atomic write costs a PowerShell launch on Windows.
+    if (!channel.pairedKey()) { if (pendingByChannel.delete(channel.id)) persistDecisionPushStore(); continue; }
     const tracked = pendingByChannel.get(channel.id);
     if (tracked) {
       const live = snapshot.drafts.find((item) => item.id === tracked.draftId);

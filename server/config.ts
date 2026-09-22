@@ -1,11 +1,11 @@
 // Config + data dirs. One file, ~/.realbud/config.json, env fallbacks:
 //   { "xai": {"key":"xai-…"}, "composio": {"key":"ak_…"}, "box": {"token":"…"},
 //     "instances": { "<instanceId>": {"driver":"grok", …} } }
-import { readFileSync, mkdirSync, existsSync, renameSync } from "node:fs";
+import { readFileSync, existsSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { writeFileAtomic } from "./atomic.ts";
+import { mkdirNewSync, mkdirPrivateSync, restrictNewSync, writeFileAtomic } from "./atomic.ts";
 import type { InstanceConfigMap } from "./contracts.ts";
 
 export interface AppConfig {
@@ -74,7 +74,10 @@ export function ensureDirs() {
       }
     }
   }
-  for (const dir of [DATA_DIR, EVENTS_DIR, NATIVE_DIR]) mkdirSync(dir, { recursive: true });
+  // Folders this boot creates get their own protected Windows descriptor, in
+  // one process; existing (or migrated) folders are left to verify-only paths.
+  const created = [DATA_DIR, EVENTS_DIR, NATIVE_DIR].flatMap((dir) => mkdirNewSync(dir));
+  restrictNewSync(created.map((path) => ({ path, kind: "directory" as const })));
 }
 
 export function loadConfig(): AppConfig {
@@ -106,7 +109,7 @@ export function saveConfig(patch: Partial<AppConfig>): void {
       disk[key] = { ...(disk[key] as object), ...patch[key] };
     }
   }
-  mkdirSync(DATA_DIR, { recursive: true });
+  mkdirPrivateSync(DATA_DIR);
   writeFileAtomic(p, JSON.stringify(disk, null, 2), 0o600);
 }
 

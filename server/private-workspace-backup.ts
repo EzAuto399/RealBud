@@ -2,13 +2,14 @@ import { WEBSITE_REMOTE_WORK_KIND, restoreWebsiteRemoteWork, validateSavedWebsit
 import { DEPARTMENT_WORK_KIND, restoreDepartmentWork, validateSavedDepartmentWork } from './department-work.ts';
 import { validateDepartmentWorkGraph } from './department-work-backup.ts';
 import { createHash, randomBytes, randomUUID, scrypt } from 'node:crypto';
-import { lstat, readdir, readFile, mkdir, open, rename, unlink, rm, chmod } from 'node:fs/promises';
+import { lstat, readdir, readFile, open, rename, unlink, rm, chmod } from 'node:fs/promises';
 import { dirname, join, parse, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { encryptJson, decryptJson, isEncryptedEnvelope, type EncryptedEnvelope } from './desk-crypto.ts';
 import { WORKFLOW_MAX_ENCRYPTED_RECORD_LENGTH } from './workflow-database.ts';
 import { fsyncDir } from './atomic.ts';
 import { windowsFilePrivacy } from './windows-file-privacy.ts';
+import { mkdirPrivate } from './private-json.ts';
 import { decodeDeskPlain } from './desk-v3-decode.ts';
 import { validateAgencySettings } from './agency-setup.ts';
 import { validateRecipe } from './recipes.ts';
@@ -110,8 +111,8 @@ async function bytes(path: string, max = MAX_FILE): Promise<Buffer | undefined> 
   } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
 }
 async function write(path: string, content: Buffer) {
-  await safeParents(dirname(path)); await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  await windowsFilePrivacy(dirname(path), 'directory', true);
+  // Restrict only folders this call creates; an existing folder stays verify-only.
+  await safeParents(dirname(path)); if (!await mkdirPrivate(dirname(path))) await windowsFilePrivacy(dirname(path), 'directory');
   await bytes(path, PRIVATE_BACKUP_MAX_BYTES);
   const temp = `${path}.${randomUUID()}.tmp`, file = await open(temp, 'wx', 0o600);
   try {

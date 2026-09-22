@@ -33,8 +33,10 @@ const plantPrivate=(path,content)=>{const missing=[];
 let runtime={node:process.versions.node,electron:process.versions.electron??null};
 const scratch=mkdtempSync(join(realpathSync(tmpdir()),'RealBud backup boundaries ')), data=join(scratch,'data');
 const output=resolve(process.env.QA_OUTPUT || join(root,packaged?'outputs/private-backup-packaged-2026-09-21/boundaries.json':'outputs/private-backup-2026-09-21/boundaries.json'));
-mkdirSync(data,{recursive:true,mode:0o700});
-writeFileSync(join(data,'config.json'),JSON.stringify({instances:{fixture:{driver:'not-a-real-driver'}}}),{mode:0o600});
+// The script creates the data folder and its fixture config, so it protects both
+// on Windows, as the desktop app's key custody does for the folder it creates.
+mkdirSync(data,{mode:0o700});protect(data,'directory',true);
+plantPrivate(join(data,'config.json'),JSON.stringify({instances:{fixture:{driver:'not-a-real-driver'}}}));
 const pause=ms=>new Promise(r=>setTimeout(r,ms)),checks=[],skipped=[];
 let child,token,base,port,failure,logs='',incomplete;
 const check=message=>{checks.push(message);console.log(`PASS ${message}`);};
