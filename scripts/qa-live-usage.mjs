@@ -279,13 +279,16 @@ globalThis.fetch=async(input,init)=>{
   await step('fake-composio', async () => {
     // Stands in for the Composio organisation surface: list + create only, the
     // two calls provisioning makes. A fake is never evidence of a real project.
-    let created = 0;
+    // It remembers what it created, so a second installation of the same company
+    // finds the company project instead of looking like an orphaned key.
+    const projects = [];
     composio = createServer((req, res) => {
       const send = (status, value) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(value)); };
-      if (req.method === 'GET' && req.url?.startsWith('/org/owner/project/list')) return send(200, { items: [] });
+      if (req.method === 'GET' && req.url?.startsWith('/org/owner/project/list')) return send(200, { items: projects.map(({ id, name }) => ({ id, name })) });
       if (req.method === 'POST' && req.url?.startsWith('/org/owner/project/new')) {
-        created += 1;
-        return send(200, { id: `pr_fictional_qa_${created}`, name: `realbud-${COMPANY_ID}`, api_key: 'ak_fictional_live_usage_project_key' });
+        const project = { id: `pr_fictional_qa_${projects.length + 1}`, name: `realbud-${COMPANY_ID}` };
+        projects.push(project);
+        return send(200, { ...project, api_key: 'ak_fictional_live_usage_project_key' });
       }
       return send(404, { error: 'not_found' });
     });
@@ -448,6 +451,63 @@ globalThis.fetch=async(input,init)=>{
     assert(after.status === 200, `analytics after revoke → ${after.status}`);
     assert(after.body.summary.requests === before.requests, `analytics grew after revocation: ${before.requests} → ${after.body.summary.requests}`);
     return `revoked key refused ${second.status} ${facts.refusedError ?? ''}, analytics still ${after.body.summary.requests}`;
+  });
+
+  // A provision whose reply was lost left a Modelvia project and one labelled key
+  // behind, with no record in our ledger. Provisioning again must use that
+  // project, rotate the orphaned key (old secret refused, new one works) and
+  // leave exactly one live key, with no operator involved.
+  const LOST_ID = `qa-${randomUUID()}`, LOST_PROJECT = `rb-${LOST_ID}`;
+  await step('lost-reply-recovers-by-rotation', async () => {
+    const operator = operatorToken();
+    const projects = await call(MV_BASE, 'GET', '/v1/operator/projects', { token: operator });
+    const template = (projects.body?.accounts ?? []).find(account => account.id === MODEL_PROJECT_ID);
+    assert(template, 'the first installation project is needed as a template');
+    const { version: _version, ...shape } = template;
+    const created = await call(MV_BASE, 'POST', '/v1/operator/projects', { token: operator, body: { ...shape, id: LOST_PROJECT, name: `RealBud ${LOST_ID}`, version: 0 } });
+    assert(created.status === 200, `pre-create project → ${created.status} ${created.text.slice(0, 200)}`);
+    const orphan = await call(MV_BASE, 'POST', '/v1/operator/keys', { token: operator, body: { projectId: LOST_PROJECT, environment: ENVIRONMENT, label: `${COMPANY_ID}:${LOST_ID}` } });
+    assert(orphan.status === 200 && typeof orphan.body?.key === 'string', `pre-mint orphan key → ${orphan.status} ${orphan.text.slice(0, 200)}`);
+
+    const token = portalToken(PORTAL_SECRET);
+    const recovered = await call(RB_BASE, 'POST', '/v1/portal/installations/provision', {
+      token, body: { companyId: COMPANY_ID, installationId: LOST_ID, customerId: CUSTOMER_ID, profile: 'property' },
+    });
+    assert(recovered.status === 200, `provision after a lost reply → ${recovered.status} ${recovered.text.slice(0, 300)}`);
+    const fresh = recovered.body.provisioning?.model?.key;
+    assert(/^rbk_[0-9a-f]{16}_[A-Za-z0-9_-]{43}$/.test(fresh ?? ''), 'no fresh rbk_ key after recovery');
+    assert(recovered.body.provisioning.model.projectId === LOST_PROJECT, 'recovery did not use the existing project');
+    assert(fresh !== orphan.body.key, 'the orphaned secret was handed out again');
+
+    const keys = await call(MV_BASE, 'GET', `/v1/operator/keys?projectId=${encodeURIComponent(LOST_PROJECT)}&environment=${encodeURIComponent(ENVIRONMENT)}`, { token: operator });
+    const live = (keys.body?.keys ?? []).filter(key => !key.revokedAt);
+    assert(live.length === 1, `expected one live key after recovery, found ${live.length}`);
+
+    const ask = content => call(MV_BASE, 'POST', '/v1/chat/completions', { token: ask.key, body: { model: 'auto', messages: [{ role: 'user', content }], max_tokens: 32 } });
+    ask.key = orphan.body.key; const old = await ask('FICTIONAL QA: the rotated secret must be refused.');
+    assert([401, 403].includes(old.status), `the orphaned secret still works: ${old.status}`);
+    ask.key = fresh; const works = await ask('FICTIONAL QA: the recovered key works.');
+    assert(works.status === 200, `the recovered key was refused: ${works.status} ${works.text.slice(0, 200)}`);
+    facts.lostReply = { projectId: LOST_PROJECT, liveKeys: live.length, orphanRefused: old.status };
+    return `project ${LOST_PROJECT} reused, orphan refused ${old.status}, new key answered 200, 1 live key`;
+  });
+
+  // A cap change made on the website reaches every provisioned Modelvia project.
+  await step('cap-change-reaches-modelvia', async () => {
+    const token = portalToken(PORTAL_SECRET);
+    const monthly = String(BigInt(MONTHLY_CAP) * 2n);
+    const changed = await call(RB_BASE, 'POST', '/v1/portal/limits', { token, body: { monthlyCapNanoAud: monthly, requestCapNanoAud: REQUEST_CAP, maxConcurrent: 3 } });
+    assert(changed.status === 200, `limits → ${changed.status} ${changed.text.slice(0, 300)}`);
+    const projects = await call(MV_BASE, 'GET', '/v1/operator/projects', { token: operatorToken() });
+    const accounts = projects.body?.accounts ?? [];
+    // Only installations still in service are synced; the revoked first one keeps
+    // its project for billing but has no live key, so its caps are left alone.
+    const live = accounts.find(account => account.id === LOST_PROJECT);
+    const revoked = accounts.find(account => account.id === MODEL_PROJECT_ID);
+    assert(live && live.monthlyCapNanoAud === monthly && live.maxConcurrent === 3, `${LOST_PROJECT} kept its old caps`);
+    assert(revoked && revoked.monthlyCapNanoAud === MONTHLY_CAP, 'the revoked installation project was changed');
+    facts.capSync = { monthlyCapNanoAud: monthly, maxConcurrent: 3, synced: LOST_PROJECT, leftAlone: MODEL_PROJECT_ID, reply: changed.body?.modelviaCaps ?? null };
+    return `monthly cap ${monthly} nanoAUD and concurrency 3 on the live installation's Modelvia project; the revoked one left as it was`;
   });
 } catch {
   /* the failing step is already recorded; the receipt is written below */
