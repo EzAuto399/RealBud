@@ -74,7 +74,8 @@ try {
   $paths = @($env:REALBUD_TEST_PROFILE_PATHS | ConvertFrom-Json)
   if ($paths.Count -lt 1 -or $paths.Count -gt 16) { exit 9 }
   $result = @(foreach ($path in $paths) {
-    $acl = Get-Acl -LiteralPath $path
+    $item = if ([System.IO.Directory]::Exists($path)) { New-Object System.IO.DirectoryInfo($path) } else { New-Object System.IO.FileInfo($path) }
+    $acl = $item.GetAccessControl()
     $onlyPrivate = $true; $fullControl = $false; $deny = $false
     foreach ($entry in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
       if ($entry.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Deny) { $deny = $true }
@@ -106,10 +107,11 @@ $ErrorActionPreference = 'Stop'
 try {
   $paths = @($env:REALBUD_TEST_PROFILE_PATHS | ConvertFrom-Json)
   if ($paths.Count -ne 1) { exit 9 }
-  $acl = Get-Acl -LiteralPath $paths[0]
+  $item = if ([System.IO.Directory]::Exists($paths[0])) { New-Object System.IO.DirectoryInfo($paths[0]) } else { New-Object System.IO.FileInfo($paths[0]) }
+  $acl = $item.GetAccessControl()
   $users = [System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-545')
   $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new($users, 'Read', 'Allow'))
-  Set-Acl -LiteralPath $paths[0] -AclObject $acl
+  $item.SetAccessControl($acl)
 } catch { exit 1 }
 `;
 
