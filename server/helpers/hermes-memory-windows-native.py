@@ -8,7 +8,10 @@ are not a claim of durable directory metadata or physical power-loss safety.
 
 Win32Native accepts explicit fake bindings for portable policy tests. The real
 CtypesBindings loads DLLs only on Windows. No environment platform overrides,
-PowerShell, path-based rename/delete, ACL repair, or copy/truncate fallback.
+PowerShell, caller-path rename/delete, ACL repair, or copy/truncate fallback.
+Rename takes handles and a leaf only: Win32 FileRenameInfo demands a fully
+qualified FileName with a NULL RootDirectory, so that name is derived from the
+destination directory handle and re-verified against the moved handle after.
 All public failures have fixed codes and suppress native exception details.
 A failure may additionally carry the numeric Win32 code, a fixed primitive
 label from PRIMITIVES and a fixed flags summary; those three fields are the
@@ -495,6 +498,10 @@ class Win32Native:
             raise NativeError("unsafe-storage")
         path = _path(folder.final_path.rstrip("\\") + "\\" + leaf)
         self._bindings.rename(handle._raw, parent._raw, leaf, replace)
+        # Bind post-condition: the moved handle's own canonical path must equal
+        # the verified directory's path plus this leaf. snapshot() below rejects
+        # anything else as "conflict", so a directory moved under us during the
+        # call is refused rather than accepted as a publication.
         handle._path = path
         self.verify_private(handle, private_root=handle._root)
         after = self.snapshot(handle)
@@ -742,27 +749,28 @@ class CtypesBindings:
         finally:
             self._free(pointer)
 
-    @_fixed
-    def file_identity(self, raw_handle) -> FileIdentity:
-        if self.k.GetFileType(raw_handle) != 1:
-            raise NativeError("unsafe-storage")
-        info = BY_HANDLE_FILE_INFORMATION()
-        self._check(self.k.GetFileInformationByHandle(raw_handle, C.byref(info)), "GetFileInformationByHandle")
+    def _final_path(self, raw_handle) -> str:
+        """Canonical DOS path of an already-open object (FILE_NAME_NORMALIZED)."""
         capacity = 512
-        path = None
         for _ in range(3):
             buffer = C.create_unicode_buffer(capacity)
             count = self.k.GetFinalPathNameByHandleW(raw_handle, buffer, capacity, 0)
             if not count:
                 self._fail(primitive="GetFinalPathNameByHandleW")
             if count < capacity:
-                path = _path(buffer.value)
-                break
+                return _path(buffer.value)
             capacity = int(count) + 1
             if capacity > MAX_PATH_UNITS + 1:
                 raise NativeError("capacity")
-        if path is None:
-            raise NativeError("unavailable")
+        raise NativeError("unavailable")
+
+    @_fixed
+    def file_identity(self, raw_handle) -> FileIdentity:
+        if self.k.GetFileType(raw_handle) != 1:
+            raise NativeError("unsafe-storage")
+        info = BY_HANDLE_FILE_INFORMATION()
+        self._check(self.k.GetFileInformationByHandle(raw_handle, C.byref(info)), "GetFileInformationByHandle")
+        path = self._final_path(raw_handle)
         volume, maximum, flags = DWORD(), DWORD(), DWORD()
         filesystem = C.create_unicode_buffer(64)
         self._check(self.k.GetVolumeInformationByHandleW(raw_handle, None, 0, C.byref(volume), C.byref(maximum), C.byref(flags), filesystem, 64),
@@ -909,17 +917,24 @@ class CtypesBindings:
 
     @_fixed
     def rename(self, raw_source, raw_parent, leaf, replace) -> None:
-        # Relative leaf + RootDirectory binds destination to an existing handle.
+        # SetFileInformationByHandle(FileRenameInfo) requires RootDirectory NULL
+        # and a fully qualified FileName; a bound RootDirectory is refused with
+        # Win32 87. Root-relative renames exist only below, at NtSetInformationFile.
+        # The destination is therefore resolved here from the destination
+        # DIRECTORY HANDLE (GetFinalPathNameByHandleW, FILE_NAME_NORMALIZED) and
+        # never from caller input, as late as possible so the path still names
+        # that directory object; the caller re-reads the moved handle's final
+        # path afterwards, which keeps the binding as a post-condition.
         # https://learn.microsoft.com/windows/win32/api/winbase/ns-winbase-file_rename_info
-        encoded = _leaf(leaf).encode("utf-16-le")
+        encoded = _path(self._final_path(raw_parent).rstrip("\\") + "\\" + _leaf(leaf)).encode("utf-16-le")
         offset = FILE_RENAME_INFO.name.offset
         buffer = C.create_string_buffer(max(C.sizeof(FILE_RENAME_INFO), offset + len(encoded) + 2))
         info = C.cast(buffer, C.POINTER(FILE_RENAME_INFO)).contents
-        info.options.replace, info.root, info.length = bool(replace), raw_parent, len(encoded)
+        info.options.replace, info.root, info.length = bool(replace), None, len(encoded)
         C.memmove(C.addressof(buffer) + offset, encoded, len(encoded))
         self._check(self.k.SetFileInformationByHandle(raw_source, 3, buffer, C.sizeof(buffer)),
                     "SetFileInformationByHandle(FileRenameInfo)",
-                    "ReplaceIfExists=%d|RootDirectory=bound|NameBytes=%d|Buffer=%d"
+                    "ReplaceIfExists=%d|RootDirectory=null|NameBytes=%d|Buffer=%d"
                     % (int(bool(replace)), len(encoded), C.sizeof(buffer)))
 
     @_fixed

@@ -193,19 +193,37 @@ class RawWin32Contract(unittest.TestCase):
             self.f.native.open_file("fictional", directory=False, writable=True, create=True, security_sddl="fictional", renameable=True)
         self.assertEqual(self.f.closed, [123])
 
-    def test_rename_uses_handle_parent_and_utf16_byte_count(self):
+    def test_rename_is_null_root_and_parent_handle_path_with_utf16_byte_count(self):
+        # Win32 FileRenameInfo refuses a bound RootDirectory (error 87): the name
+        # must be fully qualified, and it comes from the parent HANDLE, not input.
         leaf = "fictional-中文.txt"
+        directory = "\\\\?\\C:\\fictional root\\fictional dir"
+        expected = (directory + "\\" + leaf).encode("utf-16-le")
+        def final_path(handle, buffer, capacity, flags):
+            self.assertEqual((handle, flags), (456, 0))  # FILE_NAME_NORMALIZED | VOLUME_NAME_DOS
+            if len(directory) >= capacity:
+                return len(directory) + 1
+            buffer.value = directory
+            return len(directory)
+        self.f.k.add("GetFinalPathNameByHandleW", final_path)
         def rename(source, kind, buffer, size):
             self.assertEqual((source, kind), (123, 3))
             actual = C.cast(buffer, C.POINTER(N.FILE_RENAME_INFO)).contents
-            self.assertEqual(actual.root, 456)
+            self.assertIsNone(actual.root)
             self.assertEqual(actual.options.replace, 0)
-            self.assertEqual(actual.length, len(leaf.encode("utf-16-le")))
-            self.assertEqual(C.string_at(C.addressof(buffer) + N.FILE_RENAME_INFO.name.offset, actual.length), leaf.encode("utf-16-le"))
+            self.assertEqual(actual.length, len(expected))
+            self.assertEqual(C.string_at(C.addressof(buffer) + N.FILE_RENAME_INFO.name.offset, actual.length), expected)
             self.assertGreaterEqual(size, N.FILE_RENAME_INFO.name.offset + actual.length)
             return 1
         self.f.k.SetFileInformationByHandle.fn = rename
         self.f.native.rename(123, 456, leaf, False)
+        self.assertEqual(len(self.f.k.GetFinalPathNameByHandleW.calls), 1)
+
+    def test_rename_refuses_a_parent_handle_path_it_cannot_canonicalise(self):
+        self.f.k.add("GetFinalPathNameByHandleW", lambda *_: 0)
+        with self.assertRaisesRegex(N.NativeError, "^unavailable$"):
+            self.f.native.rename(123, 456, "fictional.txt", False)
+        self.assertEqual(self.f.k.SetFileInformationByHandle.calls, [])
 
     def test_delete_is_source_handle_disposition_not_path_deletion(self):
         self.f.native.delete(123)
