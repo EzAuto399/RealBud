@@ -95,6 +95,6 @@ Evidence tier per item in brackets. Nothing here is customer, signed-build or li
 Open, in order:
 1. Windows unit residue from the sharded CI run; batch the restore's file verifications (one restore call took 39 s on a runner).
 2. Done: cancelling a browser link on the computer declines it on the website. Done: office service crash restart (unit tests; installed kill-and-return not yet run).
-3. Crash restart of the office service; `.no-bundled-skills` with a curated skill set; ACP `/tools` check for built-in browser tools in Ask.
+3. Done: office service crash restart (unit tests); Hermes skill surface cut from 58 bundled skills to 4 plus RealBud's own via `skills.disabled` (source-verified, Hermes not run). Open safety item: Hermes 0.21.3 loads its built-in `browser_*` tools in Ask whenever agent-browser or `npx` and a Chromium are found; no config switch disables them for ACP, and they likely run without an ACP permission request, so RealBud's portal fence does not see them. They drive a fresh headless browser, not the person's signed-in Chrome, so they cannot act on logged-in portals; closing the gap needs a runtime check on a throwaway profile and then either an upstream switch or tool-call refusal in the ACP driver.
 4. Model name shown to owners (`jev-router`) needs an owner-readable label.
 5. Signing, a real office computer, real Gmail and live Modelvia remain gates.
