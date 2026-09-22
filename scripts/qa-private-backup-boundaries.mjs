@@ -5,7 +5,7 @@ import { once } from 'node:events';
 import { createServer } from 'node:net';
 import { request as httpRequest } from 'node:http';
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, readdirSync, statSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
@@ -24,9 +24,12 @@ const bootstrap=packaged?join(resources,'server/bootstrap.js'):join(root,'server
 // product gives everything it creates. Folders and notes this script plants get
 // the same from the product's own helper, as POSIX gets mode 0700/0600 below.
 const protect=process.platform==='win32'?(await import(pathToFileURL(packaged?join(resources,'server/windows-file-privacy.js'):join(root,'server/windows-file-privacy.ts')).href)).windowsFilePrivacySync:()=>{};
-const plantPrivate=(path,content)=>{const folder=dirname(path),created=mkdirSync(folder,{recursive:true,mode:0o700});
- if(created){const chain=[];for(let at=folder;;at=dirname(at)){chain.unshift(at);if(at===created||dirname(at)===at)break;}for(const dir of chain)protect(dir,'directory',true);}
- writeFileSync(path,'',{mode:0o600});protect(path,'file',true);writeFileSync(path,content);};
+// Only folders this call creates, and only strictly inside the disposable data
+// directory: never an ancestor the script does not own.
+const plantPrivate=(path,content)=>{const missing=[];
+ for(let at=dirname(path);!existsSync(at);at=dirname(at)){const inside=relative(data,at);assert.ok(inside&&!inside.startsWith('..')&&!isAbsolute(inside),'Planted folder is outside the disposable data directory.');missing.unshift(at);}
+ for(const dir of missing){mkdirSync(dir,{mode:0o700});protect(dir,'directory',true);}
+ writeFileSync(path,'',{mode:0o600,flag:'wx'});protect(path,'file',true);writeFileSync(path,content);};
 let runtime={node:process.versions.node,electron:process.versions.electron??null};
 const scratch=mkdtempSync(join(realpathSync(tmpdir()),'RealBud backup boundaries ')), data=join(scratch,'data');
 const output=resolve(process.env.QA_OUTPUT || join(root,packaged?'outputs/private-backup-packaged-2026-09-21/boundaries.json':'outputs/private-backup-2026-09-21/boundaries.json'));
