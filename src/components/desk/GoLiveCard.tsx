@@ -6,11 +6,13 @@ import {
   budStatusLine,
   currentSetupStep,
   readAgencySetupFacts,
+  readWebsiteLinkState,
   setupSequence,
   setupSequenceComplete,
   type AgencySetupRead,
   type ScheduleRead,
   type SetupStep,
+  type WebsiteLinkRead,
 } from "@/lib/setup-sequence";
 import type { Office } from "@/lib/office-setup";
 import { api, useStore } from "@/state/store";
@@ -29,6 +31,7 @@ export function GoLiveCard({
   compact = false,
   workflow = "workspace",
   agencySetup,
+  websiteLink,
   onConnectExport,
 }: {
   mode: "demo" | "live";
@@ -38,10 +41,13 @@ export function GoLiveCard({
   workflow?: GoLiveWorkflow;
   /** Supply the host facts to skip this card's own bounded read of them. */
   agencySetup?: AgencySetupRead;
+  /** Supply this computer's RealBud account link to skip the card's own read of it. */
+  websiteLink?: WebsiteLinkRead;
   onConnectExport: () => void;
   /**
    * Still accepted from the Desk and You callers. Each of the three steps has
-   * its own single action (the agency setup card, or Connections on You), and
+   * its own single action (the agency setup card, or the account link or
+   * Connections on You), and
    * Bud is a status line rather than a step, so these place no control here.
    */
   jurisdictions?: readonly string[];
@@ -57,6 +63,8 @@ export function GoLiveCard({
   // finished setup, so the step carries its own honest wording instead.
   const [read, setRead] = useState<AgencySetupRead>(undefined);
   const supplied = agencySetup !== undefined;
+  const [linkRead, setLinkRead] = useState<WebsiteLinkRead>(undefined);
+  const linkSupplied = websiteLink !== undefined;
   // The store already hydrates the loops once per session, so the schedule fact
   // reuses that slice instead of reading /api/loops again. Anything short of a
   // finished read stays "not checked yet".
@@ -77,6 +85,7 @@ export function GoLiveCard({
     officeAgencyName: agencyName,
     agencySetup: supplied ? agencySetup : read,
     schedule,
+    websiteLink: linkSupplied ? websiteLink : linkRead,
   });
   const current = currentSetupStep(steps);
   const exportRow = propertyExportRow({ mode, workflow });
@@ -106,6 +115,35 @@ export function GoLiveCard({
     };
   }, [supplied]);
 
+  // Step 2 starts with the account link. Re-read it whenever the link card on
+  // You changes it, so the step moves on without a reload.
+  useEffect(() => {
+    if (linkSupplied) return;
+    let alive = true;
+    let controller: AbortController | undefined;
+    const load = () => {
+      controller?.abort();
+      const current = new AbortController();
+      controller = current;
+      const timer = setTimeout(() => current.abort(), 15_000);
+      void api("/api/office-link", { signal: current.signal })
+        .then((status: unknown) => {
+          if (alive && controller === current) setLinkRead(readWebsiteLinkState(status));
+        })
+        .catch(() => {
+          if (alive && controller === current) setLinkRead("unavailable");
+        })
+        .finally(() => clearTimeout(timer));
+    };
+    load();
+    window.addEventListener("realbud-website-link-changed", load);
+    return () => {
+      alive = false;
+      controller?.abort();
+      window.removeEventListener("realbud-website-link-changed", load);
+    };
+  }, [linkSupplied]);
+
   const openWorkflowSetup = () => {
     // Schedule's own section scroll runs off the hash once its screen mounts;
     // the direct call covers the case where that section is already on screen.
@@ -114,11 +152,11 @@ export function GoLiveCard({
     if (typeof document !== "undefined") document.getElementById("schedule-packs")?.scrollIntoView({ block: "start" });
   };
 
-  // Accounts are connected on You; the other two steps are taken in the agency
-  // setup card on Schedule. Each step has exactly one of these.
+  // The account link and connected accounts live on You; the other two steps
+  // are taken in the agency setup card on Schedule. Each step has exactly one.
   const openStep = (step: SetupStep) => {
-    if (step.target === "you-connected-apps") {
-      if (typeof location !== "undefined") location.hash = "you-connected-apps";
+    if (step.target === "you-connected-apps" || step.target === "you-office") {
+      if (typeof location !== "undefined") location.hash = step.target;
       dispatch({ type: "showYou" });
       return;
     }

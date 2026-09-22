@@ -5,7 +5,8 @@ import {
   budStatusLine,
   currentSetupStep,
   readAgencySetupFacts,
-  setupSequence,
+  readWebsiteLinkState,
+  setupSequence as sequenceOf,
   setupSequenceComplete,
   type AgencySetupFacts,
   type AgencySetupWorkflowFacts,
@@ -40,6 +41,9 @@ const facts = (fields: Partial<AgencySetupFacts> = {}): AgencySetupFacts => ({
   ...fields,
 });
 
+// The cases below describe a computer already linked with its RealBud account;
+// the account-link cases pass `websiteLink` explicitly.
+const setupSequence = (input: SetupSequenceInput) => sequenceOf({ websiteLink: "linked", ...input });
 const base: SetupSequenceInput = { agencySetup: undefined };
 const stateOf = (input: SetupSequenceInput, id: SetupStepId) => setupSequence(input).find((step) => step.id === id)?.state;
 const onlyOneCurrent = (input: SetupSequenceInput) => {
@@ -90,7 +94,7 @@ describe("the three-step workspace setup", () => {
       number: 2,
       id: "accounts",
       title: "Connect your accounts",
-      why: "Connect the accounts your work reads, then check each one.",
+      why: "Link this computer with your RealBud account, then connect the accounts your work reads and check each one.",
       target: "you-connected-apps",
       actionLabel: "Open Connections",
     });
@@ -137,6 +141,44 @@ describe("the three-step workspace setup", () => {
     });
     expect(steps[1].state).toBe("done");
     expect(steps[1].status).toBe("No connected account is needed for the work you chose.");
+  });
+});
+
+describe("step 2 starts with linking this computer to its RealBud account", () => {
+  const verified = facts({ workflows: [bank({ checks: [check("gmail", "passed"), check("mapping", "needed")] })] });
+
+  it("makes the account link the first action of step 2, before any account connection", () => {
+    const steps = sequenceOf({ agencySetup: facts(), websiteLink: "not-linked" });
+    expect(currentSetupStep(steps)).toMatchObject({ number: 2, id: "accounts", target: "you-office", actionLabel: "Link with your RealBud account" });
+    expect(steps[1].status).toMatch(/^Link this computer with your RealBud account first; .*model access and account connections\. Then connect the accounts your work reads\.$/);
+    // A verified mailbox does not skip the link: model access comes through it.
+    const mailOnly = sequenceOf({ agencySetup: verified, websiteLink: "not-linked" });
+    expect(mailOnly[1].state).toBe("current");
+    expect(mailOnly[1].actionLabel).toBe("Link with your RealBud account");
+    expect(setupSequenceComplete(mailOnly)).toBe(false);
+  });
+
+  it("moves on to Connections once the host reports the link", () => {
+    const linked = sequenceOf({ agencySetup: facts(), websiteLink: "linked" });
+    expect(currentSetupStep(linked)).toMatchObject({ id: "accounts", target: "you-connected-apps", actionLabel: "Open Connections" });
+    expect(sequenceOf({ agencySetup: verified, websiteLink: "linked" })[1].state).toBe("done");
+  });
+
+  it("never reads an unread or failed link as linked", () => {
+    for (const websiteLink of [undefined, "unavailable" as const]) {
+      const steps = sequenceOf({ agencySetup: verified, websiteLink });
+      expect(steps[1].state).not.toBe("done");
+      expect(steps[1].status).toMatch(/^Not checked yet\. /);
+      expect(steps[1].actionLabel).toBe("Link with your RealBud account");
+    }
+    expect(sequenceOf({ agencySetup: verified })[1].status).toMatch(/Reading this computer’s RealBud account link/);
+    expect(sequenceOf({ agencySetup: verified, websiteLink: "unavailable" })[1].status).toMatch(/could not be read/);
+  });
+
+  it("reads the office-link status without guessing", () => {
+    expect(readWebsiteLinkState({ state: "linked" })).toBe("linked");
+    for (const state of ["unlinked", "pending", "revoked"]) expect(readWebsiteLinkState({ state })).toBe("not-linked");
+    for (const body of [null, undefined, "linked", {}, { state: "approved" }]) expect(readWebsiteLinkState(body)).toBe("unavailable");
   });
 });
 

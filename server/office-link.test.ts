@@ -378,3 +378,235 @@ it("reports a bounded product version without paths or upstream diagnostics", ()
   expect(installationWorkerVersion(null)).toBeNull();
   expect(installationWorkerVersion("could not run worker")).toBeNull();
 });
+
+describe("linking through the browser", () => {
+  const ORIGIN = "https://realbud.app";
+  const approvalUrl = `${ORIGIN}/link/${"A".repeat(43)}`;
+  const later = () => new Date(Date.now() + 10 * 60_000).toISOString();
+  const provisioning = {
+    version: 1,
+    service: { companyId: "office-a", hostInstallationId: "fictional-host-1" },
+    connector: { endpoint: "https://connections.fictional-service.invalid", credential: `rbc_${"b".repeat(64)}`, profile: "property", apps: ["gmail"] },
+    model: { provider: "modelvia", baseUrl: "https://api.modelvia.dev/v1", projectId: "proj-fictional-01", key: `rbk_${"a".repeat(40)}`, keyId: "rbkkey-01", spendCapLabel: "AU$40 per month" },
+  };
+  /** A fake website: link requests, the bearer-checked status poll and the report path. */
+  function website(options: { issued?: (body: any) => unknown; createStatus?: number; reportGate?: Promise<void> } = {}) {
+    const requests: any[] = [];
+    const calls: { route: string; method: string; auth?: string; body?: any }[] = [];
+    let answer: "pending" | "linked" | "expired" | "declined" | "foreign" = "pending";
+    let statusFailures = 0;
+    const fetcher = vi.fn(async (url: any, init: any) => {
+      const route = String(url).slice(`${ORIGIN}/api/installations/`.length);
+      const body = init.body ? JSON.parse(init.body) : undefined;
+      calls.push({ route, method: init.method, auth: init.headers?.Authorization, body });
+      expect(init.redirect).toBe("error");
+      if (route === "link-requests" && init.method === "POST") {
+        if (options.createStatus) return Response.json({}, { status: options.createStatus });
+        requests.push(body);
+        return Response.json(options.issued ? options.issued(body) : { version: 1, purpose: "installation-link-issued", approvalUrl, displayCode: "ABCD-EFGH", expiresAt: later() });
+      }
+      if (route === "link-requests/status" && init.method === "POST") {
+        if (statusFailures > 0) { statusFailures--; throw new Error("connection reset"); }
+        const request = requests.find(item => item.id === body.id);
+        if (!request || init.headers.Authorization !== `Bearer ${request.token}`) return Response.json({}, { status: 401 });
+        const base = { version: 1, purpose: "installation-link-status" };
+        if (answer === "pending") return Response.json({ ...base, state: "pending", expiresAt: later() });
+        if (answer === "linked" || answer === "foreign") return Response.json({ ...base, state: "linked", companyId: "office-a", agencyLabel: "Synthetic Office",
+          installationId: answer === "linked" ? request.id : "0f8fad5b-d9cb-469f-a165-70867728950e" });
+        return Response.json({ ...base, state: answer });
+      }
+      if (route === "report" && init.method === "POST") { await options.reportGate; return Response.json({ provisioning }); }
+      if (route === "report" && init.method === "DELETE") return Response.json({}, { status: 401 });
+      return Response.json({}, { status: 404 });
+    }) as unknown as typeof fetch;
+    return { fetcher, requests, calls, answer: (value: typeof answer) => { answer = value; }, failStatus: (times: number) => { statusFailures = times; } };
+  }
+  function desk(site: ReturnType<typeof website>) {
+    const root = mkdtempSync(join(tmpdir(), "realbud-link-")); roots.push(root);
+    const applied: any[] = [];
+    const sink = { apply: vi.fn(async (value: any, id: string) => { applied.push({ value, id }); }),
+      withdraw: vi.fn(async () => false), withdrawn: vi.fn(async () => false), reconcile: vi.fn(async () => false), clear: vi.fn(async () => {}) };
+    const report = vi.fn(async () => ({ appVersion: "0.1.19", workerVersion: null, workerReady: true }));
+    const create = () => createOfficeLink({ directory: root, appVersion: "0.1.19", platform: "darwin", fetch: site.fetcher, report, provisioning: sink });
+    return { root, create, app: create(), report, sink, applied, file: join(root, "office-link/link.json") };
+  }
+  const routes = (site: ReturnType<typeof website>) => site.calls.map(call => `${call.method} ${call.route}`);
+
+  it("starts one request, keeps its token on this computer, and resumes it after a restart", async () => {
+    const site = website(); const { app, create, file } = desk(site);
+    const started = await app.beginBrowserLink({ label: "  Reception Mac  " });
+    expect(started).toEqual({ approvalUrl, displayCode: "ABCD-EFGH", expiresAt: expect.any(String) });
+    const [sent] = site.requests;
+    expect(Object.keys(sent).sort()).toEqual(["appVersion", "id", "label", "platform", "purpose", "token", "version"]);
+    expect(sent).toMatchObject({ version: 1, purpose: "installation-link-request", label: "Reception Mac", platform: "darwin", appVersion: "0.1.19" });
+    expect(sent.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(sent.token).toMatch(/^[a-f0-9]{64}$/);
+    const status = await app.status();
+    expect(status).toMatchObject({ state: "pending", label: "Reception Mac", browser: started });
+    expect(JSON.stringify(status)).not.toContain(sent.token);
+    expect(JSON.stringify(started)).not.toContain(sent.token);
+    if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(0o600);
+    // One pending request at a time: starting again, even after a restart, resumes it.
+    expect(await app.beginBrowserLink({ label: "Another name" })).toEqual(started);
+    const restarted = create();
+    expect((await restarted.status()).browser).toEqual(started);
+    expect(await restarted.beginBrowserLink({ label: "Reception Mac" })).toEqual(started);
+    expect(site.requests).toHaveLength(1);
+    // The pasted-code path cannot silently replace a waiting approval.
+    await expect(restarted.link({ code, label: "Reception Mac" })).rejects.toThrow(/Cancel the browser approval/);
+    // The restarted process polls with the same token.
+    expect(await restarted.browserLinkStatus()).toEqual({ state: "pending", ...started });
+    expect(site.calls.at(-1)).toMatchObject({ route: "link-requests/status", auth: `Bearer ${sent.token}`, body: { version: 1, purpose: "installation-link-status", id: sent.id } });
+  });
+
+  it("stores an approved link as redeem does and reports once, so provisioning arrives through the report path", async () => {
+    let open!: () => void;
+    const site = website({ reportGate: new Promise<void>(resolve => { open = resolve; }) }); const { app, report, sink, applied } = desk(site);
+    await app.beginBrowserLink({ label: "Reception Mac" });
+    const [sent] = site.requests;
+    expect((await app.browserLinkStatus()).state).toBe("pending");
+    expect(report).not.toHaveBeenCalled();
+    site.answer("linked");
+    expect(await app.browserLinkStatus()).toEqual({ state: "linked", agencyLabel: "Synthetic Office" });
+    // Approval carries no credential: until the report settles, the link reads
+    // linked with model access not yet set up and nothing reported.
+    await vi.waitFor(() => expect(report).toHaveBeenCalledTimes(1));
+    expect(await app.status()).toMatchObject({ state: "linked", agencyLabel: "Synthetic Office", provisioned: false });
+    expect((await app.status()).lastReportedAt).toBeUndefined();
+    expect(sink.apply).not.toHaveBeenCalled();
+    open();
+    await vi.waitFor(async () => expect((await app.status()).provisioned).toBe(true));
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(routes(site).filter(route => route === "POST report")).toHaveLength(1);
+    expect(site.calls.find(call => call.route === "report")?.auth).toBe(`Bearer ${sent.token}`);
+    expect(sink.apply).toHaveBeenCalledTimes(1);
+    expect(applied[0].id).toBe(sent.id);
+    expect(await app.credentials()).toEqual({ installationId: sent.id, token: sent.token, companyId: "office-a", agencyLabel: "Synthetic Office" });
+    const status = await app.status();
+    expect(status).toMatchObject({ state: "linked", agencyLabel: "Synthetic Office", label: "Reception Mac" });
+    expect(status.browser).toBeUndefined();
+    expect(JSON.stringify(status)).not.toContain(provisioning.model.key);
+    // Polling again answers from the stored link without asking the website.
+    const polls = () => routes(site).filter(route => route === "POST link-requests/status").length;
+    const before = polls();
+    expect(await app.browserLinkStatus()).toEqual({ state: "linked", agencyLabel: "Synthetic Office" });
+    expect(polls()).toBe(before);
+    expect(report).toHaveBeenCalledTimes(1);
+    await expect(app.beginBrowserLink({ label: "Reception Mac" })).rejects.toThrow(/Disconnect/);
+  });
+
+  it("clears a declined or expired request so a new one can start", async () => {
+    for (const outcome of ["declined", "expired"] as const) {
+      const site = website(); const { app, file } = desk(site);
+      await app.beginBrowserLink({ label: "Reception Mac" });
+      site.answer(outcome);
+      expect(await app.browserLinkStatus()).toEqual({ state: outcome });
+      expect((await app.status()).state).toBe("unlinked");
+      expect(() => statSync(file)).toThrow();
+      await app.beginBrowserLink({ label: "Reception Mac" });
+      expect(site.requests).toHaveLength(2);
+      expect(site.requests[1].id).not.toBe(site.requests[0].id);
+      expect(site.requests[1].token).not.toBe(site.requests[0].token);
+    }
+  });
+
+  it("replaces a request whose time has passed, revoking its token first", async () => {
+    let first = true;
+    const site = website({ issued: () => {
+      const expiresAt = first ? new Date(Date.now() - 1000).toISOString() : later(); first = false;
+      return { version: 1, purpose: "installation-link-issued", approvalUrl, displayCode: "ABCD-EFGH", expiresAt };
+    } });
+    const { app } = desk(site);
+    await app.beginBrowserLink({ label: "Reception Mac" });
+    const replaced = await app.beginBrowserLink({ label: "Reception Mac" });
+    expect(Date.parse(replaced.expiresAt)).toBeGreaterThan(Date.now());
+    expect(routes(site)).toEqual(["POST link-requests", "DELETE report", "POST link-requests"]);
+    expect(site.calls[1].auth).toBe(`Bearer ${site.requests[0].token}`);
+  });
+
+  it("rejects an approval page off the configured website and saves nothing", async () => {
+    for (const url of ["https://evil.test/link/" + "A".repeat(43), `http://realbud.app/link/${"A".repeat(43)}`, `${approvalUrl}?next=https://evil.test`]) {
+      const site = website({ issued: () => ({ version: 1, purpose: "installation-link-issued", approvalUrl: url, displayCode: "ABCD-EFGH", expiresAt: later() }) });
+      const { app, file } = desk(site);
+      await expect(app.beginBrowserLink({ label: "Reception Mac" })).rejects.toThrow(/will not open/);
+      expect((await app.status()).state).toBe("unlinked");
+      expect(() => statSync(file)).toThrow();
+    }
+    const extra = website({ issued: () => ({ version: 1, purpose: "installation-link-issued", approvalUrl, displayCode: "ABCD-EFGH", expiresAt: later(), token: "x" }) });
+    await expect(desk(extra).app.beginBrowserLink({ label: "Desk" })).rejects.toThrow(/will not open/);
+  });
+
+  it("starts every attempt after a failed or lost create with a fresh id and token", async () => {
+    let attempt = 0;
+    const site = website({ issued: () => {
+      attempt += 1;
+      if (attempt === 1) throw new Error("reply lost");
+      if (attempt === 2) return { version: 1, purpose: "installation-link-issued", approvalUrl: "https://evil.test/link/" + "A".repeat(43), displayCode: "ABCD-EFGH", expiresAt: later() };
+      return { version: 1, purpose: "installation-link-issued", approvalUrl, displayCode: "ABCD-EFGH", expiresAt: later() };
+    } });
+    const { app } = desk(site);
+    await expect(app.beginBrowserLink({ label: "Reception Mac" })).rejects.toMatchObject({ code: "website_unreachable" });
+    expect((await app.status()).state).toBe("unlinked");
+    await expect(app.beginBrowserLink({ label: "Reception Mac" })).rejects.toThrow(/will not open/);
+    await app.beginBrowserLink({ label: "Reception Mac" });
+    expect(site.requests).toHaveLength(3);
+    expect(new Set(site.requests.map(item => item.id)).size).toBe(3);
+    expect(new Set(site.requests.map(item => item.token)).size).toBe(3);
+    // Only the attempt the website answered properly is kept.
+    expect((await app.status()).id).toBe(site.requests[2].id);
+  });
+
+  it("never repeats the create request, says when the website is unreachable, and refuses a bad name first", async () => {
+    const down = website({ createStatus: 503 }); const { app } = desk(down);
+    await expect(app.beginBrowserLink({ label: "Reception Mac" })).rejects.toMatchObject({ status: 503, code: "website_unreachable" });
+    expect(routes(down)).toEqual(["POST link-requests"]);
+    const refused = website({ createStatus: 400 });
+    await expect(desk(refused).app.beginBrowserLink({ label: "Reception Mac" })).rejects.toThrow(/did not accept/);
+    const offline = vi.fn(async () => { throw new Error("offline"); }) as unknown as typeof fetch;
+    const root = mkdtempSync(join(tmpdir(), "realbud-link-")); roots.push(root);
+    const cut = createOfficeLink({ directory: root, appVersion: "0.1.19", platform: "darwin", fetch: offline, report: async () => ({ appVersion: "0.1.19", workerVersion: null, workerReady: true }) });
+    await expect(cut.beginBrowserLink({ label: "Reception Mac" })).rejects.toMatchObject({ code: "website_unreachable" });
+    expect(offline).toHaveBeenCalledTimes(1);
+    for (const label of ["", "   ", "x".repeat(81), "Desk\nMac", 7]) await expect(cut.beginBrowserLink({ label })).rejects.toMatchObject({ status: 400 });
+    expect(offline).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a status poll once after a network error and keeps the request on a bad answer", async () => {
+    const site = website(); const { app } = desk(site);
+    await app.beginBrowserLink({ label: "Reception Mac" });
+    site.failStatus(1);
+    expect((await app.browserLinkStatus()).state).toBe("pending");
+    expect(routes(site).filter(route => route === "POST link-requests/status")).toHaveLength(2);
+    site.failStatus(2);
+    await expect(app.browserLinkStatus()).rejects.toMatchObject({ code: "website_unreachable" });
+    expect((await app.status()).browser).toBeDefined();
+    // A linked answer for another computer is not this computer's link.
+    site.answer("foreign");
+    await expect(app.browserLinkStatus()).rejects.toThrow(/different computer/);
+    expect((await app.status()).state).toBe("pending");
+    expect(await app.credentials()).toBeNull();
+  });
+
+  it("cancels a waiting request, revoking its token, and still clears it when offline", async () => {
+    const site = website(); const { app, file } = desk(site);
+    await app.beginBrowserLink({ label: "Reception Mac" });
+    expect(await app.cancelBrowserLink()).toEqual({ state: "none" });
+    expect(site.calls.at(-1)).toMatchObject({ method: "DELETE", route: "report", auth: `Bearer ${site.requests[0].token}` });
+    expect((await app.status()).state).toBe("unlinked");
+    expect(await app.browserLinkStatus()).toEqual({ state: "none" });
+    await app.beginBrowserLink({ label: "Reception Mac" });
+    (site.fetcher as any).mockImplementation(async () => { throw new Error("offline"); });
+    expect(await app.cancelBrowserLink()).toEqual({ state: "none" });
+    expect(() => statSync(file)).toThrow();
+  });
+
+  it("treats a damaged saved approval as needing recovery", async () => {
+    const site = website(); const { app, file } = desk(site);
+    await app.beginBrowserLink({ label: "Reception Mac" });
+    const saved = JSON.parse(readFileSync(file, "utf8"));
+    writeFileSync(file, JSON.stringify({ ...saved, browser: { ...saved.browser, approvalUrl: "javascript:alert(1)" } }));
+    await expect(app.status()).rejects.toThrow("The saved website link needs recovery.");
+    writeFileSync(file, JSON.stringify({ ...saved, companyId: "office-a" }));
+    await expect(app.browserLinkStatus()).rejects.toThrow("The saved website link needs recovery.");
+  });
+});

@@ -24,9 +24,11 @@ const workflow = (fields: Partial<AgencySetupWorkflowFacts> = {}): AgencySetupWo
   checks: [check('gmail', 'passed')],
   ...fields,
 });
-// Supplying the facts keeps these renders off the card's own bounded read.
-const setup = (fields: Partial<AgencySetupFacts> = {}): { agencySetup: AgencySetupFacts } => ({
+// Supplying the facts keeps these renders off the card's own bounded reads. These
+// cases describe a computer already linked with its RealBud account.
+const setup = (fields: Partial<AgencySetupFacts> = {}): { agencySetup: AgencySetupFacts; websiteLink: 'linked' } => ({
   agencySetup: { agencyName: 'Harbour Agency', timeZone: 'Australia/Brisbane', packSelected: true, workflows: [workflow()], ...fields },
+  websiteLink: 'linked',
 });
 
 describe('three-step workspace setup card', () => {
@@ -64,12 +66,25 @@ describe('three-step workspace setup card', () => {
     }));
     expect(html).toContain('Done: 1. Your agency');
     expect(html).toContain('Step 2 of 3: Connect your accounts');
-    expect(html).toContain('Connect the accounts your work reads, then check each one.');
+    expect(html).toContain('Link this computer with your RealBud account, then connect the accounts your work reads and check each one.');
     // The host's own check sentence, rendered verbatim.
     expect(html).toContain('Choose an account and verify its current private read access.');
     // Accounts are connected on You, so this step's one control is Connections.
     expect(html.match(/aria-label="Open Connections"/g)).toHaveLength(1);
     expect(html).not.toContain('aria-label="Open Agency workflow setup"');
+  });
+
+  it('starts step 2 with linking this computer to its RealBud account', () => {
+    const html = renderToStaticMarkup(createElement(GoLiveCard, { ...basic, ...setup(), websiteLink: 'not-linked' as const }));
+    expect(html).toContain('Step 2 of 3: Connect your accounts');
+    expect(html).toContain('Link this computer with your RealBud account first;');
+    expect(html.match(/aria-label="Link with your RealBud account"/g)).toHaveLength(1);
+    expect(html).not.toContain('aria-label="Open Connections"');
+    // Before the card's own read answers, the link is not checked yet, never linked.
+    const unread = renderToStaticMarkup(createElement(GoLiveCard, { ...basic, agencySetup: setup().agencySetup }));
+    expect(unread).toContain('Step 2 of 3: Connect your accounts');
+    expect(unread).toContain('Not checked yet. Reading this computer’s RealBud account link…');
+    expect(unread).not.toContain('Done: 1. Your agency · 2.');
   });
 
   it('needs no connected account when the chosen work requires none', () => {

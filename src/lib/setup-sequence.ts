@@ -20,10 +20,11 @@ export type SetupStepId = "agency" | "accounts" | "approve";
 export type SetupStepState = "done" | "current" | "later" | "unknown";
 
 /**
- * Where this step's single action goes: the agency setup card on Schedule, or
- * Connections on You, where accounts are actually connected.
+ * Where this step's single action goes: the agency setup card on Schedule,
+ * Connections on You, where accounts are actually connected, or the office
+ * section on You, where this computer is linked with its RealBud account.
  */
-export type SetupJumpTarget = "schedule-packs" | "you-connected-apps";
+export type SetupJumpTarget = "schedule-packs" | "you-connected-apps" | "you-office";
 
 export interface SetupStep {
   id: SetupStepId;
@@ -72,6 +73,21 @@ export interface AgencySetupFacts {
  */
 export type AgencySetupRead = AgencySetupFacts | "unavailable" | undefined;
 
+/**
+ * This computer's link with its RealBud account, as `/api/office-link` reports
+ * it. `undefined` until that read answers; `unavailable` when it failed or came
+ * back malformed. Only `linked` lets the accounts step move on.
+ */
+export type WebsiteLinkRead = "linked" | "not-linked" | "unavailable" | undefined;
+
+/** Re-validate the office-link status body; anything unrecognised is unavailable. */
+export function readWebsiteLinkState(value: unknown): "linked" | "not-linked" | "unavailable" {
+  const state = value && typeof value === "object" ? (value as { state?: unknown }).state : undefined;
+  if (state === "linked") return "linked";
+  if (state === "unlinked" || state === "pending" || state === "revoked") return "not-linked";
+  return "unavailable";
+}
+
 export interface SetupSequenceInput {
   /**
    * The agency name recorded on You, when there is one. The agency form's own
@@ -81,6 +97,8 @@ export interface SetupSequenceInput {
   agencySetup: AgencySetupRead;
   /** The host's own loop facts. `undefined` until the loops read answers. */
   schedule?: ScheduleRead;
+  /** This computer's RealBud account link. `undefined` until the read answers. */
+  websiteLink?: WebsiteLinkRead;
 }
 
 /** One named loop as the host reports it on the RealBud clock. */
@@ -208,14 +226,36 @@ function checkRollup(
   return { fact: "done", status: said(rows[0].check) };
 }
 
+const LINK_ACTION = "Link with your RealBud account";
+
 /**
- * Step 2: the accounts the selected work reads, connected through Connections
- * and checked. Today the only account any workflow requires is the private
- * Gmail source, so that is the one host check this rolls up. The status is
- * whatever the host's own check says; this step invents no fact about an
- * account or about what has been collected from it.
+ * Step 2 starts with linking this computer to its RealBud account: that link is
+ * how Bud's model access and the account connections arrive. Until the host
+ * reports the link, nothing after it in this step can be the current action.
  */
-function accountsFact(setup: AgencySetupFacts): Fact {
+function websiteLinkFact(link: WebsiteLinkRead): Fact | null {
+  if (link === "linked") return null;
+  const action = { actionLabel: LINK_ACTION, target: "you-office" as const };
+  if (link === "not-linked") {
+    return { fact: "todo", status: "Link this computer with your RealBud account first; your account then sets up Bud’s model access and account connections. Then connect the accounts your work reads.", ...action };
+  }
+  return {
+    fact: "unknown",
+    status: link === undefined ? `${NOT_CHECKED} Reading this computer’s RealBud account link…` : `${NOT_CHECKED} This computer’s RealBud account link could not be read.`,
+    ...action,
+  };
+}
+
+/**
+ * Step 2, after the account link: the accounts the selected work reads,
+ * connected through Connections and checked. Today the only account any
+ * workflow requires is the private Gmail source, so that is the one host check
+ * this rolls up. The status is whatever the host's own check says; this step
+ * invents no fact about an account or about what has been collected from it.
+ */
+function accountsFact(setup: AgencySetupFacts, link: WebsiteLinkRead): Fact {
+  const linkFirst = websiteLinkFact(link);
+  if (linkFirst) return linkFirst;
   const selected = setup.workflows.filter((workflow) => workflow.selected);
   // Before any work is ticked the account is still the agency's own, so the
   // check is read across every workflow that reports one.
@@ -292,7 +332,7 @@ const ORDER: { id: SetupStepId; title: string; why: string; target: SetupJumpTar
   {
     id: "accounts",
     title: "Connect your accounts",
-    why: "Connect the accounts your work reads, then check each one.",
+    why: "Link this computer with your RealBud account, then connect the accounts your work reads and check each one.",
     target: "you-connected-apps",
     actionLabel: "Open Connections",
   },
@@ -315,7 +355,7 @@ export function setupSequence(input: SetupSequenceInput): SetupStep[] {
 
   const facts: Record<SetupStepId, Fact> = {
     agency: unreadable ? held() : agencyFact(input.officeAgencyName ?? "", setup),
-    accounts: unreadable ? held() : accountsFact(setup),
+    accounts: unreadable ? held() : accountsFact(setup, input.websiteLink),
     approve: unreadable ? held() : approveFact(setup, input.schedule),
   };
 

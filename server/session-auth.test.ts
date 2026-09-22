@@ -121,6 +121,10 @@ it.each(['/api/bill-register', '/api/bill-evidence', '/api/bill-occurrences', '/
     expect(needsSession(`${path}-lookalike`, 'GET')).toBe(false);
   });
 
+it('protects the browser link start, status and cancel under the office-link prefix', () => {
+  for (const method of ['GET', 'POST', 'DELETE']) expect(needsSession('/api/office-link/browser-link', method)).toBe(true);
+});
+
 
 describe('native private backup download session', () => {
   it('accepts the scoped cookie only on download GET and rejects stale or duplicate cookies', () => {

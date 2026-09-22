@@ -3657,6 +3657,13 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     if (path === "/api/office-link/report" && method === "POST") {
       await officeLink.report(); return json(res, 200, await officeLink.status());
     }
+    // Browser approval instead of a pasted code. The view never carries the token.
+    if (path === "/api/office-link/browser-link") {
+      res.setHeader("cache-control", "no-store");
+      if (method === "POST") return json(res, 200, { state: "pending", ...(await officeLink.beginBrowserLink(await readBody(req))) });
+      if (method === "GET") return json(res, 200, await officeLink.browserLinkStatus());
+      if (method === "DELETE") return json(res, 200, await officeLink.cancelBrowserLink());
+    }
     if (path === "/api/office-link" && method === "DELETE") {
       await websiteRequests.disable();
       await officeLink.disconnect(); return json(res, 200, await officeLink.status());
