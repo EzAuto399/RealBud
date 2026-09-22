@@ -17,7 +17,12 @@ argv-*.txt
 dist-server/
 dist-postgres/
 .postgres-cache/
-electron/resources/
+# Generated helper binaries live here; the checked-in sources below are re-included.
+electron/resources/*
+!electron/resources/speech-helper-win.cs
+!electron/resources/speech-helper.swift
+!electron/resources/speech-helper-Info.plist
+!electron/resources/app-icon.png
 
 # scratch: generated documents, PDFs and salvage copies — not product code
 output/

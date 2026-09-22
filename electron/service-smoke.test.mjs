@@ -21,16 +21,25 @@ const SMOKE_TIMEOUT_MS = windows ? READY_MS + 20_000 : 30_000;
 const CASE_TIMEOUT_MS = windows ? SMOKE_TIMEOUT_MS + 20_000 : 35_000;
 const PRIVATE_FIXTURE_SCRIPT = `$ErrorActionPreference = 'Stop'
 $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
-foreach ($item in @($env:REALBUD_FIXTURE_OBJECTS | ConvertFrom-Json)) {
-  if ($item.directory) { $acl = [System.Security.AccessControl.DirectorySecurity]::new() }
+# One variable per field per object, read by name and never interpolated - a
+# single JSON array piped through @() does not survive Windows PowerShell 5.1
+# (see ACL_WITNESS in scripts/smoke-company-bundle.mjs for the same hazard).
+$count = [System.Environment]::GetEnvironmentVariable('REALBUD_FIXTURE_COUNT')
+if ($count -notmatch '^([1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-6])$') { throw 'invalid fixture count' }
+for ($index = 0; $index -lt [int]$count; $index++) {
+  $path = [System.Environment]::GetEnvironmentVariable('REALBUD_FIXTURE_PATH_' + $index)
+  $kind = [System.Environment]::GetEnvironmentVariable('REALBUD_FIXTURE_KIND_' + $index)
+  if ([string]::IsNullOrEmpty($path)) { throw 'missing fixture path' }
+  if ($kind -ne 'directory' -and $kind -ne 'file') { throw 'invalid fixture kind' }
+  if ($kind -eq 'directory') { $acl = [System.Security.AccessControl.DirectorySecurity]::new() }
   else { $acl = [System.Security.AccessControl.FileSecurity]::new() }
   $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true, $false)
   foreach ($principal in @($sid, [System.Security.Principal.SecurityIdentifier]::new('S-1-5-18'))) {
-    if ($item.directory) { $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($principal, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow') }
+    if ($kind -eq 'directory') { $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($principal, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow') }
     else { $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($principal, 'FullControl', 'Allow') }
     $acl.AddAccessRule($rule)
   }
-  Set-Acl -LiteralPath $item.path -AclObject $acl
+  Set-Acl -LiteralPath $path -AclObject $acl
 }`;
 const BROAD_FIXTURE_SCRIPT = `$ErrorActionPreference = 'Stop'
 $acl = Get-Acl -LiteralPath $env:REALBUD_FIXTURE_BROAD_FILE
@@ -124,9 +133,13 @@ describe('installed Windows service acceptance', () => {
           if (process.platform === 'win32') {
             // Prepare only empty, newly owned fake-server fixture objects. The
             // smoke's independent read-only witness must check their actual ACL.
-            powershell(${JSON.stringify(PRIVATE_FIXTURE_SCRIPT)}, {
-              REALBUD_FIXTURE_OBJECTS: JSON.stringify([...directories.map(path => ({ path, directory: true })), ...files.map(path => ({ path, directory: false }))]),
+            const fixtureObjects = [...directories.map(path => ({ path, directory: true })), ...files.map(path => ({ path, directory: false }))];
+            const fixtureEnv = { REALBUD_FIXTURE_COUNT: String(fixtureObjects.length) };
+            fixtureObjects.forEach((item, index) => {
+              fixtureEnv['REALBUD_FIXTURE_PATH_' + index] = item.path;
+              fixtureEnv['REALBUD_FIXTURE_KIND_' + index] = item.directory ? 'directory' : 'file';
             });
+            powershell(${JSON.stringify(PRIVATE_FIXTURE_SCRIPT)}, fixtureEnv);
           }
           for (const name of copies) writeFileSync(join(profile, name), readFileSync(join(pack, name)));
           writeFileSync(join(home, 'auth.json'), JSON.stringify({ version: 1, providers: {}, credential_pool: {} }));
