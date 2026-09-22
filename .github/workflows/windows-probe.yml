@@ -11,6 +11,7 @@ on:
     paths:
       - .github/workflows/windows-probe.yml
       - scripts/testing/probe-windows-acl.mjs
+      - scripts/testing/probe-windows-powershell-env.mjs
       - server/windows-file-privacy*.ts
       - server/private-file.ts
       - server/private-vault.ts
@@ -38,6 +39,9 @@ jobs:
           "PSModulePath=$env:PSModulePath"
           "TEMP=$env:TEMP RUNNER_TEMP=$env:RUNNER_TEMP"
           & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString(); (Get-Command Set-Acl).Module.Path; [System.Security.Principal.WindowsIdentity]::GetCurrent().Name'
+      - name: PowerShell launch cost under the installed service's stripped environment
+        continue-on-error: true
+        run: node scripts/testing/probe-windows-powershell-env.mjs
       - name: ACL admission in every storage root, inherited and relocated home
         continue-on-error: true
         run: node --experimental-strip-types scripts/testing/probe-windows-acl.mjs
