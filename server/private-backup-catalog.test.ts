@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, writeFile, rm, symlink, link, chmod } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm, symlink, link, chmod, lstat, unlink } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -57,6 +57,28 @@ async function loadRecords(f: Awaited<ReturnType<typeof fixture>>, populate: (db
   const directory = join(f.root, 'source'), sourceKey = randomBytes(32), db = new WorkflowDatabase({ dir: directory, key: sourceKey });
   try { await populate(db, directory, sourceKey); } finally { db.close(); }
   return { directory, sourceKey, records: [...savedRecords(directory, sourceKey)] };
+}
+// A real writer killed mid-transaction. Spilling a tiny cache writes changed
+// pages into the database before COMMIT, so the journal it leaves is hot. The
+// parent does not fabricate or modify its recovery bytes.
+async function killWriterMidTransaction(root: string, path: string, mode: 'TRUNCATE' | 'DELETE'): Promise<void> {
+  const program = `import { DatabaseSync } from 'node:sqlite'; let path=''; for await(const c of process.stdin) path+=c;
+    const db=new DatabaseSync(path); db.exec('PRAGMA journal_mode=${mode}; PRAGMA synchronous=FULL; PRAGMA cache_size=4; PRAGMA cache_spill=ON; BEGIN IMMEDIATE;');
+    db.prepare('UPDATE catalog_header SET payload=? WHERE id=1').run('uncommitted fixture');
+    db.prepare('UPDATE catalog_entries SET payload=?').run('invalid fixture '.repeat(40_000));
+    process.stdout.write('dirty\\n'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0);`;
+  const envModule: string = '../scripts/service-smoke-env.mjs'; const { serviceSmokeEnv } = await import(envModule);
+  const child = spawn(process.execPath, ['--input-type=module', '-e', program], { env: serviceSmokeEnv({ executable: process.execPath, home: root, data: root, scratch: root, port: 0 }), stdio: ['pipe', 'pipe', 'pipe'] });
+  let output = '', errors = '', timer: ReturnType<typeof setTimeout> | undefined;
+  const closed = new Promise<void>((resolve, reject) => { child.once('close', () => resolve()); child.once('error', reject); });
+  child.stderr.on('data', c => { errors = (errors + c).slice(-1500); });
+  const ready = new Promise<void>((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`Fixture did not write: ${errors}`)), 5000);
+    child.stdout.on('data', c => { output = (output + c).slice(-100); if (output.includes('dirty')) resolve(); });
+    void closed.then(() => reject(new Error(`Fixture exited: ${errors}`)), reject);
+  });
+  child.stdin.end(path);
+  try { await ready; } finally { clearTimeout(timer); if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); await closed; }
 }
 function draftInput(workspaceId: string): BillReviewDraftValue {
   return { workspaceId, state: 'editing', billId: null, billRevision: null, itemId: null, messageId: null, sourceDigest: null,
@@ -397,50 +419,23 @@ describe('physical sqlite storage bounds', () => {
     expect(reopened.validate()).toEqual(sealed);
     expect(reopened.getFile('vault/workflow-inputs/maximum.csv')!.data).toEqual(body);
   });
-  it('recovers a real killed writer and its hot rollback journal before applying the persisted cap', async () => {
+  it('recovers its own killed writer from the protected journal before applying the persisted cap, on every platform', async () => {
     const f = await fixture({ maxStorageBytes: 2 * 1024 * 1024 });
     const retained = Buffer.from('Fictional retained bytes '.repeat(12_000));
     f.catalog.addFile({ path: 'vault/properties/retained.md', encoding: 'bytes', data: retained });
     const summary = f.catalog.validate(), directory = f.catalog.directory, path = join(directory, 'catalog.sqlite');
-    f.catalog.close(); const original = await readFile(path);
-    // A pre-upgrade writer with spilling enabled produces a real hot journal.
-    // The parent does not fabricate or modify its recovery bytes.
-    const program = `import { DatabaseSync } from 'node:sqlite'; let path=''; for await(const c of process.stdin) path+=c;
-      const db=new DatabaseSync(path); db.exec('PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA cache_size=4; PRAGMA cache_spill=ON; BEGIN IMMEDIATE;');
-      db.prepare('UPDATE catalog_header SET payload=? WHERE id=1').run('uncommitted fixture');
-      db.prepare('UPDATE catalog_entries SET payload=?').run('invalid fixture '.repeat(40_000));
-      process.stdout.write('dirty\\n'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0);`;
-    const envModule: string = '../scripts/service-smoke-env.mjs'; const { serviceSmokeEnv } = await import(envModule);
-    const child = spawn(process.execPath, ['--input-type=module', '-e', program], { env: serviceSmokeEnv({ executable: process.execPath, home: f.root, data: f.root, scratch: f.root, port: 0 }), stdio: ['pipe', 'pipe', 'pipe'] });
-    let output = '', errors = '', timer: ReturnType<typeof setTimeout> | undefined;
-    const closed = new Promise<void>((resolve, reject) => { child.once('close', () => resolve()); child.once('error', reject); });
-    child.stderr.on('data', c => { errors = (errors + c).slice(-1500); });
-    const ready = new Promise<void>((resolve, reject) => {
-      timer = setTimeout(() => reject(new Error(`Fixture did not write: ${errors}`)), 5000);
-      child.stdout.on('data', c => { output = (output + c).slice(-100); if (output.includes('dirty')) resolve(); });
-      void closed.then(() => reject(new Error(`Fixture exited: ${errors}`)), reject);
-    });
-    child.stdin.end(path);
-    try {
-      await ready;
-      expect((await readFile(path)).equals(original)).toBe(false);
-      expect((await readFile(path + '-journal')).byteLength).toBeGreaterThan(512);
-    } finally { clearTimeout(timer); if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); await closed; }
-    if (process.platform === 'win32') {
-      // That writer's journal was created by SQLite with an inherited
-      // descriptor. An existing journal is verify-only, so Windows holds the
-      // catalog for recovery and leaves both files untouched.
-      const dirty = await readFile(path), hot = await readFile(path + '-journal');
-      await expect(PrivateBackupCatalog.open({ directory, key: f.key, catalogId: f.catalog.catalogId, workspaceId: f.workspaceId }))
-        .rejects.toMatchObject({ name: 'WindowsFilePrivacyError', category: 'inheritance-not-protected' });
-      expect(await readFile(path)).toEqual(dirty); expect(await readFile(path + '-journal')).toEqual(hot);
-      return;
-    }
+    f.catalog.close(); const original = await readFile(path), created = await lstat(path + '-journal');
+    await killWriterMidTransaction(f.root, path, 'TRUNCATE');
+    expect((await readFile(path)).equals(original)).toBe(false);
+    // The hot journal is the file the catalog created and protected, written in
+    // place, so Windows admits it and SQLite rolls it back.
+    const hot = await lstat(path + '-journal');
+    expect(hot.ino).toBe(created.ino); expect(hot.size).toBeGreaterThan(512);
     const restored = await PrivateBackupCatalog.open({ directory, key: f.key, catalogId: f.catalog.catalogId, workspaceId: f.workspaceId }); catalogs.push(restored);
     expect(restored.validate()).toEqual(summary);
     expect(restored.getFile('vault/properties/retained.md')!.data).toEqual(retained);
     expect(await readFile(path)).toEqual(original);
-    await expect(readFile(path + '-journal')).rejects.toMatchObject({ code: 'ENOENT' });
+    expect((await lstat(path + '-journal')).size).toBe(0);
   }, 15_000);
   it('opens legacy maxEntries/maxBytes headers without rewriting them', async () => {
     const f = await fixture({ maxEntries: 20, maxBytes: 64 * 1024 });
@@ -481,4 +476,69 @@ describe('physical sqlite storage bounds', () => {
     await expect(PrivateBackupCatalog.create({ directory: join(root, 'high'), key, workspaceId, maxEntries: 10, maxBytes: 1000, maxStorageBytes: 64 * 1024 ** 3 + 4096 })).rejects.toThrow(/limits/);
     await expect(PrivateBackupCatalog.create({ directory: join(root, 'low'), key, workspaceId, maxEntries: 10, maxBytes: 1000, maxStorageBytes: 4095 })).rejects.toThrow(/limits/);
   });
+});
+
+describe('one protected TRUNCATE journal', () => {
+  const open = (f: Awaited<ReturnType<typeof fixture>>) => PrivateBackupCatalog.open({ directory: f.catalog.directory, key: f.key, catalogId: f.catalog.catalogId, workspaceId: f.workspaceId })
+    .then(catalog => { catalogs.push(catalog); return catalog; });
+  const journalOf = (f: Awaited<ReturnType<typeof fixture>>) => join(f.catalog.directory, 'catalog.sqlite-journal');
+  const identity = async (path: string) => { const stat = await lstat(path); return { ino: stat.ino, size: stat.size }; };
+
+  it('creates the journal empty with the catalog and keeps that same empty file across commits and reopening', async () => {
+    const f = await fixture({ base: false }), created = await identity(journalOf(f));
+    expect(created.size).toBe(0);
+    f.catalog.addRecord(handoff());
+    expect(await identity(journalOf(f))).toEqual(created);
+    f.catalog.close(); expect((await open(f)).summary().records).toBe(1);
+    expect(await identity(journalOf(f))).toEqual(created);
+  });
+
+  it('opens an older DELETE-mode catalog without a journal and moves it to a new empty journal without losing data', async () => {
+    const f = await fixture(); f.catalog.addRecord(handoff());
+    const summary = f.catalog.validate(); f.catalog.close();
+    await unlink(journalOf(f));
+    const opened = await open(f);
+    expect((await lstat(journalOf(f))).size).toBe(0);
+    expect(opened.validate()).toEqual(summary);
+    opened.addRecord(handoff('handoff:after-migration'));
+    expect(opened.summary().records).toBe(2); expect((await lstat(journalOf(f))).size).toBe(0);
+  });
+
+  it('refuses a journal too short to hold a header as damage and preserves it', async () => {
+    const f = await fixture(); f.catalog.close();
+    const damaged = Buffer.from('fictional!');
+    await writeFile(journalOf(f), damaged);
+    await expect(open(f)).rejects.toThrow(/needs recovery/);
+    expect(await readFile(journalOf(f))).toEqual(damaged);
+    await writeFile(journalOf(f), Buffer.alloc(0));
+    expect((await open(f)).validate().files).toBe(2);
+  });
+
+  it('recovers an older build\u2019s DELETE-mode hot journal; Windows still refuses a journal the catalog did not create', async () => {
+    const f = await fixture({ maxStorageBytes: 2 * 1024 * 1024 });
+    const retained = Buffer.from('Fictional retained bytes '.repeat(12_000));
+    f.catalog.addFile({ path: 'vault/properties/retained.md', encoding: 'bytes', data: retained });
+    const summary = f.catalog.validate(), path = join(f.catalog.directory, 'catalog.sqlite');
+    f.catalog.close(); const original = await readFile(path);
+    // An older build kept no journal between transactions, so SQLite created
+    // this one itself when that build's writer began its transaction.
+    await unlink(journalOf(f));
+    await killWriterMidTransaction(f.root, path, 'DELETE');
+    expect((await readFile(path)).equals(original)).toBe(false);
+    expect((await lstat(journalOf(f))).size).toBeGreaterThan(512);
+    if (process.platform === 'win32') {
+      // That journal carries an inherited descriptor. An existing journal is
+      // verify-only, so Windows holds the catalog for recovery and leaves both
+      // files untouched.
+      const dirty = await readFile(path), hot = await readFile(journalOf(f));
+      await expect(open(f)).rejects.toMatchObject({ name: 'WindowsFilePrivacyError', category: 'inheritance-not-protected' });
+      expect(await readFile(path)).toEqual(dirty); expect(await readFile(journalOf(f))).toEqual(hot);
+      return;
+    }
+    const restored = await open(f);
+    expect(restored.validate()).toEqual(summary);
+    expect(restored.getFile('vault/properties/retained.md')!.data).toEqual(retained);
+    expect(await readFile(path)).toEqual(original);
+    expect((await lstat(journalOf(f))).size).toBe(0);
+  }, 15_000);
 });

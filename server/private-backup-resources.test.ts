@@ -48,7 +48,8 @@ describe('journal-bound backup resource ownership', () => {
     catalog.addFile({ path: 'desk.json', encoding: 'json', data: Buffer.from(JSON.stringify(emptyV3({ name: 'Fictional resource office', timezone: 'UTC', jurisdictions: [] }))) }); catalog.seal();
     await expect(f.service.claim(f.binding)).resolves.toMatchObject({ existing: true });
     expect(await readFile(f.marker())).toEqual(savedMarker);
-    expect(await f.service.inspect(f.binding)).toMatchObject({ claimed: true, dataPresent: true, files: 1, exceedsAllocation: false });
+    // The catalog plus its kept, empty, protected rollback journal (TRUNCATE mode).
+    expect(await f.service.inspect(f.binding)).toMatchObject({ claimed: true, dataPresent: true, files: 2, exceedsAllocation: false });
     const deleting = f.deleting(); f.drained(false);
     await expect(f.service.remove(deleting)).rejects.toMatchObject({ status: 409 }); expect(existsSync(claim.directory)).toBe(true);
     catalog.close(); f.drained(true); await f.service.remove(deleting); await f.service.remove(deleting);

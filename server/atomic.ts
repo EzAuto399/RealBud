@@ -6,7 +6,9 @@
 // that fails to parse on next boot and is silently treated as empty state.
 import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { rename } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { windowsFilePrivacyBatchSync } from "./windows-file-privacy.ts";
 
 /** A file or folder this process has just created and not yet written into. */
@@ -94,6 +96,49 @@ export function writeFilePrivateSync(path: string, data: string | Buffer, mode?:
   }
 }
 
+// Windows refuses a rename onto a file that another process (antivirus, the
+// search indexer, a backup agent) briefly holds open, with EPERM, EBUSY or
+// EACCES. Only those, and only on Windows, retry the same rename with a short
+// backoff for about a second in total. Nothing touches the temp file between
+// attempts, so it keeps its protected descriptor, and the target stays the
+// complete old file until one rename succeeds. Any other error, or the last
+// refusal, is thrown unchanged for the caller's cleanup.
+const REPLACE_RETRY_CODES = new Set(["EPERM", "EBUSY", "EACCES"]);
+const REPLACE_RETRY_DELAYS_MS = [10, 20, 40, 80, 160, 320, 370]; // 1 s in total
+
+function replaceRetryDelay(error: unknown, attempt: number): number | undefined {
+  if (process.platform !== "win32" || attempt >= REPLACE_RETRY_DELAYS_MS.length) return undefined;
+  return REPLACE_RETRY_CODES.has(String((error as NodeJS.ErrnoException | null)?.code)) ? REPLACE_RETRY_DELAYS_MS[attempt] : undefined;
+}
+
+/** renameSync onto an existing file, riding out a brief hold by another process on Windows. */
+export function renameReplacingSync(from: string, to: string): void {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      renameSync(from, to);
+      return;
+    } catch (error) {
+      const delay = replaceRetryDelay(error, attempt);
+      if (delay === undefined) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
+    }
+  }
+}
+
+/** rename onto an existing file, riding out a brief hold by another process on Windows. */
+export async function renameReplacing(from: string, to: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await rename(from, to);
+      return;
+    } catch (error) {
+      const delay = replaceRetryDelay(error, attempt);
+      if (delay === undefined) throw error;
+      await sleep(delay);
+    }
+  }
+}
+
 export function fsyncDir(dir: string): void {
   const fd = openSync(dir, "r");
   try {
@@ -140,7 +185,7 @@ export function writeFileAtomic(path: string, data: string, mode?: number): void
     fsyncSync(fd);
     closeSync(fd);
     fd = null;
-    renameSync(tmp, path);
+    renameReplacingSync(tmp, path);
     fsyncDir(dirname(path));
   } catch (e) {
     if (fd !== null) {

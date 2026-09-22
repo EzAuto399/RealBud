@@ -7,7 +7,7 @@ import { dirname, join, parse, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { decryptBytes, decryptJson, encryptBytes, encryptJson, isEncryptedEnvelope } from './desk-crypto.ts';
 import { windowsFilePrivacy } from './windows-file-privacy.ts';
-import { fsyncDir } from './atomic.ts';
+import { createEmptyFileSync, fsyncDir, restrictNewSync } from './atomic.ts';
 import { WORKFLOW_MAX_ENCRYPTED_RECORD_LENGTH } from './workflow-database.ts';
 import { decodeDeskPlain } from './desk-v3-decode.ts';
 import { isPrivateBackupPath, validatePrivateBusinessFile, validatePrivateLogicalRecord, validatePrivateWorkspaceIdentity, validatePrivatePackHistoryFiles } from './private-workspace-backup.ts';
@@ -34,6 +34,9 @@ interface EntryMetadata {
 }
 interface StoredEntry { sequence: number; entry_id: string; category: string; lookup: string; kind: string; metadata: string; payload: string }
 const FILE_NAME = 'catalog.sqlite';
+const JOURNAL_NAME = `${FILE_NAME}-journal`;
+/** A rollback journal header; anything shorter than this is damage, not a hot journal. */
+const JOURNAL_HEADER_BYTES = 28;
 const WORKSPACE = 'company-installation/workspace.json';
 const PRIVATE = 'company-installation/private/';
 const MAX_ENTRY_BYTES = 8 * 1024 * 1024;
@@ -98,8 +101,10 @@ function rollbackBudget(databaseBytes: number): number {
   // This formula must not be reused for a connection with spilling enabled.
   return 2 * MAX_SECTOR_BYTES + pages * (PAGE_BYTES + 8);
 }
-/** Conservative coordinator charge for this catalog file plus a DELETE-mode rollback journal.
- * Does not enforce aggregate quota or remaining disk space. */
+/** Conservative coordinator charge for this catalog file plus its rollback journal.
+ * TRUNCATE mode empties that journal at each commit, so it holds at most one
+ * transaction, as a DELETE-mode journal did. Does not enforce aggregate quota
+ * or remaining disk space. */
 export function catalogStorageBudget(limits: CatalogLimits): { databaseBytes: number; rollbackBytes: number; totalBytes: number } {
   checkLimits(limits);
   const databaseBytes = resolvedStorageBytes(limits);
@@ -122,7 +127,7 @@ function rethrowTransaction(error: unknown): never {
 }
 function configure(db: DatabaseSync, storageBytes: number, mode: 'create' | 'open'): void {
   db.exec('PRAGMA trusted_schema=OFF; PRAGMA synchronous=FULL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-2048; PRAGMA cache_spill=OFF; PRAGMA busy_timeout=1500;');
-  if (db.prepare('PRAGMA journal_mode=DELETE').get()?.journal_mode !== 'delete') invalid();
+  if (db.prepare('PRAGMA journal_mode=TRUNCATE').get()?.journal_mode !== 'truncate') invalid();
   if (db.prepare('PRAGMA page_size').get()?.page_size !== PAGE_BYTES || db.prepare('PRAGMA cache_spill').get()?.cache_spill !== 0) invalid();
   const maxPages = Math.floor(storageBytes / PAGE_BYTES);
   if (!integer(maxPages, 1)) invalid('The backup catalog limits are invalid.');
@@ -147,6 +152,19 @@ async function safeAncestors(path: string): Promise<void> {
     const stat = await lstat(current);
     if (!stat.isDirectory() || stat.isSymbolicLink()) invalid('Private backup storage contains a linked or invalid folder.');
   }
+}
+/** TRUNCATE mode keeps one rollback journal for the catalog's life and empties
+ * it at each commit, so the catalog creates that file itself: exclusively,
+ * empty, and restricted on Windows before SQLite writes into it. (In DELETE
+ * mode SQLite made a fresh journal per transaction with an inherited
+ * descriptor, so a writer that crashed mid-write left a journal Windows
+ * admission refuses, and the catalog could not be reopened.) An existing
+ * journal, including an older build's hot one, is never restricted: it stays
+ * verify-only. SQLite treats an empty journal as absent, so it is never hot and
+ * never deleted as stale. */
+function ensureJournal(directory: string): void {
+  const path = join(directory, JOURNAL_NAME);
+  if (createEmptyFileSync(path, 0o600)) restrictNewSync([{ path, kind: 'file' }]);
 }
 async function checkOwnedDirectory(directory: string): Promise<void> {
   await safeAncestors(directory);
@@ -178,6 +196,7 @@ export class PrivateBackupCatalog {
     const handle = await open(join(directory, FILE_NAME), 'wx', 0o600);
     await handle.close();
     await windowsFilePrivacy(join(directory, FILE_NAME), 'file', true);
+    ensureJournal(directory);
     const storage = options.maxStorageBytes ?? defaultMaxStorageBytes(options);
     let db: DatabaseSync | undefined, catalog: PrivateBackupCatalog | undefined;
     try {
@@ -205,14 +224,18 @@ export class PrivateBackupCatalog {
     const directory = resolve(options.directory);
     await checkOwnedDirectory(directory);
     const names = await readdir(directory);
-    if (!names.includes(FILE_NAME) || names.some(name => ![FILE_NAME, `${FILE_NAME}-journal`].includes(name))) invalid();
+    if (!names.includes(FILE_NAME) || names.some(name => ![FILE_NAME, JOURNAL_NAME].includes(name))) invalid();
     for (const name of await readdir(directory)) {
       const path = join(directory, name), stat = await lstat(path);
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || process.platform !== 'win32' && ((stat.mode & 0o077) !== 0 || typeof process.getuid === 'function' && stat.uid !== process.getuid())) invalid();
+      // An empty journal is the normal state between transactions; one too
+      // short to hold a header is damage and is preserved. A longer one is left
+      // to SQLite's hot-journal recovery exactly as before.
+      const damagedJournal = name === JOURNAL_NAME && stat.size > 0 && stat.size < JOURNAL_HEADER_BYTES;
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || damagedJournal || process.platform !== 'win32' && ((stat.mode & 0o077) !== 0 || typeof process.getuid === 'function' && stat.uid !== process.getuid())) invalid();
       // Older internal writers allowed spill segments. Admit their bounded
       // journal for SQLite recovery; the new connection never produces them.
       const legacyJournalMax = MAX_CATALOG_STORAGE_BYTES / PAGE_BYTES * (PAGE_BYTES + 8 + 2 * MAX_SECTOR_BYTES) + 2 * MAX_SECTOR_BYTES;
-      if (stat.size > (name === `${FILE_NAME}-journal` ? legacyJournalMax : MAX_CATALOG_STORAGE_BYTES)) invalid();
+      if (stat.size > (name === JOURNAL_NAME ? legacyJournalMax : MAX_CATALOG_STORAGE_BYTES)) invalid();
       await windowsFilePrivacy(path, 'file');
     }
     let db: DatabaseSync | undefined, catalog: PrivateBackupCatalog | undefined;
@@ -229,9 +252,14 @@ export class PrivateBackupCatalog {
       const header = catalog.header();
       const storage = resolvedStorageBytes(header.limits);
       if ((await lstat(join(directory, FILE_NAME))).size > storage) invalid();
-      const journal = await lstat(join(directory, `${FILE_NAME}-journal`)).catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; });
+      const journal = await lstat(join(directory, JOURNAL_NAME)).catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; });
       if (journal && journal.size > rollbackBudget(storage)) invalid();
       configure(db, storage, 'open');
+      // A hot journal was rolled back on this connection's first read and
+      // emptied in place (TRUNCATE mode). A catalog from an older DELETE-mode
+      // build has no journal between transactions: the journal TRUNCATE mode
+      // keeps is created here, protected, before any write.
+      ensureJournal(directory);
       return catalog;
     } catch (error) { if (catalog) catalog.close(); else db?.close(); if (isSqliteFull(error)) invalid('The private backup catalog reached its declared capacity. No partial backup is valid.', 413); throw error; }
   }
@@ -309,6 +337,7 @@ export class PrivateBackupCatalog {
     if (data.length > MAX_ENTRY_BYTES) invalid('A backup entry exceeds its entity limit.', 413);
     const payload = JSON.stringify(encryptBytes(this.key, data));
     if (category === 'record' && payload.length > WORKFLOW_MAX_ENCRYPTED_RECORD_LENGTH) invalid('A workflow record exceeds its encrypted entity limit.', 413);
+    ensureJournal(this.directory);
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const header = this.header();
@@ -414,6 +443,7 @@ export class PrivateBackupCatalog {
   seal(): CatalogSummary { return this.validateAndSeal(true); }
   private validateAndSeal(seal: boolean): CatalogSummary {
     this.ready();
+    ensureJournal(this.directory);
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const header = this.header();

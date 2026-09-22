@@ -1,8 +1,8 @@
-import { lstat, mkdir, readFile, open, rename, rmdir, unlink } from 'node:fs/promises';
+import { lstat, mkdir, readFile, open, rmdir, unlink } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { windowsFilePrivacy } from './windows-file-privacy.ts';
-import { fsyncDir } from './atomic.ts';
+import { fsyncDir, renameReplacing } from './atomic.ts';
 
 const admitting = new Map<string, Promise<void>>();
 
@@ -99,7 +99,7 @@ async function writePrivateJsonOnce(path: string, value: unknown, existingAdmiss
   try {
     await windowsFilePrivacy(temporary, 'file', true);
     await file.writeFile(JSON.stringify(value)); await file.sync(); await file.close();
-    await rename(temporary, path); fsyncDir(dirname(path));
+    await renameReplacing(temporary, path); fsyncDir(dirname(path));
   } finally { await file.close().catch(() => {}); await unlink(temporary).catch(() => {}); }
 }
 

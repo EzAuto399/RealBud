@@ -24,6 +24,8 @@ import { createPrivateBackupCoordinator } from './private-backup-coordinator.ts'
 import { withDurablePrivateBackupRestore } from './private-backup-legacy-api.ts';
 import { applyStagedPrivateRestoreV2 } from './private-backup-cold-restore.ts';
 import { PrivateBackupPreparedStore } from './private-backup-prepared.ts';
+import { PrivateBackupCatalog } from './private-backup-catalog.ts';
+import { readPrivateJson, writePrivateJson } from './private-json.ts';
 
 type Operation = [path: string, kind: string, action: string, bytes: number | null];
 const acl = vi.hoisted(() => ({
@@ -47,6 +49,26 @@ function record(options: { env?: Record<string, string | undefined> } | undefine
     return [path, kind, action, kind === 'file' ? statSync(path).size : null];
   }));
 }
+// A replacement target another process (antivirus, indexer, backup agent)
+// briefly holds open: the next `fails` renames are refused with `code`, as
+// Windows reports them, before the real rename runs.
+const held = vi.hoisted(() => {
+  const state = { fails: 0, code: 'EBUSY', renames: [] as Array<[from: string, to: string]> };
+  return Object.assign(state, {
+    rename(from: unknown, to: unknown): void {
+      state.renames.push([String(from), String(to)]);
+      if (state.fails > 0) { state.fails--; throw Object.assign(new Error(`${state.code}: fictional held target`), { code: state.code }); }
+    },
+  });
+});
+vi.mock('node:fs', async original => {
+  const actual = await original<typeof import('node:fs')>();
+  return { ...actual, renameSync: (...args: Parameters<typeof actual.renameSync>) => { held.rename(args[0], args[1]); return actual.renameSync(...args); } };
+});
+vi.mock('node:fs/promises', async original => {
+  const actual = await original<typeof import('node:fs/promises')>();
+  return { ...actual, rename: async (...args: Parameters<typeof actual.rename>) => { held.rename(args[0], args[1]); return actual.rename(...args); } };
+});
 vi.mock('node:child_process', async original => ({
   ...(await original<typeof import('node:child_process')>()),
   execFileSync: (_program: string, _args: string[], options: { env?: Record<string, string | undefined> }) => {
@@ -71,6 +93,7 @@ beforeEach(() => {
   vi.stubEnv('SystemRoot', '/synthetic/Windows');
   acl.launches.length = 0; acl.refuse = false; acl.refuseAsync = false;
   acl.restricted.clear(); acl.trusted.clear(); acl.unadmitted.length = 0;
+  held.fails = 0; held.code = 'EBUSY'; held.renames.length = 0;
 });
 afterEach(() => {
   Object.defineProperty(process, 'platform', platform); vi.unstubAllEnvs(); setOpLogPath('');
@@ -124,6 +147,69 @@ describe('atomic writers', () => {
     const root = fixture();
     writeFileAtomic(join(root, 'x.json'), '{}'); writeFilePrivateSync(join(root, 'k'), 'k'); mkdirPrivateSync(join(root, 'd', 'e'));
     expect(acl.launches).toEqual([]);
+  });
+});
+
+describe('replacing a file another process briefly holds open', () => {
+  const temporary = (root: string) => readdirSync(root).filter(name => name.endsWith('.tmp'));
+  const failure = async (write: () => unknown) => { try { await write(); } catch (error) { return error; } throw new Error('expected the write to fail'); };
+
+  it('writeFileAtomic renames the same protected temp again until the hold clears', () => {
+    const root = fixture(), path = join(root, 'bots.json');
+    writeFileAtomic(path, '[1]'); acl.launches.length = 0; held.renames.length = 0;
+    held.fails = 2;
+    writeFileAtomic(path, '[2]');
+    const [[temp]] = held.renames;
+    expect(held.renames).toEqual([[temp, path], [temp, path], [temp, path]]);
+    // Restricted once, while empty, and never recreated between attempts.
+    expect(acl.launches).toEqual([[[temp, 'file', 'restrict', 0]]]);
+    expect(readFileSync(path, 'utf8')).toBe('[2]'); expect(temporary(root)).toEqual([]);
+  });
+
+  it('writeFileAtomic gives up after about a second, keeps the original and removes its temp', async () => {
+    const root = fixture(), path = join(root, 'desk.json');
+    writeFileAtomic(path, 'saved'); held.renames.length = 0;
+    held.fails = Infinity; held.code = 'EPERM';
+    const started = performance.now(), error = await failure(() => writeFileAtomic(path, 'replacement'));
+    expect(error).toMatchObject({ code: 'EPERM' });
+    expect(performance.now() - started).toBeGreaterThanOrEqual(900);
+    expect(held.renames).toHaveLength(8);
+    expect(readFileSync(path, 'utf8')).toBe('saved'); expect(readdirSync(root)).toEqual(['desk.json']);
+  });
+
+  it('writePrivateJson rides out a hold with its protected temp, and gives up with the original intact', async () => {
+    const root = fixture(), path = join(root, 'state', 'record.json');
+    await writePrivateJson(path, { revision: 1 }); acl.launches.length = 0; held.renames.length = 0;
+    held.fails = 2; held.code = 'EACCES';
+    await writePrivateJson(path, { revision: 2 });
+    const [[temp]] = held.renames;
+    expect(held.renames).toEqual([[temp, path], [temp, path], [temp, path]]);
+    expect(restricted()).toEqual([temp]); expect(acl.unadmitted).toEqual([]);
+    expect(await readPrivateJson(path)).toEqual({ revision: 2 });
+    held.renames.length = 0; held.fails = Infinity; held.code = 'EBUSY';
+    expect(await failure(() => writePrivateJson(path, { revision: 3 }))).toMatchObject({ code: 'EBUSY' });
+    expect(held.renames).toHaveLength(8);
+    held.fails = 0;
+    expect(await readPrivateJson(path)).toEqual({ revision: 2 }); expect(temporary(join(root, 'state'))).toEqual([]);
+  });
+
+  it('never retries another error', async () => {
+    const root = fixture(), atomic = join(root, 'bots.json'), privateFile = join(root, 'state', 'record.json');
+    writeFileAtomic(atomic, 'saved'); await writePrivateJson(privateFile, { revision: 1 }); held.renames.length = 0;
+    held.fails = 2; held.code = 'EXDEV';
+    expect(await failure(() => writeFileAtomic(atomic, 'replacement'))).toMatchObject({ code: 'EXDEV' });
+    expect(await failure(() => writePrivateJson(privateFile, { revision: 2 }))).toMatchObject({ code: 'EXDEV' });
+    expect(held.renames).toHaveLength(2);
+    expect(readFileSync(atomic, 'utf8')).toBe('saved'); expect(await readPrivateJson(privateFile)).toEqual({ revision: 1 });
+    expect(temporary(root)).toEqual([]); expect(temporary(join(root, 'state'))).toEqual([]);
+  });
+
+  it('never retries on other systems', async () => {
+    Object.defineProperty(process, 'platform', { ...platform, value: 'linux' });
+    const root = fixture(), path = join(root, 'bots.json');
+    held.fails = 1;
+    expect(await failure(() => writeFileAtomic(path, '[1]'))).toMatchObject({ code: 'EBUSY' });
+    expect(held.renames).toHaveLength(1); expect(readdirSync(root)).toEqual([]);
   });
 });
 
@@ -286,6 +372,27 @@ describe('prepared restore store journal', () => {
     expect(restricted()).toEqual([]);
     rmSync(journal); acl.launches.length = 0;
     await (await PrivateBackupPreparedStore.open({ ...settings, storeId: store.storeId })).close();
+    expect(restricted()).toEqual([journal]);
+    expect(acl.unadmitted).toEqual([]);
+  });
+});
+
+describe('backup catalog journal', () => {
+  it('is created empty and protected before SQLite opens the catalog, recreated protected for an older catalog, and otherwise only verified', async () => {
+    const directory = join(fixture(), 'catalog'), journal = join(directory, 'catalog.sqlite-journal');
+    const settings = { directory, key: Buffer.alloc(32, 8), workspaceId: '00000000-0000-4000-8000-000000000008' };
+    const note = (name: string) => ({ path: `vault/properties/${name}.md`, encoding: 'bytes' as const, data: Buffer.from('Fictional note') });
+    const catalog = await PrivateBackupCatalog.create({ ...settings, maxEntries: 10, maxBytes: 1024 * 1024 });
+    expect(acl.launches.flat().filter(([, kind, action]) => kind === 'file' && action === 'restrict')).toEqual([
+      [join(directory, 'catalog.sqlite'), 'file', 'restrict', 0], [journal, 'file', 'restrict', 0],
+    ]);
+    catalog.addFile(note('first')); catalog.close();
+    const open = () => PrivateBackupCatalog.open({ ...settings, catalogId: catalog.catalogId });
+    acl.launches.length = 0;
+    (await open()).close();
+    expect(restricted()).toEqual([]);
+    rmSync(journal); acl.launches.length = 0;
+    const reopened = await open(); reopened.addFile(note('second')); reopened.close();
     expect(restricted()).toEqual([journal]);
     expect(acl.unadmitted).toEqual([]);
   });
