@@ -491,3 +491,55 @@ hypotheses holds — `exists: true` here with code 8 there would mean PowerShell
 received a different string (compare `chars`), 13/14/15 would name the real
 inspection failure, and `exists: false` here with the printed layout would mean
 the fixture never created the object at all.
+
+## 22 September 2026 — the witness gets its paths one variable per field
+
+The Package Windows run answered the previous entry's question, and none of the
+three hypotheses was right. Every object was `exists: true` on the runner, the
+first one 89 characters — yet the witness refused item 0 with code 15,
+`target-attributes-unreadable`, and `chars: 11`. Eleven is the number of
+objects, not the length of any path.
+
+That identifies the fault exactly. Windows PowerShell 5.1 unwraps the array
+`ConvertFrom-Json` returns when it is piped through `@()`, so `$items[0]` was
+the whole eleven-object collection rather than the first object. `.path` on a
+collection is member enumeration, so `$path` became an array of eleven strings:
+`$path.Length` reported the array's length (11, the `chars` seen), and
+`[IO.File]::GetAttributes($path)` could not cast an array to a string and threw
+an exception the `switch` did not name — code 15. The profile was private the
+whole time; the delivery was the defect, as the new `chars` field was added to
+detect.
+
+The JSON delivery is gone. The witness now reads `REALBUD_SMOKE_PRIVATE_COUNT`
+and, per object `i`, `REALBUD_SMOKE_PRIVATE_PATH_<i>` and
+`REALBUD_SMOKE_PRIVATE_KIND_<i>`, by name through
+`[System.Environment]::GetEnvironmentVariable` — the same one-variable-per-
+field-per-operation pattern `server/windows-file-privacy.ts` has already proven
+on this host, and which has no collection for PowerShell to reshape. The count
+is validated against `^([1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-6])$`
+(1–256, the smoke's existing inventory bound), the kind must be exactly
+`directory` or `file`, and an empty path still refuses 9 `invalid-invocation`.
+Nothing is interpolated into the script. The disposable root stays in
+`REALBUD_SMOKE_PRIVATE_ROOT`.
+
+`$size` is now unambiguously a string length, so the receipt's comparison means
+what it says: `profileObjects[i].chars` is what this host sent for object `i`
+and the refusal line's `chars` is what PowerShell read. The Node side also
+asserts the count is within 1–256 and each path is a non-empty NUL-free string
+before launching, so a malformed inventory fails here with a relative name
+rather than as an opaque PowerShell refusal. All rule codes, the refusal JSON
+line and every receipt field are unchanged.
+
+Proven on macOS: `pnpm exec vitest run electron/service-smoke.test.mjs` passes
+(10 passed), `node --check scripts/smoke-company-bundle.mjs` is clean, and
+`pnpm check:electron` reports 21 of 21 modules ok. The rendered witness source
+was extracted from the template literal and confirmed to contain no
+`ConvertFrom-Json` and no `REALBUD_SMOKE_PRIVATE_PATHS` outside a comment.
+
+Not proven: there is still no PowerShell on this macOS host, so the new
+`GetEnvironmentVariable` reads, the count regex and codes 13, 14 and 15 remain
+unexecuted. Only a Package Windows run settles whether the witness now reaches
+the ACL checks. The same `@(... | ConvertFrom-Json)` shape survives in
+`PRIVATE_FIXTURE_SCRIPT` in `electron/service-smoke.test.mjs`; it was not
+touched here because no run has shown it failing, but it carries the same
+PowerShell 5.1 hazard and should be converted before it is trusted.

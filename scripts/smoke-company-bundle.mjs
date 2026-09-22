@@ -99,16 +99,24 @@ try {
   $root = $env:REALBUD_SMOKE_PRIVATE_ROOT
   if ([string]::IsNullOrEmpty($root)) { Refuse 9 'invalid-invocation' }
   $root = $root.TrimEnd('\\')
-  $items = @($env:REALBUD_SMOKE_PRIVATE_PATHS | ConvertFrom-Json)
-  if ($items.Count -lt 1 -or $items.Count -gt 256) { Refuse 9 'invalid-invocation' }
-  for ($index = 0; $index -lt $items.Count; $index++) {
+  $count = [System.Environment]::GetEnvironmentVariable('REALBUD_SMOKE_PRIVATE_COUNT')
+  if ($count -notmatch '^([1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-6])$') { Refuse 9 'invalid-invocation' }
+  $total = [int]$count
+  for ($index = 0; $index -lt $total; $index++) {
     $depth = 0
     $size = 0
     $stage = 21
-    $path = $items[$index].path
+    # One variable per field per object, read by name and never interpolated -
+    # the delivery server/windows-file-privacy.ts already proves on this host.
+    # A single JSON array did not survive Windows PowerShell 5.1: a Package
+    # Windows run received 11 characters where this host sent an 89-character
+    # path, because ConvertFrom-Json piped through @() unwraps and reshapes.
+    $path = [System.Environment]::GetEnvironmentVariable('REALBUD_SMOKE_PRIVATE_PATH_' + $index)
+    $kind = [System.Environment]::GetEnvironmentVariable('REALBUD_SMOKE_PRIVATE_KIND_' + $index)
     if ([string]::IsNullOrEmpty($path)) { Refuse 9 'invalid-invocation' }
     $size = $path.Length
-    $wantDirectory = [bool]$items[$index].directory
+    if ($kind -ne 'directory' -and $kind -ne 'file') { Refuse 9 'invalid-invocation' }
+    $wantDirectory = $kind -eq 'directory'
     # Directory.Exists/File.Exists answer false for every failure alike - a real
     # absence, a path past MAX_PATH, a denied query - so a refusal could not say
     # which. GetAttributes throws the reason, and the reason gets its own code.
@@ -285,17 +293,27 @@ async function inspectProfile(home, pack, status, env) {
   }
   if (process.platform === 'win32') {
     assert.ok(env.SystemRoot && isAbsolute(env.SystemRoot) && !env.SystemRoot.includes('\0'), 'Windows ACL witness unavailable');
+    assert.ok(objects.length >= 1 && objects.length <= 256, 'Windows ACL witness object count out of bounds');
+    // One variable per field per object, matching server/windows-file-privacy.ts.
+    // `profileObjects[i].chars` above records what this host sent for object i,
+    // so the receipt compares the length sent with the length PowerShell read.
+    const witnessEnv = {
+      ...env, REALBUD_SMOKE_PRIVATE_COUNT: String(objects.length), REALBUD_SMOKE_PRIVATE_ROOT: scratch,
+      // Off by default: above the disposable root the layout belongs to the
+      // host, so a hosted runner is expected to report 11 or 12 here.
+      REALBUD_SMOKE_WITNESS_FULL_ANCESTRY: process.env.REALBUD_SMOKE_WITNESS_FULL_ANCESTRY === '1' ? '1' : '',
+    };
+    objects.forEach((item, index) => {
+      assert.ok(typeof item.path === 'string' && item.path && !item.path.includes('\0'), 'Windows ACL witness path is unusable');
+      witnessEnv[`REALBUD_SMOKE_PRIVATE_PATH_${index}`] = item.path;
+      witnessEnv[`REALBUD_SMOKE_PRIVATE_KIND_${index}`] = item.directory ? 'directory' : 'file';
+    });
     let witness;
     const witnessStarted = performance.now();
     witnessLaunches++;
     try {
       witness = await execute(join(env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-NonInteractive', '-EncodedCommand', ACL_WITNESS], {
-        env: {
-          ...env, REALBUD_SMOKE_PRIVATE_PATHS: JSON.stringify(objects), REALBUD_SMOKE_PRIVATE_ROOT: scratch,
-          // Off by default: above the disposable root the layout belongs to the
-          // host, so a hosted runner is expected to report 11 or 12 here.
-          REALBUD_SMOKE_WITNESS_FULL_ANCESTRY: process.env.REALBUD_SMOKE_WITNESS_FULL_ANCESTRY === '1' ? '1' : '',
-        }, shell: false, windowsHide: true,
+        env: witnessEnv, shell: false, windowsHide: true,
         // A cold Windows PowerShell 5.1 on a hosted runner took 34 s to start in run 35715811161; 15 s made the witness fail before it ran.
         timeout: 120_000, maxBuffer: 4096,
       });
