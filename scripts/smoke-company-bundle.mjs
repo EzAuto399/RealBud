@@ -34,9 +34,16 @@ let profileObjects = null, profileLayout = null;
 const checks = [];
 const execute = promisify(execFile);
 const requiredProfileFiles = ['SOUL.md', 'config.yaml', 'distribution.yaml', 'profile.yaml'];
-// The installed Windows probe is held to its own 45-second budget, so the
-// default readiness window stays 25s. A harness that knows it is paying for a
-// cold PowerShell may widen it; the receipt records the window actually used.
+// A developer machine starts the compiled service in seconds, so the default
+// readiness window stays 25s. A harness that knows it is paying for cold
+// PowerShell may widen it; the receipt records the window actually used.
+//
+// A traced Windows boot pays eleven sequential `powershell.exe` admissions
+// before `listen` (five for the private profile, three for the workspace
+// identity, three for the backup operation store). That is a few seconds once
+// each launch succeeds; it was the whole window while each one failed after
+// ~35s on `Set-Acl`/`Get-Acl` module auto-load. The receipt now carries the
+// launches actually made, so a future overrun says which of the two it is.
 const readyMs = Math.min(Math.max(Number(process.env.REALBUD_SMOKE_READY_MS) || 25_000, 5_000), 180_000);
 const readinessAttempts = Math.ceil(readyMs / 166);
 

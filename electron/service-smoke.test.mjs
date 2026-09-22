@@ -184,6 +184,7 @@ describe('installed Windows service acceptance', () => {
       const why = JSON.stringify({
         failure: receipt.failure, child: receipt.child, timings: receipt.timings,
         powershell: receipt.powershell, witness: receipt.witness, diagnostic: receipt.diagnostic,
+        stdoutTail: receipt.stdoutTail, bootLog: receipt.bootLog, healthTimeline: receipt.healthTimeline,
         objects: receipt.objects, layout: receipt.layout,
       }, null, 1);
       expect(receipt.source, why).toBe(source);
@@ -202,7 +203,27 @@ describe('installed Windows service acceptance', () => {
       // Reported, not policed: a truncated stderr must not invent a new Windows
       // failure on top of the one being diagnosed.
       expect(typeof receipt.powershell.service.launches, why).toBe('number');
+      expect(typeof receipt.powershell.service.refusals, why).toBe('number');
+      // The count is the probe's own instrumentation, not something the product
+      // reports about itself, and the receipt has to say which it is.
+      expect(receipt.powershell.service.counter, why).toBe('probe entry child_process wrapper');
       expect(typeof receipt.powershell.witnessLaunches, why).toBe('number');
+      // What each health attempt answered, per elapsed second. A wait that
+      // never ends has to distinguish a refused port from an unanswered one.
+      expect(Array.isArray(receipt.healthTimeline), why).toBe(true);
+      expect(receipt.healthTimeline.length, why).toBeLessThanOrEqual(200);
+      for (const bucket of receipt.healthTimeline) {
+        expect(Number.isInteger(bucket.second) && bucket.second >= 0, why).toBe(true);
+        for (const [outcome, count] of Object.entries(bucket.outcomes)) {
+          expect(outcome, why).toMatch(/^(ready|refused|timeout|reset|other-responder|unreachable|http-\d{3}|[A-Z][A-Z0-9_]{1,20})$/);
+          expect(count, why).toBeGreaterThan(0);
+        }
+      }
+      if (spawned) {
+        expect(receipt.healthTimeline.length, why).toBeGreaterThan(0);
+        const outcomes = receipt.healthTimeline.flatMap(bucket => Object.keys(bucket.outcomes));
+        expect(outcomes.includes('ready'), why).toBe(scenario !== 'missing compiled import');
+      } else expect(receipt.healthTimeline, why).toEqual([]);
       // The witness is win32-only, so elsewhere the receipt must say plainly
       // that none ran rather than leave the field out.
       expect(receipt, why).toHaveProperty('witness');
@@ -236,6 +257,13 @@ describe('installed Windows service acceptance', () => {
       if (scenario !== 'complete') {
         expect(failure, why).toBeDefined();
         expect(typeof receipt.diagnostic, why).toBe('string');
+        // A failure carries everything the child itself said, so a run that
+        // wrote nothing to stderr is not the end of the diagnosis. Each is
+        // present and either a string or an explicit null.
+        for (const field of ['stdoutTail', 'bootLog']) {
+          expect(receipt, why).toHaveProperty(field);
+          expect(receipt[field] === null || typeof receipt[field] === 'string', why).toBe(true);
+        }
         if (scenario === 'missing compiled import') {
           expect(receipt.diagnostic, why).toContain('missing-packaged-module.js');
           expect(receipt.child.exitCode, why).toBe(1);

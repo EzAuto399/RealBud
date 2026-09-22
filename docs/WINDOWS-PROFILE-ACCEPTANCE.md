@@ -624,3 +624,58 @@ installed smoke, `provision-service-admin`, and the test fixtures) now calls the
 module load. The module-path pin stays, applied case-insensitively over the
 environment copy. Whether this clears the vitest and installed-service refusals
 is settled by the next windows-latest run of the probe and of CI.
+
+## 2026-09-23 — what the installed service was doing while nobody could see it
+
+Package Windows run 35740638732 killed the installed compiled service at its
+120-second watchdog with an empty stderr tail. The receipt could say only that
+readiness never arrived. Two things were missing: a count of what startup
+actually spends its time on, and any account from the child itself.
+
+**Traced startup cost.** Running `server/bootstrap.ts` against a fresh home
+under a module hook that counts every call into `windowsFilePrivacy` /
+`windowsFilePrivacyBatchSync` shows **13 sequential `powershell.exe`
+admissions before `server.listen`**, covering 30 operations: seven for the
+private Hermes profile, three for the workspace identity
+(`privateDirectory` → `writePrivateJson`'s own directory → the temp file), and
+three for the backup operation store. `applyPropertyPack` now plans the skill
+tree from the read-only shipped pack *before* it admits anything, so the skill
+directories join the profile's own two directory processes and the skill files
+join its one read: **13 launches becomes 11**, and the pack apply itself goes
+from 7 to 5 (24 admissions) with reapply 9 to 7 (30 admissions). The admission
+counts are unchanged — the same paths, kinds and actions, in the same order,
+in fewer processes — and the provisioned profile tree is byte-identical.
+`server/hermes-profile-storage.test.ts` holds those counts with an injected
+runner. The remaining six launches are in files this packet does not own
+(`private-json.ts` has no asynchronous batch entry point, and batching it
+through the synchronous one would block the event loop on every request-time
+write).
+
+**Evidence the next run will carry.** `scripts/smoke-company-bundle.mjs` now
+records, on every run, a per-second `healthTimeline` of what each `/api/health`
+attempt answered (`refused` / `timeout` / `http-NNN` / `other-responder` /
+`ready`, fixed tokens only), and `powershell.service.launches` counted by a
+wrapper the probe's own entry module installs around `child_process` — passing
+every call through untouched, labelled `counter: "probe entry
+child_process wrapper"` so it is never read as a product metric. On a failure
+it also carries `stdoutTail` and `bootLog`, the latter copied from the data
+directory's `realbud.log` before the disposable fixture is removed and masked
+through the same conservative matcher as `diagnostic`.
+
+Proven on macOS: `pnpm exec vitest run electron/service-smoke.test.mjs
+server/hermes-pack.test.ts server/hermes-profile-storage.test.ts
+server/windows-file-privacy.test.ts server/windows-file-privacy-sync.test.ts
+server/windows-file-privacy-diagnostics.test.ts` passes (100 passed, 8 skipped
+— the skips are the win32-only native cases), `pnpm exec tsc -p
+tsconfig.server.json` is clean, and `pnpm check:electron` reports 21 of 21 ok.
+The launch counter was exercised against a fixture that imports
+`child_process` the same way the compiled service does, and both the
+synchronous and the promisified call sites were counted.
+
+Not proven: there is no PowerShell and no Windows host here, so neither the
+launch count on a real runner nor the timeline's shape under a genuine ACL
+failure has been observed. The next windows-latest run settles it: a receipt
+whose `powershell.service.launches` reaches 11 and whose timeline is all
+`refused` means startup is still inside the admissions; one that stops at a
+lower count names the launch that hung; a timeline that turns to `timeout`
+means the service listened and then stalled after it.

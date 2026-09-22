@@ -69,12 +69,21 @@ try {
   $serviceScript = Join-Path $PSScriptRoot 'smoke-company-bundle.mjs'
   $serviceReceipt = Join-Path $ReceiptDirectory 'installed-service.json'
   $serviceArguments = '"' + $serviceScript + '" "' + $serviceReceipt + '" "' + $resources + '"'
-  # Readiness took 35-51 s on hosted runners; the smoke's default 25 s budget is for developer machines.
+  # The smoke's default 25 s budget is for developer machines. A traced boot pays
+  # eleven sequential powershell.exe admissions before it listens: seconds once
+  # each one succeeds, but the whole window while each failed after ~35 s on
+  # Set-Acl/Get-Acl module auto-load, which is how run 35740638732 reached its
+  # watchdog with an empty stderr. The receipt now records the launches the
+  # service actually made, its stdout and boot log, and a per-second health
+  # timeline, so a repeat says which of the two it was.
   $env:REALBUD_SMOKE_READY_MS = '120000'
   $serviceProbe = Start-Process -FilePath $app -ArgumentList $serviceArguments -PassThru -NoNewWindow `
     -RedirectStandardOutput (Join-Path $ReceiptDirectory 'installed-service.stdout.log') `
     -RedirectStandardError (Join-Path $ReceiptDirectory 'installed-service.stderr.log')
-  # Readiness took 35-51 s on hosted runners (one cold PowerShell launch); 45 s was inside that window.
+  # The 120 s readiness window above, plus the read-only ACL witness that follows
+  # it and the probe's own cleanup. The probe writes its receipt even when
+  # readiness never arrives, so this outer kill — which destroys that receipt —
+  # stays the last resort rather than the usual failure path.
   if (-not $serviceProbe.WaitForExit(240000)) { $serviceProbe.Kill(); throw 'Installed service probe exceeded four minutes.' }
   if ($serviceProbe.ExitCode -ne 0) { throw "Installed service probe failed: $($serviceProbe.ExitCode)" }
   if (-not (Test-Path -LiteralPath $serviceReceipt)) { throw 'Installed service probe did not write its receipt.' }

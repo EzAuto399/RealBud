@@ -90,7 +90,12 @@ if ($action -eq 'restrict') {
   $stage = 23
   if ($directory) { $acl = New-Object System.Security.AccessControl.DirectorySecurity }
   else { $acl = New-Object System.Security.AccessControl.FileSecurity }
-  $acl.SetOwner($sid)
+  # Writing an owner needs WRITE_OWNER even when it does not change, and the .NET
+  # call enables no privilege for it; the owner's implicit WRITE_DAC is enough for
+  # the descriptor itself, so an object already owned by the caller keeps its owner.
+  if ($directory) { $owned = (New-Object System.IO.DirectoryInfo($path)).GetAccessControl([System.Security.AccessControl.AccessControlSections]::Owner) }
+  else { $owned = (New-Object System.IO.FileInfo($path)).GetAccessControl([System.Security.AccessControl.AccessControlSections]::Owner) }
+  if ($owned.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { $acl.SetOwner($sid) }
   $acl.SetAccessRuleProtection($true, $false)
   foreach ($principal in @($sid, $system)) {
     if ($directory) { $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($principal, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow') }

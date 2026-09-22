@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createPrivateVault } from './private-vault.ts';
+import { windowsFilePrivacy } from './windows-file-privacy.ts';
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 async function root() { const value = await mkdtemp(join(tmpdir(), 'rb-vault-')); roots.push(value); return value; }
@@ -25,6 +26,8 @@ describe('encrypted lifecycle state', () => {
     await vault.write('departure', { secret: 'fixture' });
     const raw = await readFile(join(directory, 'company-installation/private/departure.json'));
     await writeFile(join(directory, 'company-installation/private/outbox.json'), raw, { mode: 0o600 });
+    // A planted file inherits its directory's descriptor; Windows admission requires its own.
+    await windowsFilePrivacy(join(directory, 'company-installation/private/outbox.json'), 'file', true);
     await expect(vault.read('outbox')).rejects.toThrow(/identity needs recovery/);
     await rm(join(directory, 'company-installation/private/development-key.json'));
     await expect(createPrivateVault(directory).read('departure')).rejects.toThrow(/key is missing/);

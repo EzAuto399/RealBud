@@ -4,8 +4,21 @@ import { randomUUID } from 'node:crypto';
 import { windowsFilePrivacy } from './windows-file-privacy.ts';
 import { fsyncDir } from './atomic.ts';
 
-/** Private product state. Never follow links or silently replace damaged data. */
-export async function privateDirectory(path: string): Promise<void> {
+const admitting = new Map<string, Promise<void>>();
+
+/** Private product state. Never follow links or silently replace damaged data.
+ * Concurrent first use in one process shares one admission: on Windows the
+ * creator restricts the new directory while a second caller would otherwise
+ * verify it before that restriction lands. */
+export function privateDirectory(path: string): Promise<void> {
+  const pending = admitting.get(path);
+  if (pending) return pending;
+  const admission = admitDirectory(path).finally(() => { admitting.delete(path); });
+  admitting.set(path, admission);
+  return admission;
+}
+
+async function admitDirectory(path: string): Promise<void> {
   const created = await mkdir(path, { recursive: true, mode: 0o700 });
   const stat = await lstat(path);
   if (!stat.isDirectory() || stat.isSymbolicLink() || (process.platform !== 'win32' &&
