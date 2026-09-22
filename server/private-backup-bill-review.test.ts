@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,15 +12,17 @@ import { BillReviewDraftStore, BILL_REVIEW_DRAFT_KIND } from './bill-review-draf
 import { proposalBackupFixture } from './testing/proposal-backup-fixture.ts';
 import { readBillProposal } from './bill-proposals.ts';
 import type { BillReviewDraftValue } from '../shared/bill-review-drafts.ts';
+import { plantPrivateFiles, privateTempRoot, removeFixture } from './testing/private-fixture.ts';
 
 const roots: string[] = [], phrase = 'Fictional encrypted review recovery phrase';
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+afterEach(async () => { await Promise.all(roots.splice(0).map(root => removeFixture(root))); });
 async function fixture() {
-  const directory = await mkdtemp(join(realpathSync(tmpdir()), 'RealBud draft backup ')); roots.push(directory);
+  const directory = privateTempRoot(join(realpathSync(tmpdir()), 'RealBud draft backup ')); roots.push(directory);
   const key = randomBytes(32), workspaceId = randomUUID();
-  await mkdir(join(directory, 'company-installation'), { mode: 0o700 });
-  await writeFile(join(directory, 'company-installation/workspace.json'), JSON.stringify({ version: 1, id: workspaceId, workerMemberKey: null }), { mode: 0o600 });
-  await writeFile(join(directory, 'desk.json'), JSON.stringify(encryptJson(key, emptyV3({ name: 'Fictional office', timezone: 'UTC', jurisdictions: [] }))), { mode: 0o600 });
+  plantPrivateFiles([
+    [join(directory, 'company-installation/workspace.json'), JSON.stringify({ version: 1, id: workspaceId, workerMemberKey: null })],
+    [join(directory, 'desk.json'), JSON.stringify(encryptJson(key, emptyV3({ name: 'Fictional office', timezone: 'UTC', jurisdictions: [] })))],
+  ]);
   return { directory, key, workspaceId, service: createPrivateWorkspaceBackup({ directory, key: () => key, workspaceId, epoch: () => 'fixture', assertIdle: () => {}, assertFresh: () => {} }) };
 }
 function value(workspaceId: string): BillReviewDraftValue {

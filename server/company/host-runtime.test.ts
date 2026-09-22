@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { rmSync, writeFileSync } from 'node:fs';
+import { access, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { openOwnedPostgres, postgresBinary, stopOwnedPostgresProcess } from './host-runtime.ts';
+import { privateDir, removeFixture } from '../testing/private-fixture.ts';
 
 const temps: string[] = [];
 
@@ -32,7 +34,7 @@ describe('Windows native PostgreSQL shutdown contract', () => {
 });
 
 afterEach(async () => {
-  await Promise.all(temps.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  await Promise.all(temps.splice(0).map((dir) => removeFixture(dir)));
 });
 
 async function exists(path: string): Promise<boolean> {
@@ -52,11 +54,11 @@ async function workspace() {
   await mkdir(binaryDirectory);
   await writeFile(postgresBinary(binaryDirectory, 'postgres'), '');
   await writeFile(postgresBinary(binaryDirectory, 'initdb'), '');
-  await mkdir(rootDirectory, { mode: 0o700 });
+  privateDir(rootDirectory);
   return { temp, binaryDirectory, rootDirectory };
 }
 
-function fakeProcess() {
+function fakeProcess(pidFile?: string) {
   let exitCode: number | null = null;
   const exits: Array<() => void> = [];
   return {
@@ -67,6 +69,7 @@ function fakeProcess() {
     kill() {
       if (exitCode !== null) return false;
       exitCode = 0;
+      if (pidFile) rmSync(pidFile, { force: true });
       for (const exit of exits) exit();
       return true;
     },
@@ -75,6 +78,18 @@ function fakeProcess() {
       return this;
     },
   };
+}
+
+// Like PostgreSQL, a started fake server records postmaster.pid (pid, data
+// directory) and removes it when it stops. Windows stops it through pg_ctl
+// after matching that record, so the fake pg_ctl stops the server it names.
+const runningServers = new Map<string, ReturnType<typeof fakeProcess>>();
+function startedServer(dataDirectory: string) {
+  const pidFile = join(dataDirectory, 'postmaster.pid');
+  writeFileSync(pidFile, `4242\n${dataDirectory}\n`);
+  const server = fakeProcess(pidFile);
+  runningServers.set(dataDirectory, server);
+  return server;
 }
 
 class FakePool {
@@ -97,6 +112,10 @@ function createExecute(calls: string[][]) {
     expect(options.env.PGUSER).toBeUndefined();
     calls.push([file, ...args]);
     if (args.includes('--version')) return { stdout: 'postgres (PostgreSQL) 16.4', stderr: '' };
+    if (basename(file).startsWith('pg_ctl')) {
+      runningServers.get(args[args.indexOf('-D') + 1])?.kill();
+      return { stdout: '', stderr: '' };
+    }
     if (basename(file).startsWith('initdb')) {
       const data = args[args.indexOf('-D') + 1];
       await mkdir(data, { recursive: true });
@@ -120,7 +139,7 @@ function hooks(calls: string[][], spawnEnv?: { current?: NodeJS.ProcessEnv }) {
       expect(args.some(arg => /^-o(?:$|[^/\\])/.test(arg))).toBe(false);
       expect(env.PGPASSWORD).toBeUndefined();
       if (spawnEnv) spawnEnv.current = env;
-      return fakeProcess();
+      return startedServer(args[1]);
     },
     Pool: FakePool,
   };
@@ -248,7 +267,7 @@ describe('openOwnedPostgres', () => {
     await mkdir(binaryDirectory);
     await writeFile(postgresBinary(binaryDirectory, 'postgres'), '');
     await writeFile(postgresBinary(binaryDirectory, 'initdb'), '');
-    await mkdir(rootDirectory, { mode: 0o700 });
+    privateDir(rootDirectory);
     const calls: string[][] = [];
     const spawnEnv: { current?: NodeJS.ProcessEnv } = {};
     process.env.PGPASSWORD = 'parent-should-not-leak';
@@ -310,7 +329,7 @@ describe('openOwnedPostgres', () => {
     }
     const error = await openOwnedPostgres(
       { rootDirectory, binaryDirectory, port: 46007 },
-      { execute: createExecute([]), spawnServer: () => fakeProcess(), Pool: BoomPool },
+      { execute: createExecute([]), spawnServer: (_file, args) => startedServer(args[1]), Pool: BoomPool },
     ).catch((caught: unknown) => caught as Error);
     expect(error).toBeInstanceOf(Error);
     if (!(error instanceof Error)) throw new Error('Expected failed startup');

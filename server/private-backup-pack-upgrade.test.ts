@@ -1,8 +1,8 @@
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import { existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { createHash, randomBytes, randomUUID, scryptSync } from 'node:crypto';
 import type { CustomerPack, CustomerPackChangePreview, CustomerPackArchivePreview, CustomerPackArchivedHistory } from '../shared/customer-packs.ts';
 import type { PrivateWorkspaceBackup } from '../shared/private-workspace-backup.ts';
@@ -16,6 +16,7 @@ import { transformPrivateBackupCatalog } from './private-backup-restore-catalog.
 import { PrivateBackupPreparedStore } from './private-backup-prepared.ts';
 import { preparePrivateBackupRestore } from './private-backup-prepare.ts';
 import { stagePrivateRestoreV2, applyStagedPrivateRestoreV2, PRIVATE_RESTORE_V2_STAGE_FILE } from './private-backup-cold-restore.ts';
+import { plantPrivateFile, privateDir, privateTempRoot, removeFixture, windowsAdmissionTimeout } from './testing/private-fixture.ts';
 
 // The real recipe writer uses process-local DATA_DIR. Each simulated restart
 // imports fresh modules with its own disposable installation path; persistence,
@@ -32,19 +33,18 @@ const sha = (value: string | Uint8Array) => createHash('sha256').update(value).d
 afterEach(async () => {
   for (const store of preparedStores.splice(0)) await store.close();
   for (const catalog of catalogs.splice(0)) catalog.close();
-  await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map(path => removeFixture(path)));
 });
 afterAll(async () => {
   if (environment.previous === undefined) delete process.env.REALBUD_DATA_DIR;
   else process.env.REALBUD_DATA_DIR = environment.previous;
-  await rm(environment.guard, { recursive: true, force: true });
+  await removeFixture(environment.guard);
 });
 async function privateFile(directory: string, path: string, data: string | Uint8Array) {
-  await mkdir(dirname(join(directory, path)), { recursive: true, mode: 0o700 });
-  await writeFile(join(directory, path), data, { mode: 0o600 });
+  plantPrivateFile(join(directory, path), Buffer.from(data));
 }
 async function fixture() {
-  const directory = await mkdtemp(join(realpathSync(tmpdir()), 'RealBud pack backup Ω ')); roots.push(directory);
+  const directory = privateTempRoot(join(realpathSync(tmpdir()), 'RealBud pack backup Ω ')); roots.push(directory);
   const key = randomBytes(32), workspaceId = randomUUID();
   const book = emptyV3({ name: 'Fictional pack history office', timezone: 'Australia/Brisbane', jurisdictions: [] });
   book.bookProposals.push({ id: randomUUID(), kind: 'add-property', status: 'open', origin: 'manual',
@@ -130,7 +130,7 @@ async function restoreV2(source: Fixture, target: Fixture, expected: Pick<Popula
   const transformed = await catalog(scratch, 'transformed', target.key, source.workspaceId);
   transformPrivateBackupCatalog({ source: decoded.catalog, destination: transformed, at: 2000 });
   const directoryId = randomUUID(), parent = join(target.directory, 'private-backup-v2', 'prepared');
-  await mkdir(parent, { recursive: true, mode: 0o700 });
+  privateDir(parent);
   const prepared = await PrivateBackupPreparedStore.create({ directory: join(parent, directoryId), key: target.key, workspaceId: source.workspaceId }); preparedStores.push(prepared);
   const summary = await preparePrivateBackupRestore({ directory: target.directory, key: target.key, source: transformed, prepared, databasePresent: capture.databasePresent, assertLease() {} }); await prepared.close();
   const stage = { directory: target.directory, key: target.key, directoryId, storeId: summary.storeId, workspaceId: source.workspaceId,
@@ -210,7 +210,7 @@ function forgedHistory(backup: PrivateWorkspaceBackup, history: unknown) {
 }
 
 describe('actual completed pack upgrade history across private cold restore', () => {
-  it.each(['v1', 'v2'] as const)('%s retains history, retired plans and staff edits, repairs omitted native files, then safely rolls back', async version => {
+  it.each(['v1', 'v2'] as const)('%s retains history, retired plans and staff edits, repairs omitted native files, then safely rolls back', windowsAdmissionTimeout(248), async version => {
     const source = await fixture(), target = await fixture(), expected = await populate(source);
     expect(source.key.equals(target.key)).toBe(false);
     if (version === 'v1') {
@@ -391,7 +391,7 @@ function archiveFault(expected: Archived, fault: 'missing' | 'truncated' | 'wron
 }
 
 describe('actual archived pack configurations across private cold restore', () => {
-  it.each(['v1', 'v2'] as const)('%s restores exact archive bytes and live/retired plans, repairs instructions, then rolls back to archived generation one', async version => {
+  it.each(['v1', 'v2'] as const)('%s restores exact archive bytes and live/retired plans, repairs instructions, then rolls back to archived generation one', windowsAdmissionTimeout(413), async version => {
     const source = await fixture(), target = await fixture(), expected = await populateArchived(source);
     expect(source.key.equals(target.key)).toBe(false);
     if (version === 'v1') {
@@ -403,7 +403,7 @@ describe('actual archived pack configurations across private cold restore', () =
     await verifyArchivedRestore(source, target, expected);
   });
 
-  it.each(['missing', 'truncated', 'wrong-pack', 'orphan'] as const)('rejects authenticated %s archive at v1 import and v2 capture/catalog seal without changing the destination', async fault => {
+  it.each(['missing', 'truncated', 'wrong-pack', 'orphan'] as const)('rejects authenticated %s archive at v1 import and v2 capture/catalog seal without changing the destination', windowsAdmissionTimeout(243), async fault => {
     const source = await fixture(), target = await fixture(), scratch = await fixture(), expected = await populateArchived(source);
     const { backup } = await source.backup.exportBackup(phrase), changed = archiveFault(expected, fault);
     const forged = forgeFiles(backup, originals => {
@@ -465,7 +465,7 @@ describe('actual archived pack configurations across private cold restore', () =
     expect(await readFile(join(source.directory, 'vault/properties/fictional-property.md'))).toEqual(expected.businessNote);
   });
 
-  it('refuses an actual interrupted archive in both backup formats and admits it only after explicit recovery', async () => {
+  it('refuses an actual interrupted archive in both backup formats and admits it only after explicit recovery', windowsAdmissionTimeout(197), async () => {
     const source = await fixture(), expected = await populateNineVersions(source), block = join(source.directory, 'customer-pack-history');
     await privateFile(source.directory, 'customer-pack-history', 'Fictional filesystem obstruction');
     const body = archiveRequest(expected.archivePreview);

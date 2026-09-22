@@ -5,6 +5,7 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { resolveDeskKey } from './desk-key-custody.mjs';
 import { privateFixtureRoot, profileAclWitness, WINDOWS_PROFILE_TEST_OPTIONS } from '../server/testing/private-profile-fixture.ts';
+import { plantPrivateFile } from '../server/testing/private-fixture.ts';
 
 // Real production selector; only OS safeStorage is replaced by an AES fixture.
 const directories = [];
@@ -36,18 +37,20 @@ function recorder() {
   const calls = [];
   return { calls, privacy: (target, kind, restrict = false) => { calls.push([target, kind, restrict]); } };
 }
+// Key files an earlier start wrote carry their own protected descriptor on
+// Windows, so the fixtures plant them that way; the real policy then verifies them.
 describe('desktop encryption key custody with a mocked safeStorage boundary', () => {
   it('migrates a valid raw key to a protected file and preserves it across repeated starts', () => {
     const f = fixture(), key = randomBytes(32), raw = path.join(f.dir, 'desk.key');
-    fs.writeFileSync(raw, key, { mode: 0o600 }); fs.writeFileSync(path.join(f.dir, 'desk.json'), envelope(key, { fictional: true }));
+    plantPrivateFile(raw, key); fs.writeFileSync(path.join(f.dir, 'desk.json'), envelope(key, { fictional: true }));
     expect(f.resolve().hex === key.toString('hex')).toBe(true);
     expect(fs.existsSync(raw)).toBe(false);
     expect(f.resolve().hex === key.toString('hex')).toBe(true);
   });
   it('does not replace the live book key with a stale raw key that only opens an older quarantine', () => {
     const f = fixture(), live = randomBytes(32), stale = randomBytes(32);
-    fs.writeFileSync(path.join(f.dir, 'desk.key'), stale, { mode: 0o600 });
-    fs.writeFileSync(path.join(f.dir, 'desk.key.wrap'), f.safeStorage.encryptString(live.toString('hex')), { mode: 0o600 });
+    plantPrivateFile(path.join(f.dir, 'desk.key'), stale);
+    plantPrivateFile(path.join(f.dir, 'desk.key.wrap'), f.safeStorage.encryptString(live.toString('hex')));
     fs.writeFileSync(path.join(f.dir, 'desk.json'), envelope(live, { fictional: 'current office' }));
     const quarantine = path.join(f.dir, 'desk.json.quarantine-2026-09-01');
     fs.writeFileSync(quarantine, envelope(stale, { fictional: 'old sample' }));
@@ -59,8 +62,8 @@ describe('desktop encryption key custody with a mocked safeStorage boundary', ()
   it('retains the old wrapped key when a reviewed raw key opens the current book', () => {
     const f = fixture(), live = randomBytes(32), old = randomBytes(32);
     const oldWrap = f.safeStorage.encryptString(old.toString('hex'));
-    fs.writeFileSync(path.join(f.dir, 'desk.key'), live, { mode: 0o600 });
-    fs.writeFileSync(path.join(f.dir, 'desk.key.wrap'), oldWrap, { mode: 0o600 });
+    plantPrivateFile(path.join(f.dir, 'desk.key'), live);
+    plantPrivateFile(path.join(f.dir, 'desk.key.wrap'), oldWrap);
     fs.writeFileSync(path.join(f.dir, 'desk.json'), envelope(live, { fictional: 'current' }));
     expect(f.resolve().hex === live.toString('hex')).toBe(true);
     const held = fs.readdirSync(f.dir).find(name => name.startsWith('desk.key.wrap.recovery-'));
@@ -76,25 +79,25 @@ describe('desktop encryption key custody with a mocked safeStorage boundary', ()
   });
   it.each([true, false])('holds unreadable protected custody with encryption available=%s', available => {
     const f = fixture(), wrap = path.join(f.dir, 'desk.key.wrap'), original = Buffer.from('unreadable protected fixture');
-    fs.writeFileSync(wrap, original, { mode: 0o600 }); f.safeStorage.isEncryptionAvailable = () => available;
+    plantPrivateFile(wrap, original); f.safeStorage.isEncryptionAvailable = () => available;
     expect(() => f.resolve()).toThrow(/needs recovery/);
     expect(fs.readFileSync(wrap)).toEqual(original); expect(fs.existsSync(path.join(f.dir, 'desk.key'))).toBe(false);
   });
   it('does not guess between different keys when only workflow state remains', () => {
-    const f = fixture(); fs.writeFileSync(path.join(f.dir, 'desk.key'), randomBytes(32), { mode: 0o600 });
-    fs.writeFileSync(path.join(f.dir, 'desk.key.wrap'), f.safeStorage.encryptString(randomBytes(32).toString('hex')), { mode: 0o600 });
+    const f = fixture(); plantPrivateFile(path.join(f.dir, 'desk.key'), randomBytes(32));
+    plantPrivateFile(path.join(f.dir, 'desk.key.wrap'), f.safeStorage.encryptString(randomBytes(32).toString('hex')));
     fs.writeFileSync(path.join(f.dir, 'workflow-state.sqlite'), 'fixture');
     expect(() => f.resolve()).toThrow(/needs recovery/);
   });
   it('uses an existing raw key without changing it while safeStorage is unavailable', () => {
     const f = fixture(), key = randomBytes(32), raw = path.join(f.dir, 'desk.key');
-    fs.writeFileSync(raw, key, { mode: 0o600 }); f.safeStorage.isEncryptionAvailable = () => false;
+    plantPrivateFile(raw, key); f.safeStorage.isEncryptionAvailable = () => false;
     const result = f.resolve(); expect(result.hex === key.toString('hex')).toBe(true); expect(result.production).toBe(false);
     expect(fs.readFileSync(raw)).toEqual(key); expect(fs.existsSync(path.join(f.dir, 'desk.key.wrap'))).toBe(false);
   });
   it('retains unreadable wrap evidence when a raw key proves current-book access', () => {
     const f = fixture(), key = randomBytes(32), bytes = Buffer.from('unreadable wrap');
-    fs.writeFileSync(path.join(f.dir, 'desk.key'), key, { mode: 0o600 }); fs.writeFileSync(path.join(f.dir, 'desk.key.wrap'), bytes, { mode: 0o600 });
+    plantPrivateFile(path.join(f.dir, 'desk.key'), key); plantPrivateFile(path.join(f.dir, 'desk.key.wrap'), bytes);
     fs.writeFileSync(path.join(f.dir, 'desk.json'), envelope(key, { fictional: true }));
     expect(f.resolve().hex === key.toString('hex')).toBe(true);
     const held = fs.readdirSync(f.dir).find(name => name.startsWith('desk.key.wrap.recovery-'));
@@ -102,12 +105,12 @@ describe('desktop encryption key custody with a mocked safeStorage boundary', ()
   });
   it('never removes raw custody when protected storage fails to persist', () => {
     const f = fixture(), key = randomBytes(32), raw = path.join(f.dir, 'desk.key');
-    fs.writeFileSync(raw, key, { mode: 0o600 }); f.safeStorage.encryptString = () => { throw new Error('Fixture keychain locked'); };
+    plantPrivateFile(raw, key); f.safeStorage.encryptString = () => { throw new Error('Fixture keychain locked'); };
     expect(() => f.resolve()).toThrow(/locked/); expect(fs.readFileSync(raw)).toEqual(key);
   });
   it('retains a raw key replaced by a concurrent recovery write while wrapping', () => {
     const f = fixture(), key = randomBytes(32), recovered = randomBytes(32), raw = path.join(f.dir, 'desk.key');
-    fs.writeFileSync(raw, key, { mode: 0o600 });
+    plantPrivateFile(raw, key);
     const encrypt = f.safeStorage.encryptString;
     f.safeStorage.encryptString = text => { fs.writeFileSync(raw, recovered); return encrypt(text); };
     expect(f.resolve().hex === key.toString('hex')).toBe(true);

@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 vi.mock('./company/host-transport.ts', () => ({ requestCompanyHost: vi.fn(), startCompanyTransport: vi.fn() }));
@@ -7,6 +7,7 @@ import { requestCompanyHost } from './company/host-transport.ts';
 import { createHostCertificate, encodeCompanyPairing } from './company/host-certificate.ts';
 import { createCompanyInstallation } from './company-installation.ts';
 import { createPrivateVault } from './private-vault.ts';
+import { plantPrivateFile, privateDir, privateTempRoot, removeFixture } from './testing/private-fixture.ts';
 
 const companyId = '11111111-1111-4111-8111-111111111111';
 const otherCompanyId = '22222222-2222-4222-8222-222222222222';
@@ -25,14 +26,14 @@ beforeAll(async () => {
 });
 afterEach(async () => {
   for (const app of instances.splice(0)) await app.close();
-  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) await removeFixture(root);
   vi.resetAllMocks(); vi.unstubAllEnvs();
 });
 async function fixture(paired = true) {
   vi.stubEnv('REALBUD_COMPANY_DATABASE_URL', '');
-  const root = await mkdtemp(join(tmpdir(), 'realbud-binding-')); roots.push(root);
-  await mkdir(join(root, 'company-installation'), { mode: 0o700 });
-  if (paired) await writeFile(join(root, 'company-installation/peer.json'), JSON.stringify(hostCode), { mode: 0o600 });
+  const root = privateTempRoot(join(tmpdir(), 'realbud-binding-')); roots.push(root);
+  privateDir(join(root, 'company-installation'));
+  if (paired) plantPrivateFile(join(root, 'company-installation/peer.json'), JSON.stringify(hostCode));
   const onSeatIdentity = vi.fn();
   const app = createCompanyInstallation({ dataDirectory: root, previewEnabled: true, onSeatIdentity,
     authorizeAdmin: () => ({ ok: false, status: 401, error: 'Admin required' }), hasAdminSession: () => false,

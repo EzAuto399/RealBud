@@ -1,15 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { BrowserRuntime, type BrowserJson } from "./browser-runtime.ts";
 import { startBrowserBroker, jobBrowserUrl, observationRefs, browserLoginFields, type BrowserBroker } from "./browser-broker.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
+import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import type { BrowserCheckpoint } from "../shared/browser.ts";
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 async function fixture(checkpoint?: BrowserCheckpoint) {
-  const root = await mkdtemp(join(tmpdir(), "rb-browser-broker-")); cleanup.push(() => rm(root, { recursive: true, force: true }));
+  const root = privateTempRoot(join(tmpdir(), "rb-browser-broker-")); cleanup.push(() => removeFixture(root));
   let session = false; let page = '@e1 button "Show details"\n@e2 textbox "Reference"\n@e3 button "Transfer money"';
   let url = "https://portal.example/work"; let unknown = false; let scope = "user";
   const calls: string[][] = [];

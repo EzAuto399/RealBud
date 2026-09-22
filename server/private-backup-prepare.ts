@@ -10,6 +10,7 @@ import { PrivateBackupPreparedStore } from './private-backup-prepared.ts';
 import { privateBackupTargetPaths } from './private-backup-capture.ts';
 import { privateRestoreTargetHash } from './private-backup-cold-restore.ts';
 import { encryptJson } from './desk-crypto.ts';
+import { mkdirPrivate } from './private-json.ts';
 import { WORKFLOW_MAX_ENCRYPTED_RECORD_LENGTH } from './workflow-database.ts';
 import { windowsFilePrivacy } from './windows-file-privacy.ts';
 import { fsyncDir } from './atomic.ts';
@@ -29,9 +30,9 @@ async function safeFolder(path: string) {
     try { const s = await lstat(current); if (!s.isDirectory() || s.isSymbolicLink()) fail(); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   }
-  const created = await mkdir(path, { recursive: true, mode: 0o700 }), stat = await lstat(path);
+  const created = await mkdirPrivate(path), stat = await lstat(path);
   if (process.platform !== 'win32' && ((stat.mode & 0o077) || stat.uid !== process.getuid?.())) fail();
-  await windowsFilePrivacy(path, 'directory', created !== undefined);
+  if (!created) await windowsFilePrivacy(path, 'directory', false);
 }
 /** Clean only this invocation's exclusively created build directory after its
  * SQLite/file handles close. Unexpected entries remain available for recovery. */

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,9 +10,10 @@ import { previewBillSource } from './source-bills.ts';
 import type { BillMailSource } from '../shared/source-bills.ts';
 import type { InvoiceReview } from '../shared/accounts-review.ts';
 import type { JobRun, Recipe } from '../shared/contracts.ts';
+import { plantPrivateFile, removeFixture } from './testing/private-fixture.ts';
 
 const resources: { dir: string; db: WorkflowDatabase }[] = [];
-afterEach(() => { for (const { dir, db } of resources.splice(0)) { db.close(); rmSync(dir, { recursive: true, force: true }); } });
+afterEach(async () => { for (const { dir, db } of resources.splice(0)) { db.close(); await removeFixture(dir); } });
 const itemId = 'a'.repeat(64), messageId = 'ab12';
 function jobRun(recipe: Recipe, key: string, id: string, status: JobRun['status'] = 'running'): JobRun {
   return { id, jobId: recipe.id, jobTitle: 'Fictional invoice review', jobRevision: recipe.revision, idempotencyKey: key, status,
@@ -203,7 +204,7 @@ describe('source-bound invoice preparation requests', () => {
     expect(f.execute).not.toHaveBeenCalled(); expect(f.db.list('bill-proposal')).toEqual([]);
   });
   it('preserves the active invoice input when another job starts during authority admission', async () => {
-    const f = fixture(), request = f.request(); mkdirSync(join(f.workroom, 'workflow-inputs'), { recursive: true, mode: 0o700 }); writeFileSync(f.path, 'Existing active invoice input', { mode: 0o600 }); let reads = 0;
+    const f = fixture(), request = f.request(); plantPrivateFile(f.path, 'Existing active invoice input'); let reads = 0;
     f.authorize.mockImplementation(async () => { if (++reads === 2) f.runs.push(jobRun(f.authority.recipe, 'other-job', 'other-job')); return structuredClone(f.authority); });
     await expect(f.prepare(request)).rejects.toMatchObject({ status: 409 });
     expect(readFileSync(f.path, 'utf8')).toBe('Existing active invoice input'); expect(f.execute).not.toHaveBeenCalled();

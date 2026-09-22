@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { randomBytes, randomUUID, createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, readdir, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rename, symlink, unlink, writeFile } from 'node:fs/promises';
 import { realpathSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,9 +9,10 @@ import { createPrivateBackupResources, type BackupResourceBinding, type PrivateB
 import { PrivateBackupCatalog } from './private-backup-catalog.ts';
 import { emptyV3 } from '../shared/desk-v3.ts';
 import { createBackupTransferStore } from './private-backup-transfer.ts';
+import { plantPrivateFile, removeFixture } from './testing/private-fixture.ts';
 
 const roots: string[] = [], closers: (() => void | Promise<void>)[] = [];
-afterEach(async () => { for (const close of closers.splice(0).reverse()) await close(); await Promise.all(roots.splice(0).map(p => rm(p, { recursive: true, force: true }))); });
+afterEach(async () => { for (const close of closers.splice(0).reverse()) await close(); await Promise.all(roots.splice(0).map(removeFixture)); });
 async function fixture(role: BackupResourceBinding['allocation']['role'] = 'archive', fault?: PrivateBackupResourcesOptions['fault']) {
   const root = await mkdtemp(join(realpathSync(tmpdir()), 'RealBud owned backup resource ')); roots.push(root);
   const directory = join(root, 'private-backup-v2'), key = randomBytes(32);
@@ -24,7 +25,7 @@ async function fixture(role: BackupResourceBinding['allocation']['role'] = 'arch
     deleting() { current.allocation.state = 'deleting'; return structuredClone(current); }, drained(value: boolean) { drained = value; }, admitted(value: boolean) { admitted = value; },
     marker: () => join(directory, 'claims', `${current.allocation.id}.json`), candidate: () => join(directory, 'claims', `.${current.allocation.id}.${current.allocation.nonce}.tmp`) };
 }
-async function dataFile(directory: string, filename: string, value = 'Fictional owned encrypted data') { await mkdir(directory, { mode: 0o700 }); await writeFile(join(directory, filename), value, { mode: 0o600 }); }
+async function dataFile(directory: string, filename: string, value = 'Fictional owned encrypted data') { plantPrivateFile(join(directory, filename), value); }
 
 describe('journal-bound backup resource ownership', () => {
   it('can cancel an allocation whose process stopped before any resource folder was created', async () => {
@@ -33,8 +34,7 @@ describe('journal-bound backup resource ownership', () => {
     await f.service.remove(f.deleting()); expect(existsSync(f.directory)).toBe(false);
   });
   it('preserves an unreadable unpublished marker rather than treating it as an empty allocation', async () => {
-    const f = await fixture(); await mkdir(join(f.directory, 'claims'), { recursive: true, mode: 0o700 });
-    await writeFile(f.candidate(), 'Interrupted fixture marker', { mode: 0o600 });
+    const f = await fixture(); plantPrivateFile(f.candidate(), 'Interrupted fixture marker');
     await expect(f.service.claim(f.binding)).rejects.toThrow('ownership');
     await expect(f.service.remove(f.deleting())).rejects.toThrow('ownership');
     expect(await readFile(f.candidate(), 'utf8')).toBe('Interrupted fixture marker');
@@ -73,8 +73,7 @@ describe('journal-bound backup resource ownership', () => {
     expect(existsSync(f.marker())).toBe(true);
   });
   it('refuses pre-existing unclaimed data and malformed ownership records without overwriting them', async () => {
-    const f = await fixture(), path = f.service.path(f.binding); await mkdir(path, { recursive: true, mode: 0o700 });
-    await writeFile(join(path, 'archive.realbud-backup'), 'Keep original fixture', { mode: 0o600 });
+    const f = await fixture(), path = f.service.path(f.binding); plantPrivateFile(join(path, 'archive.realbud-backup'), 'Keep original fixture');
     await expect(f.service.claim(f.binding)).rejects.toThrow('unclaimed');
     await expect(f.service.remove(f.deleting())).rejects.toThrow('no verified ownership');
     expect(await readFile(join(path, 'archive.realbud-backup'), 'utf8')).toBe('Keep original fixture');
@@ -104,7 +103,7 @@ describe('journal-bound backup resource ownership', () => {
     let stop = true;
     const f = await fixture('capture', p => { if (p === point && stop) { stop = false; throw new Error('Fixture interruption'); } });
     const { directory } = await f.service.claim(f.binding); await dataFile(directory, 'catalog.sqlite');
-    await writeFile(join(directory, 'catalog.sqlite-journal'), 'Fictional journal', { mode: 0o600 }); const b = f.deleting();
+    plantPrivateFile(join(directory, 'catalog.sqlite-journal'), 'Fictional journal'); const b = f.deleting();
     await expect(f.service.remove(b)).rejects.toThrow('Fixture interruption'); await f.service.remove(b);
     expect(existsSync(directory)).toBe(false); expect(existsSync(f.marker())).toBe(false);
   });

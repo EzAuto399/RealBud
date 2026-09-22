@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,6 +19,7 @@ import { transformPrivateBackupCatalog } from './private-backup-restore-catalog.
 import { PrivateBackupPreparedStore } from './private-backup-prepared.ts';
 import { preparePrivateBackupRestore } from './private-backup-prepare.ts';
 import { stagePrivateRestoreV2, applyStagedPrivateRestoreV2, PRIVATE_RESTORE_V2_STAGE_FILE } from './private-backup-cold-restore.ts';
+import { plantPrivateFiles, privateDir, privateTempRoot, removeFixture, windowsAdmissionTimeout } from './testing/private-fixture.ts';
 
 const roots: string[] = [], catalogs: PrivateBackupCatalog[] = [], preparedStores: PrivateBackupPreparedStore[] = [];
 const phrase = 'Fictional amendment backup passphrase', createdAt = '2026-09-22T00:00:00.000Z';
@@ -26,16 +27,17 @@ const sha = (value: string | Uint8Array) => createHash('sha256').update(value).d
 afterEach(async () => {
   for (const store of preparedStores.splice(0)) await store.close();
   for (const catalog of catalogs.splice(0)) catalog.close();
-  await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map(path => removeFixture(path)));
 });
 async function fixture() {
-  const directory = await mkdtemp(join(realpathSync(tmpdir()), 'RealBud bank amendments ')); roots.push(directory);
+  const directory = privateTempRoot(join(realpathSync(tmpdir()), 'RealBud bank amendments ')); roots.push(directory);
   const key = randomBytes(32), workspaceId = randomUUID();
   const book = emptyV3({ name: 'Fictional amendment backup office', timezone: 'UTC', jurisdictions: [] });
-  await mkdir(join(directory, 'company-installation'), { mode: 0o700 });
-  await writeFile(join(directory, 'company-installation/workspace.json'), JSON.stringify({ version: 1, id: workspaceId, workerMemberKey: null }), { mode: 0o600 });
-  await writeFile(join(directory, 'desk.json'), JSON.stringify(encryptJson(key, book)), { mode: 0o600 });
-  await writeFile(join(directory, 'desk.key'), key, { mode: 0o600 });
+  plantPrivateFiles([
+    [join(directory, 'company-installation/workspace.json'), JSON.stringify({ version: 1, id: workspaceId, workerMemberKey: null })],
+    [join(directory, 'desk.json'), JSON.stringify(encryptJson(key, book))],
+    [join(directory, 'desk.key'), key],
+  ]);
   const service = createPrivateWorkspaceBackup({ directory, key: () => key, workspaceId, epoch: () => 'fictional-idle', assertIdle() {}, assertFresh() {} });
   return { directory, key, workspaceId, book, service };
 }
@@ -137,7 +139,7 @@ describe('bank amendment graph backup boundaries', () => {
     } finally { database.close(); }
   });
 
-  it('v2 validates, archives and cold-restores the complete amendment chain under a different key', async () => {
+  it('v2 validates, archives and cold-restores the complete amendment chain under a different key', windowsAdmissionTimeout(95), async () => {
     const source = await fixture(), target = await fixture(), scratch = await fixture();
     const database = new WorkflowDatabase({ dir: source.directory, key: source.key });
     let expected: ReturnType<typeof populate>;
@@ -155,7 +157,7 @@ describe('bank amendment graph backup boundaries', () => {
     const transformed = await newCatalog({ ...scratch, key: target.key, workspaceId: source.workspaceId }, 'transformed', false);
     transformPrivateBackupCatalog({ source: decoded.catalog, destination: transformed, at: 1000 });
     const directoryId = randomUUID(), parent = join(target.directory, 'private-backup-v2', 'prepared');
-    await mkdir(parent, { recursive: true, mode: 0o700 });
+    privateDir(parent);
     const prepared = await PrivateBackupPreparedStore.create({ directory: join(parent, directoryId), key: target.key, workspaceId: source.workspaceId }); preparedStores.push(prepared);
     const summary = await preparePrivateBackupRestore({ directory: target.directory, key: target.key, source: transformed, prepared, databasePresent: true, assertLease() {} }); await prepared.close();
     const stage = { directory: target.directory, key: target.key, directoryId, storeId: summary.storeId, workspaceId: source.workspaceId, expectedPreparedDigest: summary.digest, receipt: decoded.receipt, assertFresh() {}, assertIdle() {}, epoch: () => 'fictional-idle' };

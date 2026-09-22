@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,19 +9,20 @@ import { encryptJson } from './desk-crypto.ts';
 import { PrivateBackupCatalog } from './private-backup-catalog.ts';
 import { PrivateBackupPreparedStore } from './private-backup-prepared.ts';
 import { preparePrivateBackupRestore } from './private-backup-prepare.ts';
+import { plantPrivateFile, privateDir, removeFixture } from './testing/private-fixture.ts';
 
 const roots: string[] = [], catalogs: PrivateBackupCatalog[] = [], prepared: PrivateBackupPreparedStore[] = [];
 afterEach(async () => {
   for (const s of prepared.splice(0)) await s.close();
   for (const c of catalogs.splice(0)) c.close();
-  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map(root => removeFixture(root)));
 });
 async function fixture(records = 0) {
   const root = await mkdtemp(join(realpathSync(tmpdir()), 'RealBud preparation capacity ')); roots.push(root);
-  const directory = join(root, 'target'); await mkdir(directory, { mode: 0o700 });
+  const directory = join(root, 'target'); privateDir(directory);
   const key = randomBytes(32), workspaceId = randomUUID(), book = emptyV3({ name: 'Fictional preparation office', timezone: 'UTC', jurisdictions: [] });
   const original = Buffer.from(JSON.stringify(encryptJson(key, book)));
-  await writeFile(join(directory, 'desk.json'), original, { mode: 0o600 });
+  plantPrivateFile(join(directory, 'desk.json'), original);
   const source = await PrivateBackupCatalog.create({ directory: join(root, 'source'), key, workspaceId, maxEntries: 100, maxBytes: 1024 ** 2 }); catalogs.push(source);
   source.addFile({ path: 'company-installation/workspace.json', encoding: 'bytes', data: Buffer.from(JSON.stringify({ version: 1, id: workspaceId, workerMemberKey: null })) });
   source.addFile({ path: 'desk.json', encoding: 'json', data: Buffer.from(JSON.stringify(book)) });
@@ -52,8 +53,7 @@ describe('bounded restore database preparation', () => {
   it('preserves a pre-existing build allocation when exclusive creation fails', async () => {
     const f = await fixture(1), buildDirectoryId = randomUUID();
     const existing = join(f.directory, 'private-backup-v2', 'build', buildDirectoryId);
-    await mkdir(existing, { recursive: true, mode: 0o700 });
-    await writeFile(join(existing, 'retained.txt'), 'Earlier interrupted fixture', { mode: 0o600 });
+    plantPrivateFile(join(existing, 'retained.txt'), 'Earlier interrupted fixture');
     await expect(preparePrivateBackupRestore({ ...f.options, buildDirectoryId })).rejects.toMatchObject({ code: 'EEXIST' });
     expect(await readFile(join(existing, 'retained.txt'), 'utf8')).toBe('Earlier interrupted fixture');
     expect(f.target.summary().sealed).toBe(false);

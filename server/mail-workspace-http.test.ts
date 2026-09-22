@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, realpathSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { WorkflowDatabase } from './workflow-database.ts';
+import { plantPrivateFile, privateDir, removeFixture } from './testing/private-fixture.ts';
 import { createMailIngestionService } from './mail-ingestion.ts';
 import { defaultAgencySettings } from './agency-setup.ts';
 import type { MailTaskPage, MailTaskUpdateResult, MailWorkspaceMetadata, MailWorkItem, MailScanPage, MailThread } from '../shared/mail-ingestion.ts';
@@ -16,6 +17,9 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const scratch = mkdtempSync(join(realpathSync(tmpdir()), 'RealBud mail HTTP ')), data = join(scratch, 'data');
 const key = Buffer.alloc(32, 29), workspaceId = randomUUID(), accountId = 'fictional-mail', now = Date.now();
 const itemId = (index: number) => createHash('sha256').update(JSON.stringify([workspaceId, accountId, (index + 1).toString(16)])).digest('hex');
+// Windows admits each private object the service creates through one PowerShell
+// launch, so a fresh boot there takes several seconds longer (qa-private-backup-boundaries).
+const WINDOWS_BOOT = process.platform === 'win32', BOOT_BUDGET_MS = WINDOWS_BOOT ? 90_000 : 15_000;
 let child: ChildProcess | undefined, closed: Promise<unknown> | undefined, base = '', token = '', logs = '';
 const request = (path: string, method = 'GET', body?: unknown, headers: Record<string, string> = {}) => fetch(base + path, {
   method, signal: AbortSignal.timeout(15_000), headers: { 'x-realbud-session': token, 'content-type': 'application/json', ...headers },
@@ -39,7 +43,7 @@ async function start() {
   closed = new Promise((resolve, reject) => { child!.once('close', resolve); child!.once('error', reject); });
   for (const stream of [child.stdout, child.stderr]) stream?.on('data', bytes => { logs = (logs + bytes).slice(-12_000); });
   let ready = false;
-  for (let i = 0; i < 150; i++) {
+  for (const began = Date.now(); Date.now() - began < BOOT_BUDGET_MS;) {
     if (child.exitCode !== null || child.signalCode) throw new Error(`Fictional mail fixture stopped: ${logs}`);
     const health = await fetch(base + '/api/health', { signal: AbortSignal.timeout(500) }).then(async r => await r.json() as {pid?:number}).catch(() => null);
     if (health?.pid === child.pid) { ready = true; break; }
@@ -49,12 +53,13 @@ async function start() {
   token = (await (await fetch(base + '/api/session')).json() as {token:string}).token;
 }
 beforeAll(async () => {
-  mkdirSync(join(data, 'company-installation'), { recursive: true, mode: 0o700 });
-  writeFileSync(join(data, 'config.json'), JSON.stringify({ instances: { fixture: { driver: 'not-a-real-driver' } } }), { mode: 0o600 });
-  writeFileSync(join(data, 'company-installation/workspace.json'), JSON.stringify({ version: 1, id: workspaceId, workerMemberKey: null }), { mode: 0o600 });
+  // The desktop app creates the data folder and these files with their own protected descriptors.
+  privateDir(join(data, 'company-installation'));
+  plantPrivateFile(join(data, 'config.json'), JSON.stringify({ instances: { fixture: { driver: 'not-a-real-driver' } } }));
+  plantPrivateFile(join(data, 'company-installation/workspace.json'), JSON.stringify({ version: 1, id: workspaceId, workerMemberKey: null }));
   await start();
-}, 30_000);
-afterAll(async () => { await stop(); rmSync(scratch, { recursive: true, force: true }); });
+}, WINDOWS_BOOT ? 120_000 : 30_000);
+afterAll(async () => { await stop(); await removeFixture(scratch); });
 
 describe('retained mail through actual bootstrap and protected HTTP', () => {
   it('keeps first-use reads nonmaterializing so an untouched workspace can still restore', async () => {
@@ -104,7 +109,7 @@ describe('retained mail through actual bootstrap and protected HTTP', () => {
     const scans = await (await request('/api/mail-workspace/scans?limit=2')).json() as MailScanPage;
     expect(scans.total).toBe(3); expect(scans.items).toHaveLength(2); expect(scans.nextCursor).toBeTypeOf('string');
     expect((await (await request(`/api/mail-workspace/scans?limit=2&cursor=${scans.nextCursor}`)).json() as MailScanPage).items).toHaveLength(1);
-  }, 30_000);
+  }, WINDOWS_BOOT ? 120_000 : 30_000);
 
   it('searches all retained tasks and invalidates a continuation after a staff edit', async () => {
     const found = await (await request('/api/mail-workspace/items?group=all&q=source%20044&limit=1')).json() as MailTaskPage;

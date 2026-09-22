@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,12 +11,13 @@ import { decryptJson, encryptJson } from './desk-crypto.ts';
 import { emptyV3 } from '../shared/desk-v3.ts';
 import { validateBackupMail } from './private-backup-mail-validation.ts';
 import { applyStagedPrivateRestore, createPrivateWorkspaceBackup } from './private-workspace-backup.ts';
+import { plantPrivateFile, plantPrivateFiles, privateTempRoot, removeFixture } from './testing/private-fixture.ts';
 
 const directories: string[] = [], services: ReturnType<typeof createMailIngestionService>[] = [];
-afterEach(async () => { for (const service of services.splice(0)) await service.close(); await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true }))); });
+afterEach(async () => { for (const service of services.splice(0)) await service.close(); await Promise.all(directories.splice(0).map(removeFixture)); });
 const now = Date.parse('2026-09-21T00:00:00Z'), prefix = 'company-installation/private/';
 type Files = { path: string; base64: string }[];
-async function directory() { const value = await mkdtemp(join(realpathSync(tmpdir()), 'rb-backup-mail-')); directories.push(value); return value; }
+async function directory() { const value = privateTempRoot(join(realpathSync(tmpdir()), 'rb-backup-mail-')); directories.push(value); return value; }
 async function fixture() {
   const root = await directory(), key = Buffer.alloc(32, 19), workspaceId = randomUUID();
   const legacy = legacyMailBackupFixture(workspaceId, now);
@@ -29,8 +30,7 @@ async function fixture() {
   await vault.write('mail-workspace', legacy.state);
   await vault.write(`mail-scan-${legacy.receipt.id}`, legacy.source);
   await vault.write('mail-prepared-input', legacy.prepared);
-  await mkdir(join(root, 'vault/workflow-inputs'), { recursive: true, mode: 0o700 });
-  await writeFile(join(root, 'vault/workflow-inputs/accounts-inbox.json'), JSON.stringify(legacy.input), { mode: 0o600 });
+  plantPrivateFile(join(root, 'vault/workflow-inputs/accounts-inbox.json'), JSON.stringify(legacy.input));
   const service = createMailIngestionService(options), snapshot = legacy.state;
   services.push(service);
   const files = async (): Promise<Files> => [...await Promise.all((await readdir(join(root, prefix))).map(async name => ({ path: prefix + name, base64: (await readFile(join(root, prefix, name))).toString('base64') }))), { path: 'vault/workflow-inputs/accounts-inbox.json', base64: (await readFile(join(root, 'vault/workflow-inputs/accounts-inbox.json'))).toString('base64') }];
@@ -42,9 +42,8 @@ function alter(files: Files, key: Buffer, name: string, update: (value: any) => 
   update(envelope.value); file.base64 = Buffer.from(JSON.stringify(encryptJson(key, envelope))).toString('base64');
 }
 async function writeIdentity(root: string, key: Buffer, workspaceId: string) {
-  await mkdir(join(root, 'company-installation'), { recursive: true });
-  await writeFile(join(root, 'company-installation/workspace.json'), JSON.stringify({ version: 1, id: workspaceId, workerMemberKey: null }), { mode: 0o600 });
-  await writeFile(join(root, 'desk.json'), JSON.stringify(encryptJson(key, emptyV3({ name: 'Fictional practice', timezone: 'Australia/Brisbane', jurisdictions: [] }))), { mode: 0o600 });
+  plantPrivateFiles([[join(root, 'company-installation/workspace.json'), JSON.stringify({ version: 1, id: workspaceId, workerMemberKey: null })],
+    [join(root, 'desk.json'), JSON.stringify(encryptJson(key, emptyV3({ name: 'Fictional practice', timezone: 'Australia/Brisbane', jurisdictions: [] })))]]);
 }
 
 describe('backup mail source graph', () => {

@@ -4,7 +4,7 @@
 // startup path.
 import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
@@ -121,13 +121,14 @@ describe('runtime discovery order', () => {
 
 describe('resources directory resolution', () => {
   it('derives the resources root from the UI directory Electron passes', () => {
+    // Paths resolve natively: on Windows a rooted path gains the current drive.
     expect(appResourcesDirectory({ OMB_STATIC_DIR: '/Applications/RealBud.app/Contents/Resources/ui' } as NodeJS.ProcessEnv))
-      .toBe('/Applications/RealBud.app/Contents/Resources');
+      .toBe(resolve('/Applications/RealBud.app/Contents/Resources'));
   });
 
   it('honours an explicit resources override for staged installers', () => {
     expect(appResourcesDirectory({ REALBUD_RESOURCES_DIR: '/stage/Resources', OMB_STATIC_DIR: '/ignored/ui' } as NodeJS.ProcessEnv))
-      .toBe('/stage/Resources');
+      .toBe(resolve('/stage/Resources'));
   });
 
   it('reports no bundled location when the server runs outside the desktop app', () => {

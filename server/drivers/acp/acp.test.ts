@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ensureDirs, NATIVE_DIR } from "../../config.ts";
 import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
+import { removeFixture } from "../../testing/private-fixture.ts";
 import { GrokAgentDriver } from "./grok.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
 import { KimiAgentDriver } from "./kimi.ts";
@@ -109,7 +110,9 @@ describe("ACP turns (fake CLI)", () => {
     delete process.env.XAI_API_KEY;
     recorder?.stop();
     await instance?.dispose();
-    rmSync(scratch, { recursive: true, force: true });
+    // dispose() does not wait for the killed CLI to exit; on Windows its cwd
+    // (the scratch folder, for turns that pass one) stays held until it does.
+    await removeFixture(scratch);
   });
 
   it("replaces a warm Hermes process when the authenticated member changes", async () => {

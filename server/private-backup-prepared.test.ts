@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, realpathSync, rmSync, readFileSync, readdirSync, writeFileSync, symlinkSync, linkSync, chmodSync, statSync, unlinkSync, existsSync } from 'node:fs';
+import { mkdtempSync, realpathSync, readFileSync, readdirSync, writeFileSync, symlinkSync, linkSync, chmodSync, statSync, unlinkSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { PrivateBackupPreparedStore, PRIVATE_BACKUP_PREPARED_CHUNK_BYTES as CHUNK, PRIVATE_BACKUP_PREPARED_LIMITS, preparedStorageBudget, preparedRollbackJournalBounds } from './private-backup-prepared.ts';
+import { removeFixture } from './testing/private-fixture.ts';
 
 const roots: string[] = [], stores: PrivateBackupPreparedStore[] = [];
 const sha = (value: Uint8Array | string) => createHash('sha256').update(value).digest('hex');
@@ -18,7 +19,7 @@ async function fixture(limits?: Parameters<typeof PrivateBackupPreparedStore.cre
 async function reopen(options: Parameters<typeof PrivateBackupPreparedStore.open>[0]) { const store = await PrivateBackupPreparedStore.open(options); stores.push(store); return store; }
 async function* bytes(value: Buffer | string) { const buffer = Buffer.from(value); for (let offset = 0; offset < buffer.length; offset += CHUNK) yield buffer.subarray(offset, offset + CHUNK); }
 async function digest(input: AsyncIterable<Buffer>) { const h = createHash('sha256'); let count = 0; for await (const b of input) { expect(b.length).toBeLessThanOrEqual(CHUNK); h.update(b); count += b.length; } return { digest: h.digest('hex'), bytes: count }; }
-afterEach(async () => { for (const store of stores.splice(0)) await store.close(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(async () => { for (const store of stores.splice(0)) await store.close(); for (const root of roots.splice(0)) await removeFixture(root); });
 
 describe('exact encrypted prepared restore artifacts', () => {
   it('streams a database beyond the v1 48 MiB limit and reopens exact bytes with immutable removal metadata', async () => {

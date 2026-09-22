@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, link, copyFile, rename, readdir, chmod } from 'node:fs/promises';
+import { mkdir, readFile, symlink, link, copyFile, rename, readdir, chmod } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,20 +11,20 @@ import { encryptBytes, encryptJson } from './desk-crypto.ts';
 import { emptyV3 } from '../shared/desk-v3.ts';
 import { WorkflowDatabase } from './workflow-database.ts';
 import { legacyMailBackupFixture } from './testing/mail-backup-fixture.ts';
+import { plantPrivateFile, plantPrivateFiles, privateDir, privateTempRoot, removeFixture } from './testing/private-fixture.ts';
 
 const roots: string[] = [], catalogs: PrivateBackupCatalog[] = [];
 afterEach(async () => {
   for (const catalog of catalogs.splice(0)) catalog.close();
-  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map(root => removeFixture(root)));
 });
 async function save(directory: string, path: string, value: unknown) {
-  await mkdir(join(directory, path, '..'), { recursive: true, mode: 0o700 });
-  await writeFile(join(directory, path), Buffer.isBuffer(value) ? value : JSON.stringify(value), { mode: 0o600 });
+  plantPrivateFile(join(directory, path), Buffer.isBuffer(value) ? value : JSON.stringify(value));
 }
 async function fixture() {
-  const root = await mkdtemp(join(realpathSync(tmpdir()), 'RealBud source capture ')); roots.push(root);
+  const root = privateTempRoot(join(realpathSync(tmpdir()), 'RealBud source capture ')); roots.push(root);
   const directory = join(root, 'source'), key = randomBytes(32), targetKey = randomBytes(32), workspaceId = randomUUID();
-  await mkdir(directory, { mode: 0o700 });
+  privateDir(directory);
   const workspace = { version: 1, id: workspaceId, workerMemberKey: null };
   const desk = emptyV3({ name: 'Fictional captured office', timezone: 'UTC', jurisdictions: [] });
   await save(directory, 'company-installation/workspace.json', workspace); await save(directory, 'desk.json', encryptJson(key, desk));
@@ -141,7 +141,7 @@ describe('bounded immutable live-source capture', () => {
   it.each(['symlink-file', 'hardlink-file', 'symlink-directory', 'symlink-database'])('refuses linked source storage: %s', async type => {
     const f = await fixture();
     if (type === 'symlink-file' || type === 'hardlink-file') {
-      await mkdir(join(f.directory, 'vault/properties'), { recursive: true, mode: 0o700 });
+      privateDir(join(f.directory, 'vault/properties'));
       const target = join(f.directory, 'vault/properties/linked.md');
       if (type === 'symlink-file') await symlink(join(f.directory, 'desk.json'), target); else await link(join(f.directory, 'desk.json'), target);
     } else if (type === 'symlink-directory') {
@@ -154,7 +154,7 @@ describe('bounded immutable live-source capture', () => {
   });
   it('bounds all visited directory entries including excluded names', async () => {
     const f = await fixture();
-    await mkdir(join(f.directory, 'vault/properties'), { recursive: true, mode: 0o700 });
+    privateDir(join(f.directory, 'vault/properties'));
     for (let i = 0; i < 6; i++) await save(f.directory, `vault/properties/excluded-${i}.bin`, Buffer.from('Excluded'));
     await expect(capturePrivateWorkspace({ ...f.options, limits: { maxDirectoryEntries: 5 } })).rejects.toMatchObject({ status: 413 });
     await expect(privateBackupTargetPaths(f.directory, { limits: { maxDirectoryEntries: 5 } })).rejects.toMatchObject({ status: 413 });
@@ -211,11 +211,12 @@ describe('bounded immutable live-source capture', () => {
     await save(f.directory, 'config.json', { fictionalNewAuthority: true });
     expect(await privateBackupTargetGuard(f.directory)).not.toBe(guard);
   });
-  it('captures and rechecks more than 5,000 records and 3,000 files with bounded source reads', async () => {
+  // Windows: capture and recheck admit each of the ~3,100 files separately (about 6,300
+  // PowerShell launches, ~30 min on a runner); the bounded-read proof is OS-independent.
+  it.skipIf(process.platform === 'win32')('captures and rechecks more than 5,000 records and 3,000 files with bounded source reads', async () => {
     const f = await fixture(), detail = 'Fictional permanent source '.repeat(500);
     seedDatabase(f.directory, f.key, 5_101, detail);
-    await mkdir(join(f.directory, 'vault/properties'), { recursive: true, mode: 0o700 });
-    for (let i = 0; i < 3_101; i++) await save(f.directory, `vault/properties/retained-${i}.md`, Buffer.from(`Fictional note ${i} 保留`));
+    plantPrivateFiles(Array.from({ length: 3_101 }, (_, i) => [join(f.directory, `vault/properties/retained-${i}.md`), Buffer.from(`Fictional note ${i} 保留`)] as const));
     const receipt = await capturePrivateWorkspace(f.options);
     expect(receipt).toMatchObject({ fileCount: 3_103, recordCount: 5_101, databasePresent: true });
     expect(receipt.sourceBytes).toBeGreaterThan(48 * 1024 * 1024);

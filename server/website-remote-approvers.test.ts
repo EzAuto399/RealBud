@@ -1,13 +1,14 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createWebsiteRequests } from './website-requests.ts';
 import { WorkflowDatabase } from './workflow-database.ts';
+import { removeFixture } from './testing/private-fixture.ts';
 import type { RemoteCommandGrant, RemoteEnrollmentSnapshot } from '../shared/website-remote-approvers.ts';
-const closes:(()=>void)[]=[];
-afterEach(()=>{for(const close of closes.splice(0).reverse())close();});
+const closes:(()=>void|Promise<void>)[]=[];
+afterEach(async()=>{for(const close of closes.splice(0).reverse())await close();});
 function fixture(){
  const directory=mkdtempSync(join(tmpdir(),'realbud-remote-enrollment-')),db=new WorkflowDatabase({dir:directory,key:Buffer.alloc(32,4)});
  let time=Date.parse('2026-09-22T06:00:00.000Z'),clockOffset=0,authority='a'.repeat(64),epoch=1;
@@ -47,7 +48,7 @@ function fixture(){
  const requireRemoteScopes=vi.fn(async()=>{}),dispatch=vi.fn(async()=>{throw Error('must never dispatch');}),preview=vi.fn(async()=>{throw Error('must never read sources');});
  const options={directory,db,officeLink:{credentials:async()=>link},identity:()=>identity,authority:()=>authority,revisionEpoch:()=>epoch,getCatalog:async()=>descriptors,requireRemoteScopes,preview,check:async()=>{},dispatch,lookup:async()=>null,cancel:async()=>{},fetch:fetcher,now:()=>time};
  let service=createWebsiteRequests(options);
- closes.push(()=>{service.stop();db.close();rmSync(directory,{recursive:true,force:true});});
+ closes.push(()=>{service.stop();db.close();return removeFixture(directory);});
  const prepare=()=>service.remote.prepare({descriptorIds:descriptors.map(d=>d.id),label:'My workspace',scopes});
  const begin=()=>service.remote.begin({scopes});
  async function candidate(id:string){const row=rows.get(id)!;rows.set(id,{...row,candidate:person,phase:'candidate'});await service.remote.sync(id);return (await service.remote.status()).enrollments.find(e=>e.id===id)!;}
@@ -84,7 +85,7 @@ it('rejects cross-workspace approver receipts and stale local review revisions',
  await expect(f.service.remote.confirm({enrollmentId:c.id,expectedRevision:c.revision,candidateDigest:c.candidateDigest!})).rejects.toThrow();expect(state(f).enrollments[0].snapshot.phase).toBe('candidate');
 });
 it('local disable during an awaited publication prevents activation and drains through shared coordinator',async()=>{
- const f=fixture();await f.prepare();f.pause('v2/remote-approvers/begin');const begun=f.begin();await vi.waitFor(()=>expect(f.paused).toBe(true));
+ const f=fixture();await f.prepare();f.pause('v2/remote-approvers/begin');const begun=f.begin();await vi.waitFor(()=>expect(f.paused).toBe(true),{timeout:30_000});
  const disabled=f.service.remote.disable();f.release();await expect(begun).rejects.toThrow(/changed/);await disabled;
  expect(state(f).enabled).toBe(false);expect(state(f).revoked).toBe(true);expect(marker(f).version).toBe(2);
 });
@@ -114,7 +115,7 @@ it.each(['v2/command-grants','v2/remote-approvers/confirm'])('local disable fenc
  const f=fixture();let waiting:Promise<unknown>;
  if(route==='v2/command-grants'){f.pause(route);waiting=f.prepare();}
  else {await f.prepare();const a=await f.begin(),c=await f.candidate(a.challenge.enrollmentId);f.pause(route);waiting=f.service.remote.confirm({enrollmentId:c.id,expectedRevision:c.revision,candidateDigest:c.candidateDigest!});}
- await vi.waitFor(()=>expect(f.paused).toBe(true));const disabling=f.service.remote.disable();f.release();await expect(waiting).rejects.toThrow(/changed/);await disabling;expect(state(f).enabled).toBe(false);expect(f.dispatch).not.toHaveBeenCalled();
+ await vi.waitFor(()=>expect(f.paused).toBe(true),{timeout:30_000});const disabling=f.service.remote.disable();f.release();await expect(waiting).rejects.toThrow(/changed/);await disabling;expect(state(f).enabled).toBe(false);expect(f.dispatch).not.toHaveBeenCalled();
 });
 it('a missing authority file under a permanent marker holds rather than permitting silent reset',async()=>{
  const f=fixture();await f.prepare();unlinkSync(join(f.directory,'website-requests/remote-approvers.json'));f.restart();await expect(f.service.remote.status()).rejects.toThrow(/recovery/);await expect(f.prepare()).rejects.toThrow(/recovery/);expect(marker(f).version).toBe(2);
@@ -197,7 +198,7 @@ it('read-only reconciliation refuses a changed website installation',async()=>{
  await expect(f.service.remote.sync(c.id)).rejects.toThrow(/matching computer link/);expect(f.calls).toHaveLength(before);
 });
 it('local disable fences an awaited status response before it can overwrite enrollment',async()=>{
- const f=fixture();await f.prepare();const a=await f.begin(),c=await f.candidate(a.challenge.enrollmentId);await f.service.remote.confirm({enrollmentId:c.id,expectedRevision:c.revision,candidateDigest:c.candidateDigest!});f.pause('v2/remote-approvers/status');const syncing=f.service.remote.sync(c.id);await vi.waitFor(()=>expect(f.paused).toBe(true));const disabling=f.service.remote.disable();f.release();await expect(syncing).rejects.toThrow(/changed/);await disabling;expect(state(f).enabled).toBe(false);
+ const f=fixture();await f.prepare();const a=await f.begin(),c=await f.candidate(a.challenge.enrollmentId);await f.service.remote.confirm({enrollmentId:c.id,expectedRevision:c.revision,candidateDigest:c.candidateDigest!});f.pause('v2/remote-approvers/status');const syncing=f.service.remote.sync(c.id);await vi.waitFor(()=>expect(f.paused).toBe(true),{timeout:30_000});const disabling=f.service.remote.disable();f.release();await expect(syncing).rejects.toThrow(/changed/);await disabling;expect(state(f).enabled).toBe(false);
 });
 
 it.each(['changeMember','changeWorkspace'] as const)('read-only reconciliation denies %s before requesting another private workspace enrollment',async change=>{

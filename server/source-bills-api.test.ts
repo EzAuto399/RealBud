@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WorkflowDatabase } from './workflow-database.ts';
@@ -7,9 +7,10 @@ import { SourceBillRegister, previewBillSource } from './source-bills.ts';
 import { createSourceBillsApi, type BillApiHost } from './source-bills-api.ts';
 import { expectedBillsPage } from './expected-bills-page.ts';
 import type { BillFacts, BillMailSource } from '../shared/source-bills.ts';
+import { removeFixture } from './testing/private-fixture.ts';
 
 const resources: { dir: string; db: WorkflowDatabase }[] = [];
-afterEach(() => { for (const { dir, db } of resources.splice(0)) { db.close(); rmSync(dir, { recursive: true, force: true }); } });
+afterEach(async () => { for (const { dir, db } of resources.splice(0)) { db.close(); await removeFixture(dir); } });
 const itemId = 'a'.repeat(64), messageId = 'ab';
 const now = Date.parse('2026-09-21T01:00:00Z');
 const range = { from: '2026-09-01', to: '2026-12-31' };
@@ -245,7 +246,8 @@ describe('private source-bill host API', () => {
     expect(await f.call(`/api/bill-series/${oldPattern.id}`, 'PUT', { expectedRevision: oldPattern.revision, intervalMonths: 1,
       anchorDate: oldPattern.anchorDate, windowBeforeDays: 0, windowAfterDays: 0, timeZone: oldPattern.timeZone, active: false, reviewReason: 'Pause from historical lookup.' })).toMatchObject({ body: { revision: 2, active: false } });
     expect(snapshot).not.toHaveBeenCalled(); expect(f.host.collect).not.toHaveBeenCalled();
-  },30_000);
+    // Saving these 602 records through FULL-sync SQLite took about 45 s on a Windows runner.
+  }, process.platform === 'win32' ? 120_000 : 30_000);
 
   it('binds continuation pages to the property and calendar query and distinguishes a missing exact record', async () => {
     const f = fixture();

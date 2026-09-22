@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, link, chmod } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm, symlink, link, chmod } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { Worker } from 'node:worker_threads';
+import { SHARE_ENV, Worker } from 'node:worker_threads';
 import { spawn } from 'node:child_process';
 import { PrivateBackupCatalog, catalogStorageBudget, type CatalogRecord, type CatalogFile } from './private-backup-catalog.ts';
 import { emptyV3 } from '../shared/desk-v3.ts';
@@ -21,6 +21,7 @@ import { proposalBackupFixture } from './testing/proposal-backup-fixture.ts';
 import { legacyMailBackupFixture } from './testing/mail-backup-fixture.ts';
 import { createPrivateVault } from './private-vault.ts';
 import { MailStorage } from './mail-storage.ts';
+import { plantPrivateFile, removeFixture } from './testing/private-fixture.ts';
 import type { BillMailSource } from '../shared/source-bills.ts';
 import type { BillReviewDraftValue } from '../shared/bill-review-drafts.ts';
 import type { Recipe } from '../shared/contracts.ts';
@@ -28,7 +29,7 @@ import type { Recipe } from '../shared/contracts.ts';
 const roots: string[] = [], catalogs: PrivateBackupCatalog[] = [];
 afterEach(async () => {
   for (const catalog of catalogs.splice(0)) catalog.close();
-  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map(root => removeFixture(root)));
 });
 async function fixture(options: { workspaceId?: string; maxEntries?: number; maxBytes?: number; maxStorageBytes?: number; base?: boolean } = {}) {
   const root = await mkdtemp(join(realpathSync(tmpdir()), 'RealBud encrypted catalog ')); roots.push(root);
@@ -83,8 +84,7 @@ async function mailFixture(f: Awaited<ReturnType<typeof fixture>>) {
   const source = await loadRecords(f, async (db, directory, key) => {
     const vault = createPrivateVault(directory, key);
     for (const [name, value] of saved) await vault.write(name, value);
-    await mkdir(join(directory, 'vault/workflow-inputs'), { recursive: true, mode: 0o700 });
-    await writeFile(join(directory, 'vault/workflow-inputs/accounts-inbox.json'), JSON.stringify(legacy.input), { mode: 0o600 });
+    plantPrivateFile(join(directory, 'vault/workflow-inputs/accounts-inbox.json'), JSON.stringify(legacy.input));
     const storage = new MailStorage({ directory, key, workspaceId: f.workspaceId, workroomDirectory: join(directory, 'vault'), database: db });
     await storage.ready();
   });
@@ -179,6 +179,8 @@ describe('target-key encrypted private backup catalog', () => {
   });
   it('seals atomically and refuses mutations from a stale independent worker and reopened handle', async () => {
     const f = await fixture(), barrier = new SharedArrayBuffer(4), state = new Int32Array(barrier);
+    // A worker's default env is a plain, case-sensitive copy; on Windows the product's
+    // ACL helper reads SystemRoot, so the worker shares the real environment instead.
     const worker = new Worker(`
       const { parentPort, workerData } = require('node:worker_threads');
       (async () => {
@@ -190,7 +192,7 @@ describe('target-key encrypted private backup catalog', () => {
         catch (error) { parentPort.postMessage({ status: error.status, sealed: catalog.summary().sealed }); }
         finally { catalog.close(); }
       })().catch(error => { parentPort.postMessage({ failure: error.message }); process.exitCode = 1; });
-    `, { eval: true, workerData: {
+    `, { eval: true, env: SHARE_ENV, workerData: {
       module: new URL('./private-backup-catalog.ts', import.meta.url).href, key: f.key, barrier, record: handoff(),
       options: { directory: f.catalog.directory, catalogId: f.catalog.catalogId, workspaceId: f.workspaceId },
     } });
@@ -343,8 +345,10 @@ describe('complete bounded business graph validation', () => {
     expect(restarted.validate()).toEqual(summary);
     let count = 0; for (const row of restarted.iterateRecords('handoff')) { expect(row.revision).toBe(++count); }
     expect(count).toBe(5_101);
-  }, 60_000);
-  it('admits more than the v1 3,000-file ceiling and enumerates names without dropping any file', async () => {
+    // Each entry is its own fully synced SQLite commit: about 216 s on a Windows runner.
+  }, process.platform === 'win32' ? 600_000 : 60_000);
+  // Each file is its own fully synced SQLite commit: about 130 s on a Windows runner.
+  it('admits more than the v1 3,000-file ceiling and enumerates names without dropping any file', process.platform === 'win32' ? { timeout: 400_000 } : {}, async () => {
     const f = await fixture(), data = Buffer.from('Fictional retained property note 保留');
     for (let i = 0; i < 3_101; i++) f.catalog.addFile({ path: `vault/properties/retained-${i}.md`, encoding: 'bytes', data });
     expect(f.catalog.seal()).toMatchObject({ files: 3_103, records: 0, sealed: true });

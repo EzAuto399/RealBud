@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,19 +16,19 @@ import { legacyMailBackupFixture } from './testing/mail-backup-fixture.ts';
 import { mailEvidenceHash } from './mail-workspace-integrity.ts';
 import type { PrivateWorkspaceBackup } from '../shared/private-workspace-backup.ts';
 import type { MailScanReceipt } from '../shared/mail-ingestion.ts';
+import { plantPrivateFile, privateTempRoot, removeFixture } from './testing/private-fixture.ts';
 
 const roots: string[] = [], services: ReturnType<typeof createMailIngestionService>[] = [];
 const phrase = 'Fictional retained mail backup passphrase', at = Date.parse('2026-09-21T00:00:00Z');
 afterEach(async () => {
   for (const service of services.splice(0)) await service.close();
-  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map(removeFixture));
 });
 async function writeJson(directory: string, path: string, value: unknown) {
-  await mkdir(join(directory, path, '..'), { recursive: true, mode: 0o700 });
-  await writeFile(join(directory, path), JSON.stringify(value), { mode: 0o600 });
+  plantPrivateFile(join(directory, path), JSON.stringify(value));
 }
 async function fixture() {
-  const directory = await mkdtemp(join(realpathSync(tmpdir()), 'RealBud retained mail backup ')); roots.push(directory);
+  const directory = privateTempRoot(join(realpathSync(tmpdir()), 'RealBud retained mail backup ')); roots.push(directory);
   const key = randomBytes(32), workspaceId = randomUUID(), legacy = legacyMailBackupFixture(workspaceId, at);
   await writeJson(directory, 'company-installation/workspace.json', { version: 1, id: workspaceId, workerMemberKey: null });
   await writeJson(directory, 'desk.json', encryptJson(key, emptyV3({ name: 'Fictional retained mail office', timezone: 'Australia/Brisbane', jurisdictions: [] })));

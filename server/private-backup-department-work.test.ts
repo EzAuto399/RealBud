@@ -1,8 +1,8 @@
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { existsSync, realpathSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { emptyV3 } from '../shared/desk-v3.ts';
 import type { Recipe } from '../shared/contracts.ts';
@@ -23,15 +23,16 @@ import { transformPrivateBackupCatalog } from './private-backup-restore-catalog.
 import { PrivateBackupPreparedStore } from './private-backup-prepared.ts';
 import { preparePrivateBackupRestore } from './private-backup-prepare.ts';
 import { stagePrivateRestoreV2, applyStagedPrivateRestoreV2 } from './private-backup-cold-restore.ts';
+import { plantPrivateFile, privateDir, privateTempRoot, removeFixture, windowsAdmissionTimeout } from './testing/private-fixture.ts';
 
 const env=vi.hoisted(()=>{const previous=process.env.REALBUD_DATA_DIR;process.env.REALBUD_DATA_DIR=`${process.env.TMPDIR??'/tmp'}/rb-department-backup-unopened-${process.pid}-${Date.now()}`;return {previous,guard:process.env.REALBUD_DATA_DIR};});
 const roots:string[]=[],dbs:WorkflowDatabase[]=[],catalogs:PrivateBackupCatalog[]=[],stores:PrivateBackupPreparedStore[]=[];
 const at='2026-09-22T07:00:00.000Z',phrase='Fictional department history encrypted recovery phrase';
-afterEach(async()=>{for(const store of stores.splice(0))await store.close();for(const c of catalogs.splice(0))c.close();for(const db of dbs.splice(0))db.close();await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})));});
-afterAll(async()=>{if(env.previous===undefined)delete process.env.REALBUD_DATA_DIR;else process.env.REALBUD_DATA_DIR=env.previous;await rm(env.guard,{recursive:true,force:true});});
-async function file(directory:string,path:string,value:string|Uint8Array){await mkdir(dirname(join(directory,path)),{recursive:true,mode:0o700});await writeFile(join(directory,path),value,{mode:0o600});}
+afterEach(async()=>{for(const store of stores.splice(0))await store.close();for(const c of catalogs.splice(0))c.close();for(const db of dbs.splice(0))db.close();await Promise.all(roots.splice(0).map(root=>removeFixture(root)));});
+afterAll(async()=>{if(env.previous===undefined)delete process.env.REALBUD_DATA_DIR;else process.env.REALBUD_DATA_DIR=env.previous;await removeFixture(env.guard);});
+async function file(directory:string,path:string,value:string|Buffer){plantPrivateFile(join(directory,path),value);}
 async function fixture(){
-  const directory=await mkdtemp(join(realpathSync(tmpdir()),'RealBud department restore Ω '));roots.push(directory);const key=randomBytes(32),workspaceId=randomUUID();
+  const directory=privateTempRoot(join(realpathSync(tmpdir()),'RealBud department restore Ω '));roots.push(directory);const key=randomBytes(32),workspaceId=randomUUID();
   await file(directory,'desk.key',key);await file(directory,'desk.json',JSON.stringify(encryptJson(key,emptyV3({name:'Fictional workspace',timezone:'UTC',jurisdictions:[]}))));
   await file(directory,'company-installation/workspace.json',JSON.stringify({version:1,id:workspaceId,workerMemberKey:'worker-original'}));
   return {directory,key,workspaceId,backup:createPrivateWorkspaceBackup({directory,key:()=>key,workspaceId,epoch:()=> 'idle',assertIdle(){},assertFresh(){},now:()=>Date.parse(at)})};
@@ -74,7 +75,7 @@ async function restoreV2(source:Fixture,target:Fixture){
   for(const privateText of ['Captured case source','grant-secret-must-not-restore','session-must-not-restore'])expect(archive.includes(Buffer.from(privateText))).toBe(false);
   const decoded=await decodeBackupCatalog(chunks(archive),{directory:join(scratch.directory,'decoded'),key:target.key,passphrase:phrase,expectedArchiveDigest:createHash('sha256').update(archive).digest('hex')});catalogs.push(decoded.catalog);
   const transformed=await catalog(scratch,'transformed',target.key,source.workspaceId);transformPrivateBackupCatalog({source:decoded.catalog,destination:transformed,at:Date.parse(at)+1000});
-  const directoryId=randomUUID(),parent=join(target.directory,'private-backup-v2/prepared');await mkdir(parent,{recursive:true,mode:0o700});
+  const directoryId=randomUUID(),parent=join(target.directory,'private-backup-v2/prepared');privateDir(parent);
   const prepared=await PrivateBackupPreparedStore.create({directory:join(parent,directoryId),key:target.key,workspaceId:source.workspaceId});stores.push(prepared);
   const summary=await preparePrivateBackupRestore({directory:target.directory,key:target.key,source:transformed,prepared,databasePresent:result.databasePresent,assertLease(){}});await prepared.close();
   const stage={directory:target.directory,key:target.key,directoryId,storeId:summary.storeId,workspaceId:source.workspaceId,expectedPreparedDigest:summary.digest,receipt:decoded.receipt,assertFresh(){},assertIdle(){},epoch:()=> 'idle'};
@@ -82,7 +83,7 @@ async function restoreV2(source:Fixture,target:Fixture){
 }
 
 describe('department work history through encrypted backup and cold restore',()=>{
-  it.each(['v1','v2'] as const)('%s preserves factual and pre-enqueue history while holding every restored request',async version=>{
+  it.each(['v1','v2'] as const)('%s preserves factual and pre-enqueue history while holding every restored request',windowsAdmissionTimeout(139),async version=>{
     const source=await fixture(),target=await fixture(),populated=await populate(source);
     if(version==='v1'){const {backup,receipt}=await source.backup.exportBackup(phrase);await target.backup.stageRestore({backup,passphrase:phrase,expectedDigest:receipt.digest});expect((await applyStagedPrivateRestore({directory:target.directory,key:target.key})).restored).toBe(true);}
     else await restoreV2(source,target);

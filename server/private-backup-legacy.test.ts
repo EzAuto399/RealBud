@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash, randomBytes, randomUUID, scryptSync } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { emptyV3 } from '../shared/desk-v3.ts';
 import { encryptJson, decryptJson } from './desk-crypto.ts';
 import { createPrivateWorkspaceBackup, visitLegacyPrivateBackup } from './private-workspace-backup.ts';
@@ -17,13 +17,14 @@ import { preparePrivateBackupRestore } from './private-backup-prepare.ts';
 import { stagePrivateRestoreV2, applyStagedPrivateRestoreV2 } from './private-backup-cold-restore.ts';
 import { createBackupOperationStore, type BackupOperationStore } from './private-backup-operations.ts';
 import { createBackupResourceRuntime } from './private-backup-resource-runtime.ts';
+import { plantPrivateFile, privateDir, privateTempRoot, removeFixture, windowsAdmissionTimeout } from './testing/private-fixture.ts';
 
 const roots: string[] = [], catalogs: PrivateBackupCatalog[] = [], prepared: PrivateBackupPreparedStore[] = [];
 const journals: BackupOperationStore[] = [], runtimes: ReturnType<typeof createBackupResourceRuntime>[] = [];
 const phrase = 'Fictional legacy compatibility passphrase';
 const sha = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
-async function root() { const dir = await mkdtemp(join(realpathSync(tmpdir()), 'RealBud legacy Ω ')); roots.push(dir); return dir; }
-async function write(directory: string, path: string, bytes: Buffer | string) { await mkdir(dirname(join(directory, path)), { recursive: true, mode: 0o700 }); await writeFile(join(directory, path), bytes, { mode: 0o600 }); }
+async function root() { const dir = privateTempRoot(join(realpathSync(tmpdir()), 'RealBud legacy Ω ')); roots.push(dir); return dir; }
+async function write(directory: string, path: string, bytes: Buffer | string) { plantPrivateFile(join(directory, path), bytes); }
 async function* input(bytes: Buffer) { for (let offset = 0; offset < bytes.length; offset += 503) yield bytes.subarray(offset, offset + 503); }
 async function fixture(large = false) {
   const directory = await root(), key = randomBytes(32), workspaceId = randomUUID();
@@ -44,7 +45,7 @@ async function decode(bytes: Buffer, extra: Partial<Parameters<typeof decodeLega
   const result = await decodeLegacyBackupCatalog(input(bytes), { directory: join(await root(), 'decoded'), key: randomBytes(32), passphrase: phrase, expectedArchiveDigest: sha(bytes), ...extra });
   catalogs.push(result.catalog); return result;
 }
-afterEach(async () => { vi.restoreAllMocks(); for (const runtime of runtimes.splice(0)) await runtime.close(); for (const journal of journals.splice(0)) journal.close(); for (const p of prepared.splice(0)) await p.close(); for (const c of catalogs.splice(0)) c.close(); for (const dir of roots.splice(0)) await rm(dir, { recursive: true, force: true }); });
+afterEach(async () => { vi.restoreAllMocks(); for (const runtime of runtimes.splice(0)) await runtime.close(); for (const journal of journals.splice(0)) journal.close(); for (const p of prepared.splice(0)) await p.close(); for (const c of catalogs.splice(0)) c.close(); for (const dir of roots.splice(0)) await removeFixture(dir); });
 
 describe('legacy backup conversion into the durable catalog path', () => {
   it('binds formatted uploaded bytes and preserves real bank originals and exact ordinary files under a new key', async () => {
@@ -61,13 +62,13 @@ describe('legacy backup conversion into the durable catalog path', () => {
     const reopened = await PrivateBackupCatalog.open({ directory: result.catalog.directory, key, workspaceId: f.workspaceId, catalogId: result.catalog.catalogId }); catalogs.push(reopened);
     expect(reopened.validate().records).toBe(1);
   });
-  it('restores converted legacy data through the existing transform, preparation and cold-restore implementation', async () => {
+  it('restores converted legacy data through the existing transform, preparation and cold-restore implementation', windowsAdmissionTimeout(106), async () => {
     const f = await fixture(), directory = await root(), key = randomBytes(32), decoded = await decode(f.bytes, { key });
     await write(directory, 'company-installation/workspace.json', JSON.stringify({ version: 1, id: randomUUID(), workerMemberKey: null }));
     await write(directory, 'desk.json', JSON.stringify(encryptJson(key, emptyV3({ name: 'Fresh fixture', timezone: 'UTC', jurisdictions: [] }))));
     const preview = await PrivateBackupCatalog.create({ directory: join(await root(), 'preview'), key, workspaceId: f.workspaceId, maxEntries: 100, maxBytes: 1024 ** 2 }); catalogs.push(preview);
     transformPrivateBackupCatalog({ source: decoded.catalog, destination: preview, at: 1000 });
-    await mkdir(join(directory, 'private-backup-v2', 'prepared'), { recursive: true, mode: 0o700 });
+    privateDir(join(directory, 'private-backup-v2', 'prepared'));
     const directoryId = randomUUID(), store = await PrivateBackupPreparedStore.create({ directory: join(directory, 'private-backup-v2', 'prepared', directoryId), key, workspaceId: f.workspaceId }); prepared.push(store);
     const summary = await preparePrivateBackupRestore({ directory, key, source: preview, prepared: store, databasePresent: true, assertLease() {} }); await store.close();
     const options = { directory, key, directoryId, storeId: summary.storeId, workspaceId: f.workspaceId, expectedPreparedDigest: summary.digest, receipt: decoded.receipt, assertFresh() {}, assertIdle() {}, epoch: () => 'fixture' };
@@ -79,7 +80,7 @@ describe('legacy backup conversion into the durable catalog path', () => {
     try { expect(new BankReferenceStore(db).get(f.bank.id)).toEqual(f.bank); } finally { db.close(); }
     expect(JSON.parse(await readFile(join(directory, 'company-installation/workspace.json'), 'utf8')).id).toBe(f.workspaceId);
   });
-  it('binds legacy import to actual cold completion, then cleans the prior workspace allocations without exposing its history', async () => {
+  it('binds legacy import to actual cold completion, then cleans the prior workspace allocations without exposing its history', windowsAdmissionTimeout(166), async () => {
     const f = await fixture(), directory = await root(), key = randomBytes(32), previousWorkspaceId = randomUUID(), id = randomUUID();
     await write(directory, 'company-installation/workspace.json', JSON.stringify({ version: 1, id: previousWorkspaceId, workerMemberKey: null }));
     await write(directory, 'desk.json', JSON.stringify(encryptJson(key, emptyV3({ name: 'Fresh fixture', timezone: 'UTC', jurisdictions: [] }))));

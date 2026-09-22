@@ -1,8 +1,9 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { realpathSync, writeFileSync, linkSync } from 'node:fs';
+import { plantPrivateFile, privateTempRoot, removeFixture, windowsAdmissionTimeout } from './testing/private-fixture.ts';
 import type { CustomerPack, CustomerPackArchivePreview, CustomerPackChangePreview, CustomerPackInstallation } from '../shared/customer-packs.ts';
 const control=vi.hoisted(()=>{const root=`${process.env.TMPDIR ?? '/tmp'}/rb-pack-archive-recipes-${process.pid}-${Date.now()}`;process.env.REALBUD_DATA_DIR=root;return {root,fault:undefined as undefined|((path:string,value:any,stage:'before'|'after')=>void)};});
 vi.mock('./private-json.ts',async importOriginal=>{const original=await importOriginal<typeof import('./private-json.ts')>();return {...original,
@@ -11,7 +12,7 @@ const {createCustomerPackService,validateCustomerPackArchiveSet,validateCustomer
 const {loadRecipes}=await import('./recipes.ts');
 const roots:string[]=[];
 beforeEach(async()=>{await mkdir(control.root,{recursive:true});await rm(join(control.root,'recipes.json'),{force:true});});
-afterEach(async()=>{control.fault=undefined;for(const root of roots.splice(0))await rm(root,{recursive:true,force:true});});
+afterEach(async()=>{control.fault=undefined;for(const root of roots.splice(0))await removeFixture(root);});
 afterAll(async()=>{await rm(control.root,{recursive:true,force:true});});
 const pack=():CustomerPack=>({format:'realbud-customer-pack',version:1,id:'fixture-office',revision:1,title:'Fictional office',
   recipes:[{id:'wf-fixture-inbox',title:'Review inbox',description:'Published description 1.',steps:['Read the supplied fictional sources.'],evidence:'Source references.',capabilities:['read-files','analyse','draft'],limits:{maxRuntimeMinutes:2,maxTurns:6},siteNotes:null,schedule:null,allowedOrigins:[]}],
@@ -21,7 +22,7 @@ const pack=():CustomerPack=>({format:'realbud-customer-pack',version:1,id:'fixtu
 const changeRequest=(p:CustomerPackChangePreview)=>({pack:p.pack,expectedInstalledDigest:p.installedDigest,expectedInstalledRevision:p.installedRevision,expectedDigest:p.digest,expectedPreviewDigest:p.previewDigest});
 const archiveRequest=(p:CustomerPackArchivePreview)=>({expectedInstalledDigest:p.installedDigest,expectedInstalledRevision:p.installedRevision,expectedPreviewDigest:p.previewDigest});
 async function fixture(initial=pack()) {
-  const root=await mkdtemp(join(realpathSync(tmpdir()),'rb-pack-archive-'));roots.push(root);
+  const root=privateTempRoot(join(realpathSync(tmpdir()),'rb-pack-archive-'));roots.push(root);
   const options={directory:root,profileDirectory:()=>join(root,'profile'),workroomDirectory:()=>join(root,'vault')};
   const service=createCustomerPackService(options),preview=await service.preview(initial);await service.install(initial,preview.digest);
   let current=initial;
@@ -40,7 +41,7 @@ async function archiveFiles(f:Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe('durable private workflow-pack history archives',()=>{
-  it('keeps two recent rollback configurations, preserves every older byte, enables later upgrades and reconciles old retries after further archives',async()=>{
+  it('keeps two recent rollback configurations, preserves every older byte, enables later upgrades and reconciles old retries after further archives',windowsAdmissionTimeout(287),async()=>{
     const f=await fixture();await f.reach(9);const before=await f.journal(),recipes=loadRecipes(true);
     const p=await f.preview();expect(p.canArchive).toBe(true);expect(p.archive.map(s=>s.installationRevision)).toEqual([1,2,3,4,5,6]);expect(p.keep.map(s=>s.installationRevision)).toEqual([7,8]);
     expect(await f.journal()).toEqual(before);
@@ -67,7 +68,7 @@ describe('durable private workflow-pack history archives',()=>{
     await expect(other.handle(f.route('archive'),'POST',fresh)).rejects.toThrow(/changed after preview/);expect(await f.journal()).toEqual(before);
   });
 
-  it.each(['before-archive','after-archive','before-commit','after-commit'] as const)('recovers a %s interruption after cold reopen without losing history or touching plan approvals',async point=>{
+  it.each(['before-archive','after-archive','before-commit','after-commit'] as const)('recovers a %s interruption after cold reopen without losing history or touching plan approvals',windowsAdmissionTimeout(137),async point=>{
     const f=await fixture();await f.reach(9);const before=await f.journal(),recipes=loadRecipes(true),body=archiveRequest(await f.preview());
     let fired=false;
     control.fault=(path,value,stage)=>{const archive=path.includes('customer-pack-history/'),commit=path.endsWith('customer-packs.json')&&value.installs[f.initial.id].archiveHead&&!value.installs[f.initial.id].archiveIntent;
@@ -113,7 +114,7 @@ describe('durable private workflow-pack history archives',()=>{
     const f=await fixture();await f.reach(4);const body=archiveRequest(await f.preview());let temporary='';
     control.fault=(path,_value,stage)=>{if(path.includes('customer-pack-history/')&&stage==='before'){
       temporary=`${path}.11111111-1111-4111-8111-111111111111.tmp`;
-      writeFileSync(temporary,kind==='foreign' ? 'Preserve unrelated data.' : '{"format":"realbud-pack-',{mode:0o600});
+      plantPrivateFile(temporary,kind==='foreign' ? 'Preserve unrelated data.' : '{"format":"realbud-pack-');
       if(kind==='hardlink')linkSync(temporary,join(f.root,'held-evidence.txt'));
       throw new Error('Synthetic interruption');}};
     await expect(f.archive(body)).rejects.toThrow('Synthetic');
@@ -129,7 +130,7 @@ describe('durable private workflow-pack history archives',()=>{
     control.fault=(path,value,stage)=>{if(path.includes('customer-pack-history/')&&stage==='before'){
       temporary=`${path}.11111111-1111-4111-8111-111111111111.tmp`;
       const expected=Buffer.from(JSON.stringify(value)),index=expected.findIndex(byte=>byte>=0x80);expect(index).toBeGreaterThan(0);
-      partial=Buffer.from(expected.subarray(0,index+1));writeFileSync(temporary,partial,{mode:0o600});throw new Error('Synthetic interruption');}};
+      partial=Buffer.from(expected.subarray(0,index+1));plantPrivateFile(temporary,partial);throw new Error('Synthetic interruption');}};
     await expect(f.archive(body)).rejects.toThrow('Synthetic');
     control.fault=(path,_value,stage)=>{if(path.includes('customer-pack-history/')&&stage==='after'){
       const changed=Buffer.from(partial);changed[changed.length-1]^=1;expect(changed.toString('utf8')).toBe(partial.toString('utf8'));

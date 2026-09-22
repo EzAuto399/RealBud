@@ -1,5 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, it, expect, vi } from 'vitest';
@@ -9,9 +9,10 @@ import { canonicalWebsiteCommand, type WebsiteCommandDescriptor } from '../share
 import { REMOTE_DISCLOSURE_POLICY, type RemoteCommandGrant, type RemoteApproverGrant } from '../shared/website-remote-approvers.ts';
 import type { RemoteWorkState, RemoteWorkReview, RemoteWorkClaimResult } from '../shared/website-remote-work.ts';
 import type { WebsiteRequestRun } from './website-requests.ts';
+import { removeFixture } from './testing/private-fixture.ts';
 const hash = (v: unknown) => createHash('sha256').update(canonicalWebsiteCommand(v)).digest('hex');
-const cleanup: (() => void)[] = [];
-afterEach(() => cleanup.splice(0).reverse().forEach(f => f()));
+const cleanup: (() => void | Promise<void>)[] = [];
+afterEach(async () => { for (const f of cleanup.splice(0).reverse()) await f(); });
 function fixture(operation: 'morning-review' | 'prepare-recipe' = 'morning-review') {
   const directory = mkdtempSync(join(tmpdir(), 'rb-remote-work-')), db = new WorkflowDatabase({ dir: directory, key: Buffer.alloc(32, 9) });
   let time = Date.parse('2026-09-22T06:00:00.000Z'), valid = true, sourceReady = true;
@@ -118,7 +119,7 @@ function fixture(operation: 'morning-review' | 'prepare-recipe' = 'morning-revie
   cleanup.push(() => {
     service.stop();
     db.close();
-    rmSync(directory, { recursive: true, force: true });
+    return removeFixture(directory);
   });
   function request() {
     const id = randomUUID();
@@ -229,7 +230,7 @@ it('changed worker at claim await prevents dispatch and leaves recoverable evide
   f.decide();
   f.pause('v2/work/claim');
   const pending = f.service.sync();
-  await vi.waitFor(() => expect(f.paused).toBe(true));
+  await vi.waitFor(() => expect(f.paused).toBe(true), { timeout: 30_000 });
   f.change();
   f.release();
   await expect(pending).rejects.toThrow();
@@ -243,7 +244,7 @@ it('local disable while publication waits prevents subsequent execution and neve
   f.request();
   f.pause('v2/work/review');
   const pending = f.service.sync();
-  await vi.waitFor(() => expect(f.paused).toBe(true));
+  await vi.waitFor(() => expect(f.paused).toBe(true), { timeout: 30_000 });
   f.service.invalidate();
   f.release();
   await expect(pending).rejects.toThrow();
@@ -313,7 +314,7 @@ it('expired claim during a slow network wait is never dispatched', async () => {
   f.decide();
   f.pause('v2/work/claim');
   const pending = f.service.sync();
-  await vi.waitFor(() => expect(f.paused).toBe(true));
+  await vi.waitFor(() => expect(f.paused).toBe(true), { timeout: 30_000 });
   f.advance(60001);
   f.release();
   await expect(pending).rejects.toThrow(/expired/);

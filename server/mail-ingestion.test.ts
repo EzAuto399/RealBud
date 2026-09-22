@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,6 +15,7 @@ import type { JobRun } from '../shared/contracts.ts';
 import { WorkflowDatabase } from './workflow-database.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { mailRecordId } from './mail-records.ts';
+import { removeFixture } from './testing/private-fixture.ts';
 const services: ReturnType<typeof createNormalizedMailService>[] = [];
 const databases: WorkflowDatabase[] = [];
 // Existing behavioral scenarios deliberately use the explicit compatibility
@@ -29,7 +30,7 @@ function createMailIngestionService(options: Parameters<typeof createNormalizedM
 }
 vi.mock('./recipes.ts', () => ({ getRecipe: (id: string) => ({ id, capabilities: ['read-files'] }) }));
 const roots: string[] = [];
-afterEach(async () => { vi.restoreAllMocks(); for (const s of services.splice(0)) await s.close(); for(const db of databases.splice(0)) db.close(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
+afterEach(async () => { vi.restoreAllMocks(); for (const s of services.splice(0)) await s.close(); for(const db of databases.splice(0)) db.close(); for (const root of roots.splice(0)) await removeFixture(root); });
 const initialTime = Date.parse('2026-09-21T00:00:00Z');
 function thread(id = 'abc', messageId = 'aa'): MailThread {
   return { id, historyComplete: true, messages: [{ id: messageId, threadId: id, at: initialTime - 1000, direction: 'incoming',
@@ -497,7 +498,8 @@ describe('bounded, checkpointed historical mail acquisition', () => {
     const crashing = f.build();
     const running = crashing.collectHistory().catch(error => error);
     const peek = async () => { try { return await f.saved(); } catch { return null; } };
-    for (let i = 0; i < 400 && (await peek())?.windows[0].status !== 'running'; i++) await new Promise(r => setTimeout(r, 5));
+    // Bounded by time, not iterations: Windows admission makes each private write slower.
+    for (const until = Date.now() + 30_000; Date.now() < until && (await peek())?.windows[0].status !== 'running';) await new Promise(r => setTimeout(r, 5));
     const midway = await f.saved();
     // The intent is durable before the provider is asked for the window.
     expect(midway.windows[0]).toMatchObject({ status: 'running', attemptedAt: initialTime, capturedAt: null, pages: 0 });
@@ -567,7 +569,10 @@ describe('bounded, checkpointed historical mail acquisition', () => {
     f.scan.mockImplementationOnce(async () => { await new Promise<void>(resolve => { release = resolve; }); throw new Error('unreachable'); });
     const second = f.build();
     const running = second.startHistory({ accountId: 'mail-a', settingsRevision: 2, historyDays: 30 });
-    await vi.waitFor(async () => expect(await second.historyStatus()).toMatchObject({ state: 'checking', detail: 'History: checking 0 of 1 windows.' }));
+    // Wait for the replanned window to reach its (held) read; the status is
+    // already 'checking' a few private writes before that call is made.
+    await vi.waitFor(() => expect(f.scan).toHaveBeenCalledTimes(1), { timeout: 30_000 });
+    expect(await second.historyStatus()).toMatchObject({ state: 'checking', detail: 'History: checking 0 of 1 windows.' });
     // A repeat check joins the collection in flight instead of starting another.
     expect(second.startHistory({ accountId: 'mail-a', settingsRevision: 2, historyDays: 30 })).toBe(running);
     expect(f.scan).toHaveBeenCalledTimes(1);
@@ -617,7 +622,7 @@ describe('bounded, checkpointed historical mail acquisition', () => {
     // A restart resumes from the checkpoint without re-reading a complete window.
     const booted = f.build();
     await booted.resumeHistoryIfPending();
-    await vi.waitFor(async () => expect(await booted.historyStatus()).toMatchObject({ state: 'complete' }));
+    await vi.waitFor(async () => expect(await booted.historyStatus()).toMatchObject({ state: 'complete' }), { timeout: 30_000 });
     expect(f.requested()).toEqual([1, 2]);
     expect(await booted.historyCoverage()).toMatchObject({ complete: true, windowsComplete: 3, messagesSeen: 3 });
     // Nothing is pending, so a later boot starts no collection of its own.

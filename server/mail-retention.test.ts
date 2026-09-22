@@ -3,6 +3,7 @@ import { mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from 'node
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { WorkflowDatabase } from './workflow-database.ts';
@@ -13,6 +14,7 @@ import { legacyMailBackupFixture } from './testing/mail-backup-fixture.ts';
 import { privateDirectory, writePrivateJson } from './private-json.ts';
 import { mailRecordId } from './mail-records.ts';
 import { MailStorage } from './mail-storage.ts';
+import { removeFixture } from './testing/private-fixture.ts';
 import type { MailScanRequest, MailScanResult } from '../shared/mail-ingestion.ts';
 const roots: string[] = [], services: ReturnType<typeof createMailIngestionService>[] = [], databases: WorkflowDatabase[] = [], children: ChildProcess[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const child of children.splice(0))
@@ -22,7 +24,9 @@ afterEach(async () => { vi.restoreAllMocks(); for (const child of children.splic
     } for (const service of services.splice(0))
     await service.close(); for (const db of databases.splice(0))
     db.close(); for (const root of roots.splice(0))
-    await rm(root, { recursive: true, force: true }); });
+    await removeFixture(root); });
+// A child start on Windows also pays one PowerShell admission per private object it opens.
+const WINDOWS = process.platform === 'win32';
 const time = Date.parse('2026-09-21T00:00:00Z'), key = Buffer.alloc(32, 19), workspaceId = 'mail-retention-fixture';
 async function fixture() {
     const directory = await mkdtemp(join(realpathSync(tmpdir()), 'rb-mail-retention-'));
@@ -102,10 +106,10 @@ describe('normalized permanent mail retention and process fencing', () => {
     it('fences a real child-process owner and recovers only after verified process exit', async () => {
         const f = await fixture();
         const path = join(f.directory, 'owner.mjs');
-        await writeFile(path, `import { createMailIngestionService } from ${JSON.stringify(resolve('server/mail-ingestion.ts'))};\nconst authority=${JSON.stringify(f.authority)};\nconst service=createMailIngestionService({directory:${JSON.stringify(f.directory)},workspaceId:${JSON.stringify(workspaceId)},key:Buffer.alloc(32,19),workroomDirectory:${JSON.stringify(f.options.workroomDirectory)},now:()=>${time},authorize:async()=>authority,scan:async()=>{console.log('ACQUIRED');await new Promise(()=>{});}});\nsetInterval(()=>{},1000);await service.collect();\n`);
+        await writeFile(path, `import { createMailIngestionService } from ${JSON.stringify(pathToFileURL(resolve('server/mail-ingestion.ts')).href)};\nconst authority=${JSON.stringify(f.authority)};\nconst service=createMailIngestionService({directory:${JSON.stringify(f.directory)},workspaceId:${JSON.stringify(workspaceId)},key:Buffer.alloc(32,19),workroomDirectory:${JSON.stringify(f.options.workroomDirectory)},now:()=>${time},authorize:async()=>authority,scan:async()=>{console.log('ACQUIRED');await new Promise(()=>{});}});\nsetInterval(()=>{},1000);await service.collect();\n`);
         const child = spawn(process.execPath, ['--experimental-strip-types', path], { cwd: f.directory, env: { PATH: process.env.PATH }, stdio: ['ignore', 'pipe', 'pipe'] });
         children.push(child);
-        await new Promise<void>((accept, reject) => { const timeout = setTimeout(() => reject(new Error('Child did not acquire mail intent')), 10000); let output = ''; child.stdout!.on('data', chunk => { output += chunk; if (output.includes('ACQUIRED')) {
+        await new Promise<void>((accept, reject) => { const timeout = setTimeout(() => reject(new Error('Child did not acquire mail intent')), WINDOWS ? 60000 : 10000); let output = ''; child.stdout!.on('data', chunk => { output += chunk; if (output.includes('ACQUIRED')) {
             clearTimeout(timeout);
             accept();
         } }); child.once('exit', code => { clearTimeout(timeout); reject(new Error(`Child ended before acquisition (${code})`)); }); });
@@ -122,7 +126,7 @@ describe('normalized permanent mail retention and process fencing', () => {
         await service.collect();
         expect((await service.scanHistory()).total).toBe(2);
         expect(f.scan).toHaveBeenCalledTimes(1);
-    }, 20000);
+    }, WINDOWS ? 120000 : 20000);
     it('retains more than 2000 multilingual tasks and 1000 failed scan receipts without aggregate refusal', async () => {
         const f = await fixture(), a = f.make();
         f.scan.mockRejectedValue(new Error('Synthetic unavailable provider'));

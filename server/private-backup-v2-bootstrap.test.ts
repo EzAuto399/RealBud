@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
-import { mkdtempSync, realpathSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { realpathSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +10,7 @@ import { PrivateBackupPreparedStore } from './private-backup-prepared.ts';
 import { stagePrivateRestoreV2, PRIVATE_RESTORE_V2_STAGE_FILE } from './private-backup-cold-restore.ts';
 import { emptyV3 } from '../shared/desk-v3.ts';
 import { encryptJson } from './desk-crypto.ts';
+import { plantPrivateFile, plantPrivateFiles, privateDir, privateTempRoot, removeFixture } from './testing/private-fixture.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const fixtures: string[] = [], children: { child: ChildProcess; closed: Promise<void> }[] = [];
@@ -21,18 +22,16 @@ async function stop(owned: (typeof children)[number]) {
   if (owned.child.exitCode === null && !owned.child.signalCode) { owned.child.kill('SIGKILL'); await owned.closed; }
   expect(owned.child.exitCode !== null || owned.child.signalCode !== null).toBe(true);
 }
-afterEach(async () => { for (const child of children.splice(0)) await stop(child); for (const directory of fixtures.splice(0)) rmSync(directory, { recursive: true, force: true }); });
+afterEach(async () => { for (const child of children.splice(0)) await stop(child); for (const directory of fixtures.splice(0)) await removeFixture(directory); });
 
 async function fixture() {
-  const directory = mkdtempSync(join(realpathSync(tmpdir()), 'RealBud v2 boot Ω ')); fixtures.push(directory);
+  const directory = privateTempRoot(join(realpathSync(tmpdir()), 'RealBud v2 boot Ω ')); fixtures.push(directory);
   const key = randomBytes(32), workspaceId = randomUUID(), directoryId = randomUUID();
-  mkdirSync(join(directory, 'company-installation'), { mode: 0o700 });
   const identity = JSON.stringify({ version: 1, id: workspaceId, workerMemberKey: null });
-  writeFileSync(join(directory, 'company-installation/workspace.json'), identity, { mode: 0o600 });
-  writeFileSync(join(directory, 'desk.key'), key, { mode: 0o600 });
-  writeFileSync(join(directory, 'config.json'), JSON.stringify({ instances: { fixture: { driver: 'not-a-real-driver' } } }), { mode: 0o600 });
+  plantPrivateFiles([[join(directory, 'company-installation/workspace.json'), identity], [join(directory, 'desk.key'), key],
+    [join(directory, 'config.json'), JSON.stringify({ instances: { fixture: { driver: 'not-a-real-driver' } } })]]);
   const book = emptyV3({ name: 'Fictional bootstrap agency', timezone: 'UTC', jurisdictions: [] }); book.revision = 2; book.hands = 'held';
-  const preparedParent = join(directory, 'private-backup-v2', 'prepared'); mkdirSync(preparedParent, { recursive: true, mode: 0o700 });
+  const preparedParent = join(directory, 'private-backup-v2', 'prepared'); privateDir(preparedParent);
   const store = await PrivateBackupPreparedStore.create({ directory: join(preparedParent, directoryId), key, workspaceId });
   let summary;
   try {
@@ -76,7 +75,7 @@ describe('real service bootstrap for prepared v2 restoration', () => {
     expect(existsSync(join(f.directory, PRIVATE_RESTORE_V2_STAGE_FILE))).toBe(false);
     // Exercise the real export route, admission middleware and status route.
     // Scrypt/file capture provides an actual pause, without a test-only endpoint.
-    writeFileSync(join(f.directory, 'vault/workflow-inputs/pause.txt'), Buffer.alloc(4 * 1024 * 1024, 70), { mode: 0o600 });
+    plantPrivateFile(join(f.directory, 'vault/workflow-inputs/pause.txt'), Buffer.alloc(4 * 1024 * 1024, 70));
     const beforeBook = readFileSync(join(f.directory, 'desk.json'));
     let finished = false;
     const exporting = fetch(`${server.base}/api/private-backup/export`, { method: 'POST', signal: AbortSignal.timeout(10_000), headers: { 'x-realbud-session': session.token, 'content-type': 'application/json' }, body: JSON.stringify({ passphrase: 'Fictional pause export passphrase' }) })
@@ -101,7 +100,7 @@ describe('real service bootstrap for prepared v2 restoration', () => {
   }, 20_000);
   it.each(['conflicting stage', 'changed target', 'wrong key'])('holds startup before opening application stores: %s', async attack => {
     const f = await fixture();
-    if (attack === 'conflicting stage') writeFileSync(join(f.directory, 'private-workspace-restore.json'), 'fictional conflicting stage');
+    if (attack === 'conflicting stage') plantPrivateFile(join(f.directory, 'private-workspace-restore.json'), 'fictional conflicting stage');
     if (attack === 'changed target') writeFileSync(join(f.directory, 'desk.json'), 'fictional changed target');
     if (attack === 'wrong key') writeFileSync(join(f.directory, 'desk.key'), randomBytes(32));
     const stage = readFileSync(join(f.directory, PRIVATE_RESTORE_V2_STAGE_FILE)), server = await start(f.directory);

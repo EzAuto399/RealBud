@@ -1,11 +1,12 @@
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { readServiceAdminPolicy, verifyServiceAdminPassword } from "./service-admin.ts";
+import { privateDir, removeFixture } from "./testing/private-fixture.ts";
 
 const root = mkdtempSync(join(tmpdir(), "realbud-admin-provision-test-"));
 const script = join(dirname(fileURLToPath(import.meta.url)), "../scripts/provision-service-admin.mjs");
@@ -21,7 +22,9 @@ function run(args: string[], input: string | Buffer = "") {
 function provision(dir: string, password: string | Buffer = PASSWORD, flags: string[] = []) {
   return run(["--data-dir", dir, "--password-stdin", ...flags], password);
 }
-function privateDirectory(dir: string) { mkdirSync(dir, { mode: 0o700 }); if (process.platform !== "win32") chmodSync(dir, 0o700); }
+// An operator-made private folder: on Windows it gets its own protected descriptor,
+// which the provisioner verifies before using an existing folder.
+function privateDirectory(dir: string) { privateDir(dir); if (process.platform !== "win32") chmodSync(dir, 0o700); }
 function cleanOutput(result: ReturnType<typeof run>) {
   const output = `${result.stdout}${result.stderr}`;
   expect(output).not.toContain(PASSWORD);
@@ -29,7 +32,7 @@ function cleanOutput(result: ReturnType<typeof run>) {
   expect(output).not.toContain("scrypt$");
   return output;
 }
-afterAll(() => rmSync(root, { recursive: true, force: true }));
+afterAll(() => removeFixture(root));
 
 // scripts/provision-service-admin.mjs refuses to run below Node 24, and
 // package.json declares engines.node ">=24". On an older runtime every CLI case

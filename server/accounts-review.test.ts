@@ -9,8 +9,12 @@ import { accountsReviewSchemas } from "./accounts-review-schemas.ts";
 import { captureAccountsReview, validateAccountsReview } from "./accounts-review.ts";
 import { executeRecipeJob } from "./job-executor.ts";
 import { JobRunStore } from "./job-runs.ts";
+import { removeFixture } from "./testing/private-fixture.ts";
 const dirs: string[] = [];
-afterEach(() => { for (const path of dirs.splice(0)) rmSync(path, { recursive: true, force: true }); });
+// Stores hold their execution-history database open in the fixture folder; close them before removal (Windows).
+const stores: JobRunStore[] = [];
+const track = (store: JobRunStore) => { stores.push(store); return store; };
+afterEach(async () => { for (const store of stores.splice(0)) store.close(); for (const path of dirs.splice(0)) await removeFixture(path); });
 const pack = JSON.parse(readFileSync("pack/workflows/austin-accounts/workflows.json", "utf8"));
 const recipe: Recipe = { ...pack.recipes[0], revision: 1, status: "shadow", planApprovedAt: 1, approvedRevision: 1, createdAt: 1, updatedAt: 1, attachment: null, submitAcknowledgedAt: null };
 function setup(count = 3) {
@@ -81,11 +85,11 @@ describe("accounts review host boundary", () => {
   it("fails before starting the worker for an unavailable bound input", async () => {
     const { dir, path } = setup(); rmSync(path);
     let calls = 0;
-    const { run } = await executeRecipeJob(recipe, { mode: "prepare", trigger: "manual", idempotencyKey: "unavailable" }, { workroom: dir, store: new JobRunStore({ file: join(dir, "runs.json") }), ask: async () => { calls++; return { ok: true, stdout: "{}" }; } });
+    const { run } = await executeRecipeJob(recipe, { mode: "prepare", trigger: "manual", idempotencyKey: "unavailable" }, { workroom: dir, store: track(new JobRunStore({ file: join(dir, "runs.json") })), ask: async () => { calls++; return { ok: true, stdout: "{}" }; } });
     expect(calls).toBe(0); expect(run.status).toBe("failed"); expect(run.detail).toContain("input-unavailable");
   });
   it("persists the exact canonical queue and replays without a second worker call", async () => {
-    const { dir, value } = setup(); const store = new JobRunStore({ file: join(dir, "runs.json") }); let calls = 0;
+    const { dir, value } = setup(); const store = track(new JobRunStore({ file: join(dir, "runs.json") })); let calls = 0;
     const options = { workroom: dir, store, ask: async () => { calls++; return { ok: true as const, stdout: JSON.stringify(prepared(value)) }; } };
     const input = { mode: "prepare" as const, trigger: "manual" as const, idempotencyKey: "same-review" };
     const first = await executeRecipeJob(recipe, input, options); const replay = await executeRecipeJob(recipe, input, options);
@@ -209,7 +213,7 @@ it("derives a missing duplicate hold projection from the explicit item decision"
 
 it("stops unconfirmed bank format before model use and preserves the failed-input request on replay", async () => {
  const { chosen, dir } = recorded("SYN-ANZ-REFERENCE-PREP-FORMAT-UNCONFIRMED", "live-02");
- const store = new JobRunStore({ file: join(dir, "runs.json") }); let calls = 0;
+ const store = track(new JobRunStore({ file: join(dir, "runs.json") })); let calls = 0;
  const options = { store, workroom: dir, ask: async () => { calls++; return {ok:true as const, stdout:"{}"}; } };
  const request = {mode:"prepare" as const, trigger:"manual" as const, idempotencyKey:"format-preflight"};
  const first = await executeRecipeJob(chosen, request, options), replay = await executeRecipeJob(chosen, request, options);

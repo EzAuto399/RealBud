@@ -1,10 +1,11 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile, readdir, symlink } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile, readdir, symlink } from 'node:fs/promises';
 import { realpathSync, writeFileSync, linkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import type { CustomerPack, PackSkillArchivePreview, PackSkillHistoryPage, CustomerPackChangePreview } from '../shared/customer-packs.ts';
+import { plantPrivateFile, privateTempRoot, removeFixture, windowsAdmissionTimeout } from './testing/private-fixture.ts';
 import { validateSkillJournalRoot, validateSkillOverride, skillHistoryHash, skillArchivePath, isSkillArchivePath, validateSkillHistoryArchive } from './customer-pack-skill-history.ts';
 const control=vi.hoisted(()=>{const root=`${process.env.TMPDIR??'/tmp'}/rb-skill-history-recipes-${process.pid}-${Date.now()}`;process.env.REALBUD_DATA_DIR=root;return {root,fault:undefined as undefined|((path:string,value:any,stage:'before'|'after')=>void)};});
 vi.mock('./private-json.ts',async original=>{const actual=await original<typeof import('./private-json.ts')>();return {...actual,writePrivateJson:async(...args:Parameters<typeof actual.writePrivateJson>)=>{control.fault?.(args[0],args[1],'before');await actual.writePrivateJson(...args);control.fault?.(args[0],args[1],'after');}};});
@@ -12,14 +13,14 @@ const {createCustomerPackService}=await import('./customer-packs.ts');
 const {loadRecipes}=await import('./recipes.ts');
 const roots:string[]=[];
 beforeEach(async()=>{await mkdir(control.root,{recursive:true});await rm(join(control.root,'recipes.json'),{force:true});});
-afterEach(async()=>{control.fault=undefined;for(const root of roots.splice(0))await rm(root,{recursive:true,force:true});});
+afterEach(async()=>{control.fault=undefined;for(const root of roots.splice(0))await removeFixture(root);});
 afterAll(async()=>{await rm(control.root,{recursive:true,force:true});});
 const hash=(v:string)=>createHash('sha256').update(v).digest('hex');
 const pack=():CustomerPack=>({format:'realbud-customer-pack',version:1,id:'fixture-office',revision:1,title:'Fictional office',recipes:[{id:'wf-fixture-inbox',title:'Review inbox',description:'Review supplied data.',steps:['Read sources.'],evidence:'Source references.',capabilities:['read-files','analyse','draft'],limits:{maxRuntimeMinutes:2,maxTurns:6},siteNotes:null,schedule:null,allowedOrigins:[]}],skills:[{id:'fixture-guidance',name:'Fictional guidance',description:'Review supplied sources.',instructions:'Read source references first.',license:'Fictional license.'}],workflows:[{id:'inbox',title:'Review inbox',recipeIds:['wf-fixture-inbox'],checks:['input-coverage']}],dependencies:{runtime:'hermes-property',mode:'supplied-source-preparation',schedules:'off',permissions:'local-review-required'}});
 const confirmation=(p:PackSkillArchivePreview)=>({expectedInstalledDigest:p.installedDigest,expectedInstalledRevision:p.installedRevision,expectedActiveDigest:p.activeDigest,expectedActiveRevision:p.activeRevision,expectedHead:p.head,expectedPreviewDigest:p.previewDigest});
 const change=(p:CustomerPackChangePreview)=>({pack:p.pack,expectedInstalledDigest:p.installedDigest,expectedInstalledRevision:p.installedRevision,expectedDigest:p.digest,expectedPreviewDigest:p.previewDigest});
 async function fixture(count=6,padding=0){
- const root=await mkdtemp(join(realpathSync(tmpdir()),'rb-skill-history-'));roots.push(root);const initial=pack(),active:string[]=[],pause=vi.fn(async()=>{});
+ const root=privateTempRoot(join(realpathSync(tmpdir()),'rb-skill-history-'));roots.push(root);const initial=pack(),active:string[]=[],pause=vi.fn(async()=>{});
  const options={directory:root,profileDirectory:()=>join(root,'profile'),workroomDirectory:()=>join(root,'vault'),activeRecipeIds:()=>active,pauseSchedules:pause};const service=createCustomerPackService(options);
  await service.install(initial,(await service.preview(initial)).digest);
  const native=join(root,'profile/skills/realbud-fixture-office-fixture-guidance/SKILL.md'),baseline=await readFile(native,'utf8'),journalPath=join(root,'customer-packs.json');
@@ -35,7 +36,7 @@ async function fixture(count=6,padding=0){
 }
 
 describe('reviewed instruction history archival',()=>{
- it('archives 100 versions without changing active instructions, plan approvals, schedules or binding; continues through proposal101 and archived revert102',async()=>{
+ it('archives 100 versions without changing active instructions, plan approvals, schedules or binding; continues through proposal101 and archived revert102',windowsAdmissionTimeout(142),async()=>{
   const f=await fixture(100);const before=await f.journal(),native=await readFile(f.native),recipes=loadRecipes(true),binding=await f.service.packRecipeBinding(f.initial.id,f.initial.recipes[0].id),context=await f.service.instructionContext(f.initial.recipes[0].id);
   const p=await f.preview();expect(p.canArchive).toBe(true);expect(p.archive).toHaveLength(98);expect(p.keep.map(v=>v.revision)).toEqual([99,100]);expect(JSON.stringify(p)).not.toContain('Reviewed improvement 100.');expect(await f.journal()).toEqual(before);
   await f.call('archive',confirmation(p));let journal=await f.journal(),override=journal.installs[f.initial.id].overrides[f.initial.skills[0].id],head=override.archiveHead;
@@ -83,7 +84,7 @@ describe('reviewed instruction history archival',()=>{
  });
 
  it.each(['foreign','hardlink','changed'] as const)('preserves %s temporary evidence and retains complete inline versions',async kind=>{
-  const f=await fixture(),body=confirmation(await f.preview());let temp='';control.fault=(path,value,stage)=>{if(path.includes('/customer-skill-history/')&&stage==='before'){temp=`${path}.11111111-1111-4111-8111-111111111111.tmp`;writeFileSync(temp,kind==='foreign'?'Unrelated evidence':JSON.stringify(value).slice(0,50),{mode:0o600});if(kind==='hardlink')linkSync(temp,join(f.root,'linked-evidence'));throw new Error('Synthetic fault');}};
+  const f=await fixture(),body=confirmation(await f.preview());let temp='';control.fault=(path,value,stage)=>{if(path.includes('/customer-skill-history/')&&stage==='before'){temp=`${path}.11111111-1111-4111-8111-111111111111.tmp`;plantPrivateFile(temp,kind==='foreign'?'Unrelated evidence':JSON.stringify(value).slice(0,50));if(kind==='hardlink')linkSync(temp,join(f.root,'linked-evidence'));throw new Error('Synthetic fault');}};
   await expect(f.call('archive',body)).rejects.toThrow('Synthetic');control.fault=kind==='changed'?(path,_value,stage)=>{if(path.includes('/customer-skill-history/')&&stage==='after')writeFileSync(temp,'Changed evidence',{mode:0o600});}:undefined;
   await expect(f.call('resume-archive',body,f.reopen())).rejects.toThrow(/staging/);expect((await f.journal()).installs[f.initial.id].overrides[f.initial.skills[0].id].versions).toHaveLength(6);expect(await readFile(temp,'utf8')).not.toBe('');
  });
@@ -99,7 +100,7 @@ describe('reviewed instruction history archival',()=>{
   expect(isSkillArchivePath(path)).toBe(true);expect(isSkillArchivePath(path.replace(f.initial.id,'../escape'))).toBe(false);expect(()=>validateSkillHistoryArchive(record,f.initial.id,f.initial.skills[0].id,head.digest)).not.toThrow();expect(()=>validateSkillHistoryArchive(record,'foreign-office',f.initial.skills[0].id,head.digest)).toThrow();
   j.version=1;expect(()=>validateSkillJournalRoot(j)).toThrow();record.versions[0].content+='tampered';expect(skillHistoryHash(record)).not.toBe(head.digest);expect(()=>validateSkillHistoryArchive(record,f.initial.id,f.initial.skills[0].id,head.digest)).toThrow();
  });
- it('preserves shared archive roots in configuration snapshots, removal, reintroduction and rollback, and reconciles an older archive retry',async()=>{
+ it('preserves shared archive roots in configuration snapshots, removal, reintroduction and rollback, and reconciles an older archive retry',windowsAdmissionTimeout(208),async()=>{
   const f=await fixture(),first=confirmation(await f.preview());await f.call('archive',first);const head=(await f.journal()).installs[f.initial.id].overrides[f.initial.skills[0].id].archiveHead;
   await f.proposal(7);await f.proposal(8);await f.call('archive',confirmation(await f.preview()));const second=(await f.journal()).installs[f.initial.id].overrides[f.initial.skills[0].id].archiveHead;expect(second.batches).toBe(2);
   const current=await f.journal();await f.call('archive',first,f.reopen());expect(await f.journal()).toEqual(current);
@@ -125,7 +126,7 @@ describe('reviewed instruction history archival',()=>{
   f.pause.mockImplementationOnce(async()=>{throw new Error('Synthetic pause interruption');});await expect(f.call('revert',body)).rejects.toThrow('Synthetic');const saved=await f.journal(),native=await readFile(f.native),recipes=loadRecipes(true);saved.installs[f.initial.id].upgrade.target.revision+=2;await writeFile(f.journalPath,JSON.stringify(saved));await expect(f.call('revert',body,f.reopen())).rejects.toThrow(/pending skill revision/);expect(await readFile(f.native)).toEqual(native);expect(loadRecipes(true)).toEqual(recipes);expect(await f.journal()).toEqual(saved);
  });
 
- it('requires v2 when the only skill history root lives inside an archived removed configuration',async()=>{
+ it('requires v2 when the only skill history root lives inside an archived removed configuration',windowsAdmissionTimeout(106),async()=>{
   const f=await fixture();await f.call('archive',confirmation(await f.preview()));const absent=structuredClone(f.initial);absent.skills=[];
   for(let revision=2;revision<=5;revision++){absent.revision=revision;await f.service.upgrade(change(await f.service.previewUpgrade(absent)));}
   const preview=(await f.service.handle(`/api/customer-packs/${f.initial.id}/archive-preview`,'POST',{}))!.body as any;

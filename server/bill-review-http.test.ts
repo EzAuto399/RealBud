@@ -2,12 +2,13 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { WorkflowDatabase } from './workflow-database.ts';
+import { plantPrivateFile, privateDir, removeFixture } from './testing/private-fixture.ts';
 import { proposalBackupFixture } from './testing/proposal-backup-fixture.ts';
 import type { BillReviewDraft, BillReviewDraftPage, BillReviewDraftValue } from '../shared/bill-review-drafts.ts';
 import type { BillProposalHistory } from '../shared/bill-proposals.ts';
@@ -15,6 +16,9 @@ import type { BillProposalHistory } from '../shared/bill-proposals.ts';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const scratch = mkdtempSync(join(realpathSync(tmpdir()), 'RealBud review HTTP '));
 const data = join(scratch, 'data'), workspaceId = randomUUID(), key = Buffer.alloc(32, 47);
+// Windows admits each private object the service creates through one PowerShell
+// launch, so a fresh boot there takes several seconds longer (qa-private-backup-boundaries).
+const WINDOWS_BOOT = process.platform === 'win32', BOOT_BUDGET_MS = WINDOWS_BOOT ? 90_000 : 15_000;
 let child: ChildProcess | undefined, closed: Promise<unknown> | undefined, base = '', token = '', logs = '';
 let seeded: Awaited<ReturnType<typeof proposalBackupFixture>>;
 let savedDraft: BillReviewDraft;
@@ -46,7 +50,7 @@ async function start() {
   closed = new Promise((resolve, reject) => { child!.once('close', resolve); child!.once('error', reject); });
   for (const stream of [child.stdout, child.stderr]) stream?.on('data', bytes => { logs = (logs + bytes).slice(-12_000); });
   let ready = false;
-  for (let i = 0; i < 100; i++) {
+  for (const began = Date.now(); Date.now() - began < BOOT_BUDGET_MS;) {
     if (child.exitCode !== null || child.signalCode) throw new Error(`Fictional review service stopped: ${logs}`);
     const health = await fetch(base + '/api/health', { signal: AbortSignal.timeout(500) }).then(async r => await r.json() as { pid?: number }).catch(() => null);
     if (health?.pid === child.pid) { ready = true; break; }
@@ -56,12 +60,13 @@ async function start() {
   token = (await (await fetch(base + '/api/session')).json() as { token: string }).token;
 }
 beforeAll(async () => {
-  mkdirSync(join(data, 'company-installation'), { recursive: true, mode: 0o700 });
-  writeFileSync(join(data, 'config.json'), JSON.stringify({ instances: { fixture: { driver: 'not-a-real-driver' } } }), { mode: 0o600 });
-  writeFileSync(join(data, 'company-installation/workspace.json'), JSON.stringify({ version: 1, id: workspaceId, workerMemberKey: null }), { mode: 0o600 });
+  // The desktop app creates the data folder and these files with their own protected descriptors.
+  privateDir(join(data, 'company-installation'));
+  plantPrivateFile(join(data, 'config.json'), JSON.stringify({ instances: { fixture: { driver: 'not-a-real-driver' } } }));
+  plantPrivateFile(join(data, 'company-installation/workspace.json'), JSON.stringify({ version: 1, id: workspaceId, workerMemberKey: null }));
   await start();
-}, 20_000);
-afterAll(async () => { await stop(); rmSync(scratch, { recursive: true, force: true }); });
+}, WINDOWS_BOOT ? 120_000 : 20_000);
+afterAll(async () => { await stop(); await removeFixture(scratch); });
 
 describe('durable bill review and historical proposal HTTP boundary', () => {
   it('protects every read and write without creating drafts on first use', async () => {
@@ -92,7 +97,7 @@ describe('durable bill review and historical proposal HTTP boundary', () => {
     expect((await (await request(`/api/bill-review-drafts/${id}`)).json() as { draft: BillReviewDraft }).draft).toEqual(savedDraft);
     const page = await (await request('/api/bill-review-drafts?limit=1')).json() as BillReviewDraftPage;
     expect(page.items[0].id).toBe(id); expect(page.items[0]).not.toHaveProperty('fields'); expect(page.items[0]).not.toHaveProperty('reason');
-  }, 20_000);
+  }, WINDOWS_BOOT ? 120_000 : 20_000);
 
   it('reads a durable intent with no run despite unconfigured managed provider authority', async () => {
     const db = new WorkflowDatabase({ dir: data, key });

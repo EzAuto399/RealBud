@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, realpathSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { realpathSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { PrivateBackupPreparedStore } from './private-backup-prepared.ts';
@@ -11,20 +11,21 @@ import { parsePrivateRestoreReceipt, type PrivateBackupReceipt } from '../shared
 import { createBackupOperationStore } from './private-backup-operations.ts';
 import { PRIVATE_BACKUP_COMPLETION_FILE, readBackupColdCompletion } from './private-backup-completion.ts';
 import type { PrivateBackupTransferOperation } from '../shared/private-backup-transfers.ts';
+import { plantPrivateFile, privateDir, privateTempRoot, removeFixture, windowsAdmissionTimeout } from './testing/private-fixture.ts';
 
 const roots: string[] = [], stores: PrivateBackupPreparedStore[] = [];
 const sha = (v: Uint8Array | string) => createHash('sha256').update(v).digest('hex');
-function write(root: string, path: string, bytes: Uint8Array | string) { mkdirSync(dirname(join(root, path)), { recursive: true, mode: 0o700 }); writeFileSync(join(root, path), bytes, { mode: 0o600 }); }
+function write(root: string, path: string, bytes: Buffer | string) { plantPrivateFile(join(root, path), bytes); }
 async function* input(bytes: Buffer) { for (let offset = 0; offset < bytes.length; offset += 509) yield bytes.subarray(offset, offset + 509); }
 async function fixture() {
-  const directory = mkdtempSync(join(realpathSync(tmpdir()), 'RealBud cold restore Ω ')); roots.push(directory);
+  const directory = privateTempRoot(join(realpathSync(tmpdir()), 'RealBud cold restore Ω ')); roots.push(directory);
   const key = randomBytes(32), workspaceId = randomUUID(), directoryId = randomUUID();
   const oldIdentity = JSON.stringify({ version: 1, id: randomUUID(), workerMemberKey: null });
   const nextIdentity = JSON.stringify({ version: 1, id: workspaceId, workerMemberKey: null });
   write(directory, 'company-installation/workspace.json', oldIdentity);
   write(directory, 'vault/USER.md', 'Fictional untouched fixture');
   write(directory, 'vault/README.md', 'Fictional removable fixture');
-  const parent = join(directory, 'private-backup-v2', 'prepared'); mkdirSync(parent, { recursive: true, mode: 0o700 });
+  const parent = join(directory, 'private-backup-v2', 'prepared'); privateDir(parent);
   const prepared = await PrivateBackupPreparedStore.create({ directory: join(parent, directoryId), key, workspaceId }); stores.push(prepared);
   const expected = new Map([
     ['company-installation/workspace.json', Buffer.from(nextIdentity)],
@@ -38,10 +39,10 @@ async function fixture() {
   const options = { directory, key, directoryId, storeId: summary.storeId, workspaceId, expectedPreparedDigest: summary.digest, receipt, assertFresh: () => {}, assertIdle: () => {}, epoch: () => 'fixture-idle' };
   return { directory, key, prepared, expected, options, receipt };
 }
-afterEach(async () => { vi.restoreAllMocks(); for (const store of stores.splice(0)) await store.close(); for (const directory of roots.splice(0)) rmSync(directory, { force: true, recursive: true }); });
+afterEach(async () => { vi.restoreAllMocks(); for (const store of stores.splice(0)) await store.close(); for (const directory of roots.splice(0)) await removeFixture(directory); });
 
 describe('bounded cold private restore coordination', () => {
-  it('publishes authenticated operation completion only after exact cold application and reconciles the restored identity', async () => {
+  it('publishes authenticated operation completion only after exact cold application and reconciles the restored identity', windowsAdmissionTimeout(131), async () => {
     const f = await fixture(), previousWorkspaceId = JSON.parse(readFileSync(join(f.directory, 'company-installation/workspace.json'), 'utf8')).id as string;
     const settings = { directory: join(f.directory, 'private-backup-v2', 'operations'), key: f.key, workspaceId: previousWorkspaceId };
     const journal = await createBackupOperationStore(settings), operationId = randomUUID();
@@ -89,7 +90,7 @@ describe('bounded cold private restore coordination', () => {
     } finally { reopened.close(); }
   });
 
-  it.each(['created', 'initializing'] as const)('recovers the empty mutex after a real process kill while its lock is %s', async point => {
+  it.each(['created', 'initializing'] as const)('recovers the empty mutex after a real process kill while its lock is %s', { timeout: 15_000, ...windowsAdmissionTimeout(78) }, async point => {
     const f = await fixture();
     const program = `import { stagePrivateRestoreV2 } from ${JSON.stringify(new URL('./private-backup-cold-restore.ts', import.meta.url).href)}; let text=''; for await(const chunk of process.stdin) text+=chunk; const { key, point, ...options }=JSON.parse(text); await stagePrivateRestoreV2({...options,key:Buffer.from(key,'hex'),assertIdle(){},assertFresh(){},epoch(){return 'fixture';},lockFault(at){if(at===point){process.stdout.write('initializing\\n');Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0);}}});`;
     const envModule: string = '../scripts/service-smoke-env.mjs'; const { serviceSmokeEnv } = await import(envModule);
@@ -107,8 +108,8 @@ describe('bounded cold private restore coordination', () => {
     finally { clearTimeout(timer); if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); await closed; }
     await stagePrivateRestoreV2(f.options); await applyStagedPrivateRestoreV2(f.options);
     for (const [path, expected] of f.expected) expect(readFileSync(join(f.directory, path))).toEqual(expected);
-  }, 15_000);
-  it.each(['stage', 'apply'] as const)('releases the real process lock after a killed %s owner and preserves retry evidence', async phase => {
+  });
+  it.each(['stage', 'apply'] as const)('releases the real process lock after a killed %s owner and preserves retry evidence', { timeout: 15_000, ...windowsAdmissionTimeout(80) }, async phase => {
     const f = await fixture();
     if (phase === 'apply') await stagePrivateRestoreV2(f.options);
     const program = `
@@ -147,9 +148,9 @@ describe('bounded cold private restore coordination', () => {
     await expect(applyStagedPrivateRestoreV2(f.options)).resolves.toMatchObject({ restored: true });
     for (const [path, bytes] of f.expected) expect(readFileSync(join(f.directory, path))).toEqual(bytes);
     expect(existsSync(join(f.directory, 'vault/README.md'))).toBe(false);
-  }, 15_000);
+  });
 
-  it('holds competing stage writers until the owning operation finishes', async () => {
+  it('holds competing stage writers until the owning operation finishes', windowsAdmissionTimeout(80), async () => {
     const f = await fixture(), validate = PrivateBackupPreparedStore.prototype.validate;
     let entered!: () => void, release!: () => void;
     const started = new Promise<void>(resolve => { entered = resolve; }), gate = new Promise<void>(resolve => { release = resolve; });
@@ -160,7 +161,7 @@ describe('bounded cold private restore coordination', () => {
     await owner;
     await expect(applyStagedPrivateRestoreV2(f.options)).resolves.toMatchObject({ restored: true });
   });
-  it('stages without replacing business files, applies exact bytes, then records completion once', async () => {
+  it('stages without replacing business files, applies exact bytes, then records completion once', windowsAdmissionTimeout(82), async () => {
     const f = await fixture(), original = readFileSync(join(f.directory, 'vault/USER.md'));
     expect(await stagePrivateRestoreV2(f.options)).toEqual({ needsRestart: true, receipt: f.receipt });
     expect(readFileSync(join(f.directory, 'vault/USER.md'))).toEqual(original);
@@ -174,7 +175,7 @@ describe('bounded cold private restore coordination', () => {
     expect(await applyStagedPrivateRestoreV2(f.options)).toEqual({ restored: false });
   });
 
-  it.each([1, 2, 3, 4])('resumes exact intended files after interruption following replacement/removal %i', async count => {
+  it.each([1, 2, 3, 4])('resumes exact intended files after interruption following replacement/removal %i', windowsAdmissionTimeout(93), async count => {
     const f = await fixture(); await stagePrivateRestoreV2(f.options); let writes = 0;
     await expect(applyStagedPrivateRestoreV2({ ...f.options, afterWrite() { if (++writes === count) throw new Error('fixture interrupted'); } })).rejects.toThrow('fixture interrupted');
     expect(existsSync(join(f.directory, PRIVATE_RESTORE_V2_STAGE_FILE))).toBe(true);
@@ -193,7 +194,7 @@ describe('bounded cold private restore coordination', () => {
     expect(existsSync(join(f.directory, PRIVATE_RESTORE_V2_STAGE_FILE))).toBe(true);
   });
 
-  it('preserves a target changed while its replacement stream was being written', async () => {
+  it('preserves a target changed while its replacement stream was being written', windowsAdmissionTimeout(67), async () => {
     const f = await fixture(); await stagePrivateRestoreV2(f.options);
     const read = PrivateBackupPreparedStore.prototype.readFile;
     vi.spyOn(PrivateBackupPreparedStore.prototype, 'readFile').mockImplementation(async function* (this: PrivateBackupPreparedStore, path: string, options) {

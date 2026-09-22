@@ -1,13 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BrowserRuntime, browserStepFailure, type BrowserJson } from "./browser-runtime.ts";
+import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 
 const roots: string[] = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map(p => rm(p, { recursive: true, force: true }))); });
+afterEach(async () => { await Promise.all(roots.splice(0).map(p => removeFixture(p))); });
 export async function browserFixture() {
-  const root = await mkdtemp(join(tmpdir(), "rb-browser-test-")); roots.push(root);
+  const root = privateTempRoot(join(tmpdir(), "rb-browser-test-")); roots.push(root);
   const sessions = new Set<string>(); let counter = 0;
   const browser = { instance_id: "chrome-work", browser_name: "Chrome", label: "Work", extension_version: "0.3.0", extension_protocol_version: "1.3" };
   let browsers: BrowserJson[] = [browser]; let borrowPolicy = "always"; let stopFails = false; let startUnknown = false;

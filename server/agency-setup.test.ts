@@ -1,16 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgencySetupObservations, AgencySetupView } from '../shared/agency-setup.ts';
 import type { MailHistoryStatus } from '../shared/mail-ingestion.ts';
 import { createAgencySetupService, defaultAgencySettings, validateAgencySettings } from './agency-setup.ts';
+import { plantPrivateFile, privateTempRoot, removeFixture } from './testing/private-fixture.ts';
 
 const roots: string[] = [];
-afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
+afterEach(async () => { for (const root of roots.splice(0)) await removeFixture(root); });
 async function fixture() {
-  const root = await mkdtemp(join(realpathSync(tmpdir()), 'rb-agency-setup-')); roots.push(root);
+  const root = privateTempRoot(join(realpathSync(tmpdir()), 'rb-agency-setup-')); roots.push(root);
   let clock = 1_790_000_000_000;
   const observed: AgencySetupObservations = {
     gmail: { accounts: [{ id: 'mail-agency-a', label: 'Fictional accounts Gmail', status: 'active' }], accountId: 'mail-agency-a', state: 'verified', checkedAt: clock, bindingRevision: 'private-source-v1' },
@@ -130,7 +131,7 @@ describe('private reusable agency setup', () => {
     expect((await f.service.get()).workflows.find(item => item.id === 'morning-priorities')?.acceptance).toBe('not-verified');
   });
   it('preserves malformed, cross-workspace and linked state and blocks mutation', async () => {
-    const f = await fixture(), path = join(f.root, 'agency-setup.json'); await writeFile(path, '{ damaged bytes', { mode: 0o600 });
+    const f = await fixture(), path = join(f.root, 'agency-setup.json'); plantPrivateFile(path, '{ damaged bytes');
     await expect(f.service.save({ expectedRevision: 0, settings: f.settings() })).rejects.toMatchObject({ status: 503, code: 'agency_setup_recovery_required' });
     expect(await readFile(path, 'utf8')).toBe('{ damaged bytes'); await rm(path);
     await f.service.save({ expectedRevision: 0, settings: f.settings() });

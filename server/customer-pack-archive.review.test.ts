@@ -1,9 +1,10 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { realpathSync, writeFileSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { privateBackupTargetPaths } from './private-backup-capture.ts';
+import { plantPrivateFile, privateTempRoot, removeFixture, windowsAdmissionTimeout } from './testing/private-fixture.ts';
 import type { CustomerPack, CustomerPackArchivePreview, CustomerPackChangePreview, CustomerPackInstallation } from '../shared/customer-packs.ts';
 const control=vi.hoisted(()=>{const root=`${process.env.TMPDIR ?? '/tmp'}/rb-pack-archive-recipes-${process.pid}-${Date.now()}`;process.env.REALBUD_DATA_DIR=root;return {root,fault:undefined as undefined|((path:string,value:any,stage:'before'|'after')=>void)};});
 vi.mock('./private-json.ts',async importOriginal=>{const original=await importOriginal<typeof import('./private-json.ts')>();return {...original,
@@ -11,7 +12,7 @@ vi.mock('./private-json.ts',async importOriginal=>{const original=await importOr
 const {createCustomerPackService,validateCustomerPackArchiveSet}=await import('./customer-packs.ts');
 const roots:string[]=[];
 beforeEach(async()=>{await mkdir(control.root,{recursive:true});await rm(join(control.root,'recipes.json'),{force:true});});
-afterEach(async()=>{control.fault=undefined;for(const root of roots.splice(0))await rm(root,{recursive:true,force:true});});
+afterEach(async()=>{control.fault=undefined;for(const root of roots.splice(0))await removeFixture(root);});
 afterAll(async()=>{await rm(control.root,{recursive:true,force:true});});
 const pack=():CustomerPack=>({format:'realbud-customer-pack',version:1,id:'fixture-office',revision:1,title:'Fictional office',
   recipes:[{id:'wf-fixture-inbox',title:'Review inbox',description:'Published description 1.',steps:['Read the supplied fictional sources.'],evidence:'Source references.',capabilities:['read-files','analyse','draft'],limits:{maxRuntimeMinutes:2,maxTurns:6},siteNotes:null,schedule:null,allowedOrigins:[]}],
@@ -21,7 +22,7 @@ const pack=():CustomerPack=>({format:'realbud-customer-pack',version:1,id:'fixtu
 const changeRequest=(p:CustomerPackChangePreview)=>({pack:p.pack,expectedInstalledDigest:p.installedDigest,expectedInstalledRevision:p.installedRevision,expectedDigest:p.digest,expectedPreviewDigest:p.previewDigest});
 const archiveRequest=(p:CustomerPackArchivePreview)=>({expectedInstalledDigest:p.installedDigest,expectedInstalledRevision:p.installedRevision,expectedPreviewDigest:p.previewDigest});
 async function fixture(initial=pack()) {
-  const root=await mkdtemp(join(realpathSync(tmpdir()),'rb-pack-archive-'));roots.push(root);
+  const root=privateTempRoot(join(realpathSync(tmpdir()),'rb-pack-archive-'));roots.push(root);
   const options={directory:root,profileDirectory:()=>join(root,'profile'),workroomDirectory:()=>join(root,'vault')};
   const service=createCustomerPackService(options),preview=await service.preview(initial);await service.install(initial,preview.digest);
   let current=initial;
@@ -40,7 +41,7 @@ async function archiveFiles(f:Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe('independent pack archival recovery review',()=>{
-  it('refuses a missing recent generation even when committed archive bytes and counters are intact',async()=>{
+  it('refuses a missing recent generation even when committed archive bytes and counters are intact',windowsAdmissionTimeout(129),async()=>{
     const f=await fixture();await f.reach(9);await f.archive(archiveRequest(await f.preview()));
     const before=await f.journal();expect(before.installs[f.initial.id].history.map((s:any)=>s.generation)).toEqual([7,8]);
     before.installs[f.initial.id].history.shift();
@@ -52,7 +53,7 @@ describe('independent pack archival recovery review',()=>{
     await expect(f.reopen().list()).rejects.toThrow(/recovery/);
   });
 
-  it('resumes an archive interrupted during its atomic temp write without permanently breaking backup discovery',async()=>{
+  it('resumes an archive interrupted during its atomic temp write without permanently breaking backup discovery',windowsAdmissionTimeout(137),async()=>{
     const f=await fixture();await f.reach(9);const body=archiveRequest(await f.preview());
     let temporary='';
     control.fault=(path,_value,stage)=>{
@@ -60,7 +61,7 @@ describe('independent pack archival recovery review',()=>{
         // Exact sibling naming/permissions used by writePrivateJson. A process
         // death after the first write bypasses that helper's finally cleanup.
         temporary=`${path}.11111111-1111-4111-8111-111111111111.tmp`;
-        writeFileSync(temporary,'{"format":"realbud-pack-', {mode:0o600});
+        plantPrivateFile(temporary,'{"format":"realbud-pack-');
         throw new Error('Synthetic process termination during archive temp write');
       }
     };

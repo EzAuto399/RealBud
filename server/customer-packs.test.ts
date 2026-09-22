@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -7,11 +7,12 @@ import { join } from 'node:path';
 import type { Recipe } from '../shared/contracts.ts';
 import { austinCustomerPack } from './customer-pack-definition.ts';
 import { createCustomerPackService, validateCustomerPack } from './customer-packs.ts';
+import { privateTempRoot, removeFixture } from './testing/private-fixture.ts';
 
 const roots: string[] = [];
-afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
+afterEach(async () => { for (const root of roots.splice(0)) await removeFixture(root); });
 async function fixture() {
-  const root = await mkdtemp(join(realpathSync(tmpdir()), 'rb-customer-pack-')); roots.push(root);
+  const root = privateTempRoot(join(realpathSync(tmpdir()), 'rb-customer-pack-')); roots.push(root);
   let recipes: Recipe[] = [];
   const active: string[] = [];
   const saveRecipes = vi.fn((inputs: unknown[]) => {

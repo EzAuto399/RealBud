@@ -113,8 +113,10 @@ describe.skipIf(process.platform !== 'win32')('native Windows profile setup', WI
     // own descriptor is not yet protected — and RealBud's admission still
     // refuses that inherited descriptor, which is why the restrict follows.
     mkdirSync(middle);
+    // Its owner is the token's default owner: the account, or Administrators
+    // under an elevated token (as on a hosted runner); admission allows both.
     expect(profileAclWitness([middle])[0]).toMatchObject({
-      protected: false, currentOwner: true, onlyPrivateGrants: true, currentFullControl: true, hasDeny: false,
+      protected: false, ownerAllowed: true, onlyPrivateGrants: true, currentFullControl: true, hasDeny: false,
     });
     expect(() => windowsFilePrivacySync(middle, 'directory')).toThrow(/windows-acl:inheritance-not-protected/);
     rmSync(middle, { recursive: true });

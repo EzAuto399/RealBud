@@ -1,8 +1,8 @@
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, rm, writeFile, symlink, link } from 'node:fs/promises';
+import { mkdir, readFile, rm, symlink, link } from 'node:fs/promises';
 import { existsSync, realpathSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { CustomerPack, PackSkillHistoryPage, PackSkillHistorySelection, PackSkillRevertPreview } from '../shared/customer-packs.ts';
 import { emptyV3 } from '../shared/desk-v3.ts';
@@ -17,14 +17,15 @@ import { preparePrivateBackupRestore } from './private-backup-prepare.ts';
 import { stagePrivateRestoreV2, applyStagedPrivateRestoreV2, privateRestoreTargetHash } from './private-backup-cold-restore.ts';
 import { packHistoryArchive, nextArchiveHead, packArchivePath, packChangeHash, type PackUpgradeState, type PackSnapshot, type SkillOverride } from './customer-pack-upgrades.ts';
 import { skillHistoryArchive, skillHistoryHash, skillArchivePath, nextSkillArchiveHead, skillArchivePreviewDigest } from './customer-pack-skill-history.ts';
+import { plantPrivateFile, privateDir, privateTempRoot, removeFixture, windowsAdmissionTimeout } from './testing/private-fixture.ts';
 const env=vi.hoisted(()=>{const previous=process.env.REALBUD_DATA_DIR;process.env.REALBUD_DATA_DIR=`${process.env.TMPDIR??'/tmp'}/rb-skill-backup-unopened-${process.pid}-${Date.now()}`;return {previous,guard:process.env.REALBUD_DATA_DIR};});
 const roots:string[]=[],catalogs:PrivateBackupCatalog[]=[],stores:PrivateBackupPreparedStore[]=[];
 const at='2026-09-22T07:00:00.000Z',phrase='Fictional reviewed instruction recovery phrase';
-afterEach(async()=>{for(const store of stores.splice(0))await store.close();for(const c of catalogs.splice(0))c.close();await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})));});
+afterEach(async()=>{for(const store of stores.splice(0))await store.close();for(const c of catalogs.splice(0))c.close();await Promise.all(roots.splice(0).map(removeFixture));});
 afterAll(async()=>{if(env.previous===undefined)delete process.env.REALBUD_DATA_DIR;else process.env.REALBUD_DATA_DIR=env.previous;await rm(env.guard,{recursive:true,force:true});});
 const sha=(value:string|Uint8Array)=>createHash('sha256').update(value).digest('hex');
-async function file(directory:string,path:string,value:string|Uint8Array){await mkdir(dirname(join(directory,path)),{recursive:true,mode:0o700});await writeFile(join(directory,path),value,{mode:0o600});}
-async function fixture(){const directory=await mkdtemp(join(realpathSync(tmpdir()),'RealBud skill restore Ω '));roots.push(directory);const key=randomBytes(32),workspaceId=randomUUID();await file(directory,'desk.key',key);await file(directory,'desk.json',JSON.stringify(encryptJson(key,emptyV3({name:'Fictional workspace',timezone:'UTC',jurisdictions:[]}))));await file(directory,'company-installation/workspace.json',JSON.stringify({version:1,id:workspaceId,workerMemberKey:null}));const backup=createPrivateWorkspaceBackup({directory,key:()=>key,workspaceId,epoch:()=> 'idle',assertIdle(){},assertFresh(){},now:()=>Date.parse(at)});return {directory,key,workspaceId,backup};}
+async function file(directory:string,path:string,value:string|Uint8Array){plantPrivateFile(join(directory,path),Buffer.from(value));}
+async function fixture(){const directory=privateTempRoot(join(realpathSync(tmpdir()),'RealBud skill restore Ω '));roots.push(directory);const key=randomBytes(32),workspaceId=randomUUID();await file(directory,'desk.key',key);await file(directory,'desk.json',JSON.stringify(encryptJson(key,emptyV3({name:'Fictional workspace',timezone:'UTC',jurisdictions:[]}))));await file(directory,'company-installation/workspace.json',JSON.stringify({version:1,id:workspaceId,workerMemberKey:null}));const backup=createPrivateWorkspaceBackup({directory,key:()=>key,workspaceId,epoch:()=> 'idle',assertIdle(){},assertFresh(){},now:()=>Date.parse(at)});return {directory,key,workspaceId,backup};}
 type Fixture=Awaited<ReturnType<typeof fixture>>;
 async function openPack(directory:string){process.env.REALBUD_DATA_DIR=directory;vi.resetModules();const recipes=await import('./recipes.ts'),packs=await import('./customer-packs.ts');const service=packs.createCustomerPackService({directory,profileDirectory:()=>join(directory,'profile'),workroomDirectory:()=>join(directory,'vault'),activeRecipeIds:()=>[],learningStatus:()=>({supported:true,policyReady:true,enabled:true})});return {recipes,service,validate:packs.validateCustomerPack};}
 async function populate(f:Fixture){
@@ -52,7 +53,7 @@ async function restoreV2(source:Fixture,target:Fixture,expected:Awaited<ReturnTy
  const archive=await collect(encodeBackupCatalog(captured,{passphrase:phrase,createdAt:at,databasePresent:result.databasePresent}));expect(archive.includes(Buffer.from('Reviewed fictional instruction'))).toBe(false);
  const decoded=await decodeBackupCatalog(chunks(archive),{directory:join(scratch.directory,'decoded'),key:target.key,passphrase:phrase,expectedArchiveDigest:sha(archive)});catalogs.push(decoded.catalog);
  const transformed=await catalog(scratch,'transformed',target.key,source.workspaceId);transformPrivateBackupCatalog({source:decoded.catalog,destination:transformed,at:Date.parse(at)+1000});
- const directoryId=randomUUID(),parent=join(target.directory,'private-backup-v2/prepared');await mkdir(parent,{recursive:true,mode:0o700});const prepared=await PrivateBackupPreparedStore.create({directory:join(parent,directoryId),key:target.key,workspaceId:source.workspaceId});stores.push(prepared);
+ const directoryId=randomUUID(),parent=join(target.directory,'private-backup-v2/prepared');privateDir(parent);const prepared=await PrivateBackupPreparedStore.create({directory:join(parent,directoryId),key:target.key,workspaceId:source.workspaceId});stores.push(prepared);
  const summary=await preparePrivateBackupRestore({directory:target.directory,key:target.key,source:transformed,prepared,databasePresent:result.databasePresent,assertLease(){}});await prepared.close();
  const stage={directory:target.directory,key:target.key,directoryId,storeId:summary.storeId,workspaceId:source.workspaceId,expectedPreparedDigest:summary.digest,receipt:decoded.receipt,assertFresh(){},assertIdle(){},epoch:()=> 'idle'};await stagePrivateRestoreV2(stage);expect((await applyStagedPrivateRestoreV2(stage)).restored).toBe(true);
 }
@@ -74,7 +75,7 @@ async function repairAndRevert(target:Fixture,expected:Awaited<ReturnType<typeof
  for(const [path,bytes]of expected.files)if(path!=='customer-packs.json')expect(await readFile(join(target.directory,path))).toEqual(bytes);
 }
 describe('encrypted reviewed instruction history cold restore',()=>{
- it.each(['v1','v2'] as const)('%s preserves shared and removed-skill archive roots, rekeys, repairs native instructions and performs reviewed archived revert',async version=>{
+ it.each(['v1','v2'] as const)('%s preserves shared and removed-skill archive roots, rekeys, repairs native instructions and performs reviewed archived revert',windowsAdmissionTimeout(324),async version=>{
   const source=await fixture(),target=await fixture(),expected=await populate(source);expect(source.key.equals(target.key)).toBe(false);
   const obsolete=JSON.parse(expected.files.get(expected.skillPaths[0])!.toString());obsolete.archivedAt='2026-09-20T00:00:00.000Z';const obsoletePath=skillArchivePath(expected.initial.id,skillHistoryHash(obsolete));await file(target.directory,obsoletePath,JSON.stringify(obsolete));
   if(version==='v1'){const {backup,receipt}=await source.backup.exportBackup(phrase);await target.backup.stageRestore({backup,passphrase:phrase,expectedDigest:receipt.digest});expect((await applyStagedPrivateRestore({directory:target.directory,key:target.key})).restored).toBe(true);}else await restoreV2(source,target,expected);

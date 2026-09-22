@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { mkdirPrivate } from './private-json.ts';
 import { constants } from 'node:fs';
-import { lstat, mkdir, open, unlink } from 'node:fs/promises';
+import { lstat, open, unlink } from 'node:fs/promises';
 import { dirname, join, parse, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { encryptJson, decryptJson, isEncryptedEnvelope } from './desk-crypto.ts';
@@ -50,9 +51,9 @@ async function safeParents(path: string): Promise<void> {
 }
 async function privateFolder(path: string): Promise<void> {
   await safeParents(path);
-  const created = await mkdir(path, { recursive: true, mode: 0o700 }), s = await lstat(path);
+  const created = await mkdirPrivate(path), s = await lstat(path);
   if (!s.isDirectory() || s.isSymbolicLink() || process.platform !== 'win32' && ((s.mode & 0o077) || s.uid !== process.getuid?.())) fail('Backup transfer storage is not private.', 503);
-  await windowsFilePrivacy(path, 'directory', created !== undefined);
+  if (!created) await windowsFilePrivacy(path, 'directory', false);
 }
 async function checkedFile(path: string, absent = false) {
   await safeParents(dirname(path));

@@ -1,15 +1,16 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { realpathSync } from 'node:fs';
+import { privateTempRoot, removeFixture } from './testing/private-fixture.ts';
 import type { CustomerPack, CustomerPackChangePreview } from '../shared/customer-packs.ts';
 const recipeRoot=vi.hoisted(()=>{const value=`${process.env.TMPDIR ?? '/tmp'}/rb-pack-upgrade-recipes-${process.pid}-${Date.now()}`;process.env.REALBUD_DATA_DIR=value;return value;});
 const {createCustomerPackService,validateCustomerPackUpgradeJournal}=await import('./customer-packs.ts');
 const {saveRecipe,saveRecipesAtomically,resetRecipeApprovalsAtomically,loadRecipes,getRecipe,patchRecipe}=await import('./recipes.ts');
 const roots:string[]=[];
 beforeEach(async()=>{await mkdir(recipeRoot,{recursive:true});await rm(join(recipeRoot,'recipes.json'),{force:true});});
-afterEach(async()=>{vi.restoreAllMocks();for(const root of roots.splice(0))await rm(root,{recursive:true,force:true});});
+afterEach(async()=>{vi.restoreAllMocks();for(const root of roots.splice(0))await removeFixture(root);});
 afterAll(async()=>{await rm(recipeRoot,{recursive:true,force:true});});
 const pack=():CustomerPack=>({format:'realbud-customer-pack',version:1,id:'fixture-office',revision:1,title:'Fictional office',
   recipes:[{id:'wf-fixture-inbox',title:'Review inbox',description:'Published description.',steps:['Read the supplied fictional sources.'],evidence:'Source references.',capabilities:['read-files','analyse','draft'],limits:{maxRuntimeMinutes:2,maxTurns:6},siteNotes:'Earlier published notes.',schedule:null,allowedOrigins:[]}],
@@ -17,7 +18,7 @@ const pack=():CustomerPack=>({format:'realbud-customer-pack',version:1,id:'fixtu
   skills:[{id:'fixture-guidance',name:'Fictional guidance',description:'Review fictional supplied sources.',instructions:'# Fictional guidance\nRead the source first.\n',license:'Fictional test license.'}],
   dependencies:{runtime:'hermes-property',mode:'supplied-source-preparation',schedules:'off',permissions:'local-review-required'}});
 async function fixture(initial=pack()) {
-  const root=await mkdtemp(join(realpathSync(tmpdir()),'rb-pack-upgrade-'));roots.push(root);
+  const root=privateTempRoot(join(realpathSync(tmpdir()),'rb-pack-upgrade-'));roots.push(root);
   const active:string[]=[],reset=vi.fn(resetRecipeApprovalsAtomically),save=vi.fn(saveRecipesAtomically);
   const options={directory:root,profileDirectory:()=>join(root,'profile'),workroomDirectory:()=>join(root,'vault'),activeRecipeIds:()=>active,
     resetRecipeApprovals:reset,saveRecipes:save,learningStatus:()=>({supported:true,policyReady:true,enabled:true})};

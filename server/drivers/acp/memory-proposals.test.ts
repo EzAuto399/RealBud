@@ -1,10 +1,11 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ensureDirs } from '../../config.ts';
 import type { ProviderDriver, ProviderInstance, SendTurnInput } from '../../contracts.ts';
 import { recordEvents, type EventRecorder } from '../../testing/events.ts';
+import { removeFixture } from '../../testing/private-fixture.ts';
 import { ServiceEntitlementError } from '../../service-entitlement.ts';
 import { HermesAgentDriver } from './hermes.ts';
 import { GrokAgentDriver } from './grok.ts';
@@ -82,7 +83,8 @@ describe('Hermes typed memory proposal ACP capability', () => {
         expect(alive, 'Owned fictional ACP process must exit before deleting its files').toBe(false);
       }
     });
-    rmSync(scratch, { recursive: true, force: true }); instance = undefined; recorder = undefined;
+    // Windows can hold the fictional worker's cwd a moment after its pid is gone.
+    await removeFixture(scratch); instance = undefined; recorder = undefined;
   });
   async function create(driver: ProviderDriver<AcpConfig> = HermesAgentDriver) {
     instance = await driver.create({ instanceId: 'fictional-memory-worker', displayName: 'Fictional memory worker', enabled: true,

@@ -1,15 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { LoopManager, nextOccurrence } from './routines.ts';
 import { runMorningMailWorkflow } from './morning-mail-workflow.ts';
+import { removeFixture } from './testing/private-fixture.ts';
 import type { JobRun, LoopRun, Recipe } from '../shared/contracts.ts';
 import type { MailScanReceipt, MailWorkspaceMetadata } from '../shared/mail-ingestion.ts';
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+// Managers hold their execution-history database open; close them before removal (Windows).
+const managers: LoopManager[] = [];
+const track = (manager: LoopManager) => { managers.push(manager); return manager; };
+afterEach(async () => { for (const manager of managers.splice(0)) manager.close(); for (const root of roots.splice(0)) await removeFixture(root); });
 function file() { const root = mkdtempSync(join(tmpdir(), 'rb-mail-clock-')); roots.push(root); return join(root, 'loops.json'); }
 const recipe = { id: 'wf-austin-accounts-inbox-triage', revision: 1, approvedRevision: 1, status: 'active', planApprovedAt: 1 } as Recipe;
 function pipeline(count = 1) {
@@ -31,7 +35,7 @@ describe('morning mailbox production clock and pipeline boundary', () => {
     const { deps } = pipeline(), path = file(), now = Date.parse('2026-09-21T22:00:00Z');
     const execute = vi.fn(async (_loop: unknown, run: LoopRun) => runMorningMailWorkflow(run, deps));
     const options = { file: path, now: () => now, hostTimezone: 'UTC', execute };
-    const manager = new LoopManager(options);
+    const manager = track(new LoopManager(options));
     manager.setEnabled('morning-arrears', false); manager.setEnabled('owner-letter', false);
     const loop = manager.listLoops().find(row => row.id === 'inbound-triage')!;
     const request = { requestId: randomUUID(), expectedRevision: loop.revision };
@@ -42,7 +46,7 @@ describe('morning mailbox production clock and pipeline boundary', () => {
     const execution = deps.execute.mock.calls as unknown as Array<[Recipe, { trigger: string; loopRunId: string }]>;
     expect(execution[0][1]).toMatchObject({ trigger: 'manual', loopRunId: run.id });
     expect(manager.listLoops().find(row => row.id === loop.id)?.enabled).toBe(false);
-    const restarted = new LoopManager(options);
+    const restarted = track(new LoopManager(options));
     expect(restarted.runNow(loop.id, request)?.id).toBe(run.id); await restarted.tick();
     expect(execute).toHaveBeenCalledTimes(1);
     expect(restarted.listRuns().find(row => row.id === run.id)?.status).toBe('awaiting-approval');
@@ -51,7 +55,7 @@ describe('morning mailbox production clock and pipeline boundary', () => {
   it('runs at the configured office morning even when the host and UTC weekday differ', async () => {
     const { deps } = pipeline(); let now = Date.parse('2026-09-20T21:59:00Z');
     const execute = vi.fn(async (_loop: unknown, run: LoopRun) => runMorningMailWorkflow(run, deps));
-    const manager = new LoopManager({ file: file(), now: () => now, hostTimezone: 'America/New_York', execute });
+    const manager = track(new LoopManager({ file: file(), now: () => now, hostTimezone: 'America/New_York', execute }));
     manager.setEnabled('morning-arrears', false); manager.setEnabled('owner-letter', false);
     const loop = manager.patchClock('inbound-triage', { enabled: true, time: '08:00', weekdays: [1], timezone: 'Australia/Brisbane' });
     expect(loop.nextRunAt).toBe(Date.parse('2026-09-20T22:00:00Z'));

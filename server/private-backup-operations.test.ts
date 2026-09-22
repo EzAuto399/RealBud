@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -10,6 +10,7 @@ import { backupResourceMarker, createBackupOperationStore, parseBackupResourceMa
 import type { PrivateBackupTransferOperation } from '../shared/private-backup-transfers.ts';
 import { encryptJson, decryptJson } from './desk-crypto.ts';
 import { PRIVATE_BACKUP_COMPLETION_FILE, type BackupColdCompletion } from './private-backup-completion.ts';
+import { plantPrivateFile, plantPrivateFiles, removeFixture } from './testing/private-fixture.ts';
 
 const roots: string[] = [], stores: BackupOperationStore[] = [];
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -66,11 +67,10 @@ function coldProof(record: BackupOperationRecord): BackupColdCompletion {
     directoryId: p.directoryId, storeId: p.storeId, preparedDigest: p.digest, receipt: record.operation.preview!, restoredAt: '2026-09-21T12:00:00.000Z' };
 }
 function writeColdProof(directory: string, key: Buffer, proof: BackupColdCompletion) {
-  mkdirSync(join(directory, 'company-installation'), { recursive: true, mode: 0o700 });
-  writeFileSync(join(directory, 'company-installation/workspace.json'), JSON.stringify({ version: 1, id: proof.workspaceId, workerMemberKey: null }), { mode: 0o600 });
-  writeFileSync(join(directory, PRIVATE_BACKUP_COMPLETION_FILE), JSON.stringify(encryptJson(key, proof)), { mode: 0o600 });
+  plantPrivateFiles([[join(directory, 'company-installation/workspace.json'), JSON.stringify({ version: 1, id: proof.workspaceId, workerMemberKey: null })],
+    [join(directory, PRIVATE_BACKUP_COMPLETION_FILE), JSON.stringify(encryptJson(key, proof))]]);
 }
-afterEach(() => { vi.restoreAllMocks(); for (const s of stores.splice(0)) { try { s.close(); } catch { /* intentional corrupted/moved fixture */ } } for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(async () => { vi.restoreAllMocks(); for (const s of stores.splice(0)) { try { s.close(); } catch { /* intentional corrupted/moved fixture */ } } for (const root of roots.splice(0)) await removeFixture(root); });
 
 describe('durable private backup operation records', () => {
   it('keeps encrypted records, immutable snapshots, revision checks and request replay', async () => {
@@ -295,7 +295,7 @@ describe('durable private backup operation records', () => {
   }, 15_000);
 
   it('preserves an empty pre-existing fixed journal rather than assuming that it never contained records', async () => {
-    const root = folder(); writeFileSync(join(root, 'operations.sqlite'), '', { mode: 0o600 });
+    const root = join(folder(), 'operations'); plantPrivateFile(join(root, 'operations.sqlite'), '');
     await expect(createBackupOperationStore({ directory: root, key: randomBytes(32), workspaceId })).rejects.toThrow(/recovery/);
     expect(readFileSync(join(root, 'operations.sqlite')).length).toBe(0);
   });

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { createReadStream, mkdtempSync, realpathSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { createReadStream, realpathSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { PrivateBackupCatalog } from './private-backup-catalog.ts';
 import { PrivateBackupPreparedStore } from './private-backup-prepared.ts';
@@ -17,13 +17,14 @@ import { encryptJson, decryptJson } from './desk-crypto.ts';
 import { emptyV3 } from '../shared/desk-v3.ts';
 import type { BillReviewDraft } from '../shared/bill-review-drafts.ts';
 import { batchBackupFixture, verifyRestoredBatchReader } from './testing/batch-backup-fixture.ts';
+import { plantPrivateFile, privateDir, privateTempRoot, removeFixture } from './testing/private-fixture.ts';
 
 const roots: string[] = [], catalogs: PrivateBackupCatalog[] = [], close: (() => unknown | Promise<unknown>)[] = [];
 const sha = (bytes: Uint8Array | string) => createHash('sha256').update(bytes).digest('hex');
-function folder() { const value = mkdtempSync(join(realpathSync(tmpdir()), 'RealBud v2 integration Ω ')); roots.push(value); return value; }
-function write(root: string, path: string, bytes: Buffer | string) { mkdirSync(dirname(join(root, path)), { recursive: true, mode: 0o700 }); writeFileSync(join(root, path), bytes, { mode: 0o600 }); }
+function folder() { const value = privateTempRoot(join(realpathSync(tmpdir()), 'RealBud v2 integration Ω ')); roots.push(value); return value; }
+function write(root: string, path: string, bytes: Buffer | string) { plantPrivateFile(join(root, path), bytes); }
 async function catalog(parent: string, name: string, key: Buffer, workspaceId: string) { const value = await PrivateBackupCatalog.create({ directory: join(parent, name), key, workspaceId, maxEntries: 100_000, maxBytes: 1024 ** 3 }); catalogs.push(value); return value; }
-afterEach(async () => { for (const work of close.splice(0).reverse()) await work(); for (const c of catalogs.splice(0)) c.close(); for (const directory of roots.splice(0)) rmSync(directory, { recursive: true, force: true }); });
+afterEach(async () => { for (const work of close.splice(0).reverse()) await work(); for (const c of catalogs.splice(0)) c.close(); for (const directory of roots.splice(0)) await removeFixture(directory); });
 
 describe('actual filesystem v2 backup and restore pipeline', () => {
   it('captures, transfers, prepares and cold-restores over 5,000 records with exact bank bytes and a different destination key', async () => {
@@ -72,7 +73,7 @@ describe('actual filesystem v2 backup and restore pipeline', () => {
     expect(decoded.receipt).toEqual(archiveReceipt!.receipt);
     const transformed = await catalog(scratch, 'transformed', targetKey, workspaceId);
     transformPrivateBackupCatalog({ source: decoded.catalog, destination: transformed, at: 1000 });
-    const directoryId = randomUUID(), parent = join(destination, 'private-backup-v2', 'prepared'); mkdirSync(parent, { recursive: true, mode: 0o700 });
+    const directoryId = randomUUID(), parent = join(destination, 'private-backup-v2', 'prepared'); privateDir(parent);
     const prepared = await PrivateBackupPreparedStore.create({ directory: join(parent, directoryId), key: targetKey, workspaceId }); close.push(() => prepared.close());
     const summary = await preparePrivateBackupRestore({ directory: destination, key: targetKey, source: transformed, prepared, databasePresent: decoded.metadata.databasePresent, assertLease() {} }); await prepared.close();
     const stage = { directory: destination, key: targetKey, directoryId, storeId: summary.storeId, workspaceId, expectedPreparedDigest: summary.digest, receipt: decoded.receipt, assertFresh() {}, assertIdle() {}, epoch: () => 'fixture-fresh-held' };

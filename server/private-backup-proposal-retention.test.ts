@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,20 +10,21 @@ import { emptyV3 } from '../shared/desk-v3.ts';
 import { WorkflowDatabase } from './workflow-database.ts';
 import { createBillProposals } from './bill-proposals.ts';
 import { proposalBackupFixture } from './testing/proposal-backup-fixture.ts';
+import { plantPrivateFiles, privateTempRoot, removeFixture } from './testing/private-fixture.ts';
 
 const roots: string[] = [], phrase = 'Fictional proposal retention backup phrase';
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+afterEach(async () => { await Promise.all(roots.splice(0).map(root => removeFixture(root))); });
 async function fixture() {
-  const directory = await mkdtemp(join(realpathSync(tmpdir()), 'RealBud proposal backup ')); roots.push(directory);
+  const directory = privateTempRoot(join(realpathSync(tmpdir()), 'RealBud proposal backup ')); roots.push(directory);
   const key = randomBytes(32), workspaceId = randomUUID();
-  await mkdir(join(directory, 'company-installation'), { mode: 0o700 });
-  await writeFile(join(directory, 'company-installation/workspace.json'), JSON.stringify({ version: 1, id: workspaceId, workerMemberKey: null }), { mode: 0o600 });
-  await writeFile(join(directory, 'desk.json'), JSON.stringify(encryptJson(key, emptyV3({ name: 'Fictional office', timezone: 'UTC', jurisdictions: [] }))), { mode: 0o600 });
+  plantPrivateFiles([[join(directory, 'company-installation/workspace.json'), JSON.stringify({ version: 1, id: workspaceId, workerMemberKey: null })],
+    [join(directory, 'desk.json'), JSON.stringify(encryptJson(key, emptyV3({ name: 'Fictional office', timezone: 'UTC', jurisdictions: [] })))]]);
   return { directory, key, service: createPrivateWorkspaceBackup({ directory, key: () => key, workspaceId, epoch: () => 'fixture', assertIdle: () => {}, assertFresh: () => {} }) };
 }
 
 describe('retained invoice intents through private backup', () => {
-  it('preserves 1,001 encrypted request identities and holds an old unfinished intent after different-key restore', async () => {
+  // Windows runners pay a fully synced SQLite commit per request (31.7 s before the first refusal there).
+  it('preserves 1,001 encrypted request identities and holds an old unfinished intent after different-key restore', process.platform === 'win32' ? { timeout: 240_000 } : {}, async () => {
     const from = await fixture(), to = await fixture(), db = new WorkflowDatabase({ dir: from.directory, key: from.key });
     try {
       const seed = await proposalBackupFixture(db, from.directory), ids = [seed.id];

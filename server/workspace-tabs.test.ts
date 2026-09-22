@@ -1,13 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, readdir, rm, writeFile, symlink } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, writeFile, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createWorkspaceTabsHandler } from './workspace-tabs.ts';
 import { parseWorkspaceTabsResponse } from '../shared/workspace-tabs.ts';
+import { plantPrivateFile, removeFixture } from './testing/private-fixture.ts';
 
 const directories: string[] = [];
-afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
+afterEach(async () => { await Promise.all(directories.splice(0).map(path => removeFixture(path))); });
 const tab = { id: 'view-accounts', label: 'Waiting work', visible: true, view: { kind: 'tasks', filter: 'waiting' } };
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), 'realbud-views-')); directories.push(directory);
@@ -67,14 +68,14 @@ describe('private workspace saved views', () => {
   });
   it('does not overflow a persisted revision during either edit or reset', async () => {
     const a = await fixture(); await a.read();
-    await writeFile(a.path, JSON.stringify({ workspaceId: a.workspaceId, state: { version: 1, revision: Number.MAX_SAFE_INTEGER, tabs: [tab] } }), { mode: 0o600 });
+    plantPrivateFile(a.path, JSON.stringify({ workspaceId: a.workspaceId, state: { version: 1, revision: Number.MAX_SAFE_INTEGER, tabs: [tab] } }));
     expect((await a.call('PUT', { version: 1, expectedRevision: Number.MAX_SAFE_INTEGER, tabs: [] }))?.status).toBe(400);
     expect((await a.call('POST', { expectedRevision: Number.MAX_SAFE_INTEGER, confirm: true }, '/api/workspace-tabs/reset'))?.status).toBe(409);
     expect((await a.read()).state?.tabs).toEqual([tab]);
   });
   it.each(['{broken-json', 'x'.repeat(40_000), JSON.stringify({ state: { version: 2, revision: 4, tabs: [] }, workspaceId: 'wrong' })])('holds corrupt or oversized configuration, then retains its recovery copy on explicit reset', async content => {
     const a = await fixture(); await a.read();
-    await writeFile(a.path, content, { mode: 0o600 });
+    plantPrivateFile(a.path, content);
     const held = await a.read(); expect(held.state).toBeNull(); expect(held.recovery?.resetToken).toHaveLength(64);
     expect((await a.call('PUT', { version: 1, expectedRevision: 0, tabs: [tab] }))?.status).toBe(409);
     expect((await a.call('POST', { confirm: true, resetToken: 'stale' }, '/api/workspace-tabs/reset'))?.status).toBe(409);

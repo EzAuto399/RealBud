@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Worker } from 'node:worker_threads';
@@ -10,11 +10,12 @@ import { BillReviewDraftStore, BILL_REVIEW_DRAFT_KIND, billReviewDraftRecordId, 
 import { BILL_REVIEW_DRAFT_LIMITS, BILL_REVIEW_DRAFT_MAX_BYTES, type BillReviewDraftValue, type BillReviewDraft, type BillReviewDraftPageQuery } from '../shared/bill-review-drafts.ts';
 import { proposalBackupFixture } from './testing/proposal-backup-fixture.ts';
 import { encryptJson } from './desk-crypto.ts';
+import { removeFixture } from './testing/private-fixture.ts';
 
 const key = Buffer.alloc(32, 41), resources: { directory: string; databases: WorkflowDatabase[] }[] = [], workers: Worker[] = [];
 afterEach(async () => {
   await Promise.all(workers.splice(0).map(worker => worker.terminate())); vi.restoreAllMocks();
-  for (const resource of resources.splice(0)) { for (const database of resource.databases) database.close(); rmSync(resource.directory, { recursive: true, force: true }); }
+  for (const resource of resources.splice(0)) { for (const database of resource.databases) database.close(); await removeFixture(resource.directory); }
 });
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'RealBud bill draft ')), database = new WorkflowDatabase({ dir: directory, key });
@@ -229,7 +230,8 @@ describe('permanent encrypted bill review drafts', () => {
       cursor = page.nextCursor ?? undefined;
     } while (cursor);
     expect(found).toEqual(ids.reverse()); expect(f.open().get(found.at(-1)!).fields.vendor).toBe('Fictional 0');
-  }, 15_000);
+    // Saving 1,001 drafts through FULL-sync SQLite took about 40 s on a Windows runner.
+  }, process.platform === 'win32' ? 120_000 : 15_000);
 
   it('keeps insertion continuations stable while new drafts are excluded and existing closures stay current', () => {
     const f = fixture(), ids = Array.from({ length: 5 }, () => randomUUID());

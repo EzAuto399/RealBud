@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
-import { mkdtemp, mkdir, open, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { open, readdir, readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { emptyV3 } from '../shared/desk-v3.ts';
 import { encryptJson, decryptJson } from './desk-crypto.ts';
 import { createPrivateWorkspaceBackup } from './private-workspace-backup.ts';
@@ -17,12 +17,13 @@ import { applyStagedPrivateRestoreV2 } from './private-backup-cold-restore.ts';
 import { WorkflowDatabase } from './workflow-database.ts';
 import { BankReferenceStore } from './bank-reference-store.ts';
 import { PRIVATE_BACKUP_TRANSFER_CHUNK_BYTES as CHUNK } from '../shared/private-backup-transfers.ts';
+import { plantPrivateFile, privateTempRoot, removeFixture, windowsAdmissionTimeout } from './testing/private-fixture.ts';
 
 const roots: string[] = [], services: Awaited<ReturnType<typeof createPrivateBackupCoordinator>>[] = [];
 const phrase = 'Fictional coordinator backup phrase', sha = (data: Uint8Array | string) => createHash('sha256').update(data).digest('hex');
-async function write(dir: string, path: string, bytes: Uint8Array | string) { await mkdir(dirname(join(dir, path)), { recursive: true, mode: 0o700 }); await writeFile(join(dir, path), bytes, { mode: 0o600 }); }
+async function write(dir: string, path: string, bytes: Buffer | string) { plantPrivateFile(join(dir, path), bytes); }
 async function fixture() {
-  const directory = await mkdtemp(join(realpathSync(tmpdir()), 'RealBud coordinator Ω ')); roots.push(directory);
+  const directory = privateTempRoot(join(realpathSync(tmpdir()), 'RealBud coordinator Ω ')); roots.push(directory);
   const key = randomBytes(32), workspaceId = randomUUID(); let held = false;
   await write(directory, 'company-installation/workspace.json', JSON.stringify({ version: 1, id: workspaceId, workerMemberKey: null }));
   await write(directory, 'desk.json', JSON.stringify(encryptJson(key, emptyV3({ name: 'Fictional coordinator agency', timezone: 'UTC', jurisdictions: [] }))));
@@ -43,7 +44,7 @@ async function exported(f: Awaited<ReturnType<typeof fixture>>) {
   await f.service.download(ticket.url.split('/').at(-1)!, async (_, stream) => { for await (const chunk of stream) chunks.push(Buffer.from(chunk)); });
   return { id, ticket, bytes: Buffer.concat(chunks), ready };
 }
-afterEach(async () => { vi.restoreAllMocks(); for (const service of services.splice(0)) await service.close(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
+afterEach(async () => { vi.restoreAllMocks(); for (const service of services.splice(0)) await service.close(); for (const root of roots.splice(0)) await removeFixture(root); });
 
 describe('durable private backup coordinator', () => {
   it('retains independent streamed chunks until the consumer finishes and verifies the delivered digest', async () => {
@@ -75,7 +76,7 @@ describe('durable private backup coordinator', () => {
       await expect(response).rejects.toThrow(); expect(sent).toBeLessThan(ticket.archiveBytes);
     } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
   });
-  it('admits only one restore even with an unusually permissive host and retains both reviewed uploads', async () => {
+  it('admits only one restore even with an unusually permissive host and retains both reviewed uploads', windowsAdmissionTimeout(216), async () => {
     const source = await fixture(), target = await fixture(), archive = await exported(source), digest = sha(archive.bytes), ids: string[] = [];
     for (let i = 0; i < 2; i++) { const id = await upload(target.service, archive.bytes); ids.push(id); await target.service.preview(id, phrase, digest); expect((await target.service.settled(id)).phase).toBe('reviewed'); }
     let release!: () => void, entered!: () => void; const waiting = new Promise<void>(r => { release = r; }), ready = new Promise<void>(r => { entered = r; }), lease = target.host.snapshotLease;
@@ -91,7 +92,7 @@ describe('durable private backup coordinator', () => {
     const result = await exported(f); expect(result.ready.phase).toBe('ready'); expect(releases).toBe(1);
   });
 
-  it('recovers a crash boundary between the durable stage hold and publishing the restart descriptor', async () => {
+  it('recovers a crash boundary between the durable stage hold and publishing the restart descriptor', windowsAdmissionTimeout(157), async () => {
     const source = await fixture(), target = await fixture(), archive = await exported(source), id = await upload(target.service, archive.bytes), digest = sha(archive.bytes);
     await target.service.preview(id, phrase, digest); expect((await target.service.settled(id)).phase).toBe('reviewed');
     const begin = target.host.beginRestore; target.host.beginRestore = () => { target.host.beginRestore = begin; throw new Error('Fictional stage publication interruption'); };
@@ -100,7 +101,7 @@ describe('durable private backup coordinator', () => {
     expect(await resumed.get(id)).toMatchObject({ phase: 'staged', artifact: { archiveDigest: digest } });
     await expect(resumed.startUpload(randomUUID(), 4)).rejects.toMatchObject({ status: 409 });
   });
-  it('clears a persisted recovery warning only after held staging successfully resumes', async () => {
+  it('clears a persisted recovery warning only after held staging successfully resumes', windowsAdmissionTimeout(164), async () => {
     const source = await fixture(), target = await fixture(), archive = await exported(source), id = await upload(target.service, archive.bytes), digest = sha(archive.bytes);
     await target.service.preview(id, phrase, digest); await target.service.settled(id);
     const begin = target.host.beginRestore, fresh = target.host.assertFresh;
@@ -112,7 +113,7 @@ describe('durable private backup coordinator', () => {
     target.host.assertFresh = fresh;
     expect(await resumed.stage(id, digest)).toMatchObject({ phase: 'staged' }); expect((await resumed.get(id)).error).toBeUndefined();
   });
-  it('keeps the legacy API restore bound to the same operation journal', async () => {
+  it('keeps the legacy API restore bound to the same operation journal', windowsAdmissionTimeout(189), async () => {
     const source = await fixture(), target = await fixture();
     const legacy = (f: typeof source) => createPrivateWorkspaceBackup({ directory: f.directory, key: () => f.key, workspaceId: f.workspaceId, epoch: () => 'fixture', assertIdle() {}, assertFresh() {} });
     const exported = await legacy(source).exportBackup(phrase), bridge = withDurablePrivateBackupRestore(legacy(target), target.service);
@@ -122,7 +123,7 @@ describe('durable private backup coordinator', () => {
     const reopened = await createPrivateBackupCoordinator({ ...target.host, workspaceId: source.workspaceId }); services.push(reopened); expect(await reopened.list({ limit: 20 })).toMatchObject({ total: 0 });
   });
 
-  it('exports actual bank bytes, previews through the strict API and restores with bound cold completion', async () => {
+  it('exports actual bank bytes, previews through the strict API and restores with bound cold completion', windowsAdmissionTimeout(260), async () => {
     const source = await fixture(), target = await fixture(), csv = Buffer.from('\uFEFFDate,Amount,Description,Reference\r\n21/09/2026,12.00,"Fictional café 🏡",old\r\n');
     await write(source.directory, 'vault/workflow-inputs/bank.csv', csv);
     const db = new WorkflowDatabase({ dir: source.directory, key: source.key }); let bank;
@@ -142,7 +143,7 @@ describe('durable private backup coordinator', () => {
     const reopened = await createPrivateBackupCoordinator({ ...target.host, workspaceId: source.workspaceId }); services.push(reopened);
     expect(await reopened.list({ limit: 20 })).toMatchObject({ total: 0, items: [] }); await expect(reopened.get(id)).rejects.toMatchObject({ status: 404 });
   });
-  it('imports formatted v1 archives, preserves the upload after a wrong phrase, and retries with fresh provisional resources', async () => {
+  it('imports formatted v1 archives, preserves the upload after a wrong phrase, and retries with fresh provisional resources', windowsAdmissionTimeout(152), async () => {
     const source = await fixture(), target = await fixture();
     const legacy = createPrivateWorkspaceBackup({ directory: source.directory, key: () => source.key, workspaceId: source.workspaceId, epoch: () => 'fixture', assertIdle() {}, assertFresh() {} });
     const archive = await legacy.exportBackup(phrase), bytes = Buffer.from(JSON.stringify(archive.backup, null, 2) + '\n'), digest = sha(bytes), id = await upload(target.service, bytes);
@@ -151,7 +152,7 @@ describe('durable private backup coordinator', () => {
     await target.service.preview(id, phrase, digest); const reviewed = await target.service.settled(id); expect(reviewed).toMatchObject({ phase: 'reviewed', preview: { digest, workspaceId: source.workspaceId } });
     expect((await target.service.stage(id, digest)).phase).toBe('staged');
   });
-  it('resumes accepted chunks after restart and refuses stale, mismatched, or cancelled requests', async () => {
+  it('resumes accepted chunks after restart and refuses stale, mismatched, or cancelled requests', windowsAdmissionTimeout(67), async () => {
     const f = await fixture(), bytes = Buffer.alloc(CHUNK + 17, 7), id = randomUUID();
     await f.service.startUpload(id, bytes.length); await f.service.appendUpload(id, 0, bytes.subarray(0, CHUNK), sha(bytes.subarray(0, CHUNK))); await f.service.close();
     const reopened = await createPrivateBackupCoordinator(f.host); services.push(reopened);

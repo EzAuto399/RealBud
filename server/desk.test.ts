@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,6 +13,7 @@ import {
 } from "./desk.ts";
 import { readHandsLast } from "./hands-last.ts";
 import type { HermesLedgerAttempt } from "./hermes-hands.ts";
+import { removeFixture, windowsAdmissionTimeout } from "./testing/private-fixture.ts";
 
 const dirs: string[] = [];
 
@@ -39,8 +40,8 @@ function facts(id: string, patch: Partial<LedgerFacts> = {}): LedgerFacts {
   return { ...fixtureBook().ledger.find((row) => row.propertyId === id)!, ...patch };
 }
 
-afterEach(() => {
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+afterEach(async () => {
+  for (const dir of dirs.splice(0)) await removeFixture(dir);
 });
 
 describe("evaluateProperty", () => {
@@ -673,7 +674,8 @@ describe("Desk morning check", () => {
     expect(snap.workItems.some((w) => w.holdReason === "reversed")).toBe(true);
   });
 
-  it("accepts and evaluates a 600-property office in one intake commit", { timeout: 30_000 }, () => {
+  // 604 measured Windows admissions (a private intake note per added property); elsewhere the 30 s budget stands.
+  it("accepts and evaluates a 600-property office in one intake commit", { timeout: 30_000, ...windowsAdmissionTimeout(700) }, () => {
     const { desk } = tempDesk();
     const items = Array.from({ length: 594 }, (_, i) => ({
       address: `${i + 1} Scale St, Acton ACT`,

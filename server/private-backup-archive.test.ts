@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, realpathSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, realpathSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -10,6 +10,7 @@ import { emptyV3 } from '../shared/desk-v3.ts';
 import { WorkflowDatabase } from './workflow-database.ts';
 import { BankReferenceStore } from './bank-reference-store.ts';
 import type { BillReviewDraft } from '../shared/bill-review-drafts.ts';
+import { removeFixture } from './testing/private-fixture.ts';
 
 const roots: string[] = [], catalogs: PrivateBackupCatalog[] = [], phrase = 'Fictional bounded archive test passphrase';
 const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
@@ -33,7 +34,7 @@ async function decode(bytes: Buffer, overrides: Partial<Parameters<typeof decode
   const result = await decodeBackupCatalog(input(bytes), { passphrase: phrase, directory: join(root(), 'import'), key: randomBytes(32), expectedArchiveDigest: sha(bytes), ...overrides });
   catalogs.push(result.catalog); return result;
 }
-afterEach(() => { vi.restoreAllMocks(); for (const c of catalogs.splice(0)) c.close(); for (const path of roots.splice(0)) rmSync(path, { recursive: true, force: true }); });
+afterEach(async () => { vi.restoreAllMocks(); for (const c of catalogs.splice(0)) c.close(); for (const path of roots.splice(0)) await removeFixture(path); });
 
 describe('authenticated portable business catalog archives', () => {
   it('enforces the host catalog storage reservation through actual archive decode without losing the source', async () => {
@@ -98,7 +99,9 @@ describe('authenticated portable business catalog archives', () => {
     expect(entryText.join('')).not.toContain('keyHex');
   });
 
-  it('retains more than the v1 record cap, exact closed draft fields and insertion order', async () => {
+  // Windows: every catalog entry is its own fully synced SQLite commit, so this took over
+  // 280 s just to build the source on a runner (~10 min in all); the order proof is OS-independent.
+  it.skipIf(process.platform === 'win32')('retains more than the v1 record cap, exact closed draft fields and insertion order', async () => {
     const f = await fixture(), expected: string[] = [];
     for (let index = 0; index < 5001; index++) {
       const id = randomUUID(); expected.push(`bill-review-draft:${id}`);

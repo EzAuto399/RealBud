@@ -118,7 +118,8 @@ describe('atomic writers', () => {
     expect(acl.launches).toEqual([]);
   });
 
-  it('launch nothing on other systems', () => {
+  // Faking linux on a real Windows host makes the writers fsync a directory, which Windows refuses (EPERM).
+  it.skipIf(process.platform === 'win32')('launch nothing on other systems', () => {
     Object.defineProperty(process, 'platform', { ...platform, value: 'linux' });
     const root = fixture();
     writeFileAtomic(join(root, 'x.json'), '{}'); writeFilePrivateSync(join(root, 'k'), 'k'); mkdirPrivateSync(join(root, 'd', 'e'));

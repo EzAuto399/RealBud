@@ -2,6 +2,7 @@
  * this module never opens an uploaded database or retains an archive password.
  * Invoke apply before application stores, clocks or bridges are imported. */
 import { createHash, randomUUID } from 'node:crypto';
+import { mkdirPrivate } from './private-json.ts';
 import { constants } from 'node:fs';
 import { lstat, mkdir, open, rename, unlink } from 'node:fs/promises';
 import { dirname, join, parse, resolve } from 'node:path';
@@ -117,11 +118,11 @@ async function readStage(directory: string, key: Buffer): Promise<Stage | null> 
   } catch { return hold(); } finally { await handle.close(); }
 }
 async function atomicBytes(path: string, input: AsyncIterable<Uint8Array>, expected?: { bytes: number; digest: string }, beforePublish?: () => Promise<void>, scratchDirectory = dirname(path)): Promise<void> {
-  await parents(dirname(path)); const created = await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  await windowsFilePrivacy(dirname(path), 'directory', created !== undefined);
+  await parents(dirname(path));
+  // Every level created here is protected on Windows; an existing folder is only verified.
+  if (!(await mkdirPrivate(dirname(path)))) await windowsFilePrivacy(dirname(path), 'directory', false);
   await parents(scratchDirectory);
-  const scratchCreated = await mkdir(scratchDirectory, { recursive: true, mode: 0o700 });
-  await windowsFilePrivacy(scratchDirectory, 'directory', scratchCreated !== undefined);
+  if (!(await mkdirPrivate(scratchDirectory))) await windowsFilePrivacy(scratchDirectory, 'directory', false);
   if ((await lstat(scratchDirectory)).dev !== (await lstat(dirname(path))).dev) hold('Restore staging and business files must be on the same local filesystem.');
   // Business replacements live in the private staging area so creating a
   // temporary file cannot change the guarded company-membership directory.

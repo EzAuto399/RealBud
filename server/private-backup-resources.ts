@@ -2,7 +2,8 @@
  * resource before claim(); callers persist cleanup intent and drain writers
  * before remove(). This module never touches ordinary business directories. */
 import { constants, type Stats } from 'node:fs';
-import { link, lstat, mkdir, open, readdir, rmdir, unlink } from 'node:fs/promises';
+import { mkdirPrivate } from './private-json.ts';
+import { link, lstat, open, readdir, rmdir, unlink } from 'node:fs/promises';
 import { join, parse, resolve } from 'node:path';
 import { decryptJson, encryptJson, isEncryptedEnvelope } from './desk-crypto.ts';
 import { fsyncDir } from './atomic.ts';
@@ -62,10 +63,9 @@ async function ancestors(directory: string, missing = false) {
 }
 async function privateFolder(path: string, create: boolean): Promise<void> {
   await ancestors(path, create);
-  let created: string | undefined;
-  if (create) created = await mkdir(path, { recursive: true, mode: 0o700 });
+  const created = create ? await mkdirPrivate(path) : false;
   const s = await lstat(path); if (!s.isDirectory() || s.isSymbolicLink()) fail(); privateMode(s);
-  await windowsFilePrivacy(path, 'directory', created !== undefined);
+  if (!created) await windowsFilePrivacy(path, 'directory', false);
 }
 function ordinary(s: Stats, links = 1) {
   if (!s.isFile() || s.isSymbolicLink() || s.nlink !== links || !Number.isSafeInteger(s.size) || s.size < 0) fail(); privateMode(s);

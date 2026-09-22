@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, readdir } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, symlink, readdir } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,13 +23,14 @@ import type { Recipe } from '../shared/contracts.ts';
 import { proposalBackupFixture } from './testing/proposal-backup-fixture.ts';
 import { WorkspaceActivityGate } from './workspace-activity.ts';
 import { batchBackupFixture, verifyRestoredBatchReader } from './testing/batch-backup-fixture.ts';
+import { plantPrivateFile, privateTempRoot, removeFixture } from './testing/private-fixture.ts';
 
 const dirs: string[] = [];
-afterEach(async () => { await Promise.all(dirs.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
+afterEach(async () => { await Promise.all(dirs.splice(0).map(dir => removeFixture(dir))); });
 const passphrase = 'Fictional long backup passphrase';
-const writeJson = async (dir: string, path: string, value: unknown) => { await mkdir(join(dir, path, '..'), { recursive: true, mode: 0o700 }); await writeFile(join(dir, path), JSON.stringify(value), { mode: 0o600 }); };
+const writeJson = async (dir: string, path: string, value: unknown) => { plantPrivateFile(join(dir, path), JSON.stringify(value)); };
 async function fixture() {
-  const directory = await mkdtemp(join(realpathSync(tmpdir()), 'rb-private-backup-')); dirs.push(directory);
+  const directory = privateTempRoot(join(realpathSync(tmpdir()), 'rb-private-backup-')); dirs.push(directory);
   const key = Buffer.from(randomUUID().replaceAll('-', ''), 'utf8'), workspaceId = randomUUID();
   await writeJson(directory, 'company-installation/workspace.json', { version: 1, id: workspaceId, workerMemberKey: null });
   const book = emptyV3({ name: 'Fictional agency', timezone: 'Australia/Brisbane', jurisdictions: [] });
@@ -79,7 +80,7 @@ describe('portable private business backup', () => {
   it('retains portfolio sources and completed results across different-key restore without automatic dispatch', async () => {
     const source = await fixture(), target = await fixture();
     const original = JSON.stringify(batchBackupFixture(), null, 2) + '\n';
-    await writeFile(join(source.directory, 'work-batches.json'), original, { mode: 0o600 });
+    plantPrivateFile(join(source.directory, 'work-batches.json'), original);
     const { backup, receipt } = await source.service.exportBackup(passphrase);
     expect(await readFile(join(source.directory, 'work-batches.json'), 'utf8')).toBe(original);
     const saved = openBackup(backup); try { expect(saved.value.files.some(file => file.path === 'work-batches.json')).toBe(true); } finally { saved.key.fill(0); }

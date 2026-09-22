@@ -17,6 +17,73 @@ on:
       - server/private-file.ts
       - server/private-vault.ts
       - server/hermes-profile-storage.ts
+      - server/testing/private-fixture.ts
+      - server/testing/private-profile-fixture.ts
+      - electron/desk-key-custody.test.mjs
+      - server/accounts-review.test.ts
+      - server/agency-setup.test.ts
+      - server/batches.test.ts
+      - server/bill-proposals.test.ts
+      - server/bill-review-drafts.test.ts
+      - server/bill-review-http.test.ts
+      - server/browser-broker.test.ts
+      - server/browser-runtime.test.ts
+      - server/company-installation-binding.test.ts
+      - server/company/host-runtime.test.ts
+      - server/company/postgres-runtime.test.ts
+      - server/customer-pack-archive.review.test.ts
+      - server/customer-pack-archive.test.ts
+      - server/customer-pack-skill-history.test.ts
+      - server/customer-pack-upgrades.test.ts
+      - server/customer-packs.test.ts
+      - server/desk.test.ts
+      - server/drivers/acp/acp.test.ts
+      - server/drivers/acp/memory-proposals.test.ts
+      - server/hermes-profile-windows.test.ts
+      - server/job-executor.test.ts
+      - server/job-runs.test.ts
+      - server/mail-ingestion.test.ts
+      - server/mail-retention.test.ts
+      - server/mail-workspace-http.test.ts
+      - server/manual-job-request.test.ts
+      - server/morning-mail-scheduler.test.ts
+      - server/private-backup-archive.test.ts
+      - server/private-backup-bank-amendment.test.ts
+      - server/private-backup-bank-retention.test.ts
+      - server/private-backup-bill-review.test.ts
+      - server/private-backup-capture.test.ts
+      - server/private-backup-catalog.test.ts
+      - server/private-backup-cold-restore.test.ts
+      - server/private-backup-coordinator.test.ts
+      - server/private-backup-department-work.test.ts
+      - server/private-backup-legacy.test.ts
+      - server/private-backup-mail-retention.test.ts
+      - server/private-backup-mail-validation.test.ts
+      - server/private-backup-operations.test.ts
+      - server/private-backup-pack-upgrade.test.ts
+      - server/private-backup-prepare.test.ts
+      - server/private-backup-prepared.test.ts
+      - server/private-backup-proposal-retention.test.ts
+      - server/private-backup-resource-runtime.test.ts
+      - server/private-backup-resources.test.ts
+      - server/private-backup-restore-catalog.test.ts
+      - server/private-backup-skill-history.test.ts
+      - server/private-backup-source-bills.test.ts
+      - server/private-backup-v2-bootstrap.test.ts
+      - server/private-backup-v2-integration.test.ts
+      - server/private-backup-website-requests.test.ts
+      - server/private-workspace-backup.test.ts
+      - server/routines-recovery.test.ts
+      - server/routines.test.ts
+      - server/service-admin-provision.test.ts
+      - server/source-bills-api.test.ts
+      - server/testing/private-profile-fixture.test.ts
+      - server/vault.test.ts
+      - server/website-remote-approvers.test.ts
+      - server/website-remote-work.test.ts
+      - server/windows-created-privacy.test.ts
+      - server/workspace-identity.test.ts
+      - server/workspace-tabs.test.ts
 
 permissions:
   contents: read
@@ -25,7 +92,9 @@ jobs:
   acl:
     name: ACL admission probe (windows-latest)
     runs-on: windows-latest
-    timeout-minutes: 30
+    # The fixture-dependent suites below took about 80 min in failing CI shards
+    # (several slow tests are now skipped or bounded on Windows); allow for that.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
@@ -47,7 +116,81 @@ jobs:
         continue-on-error: true
         run: node --experimental-strip-types scripts/testing/probe-windows-acl.mjs
       - name: Smallest ACL-dependent suites
-        run: pnpm exec vitest run server/private-file.test.ts server/private-vault.test.ts server/hermes-profile-storage.test.ts server/windows-file-privacy.test.ts server/windows-file-privacy-sync.test.ts server/windows-file-privacy-diagnostics.test.ts
+        # Plus every suite whose fixtures stand in for private objects the product
+        # admits (server/testing/private-fixture.ts); one line for pwsh.
+        run: >-
+          pnpm exec vitest run
+          server/private-file.test.ts
+          server/private-vault.test.ts
+          server/hermes-profile-storage.test.ts
+          server/windows-file-privacy.test.ts
+          server/windows-file-privacy-sync.test.ts
+          server/windows-file-privacy-diagnostics.test.ts
+          server/testing/private-profile-fixture.test.ts
+          electron/desk-key-custody.test.mjs
+          server/accounts-review.test.ts
+          server/agency-setup.test.ts
+          server/batches.test.ts
+          server/bill-proposals.test.ts
+          server/bill-review-drafts.test.ts
+          server/bill-review-http.test.ts
+          server/browser-broker.test.ts
+          server/browser-runtime.test.ts
+          server/company-installation-binding.test.ts
+          server/company/host-runtime.test.ts
+          server/company/postgres-runtime.test.ts
+          server/customer-pack-archive.review.test.ts
+          server/customer-pack-archive.test.ts
+          server/customer-pack-skill-history.test.ts
+          server/customer-pack-upgrades.test.ts
+          server/customer-packs.test.ts
+          server/desk.test.ts
+          server/drivers/acp/acp.test.ts
+          server/drivers/acp/memory-proposals.test.ts
+          server/hermes-profile-windows.test.ts
+          server/job-executor.test.ts
+          server/job-runs.test.ts
+          server/mail-ingestion.test.ts
+          server/mail-retention.test.ts
+          server/mail-workspace-http.test.ts
+          server/manual-job-request.test.ts
+          server/morning-mail-scheduler.test.ts
+          server/private-backup-archive.test.ts
+          server/private-backup-bank-amendment.test.ts
+          server/private-backup-bank-retention.test.ts
+          server/private-backup-bill-review.test.ts
+          server/private-backup-capture.test.ts
+          server/private-backup-catalog.test.ts
+          server/private-backup-cold-restore.test.ts
+          server/private-backup-coordinator.test.ts
+          server/private-backup-department-work.test.ts
+          server/private-backup-legacy.test.ts
+          server/private-backup-mail-retention.test.ts
+          server/private-backup-mail-validation.test.ts
+          server/private-backup-operations.test.ts
+          server/private-backup-pack-upgrade.test.ts
+          server/private-backup-prepare.test.ts
+          server/private-backup-prepared.test.ts
+          server/private-backup-proposal-retention.test.ts
+          server/private-backup-resource-runtime.test.ts
+          server/private-backup-resources.test.ts
+          server/private-backup-restore-catalog.test.ts
+          server/private-backup-skill-history.test.ts
+          server/private-backup-source-bills.test.ts
+          server/private-backup-v2-bootstrap.test.ts
+          server/private-backup-v2-integration.test.ts
+          server/private-backup-website-requests.test.ts
+          server/private-workspace-backup.test.ts
+          server/routines-recovery.test.ts
+          server/routines.test.ts
+          server/service-admin-provision.test.ts
+          server/source-bills-api.test.ts
+          server/vault.test.ts
+          server/website-remote-approvers.test.ts
+          server/website-remote-work.test.ts
+          server/windows-created-privacy.test.ts
+          server/workspace-identity.test.ts
+          server/workspace-tabs.test.ts
         env:
           NODE_OPTIONS: --max-old-space-size=4096
       - name: Private backup restore boundaries from source

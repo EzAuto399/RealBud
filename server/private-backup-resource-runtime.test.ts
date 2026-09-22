@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
-import { mkdtemp, mkdir, open, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, open, readFile, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -9,6 +9,7 @@ import { createBackupOperationStore, type BackupOperationStore } from './private
 import { createBackupResourceRuntime } from './private-backup-resource-runtime.ts';
 import { createBackupTransferStore } from './private-backup-transfer.ts';
 import type { PrivateBackupTransferOperation } from '../shared/private-backup-transfers.ts';
+import { plantPrivateFile, removeFixture } from './testing/private-fixture.ts';
 
 const roots: string[] = [], journals: BackupOperationStore[] = [], runtimes: ReturnType<typeof createBackupResourceRuntime>[] = [];
 const sha = (bytes: Uint8Array | string) => createHash('sha256').update(bytes).digest('hex');
@@ -25,7 +26,7 @@ async function fixture(kind: 'upload' | 'export' = 'export') {
   const record = journal.create(operation, 4 * 1024 * 1024, { trackResources: true });
   return { directory, settings, journal, runtime, key, workspaceId, id, record };
 }
-afterEach(async () => { vi.restoreAllMocks(); for (const runtime of runtimes.splice(0)) await runtime.close().catch(() => {}); for (const journal of journals.splice(0)) journal.close(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
+afterEach(async () => { vi.restoreAllMocks(); for (const runtime of runtimes.splice(0)) await runtime.close().catch(() => {}); for (const journal of journals.splice(0)) journal.close(); for (const root of roots.splice(0)) await removeFixture(root); });
 
 describe('journal-bound backup file lifetime', () => {
   it('authenticates reopen access and discards only reversible stage scratch while preserving the review', async () => {
@@ -36,11 +37,11 @@ describe('journal-bound backup file lifetime', () => {
     f.journal.update(f.id, f.journal.get(f.id).revision, next => { next.operation.phase = 'checking'; });
     f.journal.update(f.id, f.journal.get(f.id).revision, next => { next.operation.phase = 'reviewed'; next.operation.preview = { digest, createdAt: new Date(10).toISOString(), workspaceId: f.workspaceId, fileCount: 1, recordCount: 0, plainBytes: 1, included: [], excluded: [], restoreChanges: [] }; });
     let directory = '';
-    await f.runtime.run(f.id, async work => { directory = (await work.claim('prepared', 1024 * 1024)).directory; await mkdir(directory, { mode: 0o700 }); await writeFile(join(directory, 'prepared.sqlite'), 'fixture', { mode: 0o600 }); expect(await work.access('prepared')).toBe(directory); });
+    await f.runtime.run(f.id, async work => { directory = (await work.claim('prepared', 1024 * 1024)).directory; plantPrivateFile(join(directory, 'prepared.sqlite'), 'fixture'); expect(await work.access('prepared')).toBe(directory); });
     await expect(f.runtime.discard(f.id, ['upload'])).rejects.toMatchObject({ status: 409 });
     await f.runtime.discard(f.id, ['prepared', 'build']); expect(existsSync(directory)).toBe(false);
     expect(f.journal.get(f.id)).toMatchObject({ reservedBytes: f.record.reservedBytes, operation: { phase: 'reviewed' }, allocations: [{ state: 'removed' }] });
-    await f.runtime.run(f.id, async work => { const claimed = await work.claim('prepared', 1024 * 1024); await mkdir(claimed.directory, { mode: 0o700 }); await writeFile(join(claimed.directory, 'prepared.sqlite'), 'fixture', { mode: 0o600 }); await unlink(join(f.directory, 'claims', `${claimed.binding.allocation.id}.json`)); await expect(work.access('prepared')).rejects.toMatchObject({ status: 503 }); });
+    await f.runtime.run(f.id, async work => { const claimed = await work.claim('prepared', 1024 * 1024); plantPrivateFile(join(claimed.directory, 'prepared.sqlite'), 'fixture'); await unlink(join(f.directory, 'claims', `${claimed.binding.allocation.id}.json`)); await expect(work.access('prepared')).rejects.toMatchObject({ status: 503 }); });
   });
 
   it('continues later cleanup while preserving both untracked legacy records and unknown-file holds', async () => {
@@ -51,8 +52,8 @@ describe('journal-bound backup file lifetime', () => {
     for (const [index, id] of ids.slice(1).entries()) {
       f.journal.create({ ...f.record.operation, id }, 4096, { trackResources: true });
       await f.runtime.run(id, async context => {
-        const { directory } = await context.claim('archive', 4096); paths.push(directory); await mkdir(directory, { mode: 0o700 });
-        await writeFile(join(directory, 'archive.realbud-backup'), 'Fictional backup', { mode: 0o600 });
+        const { directory } = await context.claim('archive', 4096); paths.push(directory);
+        plantPrivateFile(join(directory, 'archive.realbud-backup'), 'Fictional backup');
         if (index === 0) await writeFile(join(directory, 'unattributed.txt'), 'Preserve fixture', { mode: 0o600 });
       });
       cancel(id);
@@ -67,8 +68,8 @@ describe('journal-bound backup file lifetime', () => {
     const f = await fixture(); let directory = '';
     const hold = vi.spyOn(f.journal, 'holdResourceCleanup').mockImplementation(() => { throw new Error('Fictional full journal'); });
     await expect(f.runtime.run(f.id, async context => {
-      directory = (await context.claim('archive', 4096)).directory; await mkdir(directory, { mode: 0o700 });
-      await writeFile(join(directory, 'archive.realbud-backup'), 'Preserve fixture', { mode: 0o600 }); context.own(() => { throw new Error('Fictional failed close'); });
+      directory = (await context.claim('archive', 4096)).directory;
+      plantPrivateFile(join(directory, 'archive.realbud-backup'), 'Preserve fixture'); context.own(() => { throw new Error('Fictional failed close'); });
     })).rejects.toThrow('full journal'); hold.mockRestore();
     await expect(f.runtime.cancel(f.id)).rejects.toThrow('could not close'); await expect(f.runtime.close()).rejects.toThrow('restart recovery'); f.journal.close();
     const journal = await createBackupOperationStore(f.settings); journals.push(journal);
@@ -86,7 +87,8 @@ describe('journal-bound backup file lifetime', () => {
     const f = await fixture(), ready = gate(), close = gate(); let directory = '', settled = false;
     const work = f.runtime.run(f.id, async context => {
       const claimed = await context.claim('archive', 2 * 1024 * 1024); directory = claimed.directory;
-      await mkdir(directory, { mode: 0o700 }); const handle = await open(join(directory, 'archive.realbud-backup'), 'wx', 0o600);
+      // Stand-in for the archive writer: a restricted file held open until its owner closes it.
+      plantPrivateFile(join(directory, 'archive.realbud-backup'), ''); const handle = await open(join(directory, 'archive.realbud-backup'), 'r+');
       context.own(async () => { await close.promise; await handle.close(); });
       await handle.writeFile('Fictional archive bytes'); await handle.sync();
       await new Promise<void>(resolve => { context.signal.addEventListener('abort', () => {
@@ -106,8 +108,8 @@ describe('journal-bound backup file lifetime', () => {
   it('preserves all files and the reservation on an unknown file; verified cleanup can resume after operator recovery', async () => {
     const f = await fixture(); let directory = '';
     await f.runtime.run(f.id, async context => {
-      directory = (await context.claim('archive', 1024 * 1024)).directory; await mkdir(directory, { mode: 0o700 });
-      await writeFile(join(directory, 'archive.realbud-backup'), 'Fictional archive', { mode: 0o600 });
+      directory = (await context.claim('archive', 1024 * 1024)).directory;
+      plantPrivateFile(join(directory, 'archive.realbud-backup'), 'Fictional archive');
       await writeFile(join(directory, 'unattributed.txt'), 'Preserve fixture', { mode: 0o600 });
     });
     await expect(f.runtime.cancel(f.id)).rejects.toThrow('unexpected');
@@ -123,8 +125,8 @@ describe('journal-bound backup file lifetime', () => {
   it('retains a failed-close hold even when a new journal and runtime open in the same process', async () => {
     const f = await fixture(); let directory = '';
     await expect(f.runtime.run(f.id, async context => {
-      directory = (await context.claim('archive', 1024 * 1024)).directory; await mkdir(directory, { mode: 0o700 });
-      await writeFile(join(directory, 'archive.realbud-backup'), 'Retained fixture', { mode: 0o600 }); context.own(() => { throw undefined; });
+      directory = (await context.claim('archive', 1024 * 1024)).directory;
+      plantPrivateFile(join(directory, 'archive.realbud-backup'), 'Retained fixture'); context.own(() => { throw undefined; });
     })).rejects.toThrow('could not close');
     await expect(f.runtime.cancel(f.id)).rejects.toThrow('could not close');
     expect(existsSync(directory)).toBe(true); expect(f.journal.usage().reservedBytes).toBe(f.record.reservedBytes);
@@ -140,10 +142,11 @@ describe('journal-bound backup file lifetime', () => {
     const f = await fixture(); await f.runtime.close(); f.journal.close();
     const program = `import {createBackupOperationStore} from ${JSON.stringify(new URL('./private-backup-operations.ts', import.meta.url).href)};
       import {createBackupResourceRuntime} from ${JSON.stringify(new URL('./private-backup-resource-runtime.ts', import.meta.url).href)};
-      import {mkdir,open} from 'node:fs/promises';import {join} from 'node:path';
+      import {plantPrivateFile} from ${JSON.stringify(new URL('./testing/private-fixture.ts', import.meta.url).href)};
+      import {open} from 'node:fs/promises';import {join} from 'node:path';
       let text='';for await(const c of process.stdin)text+=c;const v=JSON.parse(text),key=Buffer.from(v.key,'hex');
       const journal=await createBackupOperationStore({...v.settings,key}),runtime=createBackupResourceRuntime({journal,directory:v.directory,key});let held;
-      await runtime.run(v.id,async c=>{const a=await c.claim('archive',1048576);await mkdir(a.directory,{mode:448});held=await open(join(a.directory,'archive.realbud-backup'),'wx',384);c.own(()=>{throw new Error('Fictional failed close');});await held.writeFile('Retained live-writer fixture');await held.sync();}).catch(()=>{});
+      await runtime.run(v.id,async c=>{const a=await c.claim('archive',1048576),file=join(a.directory,'archive.realbud-backup');plantPrivateFile(file,'');held=await open(file,'r+');c.own(()=>{throw new Error('Fictional failed close');});await held.writeFile('Retained live-writer fixture');await held.sync();}).catch(()=>{});
       await runtime.cancel(v.id).catch(()=>{});await runtime.close().catch(()=>{});journal.close();
       process.stdout.write('ready\\n');Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0);await held.close();`;
     const envModule: string = '../scripts/service-smoke-env.mjs'; const { serviceSmokeEnv } = await import(envModule);
