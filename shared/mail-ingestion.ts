@@ -54,6 +54,29 @@ export interface MailWorkspaceSnapshot {
   items: MailWorkItem[];
 }
 
+/** Gaps that describe one conversation's own content. Each is only ever emitted
+ * together with a marker on that conversation (an attachment, a truncated body,
+ * an unknown direction or incomplete history), so the conversation that carries
+ * the marker stays held while a separately complete conversation is still
+ * verified. Every other gap is scan coverage and holds decisions scan-wide. */
+export const MAIL_CONVERSATION_GAPS = {
+  attachmentNotRead: 'Attachment contents were not read. Any decision needing an attachment must stay held.',
+  directionUnknown: 'Some messages have unverified incoming/outgoing direction.',
+  textUnavailable: 'Some message text was unavailable; decisions needing that content must stay held.',
+  mimeNotRead: 'Some MIME content was not read; decisions needing that content must stay held.',
+  textTruncated: 'Some message text exceeded the review limit and was truncated.',
+  conversationInterrupted: 'The approved message limit interrupted a conversation.',
+  conversationChanged: 'A conversation changed after this scan began; newer mail is held for the next scan.',
+} as const;
+const conversationGaps: ReadonlySet<string> = new Set(Object.values(MAIL_CONVERSATION_GAPS));
+/** True when every conversation the scan listed was fetched: pagination finished
+ * and no gap concerns coverage. Unrecognized gap text fails closed. */
+export const mailScanCoverageComplete = (data: Pick<MailScanResult, 'paginationComplete' | 'gaps'>): boolean =>
+  data.paginationComplete && data.gaps.every(gap => conversationGaps.has(gap));
+/** One conversation's own evidence is complete: full history, known direction,
+ * full text, and no attachment whose contents were not read. */
+export const mailConversationComplete = (thread: MailThread): boolean =>
+  thread.historyComplete && thread.messages.every(m => m.direction !== 'unknown' && !m.bodyTruncated && !m.attachments.length);
 const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const bounded = (v: unknown, max: number): v is string => typeof v === 'string' && v.length <= max && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(v);
 export const gmailThreadId = (v: unknown): v is string => typeof v === 'string' && /^[a-fA-F0-9]{1,64}$/.test(v);

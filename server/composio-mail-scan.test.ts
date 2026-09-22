@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { scanGmailReadOnly, type GmailReadOnlyBinding } from './composio-gmail.ts';
-import { parseMailScanRequest, parseMailScanResult, type MailScanRequest, type MailScanResult } from '../shared/mail-ingestion.ts';
+import { mailConversationComplete, mailScanCoverageComplete, parseMailScanRequest, parseMailScanResult, type MailScanRequest, type MailScanResult } from '../shared/mail-ingestion.ts';
 
 const readonly = 'https://www.googleapis.com/auth/gmail.readonly';
 const binding: GmailReadOnlyBinding = { apiKey: 'ak_fictional_scan_secret', authConfigId: 'auth-fixture', userId: 'fictional-user', accountId: 'account-fixture' };
@@ -130,6 +130,8 @@ describe('host-owned Gmail source acquisition', () => {
     const result = await scan({ ...scope, maxMessages: 1 });
     expect(result.threads).toMatchObject([{ historyComplete: false, messages: [{ id: 'aa' }] }]);
     expect(result.gaps.join(' ')).toMatch(/message limit/);
+    // An unread listed conversation is a coverage gap, not one conversation's.
+    expect(mailScanCoverageComplete(result)).toBe(false);
     expect(executions(calls, threadSlug)).toHaveLength(1);
   });
 
@@ -180,6 +182,15 @@ describe('host-owned Gmail source acquisition', () => {
     expect(result.gaps.join(' ')).toMatch(/Attachment contents/);
     expect(result.gaps.join(' ')).toMatch(/direction/);
     expect(JSON.stringify(result)).not.toMatch(/never-read-this|provider-diagnostic-secret/);
+  });
+
+  it('holds only the conversation with an unread attachment, leaving scan coverage and other conversations verified', async () => {
+    fixture({ list: () => ({ threads: [{ id: 'abc' }, { id: 'def' }] }), thread: id => ({ id, messages: [id === 'def' ? message('da', id) : { ...message('aa', id),
+      payload: { mimeType: 'multipart/mixed', headers: [], parts: [message().payload, { mimeType: 'application/pdf', filename: 'fictional-invoice.pdf', body: { attachmentId: 'attachment-fixture', size: 123 } }] } }] }) });
+    const result = await scan();
+    expect(result.gaps).toEqual(['Attachment contents were not read. Any decision needing an attachment must stay held.']);
+    expect(mailScanCoverageComplete(result)).toBe(true);
+    expect(result.threads.map(t => [t.id, mailConversationComplete(t)])).toEqual([['abc', false], ['def', true]]);
   });
 
   it('removes provider credentials even from projected message text', async () => {

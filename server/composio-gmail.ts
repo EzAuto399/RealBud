@@ -4,7 +4,7 @@
  * https://docs.composio.dev/reference/api-reference/connected-accounts/getConnectedAccounts
  */
 import type { ConnectionServiceStatus } from "./composio.ts";
-import { parseMailScanRequest, parseMailScanResult, type MailMessage, type MailScanRequest, type MailScanResult, type MailThread } from '../shared/mail-ingestion.ts';
+import { MAIL_CONVERSATION_GAPS, parseMailScanRequest, parseMailScanResult, type MailMessage, type MailScanRequest, type MailScanResult, type MailThread } from '../shared/mail-ingestion.ts';
 export interface GmailReadOnlyBinding {
   apiKey: string;
   authConfigId: string;
@@ -440,17 +440,17 @@ export async function scanGmailReadOnly(input: GmailReadOnlyBinding, raw: MailSc
     if (data.id !== id || !Array.isArray(data.messages) || data.messages.length > 100 || !data.messages.length) fail('the returned conversation identity or history was incomplete.', 502);
     const thread: MailThread = { id, messages: [], historyComplete: true };
     for (const rawMessage of data.messages) {
-      if (count >= request.maxMessages) { thread.historyComplete = false; gap('The approved message limit interrupted a conversation.'); break; }
+      if (count >= request.maxMessages) { thread.historyComplete = false; gap(MAIL_CONVERSATION_GAPS.conversationInterrupted); break; }
       if (!record(rawMessage) || rawMessage.threadId !== id || !threadId(rawMessage.id) || !/^\d{10,16}$/.test(String(rawMessage.internalDate))) fail('a message identity or date was incomplete.', 502);
       const at = Number(rawMessage.internalDate);
       if (!Number.isSafeInteger(at)) fail('a message date was invalid.', 502);
-      if (at >= request.windowEndAt) { thread.historyComplete = false; gap('A conversation changed after this scan began; newer mail is held for the next scan.'); continue; }
+      if (at >= request.windowEndAt) { thread.historyComplete = false; gap(MAIL_CONVERSATION_GAPS.conversationChanged); continue; }
       if (!record(rawMessage.payload) || !Array.isArray(rawMessage.payload.headers) || rawMessage.payload.headers.length > 200) fail('a message payload was incomplete.', 502);
       const headers: Record<string, string> = {};
       for (const h of rawMessage.payload.headers) if (record(h) && typeof h.name === 'string' && ['from', 'to', 'subject'].includes(h.name.toLowerCase())) headers[h.name.toLowerCase()] = clean(h.value, 2048);
       const labels = rawMessage.labelIds;
       const direction = !Array.isArray(labels) || labels.some(l => typeof l !== 'string') || labels.includes('DRAFT') ? 'unknown' : labels.includes('SENT') ? 'outgoing' : 'incoming';
-      if (direction === 'unknown') gap('Some messages have unverified incoming/outgoing direction.');
+      if (direction === 'unknown') gap(MAIL_CONVERSATION_GAPS.directionUnknown);
       const m: MailMessage = { id: rawMessage.id, threadId: id, at, direction, from: headers.from ?? '', to: headers.to ?? '', subject: headers.subject ?? '', body: '', bodyTruncated: false, attachments: [] };
       let parts = 0; const plain: string[] = [], html: string[] = [];
       const visit = (part: unknown, depth: number) => {
@@ -459,7 +459,7 @@ export async function scanGmailReadOnly(input: GmailReadOnlyBinding, raw: MailSc
           const attachmentId = clean(part.body?.attachmentId || `inline-${parts}`, 512);
           m.attachments.push({ id: attachmentId, name: clean(part.filename, 255), mimeType: clean(part.mimeType, 120), size: Number.isSafeInteger(part.body?.size) && part.body.size >= 0 ? part.body.size : null });
           if (m.attachments.length > 100) fail('a message exceeded the attachment limit.', 502);
-          gap('Attachment contents were not read. Any decision needing an attachment must stay held.'); return;
+          gap(MAIL_CONVERSATION_GAPS.attachmentNotRead); return;
         }
         if (['text/plain', 'text/html'].includes(part.mimeType) && typeof part.body?.data === 'string') {
           if (part.body.data.length > 200_000 || !/^[A-Za-z0-9_-]*={0,2}$/.test(part.body.data)) fail('a message body encoding was unsupported.', 502);
@@ -474,10 +474,10 @@ export async function scanGmailReadOnly(input: GmailReadOnlyBinding, raw: MailSc
           // A missing data field is only a confirmed empty body when the provider
           // explicitly reports zero bytes. Never turn absent content into proof.
           m.bodyTruncated = true;
-          gap('Some message text was unavailable; decisions needing that content must stay held.');
+          gap(MAIL_CONVERSATION_GAPS.textUnavailable);
         } else if (!['text/plain', 'text/html'].includes(part.mimeType) && (part.body?.size > 0 || part.body?.data)) {
           m.bodyTruncated = true;
-          gap('Some MIME content was not read; decisions needing that content must stay held.');
+          gap(MAIL_CONVERSATION_GAPS.mimeNotRead);
         }
         if (part.parts !== undefined) { if (!Array.isArray(part.parts)) fail('a MIME part was incomplete.', 502); for (const child of part.parts) visit(child, depth + 1); }
       };
@@ -485,7 +485,7 @@ export async function scanGmailReadOnly(input: GmailReadOnlyBinding, raw: MailSc
       const body = (plain.length ? plain : html).join('\n');
       m.body = fitText(body.slice(0, 12_000), Math.max(0, 400_000 - textBytes));
       m.bodyTruncated ||= body.length > m.body.length; textBytes += Buffer.byteLength(m.body);
-      if (m.bodyTruncated) gap('Some message text exceeded the review limit and was truncated.');
+      if (m.bodyTruncated) gap(MAIL_CONVERSATION_GAPS.textTruncated);
       const messageBytes = Buffer.byteLength(JSON.stringify(m));
       // Reserve space for thread identities and coverage gaps. Large headers or
       // attachment metadata are bounded too, not just the message body text.

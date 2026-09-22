@@ -9,7 +9,7 @@ import { defaultAgencySettings } from './agency-setup.ts';
 import { WorkflowDatabase } from './workflow-database.ts';
 import { runMorningMailWorkflow } from './morning-mail-workflow.ts';
 import { validMailWorkItem } from './mail-workspace-integrity.ts';
-import type { MailScanResult, MailThread } from '../shared/mail-ingestion.ts';
+import { MAIL_CONVERSATION_GAPS, type MailScanResult, type MailThread } from '../shared/mail-ingestion.ts';
 import type { InboxReview } from '../shared/accounts-review.ts';
 import type { JobRun, LoopRun, Recipe } from '../shared/contracts.ts';
 
@@ -60,7 +60,7 @@ async function fixture(start = initialTime) {
   return { get service() { return service; }, authority, thread, data, scan, execute, morning, output,
     advance: (ms: number) => { time += ms; }, setTime: (at: number) => { time = at; },
     restart: async () => { await service.close(); resource.services.splice(resource.services.indexOf(service), 1); service = open(); },
-    item: async () => (await service.page({ group: 'all' })).items[0], workspaceId: options.workspaceId };
+    item: async () => (await service.page({ group: 'all' })).items[0], workspaceId: options.workspaceId, root };
 }
 
 describe('unanswered conversation calendar aging through the real mail workflow', () => {
@@ -142,6 +142,40 @@ describe('unanswered conversation calendar aging through the real mail workflow'
     expect(f.execute).toHaveBeenCalledTimes(1); expect((await f.item()).followUpReviewedKey).toBeUndefined();
     f.data.paginationComplete = true; f.data.gaps = []; f.data.threads = [f.thread]; f.thread.historyComplete = true;
     await f.morning(); expect(f.execute).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps aging a verified waiting conversation when an unrelated message has an unread attachment', async () => {
+    const f = await fixture(); await f.morning(); f.advance(3 * day);
+    // Fictional unread message in a separate conversation; its PDF is metadata only.
+    f.data.threads = [f.thread, { id: 'def', historyComplete: true, messages: [{ id: 'da', threadId: 'def', at: initialTime + 3 * day - 1000, direction: 'incoming',
+      from: 'supplier@example.test', to: 'office@example.test', subject: 'Fictional invoice', body: 'The fictional invoice is attached.', bodyTruncated: false,
+      attachments: [{ id: 'att-1', name: 'fictional-invoice.pdf', mimeType: 'application/pdf', size: 1234 }] }] }];
+    f.data.gaps = [MAIL_CONVERSATION_GAPS.attachmentNotRead];
+    expect(await f.morning()).toMatchObject({ ok: true, status: 'partial' });
+    const input = JSON.parse(await readFile(join(f.root, 'workroom/workflow-inputs/accounts-inbox.json'), 'utf8'));
+    // The scan and the review batch still say the attachment was not read.
+    expect((await f.service.get()).latestScan).toMatchObject({ status: 'partial', gaps: [MAIL_CONVERSATION_GAPS.attachmentNotRead] });
+    expect(input.coverage.complete).toBe(false);
+    expect(input.attachments).toEqual([{ id: 'da:att-1', fileName: 'fictional-invoice.pdf', status: 'not-read' }]);
+    expect(input.threads.map((t: { threadId: string }) => t.threadId).sort()).toEqual(['abc', 'def']);
+    const items = (await f.service.page({ group: 'all' })).items;
+    expect(items.find(i => i.threadId === 'abc')!.followUpReviewedKey).toMatch(/^[a-f0-9]{64}$/);
+    expect(items.find(i => i.threadId === 'def')!.followUpReviewedKey).toBeUndefined();
+  });
+
+  it.each(['own-attachment', 'listing-gap', 'unclassified-gap'] as const)('holds follow-up aging with %s evidence beside an unread attachment', async defect => {
+    const f = await fixture(); await f.morning(); f.advance(3 * day);
+    f.data.gaps = [MAIL_CONVERSATION_GAPS.attachmentNotRead];
+    if (defect === 'own-attachment') f.thread.messages[0].attachments = [{ id: 'att-2', name: 'fictional-lease.pdf', mimeType: 'application/pdf', size: 99 }];
+    else f.data.threads = [f.thread, { id: 'def', historyComplete: true, messages: [{ id: 'da', threadId: 'def', at: initialTime + day, direction: 'incoming',
+      from: 'supplier@example.test', to: 'office@example.test', subject: 'Fictional invoice', body: 'Attached.', bodyTruncated: false,
+      attachments: [{ id: 'att-1', name: 'fictional-invoice.pdf', mimeType: 'application/pdf', size: 1234 }] }] }];
+    if (defect === 'listing-gap') { f.data.paginationComplete = false; f.data.gaps.push('More mailbox pages remain; this scan is partial.'); }
+    if (defect === 'unclassified-gap') f.data.gaps.push('A fictional adapter could not confirm something.');
+    await f.morning();
+    const abc = (await f.service.page({ group: 'all' })).items.find(i => i.threadId === 'abc')!;
+    expect(abc.followUpReviewedKey).toBeUndefined();
+    expect((await f.service.get()).latestScan?.status).toBe('partial');
   });
 
   it.each(['unknown', 'tied', 'sent-excluded'] as const)('does not assert an unanswered interval with %s evidence', async defect => {

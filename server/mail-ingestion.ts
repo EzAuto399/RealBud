@@ -6,7 +6,7 @@ import { mailRecordId, mailRecovery, validateMailSource, validateMailItemSource,
 import { WorkflowDatabase } from './workflow-database.ts';
 import { mailWorkGroup, type MailTaskPageQuery, type MailTaskPage, type MailScanPageQuery, type MailScanPage } from '../shared/mail-ingestion.ts';
 import { privateDirectory, readPrivateJson, writePrivateJson } from './private-json.ts';
-import { parseMailScanRequest, parseMailScanResult, type MailScanRequest, type MailScanResult, type MailScanReceipt, type MailThread, type MailWorkItem, type MailWorkspaceSnapshot } from '../shared/mail-ingestion.ts';
+import { mailConversationComplete, mailScanCoverageComplete, parseMailScanRequest, parseMailScanResult, type MailScanRequest, type MailScanResult, type MailScanReceipt, type MailThread, type MailWorkItem, type MailWorkspaceSnapshot } from '../shared/mail-ingestion.ts';
 import { planMailHistory, mailHistoryWindows, parseMailHistoryCheckpoint, mailHistoryCoverage, mailHistoryStatusDetail, type MailHistoryCheckpoint, type MailHistoryCoverage, type MailHistoryMessageRecord, type MailHistoryPlan, type MailHistoryRunState, type MailHistoryStatus, type MailHistoryWindowStatus } from '../shared/mail-ingestion.ts';
 import { redactSecretsInText } from './redact.ts';
 import type { AgencySetupSettings } from '../shared/agency-setup.ts';
@@ -25,12 +25,16 @@ const HISTORY_FILE_BYTES = 600_000;
 const HISTORY_RESUME_MS = 7 * 86_400_000;
 const object = (v: unknown): v is Record<string, any> => !!v && typeof v === 'object' && !Array.isArray(v);
 function fail(message: string, status = 409): never { throw Object.assign(new Error(message), { status }); }
-/** A fresh complete fetch must prove that the last message is still outgoing.
- * Count office calendar dates, not 24-hour durations (including across DST).
- * The key is stable after the due date, until the outgoing message or rule changes. */
-function dueFollowUpKey(thread: MailThread | undefined, receipt: MailScanReceipt, settings: AgencySetupSettings): string | null {
-    if (!thread || receipt.status !== 'complete' || !settings.mailScope.includeSent || !thread.historyComplete ||
-        thread.messages.some(message => message.direction === 'unknown' || message.bodyTruncated)) return null;
+/** A fresh fetch must prove that the last message is still outgoing. Completeness
+ * is judged per conversation: the scan's coverage must be complete (every listed
+ * conversation fetched) and this conversation's own evidence must be complete.
+ * Another conversation's unread attachment keeps that conversation held without
+ * suppressing this one. Count office calendar dates, not 24-hour durations
+ * (including across DST). The key is stable after the due date, until the
+ * outgoing message or rule changes. */
+function dueFollowUpKey(thread: MailThread | undefined, data: MailScanResult, receipt: MailScanReceipt, settings: AgencySetupSettings): string | null {
+    if (!thread || !['complete', 'partial'].includes(receipt.status) || !mailScanCoverageComplete(data) ||
+        !settings.mailScope.includeSent || !mailConversationComplete(thread)) return null;
     const latest = thread.messages.at(-1)!;
     if (latest.direction !== 'outgoing' || thread.messages.at(-2)?.at === latest.at) return null;
     const date = new Intl.DateTimeFormat('en-US', { timeZone: settings.timeZone, year: 'numeric', month: 'numeric', day: 'numeric' });
@@ -426,7 +430,7 @@ export function createMailIngestionService(options: Options) {
                     const item = row.value as MailWorkItem;
                     const thread = source.data.threads.find(t => t.id === item.threadId);
                     const followUp = item.status === 'open' && item.disposition === 'waiting' && thread && hash(thread) === item.sourceDigest
-                        ? dueFollowUpKey(thread, receipt, source.settings) : null;
+                        ? dueFollowUpKey(thread, source.data, receipt, source.settings) : null;
                     if (item.accountId === authority.accountId && (item.newEvidence && !item.reviewed || followUp !== null && followUp !== item.followUpReviewedKey)) {
                         pendingCount++;
                         if (fullInput.threads.some(t => t.threadId === item.threadId))
@@ -500,7 +504,7 @@ export function createMailIngestionService(options: Options) {
                 if (!item)
                     fail('A reviewed conversation is missing from the saved list.');
                 const thread = source.data.threads.find(t => t.id === item.threadId);
-                const followUp = thread && hash(thread) === item.sourceDigest ? dueFollowUpKey(thread, receipt, source.settings) : null;
+                const followUp = thread && hash(thread) === item.sourceDigest ? dueFollowUpKey(thread, source.data, receipt, source.settings) : null;
                 // Staff fields remain authoritative. A due follow-up can produce a
                 // source-bound review job without replacing their task decisions.
                 if (item.reviewed) {
