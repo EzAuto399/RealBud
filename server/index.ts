@@ -5073,9 +5073,19 @@ await websiteRequests.recover().catch(() => oplog('boot', 'Website request histo
 // installation's sample book, never merge onto an occupied workspace.
 function assertPrivateBackupIdle(ignoreRequests = false) {
   if (desk.recovery.active || loops?.recovery.active) throw Object.assign(new Error('Resolve the existing recovery hold before backing up or restoring private work.'),{status:503});
-  if (!ignoreRequests && privateBackupRequests > 0 || store.bots.some(bot=>bot.busy || bot.queuedMessage) || mailWorkspace.busy || deskCheckFlight.running() ||
-      websiteRequests.busy || departmentWork.busy || jobRuns.list().some(run=>run.status==='running'||run.status==='queued') || batches.list().some(batch=>batch.status==='running') || loops?.busy || installInFlight())
-    throw Object.assign(new Error('Wait for current work and setup to finish, then retry the private backup action.'),{status:409});
+  // Name what is still running, so the person knows what to wait for.
+  const busy =
+    !ignoreRequests && privateBackupRequests > 0 ? 'the other workspace change in progress' :
+    store.bots.some(bot=>bot.busy || bot.queuedMessage) ? 'Bud to finish its current reply' :
+    mailWorkspace.busy ? 'mail collection' :
+    deskCheckFlight.running() ? 'the Desk check' :
+    websiteRequests.busy ? 'the website request in progress' :
+    departmentWork.busy ? 'department work' :
+    jobRuns.list().some(run=>run.status==='running'||run.status==='queued') ? 'the running or queued job' :
+    batches.list().some(batch=>batch.status==='running') ? 'the running batch' :
+    loops?.busy ? 'the scheduled routine' :
+    installInFlight() ? 'Bud setup' : null;
+  if (busy) throw Object.assign(new Error(`Wait for current work and setup to finish (${busy}), then retry the private backup action.`),{status:409});
 }
 function privateRestoreReadiness() {
   const bootstrap = process.env.REALBUD_RESTORE_BOOTSTRAP === '1';
