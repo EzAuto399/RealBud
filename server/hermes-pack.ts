@@ -260,15 +260,31 @@ export function mergePropertyPolicy(existing: string, defaults: string): string 
   result.setIn(["auxiliary", "background_review"], policy.getIn(["auxiliary", "background_review"]));
   // Owned whole: with titles off, the rest of the block (provider, model) is unused.
   if (policy.hasIn(["auxiliary", "title_generation"])) result.setIn(["auxiliary", "title_generation"], policy.getIn(["auxiliary", "title_generation"]));
-  // Hermes turns on Browser Use mode by default whenever `uvx` runs (its runtime
-  // ships one): Ask would get `browser_exec`, which downloads a package at run
-  // time and can drive a local Chrome, plus the credential-vault tools that ride
-  // with it. Portal work goes through RealBud's own fenced browser instead, and
-  // the person signs in themselves. `off` is Hermes' supported switch; other
-  // browser settings stay the office's.
-  result.setIn(["browser", "backend"], "off");
+  // Portal work goes through RealBud's own fenced browser, and the person signs
+  // in themselves; Ask and its subagents get no Hermes browser or credential
+  // vault. Hermes 0.21.3 ACP ignores `agent.disabled_toolsets`, so these keys
+  // keep its availability check (tools/browser_tool_install.py
+  // `check_browser_requirements`, which also gates browser_vault_*) from being
+  // satisfied by settings. Other browser settings stay the office's.
+  for (const [key, value] of Object.entries(WORKER_BROWSER_POLICY)) result.setIn(["browser", key], value);
   return result.toString();
 }
+
+/** Owned `browser.*` keys. `backend: off` stops Browser Use mode (`browser_exec`
+ * plus the vault, which Hermes enables whenever `uvx` runs). `cloud_provider:
+ * local` is the definitive local selection: no cloud browser auto-detected from
+ * a key and no Camofox from `CAMOFOX_URL`. An empty `cdp_url` never attaches to
+ * an already-running browser. `engine: chrome` rules out Lightpanda, which is
+ * advertised with no Chromium on disk. `use_real_profile: false` never copies
+ * the person's own signed-in browser profile. The worker environment
+ * (drivers/acp/hermes.ts) drops the matching overrides. */
+export const WORKER_BROWSER_POLICY = {
+  backend: "off",
+  cloud_provider: "local",
+  cdp_url: "",
+  engine: "chrome",
+  use_real_profile: false,
+} as const;
 
 function policyDocument(raw: string) {
   // Match upstream's YAML 1.1 booleans, and reject malformed/duplicate mappings
@@ -320,7 +336,7 @@ export function workerLimitsReady(root?: string): boolean {
     const ratio = doc.getIn(["agent", "budget_warning_ratio"]);
     return doc.getIn(["auxiliary", "title_generation", "enabled"]) === false &&
       doc.getIn(["security", "allow_lazy_installs"]) === false &&
-      doc.getIn(["browser", "backend"]) === "off" &&
+      Object.entries(WORKER_BROWSER_POLICY).every(([key, value]) => doc.getIn(["browser", key]) === value) &&
       cap("max_web_searches", 10) && cap("max_subagents", 4) &&
       typeof ratio === "number" && ratio > 0 && ratio < 1;
   } catch { return false; }

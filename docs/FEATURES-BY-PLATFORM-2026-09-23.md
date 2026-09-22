@@ -19,7 +19,8 @@ customer. Update this table whenever a row changes tier; it is the acceptance li
 | Portal | Fenced browser runtime (read, prefill) | local tests, rendered | packaged helper shipped | — | Driven portal run on an installed Windows build |
 | Portal | Attended computer control (CUA) | allowed by the live-portal gate | **held by policy** | `server/pilot-contract.ts:15` (`cuaHostSupported: darwin`) | Owner decision + a driven Windows session |
 | Worker | Pack skills, skill preload, curated skill index | real Hermes 0.21.3 code, throwaway profile | same config | — | Packaged worker on both |
-| Worker | Browser and credential-vault tools in Ask | being enforced off (in progress) | same | `server/hermes-pack.ts` policy | Boundary check with browser dependencies present |
+| Worker | Hermes' own browser and credential-vault tools (bypass route) | **0 offered** with dependencies present (real 0.21.3 code); driver cancels any Hermes `browser_*` call | same config | residual: agent-browser/npx in a system folder plus a Playwright Chromium under the person's home still exposes 14 (no 0.21.3 switch) | `scripts/testing/hermes-browser-boundary.mjs` on each Hermes upgrade; readiness check at install is an owner call |
+| Worker | Browser tasks through RealBud's broker from Ask | **not available**: the broker is mounted only for a fenced portal job | same | `server/index.ts` broker mount | Task-authority slices (decision 2026-09-23) |
 | Worker | Memory review and proposals | local tests | **refused** | `server/hermes-memory-review.ts:74` (`platform-unverified`) | Windows per-file ACL + durable rename admission for the native store |
 | Worker | Legacy personal Hermes profile migration | local tests | **refused** | `server/hermes-pack.ts:31` | An ACL-preserving migration protocol |
 | Storage | Private data created protected | local tests | installed hosted runner | — | Real device |

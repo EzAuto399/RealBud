@@ -18,6 +18,8 @@ import { applyWorkerModelAccessEnv, selectedWindowsRuntimeHome, windowsHermesRun
 // The startup skip flag alone does not cover discovery restarted by an agent.
 export const HERMES_CONFIGURED_MCP_FILTER = `realbud_explicit_${randomUUID().replaceAll("-", "")}`;
 
+const HERMES_BROWSER_ENV = /^(?:AGENT_BROWSER_\w*|BROWSER_CDP_URL|CAMOFOX_URL|PLAYWRIGHT_BROWSERS_PATH)$/i;
+
 export function hardenHermesChildEnv(env: Record<string, string | undefined>): void {
   // Upstream does not understand RealBud's data/profile variables. Resolve
   // the child environment here so ACP and one-shot work use the same home.
@@ -41,6 +43,12 @@ export function hardenHermesChildEnv(env: Record<string, string | undefined>): v
   delete env.REALBUD_CUA_CONTROL_TOKEN;
   delete env.REALBUD_CUA_CONTROL_URL;
   delete env.REALBUD_DESK_KEY;
+  // Ask and its subagents get no Hermes browser; RealBud's fenced browser is
+  // the only one. Hermes' availability check (tools/browser_tool_install.py
+  // `check_browser_requirements`, which also gates the credential vault) reads
+  // these to attach to a running browser, choose Camofox or an engine, or find
+  // a Chromium. The profile policy pins the matching config keys.
+  for (const key of Object.keys(env)) if (HERMES_BROWSER_ENV.test(key)) delete env[key];
   // RealBud is the capability broker. Globally configured MCP servers must
   // not appear in Ask; only per-turn servers explicitly mounted by RealBud do.
   env.HERMES_ACP_SKIP_CONFIGURED_MCP = "1";

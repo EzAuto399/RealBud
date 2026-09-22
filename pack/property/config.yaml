@@ -46,6 +46,10 @@ security:
   redact_secrets: true
   # Never install Python packages at run time; the worker runs its reviewed release.
   allow_lazy_installs: false
+# Install and Repair also own browser.backend/cloud_provider/cdp_url/engine/
+# use_real_profile (server/hermes-pack.ts WORKER_BROWSER_POLICY): Ask and its
+# subagents get no Hermes browser or credential vault; portal work uses
+# RealBud's fenced browser. Other browser settings stay the office's.
 # Native foreground and background learning proposes durable changes for review.
 # RealBud enables the learner only for its exact admitted runtime during Repair.
 # Install and Repair also add skills.disabled: Hermes' bundled skills outside

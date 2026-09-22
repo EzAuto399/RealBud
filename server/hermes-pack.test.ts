@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { applyPropertyPack, mergePropertyPolicy, ensurePropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, learningPolicyReady, migratePropertyProfileFromLegacyHermes, OFF_SCOPE_BUNDLED_SKILLS, PACK_DIR, packInstalled, propertyProfileDir, propertyWorkroomReady, skillScopeReady, stagedLearningSupported, workerLimitsReady, yamlBlock } from "./hermes-pack.ts";
+import { applyPropertyPack, mergePropertyPolicy, ensurePropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, learningPolicyReady, migratePropertyProfileFromLegacyHermes, OFF_SCOPE_BUNDLED_SKILLS, PACK_DIR, packInstalled, propertyProfileDir, propertyWorkroomReady, skillScopeReady, stagedLearningSupported, workerLimitsReady, WORKER_BROWSER_POLICY, yamlBlock } from "./hermes-pack.ts";
 import { HERMES_RECOMMENDED } from "./hermes-releases.ts";
 import { releaseHome, resetRuntimeSelectionForTests, saveRuntimeSelection, selectedHermesCli } from "./hermes-runtime-selection.ts";
 import { runtimeCli } from "./hermes-paths.ts";
@@ -385,10 +385,23 @@ describe("product fleet", () => {
 });
 
 describe("worker browser surface", () => {
-  it("turns Hermes' default Browser Use mode off on install and keeps the office's other browser settings", () => {
-    const merged = mergePropertyPolicy("browser:\n  headed: true\n  backend: \"\"\n", readFileSync(join(PACK_DIR, "config.yaml"), "utf8"));
+  it("owns the browser keys that would give Hermes its own browser and keeps the office's other browser settings", () => {
+    const office = "browser:\n  headed: true\n  backend: \"\"\n  cloud_provider: camofox\n  cdp_url: http://127.0.0.1:9222\n  engine: lightpanda\n  use_real_profile: true\n";
+    const merged = mergePropertyPolicy(office, readFileSync(join(PACK_DIR, "config.yaml"), "utf8"));
     const doc = parseDocument(merged, { version: "1.1" });
-    expect(doc.getIn(["browser", "backend"])).toBe("off");
-    expect(doc.getIn(["browser", "headed"])).toBe(true);
+    expect(doc.toJS().browser).toEqual({ headed: true, ...WORKER_BROWSER_POLICY });
+    expect(WORKER_BROWSER_POLICY).toEqual({ backend: "off", cloud_provider: "local", cdp_url: "", engine: "chrome", use_real_profile: false });
+  });
+
+  it.each(Object.keys(WORKER_BROWSER_POLICY))("reads a profile whose browser.%s was changed as needing Repair", key => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-worker-browser-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home); const path = join(dir, "config.yaml");
+    expect(workerLimitsReady(home)).toBe(true);
+    const doc = parseDocument(readFileSync(path, "utf8"), { version: "1.1" });
+    doc.deleteIn(["browser", key]);
+    writeFileSync(path, doc.toString());
+    expect(workerLimitsReady(home)).toBe(false);
+    applyPropertyPack(home);
+    expect(workerLimitsReady(home)).toBe(true);
   });
 });

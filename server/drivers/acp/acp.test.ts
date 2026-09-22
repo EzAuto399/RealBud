@@ -21,6 +21,7 @@ import { GrokAgentDriver } from "./grok.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
 import { KimiAgentDriver } from "./kimi.ts";
 import { hardenHermesChildEnv, HermesAgentDriver } from "./hermes.ts";
+import { HERMES_BROWSER_REFUSED, hermesNativeBrowserTool } from "./core.ts";
 import { HERMES_PIN } from "../../hermes-pin.ts";
 import { seedVault } from "../../vault.ts";
 import { revokeConnectedAppsBrokers } from "../../connected-apps-broker.ts";
@@ -70,6 +71,14 @@ describe("ACP decodeConfig", () => {
     };
     hardenHermesChildEnv(env);
     expect(env).toEqual({ SAFE_VALUE: "kept", HERMES_HOME: join(homedir(), ".realbud", "hermes"), HERMES_ACP_SKIP_CONFIGURED_MCP: "1", HERMES_SAFE_MODE: "1", HERMES_EXEC_ASK: "1", HERMES_CODEX_EVENT_STALE_TIMEOUT_SECONDS: "60" });
+  });
+  it("names only Hermes' own browser and vault tools, never RealBud's fenced browser", () => {
+    expect(hermesNativeBrowserTool("browser_navigate: https://example.invalid")).toBe("browser_navigate");
+    expect(hermesNativeBrowserTool(undefined, "browser_vault_fill")).toBe("browser_vault_fill");
+    expect(hermesNativeBrowserTool("browser_exec")).toBe("browser_exec");
+    for (const other of ["mcp__browser__navigate: https://example.invalid", "browser", "browserish", "Open approved portal", "navigate", "web_extract"]) {
+      expect(hermesNativeBrowserTool(other), other).toBeNull();
+    }
   });
   it("fullAuto only when explicitly true", () => {
     expect(GrokAgentDriver.decodeConfig({ fullAuto: "yes" }).fullAuto).toBe(false);
@@ -582,6 +591,68 @@ describe("ACP turns (fake CLI)", () => {
     await recorder.until(event => event.type === 'turn.completed');
     expect(JSON.parse(readFileSync(dump, 'utf8')).selectedPermissionOption).toBeNull();
     expect(recorder.events.some(event => event.type === 'request.opened')).toBe(false);
+  });
+
+  it.each([
+    { name: "titled", rawInput: {}, title: "browser_navigate: https://example.invalid/bills" },
+    { name: "named vault", rawInput: { name: "browser_vault_fill", url: "https://example.invalid/login" }, title: "Fill saved login" },
+  ])("refuses a Hermes-native browser permission ($name) before fullAuto and stops the turn", async ({ rawInput, title }) => {
+    const dump = join(scratch, "native-browser-permission.json"), script = join(scratch, "native-browser-callback.json");
+    writeFileSync(script, JSON.stringify({ tool: "fetch", rawInput, title }));
+    process.env.FAKE_ACP_SCRIPT = script; process.env.FAKE_ACP_DUMP = dump;
+    await create(HermesAgentDriver, "permission", true);
+    await instance.adapter.sendTurn({ threadId: "native-browser-permission", text: "go" });
+    await recorder.until(event => event.type === "turn.completed");
+    expect(JSON.parse(readFileSync(dump, "utf8")).selectedPermissionOption).toBeNull();
+    expect(recorder.events.some(event => event.type === "request.opened")).toBe(false);
+    expect(recorder.events).toContainEqual(expect.objectContaining({ type: "runtime.error", message: HERMES_BROWSER_REFUSED }));
+  });
+
+  it("still asks about RealBud's own fenced browser tools", async () => {
+    const script = join(scratch, "fenced-browser-callback.json");
+    writeFileSync(script, JSON.stringify({ tool: "fetch", rawInput: { url: "https://example.invalid/bills" }, title: "mcp__browser__navigate: https://example.invalid/bills" }));
+    process.env.FAKE_ACP_SCRIPT = script;
+    await create(HermesAgentDriver, "permission");
+    await instance.adapter.sendTurn({ threadId: "fenced-browser", text: "go" });
+    const opened = await recorder.until(event => event.type === "request.opened");
+    await instance.adapter.respondToRequest("fenced-browser", opened.requestId!, { behavior: "deny" });
+    await recorder.until(event => event.type === "turn.completed");
+    expect(recorder.events.some(event => event.type === "runtime.error" && (event as any).message === HERMES_BROWSER_REFUSED)).toBe(false);
+  });
+
+  it("cancels the turn when Hermes starts one of its own browser tools", async () => {
+    // Hermes offers no permission prompt for most browser actions, so the
+    // started tool call is the only signal RealBud sees.
+    const fake = join(scratch, "native-browser-acp.mjs"), dump = join(scratch, "native-browser-cancel.json");
+    writeFileSync(fake, `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+const out = m => process.stdout.write(JSON.stringify(m) + "\\n");
+let buf = "", prompt = null;
+process.stdin.on("data", chunk => {
+  buf += chunk; let nl;
+  while ((nl = buf.indexOf("\\n")) !== -1) {
+    const msg = JSON.parse(buf.slice(0, nl)); buf = buf.slice(nl + 1);
+    if (msg.method === "initialize") out({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, authMethods: [] } });
+    else if (msg.method === "session/new") out({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "fictional-session" } });
+    else if (msg.method === "session/set_mode") out({ jsonrpc: "2.0", id: msg.id, result: {} });
+    else if (msg.method === "session/prompt") {
+      prompt = msg.id;
+      out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call", toolCallId: "tc-browser", title: "browser_navigate: https://example.invalid/bills", kind: "fetch" } } });
+    } else if (msg.method === "session/cancel") {
+      writeFileSync(${JSON.stringify(dump)}, "cancelled");
+      out({ jsonrpc: "2.0", id: prompt, result: { stopReason: "cancelled" } });
+    } else if (msg.id !== undefined) out({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } });
+  }
+});
+`);
+    chmodSync(fake, 0o755);
+    instance = await HermesAgentDriver.create({ instanceId: "acp-test", displayName: "ACP Test", environment: {}, enabled: true, config: { cli: fake, fullAuto: true } });
+    recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId: "native-browser-call", text: "go" });
+    const done = await recorder.until(event => event.type === "turn.completed");
+    expect(done).toMatchObject({ stopReason: "cancelled" });
+    expect(readFileSync(dump, "utf8")).toBe("cancelled");
+    expect(recorder.events).toContainEqual(expect.objectContaining({ type: "runtime.error", message: HERMES_BROWSER_REFUSED }));
   });
 
   it("puts Hermes in workspace-scoped accept-edits mode before the prompt", async () => {

@@ -125,6 +125,23 @@ type AcpHttpMcpServer = {
 };
 type AcpMcpServer = AcpStdioMcpServer | AcpHttpMcpServer;
 
+/** Hermes' own browser and credential-vault tools (`browser_navigate`,
+ * `browser_vault_fill`, …), named by the leading tool name Hermes ACP puts in a
+ * tool call's title (acp_adapter/tools.py `build_tool_title`) or by an explicit
+ * name field. RealBud's fenced browser reaches Hermes as MCP tools
+ * (`mcp__browser__…`), which never match. The profile policy and worker
+ * environment keep these tools from being offered; this is the backstop. */
+export function hermesNativeBrowserTool(...values: unknown[]): string | null {
+  for (const value of values) {
+    const match = typeof value === "string" ? /^\s*(browser_[a-z0-9_]+)(?![a-z0-9_])/i.exec(value) : null;
+    if (match) return match[1].toLowerCase();
+  }
+  return null;
+}
+
+export const HERMES_BROWSER_REFUSED =
+  "Bud tried to use a web browser of its own, which RealBud does not allow, so this request was stopped. Website work runs in RealBud’s browser, where you sign in yourself.";
+
 function decodeAcpConfig(defaultCli: string) {
   return (raw: unknown): AcpConfig => {
     const o = (raw ?? {}) as Record<string, unknown>;
@@ -406,6 +423,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           else terminate();
         };
 
+        // Stop the whole turn: the call may already be running inside Hermes,
+        // and later calls in the same turn would follow the same plan.
+        const refuseHermesBrowser = (run: RunningTurn) => {
+          if (run.settled || run.cancellationRequested) return;
+          emit({ ...eventBase(run), type: "runtime.error", message: HERMES_BROWSER_REFUSED });
+          void interrupt(run);
+        };
+
         const handleServerRequest = (message: any) => {
           const run = current;
           if (!run || run.settled || run.cancellationRequested || message.method !== "session/request_permission") {
@@ -434,6 +459,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             });
 
           const toolCall = params.toolCall ?? {};
+          if (DRIVER_KIND === "hermesAgent" &&
+            hermesNativeBrowserTool(toolCall.rawInput?.name, toolCall.rawInput?.tool, toolCall.title, toolCall.kind)) {
+            refuseHermesBrowser(run);
+            return send({ jsonrpc: "2.0", id: message.id, result: cancelled });
+          }
           const memoryPermission = DRIVER_KIND === "hermesAgent" ? hermesMemoryPermission(toolCall) : { kind: "other" as const };
           if (memoryPermission.kind === "invalid-memory") {
             emit({ ...eventBase(run), type: "runtime.error", message: "This memory change cannot be reviewed completely here. Only one fully shown addition can be approved; replacements, removals and batches need separate full-entry review. No memory change was approved." });
@@ -565,6 +595,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 title: String(update.rawInput?.command ?? update.title ?? "tool").slice(0, 80),
                 toolFingerprint: toolFingerprint(String(update.title ?? "tool"), update.rawInput ?? update.content),
               });
+              if (DRIVER_KIND === "hermesAgent" && hermesNativeBrowserTool(update.rawInput?.name, update.rawInput?.tool, update.title)) {
+                refuseHermesBrowser(run);
+              }
               break;
             case "tool_call_update":
               if (update.status === "completed" || update.status === "failed") {
