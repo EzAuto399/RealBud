@@ -27,12 +27,12 @@ customer. Update this table whenever a row changes tier; it is the acceptance li
 | Backup | Export, preview, staged restore, cold apply | local tests | **installed hosted runner, 6/6** (restore up to 39 s) | — | Real device; restart; uninstall with data; data folders from older builds still refuse |
 | Service | Office service start | packaged smoke | installed hosted runner (6.9–14.2 s) | — | Real device timing |
 | Service | Crash restart (window open) | unit tests | unit tests | — | Kill-and-return on an installed build |
-| Service | Supervision after the window closes | in progress | in progress (quits today) | `electron/main.mjs` window-all-closed | Installed: schedule on, close window, kill service, one return, no duplicate run |
+| Service | Supervision after the window closes | already kept (app stays in the dock) | unit tests: stays in the notification area when unattended work is on; sign-in host supervises | `electron/unattended-host.mjs` | Installed: schedule on, close window, kill service, one return, no duplicate run (steps in WINDOWS-PROFILE-ACCEPTANCE) |
 | Service | Start at sign-in, keep awake | component tests; login item opens the window | component tests; `--service` headless | `electron/service-persistence.mjs` | Real reboot + sign-in |
 | Company | Hosting an office (owned PostgreSQL) | local tests | installed hosted runner | — | Real device |
 | Speech | Dictation helper | packaged build | packaged build | Linux unsupported (`electron/speech.mjs:48`) | Driven microphone session |
 | Release | Signing and updates | **unsigned, not notarized** | **no Authenticode certificate** | `electron-builder.yml` | Certificates (owner gate, GATES §B) |
 
 Biggest gaps by user impact: unsigned builds on both platforms; memory review refused on
-Windows; attended computer control held to macOS by policy; supervision lost when the window
-closes (fix in progress); attachment contents never collected.
+Windows; attended computer control held to macOS by policy; Ask cannot yet reach the browser
+broker for authorised tasks; attachment contents never collected.
