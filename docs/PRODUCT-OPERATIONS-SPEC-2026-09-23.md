@@ -75,3 +75,26 @@ Approvals stay manual; nothing sends, pays, signs or files a notice. RealBud own
 (`cron_mode: deny`). Profiles resolve only through `hermes-profile.ts`. Vendor credentials never
 enter customer or Hermes-controlled storage beyond the installation's own vaulted Modelvia key.
 Every persisted or shown string passes redaction.
+
+## Status at end of 23 September 2026
+
+Evidence tier per item in brackets. Nothing here is customer, signed-build or live-integration proof.
+
+| Item | Result |
+|---|---|
+| A Hermes | One-shot jobs preload their pack skill (`-s`), import inspection runs under the member's own profile, worker config turns off auto-title calls and runtime package installs, caps web search at 10 and delegation at 4 per turn, adds a budget warning. Existing profiles show "Re-apply safeguards" once. [local tests: 116 passed] |
+| B Modelvia | Lost reply or existing project recovers through Modelvia's key listing and rotate routes instead of an operator hold; cap changes reach the live Modelvia project (its project upsert is versioned, no Modelvia change needed); usage reads retry once and cache 3 minutes. [gateway tests 146/146; desktop 22/22; not run against Modelvia] |
+| C Join code | One `RBJ1!…` code carries host identity and invitation; copy buttons; carry-over note; department access reminder. [unit 32/32; rendered 1365/390, damaged code refused before any request] |
+| D Website billing | One AI usage figure from platform billing; `/account/usage` redirects; service vs AI usage invoices labelled and cross-linked; narrow-screen tables; plain copy; money in cents; support contact on home; sandbox banner never in production. [website tests 88/88; build; 47 renders, 0 overflow] |
+| E Support | "Save support file" on You writes one redacted text report; full disk gets its own message on private writes. [unit 98/98; Electron handler not run] |
+| Wave 2.1 Browser link | Desktop "Link with your RealBud account" opens the owner's approval page (`/link/<id>`), both show the same code, the desktop polls, names the office it joined with a one-click disconnect, and model access arrives through the report path. Website approval reuses `realbud_issue_pairing` + `realbud_redeem_installation` in one transaction. [website unit 95/95, disposable PostgreSQL 74 assertions, renders 360/1280; desktop 185 tests, rendered with synthetic website answers; not run desktop-to-website end to end] |
+| Windows data folder | The product now creates every file and folder it owns in the data folder with its own protected descriptor before content, so backup restore can admit them. Fresh boot: 22 PowerShell launches (was 11), about 0.2 s each. Data folders created by older builds stay unprotected (no-repair rule), so restore onto them still refuses. [server tests 3,938 passed on macOS; Windows result pending the probe and package runs] |
+| Windows CI | Unit run split into three shards to stay inside the job limit. |
+| macOS | Unsigned arm64 package builds and its packaged smoke passes at 7b0e299. [packaged build] |
+
+Open, in order:
+1. Windows proof of the data-folder change (probe and installed backup check), then the sharded Windows unit residue.
+2. Website-side cancel for a browser link request (a request cancelled on the computer can still be approved until it expires; the owner can revoke it from Computers).
+3. Crash restart of the office service; `.no-bundled-skills` with a curated skill set; ACP `/tools` check for built-in browser tools in Ask.
+4. Model name shown to owners (`jev-router`) needs an owner-readable label.
+5. Signing, a real office computer, real Gmail and live Modelvia remain gates.
