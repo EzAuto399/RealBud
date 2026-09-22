@@ -190,11 +190,15 @@ export function createDepartmentWork(options:{
   function pump() {
     while(!stopped&&queued.length&&flights.size<4)launch(queued.shift()!);
   }
+  const eligibleRows=()=>rows().reverse().map(r=>r.value).filter(s=>!s.restored&&['requesting','waiting-owner','admitting','running'].includes(s.phase));
   async function tick() {
     if(stopped)return;if(ticking)return ticking;
+    // An idle scan is a database read. It never enters the worker context, so it
+    // cannot wait behind a workspace pause and hold a restore as "busy".
+    if(!eligibleRows().length&&!queued.length)return;
     const work=options.runContext(async()=>{
       options.assertAdmission();
-      const eligible=rows().reverse().map(r=>r.value).filter(s=>!s.restored&&['requesting','waiting-owner','admitting','running'].includes(s.phase));
+      const eligible=eligibleRows();
       // A finite fair page per tick. Pending owner reviews release their slot
       // immediately and pump the next candidate; they cannot starve approvals.
       const start=eligible.length?scanCursor%eligible.length:0;

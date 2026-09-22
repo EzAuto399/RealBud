@@ -164,3 +164,14 @@ it('holds dispatch when workflow instructions change during the awaited host per
   const f=await fixture();await f.work.prepare(f.session,f.input);f.setAfterCheck(()=>f.setInstructions('New instructions after the host check began.'));await f.confirm();
   expect(f.workerPrompts).toHaveLength(0);expect(f.runs().list()).toHaveLength(0);expect(f.saved().value.delivery?.outcome).toBe('interrupted');
 });
+
+it('an idle scan never enters the worker context, so it cannot wait behind a workspace pause and hold a restore as busy',async()=>{
+  const f=await fixture();let entered=0;
+  const idle=createDepartmentWork({db:f.db,client:f.client,forward:async()=>{throw new Error('No request is expected.');},recipes:()=>[],instructions:async()=>'',assertRecipeReady:async()=>{},assertAdmission:()=>{},epoch:()=>'idle',
+    // A context that never admits, like one waiting behind a workspace pause.
+    runContext:()=>{entered++;return new Promise<never>(()=>{});},findJob:()=>undefined,
+    execute:async()=>{throw new Error('Nothing should run.');},ask:async()=>{throw new Error('Nothing should ask.');}});
+  await idle.tick();
+  expect(entered).toBe(0);expect(idle.busy).toBe(false);
+  idle.stop();
+});
