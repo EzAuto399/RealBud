@@ -37,7 +37,8 @@ try {
   # Exercise the exact installed candidate module with the CI runner's Python.
   # This proves packaged helper bytes/API only; it does not admit memory writes
   # or claim the Hermes-managed Python/runtime and journal integration passed.
-  $python = (Get-Command python -CommandType Application -ErrorAction Stop).Source
+  # Hosted runners expose several python applications on PATH (hostedtoolcache, the Store alias); take the first.
+  $python = @(Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1)[0].Source
   $memoryScript = Join-Path $PSScriptRoot 'testing/hermes-memory-windows-native.py'
   $memoryModule = Join-Path $resources 'server/helpers/hermes-memory-windows-native.py'
   $memoryReceipt = Join-Path $ReceiptDirectory 'installed-memory-primitives.json'
@@ -46,7 +47,8 @@ try {
   $memoryProbe = Start-Process -FilePath $python -ArgumentList $memoryArguments -PassThru -NoNewWindow `
     -RedirectStandardOutput (Join-Path $ReceiptDirectory 'installed-memory-primitives.stdout.log') `
     -RedirectStandardError (Join-Path $ReceiptDirectory 'installed-memory-primitives.stderr.log')
-  if (-not $memoryProbe.WaitForExit(120000)) {
+  # The native acceptance script budgets 480 s for a cold PowerShell 5.1 runner; allow it to finish and write its receipt.
+  if (-not $memoryProbe.WaitForExit(600000)) {
     & (Join-Path $env:SystemRoot 'System32\taskkill.exe') /PID $memoryProbe.Id /T /F | Out-Null
     throw 'Installed memory primitives exceeded two minutes.'
   }
@@ -67,7 +69,8 @@ try {
   $serviceProbe = Start-Process -FilePath $app -ArgumentList $serviceArguments -PassThru -NoNewWindow `
     -RedirectStandardOutput (Join-Path $ReceiptDirectory 'installed-service.stdout.log') `
     -RedirectStandardError (Join-Path $ReceiptDirectory 'installed-service.stderr.log')
-  if (-not $serviceProbe.WaitForExit(45000)) { $serviceProbe.Kill(); throw 'Installed service probe exceeded 45 seconds.' }
+  # Readiness took 35-51 s on hosted runners (one cold PowerShell launch); 45 s was inside that window.
+  if (-not $serviceProbe.WaitForExit(240000)) { $serviceProbe.Kill(); throw 'Installed service probe exceeded four minutes.' }
   if ($serviceProbe.ExitCode -ne 0) { throw "Installed service probe failed: $($serviceProbe.ExitCode)" }
   if (-not (Test-Path -LiteralPath $serviceReceipt)) { throw 'Installed service probe did not write its receipt.' }
   $serviceResult = Get-Content -Raw -LiteralPath $serviceReceipt | ConvertFrom-Json

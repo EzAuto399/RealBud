@@ -109,7 +109,7 @@ describe('authenticated portable business catalog archives', () => {
     const encoded = await encode(f.catalog, true), restored = await decode(encoded.bytes);
     expect(restored.receipt.recordCount).toBe(5001); expect([...restored.catalog.iterateRecords()].map(row => row.id)).toEqual(expected);
     for (const id of [expected[0], expected[5000]]) expect(restored.catalog.getRecord('bill-review-draft', id)).toEqual(f.catalog.getRecord('bill-review-draft', id));
-  }, 30_000);
+  }, process.env.CI ? 120_000 : 30_000);
 
   it('keeps decoded entries provisional until exact EOF and the expected uploaded digest validate', async () => {
     const f = await fixture(), { bytes } = await encode(f.catalog), source = readFileSync(join(f.catalog.directory, 'catalog.sqlite'));
