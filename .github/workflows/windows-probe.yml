@@ -5,6 +5,16 @@ name: Windows probe
 # for the full CI matrix. Evidence only; it gates nothing.
 on:
   workflow_dispatch:
+  # Dispatch only resolves on the default branch, so a pull request that touches
+  # the Windows privacy pieces runs the probe on its own.
+  pull_request:
+    paths:
+      - .github/workflows/windows-probe.yml
+      - scripts/testing/probe-windows-acl.mjs
+      - server/windows-file-privacy*.ts
+      - server/private-file.ts
+      - server/private-vault.ts
+      - server/hermes-profile-storage.ts
 
 permissions:
   contents: read
