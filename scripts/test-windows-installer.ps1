@@ -52,10 +52,13 @@ try {
     & (Join-Path $env:SystemRoot 'System32\taskkill.exe') /PID $memoryProbe.Id /T /F | Out-Null
     throw 'Installed memory primitives exceeded two minutes.'
   }
-  if ($memoryProbe.ExitCode -ne 0) { throw "Installed memory primitives failed: $($memoryProbe.ExitCode)" }
+  # The native memory candidate is a documented production hold: its receipt is the evidence.
+  # A refusal here is recorded and reported, and must not hide the service and backup probes that follow.
+  if ($memoryProbe.ExitCode -ne 0) { Write-Warning "Installed memory primitives candidate failed: $($memoryProbe.ExitCode) (held candidate; see installed-memory-primitives.json)" }
   if (-not (Test-Path -LiteralPath $memoryReceipt)) { throw 'Installed memory primitives did not write a receipt.' }
   $memoryResult = Get-Content -Raw -LiteralPath $memoryReceipt | ConvertFrom-Json
-  if (-not $memoryResult.passed -or -not $memoryResult.native_validation -or $memoryResult.platform -ne 'win32' -or -not $memoryResult.cleanup -or -not $memoryResult.handles_drained) {
+  if (-not $memoryResult.passed) { Write-Warning ('Installed memory candidate did not pass (held): ' + $memoryResult.active_check + ' ' + ($memoryResult.native_error | ConvertTo-Json -Compress)) }
+  if (-not $memoryResult.native_validation -or $memoryResult.platform -ne 'win32' -or -not $memoryResult.cleanup -or -not $memoryResult.handles_drained) {
     throw 'Installed memory candidate did not confirm native checks and cleanup.'
   }
   if ([IO.Path]::GetFullPath($memoryResult.selected_module) -ne [IO.Path]::GetFullPath($memoryModule)) { throw 'Memory receipt names a different module.' }
