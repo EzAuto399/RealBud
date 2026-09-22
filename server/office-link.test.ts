@@ -171,6 +171,25 @@ describe("which website this installation reports to", () => {
       expect(notes[0]).toMatch(/ignored/);
     }
   });
+  it("accepts a loopback http website only in the local test lab, never on a production build", () => {
+    const lab = { REALBUD_TEST_LAB: "1", REALBUD_WEBSITE_ORIGIN: "http://127.0.0.1:43123" };
+    expect(origin(lab)).toBe("http://127.0.0.1:43123");
+    expect(notes).toEqual(["website origin override in use (test lab loopback): http://127.0.0.1:43123"]);
+    expect(origin({ REALBUD_WEBSITE_ORIGIN: "http://127.0.0.1:43123" })).toBe("https://realbud.app");
+    expect(notes[0]).toMatch(/ignored: not a plain https origin/);
+    for (const guard of [{ REALBUD_PRODUCTION: "1" }, { REALBUD_MANAGED_SERVICE: "1" }]) {
+      expect(origin({ ...lab, ...guard })).toBe("https://realbud.app");
+      expect(notes[0]).toMatch(/production build/);
+    }
+    for (const unsafe of ["http://127.0.0.1", "http://localhost:43123", "http://10.0.0.2:43123", "http://127.0.0.1:43123/path",
+      "http://127.0.0.1:43123/?x=1", "http://127.0.0.1:43123/#x", "http://user:pass@127.0.0.1:43123"]) {
+      expect(origin({ REALBUD_TEST_LAB: "1", REALBUD_WEBSITE_ORIGIN: unsafe })).toBe("https://realbud.app");
+      expect(notes[0]).toMatch(/ignored/);
+    }
+    // https behaviour is unchanged by the lab flag.
+    expect(origin({ REALBUD_TEST_LAB: "1", REALBUD_WEBSITE_ORIGIN: "https://staging.realbud.app" })).toBe("https://staging.realbud.app");
+    expect(notes).toEqual(["website origin override in use: https://staging.realbud.app"]);
+  });
   it("sends every request to the overridden origin", async () => {
     const calls: string[] = [];
     const app = createOfficeLink({ directory: mkdtempSync(join(tmpdir(), "realbud-link-")), appVersion: "0.1.19", origin: "https://staging.realbud.app",

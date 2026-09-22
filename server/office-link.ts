@@ -26,7 +26,8 @@ const PRODUCTION_ORIGIN = "https://realbud.app";
  * override there would move a customer's installation, subscription and model
  * access to somewhere the customer never chose. `REALBUD_WEBSITE_ORIGIN` is a
  * development/staging affordance only, and only for an https origin with no
- * path, query, fragment or embedded credentials.
+ * path, query, fragment or embedded credentials. The local test lab
+ * (`REALBUD_TEST_LAB=1`) may also use `http://127.0.0.1:<port>`.
  */
 let originNoted = false;
 const noteOnce = (detail: string): void => { if (originNoted) return; originNoted = true; oplog("boot", detail); };
@@ -39,6 +40,14 @@ export function websiteOrigin(env: NodeJS.ProcessEnv = process.env, note: (detai
   }
   let url: URL;
   try { url = new URL(raw); } catch { note("website origin override ignored: not a URL"); return PRODUCTION_ORIGIN; }
+  // The local test lab runs the website fixture on loopback over plain http.
+  // Only an explicit port on 127.0.0.1, only with the lab flag, and never on a
+  // production or managed build (refused above).
+  if (env.REALBUD_TEST_LAB === "1" && url.protocol === "http:" && url.hostname === "127.0.0.1" && url.port
+    && !url.username && !url.password && !url.search && !url.hash && url.pathname === "/") {
+    note(`website origin override in use (test lab loopback): ${url.origin}`);
+    return url.origin;
+  }
   if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.pathname !== "/") {
     note("website origin override ignored: not a plain https origin");
     return PRODUCTION_ORIGIN;

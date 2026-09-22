@@ -1,0 +1,48 @@
+{
+  "at": "2026-09-22T22:37:40.012Z",
+  "ok": true,
+  "layer": "Local HTTP: desktop server from source + actual built Next routes and pages + disposable PostgreSQL through the fixture PostgREST bridge, all on 127.0.0.1",
+  "limits": [
+    "Not a deployed website, not https, not a packaged or installed desktop app; the loopback origin is accepted only with REALBUD_TEST_LAB=1.",
+    "The owner approval is the same POST the approval page button sends, made with fetch and a real signed-in session cookie; no browser was rendered here (website/scripts/qa-installation-link.mjs renders the pages).",
+    "The fixture PostgREST bridge replaces transport only; authority is the real SQL RPCs.",
+    "Fictional companies, owners and computer names; no customer account, email delivery or live provider.",
+    "The worker is a fake CLI that only answers --version, so workerReady in the report is a fixture value, not a Hermes readiness proof.",
+    "Provisioning is recorded as observed on this fixture, not proven: see provisioning."
+  ],
+  "checks": [
+    "Website fixture: built Next on a disposable PostgreSQL; owner, reader and second-company owner signed in through the real /auth/callback.",
+    "Desktop POST /api/office-link/browser-link returns pending with an approval URL on the website fixture origin (passes the shared isLinkRequestIssued contract) and a display code; the reply carries no token; a poll before approval stays pending.",
+    "Approve is refused for the reader (403), with no session (401) and from a foreign Origin (403); the desktop still reads pending after each.",
+    "Owner A approves with the same POST the approval page sends (same Origin, signed-in session, body {approvalId} only): 200 {state:\"linked\"}, with no installation id or credential in the browser reply.",
+    "Desktop GET /api/office-link/browser-link turns linked with \"Fixture Office A\" after 1 poll(s); GET /api/office-link reads linked for that office with no pending browser request, and neither response ever contains the token.",
+    "Website GET /api/account/installations for company A lists \"Fictional front desk\" under the desktop's own installation id; company B's list does not; the approval page for owner A now renders \"Computer linked\".",
+    "Provisioning as observed: the first report reached the website; website provisioned_at is null and the desktop reads provisioned=false, because the fixture has no https gateway. Recorded as skipped, not as success.",
+    "Cancel: a second desktop (own data dir and server) starts a request, then DELETE /api/office-link/browser-link answers {state:\"none\"}, removes its saved request and reads unlinked; the website row is declined, the approval page renders \"Request declined\", a late owner approve is refused 409 and no installation exists for it.",
+    "Neither desktop attempted a non-loopback fetch, and the website fixture bridge saw no unlisted route."
+  ],
+  "provisioning": {
+    "desktop": {
+      "provisioned": false,
+      "lastReported": true,
+      "error": null,
+      "serviceWithdrawn": false
+    },
+    "website": {
+      "provisionedAt": null,
+      "modelKeyRecorded": false,
+      "reportRecorded": true,
+      "workerReady": true
+    },
+    "reading": "Skipped by the website, not by the desktop: the fixture sets REALBUD_GATEWAY_URL to its plain-http bridge and no portal secret, so gatewayProvisioningClient() returns null and the report reply carries no provisioning. The desktop therefore reads linked with provisioned=false. No model access was granted or faked."
+  },
+  "cleanup": true,
+  "site": {
+    "rpcCount": 24,
+    "bridgeViolations": [],
+    "databaseErrors": [
+      "link_decided"
+    ],
+    "authRejections": 0
+  }
+}
