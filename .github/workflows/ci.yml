@@ -51,7 +51,11 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       - run: pnpm typecheck
-      - run: pnpm test
+      - name: Unit and contract tests
+        run: pnpm test
+        env:
+          # Runners have a fraction of a developer machine's memory; vitest forks inherit this.
+          NODE_OPTIONS: --max-old-space-size=6144
       - name: Two-device evidence contract tests
         run: pnpm test:two-device-evidence
       - name: Release guard tests
