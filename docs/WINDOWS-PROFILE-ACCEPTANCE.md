@@ -706,3 +706,33 @@ Evidence (all on hosted `windows-latest`, PR #5, branch `wave/2026-09-22`):
 
 Still open: why a PowerShell launch costs ~23 s inside the installed service, and the full CI
 matrix result on the .NET access-control scripts (run 35750286883 @ beb6280).
+
+## 2026-09-23 — installed service starts: the 23 s was cmdlet module auto-load
+
+Package Windows run 35750672323 timed the same PowerShell launches with the installed Electron
+binary as parent: `exit 0` took 0.2 s everywhere, while a script using `New-Object` took 23 s in
+every stripped environment (the installed service's shape) and 0.3 s only with the runner's full
+environment. `New-Object` is a cmdlet, so each launch auto-loaded its module; with a stripped
+environment Windows PowerShell 5.1 pays a cold module search every time. Defender real-time,
+behaviour and script scanning were off on the runner (`installed-defender.json`), so it was not
+antivirus.
+
+Change (7b0e299): every RealBud ACL script now uses `[Type]::new()` and no cmdlet at all, with a
+unit test that decodes the shipped script and fails on any `Verb-Noun` token.
+
+Package Windows run 35757744606 @ 3433495 (probe branch `probe/windows-no-cmdlets`):
+- the same script shape with `::new()` took 0.19 s in the stripped environment;
+- the installed compiled service reached `/api/health` in **4.1 s** (was killed at 120 s), with
+  11 PowerShell launches totalling 3.0 s and zero refusals, and passed all four service checks
+  (compiled server outside the checkout, packaged PostgreSQL driver, TLS certificate generator,
+  fresh private Hermes profile with shipped safeguards and no model credentials).
+
+The next installed step, `qa-private-backup-boundaries.mjs`, then failed at its restore call with
+`inheritance-not-protected`: the script plants vault notes in folders it creates itself, with POSIX
+mode 0700 but no Windows descriptor. The script now protects what it plants with the product's own
+helper, and reads the v2 restore stage file the product writes today (the POSIX-only section had
+been failing on macOS source runs for the same stale file name). All seven backup boundary checks
+pass from source on macOS; the Windows installed result is run 35759211257.
+
+Tier: hosted `windows-latest` runner with the unsigned NSIS installer. Not a customer machine, not
+signed, no restart or uninstall-with-data claim.
