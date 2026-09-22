@@ -16,7 +16,15 @@ const stripped = { ...pick(['SystemRoot', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PA
 const profile = pick(['USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'HOMEDRIVE', 'HOMEPATH', 'USERNAME', 'USERDOMAIN']);
 const path = pick(['PATH', 'Path']);
 const program = pick(['ProgramData', 'ProgramFiles', 'ProgramFiles(x86)', 'CommonProgramFiles', 'ALLUSERSPROFILE', 'PUBLIC']);
+// What scripts/service-smoke-env.mjs hands the installed service: a fake home
+// whose application-data directories do not exist and a PATH of one directory.
+const fakeHome = join(scratch, 'rb-probe-fake-home-' + process.pid);
+const smokeHome = { HOME: fakeHome, USERPROFILE: fakeHome, APPDATA: join(fakeHome, 'AppData', 'Roaming'), LOCALAPPDATA: join(fakeHome, 'AppData', 'Local') };
+const exeDir = join(process.execPath, '..');
 const variants = [
+  ['smoke-like', { ...stripped, ...smokeHome, PATH: exeDir }],
+  ['smoke-like+system32-path', { ...stripped, ...smokeHome, PATH: `${exeDir};${join(systemRoot, 'System32')};${join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0')}` }],
+  ['smoke-like+real-profile', { ...stripped, ...profile, PATH: exeDir }],
   ['full', { ...source, ...pinned }],
   ['stripped', stripped],
   ['stripped+path', { ...stripped, ...path }],
