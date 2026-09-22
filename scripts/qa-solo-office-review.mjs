@@ -5,12 +5,13 @@ import { once } from 'node:events';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE to an installed playwright module.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const output = join(root, 'outputs/production-lifecycle-2026-09-20');
+// A dated run writes its own folder; the default keeps the original receipt location.
+const output = process.env.REALBUD_QA_OUTPUT ? resolve(process.env.REALBUD_QA_OUTPUT) : join(root, 'outputs/production-lifecycle-2026-09-20');
 mkdirSync(output, { recursive: true });
 const temp = mkdtempSync(join(tmpdir(), 'rb-solo-office-'));
 let child, browser;
@@ -153,6 +154,39 @@ try {
   await page.getByText('Recovery record archived locally. The remote outcome has not been changed.', { exact: true }).waitFor();
   assert.equal(archived, true);
   assert.deepEqual(errors, []);
+  // One join code (23 September): a damaged paste is refused before any
+  // request; a valid one connects with its host part and carries the
+  // invitation into the join form. Synthetic host responses only.
+  const { encodeCompanyJoinCode } = await import(pathToFileURL(join(root, 'src/lib/company-join-code.ts')).href);
+  const hostPart = 'RB1.' + 'Fixture_only_host_identity_0123456789'.padEnd(64, 'x');
+  const invitationPart = 'fixture_only_invitation_12345678901234567890';
+  const joinCode = encodeCompanyJoinCode(hostPart, invitationPart);
+  const joinPage = await context.newPage(); const joinErrors = []; const connectBodies = [];
+  joinPage.on('pageerror', error => joinErrors.push(error.message));
+  await joinPage.route('**/api/company/connect-host', route => { connectBodies.push(JSON.parse(route.request().postData() || '{}')); return route.fulfill({ json: { ok: true } }); });
+  await joinPage.goto(origin + '/#you-office');
+  await joinPage.getByRole('button', { name: /^You\b/ }).first().click();
+  const joinOffice = joinPage.locator('details').filter({ has: joinPage.getByText('This office', { exact: true }) }).first();
+  if (await joinOffice.count()) await joinOffice.evaluate(node => { node.open = true; });
+  await joinPage.getByRole('button', { name: 'Join an office', exact: true }).click();
+  const joinField = joinPage.getByLabel('Connect to an existing host', { exact: true });
+  await joinField.fill(joinCode.slice(0, -1) + (joinCode.endsWith('0') ? '1' : '0'));
+  await joinPage.getByRole('button', { name: 'Connect to host', exact: true }).click();
+  await joinPage.getByText(/incomplete or was changed/).first().waitFor();
+  assert.equal(connectBodies.length, 0, 'A damaged join code must be refused before any request.');
+  await joinPage.screenshot({ path: join(output, 'join-code-damaged-desktop.png') });
+  await joinPage.route('**/api/company/status', route => route.fulfill({ json: { storageAvailable: true, configured: true, setupAllowed: false, transport: 'encrypted-company', limitations: [] } }));
+  await joinField.fill(joinCode);
+  await joinPage.getByRole('button', { name: 'Connect to host', exact: true }).click();
+  await joinPage.getByText('Filled in from your join code.', { exact: true }).waitFor();
+  assert.deepEqual(connectBodies, [{ hostCode: hostPart }]);
+  assert.equal(await joinPage.getByLabel(/^Private invitation/).inputValue(), invitationPart);
+  await joinPage.screenshot({ path: join(output, 'join-code-connected-desktop.png') });
+  await joinPage.setViewportSize({ width: 390, height: 844 });
+  assert.ok(await joinPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await joinPage.screenshot({ path: join(output, 'join-code-connected-mobile.png') });
+  assert.deepEqual(joinErrors, []);
+  console.log('PASS: one join code refuses a damaged paste without a request, connects with the host part and fills the invitation (1365/390)');
   console.log('PASS: guided solo/join choices, explicit member revocation confirmation, backup download receipt, offline share archival confirmation;  basics-first layout; optional solo/office/website wording; 1365/390 layouts; both binding errors through actual fetch + UI; no automatic replay; no browser errors. Synthetic company responses only.');
 } catch (error) {
   const pages = browser?.contexts().flatMap(context => context.pages()) ?? [];
