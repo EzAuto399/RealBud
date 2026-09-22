@@ -57,7 +57,9 @@ function Report($reportStage, $reportIndex, $reportRecord) {
     if ($err -is [System.ComponentModel.Win32Exception]) { $win32 = [string][int]$err.NativeErrorCode }
     elseif ($err -is [System.IO.IOException] -and ($hresult -band -65536) -eq -2147024896) { $win32 = [string]($hresult -band 65535) }
   } catch { }
-  [Console]::Error.WriteLine("[windows-acl] stage=$reportStage index=$reportIndex type=$type hresult=$hresult win32=$win32")
+  $fqid = '-'
+  try { $fqid = ([string]$reportRecord.FullyQualifiedErrorId) -replace '[^A-Za-z0-9_.,:-]', ''; if ($fqid.Length -gt 120) { $fqid = $fqid.Substring(0, 120) }; if ($fqid.Length -eq 0) { $fqid = '-' } } catch { }
+  [Console]::Error.WriteLine("[windows-acl] stage=$reportStage index=$reportIndex type=$type hresult=$hresult win32=$win32 fqid=$fqid")
 }
 for ($index = 0; $index -lt $total; $index++) {
 [Console]::Out.WriteLine($index)
@@ -166,11 +168,12 @@ export function windowsKeyPrivacy(rawTarget, kind, restrict = false) {
       ['-NoProfile', '-NonInteractive', '-EncodedCommand', WINDOWS_ACL_ENCODED], {
         env: {
           ...process.env,
+          PSModulePath: path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules'),
           REALBUD_WINDOWS_FILE_PRIVACY_PATH: target,
           REALBUD_WINDOWS_FILE_PRIVACY_KIND: kind,
           REALBUD_WINDOWS_FILE_PRIVACY_ACTION: restrict ? 'restrict' : 'verify',
         },
-        shell: false, windowsHide: true, timeout: 15_000, maxBuffer: 4096, stdio: ['ignore', 'pipe', 'pipe'],
+        shell: false, windowsHide: true, timeout: 120_000, maxBuffer: 4096, stdio: ['ignore', 'pipe', 'pipe'],
       });
   } catch (error) {
     // Retain only the numeric exit; never the native stderr, command or path.

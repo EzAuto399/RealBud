@@ -382,7 +382,11 @@ try {
   // Recorded even when readiness never arrives: how long the child was given
   // is half of what a Windows failure has to explain.
   try {
-    for (let attempt = 0; attempt < readinessAttempts; attempt++) {
+    // Time-based, not attempt-based: a refused connection returns in a few
+    // milliseconds, so a fixed attempt count exhausted itself in 16 s on a
+    // Windows runner whose cold service needs 35-51 s.
+    for (let attempt = 0; attempt < readinessAttempts || performance.now() - started < readyMs; attempt++) {
+      if (performance.now() - started >= readyMs) break;
       if (child.exitCode !== null || child.signalCode) throw new Error('Compiled service exited before readiness');
       const health = await fetch(base + '/api/health', { signal: AbortSignal.timeout(500) })
         .then(r => r.ok ? r.json() : null).catch(() => null);

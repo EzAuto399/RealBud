@@ -69,6 +69,8 @@ try {
   $serviceScript = Join-Path $PSScriptRoot 'smoke-company-bundle.mjs'
   $serviceReceipt = Join-Path $ReceiptDirectory 'installed-service.json'
   $serviceArguments = '"' + $serviceScript + '" "' + $serviceReceipt + '" "' + $resources + '"'
+  # Readiness took 35-51 s on hosted runners; the smoke's default 25 s budget is for developer machines.
+  $env:REALBUD_SMOKE_READY_MS = '120000'
   $serviceProbe = Start-Process -FilePath $app -ArgumentList $serviceArguments -PassThru -NoNewWindow `
     -RedirectStandardOutput (Join-Path $ReceiptDirectory 'installed-service.stdout.log') `
     -RedirectStandardError (Join-Path $ReceiptDirectory 'installed-service.stderr.log')

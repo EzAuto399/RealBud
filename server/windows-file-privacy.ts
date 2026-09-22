@@ -1,3 +1,4 @@
+import * as nodePath from 'node:path';
 import { execFile, execFileSync } from 'node:child_process';
 import { isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -41,7 +42,9 @@ function Report($reportStage, $reportIndex, $reportRecord) {
     if ($err -is [System.ComponentModel.Win32Exception]) { $win32 = [string][int]$err.NativeErrorCode }
     elseif ($err -is [System.IO.IOException] -and ($hresult -band -65536) -eq -2147024896) { $win32 = [string]($hresult -band 65535) }
   } catch { }
-  [Console]::Error.WriteLine("[windows-acl] stage=$reportStage index=$reportIndex type=$type hresult=$hresult win32=$win32")
+  $fqid = '-'
+  try { $fqid = ([string]$reportRecord.FullyQualifiedErrorId) -replace '[^A-Za-z0-9_.,:-]', ''; if ($fqid.Length -gt 120) { $fqid = $fqid.Substring(0, 120) }; if ($fqid.Length -eq 0) { $fqid = '-' } } catch { }
+  [Console]::Error.WriteLine("[windows-acl] stage=$reportStage index=$reportIndex type=$type hresult=$hresult win32=$win32 fqid=$fqid")
 }
 for ($index = 0; $index -lt $total; $index++) {
 [Console]::Out.WriteLine($index)
@@ -259,6 +262,9 @@ function privacyInvocation(
     throw new WindowsFilePrivacyError('invalid-path-or-kind');
   }
   const env: NodeJS.ProcessEnv = { ...process.env, REALBUD_WINDOWS_FILE_PRIVACY_COUNT: String(operations.length) };
+  // Windows PowerShell 5.1 must load its own Security module: an inherited PSModulePath that
+  // points at PowerShell 7 modules leaves Get-Acl/Set-Acl unresolved (seen on hosted runners).
+  env.PSModulePath = nodePath.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'Modules');
   operations.forEach((operation, index) => {
     const { path, kind, action } = operation ?? ({} as Partial<WindowsFilePrivacyOperation>);
     const literal = typeof path === 'string' ? literalPath(path) : path;
@@ -310,7 +316,7 @@ export async function windowsFilePrivacy(
         env: invocation.env,
         shell: false,
         windowsHide: true,
-        timeout: 15_000,
+        timeout: 120_000,
         maxBuffer: 4096,
       },
     );
@@ -332,7 +338,7 @@ export function windowsFilePrivacyBatchSync(operations: WindowsFilePrivacyOperat
   if (!invocation) return planned.map(operation => ({ ...operation, applied: false }));
   try {
     execFileSync(invocation.executable, invocation.args, {
-      env: invocation.env, shell: false, windowsHide: true, timeout: 15_000,
+      env: invocation.env, shell: false, windowsHide: true, timeout: 120_000,
       maxBuffer: 4096, stdio: ['ignore', 'pipe', 'pipe'],
     });
   } catch (error) {
