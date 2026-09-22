@@ -199,7 +199,7 @@ class WindowsFilePrivacyError extends Error {
 // field from a fixed character set, so no native message, path or identity can
 // ride along even if the child writes something else on the same stream.
 const DETAIL_LINE =
-  /^\[windows-acl\] stage=(\d{1,3}) index=(-?\d{1,3}) type=([A-Za-z0-9_.+]{1,120}) hresult=(-?\d{1,11}) win32=(-?\d{1,10}|-)$/;
+  /^\[windows-acl\] stage=(\d{1,3}) index=(-?\d{1,3}) type=([A-Za-z0-9_.+]{1,120}) hresult=(-?\d{1,11}) win32=(-?\d{1,10}|-)(?: fqid=([A-Za-z0-9_.,:-]{1,120}))?$/;
 
 function privacyDetail(stderr: unknown): { text: string; index: number | null } | null {
   const text = typeof stderr === 'string' ? stderr : Buffer.isBuffer(stderr) ? stderr.toString('utf8') : '';
@@ -208,7 +208,7 @@ function privacyDetail(stderr: unknown): { text: string; index: number | null } 
     if (!found) continue;
     const index = Number(found[2]);
     return {
-      text: `stage=${found[1]} index=${found[2]} type=${found[3]} hresult=${found[4]} win32=${found[5]}`,
+      text: `stage=${found[1]} index=${found[2]} type=${found[3]} hresult=${found[4]} win32=${found[5]}${found[6] ? ` fqid=${found[6]}` : ''}`,
       index: Number.isInteger(index) && index >= 0 ? index : null,
     };
   }

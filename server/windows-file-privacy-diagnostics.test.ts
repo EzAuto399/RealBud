@@ -137,6 +137,22 @@ describe('Windows privacy subprocess boundary (simulated Windows)', () => {
     expect(inspect(failure)).not.toContain(secret);
   });
 
+  it('carries the fully qualified error id when the script names one', async () => {
+    const line = '[windows-acl] stage=25 index=1 type=System.Management.Automation.RuntimeException hresult=-2146233087 win32=- fqid=CommandNotFoundException,Microsoft.PowerShell.Commands.GetAclCommand';
+    const stderr = `${line}\r\n`;
+    subprocess.run.mockImplementation((...args) => {
+      (args.at(-1) as (error: unknown, stdout: string, stderr: string) => void)(
+        Object.assign(new Error('fictional'), { code: 25, stderr }), '', stderr,
+      );
+    });
+    let failure: unknown;
+    try { await windowsFilePrivacy('C:\\private', 'directory'); } catch (error) { failure = error; }
+    expect(failure).toMatchObject({
+      category: 'acl-read-failed', nativeExitCode: 25,
+      detail: 'stage=25 index=1 type=System.Management.Automation.RuntimeException hresult=-2146233087 win32=- fqid=CommandNotFoundException,Microsoft.PowerShell.Commands.GetAclCommand',
+    });
+  });
+
   it('keeps a stderr line that is not the script\u2019s own out of the failure', async () => {
     const secret = 'fictional-private-path-and-SID';
     for (const stderr of [
