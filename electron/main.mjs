@@ -1,8 +1,9 @@
 import { registerDesktopShutdown } from "./shutdown.mjs";
 import { createServerSupervisor } from "./server-supervisor.mjs";
-import { findRunningService, probeService, serviceIdentity } from "./service-instance.mjs";
-import { abandonSpawnedService, availableServicePort, clearServiceHandle, ownsRunningService, requestServiceStop, readServiceHandle, SERVICE_WAIT_INTERVAL_MS, serviceWaitTicks, shouldRestartServiceWait, shouldStartService, spawnedServiceState, startDetachedService, systemBootedAt } from "./service-lifecycle.mjs";
+import { findRunningService, isOurService, probeService, serviceIdentity } from "./service-instance.mjs";
+import { abandonSpawnedService, availableServicePort, clearServiceHandle, ownsRunningService, processAlive, requestServiceStop, readServiceHandle, SERVICE_WAIT_INTERVAL_MS, serviceWaitTicks, shouldRestartServiceWait, shouldStartService, spawnedServiceState, startDetachedService, systemBootedAt } from "./service-lifecycle.mjs";
 import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, powerMonitor, powerSaveBlocker, safeStorage, session, shell, systemPreferences, utilityProcess } from "electron";
+import { createServiceWatchdog, WATCHDOG_DEFAULTS } from "./service-watchdog.mjs";
 import { SERVICE_MODE_FLAG, keepAwakeDecision, parseServiceModeArgs, planStartupRegistration, startupRegistrationSupport } from "./service-persistence.mjs";
 import { resolveDeskKey } from "./desk-key-custody.mjs";
 import { configureLogDirectory } from "./log-directory.mjs";
@@ -95,6 +96,11 @@ let serviceHandle = null;
 // A port an abandoned child of ours may still hold. Remembered across start
 // attempts so a later retry cannot scan past it while it is still dying.
 let abandonedServicePort = null;
+// The person asked to stop the office service in this session. Set before the
+// stop request goes out, so the watchdog cannot race it; cleared only by their
+// Start. It records intent, not outcome: an unconfirmed stop is still a stop the
+// watchdog must not undo.
+let serviceStopRequested = false;
 
 // The packaged app has no terminal: everything about the server child's life
 // goes to server.log in the OS log dir (~/Library/Logs/RealBud on macOS,
@@ -581,12 +587,15 @@ async function officeServiceStatus() {
     manageable,
     // Running but not started by this installation's app: report it, do not own it.
     external: Boolean(running) && !manageable,
+    // Automatic restarts of the detached service while this window is open.
+    autoRestart: serviceWatchdog?.status() ?? null,
   };
 }
 
 ipcMain.handle("service:status", officeServiceStatus);
 ipcMain.handle("service:retry", async () => {
   if (!app.isPackaged) return { ok: false, status: await officeServiceStatus() };
+  serviceStopRequested = false;
   const before = await findRunningService(serviceIdentity(realbudDataDir()));
   if (before) {
     // Already answering. Record the port, so a window created after this (macOS
@@ -602,6 +611,7 @@ ipcMain.handle("service:retry", async () => {
 });
 // Explicitly stop the office service. Closing the window never does this.
 ipcMain.handle("service:stop", async () => {
+  serviceStopRequested = true;
   const dataDirectory = realbudDataDir();
   const identity = serviceIdentity(dataDirectory);
   const handle = serviceHandle ?? readServiceHandle(dataDirectory, identity.instanceId);
@@ -622,6 +632,7 @@ ipcMain.handle("service:stop", async () => {
 });
 ipcMain.handle("service:start", async () => {
   if (!app.isPackaged) return { ok: false, status: await officeServiceStatus() };
+  serviceStopRequested = false;
   const ok = await startOrAdoptOfficeService();
   return { ok, status: await officeServiceStatus() };
 });
@@ -1156,6 +1167,84 @@ async function startOrAdoptOfficeServiceOnce() {
   return false;
 }
 
+/**
+ * Bring the detached office service back when it crashes while the window is
+ * open. The rules live in service-watchdog.mjs; this only gathers the facts and
+ * routes every restart through `startOrAdoptOfficeService()`, so an adopted or
+ * already-running service is never duplicated.
+ *
+ * Window mode only. The sign-in service host (`--service`) keeps its documented
+ * contract of exiting when the office stops, and it has no banner or Start button
+ * to hand over to once the hourly limit is reached; the next window launch or
+ * sign-in starts the office again. Smoke runs stop the service themselves and
+ * must exit cleanly, so they are left out too.
+ */
+// `before-quit` can be cancelled (a window with unsaved work refuses to close)
+// and Electron reports no cancellation, so "quitting" holds for a bounded time
+// rather than for the rest of the session. `will-quit` stops the watchdog for good.
+const QUIT_HOLD_MS = 60_000;
+let quitRequestedAt = null;
+app.on("before-quit", () => { quitRequestedAt = Date.now(); });
+const appQuitting = () => quitRequestedAt !== null && Date.now() - quitRequestedAt < QUIT_HOLD_MS;
+let serviceWatchdog = null;
+let serviceWatchdogTimer = null;
+function startServiceWatchdog() {
+  if (serviceWatchdog) return;
+  serviceWatchdog = createServiceWatchdog({
+    observe: async () => {
+      const dataDirectory = realbudDataDir();
+      const identity = serviceIdentity(dataDirectory);
+      const running = await findRunningService(identity);
+      const recorded = serviceHandle ?? readServiceHandle(dataDirectory, identity.instanceId);
+      let recordedAlive = false;
+      let recordedPortAnswers = false;
+      if (recorded && !running) {
+        // Our own child reports its exit directly; a service another session
+        // started can only be tested for existence. Neither authorises a signal.
+        const own = spawnedServiceState(recorded);
+        recordedAlive = own === "running" || (own === "unknown" && processAlive(recorded.pid));
+        // findRunningService already asked every port of this installation.
+        if (!identity.ports.includes(recorded.port)) {
+          recordedPortAnswers = isOurService((await probeService(recorded.port))?.body, identity);
+        }
+      }
+      return {
+        quitting: appQuitting(),
+        stopRequested: serviceStopRequested,
+        startInFlight: serviceStart !== null,
+        answeringPort: running?.port ?? null,
+        currentPort: SERVER_PORT,
+        recorded: Boolean(recorded),
+        recordedAlive,
+        recordedPortAnswers,
+      };
+    },
+    // A Stop or a quit can land between the check and the start: look again.
+    startOrAdopt: async () => {
+      if (serviceStopRequested || appQuitting()) return false;
+      // A fresh start is this app's own, not "already running"; the adopt branch
+      // sets it again if a service of ours turns out to be answering after all.
+      serviceAdopted = false;
+      const ok = await startOrAdoptOfficeService();
+      if (ok) serverReady = true;
+      return ok;
+    },
+    // The same bookkeeping as the adopt branch of startOrAdoptOfficeServiceOnce.
+    adopt: (port) => {
+      SERVER_PORT = port;
+      serverEverStarted = true;
+      serviceAdopted = true;
+      serverReady = true;
+    },
+    log: slog,
+  });
+  serviceWatchdogTimer = setInterval(() => { void serviceWatchdog?.tick(); }, WATCHDOG_DEFAULTS.tickMs);
+}
+function stopServiceWatchdog() {
+  serviceWatchdog?.stop();
+  if (serviceWatchdogTimer) { clearInterval(serviceWatchdogTimer); serviceWatchdogTimer = null; }
+}
+
 app.whenReady().then(async () => {
   // Started by the login item: host the office service, never a window.
   if (serviceMode) return runServiceHost();
@@ -1219,6 +1308,7 @@ app.whenReady().then(async () => {
   if (app.isPackaged) {
     try { serverReady = await startOrAdoptOfficeService(); }
     catch (error) { serverReady = false; slog(`office service requires recovery: ${error instanceof Error ? error.message : String(error)}`); }
+    if (!smokeMode) startServiceWatchdog();
   }
   // After the service decision, because applying the settings reads the office's
   // last reported schedule state and must not delay the window.
@@ -1252,6 +1342,7 @@ registerDesktopShutdown(app, {
     // awake once the process is gone.
     releaseKeepAwake();
     if (serviceHostWatch) { clearInterval(serviceHostWatch); serviceHostWatch = null; }
+    stopServiceWatchdog();
   },
   stopSpeech,
   closeControl: () => cuaControl?.close(),

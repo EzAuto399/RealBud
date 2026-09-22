@@ -4,6 +4,24 @@ import { fmtDateTime } from "@/lib/au";
 import { serviceActionFeedback, serviceLifecycleCopy, serviceStatusCopy, type ServiceLifecycle } from "@/lib/service-status";
 import { Card } from "./SettingsPrimitives";
 
+/**
+ * Copy for the main process's automatic restarts of the office service,
+ * re-validated here because the field is optional and older builds omit it.
+ * `running` is shown beside a running service, `stopped` in the not-running banner.
+ */
+export function autoRestartCopy(value: unknown): { running: string | null; stopped: string | null } {
+  const report = value && typeof value === "object" ? (value as { autoRestart?: unknown }).autoRestart : null;
+  if (!report || typeof report !== "object") return { running: null, stopped: null };
+  const { today, pending, exhausted } = report as Record<string, unknown>;
+  const count = typeof today === "number" && Number.isSafeInteger(today) && today > 0 ? today : 0;
+  return {
+    running: count ? `Restarted automatically ${count === 1 ? "once" : `${count} times`} today. Check recent work before retrying an interrupted job; its last action may already have completed.` : null,
+    stopped: exhausted === true
+      ? "Automatic restarts have paused after five attempts in the last hour. Start it below; if it stops again, contact RealBud support."
+      : pending === true ? "RealBud will try to restart it automatically shortly. You can also start it now." : null,
+  };
+}
+
 export function ServiceStatusCard() {
   const [status, setStatus] = useState<ReturnType<typeof serviceStatusCopy> | null>(null);
   const [pending, setPending] = useState(true);
@@ -78,6 +96,7 @@ export function ServiceStatusCard() {
   // The office surviving the window is the point of the service split, so say so
   // plainly when it is running and this app can manage it.
   const officeRunning = worker?.running === true;
+  const autoRestart = autoRestartCopy(worker);
   return <Card title="RealBud service" subtitle="Access to managed assistance on this computer.">
     {officeRunning ? (
       <div role="status" className="mb-3 rounded-lg bg-raised px-3 py-2 text-[13px] leading-relaxed">
@@ -87,6 +106,7 @@ export function ServiceStatusCard() {
             ? "RealBud connected to a service that was already running on this computer."
             : "It keeps running when you close the window. Keep this computer awake and connected for shared records and scheduled work."}
         </p>
+        {autoRestart.running ? <p className="mt-1 text-ink-secondary">{autoRestart.running}</p> : null}
         {worker?.manageable ? (
           <button type="button" disabled={retrying} onClick={() => { setConfirmStop(true); setFeedback(null); }}
             className="pm-control mt-2 rounded border border-line px-3 text-[13px] text-ink hover:bg-raised disabled:opacity-50">
@@ -108,6 +128,7 @@ export function ServiceStatusCard() {
       <div role="alert" className="mb-3 rounded-lg bg-hold/10 px-3 py-2 text-[13px] leading-relaxed">
         <p className="font-medium text-hold">{lifecycleCopy.title}</p>
         <p className="mt-1 text-ink-secondary">{lifecycleCopy.detail}</p>
+        {worker?.running === false && lifecycleCopy.canRetry && autoRestart.stopped ? <p className="mt-1 text-ink-secondary">{autoRestart.stopped}</p> : null}
         {lifecycleCopy.canRetry ? (
           <button type="button" disabled={retrying} onClick={() => { void retryWorker(); }}
             className="pm-control mt-2 rounded border border-line px-3 text-[13px] text-ink hover:bg-raised disabled:opacity-50">
