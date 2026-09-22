@@ -64,6 +64,23 @@ try {
   if ([IO.Path]::GetFullPath($memoryResult.selected_module) -ne [IO.Path]::GetFullPath($memoryModule)) { throw 'Memory receipt names a different module.' }
   if ($memoryResult.module_sha256 -ne (Get-FileHash -Algorithm SHA256 -LiteralPath $memoryModule).Hash.ToLowerInvariant()) { throw 'Installed memory module changed.' }
   $memoryResult.checks | Write-Output
+  # Evidence for the installed service's PowerShell cost: run 35748277547 paid
+  # ~23 s per successful launch inside the installed Electron-as-Node service
+  # while the same launch under node.exe on the same runner took 0.2 s. Time a
+  # trivial launch with the installed binary as the parent, and record the
+  # Defender posture, before the service probe so a slow launch has a suspect.
+  $launchProbe = Join-Path $PSScriptRoot 'testing' 'probe-windows-powershell-env.mjs'
+  $launchProbeProcess = Start-Process -FilePath $app -ArgumentList ('"' + $launchProbe + '"') -PassThru -NoNewWindow `
+    -RedirectStandardOutput (Join-Path $ReceiptDirectory 'installed-powershell-launch.stdout.log') `
+    -RedirectStandardError (Join-Path $ReceiptDirectory 'installed-powershell-launch.stderr.log')
+  if (-not $launchProbeProcess.WaitForExit(600000)) { $launchProbeProcess.Kill(); Write-Warning 'Installed PowerShell launch probe exceeded ten minutes.' }
+  else { Get-Content -LiteralPath (Join-Path $ReceiptDirectory 'installed-powershell-launch.stdout.log') | Write-Output }
+  try {
+    $defender = Get-MpComputerStatus | Select-Object AMServiceEnabled, RealTimeProtectionEnabled, BehaviorMonitorEnabled, OnAccessProtectionEnabled, AntivirusSignatureAge
+    $defenderPreference = Get-MpPreference | Select-Object MAPSReporting, CloudBlockLevel, CloudExtendedTimeout, DisableRealtimeMonitoring, DisableBehaviorMonitoring, DisableScriptScanning
+    @{ status = $defender; preference = $defenderPreference } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $ReceiptDirectory 'installed-defender.json')
+    Write-Output ('Defender: ' + ($defender | ConvertTo-Json -Compress) + ' ' + ($defenderPreference | ConvertTo-Json -Compress))
+  } catch { Write-Warning ('Defender status unavailable: ' + $_.Exception.GetType().FullName) }
   # Load the installed compiled service using installed Electron/Node, with a
   # fresh home and no checkout node_modules or inherited provider credentials.
   $serviceScript = Join-Path $PSScriptRoot 'smoke-company-bundle.mjs'

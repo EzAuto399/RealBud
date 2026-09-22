@@ -33,13 +33,21 @@ const variants = [
   ['stripped+profile+path', { ...stripped, ...profile, ...path }],
   ['stripped+profile+path+program', { ...stripped, ...profile, ...path, ...program }],
 ];
-const encoded = Buffer.from('exit 0', 'utf16le').toString('base64');
-for (const [name, env] of variants) {
-  const runs = [];
-  for (let i = 0; i < 2; i++) {
-    const started = Date.now();
-    const result = spawnSync(exe, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { env, windowsHide: true, timeout: 180_000, stdio: 'ignore' });
-    runs.push({ ms: Date.now() - started, status: result.status, error: result.error?.code ?? null });
+const commands = {
+  exit: 'exit 0',
+  dotnet: '$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User; $acl = New-Object System.Security.AccessControl.DirectorySecurity; $acl.SetOwner($sid); exit 0',
+};
+const only = process.argv.includes('--quick') ? variants.slice(0, 1) : variants;
+console.log(JSON.stringify({ parent: process.versions.electron ? `electron ${process.versions.electron}` : `node ${process.versions.node}`, execPath: process.execPath.length > 0, cwd: process.cwd().length > 0 }));
+for (const [name, env] of only) {
+  for (const [command, text] of Object.entries(commands)) {
+    const encoded = Buffer.from(text, 'utf16le').toString('base64');
+    const runs = [];
+    for (let i = 0; i < 2; i++) {
+      const started = Date.now();
+      const result = spawnSync(exe, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { env, windowsHide: true, timeout: 180_000, stdio: 'ignore' });
+      runs.push({ ms: Date.now() - started, status: result.status, error: result.error?.code ?? null });
+    }
+    console.log(JSON.stringify({ variant: name, command, keys: Object.keys(env).length, runs }));
   }
-  console.log(JSON.stringify({ variant: name, keys: Object.keys(env).length, runs }));
 }
