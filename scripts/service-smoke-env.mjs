@@ -12,8 +12,13 @@ export function serviceSmokeEnv({ executable, home, data, scratch, port }, sourc
     REALBUD_MANAGED_SERVICE: '1', REALBUD_SERVICE_ENTITLEMENT_REQUIRED: '1',
     ELECTRON_RUN_AS_NODE: '1', OMB_PORT: String(port), LANG: 'C', LC_ALL: 'C',
   };
-  for (const key of ['SystemRoot', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT']) {
+  for (const key of ['SystemRoot', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT', 'SystemDrive']) {
     if (source[key]) env[key] = source[key];
   }
+  // Windows file privacy runs through powershell.exe. A stripped environment
+  // must still resolve the shipped modules that carry Get-Acl/Set-Acl, and must
+  // not borrow a developer's module path to do it.
+  const systemRoot = env.SystemRoot || env.SYSTEMROOT || env.WINDIR;
+  if (systemRoot) env.PSModulePath = join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules');
   return env;
 }

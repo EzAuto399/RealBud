@@ -10,6 +10,15 @@ import { serviceSmokeEnv } from '../scripts/service-smoke-env.mjs';
 
 const execute = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const windows = process.platform === 'win32';
+// The fake server shells out to PowerShell to build its ACL fixture, and the
+// first PowerShell of a CI job is cold. A tight bound killed the child before
+// readiness, which the smoke could only report as "exited before readiness".
+// These widen the wait; no assertion depends on any of them.
+const FIXTURE_ACL_MS = windows ? 60_000 : 15_000;
+const READY_MS = windows ? 120_000 : 25_000;
+const SMOKE_TIMEOUT_MS = windows ? READY_MS + 20_000 : 30_000;
+const CASE_TIMEOUT_MS = windows ? SMOKE_TIMEOUT_MS + 20_000 : 35_000;
 const PRIVATE_FIXTURE_SCRIPT = `$ErrorActionPreference = 'Stop'
 $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
 foreach ($item in @($env:REALBUD_FIXTURE_OBJECTS | ConvertFrom-Json)) {
@@ -54,7 +63,9 @@ describe('installed Windows service acceptance', () => {
     expect(env.LOCALAPPDATA).toBe(join('/isolated/home', 'AppData', 'Local'));
     expect(env.REALBUD_DATA_DIR).toBe('/isolated/data');
     expect(env.SystemRoot).toBe('C:\\Windows');
+    expect(env.PSModulePath).toBe(join('C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'Modules'));
     for (const key of ['OPENAI_API_KEY', 'COMPOSIO_API_KEY', 'NODE_OPTIONS', 'NODE_PATH']) expect(env[key]).toBeUndefined();
+    expect(serviceSmokeEnv({ executable: '/fixture/RealBud', home: '/isolated/home', data: '/isolated/data', scratch: '/isolated', port: 1 }, { PSModulePath: '/customer/modules' }).PSModulePath).toBeUndefined();
   });
 
   it.each(['complete', 'missing compiled import', 'missing packaged safeguards', 'health without profile', 'false policy status', 'public profile', 'unsafe written policy', 'wrong skill bytes'])('checks explicit fresh-profile smoke boundaries: %s', async scenario => {
@@ -102,7 +113,7 @@ describe('installed Windows service acceptance', () => {
             const script = ${JSON.stringify(PRIVATE_FIXTURE_SCRIPT)};
             execFileSync(join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
               env: { ...process.env, REALBUD_FIXTURE_OBJECTS: JSON.stringify([...directories.map(path => ({ path, directory: true })), ...files.map(path => ({ path, directory: false }))]) },
-              shell: false, windowsHide: true, timeout: 15000, stdio: ['ignore', 'pipe', 'pipe'],
+              shell: false, windowsHide: true, timeout: ${FIXTURE_ACL_MS}, stdio: ['ignore', 'pipe', 'pipe'],
             });
           }
           for (const name of copies) writeFileSync(join(profile, name), readFileSync(join(pack, name)));
@@ -118,7 +129,7 @@ describe('installed Windows service acceptance', () => {
             else {
               const script = ${JSON.stringify(BROAD_FIXTURE_SCRIPT)};
               execFileSync(join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
-                env: { ...process.env, REALBUD_FIXTURE_BROAD_FILE: path }, shell: false, windowsHide: true, timeout: 15000, stdio: ['ignore', 'pipe', 'pipe'],
+                env: { ...process.env, REALBUD_FIXTURE_BROAD_FILE: path }, shell: false, windowsHide: true, timeout: ${FIXTURE_ACL_MS}, stdio: ['ignore', 'pipe', 'pipe'],
               });
             }
           }
@@ -141,7 +152,8 @@ describe('installed Windows service acceptance', () => {
       let failure;
       try {
         await execute(process.execPath, [join(root, 'scripts/smoke-company-bundle.mjs'), receiptPath, source], {
-          cwd: scratch, env: { ...process.env, OPENAI_API_KEY: 'fictional-must-not-inherit' }, timeout: 30000,
+          cwd: scratch, timeout: SMOKE_TIMEOUT_MS,
+          env: { ...process.env, OPENAI_API_KEY: 'fictional-must-not-inherit', REALBUD_SMOKE_READY_MS: String(READY_MS) },
         });
       } catch (error) { failure = error; }
       const receipt = JSON.parse(await readFile(receiptPath, 'utf8'));
@@ -149,9 +161,19 @@ describe('installed Windows service acceptance', () => {
       expect(receipt.packSource).toBe(pack);
       expect(receipt.cleanupComplete).toBe(true);
       expect(receipt.passed).toBe(scenario === 'complete');
+      // A receipt that cannot say how the child ended cannot explain a failure
+      // on a platform nobody can attach a debugger to.
+      expect(receipt.timings.watchdogMs).toBe(READY_MS);
+      expect(receipt.child).toMatchObject({ killedByWatchdog: false });
+      expect(receipt.child).toHaveProperty('exitCode');
+      expect(receipt.child).toHaveProperty('signal');
       if (scenario !== 'complete') {
         expect(failure).toBeDefined();
-        if (scenario === 'missing compiled import') expect(receipt.diagnostic).toContain('missing-packaged-module.js');
+        expect(typeof receipt.diagnostic).toBe('string');
+        if (scenario === 'missing compiled import') {
+          expect(receipt.diagnostic).toContain('missing-packaged-module.js');
+          expect(receipt.child.exitCode).toBe(1);
+        }
         if (scenario === 'public profile') expect(receipt.failure).toMatch(/not private|privacy verification failed/i);
         expect(receipt.profileProof).toBeUndefined();
       } else {
@@ -162,5 +184,5 @@ describe('installed Windows service acceptance', () => {
         expect(receipt.timings.profileCheckMs).toBeGreaterThanOrEqual(0);
       }
     } finally { await rm(scratch, { recursive: true, force: true }); }
-  }, 35000);
+  }, CASE_TIMEOUT_MS);
 });

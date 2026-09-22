@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 from contextlib import contextmanager
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -50,6 +51,26 @@ def require(value: Any, message: str) -> None:
 
 def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def native_detail(error: Any) -> dict[str, Any] | None:
+    """Receipt-safe {code, primitive, flags} from a NativeError, or None.
+
+    The module bounds these three fields; this re-checks them so an older or
+    packaged helper can never put a path, a name or file bytes in the receipt.
+    """
+    detail = getattr(error, "native_detail", None)
+    if not isinstance(detail, dict):
+        return None
+    code = detail.get("code")
+    primitive = detail.get("primitive")
+    flags = detail.get("flags")
+    safe: dict[str, Any] = {
+        "code": code if type(code) is int and 0 <= code <= 0xFFFFFFFF else None,
+        "primitive": primitive if isinstance(primitive, str) and re.fullmatch(r"[A-Za-z0-9_()]{1,96}", primitive) else None,
+        "flags": flags if isinstance(flags, str) and re.fullmatch(r"[A-Za-z0-9_=|]{1,96}", flags) else None,
+    }
+    return safe if any(value is not None for value in safe.values()) else None
 
 
 def require_namespace_absent(path: Path) -> None:
@@ -615,6 +636,11 @@ def main() -> int:
             receipt["failure"] = str(error)
         elif rig is not None and isinstance(error, rig.module.NativeError):
             receipt["native_failure"] = getattr(error, "code", "native-error")
+            # Bounded native diagnostics only: the numeric Win32 code, the fixed
+            # primitive label and its fixed flag summary. Never a path or bytes.
+            detail = native_detail(error)
+            if detail is not None:
+                receipt["native_error"] = detail
         elif isinstance(error, subprocess.TimeoutExpired):
             receipt["failure"] = "A disposable fixture command exceeded its configured timeout; see active_step."
         else:

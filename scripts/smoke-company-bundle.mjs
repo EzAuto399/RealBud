@@ -20,10 +20,36 @@ const source = resolve(process.argv[3] || join(root, 'dist-server'));
 // electron-builder combines these inputs; an explicit artifact has no fallback.
 const packSource = process.argv[3] ? join(source, 'pack', 'property') : join(root, 'pack', 'property');
 let child, exited, timer, failure, stderr = '', cleanupComplete = false, timedOut = false;
-let profileProof, startupMs, profileCheckMs;
+let profileProof, startupMs, profileCheckMs, stderrDrained;
+let exitCode = null, exitSignal = null;
 const checks = [];
 const execute = promisify(execFile);
 const requiredProfileFiles = ['SOUL.md', 'config.yaml', 'distribution.yaml', 'profile.yaml'];
+// The installed Windows probe is held to its own 45-second budget, so the
+// default readiness window stays 25s. A harness that knows it is paying for a
+// cold PowerShell may widen it; the receipt records the window actually used.
+const readyMs = Math.min(Math.max(Number(process.env.REALBUD_SMOKE_READY_MS) || 25_000, 5_000), 180_000);
+const readinessAttempts = Math.ceil(readyMs / 166);
+
+// This script must also run from an installed package, where the compiled
+// server's redactor is not importable. Conservative shapes only: no generic
+// hex or base64 heuristics, so a diagnostic stays readable.
+const SECRET_SHAPES = [
+  /\b(?:rbk|rbc|mgt|ak|ck|ntn|npm|ghp|gho|ghu|ghs|ghr|secret)_[A-Za-z0-9_-]{12,}/g,
+  /\b(?:sk|xai|xox[abposr])-[A-Za-z0-9_-]{12,}/g,
+  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
+];
+const SECRET_VALUES = [
+  /(\bBearer\s+)([A-Za-z0-9._~+/=-]{12,})/g,
+  /\b((?:api[_-]?key|apikey|secret|token|password|authorization)s?["']?\s*[=:]\s*["']?)([A-Za-z0-9._~+/=-]{8,})/gi,
+];
+/** Last 20 non-empty stderr lines, with credential-shaped values masked. */
+function diagnosticFrom(text) {
+  let out = text;
+  for (const shape of SECRET_SHAPES) out = out.replace(shape, match => `«redacted ${match.length} chars»`);
+  for (const shape of SECRET_VALUES) out = out.replace(shape, (_m, lead, value) => `${lead}«redacted ${value.length} chars»`);
+  return out.split(/\r?\n/).map(line => line.trimEnd()).filter(Boolean).slice(-20).join('\n');
+}
 
 // Independent read-only ACL witness, not the production verifier or a repair.
 // No descriptor, SID, or path is returned by PowerShell.
@@ -140,12 +166,19 @@ try {
   await assertMissing(env.REALBUD_HERMES_HOME);
   const started = performance.now();
   child = spawn(process.execPath, [entry], { cwd: scratch, env, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
-  exited = new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', resolve); });
+  exited = new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('exit', (code, signal) => { exitCode = code; exitSignal = signal; resolve(code); });
+  });
   child.stderr.on('data', bytes => { stderr = (stderr + bytes).slice(-16_000); });
-  timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, 25_000);
+  // Windows can emit 'exit' before the stderr pipe has been read, which left a
+  // crashed child with an empty diagnostic and a run that could not explain
+  // itself. Wait for the pipe, not the process.
+  stderrDrained = once(child.stderr, 'close').then(() => {}, () => {});
+  timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, readyMs);
   const base = `http://127.0.0.1:${port}`;
   let ready = false;
-  for (let attempt = 0; attempt < 150; attempt++) {
+  for (let attempt = 0; attempt < readinessAttempts; attempt++) {
     if (child.exitCode !== null || child.signalCode) throw new Error('Compiled service exited before readiness');
     const health = await fetch(base + '/api/health', { signal: AbortSignal.timeout(500) })
       .then(r => r.ok ? r.json() : null).catch(() => null);
@@ -164,7 +197,7 @@ try {
   assert.equal(hermesResponse.status, 200, 'Private profile status is unavailable');
   profileProof = await inspectProfile(env.REALBUD_HERMES_HOME, join(resources, 'pack', 'property'), await hermesResponse.json(), env);
   profileCheckMs = Math.round(performance.now() - checked);
-  assert.equal(timedOut, false, 'Compiled service probe exceeded its 25-second watchdog');
+  assert.equal(timedOut, false, `Compiled service probe exceeded its ${Math.round(readyMs / 1000)}-second watchdog`);
   assert.equal(child.exitCode, null, 'Compiled service stopped before profile proof completed');
   assert.equal(child.signalCode, null, 'Compiled service was terminated before profile proof completed');
   checks.push('Fresh private Hermes profile has shipped safeguards and skills, private storage, and no model credentials');
@@ -175,13 +208,19 @@ finally {
     await exited.catch(() => {}); clearTimeout(forced);
   }
   clearTimeout(timer);
+  if (stderrDrained) {
+    await Promise.race([stderrDrained, new Promise(resolve => { setTimeout(resolve, 2_000).unref(); })]);
+  }
   await rm(scratch, { recursive: true, force: true }); cleanupComplete = true;
   await mkdir(dirname(out), { recursive: true });
   await writeFile(out, JSON.stringify({ passed: !failure, platform: process.platform, arch: process.arch, node: process.version,
     source, packSource, runtime: process.versions.electron ? 'installed Electron/Node' : 'Node',
     proofLayer: 'Compiled service and fresh private profile from the selected inputs; not Hermes runtime installation, model access, GUI or two-device acceptance',
-    timings: { startupMs, profileCheckMs, watchdogMs: 25_000, readinessAttempts: 150, perHealthRequestMs: 500 }, profileProof,
-    checks, failure, cleanupComplete, ...(failure ? { diagnostic: stderr } : {}) }, null, 2) + '\n');
+    timings: { startupMs, profileCheckMs, watchdogMs: readyMs, readinessAttempts, perHealthRequestMs: 500 }, profileProof,
+    // Recorded whether or not the probe failed: a child that exited is the one
+    // fact the earlier receipt could not report.
+    child: { exitCode, signal: exitSignal, killedByWatchdog: timedOut },
+    checks, failure, cleanupComplete, ...(failure ? { diagnostic: diagnosticFrom(stderr) } : {}) }, null, 2) + '\n');
   console.log(`${failure ? 'FAILED' : 'PASSED'} compiled company bundle: ${out}`);
   process.exitCode = failure ? 1 : 0;
 }

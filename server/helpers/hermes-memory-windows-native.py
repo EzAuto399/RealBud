@@ -10,6 +10,9 @@ Win32Native accepts explicit fake bindings for portable policy tests. The real
 CtypesBindings loads DLLs only on Windows. No environment platform overrides,
 PowerShell, path-based rename/delete, ACL repair, or copy/truncate fallback.
 All public failures have fixed codes and suppress native exception details.
+A failure may additionally carry the numeric Win32 code, a fixed primitive
+label from PRIMITIVES and a fixed flags summary; those three fields are the
+only native detail exposed and can never carry a path, a name or file bytes.
 """
 from __future__ import annotations
 
@@ -33,12 +36,42 @@ SYSTEM_SID = "S-1-5-18"
 ADMIN_SID = "S-1-5-32-544"
 ERROR_CODES = frozenset({"platform-unverified", "unsafe-storage", "unavailable",
                          "capacity", "conflict", "invalid", "recovery-required", "not-found"})
+# Fixed labels for the exact native primitive that refused. Anything outside
+# this set is dropped, so a caller can never smuggle a path or a name here.
+PRIMITIVES = frozenset({
+    "CreateFileW", "CreateDirectoryW", "CloseHandle", "LocalFree",
+    "GetFileInformationByHandle", "GetFileInformationByHandleEx",
+    "GetFinalPathNameByHandleW", "GetVolumeInformationByHandleW",
+    "ReadFile", "WriteFile", "SetFilePointerEx", "FlushFileBuffers",
+    "LockFileEx", "UnlockFileEx",
+    "SetFileInformationByHandle(FileRenameInfo)",
+    "SetFileInformationByHandle(FileDispositionInfo)",
+    "OpenThreadToken", "OpenProcessToken", "GetTokenInformation",
+    "ConvertSidToStringSidW",
+    "ConvertStringSecurityDescriptorToSecurityDescriptorW",
+    "GetSecurityInfo", "GetSecurityDescriptorControl", "GetAce",
+})
+# Short fixed summaries only: hexadecimal masks and small decimal counts.
+_FLAGS_PATTERN = re.compile(r"[A-Za-z0-9_=|]{1,96}")
 
 
 class NativeError(Exception):
-    def __init__(self, code: str = "unavailable") -> None:
+    """Fixed public code, plus optional Win32 code / primitive / flags detail."""
+
+    def __init__(self, code: str = "unavailable", *, win32: Any = None,
+                 primitive: Any = None, flags: Any = None) -> None:
         self.code = code if isinstance(code, str) and code in ERROR_CODES else "unavailable"
+        self.win32 = win32 if type(win32) is int and 0 <= win32 <= 0xFFFFFFFF else None
+        self.primitive = primitive if isinstance(primitive, str) and primitive in PRIMITIVES else None
+        self.flags = flags if isinstance(flags, str) and _FLAGS_PATTERN.fullmatch(flags) else None
         super().__init__(self.code)
+
+    @property
+    def native_detail(self) -> dict[str, Any] | None:
+        """Receipt-safe {code, primitive, flags}, or None when nothing is known."""
+        if self.win32 is None and self.primitive is None and self.flags is None:
+            return None
+        return {"code": self.win32, "primitive": self.primitive, "flags": self.flags}
 
 
 def _fixed(fn):
@@ -47,7 +80,8 @@ def _fixed(fn):
         try:
             return fn(*args, **kwargs)
         except NativeError as error:
-            raise NativeError(error.code) from None
+            raise NativeError(error.code, win32=error.win32, primitive=error.primitive,
+                              flags=error.flags) from None
         except Exception:
             raise NativeError("unavailable") from None
     return call
@@ -588,19 +622,21 @@ class CtypesBindings:
                 fn = getattr(library, name)
                 fn.argtypes, fn.restype = args, result
 
-    def _fail(self, error=None, *, missing=False):
+    def _fail(self, error=None, *, missing=False, primitive=None, flags=None):
         value = self._last_error() if error is None else error
+        detail = {"win32": value if type(value) is int else None,
+                  "primitive": primitive, "flags": flags}
         if missing and value == 2:  # Only a failed OPEN_EXISTING may prove leaf absence.
-            raise NativeError("not-found")
-        raise NativeError("conflict" if value in (80, 183) else "unavailable")
+            raise NativeError("not-found", **detail)
+        raise NativeError("conflict" if value in (80, 183) else "unavailable", **detail)
 
-    def _check(self, result):
+    def _check(self, result, primitive=None, flags=None):
         if not result:
-            self._fail()
+            self._fail(primitive=primitive, flags=flags)
 
     def _free(self, pointer):
         if pointer and self.k.LocalFree(pointer):
-            raise NativeError("unavailable")
+            raise NativeError("unavailable", primitive="LocalFree")
 
     def _sid_at(self, address: int, lower: int, upper: int) -> str:
         if not address or not lower <= address or address + 8 > upper:
@@ -612,7 +648,7 @@ class CtypesBindings:
         if not self.a.IsValidSid(PVOID(address)) or self.a.GetLengthSid(PVOID(address)) != size:
             raise NativeError("unsafe-storage")
         text = PVOID()
-        self._check(self.a.ConvertSidToStringSidW(PVOID(address), C.byref(text)))
+        self._check(self.a.ConvertSidToStringSidW(PVOID(address), C.byref(text)), "ConvertSidToStringSidW")
         try:
             return _sid(C.wstring_at(text.value))
         finally:
@@ -625,16 +661,16 @@ class CtypesBindings:
             self.close(thread.value)
             raise NativeError("unsafe-storage")
         if self._last_error() != 1008:  # ERROR_NO_TOKEN
-            self._fail()
+            self._fail(primitive="OpenThreadToken")
         token = HANDLE()
-        self._check(self.a.OpenProcessToken(self.k.GetCurrentProcess(), 8, C.byref(token)))
+        self._check(self.a.OpenProcessToken(self.k.GetCurrentProcess(), 8, C.byref(token)), "OpenProcessToken")
         try:
             size = DWORD()
             result = self.a.GetTokenInformation(token, 1, None, 0, C.byref(size))
             if result or self._last_error() != 122 or not C.sizeof(SID_AND_ATTRIBUTES) <= size.value <= 65536:
                 raise NativeError("unavailable")
             buffer = C.create_string_buffer(size.value)
-            self._check(self.a.GetTokenInformation(token, 1, buffer, size.value, C.byref(size)))
+            self._check(self.a.GetTokenInformation(token, 1, buffer, size.value, C.byref(size)), "GetTokenInformation")
             if not C.sizeof(SID_AND_ATTRIBUTES) <= size.value <= C.sizeof(buffer):
                 raise NativeError("unsafe-storage")
             sid = C.cast(buffer, C.POINTER(SID_AND_ATTRIBUTES)).contents.sid
@@ -645,7 +681,8 @@ class CtypesBindings:
     def _attributes(self, sddl: str):
         pointer = PVOID()
         try:
-            self._check(self.a.ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1, C.byref(pointer), None))
+            self._check(self.a.ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1, C.byref(pointer), None),
+                        "ConvertStringSecurityDescriptorToSecurityDescriptorW")
             if not pointer:
                 raise NativeError("unavailable")
             return pointer, SECURITY_ATTRIBUTES(C.sizeof(SECURITY_ATTRIBUTES), pointer, False)
@@ -679,11 +716,15 @@ class CtypesBindings:
             flags = 0x200000 | (0x2000000 if directory else 0)
             if writable or renameable:
                 flags |= 0x80000000  # FILE_FLAG_WRITE_THROUGH; no durability admission.
-            raw = self.k.CreateFileW(path, access, 3 if directory or lock_file else 1,
+            share = 3 if directory or lock_file else 1
+            disposition = 1 if create else 3
+            raw = self.k.CreateFileW(path, access, share,
                                      C.byref(attributes) if attributes is not None else None,
-                                     1 if create else 3, flags, None)
+                                     disposition, flags, None)
             if raw is None or raw == C.c_void_p(-1).value:
-                self._fail(missing=not create)
+                self._fail(missing=not create, primitive="CreateFileW",
+                           flags="access=0x%08X|share=%d|disposition=%d|create=0x%08X"
+                                 % (access, share, disposition, flags))
             return int(raw)
         finally:
             try:
@@ -697,7 +738,7 @@ class CtypesBindings:
     def create_directory(self, path, security_sddl) -> None:
         pointer, attributes = self._attributes(security_sddl)
         try:
-            self._check(self.k.CreateDirectoryW(path, C.byref(attributes)))
+            self._check(self.k.CreateDirectoryW(path, C.byref(attributes)), "CreateDirectoryW")
         finally:
             self._free(pointer)
 
@@ -706,14 +747,14 @@ class CtypesBindings:
         if self.k.GetFileType(raw_handle) != 1:
             raise NativeError("unsafe-storage")
         info = BY_HANDLE_FILE_INFORMATION()
-        self._check(self.k.GetFileInformationByHandle(raw_handle, C.byref(info)))
+        self._check(self.k.GetFileInformationByHandle(raw_handle, C.byref(info)), "GetFileInformationByHandle")
         capacity = 512
         path = None
         for _ in range(3):
             buffer = C.create_unicode_buffer(capacity)
             count = self.k.GetFinalPathNameByHandleW(raw_handle, buffer, capacity, 0)
             if not count:
-                self._fail()
+                self._fail(primitive="GetFinalPathNameByHandleW")
             if count < capacity:
                 path = _path(buffer.value)
                 break
@@ -724,7 +765,8 @@ class CtypesBindings:
             raise NativeError("unavailable")
         volume, maximum, flags = DWORD(), DWORD(), DWORD()
         filesystem = C.create_unicode_buffer(64)
-        self._check(self.k.GetVolumeInformationByHandleW(raw_handle, None, 0, C.byref(volume), C.byref(maximum), C.byref(flags), filesystem, 64))
+        self._check(self.k.GetVolumeInformationByHandleW(raw_handle, None, 0, C.byref(volume), C.byref(maximum), C.byref(flags), filesystem, 64),
+                    "GetVolumeInformationByHandleW")
         if volume.value != info.volume:
             raise NativeError("conflict")
         ticks = lambda value: (int(value.high) << 32) | int(value.low)
@@ -739,13 +781,13 @@ class CtypesBindings:
         error = self.a.GetSecurityInfo(raw_handle, 1, 5, C.byref(owner), None, C.byref(dacl), None, C.byref(descriptor))
         try:
             if error:
-                self._fail(error)
+                self._fail(error, primitive="GetSecurityInfo")
             if not descriptor or not self.a.IsValidSecurityDescriptor(descriptor):
                 raise NativeError("unsafe-storage")
             size = int(self.a.GetSecurityDescriptorLength(descriptor))
             lower, upper = descriptor.value, descriptor.value + size
             control, revision = WORD(), DWORD()
-            self._check(self.a.GetSecurityDescriptorControl(descriptor, C.byref(control), C.byref(revision)))
+            self._check(self.a.GetSecurityDescriptorControl(descriptor, C.byref(control), C.byref(revision)), "GetSecurityDescriptorControl")
             if not 20 <= size <= 65536 or revision.value != 1 or not control.value & 0x8000:
                 raise NativeError("unsafe-storage")
             owner_sid = self._sid_at(owner.value, lower, upper)
@@ -759,7 +801,7 @@ class CtypesBindings:
             previous = dacl.value + 8
             for index in range(count):
                 pointer = PVOID()
-                self._check(self.a.GetAce(dacl, index, C.byref(pointer)))
+                self._check(self.a.GetAce(dacl, index, C.byref(pointer)), "GetAce")
                 address = pointer.value
                 if not address or address < previous or address + 8 > dacl.value + acl_size:
                     raise NativeError("unsafe-storage")
@@ -777,7 +819,7 @@ class CtypesBindings:
     @_fixed
     def seek_start(self, raw_handle) -> None:
         position = C.c_int64()
-        self._check(self.k.SetFilePointerEx(raw_handle, 0, C.byref(position), 0))
+        self._check(self.k.SetFilePointerEx(raw_handle, 0, C.byref(position), 0), "SetFilePointerEx")
         if position.value != 0:
             raise NativeError("unavailable")
 
@@ -787,7 +829,7 @@ class CtypesBindings:
             raise NativeError("invalid")
         buffer = C.create_string_buffer(max(1, count))
         actual = DWORD()
-        self._check(self.k.ReadFile(raw_handle, buffer, count, C.byref(actual), None))
+        self._check(self.k.ReadFile(raw_handle, buffer, count, C.byref(actual), None), "ReadFile")
         if actual.value > count:
             raise NativeError("unavailable")
         return buffer.raw[:actual.value]
@@ -797,14 +839,14 @@ class CtypesBindings:
         if type(data) is not bytes or len(data) > MAX_BYTES:
             raise NativeError("invalid")
         buffer, actual = C.create_string_buffer(data), DWORD()
-        self._check(self.k.WriteFile(raw_handle, buffer, len(data), C.byref(actual), None))
+        self._check(self.k.WriteFile(raw_handle, buffer, len(data), C.byref(actual), None), "WriteFile")
         if actual.value > len(data):
             raise NativeError("unavailable")
         return int(actual.value)
 
     @_fixed
     def flush(self, raw_handle) -> None:
-        self._check(self.k.FlushFileBuffers(raw_handle))
+        self._check(self.k.FlushFileBuffers(raw_handle), "FlushFileBuffers")
 
     @_fixed
     def lock(self, raw_handle) -> bool:
@@ -814,12 +856,12 @@ class CtypesBindings:
         error = self._last_error()
         if error == 33:  # ERROR_LOCK_VIOLATION is the only retryable result.
             return False
-        self._fail(error)
+        self._fail(error, primitive="LockFileEx")
 
     @_fixed
     def unlock(self, raw_handle) -> None:
         overlap = OVERLAPPED()
-        self._check(self.k.UnlockFileEx(raw_handle, 0, 1, 0, C.byref(overlap)))
+        self._check(self.k.UnlockFileEx(raw_handle, 0, 1, 0, C.byref(overlap)), "UnlockFileEx")
 
     @_fixed
     def names(self, raw_handle, limit) -> list[str]:
@@ -835,7 +877,8 @@ class CtypesBindings:
                 error = self._last_error()
                 if error == 18:  # ERROR_NO_MORE_FILES, including an empty directory.
                     return result
-                self._fail(error)
+                self._fail(error, primitive="GetFileInformationByHandleEx",
+                           flags="restart=%d" % (1 if page == 0 else 0))
             offset = 0
             while True:
                 if offset + header > C.sizeof(buffer):
@@ -874,14 +917,18 @@ class CtypesBindings:
         info = C.cast(buffer, C.POINTER(FILE_RENAME_INFO)).contents
         info.options.replace, info.root, info.length = bool(replace), raw_parent, len(encoded)
         C.memmove(C.addressof(buffer) + offset, encoded, len(encoded))
-        self._check(self.k.SetFileInformationByHandle(raw_source, 3, buffer, C.sizeof(buffer)))
+        self._check(self.k.SetFileInformationByHandle(raw_source, 3, buffer, C.sizeof(buffer)),
+                    "SetFileInformationByHandle(FileRenameInfo)",
+                    "ReplaceIfExists=%d|RootDirectory=bound|NameBytes=%d|Buffer=%d"
+                    % (int(bool(replace)), len(encoded), C.sizeof(buffer)))
 
     @_fixed
     def delete(self, raw_handle) -> None:
         # This marks the opened object for deletion; caller must also close.
         info = FILE_DISPOSITION_INFO(1)
-        self._check(self.k.SetFileInformationByHandle(raw_handle, 4, C.byref(info), C.sizeof(info)))
+        self._check(self.k.SetFileInformationByHandle(raw_handle, 4, C.byref(info), C.sizeof(info)),
+                    "SetFileInformationByHandle(FileDispositionInfo)", "DeleteFile=1")
 
     @_fixed
     def close(self, raw_handle) -> None:
-        self._check(self.k.CloseHandle(raw_handle))
+        self._check(self.k.CloseHandle(raw_handle), "CloseHandle")

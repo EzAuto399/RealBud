@@ -121,3 +121,48 @@ than made platform-correct. Both changes are proven only by macOS source tests
 (`server/worker-bootstrap.test.ts`, `server/hermes-bridge.test.ts`) and the
 server typecheck. Neither has been observed on a Windows runner or device, so
 the Windows setup path remains unaccepted.
+
+## 22 September 2026 — making the fresh-profile smoke fixture explain itself on Windows
+
+Package Windows run 35712320927 (windows-latest) failed the fixture case
+`installed Windows service acceptance > checks explicit fresh-profile smoke
+boundaries: complete`, and the `public profile` case reported "Compiled service
+exited before readiness" instead of its privacy refusal. The receipt could not
+say why: it carried no exit status, and its `diagnostic` was empty.
+
+One reported hypothesis was checked and is wrong. The fixture does not need
+`dist-server`: `electron/service-smoke.test.mjs` writes its own miniature
+`server/`, `shared/`, `src/` and `pack/property` tree into a scratch directory
+and passes it to `scripts/smoke-company-bundle.mjs` as an explicit source, so
+running the fixture step before `pnpm package:win` is correct and the workflow
+step order is unchanged.
+
+Two real defects were found by reading the child's failure path.
+(1) On Windows, `exit` can be emitted before the stderr pipe has been read, and
+the smoke wrote its receipt as soon as it saw the child gone — so exactly the
+runs that most needed a diagnostic produced an empty one. The smoke now waits
+(bounded, 2 s) for `stderr` to close, and records `child.exitCode`,
+`child.signal` and `child.killedByWatchdog` on every run, pass or fail. The
+`diagnostic` is now the last 20 non-empty stderr lines with credential-shaped
+values masked; the script runs from an installed package, where the compiled
+server's `redactSecretsInText` is not importable, so it uses a conservative
+prefix/Bearer/key-value matcher and no generic hex or base64 heuristic.
+(2) The fixture's own ACL preparation shells out to `powershell.exe`, and the
+first PowerShell of a CI job is cold. Its 15 s bound and the smoke's 25 s
+readiness watchdog are plausible causes of a silent early exit. On win32 the
+fixture's PowerShell bound is now 60 s and the smoke's readiness window is
+120 s, passed as `REALBUD_SMOKE_READY_MS` and clamped to [5 s, 180 s] by the
+script. The default stays 25 s, so the installed probe in
+`scripts/test-windows-installer.ps1` keeps its existing 45 s budget.
+`scripts/service-smoke-env.mjs` now also pins `PSModulePath` to
+`%SystemRoot%\System32\WindowsPowerShell\v1.0\Modules` (and forwards
+`SystemDrive`), so the deliberately stripped child environment cannot lose
+`Get-Acl`/`Set-Acl` and cannot borrow a developer's module path either.
+
+No privacy assertion was weakened: the independent read-only ACL witness, the
+`public profile` refusal and the POSIX owner/mode checks are unchanged. What is
+proven: all 10 cases pass on macOS (`pnpm exec vitest run
+electron/service-smoke.test.mjs`) and `pnpm check:electron` is clean. What is
+not proven: nothing here has run on win32. If the cold-PowerShell theory is
+wrong, the next Windows run is now able to say so, because the receipt carries
+the child's exit status and its redacted stderr.
