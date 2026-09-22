@@ -1,5 +1,7 @@
 # Portal work — Bud in the real browser
 
+> **Superseded in part, 23 September 2026:** the owner's [browser task authority decision](decisions/2026-09-23-browser-task-authority.md) replaces the read-and-prefill-only limit and the permanent pay/sign/notice/send ban below. Bud completes authorised tasks with full browser actions in the person's signed-in session; consequential actions need explicit approval of the actual recipient, amount or content; account scope, task permission and Stop apply on every route. The sections below remain as the history of the fence design and are not current limits.
+
 Date: 2026-09-01 · updated 2026-09-02
 Status: architecture updated; the general prepare-only job engine is built locally.
 Attended live portal ("Run beside me") is gated by plan approval + per-job Attach,
