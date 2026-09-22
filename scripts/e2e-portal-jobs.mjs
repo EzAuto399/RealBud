@@ -10,7 +10,7 @@ import { createServer } from "node:http";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { startCuaControl } from "../electron/cua-control.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -29,6 +29,16 @@ mkdirSync(join(HOME, ".realbud"), { recursive: true });
 
 const scriptPath = join(HOME, "fake-acp-script.json");
 const cuaPath = join(HOME, "cua-connection.json");
+// In product mode the attend route asks the managed browser runtime, not the
+// CUA descriptor. Like server/attended-run.test.ts, this suite supplies a
+// synthetic connection (ready while the descriptor exists) the way it supplies
+// a fake ACP worker; the runtime's own suites exercise real ownership.
+const browserFixture = join(HOME, "browser-fixture.mjs");
+writeFileSync(browserFixture, `import { existsSync } from "node:fs";
+import { browserRuntime } from ${JSON.stringify(pathToFileURL(join(ROOT, "server", "browser-runtime.ts")).href)};
+browserRuntime.status = async () => ({ state: existsSync(${JSON.stringify(cuaPath)}) ? "ready" : "disconnected", enabled: true, browsers: [], selectedBrowserId: "fixture", active: false, checkedAt: Date.now(), version: "0.3.0", port: 52800, detail: "Synthetic browser connection" });
+browserRuntime.resumeConnection = async () => {};
+`);
 const dumpPath = join(HOME, "fake-acp-dump.json");
 
 let failures = 0;
@@ -223,7 +233,7 @@ const spawnServer = (extraEnv = {}) => {
       2,
     ),
   );
-  const proc = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "server", "index.ts")], {
+  const proc = spawn(process.execPath, ["--experimental-strip-types", "--import", pathToFileURL(browserFixture).href, join(ROOT, "server", "index.ts")], {
     cwd: ROOT,
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -691,7 +701,7 @@ try {
     reply: "opening the portal",
   });
   const navStart = await api("POST", "/api/recipes/run-nav/attend", {});
-  check("navigate attend accepted", navStart.status === 202);
+  check("navigate attend accepted", navStart.status === 202, `${navStart.status} ${JSON.stringify(navStart.body)}`);
   const navBud = await waitForOptionsCard();
   const navCard = navBud.messages.find((m) => m.kind === "options" && !m.card?.answered);
   check("navigate card fence is portal-read", navCard?.card?.fence?.surface === "portal-read");

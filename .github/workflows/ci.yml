@@ -84,7 +84,8 @@ jobs:
 
   package-linux:
     # Linux is a desktop beta without an office host: no PostgreSQL runtime is
-    # pinned for linux-x64, so this job reports but does not block the matrix.
+    # pinned for linux-x64, so this job reports but does not block the matrix,
+    # and its first step skips the build until a runtime is pinned.
     continue-on-error: true
     name: package + smoke (Ubuntu 24.04 x64)
     runs-on: ubuntu-24.04
@@ -98,20 +99,35 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      # `scripts/prepare-postgres.mjs` refuses to package a target with no pinned
+      # PostgreSQL runtime, by design. Until one is pinned for linux-x64 the job
+      # says so and stops, instead of failing on every pull request.
+      - name: Linux office storage runtime pinned?
+        id: target
+        run: |
+          supported=$(node --input-type=module -e "import { artifactFor } from './scripts/postgres-artifacts.mjs'; console.log(artifactFor('linux', 'x64') ? 'true' : 'false')")
+          echo "supported=$supported" >> "$GITHUB_OUTPUT"
+          if [ "$supported" != "true" ]; then echo "::notice title=Linux package skipped::No pinned PostgreSQL 16 runtime for linux-x64 (scripts/postgres-artifacts.mjs); Windows and macOS are the supported targets."; fi
       - name: Install package validation tools
+        if: steps.target.outputs.supported == 'true'
         run: sudo apt-get update && sudo apt-get install -y desktop-file-utils xvfb dbus-x11
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm package:linux
-      - run: node scripts/verify-linux-package.mjs
+      - if: steps.target.outputs.supported == 'true'
+        run: pnpm install --frozen-lockfile
+      - if: steps.target.outputs.supported == 'true'
+        run: pnpm package:linux
+      - if: steps.target.outputs.supported == 'true'
+        run: node scripts/verify-linux-package.mjs
       - name: Configure Chromium sandbox for the unpacked app
+        if: steps.target.outputs.supported == 'true'
         run: |
           sudo chown root:root release/linux-unpacked/chrome-sandbox
           sudo chmod 4755 release/linux-unpacked/chrome-sandbox
           test "$(stat -c '%U:%G %a' release/linux-unpacked/chrome-sandbox)" = "root:root 4755"
       - name: Launch packaged app and verify lifecycle
+        if: steps.target.outputs.supported == 'true'
         run: dbus-run-session -- xvfb-run -a node scripts/smoke-linux-package.mjs
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && steps.target.outputs.supported == 'true'
         with:
           name: openmausbot-ubuntu-x64
           path: |
