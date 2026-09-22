@@ -93,6 +93,69 @@ describe("parsePortalJobIntent", () => {
   });
 });
 
+const IMPERATIVE = "Open this portal and download the report";
+const POLITE_REQUESTS = [
+  "Open this portal and download the report.",
+  "Open this portal and download the report, thanks",
+  "Can you open this portal and download the report?",
+  "Can you open this portal and download the report",
+  "can you please open this portal and download the report? thanks!",
+  "Could you open this portal and download the report, please?",
+  "Would you open this portal and download the report? Thank you.",
+  "Would you be able to open this portal and download the report?",
+  "Please open this portal and download the report",
+  "please open this portal and download the report. Thanks",
+  "I need you to open this portal and download the report",
+  "I'd like you to open this portal and download the report?",
+  "Are you able to open this portal and download the report?",
+  "ok so can you open this portal and download the report? cheers",
+];
+const GENUINE_QUESTIONS = [
+  "Can you see my portal?",
+  "What does the report say?",
+  "How do I download the report?",
+  "How do I download the report from the portal?",
+  "Do you have access to the portal?",
+  "Do you have access to portal.vantagestrata.com.au?",
+  "Can you tell me how to download the report from the portal?",
+  "Could you explain what the strata portal shows?",
+  "Is the portal down?",
+  "Open this portal and download the report?",
+  "Can you open the portal? What does the levy report say?",
+  "Can you open the portal and download the report?\nAlso, is the levy due?",
+  "Can you draft an update from the portal report?",
+  "Can you log in?",
+];
+const NOT_INSTRUCTIONS = [
+  'My tenant wrote: "Can you open the portal and download the report?"',
+  "Tenant said \u201cplease open the portal and download the report\u201d, what do they mean",
+  "Fwd: Please open the portal and download the report",
+  "FW: can you open the portal and download the report?",
+  "---------- Forwarded message ----------\nFrom: owner@example.com\nPlease open the portal and download the report.",
+  "> Please open the portal and download the report.\nWhat is this about",
+  'Continue this job.\n<pasted-text index="1">Can you open portal.example.com and download the report?</pasted-text>',
+];
+
+describe("parsePortalJobIntent polite requests", () => {
+  it.each(POLITE_REQUESTS)("routes %s to the same job as the imperative", text => {
+    expect(parsePortalJobIntent(text)).toEqual(parsePortalJobIntent(IMPERATIVE));
+    expect(parsePortalJobIntent(text)).toEqual({ site: null, task: IMPERATIVE, origins: [] });
+  });
+  it("keeps the named host and site on a polite request", () => {
+    const polite = parsePortalJobIntent("Could you log in to portal.vantagestrata.com.au and download the levy report? Thanks");
+    expect(polite).toEqual(parsePortalJobIntent("Log in to portal.vantagestrata.com.au and download the levy report"));
+    expect(polite?.origins).toEqual(["portal.vantagestrata.com.au"]);
+    expect(parsePortalJobIntent("Can you check the CBA business banking site every Monday?")?.task).toBe("Check the CBA business banking site every Monday");
+    expect(parsePortalJobIntent('Could you open the strata portal and download the "Levy Summary" report?')?.task).toBe('Open the strata portal and download the "Levy Summary" report');
+  });
+  it.each(GENUINE_QUESTIONS)("keeps %s a question", text => {
+    expect(parsePortalJobIntent(text)).toBeNull();
+  });
+  it.each(NOT_INSTRUCTIONS)("never routes quoted or forwarded material: %s", text => {
+    expect(parsePortalJobIntent(text)).toBeNull();
+  });
+});
+
 describe("portalJobIntentReply", () => {
   it.each(CONNECTED_TOOL_REQUESTS)("never reads saved jobs, drafts or saves a connected-tool request: %s", async text => {
     const recipes = vi.fn(() => { throw new Error("portal lookup must not run"); });
@@ -102,6 +165,17 @@ describe("portalJobIntentReply", () => {
     expect(recipes).not.toHaveBeenCalled();
     expect(draft).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
+  });
+  it("drafts a polite request from the same imperative task", async () => {
+    const draft = vi.fn(async (_text: string) => recipe({ id: "draft-polite", allowedOrigins: [] }));
+    const result = await portalJobIntentReply("Can you open this portal and download the report? Thanks", {
+      recipes: () => [],
+      draft,
+      save: (row) => row,
+    });
+    expect(draft).toHaveBeenCalledWith(IMPERATIVE);
+    expect(result?.recipeId).toBe("draft-polite");
+    expect(result?.reply).toContain("Press **Approve the plan** here in Ask");
   });
   it("returns null when the sentence is not portal work", async () => {
     expect(await portalJobIntentReply("hi", { recipes: () => [], draft: async () => recipe(), save: (row) => row })).toBeNull();

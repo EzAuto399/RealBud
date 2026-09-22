@@ -61,6 +61,48 @@ function stripPortalSecrets(text: string): string {
     .replace(/\b(?=[A-Za-z0-9_-]*[A-Za-z])(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{16,}\b/g, "[redacted]");
 }
 
+/** A polite frame around one action ("Can you …?", "Please …", "I need you
+ * to …"). Anchored at the start so a frame inside quoted or forwarded prose
+ * never counts. */
+const POLITE_FRAME =
+  /^(?:(?:ok(?:ay)?|so|hey|hi|bud)[\s,]+)*(?:please\s+|(?:can|could|would|will)\s+you\s+(?:please\s+|kindly\s+)?(?:be\s+able\s+to\s+)?|are\s+you\s+able\s+to\s+|i(?:\s+(?:need|want|would\s+like)|['\u2019]d\s+like)\s+you\s+to\s+)/i;
+/** What follows the frame must itself be the action ("can you open …"), not
+ * a request for information ("can you tell me how to open …"). */
+const ACTION_START = new RegExp(`^(?:(?:please|just|kindly)\\s+|go\\s+ahead\\s+and\\s+)*${ACTION.source}`, "i");
+const COURTESY_TAIL =
+  /(?:[\s,;.!]*\b(?:thanks(?:\s+(?:so\s+much|a\s+lot|heaps))?|thank\s+you(?:\s+(?:so\s+much|very\s+much))?|thx|ta|cheers|please|pls)\b)?[\s,;.!]*$/i;
+/** Forwarded mail and reply quotes are material to review, never instructions. */
+const FORWARDED = /^\s*(?:>|(?:fwd?|fw)\s*:|-{2,}\s*(?:forwarded|original)\s+message|begin\s+forwarded\s+message|(?:from|sent|to|subject|date)\s*:)/im;
+/** Quoted spans ("Levy Summary", “can you open …”). */
+const QUOTED_SPAN = /"[^"\n]*"|\u201c[^\u201d\n]*\u201d/g;
+
+/** A quoted instruction is somebody else's words, never the PM's request. */
+function quotesAnInstruction(text: string): boolean {
+  return (text.match(QUOTED_SPAN) ?? []).some((span) => ACTION.test(span));
+}
+
+function stripCourtesyTail(text: string): string {
+  let out = text.trim();
+  for (let previous = ""; previous !== out;) {
+    previous = out;
+    out = out.replace(COURTESY_TAIL, "").trim();
+  }
+  return out;
+}
+
+/** "Can you open this portal and download the report? Thanks" reads as the
+ * imperative "Open this portal and download the report". Returns the
+ * imperative, or null when the text is not one politely framed action. */
+function imperativeFrom(text: string): string | null {
+  let body = stripCourtesyTail(text);
+  const frame = POLITE_FRAME.exec(body);
+  if (!frame) return body || null;
+  body = stripCourtesyTail(body.slice(frame[0].length).replace(/\?$/, ""));
+  // One request per message: a second question stays a question.
+  if (!body || body.includes("?") || !ACTION_START.test(body)) return null;
+  return body.charAt(0).toUpperCase() + body.slice(1);
+}
+
 function isQuestion(text: string): boolean {
   const trimmed = text.trim();
   return /\?\s*$/.test(trimmed) || QUESTION_START.test(trimmed);
@@ -107,17 +149,20 @@ export function parsePortalJobIntent(text: string): PortalJobIntent | null {
   // Rich requests belong to the worker. Quoted results and attachments must
   // not create or select a portal job through a keyword shortcut.
   if (/<pasted-text\b|<attached-file\b/i.test(trimmed)) return null;
+  if (FORWARDED.test(trimmed) || quotesAnInstruction(trimmed)) return null;
   if (CONNECTED_TOOL_REQUEST.test(trimmed)) return null;
-  if (PREPARATION_START.test(trimmed) || /^(?:please\s+)?(?:do not|don't|never)\b/i.test(trimmed)) return null;
   if (askBookIntent(trimmed)) return null;
   if (parseConnectionIntent(trimmed)) return null;
-  if (isQuestion(trimmed)) return null;
+  const request = imperativeFrom(trimmed);
+  if (!request) return null;
+  if (PREPARATION_START.test(request) || /^(?:please\s+)?(?:do not|don't|never)\b/i.test(request)) return null;
+  if (isQuestion(request)) return null;
   // A prohibition such as "Do not call tools" is not a request to do portal
   // work, even when the surrounding draft mentions a supplier's bank details.
   // Route from the opening request, never verbs or portal names buried in
   // subsequent receipts, bank extracts or other pasted prose. Keep dots in
   // hostnames intact. Longer instructions still reach the real worker.
-  const openingRequest = trimmed.split(/[.!?](?=\s)|[\r\n]/, 1)[0];
+  const openingRequest = request.split(/[.!?](?=\s)|[\r\n]/, 1)[0];
   const positiveRequest = openingRequest.replace(/\b(?:do\s+not|don't|never)\b[^.!?;\n]*(?:[.!?;]|$)/gi, "");
   if (!ACTION.test(positiveRequest)) return null;
 
@@ -130,7 +175,7 @@ export function parsePortalJobIntent(text: string): PortalJobIntent | null {
   if (!named) return null;
 
   const site = origins[0] ?? siteFromPhrase(positiveRequest);
-  return { site, task: trimmed, origins };
+  return { site, task: request, origins };
 }
 
 export async function portalJobIntentReply(
@@ -151,7 +196,7 @@ export async function portalJobIntentReply(
   }
 
   try {
-    const saved = deps.save(await deps.draft(text));
+    const saved = deps.save(await deps.draft(intent.task));
     const origins = saved.allowedOrigins.length ? saved.allowedOrigins : intent.origins;
     const siteLine = origins.length ? origins.join(", ") : "add the portal address on the job card before Run beside me";
     const reply = [
