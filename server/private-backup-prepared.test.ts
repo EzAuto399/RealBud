@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, realpathSync, rmSync, readFileSync, readdirSync, writeFileSync, symlinkSync, linkSync, chmodSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, readFileSync, readdirSync, writeFileSync, symlinkSync, linkSync, chmodSync, statSync, unlinkSync, existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -105,7 +106,7 @@ describe('exact encrypted prepared restore artifacts', () => {
     expect(() => preparedStorageBudget({ sqliteBytes: 65_535 })).toThrow(/limits/);
   });
 
-  it('observes DELETE journal sector during a transaction and reopens after an interrupted write', async () => {
+  it('observes the rollback journal sector during a transaction and reopens after an interrupted write', async () => {
     const f = await fixture(); let started!: () => void;
     const entered = new Promise<void>(resolve => { started = resolve; });
     const source: AsyncIterable<Uint8Array> = { [Symbol.asyncIterator]() { return { next() { started(); return new Promise(() => {}); }, async return() { return { done: true, value: undefined }; } }; } };
@@ -183,5 +184,76 @@ describe('exact encrypted prepared restore artifacts', () => {
     expect(opened.summary().entries).toBe(0);
     await opened.addFile('vault/USER.md', null, bytes('ok'));
     expect(opened.summary().entries).toBe(1);
+  });
+
+  describe('one protected TRUNCATE journal', () => {
+    const journalOf = (directory: string) => join(directory, 'prepared.sqlite-journal');
+    const identity = (path: string) => { const stat = statSync(path); return { ino: stat.ino, size: stat.size }; };
+    // A real crash: another process changes stored ciphertext in a transaction
+    // small enough in cache to spill to the database file, then dies before COMMIT.
+    function crashMidTransaction(directory: string, mode: 'TRUNCATE' | 'DELETE') {
+      const script = `const { DatabaseSync } = require('node:sqlite'); const db = new DatabaseSync(process.env.PREPARED_DB);
+        db.exec('PRAGMA journal_mode=${mode}; PRAGMA synchronous=FULL; PRAGMA cache_size=10; BEGIN IMMEDIATE;');
+        db.exec('UPDATE prepared_chunks SET payload=zeroblob(length(payload))'); process.kill(process.pid, 'SIGKILL');`;
+      const result = spawnSync(process.execPath, ['-e', script], { env: { ...process.env, PREPARED_DB: join(directory, 'prepared.sqlite') }, encoding: 'utf8' });
+      expect(result.signal).toBe('SIGKILL');
+    }
+    async function sealedWithFile(content: Buffer) {
+      const f = await fixture(); await f.store.addFile('vault/properties/crash.md', null, bytes(content)); await f.store.seal(); await f.store.close(); return f;
+    }
+    async function readBack(store: PrivateBackupPreparedStore) { const parts: Buffer[] = []; for await (const part of store.readFile('vault/properties/crash.md')) parts.push(Buffer.from(part)); return Buffer.concat(parts); }
+
+    it('creates the journal empty with the store and keeps that same empty file across commits and reopening', async () => {
+      const f = await fixture(), journal = journalOf(f.options.directory), created = identity(journal);
+      expect(created.size).toBe(0);
+      await f.store.addFile('vault/USER.md', null, bytes('fictional')); await f.store.seal();
+      expect(identity(journal)).toEqual(created);
+      await f.store.close(); const opened = await reopen(f.options); await opened.validate();
+      expect(identity(journal)).toEqual(created);
+    });
+
+    it('treats a crashed transaction\u2019s journal as hot and restores the sealed bytes, then keeps an empty journal', async () => {
+      const content = randomBytes(3 * CHUNK + 11), f = await sealedWithFile(content), database = join(f.options.directory, 'prepared.sqlite');
+      const before = readFileSync(database);
+      crashMidTransaction(f.options.directory, 'TRUNCATE');
+      const journal = readFileSync(journalOf(f.options.directory));
+      expect(journal.length).toBeGreaterThanOrEqual(28); expect(preparedRollbackJournalBounds(journal).pageBytes).toBe(4096);
+      expect(readFileSync(database).equals(before)).toBe(false);
+      const opened = await reopen(f.options);
+      expect((await opened.validate()).entries).toBe(1);
+      expect(await readBack(opened)).toEqual(content);
+      expect(statSync(journalOf(f.options.directory)).size).toBe(0);
+    }, 30_000);
+
+    it('refuses a journal too short to hold a header as damage and preserves it', async () => {
+      const f = await fixture(); await f.store.close();
+      const journal = journalOf(f.options.directory), damaged = Buffer.from('fictional!');
+      writeFileSync(journal, damaged);
+      await expect(reopen(f.options)).rejects.toThrow(/needs recovery/);
+      expect(readFileSync(journal)).toEqual(damaged);
+      writeFileSync(journal, Buffer.alloc(0));
+      expect((await reopen(f.options)).summary().entries).toBe(0);
+    });
+
+    it('opens an older DELETE-mode store without a journal and moves it to a new empty journal without losing data', async () => {
+      const content = randomBytes(CHUNK + 5), f = await sealedWithFile(content);
+      unlinkSync(journalOf(f.options.directory));
+      const opened = await reopen(f.options);
+      expect(statSync(journalOf(f.options.directory)).size).toBe(0);
+      expect((await opened.validate()).entries).toBe(1); expect(await readBack(opened)).toEqual(content);
+    });
+
+    it('recovers an older build\u2019s DELETE-mode hot journal, then keeps an empty journal', async () => {
+      const content = randomBytes(3 * CHUNK + 7), f = await sealedWithFile(content);
+      unlinkSync(journalOf(f.options.directory));
+      const database = join(f.options.directory, 'prepared.sqlite'), before = readFileSync(database);
+      crashMidTransaction(f.options.directory, 'DELETE');
+      expect(statSync(journalOf(f.options.directory)).size).toBeGreaterThanOrEqual(28);
+      expect(readFileSync(database).equals(before)).toBe(false);
+      const opened = await reopen(f.options);
+      expect((await opened.validate()).entries).toBe(1); expect(await readBack(opened)).toEqual(content);
+      expect(existsSync(journalOf(f.options.directory))).toBe(true);
+      expect(statSync(journalOf(f.options.directory)).size).toBe(0);
+    }, 30_000);
   });
 });

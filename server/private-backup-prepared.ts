@@ -4,7 +4,7 @@
  * This store does not interpret business ciphertext or apply a restore. */
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
-import { lstat, mkdir, open, readdir } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, unlink } from 'node:fs/promises';
 import { dirname, join, parse, resolve } from 'node:path';
 import { setImmediate as yieldTurn } from 'node:timers/promises';
 import { DatabaseSync } from 'node:sqlite';
@@ -62,7 +62,7 @@ export function preparedStorageBudget(limits?: Partial<PreparedLimits>): { datab
   const rollbackBytes = pages * (PAGE_BYTES + 8) + 2 * PAGE_BYTES * (pages + 1) + BOOTSTRAP_BYTES;
   return { databaseBytes, rollbackBytes, totalBytes: databaseBytes + rollbackBytes };
 }
-/** DELETE journal header: sector-size at 20, page-size at 24. Magic may be unsynced zeros. */
+/** Rollback journal header: sector-size at 20, page-size at 24. Magic may be unsynced zeros. */
 export function preparedRollbackJournalBounds(header: Uint8Array): { pageBytes: number; sectorBytes: number } {
   if (header.byteLength < JOURNAL_HEADER_BYTES) unsupported();
   const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
@@ -83,6 +83,23 @@ async function admitRollbackJournal(directory: string): Promise<void> {
     if (readSync(fd, bytes, 0, JOURNAL_HEADER_BYTES, 0) < JOURNAL_HEADER_BYTES) unsupported();
     preparedRollbackJournalBounds(bytes);
   } finally { bytes.fill(0); closeSync(fd); }
+}
+
+/** TRUNCATE mode keeps one rollback journal for the store's life and empties it
+ * at each commit, so the store creates that file itself: exclusively, empty,
+ * and restricted on Windows before SQLite writes into it. (In DELETE mode
+ * SQLite made a fresh journal per transaction with an inherited descriptor,
+ * which Windows admission refuses.) An existing journal, including an older
+ * build's hot one, is never restricted: it stays verify-only. SQLite treats an
+ * empty journal as absent, so it is never hot and never deleted as stale. */
+async function ensureJournal(directory: string): Promise<void> {
+  const path = join(directory, JOURNAL);
+  let file;
+  try { file = await open(path, 'wx', 0o600); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') return; throw error; }
+  await file.close();
+  try { await windowsFilePrivacy(path, 'file', true); }
+  catch (error) { await unlink(path).catch(() => {}); throw error; }
 }
 
 function validPath(path: unknown): path is string { return path === DATABASE || isPrivateBackupPath(path); }
@@ -127,15 +144,19 @@ async function ownedFiles(directory: string, budget = preparedStorageBudget()): 
   for (const name of names) {
     const path = join(directory, name), stat = await lstat(path);
     const maxBytes = name === FILE ? budget.databaseBytes : budget.rollbackBytes;
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > maxBytes ||
+    // An empty journal is the normal state between transactions; one too short
+    // to hold a header is damage. A longer one is left to SQLite's hot-journal
+    // recovery exactly as before.
+    const damagedJournal = name !== FILE && stat.size > 0 && stat.size < JOURNAL_HEADER_BYTES;
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > maxBytes || damagedJournal ||
         process.platform !== 'win32' && ((stat.mode & 0o077) !== 0 || typeof process.getuid === 'function' && stat.uid !== process.getuid())) fail();
     await windowsFilePrivacy(path, 'file');
   }
 }
 function configure(db: DatabaseSync, maxBytes: number): void {
-  db.exec('PRAGMA trusted_schema=OFF; PRAGMA synchronous=FULL; PRAGMA journal_mode=DELETE; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-2048; PRAGMA busy_timeout=0;');
+  db.exec('PRAGMA trusted_schema=OFF; PRAGMA synchronous=FULL; PRAGMA journal_mode=TRUNCATE; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-2048; PRAGMA busy_timeout=0;');
   const page = db.prepare('PRAGMA page_size').get()?.page_size;
-  if (page !== PAGE_BYTES || db.prepare('PRAGMA journal_mode').get()?.journal_mode !== 'delete' || db.prepare('PRAGMA temp_store').get()?.temp_store !== 2) fail();
+  if (page !== PAGE_BYTES || db.prepare('PRAGMA journal_mode').get()?.journal_mode !== 'truncate' || db.prepare('PRAGMA temp_store').get()?.temp_store !== 2) fail();
   const max = Math.floor(maxBytes / PAGE_BYTES);
   if (db.prepare(`PRAGMA max_page_count=${max}`).get()?.max_page_count !== max) fail('Prepared backup storage has reached its capacity.', 413);
 }
@@ -170,6 +191,7 @@ export class PrivateBackupPreparedStore {
     await windowsFilePrivacy(directory, 'directory', true);
     const file = await open(join(directory, FILE), 'wx', 0o600); await file.close();
     await windowsFilePrivacy(join(directory, FILE), 'file', true);
+    await ensureJournal(directory);
     let db: DatabaseSync | undefined, store: PrivateBackupPreparedStore | undefined;
     try {
       db = new DatabaseSync(join(directory, FILE));
@@ -195,6 +217,11 @@ export class PrivateBackupPreparedStore {
       schemaCheck(db); configure(db, PRIVATE_BACKUP_PREPARED_LIMITS.sqliteBytes);
       store = new PrivateBackupPreparedStore(directory, options.key, db, options.storeId, options.workspaceId);
       const header = store.header(); configure(db, header.limits.sqliteBytes);
+      // A store from an older DELETE-mode build has no journal between
+      // transactions, and a hot journal recovered on this connection's first
+      // read (still in SQLite's default DELETE mode) is removed afterwards.
+      // Either way the journal TRUNCATE mode keeps is created here, protected.
+      await ensureJournal(directory);
       return store;
     } catch (error) { if (store) await store.close(); else db?.close(); throw error; }
   }
@@ -284,6 +311,7 @@ export class PrivateBackupPreparedStore {
   private async transaction<T>(signal: AbortSignal, body: (header: Header) => Promise<T>): Promise<T> {
     aborted(signal);
     await ownedFiles(this.directory, preparedStorageBudget(this.header().limits));
+    await ensureJournal(this.directory);
     aborted(signal);
     let began = false;
     try {

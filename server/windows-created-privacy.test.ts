@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { mkdirPrivateSync, writeFileAtomic, writeFileFsynced, writeFilePrivateSync } from './atomic.ts';
 import { ensureDirs } from './config.ts';
 import { DEFAULT_VAULT_DOCUMENTS, appendAllowedLine, seedVault } from './vault.ts';
@@ -20,17 +20,31 @@ import { encryptJson } from './desk-crypto.ts';
 import { emptyV3 } from '../shared/desk-v3.ts';
 import { createCustomerPackService } from './customer-packs.ts';
 import { austinCustomerPack } from './customer-pack-definition.ts';
+import { createPrivateBackupCoordinator } from './private-backup-coordinator.ts';
+import { withDurablePrivateBackupRestore } from './private-backup-legacy-api.ts';
+import { applyStagedPrivateRestoreV2 } from './private-backup-cold-restore.ts';
+import { PrivateBackupPreparedStore } from './private-backup-prepared.ts';
 
 type Operation = [path: string, kind: string, action: string, bytes: number | null];
-const acl = vi.hoisted(() => ({ launches: [] as Operation[][], refuse: false, refuseAsync: false }));
+const acl = vi.hoisted(() => ({
+  launches: [] as Operation[][], refuse: false, refuseAsync: false,
+  // Objects that carry a descriptor applied at creation, by identity: a rename
+  // keeps it, so a restricted temp file stays admitted under its final name.
+  // `trusted` holds fixture objects planted as already protected.
+  restricted: new Set<string>(), trusted: new Set<string>(), unadmitted: [] as string[],
+}));
+const identity = (path: string) => { const stat = statSync(path); return `${stat.dev}:${stat.ino}`; };
 function record(options: { env?: Record<string, string | undefined> } | undefined): void {
   const env = options?.env ?? {};
   const count = Number(env.REALBUD_WINDOWS_FILE_PRIVACY_COUNT);
   acl.launches.push(Array.from({ length: count }, (_, index) => {
     const suffix = index ? `_${index}` : '';
     const path = env[`REALBUD_WINDOWS_FILE_PRIVACY_PATH${suffix}`]!, kind = env[`REALBUD_WINDOWS_FILE_PRIVACY_KIND${suffix}`]!;
+    const action = env[`REALBUD_WINDOWS_FILE_PRIVACY_ACTION${suffix}`]!, id = identity(path);
+    if (action === 'restrict') acl.restricted.add(id);
+    else if (!acl.restricted.has(id) && !acl.trusted.has(id)) acl.unadmitted.push(path);
     // A restricted file must still be empty when its descriptor is applied.
-    return [path, kind, env[`REALBUD_WINDOWS_FILE_PRIVACY_ACTION${suffix}`]!, kind === 'file' ? statSync(path).size : null];
+    return [path, kind, action, kind === 'file' ? statSync(path).size : null];
   }));
 }
 vi.mock('node:child_process', async original => ({
@@ -56,6 +70,7 @@ beforeEach(() => {
   // Absolute on every host, so the helper's own path check admits it.
   vi.stubEnv('SystemRoot', '/synthetic/Windows');
   acl.launches.length = 0; acl.refuse = false; acl.refuseAsync = false;
+  acl.restricted.clear(); acl.trusted.clear(); acl.unadmitted.length = 0;
 });
 afterEach(() => {
   Object.defineProperty(process, 'platform', platform); vi.unstubAllEnvs(); setOpLogPath('');
@@ -253,5 +268,56 @@ describe('asynchronous private folders', () => {
     expect(readFileSync(file, 'utf8')).toBe(skill.instructions);
     acl.launches.length = 0; await service.install(pack, preview.digest);
     expect(restricted().filter(path => path.startsWith(support))).toEqual([]);
+  });
+});
+
+describe('prepared restore store journal', () => {
+  it('is created empty and protected before SQLite opens the store, recreated protected for an older store, and otherwise only verified', async () => {
+    const directory = join(fixture(), 'prepared'), journal = join(directory, 'prepared.sqlite-journal');
+    const settings = { directory, key: Buffer.alloc(32, 6), workspaceId: '00000000-0000-4000-8000-000000000006' };
+    const store = await PrivateBackupPreparedStore.create(settings);
+    expect(acl.launches.flat().filter(([, kind, action]) => kind === 'file' && action === 'restrict')).toEqual([
+      [join(directory, 'prepared.sqlite'), 'file', 'restrict', 0], [journal, 'file', 'restrict', 0],
+    ]);
+    await store.addFile('vault/USER.md', null, (async function* () { yield Buffer.from('fictional'); })()); await store.close();
+    acl.launches.length = 0;
+    await (await PrivateBackupPreparedStore.open({ ...settings, storeId: store.storeId })).close();
+    expect(restricted()).toEqual([]);
+    rmSync(journal); acl.launches.length = 0;
+    await (await PrivateBackupPreparedStore.open({ ...settings, storeId: store.storeId })).close();
+    expect(restricted()).toEqual([journal]);
+    expect(acl.unadmitted).toEqual([]);
+  });
+});
+
+describe('durable restore staging', () => {
+  it('staging and cold apply admit only objects protected at creation, before content', async () => {
+    const phrase = 'Fictional staging trace passphrase';
+    const office = (workspaceId: string) => {
+      const directory = fixture(), key = Buffer.alloc(32, workspaceId.endsWith('3') ? 3 : 4);
+      mkdirSync(join(directory, 'company-installation'));
+      writeFileSync(join(directory, 'company-installation', 'workspace.json'), JSON.stringify({ version: 1, id: workspaceId, workerMemberKey: null }));
+      writeFileSync(join(directory, 'desk.json'), JSON.stringify(encryptJson(key, emptyV3({ name: 'Fictional staging agency', timezone: 'UTC', jurisdictions: [] }))));
+      // Planted as the desktop app and the QA leave them: already protected.
+      for (const path of [directory, join(directory, 'company-installation'), join(directory, 'company-installation', 'workspace.json'), join(directory, 'desk.json')]) acl.trusted.add(identity(path));
+      const legacy = createPrivateWorkspaceBackup({ directory, key: () => key, workspaceId, epoch: () => 'fixture', assertIdle: () => {}, assertFresh: () => {} });
+      return { directory, key, workspaceId, legacy };
+    };
+    const source = office('00000000-0000-4000-8000-000000000003'), target = office('00000000-0000-4000-8000-000000000004');
+    const coordinator = await createPrivateBackupCoordinator({ directory: target.directory, key: target.key, workspaceId: target.workspaceId, now: Date.now,
+      freeBytes: async () => 100 * 1024 ** 3, captureLimits: { maxEntries: 1000, maxBytes: 16 * 1024 ** 2 },
+      snapshotLease: async () => ({ assertCurrent() {}, release() {} }), assertFresh() {}, assertIdle() {}, epoch: () => 'fixture', beginRestore() {} });
+    try {
+      const exported = await source.legacy.exportBackup(phrase);
+      await withDurablePrivateBackupRestore(target.legacy, coordinator).stageRestore({ backup: exported.backup, passphrase: phrase, expectedDigest: exported.receipt.digest });
+    } finally { await coordinator.close(); }
+    // The cold apply at the next start admits through the same stores.
+    expect(await applyStagedPrivateRestoreV2({ directory: target.directory, key: target.key })).toMatchObject({ restored: true });
+    const files = acl.launches.flat().filter(([, kind, action]) => kind === 'file' && action === 'restrict');
+    expect(files.length).toBeGreaterThan(0);
+    expect(files.filter(([, , , bytes]) => bytes !== 0)).toEqual([]);
+    // Including the prepared store's rollback journal, which it now creates
+    // protected and keeps (TRUNCATE mode) instead of SQLite making a new one.
+    expect(acl.unadmitted.map(path => basename(path))).toEqual([]);
   });
 });
