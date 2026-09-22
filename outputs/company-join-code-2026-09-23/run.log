@@ -1,2 +1,3 @@
 PASS: one join code refuses a damaged paste without a request, connects with the host part and fills the invitation (1365/390)
+PASS: browser link opens the issued approval page, shows the matching code, polls to linked and names the office with a disconnect (1365/390)
 PASS: guided solo/join choices, explicit member revocation confirmation, backup download receipt, offline share archival confirmation;  basics-first layout; optional solo/office/website wording; 1365/390 layouts; both binding errors through actual fetch + UI; no automatic replay; no browser errors. Synthetic company responses only.

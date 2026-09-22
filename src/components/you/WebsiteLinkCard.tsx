@@ -136,6 +136,10 @@ export function WebsiteLinkCardView(props: WebsiteLinkCardViewProps) {
       {/* One polite live region, always in the page, announces every approval change. */}
       <p role="status" aria-live="polite" className="sr-only">{[message, access ? MODEL_ACCESS[access] : ""].filter(Boolean).join(" ")}</p>
       {message ? <p className={request || joined ? "font-medium text-ink" : "text-ink-secondary"}>{message}</p> : null}
+      {request ? <p className="rounded border border-line bg-paper px-4 py-3 text-center" aria-hidden="true">
+        <span className="block text-[12px] text-ink-muted">Code on this computer</span>
+        <span className="block font-mono text-[22px] font-semibold tracking-[0.12em] text-ink">{request.displayCode}</span>
+      </p> : null}
       {joined ? <>
         {access ? <p className="text-ink-secondary" aria-busy={access === "setting-up" || undefined}>{MODEL_ACCESS[access]}</p> : null}
         <button type="button" className={secondary} disabled={busy} onClick={props.onDisconnect}>Not your office? Disconnect</button>

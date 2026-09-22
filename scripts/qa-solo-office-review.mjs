@@ -187,6 +187,46 @@ try {
   await joinPage.screenshot({ path: join(output, 'join-code-connected-mobile.png') });
   assert.deepEqual(joinErrors, []);
   console.log('PASS: one join code refuses a damaged paste without a request, connects with the host part and fills the invitation (1365/390)');
+  // Link with your RealBud account (23 September): the desktop asks for a link
+  // request, opens the approval page, shows the matching code, polls, then names
+  // the office it joined with a way out. Website answers are synthetic; the
+  // browser opening is stubbed so nothing leaves this machine.
+  const linkPage = await context.newPage(); const linkErrors = []; let linkPolls = 0, linked = false;
+  linkPage.on('pageerror', error => linkErrors.push(error.message));
+  await linkPage.addInitScript(() => { window.open = url => { window.__openedApproval = String(url); return null; }; });
+  const approvalUrl = 'https://realbud.app/link/' + 'Fixture_only_approval_id_'.padEnd(43, 'x');
+  const pendingView = { approvalUrl, displayCode: 'R9QF-BRFG', expiresAt: new Date(Date.now() + 600_000).toISOString() };
+  await linkPage.route('**/api/office-link', route => route.fulfill({ json: linked
+    ? { state: 'linked', label: 'Front desk Mac', agencyLabel: 'Fixture Office A', provisioned: false }
+    : { state: 'unlinked' } }));
+  await linkPage.route('**/api/office-link/browser-link', route => {
+    const method = route.request().method();
+    if (method === 'POST') return route.fulfill({ json: { state: 'pending', ...pendingView } });
+    if (method === 'GET') { linkPolls++; if (linkPolls >= 2) linked = true; return route.fulfill({ json: linked ? { state: 'linked', agencyLabel: 'Fixture Office A' } : { state: 'pending', ...pendingView } }); }
+    return route.fulfill({ json: { state: 'none' } });
+  });
+  await linkPage.goto(origin + '/#you-office');
+  await linkPage.getByRole('button', { name: /^You\b/ }).first().click();
+  const linkOffice = linkPage.locator('details').filter({ has: linkPage.getByText('This office', { exact: true }) }).first();
+  if (await linkOffice.count()) await linkOffice.evaluate(node => { node.open = true; });
+  const start = linkPage.getByRole('button', { name: 'Link with your RealBud account', exact: true });
+  await start.scrollIntoViewIfNeeded();
+  const nameField = linkPage.getByLabel('Computer name').first();
+  if (await nameField.isVisible()) await nameField.fill('Front desk Mac');
+  await start.click();
+  await linkPage.getByText('R9QF-BRFG').first().waitFor();
+  await linkPage.getByText('Code on this computer', { exact: true }).scrollIntoViewIfNeeded();
+  assert.equal(await linkPage.evaluate(() => window.__openedApproval), approvalUrl, 'The approval page must open at the URL the website issued.');
+  await linkPage.screenshot({ path: join(output, 'browser-link-waiting-desktop.png') });
+  await linkPage.getByText('Linked to Fixture Office A.', { exact: true }).waitFor({ timeout: 20_000 });
+  await linkPage.getByRole('button', { name: 'Not your office? Disconnect', exact: true }).waitFor();
+  await linkPage.screenshot({ path: join(output, 'browser-link-linked-desktop.png') });
+  await linkPage.setViewportSize({ width: 390, height: 844 });
+  await linkPage.getByText('Linked to Fixture Office A.', { exact: true }).scrollIntoViewIfNeeded();
+  assert.ok(await linkPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await linkPage.screenshot({ path: join(output, 'browser-link-linked-mobile.png') });
+  assert.deepEqual(linkErrors, []);
+  console.log('PASS: browser link opens the issued approval page, shows the matching code, polls to linked and names the office with a disconnect (1365/390)');
   console.log('PASS: guided solo/join choices, explicit member revocation confirmation, backup download receipt, offline share archival confirmation;  basics-first layout; optional solo/office/website wording; 1365/390 layouts; both binding errors through actual fetch + UI; no automatic replay; no browser errors. Synthetic company responses only.');
 } catch (error) {
   const pages = browser?.contexts().flatMap(context => context.pages()) ?? [];
