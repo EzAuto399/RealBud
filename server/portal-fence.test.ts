@@ -193,6 +193,18 @@ describe("standing rules and submit", () => {
     }
   });
 
+  it("uses the one consequential table on the route that has no page observation", () => {
+    const submit: FenceContext = { ...ctx, capabilities: ["portal-read", "portal-prefill", "portal-submit"] };
+    // Without an observed page the facts cannot be verified, so these stay denied here;
+    // the browser broker is the route that can ask for a once-only approval.
+    for (const label of ["Transfer money", "Cancel booking", "Log out", "Sign in", "Remove tenant", "Purchase"]) {
+      expect(fenceDecision(submit, { tool: "click_semantic", params: { label, url: "https://vantagestrata.com.au" } }), label)
+        .toMatchObject({ kind: "deny", reason: "Submit, Pay and Send stay with you.", surface: "portal-submit" });
+    }
+    expect(fenceDecision(submit, { tool: "click_semantic", params: { label: "Show levy history", url: "https://vantagestrata.com.au" } }))
+      .toEqual({ kind: "ask", surface: "portal-read", origin: "vantagestrata.com.au" });
+  });
+
   it("returns a surface on every on-site decision", () => {
     expect(fenceDecision(ctx, { tool: "read", params: { url: "https://vantagestrata.com.au" } }).surface).toBe(
       "portal-read",

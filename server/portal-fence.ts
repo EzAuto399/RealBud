@@ -2,6 +2,9 @@
 import { ALLOWED_TOOLS, FORBIDDEN_TOOLS } from "./cua-bounded.ts";
 import type { JobCapability } from "../shared/contracts.ts";
 import { portalRuleKey, portalRuleLabel, type PortalRuleSurface } from "./rules.ts";
+import { consequentialKind, SIGN_IN_CONTROL, SUBMIT_CONTROL, SUBMIT_JOB_DENY, SUBMIT_STAYS_WITH_YOU } from "./browser-authority.ts";
+
+export { SUBMIT_JOB_DENY, SUBMIT_STAYS_WITH_YOU, submitPressSummary } from "./browser-authority.ts";
 
 export type PortalFenceSurface = "portal-read" | "portal-prefill" | "portal-submit";
 
@@ -35,15 +38,10 @@ const ALLOWED = new Set<string>(ALLOWED_TOOLS);
 const DISCOVERY = new Set(["get_browser_state", "list_windows", "verify_state"]);
 const COMPUTER = new Set<string>([...ALLOWED_TOOLS, ...FORBIDDEN_TOOLS, "shell", "prepare", ...DISCOVERY]);
 const PASSWORD_RE = /password|passcode|otp|one-time|verification code|mfa|2fa/i;
-const MONEY_RE =
-  /\b(pay|payment|transfer|remit|bpay|direct debit|authori[sz]e|approve payment|sign|send|delete|remove|notice|terminate|evict)\b/i;
-const SUBMIT_ACTION_RE = /\b(submit|save|continue|next|confirm|lodge|create|update)\b/i;
 const URL_RE = /https?:\/\/[^\s"'<>]+/gi;
 const HOST_RE = /(?:^|[\s"'=:])(?:https?:\/\/)?((?:[a-z0-9-]+\.)+[a-z]{2,})(?:[/:?#\s"'<>]|$)/gi;
 
 const UNCONFIRMABLE = "Bud could not confirm which site or control this touches.";
-export const SUBMIT_STAYS_WITH_YOU = "Submit, Pay and Send stay with you.";
-export const SUBMIT_JOB_DENY = "This job cannot press Submit. Add 'Bud may press Submit' on the job if it should.";
 export const USE_OPEN_BROWSER =
   "Use the person's already-open Chrome or Brave window for this job (existing profile with pid and window). Do not launch a new isolated browser.";
 export const ISOLATED_BROWSER_DENY =
@@ -282,10 +280,13 @@ export function fenceDecision(ctx: FenceContext, request: FenceRequest): FenceDe
 
   if (tool === "click_semantic") {
     const label = `${clickBlob(request.params)} ${request.summary ?? ""}`;
-    if (MONEY_RE.test(label)) {
+    // This route carries no page observation, so the facts of a consequential
+    // action cannot be verified here: it stays denied (one table, see
+    // server/browser-authority.ts). The broker is the approval route.
+    if (consequentialKind(label) || SIGN_IN_CONTROL.test(label)) {
       return { kind: "deny", reason: SUBMIT_STAYS_WITH_YOU, surface: "portal-submit", origin };
     }
-    if (SUBMIT_ACTION_RE.test(label)) {
+    if (SUBMIT_CONTROL.test(label)) {
       if (!ctx.capabilities.includes("portal-submit")) {
         return { kind: "deny", reason: SUBMIT_JOB_DENY, surface: "portal-submit", origin };
       }
@@ -312,10 +313,6 @@ export function fencePayload(decision: FenceDecision): FencePayload | undefined 
         }
       : null;
   return { surface: decision.surface, origin: decision.origin, ruleOffer };
-}
-
-export function submitPressSummary(label: string, origin: string): string {
-  return `Bud wants to press '${label}' on ${origin}. Check the form in the browser first.`;
 }
 
 export function ruleAllowNote(decision: FenceDecision): string {

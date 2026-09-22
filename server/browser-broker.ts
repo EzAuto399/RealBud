@@ -1,13 +1,30 @@
 // Per-job browser capability. The worker sees typed tools, never bsk's shell,
 // daemon controls, credentials, recording, arbitrary JavaScript or other tabs.
+// Every step is decided by authorizeBrowserAction (server/browser-authority.ts);
+// server/index.ts only displays this broker's decision.
 import { createServer } from "node:http";
-import { isIP } from "node:net";
 import { randomBytes, randomUUID } from "node:crypto";
 import { browserRuntime, type BrowserRuntime, type BrowserJson } from "./browser-runtime.ts";
-import { fenceDecision, type FenceContext } from "./portal-fence.ts";
+import { fenceDenialNote, fenceEvidenceLine, type FenceContext } from "./portal-fence.ts";
+import {
+  authorizeBrowserAction,
+  browserApprovals,
+  browserLoginFields,
+  jobBrowserUrl,
+  legacyBrowserGrant,
+  observationRefs,
+  type BrowserApprovalStore,
+  type BrowserAuthorization,
+  type BrowserFenceProjection,
+} from "./browser-authority.ts";
+import { loadRules } from "./rules.ts";
 import { connectedAppOperations, type ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { managedService } from "./managed-service.ts";
 import type { BrowserCheckpoint } from "../shared/browser.ts";
+import type { JobRunEvidence } from "../shared/contracts.ts";
+import { parseBrowserTaskGrant, type BrowserTaskGrant } from "../shared/browser-task.ts";
+
+export { browserLoginFields, jobBrowserUrl, observationRefs } from "./browser-authority.ts";
 
 const props = (properties: Record<string, unknown>, required: string[] = []) => ({ type: "object", properties, required, additionalProperties: false });
 const tab = { type: "integer", description: "An exact tab ID returned by browser_tabs in this job." };
@@ -23,36 +40,23 @@ export const BROWSER_TOOLS = [
 ];
 const record = (v: unknown): v is BrowserJson => Boolean(v && typeof v === "object" && !Array.isArray(v));
 const problem = (text: string) => Object.assign(new Error(text), { status: 409 });
-const sensitive = /password|passcode|\botp\b|one.time|verification code|\bmfa\b|\b2fa\b|security code|\bpin\b|card number|\bcvv\b|\bbsb\b|account number/i;
-const consequential = /\b(pay|payment|transfer|remit|bpay|send|sign|authori[sz]e|approve|delete|remove|close account|beneficiary|payee|direct debit|cancel|unsubscribe|purchase|buy|order|execute|trade|logout|log.?out)\b/i;
-const bank = /\b(bank|banking|transaction|statement|balance|account number|bpay|bsb)\b/i;
-export const browserLoginFields = (text: string): boolean => text.split("\n").some(line => /\b(input|textbox|password|editable)\b/i.test(line) && /password|passcode|\botp\b|one.time|verification code|\bmfa\b|\b2fa\b|security code|\bpin\b/i.test(line));
-export function jobBrowserUrl(value: unknown, origins: readonly string[]): URL | null {
-  if (typeof value !== "string" || value.length > 2048) return null;
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "https:" || url.username || url.password || !url.hostname.includes(".") ||
-      isIP(url.hostname) !== 0 || /\.(local|localhost|internal|lan)$/.test(url.hostname) || url.port && url.port !== "443") return null;
-    const allowed = origins.some(origin => {
-      try { return new URL(origin.includes("://") ? origin : `https://${origin}`).origin === url.origin; } catch { return false; }
-    });
-    return allowed ? url : null;
-  } catch { return null; }
-}
-export function observationRefs(text: string): Map<string, string> {
-  const refs = new Map<string, string>();
-  for (const line of text.split("\n")) {
-    const match = line.match(/^\s*(?:[-│├└─ ]*)?(@e\d+)\s+(.+)$/);
-    if (match && !refs.has(match[1])) refs.set(match[1], match[2].slice(0, 1000));
-  }
-  return refs;
-}
-type Snapshot = { refs: Map<string, string>; at: number; financial: boolean; url: string };
+const NOT_APPROVED = "This browser step was not approved. Do not retry it without a new user request.";
+const CHANGED = "The control changed while waiting for review. Read the page and prepare a new step.";
+type Snapshot = { refs: Map<string, string>; at: number; url: string; text: string };
+const NOUNS: Record<string, string> = { pay: "payment", sign: "signature", send: "message", notice: "notice", delete: "deletion", "account-change": "account change" };
+/** What the approval card shows: the broker's own decision, never re-decided by the host. */
+export interface BrowserApprovalProjection { fence: BrowserFenceProjection; approvalPolicy?: "once" }
 export interface BrowserBroker {
   descriptor: { type: "http"; name: string; url: string; headers: { name: string; value: string }[] };
   close(): void;
   cancelPending(): void;
   released(): Promise<void>;
+}
+export interface BrowserDecisionEvent { threadId: string; runId: string; entry: JobRunEvidence }
+const decisionListeners = new Set<(event: BrowserDecisionEvent) => void>();
+/** The host records the broker's decisions as run evidence; it never re-decides them. */
+export function onBrowserDecision(listener: (event: BrowserDecisionEvent) => void): () => void {
+  decisionListeners.add(listener); return () => { decisionListeners.delete(listener); };
 }
 const live = new Set<BrowserBroker>();
 export async function releaseBrowserBrokers(): Promise<void> {
@@ -64,21 +68,34 @@ export async function startBrowserBroker(options: {
   threadId: string;
   runId: string;
   context: FenceContext;
+  /** An explicit task grant. Without one, the saved job keeps exactly its capabilities. */
+  grant?: BrowserTaskGrant;
   checkpoint?: BrowserCheckpoint;
   isActive(): boolean;
-  approve(tool: string, params: BrowserJson, summary: string, signal: AbortSignal): Promise<boolean>;
+  approve(tool: string, params: BrowserJson, summary: string, signal: AbortSignal, projection?: BrowserApprovalProjection): Promise<boolean>;
   runtime?: BrowserRuntime;
   operations?: ConnectedAppOperationStore;
+  approvals?: BrowserApprovalStore;
+  /** Site read/prefill rules, read per step so a newly saved rule applies. */
+  rules?: () => ReadonlyArray<{ key: string; decision: "allow" | "deny" }>;
   assertCapability?: () => void;
+  now?: () => number;
 }): Promise<BrowserBroker> {
   const runtime = options.runtime ?? browserRuntime;
   const operations = options.operations ?? connectedAppOperations;
+  const approvals = options.approvals ?? browserApprovals();
   const assertCapability = options.assertCapability ?? (() => managedService.assertCapability("computer-use"));
+  const now = options.now ?? Date.now;
   const owner = `${options.runId}:${randomUUID()}`;
   const token = randomBytes(32).toString("hex");
   const context = structuredClone(options.context);
   const checkpoint = options.checkpoint ? structuredClone(options.checkpoint) : undefined;
-  let closed = false; let session: string | null = null; let busy = false;
+  const grant = parseBrowserTaskGrant(options.grant ? structuredClone(options.grant)
+    : legacyBrowserGrant({ runId: options.runId, allowedOrigins: context.allowedOrigins, capabilities: context.capabilities, checkpoint }));
+  if (options.grant && grant.runId !== options.runId) throw problem("This browser task permission belongs to another run. Start the task again.");
+  const sites = grant.sites;
+  const rules = options.rules ?? (() => context.rules ?? loadRules());
+  let closed = false; let session: string | null = null; let busy = false; let used = 0;
   let release: Promise<void> | null = null;
   const borrowed = new Set<number>();
   const deniedBorrows = new Set<number>();
@@ -88,6 +105,12 @@ export async function startBrowserBroker(options: {
   const text = (value: unknown, isError = false) => ({ content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value) }], ...(isError ? { isError: true } : {}) });
   const active = () => !closed && options.isActive() && (!session || runtime.isOwner(owner));
   const check = (signal: AbortSignal) => { if (!active() || signal.aborted) throw problem("This browser request stopped. Review unfinished work before starting another job."); assertCapability(); };
+  const publish = (kind: JobRunEvidence["kind"], note: string) => {
+    const entry = { at: now(), kind, note };
+    for (const listener of decisionListeners) { try { listener({ threadId: options.threadId, runId: options.runId, entry }); } catch { /* evidence display is best effort */ } }
+  };
+  const authorize = (tool: string, url: string | null, args: BrowserJson, page?: string): BrowserAuthorization =>
+    authorizeBrowserAction(grant, url === null ? null : { url, ...(page !== undefined ? { text: page } : {}) }, tool, args, { rules: rules(), now: now(), used });
   const ensure = async (signal: AbortSignal) => {
     check(signal);
     if (checkpoint && (await runtime.status()).selectedBrowserId !== checkpoint.browserId) throw problem("The browser profile changed after sign-in. Check the intended page again before continuing.");
@@ -96,7 +119,7 @@ export async function startBrowserBroker(options: {
   const tabs = async (signal: AbortSignal) => {
     const data = await runtime.command(["tab", "list", "--scope", "all", "--session", await ensure(signal)], signal);
     check(signal);
-    return (Array.isArray(data.tabs) ? data.tabs : []).filter(record).filter(row => Number.isSafeInteger(row.tab_id) && jobBrowserUrl(row.url, context.allowedOrigins))
+    return (Array.isArray(data.tabs) ? data.tabs : []).filter(record).filter(row => Number.isSafeInteger(row.tab_id) && jobBrowserUrl(row.url, sites))
       .filter(row => !checkpoint || row.tab_id === checkpoint.tabId && new URL(String(row.url)).origin === checkpoint.origin);
   };
   const currentTab = async (tabId: number, signal: AbortSignal, owned = true) => {
@@ -105,11 +128,13 @@ export async function startBrowserBroker(options: {
     if (!row || (owned && !borrowed.has(tabId))) throw problem("That tab is outside this job or is no longer borrowed. Stop and choose the intended page again.");
     return row;
   };
-  const approve = async (tool: string, params: BrowserJson, summary: string, signal: AbortSignal) => {
+  /** Routine steps: allow (grant or site rule), ask, or deny, exactly as decided. */
+  const gate = async (tool: string, auth: BrowserAuthorization, params: BrowserJson, signal: AbortSignal, presentAs = tool) => {
     check(signal);
-    const decision = fenceDecision(context, { tool, params, summary });
-    if (decision.kind === "deny") throw problem(decision.reason || "This step is outside the saved job.");
-    if (decision.kind !== "allow" && !await options.approve(tool, params, summary, signal)) throw problem("This browser step was not approved. Do not retry it without a new user request.");
+    if (auth.decision === "deny") { publish("denied", fenceDenialNote(tool, auth.reason)); throw problem(auth.reason); }
+    if (auth.decision === "allow") { if (auth.note) publish("action", auth.note); check(signal); return; }
+    publish("asked", fenceEvidenceLine({ tool }, { kind: "ask" }));
+    if (!await options.approve(presentAs, params, auth.summary, signal, { fence: auth.fence, ...(auth.once ? { approvalPolicy: "once" as const } : {}) })) throw problem(NOT_APPROVED);
     check(signal);
   };
   const observe = async (tabId: number, signal: AbortSignal) => {
@@ -119,8 +144,57 @@ export async function startBrowserBroker(options: {
     if (data.tab_id !== tabId || typeof data.text !== "string" || before.url !== after.url) throw problem("The page changed during the read. Read it again before acting.");
     if (browserLoginFields(data.text)) { snapshots.delete(tabId); throw problem("This page contains sign-in or security fields. Stop browser work and let the person finish sign-in directly; keep passwords and codes out of chat."); }
     if (checkpoint && !data.text.includes(checkpoint.accountMarker)) { broker.close(); throw problem("The verified account label is no longer visible. This step stopped. Check the account and page before continuing."); }
-    snapshots.set(tabId, { refs: observationRefs(data.text), at: Date.now(), financial: bank.test(`${data.text} ${before.url}`), url: String(after.url) });
+    snapshots.set(tabId, { refs: observationRefs(data.text), at: now(), url: String(after.url), text: data.text });
     return { text: data.text, truncated: data.truncated === true || Boolean(data.next_cursor), source: new URL(String(after.url)).origin };
+  };
+  /** A consequential step: facts from a fresh observation, a record persisted
+   * before the card, a once-only approval with a short expiry, and the same
+   * control and facts again before dispatch. Returns the approved record. */
+  const approveConsequential = async (name: string, tabId: number, url: string, ref: string, label: string, args: BrowserJson, signal: AbortSignal) => {
+    await observe(tabId, signal);
+    const fresh = snapshots.get(tabId);
+    if (!fresh || fresh.refs.get(ref) !== label) throw problem(CHANGED);
+    const auth = authorize(name, url, args, fresh.text);
+    const ownerIds = { grantId: grant.id, runId: options.runId, threadId: options.threadId };
+    if (auth.decision !== "ask" || !auth.draft) {
+      const reason = auth.decision === "deny" ? auth.reason : "This step cannot be approved here. It stays with the person.";
+      if (auth.decision === "deny" && auth.draft) await approvals.create(auth.draft, ownerIds, "unconfirmed", now());
+      publish("denied", fenceDenialNote(name, reason)); throw problem(reason);
+    }
+    const noun = NOUNS[auth.draft.kind]; const host = new URL(url).hostname;
+    if (await approvals.unresolved(auth.draft.fingerprint, now())) {
+      const reason = `An earlier approved ${noun} with these details has an unknown result. Check the site yourself; RealBud will not repeat it.`;
+      publish("denied", fenceDenialNote(name, reason)); throw problem(reason);
+    }
+    const saved = await approvals.create(auth.draft, ownerIds, "pending", now());
+    publish("approval", `Asked for one-time approval of a ${noun} on ${host}.`);
+    const expiry = new AbortController();
+    const timer = setTimeout(() => expiry.abort(), Math.max(0, saved.expiresAt - now())); timer.unref?.();
+    let approved = false;
+    try {
+      approved = await options.approve(name, { url: saved.url, label, approval: { id: saved.id, kind: saved.kind, facts: saved.facts, expiresAt: saved.expiresAt } },
+        saved.summary, AbortSignal.any([signal, expiry.signal]), { fence: auth.fence, approvalPolicy: "once" });
+    } catch { approved = false; } finally { clearTimeout(timer); }
+    const decidedAt = now();
+    const refuse = async (decision: "denied" | "expired" | "changed", reason: string, error: unknown = problem(reason)) => {
+      await approvals.update(saved.id, { decision, decidedAt }).catch(() => {});
+      publish("denied", fenceDenialNote(name, reason)); throw error;
+    };
+    const expired = () => expiry.signal.aborted || now() >= saved.expiresAt;
+    const EXPIRED = `This ${noun} approval expired before it was used. Nothing was pressed. Read the page and prepare the step again if it is still wanted.`;
+    if (expired()) return refuse("expired", EXPIRED);
+    if (!approved) return refuse("denied", NOT_APPROVED);
+    try { check(signal); } catch (error) { return refuse("denied", "Browser work stopped before the approved step.", error); }
+    // The approval is for the facts the person saw, not whatever replaced them.
+    try { await observe(tabId, signal); } catch (error) { return refuse("changed", "The page changed after approval. Nothing was pressed.", error); }
+    const again = snapshots.get(tabId);
+    const recheck = again && again.refs.get(ref) === label ? authorize(name, url, args, again.text) : null;
+    if (!recheck || recheck.decision !== "ask" || recheck.draft?.fingerprint !== saved.fingerprint) {
+      return refuse("changed", `The ${noun} details or control changed after approval. Nothing was pressed. Read the page and prepare a new step.`);
+    }
+    if (expired()) return refuse("expired", EXPIRED);
+    await approvals.update(saved.id, { decision: "approved", decidedAt });
+    return { id: saved.id, noun, host };
   };
   const call = async (name: string, args: BrowserJson, signal: AbortSignal) => {
     check(signal);
@@ -128,9 +202,13 @@ export async function startBrowserBroker(options: {
     if (!definition || Object.keys(args).some(key => !(key in definition.inputSchema.properties)) || definition.inputSchema.required.some(key => !(key in args))) throw problem("This browser tool or its arguments are not available.");
     if (name === "browser_release") { broker.close(); await broker.released(); return text("Browser work stopped. Check your browser and review the page to confirm the job's result."); }
     if (busy) throw problem("Finish the current browser step before starting another.");
-    busy = true; let receipt: string | undefined;
+    busy = true; let receipt: string | undefined; let claim: string | undefined;
+    let approval: { id: string; noun: string; host: string } | undefined;
     try {
-      if (name === "browser_tabs") return text({ tabs: (await tabs(signal)).map(row => ({ tab_id: row.tab_id, site: new URL(String(row.url)).origin, borrowed: borrowed.has(Number(row.tab_id)) })) });
+      if (name === "browser_tabs") {
+        await gate(name, authorize(name, null, args), {}, signal);
+        return text({ tabs: (await tabs(signal)).map(row => ({ tab_id: row.tab_id, site: new URL(String(row.url)).origin, borrowed: borrowed.has(Number(row.tab_id)) })) });
+      }
       if (!Number.isSafeInteger(args.tab_id) || Number(args.tab_id) < 1) throw problem("Choose a tab from this job's browser list.");
       const tabId = Number(args.tab_id);
       const row = await currentTab(tabId, signal, name !== "browser_borrow");
@@ -138,54 +216,59 @@ export async function startBrowserBroker(options: {
       if (name === "browser_borrow") {
         if (borrowed.has(tabId)) return text("This tab is already available to this job.");
         if (deniedBorrows.has(tabId)) throw problem("This tab request already ended or has an unknown outcome. Do not repeat it.");
-        await approve("browser_read", { url }, `Use the existing tab on ${new URL(url).hostname} for this saved job. The browser will also ask for confirmation.`, signal);
+        await gate(name, authorize(name, url, args), { url }, signal, "browser_read");
         deniedBorrows.add(tabId); // Claim before dispatch; a timeout never creates an automatic retry.
-        receipt = operations.start({ threadId: options.threadId, toolName: name, toolSlugs: [] }).id;
+        receipt = operations.start({ threadId: options.threadId, toolName: name, toolSlugs: [] }).id; used += 1;
         await runtime.command(["tab", "borrow", String(tabId), "--session", session!, "--timeout", "60s"], signal);
         check(signal); borrowed.add(tabId);
         await currentTab(tabId, signal); operations.finish(receipt, "succeeded"); receipt = undefined;
         return text("The tab is borrowed for this job. Read it before doing anything else.");
       }
       if (name === "browser_read") {
-        await approve(name, { url }, `Read the current page on ${new URL(url).hostname} for this job.`, signal);
+        await gate(name, authorize(name, url, args), { url }, signal);
         return text(await observe(tabId, signal));
       }
-      let command: string[]; let params: BrowserJson; let summary: string;
+      let command: string[];
       if (name === "browser_navigate") {
         if (checkpoint) await observe(tabId, signal);
-        const target = jobBrowserUrl(args.url, context.allowedOrigins);
-        if (!target || target.origin !== new URL(url).origin || consequential.test(decodeURIComponent(target.pathname + target.search)) || target.hash) throw problem("Open this page yourself. Bud can only navigate within the job's exact HTTPS site, without account-changing links.");
-        params = { url: target.href }; summary = `Open ${target.hostname}${target.pathname} in this job's borrowed tab.`;
+        const auth = authorize(name, url, args, snapshots.get(tabId)?.text);
+        const target = auth.decision === "deny" ? null : jobBrowserUrl(args.url, sites);
+        if (!target) { await gate(name, auth, {}, signal); throw problem("Open this page yourself."); }
         command = ["navigate", target.href, "--session", session!, "--tab-id", String(tabId), "--timeout", "30s"];
+        await gate(name, auth, { url: target.href }, signal);
       } else {
         const snap = snapshots.get(tabId); const target = typeof args.ref === "string" ? args.ref : "";
         const label = snap?.refs.get(target);
-        if (!snap || !/^@e\d+$/.test(target) || !label || Date.now() - snap.at > 120_000 || snap.url !== url) throw problem("Read the page again before choosing a control. The previous reference is no longer current.");
-        if (sensitive.test(label) || consequential.test(label)) throw problem("This account, payment or security step stays with the person. Stop browser work before they take over.");
-        if (name === "browser_fill") {
-          if (!context.capabilities.includes("portal-prefill") || snap.financial) throw problem("This page is for reading. Enter bank and financial details yourself.");
-          if (typeof args.value !== "string" || args.value.length > 2000 || /[\x00-\x1f]/.test(args.value)) throw problem("Use one ordinary field value without key presses.");
-          params = { url, label, value: args.value }; summary = `Prepare the field ${label} on ${new URL(url).hostname}.`;
-          command = ["fill", "--ref", target, "--value", args.value, "--session", session!, "--tab-id", String(tabId)];
+        if (!snap || !/^@e\d+$/.test(target) || !label || now() - snap.at > 120_000 || snap.url !== url) throw problem("Read the page again before choosing a control. The previous reference is no longer current.");
+        const auth = authorize(name, url, args, snap.text);
+        command = name === "browser_fill"
+          ? ["fill", "--ref", target, "--value", String(args.value), "--session", session!, "--tab-id", String(tabId)]
+          : ["click", "--ref", target, "--session", session!, "--tab-id", String(tabId)];
+        if (auth.classification.class === "consequential" && (auth.decision === "ask" || auth.decision === "deny" && auth.draft)) {
+          approval = await approveConsequential(name, tabId, url, target, label, args, signal);
         } else {
-          // Bank controls are limited to plainly identified reading/export affordances.
-          if (snap.financial && (!/\b(view|show|statement|transaction|history|download|export|search|filter|previous|next page)\b/i.test(label) || /\b(confirm|submit|save|continue|next)\b/i.test(label))) throw problem("Use this financial control yourself. Bud can help read statements and transaction history.");
-          params = { url, label }; summary = `Use ${label} on ${new URL(url).hostname}.`;
-          command = ["click", "--ref", target, "--session", session!, "--tab-id", String(tabId)];
+          await gate(name, auth, name === "browser_fill" ? { url, label, value: args.value } : { url, label }, signal);
+          // An approval is for the observed control, not whatever replaced it while waiting.
+          await observe(tabId, signal);
+          if (snapshots.get(tabId)?.refs.get(target) !== label) throw problem(CHANGED);
         }
-        await approve(name, params, summary, signal);
-        // An approval is for the observed control, not whatever replaced it while waiting.
-        await observe(tabId, signal);
-        if (snapshots.get(tabId)?.refs.get(target) !== label) throw problem("The control changed while waiting for review. Read the page and prepare a new step.");
       }
-      if (name === "browser_navigate") await approve(name, params, summary, signal);
       await currentTab(tabId, signal); check(signal); snapshots.delete(tabId);
-      receipt = operations.start({ threadId: options.threadId, toolName: name, toolSlugs: [] }).id;
+      if (approval) { await approvals.update(approval.id, { outcome: "dispatching" }); claim = approval.id; }
+      receipt = operations.start({ threadId: options.threadId, toolName: name, toolSlugs: [] }).id; used += 1;
       await runtime.command(command, signal); check(signal);
       // A click acknowledgement proves dispatch only. Require a separate fresh read-back.
       operations.finish(receipt, "succeeded"); receipt = undefined;
+      if (claim && approval) {
+        claim = undefined; await approvals.update(approval.id, { outcome: "succeeded" });
+        publish("action", `The approved ${approval.noun} was pressed on ${approval.host}. Read the page back to confirm its result.`);
+      }
       return text("The browser acknowledged the step. Read the page again to verify its result; do not repeat the action.");
     } catch (error) {
+      if (claim && approval) {
+        await approvals.update(claim, { outcome: receipt ? "unknown" : "not-dispatched" }).catch(() => {});
+        if (receipt) publish("note", `The approved ${approval.noun} on ${approval.host} has an unknown result. RealBud will not repeat it; check the site.`);
+      }
       if (receipt) { operations.finish(receipt, "unknown"); broker.close(); }
       throw error;
     } finally { busy = false; }

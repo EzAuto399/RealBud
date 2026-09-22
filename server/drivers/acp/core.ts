@@ -701,7 +701,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               checkpoint: browser.checkpoint,
               context: { allowedOrigins: browser.allowedOrigins, capabilities: browser.capabilities },
               isActive: () => Boolean(current && !current.settled && !current.cancellationRequested && !closed),
-              approve: (tool, params, summary, signal) => new Promise<boolean>(resolve => {
+              // The broker has already decided this step; the card carries its
+              // projection (site, surface, once-only policy) and the host only shows it.
+              approve: (tool, params, summary, signal, projection) => new Promise<boolean>(resolve => {
                 const run = current;
                 if (!run || run.settled || run.cancellationRequested || !run.promptSent || closed || signal.aborted) { resolve(false); return; }
                 const requestId = newId();
@@ -714,7 +716,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 const aborted = () => finish({ behavior: "deny" });
                 const timer = setTimeout(aborted, 5 * 60_000); timer.unref();
                 run.asks.set(requestId, finish); signal.addEventListener("abort", aborted, { once: true });
-                emit({ ...eventBase(run), type: "request.opened", requestId, requestType: "permission", tool, params, summary });
+                emit({ ...eventBase(run), type: "request.opened", requestId, requestType: "permission", tool, params, summary,
+                  ...(projection ? { fence: projection.fence, ...(projection.approvalPolicy ? { approvalPolicy: projection.approvalPolicy } : {}) } : {}) });
               }),
             });
             if (closed) { browserBroker.close(); throw new Error("Browser work stopped."); }

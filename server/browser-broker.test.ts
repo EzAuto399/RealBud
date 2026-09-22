@@ -2,13 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { BrowserRuntime, type BrowserJson } from "./browser-runtime.ts";
-import { startBrowserBroker, jobBrowserUrl, observationRefs, browserLoginFields, type BrowserBroker } from "./browser-broker.ts";
+import { startBrowserBroker, jobBrowserUrl, observationRefs, browserLoginFields, onBrowserDecision, type BrowserBroker, type BrowserDecisionEvent } from "./browser-broker.ts";
+import { BrowserApprovalStore } from "./browser-authority.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import type { BrowserCheckpoint } from "../shared/browser.ts";
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
-async function fixture(checkpoint?: BrowserCheckpoint) {
+async function fixture(checkpoint?: BrowserCheckpoint, job: { capabilities?: Array<"portal-read" | "portal-prefill" | "portal-submit">; rules?: Array<{ key: string; decision: "allow" | "deny" }> } = {}) {
   const root = privateTempRoot(join(tmpdir(), "rb-browser-broker-")); cleanup.push(() => removeFixture(root));
   let session = false; let page = '@e1 button "Show details"\n@e2 textbox "Reference"\n@e3 button "Transfer money"';
   let url = "https://portal.example/work"; let unknown = false; let scope = "user";
@@ -27,9 +28,17 @@ async function fixture(checkpoint?: BrowserCheckpoint) {
   const runtime = new BrowserRuntime({ root, command, executable: async () => "/fixture/bsk", startDaemon: async () => {} });
   await runtime.connect(); await runtime.select("work");
   const operations = new ConnectedAppOperationStore({ file: join(root, "operations.json") });
-  const approve = vi.fn(async () => true);
-  const broker = await startBrowserBroker({ runtime, operations, checkpoint, threadId: "thread-1", runId: "run-1", context: { allowedOrigins: ["portal.example"], capabilities: ["portal-read", "portal-prefill"] }, isActive: () => true, approve, assertCapability: () => {} });
-  cleanup.push(async () => { broker.close(); await broker.released(); });
+  const approvals = new BrowserApprovalStore({ file: join(root, "approvals.json") });
+  let clock = 1_000_000;
+  const approve = vi.fn(async (..._args: unknown[]) => true);
+  const start = async () => {
+    const started = await startBrowserBroker({ runtime, operations, approvals, checkpoint, threadId: "thread-1", runId: "run-1", now: () => clock,
+      context: { allowedOrigins: ["portal.example"], capabilities: job.capabilities ?? ["portal-read", "portal-prefill"], ...(job.rules ? { rules: job.rules } : {}) },
+      isActive: () => true, approve, assertCapability: () => {} });
+    cleanup.push(async () => { started.close(); await started.released(); });
+    return started;
+  };
+  const broker = await start();
   let next = 0;
   const request = async (name: string, args: BrowserJson = {}, requestId: number = ++next, target: BrowserBroker = broker) => {
     const response = await fetch(target.descriptor.url, { method: "POST", headers: { "content-type": "application/json", authorization: target.descriptor.headers[0].value }, body: JSON.stringify({ jsonrpc: "2.0", id: requestId, method: "tools/call", params: { name, arguments: args } }) });
@@ -37,7 +46,8 @@ async function fixture(checkpoint?: BrowserCheckpoint) {
     return (await response.json() as { result: { isError?: boolean; content: Array<{ text: string }> } }).result;
   };
   const ready = async () => { await request("browser_borrow", { tab_id: 1 }); await request("browser_read", { tab_id: 1 }); };
-  return { request, ready, broker, approve, calls, operations, runtime, page: (text: string) => { page = text; }, url: (value: string) => { url = value; }, unknown: () => { unknown = true; }, returnTab: () => { scope = "user"; } };
+  return { request, ready, broker, approve, calls, operations, approvals, runtime, start, page: (text: string) => { page = text; }, url: (value: string) => { url = value; },
+    unknown: () => { unknown = true; }, known: () => { unknown = false; }, returnTab: () => { scope = "user"; }, advance: (ms: number) => { clock += ms; } };
 }
 describe("saved-job browser broker", () => {
   it("uses exact HTTPS sites, rejects credentials, other origins and local addresses", () => {
@@ -117,5 +127,93 @@ describe("saved-job browser broker", () => {
     const read = await f.request("browser_read", { tab_id: 1 });
     expect(read.isError).toBe(true); expect(JSON.stringify(read)).not.toContain("Other private account");
     await f.broker.released(); expect((await f.runtime.status()).active).toBe(false);
+  });
+});
+
+const PAY_PAGE = 'Pay a bill\nPayee: Fictional Plumbing Pty Ltd\nAmount: AUD 480.00\nReference: INV-FICTIONAL-7\n@e1 button "Pay now"\n@e2 button "Show details"';
+describe("consequential browser steps need a once-only approval of the verified facts", () => {
+  const clicks = (f: Awaited<ReturnType<typeof fixture>>) => f.calls.filter(a => a[0] === "click").length;
+  it("persists the record before the card, then presses once after the same facts are re-read", async () => {
+    const f = await fixture(); f.page(PAY_PAGE); await f.ready();
+    let pendingBeforeCard: unknown;
+    f.approve.mockImplementationOnce(async () => { pendingBeforeCard = (await f.approvals.list()).map(row => row.decision); return true; });
+    const result = await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" });
+    expect(result.isError).not.toBe(true);
+    expect(pendingBeforeCard).toEqual(["pending"]);
+    const [tool, params, summary, , projection] = f.approve.mock.calls.at(-1)!;
+    expect(tool).toBe("browser_click_semantic");
+    expect(summary).toBe("Pay AUD 480.00 to Fictional Plumbing Pty Ltd (reference INV-FICTIONAL-7) by pressing 'Pay now' on portal.example. This approval is for this one payment and expires in 2 minutes.");
+    expect(projection).toEqual({ fence: { surface: "portal-submit", origin: "portal.example", ruleOffer: null }, approvalPolicy: "once" });
+    expect((params as { approval: { kind: string } }).approval.kind).toBe("pay");
+    expect(clicks(f)).toBe(1);
+    expect(await f.approvals.list()).toMatchObject([{ decision: "approved", outcome: "succeeded", kind: "pay", control: { label: "Pay now" } }]);
+    // Once only: the approval is spent and the old reference is gone.
+    expect((await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" })).isError).toBe(true);
+    expect(clicks(f)).toBe(1);
+  });
+  it("records a refusal and presses nothing", async () => {
+    const f = await fixture(); f.page(PAY_PAGE); await f.ready();
+    f.approve.mockImplementationOnce(async () => false);
+    expect((await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" })).isError).toBe(true);
+    expect(clicks(f)).toBe(0);
+    expect(await f.approvals.list()).toMatchObject([{ decision: "denied", outcome: "not-dispatched" }]);
+  });
+  it("does not use an approval that arrives after it expired", async () => {
+    const f = await fixture(); f.page(PAY_PAGE); await f.ready();
+    f.approve.mockImplementationOnce(async () => { f.advance(121_000); return true; });
+    const result = await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" });
+    expect(result.isError).toBe(true); expect(result.content[0].text).toMatch(/expired before it was used/);
+    expect(clicks(f)).toBe(0);
+    expect(await f.approvals.list()).toMatchObject([{ decision: "expired", outcome: "not-dispatched" }]);
+  });
+  it("refuses when the facts change while waiting for the person", async () => {
+    const f = await fixture(); f.page(PAY_PAGE); await f.ready();
+    f.approve.mockImplementationOnce(async () => { f.page(PAY_PAGE.replace("AUD 480.00", "AUD 4800.00")); return true; });
+    const result = await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" });
+    expect(result.isError).toBe(true); expect(result.content[0].text).toMatch(/changed after approval\. Nothing was pressed/);
+    expect(clicks(f)).toBe(0);
+    expect(await f.approvals.list()).toMatchObject([{ decision: "changed", outcome: "not-dispatched" }]);
+  });
+  it("shows no card for facts the page does not confirm", async () => {
+    const f = await fixture(); f.page('Amount: AUD 480.00\n@e1 button "Pay now"'); await f.ready();
+    const asked = f.approve.mock.calls.length;
+    const result = await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" });
+    expect(result.content[0].text).toMatch(/could not confirm the payee/);
+    expect(f.approve.mock.calls.length).toBe(asked); expect(clicks(f)).toBe(0);
+    expect(await f.approvals.list()).toMatchObject([{ decision: "unconfirmed", unconfirmed: ["recipient"] }]);
+  });
+  it("never replays an approved step whose outcome is unknown, even from a new broker", async () => {
+    const f = await fixture(); f.page(PAY_PAGE); await f.ready(); f.unknown();
+    expect((await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" })).isError).toBe(true);
+    expect(clicks(f)).toBe(1);
+    expect(await f.approvals.list()).toMatchObject([{ decision: "approved", outcome: "unknown" }]);
+    await f.broker.released(); expect((await f.runtime.status()).active).toBe(false);
+    f.known();
+    const next = await f.start();
+    await f.request("browser_borrow", { tab_id: 1 }, 101, next); await f.request("browser_read", { tab_id: 1 }, 102, next);
+    const asked = f.approve.mock.calls.length;
+    const retry = await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" }, 103, next);
+    expect(retry.isError).toBe(true); expect(retry.content[0].text).toMatch(/unknown result\. Check the site yourself/);
+    expect(f.approve.mock.calls.length).toBe(asked); expect(clicks(f)).toBe(1);
+  });
+  it("keeps a saved job's routine steps as before and records the broker's own decisions", async () => {
+    const seen: BrowserDecisionEvent[] = []; const stop = onBrowserDecision(event => seen.push(event)); cleanup.push(async () => stop());
+    const f = await fixture(undefined, { rules: [{ key: "portal:read:portal.example", decision: "allow" }] });
+    f.page('@e1 button "Show details"\n@e2 textbox "Reference"\n@e3 button "Save"'); await f.ready();
+    expect(f.approve).not.toHaveBeenCalled(); // borrow and read allowed by the site rule
+    expect(seen.map(event => event.entry.note)).toContain("allowed by rule · Reading on portal.example");
+    expect((await f.request("browser_click_semantic", { tab_id: 1, ref: "@e3" })).content[0].text).toBe("This job cannot press Submit. Add 'Bud may press Submit' on the job if it should.");
+    expect(await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" })).not.toHaveProperty("isError");
+    expect(f.approve.mock.calls.at(-1)!.slice(2)).toEqual(["Use button \"Show details\" on portal.example.", expect.anything(), { fence: { surface: "portal-read", origin: "portal.example", ruleOffer: null } }]);
+    await f.request("browser_read", { tab_id: 1 });
+    expect(await f.request("browser_fill", { tab_id: 1, ref: "@e2", value: "Fictional reference" })).not.toHaveProperty("isError");
+    expect(f.approve.mock.calls.at(-1)![4]).toEqual({ fence: { surface: "portal-prefill", origin: "portal.example", ruleOffer: { surface: "portal-prefill", origin: "portal.example", label: "Prefill on portal.example" } } });
+    expect(seen.every(event => event.threadId === "thread-1" && event.runId === "run-1")).toBe(true);
+    expect(await f.approvals.list()).toEqual([]);
+  });
+  it("keeps a read-only job from filling", async () => {
+    const f = await fixture(undefined, { capabilities: ["portal-read"] }); await f.ready();
+    expect((await f.request("browser_fill", { tab_id: 1, ref: "@e2", value: "Fictional" })).isError).toBe(true);
+    expect(f.calls.some(a => a[0] === "fill")).toBe(false);
   });
 });

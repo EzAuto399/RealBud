@@ -8,6 +8,7 @@ import {
   type FenceContext,
 } from "./portal-fence.ts";
 import { recipeHasPortalCapability } from "./recipes.ts";
+import { consequentialKind } from "./browser-authority.ts";
 import type { ParsedPortalRule } from "./request-decision.ts";
 
 export interface AttendedFenceContext extends FenceContext {
@@ -152,8 +153,10 @@ export function attendedSettleStatus(input: {
 export const ATTENDED_UNVERIFIED_RESULT =
   "The current browser result has not been verified. Review Bud's response before retrying; earlier results do not confirm this run.";
 
+/** Display only: the run's final text mentions a step the person still owns.
+ * Uses the same consequential table as the browser authority. */
 export function submitHoldLine(text: string): string[] {
-  return /\b(submit|pay|send)\b/i.test(text) ? ["Submit/Pay/Send stay with you"] : [];
+  return /\bsubmit\b/i.test(text) || consequentialKind(text) ? ["Submit/Pay/Send stay with you"] : [];
 }
 
 export function turnEndedNote(ok: boolean, stopReason?: string | null): string {

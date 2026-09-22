@@ -140,7 +140,7 @@ import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { cuaAttendedReady, readCuaConnection } from "./local-computer.ts";
 import { browserRuntime } from "./browser-runtime.ts";
-import { releaseBrowserBrokers } from "./browser-broker.ts";
+import { onBrowserDecision, releaseBrowserBrokers } from "./browser-broker.ts";
 import { applyPropertyPack, ensurePropertyPack, hermesHome, propertyProfileDir } from "./hermes-pack.ts";
 import { applyHandsReadiness, hermesStatus } from "./hermes-status.ts";
 import { bootstrapPlan, bootstrapPending } from "./worker-bootstrap.ts";
@@ -724,8 +724,16 @@ try {
 let activeVmThreadId: string | null = null;
 let localVmLifecycleBusy = false;
 
+/** Only RealBud's browser broker emits a request that already carries `fence`:
+ * it decided the step (server/browser-authority.ts) and the host displays that
+ * decision without re-evaluating it. Native computer-tool requests have no
+ * broker, so the job fence below still decides them. */
+const brokerDecided = (event: RuntimeEvent): boolean => event.type === "request.opened" && event.fence !== undefined;
+onBrowserDecision(({ threadId, entry }) => recordFenceEvidence(threadId, entry));
+
 function attachFenceToOpened(event: RuntimeEvent): RuntimeEvent {
   if (event.type !== "request.opened" || event.requestType !== "permission") return event;
+  if (brokerDecided(event)) return event;
   if (event.tool === "bud_connected_app_action" || event.tool === HERMES_MEMORY_APPROVAL) return event;
   if (!isComputerTool(event.tool, event.summary)) return event;
   const fence = fenceContextFor(event.threadId);
@@ -739,6 +747,7 @@ function attachFenceToOpened(event: RuntimeEvent): RuntimeEvent {
 }
 
 bus.subscribe((raw: RuntimeEvent) => {
+  const fromBroker = brokerDecided(raw);
   const event = raw.type === "request.opened" ? attachFenceToOpened(raw) : raw;
   watchdog.touch(event.threadId);
   if (event.type === "request.opened") watchdog.setWaitingOnHuman(event.threadId, true);
@@ -883,7 +892,7 @@ bus.subscribe((raw: RuntimeEvent) => {
       // whole point of asking is that a person decides — and anything that
       // looks destructive stops even in auto mode.
       const asker = bot ?? (speaker ? store.bot(speaker.botId) : undefined);
-      if (permission && asker && event.requestId && event.tool !== HERMES_MEMORY_APPROVAL && event.tool !== "bud_connected_app_action" && isComputerTool(event.tool, event.summary)) {
+      if (permission && asker && event.requestId && !fromBroker && event.tool !== HERMES_MEMORY_APPROVAL && event.tool !== "bud_connected_app_action" && isComputerTool(event.tool, event.summary)) {
         const fence = fenceContextFor(event.threadId);
         const request = { tool: event.tool, params: event.params, summary: event.summary };
         const instance = event.providerInstanceId
@@ -981,7 +990,7 @@ bus.subscribe((raw: RuntimeEvent) => {
       // Product mode uses standing rules (guards still win).
       let settled: string | null = null;
       let ruleDeny = false;
-      if (permission && !onceApproval && asker && event.requestId && event.tool !== "bud_connected_app_action") {
+      if (permission && !onceApproval && !fromBroker && asker && event.requestId && event.tool !== "bud_connected_app_action") {
         if (!PRODUCT_MODE) {
           settled = autoDecision(asker, event.tool, event.summary);
         } else {
@@ -1040,8 +1049,9 @@ bus.subscribe((raw: RuntimeEvent) => {
         })();
         break;
       }
+      // The broker writes its own card summary (with an approval's verified facts).
       const submitSummary =
-        event.type === "request.opened" && event.fence?.surface === "portal-submit"
+        event.type === "request.opened" && !fromBroker && event.fence?.surface === "portal-submit"
           ? submitPressSummary(clickControlLabel(event.params, event.summary), event.fence.origin)
           : null;
       const message = pushMessage({
