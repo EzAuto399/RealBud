@@ -16,6 +16,21 @@
  *
  * Both routes reject unknown fields, so nothing extra is ever sent.
  *
+ * Reads and repairs added on Modelvia `e41c186` (`platform-admin.ts:136-172`,
+ * `keys.ts` `listForProject`/`rotate`, `accounts.ts` `put`):
+ *
+ *   GET  {MODELVIA}/v1/operator/projects               → { accounts: ProjectAccount[] }
+ *     Every project; there is no read by id, so one is found in this list.
+ *   POST {MODELVIA}/v1/operator/projects with the stored `version` updates that
+ *     project (optimistic; a stale version is 409 `account_version_conflict`;
+ *     `clientId`/`customerId` are immutable).
+ *   GET  {MODELVIA}/v1/operator/keys?projectId=&environment=
+ *     → { keys: [{ id, companyId, project, environment, label?, createdAt,
+ *                  expiresAt?, revokedAt?, lastUsedAt? }] }   records only, no secret
+ *   POST {MODELVIA}/v1/operator/keys/{id}/rotate  { label?, expiresAt? }
+ *     → { key, record, replaced }  revokes `id` and mints a replacement with the
+ *     same project, environment and label; `key` is returned once.
+ *
  * Caps live on the PROJECT, not the key (`requestCapNanoAud`,
  * `monthlyCapNanoAud`, `maxConcurrent`). That is why one project is created per
  * installation, under the office's customer account: it is the only place this
@@ -77,15 +92,33 @@ export interface ModelviaProjectInput {
   monthlyCapNanoAud: string; requestCapNanoAud: string; maxConcurrent: number;
 }
 export interface ModelviaMintedKey { key: string; keyId: string; baseUrl: string }
+export interface ModelviaCaps { monthlyCapNanoAud: string; requestCapNanoAud: string; maxConcurrent: number }
+/** A project as Modelvia stores it, read back for adoption and cap updates. */
+export interface ModelviaProjectRecord extends ModelviaCaps {
+  projectId: string; clientId: string; customerId: string; environments: string[]; active: boolean; version: number;
+}
+/** A key record without its secret. `label` is how provisioning attributes a key
+ * to one installation; Modelvia keeps it across a rotation. */
+export interface ModelviaKeyRecord { keyId: string; projectId: string; environment: string; label?: string; expiresAt?: number; revokedAt?: number }
+export interface ModelviaRotatedKey extends ModelviaMintedKey { projectId: string; replaced: string }
 export interface ModelviaClient {
   readonly environment: string;
   /** Creates the installation's project under the customer, with the ledger cap.
    * `created` is false when Modelvia already holds that project id. */
   createProject(input: ModelviaProjectInput): Promise<{ projectId: string; created: boolean }>;
+  /** The stored project, or undefined when Modelvia holds no project with that id. */
+  findProject(projectId: string): Promise<ModelviaProjectRecord | undefined>;
   mint(input: { projectId: string; label: string }): Promise<ModelviaMintedKey>;
+  /** Secret-free key records for one project and environment, revoked ones included. */
+  listKeys(projectId: string, environment: string): Promise<ModelviaKeyRecord[]>;
+  /** Revokes `keyId` and returns its replacement's secret, once. Never retried here. */
+  rotate(keyId: string): Promise<ModelviaRotatedKey>;
   /** Marks the key for revocation. Idempotent there; never retried here. The
    * project is deliberately left in place — see `revoke` in provisioning.ts. */
   revoke(keyId: string): Promise<void>;
+  /** Writes new caps onto an existing project at its stored version, re-reading
+   * once after a version conflict. `updated` is false when it already had them. */
+  updateProjectCaps(projectId: string, caps: ModelviaCaps): Promise<{ updated: boolean; version: number }>;
 }
 
 function origin(raw: string): string {
@@ -95,6 +128,29 @@ function origin(raw: string): string {
   return url.origin;
 }
 const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value));
+const optionalTime = (value: unknown) => value === undefined || (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0);
+function validCaps(caps: ModelviaCaps): boolean {
+  return NANO.test(caps.monthlyCapNanoAud) && NANO.test(caps.requestCapNanoAud)
+    && BigInt(caps.requestCapNanoAud) <= BigInt(caps.monthlyCapNanoAud)
+    && Number.isSafeInteger(caps.maxConcurrent) && caps.maxConcurrent > 0 && caps.maxConcurrent <= 100;
+}
+/** The fields `accounts.put` admits for a project, in the shape it stores them.
+ * Anything else in a listed record is dropped, because a write that carries an
+ * unknown field is refused. */
+type StoredProject = { id: string; name: string; active: boolean; monthlyCapNanoAud: string; maxConcurrent: number; allowedModels: string[];
+  version: number; clientId: string; customerId: string; environments: string[]; requestCapNanoAud: string };
+function storedProject(value: unknown): StoredProject {
+  const ids = (list: unknown) => Array.isArray(list) && list.length > 0 && list.length <= 64 && list.every(item => typeof item === 'string' && ACCOUNT_ID.test(item));
+  requireThat(record(value) && typeof value.id === 'string' && PATH_ID.test(value.id) && typeof value.name === 'string' && typeof value.active === 'boolean'
+    && typeof value.clientId === 'string' && ACCOUNT_ID.test(value.clientId) && typeof value.customerId === 'string' && ACCOUNT_ID.test(value.customerId)
+    && ids(value.environments) && ids(value.allowedModels) && typeof value.version === 'number' && Number.isSafeInteger(value.version) && value.version >= 0
+    && typeof value.monthlyCapNanoAud === 'string' && typeof value.requestCapNanoAud === 'string' && typeof value.maxConcurrent === 'number'
+    && validCaps(value as unknown as ModelviaCaps), 'modelvia_unreadable', 502);
+  const v = value as unknown as StoredProject;
+  return { id: v.id, name: v.name, active: v.active, monthlyCapNanoAud: v.monthlyCapNanoAud, maxConcurrent: v.maxConcurrent, allowedModels: [...v.allowedModels],
+    version: v.version, clientId: v.clientId, customerId: v.customerId, environments: [...v.environments], requestCapNanoAud: v.requestCapNanoAud };
+}
+const sameCaps = (a: ModelviaCaps, b: ModelviaCaps) => a.monthlyCapNanoAud === b.monthlyCapNanoAud && a.requestCapNanoAud === b.requestCapNanoAud && a.maxConcurrent === b.maxConcurrent;
 
 export function modelviaKeyClient(options: {
   /** Modelvia service origin, normally https://api.modelvia.dev. */
@@ -130,15 +186,15 @@ export function modelviaKeyClient(options: {
   /** `conflicts` names the Modelvia error codes this call treats as a conflict
    * rather than a failure. Only a strictly shaped `{error: "<code>"}` is read,
    * and only for control flow — an upstream body is never surfaced. */
-  const callRaw = async (path: string, body: unknown, conflicts: readonly string[] = []): Promise<{ conflict?: string; body?: unknown }> => {
+  const callRaw = async (path: string, body: unknown, conflicts: readonly string[] = [], method: 'GET' | 'POST' = 'POST'): Promise<{ conflict?: string; body?: unknown }> => {
     const bearerToken = token();
     let response: Response;
     try {
-      response = await options.fetch(`${base}${path}`, {
-        method: 'POST', redirect: 'error', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        headers: { authorization: `Bearer ${bearerToken}`, accept: 'application/json', 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+      response = await options.fetch(`${base}${path}`, method === 'GET'
+        ? { method, redirect: 'error', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS), headers: { authorization: `Bearer ${bearerToken}`, accept: 'application/json' } }
+        : { method, redirect: 'error', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+          headers: { authorization: `Bearer ${bearerToken}`, accept: 'application/json', 'content-type': 'application/json' },
+          body: JSON.stringify(body) });
     } catch { throw new GatewayError('modelvia_unreachable', 502); }
     if (response.redirected) { await response.body?.cancel().catch(() => {}); throw new GatewayError('modelvia_redirected', 502); }
     if (response.status === 409 && conflicts.length) {
@@ -152,6 +208,32 @@ export function modelviaKeyClient(options: {
     try { return { body: await response.json() }; } catch { throw new GatewayError('modelvia_unreadable', 502); }
   };
   const call = async (path: string, body: unknown): Promise<unknown> => (await callRaw(path, body)).body;
+  const read = async (path: string): Promise<unknown> => (await callRaw(path, undefined, [], 'GET')).body;
+  /** Modelvia has no project read by id; the operator list is the only source. */
+  const readProject = async (projectId: string): Promise<StoredProject | undefined> => {
+    const body = await read('/v1/operator/projects');
+    requireThat(record(body) && Array.isArray(body.accounts), 'modelvia_unreadable', 502);
+    const found = (body.accounts as unknown[]).filter(entry => record(entry) && entry.id === projectId);
+    requireThat(found.length <= 1, 'modelvia_unreadable', 502);
+    if (!found.length) return undefined;
+    const project = storedProject(found[0]);
+    // A project under another platform client is not one this service may touch.
+    requireThat(project.clientId === options.clientId, 'modelvia_project_scope_mismatch', 502);
+    return project;
+  };
+  /** Checks a returned key against the record Modelvia says it belongs to. */
+  const issuedKey = (body: unknown, projectId?: string): { key: string; keyId: string; projectId: string } => {
+    requireThat(record(body), 'modelvia_unreadable', 502);
+    const b = body as Record<string, unknown>, minted = b.key, issued = b.record;
+    requireThat(typeof minted === 'string' && MINTED_KEY.test(minted), 'modelvia_key_unusable', 502);
+    requireThat(record(issued) && typeof issued.id === 'string' && KEY_ID.test(issued.id), 'modelvia_unreadable', 502);
+    const keyId = (issued as Record<string, unknown>).id as string, project = (issued as Record<string, unknown>).project;
+    // A record id that does not belong to the returned key would leave a live
+    // credential revocation cannot reach.
+    requireThat((minted as string).startsWith(`rbk_${keyId}_`), 'modelvia_key_unusable', 502);
+    requireThat(typeof project === 'string' && (projectId === undefined || project === projectId), 'modelvia_key_scope_mismatch', 502);
+    return { key: minted as string, keyId, projectId: project as string };
+  };
   return {
     environment: options.environment,
     async createProject(input) {
@@ -180,21 +262,66 @@ export function modelviaKeyClient(options: {
       requireThat(input.label.length > 0 && input.label.length <= 200, 'invalid_key_label');
       // Exactly the four permitted fields, and only the ones we set.
       const body = await call('/v1/operator/keys', { projectId: input.projectId, environment: options.environment, label: input.label });
-      requireThat(record(body), 'modelvia_unreadable', 502);
-      const minted = body.key, issued = body.record;
-      requireThat(typeof minted === 'string' && MINTED_KEY.test(minted), 'modelvia_key_unusable', 502);
-      requireThat(record(issued) && typeof issued.id === 'string' && KEY_ID.test(issued.id), 'modelvia_unreadable', 502);
-      const keyId = (issued as Record<string, unknown>).id as string;
-      // A record id that does not belong to the returned key would leave a live
-      // credential revocation cannot reach.
-      requireThat((minted as string).startsWith(`rbk_${keyId}_`), 'modelvia_key_unusable', 502);
-      requireThat((issued as Record<string, unknown>).project === input.projectId, 'modelvia_key_scope_mismatch', 502);
+      const issued = issuedKey(body, input.projectId);
       // OpenAI-compatible serving base; Modelvia serves /v1/models and /v1/chat/completions.
-      return { key: minted as string, keyId, baseUrl: `${base}/v1` };
+      return { key: issued.key, keyId: issued.keyId, baseUrl: `${base}/v1` };
+    },
+    async findProject(projectId) {
+      requireThat(PATH_ID.test(projectId), 'invalid_modelvia_account');
+      const project = await readProject(projectId);
+      if (!project) return undefined;
+      return { projectId: project.id, clientId: project.clientId, customerId: project.customerId, environments: [...project.environments], active: project.active,
+        version: project.version, monthlyCapNanoAud: project.monthlyCapNanoAud, requestCapNanoAud: project.requestCapNanoAud, maxConcurrent: project.maxConcurrent };
+    },
+    async listKeys(projectId, environment) {
+      requireThat(PATH_ID.test(projectId), 'invalid_modelvia_account');
+      requireThat(ACCOUNT_ID.test(environment), 'modelvia_environment_invalid');
+      const body = await read(`/v1/operator/keys?${new URLSearchParams({ projectId, environment })}`);
+      requireThat(record(body) && Array.isArray(body.keys) && body.keys.length <= 1000, 'modelvia_unreadable', 502);
+      return (body.keys as unknown[]).map(entry => {
+        requireThat(record(entry) && typeof entry.id === 'string' && KEY_ID.test(entry.id) && (entry.label === undefined || typeof entry.label === 'string')
+          && optionalTime(entry.expiresAt) && optionalTime(entry.revokedAt), 'modelvia_unreadable', 502);
+        const e = entry as Record<string, unknown>;
+        // The listing is filtered there; a record for anything else is not ours to act on.
+        requireThat(e.project === projectId && e.environment === environment, 'modelvia_key_scope_mismatch', 502);
+        return { keyId: e.id as string, projectId, environment,
+          ...(e.label === undefined ? {} : { label: e.label as string }),
+          ...(e.expiresAt === undefined ? {} : { expiresAt: e.expiresAt as number }),
+          ...(e.revokedAt === undefined ? {} : { revokedAt: e.revokedAt as number }) };
+      });
+    },
+    async rotate(keyId) {
+      requireThat(KEY_ID.test(keyId), 'invalid_key_id');
+      // No label or expiry override: the replacement keeps the installation label,
+      // which is what attributes it on a later listing.
+      const body = await call(`/v1/operator/keys/${keyId}/rotate`, {});
+      const issued = issuedKey(body);
+      requireThat((body as Record<string, unknown>).replaced === keyId && issued.keyId !== keyId, 'modelvia_key_unusable', 502);
+      return { key: issued.key, keyId: issued.keyId, baseUrl: `${base}/v1`, projectId: issued.projectId, replaced: keyId };
     },
     async revoke(keyId) {
       requireThat(KEY_ID.test(keyId), 'invalid_key_id');
       await call(`/v1/operator/keys/${keyId}/revoke`, {});
+    },
+    async updateProjectCaps(projectId, caps) {
+      requireThat(PATH_ID.test(projectId), 'invalid_modelvia_account');
+      requireThat(validCaps(caps), 'invalid_modelvia_caps');
+      // Read, write back at the stored version, and re-read once if another
+      // writer moved it in between. Only the caps change; every other field goes
+      // back exactly as Modelvia stored it.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const current = await readProject(projectId);
+        requireThat(current, 'modelvia_project_missing', 502);
+        if (sameCaps(current!, caps)) return { updated: false, version: current!.version };
+        const answer = await callRaw('/v1/operator/projects', { ...current!, monthlyCapNanoAud: caps.monthlyCapNanoAud,
+          requestCapNanoAud: caps.requestCapNanoAud, maxConcurrent: caps.maxConcurrent }, ['account_version_conflict']);
+        if (answer.conflict) continue;
+        const saved = answer.body;
+        requireThat(record(saved) && saved.id === projectId && typeof saved.version === 'number' && Number.isSafeInteger(saved.version), 'modelvia_unreadable', 502);
+        requireThat(sameCaps(saved as unknown as ModelviaCaps, caps), 'modelvia_project_scope_mismatch', 502);
+        return { updated: true, version: (saved as Record<string, unknown>).version as number };
+      }
+      throw new GatewayError('modelvia_project_version_conflict', 502);
     },
   };
 }

@@ -32,12 +32,13 @@ function verifyOperatorToken(token: string, secret: string, now: number): { subj
 }
 const MINTED = `rbk_0123456789abcdef_${'A'.repeat(43)}`;
 
-function transport(handler: (url: string) => { status?: number; body?: unknown; text?: string; redirected?: boolean }) {
-  const seen: { url: string; authorization: string | undefined; body: Record<string, unknown> }[] = [];
+function transport(handler: (url: string, method: string) => { status?: number; body?: unknown; text?: string; redirected?: boolean }) {
+  const seen: { url: string; method: string; authorization: string | undefined; body: Record<string, unknown> | undefined }[] = [];
   const fetchLike: HttpTransport = async (url, init) => {
     const headers = init.headers as Record<string, string>;
-    seen.push({ url, authorization: headers.authorization, body: JSON.parse(String(init.body)) });
-    const result = handler(url);
+    const method = String(init.method);
+    seen.push({ url, method, authorization: headers.authorization, body: init.body === undefined ? undefined : JSON.parse(String(init.body)) });
+    const result = handler(url, method);
     const response = new Response(result.text ?? JSON.stringify(result.body ?? {}), { status: result.status ?? 200 });
     if (result.redirected) Object.defineProperty(response, 'redirected', { value: true });
     return response;
@@ -166,4 +167,93 @@ test('operatorToken refuses a short secret, an empty subject and an over-long wi
   assert.throws(() => operatorToken('short', OPERATOR_SUBJECT, CLOCK), /modelvia_operator_unconfigured/);
   assert.throws(() => operatorToken(OPERATOR_SECRET, '', CLOCK), /modelvia_operator_unconfigured/);
   assert.throws(() => operatorToken(OPERATOR_SECRET, OPERATOR_SUBJECT, CLOCK, 300_001), /modelvia_operator_unconfigured/);
+});
+
+const ROTATED = `rbk_fedcba9876543210_${'B'.repeat(43)}`;
+const stored = (over: Record<string, unknown> = {}) => ({ id: 'rb-install-one', name: 'RealBud installation install-one', active: true,
+  monthlyCapNanoAud: '100000000000', requestCapNanoAud: '1000000000', maxConcurrent: 4, allowedModels: ['auto'], version: 3,
+  clientId: 'realbud', customerId: 'cus-office', environments: ['production'], ...over });
+
+test('listKeys reads secret-free records for one project and environment with a GET and no body', async () => {
+  const t = transport(() => ({ body: { keys: [
+    { id: '0123456789abcdef', companyId: 'billing-office', project: 'rb-install-one', environment: 'production', label: 'company-a:install-one', createdAt: 1, revokedAt: 5 },
+    { id: 'fedcba9876543210', companyId: 'billing-office', project: 'rb-install-one', environment: 'production', label: 'company-a:install-one', createdAt: 6, lastUsedAt: 7 },
+  ] } }));
+  const keys = await client(t).listKeys('rb-install-one', 'production');
+  assert.deepEqual(keys, [
+    { keyId: '0123456789abcdef', projectId: 'rb-install-one', environment: 'production', label: 'company-a:install-one', revokedAt: 5 },
+    { keyId: 'fedcba9876543210', projectId: 'rb-install-one', environment: 'production', label: 'company-a:install-one' },
+  ]);
+  assert.equal(t.seen[0]!.method, 'GET');
+  assert.equal(t.seen[0]!.url, 'https://api.modelvia.dev/v1/operator/keys?projectId=rb-install-one&environment=production');
+  assert.equal(t.seen[0]!.body, undefined);
+  assert.deepEqual(verifyOperatorToken(t.seen[0]!.authorization!.slice('Bearer '.length), OPERATOR_SECRET, clock), { subject: OPERATOR_SUBJECT });
+  // A record for another project is not ours to act on; a path-unsafe id never leaves.
+  const stray = transport(() => ({ body: { keys: [{ id: '0123456789abcdef', project: 'rb-other', environment: 'production', createdAt: 1 }] } }));
+  await assert.rejects(() => client(stray).listKeys('rb-install-one', 'production'), /modelvia_key_scope_mismatch/);
+  await assert.rejects(() => client(t).listKeys('rb/../other', 'production'), /invalid_modelvia_account/);
+  assert.equal(t.seen.length, 1);
+});
+
+test('rotate posts an empty body so the label is kept, and ties the replacement to the returned key', async () => {
+  const t = transport(() => ({ body: { key: ROTATED, record: { id: 'fedcba9876543210', project: 'rb-install-one', label: 'company-a:install-one' }, replaced: '0123456789abcdef' } }));
+  const rotated = await client(t).rotate('0123456789abcdef');
+  assert.deepEqual(rotated, { key: ROTATED, keyId: 'fedcba9876543210', baseUrl: 'https://api.modelvia.dev/v1', projectId: 'rb-install-one', replaced: '0123456789abcdef' });
+  assert.equal(t.seen[0]!.url, 'https://api.modelvia.dev/v1/operator/keys/0123456789abcdef/rotate');
+  assert.deepEqual(t.seen[0]!.body, {});
+  for (const body of [
+    { key: ROTATED, record: { id: 'fedcba9876543210', project: 'rb-install-one' }, replaced: 'aaaaaaaaaaaaaaaa' },
+    { key: ROTATED, record: { id: '0123456789abcdef', project: 'rb-install-one' }, replaced: '0123456789abcdef' },
+    { key: 'sk-not-a-modelvia-key', record: { id: 'fedcba9876543210', project: 'rb-install-one' }, replaced: '0123456789abcdef' },
+  ]) await assert.rejects(() => client(transport(() => ({ body }))).rotate('0123456789abcdef'), /modelvia_key_unusable/);
+  await assert.rejects(() => client(t).rotate('../other'), /invalid_key_id/);
+});
+
+test('findProject reads the operator project list and refuses a project under another client', async () => {
+  const t = transport(() => ({ body: { accounts: [stored({ id: 'rb-install-two' }), stored()] } }));
+  assert.deepEqual(await client(t).findProject('rb-install-one'), { projectId: 'rb-install-one', clientId: 'realbud', customerId: 'cus-office',
+    environments: ['production'], active: true, version: 3, monthlyCapNanoAud: '100000000000', requestCapNanoAud: '1000000000', maxConcurrent: 4 });
+  assert.equal(t.seen[0]!.method, 'GET');
+  assert.equal(t.seen[0]!.url, 'https://api.modelvia.dev/v1/operator/projects');
+  assert.equal(await client(t).findProject('rb-absent'), undefined);
+  const foreign = transport(() => ({ body: { accounts: [stored({ clientId: 'another-platform' })] } }));
+  await assert.rejects(() => client(foreign).findProject('rb-install-one'), /modelvia_project_scope_mismatch/);
+});
+
+test('updateProjectCaps writes back the stored record at its version with only the caps changed', async () => {
+  const caps = { monthlyCapNanoAud: '50000000000', requestCapNanoAud: '500000000', maxConcurrent: 2 };
+  const t = transport((_url, method) => method === 'GET' ? { body: { accounts: [stored()] } } : { body: { ...stored(), ...caps, version: 4 } });
+  assert.deepEqual(await client(t).updateProjectCaps('rb-install-one', caps), { updated: true, version: 4 });
+  assert.deepEqual(t.seen.map(call => call.method), ['GET', 'POST']);
+  assert.equal(t.seen[1]!.url, 'https://api.modelvia.dev/v1/operator/projects');
+  // Exactly the fields Modelvia's accounts.put admits, the stored version, new caps.
+  assert.deepEqual(t.seen[1]!.body, { ...stored(), ...caps });
+  // Already applied: nothing is written.
+  const same = transport(() => ({ body: { accounts: [stored(caps)] } }));
+  assert.deepEqual(await client(same).updateProjectCaps('rb-install-one', caps), { updated: false, version: 3 });
+  assert.deepEqual(same.seen.map(call => call.method), ['GET']);
+  // A request cap above the monthly cap never leaves.
+  await assert.rejects(() => client(t).updateProjectCaps('rb-install-one', { ...caps, requestCapNanoAud: '60000000000' }), /invalid_modelvia_caps/);
+});
+
+test('updateProjectCaps re-reads once after a version conflict, then gives up', async () => {
+  const caps = { monthlyCapNanoAud: '50000000000', requestCapNanoAud: '500000000', maxConcurrent: 2 };
+  let version = 3, posts = 0;
+  const t = transport((_url, method) => {
+    if (method === 'GET') return { body: { accounts: [stored({ version })] } };
+    posts++;
+    // Another writer moved the project between the first read and the write.
+    if (posts === 1) { version = 5; return { status: 409, body: { error: 'account_version_conflict' } }; }
+    return { body: { ...stored(), ...caps, version: 6 } };
+  });
+  assert.deepEqual(await client(t).updateProjectCaps('rb-install-one', caps), { updated: true, version: 6 });
+  assert.deepEqual(t.seen.map(call => `${call.method}:${call.body?.version ?? ''}`), ['GET:', 'POST:3', 'GET:', 'POST:5']);
+  const stuck = transport((_url, method) => method === 'GET' ? { body: { accounts: [stored()] } } : { status: 409, body: { error: 'account_version_conflict' } });
+  await assert.rejects(() => client(stuck).updateProjectCaps('rb-install-one', caps), /modelvia_project_version_conflict/);
+  assert.equal(stuck.seen.filter(call => call.method === 'POST').length, 2);
+  // Any other refusal (a binding change, say) is not a conflict to retry.
+  const refused = transport((_url, method) => method === 'GET' ? { body: { accounts: [stored()] } } : { status: 409, body: { error: 'account_binding_immutable' } });
+  await assert.rejects(() => client(refused).updateProjectCaps('rb-install-one', caps), /modelvia_rejected/);
+  const missing = transport(() => ({ body: { accounts: [] } }));
+  await assert.rejects(() => client(missing).updateProjectCaps('rb-install-one', caps), /modelvia_project_missing/);
 });

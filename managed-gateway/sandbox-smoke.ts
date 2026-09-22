@@ -110,6 +110,11 @@ async function provisioningLeg(): Promise<void> {
     async createProject(input) { modelProjects.push(input); return { projectId: input.projectId, created: true }; },
     async mint() { return { key: `rbk_00112233445566aa_${'S'.repeat(43)}`, keyId: '00112233445566aa', baseUrl: 'https://api.modelvia.dev/v1' }; },
     async revoke(keyId) { revokedKeys.push(keyId); },
+    // The smoke only takes the new-project path; recovery paths have their own tests.
+    async findProject() { return undefined; },
+    async listKeys() { return []; },
+    async rotate() { throw new Error('The sandbox smoke never rotates a key.'); },
+    async updateProjectCaps() { return { updated: false, version: 0 }; },
   };
   const secrets = fileSecretStore(join(root, 'secrets'));
   try {

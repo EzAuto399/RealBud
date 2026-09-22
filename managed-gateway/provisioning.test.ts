@@ -6,21 +6,36 @@ import { join } from 'node:path';
 import { fixture } from './testing.ts';
 import { createGatewayServer } from './http.ts';
 import { validateConnectorDevices } from './connectors.ts';
-import { composeProvisioning, fileSecretStore, InstallationProvisioning, PROVISIONING_ENV, type ProvisioningDescriptor } from './provisioning.ts';
+import { composeProvisioning, fileSecretStore, InstallationProvisioning, PENDING_RESUME_AFTER_MS, PROVISIONING_ENV, type ProvisioningDescriptor } from './provisioning.ts';
 import type { ComposioOrgClient, HttpTransport } from './composio-org.ts';
-import type { ModelviaClient } from './modelvia-keys.ts';
+import type { ModelviaCaps, ModelviaClient, ModelviaProjectInput } from './modelvia-keys.ts';
+import { GatewayError } from './contracts.ts';
 
 const ORG_KEY = 'fictional-org-key-never-in-a-response';
 const PROJECT_KEY = 'ak_fictional_project_key_for_tests';
 const MODEL_KEY = `rbk_0123456789abcdef_${'A'.repeat(43)}`;
 const CUSTOMER = 'cus-fictional-office';
+/** Key ids the fake hands out in order; the first matches MODEL_KEY. */
+const KEY_IDS = ['0123456789abcdef', 'fedcba9876543210', '00000000000000a3', '00000000000000b4'];
+const synthetic = (keyId: string) => `rbk_${keyId}_${(keyId === KEY_IDS[0] ? 'A' : 'B').repeat(43)}`;
 
 function harness() {
   const f = fixture();
   const root = mkdtempSync(join(tmpdir(), 'realbud-provisioning-'));
   const registry = join(root, 'registry', 'devices.json'), secretsDir = join(root, 'secrets');
   const org = { created: [] as string[], deleted: [] as string[], projects: [] as { id: string; name: string }[], orgKeyReads: 0 };
-  const modelvia = { projects: [] as unknown[], minted: [] as unknown[], revoked: [] as string[] };
+  /** A stateful stand-in for Modelvia: what it holds survives a lost reply,
+   * which is the whole point of the recovery it exercises. `lose` performs the
+   * named effect and then throws, as a reply lost on the wire would. */
+  const modelvia = { projects: [] as unknown[], minted: [] as unknown[], revoked: [] as string[], rotated: [] as string[], capUpdates: [] as unknown[],
+    held: new Map<string, ModelviaProjectInput & { active: boolean; environments: string[] }>(),
+    keys: [] as { keyId: string; projectId: string; label: string; revokedAt?: number }[],
+    lose: undefined as undefined | 'createProject' | 'mint' | 'rotate', failCaps: false };
+  const lost = (effect: 'createProject' | 'mint' | 'rotate') => { if (modelvia.lose === effect) { modelvia.lose = undefined; throw new GatewayError('modelvia_unreachable', 502); } };
+  const issue = (projectId: string, label: string) => {
+    const keyId = KEY_IDS[modelvia.keys.length]!; modelvia.keys.push({ keyId, projectId, label });
+    return { key: synthetic(keyId), keyId, baseUrl: 'https://api.modelvia.dev/v1' };
+  };
   const orgClient: ComposioOrgClient = {
     async listProjects() { org.orgKeyReads++; return org.projects.map(p => ({ ...p })); },
     async createProject(name) { org.created.push(name); const project = { id: `pr_${org.created.length}`, name }; org.projects.push(project); return { ...project, apiKey: PROJECT_KEY }; },
@@ -28,9 +43,39 @@ function harness() {
   };
   const modelviaClient: ModelviaClient = {
     environment: 'production',
-    async createProject(input) { modelvia.projects.push(input); return { projectId: input.projectId, created: true }; },
-    async mint(input) { modelvia.minted.push(input); return { key: MODEL_KEY, keyId: '0123456789abcdef', baseUrl: 'https://api.modelvia.dev/v1' }; },
+    async createProject(input) {
+      modelvia.projects.push(input);
+      if (modelvia.held.has(input.projectId)) return { projectId: input.projectId, created: false };
+      modelvia.held.set(input.projectId, { ...input, active: true, environments: ['production'] });
+      lost('createProject');
+      return { projectId: input.projectId, created: true };
+    },
+    async findProject(projectId) {
+      const held = modelvia.held.get(projectId);
+      return held && { projectId, clientId: 'realbud', customerId: held.customerId, environments: held.environments, active: held.active, version: 1,
+        monthlyCapNanoAud: held.monthlyCapNanoAud, requestCapNanoAud: held.requestCapNanoAud, maxConcurrent: held.maxConcurrent };
+    },
+    async mint(input) { modelvia.minted.push(input); const key = issue(input.projectId, input.label); lost('mint'); return key; },
+    async listKeys(projectId, environment) {
+      assert.equal(environment, 'production');
+      return modelvia.keys.filter(key => key.projectId === projectId).map(key => ({ keyId: key.keyId, projectId, environment, label: key.label, ...(key.revokedAt ? { revokedAt: key.revokedAt } : {}) }));
+    },
+    async rotate(keyId) {
+      const old = modelvia.keys.find(key => key.keyId === keyId && !key.revokedAt);
+      if (!old) throw new GatewayError('modelvia_rejected', 502);
+      modelvia.rotated.push(keyId); old.revokedAt = 1;
+      const key = issue(old.projectId, old.label); lost('rotate');
+      return { ...key, projectId: old.projectId, replaced: keyId };
+    },
     async revoke(keyId) { modelvia.revoked.push(keyId); },
+    async updateProjectCaps(projectId, caps: ModelviaCaps) {
+      modelvia.capUpdates.push({ projectId, ...caps });
+      if (modelvia.failCaps) throw new GatewayError('modelvia_unreachable', 502);
+      const held = modelvia.held.get(projectId)!;
+      const updated = held.monthlyCapNanoAud !== caps.monthlyCapNanoAud || held.requestCapNanoAud !== caps.requestCapNanoAud || held.maxConcurrent !== caps.maxConcurrent;
+      Object.assign(held, caps);
+      return { updated, version: 2 };
+    },
   };
   const secrets = fileSecretStore(secretsDir);
   const make = (overrides: Partial<ConstructorParameters<typeof InstallationProvisioning>[0]> = {}) => new InstallationProvisioning({
@@ -145,23 +190,180 @@ test('an unknown or unconfigured app is refused before any external call', async
   } finally { h.close(); }
 });
 
-test('an interrupted first attempt is held for reconciliation rather than minting a second time', async () => {
+const live = (h: ReturnType<typeof harness>) => h.modelvia.keys.filter(key => !key.revokedAt).map(key => key.keyId);
+const later = (h: ReturnType<typeof harness>) => h.f.setTime(h.f.now() + PENDING_RESUME_AFTER_MS);
+
+test('a lost mint reply is resumed by rotating the one labelled key, and a repeat after success rotates nothing', async () => {
   const h = harness(); try {
-    const failing = h.make({ modelvia: { environment: 'production', async createProject(input) { return { projectId: input.projectId, created: true }; },
-      async mint() { throw new Error('Synthetic loss with confidential provider detail'); }, async revoke() {} } });
-    await assert.rejects(() => failing.provision(h.f.owner, h.request));
-    await assert.rejects(() => h.make().provision(h.f.owner, h.request), /installation_provisioning_outcome_unknown/);
+    h.modelvia.lose = 'mint';
+    await assert.rejects(() => h.make().provision(h.f.owner, h.request), /modelvia_unreachable/);
+    // The key exists at Modelvia; its only copy was in the lost reply.
+    assert.deepEqual(live(h), ['0123456789abcdef']);
+    const lostHash = h.devices()[0]!.tokenHash;
+    // While that attempt could still be running, a retry is refused, not raced.
+    await assert.rejects(() => h.make().provision(h.f.owner, h.request), /installation_provisioning_in_progress/);
+    assert.equal(h.modelvia.projects.length, 1);
+
+    later(h);
+    const resumed = (await h.make().provision(h.f.owner, h.request)).provisioning;
+    // Rotation revoked the lost copy and delivered a fresh one; nothing was minted twice.
+    assert.deepEqual(h.modelvia.rotated, ['0123456789abcdef']);
+    assert.equal(h.modelvia.minted.length, 1);
+    assert.deepEqual(live(h), ['fedcba9876543210']);
+    assert.equal(resumed.model.key, synthetic('fedcba9876543210'));
+    assert.equal(resumed.model.keyId, 'fedcba9876543210');
+    // The never-delivered connector credential was replaced, not duplicated.
+    assert.match(resumed.connector.credential!, /^rbc_[a-f0-9]{64}$/);
+    assert.equal(h.devices().length, 1);
+    assert.notEqual(h.devices()[0]!.tokenHash, lostHash);
     assert.deepEqual(h.org.created, [`realbud-${h.f.tenant.companyId}`]);
-    assert.equal(h.modelvia.minted.length, 0);
+    const provisioned = h.f.ledger.db.all<{ kind: string; body: string }>('SELECT kind,body FROM events').filter(row => row.kind === 'installation_provisioned');
+    assert.equal(provisioned.length, 1);
+    assert.equal(JSON.parse(provisioned[0]!.body).modelKeyRotatedFrom, '0123456789abcdef');
+    assert.ok(!provisioned[0]!.body.includes(resumed.model.key!));
+
+    // Delivered once: a repeat returns the descriptor without secrets and never rotates again.
+    later(h);
+    const repeat = (await h.make().provision(h.f.owner, h.request)).provisioning;
+    assert.equal(repeat.model.key, undefined);
+    assert.equal(repeat.connector.credential, undefined);
+    assert.equal(repeat.model.keyId, 'fedcba9876543210');
+    assert.deepEqual(h.modelvia.rotated, ['0123456789abcdef']);
+    assert.equal(h.modelvia.projects.length, 2);
   } finally { h.close(); }
 });
 
-test('a Modelvia project that already exists is held rather than minting a possible second live key', async () => {
+test('a lost project reply is resumed into that project and mints when it holds no key', async () => {
   const h = harness(); try {
-    const existing = h.make({ modelvia: { environment: 'production',
-      async createProject(input) { return { projectId: input.projectId, created: false }; },
-      async mint() { throw new Error('must not mint into a project that already exists'); }, async revoke() {} } });
-    await assert.rejects(() => existing.provision(h.f.owner, h.request), /modelvia_project_already_exists/);
+    h.modelvia.lose = 'createProject';
+    await assert.rejects(() => h.make().provision(h.f.owner, h.request), /modelvia_unreachable/);
+    later(h);
+    const resumed = (await h.make().provision(h.f.owner, h.request)).provisioning;
+    assert.equal(resumed.model.key, MODEL_KEY);
+    assert.deepEqual(h.modelvia.minted, [{ projectId: 'rb-install-one', label: `${h.f.tenant.companyId}:install-one` }]);
+    assert.deepEqual(h.modelvia.rotated, []);
+    // Adopted, not recreated; its caps are this tenant's.
+    assert.equal(h.modelvia.held.size, 1);
+    assert.deepEqual(h.modelvia.capUpdates, [{ projectId: 'rb-install-one', monthlyCapNanoAud: h.f.tenant.monthlyCapNanoAud,
+      requestCapNanoAud: h.f.tenant.requestCapNanoAud, maxConcurrent: h.f.tenant.maxConcurrent }]);
+  } finally { h.close(); }
+});
+
+test('a lost rotate reply rotates the replacement on the next resume', async () => {
+  const h = harness(); try {
+    h.modelvia.lose = 'mint';
+    await assert.rejects(() => h.make().provision(h.f.owner, h.request));
+    later(h); h.modelvia.lose = 'rotate';
+    await assert.rejects(() => h.make().provision(h.f.owner, h.request), /modelvia_unreachable/);
+    later(h);
+    const resumed = (await h.make().provision(h.f.owner, h.request)).provisioning;
+    assert.deepEqual(h.modelvia.rotated, ['0123456789abcdef', 'fedcba9876543210']);
+    assert.deepEqual(live(h), ['00000000000000a3']);
+    assert.equal(resumed.model.keyId, '00000000000000a3');
+  } finally { h.close(); }
+});
+
+test('an existing project is adopted only when its keys can be attributed to this installation', async () => {
+  const label = (h: ReturnType<typeof harness>) => `${h.f.tenant.companyId}:install-one`;
+  const hold = (h: ReturnType<typeof harness>, keys: { label: string }[]) => {
+    h.modelvia.held.set('rb-install-one', { projectId: 'rb-install-one', name: 'x', customerId: CUSTOMER, monthlyCapNanoAud: '1', requestCapNanoAud: '1', maxConcurrent: 1, active: true, environments: ['production'] });
+    for (const key of keys) h.modelvia.keys.push({ keyId: KEY_IDS[h.modelvia.keys.length]!, projectId: 'rb-install-one', label: key.label });
+  };
+  // Two live keys: which one the desktop holds cannot be known.
+  const two = harness(); try {
+    hold(two, [{ label: label(two) }, { label: label(two) }]);
+    await assert.rejects(() => two.make().provision(two.f.owner, two.request), /modelvia_keys_ambiguous/);
+    assert.deepEqual(two.modelvia.rotated, []); assert.deepEqual(two.modelvia.minted, []); assert.deepEqual(live(two).length, 2);
+  } finally { two.close(); }
+  // One live key somebody else labelled is not ours to revoke by rotation.
+  const foreign = harness(); try {
+    hold(foreign, [{ label: 'company-other:install-one' }]);
+    await assert.rejects(() => foreign.make().provision(foreign.f.owner, foreign.request), /modelvia_keys_ambiguous/);
+    assert.deepEqual(foreign.modelvia.rotated, []); assert.deepEqual(foreign.modelvia.minted, []);
+  } finally { foreign.close(); }
+  // A project this ledger no longer records, holding our one labelled key: rotated.
+  const orphan = harness(); try {
+    hold(orphan, [{ label: label(orphan) }]);
+    const result = (await orphan.make().provision(orphan.f.owner, orphan.request)).provisioning;
+    assert.deepEqual(orphan.modelvia.rotated, ['0123456789abcdef']);
+    assert.equal(result.model.keyId, 'fedcba9876543210');
+  } finally { orphan.close(); }
+  // A project under another customer is never adopted, and nothing is minted into it.
+  const other = harness(); try {
+    hold(other, []);
+    other.modelvia.held.get('rb-install-one')!.customerId = 'cus-somebody-else';
+    await assert.rejects(() => other.make().provision(other.f.owner, other.request), /modelvia_project_scope_mismatch/);
+    assert.deepEqual(other.modelvia.minted, []); assert.deepEqual(other.modelvia.capUpdates, []);
+  } finally { other.close(); }
+});
+
+test('a resume never takes over a connector device another attempt did not admit', async () => {
+  const h = harness(); try {
+    // A device with this id that this provisioning never journalled.
+    h.modelvia.lose = 'mint';
+    await assert.rejects(() => h.make().provision(h.f.owner, h.request));
+    const row = h.f.ledger.db.get<{ body: string }>('SELECT body FROM installation_provisioning')!;
+    const body = JSON.parse(row.body); delete body.deviceTokenHash;
+    h.f.ledger.db.run('UPDATE installation_provisioning SET body=?', JSON.stringify(body));
+    later(h);
+    await assert.rejects(() => h.make().provision(h.f.owner, h.request), /connector_device_exists/);
+    assert.deepEqual(h.modelvia.rotated, []);
+    assert.equal(h.modelvia.projects.length, 1);
+  } finally { h.close(); }
+});
+
+test('an attempt past its deadline stops before the key step and leaves it to a later resume', async () => {
+  const h = harness(); try {
+    h.modelvia.lose = 'mint';
+    await assert.rejects(() => h.make().provision(h.f.owner, h.request));
+    later(h);
+    // This attempt stalls long enough that it must not start a key effect.
+    const slow = h.make({ modelvia: { ...h.modelviaClient, async listKeys(projectId, environment) {
+      h.f.setTime(h.f.now() + PENDING_RESUME_AFTER_MS / 2); return h.modelviaClient.listKeys(projectId, environment);
+    } } });
+    await assert.rejects(() => slow.provision(h.f.owner, h.request), /installation_provisioning_expired/);
+    assert.deepEqual(h.modelvia.rotated, []);
+    later(h);
+    assert.equal((await h.make().provision(h.f.owner, h.request)).provisioning.model.keyId, 'fedcba9876543210');
+  } finally { h.close(); }
+});
+
+test('of two concurrent resumes exactly one proceeds', async () => {
+  const h = harness(); try {
+    h.modelvia.lose = 'mint';
+    await assert.rejects(() => h.make().provision(h.f.owner, h.request));
+    later(h);
+    const outcomes = await Promise.allSettled([h.make().provision(h.f.owner, h.request), h.make().provision(h.f.owner, h.request)]);
+    assert.deepEqual(outcomes.map(outcome => outcome.status).sort(), ['fulfilled', 'rejected']);
+    assert.match(String((outcomes.find(outcome => outcome.status === 'rejected') as PromiseRejectedResult).reason), /installation_provisioning_in_progress/);
+    assert.deepEqual(h.modelvia.rotated, ['0123456789abcdef']);
+    assert.equal(live(h).length, 1);
+  } finally { h.close(); }
+});
+
+test('a cap change is pushed to every provisioned project, and a failed push is recorded and reported', async () => {
+  const h = harness(); try {
+    const provisioning = h.make();
+    assert.deepEqual(await provisioning.syncCaps(h.f.owner), { state: 'none', projects: [] });
+    await provisioning.provision(h.f.owner, h.request);
+    const caps = { monthlyCapNanoAud: '50000000000', requestCapNanoAud: '500000000', maxConcurrent: 2 };
+    h.f.ledger.setCaps(h.f.owner, caps);
+    assert.deepEqual(await provisioning.syncCaps(h.f.owner), { state: 'synced', projects: [{ installationId: 'install-one', projectId: 'rb-install-one', state: 'synced' }] });
+    assert.deepEqual(h.modelvia.capUpdates.at(-1), { projectId: 'rb-install-one', ...caps });
+    assert.equal(h.modelvia.held.get('rb-install-one')!.monthlyCapNanoAud, '50000000000');
+
+    h.modelvia.failCaps = true;
+    h.f.ledger.setCaps(h.f.owner, { ...caps, monthlyCapNanoAud: '40000000000' });
+    const failed = await provisioning.syncCaps(h.f.owner);
+    assert.deepEqual(failed, { state: 'out_of_sync', projects: [{ installationId: 'install-one', projectId: 'rb-install-one', state: 'out_of_sync', error: 'modelvia_unreachable' }] });
+    // The local change stands; the record says the project did not get it.
+    assert.equal(h.f.ledger.tenant(h.f.tenant.companyId).monthlyCapNanoAud, '40000000000');
+    const stored = JSON.parse(h.f.ledger.db.get<{ body: string }>('SELECT body FROM installation_provisioning')!.body);
+    assert.equal(stored.modelviaCaps.state, 'out_of_sync');
+    assert.equal(stored.modelviaCaps.monthlyCapNanoAud, '40000000000');
+    const kinds = h.f.ledger.db.all<{ kind: string }>('SELECT kind FROM events').map(row => row.kind);
+    assert.ok(kinds.includes('modelvia_caps_synced') && kinds.includes('modelvia_caps_out_of_sync'));
+    await assert.rejects(() => provisioning.syncCaps({ ...h.f.owner, role: 'billing_reader' }), /forbidden/);
   } finally { h.close(); }
 });
 

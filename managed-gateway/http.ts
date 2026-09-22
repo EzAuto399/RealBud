@@ -96,7 +96,16 @@ export function createGatewayServer(options:{gateway:ManagedGateway;billing:Bill
       }
       if(req.method==='POST' && url.pathname==='/v1/portal/limits') {
         const value=json(await body(req,4096)); object(value); exact(value,['monthlyCapNanoAud','requestCapNanoAud','maxConcurrent']);
-        ledger.setCaps(actor,value as never); reply(res,200,ledger.portalUsage(actor)); return;
+        ledger.setCaps(actor,value as never);
+        // The ledger change stands whatever happens next. Each provisioned
+        // installation's Modelvia project is then updated to match, and one the
+        // push did not reach is reported as out of sync, never as applied.
+        let modelviaCaps:unknown;
+        if(options.provisioning) {
+          try { modelviaCaps=await options.provisioning.syncCaps(actor); }
+          catch(error) { modelviaCaps={state:'unknown',error:provisioningError(error).code}; }
+        }
+        reply(res,200,{...ledger.portalUsage(actor),...(modelviaCaps?{modelviaCaps}:{})}); return;
       }
       // Vendor-side installation provisioning and revocation. Same portal bearer as
       // every other /v1/portal route; the authenticated principal is the authority,

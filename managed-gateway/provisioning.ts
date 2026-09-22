@@ -13,8 +13,12 @@
  *   - Secret material is returned exactly once. The stored descriptor has none,
  *     so a later read, an audit line and an error response are all secret-free.
  *   - Every external effect is journalled before it is attempted. A lost outcome
- *     is held for operator reconciliation, never retried into a second project,
- *     a second credential or a second minted key.
+ *     is resumed only once the attempt that lost it can no longer be running,
+ *     and only through what can be attributed to this installation: the same
+ *     Composio project, the connector device that attempt admitted, and the one
+ *     Modelvia key carrying this installation's label, rotated rather than
+ *     duplicated. Anything else is held for an operator, never retried into a
+ *     second project, a second credential or a second live key.
  *   - No default transport. The Composio org client, the Modelvia client and the
  *     secret store are all injected. Nothing here is deployed.
  */
@@ -25,7 +29,7 @@ import { canonical, GatewayError, id, object, requireThat, type PortalPrincipal 
 import { newConnectorCredential, validateConnectorDevices, type ConnectorDevice } from './connectors.ts';
 import type { UsageLedger } from './ledger.ts';
 import { composioOrgClient, type ComposioOrgClient, type HttpTransport } from './composio-org.ts';
-import { modelviaKeyClient, type ModelviaClient } from './modelvia-keys.ts';
+import { modelviaKeyClient, type ModelviaCaps, type ModelviaClient, type ModelviaMintedKey } from './modelvia-keys.ts';
 
 // ---------------------------------------------------------------------------
 // Registry file (shared with the provision-connector CLI)
@@ -185,8 +189,34 @@ interface StoredRecord {
   descriptor?: ProvisioningDescriptor;
   deviceId?: string; projectId?: string; projectKeyEnv?: string; keyId?: string; modelProjectId?: string;
   revocation?: Record<string, unknown>;
+  /** Pending only: which attempt owns the record, and since when. A record
+   * written before these existed falls back to its `created` column. */
+  attempt?: string; attemptAt?: number;
+  /** Pending only: hash of the connector credential that attempt admitted. A
+   * hash, never the credential; it is what lets a resumed attempt prove the
+   * registry device is its own and was never delivered. */
+  deviceTokenHash?: string;
+  /** Ready only: whether the tenant's current caps reached the Modelvia project. */
+  modelviaCaps?: { state: 'synced' | 'out_of_sync'; at: number; error?: string } & ModelviaCaps;
 }
 const MODELVIA_CUSTOMER = /^[A-Za-z0-9_.-]{1,128}$/;
+/** A pending attempt younger than this may still be running, so it is not
+ * resumed. It comfortably exceeds `ATTEMPT_EFFECT_DEADLINE_MS` plus one bounded
+ * Modelvia call (30 s), so a resumed attempt never races the one it replaces. */
+export const PENDING_RESUME_AFTER_MS = 10 * 60_000;
+/** An attempt that has not reached its model-key step by then stops before it,
+ * leaving the key to a later resume rather than to two concurrent writers. */
+const ATTEMPT_EFFECT_DEADLINE_MS = 5 * 60_000;
+/** Modelvia refuses a request cap above the monthly cap, so it is clamped. */
+function projectCaps(tenant: { monthlyCapNanoAud: string; requestCapNanoAud: string; maxConcurrent: number }): ModelviaCaps {
+  const requestCapNanoAud = BigInt(tenant.requestCapNanoAud) < BigInt(tenant.monthlyCapNanoAud) ? tenant.requestCapNanoAud : tenant.monthlyCapNanoAud;
+  return { monthlyCapNanoAud: tenant.monthlyCapNanoAud, requestCapNanoAud, maxConcurrent: tenant.maxConcurrent };
+}
+export interface ModelviaCapsSync {
+  /** `none` when this company has no provisioned installation to update. */
+  state: 'synced' | 'out_of_sync' | 'none';
+  projects: { installationId: string; projectId: string; state: 'synced' | 'out_of_sync'; error?: string }[];
+}
 export interface ProvisioningOptions {
   ledger: UsageLedger;
   /** Absolute path of the connector device registry this service reads per request. */
@@ -203,6 +233,8 @@ export interface ProvisioningOptions {
 export class InstallationProvisioning {
   private readonly options: ProvisioningOptions;
   private readonly endpoint: string;
+  /** One cap push at a time per company; see `syncCaps`. */
+  private readonly capsQueue = new Map<string, Promise<ModelviaCapsSync>>();
   constructor(options: ProvisioningOptions) {
     const url = new URL(options.endpoint);
     requireThat(url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash && url.pathname === '/', 'connector_endpoint_invalid', 503);
@@ -218,6 +250,30 @@ export class InstallationProvisioning {
   private store(companyId: string, installationId: string, record: StoredRecord) {
     this.options.ledger.db.run('UPDATE installation_provisioning SET state=?,body=? WHERE tenant=? AND installation=?', record.state, canonical(record), companyId, installationId);
   }
+  /** Write `next` only while `attempt` still owns the pending record. Callers run
+   * inside a transaction, so the check and the write are one step. */
+  private journal(companyId: string, installationId: string, attempt: string, next: StoredRecord) {
+    const current = this.saved(companyId, installationId);
+    requireThat(current?.state === 'pending' && current.attempt === attempt, 'installation_provisioning_superseded', 409);
+    this.store(companyId, installationId, next);
+  }
+  /**
+   * Take over a pending record whose attempt can no longer be running. The
+   * record is claimed with a fresh attempt id under the ledger's write lock, so
+   * of two concurrent retries exactly one proceeds.
+   */
+  private resume(companyId: string, installationId: string, existing: StoredRecord, now: number): StoredRecord {
+    const since = existing.attemptAt ?? this.options.ledger.db.get<{ created: number }>('SELECT created FROM installation_provisioning WHERE tenant=? AND installation=?', companyId, installationId)!.created;
+    requireThat(now - since >= PENDING_RESUME_AFTER_MS, 'installation_provisioning_in_progress', 409);
+    const next: StoredRecord = { ...existing, attempt: randomBytes(12).toString('hex'), attemptAt: now };
+    this.options.ledger.db.transaction(() => {
+      const current = this.saved(companyId, installationId);
+      requireThat(current && canonical(current) === canonical(existing), 'installation_provisioning_in_progress', 409);
+      this.store(companyId, installationId, next);
+      this.options.ledger.db.append(companyId, 'installation_provision_resumed', null, now, { installationId, pendingSince: since });
+    });
+    return next;
+  }
   /** Shared gate: the portal principal is the authority; the body only confirms it. */
   private scope(actor: PortalPrincipal, value: unknown, fields: string[]): Record<string, unknown> {
     requireThat(actor.role === 'billing_owner', 'forbidden', 403);
@@ -229,10 +285,12 @@ export class InstallationProvisioning {
   }
 
   /**
-   * Idempotent per installationId. The first call returns the secret material;
-   * every later call returns the same descriptor with none. An interrupted first
-   * call leaves a `pending` record and is held for an operator: retrying blind
-   * could create a second project, a second device or a second minted key.
+   * Idempotent per installationId. The call that reaches `ready` returns the
+   * secret material; every later call returns the same descriptor with none and
+   * touches nothing at Modelvia. An interrupted call leaves a `pending` record.
+   * A retry while that attempt may still be running is refused; a later retry
+   * resumes it (see `resume`) and repeats each step against what the earlier
+   * attempt left behind, so a lost reply yields a fresh secret, not a second one.
    */
   async provision(actor: PortalPrincipal, value: unknown): Promise<{ provisioning: ProvisioningDescriptor }> {
     const body = this.scope(actor, value, ['companyId', 'installationId', 'customerId', 'profile', 'apps']);
@@ -261,20 +319,24 @@ export class InstallationProvisioning {
     requireThat(tenant.active && tenant.serviceExpiresAt > now && now >= tenant.goLiveAt, 'service_unavailable', 402);
 
     const existing = this.saved(companyId, installationId);
+    let pending: StoredRecord;
     if (existing) {
       requireThat(existing.state !== 'revoked', 'installation_revoked', 409);
-      requireThat(existing.state === 'ready' && existing.descriptor, 'installation_provisioning_outcome_unknown', 409);
+      requireThat(existing.state === 'ready' ? Boolean(existing.descriptor) : existing.state === 'pending', 'installation_provisioning_outcome_unknown', 409);
       requireThat(existing.profile === profile && canonical(existing.apps) === canonical(apps) && existing.customerId === customerId, 'installation_provisioning_conflict', 409);
-      return { provisioning: existing.descriptor! };
+      // Delivered once already: never rotate or mint again for a repeat.
+      if (existing.state === 'ready') return { provisioning: existing.descriptor! };
+      pending = this.resume(companyId, installationId, existing, now);
+    } else {
+      // Journal the intent before the first external effect, so a lost outcome is
+      // recoverable rather than repeatable. The audit line carries no customerId.
+      pending = { state: 'pending', profile, apps: apps as string[], customerId, attempt: randomBytes(12).toString('hex'), attemptAt: now };
+      this.options.ledger.db.transaction(() => {
+        this.options.ledger.db.run('INSERT INTO installation_provisioning(tenant,installation,state,body,created) VALUES(?,?,?,?,?)', companyId, installationId, 'pending', canonical(pending), now);
+        this.options.ledger.db.append(companyId, 'installation_provision_requested', null, now, { installationId, profile, apps });
+      });
     }
-
-    // Journal the intent before the first external effect, so a lost outcome is
-    // recoverable rather than repeatable. The audit line carries no customerId.
-    const pending: StoredRecord = { state: 'pending', profile, apps: apps as string[], customerId };
-    this.options.ledger.db.transaction(() => {
-      this.options.ledger.db.run('INSERT INTO installation_provisioning(tenant,installation,state,body,created) VALUES(?,?,?,?,?)', companyId, installationId, 'pending', canonical(pending), now);
-      this.options.ledger.db.append(companyId, 'installation_provision_requested', null, now, { installationId, profile, apps });
-    });
+    const attempt = pending.attempt!, attemptAt = pending.attemptAt!;
 
     // (a) The company's Composio project, and its `ak_` key in the secret store.
     const projectName = `realbud-${companyId}`;
@@ -297,7 +359,9 @@ export class InstallationProvisioning {
       projectId = created.id;
     }
 
-    // (b) The revocable `rbc_` connector credential, admitted by hash only.
+    // (b) The revocable `rbc_` connector credential, admitted by hash only. A
+    // resumed attempt replaces the device its predecessor admitted: that
+    // credential was never delivered, because the record never reached `ready`.
     const credential = newConnectorCredential();
     const device: ConnectorDevice = {
       id: installationId, companyId, licenseId: tenant.licenseId,
@@ -308,25 +372,55 @@ export class InstallationProvisioning {
       projectKeyEnv, authConfigId: this.options.authConfigs[app]!, userId: `installation-${installationId}`,
       apps: apps as string[],
     };
-    updateRegistry(this.options.registry, devices => {
-      requireThat(!devices.some(entry => entry.id === device.id), 'connector_device_exists', 409);
-      return { devices: [...devices, device] };
+    const admitted = pending.deviceTokenHash;
+    this.options.ledger.db.transaction(() => {
+      // Both steps are synchronous, so nothing interleaves between the registry
+      // change and the journal line that records whose device it is.
+      this.journal(companyId, installationId, attempt, { ...pending, deviceTokenHash: credential.tokenHash });
+      updateRegistry(this.options.registry, devices => {
+        const current = devices.find(entry => entry.id === device.id);
+        if (!current) return { devices: [...devices, device] };
+        requireThat(admitted !== undefined && current.tokenHash === admitted && current.active && current.companyId === companyId && current.installationId === installationId,
+          'connector_device_exists', 409);
+        return { devices: devices.map(entry => entry.id === device.id ? device : entry) };
+      });
     });
 
     // (c) One Modelvia project per installation, under the company's customer
     // account. Caps live on the project, not on keys, so this is where the
     // ledger tenant's cap is actually applied rather than merely described.
-    const requestCapNanoAud = (BigInt(tenant.requestCapNanoAud) < BigInt(tenant.monthlyCapNanoAud) ? tenant.requestCapNanoAud : tenant.monthlyCapNanoAud);
-    const spendCapLabel = `monthly-cap ${tenant.monthlyCapNanoAud} nanoAUD, request-cap ${requestCapNanoAud} nanoAUD, max-concurrent ${tenant.maxConcurrent}`;
-    const modelProject = await this.options.modelvia.createProject({
-      projectId: `rb-${installationId}`, name: `RealBud installation ${installationId}`.slice(0, 200), customerId,
-      monthlyCapNanoAud: tenant.monthlyCapNanoAud, requestCapNanoAud, maxConcurrent: tenant.maxConcurrent,
-    });
-    // Modelvia already holds this project, so a key may already exist under it and
-    // its operator surface has no key listing to check. Hold it for an operator
-    // rather than risk a second live key for the same installation.
-    requireThat(modelProject.created, 'modelvia_project_already_exists', 409);
-    const minted = await this.options.modelvia.mint({ projectId: modelProject.projectId, label: `${companyId}:${installationId}` });
+    const caps = projectCaps(tenant);
+    const spendCapLabel = `monthly-cap ${caps.monthlyCapNanoAud} nanoAUD, request-cap ${caps.requestCapNanoAud} nanoAUD, max-concurrent ${caps.maxConcurrent}`;
+    const modelvia = this.options.modelvia, modelProjectId = `rb-${installationId}`, label = `${companyId}:${installationId}`;
+    const modelProject = await modelvia.createProject({ projectId: modelProjectId, name: `RealBud installation ${installationId}`.slice(0, 200), customerId, ...caps });
+    // (d) The installation's model key. A project Modelvia already holds is an
+    // earlier attempt whose reply was lost, or one this ledger no longer records.
+    // It is adopted only when it sits under this office's customer, with this
+    // tenant's caps applied, and its keys are read before anything is minted.
+    let live: { keyId: string; label?: string }[] = [];
+    if (!modelProject.created) {
+      const adopted = await modelvia.findProject(modelProjectId);
+      requireThat(adopted && adopted.customerId === customerId && adopted.environments.includes(modelvia.environment), 'modelvia_project_scope_mismatch', 409);
+      requireThat(adopted!.active, 'modelvia_project_inactive', 409);
+      await modelvia.updateProjectCaps(modelProjectId, caps);
+      const at = this.options.ledger.now();
+      live = (await modelvia.listKeys(modelProjectId, modelvia.environment)).filter(key => key.revokedAt === undefined && (key.expiresAt === undefined || key.expiresAt > at));
+      // One live key with this installation's label is ours, its secret lost with
+      // an earlier reply: rotating it revokes that copy and returns a fresh one.
+      // Two, or one we did not label, cannot be attributed: an operator decides.
+      requireThat(live.length === 0 || (live.length === 1 && live[0]!.label === label), 'modelvia_keys_ambiguous', 409);
+    }
+    // Stop before a key effect this attempt may no longer own or be in time for.
+    requireThat(this.options.ledger.now() - attemptAt < ATTEMPT_EFFECT_DEADLINE_MS, 'installation_provisioning_expired', 409);
+    requireThat(this.saved(companyId, installationId)?.attempt === attempt, 'installation_provisioning_superseded', 409);
+    let minted: ModelviaMintedKey, rotatedFrom: string | undefined;
+    if (live.length) {
+      const rotated = await modelvia.rotate(live[0]!.keyId);
+      requireThat(rotated.projectId === modelProjectId, 'modelvia_key_scope_mismatch', 502);
+      minted = rotated; rotatedFrom = rotated.replaced;
+    } else {
+      minted = await modelvia.mint({ projectId: modelProjectId, label });
+    }
 
     const descriptor: ProvisioningDescriptor = {
       version: 1,
@@ -334,12 +428,18 @@ export class InstallationProvisioning {
       connector: { endpoint: this.endpoint, profile, apps: apps as string[], projectId },
       model: { provider: 'modelvia', baseUrl: minted.baseUrl, keyId: minted.keyId, projectId: modelProject.projectId, spendCapLabel },
     };
-    const ready: StoredRecord = { state: 'ready', profile, apps: apps as string[], customerId, descriptor, deviceId: device.id, projectId, projectKeyEnv, keyId: minted.keyId, modelProjectId: modelProject.projectId };
+    // A cap change accepted while this attempt was in flight did not reach the
+    // project (it was not yet `ready` to push to); say so rather than claim it.
+    const latest = projectCaps(this.options.ledger.tenant(companyId));
+    const capsState = canonical(latest) === canonical(caps) ? 'synced' as const : 'out_of_sync' as const;
+    const ready: StoredRecord = { state: 'ready', profile, apps: apps as string[], customerId, descriptor, deviceId: device.id, projectId, projectKeyEnv, keyId: minted.keyId, modelProjectId: modelProject.projectId,
+      modelviaCaps: { state: capsState, at: this.options.ledger.now(), ...caps } };
     this.options.ledger.db.transaction(() => {
-      this.store(companyId, installationId, ready);
+      this.journal(companyId, installationId, attempt, ready);
       // Audit line carries identifiers only: no project key, no connector
       // credential, no model key, and no Modelvia customer id.
-      this.options.ledger.db.append(companyId, 'installation_provisioned', null, this.options.ledger.now(), { installationId, profile, apps, projectId, projectKeyEnv, modelKeyId: minted.keyId, spendCapLabel });
+      this.options.ledger.db.append(companyId, 'installation_provisioned', null, this.options.ledger.now(), { installationId, profile, apps, projectId, projectKeyEnv, modelKeyId: minted.keyId, spendCapLabel,
+        ...(rotatedFrom ? { modelKeyRotatedFrom: rotatedFrom } : {}), ...(modelProject.created ? {} : { modelProjectAdopted: true }) });
     });
     // The only response that carries secret material.
     return { provisioning: {
@@ -347,6 +447,43 @@ export class InstallationProvisioning {
       connector: { endpoint: descriptor.connector.endpoint, credential: credential.token, profile, apps: apps as string[], projectId },
       model: { ...descriptor.model, key: minted.key },
     } };
+  }
+
+  /**
+   * Push the tenant's current caps to every provisioned installation's Modelvia
+   * project. The local cap change has already been accepted; this never undoes
+   * it. A project the push does not reach is recorded as out of sync and
+   * reported as such, and is pushed again on the next change. Serialized per
+   * company, reading the caps inside, so the last push carries the latest caps.
+   */
+  async syncCaps(actor: PortalPrincipal): Promise<ModelviaCapsSync> {
+    requireThat(actor.role === 'billing_owner', 'forbidden', 403);
+    const companyId = actor.companyId;
+    const previous = this.capsQueue.get(companyId) ?? Promise.resolve();
+    const run = previous.catch(() => {}).then(() => this.pushCaps(companyId));
+    this.capsQueue.set(companyId, run);
+    try { return await run; } finally { if (this.capsQueue.get(companyId) === run) this.capsQueue.delete(companyId); }
+  }
+  private async pushCaps(companyId: string): Promise<ModelviaCapsSync> {
+    const caps = projectCaps(this.options.ledger.tenant(companyId));
+    const rows = this.options.ledger.db.all<{ installation: string; body: string }>("SELECT installation, body FROM installation_provisioning WHERE tenant=? AND state='ready' ORDER BY installation", companyId);
+    const projects: ModelviaCapsSync['projects'] = [];
+    for (const row of rows) {
+      const projectId = (JSON.parse(row.body) as StoredRecord).modelProjectId;
+      if (!projectId) continue;
+      let error: string | undefined;
+      try { await this.options.modelvia.updateProjectCaps(projectId, caps); }
+      catch (failure) { error = failure instanceof GatewayError ? failure.code : 'modelvia_caps_update_failed'; }
+      const state = error ? 'out_of_sync' as const : 'synced' as const, at = this.options.ledger.now();
+      this.options.ledger.db.transaction(() => {
+        // Re-read: a revocation may have landed while the push was in flight.
+        const current = this.saved(companyId, row.installation);
+        if (current?.state === 'ready') this.store(companyId, row.installation, { ...current, modelviaCaps: { state, at, ...caps, ...(error ? { error } : {}) } });
+        this.options.ledger.db.append(companyId, error ? 'modelvia_caps_out_of_sync' : 'modelvia_caps_synced', null, at, { installationId: row.installation, projectId, ...caps, ...(error ? { error } : {}) });
+      });
+      projects.push({ installationId: row.installation, projectId, state, ...(error ? { error } : {}) });
+    }
+    return { state: !projects.length ? 'none' : projects.every(project => project.state === 'synced') ? 'synced' : 'out_of_sync', projects };
   }
 
   /**

@@ -267,7 +267,7 @@ describe("AI usage for the current month", () => {
     return { link, calls };
   };
 
-  it("asks once per ten minutes, sends the bearer token, and never persists the figures", async () => {
+  it("asks once per three minutes, sends the bearer token, and never persists the figures", async () => {
     const { link, calls } = app(() => Response.json(body()));
     await link.link({ code, label: "Desk" });
     const first = await link.usage();
@@ -295,6 +295,54 @@ describe("AI usage for the current month", () => {
       // A 403 here is not revocation: the report loop stays the authority.
       expect((await link.status()).state).toBe("linked");
     }
+  });
+
+  it("retries a dropped connection or a 5xx once, and a refusal not at all", async () => {
+    const replies = (list: (() => Response)[]) => { let n = 0; return () => { const next = list[Math.min(n++, list.length - 1)]!; return next(); }; };
+    const flaky = app(replies([() => Response.json({}, { status: 503 }), () => Response.json(body())]));
+    await flaky.link.link({ code, label: "Desk" });
+    expect((await flaky.link.usage()).state).toBe("ready");
+    expect(flaky.calls.filter(url => url.includes("usage"))).toHaveLength(2);
+
+    const dropped = app(replies([() => { throw new TypeError("synthetic network failure"); }, () => Response.json(body())]));
+    await dropped.link.link({ code, label: "Desk" });
+    expect((await dropped.link.usage()).state).toBe("ready");
+    expect(dropped.calls.filter(url => url.includes("usage"))).toHaveLength(2);
+
+    // Bounded: a second 5xx is the answer, not a reason to keep asking.
+    const down = app(() => Response.json({}, { status: 502 }));
+    await down.link.link({ code, label: "Desk" });
+    expect(await down.link.usage()).toEqual({ state: "unavailable" });
+    expect(down.calls.filter(url => url.includes("usage"))).toHaveLength(2);
+
+    const refused = app(() => Response.json({}, { status: 403 }));
+    await refused.link.link({ code, label: "Desk" });
+    expect(await refused.link.usage()).toEqual({ state: "unavailable" });
+    expect(refused.calls.filter(url => url.includes("usage"))).toHaveLength(1);
+  });
+
+  it("never repeats a report write, even on a 5xx", async () => {
+    const { link, calls } = app(() => Response.json({}, { status: 503 }));
+    await link.link({ code, label: "Desk" });
+    await expect(link.report()).rejects.toThrow(/did not accept/);
+    expect(calls.filter(url => url.endsWith("/report"))).toHaveLength(1);
+  });
+
+  it("refreshes after three minutes and serves the cached figures before then", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-09-15T12:00:00Z"));
+      let requests = 0;
+      const { link, calls } = app(() => Response.json(body({ period: "2026-09", requests: ++requests })));
+      await link.link({ code, label: "Desk" });
+      expect(await link.usage()).toMatchObject({ state: "ready", usage: { requests: 1 } });
+      vi.setSystemTime(new Date("2026-09-15T12:02:59Z"));
+      expect(await link.usage()).toMatchObject({ usage: { requests: 1 } });
+      expect(calls.filter(url => url.includes("usage"))).toHaveLength(1);
+      vi.setSystemTime(new Date("2026-09-15T12:03:00Z"));
+      expect(await link.usage()).toMatchObject({ usage: { requests: 2 } });
+      expect(calls.filter(url => url.includes("usage"))).toHaveLength(2);
+    } finally { vi.useRealTimers(); }
   });
 
   it("reports not-linked without contacting the account, and rejects a bad month", async () => {

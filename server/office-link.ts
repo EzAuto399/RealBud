@@ -5,6 +5,7 @@ import { oplog } from "./oplog.ts";
 import { randomBytes, randomUUID } from "node:crypto";
 import { lstatSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { writeFileAtomic } from "./atomic.ts";
 import { windowsFilePrivacy } from "./windows-file-privacy.ts";
 import { currentUsagePeriod, parseInstallationProvisioning, parseInstallationUsage, USAGE_PERIOD,
@@ -104,16 +105,16 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
     await windowsFilePrivacy(path, "file", true);
   }
   /**
-   * AI usage for one month, at most one request per ten minutes.
+   * AI usage for one month, at most one check per three minutes.
    *
    * Held in memory and never written to disk: it is a reporting convenience,
-   * not a record, and the authoritative figures live in the account. A failure
-   * is cached for the same interval so a portal outage cannot turn every status
-   * read into a ten-second wait.
+   * not a record, and the authoritative figures live in the account. A check
+   * that still fails after its one retry is cached for the same interval, so a
+   * portal outage cannot turn every status read into a wait.
    */
   let usageCache: { period: string; at: number; value: InstallationUsageState } | undefined;
   let usageBusy = false;
-  const USAGE_TTL = 10 * 60_000;
+  const USAGE_TTL = 3 * 60_000;
   async function usage(period = currentUsagePeriod()): Promise<InstallationUsageState> {
     if (!USAGE_PERIOD.test(period)) throw Object.assign(new Error("Ask for a month as YYYY-MM."), { status: 400 });
     const saved = await read().catch(() => null);
@@ -123,7 +124,7 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
     usageBusy = true;
     let value: InstallationUsageState;
     try {
-      const response = await request(`usage?period=${period}`, { method: "GET", headers: { Authorization: `Bearer ${saved.token}` } });
+      const response = await readWithRetry(`usage?period=${period}`, { method: "GET", headers: { Authorization: `Bearer ${saved.token}` } });
       if (!response.ok) { await response.body?.cancel().catch(() => {}); throw new Error("usage unavailable"); }
       // 401/403 is not treated as revocation here: the report loop is the
       // authority for that, and a usage read must not tear down an install.
@@ -152,6 +153,21 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
   async function request(route: string, init: RequestInit): Promise<Response> {
     try { return await fetcher(`${ORIGIN}/api/installations/${route}`, { ...init, redirect: "error", signal: AbortSignal.timeout(10_000), headers: { "Content-Type": "application/json", ...init.headers } }); }
     catch { throw new Error("The website could not be reached. Your link is saved; try again when connected."); }
+  }
+  /**
+   * A read that is safe to repeat gets one more try, shortly after, when the
+   * connection failed or the website answered 5xx. Only GET reads use this:
+   * redeem and report are writes whose outcome a blind repeat could double.
+   */
+  const READ_RETRY_DELAY_MS = 750;
+  async function readWithRetry(route: string, init: RequestInit & { method: "GET" }): Promise<Response> {
+    try {
+      const response = await request(route, init);
+      if (response.status < 500) return response;
+      await response.body?.cancel().catch(() => {});
+    } catch { /* retried once below */ }
+    await sleep(READ_RETRY_DELAY_MS);
+    return request(route, init);
   }
   async function exclusive<T>(work: () => Promise<T>): Promise<T> {
     if (busy) throw Object.assign(new Error("A website link update is already running. Try again shortly."), { status: 409 });
