@@ -6,7 +6,7 @@ import { execFile, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
@@ -22,6 +22,10 @@ const packSource = process.argv[3] ? join(source, 'pack', 'property') : join(roo
 let child, exited, timer, failure, stderr = '', cleanupComplete = false, timedOut = false;
 let profileProof, startupMs, profileCheckMs, stderrDrained, readinessMs;
 let exitCode = null, exitSignal = null, witnessLaunches = 0, witnessMs = 0, witnessReport = null;
+// What this host saw of the fresh profile before any witness ran, and the
+// layout it actually found. Relative names only: an absolute path carries the
+// runner's account and workspace. `null` means inspection never got that far.
+let profileObjects = null, profileLayout = null;
 const checks = [];
 const execute = promisify(execFile);
 const requiredProfileFiles = ['SOUL.md', 'config.yaml', 'distribution.yaml', 'profile.yaml'];
@@ -68,8 +72,10 @@ function diagnosticFrom(text, limit = 20) {
 // Codes follow server/windows-file-privacy.ts where the rule is the same
 // (2 owner, 3 ACE principal, 4 no usable grant, 5 not protected, 6 reparse
 // point, 7 kind mismatch, 9 bad input, 10 deny) and add 8 missing, 11 reparse
-// point above the disposable root and 12 unprotected ancestor above it. 20-26
-// are the verifier's inspection stages.
+// point above the disposable root, 12 unprotected ancestor above it, and
+// 13 too long / 14 attributes denied / 15 otherwise unreadable for a target
+// this host could stat but PowerShell could not. 20-26 are the verifier's
+// inspection stages.
 //
 // `exit` inside a `try` is not caught by PowerShell's `catch`, but this script
 // must not depend on that: a rule refusal records its code and throws, and the
@@ -82,8 +88,9 @@ $failRule = ''
 $stage = 20
 $index = -1
 $depth = 0
+$size = 0
 function Refuse($code, $name) { $script:failCode = $code; $script:failRule = $name; throw 'witness refused' }
-function Note($code, $name, $at, $level) { [Console]::Out.Write('{"code":' + $code + ',"rule":"' + $name + '","index":' + $at + ',"depth":' + $level + '}') }
+function Note($code, $name, $at, $level, $chars) { [Console]::Out.Write('{"code":' + $code + ',"rule":"' + $name + '","index":' + $at + ',"depth":' + $level + ',"chars":' + $chars + '}') }
 try {
   $current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
   $allowed = @($current, 'S-1-5-18', 'S-1-5-32-544')
@@ -96,12 +103,27 @@ try {
   if ($items.Count -lt 1 -or $items.Count -gt 256) { Refuse 9 'invalid-invocation' }
   for ($index = 0; $index -lt $items.Count; $index++) {
     $depth = 0
+    $size = 0
     $stage = 21
     $path = $items[$index].path
     if ([string]::IsNullOrEmpty($path)) { Refuse 9 'invalid-invocation' }
+    $size = $path.Length
     $wantDirectory = [bool]$items[$index].directory
-    if (-not ([IO.Directory]::Exists($path) -or [IO.File]::Exists($path))) { Refuse 8 'missing' }
-    $attributes = [IO.File]::GetAttributes($path)
+    # Directory.Exists/File.Exists answer false for every failure alike - a real
+    # absence, a path past MAX_PATH, a denied query - so a refusal could not say
+    # which. GetAttributes throws the reason, and the reason gets its own code.
+    try { $attributes = [IO.File]::GetAttributes($path) }
+    catch {
+      $reason = $_.Exception
+      while ($reason.InnerException) { $reason = $reason.InnerException }
+      switch ($reason.GetType().Name) {
+        'DirectoryNotFoundException' { Refuse 8 'missing' }
+        'FileNotFoundException' { Refuse 8 'missing' }
+        'PathTooLongException' { Refuse 13 'path-too-long' }
+        'UnauthorizedAccessException' { Refuse 14 'attributes-access-denied' }
+        default { Refuse 15 'target-attributes-unreadable' }
+      }
+    }
     if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { Refuse 6 'reparse-point' }
     if ($wantDirectory -ne ((($attributes -band [IO.FileAttributes]::Directory) -ne 0))) { Refuse 7 'kind-mismatch' }
     # Bounded ancestry: the profile tree and the disposable root containing it.
@@ -148,10 +170,10 @@ try {
   [Console]::Out.Write('private')
 } catch {
   # Never emit the exception: a native message can carry a path or an identity.
-  if ($failCode -ne 0) { Note $failCode $failRule $index $depth; exit $failCode }
+  if ($failCode -ne 0) { Note $failCode $failRule $index $depth $size; exit $failCode }
   $name = $stageRules[$stage]
   if (-not $name) { $name = 'witness-failed' }
-  Note $stage $name $index $depth
+  Note $stage $name $index $depth $size
   exit $stage
 }
 `, 'utf16le').toString('base64');
@@ -162,7 +184,7 @@ try {
  * reaches the receipt.
  */
 function witnessReportFrom({ exitCode, signal, stdout, stderr }) {
-  let code = null, rule = null, index = null, depth = null;
+  let code = null, rule = null, index = null, depth = null, chars = null;
   const line = String(stdout ?? '').trim();
   if (line.startsWith('{') && line.length <= 512) {
     try {
@@ -171,13 +193,40 @@ function witnessReportFrom({ exitCode, signal, stdout, stderr }) {
       if (typeof parsed.rule === 'string' && /^[a-z][a-z-]{0,48}$/.test(parsed.rule)) rule = parsed.rule;
       if (Number.isInteger(parsed.index)) index = parsed.index;
       if (Number.isInteger(parsed.depth)) depth = parsed.depth;
+      // Character count only, never the path: it settles whether PowerShell
+      // received the same string this host stat'd, or a truncated one.
+      if (Number.isInteger(parsed.chars)) chars = parsed.chars;
     } catch { /* an unparsable line is reported as no rule, never echoed */ }
   }
-  return { exitCode, signal, code, rule, index, depth, stderrTail: diagnosticFrom(String(stderr ?? ''), 10) };
+  return { exitCode, signal, code, rule, index, depth, chars, stderrTail: diagnosticFrom(String(stderr ?? ''), 10) };
 }
 
 async function assertMissing(path) {
   await assert.rejects(lstat(path), error => error?.code === 'ENOENT', 'Fresh fixture contains unexpected profile state');
+}
+/** Name inside the private home; an absolute path names the runner's account. */
+function relativeTo(root, path) {
+  if (path === root) return '.';
+  return path.startsWith(root + sep) ? path.slice(root.length + 1).split(sep).join('/') : '«outside the private home»';
+}
+/** The layout actually on disk: relative names of `root` and its children. */
+async function layoutOf(root, home) {
+  let entries;
+  try { entries = await readdir(root, { withFileTypes: true }); }
+  catch (error) { return [`«unreadable: ${error?.code ?? 'error'}»`]; }
+  const names = [];
+  for (const entry of entries.slice(0, 64)) {
+    const name = relativeTo(home, join(root, entry.name));
+    names.push(entry.isDirectory() ? `${name}/` : name);
+    if (!entry.isDirectory()) continue;
+    try {
+      for (const child of (await readdir(join(root, entry.name), { withFileTypes: true })).slice(0, 64)) {
+        const path = relativeTo(home, join(root, entry.name, child.name));
+        names.push(child.isDirectory() ? `${path}/` : path);
+      }
+    } catch (error) { names.push(`${name}/«unreadable: ${error?.code ?? 'error'}»`); }
+  }
+  return names;
 }
 async function inspectProfile(home, pack, status, env) {
   const profile = join(home, 'profiles', 'property');
@@ -206,6 +255,24 @@ async function inspectProfile(home, pack, status, env) {
   await skills(join(pack, 'skills'), join(profile, 'skills'));
   assert.ok(objects.length + files.length <= 256, 'Shipped skill inventory exceeds smoke bound');
   objects.push(...files.map(path => ({ path, directory: false })));
+  // What this host sees, recorded before any witness runs. A Windows refusal
+  // that names an object this host did stat is a witness or path-delivery
+  // fault, not an absent profile, and the two can no longer be confused.
+  profileObjects = [];
+  for (const item of objects) {
+    const kind = item.directory ? 'directory' : 'file';
+    let exists = false;
+    try {
+      const stat = await lstat(item.path);
+      exists = item.directory ? stat.isDirectory() : stat.isFile();
+    } catch { exists = false; }
+    profileObjects.push({ name: relativeTo(home, item.path), kind, exists, chars: item.path.length });
+  }
+  const absent = profileObjects.filter(item => !item.exists);
+  if (absent.length) {
+    profileLayout = { home: await layoutOf(home, home), profile: await layoutOf(profile, home) };
+    throw new Error(`Fresh profile is missing ${absent[0].kind} "${absent[0].name}" (${absent.length} of ${profileObjects.length} objects absent); private home layout ${JSON.stringify(profileLayout.home)}`);
+  }
   const before = [];
   for (const item of objects) {
     const stat = await lstat(item.path, { bigint: true });
@@ -238,7 +305,12 @@ async function inspectProfile(home, pack, status, env) {
         signal: error?.signal ?? null, stdout: error?.stdout, stderr: error?.stderr,
       });
       const reported = witnessReport.exitCode ?? (typeof error?.code === 'string' ? error.code : 'unavailable');
-      throw new Error(`Fresh profile Windows privacy verification failed (exit ${reported}, rule ${witnessReport.rule ?? 'unreported'})`);
+      // The witness may not say which object it refused on, so the receipt
+      // carries the layout this host found and the refused object's own name.
+      profileLayout = { home: await layoutOf(home, home), profile: await layoutOf(profile, home) };
+      const refused = profileObjects[witnessReport.index] ?? null;
+      throw new Error(`Fresh profile Windows privacy verification failed (exit ${reported}, rule ${witnessReport.rule ?? 'unreported'}`
+        + `${refused ? `, object "${refused.name}" ${refused.kind}, ${refused.chars} chars here and ${witnessReport.chars ?? 'unreported'} there` : ''})`);
     } finally { witnessMs += Math.round(performance.now() - witnessStarted); }
     witnessReport = witnessReportFrom({ exitCode: 0, signal: null, stdout: witness.stdout, stderr: witness.stderr });
     assert.equal(witness.stdout, 'private', 'Windows ACL witness did not confirm privacy');
@@ -340,6 +412,10 @@ finally {
     // refused, so a Windows failure names its rule instead of one exit 1.
     // `null` means no witness ran: not a win32 host, or the probe failed first.
     witness: witnessReport,
+    // Every object the witness was asked about, as this host saw it, and the
+    // layout actually on disk when an object was absent or a witness refused.
+    // Relative names only. `null` means inspection never reached them.
+    objects: profileObjects, layout: profileLayout,
     checks, failure, cleanupComplete, ...(failure ? { diagnostic: diagnosticFrom(stderr) } : {}) }, null, 2) + '\n');
   console.log(`${failure ? 'FAILED' : 'PASSED'} compiled company bundle: ${out}`);
   process.exitCode = failure ? 1 : 0;

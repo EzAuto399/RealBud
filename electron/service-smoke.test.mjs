@@ -169,6 +169,7 @@ describe('installed Windows service acceptance', () => {
       const why = JSON.stringify({
         failure: receipt.failure, child: receipt.child, timings: receipt.timings,
         powershell: receipt.powershell, witness: receipt.witness, diagnostic: receipt.diagnostic,
+        objects: receipt.objects, layout: receipt.layout,
       }, null, 1);
       expect(receipt.source, why).toBe(source);
       expect(receipt.packSource, why).toBe(pack);
@@ -191,6 +192,32 @@ describe('installed Windows service acceptance', () => {
       // that none ran rather than leave the field out.
       expect(receipt, why).toHaveProperty('witness');
       if (!windows) expect(receipt.witness, why).toBeNull();
+      // Every receipt says what this host saw of the profile before any witness
+      // ran, so a Windows refusal cannot be read as an absent profile without
+      // the layout that would prove it. Relative names only.
+      expect(receipt, why).toHaveProperty('objects');
+      expect(receipt, why).toHaveProperty('layout');
+      const inspected = ['complete', 'health without profile', 'public profile', 'unsafe written policy', 'wrong skill bytes'].includes(scenario);
+      expect(Array.isArray(receipt.objects), why).toBe(inspected);
+      if (inspected) {
+        expect(receipt.objects.map(object => object.name), why).toEqual([
+          '.', 'profiles', 'profiles/property', 'profiles/property/skills', 'profiles/property/skills/fictional-skill',
+          'auth.json', 'profiles/property/SOUL.md', 'profiles/property/config.yaml', 'profiles/property/distribution.yaml',
+          'profiles/property/profile.yaml', 'profiles/property/skills/fictional-skill/SKILL.md',
+        ]);
+        for (const object of receipt.objects) expect(object.chars, why).toBeGreaterThan(0);
+        expect(receipt.objects.slice(0, 5).map(object => object.kind), why).toEqual(Array(5).fill('directory'));
+        expect(receipt.objects.slice(5).map(object => object.kind), why).toEqual(Array(6).fill('file'));
+      }
+      // The one scenario where the profile genuinely is not there: the receipt
+      // must name the absent object relatively and carry the layout it found.
+      if (scenario === 'health without profile') {
+        expect(receipt.objects.every(object => object.exists === false), why).toBe(true);
+        expect(receipt.failure, why).toMatch(/Fresh profile is missing directory "\." \(11 of 11 objects absent\)/);
+        expect(receipt.layout, why).toMatchObject({ home: ['«unreadable: ENOENT»'], profile: ['«unreadable: ENOENT»'] });
+      } else if (inspected) {
+        expect(receipt.objects.every(object => object.exists === true), why).toBe(true);
+      }
       if (scenario !== 'complete') {
         expect(failure, why).toBeDefined();
         expect(typeof receipt.diagnostic, why).toBe('string');

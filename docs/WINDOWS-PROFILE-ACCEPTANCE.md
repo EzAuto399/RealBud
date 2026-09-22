@@ -434,3 +434,60 @@ script has never been parsed or executed. Its refusal codes, the JSON line, the
 bounded walk and the `REALBUD_SMOKE_WITNESS_FULL_ANCESTRY` path are all
 source-level only until a win32 Package run exercises them. A green macOS suite
 is not Windows privacy evidence.
+
+## 22 September 2026 — the witness's "missing" is now separable from unreadable
+
+Package Windows run 35718088869 (`6ca6bf22`) reached readiness in 51 s with one
+service PowerShell launch, then the ACL witness refused
+`{ code: 8, rule: "missing", index: 0, depth: 0 }` in both scenarios that reach
+it and assert on it — `complete` and `public profile`. Index 0 is the private
+Hermes home itself (`REALBUD_HERMES_HOME`, i.e. `<data>\hermes`).
+
+That refusal cannot be taken at face value, and the source says why. These two
+scenarios are `electron/service-smoke.test.mjs` fixtures: the fake server
+creates the very objects the smoke then lists (`home`, `profiles`,
+`profiles\property`, the two skills directories, `auth.json` and the five
+profile files), and `inspectProfile` **already `lstat`s every one of them
+successfully** before the win32 branch runs. No product code is involved, so
+the win32 layout is not in question here: `hermesHome` prefers
+`REALBUD_HERMES_HOME` on every platform, `hermesProfileFor` returns the plain
+base profile with no member key, and `applyPropertyPack` publishes the same set
+on win32 as on POSIX. The mismatch is inside the witness, not in the profile.
+
+The witness's own `[IO.Directory]::Exists($path) -or [IO.File]::Exists($path)`
+pre-check was the defect: both answer `false` for *every* failure — a genuine
+absence, a path past `MAX_PATH`, a denied attribute query, an argument the
+legacy .NET Framework normalizer rejects — so one code, 8, covered all of them
+and a path this host had just stat'd was reported as absent. It now reads
+`[IO.File]::GetAttributes($path)` (which the next line needed anyway), unwraps
+the thrown exception and gives the reason its own code: 8 `missing` for
+directory/file-not-found only, 13 `path-too-long`, 14
+`attributes-access-denied`, 15 `target-attributes-unreadable`. The refusal line
+gains `chars`, the length of the path under inspection — an integer, never the
+path — so a truncated or mangled `REALBUD_SMOKE_PRIVATE_PATHS` delivery is
+separable from a path PowerShell received intact but could not read.
+
+Every receipt now also carries, from this host and before any witness runs,
+`objects: [{ name, kind, exists, chars }]` for the whole list and `layout:
+{ home, profile }` — relative names inside the private home only, never an
+absolute path, since an absolute path carries the runner's account and
+workspace. An object this host cannot stat fails the scenario immediately,
+naming the relative object and the layout actually found, instead of failing
+later inside PowerShell. The thrown Windows message now names the refused
+object relatively and prints both character counts.
+
+Proven on macOS: `pnpm exec vitest run electron/service-smoke.test.mjs` passes
+(10 passed) and `node --check scripts/smoke-company-bundle.mjs` is clean. The
+new diagnostic is genuinely exercised here, not just compiled: `health without
+profile` now fails with `Fresh profile is missing directory "." (11 of 11
+objects absent)` and a layout of `«unreadable: ENOENT»`, and the four scenarios
+that do reach inspection assert the exact eleven relative names, kinds and
+`exists: true`.
+
+Not proven: no PowerShell exists on this host, so codes 13, 14 and 15, the
+`chars` field and the `GetAttributes` unwrap have never been parsed or
+executed. The next Package Windows run settles which of the remaining
+hypotheses holds — `exists: true` here with code 8 there would mean PowerShell
+received a different string (compare `chars`), 13/14/15 would name the real
+inspection failure, and `exists: false` here with the printed layout would mean
+the fixture never created the object at all.
