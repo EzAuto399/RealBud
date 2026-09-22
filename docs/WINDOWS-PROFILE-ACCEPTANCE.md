@@ -101,3 +101,23 @@ an installed app, still require the Windows CI runner or a physical device. An
 independent design review of this custody policy, the checks it asked for and
 the runtime behaviour only NTFS can show is summarized in
 `outputs/windows-key-custody-2026-09-22/review-summary.md`.
+
+## 22 September 2026 — two Windows setup-path corrections (source-level only)
+
+Two Windows-only defects in the worker setup path were fixed at source. (1)
+`bootstrapInvocation` in `server/worker-bootstrap.ts` spawned the verified
+upstream `install.ps1` with `powershell.exe -NoProfile -NonInteractive -File`
+and no execution-policy argument; a default Windows 11 client policy is
+`Restricted`, which refuses any `.ps1` passed to `-File`, so setup would have
+failed before its first stage. The invocation now passes `-ExecutionPolicy
+Bypass` as well. Bypass is process-scoped and changes no machine or user
+policy, and it cannot widen what runs, because `downloadBootstrap` rejects the
+installer on a sha256 mismatch before any spawn happens — that ordering is
+unchanged and is asserted by the existing download test. (2) `preflight()` in
+`server/hermes-bridge.ts` probed `curl`/`git`/`python3` and so reported a
+missing dependency on every Windows machine, which does not ship a `python3`
+executable; it had no caller outside its own test and has been removed rather
+than made platform-correct. Both changes are proven only by macOS source tests
+(`server/worker-bootstrap.test.ts`, `server/hermes-bridge.test.ts`) and the
+server typecheck. Neither has been observed on a Windows runner or device, so
+the Windows setup path remains unaccepted.

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { HERMES_PIN } from "./hermes-pin.ts";
-import { attachModel, installStatus, listModelOptions, listModels, modelStatus, preflight, PROVIDER_OPTIONS, startInstall } from "./hermes-bridge.ts";
+import { attachModel, installStatus, listModelOptions, listModels, modelStatus, PROVIDER_OPTIONS, startInstall } from "./hermes-bridge.ts";
 
 import { privateFixtureDirectory, privateFixtureRoot, writePrivateFixtureFile as writeFileSync, WINDOWS_PROFILE_TEST_OPTIONS } from "./testing/private-profile-fixture.ts";
 
@@ -305,10 +305,4 @@ describe("install job", () => {
     expect(["done", "failed", "verifying", "running"]).toContain(status.state);
     expect(status.lines.join("\n")).toContain("downloading");
   }, 20_000);
-
-  it("preflight reports the dependency list", async () => {
-    const result = await preflight();
-    expect(result.deps.map((d) => d.name)).toEqual(["curl", "git", "python3"]);
-    expect(result.deps.every((d) => typeof d.ok === "boolean")).toBe(true);
-  });
 });

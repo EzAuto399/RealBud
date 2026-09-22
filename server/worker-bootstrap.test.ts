@@ -52,7 +52,15 @@ describe("runtime stage contract", () => {
     expect(invocation.args).toContain("/some path/setup");
     expect(invocation.args).toContain("/a home/with spaces");
     expect(invocation.args).toContain(HERMES_RECOMMENDED.commit);
-    expect(invocation.args.join(" ")).not.toMatch(/ExecutionPolicy|Bypass/i);
+    if (platform === "win32") {
+      // The installer is sha256-verified before it is spawned, so a
+      // process-scoped Bypass cannot widen what runs — but without it a
+      // default `Restricted` client policy refuses the -File script outright.
+      expect(invocation.command).toBe("powershell.exe");
+      expect(invocation.args.slice(0, 6)).toEqual(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "/some path/setup"]);
+    } else {
+      expect(invocation.args.join(" ")).not.toMatch(/ExecutionPolicy|Bypass/i);
+    }
   });
   it("still accepts the compatibility floor when it is named explicitly", () => {
     const floor = HERMES_RELEASES.find(release => release.commit === HERMES_PIN.commit)!;

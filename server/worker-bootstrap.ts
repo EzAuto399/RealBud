@@ -85,8 +85,14 @@ export function bootstrapPlan(platform: NodeJS.Platform, release: HermesRelease 
 export function bootstrapInvocation(platform: NodeJS.Platform, file: string, stage: string, home: string, release: HermesRelease = HERMES_RECOMMENDED, privateRuntime = false) {
   const plan = bootstrapPlan(platform, release, privateRuntime);
   if (!plan || !(plan.stages as readonly string[]).includes(stage)) throw new BootstrapError("Unsupported setup stage");
+  // `-ExecutionPolicy Bypass` applies to this PowerShell process only and
+  // changes no machine or user policy. It is safe here because the script is
+  // already the sha256-verified bytes from `downloadBootstrap` — verification
+  // happens before the spawn, so Bypass never widens what may run. Without it
+  // a default Windows 11 client policy (`Restricted`) refuses any `.ps1`
+  // passed to `-File`, and setup fails before the first stage.
   return platform === "win32"
-    ? { command: "powershell.exe", args: ["-NoProfile", "-NonInteractive", "-File", file, "-Stage", stage, "-NonInteractive", "-SkipSetup", "-SkipComputerUse", "-Commit", release.commit, "-ForceCommit", "-HermesHome", home, "-InstallDir", join(home, "hermes-agent")] }
+    ? { command: "powershell.exe", args: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", file, "-Stage", stage, "-NonInteractive", "-SkipSetup", "-SkipComputerUse", "-Commit", release.commit, "-ForceCommit", "-HermesHome", home, "-InstallDir", join(home, "hermes-agent")] }
     : { command: "/bin/bash", args: [file, "--stage", stage, "--non-interactive", "--skip-setup", "--skip-computer-use", "--commit", release.commit, "--force-commit", "--hermes-home", home, "--dir", join(home, "hermes-agent")] };
 }
 

@@ -20,7 +20,6 @@ import { join } from "node:path";
 import { WORKER_PROVIDERS, workerProvider, type WorkerProvider } from "../shared/worker-providers.ts";
 import { readProfileFile, verifyProfileDirectory, writeProfileFile } from "./hermes-profile-storage.ts";
 import { augmentedPath, resetPathCache } from "./env-path.ts";
-import { execCli } from "./procs.ts";
 import { HERMES_PIN, hermesCli, hermesMatchesPin } from "./hermes-pin.ts";
 import { applyManagedModelProfile, hermesHome, propertyProfileDir, withYamlBlock, yamlBlock } from "./hermes-pack.ts";
 import { workerModelGrant } from "./worker-model-access.ts";
@@ -32,35 +31,6 @@ import { parseHermesVersion } from "./hermes-pin.ts";
 
 export type ProviderOption = WorkerProvider;
 export const PROVIDER_OPTIONS = WORKER_PROVIDERS;
-
-export interface PreflightEntry {
-  name: string;
-  ok: boolean;
-  detail: string;
-}
-
-export interface PreflightResult {
-  ok: boolean;
-  deps: PreflightEntry[];
-}
-
-function whichOne(bin: string): Promise<{ ok: boolean; detail: string }> {
-  return new Promise((resolve) => {
-    execCli(bin, ["--version"], { timeout: 8_000, env: serviceSafeChildEnv({ PATH: augmentedPath() }) }, (err, stdout) => {
-      resolve({ ok: !err, detail: err ? "not found" : String(stdout).trim().split("\n")[0]?.slice(0, 80) ?? "" });
-    });
-  });
-}
-
-export async function preflight(): Promise<PreflightResult> {
-  const [curl, git, py] = await Promise.all([whichOne("curl"), whichOne("git"), whichOne("python3")]);
-  const deps: PreflightEntry[] = [
-    { name: "curl", ok: curl.ok, detail: curl.detail },
-    { name: "git", ok: git.ok, detail: git.detail },
-    { name: "python3", ok: py.ok, detail: py.detail },
-  ];
-  return { ok: deps.every((d) => d.ok), deps };
-}
 
 // ── install job (singleton: one worker install at a time) ────────────────
 

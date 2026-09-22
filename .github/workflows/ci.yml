@@ -41,6 +41,9 @@ jobs:
           python scripts/testing/hermes-memory-windows-journal-io.py
       - name: Native Windows memory storage candidate (production hold stays)
         if: matrix.os == 'windows-latest'
+        # A held candidate: its receipt is the evidence, and its failure must not
+        # hide the real Windows test results that follow.
+        continue-on-error: true
         # Nested under the job's 15 minutes: the script's own budgets (120 s per
         # fixture command, 300 s per check, 480 s overall) expire first so a
         # failure still writes a receipt, and this bound is the backstop.
