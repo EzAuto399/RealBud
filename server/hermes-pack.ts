@@ -248,7 +248,7 @@ export function mergePropertyPolicy(existing: string, defaults: string): string 
   }
   // Own the write gate and a floor of hidden upstream skills; retain memory
   // preferences and any further skills the office has hidden itself.
-  for (const key of ["skills", "memory", "auxiliary"]) {
+  for (const key of ["skills", "memory", "auxiliary", "browser"]) {
     if (result.has(key) && !isMap(result.get(key))) throw new Error(UNREADABLE_LEARNING);
     // YAML 1.1 setIn creates !!omap for missing parents; PyYAML reads that as
     // a sequence, so Hermes would lose these policy gates. Create plain maps.
@@ -260,6 +260,13 @@ export function mergePropertyPolicy(existing: string, defaults: string): string 
   result.setIn(["auxiliary", "background_review"], policy.getIn(["auxiliary", "background_review"]));
   // Owned whole: with titles off, the rest of the block (provider, model) is unused.
   if (policy.hasIn(["auxiliary", "title_generation"])) result.setIn(["auxiliary", "title_generation"], policy.getIn(["auxiliary", "title_generation"]));
+  // Hermes turns on Browser Use mode by default whenever `uvx` runs (its runtime
+  // ships one): Ask would get `browser_exec`, which downloads a package at run
+  // time and can drive a local Chrome, plus the credential-vault tools that ride
+  // with it. Portal work goes through RealBud's own fenced browser instead, and
+  // the person signs in themselves. `off` is Hermes' supported switch; other
+  // browser settings stay the office's.
+  result.setIn(["browser", "backend"], "off");
   return result.toString();
 }
 
@@ -313,6 +320,7 @@ export function workerLimitsReady(root?: string): boolean {
     const ratio = doc.getIn(["agent", "budget_warning_ratio"]);
     return doc.getIn(["auxiliary", "title_generation", "enabled"]) === false &&
       doc.getIn(["security", "allow_lazy_installs"]) === false &&
+      doc.getIn(["browser", "backend"]) === "off" &&
       cap("max_web_searches", 10) && cap("max_subagents", 4) &&
       typeof ratio === "number" && ratio > 0 && ratio < 1;
   } catch { return false; }

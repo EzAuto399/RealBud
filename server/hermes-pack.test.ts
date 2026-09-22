@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { applyPropertyPack, ensurePropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, learningPolicyReady, migratePropertyProfileFromLegacyHermes, OFF_SCOPE_BUNDLED_SKILLS, PACK_DIR, packInstalled, propertyProfileDir, propertyWorkroomReady, skillScopeReady, stagedLearningSupported, workerLimitsReady, yamlBlock } from "./hermes-pack.ts";
+import { applyPropertyPack, mergePropertyPolicy, ensurePropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, learningPolicyReady, migratePropertyProfileFromLegacyHermes, OFF_SCOPE_BUNDLED_SKILLS, PACK_DIR, packInstalled, propertyProfileDir, propertyWorkroomReady, skillScopeReady, stagedLearningSupported, workerLimitsReady, yamlBlock } from "./hermes-pack.ts";
 import { HERMES_RECOMMENDED } from "./hermes-releases.ts";
 import { releaseHome, resetRuntimeSelectionForTests, saveRuntimeSelection, selectedHermesCli } from "./hermes-runtime-selection.ts";
 import { runtimeCli } from "./hermes-paths.ts";
@@ -381,5 +381,14 @@ describe("hermesAgentDir", () => {
 describe("product fleet", () => {
   it("registers Hermes as the only built-in driver", () => {
     expect(BUILT_IN_DRIVERS.map((d) => d.driverKind)).toEqual(["hermesAgent"]);
+  });
+});
+
+describe("worker browser surface", () => {
+  it("turns Hermes' default Browser Use mode off on install and keeps the office's other browser settings", () => {
+    const merged = mergePropertyPolicy("browser:\n  headed: true\n  backend: \"\"\n", readFileSync(join(PACK_DIR, "config.yaml"), "utf8"));
+    const doc = parseDocument(merged, { version: "1.1" });
+    expect(doc.getIn(["browser", "backend"])).toBe("off");
+    expect(doc.getIn(["browser", "headed"])).toBe(true);
   });
 });
