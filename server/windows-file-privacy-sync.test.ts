@@ -21,7 +21,7 @@ it('uses the exact same ACL script, invocation and verify-only default as async 
   windowsFilePrivacySync(path, 'file'); await windowsFilePrivacy(path, 'file');
   const [program, args, options] = calls.sync.mock.calls[0]!;
   expect(calls.async.mock.calls[0]!.slice(0, 2)).toEqual([program, args]);
-  expect(options).toMatchObject({ shell: false, windowsHide: true, timeout: 15_000, maxBuffer: 4096, stdio: ['ignore', 'pipe', 'pipe'], env: { REALBUD_WINDOWS_FILE_PRIVACY_PATH: path, REALBUD_WINDOWS_FILE_PRIVACY_ACTION: 'verify' } });
+  expect(options).toMatchObject({ shell: false, windowsHide: true, timeout: 120_000, maxBuffer: 4096, stdio: ['ignore', 'pipe', 'pipe'], env: { REALBUD_WINDOWS_FILE_PRIVACY_PATH: path, REALBUD_WINDOWS_FILE_PRIVACY_ACTION: 'verify' } });
   expect(args.join(' ')).not.toContain(path);
   windowsFilePrivacySync(path, 'file', true);
   expect(calls.sync.mock.calls[1]![2].env.REALBUD_WINDOWS_FILE_PRIVACY_ACTION).toBe('restrict');

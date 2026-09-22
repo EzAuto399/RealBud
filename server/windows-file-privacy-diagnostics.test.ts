@@ -45,7 +45,7 @@ describe('Windows privacy subprocess boundary (simulated Windows)', () => {
     expect(script).toContain('$env:REALBUD_WINDOWS_FILE_PRIVACY_PATH');
     expect(script).not.toContain(path);
     expect(script).not.toContain('whoami');
-    expect(options).toMatchObject({ shell: false, windowsHide: true, timeout: 15_000, maxBuffer: 4096 });
+    expect(options).toMatchObject({ shell: false, windowsHide: true, timeout: 120_000, maxBuffer: 4096 });
     expect(options.env).toMatchObject({
       REALBUD_WINDOWS_FILE_PRIVACY_PATH: path,
       REALBUD_WINDOWS_FILE_PRIVACY_KIND: 'file',
