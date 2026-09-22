@@ -76,9 +76,11 @@ if ($env:REALBUD_PROVISION_ACL_ACTION -eq 'restrict') {
     else { $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($principal, 'FullControl', 'Allow') }
     $acl.AddAccessRule($rule)
   }
-  Set-Acl -LiteralPath $path -AclObject $acl
+  if ($directory) { (New-Object System.IO.DirectoryInfo($path)).SetAccessControl($acl) }
+  else { (New-Object System.IO.FileInfo($path)).SetAccessControl($acl) }
 }
-$actual = Get-Acl -LiteralPath $path
+if ($directory) { $actual = (New-Object System.IO.DirectoryInfo($path)).GetAccessControl() }
+else { $actual = (New-Object System.IO.FileInfo($path)).GetAccessControl() }
 $allowed = @($sid.Value, 'S-1-5-18', 'S-1-5-32-544')
 if ($allowed -notcontains $actual.GetOwner([System.Security.Principal.SecurityIdentifier]).Value) { exit 2 }
 $usable = $false

@@ -19,8 +19,13 @@ const out = resolve(process.argv[2] || join(root, 'outputs/company-bundle-proof.
 const source = resolve(process.argv[3] || join(root, 'dist-server'));
 // electron-builder combines these inputs; an explicit artifact has no fallback.
 const packSource = process.argv[3] ? join(source, 'pack', 'property') : join(root, 'pack', 'property');
-let child, exited, timer, failure, stderr = '', cleanupComplete = false, timedOut = false;
-let profileProof, startupMs, profileCheckMs, stderrDrained, readinessMs;
+let child, exited, timer, failure, stderr = '', stdout = '', cleanupComplete = false, timedOut = false;
+let profileProof, startupMs, profileCheckMs, stderrDrained, stdoutDrained, readinessMs;
+// What each `/api/health` attempt actually answered, bucketed per elapsed
+// second. A run that never reaches readiness has to say whether the port was
+// refused all the way (the service never listened), timing out (it listened
+// but never answered), or answering something else (a foreign responder).
+const healthTimeline = [];
 let exitCode = null, exitSignal = null, witnessLaunches = 0, witnessMs = 0, witnessReport = null;
 // What this host saw of the fresh profile before any witness ran, and the
 // layout it actually found. Relative names only: an absolute path carries the
@@ -52,10 +57,107 @@ const SECRET_VALUES = [
 // carries them next to this script's own ACL witness. No path, SID or
 // descriptor is in the marker.
 const POWERSHELL_MARKER = /\[smoke-powershell\] launches=(\d+) ms=(\d+)/g;
+// The product's own refusal line, written once per failed ACL operation. Only
+// its count is kept here; `diagnostic` already carries the lines themselves.
+const WINDOWS_ACL_MARKER = /\[windows-acl\] /g;
 function servicePowershellFrom(text) {
   let last = null;
   for (const match of text.matchAll(POWERSHELL_MARKER)) last = match;
-  return { launches: last ? Number(last[1]) : 0, ms: last ? Number(last[2]) : 0 };
+  return {
+    launches: last ? Number(last[1]) : 0, ms: last ? Number(last[2]) : 0,
+    refusals: (text.match(WINDOWS_ACL_MARKER) ?? []).length,
+    // The compiled service does not count its own launches; the probe's entry
+    // module wraps `child_process` for this run only, passing every call
+    // through untouched. Say so, so nobody reads this as a product metric.
+    counter: 'probe entry child_process wrapper',
+  };
+}
+
+// The probe's entry module. It counts the child's own `powershell.exe`
+// launches — the dominant Windows startup cost — and otherwise does exactly
+// what it did before: generate a certificate (importing `selfsigned` alone
+// misses its ASN.1 initialization and crypto path), then start the service.
+// The wrapper forwards the executable, arguments, environment and result
+// unchanged and writes one stderr line of two integers per launch; a failure
+// to install it is swallowed, because a missing count must never be the reason
+// a service does not start. Both imports are dynamic so the wrapper is in
+// place before any module that captures `execFile` is linked.
+const PROBE_ENTRY = `import { createRequire, syncBuiltinESMExports } from 'node:module';
+const childProcess = createRequire(import.meta.url)('node:child_process');
+const PROMISIFY = Symbol.for('nodejs.util.promisify.custom');
+let launches = 0, elapsed = 0;
+const powershell = file => typeof file === 'string' && /powershell\\.exe$/i.test(file);
+const mark = started => {
+  elapsed += Math.round(performance.now() - started);
+  process.stderr.write('[smoke-powershell] launches=' + launches + ' ms=' + elapsed + '\\n');
+};
+try {
+  const realSync = childProcess.execFileSync;
+  childProcess.execFileSync = function (file, ...rest) {
+    if (!powershell(file)) return realSync.call(this, file, ...rest);
+    const started = performance.now(); launches++;
+    try { return realSync.call(this, file, ...rest); } finally { mark(started); }
+  };
+  const realFile = childProcess.execFile, realPromise = realFile[PROMISIFY];
+  const wrapped = function (file, ...rest) {
+    const done = rest.at(-1);
+    if (!powershell(file) || typeof done !== 'function') return realFile.call(this, file, ...rest);
+    const started = performance.now(); launches++;
+    return realFile.call(this, file, ...rest.slice(0, -1), (...answer) => { mark(started); done(...answer); });
+  };
+  if (typeof realPromise === 'function') {
+    wrapped[PROMISIFY] = function (file, ...rest) {
+      if (!powershell(file)) return realPromise.call(this, file, ...rest);
+      const started = performance.now(); launches++;
+      return realPromise.call(this, file, ...rest).then(
+        answer => { mark(started); return answer; },
+        error => { mark(started); throw error; },
+      );
+    };
+  }
+  childProcess.execFile = wrapped;
+  syncBuiltinESMExports();
+} catch { /* the count is diagnostic only; never let it hold up the service */ }
+const { createHostCertificate } = await import('./server/company/host-certificate.js');
+await createHostCertificate('127.0.0.1');
+await import('./server/bootstrap.js');
+`;
+
+/** One `/api/health` attempt, bucketed into the elapsed second it ran in. */
+function noteHealth(elapsedMs, outcome) {
+  const second = Math.floor(elapsedMs / 1000);
+  let bucket = healthTimeline.at(-1);
+  if (!bucket || bucket.second !== second) {
+    // 180 s is the widest watchdog this script accepts, so the list is bounded.
+    if (healthTimeline.length >= 200) return;
+    bucket = { second, outcomes: {} };
+    healthTimeline.push(bucket);
+  }
+  bucket.outcomes[outcome] = (bucket.outcomes[outcome] ?? 0) + 1;
+}
+/**
+ * The service's own boot trail (`server/oplog.ts`), bounded and masked like
+ * any other diagnostic. The log is already written through the compiled
+ * redactor; this adds the probe's own conservative matcher on top, because an
+ * installed package does not let this script import that redactor. `null`
+ * means there is no usable log, which is itself an answer: a service that
+ * never reached `oplog` never got past its startup admissions.
+ */
+async function bootLogFrom(path, limit = 40) {
+  try {
+    const stat = await lstat(path);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4_000_000) return null;
+    return diagnosticFrom((await readFile(path, 'utf8')).slice(-64_000), limit) || null;
+  } catch { return null; }
+}
+/** Fixed tokens only: a native error message can name a path or an account. */
+function healthFailure(error) {
+  const name = error?.name, code = error?.cause?.code ?? error?.code;
+  if (name === 'TimeoutError' || name === 'AbortError') return 'timeout';
+  if (code === 'ECONNREFUSED') return 'refused';
+  if (code === 'ECONNRESET') return 'reset';
+  if (typeof code === 'string' && /^[A-Z][A-Z0-9_]{1,20}$/.test(code)) return code;
+  return 'unreachable';
 }
 /** Last `limit` non-empty stderr lines, with credential-shaped values masked. */
 function diagnosticFrom(text, limit = 20) {
@@ -148,7 +250,7 @@ try {
       }
       if ($above) {
         $stage = 25
-        if (-not (Get-Acl -LiteralPath $cursor).AreAccessRulesProtected) { Refuse 12 'ancestor-not-protected' }
+        if (-not (New-Object System.IO.DirectoryInfo($cursor)).GetAccessControl().AreAccessRulesProtected) { Refuse 12 'ancestor-not-protected' }
       }
       if ($cursor.TrimEnd('\\') -eq $root) {
         if (-not $full) { break }
@@ -161,7 +263,8 @@ try {
     }
     $depth = 0
     $stage = 25
-    $acl = Get-Acl -LiteralPath $path
+    if ($wantDirectory) { $acl = (New-Object System.IO.DirectoryInfo($path)).GetAccessControl() }
+    else { $acl = (New-Object System.IO.FileInfo($path)).GetAccessControl() }
     $stage = 26
     if (-not $acl.AreAccessRulesProtected) { Refuse 5 'not-protected' }
     if ($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $current) { Refuse 2 'owner-not-allowed' }
@@ -362,20 +465,25 @@ try {
   // Check certificate generation too: importing selfsigned alone misses its
   // ASN.1 initialization and crypto path.
   const entry = join(resources, 'proof.mjs');
-  await writeFile(entry, `import { createHostCertificate } from './server/company/host-certificate.js';\nawait createHostCertificate('127.0.0.1');\nawait import('./server/bootstrap.js');\n`);
+  await writeFile(entry, PROBE_ENTRY);
   const env = serviceSmokeEnv({ executable: process.execPath, home, data, scratch, port });
   await assertMissing(env.REALBUD_HERMES_HOME);
   const started = performance.now();
-  child = spawn(process.execPath, [entry], { cwd: scratch, env, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+  // stdout is captured too: a compiled service that fails before its first
+  // stderr byte still prints `realbud server on …`, and a run that reported an
+  // empty diagnostic could not say whether that line had been reached.
+  child = spawn(process.execPath, [entry], { cwd: scratch, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   exited = new Promise((resolve, reject) => {
     child.once('error', reject);
     child.once('exit', (code, signal) => { exitCode = code; exitSignal = signal; resolve(code); });
   });
   child.stderr.on('data', bytes => { stderr = (stderr + bytes).slice(-16_000); });
+  child.stdout.on('data', bytes => { stdout = (stdout + bytes).slice(-16_000); });
   // Windows can emit 'exit' before the stderr pipe has been read, which left a
   // crashed child with an empty diagnostic and a run that could not explain
   // itself. Wait for the pipe, not the process.
   stderrDrained = once(child.stderr, 'close').then(() => {}, () => {});
+  stdoutDrained = once(child.stdout, 'close').then(() => {}, () => {});
   timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, readyMs);
   const base = `http://127.0.0.1:${port}`;
   let ready = false;
@@ -388,8 +496,17 @@ try {
     for (let attempt = 0; attempt < readinessAttempts || performance.now() - started < readyMs; attempt++) {
       if (performance.now() - started >= readyMs) break;
       if (child.exitCode !== null || child.signalCode) throw new Error('Compiled service exited before readiness');
+      const attemptedAt = performance.now() - started;
+      let outcome = 'unreachable';
       const health = await fetch(base + '/api/health', { signal: AbortSignal.timeout(500) })
-        .then(r => r.ok ? r.json() : null).catch(() => null);
+        .then(async r => {
+          if (!r.ok) { outcome = `http-${r.status}`; return null; }
+          const body = await r.json();
+          outcome = body?.app === 'realbud' && body.pid === child.pid ? 'ready' : 'other-responder';
+          return body;
+        })
+        .catch(error => { outcome = healthFailure(error); return null; });
+      noteHealth(attemptedAt, outcome);
       if (health?.app === 'realbud' && health.pid === child.pid) { ready = true; break; }
       await new Promise(resolve => setTimeout(resolve, 100));
     }
@@ -417,9 +534,14 @@ finally {
     await exited.catch(() => {}); clearTimeout(forced);
   }
   clearTimeout(timer);
-  if (stderrDrained) {
-    await Promise.race([stderrDrained, new Promise(resolve => { setTimeout(resolve, 2_000).unref(); })]);
+  const drained = [stderrDrained, stdoutDrained].filter(Boolean);
+  if (drained.length) {
+    await Promise.race([Promise.all(drained), new Promise(resolve => { setTimeout(resolve, 2_000).unref(); })]);
   }
+  // Read before the disposable fixture is removed. When readiness never
+  // arrives, the service's own boot trail under the data directory is the only
+  // account of what it was doing while this probe waited.
+  const bootLog = failure ? await bootLogFrom(join(scratch, 'home', '.realbud', 'realbud.log')) : null;
   await rm(scratch, { recursive: true, force: true }); cleanupComplete = true;
   await mkdir(dirname(out), { recursive: true });
   await writeFile(out, JSON.stringify({ passed: !failure, platform: process.platform, arch: process.arch, node: process.version,
@@ -438,7 +560,15 @@ finally {
     // layout actually on disk when an object was absent or a witness refused.
     // Relative names only. `null` means inspection never reached them.
     objects: profileObjects, layout: profileLayout,
-    checks, failure, cleanupComplete, ...(failure ? { diagnostic: diagnosticFrom(stderr) } : {}) }, null, 2) + '\n');
+    // What each health attempt answered, per elapsed second. Recorded on a
+    // pass too: the shape of a passing wait is the baseline a failing one is
+    // read against.
+    healthTimeline,
+    checks, failure, cleanupComplete,
+    // On a failure, everything the child itself said: its last stderr and
+    // stdout lines and its own boot trail, each bounded and masked through the
+    // same conservative matcher. `null` means the child wrote none.
+    ...(failure ? { diagnostic: diagnosticFrom(stderr), stdoutTail: diagnosticFrom(stdout, 10) || null, bootLog } : {}) }, null, 2) + '\n');
   console.log(`${failure ? 'FAILED' : 'PASSED'} compiled company bundle: ${out}`);
   process.exitCode = failure ? 1 : 0;
 }

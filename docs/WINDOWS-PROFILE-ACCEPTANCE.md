@@ -604,3 +604,23 @@ windows-latest run; if it does not, the new stderr line now names the exception
 type and Win32 code that the old script discarded, which is what the next
 diagnosis needs. A native case in `server/windows-file-privacy.test.ts` admits a
 fixture through its `\\?\` form and will run there.
+
+## 2026-09-23: exits 24/25 named — `CouldNotAutoloadMatchingModule`
+
+The manual `Windows probe` workflow (`.github/workflows/windows-probe.yml`,
+`scripts/testing/probe-windows-acl.mjs`) ran the admission under plain node in
+every runner storage root, with the inherited and a relocated home: 30 of 30
+admissions succeeded in 0.4–0.9 s each. The same script under vitest still
+refused with the fully qualified error id the parser now keeps:
+`stage=24 … type=System.Management.Automation.RuntimeException fqid=CouldNotAutoloadMatchingModule`.
+Windows PowerShell 5.1 could not auto-load the Security module that carries
+`Set-Acl`/`Get-Acl` inside the vitest worker's environment, and the earlier
+"cold 35–51 s launches" were that failed module search, not process start-up.
+
+Change: every RealBud ACL script (server helper, Electron key custody copy, the
+installed smoke, `provision-service-admin`, and the test fixtures) now calls the
+.NET access-control API directly (`DirectoryInfo`/`FileInfo`
+`GetAccessControl`/`SetAccessControl`) and no longer depends on a cmdlet or a
+module load. The module-path pin stays, applied case-insensitively over the
+environment copy. Whether this clears the vitest and installed-service refusals
+is settled by the next windows-latest run of the probe and of CI.

@@ -369,9 +369,17 @@ describe('profile provisioning and model attachment privacy wiring', () => {
     // whole pack now publishes in three. The three admissions that went away
     // are duplicate destination-directory verifies: one per file became one
     // per directory. No other path, kind or action changed.
+    //
+    // 2026-09-23: fresh 7 -> 5 and reapply 9 -> 7. `applyPropertyPack` plans
+    // the skill tree from the read-only shipped pack before it admits
+    // anything, so the skill directories join the profile's own two
+    // directory processes and the skill files join its one read, instead of
+    // costing two more cold launches. The admission counts are unchanged:
+    // the same paths, kinds and actions, in the same order, in fewer
+    // processes.
     expect({ fresh, reapply, startup }).toEqual({
-      fresh: { launches: 7, admissions: 24 },
-      reapply: { launches: 9, admissions: 30 },
+      fresh: { launches: 5, admissions: 24 },
+      reapply: { launches: 7, admissions: 30 },
       startup: { launches: 3, admissions: 8 },
     });
   });

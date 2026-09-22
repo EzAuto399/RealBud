@@ -94,19 +94,35 @@ function ensurePrivateRootAuth(root?: string): void {
 
 const PROFILE_FILES = ["SOUL.md", "config.yaml", "distribution.yaml", "profile.yaml", ".env"];
 
+type SkillPlan = { dirs: string[]; files: Array<{ from: string; to: string }> };
+
 /** The whole profile chain and its existing policy/credential files are
  * admitted in two PowerShell processes rather than eight: the directories do
- * not gate each other once their root is admitted, and no read gates another. */
-function prepareProfile(root?: string): { dir: string; config: Buffer | null } {
+ * not gate each other once their root is admitted, and no read gates another.
+ *
+ * A caller that already knows the skill tree it is about to install passes it
+ * here, so the skill directories join the same two processes and the skill
+ * files join the same read, instead of paying for two more cold PowerShell
+ * launches of their own. The plan is computed from the read-only shipped pack
+ * and names nothing in the destination that is not created under an admitted
+ * root, so the protect-the-root-before-creating-descendants rule is unchanged. */
+function prepareProfile(root?: string, skills?: SkillPlan): { dir: string; config: Buffer | null; skills: Array<Buffer | null> } {
   const home = hermesHome(root), dest = propertyProfileDir(root);
-  ensureProfileDirectories([home, join(home, "profiles"), dest]);
+  ensureProfileDirectories([home, join(home, "profiles"), dest, ...(skills?.dirs ?? [])]);
   // Existing RealBud-owned policy/credential files are admission-only here.
   // Upstream-managed auth/memory files retain their native ownership contract.
-  const existing = readProfileFiles(PROFILE_FILES.map(name => join(dest, name)));
-  return { dir: dest, config: existing[PROFILE_FILES.indexOf("config.yaml")] ?? null };
+  const existing = readProfileFiles([
+    ...PROFILE_FILES.map(name => join(dest, name)),
+    ...(skills?.files ?? []).map(file => file.to),
+  ]);
+  return {
+    dir: dest,
+    config: existing[PROFILE_FILES.indexOf("config.yaml")] ?? null,
+    skills: existing.slice(PROFILE_FILES.length),
+  };
 }
 
-function skillPlan(source: string, destination: string, plan: { dirs: string[]; files: Array<{ from: string; to: string }> }, depth = 0): void {
+function skillPlan(source: string, destination: string, plan: SkillPlan, depth = 0): void {
   if (depth > 12 || plan.files.length > 1000) throw new Error("Bud’s skill pack needs recovery before it can be installed.");
   const stat = lstatSync(source);
   if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error("Bud’s skill pack needs recovery before it can be installed.");
@@ -119,13 +135,11 @@ function skillPlan(source: string, destination: string, plan: { dirs: string[]; 
   }
 }
 
-function prepareSkillCopies(source: string, destination: string): Array<{ path: string; body: Buffer }> {
-  const plan: { dirs: string[]; files: Array<{ from: string; to: string }> } = { dirs: [], files: [] };
-  skillPlan(source, destination, plan);
-  // Every destination directory is still admitted before any file in it is
-  // read, and a linked or foreign one refuses before anything is created.
-  ensureProfileDirectories(plan.dirs);
-  const existing = readProfileFiles(plan.files.map(file => file.to));
+/** `existing` is what `prepareProfile` already read for `plan.files`, in order:
+ * every destination directory was admitted before any file in it was read, and
+ * a linked or foreign one refused before anything was created. */
+function prepareSkillCopies(plan: SkillPlan, existing: Array<Buffer | null>): Array<{ path: string; body: Buffer }> {
+  if (existing.length !== plan.files.length) throw new Error("Bud’s skill pack needs recovery before it can be installed.");
   const files: Array<{ path: string; body: Buffer }> = [];
   plan.files.forEach((file, index) => {
     // Keep locally maintained skills; never replace them as profile repair.
@@ -238,14 +252,21 @@ export function stagedLearningEnabled(root?: string): boolean {
 }
 
 export function applyPropertyPack(root?: string): { dir: string; wrote: string[] } {
+  const skillsFrom = join(PACK_DIR, "skills");
+  // Plan the skill tree from the read-only shipped pack before anything in the
+  // destination is admitted: the plan touches only `PACK_DIR`, so its
+  // destination directories and files can share the profile's own admission
+  // processes instead of paying for two more cold PowerShell launches.
+  const plan: SkillPlan | undefined = existsSync(skillsFrom)
+    ? (() => { const built: SkillPlan = { dirs: [], files: [] }; skillPlan(skillsFrom, join(propertyProfileDir(root), "skills"), built); return built; })()
+    : undefined;
   // `prepareProfile` has already admitted and read `config.yaml`; re-reading it
   // here would only cost another cold PowerShell process on Windows.
-  const { dir: dest, config: existingBytes } = prepareProfile(root);
+  const { dir: dest, config: existingBytes, skills: existingSkills } = prepareProfile(root, plan);
   const defaults = policyDocument(readFileSync(join(PACK_DIR, "config.yaml"), "utf8"));
   defaults.setIn(["auxiliary", "background_review", "enabled"], stagedLearningSupported(root));
   const config = mergePropertyPolicy(existingBytes?.toString("utf8") ?? "", defaults.toString());
-  const skillsFrom = join(PACK_DIR, "skills");
-  const skillCopies = existsSync(skillsFrom) ? prepareSkillCopies(skillsFrom, join(dest, "skills")) : [];
+  const skillCopies = plan ? prepareSkillCopies(plan, existingSkills) : [];
   const wrote: string[] = [];
   // Every destination directory here is already admitted and every existing
   // destination file already read, so the whole pack publishes in one batch:
@@ -263,7 +284,7 @@ export function applyPropertyPack(root?: string): { dir: string; wrote: string[]
     entries.push({ path: join(dest, name), bytes: body, expected: name === "config.yaml" ? existingBytes : undefined });
     wrote.push(name);
   }
-  if (existsSync(skillsFrom)) {
+  if (plan) {
     for (const file of skillCopies) entries.push({ path: file.path, bytes: file.body, overwrite: false });
     wrote.push("skills/");
   }

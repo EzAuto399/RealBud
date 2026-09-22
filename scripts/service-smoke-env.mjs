@@ -15,9 +15,9 @@ export function serviceSmokeEnv({ executable, home, data, scratch, port }, sourc
   for (const key of ['SystemRoot', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT', 'SystemDrive']) {
     if (source[key]) env[key] = source[key];
   }
-  // Windows file privacy runs through powershell.exe. A stripped environment
-  // must still resolve the shipped modules that carry Get-Acl/Set-Acl, and must
-  // not borrow a developer's module path to do it.
+  // Windows file privacy runs through powershell.exe with the .NET access-control
+  // API, so no module load is needed; the pin still keeps a stripped environment
+  // from borrowing a developer's or PowerShell 7 module path.
   const systemRoot = env.SystemRoot || env.SYSTEMROOT || env.WINDIR;
   if (systemRoot) env.PSModulePath = join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules');
   return env;

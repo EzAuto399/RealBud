@@ -98,10 +98,12 @@ if ($action -eq 'restrict') {
     $acl.AddAccessRule($rule)
   }
   $stage = 24
-  Set-Acl -LiteralPath $path -AclObject $acl
+  if ($directory) { (New-Object System.IO.DirectoryInfo($path)).SetAccessControl($acl) }
+  else { (New-Object System.IO.FileInfo($path)).SetAccessControl($acl) }
 }
 $stage = 25
-$actual = Get-Acl -LiteralPath $path
+if ($directory) { $actual = (New-Object System.IO.DirectoryInfo($path)).GetAccessControl() }
+else { $actual = (New-Object System.IO.FileInfo($path)).GetAccessControl() }
 $stage = 26
 if (-not $actual.AreAccessRulesProtected) { exit 5 }
 if ($allowed -notcontains $actual.GetOwner([System.Security.Principal.SecurityIdentifier]).Value) { exit 2 }
@@ -242,9 +244,9 @@ function nativeFailure(error: unknown, operationIndex: number | null = null, ope
   );
 }
 
-// PowerShell 5.1's FileSystem provider does not accept the Win32 namespaced
-// form behind -LiteralPath, and Node hands one back on some Windows hosts, so
-// Set-Acl/Get-Acl refuse a path the ancestor walk already accepted. Strip the
+// The .NET path APIs do not accept the Win32 namespaced form the way the
+// ancestor walk does, and Node hands one back on some Windows hosts, so the
+// access-control calls would refuse a path already accepted. Strip the
 // prefix here and leave every other byte exactly as the caller wrote it.
 function literalPath(path: string): string {
   if (path.startsWith('\\\\?\\UNC\\')) return `\\\\${path.slice(8)}`;
@@ -262,8 +264,11 @@ function privacyInvocation(
     throw new WindowsFilePrivacyError('invalid-path-or-kind');
   }
   const env: NodeJS.ProcessEnv = { ...process.env, REALBUD_WINDOWS_FILE_PRIVACY_COUNT: String(operations.length) };
-  // Windows PowerShell 5.1 must load its own Security module: an inherited PSModulePath that
-  // points at PowerShell 7 modules leaves Get-Acl/Set-Acl unresolved (seen on hosted runners).
+  // The script calls the .NET access-control API directly, so no module has to auto-load; a
+  // pinned PSModulePath still keeps Windows PowerShell 5.1 away from PowerShell 7 module roots
+  // (hosted runners spend half a minute searching them). Windows environment names are
+  // case-insensitive while this copy is a plain object, so drop every spelling first.
+  for (const name of Object.keys(env)) if (name.toLowerCase() === 'psmodulepath') delete env[name];
   env.PSModulePath = nodePath.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'Modules');
   operations.forEach((operation, index) => {
     const { path, kind, action } = operation ?? ({} as Partial<WindowsFilePrivacyOperation>);

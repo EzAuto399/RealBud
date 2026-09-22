@@ -113,10 +113,12 @@ if ($action -eq 'restrict') {
     $acl.AddAccessRule($rule)
   }
   $stage = 24
-  Set-Acl -LiteralPath $path -AclObject $acl
+  if ($directory) { (New-Object System.IO.DirectoryInfo($path)).SetAccessControl($acl) }
+  else { (New-Object System.IO.FileInfo($path)).SetAccessControl($acl) }
 }
 $stage = 25
-$actual = Get-Acl -LiteralPath $path
+if ($directory) { $actual = (New-Object System.IO.DirectoryInfo($path)).GetAccessControl() }
+else { $actual = (New-Object System.IO.FileInfo($path)).GetAccessControl() }
 $stage = 26
 if (-not $actual.AreAccessRulesProtected) { exit 5 }
 if ($allowed -notcontains $actual.GetOwner([System.Security.Principal.SecurityIdentifier]).Value) { exit 2 }
@@ -167,7 +169,7 @@ export function windowsKeyPrivacy(rawTarget, kind, restrict = false) {
     execFileSync(path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
       ['-NoProfile', '-NonInteractive', '-EncodedCommand', WINDOWS_ACL_ENCODED], {
         env: {
-          ...process.env,
+          ...Object.fromEntries(Object.entries(process.env).filter(([name]) => name.toLowerCase() !== 'psmodulepath')),
           PSModulePath: path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules'),
           REALBUD_WINDOWS_FILE_PRIVACY_PATH: target,
           REALBUD_WINDOWS_FILE_PRIVACY_KIND: kind,

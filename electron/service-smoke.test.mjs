@@ -39,12 +39,14 @@ for ($index = 0; $index -lt [int]$count; $index++) {
     else { $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($principal, 'FullControl', 'Allow') }
     $acl.AddAccessRule($rule)
   }
-  Set-Acl -LiteralPath $path -AclObject $acl
+  if ($kind -eq 'directory') { (New-Object System.IO.DirectoryInfo($path)).SetAccessControl($acl) }
+  else { (New-Object System.IO.FileInfo($path)).SetAccessControl($acl) }
 }`;
 const BROAD_FIXTURE_SCRIPT = `$ErrorActionPreference = 'Stop'
-$acl = Get-Acl -LiteralPath $env:REALBUD_FIXTURE_BROAD_FILE
+$broad = New-Object System.IO.FileInfo($env:REALBUD_FIXTURE_BROAD_FILE)
+$acl = $broad.GetAccessControl()
 $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new([System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-545'), 'Read', 'Allow'))
-Set-Acl -LiteralPath $env:REALBUD_FIXTURE_BROAD_FILE -AclObject $acl`;
+$broad.SetAccessControl($acl)`;
 
 describe('installed Windows service acceptance', () => {
   it('selects the NSIS filename actually emitted by electron-builder', async () => {

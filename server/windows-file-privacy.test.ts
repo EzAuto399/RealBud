@@ -31,14 +31,14 @@ if ($env:REALBUD_TEST_ACL_MODE -eq 'inherit-only') {
   $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', 'Allow'))
   $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new($sid, 'WriteData', 'Deny'))
 } else { exit 9 }
-Set-Acl -LiteralPath $env:REALBUD_TEST_ACL_PATH -AclObject $acl
+(New-Object System.IO.DirectoryInfo($env:REALBUD_TEST_ACL_PATH)).SetAccessControl($acl)
 `, 'utf16le').toString('base64');
 
 async function setTestAcl(path: string, mode: 'inherit-only' | 'deny-write') {
   await promisify(execFile)(join(process.env.SystemRoot!, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
     ['-NoProfile', '-NonInteractive', '-EncodedCommand', SET_TEST_ACL], {
       env: { ...process.env, REALBUD_TEST_ACL_PATH: path, REALBUD_TEST_ACL_MODE: mode },
-      shell: false, windowsHide: true, timeout: 15_000, maxBuffer: 4096,
+      shell: false, windowsHide: true, timeout: 120_000, maxBuffer: 4096,
     });
 }
 
@@ -91,7 +91,7 @@ describe.skipIf(process.platform !== 'win32')('native Windows privacy admission'
   });
 
   it('admits the same directory through its Win32 namespaced form', async () => {
-    // Set-Acl/Get-Acl -LiteralPath refuse \\?\ on PowerShell 5.1 even though the
+    // The .NET access-control calls refuse \\?\ on PowerShell 5.1 even though the
     // ancestor walk accepts it, so the Node side strips it before the script.
     const root = await fixture();
     await expect(windowsFilePrivacy(`\\\\?\\${root}`, 'directory')).resolves.toBeUndefined();
