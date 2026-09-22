@@ -197,7 +197,10 @@ describe('exact encrypted prepared restore artifacts', () => {
         db.exec('PRAGMA journal_mode=${mode}; PRAGMA synchronous=FULL; PRAGMA cache_size=10; BEGIN IMMEDIATE;');
         db.exec('UPDATE prepared_chunks SET payload=zeroblob(length(payload))'); process.kill(process.pid, 'SIGKILL');`;
       const result = spawnSync(process.execPath, ['-e', script], { env: { ...process.env, PREPARED_DB: join(directory, 'prepared.sqlite') }, encoding: 'utf8' });
-      expect(result.signal).toBe('SIGKILL');
+      // Windows has no signals: a self-kill is TerminateProcess with exit code 1
+      // and no uncaught-error stack.
+      if (process.platform === 'win32') { expect(result.status).toBe(1); expect(result.stderr).not.toMatch(/^\s+at /m); }
+      else expect(result.signal).toBe('SIGKILL');
     }
     async function sealedWithFile(content: Buffer) {
       const f = await fixture(); await f.store.addFile('vault/properties/crash.md', null, bytes(content)); await f.store.seal(); await f.store.close(); return f;
@@ -251,6 +254,15 @@ describe('exact encrypted prepared restore artifacts', () => {
       crashMidTransaction(f.options.directory, 'DELETE');
       expect(statSync(journalOf(f.options.directory)).size).toBeGreaterThanOrEqual(28);
       expect(readFileSync(database).equals(before)).toBe(false);
+      if (process.platform === 'win32') {
+        // An older build's DELETE-mode journal was created by SQLite with an
+        // inherited descriptor. An existing journal is verify-only, so Windows
+        // holds the store for recovery and leaves both files untouched.
+        const dirty = readFileSync(database), hot = readFileSync(journalOf(f.options.directory));
+        await expect(reopen(f.options)).rejects.toMatchObject({ name: 'WindowsFilePrivacyError', category: 'inheritance-not-protected' });
+        expect(readFileSync(database)).toEqual(dirty); expect(readFileSync(journalOf(f.options.directory))).toEqual(hot);
+        return;
+      }
       const opened = await reopen(f.options);
       expect((await opened.validate()).entries).toBe(1); expect(await readBack(opened)).toEqual(content);
       expect(existsSync(journalOf(f.options.directory))).toBe(true);

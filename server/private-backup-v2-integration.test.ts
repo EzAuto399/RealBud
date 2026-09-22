@@ -97,5 +97,5 @@ describe('actual filesystem v2 backup and restore pipeline', () => {
     expect(existsSync(join(destination, 'private-workspace-restore-v2.json'))).toBe(false);
     await verifyRestoredBatchReader(destination, targetKey);
   // The coverage job re-runs this under v8 instrumentation on a hosted runner, about three times slower.
-  }, process.env.CI ? 360_000 : 120_000);
+  }, process.platform === 'win32' ? 900_000 : process.env.CI ? 360_000 : 120_000);
 });

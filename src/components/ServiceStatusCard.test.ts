@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { autoRestartCopy, ServiceStatusCard } from "./ServiceStatusCard";
+import { autoRestartCopy, officeRunningCopy, ServiceStatusCard } from "./ServiceStatusCard";
 
 vi.mock("@/state/store", () => ({ api: vi.fn() }));
 
@@ -24,6 +24,17 @@ describe("automatic restart copy", () => {
     for (const value of [null, {}, status(undefined), status(null), status("5"), status({ today: "2", pending: "yes", exhausted: 1 }), status({ today: 1.5 })]) {
       expect(autoRestartCopy(value)).toEqual({ running: null, stopped: null });
     }
+  });
+
+  it("says on Windows that RealBud stays in the notification area while unattended work is on", () => {
+    const windows = officeRunningCopy(false, "win32");
+    expect(windows).toMatch(/^It keeps running when you close the window\./);
+    expect(windows).toContain("RealBud also stays in the notification area to restart the service if it stops");
+    expect(windows).toContain("Quit RealBud from that icon");
+    for (const platform of ["darwin", "linux", undefined]) {
+      expect(officeRunningCopy(false, platform)).toBe("It keeps running when you close the window. Keep this computer awake and connected for shared records and scheduled work.");
+    }
+    expect(officeRunningCopy(true, "win32")).toBe("RealBud connected to a service that was already running on this computer.");
   });
 
   it("renders the card before the main process has reported", () => {

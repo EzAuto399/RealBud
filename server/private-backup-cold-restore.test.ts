@@ -109,7 +109,7 @@ describe('bounded cold private restore coordination', () => {
     await stagePrivateRestoreV2(f.options); await applyStagedPrivateRestoreV2(f.options);
     for (const [path, expected] of f.expected) expect(readFileSync(join(f.directory, path))).toEqual(expected);
   });
-  it.each(['stage', 'apply'] as const)('releases the real process lock after a killed %s owner and preserves retry evidence', { timeout: 15_000, ...windowsAdmissionTimeout(80) }, async phase => {
+  it.each(['stage', 'apply'] as const)('releases the real process lock after a killed %s owner and preserves retry evidence', { timeout: 15_000, ...windowsAdmissionTimeout(150) }, async phase => {
     const f = await fixture();
     if (phase === 'apply') await stagePrivateRestoreV2(f.options);
     const program = `
@@ -128,7 +128,8 @@ describe('bounded cold private restore coordination', () => {
     child.stderr.on('data', chunk => { errors = (errors + chunk).slice(-4000); });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const ready = new Promise<void>((resolve, reject) => {
-      timer = setTimeout(() => reject(new Error(`Fixture restore owner did not acquire its lock: ${errors}`)), 5000);
+      // The owner's own admissions before it signals take many seconds on Windows.
+      timer = setTimeout(() => reject(new Error(`Fixture restore owner did not acquire its lock: ${errors}`)), process.platform === 'win32' ? 60_000 : 5000);
       child.stdout.on('data', chunk => { output = (output + chunk).slice(-100); if (output.includes('locked\n')) resolve(); });
       void closed.then(() => reject(new Error(`Fixture restore owner exited before signalling: ${errors}`)), reject);
     });

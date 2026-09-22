@@ -426,6 +426,16 @@ describe('physical sqlite storage bounds', () => {
       expect((await readFile(path)).equals(original)).toBe(false);
       expect((await readFile(path + '-journal')).byteLength).toBeGreaterThan(512);
     } finally { clearTimeout(timer); if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); await closed; }
+    if (process.platform === 'win32') {
+      // That writer's journal was created by SQLite with an inherited
+      // descriptor. An existing journal is verify-only, so Windows holds the
+      // catalog for recovery and leaves both files untouched.
+      const dirty = await readFile(path), hot = await readFile(path + '-journal');
+      await expect(PrivateBackupCatalog.open({ directory, key: f.key, catalogId: f.catalog.catalogId, workspaceId: f.workspaceId }))
+        .rejects.toMatchObject({ name: 'WindowsFilePrivacyError', category: 'inheritance-not-protected' });
+      expect(await readFile(path)).toEqual(dirty); expect(await readFile(path + '-journal')).toEqual(hot);
+      return;
+    }
     const restored = await PrivateBackupCatalog.open({ directory, key: f.key, catalogId: f.catalog.catalogId, workspaceId: f.workspaceId }); catalogs.push(restored);
     expect(restored.validate()).toEqual(summary);
     expect(restored.getFile('vault/properties/retained.md')!.data).toEqual(retained);

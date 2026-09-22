@@ -168,7 +168,7 @@ describe('normalized permanent mail retention and process fencing', () => {
         expect(await b.service.getItem(oldestId)).toMatchObject({ status: 'done', firstSeenAt: originalFirstSeen, note: 'Retain the completed decision across all later scans.' });
         console.info(JSON.stringify({ mailRetentionMeasurement: { tasks: 2100, receipts: 1022, coldMetadataMs, warmMetadataMs, pageMs, platform: process.platform, provider: 'fictional' } }));
         if(process.env.MAIL_RETENTION_MEASUREMENT_OUTPUT)await writeFile(process.env.MAIL_RETENTION_MEASUREMENT_OUTPUT,JSON.stringify({tasks:2100,receipts:1022,coldMetadataMs,warmMetadataMs,pageMs,platform:process.platform,node:process.version,provider:'fictional'},null,2)+'\n');
-    }, 90000);
+    }, WINDOWS ? 400000 : 90000);
     it.skipIf(process.platform==='win32')('refuses a linked legacy private directory without following its saved sources',async()=>{
         const f=await fixture(),legacy=legacyMailBackupFixture(workspaceId,time),vault=createPrivateVault(f.directory,key);
         await vault.write('mail-workspace',legacy.state);await vault.write(`mail-scan-${legacy.receipt.id}`,legacy.source);

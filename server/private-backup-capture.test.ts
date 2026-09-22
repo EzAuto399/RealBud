@@ -130,6 +130,19 @@ describe('bounded immutable live-source capture', () => {
   });
   it('rejects source database replacement during its readonly iteration', async () => {
     const f = await fixture(); seedDatabase(f.directory, f.key, 75); let replaced = false;
+    if (process.platform === 'win32') {
+      // Windows refuses to replace a database file the capture holds open, so
+      // the swap cannot happen there; the capture continues over unchanged bytes.
+      let refused: unknown;
+      await expect(capturePrivateWorkspace({ ...f.options, onProgress: async progress => {
+        if (!replaced && progress.phase === 'records') {
+          replaced = true; const path = join(f.directory, 'workflow-state.sqlite'), replacement = join(f.root, 'replacement.sqlite');
+          await copyFile(path, replacement); refused = await rename(replacement, path).then(() => null, error => error);
+        }
+      } })).resolves.toBeDefined();
+      expect(replaced).toBe(true); expect(refused).toMatchObject({ code: expect.stringMatching(/^(EBUSY|EPERM|EACCES)$/) });
+      return;
+    }
     await expect(capturePrivateWorkspace({ ...f.options, onProgress: async progress => {
       if (!replaced && progress.phase === 'records') {
         replaced = true; const path = join(f.directory, 'workflow-state.sqlite'), replacement = join(f.directory, 'replacement.sqlite');

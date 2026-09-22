@@ -3,6 +3,7 @@ import { readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 const dir = vi.hoisted(() => { const dir = `${process.env.TMPDIR || "/tmp"}/realbud-pair-${process.pid}-${Date.now()}`; process.env.REALBUD_DATA_DIR = dir; return dir; });
 const { createPairingCode, matchesPairingCode, clearPairingCode } = await import("./channel-pairing.ts");
+const { windowsFilePrivacySync } = await import("./windows-file-privacy.ts");
 beforeEach(() => rmSync(dir, { recursive: true, force: true }));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 describe("pairing from the local Mac", () => {
@@ -25,7 +26,9 @@ describe("pairing from the local Mac", () => {
   it("keeps only a private digest on disk and rejects corrupt state", async () => {
     const a = createPairingCode("slack", 100); const file = join(dir, "pairing-slack.json");
     expect(readFileSync(file, "utf8")).not.toContain(a.command.split(" ")[1]);
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    // Windows reports no POSIX mode; its privacy is the file's own protected descriptor.
+    if (process.platform === "win32") windowsFilePrivacySync(file, "file");
+    else expect(statSync(file).mode & 0o777).toBe(0o600);
     const { writeFileSync } = await import("node:fs"); writeFileSync(file, "broken");
     expect(matchesPairingCode("slack", a.command, 100)).toBe(false);
   });

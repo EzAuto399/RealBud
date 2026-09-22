@@ -71,7 +71,7 @@ describe('durable private workflow-pack history archives',()=>{
   it.each(['before-archive','after-archive','before-commit','after-commit'] as const)('recovers a %s interruption after cold reopen without losing history or touching plan approvals',windowsAdmissionTimeout(137),async point=>{
     const f=await fixture();await f.reach(9);const before=await f.journal(),recipes=loadRecipes(true),body=archiveRequest(await f.preview());
     let fired=false;
-    control.fault=(path,value,stage)=>{const archive=path.includes('customer-pack-history/'),commit=path.endsWith('customer-packs.json')&&value.installs[f.initial.id].archiveHead&&!value.installs[f.initial.id].archiveIntent;
+    control.fault=(path,value,stage)=>{const archive=/customer-pack-history[\\/]/.test(path),commit=path.endsWith('customer-packs.json')&&value.installs[f.initial.id].archiveHead&&!value.installs[f.initial.id].archiveIntent;
       if(!fired&&((point==='before-archive'&&archive&&stage==='before')||(point==='after-archive'&&archive&&stage==='after')||(point==='before-commit'&&commit&&stage==='before')||(point==='after-commit'&&commit&&stage==='after'))){fired=true;throw new Error(`Synthetic ${point} interruption`);}};
     await expect(f.archive(body)).rejects.toThrow('Synthetic');expect(fired).toBe(true);control.fault=undefined;
     const interrupted=await f.journal();if(point!=='after-commit'){expect(interrupted.installs[f.initial.id].history).toEqual(before.installs[f.initial.id].history);expect(interrupted.installs[f.initial.id].archiveIntent).toBeDefined();
@@ -82,7 +82,7 @@ describe('durable private workflow-pack history archives',()=>{
   });
 
   it('holds pending archives against upgrade, repair, stale resume and profile changes',async()=>{
-    const f=await fixture();await f.reach(4);const body=archiveRequest(await f.preview());control.fault=(path,_value,stage)=>{if(path.includes('customer-pack-history/')&&stage==='before')throw new Error('Synthetic write failure');};
+    const f=await fixture();await f.reach(4);const body=archiveRequest(await f.preview());control.fault=(path,_value,stage)=>{if(/customer-pack-history[\\/]/.test(path)&&stage==='before')throw new Error('Synthetic write failure');};
     await expect(f.archive(body)).rejects.toThrow('Synthetic');control.fault=undefined;const before=await f.journal();
     await expect(f.service.install(before.installs[f.initial.id].pack,before.installs[f.initial.id].digest)).rejects.toThrow(/pending/);
     await expect(f.upgrade(5)).rejects.toThrow(/recover/);
@@ -96,14 +96,14 @@ describe('durable private workflow-pack history archives',()=>{
     const f=await fixture();await f.reach(4);let workroom=join(f.root,'vault');
     const service=createCustomerPackService({...f.options,workroomDirectory:()=>workroom});
     const preview=(await service.handle(f.route('archive-preview'),'POST',{}))!.body as CustomerPackArchivePreview,body=archiveRequest(preview);
-    control.fault=(path,_value,stage)=>{if(path.includes('customer-pack-history/')&&stage==='after')workroom=join(f.root,'other-vault');};
+    control.fault=(path,_value,stage)=>{if(/customer-pack-history[\\/]/.test(path)&&stage==='after')workroom=join(f.root,'other-vault');};
     await expect(service.handle(f.route('archive'),'POST',body)).rejects.toThrow(/same private workspace/);control.fault=undefined;
     const journal=await f.journal();expect(journal.installs[f.initial.id].history).toHaveLength(3);expect(journal.installs[f.initial.id].archiveHead).toBeUndefined();
     workroom=join(f.root,'vault');await expect(service.handle(f.route('resume-archive'),'POST',body)).resolves.toMatchObject({body:{localReady:true,archivedHistory:{configurations:1}}});
   });
 
   it('rejects altered durable archive intent without rewriting the journal or touching saved plans',async()=>{
-    const f=await fixture();await f.reach(4);const body=archiveRequest(await f.preview());control.fault=(path,_value,stage)=>{if(path.includes('customer-pack-history/')&&stage==='before')throw new Error('Synthetic interruption');};
+    const f=await fixture();await f.reach(4);const body=archiveRequest(await f.preview());control.fault=(path,_value,stage)=>{if(/customer-pack-history[\\/]/.test(path)&&stage==='before')throw new Error('Synthetic interruption');};
     await expect(f.archive(body)).rejects.toThrow('Synthetic');control.fault=undefined;
     const journal=await f.journal();journal.installs[f.initial.id].archiveIntent.digest='f'.repeat(64);const damaged=JSON.stringify(journal),recipes=loadRecipes(true);
     await writeFile(join(f.root,'customer-packs.json'),damaged,{mode:0o600});await expect(f.reopen().handle(f.route('resume-archive'),'POST',body)).rejects.toThrow(/recovery/);
@@ -112,13 +112,13 @@ describe('durable private workflow-pack history archives',()=>{
 
   it.each(['foreign','hardlink','changed-during-recovery'] as const)('preserves %s staging files and holds the saved intent instead of deleting unrelated bytes',async kind=>{
     const f=await fixture();await f.reach(4);const body=archiveRequest(await f.preview());let temporary='';
-    control.fault=(path,_value,stage)=>{if(path.includes('customer-pack-history/')&&stage==='before'){
+    control.fault=(path,_value,stage)=>{if(/customer-pack-history[\\/]/.test(path)&&stage==='before'){
       temporary=`${path}.11111111-1111-4111-8111-111111111111.tmp`;
       plantPrivateFile(temporary,kind==='foreign' ? 'Preserve unrelated data.' : '{"format":"realbud-pack-');
       if(kind==='hardlink')linkSync(temporary,join(f.root,'held-evidence.txt'));
       throw new Error('Synthetic interruption');}};
     await expect(f.archive(body)).rejects.toThrow('Synthetic');
-    control.fault=kind==='changed-during-recovery' ? (path,_value,stage)=>{if(path.includes('customer-pack-history/')&&stage==='after')writeFileSync(temporary,'Newer unrelated data.',{mode:0o600});} : undefined;
+    control.fault=kind==='changed-during-recovery' ? (path,_value,stage)=>{if(/customer-pack-history[\\/]/.test(path)&&stage==='after')writeFileSync(temporary,'Newer unrelated data.',{mode:0o600});} : undefined;
     await expect(f.reopen().handle(f.route('resume-archive'),'POST',body)).rejects.toThrow(/staging/);
     expect((await f.journal()).installs[f.initial.id].history).toHaveLength(3);
     expect(await readFile(temporary,'utf8')).toBe(kind==='foreign'?'Preserve unrelated data.':kind==='hardlink'?'{"format":"realbud-pack-':'Newer unrelated data.');
@@ -127,12 +127,12 @@ describe('durable private workflow-pack history archives',()=>{
   it('compares staging bytes exactly when an interruption ends within a multibyte character',async()=>{
     const initial=pack();initial.title='Fictional 辦公室';const f=await fixture(initial);await f.reach(4);const body=archiveRequest(await f.preview());
     let temporary='',partial=Buffer.alloc(0);
-    control.fault=(path,value,stage)=>{if(path.includes('customer-pack-history/')&&stage==='before'){
+    control.fault=(path,value,stage)=>{if(/customer-pack-history[\\/]/.test(path)&&stage==='before'){
       temporary=`${path}.11111111-1111-4111-8111-111111111111.tmp`;
       const expected=Buffer.from(JSON.stringify(value)),index=expected.findIndex(byte=>byte>=0x80);expect(index).toBeGreaterThan(0);
       partial=Buffer.from(expected.subarray(0,index+1));plantPrivateFile(temporary,partial);throw new Error('Synthetic interruption');}};
     await expect(f.archive(body)).rejects.toThrow('Synthetic');
-    control.fault=(path,_value,stage)=>{if(path.includes('customer-pack-history/')&&stage==='after'){
+    control.fault=(path,_value,stage)=>{if(/customer-pack-history[\\/]/.test(path)&&stage==='after'){
       const changed=Buffer.from(partial);changed[changed.length-1]^=1;expect(changed.toString('utf8')).toBe(partial.toString('utf8'));
       writeFileSync(temporary,changed,{mode:0o600});}};
     await expect(f.reopen().handle(f.route('resume-archive'),'POST',body)).rejects.toThrow(/staging changed/);

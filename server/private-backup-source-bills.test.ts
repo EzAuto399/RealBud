@@ -108,7 +108,7 @@ describe('source-bill retention through private backup', () => {
         expect(() => restored.accept(review(source(500), 500), source(500), to.workspaceId)).toThrow(/already|correction/i);
       } finally { restoredDatabase.close(); }
     } finally { database.close(); }
-  }, 30_000);
+  }, process.platform === 'win32' ? 180_000 : 30_000);
 
   it('keeps legacy bill bytes valid for import and migrates only when the restored register is opened', async () => {
     const from = await fixture(), to = await fixture();

@@ -16,6 +16,9 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const fixtures: string[] = [], children: { child: ChildProcess; closed: Promise<void> }[] = [];
 const sha = (value: Buffer | string) => createHash('sha256').update(value).digest('hex');
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+// Every private object the fixture plants and the service admits costs one
+// PowerShell launch on Windows, so boot, export and refusal take far longer there.
+const WINDOWS = process.platform === 'win32';
 async function stop(owned: (typeof children)[number]) {
   if (owned.child.exitCode === null && !owned.child.signalCode) owned.child.kill('SIGTERM');
   await Promise.race([owned.closed, delay(3000)]);
@@ -61,7 +64,7 @@ async function start(directory: string) {
 describe('real service bootstrap for prepared v2 restoration', () => {
   it('applies before stores load and exposes the persisted completion receipt through actual HTTP', async () => {
     const f = await fixture(), server = await start(f.directory); let ready = false;
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < (WINDOWS ? 600 : 100); i++) {
       if (server.owned.child.exitCode !== null || server.owned.child.signalCode) break;
       try { const response = await fetch(`${server.base}/api/health`, { signal: AbortSignal.timeout(300) }); const health = await response.json() as { pid: number }; if (health.pid === server.owned.child.pid) { ready = true; break; } } catch {}
       await delay(100);
@@ -78,7 +81,7 @@ describe('real service bootstrap for prepared v2 restoration', () => {
     plantPrivateFile(join(f.directory, 'vault/workflow-inputs/pause.txt'), Buffer.alloc(4 * 1024 * 1024, 70));
     const beforeBook = readFileSync(join(f.directory, 'desk.json'));
     let finished = false;
-    const exporting = fetch(`${server.base}/api/private-backup/export`, { method: 'POST', signal: AbortSignal.timeout(10_000), headers: { 'x-realbud-session': session.token, 'content-type': 'application/json' }, body: JSON.stringify({ passphrase: 'Fictional pause export passphrase' }) })
+    const exporting = fetch(`${server.base}/api/private-backup/export`, { method: 'POST', signal: AbortSignal.timeout(WINDOWS ? 120_000 : 10_000), headers: { 'x-realbud-session': session.token, 'content-type': 'application/json' }, body: JSON.stringify({ passphrase: 'Fictional pause export passphrase' }) })
       .then(async response => ({ status: response.status, body: await response.json() as any })).finally(() => { finished = true; });
     try {
       let paused = false;
@@ -97,16 +100,16 @@ describe('real service bootstrap for prepared v2 restoration', () => {
     const resumed = await fetch(`${server.base}/api/desk`, { headers: { 'x-realbud-session': session.token } }); expect(resumed.status).toBe(200);
     expect(readFileSync(join(f.directory, 'desk.json'))).toEqual(beforeBook);
     await stop(server.owned);
-  }, 20_000);
+  }, WINDOWS ? 300_000 : 20_000);
   it.each(['conflicting stage', 'changed target', 'wrong key'])('holds startup before opening application stores: %s', async attack => {
     const f = await fixture();
     if (attack === 'conflicting stage') plantPrivateFile(join(f.directory, 'private-workspace-restore.json'), 'fictional conflicting stage');
     if (attack === 'changed target') writeFileSync(join(f.directory, 'desk.json'), 'fictional changed target');
     if (attack === 'wrong key') writeFileSync(join(f.directory, 'desk.key'), randomBytes(32));
     const stage = readFileSync(join(f.directory, PRIVATE_RESTORE_V2_STAGE_FILE)), server = await start(f.directory);
-    await Promise.race([server.owned.closed, delay(10_000)]);
+    await Promise.race([server.owned.closed, delay(WINDOWS ? 60_000 : 10_000)]);
     expect(server.owned.child.exitCode, server.logs()).toBe(1);
     expect(readFileSync(join(f.directory, PRIVATE_RESTORE_V2_STAGE_FILE))).toEqual(stage);
     expect(existsSync(join(f.directory, 'workflow-state.sqlite'))).toBe(false);
-  }, 15_000);
+  }, WINDOWS ? 120_000 : 15_000);
 });

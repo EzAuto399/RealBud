@@ -57,7 +57,7 @@ describe('independent pack archival recovery review',()=>{
     const f=await fixture();await f.reach(9);const body=archiveRequest(await f.preview());
     let temporary='';
     control.fault=(path,_value,stage)=>{
-      if(path.includes('customer-pack-history/')&&stage==='before'){
+      if(/customer-pack-history[\\/]/.test(path)&&stage==='before'){
         // Exact sibling naming/permissions used by writePrivateJson. A process
         // death after the first write bypasses that helper's finally cleanup.
         temporary=`${path}.11111111-1111-4111-8111-111111111111.tmp`;

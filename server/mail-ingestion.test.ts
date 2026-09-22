@@ -490,16 +490,18 @@ describe('bounded, checkpointed historical mail acquisition', () => {
 
   it('resumes an unconfirmed window after a crash without re-reading a completed one', async () => {
     const f = await historyFixture();
-    let release!: () => void;
+    let release!: () => void, asked!: () => void;
+    const providerAsked = new Promise<void>(resolve => { asked = resolve; });
     f.scan.mockImplementationOnce(async (_authority, _request, signal) => {
-      await new Promise<void>((resolve, reject) => { release = resolve; signal.addEventListener('abort', () => reject(signal.reason)); });
+      await new Promise<void>((resolve, reject) => { release = resolve; signal.addEventListener('abort', () => reject(signal.reason)); asked(); });
       throw new Error('unreachable');
     });
     const crashing = f.build();
     const running = crashing.collectHistory().catch(error => error);
-    const peek = async () => { try { return await f.saved(); } catch { return null; } };
-    // Bounded by time, not iterations: Windows admission makes each private write slower.
-    for (const until = Date.now() + 30_000; Date.now() < until && (await peek())?.windows[0].status !== 'running';) await new Promise(r => setTimeout(r, 5));
+    // Wait for the provider call itself rather than polling the checkpoint: on
+    // Windows a reader holding the file can make the service's atomic replace fail.
+    const outcome = await Promise.race([providerAsked.then(() => null), running]);
+    expect(outcome).toBeNull();
     const midway = await f.saved();
     // The intent is durable before the provider is asked for the window.
     expect(midway.windows[0]).toMatchObject({ status: 'running', attemptedAt: initialTime, capturedAt: null, pages: 0 });

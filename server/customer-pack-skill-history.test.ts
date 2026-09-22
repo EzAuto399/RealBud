@@ -52,7 +52,7 @@ describe('reviewed instruction history archival',()=>{
 
  it.each(['before-intent','after-intent','before-file','after-file','before-head','after-head'] as const)('recovers %s with a cold retry and one immutable batch',async point=>{
   const f=await fixture(),body=confirmation(await f.preview()),before=await f.journal(),recipes=loadRecipes(true);let fired=false;
-  control.fault=(path,value,stage)=>{const intent=path===f.journalPath&&!!value.installs[f.initial.id].skillArchiveIntent,file=path.includes('/customer-skill-history/'),head=path===f.journalPath&&!!value.installs[f.initial.id].overrides[f.initial.skills[0].id].archiveHead&&!intent;
+  control.fault=(path,value,stage)=>{const intent=path===f.journalPath&&!!value.installs[f.initial.id].skillArchiveIntent,file=/[\\/]customer-skill-history[\\/]/.test(path),head=path===f.journalPath&&!!value.installs[f.initial.id].overrides[f.initial.skills[0].id].archiveHead&&!intent;
    if(!fired&&((point==='before-intent'&&intent&&stage==='before')||(point==='after-intent'&&intent&&stage==='after')||(point==='before-file'&&file&&stage==='before')||(point==='after-file'&&file&&stage==='after')||(point==='before-head'&&head&&stage==='before')||(point==='after-head'&&head&&stage==='after'))){fired=true;throw new Error(`Synthetic ${point}`);}};
   await expect(f.call('archive',body)).rejects.toThrow('Synthetic');expect(fired).toBe(true);control.fault=undefined;
   const saved=await f.journal();if(point==='before-intent')expect(saved).toEqual(before);else if(point!=='after-head'){expect(saved.version).toBe(2);expect(saved.installs[f.initial.id].overrides).toEqual(before.installs[f.initial.id].overrides);expect((await f.reopen().list()).installations[0].localReady).toBe(false);}
@@ -61,7 +61,7 @@ describe('reviewed instruction history archival',()=>{
 
  it('admits only a compact validated intent over an otherwise admitted near-2MB legacy root, then completes using the actual private writer after restart',async()=>{
   const f=await fixture(100,18000),j=await f.journal();j.installs[f.initial.id].receipt.note='';j.installs[f.initial.id].receipt.note='x'.repeat(1_999_950-Buffer.byteLength(JSON.stringify(j)));await writeFile(f.journalPath,JSON.stringify(j));expect(Buffer.byteLength(JSON.stringify(j))).toBe(1_999_950);
-  const body=confirmation(await f.preview());control.fault=(path,_value,stage)=>{if(path.includes('/customer-skill-history/')&&stage==='before')throw new Error('Synthetic interrupted archive');};await expect(f.call('archive',body)).rejects.toThrow('Synthetic');control.fault=undefined;
+  const body=confirmation(await f.preview());control.fault=(path,_value,stage)=>{if(/[\\/]customer-skill-history[\\/]/.test(path)&&stage==='before')throw new Error('Synthetic interrupted archive');};await expect(f.call('archive',body)).rejects.toThrow('Synthetic');control.fault=undefined;
   const pending=await f.journal(),size=Buffer.byteLength(JSON.stringify(pending));expect(size).toBeGreaterThan(2_000_000);expect(size).toBeLessThanOrEqual(2_016_384);expect(()=>validateSkillJournalRoot(pending)).not.toThrow();
   const invalid=structuredClone(pending);invalid.installs[f.initial.id].skillArchiveIntent.digest='f'.repeat(64);expect(()=>validateSkillJournalRoot(invalid)).toThrow();const unrelated=structuredClone(pending);delete unrelated.installs[f.initial.id].skillArchiveIntent;unrelated.installs[f.initial.id].receipt.note+='x'.repeat(1000);expect(()=>validateSkillJournalRoot(unrelated)).toThrow();
   await f.call('resume-archive',body,f.reopen());expect(Buffer.byteLength(JSON.stringify(await f.journal()))).toBeLessThan(2_000_000);expect((await f.reopen().list()).installations[0].localReady).toBe(true);
@@ -77,15 +77,15 @@ describe('reviewed instruction history archival',()=>{
 
  it('holds pending archives against pack/proposal preparation and a profile switch after durable file creation',async()=>{
   const f=await fixture();let profile=f.options.profileDirectory();const service=createCustomerPackService({...f.options,profileDirectory:()=>profile});const body=confirmation(await f.call('archive-preview',{},service));
-  control.fault=(path,_value,stage)=>{if(path.includes('/customer-skill-history/')&&stage==='after')profile=join(f.root,'other-profile');};await expect(f.call('archive',body,service)).rejects.toThrow(/instructions changed|workspace/);control.fault=undefined;
+  control.fault=(path,_value,stage)=>{if(/[\\/]customer-skill-history[\\/]/.test(path)&&stage==='after')profile=join(f.root,'other-profile');};await expect(f.call('archive',body,service)).rejects.toThrow(/instructions changed|workspace/);control.fault=undefined;
   expect((await f.journal()).installs[f.initial.id].skillArchiveIntent).toBeDefined();await expect(f.service.assertReadyForRecipe(f.initial.recipes[0].id)).rejects.toThrow(/recovery/);
   const next=structuredClone(f.initial);next.revision=2;await expect(f.service.previewUpgrade(next)).rejects.toThrow(/recover/);await expect(f.service.install(f.initial,(await f.journal()).installs[f.initial.id].digest)).rejects.toThrow(/pending/);
   await expect(f.call('resume-archive',body,service)).rejects.toThrow(/different instruction archive/);profile=f.options.profileDirectory();await f.call('resume-archive',body,service);
  });
 
  it.each(['foreign','hardlink','changed'] as const)('preserves %s temporary evidence and retains complete inline versions',async kind=>{
-  const f=await fixture(),body=confirmation(await f.preview());let temp='';control.fault=(path,value,stage)=>{if(path.includes('/customer-skill-history/')&&stage==='before'){temp=`${path}.11111111-1111-4111-8111-111111111111.tmp`;plantPrivateFile(temp,kind==='foreign'?'Unrelated evidence':JSON.stringify(value).slice(0,50));if(kind==='hardlink')linkSync(temp,join(f.root,'linked-evidence'));throw new Error('Synthetic fault');}};
-  await expect(f.call('archive',body)).rejects.toThrow('Synthetic');control.fault=kind==='changed'?(path,_value,stage)=>{if(path.includes('/customer-skill-history/')&&stage==='after')writeFileSync(temp,'Changed evidence',{mode:0o600});}:undefined;
+  const f=await fixture(),body=confirmation(await f.preview());let temp='';control.fault=(path,value,stage)=>{if(/[\\/]customer-skill-history[\\/]/.test(path)&&stage==='before'){temp=`${path}.11111111-1111-4111-8111-111111111111.tmp`;plantPrivateFile(temp,kind==='foreign'?'Unrelated evidence':JSON.stringify(value).slice(0,50));if(kind==='hardlink')linkSync(temp,join(f.root,'linked-evidence'));throw new Error('Synthetic fault');}};
+  await expect(f.call('archive',body)).rejects.toThrow('Synthetic');control.fault=kind==='changed'?(path,_value,stage)=>{if(/[\\/]customer-skill-history[\\/]/.test(path)&&stage==='after')writeFileSync(temp,'Changed evidence',{mode:0o600});}:undefined;
   await expect(f.call('resume-archive',body,f.reopen())).rejects.toThrow(/staging/);expect((await f.journal()).installs[f.initial.id].overrides[f.initial.skills[0].id].versions).toHaveLength(6);expect(await readFile(temp,'utf8')).not.toBe('');
  });
 

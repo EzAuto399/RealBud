@@ -22,12 +22,15 @@ on:
       - electron/desk-key-custody.test.mjs
       - server/accounts-review.test.ts
       - server/agency-setup.test.ts
+      - server/attended-run.test.ts
       - server/batches.test.ts
       - server/bill-proposals.test.ts
       - server/bill-review-drafts.test.ts
       - server/bill-review-http.test.ts
       - server/browser-broker.test.ts
       - server/browser-runtime.test.ts
+      - server/channel-pairing.test.ts
+      - server/company-installation.test.ts
       - server/company-installation-binding.test.ts
       - server/company/host-runtime.test.ts
       - server/company/postgres-runtime.test.ts
@@ -47,6 +50,7 @@ on:
       - server/mail-workspace-http.test.ts
       - server/manual-job-request.test.ts
       - server/morning-mail-scheduler.test.ts
+      - server/office-link.test.ts
       - server/private-backup-archive.test.ts
       - server/private-backup-bank-amendment.test.ts
       - server/private-backup-bank-retention.test.ts
@@ -130,12 +134,15 @@ jobs:
           electron/desk-key-custody.test.mjs
           server/accounts-review.test.ts
           server/agency-setup.test.ts
+          server/attended-run.test.ts
           server/batches.test.ts
           server/bill-proposals.test.ts
           server/bill-review-drafts.test.ts
           server/bill-review-http.test.ts
           server/browser-broker.test.ts
           server/browser-runtime.test.ts
+          server/channel-pairing.test.ts
+          server/company-installation.test.ts
           server/company-installation-binding.test.ts
           server/company/host-runtime.test.ts
           server/company/postgres-runtime.test.ts
@@ -155,6 +162,7 @@ jobs:
           server/mail-workspace-http.test.ts
           server/manual-job-request.test.ts
           server/morning-mail-scheduler.test.ts
+          server/office-link.test.ts
           server/private-backup-archive.test.ts
           server/private-backup-bank-amendment.test.ts
           server/private-backup-bank-retention.test.ts

@@ -308,8 +308,15 @@ describe('durable private backup operation records', () => {
     const sql = new DatabaseSync(secondPath); sql.prepare('UPDATE operations SET payload=? WHERE id=?').run('not-encrypted', row.operation.id); sql.close();
     expect(() => second.store.get(row.operation.id)).toThrow(/recovery/);
     const third = await setup(), thirdPath = join(third.settings.directory, 'operations.sqlite');
-    renameSync(thirdPath, `${thirdPath}.saved`); const replacement = new DatabaseSync(thirdPath); replacement.close();
-    expect(() => third.store.usage()).toThrow(/recovery/);
+    if (process.platform === 'win32') {
+      // Windows refuses to move a database file that another handle holds open,
+      // so the swap this guards against cannot happen under a live store there.
+      expect(() => renameSync(thirdPath, `${thirdPath}.saved`)).toThrow(/EBUSY|EPERM|EACCES/);
+      expect(third.store.usage()).toMatchObject({ records: 0 });
+    } else {
+      renameSync(thirdPath, `${thirdPath}.saved`); const replacement = new DatabaseSync(thirdPath); replacement.close();
+      expect(() => third.store.usage()).toThrow(/recovery/);
+    }
   });
 
   it.skipIf(process.platform === 'win32')('refuses public or multiply linked journal files', async () => {

@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Recipe } from "../shared/contracts.ts";
 import { ATTEND_ERRORS, ATTENDED_UNVERIFIED_RESULT, attendBlocked, attendedJobSystemBlock, attendedSettleStatus, fenceEvidence, humanSigninNeeded, portalBrowserPolicy, portalSignInCompleteIntent, submitHoldLine } from "./attended-run.ts";
 import { JobRunStore } from "./job-runs.ts";
+import { removeFixture } from "./testing/private-fixture.ts";
 import { startCuaControl } from "../electron/cua-control.mjs";
 let fixtureControl: Awaited<ReturnType<typeof startCuaControl>>;
 describe("worker sign-in handover requests", () => {
@@ -179,7 +180,7 @@ describe("attend preconditions", () => {
     }
   });
 
-  it("marks a queued attended run missed after a day", () => {
+  it("marks a queued attended run missed after a day", async () => {
     const dir = mkdtempSync(join(tmpdir(), "realbud-attend-sweep-"));
     let now = 1_000;
     const store = new JobRunStore({ file: join(dir, "job-runs.json"), now: () => now });
@@ -195,7 +196,9 @@ describe("attend preconditions", () => {
       status: "missed",
       detail: "Not started — the run waited a day for someone at the screen.",
     });
-    rmSync(dir, { recursive: true, force: true });
+    store.close();
+    // Windows can hold the folder briefly after the last write (EPERM); retry, never fail on cleanup.
+    await removeFixture(dir);
   });
 });
 

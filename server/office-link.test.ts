@@ -506,7 +506,8 @@ describe("linking through the browser", () => {
     expect((await app.status()).lastReportedAt).toBeUndefined();
     expect(sink.apply).not.toHaveBeenCalled();
     open();
-    await vi.waitFor(async () => expect((await app.status()).provisioned).toBe(true));
+    // Each private write costs a Windows admission launch, so allow for several there.
+    await vi.waitFor(async () => expect((await app.status()).provisioned).toBe(true), process.platform === "win32" ? { timeout: 30_000, interval: 100 } : undefined);
     expect(report).toHaveBeenCalledTimes(1);
     expect(routes(site).filter(route => route === "POST report")).toHaveLength(1);
     expect(site.calls.find(call => call.route === "report")?.auth).toBe(`Bearer ${sent.token}`);

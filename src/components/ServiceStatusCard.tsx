@@ -22,6 +22,19 @@ export function autoRestartCopy(value: unknown): { running: string | null; stopp
   };
 }
 
+/**
+ * What happens to a running office service when the window closes. On Windows
+ * the app itself stays in the notification area while unattended work is on
+ * (electron/unattended-host.mjs), so that is where supervision lives.
+ */
+export function officeRunningCopy(adopted: boolean, platform: string | undefined): string {
+  if (adopted) return "RealBud connected to a service that was already running on this computer.";
+  const background = platform === "win32"
+    ? " While a schedule, start at sign-in or keep-awake is on, RealBud also stays in the notification area to restart the service if it stops. Quit RealBud from that icon to stop watching over it."
+    : "";
+  return `It keeps running when you close the window.${background} Keep this computer awake and connected for shared records and scheduled work.`;
+}
+
 export function ServiceStatusCard() {
   const [status, setStatus] = useState<ReturnType<typeof serviceStatusCopy> | null>(null);
   const [pending, setPending] = useState(true);
@@ -102,9 +115,7 @@ export function ServiceStatusCard() {
       <div role="status" className="mb-3 rounded-lg bg-raised px-3 py-2 text-[13px] leading-relaxed">
         <p className="font-medium text-ink">The office service is running.</p>
         <p className="mt-1 text-ink-secondary">
-          {worker?.adopted
-            ? "RealBud connected to a service that was already running on this computer."
-            : "It keeps running when you close the window. Keep this computer awake and connected for shared records and scheduled work."}
+          {officeRunningCopy(worker?.adopted === true, typeof window !== "undefined" ? window.ogb?.platform : undefined)}
         </p>
         {autoRestart.running ? <p className="mt-1 text-ink-secondary">{autoRestart.running}</p> : null}
         {worker?.manageable ? (
