@@ -14,7 +14,10 @@ const recovery = () => new Error('The saved workspace encryption key needs recov
 // Electron main loads plain .mjs out of the ASAR and cannot import the
 // compiled server module, and the policy must not fork. Path, kind and action
 // are passed as environment variables, never interpolated into the command or
-// its arguments.
+// its arguments. The script applies an ordered list, so the server can pay for
+// one cold powershell.exe instead of one per path; this caller only ever needs
+// a single operation, so it omits REALBUD_WINDOWS_FILE_PRIVACY_COUNT and the
+// script falls back to the unsuffixed PATH/KIND/ACTION triple passed below.
 //
 // What this policy does and does not claim, checked against the script below:
 // the verifier reads the live descriptor as objects and compares it
@@ -34,16 +37,34 @@ const recovery = () => new Error('The saved workspace encryption key needs recov
 // points; those are refused at open/verify time, not prevented.
 const WINDOWS_ACL = `
 $ErrorActionPreference = 'Stop'
+$count = $env:REALBUD_WINDOWS_FILE_PRIVACY_COUNT
+if ([string]::IsNullOrEmpty($count)) { $count = '1' }
+if ($count -notmatch '^([1-9]|[1-5][0-9]|6[0-4])$') { exit 9 }
+$total = [int]$count
+$stage = 20
+try {
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+$system = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
+$allowed = @($sid.Value, 'S-1-5-18', 'S-1-5-32-544')
+} catch {
+  exit $stage
+}
+for ($index = 0; $index -lt $total; $index++) {
+[Console]::Out.WriteLine($index)
 $path = $env:REALBUD_WINDOWS_FILE_PRIVACY_PATH
 $kind = $env:REALBUD_WINDOWS_FILE_PRIVACY_KIND
 $action = $env:REALBUD_WINDOWS_FILE_PRIVACY_ACTION
+if ($index -gt 0) {
+  $path = [System.Environment]::GetEnvironmentVariable("REALBUD_WINDOWS_FILE_PRIVACY_PATH_" + $index)
+  $kind = [System.Environment]::GetEnvironmentVariable("REALBUD_WINDOWS_FILE_PRIVACY_KIND_" + $index)
+  $action = [System.Environment]::GetEnvironmentVariable("REALBUD_WINDOWS_FILE_PRIVACY_ACTION_" + $index)
+}
+if ([string]::IsNullOrEmpty($path)) { exit 9 }
 if ($kind -ne 'directory' -and $kind -ne 'file') { exit 9 }
 if ($action -ne 'restrict' -and $action -ne 'verify') { exit 9 }
 $directory = $kind -eq 'directory'
 $stage = 20
 try {
-$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
-$system = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
 $cursor = $path
 $target = $true
 while ($true) {
@@ -80,7 +101,6 @@ $stage = 25
 $actual = Get-Acl -LiteralPath $path
 $stage = 26
 if (-not $actual.AreAccessRulesProtected) { exit 5 }
-$allowed = @($sid.Value, 'S-1-5-18', 'S-1-5-32-544')
 if ($allowed -notcontains $actual.GetOwner([System.Security.Principal.SecurityIdentifier]).Value) { exit 2 }
 $usable = $false
 foreach ($rule in $actual.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
@@ -97,6 +117,7 @@ if (-not $usable) { exit 4 }
 } catch {
   # Never emit the exception: native messages can contain a path or identity.
   exit $stage
+}
 }
 exit 0
 `;

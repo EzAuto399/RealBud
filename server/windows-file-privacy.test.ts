@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { windowsFilePrivacy } from './windows-file-privacy.ts';
+import { windowsFilePrivacy, windowsFilePrivacyBatchSync } from './windows-file-privacy.ts';
 import { writeNewPrivateFile } from './private-file.ts';
 
 const roots: string[] = [];
@@ -44,6 +44,14 @@ async function setTestAcl(path: string, mode: 'inherit-only' | 'deny-write') {
 
 it.skipIf(process.platform === 'win32')('does not run Windows ACL operations on another OS', async () => {
   await expect(windowsFilePrivacy('/no-file-is-accessed', 'file')).resolves.toBeUndefined();
+  // A batch reports what it did, so a no-op is never mistaken for an admission.
+  expect(windowsFilePrivacyBatchSync([
+    { path: '/no-file-is-accessed', kind: 'file', action: 'verify' },
+    { path: '/no-directory-is-accessed', kind: 'directory', action: 'restrict' },
+  ])).toEqual([
+    { path: '/no-file-is-accessed', kind: 'file', action: 'verify', applied: false },
+    { path: '/no-directory-is-accessed', kind: 'directory', action: 'restrict', applied: false },
+  ]);
 });
 
 describe.skipIf(process.platform !== 'win32')('native Windows privacy admission', () => {
@@ -54,6 +62,34 @@ describe.skipIf(process.platform !== 'win32')('native Windows privacy admission'
     await expect(windowsFilePrivacy(path, 'file')).resolves.toBeUndefined();
     expect(await readFile(path, 'utf8')).toBe('fictional credential');
   });
+  it('applies an ordered list in one process and stops at the refusing operation', async () => {
+    const root = await fixture(), nested = join(root, 'nested'); await mkdir(nested);
+    // A file created under the protected root inherits its ACEs, so its own
+    // descriptor is unprotected: a real refusal, not a simulated one.
+    const inherited = join(root, 'inherited.txt'); await writeFile(inherited, 'preserved');
+    expect(windowsFilePrivacyBatchSync([
+      { path: root, kind: 'directory', action: 'verify' },
+      { path: nested, kind: 'directory', action: 'restrict' },
+    ])).toEqual([
+      { path: root, kind: 'directory', action: 'verify', applied: true },
+      { path: nested, kind: 'directory', action: 'restrict', applied: true },
+    ]);
+
+    const unreached = join(nested, 'unreached'); await mkdir(unreached);
+    let failure: unknown;
+    try {
+      windowsFilePrivacyBatchSync([
+        { path: root, kind: 'directory', action: 'verify' },
+        { path: inherited, kind: 'file', action: 'verify' },
+        { path: unreached, kind: 'directory', action: 'restrict' },
+      ]);
+    } catch (error) { failure = error; }
+    expect(failure).toMatchObject({ category: 'inheritance-not-protected', nativeExitCode: 5, operationIndex: 1 });
+    expect(await readFile(inherited, 'utf8')).toBe('preserved');
+    // Nothing after the refusal ran: the trailing restrict never happened.
+    await expect(windowsFilePrivacy(unreached, 'directory')).rejects.toMatchObject({ category: 'inheritance-not-protected' });
+  });
+
   it('rejects an inherited, unprotected existing file without repairing it', async () => {
     const root = await fixture(); const path = join(root, 'inherited.txt'); await writeFile(path, 'preserved');
     await expect(windowsFilePrivacy(path, 'file')).rejects.toMatchObject({ category: 'inheritance-not-protected', nativeExitCode: 5 });

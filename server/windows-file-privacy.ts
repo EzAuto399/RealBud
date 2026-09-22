@@ -8,18 +8,44 @@ const execFileAsync = promisify(execFile);
 // secret, verifier, or interpolated path in a command, its output, or arguments.
 // Existing paths are verify-only. Newly owned directories and files may be restricted
 // before content is written. This does not protect secrets from the OS admin.
+//
+// A cold powershell.exe costs seconds, so one process applies a whole ordered
+// list: operation i reads REALBUD_WINDOWS_FILE_PRIVACY_{PATH,KIND,ACTION} with
+// an `_i` suffix for i > 0, so a one-operation batch is byte-for-byte the same
+// invocation as before. Values are read by name, never interpolated. The list
+// stops at the first failure with today's numeric exit code; the attempted
+// index (an integer, never a path or identity) is echoed so the caller can say
+// which operation refused.
 const WINDOWS_ACL = `
 $ErrorActionPreference = 'Stop'
+$count = $env:REALBUD_WINDOWS_FILE_PRIVACY_COUNT
+if ([string]::IsNullOrEmpty($count)) { $count = '1' }
+if ($count -notmatch '^([1-9]|[1-5][0-9]|6[0-4])$') { exit 9 }
+$total = [int]$count
+$stage = 20
+try {
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+$system = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
+$allowed = @($sid.Value, 'S-1-5-18', 'S-1-5-32-544')
+} catch {
+  exit $stage
+}
+for ($index = 0; $index -lt $total; $index++) {
+[Console]::Out.WriteLine($index)
 $path = $env:REALBUD_WINDOWS_FILE_PRIVACY_PATH
 $kind = $env:REALBUD_WINDOWS_FILE_PRIVACY_KIND
 $action = $env:REALBUD_WINDOWS_FILE_PRIVACY_ACTION
+if ($index -gt 0) {
+  $path = [System.Environment]::GetEnvironmentVariable("REALBUD_WINDOWS_FILE_PRIVACY_PATH_" + $index)
+  $kind = [System.Environment]::GetEnvironmentVariable("REALBUD_WINDOWS_FILE_PRIVACY_KIND_" + $index)
+  $action = [System.Environment]::GetEnvironmentVariable("REALBUD_WINDOWS_FILE_PRIVACY_ACTION_" + $index)
+}
+if ([string]::IsNullOrEmpty($path)) { exit 9 }
 if ($kind -ne 'directory' -and $kind -ne 'file') { exit 9 }
 if ($action -ne 'restrict' -and $action -ne 'verify') { exit 9 }
 $directory = $kind -eq 'directory'
 $stage = 20
 try {
-$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
-$system = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
 $cursor = $path
 $target = $true
 while ($true) {
@@ -56,7 +82,6 @@ $stage = 25
 $actual = Get-Acl -LiteralPath $path
 $stage = 26
 if (-not $actual.AreAccessRulesProtected) { exit 5 }
-$allowed = @($sid.Value, 'S-1-5-18', 'S-1-5-32-544')
 if ($allowed -notcontains $actual.GetOwner([System.Security.Principal.SecurityIdentifier]).Value) { exit 2 }
 $usable = $false
 foreach ($rule in $actual.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
@@ -73,6 +98,7 @@ if (-not $usable) { exit 4 }
 } catch {
   # Never emit the exception: native messages can contain a path or identity.
   exit $stage
+}
 }
 exit 0
 `;
@@ -108,19 +134,50 @@ type PrivacyFailure = (typeof NATIVE_FAILURES)[keyof typeof NATIVE_FAILURES]
   | 'powershell-launch-denied' | 'output-limit-exceeded' | 'process-terminated'
   | 'native-command-failed';
 
+/** One ordered admission. `verify` never repairs; `restrict` owns a new object. */
+export type WindowsFilePrivacyOperation = {
+  path: string;
+  kind: 'file' | 'directory';
+  action: 'restrict' | 'verify';
+};
+/** `applied` is false only where this policy does not run (not win32). */
+export type WindowsFilePrivacyResult = WindowsFilePrivacyOperation & { applied: boolean };
+
+// Each operation costs three more environment entries and one more path in the
+// child's environment block, so the list is capped; the script refuses a count
+// above this too, and a caller with more work splits it across processes.
+const MAX_OPERATIONS = 64;
+
 class WindowsFilePrivacyError extends Error {
   readonly category: PrivacyFailure;
   readonly nativeExitCode: number | null;
+  /** Which operation of a batch refused; null when it is not known. */
+  readonly operationIndex: number | null;
 
-  constructor(category: PrivacyFailure, nativeExitCode: number | null = null, unavailable = false) {
-    super(`${unavailable ? UNAVAILABLE : UNVERIFIED} [windows-acl:${category}; exit=${nativeExitCode ?? 'unavailable'}]`);
+  constructor(
+    category: PrivacyFailure, nativeExitCode: number | null = null, unavailable = false,
+    operationIndex: number | null = null, operationCount = 1,
+  ) {
+    // A one-operation batch keeps today's exact diagnostic suffix.
+    const where = operationCount > 1 && operationIndex !== null ? `; operation=${operationIndex}/${operationCount}` : '';
+    super(`${unavailable ? UNAVAILABLE : UNVERIFIED} [windows-acl:${category}; exit=${nativeExitCode ?? 'unavailable'}${where}]`);
     this.name = 'WindowsFilePrivacyError';
     this.category = category;
     this.nativeExitCode = nativeExitCode;
+    this.operationIndex = operationCount > 1 ? operationIndex : null;
   }
 }
 
-function nativeFailure(error: unknown): WindowsFilePrivacyError {
+/** The script echoes the index it attempted; take that integer and nothing else. */
+function attemptedIndex(stdout: unknown, count: number): number | null {
+  const text = typeof stdout === 'string' ? stdout : Buffer.isBuffer(stdout) ? stdout.toString('utf8') : '';
+  const last = text.split(/\r?\n/).filter(line => /^[0-9]{1,3}$/.test(line)).at(-1);
+  if (last === undefined) return null;
+  const index = Number(last);
+  return index >= 0 && index < count ? index : null;
+}
+
+function nativeFailure(error: unknown, operationIndex: number | null = null, operationCount = 1): WindowsFilePrivacyError {
   const failure = error && typeof error === 'object' ? error as Record<string, unknown> : {};
   const code = failure.code;
   const exit = typeof code === 'number' && Number.isInteger(code) && code >= 0 && code <= 0xffff_ffff ? code : null;
@@ -131,24 +188,36 @@ function nativeFailure(error: unknown): WindowsFilePrivacyError {
   else if (failure.killed === true) category = 'process-terminated';
   else if (exit !== null) category = NATIVE_FAILURES[exit as keyof typeof NATIVE_FAILURES] ?? 'native-command-failed';
   // Do not retain native stderr/stdout, command, signal, path, SID, or cause.
-  return new WindowsFilePrivacyError(category, exit);
+  return new WindowsFilePrivacyError(category, exit, false, operationIndex, operationCount);
 }
 
 function privacyInvocation(
-  path: string,
-  kind: 'file' | 'directory',
-  restrict = false,
+  operations: WindowsFilePrivacyOperation[],
 ): { executable: string; args: string[]; env: NodeJS.ProcessEnv } | null {
   if (process.platform !== 'win32') {
     return null;
   }
-  if (
-    path.includes('\0') ||
-    !isAbsolute(path) ||
-    (kind !== 'file' && kind !== 'directory')
-  ) {
+  if (!Array.isArray(operations) || operations.length < 1 || operations.length > MAX_OPERATIONS) {
     throw new WindowsFilePrivacyError('invalid-path-or-kind');
   }
+  const env: NodeJS.ProcessEnv = { ...process.env, REALBUD_WINDOWS_FILE_PRIVACY_COUNT: String(operations.length) };
+  operations.forEach((operation, index) => {
+    const { path, kind, action } = operation ?? ({} as Partial<WindowsFilePrivacyOperation>);
+    if (
+      typeof path !== 'string' ||
+      path.includes('\0') ||
+      !isAbsolute(path) ||
+      (kind !== 'file' && kind !== 'directory') ||
+      (action !== 'restrict' && action !== 'verify')
+    ) {
+      throw new WindowsFilePrivacyError('invalid-path-or-kind', null, false, index, operations.length);
+    }
+    // Read by name inside the script; never interpolated into a command.
+    const suffix = index === 0 ? '' : `_${index}`;
+    env[`REALBUD_WINDOWS_FILE_PRIVACY_PATH${suffix}`] = path;
+    env[`REALBUD_WINDOWS_FILE_PRIVACY_KIND${suffix}`] = kind;
+    env[`REALBUD_WINDOWS_FILE_PRIVACY_ACTION${suffix}`] = action;
+  });
   const systemRoot = process.env.SystemRoot;
   if (!systemRoot || systemRoot.includes('\0') || !isAbsolute(systemRoot)) {
     throw new WindowsFilePrivacyError('system-root-unavailable', null, true);
@@ -163,12 +232,7 @@ function privacyInvocation(
   return {
     executable: powershell,
     args: ['-NoProfile', '-NonInteractive', '-EncodedCommand', WINDOWS_ACL_ENCODED],
-    env: {
-      ...process.env,
-      REALBUD_WINDOWS_FILE_PRIVACY_PATH: path,
-      REALBUD_WINDOWS_FILE_PRIVACY_KIND: kind,
-      REALBUD_WINDOWS_FILE_PRIVACY_ACTION: restrict ? 'restrict' : 'verify',
-    },
+    env,
   };
 }
 
@@ -177,7 +241,7 @@ export async function windowsFilePrivacy(
   kind: 'file' | 'directory',
   restrict = false,
 ): Promise<void> {
-  const invocation = privacyInvocation(path, kind, restrict);
+  const invocation = privacyInvocation([{ path, kind, action: restrict ? 'restrict' : 'verify' }]);
   if (!invocation) return;
   try {
     await execFileAsync(
@@ -196,10 +260,17 @@ export async function windowsFilePrivacy(
   }
 }
 
-/** The same policy for existing synchronous installer/profile call paths. */
-export function windowsFilePrivacySync(path: string, kind: 'file' | 'directory', restrict = false): void {
-  const invocation = privacyInvocation(path, kind, restrict);
-  if (!invocation) return;
+/**
+ * One PowerShell process for an ordered list of admissions. The caller decides
+ * the order; the script stops at the first refusal, so nothing after a failure
+ * is applied and the failure carries the same numeric exit code as a single
+ * call. Only batch operations whose order is already safe: an admission that
+ * must gate a write still has to happen before that write.
+ */
+export function windowsFilePrivacyBatchSync(operations: WindowsFilePrivacyOperation[]): WindowsFilePrivacyResult[] {
+  const invocation = privacyInvocation(operations);
+  const planned = (Array.isArray(operations) ? operations : []).map(({ path, kind, action }) => ({ path, kind, action }));
+  if (!invocation) return planned.map(operation => ({ ...operation, applied: false }));
   try {
     execFileSync(invocation.executable, invocation.args, {
       env: invocation.env, shell: false, windowsHide: true, timeout: 15_000,
@@ -211,6 +282,12 @@ export function windowsFilePrivacySync(path: string, kind: 'file' | 'directory',
     throw nativeFailure({
       code: failure.code === 'ENOBUFS' ? 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' : failure.code ?? failure.status,
       killed: failure.killed === true || failure.code === 'ETIMEDOUT',
-    });
+    }, attemptedIndex(failure.stdout, planned.length), planned.length);
   }
+  return planned.map(operation => ({ ...operation, applied: true }));
+}
+
+/** The same policy for existing synchronous installer/profile call paths. */
+export function windowsFilePrivacySync(path: string, kind: 'file' | 'directory', restrict = false): void {
+  windowsFilePrivacyBatchSync([{ path, kind, action: restrict ? 'restrict' : 'verify' }]);
 }

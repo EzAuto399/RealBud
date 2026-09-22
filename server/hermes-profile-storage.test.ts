@@ -6,8 +6,26 @@ import { ensureProfileDirectory, readProfileFile, writeProfileFile } from './her
 import { applyPropertyPack, ensurePropertyPack, migratePropertyProfileFromLegacyHermes, propertyProfileDir } from './hermes-pack.ts';
 import { attachModel } from './hermes-bridge.ts';
 
-const privacy = vi.hoisted(() => vi.fn<(path: string, kind: 'file' | 'directory', restrict?: boolean) => void>());
-vi.mock('./windows-file-privacy.ts', () => ({ windowsFilePrivacySync: privacy }));
+type Operation = { path: string; kind: 'file' | 'directory'; action: 'restrict' | 'verify' };
+// `privacy` keeps recording one entry per admitted path, batched or not, so the
+// ordered admission list stays comparable; `processes` groups those entries by
+// the PowerShell process that would have run them.
+const acl = vi.hoisted(() => ({
+  privacy: vi.fn<(path: string, kind: 'file' | 'directory', restrict?: boolean) => void>(),
+  processes: [] as Array<Array<[string, 'file' | 'directory', boolean]>>,
+}));
+const privacy = acl.privacy;
+vi.mock('./windows-file-privacy.ts', () => ({
+  windowsFilePrivacySync: (path: string, kind: 'file' | 'directory', restrict = false) => {
+    acl.processes.push([[path, kind, restrict]]);
+    acl.privacy(path, kind, restrict);
+  },
+  windowsFilePrivacyBatchSync: (operations: Operation[]) => {
+    acl.processes.push(operations.map(o => [o.path, o.kind, o.action === 'restrict'] as [string, 'file' | 'directory', boolean]));
+    for (const o of operations) acl.privacy(o.path, o.kind, o.action === 'restrict');
+    return operations.map(o => ({ ...o, applied: true }));
+  },
+}));
 const roots: string[] = [];
 const fixture = () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'realbud-profile-storage-')));
@@ -15,7 +33,7 @@ const fixture = () => {
   return root;
 };
 const refusal = () => Object.assign(new Error('Private storage refused.'), { name: 'WindowsFilePrivacyError' });
-beforeEach(() => { privacy.mockReset(); });
+beforeEach(() => { privacy.mockReset(); acl.processes.length = 0; });
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 describe('profile storage with simulated ACL outcomes and real disposable files', () => {
@@ -162,6 +180,39 @@ describe('profile storage with simulated ACL outcomes and real disposable files'
     expect(readFileSync(file, 'utf8')).toBe('concurrent settings');
     expect(readdirSync(root)).toEqual(['config.yaml']);
     expect(privacy.mock.calls.every(call => call[2] !== true)).toBe(true);
+  });
+
+  it('admits the destination directory and the file it replaces in one PowerShell process', () => {
+    const root = fixture(), file = join(root, 'config.yaml');
+    writeFileSync(file, 'previous settings');
+    privacy.mockReset(); acl.processes.length = 0;
+    writeProfileFile(file, 'next settings');
+    const stage = privacy.mock.calls[2]![0];
+    expect(basename(stage)).toMatch(/^\.realbud-profile-.*\.tmp$/);
+    // The same paths, kinds and actions, in the same order, as the per-path form.
+    expect(privacy.mock.calls.map(call => [call[0], call[1], call[2] === true])).toEqual([
+      [root, 'directory', false], [file, 'file', false], [stage, 'file', true],
+      [file, 'file', false], [file, 'file', false],
+    ]);
+    // Five admissions, four cold powershell.exe launches: the pair that neither
+    // gates the other shares one. The rest each gate the step that follows.
+    expect(acl.processes).toEqual([
+      [[root, 'directory', false], [file, 'file', false]],
+      [[stage, 'file', true]], [[file, 'file', false]], [[file, 'file', false]],
+    ]);
+  });
+
+  it('never batches a new stage behind the directory that must admit it first', () => {
+    const root = fixture(), file = join(root, '.env');
+    writeProfileFile(file, 'FAKE_KEY=fictional\n');
+    // A first publication has nothing to verify at the destination, so its
+    // directory admission is a batch of one and still returns before the stage
+    // exists. Every process holds admissions for a single moment in the write.
+    expect(acl.processes).toEqual([
+      [[root, 'directory', false]],
+      [[privacy.mock.calls[1]![0], 'file', true]],
+      [[file, 'file', false]],
+    ]);
   });
 
   it('keeps POSIX existing directory modes unchanged while new files are private', () => {

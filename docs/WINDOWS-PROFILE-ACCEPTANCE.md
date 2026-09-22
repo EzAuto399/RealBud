@@ -166,3 +166,51 @@ electron/service-smoke.test.mjs`) and `pnpm check:electron` is clean. What is
 not proven: nothing here has run on win32. If the cold-PowerShell theory is
 wrong, the next Windows run is now able to say so, because the receipt carries
 the child's exit status and its redacted stderr.
+
+## 22 September 2026 — one PowerShell process for an ordered list of admissions
+
+Follow-on to the cold-PowerShell finding above. The cost is per process, not per
+path, and every admission was its own `powershell.exe`: provisioning one Hermes
+profile runs well over a dozen. `server/windows-file-privacy.ts` now exports
+`windowsFilePrivacyBatchSync(operations)`, which applies an ordered list in a
+single process. Each operation still arrives by environment variable and is read
+by name inside the script — `REALBUD_WINDOWS_FILE_PRIVACY_{PATH,KIND,ACTION}`
+for the first, the same names suffixed `_1`, `_2`, … after it, with
+`REALBUD_WINDOWS_FILE_PRIVACY_COUNT` giving the length. Nothing is interpolated.
+The list stops at the first refusal, so nothing after a failure is applied, and
+the failure keeps today's numeric exit code; the script echoes the integer index
+it attempted (and nothing else) so the error can name the operation.
+`windowsFilePrivacySync` is now a one-operation batch, and a one-operation batch
+is the same invocation and the same environment as before — which is why
+`electron/desk-key-custody.mjs` needed only the byte-identical script copy, not
+a change to its call.
+
+How far this actually goes. Batching is only safe where one admission does not
+gate the next. In `server/hermes-profile-storage.ts` that is the pair at the top
+of `writeProfileFile`: the destination directory and the file already published
+there are both verify-only, so they now share one process — five admissions in
+four launches when replacing a file. Two sequences were deliberately left alone.
+`ensureProfileDirectory` still protects each newly created directory before
+creating anything inside it, so its restricts cannot be collected. In
+`writeProfileFile`, the stage's restrict must return before any byte is written
+and the published verify can only run after the rename. A first publication
+therefore still costs three launches, so this does **not** on its own bring a
+cold first run inside the installed probe's 25 s or the installer smoke's 45 s.
+
+The remaining lever is a profile-scoped batch across the call sites in
+`server/hermes-pack.ts` — in particular `prepareProfile`'s three consecutive
+`ensureProfileDirectory` calls and its five consecutive `readProfileFile` calls,
+which are independent of each other and would collapse to two processes. That
+file was out of scope here.
+
+Proven: `pnpm exec vitest run server/windows-file-privacy.test.ts
+server/windows-file-privacy-sync.test.ts
+server/windows-file-privacy-diagnostics.test.ts
+server/hermes-profile-storage.test.ts server/hermes-profile-windows.test.ts
+electron/desk-key-custody.test.mjs` passes on macOS, `pnpm exec tsc -p
+tsconfig.server.json` and `pnpm check:electron` are clean, and the parity test
+still holds the two script copies byte-identical. Not proven: no PowerShell runs
+on the macOS host, so the batch script has never been parsed or executed. The
+loop, the `_i` lookup and the echoed index are unverified until a win32 run; the
+native suites in `server/windows-file-privacy.test.ts` and
+`server/hermes-profile-windows.test.ts` are the ones that will say so.

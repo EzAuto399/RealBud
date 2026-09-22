@@ -7,7 +7,7 @@ import {
 } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { fsyncDir } from './atomic.ts';
-import { windowsFilePrivacySync } from './windows-file-privacy.ts';
+import { windowsFilePrivacyBatchSync, windowsFilePrivacySync } from './windows-file-privacy.ts';
 
 const MAX_BYTES = 2 * 1024 * 1024;
 const NOFOLLOW = constants.O_NOFOLLOW ?? 0;
@@ -85,45 +85,71 @@ export function ensureProfileDirectory(path: string): void {
   });
 }
 
+// A Windows admission is bracketed by identical stats taken before and after
+// it. Splitting that bracket lets several admissions share one PowerShell
+// process without changing which paths are admitted, in what order, or what is
+// allowed to happen before an admission returns.
+type Chain = Array<[string, BigIntStats]>;
+
+function stageDirectory(path: string): { chain: Chain; before: BigIntStats } {
+  const chain = parents(path);
+  const before = lstatSync(path, { bigint: true }); ordinary(before, true);
+  return { chain, before };
+}
+function settleDirectory(path: string, chain: Chain, before: BigIntStats): void {
+  const after = lstatSync(path, { bigint: true }); ordinary(after, true);
+  if (!same(before, after)) fail();
+  recheckParents(chain);
+}
+
 export function verifyProfileDirectory(path: string): void {
   checked(() => {
-    const chain = parents(path);
-    const before = lstatSync(path, { bigint: true }); ordinary(before, true);
+    const { chain, before } = stageDirectory(path);
     windowsFilePrivacySync(path, 'directory');
-    const after = lstatSync(path, { bigint: true }); ordinary(after, true);
-    if (!same(before, after)) fail();
-    recheckParents(chain);
+    settleDirectory(path, chain, before);
   });
 }
 
 /** Missing means only a missing leaf under verified, existing ancestry. */
-function readProfileSnapshot(path: string): { data: Buffer; stat: BigIntStats } | null {
-  return checked(() => {
-    const chain = parents(path);
-    const before = optionalStat(path);
-    if (!before) { recheckParents(chain); return null; }
+function stageFile(path: string): { chain: Chain; before: BigIntStats | null } {
+  const chain = parents(path);
+  const before = optionalStat(path);
+  if (before) {
     ordinary(before, false);
     if (before.size > BigInt(MAX_BYTES)) fail();
+  }
+  return { chain, before };
+}
+
+function readProfileSnapshot(path: string): { data: Buffer; stat: BigIntStats } | null {
+  return checked(() => {
+    const { chain, before } = stageFile(path);
+    if (!before) { recheckParents(chain); return null; }
     windowsFilePrivacySync(path, 'file');
-    const fd = openSync(path, constants.O_RDONLY | NOFOLLOW);
-    try {
-      const opened = fstatSync(fd, { bigint: true }); ordinary(opened, false);
-      if (!unchanged(before, opened)) fail();
-      const buffer = Buffer.alloc(Number(opened.size) + 1);
-      let length = 0;
-      while (length < buffer.length) {
-        const count = readSync(fd, buffer, length, buffer.length - length, null);
-        if (!count) break;
-        length += count;
-      }
-      const data = buffer.subarray(0, length);
-      const after = fstatSync(fd, { bigint: true }); ordinary(after, false);
-      const named = lstatSync(path, { bigint: true }); ordinary(named, false);
-      if (!unchanged(opened, after) || !unchanged(after, named) || BigInt(data.length) !== after.size) fail();
-      recheckParents(chain);
-      return { data, stat: after };
-    } finally { closeSync(fd); }
+    return readAdmittedFile(path, chain, before);
   });
+}
+
+/** Only ever called once the file's own admission has already returned. */
+function readAdmittedFile(path: string, chain: Chain, before: BigIntStats): { data: Buffer; stat: BigIntStats } {
+  const fd = openSync(path, constants.O_RDONLY | NOFOLLOW);
+  try {
+    const opened = fstatSync(fd, { bigint: true }); ordinary(opened, false);
+    if (!unchanged(before, opened)) fail();
+    const buffer = Buffer.alloc(Number(opened.size) + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const count = readSync(fd, buffer, length, buffer.length - length, null);
+      if (!count) break;
+      length += count;
+    }
+    const data = buffer.subarray(0, length);
+    const after = fstatSync(fd, { bigint: true }); ordinary(after, false);
+    const named = lstatSync(path, { bigint: true }); ordinary(named, false);
+    if (!unchanged(opened, after) || !unchanged(after, named) || BigInt(data.length) !== after.size) fail();
+    recheckParents(chain);
+    return { data, stat: after };
+  } finally { closeSync(fd); }
 }
 
 export function readProfileFile(path: string): Buffer | null {
@@ -135,9 +161,22 @@ export function writeProfileFile(path: string, content: string | Buffer, overwri
   checked(() => {
     const data = typeof content === 'string' ? Buffer.from(content, 'utf8') : content;
     if (!Buffer.isBuffer(data) || data.length > MAX_BYTES) fail();
-    verifyProfileDirectory(dirname(path));
-    const chain = parents(path);
-    const snapshot = readProfileSnapshot(path);
+    const directory = dirname(path);
+    // The destination directory and any file already published in it are both
+    // verify-only and neither gates the other, so one PowerShell process
+    // admits both in that order. A cold powershell.exe costs seconds on a
+    // Windows client, and provisioning a profile repeats this per file.
+    const staged = stageDirectory(directory);
+    const target = stageFile(path);
+    windowsFilePrivacyBatchSync([
+      { path: directory, kind: 'directory', action: 'verify' },
+      ...(target.before ? [{ path, kind: 'file' as const, action: 'verify' as const }] : []),
+    ]);
+    settleDirectory(directory, staged.chain, staged.before);
+    const chain = target.chain;
+    let snapshot: { data: Buffer; stat: BigIntStats } | null = null;
+    if (target.before) snapshot = readAdmittedFile(path, chain, target.before);
+    else recheckParents(chain);
     const previous = snapshot?.data ?? null;
     if (expected !== undefined && ((expected === null) !== (previous === null) || expected && !expected.equals(previous!))) fail();
     if (!overwrite && previous !== null) fail();
