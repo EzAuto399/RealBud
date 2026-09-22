@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { applyPropertyPack, ensurePropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, learningPolicyReady, migratePropertyProfileFromLegacyHermes, packInstalled, propertyProfileDir, propertyWorkroomReady, stagedLearningSupported, workerLimitsReady, yamlBlock } from "./hermes-pack.ts";
+import { applyPropertyPack, ensurePropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, learningPolicyReady, migratePropertyProfileFromLegacyHermes, OFF_SCOPE_BUNDLED_SKILLS, PACK_DIR, packInstalled, propertyProfileDir, propertyWorkroomReady, skillScopeReady, stagedLearningSupported, workerLimitsReady, yamlBlock } from "./hermes-pack.ts";
+import { HERMES_RECOMMENDED } from "./hermes-releases.ts";
 import { releaseHome, resetRuntimeSelectionForTests, saveRuntimeSelection, selectedHermesCli } from "./hermes-runtime-selection.ts";
 import { runtimeCli } from "./hermes-paths.ts";
 import { dirname } from "node:path";
@@ -132,7 +133,7 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     writeFileSync(path, "skills:\n  disabled: [sample]\n  write_approval: false\nmemory:\n  memory_enabled: false\n  write_approval: false\nauxiliary:\n  title:\n    model: retained\n  background_review:\n    enabled: true\n    provider: unreviewed\n    extra_tools: [terminal]\n");
     applyPropertyPack(home);
     const saved = readFileSync(path, "utf8");
-    expect(saved).toContain("disabled: [ sample ]");
+    expect(parse(saved, { version: "1.1" }).skills.disabled).toEqual(expect.arrayContaining(["sample", ...OFF_SCOPE_BUNDLED_SKILLS]));
     expect(saved).toContain("memory_enabled: false");
     expect(saved).toContain("model: retained");
     expect(saved).not.toContain("unreviewed");
@@ -255,6 +256,63 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     tighter.setIn(["tool_loop_guardrails", "loop_caps", "max_web_searches"], 3);
     writeFileSync(path, tighter.toString());
     expect(workerLimitsReady(home)).toBe(true);
+  });
+
+  it("hides off-scope upstream skills on install and keeps document, RealBud and office skills listed", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-skill-scope-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home);
+    const disabled: string[] = parse(readFileSync(join(dir, "config.yaml"), "utf8"), { version: "1.1" }).skills.disabled;
+    expect(disabled).toEqual([...OFF_SCOPE_BUNDLED_SKILLS].sort());
+    // Mail, messaging, social posting, coding agents and desktop control stay out of Ask's index.
+    for (const name of ["himalaya", "email-inbox-triage", "google-workspace", "imessage", "xurl", "computer-use", "claude-code", "codex"]) expect(disabled).toContain(name);
+    for (const name of ["hermes-agent", "pdf", "xlsx", "docx", ...readdirSync(join(PACK_DIR, "skills"))]) expect(disabled).not.toContain(name);
+    expect(disabled.some(name => name.startsWith("realbud-"))).toBe(false);
+    // The seeding opt-out marker would also withhold pdf/xlsx/docx from a new profile.
+    expect(existsSync(join(dir, ".no-bundled-skills"))).toBe(false);
+    expect(skillScopeReady(home)).toBe(true);
+    expect(propertyWorkroomReady(home)).toBe(true);
+  });
+
+  it("asks an older profile for Repair once, then hides skills without deleting them or the office's own choices", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-skill-scope-old-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home); const path = join(dir, "config.yaml");
+    const old = parseDocument(readFileSync(path, "utf8"), { version: "1.1" });
+    old.setIn(["skills", "disabled"], "['sample-office-hidden']"); // `hermes config set` list literal
+    const before = old.toString();
+    writeFileSync(path, before);
+    const seeded = join(dir, "skills", "email", "himalaya");
+    privateFixtureDirectory(seeded); writeFileSync(join(seeded, "SKILL.md"), "---\nname: himalaya\ndescription: fictional seeded copy\n---\n");
+    expect(skillScopeReady(home)).toBe(false);
+    expect(propertyWorkroomReady(home)).toBe(false);
+    expect(ensurePropertyPack(home).wrote).toEqual([]);
+    expect(readFileSync(path, "utf8")).toBe(before);
+
+    applyPropertyPack(home);
+    const disabled = parse(readFileSync(path, "utf8"), { version: "1.1" }).skills.disabled;
+    expect(disabled).toEqual(expect.arrayContaining(["sample-office-hidden", ...OFF_SCOPE_BUNDLED_SKILLS]));
+    expect(readFileSync(join(seeded, "SKILL.md"), "utf8")).toContain("fictional seeded copy");
+    expect(skillScopeReady(home)).toBe(true);
+    expect(propertyWorkroomReady(home)).toBe(true);
+
+    // Re-listing one upstream skill, or a string that upstream matches by substring, needs Repair again.
+    const repaired = readFileSync(path, "utf8");
+    for (const value of [disabled.filter((name: string) => name !== "himalaya"), JSON.stringify(disabled)]) {
+      const doc = parseDocument(repaired, { version: "1.1" }); doc.setIn(["skills", "disabled"], value);
+      writeFileSync(path, doc.toString());
+      expect(skillScopeReady(home)).toBe(false);
+    }
+    const unreadable = parseDocument(repaired, { version: "1.1" });
+    unreadable.setIn(["skills", "disabled"], unreadable.createNode({ nested: "map" }));
+    writeFileSync(path, unreadable.toString());
+    expect(() => applyPropertyPack(home)).toThrow(/kept/);
+    expect(readFileSync(path, "utf8")).toBe(unreadable.toString());
+  });
+
+  it("was reviewed against the bundled skills of the release RealBud recommends", () => {
+    // 0.21.0, 0.21.2 and 0.21.3 bundle the same 58 skills. A new recommended
+    // release needs OFF_SCOPE_BUNDLED_SKILLS checked against its skills/ tree.
+    expect(["29112bef099274229cadff79cdff7bf7b99c4b77", "939e45c91d751fadd94dcd1b873ac3cb44846213", "345cd2b057a452236de401d3534b8502a7465e8d"]).toContain(HERMES_RECOMMENDED.commit);
+    expect(OFF_SCOPE_BUNDLED_SKILLS).toHaveLength(54);
   });
 
   it("does not inherit a Hermes Desktop home model into Bud's hands", () => {

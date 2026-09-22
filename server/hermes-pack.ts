@@ -5,7 +5,7 @@ import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, re
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
-import { isMap, parseDocument, YAMLMap } from "yaml";
+import { isMap, isSeq, parseDocument, YAMLMap } from "yaml";
 
 import { ensureProfileDirectories, ensureProfileDirectory, readProfileFile, readProfileFiles, writeProfileFile, writeProfileFiles, type ProfileFileWrite } from "./hermes-profile-storage.ts";
 import { HERMES_PIN } from "./hermes-pin.ts";
@@ -189,6 +189,55 @@ function readIf(path: string): string {
   }
 }
 
+/**
+ * Hermes' bundled skills that Bud's worker must neither list nor load: every
+ * name in the bundled `skills/` tree of the admitted releases (0.21.0 29112bef,
+ * 0.21.2 939e45c9 and 0.21.3 345cd2b0 ship the same 58) except `hermes-agent`
+ * (upstream ESSENTIAL_SKILLS, never disableable), `pdf`, `xlsx` and `docx`.
+ *
+ * `skills.disabled` is enforced by Hermes itself: the system-prompt skill index
+ * drops these names (agent/prompt_builder.py `_build_skills_system_prompt_inner`),
+ * `skills_list` omits them and `skill_view` refuses them (tools/skills_tool.py
+ * `_find_all_skills`, `skill_view`). Upstream has no allowlist key. The
+ * `.no-bundled-skills` marker is not used: it only limits seeding to the
+ * essential set (tools/skills_sync.py `sync_skills`), so it would withhold
+ * pdf/xlsx/docx from a new profile and still list what an existing one has.
+ * RealBud's pack skills, `realbud-*` customer-pack skills and an office's own
+ * learned skills are not upstream names and stay visible. Promoting a release
+ * whose bundle differs needs this list reviewed again.
+ */
+export const OFF_SCOPE_BUNDLED_SKILLS: readonly string[] = [
+  "airtable", "apple-notes", "apple-reminders", "architecture-diagram", "arxiv", "ascii-video", "baoyu-infographic",
+  "blocked-page-recovery", "box", "claude-code", "claude-design", "codebase-inspection", "codex", "competitor-news-monitor",
+  "computer-use", "design-md", "document-to-action-items", "dogfood", "email-inbox-triage", "findmy", "gif-search", "github",
+  "google-workspace", "grounded-citations", "hermes-agent-skill-authoring", "himalaya", "humanizer", "imessage",
+  "inspecting-hermes-desktop-dom", "llm-wiki", "manim-video", "maps", "meeting-action-items", "node-inspect-debugger",
+  "notion", "obsidian", "opencode", "p5js", "popular-web-designs", "powerpoint", "product-price-monitor", "python-debugpy",
+  "requesting-code-review", "sdlc-review", "simplify-code", "songsee", "songwriting-and-ai-music", "spike",
+  "systematic-debugging", "teams-meeting-pipeline", "test-driven-development", "weekly-review-planning", "xurl",
+  "youtube-content",
+];
+
+const UNREADABLE_LEARNING = "Bud’s learning settings could not be read. The existing file has been kept.";
+
+/** `skills.disabled` as upstream reads it (agent/skill_utils.py
+ * `parse_config_string_list`): a sequence, or a string holding one name or the
+ * list literal `hermes config set` writes. Anything else is unreadable policy. */
+function disabledSkillNames(value: unknown): string[] {
+  if (value === undefined || value === null) return [];
+  let items: unknown[] | null = null;
+  if (isSeq(value)) items = value.toJSON() as unknown[];
+  else if (typeof value === "string") {
+    const text = value.trim();
+    for (const candidate of text.startsWith("[") ? [text, text.replace(/'/g, "\"")] : []) {
+      try { const parsed: unknown = JSON.parse(candidate); if (Array.isArray(parsed)) { items = parsed; break; } } catch { /* not a list literal */ }
+    }
+    items ??= [text];
+  }
+  if (!items || !items.every(item => typeof item === "string" || typeof item === "number")) throw new Error(UNREADABLE_LEARNING);
+  return items.map(item => String(item).trim()).filter(Boolean);
+}
+
 /** Replace only RealBud-owned policy blocks; keep all other upstream settings. */
 export function mergePropertyPolicy(existing: string, defaults: string): string {
   const result = policyDocument(existing.trim() ? existing : defaults);
@@ -197,14 +246,17 @@ export function mergePropertyPolicy(existing: string, defaults: string): string 
   for (const key of keys) {
     if (policy.has(key)) result.set(key, policy.get(key));
   }
-  // Own only the write gate; retain memory preferences and skill visibility.
+  // Own the write gate and a floor of hidden upstream skills; retain memory
+  // preferences and any further skills the office has hidden itself.
   for (const key of ["skills", "memory", "auxiliary"]) {
-    if (result.has(key) && !isMap(result.get(key))) throw new Error("Bud’s learning settings could not be read. The existing file has been kept.");
+    if (result.has(key) && !isMap(result.get(key))) throw new Error(UNREADABLE_LEARNING);
     // YAML 1.1 setIn creates !!omap for missing parents; PyYAML reads that as
     // a sequence, so Hermes would lose these policy gates. Create plain maps.
     if (!result.has(key)) result.set(key, new YAMLMap(result.schema));
   }
   for (const key of ["skills", "memory"]) result.setIn([key, "write_approval"], true);
+  const disabled = new Set([...disabledSkillNames(result.getIn(["skills", "disabled"])), ...OFF_SCOPE_BUNDLED_SKILLS]);
+  result.setIn(["skills", "disabled"], result.createNode([...disabled].sort()));
   result.setIn(["auxiliary", "background_review"], policy.getIn(["auxiliary", "background_review"]));
   // Owned whole: with titles off, the rest of the block (provider, model) is unused.
   if (policy.hasIn(["auxiliary", "title_generation"])) result.setIn(["auxiliary", "title_generation"], policy.getIn(["auxiliary", "title_generation"]));
@@ -263,6 +315,19 @@ export function workerLimitsReady(root?: string): boolean {
       doc.getIn(["security", "allow_lazy_installs"]) === false &&
       cap("max_web_searches", 10) && cap("max_subagents", 4) &&
       typeof ratio === "number" && ratio > 0 && ratio < 1;
+  } catch { return false; }
+}
+
+/** Every off-scope bundled skill is hidden, as a real sequence: upstream's
+ * `skill_view` gate tests `name in skills.disabled`, which on a string is a
+ * substring match. A profile from before this floor reads as needing Repair;
+ * further hidden skills are accepted. */
+export function skillScopeReady(root?: string): boolean {
+  try {
+    const value = policyDocument(readFileSync(join(propertyProfileDir(root), "config.yaml"), "utf8")).getIn(["skills", "disabled"]);
+    if (!isSeq(value)) return false;
+    const names = new Set(disabledSkillNames(value));
+    return OFF_SCOPE_BUNDLED_SKILLS.every(name => names.has(name));
   } catch { return false; }
 }
 
@@ -483,7 +548,7 @@ export function propertyWorkroomReady(root?: string): boolean {
       /^\s+redact_secrets:\s*true\s*$/m.test(security) &&
       requiredToolsets.every((name) => new RegExp(`^\\s+-\\s*${name}\\s*$`, "m").test(toolsets)) &&
       !/^\s+-\s*(code_execution|computer_use|cronjob|skills)\s*$/m.test(toolsets) &&
-      maxTurns >= 60 && learningPolicyReady(root) && workerLimitsReady(root)
+      maxTurns >= 60 && learningPolicyReady(root) && workerLimitsReady(root) && skillScopeReady(root)
     );
   } catch {
     return false;

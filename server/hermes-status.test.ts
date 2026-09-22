@@ -7,6 +7,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { applyHandsReadiness, hermesReadinessFingerprint, hermesStatus, modelAccessStatus } from "./hermes-status.ts";
 import { setWorkerModelGrant } from "./worker-model-access.ts";
 import { HERMES_PIN } from "./hermes-pin.ts";
+import { OFF_SCOPE_BUNDLED_SKILLS } from "./hermes-pack.ts";
 import { fakeHermesVersion } from "./testing/fake-hermes.ts";
 
 let home: string;
@@ -20,7 +21,7 @@ beforeAll(() => {
   writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
   writeFileSync(
     join(profile, "config.yaml"),
-    `approvals:\n  mode: manual\n  timeout: 300\nagent:\n  max_turns: 60\n  budget_warning_ratio: 0.75\ntoolsets:\n  - web\n  - terminal\n  - file\n  - vision\n  - todo\n  - session_search\n  - delegation\nsecurity:\n  redact_secrets: true\n  allow_lazy_installs: false\nterminal:\n  backend: local\n  home_mode: profile\n  env_passthrough: []\nmodel:\n  default: test\nskills:\n  write_approval: true\nmemory:\n  write_approval: true\nauxiliary:\n  title_generation:\n    enabled: false\n  background_review:\n    enabled: false\n    extra_tools: []\ntool_loop_guardrails:\n  loop_caps:\n    max_web_searches: 10\n    max_subagents: 4\n`,
+    `approvals:\n  mode: manual\n  timeout: 300\nagent:\n  max_turns: 60\n  budget_warning_ratio: 0.75\ntoolsets:\n  - web\n  - terminal\n  - file\n  - vision\n  - todo\n  - session_search\n  - delegation\nsecurity:\n  redact_secrets: true\n  allow_lazy_installs: false\nterminal:\n  backend: local\n  home_mode: profile\n  env_passthrough: []\nmodel:\n  default: test\nskills:\n  write_approval: true\n  disabled:\n${OFF_SCOPE_BUNDLED_SKILLS.map(name => `    - ${name}\n`).join("")}memory:\n  write_approval: true\nauxiliary:\n  title_generation:\n    enabled: false\n  background_review:\n    enabled: false\n    extra_tools: []\ntool_loop_guardrails:\n  loop_caps:\n    max_web_searches: 10\n    max_subagents: 4\n`,
   );
   OLD_HERMES = fakeHermesVersion("Hermes Agent v0.20.0 (2026.8.3)", "fake-hermes-old");
   PINNED_HERMES = fakeHermesVersion("Hermes Agent v0.20.3 (2026.8.16.2)", "fake-hermes-pinned");

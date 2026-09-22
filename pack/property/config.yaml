@@ -48,6 +48,9 @@ security:
   allow_lazy_installs: false
 # Native foreground and background learning proposes durable changes for review.
 # RealBud enables the learner only for its exact admitted runtime during Repair.
+# Install and Repair also add skills.disabled: Hermes' bundled skills outside
+# office work (server/hermes-pack.ts OFF_SCOPE_BUNDLED_SKILLS). pdf, xlsx, docx
+# and hermes-agent stay; RealBud and office skills are never listed there.
 skills:
   write_approval: true
 memory:
