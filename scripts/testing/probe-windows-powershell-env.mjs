@@ -35,9 +35,12 @@ const variants = [
 ];
 const commands = {
   exit: 'exit 0',
+  // The same work with and without a cmdlet: New-Object auto-loads a module.
   dotnet: '$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User; $acl = New-Object System.Security.AccessControl.DirectorySecurity; $acl.SetOwner($sid); exit 0',
+  'dotnet-new': '$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User; $acl = [System.Security.AccessControl.DirectorySecurity]::new(); $acl.SetOwner($sid); exit 0',
 };
-const only = process.argv.includes('--quick') ? variants.slice(0, 1) : variants;
+const wanted = new Set(['smoke-like', 'full', 'stripped']);
+const only = process.argv.includes('--all') ? variants : variants.filter(([name]) => wanted.has(name));
 console.log(JSON.stringify({ parent: process.versions.electron ? `electron ${process.versions.electron}` : `node ${process.versions.node}`, execPath: process.execPath.length > 0, cwd: process.cwd().length > 0 }));
 for (const [name, env] of only) {
   for (const [command, text] of Object.entries(commands)) {

@@ -31,7 +31,7 @@ if ($env:REALBUD_TEST_ACL_MODE -eq 'inherit-only') {
   $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', 'Allow'))
   $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new($sid, 'WriteData', 'Deny'))
 } else { exit 9 }
-(New-Object System.IO.DirectoryInfo($env:REALBUD_TEST_ACL_PATH)).SetAccessControl($acl)
+([System.IO.DirectoryInfo]::new($env:REALBUD_TEST_ACL_PATH)).SetAccessControl($acl)
 `, 'utf16le').toString('base64');
 
 async function setTestAcl(path: string, mode: 'inherit-only' | 'deny-write') {

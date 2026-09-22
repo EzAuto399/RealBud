@@ -39,6 +39,8 @@ const recovery = () => new Error('The saved workspace encryption key needs recov
 // points; those are refused at open/verify time, not prevented.
 const WINDOWS_ACL = `
 $ErrorActionPreference = 'Stop'
+# No cmdlets: each one auto-loads a module, which costs ~23 s per launch in the
+# installed service's stripped environment and fails outright under some hosts.
 $count = $env:REALBUD_WINDOWS_FILE_PRIVACY_COUNT
 if ([string]::IsNullOrEmpty($count)) { $count = '1' }
 if ($count -notmatch '^([1-9]|[1-5][0-9]|6[0-4])$') { exit 9 }
@@ -83,7 +85,7 @@ $usable = $false
 $stage = 20
 try {
 $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
-$system = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
+$system = [System.Security.Principal.SecurityIdentifier]::new('S-1-5-18')
 $allowed = @($sid.Value, 'S-1-5-18', 'S-1-5-32-544')
 while ($true) {
   if ($target) { $stage = 21 } else { $stage = 22 }
@@ -103,27 +105,27 @@ while ($true) {
 }
 if ($action -eq 'restrict') {
   $stage = 23
-  if ($directory) { $acl = New-Object System.Security.AccessControl.DirectorySecurity }
-  else { $acl = New-Object System.Security.AccessControl.FileSecurity }
+  if ($directory) { $acl = [System.Security.AccessControl.DirectorySecurity]::new() }
+  else { $acl = [System.Security.AccessControl.FileSecurity]::new() }
   # Writing an owner needs WRITE_OWNER even when it does not change, and the .NET
   # call enables no privilege for it; the owner's implicit WRITE_DAC is enough for
   # the descriptor itself, so an object already owned by the caller keeps its owner.
-  if ($directory) { $owned = (New-Object System.IO.DirectoryInfo($path)).GetAccessControl([System.Security.AccessControl.AccessControlSections]::Owner) }
-  else { $owned = (New-Object System.IO.FileInfo($path)).GetAccessControl([System.Security.AccessControl.AccessControlSections]::Owner) }
+  if ($directory) { $owned = ([System.IO.DirectoryInfo]::new($path)).GetAccessControl([System.Security.AccessControl.AccessControlSections]::Owner) }
+  else { $owned = ([System.IO.FileInfo]::new($path)).GetAccessControl([System.Security.AccessControl.AccessControlSections]::Owner) }
   if ($owned.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { $acl.SetOwner($sid) }
   $acl.SetAccessRuleProtection($true, $false)
   foreach ($principal in @($sid, $system)) {
-    if ($directory) { $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($principal, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow') }
-    else { $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($principal, 'FullControl', 'Allow') }
+    if ($directory) { $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($principal, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow') }
+    else { $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($principal, 'FullControl', 'Allow') }
     $acl.AddAccessRule($rule)
   }
   $stage = 24
-  if ($directory) { (New-Object System.IO.DirectoryInfo($path)).SetAccessControl($acl) }
-  else { (New-Object System.IO.FileInfo($path)).SetAccessControl($acl) }
+  if ($directory) { ([System.IO.DirectoryInfo]::new($path)).SetAccessControl($acl) }
+  else { ([System.IO.FileInfo]::new($path)).SetAccessControl($acl) }
 }
 $stage = 25
-if ($directory) { $actual = (New-Object System.IO.DirectoryInfo($path)).GetAccessControl() }
-else { $actual = (New-Object System.IO.FileInfo($path)).GetAccessControl() }
+if ($directory) { $actual = ([System.IO.DirectoryInfo]::new($path)).GetAccessControl() }
+else { $actual = ([System.IO.FileInfo]::new($path)).GetAccessControl() }
 $stage = 26
 if (-not $actual.AreAccessRulesProtected) { exit 5 }
 if ($allowed -notcontains $actual.GetOwner([System.Security.Principal.SecurityIdentifier]).Value) { exit 2 }

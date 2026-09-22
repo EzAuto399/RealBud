@@ -257,7 +257,7 @@ try {
       }
       if ($above) {
         $stage = 25
-        if (-not (New-Object System.IO.DirectoryInfo($cursor)).GetAccessControl().AreAccessRulesProtected) { Refuse 12 'ancestor-not-protected' }
+        if (-not ([System.IO.DirectoryInfo]::new($cursor)).GetAccessControl().AreAccessRulesProtected) { Refuse 12 'ancestor-not-protected' }
       }
       if ($cursor.TrimEnd('\\') -eq $root) {
         if (-not $full) { break }
@@ -270,8 +270,8 @@ try {
     }
     $depth = 0
     $stage = 25
-    if ($wantDirectory) { $acl = (New-Object System.IO.DirectoryInfo($path)).GetAccessControl() }
-    else { $acl = (New-Object System.IO.FileInfo($path)).GetAccessControl() }
+    if ($wantDirectory) { $acl = ([System.IO.DirectoryInfo]::new($path)).GetAccessControl() }
+    else { $acl = ([System.IO.FileInfo]::new($path)).GetAccessControl() }
     $stage = 26
     if (-not $acl.AreAccessRulesProtected) { Refuse 5 'not-protected' }
     if ($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $current) { Refuse 2 'owner-not-allowed' }

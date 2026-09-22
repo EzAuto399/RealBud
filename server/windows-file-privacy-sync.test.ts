@@ -81,3 +81,15 @@ it('rejects invalid input before launching and does nothing on other systems', (
   windowsFilePrivacySync('/not-accessed', 'file', true);
   expect(calls.sync).not.toHaveBeenCalled();
 });
+
+it('runs a script with no cmdlets, so no PowerShell module has to auto-load', () => {
+  // A cmdlet auto-loads its module: ~23 s per launch in the installed service's
+  // stripped environment (Package Windows run 35750672323) and a
+  // CouldNotAutoloadMatchingModule failure under some hosts.
+  windowsFilePrivacySync('C:\\private', 'directory');
+  const args = calls.sync.mock.calls[0]![1] as string[];
+  const script = Buffer.from(args[args.indexOf('-EncodedCommand') + 1]!, 'base64').toString('utf16le');
+  const code = script.split('\n').filter(line => !line.trim().startsWith('#')).join('\n');
+  expect(code).toContain('GetAccessControl');
+  expect(code.match(/\b[A-Z][a-z]+-[A-Z][A-Za-z]+\b/g)).toBeNull();
+});

@@ -39,11 +39,11 @@ for ($index = 0; $index -lt [int]$count; $index++) {
     else { $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($principal, 'FullControl', 'Allow') }
     $acl.AddAccessRule($rule)
   }
-  if ($kind -eq 'directory') { (New-Object System.IO.DirectoryInfo($path)).SetAccessControl($acl) }
-  else { (New-Object System.IO.FileInfo($path)).SetAccessControl($acl) }
+  if ($kind -eq 'directory') { ([System.IO.DirectoryInfo]::new($path)).SetAccessControl($acl) }
+  else { ([System.IO.FileInfo]::new($path)).SetAccessControl($acl) }
 }`;
 const BROAD_FIXTURE_SCRIPT = `$ErrorActionPreference = 'Stop'
-$broad = New-Object System.IO.FileInfo($env:REALBUD_FIXTURE_BROAD_FILE)
+$broad = [System.IO.FileInfo]::new($env:REALBUD_FIXTURE_BROAD_FILE)
 $acl = $broad.GetAccessControl()
 $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new([System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-545'), 'Read', 'Allow'))
 $broad.SetAccessControl($acl)`;

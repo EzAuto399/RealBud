@@ -41,7 +41,7 @@ jobs:
           & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString(); (Get-Command Set-Acl).Module.Path; [System.Security.Principal.WindowsIdentity]::GetCurrent().Name'
       - name: PowerShell launch cost under the installed service's stripped environment
         continue-on-error: true
-        run: node scripts/testing/probe-windows-powershell-env.mjs
+        run: node scripts/testing/probe-windows-powershell-env.mjs --all
       - name: ACL admission in every storage root, inherited and relocated home
         continue-on-error: true
         run: node --experimental-strip-types scripts/testing/probe-windows-acl.mjs
