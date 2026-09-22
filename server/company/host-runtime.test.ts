@@ -50,8 +50,8 @@ async function workspace() {
   const binaryDirectory = join(temp, 'bin');
   const rootDirectory = join(temp, 'instance');
   await mkdir(binaryDirectory);
-  await writeFile(join(binaryDirectory, 'postgres'), '');
-  await writeFile(join(binaryDirectory, 'initdb'), '');
+  await writeFile(postgresBinary(binaryDirectory, 'postgres'), '');
+  await writeFile(postgresBinary(binaryDirectory, 'initdb'), '');
   await mkdir(rootDirectory, { mode: 0o700 });
   return { temp, binaryDirectory, rootDirectory };
 }
@@ -113,7 +113,7 @@ function hooks(calls: string[][], spawnEnv?: { current?: NodeJS.ProcessEnv }) {
   return {
     execute: createExecute(calls),
     spawnServer: (file: string, args: readonly string[], env: NodeJS.ProcessEnv) => {
-      expect(file.endsWith('postgres')).toBe(true);
+      expect(basename(file).startsWith('postgres')).toBe(true);
       expect(args).toEqual(['-D', expect.any(String)]);
       // Paths may legitimately contain "-o". Reject the option as an argv
       // entry without confusing a randomly generated directory with a flag.
@@ -246,8 +246,8 @@ describe('openOwnedPostgres', () => {
     const binaryDirectory = join(temp, 'pg bin');
     const rootDirectory = join(temp, 'instance');
     await mkdir(binaryDirectory);
-    await writeFile(join(binaryDirectory, 'postgres'), '');
-    await writeFile(join(binaryDirectory, 'initdb'), '');
+    await writeFile(postgresBinary(binaryDirectory, 'postgres'), '');
+    await writeFile(postgresBinary(binaryDirectory, 'initdb'), '');
     await mkdir(rootDirectory, { mode: 0o700 });
     const calls: string[][] = [];
     const spawnEnv: { current?: NodeJS.ProcessEnv } = {};
