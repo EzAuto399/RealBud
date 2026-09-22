@@ -110,6 +110,8 @@ async function stoppedFixture() {
     running.kill("SIGTERM");
   });
 }
+// A hosted Windows runner boots the real server slower than a developer machine.
+const FIXTURE_START_MS = process.platform === "win32" ? 90_000 : 20_000;
 async function startFixture() {
   const reservation = createServer();
   await new Promise<void>(resolve => reservation.listen(0, "127.0.0.1", resolve));
@@ -122,7 +124,7 @@ async function startFixture() {
     stdio: ["ignore", "ignore", "pipe"],
   });
   child.stderr!.on("data", chunk => { stderr = (stderr + String(chunk)).slice(-12_000); });
-  const deadline = Date.now() + 20_000;
+  const deadline = Date.now() + FIXTURE_START_MS;
   for (;;) {
     if (child.exitCode !== null) throw new Error(`Fixture server exited ${child.exitCode}: ${stderr}`);
     try { if ((await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(500) })).ok) break; } catch { /* starting */ }
@@ -225,7 +227,7 @@ beforeEach(async () => {
     ["morning-arrears", "owner-letter", "inbound-triage"].map(id => [id, { enabled: false, handledThrough: Date.now(), revision: 1 }]),
   ) }));
   await startFixture();
-}, 25_000);
+}, FIXTURE_START_MS + 5_000);
 
 afterEach(async () => {
   holdAuth = false; for (const answer of heldAuth.splice(0)) answer();
