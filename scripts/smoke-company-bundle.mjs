@@ -139,7 +139,9 @@ async function inspectProfile(home, pack, status, env) {
     witnessLaunches++;
     try {
       witness = await execute(join(env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-NonInteractive', '-EncodedCommand', ACL_WITNESS], {
-        env: { ...env, REALBUD_SMOKE_PRIVATE_PATHS: JSON.stringify(objects) }, shell: false, windowsHide: true, timeout: 15_000, maxBuffer: 4096,
+        env: { ...env, REALBUD_SMOKE_PRIVATE_PATHS: JSON.stringify(objects) }, shell: false, windowsHide: true,
+        // A cold Windows PowerShell 5.1 on a hosted runner took 34 s to start in run 35715811161; 15 s made the witness fail before it ran.
+        timeout: 120_000, maxBuffer: 4096,
       });
     } catch { throw new Error('Fresh profile Windows privacy verification failed'); }
     finally { witnessMs += Math.round(performance.now() - witnessStarted); }
