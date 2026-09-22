@@ -218,65 +218,169 @@ export function readProfileFiles(paths: string[]): Array<Buffer | null> {
 
 /** Complete private stage, then publish; no truncation or copy fallback. */
 export function writeProfileFile(path: string, content: string | Buffer, overwrite = true, expected?: Buffer | null): void {
-  checked(() => {
-    const data = typeof content === 'string' ? Buffer.from(content, 'utf8') : content;
+  writeProfileFiles([{ path, bytes: content, overwrite, expected }]);
+}
+
+/** One file of a publication. `expected` is the caller's snapshot, as before. */
+export type ProfileFileWrite = {
+  path: string;
+  bytes: string | Buffer;
+  /** Default true, matching `writeProfileFile`. */
+  overwrite?: boolean;
+  expected?: Buffer | null;
+};
+
+/**
+ * What each entry actually ended up as. `published` means renamed AND verified;
+ * `renamed-unverified` means the bytes are at the destination but this call
+ * never got its own admission back for that path, so nothing may trust it.
+ */
+export type ProfileWriteOutcome = {
+  path: string;
+  state: 'published' | 'renamed-unverified' | 'staged' | 'absent';
+};
+
+type Pending = {
+  path: string; data: Buffer; overwrite: boolean; expected?: Buffer | null;
+  directory: string; chain: Chain; before: BigIntStats | null;
+  previous: Buffer | null; existing: BigIntStats | null;
+  temporary: string; fd: number; created: BigIntStats | null;
+  state: ProfileWriteOutcome['state'];
+};
+
+/**
+ * Publish many files in three PowerShell processes instead of three per file.
+ * The per-file guarantees are the ones `writeProfileFile` has always made:
+ * no byte reaches a stage before that stage's own restrict has returned, no
+ * published file is reported before its own verification has returned, and a
+ * refusal at any index leaves earlier entries published and later ones staged
+ * or absent — never a silent partial success. The returned outcomes say which
+ * is which, and a thrown error carries the same list as `profileWriteOutcomes`.
+ *
+ * What is batched is only what does not gate the next step: the destination
+ * directories and the files already published in them (one process), then every
+ * empty stage's restrict (one), then every published path's verify (one). A
+ * list longer than the script's cap splits across processes, still in phase.
+ */
+export function writeProfileFiles(entries: ProfileFileWrite[]): ProfileWriteOutcome[] {
+  const pending: Pending[] = [];
+  try {
+    return checked(() => publishAll(entries, pending));
+  } catch (error) {
+    // Never let a failure be read as "nothing happened": say it per file.
+    if (error instanceof Error) Object.assign(error, { profileWriteOutcomes: outcomes(pending) });
+    throw error;
+  }
+}
+
+function outcomes(pending: Pending[]): ProfileWriteOutcome[] {
+  return pending.map(item => ({ path: item.path, state: item.state }));
+}
+
+function publishAll(entries: ProfileFileWrite[], pending: Pending[]): ProfileWriteOutcome[] {
+  if (!Array.isArray(entries)) fail();
+  for (const entry of entries) {
+    const bytes = entry?.bytes;
+    const data = typeof bytes === 'string' ? Buffer.from(bytes, 'utf8') : bytes;
     if (!Buffer.isBuffer(data) || data.length > MAX_BYTES) fail();
-    const directory = dirname(path);
-    // The destination directory and any file already published in it are both
-    // verify-only and neither gates the other, so one PowerShell process
-    // admits both in that order. A cold powershell.exe costs seconds on a
-    // Windows client, and provisioning a profile repeats this per file.
-    const staged = stageDirectory(directory);
-    const target = stageFile(path);
-    windowsFilePrivacyBatchSync([
-      { path: directory, kind: 'directory', action: 'verify' },
-      ...(target.before ? [{ path, kind: 'file' as const, action: 'verify' as const }] : []),
-    ]);
-    settleDirectory(directory, staged.chain, staged.before);
-    const chain = target.chain;
-    let snapshot: { data: Buffer; stat: BigIntStats } | null = null;
-    if (target.before) snapshot = readAdmittedFile(path, chain, target.before);
-    else recheckParents(chain);
-    const previous = snapshot?.data ?? null;
-    if (expected !== undefined && ((expected === null) !== (previous === null) || expected && !expected.equals(previous!))) fail();
-    if (!overwrite && previous !== null) fail();
-    const existing = snapshot?.stat ?? null;
-    const temporary = join(dirname(path), `.realbud-profile-${randomUUID()}.tmp`);
-    const fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NOFOLLOW, 0o600);
-    let created: BigIntStats | undefined;
-    let closed = false;
-    try {
-      created = fstatSync(fd, { bigint: true });
-      ordinary(created, false);
-      if (created.size !== 0n) fail();
-      windowsFilePrivacySync(temporary, 'file', true);
-      const restricted = lstatSync(temporary, { bigint: true }); ordinary(restricted, false);
-      if (!same(created, restricted) || restricted.size !== 0n || !same(restricted, fstatSync(fd, { bigint: true }))) fail();
-      recheckParents(chain);
-      writeFileSync(fd, data); fsyncSync(fd);
-      const written = fstatSync(fd, { bigint: true }); ordinary(written, false);
-      const named = lstatSync(temporary, { bigint: true }); ordinary(named, false);
-      if (!unchanged(written, named) || written.size !== BigInt(data.length)) fail();
-      const current = readProfileFile(path);
-      const currentStat = optionalStat(path);
-      if ((previous === null) !== (current === null) || previous && !previous.equals(current!) ||
-          existing && (!currentStat || !unchanged(existing, currentStat))) fail();
-      recheckParents(chain);
-      // CREATE_NEW publication cannot overwrite a competing first creation.
-      // Both names refer to our already-private complete stage until unlink.
-      if (existing === null) { linkSync(temporary, path); unlinkSync(temporary); }
-      else renameSync(temporary, path);
-      const published = lstatSync(path, { bigint: true }); ordinary(published, false);
-      if (!same(created, published) || published.size !== BigInt(data.length)) fail();
-      windowsFilePrivacySync(path, 'file');
-      recheckParents(chain);
-      closeSync(fd); closed = true;
-      fsyncDir(dirname(path));
-    } finally {
-      if (!closed) closeSync(fd);
-      // Delete only our still-single-linked stage. Uncertain aliases survive.
-      const staged = optionalStat(temporary);
-      if (created && staged && !staged.isSymbolicLink() && staged.nlink === 1n && same(created, staged)) unlinkSync(temporary);
+    pathCheck(entry.path);
+    pending.push({
+      path: entry.path, data, overwrite: entry.overwrite !== false, expected: entry.expected,
+      directory: dirname(entry.path), chain: [], before: null, previous: null, existing: null,
+      temporary: '', fd: -1, created: null, state: 'absent',
+    });
+  }
+  if (!pending.length) return [];
+  const directories: string[] = [];
+  try {
+    // 1. Admit every destination directory and every file already published in
+    //    one of them. None of these gates another, and all of them gate what
+    //    follows, so they share one process and all settle before it.
+    const staged = new Map<string, { chain: Chain; before: BigIntStats }>();
+    const operations: WindowsFilePrivacyOperation[] = [];
+    for (const item of pending) {
+      if (!staged.has(item.directory)) {
+        staged.set(item.directory, stageDirectory(item.directory));
+        directories.push(item.directory);
+        operations.push({ path: item.directory, kind: 'directory', action: 'verify' });
+      }
+      const target = stageFile(item.path);
+      item.chain = target.chain; item.before = target.before;
+      if (target.before) operations.push({ path: item.path, kind: 'file', action: 'verify' });
     }
-  });
+    admit(operations);
+    for (const directory of directories) {
+      const entry = staged.get(directory)!;
+      settleDirectory(directory, entry.chain, entry.before);
+    }
+    for (const item of pending) {
+      if (item.before) {
+        const snapshot = readAdmittedFile(item.path, item.chain, item.before);
+        item.previous = snapshot.data; item.existing = snapshot.stat;
+      } else recheckParents(item.chain);
+      if (item.expected !== undefined && ((item.expected === null) !== (item.previous === null) ||
+          item.expected && !item.expected.equals(item.previous!))) fail();
+      if (!item.overwrite && item.previous !== null) fail();
+    }
+    // 2. Exclusively create every stage empty, then restrict them together.
+    for (const item of pending) {
+      item.temporary = join(item.directory, `.realbud-profile-${randomUUID()}.tmp`);
+      item.fd = openSync(item.temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NOFOLLOW, 0o600);
+      item.state = 'staged';
+      const created = fstatSync(item.fd, { bigint: true }); ordinary(created, false);
+      if (created.size !== 0n) fail();
+      item.created = created;
+    }
+    admit(pending.map((item): WindowsFilePrivacyOperation => ({ path: item.temporary, kind: 'file', action: 'restrict' })));
+    for (const item of pending) {
+      const restricted = lstatSync(item.temporary, { bigint: true }); ordinary(restricted, false);
+      if (!same(item.created!, restricted) || restricted.size !== 0n || !same(restricted, fstatSync(item.fd, { bigint: true }))) fail();
+      recheckParents(item.chain);
+    }
+    // 3. Only now, with every stage restricted, do any bytes get written.
+    for (const item of pending) {
+      writeFileSync(item.fd, item.data); fsyncSync(item.fd);
+      const written = fstatSync(item.fd, { bigint: true }); ordinary(written, false);
+      const named = lstatSync(item.temporary, { bigint: true }); ordinary(named, false);
+      if (!unchanged(written, named) || written.size !== BigInt(item.data.length)) fail();
+    }
+    // 4. Last-moment drift check against every destination, in one process.
+    const current = readProfileFiles(pending.map(item => item.path));
+    pending.forEach((item, index) => {
+      const now = current[index] ?? null;
+      const currentStat = optionalStat(item.path);
+      if ((item.previous === null) !== (now === null) || item.previous && !item.previous.equals(now!) ||
+          item.existing && (!currentStat || !unchanged(item.existing, currentStat))) fail();
+      recheckParents(item.chain);
+    });
+    // 5. Publish. CREATE_NEW publication cannot overwrite a competing first
+    //    creation. Both names refer to our already-private complete stage.
+    for (const item of pending) {
+      if (item.existing === null) { linkSync(item.temporary, item.path); unlinkSync(item.temporary); }
+      else renameSync(item.temporary, item.path);
+      const published = lstatSync(item.path, { bigint: true }); ordinary(published, false);
+      if (!same(item.created!, published) || published.size !== BigInt(item.data.length)) fail();
+      item.state = 'renamed-unverified';
+    }
+    // 6. Nothing is reported published before its own verification returns.
+    admit(pending.map((item): WindowsFilePrivacyOperation => ({ path: item.path, kind: 'file', action: 'verify' })));
+    for (const item of pending) { recheckParents(item.chain); item.state = 'published'; }
+    for (const item of pending) { closeSync(item.fd); item.fd = -1; }
+    for (const directory of directories) fsyncDir(directory);
+    return outcomes(pending);
+  } finally {
+    for (const item of pending) {
+      // Delete only our still-single-linked stage. Uncertain aliases survive.
+      // One entry's cleanup must not hide the refusal or skip the next entry.
+      try { if (item.fd >= 0) { closeSync(item.fd); item.fd = -1; } } catch { /* already closed */ }
+      if (!item.created || !item.temporary) continue;
+      try {
+        const remains = optionalStat(item.temporary);
+        if (remains && !remains.isSymbolicLink() && remains.nlink === 1n && same(item.created, remains)) {
+          unlinkSync(item.temporary);
+          if (item.state === 'staged') item.state = 'absent';
+        }
+      } catch { /* leave an uncertain stage in place and reported */ }
+    }
+  }
 }

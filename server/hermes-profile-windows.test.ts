@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { attachModel } from './hermes-bridge.ts';
 import { ensurePropertyPack, propertyProfileDir, propertyWorkroomReady } from './hermes-pack.ts';
-import { ensureProfileDirectories } from './hermes-profile-storage.ts';
+import { ensureProfileDirectories, writeProfileFiles } from './hermes-profile-storage.ts';
 import { windowsFilePrivacySync } from './windows-file-privacy.ts';
 import { addFixtureUsersRead, privateFixtureDirectory, privateFixtureRoot, profileAclWitness, writePrivateFixtureFile, WINDOWS_PROFILE_TEST_OPTIONS } from './testing/private-profile-fixture.ts';
 
@@ -124,6 +124,29 @@ describe.skipIf(process.platform !== 'win32')('native Windows profile setup', WI
       protected: true, currentOwner: true, onlyPrivateGrants: true, currentFullControl: true, hasDeny: false,
     });
     expect(readdirSync(target)).toEqual([]);
+  });
+
+  it('publishes a file set in one batch privately, and refuses the set on one bad destination', () => {
+    const root = fixture(), profile = join(root, 'owned-home', 'profiles', 'property');
+    privateFixtureDirectory(profile);
+    const paths = ['SOUL.md', 'config.yaml', '.env'].map(name => join(profile, name));
+    expect(writeProfileFiles(paths.map((path, index) => ({ path, bytes: `fictional body ${index}\n` }))))
+      .toEqual(paths.map(path => ({ path, state: 'published' })));
+    for (const witness of profileAclWitness(paths)) expect(witness).toMatchObject({
+      protected: true, currentOwner: true, onlyPrivateGrants: true, currentFullControl: true, hasDeny: false,
+    });
+    const before = paths.map(path => readFileSync(path));
+    const acls = profileAclWitness(paths);
+
+    addFixtureUsersRead(paths[1]!);
+    expect(() => writeProfileFiles(paths.map(path => ({ path, bytes: 'fictional replacement\n' }))))
+      .toThrow(/windows-acl:grant-not-allowed/);
+    // The whole set refuses at the destination admission, so nothing is staged
+    // and no other destination in the set is touched.
+    paths.forEach((path, index) => { if (index !== 1) expect(readFileSync(path).equals(before[index]!)).toBe(true); });
+    expect(readFileSync(paths[1]!).equals(before[1]!)).toBe(true);
+    expect(readdirSync(profile).some(name => name.startsWith('.realbud-profile-'))).toBe(false);
+    expect(profileAclWitness([paths[0]!, paths[2]!])).toEqual([acls[0], acls[2]]);
   });
 
   it.each(['hardlink', 'junction'] as const)('refuses a profile %s without changing the original target', kind => {

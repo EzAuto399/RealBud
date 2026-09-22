@@ -292,3 +292,92 @@ root is witnessed as owner-only and deny-free but unprotected, is refused by
 the production verifier until it is restricted, and ends protected after
 `ensureProfileDirectories` — and that case, like the existing inherited-home
 refusal that now exercises the new existing-root admission, only runs on win32.
+
+## 22 September 2026 — the batched publication: a fresh apply from 25 launches to 7
+
+Takes the last lever the section above named: the six first publications that
+were eighteen of a fresh apply's twenty-five launches, three each.
+
+`writeProfileFiles(entries)` in `server/hermes-profile-storage.ts` publishes a
+whole set of files in three PowerShell processes instead of three per file, by
+running each step of `writeProfileFile` across the whole list before the next
+step starts:
+
+1. every destination directory, and every file already published in one of
+   them, is admitted in **one** process — none gates another, all gate what
+   follows — and each is settled against its own before/after stat bracket;
+2. every stage is created empty (0-byte, `O_EXCL`) in its admitted directory,
+   and all of them are restricted in **one** process;
+3. only then is any byte written, each into its own already-restricted stage
+   and fsynced;
+4. every destination is re-read once more for drift, then each temp is
+   published — `linkSync`+`unlinkSync` for a first publication, `renameSync`
+   for a replacement, exactly as before;
+5. every published path is verified in **one** process, and only then is
+   anything reported published.
+
+A list longer than the script's 64-operation cap splits into chunks within its
+phase, so the phase ordering holds at any length. `writeProfileFile` is now a
+one-entry call of this and is byte-for-byte the same sequence of admissions,
+in the same processes, as it was before — which is why the existing per-write
+cases did not change.
+
+Per-file honesty. The call returns a `ProfileWriteOutcome` per entry, and a
+thrown error carries the same list as `profileWriteOutcomes`, so a refusal is
+never read as "nothing happened". The states are `published` (renamed **and**
+verified), `renamed-unverified`, `staged` and `absent`. `renamed-unverified` is
+the one new state and it is deliberate: because step 5 is a single batch,
+a refusal there leaves the whole set at its destinations with none of them
+verified, and the call reports exactly that rather than claiming any of them.
+`writeProfileFile` has always had this window for its single file; batching
+widens it to the set. The drift re-check in step 4 is likewise now taken for
+the whole set before the first rename, so the window between one entry's drift
+read and its own rename includes the earlier entries' renames. A competing
+*first* creation is still refused by `linkSync`, and every publication is still
+followed by `same(created, published)` and a size check.
+
+`server/hermes-pack.ts` uses it for the pack's file set: `applyPropertyPack`
+collects `auth.json` (from `pendingRootAuth`, which replaces the write inside
+`ensurePrivateRootAuth`), the four profile files and every skill copy into one
+`writeProfileFiles` call. Their directories are already admitted by
+`prepareProfile`/`prepareSkillCopies` and their existing bytes already read, so
+the ordering holds. Single writes — `applyManagedModelProfile`,
+`removeManagedEnvKey`, the bridge's attach — keep `writeProfileFile`.
+
+Launch counts, measured with the same injected runner in
+`server/hermes-profile-storage.test.ts`, at HEAD `a77cb4a1` and after:
+
+| path | before | after |
+| --- | --- | --- |
+| fresh `applyPropertyPack` | 25 launches / 27 admissions | 7 / 24 |
+| re-apply (Repair) | 21 / 33 | 9 / 30 |
+| installed-profile startup (`ensurePropertyPack`) | 3 / 8 | 3 / 8 |
+
+A fresh apply's seven launches are: two for the profile directory chain, two
+for the skills chain, then the three this change is about — one admitting the
+four distinct destination directories, one restricting all seven stages, one
+verifying all seven published files. The three admissions that went away are
+duplicate destination-directory verifies: the same directory was verified once
+per file and is now verified once per set. No other path, kind or action
+changed, and startup — the path the installed probe's 25-second readiness
+budget waits on — is untouched at three.
+
+Proven: `pnpm exec vitest run server/hermes-pack.test.ts
+server/hermes-profile-storage.test.ts server/hermes-profile-windows.test.ts
+server/windows-file-privacy.test.ts` passes on macOS (47 passed, 14 skipped),
+all 22 `server/hermes-*.test.ts` suites pass (373 passed, 50 skipped), and
+`pnpm exec tsc -p tsconfig.server.json` is clean. Four new cases cover the
+three-process shape with a "no destination exists while any stage is empty"
+witness on every restrict, a verification batch that refuses (both files at
+their destinations, neither reported published), a stage restrict that refuses
+(no destination and no stage left behind, every entry `absent`), and a
+no-clobber entry that refuses before any stage in the set is created.
+
+Not proven: no PowerShell ran on this macOS host, so the seven-operation
+restrict and verify batches have never been parsed or executed. The win32-only
+case added to `server/hermes-profile-windows.test.ts` — three files published
+by one `writeProfileFiles` call, each witnessed protected, owner-only and
+deny-free, then the same set refused on one users-readable destination with no
+stage left behind and the other two files and their descriptors unchanged — is
+the one that will say so, alongside the existing fresh-install case that now
+drives a seven-operation batch natively.

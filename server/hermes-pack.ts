@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { isMap, parseDocument, YAMLMap } from "yaml";
 
-import { ensureProfileDirectories, ensureProfileDirectory, readProfileFile, readProfileFiles, writeProfileFile } from "./hermes-profile-storage.ts";
+import { ensureProfileDirectories, ensureProfileDirectory, readProfileFile, readProfileFiles, writeProfileFile, writeProfileFiles, type ProfileFileWrite } from "./hermes-profile-storage.ts";
 import { HERMES_PIN } from "./hermes-pin.ts";
 import { hermesHome, runtimeCli } from "./hermes-paths.ts";
 import { readRuntimeSelection, releaseHome, runtimeCommit, selectedHermesCli } from "./hermes-runtime-selection.ts";
@@ -79,10 +79,17 @@ export function packInstalled(root?: string): boolean {
   return existsSync(join(propertyProfileDir(root), "SOUL.md"));
 }
 
-function ensurePrivateRootAuth(root?: string): void {
-  // An empty owned-home root prevents fallback to personal Hermes auth.
+/** An empty owned-home root prevents fallback to personal Hermes auth. Returned
+ * rather than written so an apply can publish it in the same batch as the pack. */
+function pendingRootAuth(root?: string): ProfileFileWrite | null {
   const path = join(hermesHome(root), "auth.json");
-  if (readProfileFile(path) === null) writeProfileFile(path, `${JSON.stringify({ version: 1, providers: {}, credential_pool: {} }, null, 2)}\n`, false);
+  if (readProfileFile(path) !== null) return null;
+  return { path, bytes: `${JSON.stringify({ version: 1, providers: {}, credential_pool: {} }, null, 2)}\n`, overwrite: false };
+}
+
+function ensurePrivateRootAuth(root?: string): void {
+  const pending = pendingRootAuth(root);
+  if (pending) writeProfileFiles([pending]);
 }
 
 const PROFILE_FILES = ["SOUL.md", "config.yaml", "distribution.yaml", "profile.yaml", ".env"];
@@ -239,21 +246,28 @@ export function applyPropertyPack(root?: string): { dir: string; wrote: string[]
   const config = mergePropertyPolicy(existingBytes?.toString("utf8") ?? "", defaults.toString());
   const skillsFrom = join(PACK_DIR, "skills");
   const skillCopies = existsSync(skillsFrom) ? prepareSkillCopies(skillsFrom, join(dest, "skills")) : [];
-  ensurePrivateRootAuth(root);
   const wrote: string[] = [];
+  // Every destination directory here is already admitted and every existing
+  // destination file already read, so the whole pack publishes in one batch:
+  // three PowerShell processes for the set rather than three per file. The
+  // order is the order these were written one at a time.
+  const entries: ProfileFileWrite[] = [];
+  const auth = pendingRootAuth(root);
+  if (auth) entries.push(auth);
 
   for (const name of ["SOUL.md", "config.yaml", "distribution.yaml", "profile.yaml"]) {
     const from = join(PACK_DIR, name);
     if (!existsSync(from)) continue;
     let body = readFileSync(from, "utf8");
     if (name === "config.yaml") body = config;
-    writeProfileFile(join(dest, name), body, true, name === "config.yaml" ? existingBytes : undefined);
+    entries.push({ path: join(dest, name), bytes: body, expected: name === "config.yaml" ? existingBytes : undefined });
     wrote.push(name);
   }
   if (existsSync(skillsFrom)) {
-    for (const file of skillCopies) writeProfileFile(file.path, file.body, false);
+    for (const file of skillCopies) entries.push({ path: file.path, bytes: file.body, overwrite: false });
     wrote.push("skills/");
   }
+  writeProfileFiles(entries);
   return { dir: dest, wrote };
 }
 

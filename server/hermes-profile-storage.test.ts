@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { ensureProfileDirectories, ensureProfileDirectory, readProfileFile, readProfileFiles, writeProfileFile } from './hermes-profile-storage.ts';
+import { ensureProfileDirectories, ensureProfileDirectory, readProfileFile, readProfileFiles, writeProfileFile, writeProfileFiles } from './hermes-profile-storage.ts';
 import { applyPropertyPack, ensurePropertyPack, migratePropertyProfileFromLegacyHermes, propertyProfileDir } from './hermes-pack.ts';
 import { attachModel } from './hermes-bridge.ts';
 
@@ -263,6 +263,75 @@ describe('profile storage with simulated ACL outcomes and real disposable files'
     ]);
   });
 
+  it('publishes a whole file set in three processes with bytes only after every restrict', () => {
+    const root = fixture();
+    const names = ['SOUL.md', 'config.yaml', '.env'];
+    const paths = names.map(name => join(root, name));
+    const bytesWhenRestricted: number[] = [];
+    privacy.mockImplementation((path, kind, restrict) => {
+      // Nothing may exist at a destination while any stage is still empty.
+      if (kind === 'file' && restrict) {
+        expect(readFileSync(path)).toHaveLength(0);
+        bytesWhenRestricted.push(paths.filter(existsSync).length);
+      }
+    });
+    const outcomes = writeProfileFiles(paths.map((path, index) => ({ path, bytes: `body ${index}\n` })));
+    expect(outcomes).toEqual(paths.map(path => ({ path, state: 'published' })));
+    expect(paths.map(path => readFileSync(path, 'utf8'))).toEqual(['body 0\n', 'body 1\n', 'body 2\n']);
+    expect(readdirSync(root).sort()).toEqual([...names].sort());
+    expect(bytesWhenRestricted).toEqual([0, 0, 0]);
+    // One process admits the shared destination directory, one restricts all
+    // three stages, one verifies all three published paths. The directory is
+    // admitted once for the set, not once per file.
+    const stages = privacy.mock.calls.slice(1, 4).map(call => call[0]);
+    expect(stages.every(path => /^\.realbud-profile-.*\.tmp$/.test(basename(path)))).toBe(true);
+    expect(acl.processes).toEqual([
+      [[root, 'directory', false]],
+      stages.map(path => [path, 'file', true]),
+      paths.map(path => [path, 'file', false]),
+    ]);
+  });
+
+  it('never reports a published file the verification batch did not reach', () => {
+    const root = fixture();
+    const paths = ['SOUL.md', 'config.yaml'].map(name => join(root, name));
+    privacy.mockImplementation((path, kind, restrict) => { if (kind === 'file' && !restrict && path === paths[1]) throw refusal(); });
+    let outcomes: unknown;
+    expect(() => {
+      try { writeProfileFiles(paths.map(path => ({ path, bytes: 'body\n' }))); }
+      catch (error) { outcomes = (error as { profileWriteOutcomes?: unknown }).profileWriteOutcomes; throw error; }
+    }).toThrow('Private storage refused.');
+    // Both are at their destinations, and neither is claimed as published.
+    expect(outcomes).toEqual(paths.map(path => ({ path, state: 'renamed-unverified' })));
+    expect(paths.every(path => readFileSync(path, 'utf8') === 'body\n')).toBe(true);
+  });
+
+  it('leaves no destination and no stage behind when one stage restrict refuses', () => {
+    const root = fixture();
+    const paths = ['SOUL.md', 'config.yaml', '.env'].map(name => join(root, name));
+    let seen = 0;
+    privacy.mockImplementation((_path, kind, restrict) => { if (kind === 'file' && restrict && seen++ === 1) throw refusal(); });
+    let outcomes: unknown;
+    expect(() => {
+      try { writeProfileFiles(paths.map(path => ({ path, bytes: 'FAKE_KEY=fictional\n' }))); }
+      catch (error) { outcomes = (error as { profileWriteOutcomes?: unknown }).profileWriteOutcomes; throw error; }
+    }).toThrow('Private storage refused.');
+    expect(outcomes).toEqual(paths.map(path => ({ path, state: 'absent' })));
+    expect(readdirSync(root)).toEqual([]);
+  });
+
+  it('refuses a no-clobber entry before creating any stage for the set', () => {
+    const root = fixture(), kept = join(root, 'config.yaml');
+    writeFileSync(kept, 'retained');
+    expect(() => writeProfileFiles([
+      { path: join(root, 'SOUL.md'), bytes: 'new' },
+      { path: kept, bytes: 'replacement', overwrite: false },
+    ])).toThrow(/recovery/);
+    expect(readdirSync(root)).toEqual(['config.yaml']);
+    expect(readFileSync(kept, 'utf8')).toBe('retained');
+    expect(writeProfileFiles([])).toEqual([]);
+  });
+
   it('keeps POSIX existing directory modes unchanged while new files are private', () => {
     const root = fixture(); if (process.platform !== 'win32') chmodSync(root, 0o750);
     const before = statSync(root).mode; ensureProfileDirectory(root);
@@ -295,13 +364,14 @@ describe('profile provisioning and model attachment privacy wiring', () => {
     privacy.mockClear(); acl.processes.length = 0;
     expect(ensurePropertyPack(root).wrote).toEqual([]);
     const startup = { launches: acl.processes.length, admissions: privacy.mock.calls.length };
-    // Measured at HEAD before the profile-scoped batches: 27/27, 30/34 and
-    // 8/8. The admitted paths, kinds and actions are otherwise unchanged; the
-    // one admission that went away is the duplicate `config.yaml` read a
-    // re-apply used to make after `prepareProfile` had already read it.
+    // Measured at HEAD before the batched publication: 25/27, 21/33 and 3/8.
+    // Six first publications cost eighteen of those twenty-five launches; the
+    // whole pack now publishes in three. The three admissions that went away
+    // are duplicate destination-directory verifies: one per file became one
+    // per directory. No other path, kind or action changed.
     expect({ fresh, reapply, startup }).toEqual({
-      fresh: { launches: 25, admissions: 27 },
-      reapply: { launches: 21, admissions: 33 },
+      fresh: { launches: 7, admissions: 24 },
+      reapply: { launches: 9, admissions: 30 },
       startup: { launches: 3, admissions: 8 },
     });
   });
