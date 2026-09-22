@@ -41,6 +41,10 @@ jobs:
           python scripts/testing/hermes-memory-windows-journal-io.py
       - name: Native Windows memory storage candidate (production hold stays)
         if: matrix.os == 'windows-latest'
+        # Nested under the job's 15 minutes: the script's own budgets (120 s per
+        # fixture command, 300 s per check, 480 s overall) expire first so a
+        # failure still writes a receipt, and this bound is the backstop.
+        timeout-minutes: 10
         run: python scripts/testing/hermes-memory-windows-native.py --receipt outputs/windows-memory-ci.json
       - name: Preserve native memory acceptance evidence
         if: always() && matrix.os == 'windows-latest'
@@ -74,6 +78,9 @@ jobs:
         run: pnpm exec vite build
 
   package-linux:
+    # Linux is a desktop beta without an office host: no PostgreSQL runtime is
+    # pinned for linux-x64, so this job reports but does not block the matrix.
+    continue-on-error: true
     name: package + smoke (Ubuntu 24.04 x64)
     runs-on: ubuntu-24.04
     timeout-minutes: 25

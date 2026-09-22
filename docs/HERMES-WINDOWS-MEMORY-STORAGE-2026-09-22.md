@@ -45,6 +45,18 @@ The call receipts, frozen input hashes, structured outputs and source dispositio
 - Server packaging verifies and records the exact bytes of all four dynamically loaded memory helpers. Generated Python cache directories are excluded from input copying.
 - Local results and final fingerprints are recorded in the wave's `verification.json`; review dispositions retain earlier frozen source hashes and subsequent fixes.
 
+## Windows CI timeout fix — 22 September 2026
+
+This note records a harness change only. No Windows acceptance has passed; the native candidate remains unproven on Windows and the production hold is unchanged.
+
+Run 35709366311 (`windows-latest`, Windows Server 2025, Python 3.12.10) failed the third native case, "An inherited child requires its containing protected root; absent and unrelated roots are refused without repair", with `failure_type: TimeoutExpired`, `handles_drained: true` and `cleanup: true`. That case makes the run's first `powershell.exe` call (a `Get-Acl` descriptor read); the fixture helper allowed each disposable command only 20 seconds, which a cold Windows PowerShell start on a hosted runner can exceed. Cases 1 and 2 use no subprocess, which is why they passed. The receipt named the check but not the command, so the cause was not readable from the evidence.
+
+Changed, without relaxing any refusal or assertion: each disposable fixture command (PowerShell ACL/junction preparation and the independent CRT lock probe) now gets 120 seconds instead of 20 and 10; a check may take 300 seconds and the whole run 480 seconds, after which acceptance fails with a fixed message rather than running unbounded; the CI step carries `timeout-minutes: 10`, nested inside the job's 15, so the script's own budgets expire first and still write a receipt. The helper already used `-NoProfile -NonInteractive`.
+
+The receipt now carries `timeouts` (the configured fixture/check/run budgets), `check_seconds` (elapsed seconds per passed check, for spotting a near-miss before it times out) and, on failure, `active_step` plus `active_step_timeout_seconds` — a short fixed label such as "fixture: inherited child descriptor read", never command output and no path beyond the disposable root. Each check name is also printed to stderr as it starts, so an outer kill still names the running case in the CI log.
+
+Verified on macOS only: `python3 -m py_compile` on the acceptance script, its non-Windows unsupported path (exit 2, zero native checks, new receipt fields present), a disposable control-flow check that the step label survives a propagating timeout and clears on success, and the four portable sibling suites (19 + 19 + 33 + 18 tests, all passing). The proof of the fix is the next `windows-latest` run; until it passes, checks 3 to 13 remain unrun on Windows.
+
 ## Remaining gates
 
 1. Integrate the owned adapter with the existing signed review/proposal journal, native memory semantics and interoperable target locks. Include safe private directory/lock initialization, bounded inventory and confirmed cleanup/recovery. The foundation alone is insufficient to remove the hold.

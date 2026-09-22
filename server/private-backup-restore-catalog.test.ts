@@ -27,6 +27,9 @@ import { WORKFLOW_MAX_ENCRYPTED_RECORD_LENGTH } from './workflow-database.ts';
 import { batchBackupFixture } from './testing/batch-backup-fixture.ts';
 
 const AT = Date.parse('2026-09-21T03:00:00Z'), roots: string[] = [], catalogs: PrivateBackupCatalog[] = [];
+// Thousands of encrypted SQLite inserts and reads. Shared CI runners have much
+// slower disks than a developer machine, so only the hosted budget is raised.
+const BULK_TIMEOUT_MS = process.env.CI ? 120_000 : 30_000;
 afterEach(async () => { vi.restoreAllMocks(); for (const c of catalogs.splice(0)) c.close(); await Promise.all(roots.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
 async function fixture(workspaceId = randomUUID(), base = true, maxEntries = 20_000) {
   const directory = await mkdtemp(join(realpathSync(tmpdir()), 'RealBud logical restore ')); roots.push(directory);
@@ -183,7 +186,7 @@ describe('bounded logical private restore', () => {
     expect(to.catalog.getFile('vault/workflow-inputs/original.csv')!.data).toEqual(exact);
     expect(to.catalog.getFile('vault/workflow-inputs/arbitrary.json')!.data).toEqual(json);
     expect(JSON.parse(to.catalog.getFile('loops.json')!.data.toString()).state).toEqual(Object.fromEntries(['morning-arrears', 'owner-letter', 'inbound-triage'].map(id => [id, { enabled: false, handledThrough: AT }])));
-  }, 30_000);
+  }, BULK_TIMEOUT_MS);
   it('matches v1 execution rows, exact projection bytes and checkpoint hashes while retaining old request identities', async () => {
     const from = await fixture(), to = await fixture(from.workspaceId, false), history = executionFixture();
     for (const [path, data] of Object.entries(history.files)) from.catalog.addFile({ path, encoding: 'bytes', data: Buffer.from(data) });

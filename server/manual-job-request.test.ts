@@ -46,13 +46,19 @@ describe("manual job request boundary", () => {
       idempotencyKey: manualRecipeRequestKey(job, { requestId, expectedRevision: 3 }, "prepare"),
     };
     let release!: (value: { ok: true; stdout: string }) => void;
+    let reachWorker!: () => void;
+    // The first attempt reaches the worker after an unspecified number of awaits
+    // (optional pack instructions, assigned-case checks). Wait for the worker
+    // itself rather than assuming a microtask count.
+    const reachedWorker = new Promise<void>((resolve) => { reachWorker = resolve; });
     let calls = 0;
-    const ask = () => { calls += 1; return new Promise<{ ok: true; stdout: string }>((resolve) => { release = resolve; }); };
+    const ask = () => { calls += 1; reachWorker(); return new Promise<{ ok: true; stdout: string }>((resolve) => { release = resolve; }); };
     try {
       const runs = new JobRunStore({ file });
       const original = executeRecipeJob(job, input, { store: runs, ask });
       const overlapping = await executeRecipeJob(job, input, { store: runs, ask });
       expect(overlapping).toMatchObject({ reused: true, run: { status: "running" } });
+      await reachedWorker;
       expect(calls).toBe(1);
       release({ ok: true, stdout: JSON.stringify({ summary: "Draft ready", evidence: ["Fictional notes"], outputs: ["Full owner report"], needsApproval: [] }) });
       const completed = await original;

@@ -27,6 +27,16 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MODULE = ROOT / "server/helpers/hermes-memory-windows-native.py"
 BEFORE = b"Fictional preference: concise updates.\n"
 AFTER = "Fictional preference: detailed updates.\nUnicode: 中文🙂\n".encode("utf-8")
+# A cold CI runner pays PowerShell/interpreter start-up on the first fixture
+# command, so each disposable helper process gets a bounded but realistic
+# budget; the per-check and whole-run budgets keep a stall from running away.
+FIXTURE_TIMEOUT_SECONDS = 120
+CHECK_BUDGET_SECONDS = 300
+RUN_BUDGET_SECONDS = 480
+# Short fixed labels only: never command output, and no path beyond the
+# disposable root.
+ACTIVE_STEP: dict[str, Any] = {}
+RUN_STARTED = time.monotonic()
 
 
 class AcceptanceFailure(Exception):
@@ -52,20 +62,30 @@ def require_namespace_absent(path: Path) -> None:
     raise AcceptanceFailure("The selected name must be absent after the final handle closes.")
 
 
-def powershell(script: str, values: dict[str, str]) -> str:
+@contextmanager
+def fixture_step(label: str, timeout_seconds: float):
+    """Name the running fixture command so a timeout receipt can say which one."""
+    ACTIVE_STEP.update(active_step=label, active_step_timeout_seconds=timeout_seconds)
+    yield
+    # Deliberately no finally: a propagating failure keeps its own label.
+    ACTIVE_STEP.clear()
+
+
+def powershell(script: str, values: dict[str, str], *, label: str) -> str:
     import base64
     system_root = os.environ.get("SystemRoot")
     require(system_root and Path(system_root).is_absolute(), "Trusted Windows system directory is required.")
     executable = Path(system_root) / "System32/WindowsPowerShell/v1.0/powershell.exe"
     env = {name: os.environ[name] for name in ("SystemRoot", "SYSTEMROOT", "WINDIR", "PATH", "TEMP", "TMP") if name in os.environ}
     env.update(values)
-    result = subprocess.run(
-        [str(executable), "-NoProfile", "-NonInteractive", "-EncodedCommand",
-         base64.b64encode(script.encode("utf-16le")).decode("ascii")],
-        env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE, timeout=20, check=False,
-        creationflags=subprocess.CREATE_NO_WINDOW,
-    )
+    with fixture_step(label, FIXTURE_TIMEOUT_SECONDS):
+        result = subprocess.run(
+            [str(executable), "-NoProfile", "-NonInteractive", "-EncodedCommand",
+             base64.b64encode(script.encode("utf-16le")).decode("ascii")],
+            env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, timeout=FIXTURE_TIMEOUT_SECONDS, check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
     require(result.returncode == 0, "Disposable fixture ACL/junction operation failed.")
     require(len(result.stdout) <= 16384 and len(result.stderr) <= 16384, "Disposable fixture output exceeded its bound.")
     return result.stdout.decode("utf-8-sig", errors="strict").strip()
@@ -213,7 +233,14 @@ def run_checks(rig: Rig, receipt: dict[str, Any]) -> None:
 
     def check(name: str, work: Any) -> None:
         receipt["active_check"] = name
+        # Progress on stderr so an outer kill still names the running check.
+        print("check: " + name, file=sys.stderr, flush=True)
+        started = time.monotonic()
         work()
+        elapsed = time.monotonic() - started
+        receipt["check_seconds"].append(round(elapsed, 1))
+        require(elapsed <= CHECK_BUDGET_SECONDS, "A single acceptance check exceeded its bounded time budget.")
+        require(time.monotonic() - RUN_STARTED <= RUN_BUDGET_SECONDS, "Acceptance exceeded its bounded total time budget.")
         receipt["checks"].append(name)
 
     def empty_private_creation() -> None:
@@ -259,7 +286,7 @@ def run_checks(rig: Rig, receipt: dict[str, Any]) -> None:
             stream.write(BEFORE)
             stream.flush()
             os.fsync(stream.fileno())
-        descriptor_before = powershell(GET_ACL, {"REALBUD_ACCEPTANCE_PATH": str(path)})
+        descriptor_before = powershell(GET_ACL, {"REALBUD_ACCEPTANCE_PATH": str(path)}, label="fixture: inherited child descriptor read")
         handle = rig.own(native.open_existing(str(path)))
         rig.refuses(lambda: native.verify_private(handle), code="unsafe-storage")
         unrelated = rig.own(native.create_private_directory(str(rig.root.parent / "Unrelated private sibling")))
@@ -270,7 +297,7 @@ def run_checks(rig: Rig, receipt: dict[str, Any]) -> None:
         rig.refuses(lambda: native.verify_private(handle, private_root=unrelated), code="unsafe-storage")
         rig.close(unrelated)
         require(native.read(handle, 65536) == BEFORE, "Root-bound inherited child must preserve its bytes.")
-        require(powershell(GET_ACL, {"REALBUD_ACCEPTANCE_PATH": str(path)}) == descriptor_before, "Verification must not rewrite an inherited descriptor.")
+        require(powershell(GET_ACL, {"REALBUD_ACCEPTANCE_PATH": str(path)}, label="fixture: inherited child descriptor recheck") == descriptor_before, "Verification must not rewrite an inherited descriptor.")
         rig.close(handle)
 
     check("An inherited child requires its containing protected root; absent and unrelated roots are refused without repair", inherited_child)
@@ -278,12 +305,12 @@ def run_checks(rig: Rig, receipt: dict[str, Any]) -> None:
     def broad_grant() -> None:
         path, handle = rig.file("explicit broad grant.txt", BEFORE)
         rig.close(handle)
-        powershell(BROAD_GRANT, {"REALBUD_ACCEPTANCE_PATH": str(path)})
-        descriptor_before = powershell(GET_ACL, {"REALBUD_ACCEPTANCE_PATH": str(path)})
+        powershell(BROAD_GRANT, {"REALBUD_ACCEPTANCE_PATH": str(path)}, label="fixture: broad grant ACL write")
+        descriptor_before = powershell(GET_ACL, {"REALBUD_ACCEPTANCE_PATH": str(path)}, label="fixture: broad grant descriptor read")
         handle = rig.own(native.open_existing(str(path)))
         rig.refuses(lambda: native.verify_private(handle), code="unsafe-storage")
         rig.refuses(lambda: native.verify_private(handle, private_root=rig.root_handle), code="unsafe-storage")
-        require(powershell(GET_ACL, {"REALBUD_ACCEPTANCE_PATH": str(path)}) == descriptor_before, "Rejected broad ACL must remain unchanged.")
+        require(powershell(GET_ACL, {"REALBUD_ACCEPTANCE_PATH": str(path)}, label="fixture: broad grant descriptor recheck") == descriptor_before, "Rejected broad ACL must remain unchanged.")
         rig.refuses(lambda: native.read(handle, 65536))
         require(path.read_bytes() == BEFORE, "Privacy rejection must not rewrite fictional bytes.")
         rig.close(handle)
@@ -329,7 +356,7 @@ def run_checks(rig: Rig, receipt: dict[str, Any]) -> None:
         native.flush(child_handle)
         rig.close(child_handle)
         junction = rig.root / "junction alias"
-        powershell(JUNCTION, {"REALBUD_ACCEPTANCE_LINK": str(junction), "REALBUD_ACCEPTANCE_TARGET": str(target)})
+        powershell(JUNCTION, {"REALBUD_ACCEPTANCE_LINK": str(junction), "REALBUD_ACCEPTANCE_TARGET": str(target)}, label="fixture: junction creation")
         try:
             rig.refuses(lambda: native.open_existing(str(junction), directory=True), code="unsafe-storage")
             require(rig.bytes(child) == BEFORE, "Junction refusal must preserve target bytes.")
@@ -491,9 +518,11 @@ finally:
     os.close(fd)
 """
         def crt_probe(expected: bytes) -> None:
-            result = subprocess.run([sys.executable, "-B", "-c", child, str(path)],
-                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                    timeout=10, check=False, creationflags=subprocess.CREATE_NO_WINDOW)
+            with fixture_step("fixture: independent CRT byte-zero lock probe", FIXTURE_TIMEOUT_SECONDS):
+                result = subprocess.run([sys.executable, "-B", "-c", child, str(path)],
+                                        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        timeout=FIXTURE_TIMEOUT_SECONDS, check=False,
+                                        creationflags=subprocess.CREATE_NO_WINDOW)
             require(result.returncode == 0 and result.stdout.strip() == expected and not result.stderr,
                     "The independent CRT process must observe the expected byte-zero lock state.")
         native.lock(lock, timeout_ms=0)
@@ -538,7 +567,10 @@ def main() -> int:
         "python": platform.python_version(), "architecture": platform.machine(),
         "windows": platform.win32_ver(), "selected_module": str(args.module.absolute()),
         "script_sha256": digest(Path(__file__)), "checks": [], "cleanup": False,
-        "native_validation": False,
+        "native_validation": False, "check_seconds": [],
+        "timeouts": {"fixture_seconds": FIXTURE_TIMEOUT_SECONDS,
+                     "check_seconds": CHECK_BUDGET_SECONDS,
+                     "run_seconds": RUN_BUDGET_SECONDS},
         "limits": ["Primitive acceptance only; production platform holds remain unchanged.",
                    "No Hermes runtime, model/provider, customer profile or credential is used.",
                    "No full application, installed GUI, Windows 11 device or power-loss guarantee is implied.",
@@ -577,10 +609,14 @@ def main() -> int:
         receipt["failure_type"] = type(error).__name__
         if getattr(error, "acceptance_independent_reader_cleanup_failed", False):
             receipt["independent_reader_cleanup_failure"] = True
+        # A fixed label and its configured budget only; never command output.
+        receipt.update(ACTIVE_STEP)
         if isinstance(error, AcceptanceFailure):
             receipt["failure"] = str(error)
         elif rig is not None and isinstance(error, rig.module.NativeError):
             receipt["native_failure"] = getattr(error, "code", "native-error")
+        elif isinstance(error, subprocess.TimeoutExpired):
+            receipt["failure"] = "A disposable fixture command exceeded its configured timeout; see active_step."
         else:
             receipt["failure"] = "The acceptance fixture could not complete; native diagnostics are not exposed."
     finally:
