@@ -30,14 +30,25 @@ export function createPrivateVault(dataDirectory: string, key?: Buffer) {
     try { fd = openSync(keyPath, 'wx', 0o600); }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      const winner = await readKey(); if (!winner) throw new Error('Private state key needs recovery.');
-      generated.fill(0); return winner;
+      generated.fill(0);
+      // The winner protects its file before writing it, so a concurrent loser
+      // can briefly see an unprotected or still-empty key: wait that window
+      // out, then treat whatever remains as damage rather than regenerating.
+      for (let attempt = 0; ; attempt++) {
+        try { const winner = await readKey(); if (winner) return winner; }
+        catch (raceError) { if (attempt >= 50) throw raceError; }
+        if (attempt >= 50) throw new Error('Private state key needs recovery.');
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
     }
     // Exclusive first creation cannot replace a concurrent writer's key. An
-    // interrupted initial key file fails closed; it is never regenerated.
-    try { writeFileSync(fd, JSON.stringify({ version: 1, key: generated.toString('hex') })); fsyncSync(fd); }
-    finally { closeSync(fd); }
-    fsyncDir(directory); await windowsFilePrivacy(keyPath, 'file', true); return generated;
+    // interrupted initial key file fails closed; it is never regenerated. The
+    // descriptor lands before the content, as every private write does.
+    try {
+      await windowsFilePrivacy(keyPath, 'file', true);
+      writeFileSync(fd, JSON.stringify({ version: 1, key: generated.toString('hex') })); fsyncSync(fd);
+    } finally { closeSync(fd); }
+    fsyncDir(directory); return generated;
   })();
   const path = (name: string) => {
     if (!/^[a-z0-9-]{1,80}$/.test(name)) throw new Error('Invalid private state name.');
