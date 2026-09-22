@@ -10,7 +10,7 @@ import { writeFileAtomic } from "./atomic.ts";
 import { windowsFilePrivacy } from "./windows-file-privacy.ts";
 import { currentUsagePeriod, parseInstallationProvisioning, parseInstallationUsage, USAGE_PERIOD,
   type InstallationProvisioning, type InstallationUsageState } from "../shared/office-link.ts";
-import { isLinkRequestInput, isLinkRequestIssued, isLinkStatus, type LinkRequestInput, type LinkStatusInput } from "../shared/installation-link.ts";
+import { isLinkRequestInput, isLinkRequestIssued, isLinkStatus, type LinkCancelInput, type LinkRequestInput, type LinkStatus, type LinkStatusInput } from "../shared/installation-link.ts";
 
 /** CLI diagnostics include local paths and update notices; only the product
  * version belongs in the website report. */
@@ -329,10 +329,8 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       if (reply.state === "pending") return viewOf(saved);
       if (reply.state === "linked") {
         if (reply.installationId !== saved.id) throw Object.assign(new Error("The website answered for a different computer. Nothing was linked; cancel and start again."), { status: 502 });
-        const { browser: _approved, ...rest } = saved;
-        await save({ ...rest, companyId: reply.companyId, agencyLabel: reply.agencyLabel });
         linked = true;
-        return { state: "linked", agencyLabel: reply.agencyLabel };
+        return keepApproved(saved, reply);
       }
       unlinkSync(path);
       return { state: reply.state };
@@ -341,14 +339,50 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
     if (linked) void report().catch(() => {});
     return view;
   }
+  /** The owner approved: store the link exactly as a successful redeem stores it. */
+  async function keepApproved(saved: Saved, reply: Extract<LinkStatus, { state: "linked" }>): Promise<BrowserLinkView> {
+    const { browser: _approved, ...rest } = saved;
+    await save({ ...rest, companyId: reply.companyId, agencyLabel: reply.agencyLabel });
+    return { state: "linked", agencyLabel: reply.agencyLabel };
+  }
+  /**
+   * Tell the website this computer is abandoning its request, so the owner can
+   * no longer approve it. One attempt within the ordinary request timeout, never
+   * repeated. The website's status answer, or `unreachable` when no request
+   * reached it, or `null` when it answered without a usable status.
+   */
+  async function cancelOnWebsite(saved: Saved): Promise<LinkStatus | "unreachable" | null> {
+    const input: LinkCancelInput = { version: 1, purpose: "installation-link-cancel", id: saved.id };
+    let response: Response;
+    try { response = await request("link-requests/cancel", { method: "POST", headers: { Authorization: `Bearer ${saved.token}` }, body: JSON.stringify(input) }); }
+    catch { return "unreachable"; }
+    if (!response.ok) { await response.body?.cancel().catch(() => {}); return null; }
+    const reply: unknown = await response.json().catch(() => null);
+    return isLinkStatus(reply) ? reply : null;
+  }
+  /**
+   * Cancel a waiting approval. The request is forgotten on this computer
+   * whatever the website answers, so being offline never traps anyone in it.
+   * If the owner approved before the cancel arrived, the website says linked
+   * and the link is kept exactly as a status poll keeps it. If the website
+   * answered without saying which (an older website, an error), the token is
+   * revoked as before, in case an approval landed that this computer cannot see.
+   */
   async function cancelBrowserLink(): Promise<BrowserLinkView> {
-    return exclusive(async () => {
+    let linked = false;
+    const view = await exclusive(async (): Promise<BrowserLinkView> => {
       const saved = await read();
       if (!saved?.browser || saved.companyId || saved.revoked) return viewOf(saved);
-      await revokeQuietly(saved.token);
+      const reply = await cancelOnWebsite(saved);
+      const approved = reply !== "unreachable" && reply?.state === "linked" ? reply : null;
+      if (approved?.installationId === saved.id) { linked = true; return keepApproved(saved, approved); }
+      // No usable answer, or a linked answer for another computer.
+      if (reply === null || approved) await revokeQuietly(saved.token);
       unlinkSync(path);
       return { state: "none" };
     });
+    if (linked) void report().catch(() => {});
+    return view;
   }
 
   async function report() {

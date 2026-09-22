@@ -389,8 +389,8 @@ describe("linking through the browser", () => {
     connector: { endpoint: "https://connections.fictional-service.invalid", credential: `rbc_${"b".repeat(64)}`, profile: "property", apps: ["gmail"] },
     model: { provider: "modelvia", baseUrl: "https://api.modelvia.dev/v1", projectId: "proj-fictional-01", key: `rbk_${"a".repeat(40)}`, keyId: "rbkkey-01", spendCapLabel: "AU$40 per month" },
   };
-  /** A fake website: link requests, the bearer-checked status poll and the report path. */
-  function website(options: { issued?: (body: any) => unknown; createStatus?: number; reportGate?: Promise<void> } = {}) {
+  /** A fake website: link requests, the bearer-checked status poll and cancel, and the report path. */
+  function website(options: { issued?: (body: any) => unknown; createStatus?: number; reportGate?: Promise<void>; cancelStatus?: number; cancelReply?: unknown } = {}) {
     const requests: any[] = [];
     const calls: { route: string; method: string; auth?: string; body?: any }[] = [];
     let answer: "pending" | "linked" | "expired" | "declined" | "foreign" = "pending";
@@ -415,11 +415,23 @@ describe("linking through the browser", () => {
           installationId: answer === "linked" ? request.id : "0f8fad5b-d9cb-469f-a165-70867728950e" });
         return Response.json({ ...base, state: answer });
       }
+      if (route === "link-requests/cancel" && init.method === "POST") {
+        if (options.cancelStatus) return Response.json({}, { status: options.cancelStatus });
+        if (options.cancelReply !== undefined) return Response.json(options.cancelReply);
+        const request = requests.find(item => item.id === body.id);
+        if (!request || init.headers.Authorization !== `Bearer ${request.token}`) return Response.json({}, { status: 401 });
+        // As the SQL does: only a pending request changes, and it becomes declined.
+        if (answer === "pending") answer = "declined";
+        const base = { version: 1, purpose: "installation-link-status" };
+        if (answer === "linked" || answer === "foreign") return Response.json({ ...base, state: "linked", companyId: "office-a", agencyLabel: "Synthetic Office",
+          installationId: answer === "linked" ? request.id : "0f8fad5b-d9cb-469f-a165-70867728950e" });
+        return Response.json({ ...base, state: answer });
+      }
       if (route === "report" && init.method === "POST") { await options.reportGate; return Response.json({ provisioning }); }
       if (route === "report" && init.method === "DELETE") return Response.json({}, { status: 401 });
       return Response.json({}, { status: 404 });
     }) as unknown as typeof fetch;
-    return { fetcher, requests, calls, answer: (value: typeof answer) => { answer = value; }, failStatus: (times: number) => { statusFailures = times; } };
+    return { fetcher, requests, calls, answer: (value: typeof answer) => { answer = value; }, current: () => answer, failStatus: (times: number) => { statusFailures = times; } };
   }
   function desk(site: ReturnType<typeof website>) {
     const root = mkdtempSync(join(tmpdir(), "realbud-link-")); roots.push(root);
@@ -587,17 +599,78 @@ describe("linking through the browser", () => {
     expect(await app.credentials()).toBeNull();
   });
 
-  it("cancels a waiting request, revoking its token, and still clears it when offline", async () => {
+  it("cancels a waiting request on the website, so the owner can no longer approve it, then forgets it", async () => {
+    const site = website(); const { app, file, report } = desk(site);
+    await app.beginBrowserLink({ label: "Reception Mac" });
+    const [sent] = site.requests;
+    expect(await app.cancelBrowserLink()).toEqual({ state: "none" });
+    expect(routes(site)).toEqual(["POST link-requests", "POST link-requests/cancel"]);
+    expect(site.calls[1]).toEqual({ route: "link-requests/cancel", method: "POST", auth: `Bearer ${sent.token}`, body: { version: 1, purpose: "installation-link-cancel", id: sent.id } });
+    expect(site.current()).toBe("declined");
+    expect((await app.status()).state).toBe("unlinked");
+    expect(() => statSync(file)).toThrow();
+    expect(await app.browserLinkStatus()).toEqual({ state: "none" });
+    expect(await app.credentials()).toBeNull();
+    expect(report).not.toHaveBeenCalled();
+    // Nothing waiting: cancelling again asks nobody.
+    expect(await app.cancelBrowserLink()).toEqual({ state: "none" });
+    expect(site.calls).toHaveLength(2);
+  });
+
+  it("keeps the link when the owner approved before the cancel arrived, exactly as a status poll would", async () => {
+    const site = website(); const { app, report, sink } = desk(site);
+    await app.beginBrowserLink({ label: "Reception Mac" });
+    const [sent] = site.requests;
+    site.answer("linked");
+    expect(await app.cancelBrowserLink()).toEqual({ state: "linked", agencyLabel: "Synthetic Office" });
+    expect(await app.credentials()).toEqual({ installationId: sent.id, token: sent.token, companyId: "office-a", agencyLabel: "Synthetic Office" });
+    await vi.waitFor(async () => expect((await app.status()).provisioned).toBe(true));
+    const status = await app.status();
+    expect(status).toMatchObject({ state: "linked", agencyLabel: "Synthetic Office", label: "Reception Mac" });
+    expect(status.browser).toBeUndefined();
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(sink.apply).toHaveBeenCalledTimes(1);
+    // The approved installation is kept, never revoked.
+    expect(routes(site)).not.toContain("DELETE report");
+    expect(await app.browserLinkStatus()).toEqual({ state: "linked", agencyLabel: "Synthetic Office" });
+  });
+
+  it("forgets the request after one attempt when offline, and when the website says it expired or was declined", async () => {
     const site = website(); const { app, file } = desk(site);
     await app.beginBrowserLink({ label: "Reception Mac" });
+    const before = site.calls.length;
+    (site.fetcher as any).mockImplementation(async (_url: any, init: any) => {
+      site.calls.push({ route: "offline", method: init.method });
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+      throw new Error("offline");
+    });
     expect(await app.cancelBrowserLink()).toEqual({ state: "none" });
-    expect(site.calls.at(-1)).toMatchObject({ method: "DELETE", route: "report", auth: `Bearer ${site.requests[0].token}` });
-    expect((await app.status()).state).toBe("unlinked");
-    expect(await app.browserLinkStatus()).toEqual({ state: "none" });
-    await app.beginBrowserLink({ label: "Reception Mac" });
-    (site.fetcher as any).mockImplementation(async () => { throw new Error("offline"); });
-    expect(await app.cancelBrowserLink()).toEqual({ state: "none" });
+    // One bounded attempt; an unreachable website is not asked again, nor revoked.
+    expect(site.calls.length - before).toBe(1);
     expect(() => statSync(file)).toThrow();
+    expect((await app.status()).state).toBe("unlinked");
+    for (const outcome of ["expired", "declined"] as const) {
+      const other = website(); const { app: desk2, file: file2 } = desk(other);
+      await desk2.beginBrowserLink({ label: "Reception Mac" });
+      other.answer(outcome);
+      expect(await desk2.cancelBrowserLink()).toEqual({ state: "none" });
+      expect(routes(other)).toEqual(["POST link-requests", "POST link-requests/cancel"]);
+      expect(() => statSync(file2)).toThrow();
+    }
+  });
+
+  it("still forgets the request when the website gives no usable answer, revoking the token in case an approval landed", async () => {
+    const foreign = { version: 1, purpose: "installation-link-status", state: "linked", companyId: "office-a", agencyLabel: "Synthetic Office", installationId: "0f8fad5b-d9cb-469f-a165-70867728950e" };
+    for (const options of [{ cancelStatus: 404 }, { cancelStatus: 401 }, { cancelStatus: 503 }, { cancelReply: { state: "declined" } }, { cancelReply: foreign }]) {
+      const site = website(options); const { app, file } = desk(site);
+      await app.beginBrowserLink({ label: "Reception Mac" });
+      const [sent] = site.requests;
+      expect(await app.cancelBrowserLink()).toEqual({ state: "none" });
+      expect(routes(site)).toEqual(["POST link-requests", "POST link-requests/cancel", "DELETE report"]);
+      expect(site.calls[2].auth).toBe(`Bearer ${sent.token}`);
+      expect(() => statSync(file)).toThrow();
+      expect(await app.credentials()).toBeNull();
+    }
   });
 
   it("treats a damaged saved approval as needing recovery", async () => {

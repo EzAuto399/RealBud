@@ -14,6 +14,11 @@
 //    receives the same `{companyId, agencyLabel, installationId}` redeem
 //    returns, and model access arrives through the existing report path, so
 //    no secret is ever held for the browser or stored for later pickup.
+// 5. The desktop may cancel while waiting: `LinkCancelInput` with the same
+//    bearer token. The website turns a pending request into `declined`, so the
+//    owner can no longer approve it, and answers with the resulting
+//    `LinkStatus`. A linked or expired request is returned unchanged: if the
+//    owner approved first the answer is `linked`, and the desktop keeps it.
 //
 // Dependency-free; the desktop server and the website both import this file.
 
@@ -42,6 +47,8 @@ export interface LinkRequestIssued {
   approvalUrl: string; displayCode: string; expiresAt: string;
 }
 export interface LinkStatusInput { version: 1; purpose: 'installation-link-status'; id: string }
+/** Sent with `Authorization: Bearer <token>`; answered with a `LinkStatus`. */
+export interface LinkCancelInput { version: 1; purpose: 'installation-link-cancel'; id: string }
 export type LinkStatus =
   | { version: 1; purpose: 'installation-link-status'; state: 'pending'; expiresAt: string }
   | { version: 1; purpose: 'installation-link-status'; state: 'linked'; companyId: string; agencyLabel: string; installationId: string }
@@ -84,6 +91,10 @@ export function isLinkRequestIssued(v: unknown, origin: string): v is LinkReques
 
 export function isLinkStatusInput(v: unknown): v is LinkStatusInput {
   return exact(v, ['version', 'purpose', 'id']) && v.version === 1 && v.purpose === 'installation-link-status' && id(v.id);
+}
+
+export function isLinkCancelInput(v: unknown): v is LinkCancelInput {
+  return exact(v, ['version', 'purpose', 'id']) && v.version === 1 && v.purpose === 'installation-link-cancel' && id(v.id);
 }
 
 export function isLinkStatus(v: unknown): v is LinkStatus {

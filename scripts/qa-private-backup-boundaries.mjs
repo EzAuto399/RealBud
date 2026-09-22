@@ -44,7 +44,11 @@ async function stop(){if(child?.exitCode===null&&!child.signalCode){child.kill('
 async function start(){child=spawn(executable,[bootstrap],{cwd:serviceCwd,env:{...serviceSmokeEnv({executable,home:scratch,data,scratch,port}),REALBUD_MANAGED_SERVICE:'0',REALBUD_TEST_LAB:'1'},windowsHide:true,stdio:['ignore','pipe','pipe']});
  let spawnError;child.once('error',error=>{spawnError=error;});
  for(const stream of [child.stdout,child.stderr])stream.on('data',b=>logs=(logs+b).slice(-10000));
- for(let n=0;n<100;n++){if(spawnError)throw spawnError;if(child.exitCode!==null||child.signalCode)break;try{const health=await(await fetch(base+'/api/health',{signal:AbortSignal.timeout(500)})).json();if(health.app==='realbud'&&health.pid===child.pid){token=(await(await fetch(base+'/api/session')).json()).token;return;}}catch{}await pause(100);}throw new Error(logs||'Service failed to start');}
+ // Windows admits every file the service creates through PowerShell before content,
+ // so a fresh boot takes several seconds longer there than on macOS or Linux.
+ const startedAt=Date.now(),budget=process.platform==='win32'?90_000:15_000;
+ while(Date.now()-startedAt<budget){if(spawnError)throw spawnError;if(child.exitCode!==null||child.signalCode)break;try{const health=await(await fetch(base+'/api/health',{signal:AbortSignal.timeout(500)})).json();if(health.app==='realbud'&&health.pid===child.pid){token=(await(await fetch(base+'/api/session')).json()).token;return;}}catch{}await pause(100);}
+ throw new Error(`Service failed to start after ${Date.now()-startedAt} ms (exit ${child.exitCode??'none'}${child.signalCode?`, signal ${child.signalCode}`:''})${logs?`: ${logs.slice(-3000)}`:''}`);}
 async function call(path,method='GET',body,status=200){const response=await fetch(base+path,{method,signal:AbortSignal.timeout(30000),headers:{'content-type':'application/json','x-realbud-session':token},...(body===undefined?{}:{body:JSON.stringify(body)})});const result=await response.json();assert.equal(response.status,status,`${path}: ${JSON.stringify(result)}`);return result;}
 try{
  if(packaged){

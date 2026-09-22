@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  LINK_DISPLAY_CODE, isLinkRequestInput, isLinkRequestIssued, isLinkStatus, isLinkStatusInput, linkDisplayCode,
+  LINK_DISPLAY_CODE, isLinkCancelInput, isLinkRequestInput, isLinkRequestIssued, isLinkStatus, isLinkStatusInput, linkDisplayCode,
 } from './installation-link.ts';
 
 const origin = 'https://realbud.app';
@@ -83,6 +83,23 @@ describe('status poll and reply', () => {
     expect(isLinkStatus(status({ ...linked, agencyLabel: 'x'.repeat(201) }))).toBe(false);
     expect(isLinkStatus({ ...status({ state: 'declined' }), version: 2 })).toBe(false);
     expect(isLinkStatus([])).toBe(false);
+  });
+});
+
+describe('cancel sent by the desktop', () => {
+  it('accepts exactly the version, purpose and installation id', () => {
+    const cancel = { version: 1, purpose: 'installation-link-cancel', id: installationId };
+    expect(isLinkCancelInput(cancel)).toBe(true);
+    expect(isLinkCancelInput({ ...cancel, token: 'a'.repeat(64) })).toBe(false);
+    expect(isLinkCancelInput({ version: 1, purpose: 'installation-link-cancel' })).toBe(false);
+    for (const bad of [{ id: 'not-an-id' }, { id: installationId.toUpperCase() }, { version: 2 }, { purpose: 'installation-link-status' }]) {
+      expect(isLinkCancelInput({ ...cancel, ...bad })).toBe(false);
+    }
+    // A status poll is not a cancel, and a cancel is not a status poll.
+    expect(isLinkCancelInput({ version: 1, purpose: 'installation-link-status', id: installationId })).toBe(false);
+    expect(isLinkStatusInput(cancel)).toBe(false);
+    expect(isLinkCancelInput(null)).toBe(false);
+    expect(isLinkCancelInput([])).toBe(false);
   });
 });
 
