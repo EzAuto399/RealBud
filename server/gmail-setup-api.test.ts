@@ -328,7 +328,14 @@ describe("Gmail read-only setup HTTP boundary", () => {
     await vi.waitFor(() => expect(diskConfig().composio.gmailReadOnly?.userId).toMatch(/^realbud_/));
     const saved = diskConfig().composio.gmailReadOnly;
     expect((await api("GET", "/api/config")).body.composio.readOnlyConfigured).toBe(true);
-    await setup();
+    // The aborted request saves the binding, then finishes refreshing office
+    // sources before it releases setup; until then a retry is told setup is in
+    // progress (409), which is the answer a client must wait out, not an error.
+    await vi.waitFor(async () => {
+      const retry = await api("POST", SETUP, { apiKey: PROJECT_KEY, authConfigId: AUTH_CONFIG });
+      if (retry.status === 409) expect(retry.body.error).toMatch(/in progress/);
+      expect(retry.status).toBe(200);
+    }, { timeout: 15_000, interval: 100 });
     expect(diskConfig().composio.gmailReadOnly).toEqual(saved);
   });
 
