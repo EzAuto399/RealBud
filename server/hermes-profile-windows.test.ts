@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { attachModel } from './hermes-bridge.ts';
 import { ensurePropertyPack, propertyProfileDir, propertyWorkroomReady } from './hermes-pack.ts';
+import { ensureProfileDirectories } from './hermes-profile-storage.ts';
 import { windowsFilePrivacySync } from './windows-file-privacy.ts';
 import { addFixtureUsersRead, privateFixtureDirectory, privateFixtureRoot, profileAclWitness, writePrivateFixtureFile, WINDOWS_PROFILE_TEST_OPTIONS } from './testing/private-profile-fixture.ts';
 
@@ -101,6 +102,28 @@ describe.skipIf(process.platform !== 'win32')('native Windows profile setup', WI
       expect(profileAclWitness(aclPaths)).toEqual(before);
       expect(readdirSync(profile).some(name => name.startsWith('.realbud-profile-'))).toBe(false);
     }
+  });
+
+  it('creates a directory chain privately under one admitted root, then protects the rest together', () => {
+    const root = fixture(), home = join(root, 'owned-home');
+    privateFixtureDirectory(home);
+    const middle = join(home, 'profiles'), target = join(middle, 'property');
+    // What the batched chain relies on: a directory created inside a protected
+    // directory inherits its DACL, so it is private from birth even though its
+    // own descriptor is not yet protected — and RealBud's admission still
+    // refuses that inherited descriptor, which is why the restrict follows.
+    mkdirSync(middle);
+    expect(profileAclWitness([middle])[0]).toMatchObject({
+      protected: false, currentOwner: true, onlyPrivateGrants: true, currentFullControl: true, hasDeny: false,
+    });
+    expect(() => windowsFilePrivacySync(middle, 'directory')).toThrow(/windows-acl:inheritance-not-protected/);
+    rmSync(middle, { recursive: true });
+
+    ensureProfileDirectories([home, middle, target]);
+    for (const witness of profileAclWitness([home, middle, target])) expect(witness).toMatchObject({
+      protected: true, currentOwner: true, onlyPrivateGrants: true, currentFullControl: true, hasDeny: false,
+    });
+    expect(readdirSync(target)).toEqual([]);
   });
 
   it.each(['hardlink', 'junction'] as const)('refuses a profile %s without changing the original target', kind => {

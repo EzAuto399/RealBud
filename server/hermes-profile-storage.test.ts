@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { ensureProfileDirectory, readProfileFile, writeProfileFile } from './hermes-profile-storage.ts';
+import { ensureProfileDirectories, ensureProfileDirectory, readProfileFile, readProfileFiles, writeProfileFile } from './hermes-profile-storage.ts';
 import { applyPropertyPack, ensurePropertyPack, migratePropertyProfileFromLegacyHermes, propertyProfileDir } from './hermes-pack.ts';
 import { attachModel } from './hermes-bridge.ts';
 
@@ -56,6 +56,54 @@ describe('profile storage with simulated ACL outcomes and real disposable files'
     });
     ensureProfileDirectory(target);
     expect(privacy.mock.calls.map(call => call[0])).toEqual([first, join(first, 'profiles'), target]);
+  });
+
+  it('protects a new chain root before its descendants, then restricts them in one process', () => {
+    const root = fixture(), first = join(root, 'home'), middle = join(first, 'profiles'), target = join(middle, 'property');
+    const emptyWhenRestricted: string[] = [];
+    privacy.mockImplementation((path, _kind, restrict) => { if (restrict && !readdirSync(path).length) emptyWhenRestricted.push(path); });
+    ensureProfileDirectories([first, middle, target]);
+    // Same paths, same order, same actions as three per-path calls.
+    expect(privacy.mock.calls.map(call => [call[0], call[1], call[2] === true])).toEqual([
+      [first, 'directory', true], [middle, 'directory', true], [target, 'directory', true],
+    ]);
+    // Two launches: the chain root's own protect-before-create, then the pair
+    // that was born private under it.
+    expect(acl.processes).toEqual([
+      [[first, 'directory', true]],
+      [[middle, 'directory', true], [target, 'directory', true]],
+    ]);
+    // Only the root has to be empty at restrict time; the rest inherit its DACL.
+    expect(emptyWhenRestricted).toEqual([first, target]);
+    expect(readdirSync(target)).toEqual([]);
+  });
+
+  it('admits an existing root before creating anything inside it', () => {
+    const root = fixture(), home = join(root, 'home'); mkdirSync(home);
+    const target = join(home, 'profiles', 'property');
+    privacy.mockImplementation(path => { if (path === home) throw refusal(); });
+    expect(() => ensureProfileDirectories([home, join(home, 'profiles'), target])).toThrow('Private storage refused.');
+    expect(readdirSync(home)).toEqual([]);
+    expect(acl.processes).toEqual([[[home, 'directory', false]]]);
+
+    privacy.mockReset(); acl.processes.length = 0;
+    ensureProfileDirectories([home, join(home, 'profiles'), target]);
+    // The existing directory is verified first, in its own process, and only
+    // then are the two directories created inside it and restricted together.
+    expect(acl.processes).toEqual([
+      [[home, 'directory', false]],
+      [[join(home, 'profiles'), 'directory', true], [target, 'directory', true]],
+    ]);
+  });
+
+  it('reads several files in one admission process and never admits an absent one', () => {
+    const root = fixture();
+    writeFileSync(join(root, 'SOUL.md'), 'soul'); writeFileSync(join(root, 'config.yaml'), 'settings');
+    const paths = ['SOUL.md', 'config.yaml', '.env'].map(name => join(root, name));
+    expect(readProfileFiles(paths).map(value => value?.toString() ?? null)).toEqual(['soul', 'settings', null]);
+    expect(acl.processes).toEqual([[[paths[0]!, 'file', false], [paths[1]!, 'file', false]]]);
+    expect(readProfileFiles([])).toEqual([]);
+    expect(() => readProfileFiles([join(root, 'absent-parent', '.env')])).toThrow(/recovery/);
   });
 
   it('stops new directory creation before descendants when ACL setup fails', () => {
@@ -235,6 +283,27 @@ describe('profile provisioning and model attachment privacy wiring', () => {
     expect(privacy.mock.calls.some(call => call[0] === join(profile, '.env'))).toBe(true);
     expect(privacy.mock.calls.every(call => call[2] !== true)).toBe(true);
     expect(readFileSync(config)).toEqual(before); expect(statSync(config).ino).toBe(identity);
+  });
+
+  it('counts the cold PowerShell launches a pack apply and a startup would cost', () => {
+    const root = fixture();
+    applyPropertyPack(root);
+    const fresh = { launches: acl.processes.length, admissions: privacy.mock.calls.length };
+    privacy.mockClear(); acl.processes.length = 0;
+    applyPropertyPack(root);
+    const reapply = { launches: acl.processes.length, admissions: privacy.mock.calls.length };
+    privacy.mockClear(); acl.processes.length = 0;
+    expect(ensurePropertyPack(root).wrote).toEqual([]);
+    const startup = { launches: acl.processes.length, admissions: privacy.mock.calls.length };
+    // Measured at HEAD before the profile-scoped batches: 27/27, 30/34 and
+    // 8/8. The admitted paths, kinds and actions are otherwise unchanged; the
+    // one admission that went away is the duplicate `config.yaml` read a
+    // re-apply used to make after `prepareProfile` had already read it.
+    expect({ fresh, reapply, startup }).toEqual({
+      fresh: { launches: 25, admissions: 27 },
+      reapply: { launches: 21, admissions: 33 },
+      startup: { launches: 3, admissions: 8 },
+    });
   });
 
   it('rejected config privacy prevents a credential from being stored', () => {

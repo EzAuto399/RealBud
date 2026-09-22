@@ -7,10 +7,13 @@ import {
 } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { fsyncDir } from './atomic.ts';
-import { windowsFilePrivacyBatchSync, windowsFilePrivacySync } from './windows-file-privacy.ts';
+import { windowsFilePrivacyBatchSync, windowsFilePrivacySync, type WindowsFilePrivacyOperation } from './windows-file-privacy.ts';
 
 const MAX_BYTES = 2 * 1024 * 1024;
 const NOFOLLOW = constants.O_NOFOLLOW ?? 0;
+// windowsFilePrivacyBatchSync refuses a longer list, so a caller with more
+// admissions than this pays for another process rather than being refused.
+const MAX_ADMISSIONS = 64;
 
 class ProfileStorageError extends Error {
   readonly status = 409;
@@ -63,26 +66,73 @@ function recheckParents(chain: Array<[string, BigIntStats]>): void {
 
 /** Create missing owned directories one at a time; never repair existing ACLs. */
 export function ensureProfileDirectory(path: string): void {
-  checked(() => {
-    pathCheck(path);
-    const missing: string[] = [];
+  checked(() => ensureDirectories([path], false));
+}
+
+/**
+ * The same policy for a list, in one or two processes instead of one per
+ * level. Existing directories in the list are admitted first, together, before
+ * anything is created inside any of them: a foreign or unprotected one still
+ * refuses with no descendant on disk. A directory created under a directory
+ * this call has already admitted is private from birth — on Windows it
+ * inherits the admitted root's protected DACL, on POSIX it is created 0700 —
+ * so those restricts no longer have to gate each other and share one process.
+ * Only the root of a chain whose parent this call has not admitted keeps its
+ * own protect-before-create process.
+ */
+export function ensureProfileDirectories(paths: string[]): void {
+  checked(() => ensureDirectories(paths, true));
+}
+
+function ensureDirectories(paths: string[], defer: boolean): void {
+  if (!Array.isArray(paths)) fail();
+  const wanted: string[] = [];
+  for (const path of paths) { pathCheck(path); if (!wanted.includes(path)) wanted.push(path); }
+  const present: string[] = [];
+  const missing: string[] = [];
+  for (const path of wanted) {
+    const chain: string[] = [];
     for (let cursor = path; !optionalStat(cursor); cursor = dirname(cursor)) {
       if (dirname(cursor) === cursor) fail();
-      missing.push(cursor);
+      chain.push(cursor);
     }
-    for (const candidate of missing.reverse()) {
-      const chain = parents(candidate);
-      let created = false;
-      try { mkdirSync(candidate, { mode: 0o700 }); created = true; }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
-      const before = lstatSync(candidate, { bigint: true }); ordinary(before, true);
-      windowsFilePrivacySync(candidate, 'directory', created);
-      const after = lstatSync(candidate, { bigint: true }); ordinary(after, true);
-      if (!same(before, after)) fail();
-      recheckParents(chain);
+    if (!chain.length) { present.push(path); continue; }
+    // Parents first, so a chain is created top down and never lists a child
+    // before the directory it will be created in.
+    for (const candidate of chain.reverse()) if (!missing.includes(candidate)) missing.push(candidate);
+  }
+  const admitted = new Set<string>();
+  if (present.length) {
+    const staged = present.map(path => ({ path, ...stageDirectory(path) }));
+    admit(present.map((path): WindowsFilePrivacyOperation => ({ path, kind: 'directory', action: 'verify' })));
+    for (const entry of staged) settleDirectory(entry.path, entry.chain, entry.before);
+    for (const path of present) admitted.add(path);
+  }
+  const deferred: Array<{ path: string; chain: Chain; before: BigIntStats }> = [];
+  for (const candidate of missing) {
+    const chain = parents(candidate);
+    let created = false;
+    try { mkdirSync(candidate, { mode: 0o700 }); created = true; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+    const before = lstatSync(candidate, { bigint: true }); ordinary(before, true);
+    if (defer && created && admitted.has(dirname(candidate))) deferred.push({ path: candidate, chain, before });
+    else {
+      admit([{ path: candidate, kind: 'directory', action: created ? 'restrict' : 'verify' }]);
+      settleDirectory(candidate, chain, before);
     }
-    if (!missing.length) verifyProfileDirectory(path);
-  });
+    admitted.add(candidate);
+  }
+  if (deferred.length) {
+    admit(deferred.map((entry): WindowsFilePrivacyOperation => ({ path: entry.path, kind: 'directory', action: 'restrict' })));
+    for (const entry of deferred) settleDirectory(entry.path, entry.chain, entry.before);
+  }
+}
+
+/** One process per MAX_ADMISSIONS; an empty list never launches one. */
+function admit(operations: WindowsFilePrivacyOperation[]): void {
+  for (let index = 0; index < operations.length; index += MAX_ADMISSIONS) {
+    windowsFilePrivacyBatchSync(operations.slice(index, index + MAX_ADMISSIONS));
+  }
 }
 
 // A Windows admission is bracketed by identical stats taken before and after
@@ -121,15 +171,6 @@ function stageFile(path: string): { chain: Chain; before: BigIntStats | null } {
   return { chain, before };
 }
 
-function readProfileSnapshot(path: string): { data: Buffer; stat: BigIntStats } | null {
-  return checked(() => {
-    const { chain, before } = stageFile(path);
-    if (!before) { recheckParents(chain); return null; }
-    windowsFilePrivacySync(path, 'file');
-    return readAdmittedFile(path, chain, before);
-  });
-}
-
 /** Only ever called once the file's own admission has already returned. */
 function readAdmittedFile(path: string, chain: Chain, before: BigIntStats): { data: Buffer; stat: BigIntStats } {
   const fd = openSync(path, constants.O_RDONLY | NOFOLLOW);
@@ -153,7 +194,26 @@ function readAdmittedFile(path: string, chain: Chain, before: BigIntStats): { da
 }
 
 export function readProfileFile(path: string): Buffer | null {
-  return readProfileSnapshot(path)?.data ?? null;
+  return readProfileFiles([path])[0] ?? null;
+}
+
+/**
+ * Several existing files in one admission process. No read gates another, so
+ * the whole list is admitted first; each file is still opened and read only
+ * after its own admission has returned, and a missing file is still a missing
+ * leaf under verified ancestry rather than an empty one.
+ */
+export function readProfileFiles(paths: string[]): Array<Buffer | null> {
+  return checked(() => {
+    if (!Array.isArray(paths)) fail();
+    const staged = paths.map(path => { pathCheck(path); return { path, ...stageFile(path) }; });
+    admit(staged.flatMap((entry): WindowsFilePrivacyOperation[] =>
+      entry.before ? [{ path: entry.path, kind: 'file', action: 'verify' }] : []));
+    return staged.map(entry => {
+      if (!entry.before) { recheckParents(entry.chain); return null; }
+      return readAdmittedFile(entry.path, entry.chain, entry.before).data;
+    });
+  });
 }
 
 /** Complete private stage, then publish; no truncation or copy fallback. */

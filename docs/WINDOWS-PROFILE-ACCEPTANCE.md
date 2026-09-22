@@ -214,3 +214,81 @@ on the macOS host, so the batch script has never been parsed or executed. The
 loop, the `_i` lookup and the echoed index are unverified until a win32 run; the
 native suites in `server/windows-file-privacy.test.ts` and
 `server/hermes-profile-windows.test.ts` are the ones that will say so.
+
+Follow-up, same day: run 35713565138 carried the fixes above and reduced the
+failure to the single `complete` case (9/10 pass, 60.5 s), but vitest printed
+only `expect(receipt.passed).toBe(true)` — the receipt was honest and the
+assertion was not. Every assertion in that case now carries the receipt's
+`failure`, `child`, `timings`, `powershell` and redacted `diagnostic` as its
+message, and the receipt additionally records `timings.readinessMs` (wall time
+from spawn to readiness, recorded even when readiness never arrives) and
+`powershell` — the compiled service's own launch count and elapsed time,
+reported on stderr after every launch including failed ones, alongside this
+script's ACL witness count. The launch counts are reported, not asserted, so a
+truncated stderr cannot invent a second failure. macOS: 10/10 pass.
+
+## 22 September 2026 — the profile-scoped batch: 8 launches to 3 at startup
+
+Takes the lever the section above left open. `server/hermes-profile-storage.ts`
+adds two batch-capable entry points and `server/hermes-pack.ts` calls them.
+
+`ensureProfileDirectories(paths)` admits every directory in the list that
+already exists first, together, in one process — before anything is created
+inside any of them, so a foreign or unprotected root still refuses with no
+descendant on disk. Only the root of a chain whose parent this call has not
+admitted keeps its own protect-before-create process. A directory created
+inside a directory the same call has already admitted is private from birth:
+on Windows it inherits the admitted root's protected DACL, on POSIX it is
+created 0700. Those restricts therefore no longer gate each other and share one
+process. This is the one place the per-level "protect before create" rule is
+relaxed, and only underneath a root this call has just proven protected.
+Inheritance is not protection — an inherited descriptor has
+`AreAccessRulesProtected` false and our own verifier refuses it (exit 5) — so
+every created directory is still restricted before the call returns.
+`ensureProfileDirectory(path)` is unchanged: one path, one level at a time.
+
+`readProfileFiles(paths)` admits the files in the list that exist in one
+process, then opens and reads each one only after its own admission has
+returned. A missing file is still a missing leaf under verified ancestry, never
+an empty one. Both entry points split a list longer than the script's 64-
+operation cap across processes rather than being refused.
+
+`prepareProfile` now uses both (three `ensureProfileDirectory` calls and five
+`readProfileFile` calls become two processes), `prepareSkillCopies` plans the
+source tree first and then admits its destination directories and reads its
+destination files in two processes, and `applyPropertyPack` takes `config.yaml`
+from `prepareProfile` instead of admitting and reading it a second time.
+
+Launch counts, measured with the injected runner in
+`server/hermes-profile-storage.test.ts` (`launches` = cold `powershell.exe`
+processes, `admissions` = admitted paths), at HEAD `d66c669c` and after:
+
+| path | before | after |
+| --- | --- | --- |
+| fresh `applyPropertyPack` | 27 launches / 27 admissions | 25 / 27 |
+| re-apply (Repair) | 30 / 34 | 21 / 33 |
+| installed-profile startup (`ensurePropertyPack`) | 8 / 8 | 3 / 8 |
+
+The startup path the installed probe's 25-second readiness budget actually
+waits on drops from eight cold launches to three. A fresh install barely moves,
+and this says so: 18 of its 25 launches are the six first publications in
+`writeProfileFile`, where the stage's restrict must return before any byte is
+written and the published verify can only run after the rename. No admitted
+path, kind or action changed; the single admission that went away is the
+duplicate `config.yaml` read. Startup admissions are eight here because the
+fixture profile has no `.env`; with stored credentials it is the nine the
+earlier section quoted.
+
+Proven: `pnpm exec vitest run server/hermes-pack.test.ts
+server/hermes-profile-storage.test.ts server/hermes-profile-windows.test.ts
+server/windows-file-privacy.test.ts` passes on macOS (43 passed, 14 skipped),
+all 22 `server/hermes-*.test.ts` suites pass (369 passed, 49 skipped), and
+`pnpm exec tsc -p tsconfig.server.json` is clean. The before column was
+measured by running the same counting test against a disposable worktree at
+`d66c669c`. Not proven: no PowerShell ran on this macOS host. The inheritance
+claim the directory batch rests on is asserted natively in
+`server/hermes-profile-windows.test.ts` — a directory created under a protected
+root is witnessed as owner-only and deny-free but unprotected, is refused by
+the production verifier until it is restricted, and ends protected after
+`ensureProfileDirectories` — and that case, like the existing inherited-home
+refusal that now exercises the new existing-root admission, only runs on win32.

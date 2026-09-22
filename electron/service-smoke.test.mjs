@@ -100,6 +100,20 @@ describe('installed Windows service acceptance', () => {
         const scenario = ${JSON.stringify(scenario)};
         const home = process.env.REALBUD_HERMES_HOME, profile = join(home, 'profiles', 'property');
         assert.equal(existsSync(home), false);
+        // Windows startup cost is PowerShell. Report it on stderr after every
+        // launch, failed ones included, so the receipt can price the wait.
+        let psLaunches = 0, psMs = 0;
+        function powershell(script, extra) {
+          const started = Date.now(); psLaunches++;
+          try {
+            execFileSync(join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
+              env: { ...process.env, ...extra }, shell: false, windowsHide: true, timeout: ${FIXTURE_ACL_MS}, stdio: ['ignore', 'pipe', 'pipe'],
+            });
+          } finally {
+            psMs += Date.now() - started;
+            process.stderr.write('[smoke-powershell] launches=' + psLaunches + ' ms=' + psMs + '\\n');
+          }
+        }
         if (scenario !== 'health without profile') {
           const pack = join(dirname(fileURLToPath(import.meta.url)), '..', 'pack', 'property');
           const directories = [home, join(home, 'profiles'), profile, join(profile, 'skills'), join(profile, 'skills', 'fictional-skill')];
@@ -110,10 +124,8 @@ describe('installed Windows service acceptance', () => {
           if (process.platform === 'win32') {
             // Prepare only empty, newly owned fake-server fixture objects. The
             // smoke's independent read-only witness must check their actual ACL.
-            const script = ${JSON.stringify(PRIVATE_FIXTURE_SCRIPT)};
-            execFileSync(join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
-              env: { ...process.env, REALBUD_FIXTURE_OBJECTS: JSON.stringify([...directories.map(path => ({ path, directory: true })), ...files.map(path => ({ path, directory: false }))]) },
-              shell: false, windowsHide: true, timeout: ${FIXTURE_ACL_MS}, stdio: ['ignore', 'pipe', 'pipe'],
+            powershell(${JSON.stringify(PRIVATE_FIXTURE_SCRIPT)}, {
+              REALBUD_FIXTURE_OBJECTS: JSON.stringify([...directories.map(path => ({ path, directory: true })), ...files.map(path => ({ path, directory: false }))]),
             });
           }
           for (const name of copies) writeFileSync(join(profile, name), readFileSync(join(pack, name)));
@@ -126,12 +138,7 @@ describe('installed Windows service acceptance', () => {
           if (scenario === 'public profile') {
             const path = join(profile, 'config.yaml');
             if (process.platform !== 'win32') chmodSync(path, 0o644);
-            else {
-              const script = ${JSON.stringify(BROAD_FIXTURE_SCRIPT)};
-              execFileSync(join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
-                env: { ...process.env, REALBUD_FIXTURE_BROAD_FILE: path }, shell: false, windowsHide: true, timeout: ${FIXTURE_ACL_MS}, stdio: ['ignore', 'pipe', 'pipe'],
-              });
-            }
+            else powershell(${JSON.stringify(BROAD_FIXTURE_SCRIPT)}, { REALBUD_FIXTURE_BROAD_FILE: path });
           }
         }
         const server = createServer((req, res) => {
@@ -157,31 +164,44 @@ describe('installed Windows service acceptance', () => {
         });
       } catch (error) { failure = error; }
       const receipt = JSON.parse(await readFile(receiptPath, 'utf8'));
-      expect(receipt.source).toBe(source);
-      expect(receipt.packSource).toBe(pack);
-      expect(receipt.cleanupComplete).toBe(true);
-      expect(receipt.passed).toBe(scenario === 'complete');
-      // A receipt that cannot say how the child ended cannot explain a failure
-      // on a platform nobody can attach a debugger to.
-      expect(receipt.timings.watchdogMs).toBe(READY_MS);
-      expect(receipt.child).toMatchObject({ killedByWatchdog: false });
-      expect(receipt.child).toHaveProperty('exitCode');
-      expect(receipt.child).toHaveProperty('signal');
+      // Nobody can attach a debugger to the Windows runner, so every assertion
+      // about this receipt carries what the receipt knows about the child.
+      const why = JSON.stringify({
+        failure: receipt.failure, child: receipt.child, timings: receipt.timings,
+        powershell: receipt.powershell, diagnostic: receipt.diagnostic,
+      }, null, 1);
+      expect(receipt.source, why).toBe(source);
+      expect(receipt.packSource, why).toBe(pack);
+      expect(receipt.cleanupComplete, why).toBe(true);
+      expect(receipt.passed, why).toBe(scenario === 'complete');
+      expect(receipt.timings.watchdogMs, why).toBe(READY_MS);
+      // 'missing packaged safeguards' is refused while copying the inputs, so
+      // it is the one case with no child and no readiness wait to report.
+      const spawned = scenario !== 'missing packaged safeguards';
+      expect(receipt.timings.readinessMs === undefined, why).toBe(!spawned);
+      if (spawned) expect(receipt.timings.readinessMs, why).toBeGreaterThanOrEqual(0);
+      expect(receipt.child, why).toMatchObject({ killedByWatchdog: false });
+      expect(receipt.child, why).toHaveProperty('exitCode');
+      expect(receipt.child, why).toHaveProperty('signal');
+      // Reported, not policed: a truncated stderr must not invent a new Windows
+      // failure on top of the one being diagnosed.
+      expect(typeof receipt.powershell.service.launches, why).toBe('number');
+      expect(typeof receipt.powershell.witnessLaunches, why).toBe('number');
       if (scenario !== 'complete') {
-        expect(failure).toBeDefined();
-        expect(typeof receipt.diagnostic).toBe('string');
+        expect(failure, why).toBeDefined();
+        expect(typeof receipt.diagnostic, why).toBe('string');
         if (scenario === 'missing compiled import') {
-          expect(receipt.diagnostic).toContain('missing-packaged-module.js');
-          expect(receipt.child.exitCode).toBe(1);
+          expect(receipt.diagnostic, why).toContain('missing-packaged-module.js');
+          expect(receipt.child.exitCode, why).toBe(1);
         }
-        if (scenario === 'public profile') expect(receipt.failure).toMatch(/not private|privacy verification failed/i);
-        expect(receipt.profileProof).toBeUndefined();
+        if (scenario === 'public profile') expect(receipt.failure, why).toMatch(/not private|privacy verification failed/i);
+        expect(receipt.profileProof, why).toBeUndefined();
       } else {
-        expect(failure).toBeUndefined();
-        expect(receipt.checks).toHaveLength(4);
-        expect(receipt.profileProof).toMatchObject({ freshHome: true, installed: true, approvalsManual: true, workroomReady: true, modelAttached: false, workerReady: false, files: 6, directories: 5 });
-        expect(receipt.timings.startupMs).toBeGreaterThanOrEqual(0);
-        expect(receipt.timings.profileCheckMs).toBeGreaterThanOrEqual(0);
+        expect(failure, why).toBeUndefined();
+        expect(receipt.checks, why).toHaveLength(4);
+        expect(receipt.profileProof, why).toMatchObject({ freshHome: true, installed: true, approvalsManual: true, workroomReady: true, modelAttached: false, workerReady: false, files: 6, directories: 5 });
+        expect(receipt.timings.startupMs, why).toBeGreaterThanOrEqual(0);
+        expect(receipt.timings.profileCheckMs, why).toBeGreaterThanOrEqual(0);
       }
     } finally { await rm(scratch, { recursive: true, force: true }); }
   }, CASE_TIMEOUT_MS);

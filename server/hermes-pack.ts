@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { isMap, parseDocument, YAMLMap } from "yaml";
 
-import { ensureProfileDirectory, readProfileFile, writeProfileFile } from "./hermes-profile-storage.ts";
+import { ensureProfileDirectories, ensureProfileDirectory, readProfileFile, readProfileFiles, writeProfileFile } from "./hermes-profile-storage.ts";
 import { HERMES_PIN } from "./hermes-pin.ts";
 import { hermesHome, runtimeCli } from "./hermes-paths.ts";
 import { readRuntimeSelection, releaseHome, runtimeCommit, selectedHermesCli } from "./hermes-runtime-selection.ts";
@@ -85,33 +85,47 @@ function ensurePrivateRootAuth(root?: string): void {
   if (readProfileFile(path) === null) writeProfileFile(path, `${JSON.stringify({ version: 1, providers: {}, credential_pool: {} }, null, 2)}\n`, false);
 }
 
-function prepareProfile(root?: string): string {
+const PROFILE_FILES = ["SOUL.md", "config.yaml", "distribution.yaml", "profile.yaml", ".env"];
+
+/** The whole profile chain and its existing policy/credential files are
+ * admitted in two PowerShell processes rather than eight: the directories do
+ * not gate each other once their root is admitted, and no read gates another. */
+function prepareProfile(root?: string): { dir: string; config: Buffer | null } {
   const home = hermesHome(root), dest = propertyProfileDir(root);
-  ensureProfileDirectory(home);
-  ensureProfileDirectory(join(home, "profiles"));
-  ensureProfileDirectory(dest);
+  ensureProfileDirectories([home, join(home, "profiles"), dest]);
   // Existing RealBud-owned policy/credential files are admission-only here.
   // Upstream-managed auth/memory files retain their native ownership contract.
-  for (const name of ["SOUL.md", "config.yaml", "distribution.yaml", "profile.yaml", ".env"]) readProfileFile(join(dest, name));
-  return dest;
+  const existing = readProfileFiles(PROFILE_FILES.map(name => join(dest, name)));
+  return { dir: dest, config: existing[PROFILE_FILES.indexOf("config.yaml")] ?? null };
 }
 
-function prepareSkillCopies(source: string, destination: string, files: Array<{ path: string; body: Buffer }> = [], depth = 0): Array<{ path: string; body: Buffer }> {
-  if (depth > 12 || files.length > 1000) throw new Error("Bud’s skill pack needs recovery before it can be installed.");
+function skillPlan(source: string, destination: string, plan: { dirs: string[]; files: Array<{ from: string; to: string }> }, depth = 0): void {
+  if (depth > 12 || plan.files.length > 1000) throw new Error("Bud’s skill pack needs recovery before it can be installed.");
   const stat = lstatSync(source);
   if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error("Bud’s skill pack needs recovery before it can be installed.");
-  ensureProfileDirectory(destination);
+  plan.dirs.push(destination);
   for (const entry of readdirSync(source, { withFileTypes: true })) {
     const from = join(source, entry.name), to = join(destination, entry.name);
-    if (entry.isDirectory()) prepareSkillCopies(from, to, files, depth + 1);
-    else if (entry.isFile()) {
-      // Keep locally maintained skills; never replace them as profile repair.
-      if (readProfileFile(to) === null) {
-        if (lstatSync(from).size > 2 * 1024 * 1024 || files.length >= 1000) throw new Error("Bud’s skill pack needs recovery before it can be installed.");
-        files.push({ path: to, body: readFileSync(from) });
-      }
-    } else throw new Error("Bud’s skill pack needs recovery before it can be installed.");
+    if (entry.isDirectory()) skillPlan(from, to, plan, depth + 1);
+    else if (entry.isFile()) plan.files.push({ from, to });
+    else throw new Error("Bud’s skill pack needs recovery before it can be installed.");
   }
+}
+
+function prepareSkillCopies(source: string, destination: string): Array<{ path: string; body: Buffer }> {
+  const plan: { dirs: string[]; files: Array<{ from: string; to: string }> } = { dirs: [], files: [] };
+  skillPlan(source, destination, plan);
+  // Every destination directory is still admitted before any file in it is
+  // read, and a linked or foreign one refuses before anything is created.
+  ensureProfileDirectories(plan.dirs);
+  const existing = readProfileFiles(plan.files.map(file => file.to));
+  const files: Array<{ path: string; body: Buffer }> = [];
+  plan.files.forEach((file, index) => {
+    // Keep locally maintained skills; never replace them as profile repair.
+    if (existing[index] !== null) return;
+    if (lstatSync(file.from).size > 2 * 1024 * 1024 || files.length >= 1000) throw new Error("Bud’s skill pack needs recovery before it can be installed.");
+    files.push({ path: file.to, body: readFileSync(file.from) });
+  });
   return files;
 }
 
@@ -217,11 +231,9 @@ export function stagedLearningEnabled(root?: string): boolean {
 }
 
 export function applyPropertyPack(root?: string): { dir: string; wrote: string[] } {
-  const dest = prepareProfile(root);
-  const destConfig = join(dest, "config.yaml");
-  let existingBytes: Buffer | null = null;
-  try { existingBytes = readProfileFile(destConfig); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("Bud’s existing profile could not be read. Its files have been kept."); }
+  // `prepareProfile` has already admitted and read `config.yaml`; re-reading it
+  // here would only cost another cold PowerShell process on Windows.
+  const { dir: dest, config: existingBytes } = prepareProfile(root);
   const defaults = policyDocument(readFileSync(join(PACK_DIR, "config.yaml"), "utf8"));
   defaults.setIn(["auxiliary", "background_review", "enabled"], stagedLearningSupported(root));
   const config = mergePropertyPolicy(existingBytes?.toString("utf8") ?? "", defaults.toString());

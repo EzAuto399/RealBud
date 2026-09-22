@@ -20,8 +20,8 @@ const source = resolve(process.argv[3] || join(root, 'dist-server'));
 // electron-builder combines these inputs; an explicit artifact has no fallback.
 const packSource = process.argv[3] ? join(source, 'pack', 'property') : join(root, 'pack', 'property');
 let child, exited, timer, failure, stderr = '', cleanupComplete = false, timedOut = false;
-let profileProof, startupMs, profileCheckMs, stderrDrained;
-let exitCode = null, exitSignal = null;
+let profileProof, startupMs, profileCheckMs, stderrDrained, readinessMs;
+let exitCode = null, exitSignal = null, witnessLaunches = 0, witnessMs = 0;
 const checks = [];
 const execute = promisify(execFile);
 const requiredProfileFiles = ['SOUL.md', 'config.yaml', 'distribution.yaml', 'profile.yaml'];
@@ -43,6 +43,16 @@ const SECRET_VALUES = [
   /(\bBearer\s+)([A-Za-z0-9._~+/=-]{12,})/g,
   /\b((?:api[_-]?key|apikey|secret|token|password|authorization)s?["']?\s*[=:]\s*["']?)([A-Za-z0-9._~+/=-]{8,})/gi,
 ];
+// Windows startup cost is dominated by PowerShell launches, so the compiled
+// service reports its own count and elapsed time on stderr and the receipt
+// carries them next to this script's own ACL witness. No path, SID or
+// descriptor is in the marker.
+const POWERSHELL_MARKER = /\[smoke-powershell\] launches=(\d+) ms=(\d+)/g;
+function servicePowershellFrom(text) {
+  let last = null;
+  for (const match of text.matchAll(POWERSHELL_MARKER)) last = match;
+  return { launches: last ? Number(last[1]) : 0, ms: last ? Number(last[2]) : 0 };
+}
 /** Last 20 non-empty stderr lines, with credential-shaped values masked. */
 function diagnosticFrom(text) {
   let out = text;
@@ -125,11 +135,14 @@ async function inspectProfile(home, pack, status, env) {
   if (process.platform === 'win32') {
     assert.ok(env.SystemRoot && isAbsolute(env.SystemRoot) && !env.SystemRoot.includes('\0'), 'Windows ACL witness unavailable');
     let witness;
+    const witnessStarted = performance.now();
+    witnessLaunches++;
     try {
       witness = await execute(join(env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-NonInteractive', '-EncodedCommand', ACL_WITNESS], {
         env: { ...env, REALBUD_SMOKE_PRIVATE_PATHS: JSON.stringify(objects) }, shell: false, windowsHide: true, timeout: 15_000, maxBuffer: 4096,
       });
     } catch { throw new Error('Fresh profile Windows privacy verification failed'); }
+    finally { witnessMs += Math.round(performance.now() - witnessStarted); }
     assert.equal(witness.stdout, 'private', 'Windows ACL witness did not confirm privacy');
   }
   for (const { from, to } of copies) assert.deepEqual(await readFile(to), await readFile(from), 'Shipped safeguard or skill bytes were not provisioned');
@@ -178,13 +191,17 @@ try {
   timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, readyMs);
   const base = `http://127.0.0.1:${port}`;
   let ready = false;
-  for (let attempt = 0; attempt < readinessAttempts; attempt++) {
-    if (child.exitCode !== null || child.signalCode) throw new Error('Compiled service exited before readiness');
-    const health = await fetch(base + '/api/health', { signal: AbortSignal.timeout(500) })
-      .then(r => r.ok ? r.json() : null).catch(() => null);
-    if (health?.app === 'realbud' && health.pid === child.pid) { ready = true; break; }
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
+  // Recorded even when readiness never arrives: how long the child was given
+  // is half of what a Windows failure has to explain.
+  try {
+    for (let attempt = 0; attempt < readinessAttempts; attempt++) {
+      if (child.exitCode !== null || child.signalCode) throw new Error('Compiled service exited before readiness');
+      const health = await fetch(base + '/api/health', { signal: AbortSignal.timeout(500) })
+        .then(r => r.ok ? r.json() : null).catch(() => null);
+      if (health?.app === 'realbud' && health.pid === child.pid) { ready = true; break; }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  } finally { readinessMs = Math.round(performance.now() - started); }
   assert.ok(ready, 'Compiled service readiness'); checks.push('Compiled server starts outside checkout without node_modules');
   startupMs = Math.round(performance.now() - started);
   const session = await fetch(base + '/api/session').then(r => r.json());
@@ -216,10 +233,11 @@ finally {
   await writeFile(out, JSON.stringify({ passed: !failure, platform: process.platform, arch: process.arch, node: process.version,
     source, packSource, runtime: process.versions.electron ? 'installed Electron/Node' : 'Node',
     proofLayer: 'Compiled service and fresh private profile from the selected inputs; not Hermes runtime installation, model access, GUI or two-device acceptance',
-    timings: { startupMs, profileCheckMs, watchdogMs: readyMs, readinessAttempts, perHealthRequestMs: 500 }, profileProof,
+    timings: { startupMs, readinessMs, profileCheckMs, watchdogMs: readyMs, readinessAttempts, perHealthRequestMs: 500 }, profileProof,
     // Recorded whether or not the probe failed: a child that exited is the one
     // fact the earlier receipt could not report.
     child: { exitCode, signal: exitSignal, killedByWatchdog: timedOut },
+    powershell: { service: servicePowershellFrom(stderr), witnessLaunches, witnessMs },
     checks, failure, cleanupComplete, ...(failure ? { diagnostic: diagnosticFrom(stderr) } : {}) }, null, 2) + '\n');
   console.log(`${failure ? 'FAILED' : 'PASSED'} compiled company bundle: ${out}`);
   process.exitCode = failure ? 1 : 0;
