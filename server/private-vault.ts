@@ -7,10 +7,22 @@ import { windowsFilePrivacy } from './windows-file-privacy.ts';
 import { decryptJson, encryptJson, type EncryptedEnvelope } from './desk-crypto.ts';
 import { privateDirectory, readPrivateJson, removePrivateJson, writePrivateJson } from './private-json.ts';
 
+/** First use of the development key in this process, per private directory,
+ * while it is in flight. A second vault on the same directory joins it instead
+ * of reading a key file its sibling has created but not yet protected (Windows
+ * admits it only once its own descriptor is in place). Settled uses are not
+ * kept, so a key removed later is still refused. */
+const keyFirstUse = new Map<string, Promise<Buffer>>();
+
 export function createPrivateVault(dataDirectory: string, key?: Buffer) {
   const directory = join(dataDirectory, 'company-installation', 'private');
   let pendingKey: Promise<Buffer> | undefined;
-  const selected = () => pendingKey ??= (async () => {
+  const selected = () => pendingKey ??= key ? loadKey() : (keyFirstUse.get(directory) ?? (() => {
+    const use = loadKey().finally(() => { keyFirstUse.delete(directory); });
+    keyFirstUse.set(directory, use);
+    return use;
+  })());
+  const loadKey = async (): Promise<Buffer> => {
     if (key) { if (key.length !== 32) throw new Error('Invalid private state key.'); return key; }
     if (process.env.REALBUD_PRODUCTION === '1') throw new Error('The installed app must provide its protected private state key.');
     await privateDirectory(directory);
@@ -49,7 +61,7 @@ export function createPrivateVault(dataDirectory: string, key?: Buffer) {
       writeFileSync(fd, JSON.stringify({ version: 1, key: generated.toString('hex') })); fsyncSync(fd);
     } finally { closeSync(fd); }
     fsyncDir(directory); return generated;
-  })();
+  };
   const path = (name: string) => {
     if (!/^[a-z0-9-]{1,80}$/.test(name)) throw new Error('Invalid private state name.');
     return join(dataDirectory, 'company-installation', 'private', `${name}.json`);

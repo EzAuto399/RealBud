@@ -82,7 +82,10 @@ try{
  incomplete=httpRequest(base+'/api/workspace-tabs',{method:'PUT',headers:{'content-type':'application/json','x-realbud-session':token}});incomplete.on('error',()=>{});incomplete.write('{');await pause(100);
  await call('/api/private-backup/restore','POST',restore,409);incomplete.destroy();incomplete=null;await pause(100);
  check('Stale preview and concurrent unfinished business requests refuse staging without stranding the workspace');
- await call('/api/private-backup/restore','POST',restore);assert.equal((await call('/api/private-backup')).staged,true);
+ // The abandoned request above can take a moment to close on a slower host; the
+ // readiness hold changes nothing, so only that exact answer is waited out.
+ for(const began=Date.now();;){try{await call('/api/private-backup/restore','POST',restore);break;}catch(error){if(!/Wait for current work and setup to finish/.test(String(error?.message))||Date.now()-began>30_000)throw error;await pause(250);}}
+ assert.equal((await call('/api/private-backup')).staged,true);
  for(const [path,method,body] of [['/api/desk','GET'],['/api/workspace-tabs','PUT',{}],['/api/private-backup/export','POST',{passphrase:phrase}],['/api/private-backup/restore','POST',restore]])await call(path,method,body,409);
  check('A staged restore holds business reads, writes, exports and duplicate restore attempts');
  const keyPath=join(data,'desk.key'),key=readFileSync(keyPath);await stop();
