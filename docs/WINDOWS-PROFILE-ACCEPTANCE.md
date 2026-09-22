@@ -679,3 +679,30 @@ whose `powershell.service.launches` reaches 11 and whose timeline is all
 `refused` means startup is still inside the admissions; one that stops at a
 lower count names the launch that hung; a timeline that turns to `timeout`
 means the service listened and then stalled after it.
+
+## 2026-09-23 — probe green, installed memory candidate passed, service launch cost isolated
+
+Evidence (all on hosted `windows-latest`, PR #5, branch `wave/2026-09-22`):
+
+- `Windows probe` run 35748611551 @ 98f792b: the ACL admission probe passed 30 of 30 and the six
+  ACL-dependent suites (`private-file`, `private-vault`, `hermes-profile-storage`,
+  `windows-file-privacy` ×3) passed 6 of 6 in 25 s. Earlier probes named the last three
+  refusals and each got a fix: `UnauthorizedAccessException` at stage 24 (writing an owner the
+  caller already holds needs WRITE_OWNER; the script now keeps an already-owned object's owner),
+  `inheritance-not-protected` on concurrent first use (one admission per directory per process;
+  the vault protects its key file before writing it and a concurrent loser waits that window out),
+  and a planted test file that inherited its descriptor.
+- `Package Windows` run 35748277547 @ 9fa802e: seven installed checks passed and the native memory
+  storage candidate **passed** (`installed-memory-primitives.json`, `passed: true`), so the check 7
+  rename fix holds at the installed-device tier. The compiled service still never listened: the
+  receipt now shows five successful PowerShell launches (`refusals: 0`) at ~23 s each
+  (`[smoke-powershell] launches=5 ms=115761`), every `/api/health` attempt refused, empty stderr.
+- `Windows probe` run 35750286892 @ beb6280: a trivial `powershell.exe -EncodedCommand` launch under
+  node.exe costs 0.17–0.22 s in every environment variant, including the smoke's stripped one
+  (fake home, one-directory PATH). The 23 s is therefore not the environment; the remaining
+  difference is the parent process (the installed Electron binary in Node mode) or the
+  installed location. Run 35750672323 @ 24469e6 times the same launches with the installed binary
+  as parent and records the Defender posture before the service probe.
+
+Still open: why a PowerShell launch costs ~23 s inside the installed service, and the full CI
+matrix result on the .NET access-control scripts (run 35750286883 @ beb6280).
