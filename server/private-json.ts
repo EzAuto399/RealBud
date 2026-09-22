@@ -36,7 +36,28 @@ export async function readPrivateJson(path: string, maxBytes = 64_000): Promise<
   } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
 }
 
+export const DISK_FULL_MESSAGE = 'This computer is out of disk space. Free some space, then try again.';
+
+/** A full disk or an exhausted quota is not damage: the saved file is intact
+ * and the same write can succeed once space is freed. It gets its own error so
+ * it is never reported, or held, as a file that needs recovery. */
+export class DiskFullError extends Error {
+  readonly status = 507;
+  readonly code = 'disk_full';
+  constructor(cause: unknown) { super(DISK_FULL_MESSAGE, { cause }); this.name = 'DiskFullError'; }
+}
+
+export function isDiskFull(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return error instanceof DiskFullError || code === 'ENOSPC' || code === 'EDQUOT';
+}
+
 export async function writePrivateJson(path: string, value: unknown, existingAdmission?: { maxBytes: number; validate: (value: unknown) => void }): Promise<void> {
+  try { await writePrivateJsonOnce(path, value, existingAdmission); }
+  catch (error) { throw isDiskFull(error) && !(error instanceof DiskFullError) ? new DiskFullError(error) : error; }
+}
+
+async function writePrivateJsonOnce(path: string, value: unknown, existingAdmission?: { maxBytes: number; validate: (value: unknown) => void }): Promise<void> {
   await privateDirectory(dirname(path));
   // Validate an existing destination's privacy, including before replacement.
   const existing = await readPrivateJson(path, existingAdmission?.maxBytes ?? 2_000_000);

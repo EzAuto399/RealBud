@@ -218,6 +218,7 @@ import {
   startRemoteDecisionFlush,
   stopRemoteDecisionFlush,
 } from "./remote-decisions.ts";
+import { buildSupportBundle, supportBundleRequest } from "./support-bundle.ts";
 
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
 const STATIC_DIR = process.env.OMB_STATIC_DIR || null;
@@ -2506,6 +2507,16 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
     }
     const denied = productDenied(method, path);
     if (denied) return json(res, 403, { error: denied });
+
+    // Help and support. POST carries the desktop app's own log tail so one
+    // redactor masks both logs; the report is plain text and never stored.
+    if (path === "/api/support/bundle" && (method === "GET" || method === "POST")) {
+      if (method === "POST" && !String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      const request = method === "POST" ? supportBundleRequest(await readBody(req)) : {};
+      const report = await buildSupportBundle(request);
+      res.writeHead(200, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
+      return res.end(report);
+    }
 
     if (path === "/api/session" && method === "GET") {
       const host = typeof req.headers.host === "string" ? req.headers.host : undefined;

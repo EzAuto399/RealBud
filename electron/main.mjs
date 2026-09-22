@@ -2,7 +2,7 @@ import { registerDesktopShutdown } from "./shutdown.mjs";
 import { createServerSupervisor } from "./server-supervisor.mjs";
 import { findRunningService, probeService, serviceIdentity } from "./service-instance.mjs";
 import { abandonSpawnedService, availableServicePort, clearServiceHandle, ownsRunningService, requestServiceStop, readServiceHandle, SERVICE_WAIT_INTERVAL_MS, serviceWaitTicks, shouldRestartServiceWait, shouldStartService, spawnedServiceState, startDetachedService, systemBootedAt } from "./service-lifecycle.mjs";
-import { app, BrowserWindow, clipboard, desktopCapturer, ipcMain, powerMonitor, powerSaveBlocker, safeStorage, session, shell, systemPreferences, utilityProcess } from "electron";
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, powerMonitor, powerSaveBlocker, safeStorage, session, shell, systemPreferences, utilityProcess } from "electron";
 import { SERVICE_MODE_FLAG, keepAwakeDecision, parseServiceModeArgs, planStartupRegistration, startupRegistrationSupport } from "./service-persistence.mjs";
 import { resolveDeskKey } from "./desk-key-custody.mjs";
 import { configureLogDirectory } from "./log-directory.mjs";
@@ -624,6 +624,135 @@ ipcMain.handle("service:start", async () => {
   if (!app.isPackaged) return { ok: false, status: await officeServiceStatus() };
   const ok = await startOrAdoptOfficeService();
   return { ok, status: await officeServiceStatus() };
+});
+
+// ---------------------------------------------------------------------------
+// Help and support: one plain-text file the person saves where they choose.
+//
+// The renderer gets neither a path nor the contents, only the outcome. Only the
+// office service runs RealBud's redactor, so the tail of server.log is posted
+// to it with a session this process fetches itself, from the service whose
+// identity matches this data directory, and the masked report it returns is
+// what gets saved. When the office service does not answer, nothing can mask
+// its [out]/[err] output, so the file keeps only lines this process wrote
+// itself, and drops any of those that carry a key-like word or a long
+// token-shaped run; everything left out is counted, never silently lost.
+const SUPPORT_DESKTOP_LOG_BYTES = 192 * 1024;
+const SUPPORT_REPORT_MAX_BYTES = 512 * 1024;
+const SUPPORT_OWN_LINE = /^\[\d{4}-\d{2}-\d{2}T[0-9:.]+Z\] (?!\[out\]|\[err\])/;
+const SUPPORT_UNSAFE_LINE = /[A-Za-z0-9_+=-]{20,}|token|secret|passw|bearer|authori[sz]|api[_-]?key|private key|cookie|credential/i;
+let supportSaveInFlight = false;
+
+function desktopLogTail() {
+  let fd = null;
+  try {
+    const file = path.join(LOG_DIR, "server.log");
+    if (!fs.lstatSync(file).isFile()) return "";
+    fd = fs.openSync(file, "r");
+    const size = fs.fstatSync(fd).size;
+    const length = Math.min(size, SUPPORT_DESKTOP_LOG_BYTES);
+    const buffer = Buffer.alloc(length);
+    const text = buffer.subarray(0, fs.readSync(fd, buffer, 0, length, size - length)).toString("utf8");
+    if (length === size) return text;
+    // A tail that starts mid-line can start mid-secret; drop that partial line.
+    const cut = text.indexOf("\n");
+    return cut === -1 ? "" : text.slice(cut + 1);
+  } catch {
+    return "";
+  } finally {
+    if (fd !== null) try { fs.closeSync(fd); } catch { /* already closed */ }
+  }
+}
+
+async function officeSupportReport(desktopLog) {
+  const running = await findRunningService(serviceIdentity(realbudDataDir())).catch(() => null);
+  if (!running) return null;
+  const base = `http://127.0.0.1:${running.port}`;
+  try {
+    const sessionResponse = await fetch(`${base}/api/session`, { signal: AbortSignal.timeout(5_000) });
+    const token = sessionResponse.ok ? (await sessionResponse.json().catch(() => null))?.token : null;
+    if (typeof token !== "string" || !token) return null;
+    const response = await fetch(`${base}/api/support/bundle`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-realbud-session": token },
+      body: JSON.stringify({ desktopLog }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) return null;
+    const report = await response.text();
+    return report.startsWith("RealBud support file\n") && Buffer.byteLength(report, "utf8") <= SUPPORT_REPORT_MAX_BYTES ? report : null;
+  } catch {
+    return null;
+  }
+}
+
+function desktopOnlySupportReport(desktopLog) {
+  const kept = [];
+  let omitted = 0;
+  for (const line of desktopLog.split(/\r?\n/)) {
+    if (!line) continue;
+    if (SUPPORT_OWN_LINE.test(line) && !SUPPORT_UNSAFE_LINE.test(line) && line.length <= 2_000) kept.push(line);
+    else omitted++;
+  }
+  return [
+    "RealBud support file",
+    `Created: ${new Date().toISOString()}`,
+    `RealBud version: ${app.getVersion()}`,
+    `System: ${process.platform} ${process.arch} ${process.getSystemVersion?.() ?? ""}`.trimEnd(),
+    "Office service: did not answer, so its log is not included.",
+    "",
+    "Contains: RealBud's version, this computer's system type and the desktop app's own recent log lines. Documents, mail, saved credentials and business records are never read for this file.",
+    "",
+    "== Desktop app log (server.log) ==",
+    ...(omitted ? [`[${omitted} lines were left out because only the office service can check them for keys and passwords.]`] : []),
+    ...kept,
+    "",
+  ].join("\n");
+}
+
+ipcMain.handle("support:save", async (event) => {
+  if (supportSaveInFlight) return { ok: false, error: "A support file is already being saved." };
+  supportSaveInFlight = true;
+  try {
+    const now = new Date();
+    const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const options = {
+      title: "Save support file",
+      defaultPath: path.join(app.getPath("downloads"), `realbud-support-${day}.txt`),
+      filters: [{ name: "Text", extensions: ["txt"] }],
+      properties: ["createDirectory", "showOverwriteConfirmation"],
+    };
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const choice = owner ? await dialog.showSaveDialog(owner, options) : await dialog.showSaveDialog(options);
+    if (choice.canceled || !choice.filePath) return { ok: false, canceled: true };
+    const desktopLog = desktopLogTail();
+    const office = await officeSupportReport(desktopLog);
+    const report = office ?? desktopOnlySupportReport(desktopLog);
+    // Only a file this call opened is removed after a failed write, so a
+    // partial report is never left looking complete and nothing else is touched.
+    const handle = await fs.promises.open(choice.filePath, "w", 0o600);
+    try {
+      await handle.writeFile(report, "utf8");
+      await handle.close();
+    } catch (error) {
+      await handle.close().catch(() => {});
+      await fs.promises.unlink(choice.filePath).catch(() => {});
+      throw error;
+    }
+    slog(`saved a support file (${office ? "with" : "without"} the office service report)`);
+    return { ok: true, officeReport: office !== null };
+  } catch (error) {
+    const code = error?.code;
+    slog(`the support file could not be saved: ${typeof code === "string" ? code : "error"}`);
+    return {
+      ok: false,
+      error: code === "ENOSPC" || code === "EDQUOT"
+        ? "This computer is out of disk space. Free some space, then try again."
+        : "The support file could not be saved. Try again, or choose another folder.",
+    };
+  } finally {
+    supportSaveInFlight = false;
+  }
 });
 
 // ---------------------------------------------------------------------------

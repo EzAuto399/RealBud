@@ -115,6 +115,7 @@ export function needsSession(path: string, method?: string): boolean {
     path.startsWith("/api/care") ||
     path.startsWith("/api/service-admin") ||
     path.startsWith("/api/service/") ||
+    path.startsWith("/api/support/") ||
     path.startsWith("/api/tts") ||
     path.startsWith("/api/company") ||
     path.startsWith("/api/connected-apps") ||

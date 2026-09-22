@@ -60,6 +60,7 @@ import { coerceOffice } from "../../shared/office";
 import { LawWatchCard } from "./you/LawWatchCard";
 import { OfficeCard } from "./you/OfficeCard";
 import { UnattendedWorkCard } from "./you/UnattendedWorkCard";
+import { SupportCard } from "./you/SupportCard";
 import { PrivateWorkspaceBackup } from "./PrivateWorkspaceBackup";
 
 function YouLoadLines({ label }: { label: string }) {
@@ -572,6 +573,7 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
         <YouGroup label="Account">
           {profileSection}
           <ServiceStatusCard />
+          <SupportCard />
           <UnattendedWorkCard />
         </YouGroup>
 

@@ -116,6 +116,9 @@ declare global {
           scheduleEnabled?: boolean;
         }): Promise<ServicePersistenceState>;
       };
+      /** Help and support: shows a save dialog and writes one redacted plain-text
+       * report. Resolves with the outcome only, never a path or the contents. */
+      saveSupportFile?: () => Promise<unknown>;
       /** In-app auto-update (packaged app only; dormant in dev). onState
        * fires immediately with the current state, then on transitions. */
       updater?: {
