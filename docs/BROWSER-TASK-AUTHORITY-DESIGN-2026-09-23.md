@@ -48,7 +48,7 @@ reading only; no customer or live portal run. Direction: [owner decision](decisi
 3. Approval card and Stop in the UI — rendered fixture.
 4. Fictional pay/send form on the real helper — local helper + Playwright.
 5. Ask one-off grants — local tests.
-6. Keys, download capture with hash, upload of granted files — depends on helper support.
+6. Keys, select, download capture with hash, upload of granted files — **helper supports all of it** (`bsk` 0.3.0 `--help`, checked 23 September: `press <KEY>`, `select --value`, `upload --file`, `download --out`, plus `request-help --prompt` for in-page login/MFA/captcha handoff and `browsers` for connected browsers); RealBud only needs broker tools and authority rules (Enter and select on a form are classified like submit when they would submit).
 7. Login resume with the remaining grant; delegated-child broker check — local tests.
 8. Docs (`PORTAL-WORK.md`) after 1–3.
 
