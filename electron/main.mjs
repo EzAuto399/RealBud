@@ -2,9 +2,10 @@ import { registerDesktopShutdown } from "./shutdown.mjs";
 import { createServerSupervisor } from "./server-supervisor.mjs";
 import { findRunningService, isOurService, probeService, serviceIdentity } from "./service-instance.mjs";
 import { abandonSpawnedService, availableServicePort, clearServiceHandle, ownsRunningService, processAlive, requestServiceStop, readServiceHandle, SERVICE_WAIT_INTERVAL_MS, serviceWaitTicks, shouldRestartServiceWait, shouldStartService, spawnedServiceState, startDetachedService, systemBootedAt } from "./service-lifecycle.mjs";
-import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, powerMonitor, powerSaveBlocker, safeStorage, session, shell, systemPreferences, utilityProcess } from "electron";
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, powerMonitor, powerSaveBlocker, safeStorage, session, shell, systemPreferences, Tray, utilityProcess } from "electron";
 import { createServiceWatchdog, WATCHDOG_DEFAULTS } from "./service-watchdog.mjs";
 import { SERVICE_MODE_FLAG, keepAwakeDecision, parseServiceModeArgs, planStartupRegistration, startupRegistrationSupport } from "./service-persistence.mjs";
+import { headlessHostShouldExit, secondInstanceAction, unattendedWorkWanted, windowsClosedAction } from "./unattended-host.mjs";
 import { resolveDeskKey } from "./desk-key-custody.mjs";
 import { configureLogDirectory } from "./log-directory.mjs";
 import fs from "node:fs";
@@ -58,21 +59,25 @@ if (!smokeMode && !app.requestSingleInstanceLock()) {
 } else if (!smokeMode) {
   app.on("second-instance", (_event, argv) => {
     const win = BrowserWindow.getAllWindows()[0];
-    if (win) {
+    // The decision is pure and tested in unattended-host.mjs. A sign-in launch
+    // arriving while RealBud already runs is ignored: this process is already
+    // supervising, and a login item must never pop a window over someone's work.
+    const action = secondInstanceAction({ serviceMode, incomingServiceMode: parseServiceModeArgs(argv), hasWindow: Boolean(win) });
+    if (action === "focus" && win) {
       if (win.isMinimized()) win.restore();
       win.focus();
-      return;
-    }
-    // No window to focus: this process is the headless service host the login
-    // item started, and someone has just opened RealBud. Holding the lock must
-    // not make their double-click do nothing — and both processes deciding to
-    // start a service would put two of them on one company database. So hand
-    // the lock over: relaunch as an ordinary window and quit. The office
-    // service is detached, so it keeps serving across the swap.
-    if (serviceMode && !parseServiceModeArgs(argv)) {
-      slog("a window launch arrived while running as the sign-in service host; handing over");
-      app.relaunch({ args: [] });
-      app.quit();
+    } else if (action === "hand-over") {
+      // No window to focus: this process is the headless service host the login
+      // item started, and someone has just opened RealBud. Holding the lock must
+      // not make their double-click do nothing — and both processes deciding to
+      // start a service would put two of them on one company database. So hand
+      // the lock over: relaunch as an ordinary window and quit. The office
+      // service is detached, so it keeps serving across the swap.
+      handOverToWindowProcess("a window launch arrived while running as the sign-in service host");
+    } else if (action === "open-window") {
+      // This process is running in the background for scheduled work; open the
+      // window here rather than let a second process decide about the service.
+      openWindowFromBackground();
     }
   });
 }
@@ -971,10 +976,9 @@ function startServicePersistence() {
 /**
  * The headless sign-in launch: no window, no computer use, no updater — start or
  * adopt the office service through the same single-authority path a window uses,
- * then stay only as long as it is serving.
+ * then supervise it with the same watchdog a window runs, for as long as there is
+ * a service of ours to supervise.
  */
-const SERVICE_HOST_POLL_MS = 15_000;
-let serviceHostWatch = null;
 async function runServiceHost() {
   if (process.platform === "darwin") { try { app.dock?.hide(); } catch { /* no dock */ } }
   if (!app.isPackaged) {
@@ -993,18 +997,91 @@ async function runServiceHost() {
     app.quit();
     return;
   }
-  // Exit when the office stops. An invisible process that outlives the thing it
-  // was hosting is worse than no process: it holds the single-instance lock and
-  // whatever the power manager gave it, while hosting nothing.
-  const identity = serviceIdentity(realbudDataDir());
-  serviceHostWatch = setInterval(() => {
-    void (async () => {
-      if (await findRunningService(identity)) return;
-      slog("the office service has stopped; the sign-in service host is exiting");
-      if (serviceHostWatch) { clearInterval(serviceHostWatch); serviceHostWatch = null; }
-      app.quit();
-    })();
-  }, SERVICE_HOST_POLL_MS);
+  // Supervise rather than exit when the office stops. This host exists for
+  // scheduled work, and a crash at 3 a.m. used to end it along with its
+  // keep-awake hold, leaving the morning run to nobody. The watchdog brings a
+  // crashed service back on its bounded schedule; the host still exits once
+  // there is provably nothing of ours to supervise (headlessHostShouldExit),
+  // because an invisible process hosting nothing only holds the lock and the
+  // power manager's hold.
+  startServiceWatchdog();
+  showBackgroundTray({
+    onOpen: () => handOverToWindowProcess("RealBud was opened from the notification area"),
+  });
+}
+
+/** Give the single-instance lock to an ordinary window process. */
+function handOverToWindowProcess(why) {
+  slog(`${why}; handing over to a window`);
+  app.relaunch({ args: [] });
+  app.quit();
+}
+
+// ---------------------------------------------------------------------------
+// Running in the background after the last window closes (Windows).
+//
+// The decision lives in unattended-host.mjs. When the person has asked for
+// unattended work, closing the window keeps this process — its watchdog and its
+// keep-awake hold — and shows a notification-area icon to reopen RealBud or quit
+// it. Quitting from there, or from the window, still ends supervision; the office
+// service itself keeps running either way, as it always has.
+let runningInBackground = false;
+let backgroundTray = null;
+let backgroundNoticeShown = false;
+
+function showBackgroundTray({ onOpen }) {
+  if (process.platform !== "win32" || backgroundTray) return;
+  try {
+    const icon = nativeImage.createFromPath(APP_ICON).resize({ width: 16, height: 16 });
+    backgroundTray = new Tray(icon);
+    backgroundTray.setToolTip("RealBud is running so scheduled work can happen");
+    backgroundTray.setContextMenu(Menu.buildFromTemplate([
+      { label: "Open RealBud", click: () => onOpen() },
+      { type: "separator" },
+      { label: "Quit RealBud", click: () => app.quit() },
+    ]));
+    backgroundTray.on("click", () => onOpen());
+  } catch (error) {
+    // The process still supervises without an icon; reopening RealBud reaches it.
+    backgroundTray = null;
+    slog(`the notification-area icon could not be shown: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function hideBackgroundTray() {
+  if (!backgroundTray) return;
+  try { backgroundTray.destroy(); } catch { /* already gone */ }
+  backgroundTray = null;
+}
+
+function enterBackground() {
+  if (runningInBackground) return;
+  runningInBackground = true;
+  slog("the last window closed; RealBud keeps running in the background for scheduled work");
+  showBackgroundTray({ onOpen: openWindowFromBackground });
+  if (backgroundTray && !backgroundNoticeShown) {
+    backgroundNoticeShown = true;
+    try {
+      backgroundTray.displayBalloon({
+        title: "RealBud is still running",
+        content: "Scheduled work keeps running while this computer is on. Quit RealBud from this icon.",
+        iconType: "info",
+      });
+    } catch { /* a notice is a courtesy; the icon is the control */ }
+  }
+}
+
+function openWindowFromBackground() {
+  if (serviceMode) return;
+  const existing = BrowserWindow.getAllWindows()[0];
+  if (existing) {
+    if (existing.isMinimized()) existing.restore();
+    existing.focus();
+  } else {
+    createWindow();
+  }
+  runningInBackground = false;
+  hideBackgroundTray();
 }
 
 /**
@@ -1173,11 +1250,13 @@ async function startOrAdoptOfficeServiceOnce() {
  * routes every restart through `startOrAdoptOfficeService()`, so an adopted or
  * already-running service is never duplicated.
  *
- * Window mode only. The sign-in service host (`--service`) keeps its documented
- * contract of exiting when the office stops, and it has no banner or Start button
- * to hand over to once the hourly limit is reached; the next window launch or
- * sign-in starts the office again. Smoke runs stop the service themselves and
- * must exit cleanly, so they are left out too.
+ * The window process runs it, and so does a windowless RealBud: the sign-in host
+ * (`--service`) and a window process running in the background after its last
+ * window closed. A windowless process has no banner or Start button, so it ends
+ * once there is provably nothing of ours to supervise (a deliberate Stop cleared
+ * the record, or a start died while booting); the next window launch or sign-in
+ * starts the office again. Smoke runs stop the service themselves and must exit
+ * cleanly, so they are left out.
  */
 // `before-quit` can be cancelled (a window with unsaved work refuses to close)
 // and Electron reports no cancellation, so "quitting" holds for a bounded time
@@ -1238,7 +1317,14 @@ function startServiceWatchdog() {
     },
     log: slog,
   });
-  serviceWatchdogTimer = setInterval(() => { void serviceWatchdog?.tick(); }, WATCHDOG_DEFAULTS.tickMs);
+  serviceWatchdogTimer = setInterval(() => {
+    void serviceWatchdog?.tick().then((decision) => {
+      if (!(serviceMode || runningInBackground) || !headlessHostShouldExit(decision)) return;
+      slog(`nothing of ours is left to supervise (${decision.reason}); the windowless RealBud is exiting`);
+      stopServiceWatchdog();
+      app.quit();
+    });
+  }, WATCHDOG_DEFAULTS.tickMs);
 }
 function stopServiceWatchdog() {
   serviceWatchdog?.stop();
@@ -1323,9 +1409,25 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  // The sign-in service host never opened a window, so this cannot fire for it —
-  // but if it ever did, closing a window must not end the host.
-  if (!serviceMode && process.platform !== "darwin") app.quit();
+  // Decided in unattended-host.mjs. The sign-in service host never opened a
+  // window, so this cannot fire for it — but if it ever did, closing a window
+  // must not end the host. macOS keeps the app in the dock, as it always has.
+  const settings = loadDesktopSettings();
+  const decision = windowsClosedAction({
+    platform: process.platform,
+    serviceMode,
+    packaged: app.isPackaged,
+    smoke: smokeMode,
+    quitting: appQuitting(),
+    unattended: unattendedWorkWanted({
+      startOfficeServiceAtLogin: settings.startOfficeServiceAtLogin,
+      keepAwakeForSchedules: settings.keepAwakeForSchedules,
+      scheduleEnabled: loadScheduleFact().scheduleEnabled,
+      stopRequested: serviceStopRequested,
+    }),
+  });
+  if (decision.action === "quit") app.quit();
+  else if (decision.action === "background") enterBackground();
 });
 
 // Defer final quit for bounded helper cleanup, after every window accepts close.
@@ -1341,8 +1443,8 @@ registerDesktopShutdown(app, {
     // running, but nothing in this process should still be holding the machine
     // awake once the process is gone.
     releaseKeepAwake();
-    if (serviceHostWatch) { clearInterval(serviceHostWatch); serviceHostWatch = null; }
     stopServiceWatchdog();
+    hideBackgroundTray();
   },
   stopSpeech,
   closeControl: () => cuaControl?.close(),

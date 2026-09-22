@@ -768,3 +768,47 @@ runner), private backup boundaries 6/6 with one documented Windows skip (slowest
 Cost to watch: every atomic private write on Windows pays one PowerShell admission (about
 0.2–0.4 s), and one restore attempt took 27 s on a runner because restore verifies files one
 launch at a time. Batching those verifications is the next Windows performance item.
+
+## 2026-09-23 — to run: supervision survives closing the window
+
+Status: **not run**. Source and local tests only (`electron/unattended-host.mjs` and its tests,
+`server/routines-service-restart.test.ts`). What only an installed Windows run proves: the
+notification-area icon and its menu, that the process really stays after the last window closes,
+that the keep-awake hold is still held, that the watchdog restarts a killed detached service once,
+and that the morning run is not repeated.
+
+Change under test: on Windows, when unattended work is wanted ("Start the office service when I sign
+in", "Keep this computer awake for scheduled work", or any enabled schedule) and the office service was not deliberately stopped, closing
+the last window keeps RealBud running in the background with an icon ("Open RealBud", "Quit
+RealBud") instead of quitting. The `--service` sign-in host now supervises with the same watchdog
+instead of exiting when the service dies. Both exit only when nothing of ours is recorded.
+
+Setup: installed unsigned NSIS build from the change, a disposable Windows user, no customer data.
+Log: `%APPDATA%\RealBud\logs\server.log`. Service pid and port: `http://127.0.0.1:8799/api/health`
+(or 18799 / 28799).
+
+1. Open RealBud, finish setup, enable the morning money check on Schedule and set its time about
+   10 minutes ahead. On You turn on "Keep this computer awake for scheduled work". Plug in.
+2. Close the window. Expect: the process stays (Task Manager), a RealBud icon in the notification
+   area, a one-time notice, and `the last window closed; RealBud keeps running in the background`
+   in the log. `powercfg /requests` lists RealBud under SYSTEM (prevent-app-suspension).
+3. Kill the office service: read `pid` from `/api/health`, then `taskkill /PID <pid> /F`.
+   Expect within about 20 s: `restarting it automatically (attempt 1 of 5 this hour)` then
+   `the office service was restarted automatically`, exactly once, and `/api/health` answers with
+   the same `instanceId` on the same port. Only one RealBud service process exists afterwards.
+4. Let the scheduled time pass with the window closed. Then kill the service again during the run
+   (step 3 again while the run is in progress). Reopen RealBud from the icon. Expect on Schedule:
+   one receipt for that time, marked interrupted ("not resumed") or completed — never two, and
+   no second run of the same time after the restart.
+5. Deliberate Stop: open RealBud, You → "Stop the office service", close the window. Expect:
+   RealBud quits (no icon, no process), `powercfg /requests` no longer lists it, and the service
+   is not started again.
+6. Not opted in: turn off both settings and disable every schedule, close the window. Expect:
+   RealBud quits as before.
+7. Sign-in host: turn on "Start the office service when I sign in", sign out and in. Expect the icon, no window. Kill
+   the service as in step 3: it returns once and the host stays. Choose "Open RealBud": a window
+   opens on the same service. Choose "Quit RealBud" from the icon: the process exits, the service
+   keeps running unsupervised (by design).
+
+Record: the log excerpt, `powercfg /requests` before and after, the Schedule receipts, and
+`/api/health` before and after each kill, under `outputs/unattended-supervision-<date>/`.

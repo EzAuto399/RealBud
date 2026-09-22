@@ -1,4 +1,6 @@
-// Bringing a crashed office service back while the RealBud window is open.
+// Bringing a crashed office service back while RealBud is running: with its
+// window open, in the background after the window closed, or as the sign-in
+// host (see unattended-host.mjs for when a windowless RealBud stays running).
 //
 // Why: the office service runs DETACHED so it outlives the window
 // (`startDetachedService` in service-lifecycle.mjs). The in-app supervisor only
