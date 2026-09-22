@@ -3,12 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { applyPropertyPack, ensurePropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, learningPolicyReady, migratePropertyProfileFromLegacyHermes, packInstalled, propertyProfileDir, propertyWorkroomReady, stagedLearningSupported, yamlBlock } from "./hermes-pack.ts";
+import { applyPropertyPack, ensurePropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, learningPolicyReady, migratePropertyProfileFromLegacyHermes, packInstalled, propertyProfileDir, propertyWorkroomReady, stagedLearningSupported, workerLimitsReady, yamlBlock } from "./hermes-pack.ts";
 import { releaseHome, resetRuntimeSelectionForTests, saveRuntimeSelection, selectedHermesCli } from "./hermes-runtime-selection.ts";
 import { runtimeCli } from "./hermes-paths.ts";
 import { dirname } from "node:path";
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
-import { parse } from "yaml";
+import { parse, parseDocument } from "yaml";
 
 import { privateFixtureDirectory, privateFixtureRoot, writePrivateFixtureFile as writeFileSync, WINDOWS_PROFILE_TEST_OPTIONS } from "./testing/private-profile-fixture.ts";
 
@@ -196,6 +196,65 @@ describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     writeFileSync(configPath, readFileSync(configPath, "utf8").replace(/\n/g, "\r\n"));
     expect(propertyWorkroomReady(home)).toBe(true);
     expect(yamlBlock(readFileSync(configPath, "utf8"), "terminal")).toMatch(/backend: local/);
+  });
+
+  it("writes cheaper worker limits on install and repairs a profile from before they existed", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-worker-limits-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home); const path = join(dir, "config.yaml");
+    const fresh = readFileSync(path, "utf8");
+    expect(parse(fresh, { version: "1.1" })).toMatchObject({
+      agent: { max_turns: 60, budget_warning_ratio: 0.75 },
+      security: { redact_secrets: true, allow_lazy_installs: false },
+      tool_loop_guardrails: { loop_caps: { max_web_searches: 10, max_subagents: 4 } },
+      auxiliary: { background_review: { enabled: false, extra_tools: [] }, title_generation: { enabled: false } },
+    });
+    expect(fresh).not.toContain("!!omap");
+    expect(workerLimitsReady(home)).toBe(true);
+    expect(propertyWorkroomReady(home)).toBe(true);
+
+    // The policy shipped before these limits, plus an office's own title model.
+    const old = parseDocument(fresh, { version: "1.1" });
+    for (const at of [["agent", "budget_warning_ratio"], ["security", "allow_lazy_installs"], ["tool_loop_guardrails"], ["auxiliary", "title_generation"]]) old.deleteIn(at);
+    old.setIn(["auxiliary", "title_generation"], old.createNode({ enabled: true, model: "fictional-title-model" }));
+    const before = old.toString();
+    writeFileSync(path, before);
+    // Needs Repair, not unsafe: hands still run and startup does not rewrite it.
+    expect(approvalsAreManual(home)).toBe(true);
+    expect(learningPolicyReady(home)).toBe(true);
+    expect(workerLimitsReady(home)).toBe(false);
+    expect(propertyWorkroomReady(home)).toBe(false);
+    expect(ensurePropertyPack(home).wrote).toEqual([]);
+    expect(readFileSync(path, "utf8")).toBe(before);
+
+    applyPropertyPack(home);
+    const repaired = parse(readFileSync(path, "utf8"), { version: "1.1" });
+    expect(repaired.auxiliary.title_generation).toEqual({ enabled: false });
+    expect(workerLimitsReady(home)).toBe(true);
+    expect(propertyWorkroomReady(home)).toBe(true);
+  });
+
+  it("does not accept looser worker limits than the pack's", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-worker-limits-loose-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home); const path = join(dir, "config.yaml");
+    const baseline = readFileSync(path, "utf8");
+    const edits: Array<[string[], unknown]> = [
+      [["tool_loop_guardrails", "loop_caps", "max_web_searches"], 0], // upstream reads 0 as unlimited
+      [["tool_loop_guardrails", "loop_caps", "max_web_searches"], 50],
+      [["tool_loop_guardrails", "loop_caps", "max_subagents"], 5],
+      [["security", "allow_lazy_installs"], true],
+      [["auxiliary", "title_generation", "enabled"], true],
+      [["agent", "budget_warning_ratio"], 1],
+    ];
+    for (const [at, value] of edits) {
+      const doc = parseDocument(baseline, { version: "1.1" }); doc.setIn(at, value);
+      writeFileSync(path, doc.toString());
+      expect(workerLimitsReady(home), at.join(".")).toBe(false);
+      expect(propertyWorkroomReady(home), at.join(".")).toBe(false);
+    }
+    const tighter = parseDocument(baseline, { version: "1.1" });
+    tighter.setIn(["tool_loop_guardrails", "loop_caps", "max_web_searches"], 3);
+    writeFileSync(path, tighter.toString());
+    expect(workerLimitsReady(home)).toBe(true);
   });
 
   it("does not inherit a Hermes Desktop home model into Bud's hands", () => {

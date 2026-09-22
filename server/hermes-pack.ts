@@ -193,7 +193,7 @@ function readIf(path: string): string {
 export function mergePropertyPolicy(existing: string, defaults: string): string {
   const result = policyDocument(existing.trim() ? existing : defaults);
   const policy = policyDocument(defaults);
-  const keys = ["approvals", "agent", "toolsets", "security", "delegation", "terminal", "file_read_max_chars", "tool_output"];
+  const keys = ["approvals", "agent", "toolsets", "security", "delegation", "terminal", "file_read_max_chars", "tool_output", "tool_loop_guardrails"];
   for (const key of keys) {
     if (policy.has(key)) result.set(key, policy.get(key));
   }
@@ -206,6 +206,8 @@ export function mergePropertyPolicy(existing: string, defaults: string): string 
   }
   for (const key of ["skills", "memory"]) result.setIn([key, "write_approval"], true);
   result.setIn(["auxiliary", "background_review"], policy.getIn(["auxiliary", "background_review"]));
+  // Owned whole: with titles off, the rest of the block (provider, model) is unused.
+  if (policy.hasIn(["auxiliary", "title_generation"])) result.setIn(["auxiliary", "title_generation"], policy.getIn(["auxiliary", "title_generation"]));
   return result.toString();
 }
 
@@ -240,6 +242,27 @@ export function learningPolicyReady(root?: string): boolean {
       (settings.enabled === false || (settings.enabled === true && stagedLearningSupported(root))) &&
       JSON.stringify(settings.extra_tools) === "[]" &&
       background.items.every(item => ["enabled", "extra_tools"].includes(String(item.key)));
+  } catch { return false; }
+}
+
+/** The worker limits every install writes, checked against the parsed config
+ * so a profile from before they existed reads as needing Repair (which writes
+ * them) rather than as unsafe. Keys verified in the pinned runtime's
+ * hermes_cli/config_defaults.py (0.21.3); older supported releases ignore the
+ * ones they lack. Tighter values than the pack's are accepted. */
+export function workerLimitsReady(root?: string): boolean {
+  try {
+    const doc = policyDocument(readFileSync(join(propertyProfileDir(root), "config.yaml"), "utf8"));
+    const cap = (key: string, max: number) => {
+      const value = doc.getIn(["tool_loop_guardrails", "loop_caps", key]);
+      // Upstream reads 0 as unlimited, so a cap must be a positive integer.
+      return Number.isInteger(value) && (value as number) >= 1 && (value as number) <= max;
+    };
+    const ratio = doc.getIn(["agent", "budget_warning_ratio"]);
+    return doc.getIn(["auxiliary", "title_generation", "enabled"]) === false &&
+      doc.getIn(["security", "allow_lazy_installs"]) === false &&
+      cap("max_web_searches", 10) && cap("max_subagents", 4) &&
+      typeof ratio === "number" && ratio > 0 && ratio < 1;
   } catch { return false; }
 }
 
@@ -460,7 +483,7 @@ export function propertyWorkroomReady(root?: string): boolean {
       /^\s+redact_secrets:\s*true\s*$/m.test(security) &&
       requiredToolsets.every((name) => new RegExp(`^\\s+-\\s*${name}\\s*$`, "m").test(toolsets)) &&
       !/^\s+-\s*(code_execution|computer_use|cronjob|skills)\s*$/m.test(toolsets) &&
-      maxTurns >= 60 && learningPolicyReady(root)
+      maxTurns >= 60 && learningPolicyReady(root) && workerLimitsReady(root)
     );
   } catch {
     return false;

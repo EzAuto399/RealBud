@@ -14,7 +14,15 @@ approvals:
   mcp_reload_confirm: true
 agent:
   max_turns: 60
+  # One model-visible wrap-up notice at 75% of the turn cap, so a long job
+  # returns a partial answer instead of being cut off at the cap.
+  budget_warning_ratio: 0.75
   verbose: false
+# Per-turn hard ceilings on web searches and subagent spawns (upstream 50 each).
+tool_loop_guardrails:
+  loop_caps:
+    max_web_searches: 10
+    max_subagents: 4
 # Keep a long CSV/JSON line intact within the overall read budget. Upstream's
 # smaller per-line default can hide the tail without a resumable line offset.
 # Larger reads must still report partial coverage; this is not unlimited input.
@@ -36,6 +44,8 @@ toolsets:
   - delegation
 security:
   redact_secrets: true
+  # Never install Python packages at run time; the worker runs its reviewed release.
+  allow_lazy_installs: false
 # Native foreground and background learning proposes durable changes for review.
 # RealBud enables the learner only for its exact admitted runtime during Repair.
 skills:
@@ -46,6 +56,9 @@ auxiliary:
   background_review:
     enabled: false
     extra_tools: []
+  # No extra model call per session just to name it.
+  title_generation:
+    enabled: false
 delegation:
   max_concurrent_children: 2
   max_iterations: 24

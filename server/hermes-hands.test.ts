@@ -1,5 +1,5 @@
 import { withWorkerProfile } from "./hermes-profile.ts";
-import { applyPropertyPack } from "./hermes-pack.ts";
+import { applyPropertyPack, PACK_DIR } from "./hermes-pack.ts";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { HERMES_PIN } from "./hermes-pin.ts";
 import type { LedgerFacts } from "./desk.ts";
-import { parseLedgerFacts, tryHermesLedger, tryHermesPing, uncoveredPropertyIds, workerMissReason } from "./hermes-hands.ts";
+import { LEDGER_SKILL, parseLedgerFacts, tryHermesLedger, tryHermesPing, uncoveredPropertyIds, workerMissReason } from "./hermes-hands.ts";
 import { seedVault } from "./vault.ts";
 import { HermesAgentDriver } from "./drivers/acp/hermes.ts";
 import { fakeHermes } from "./testing/fake-hermes.ts";
@@ -45,6 +45,12 @@ describe("workerMissReason", () => {
     expect(workerMissReason("", "Error: insufficient_quota (402)")).toMatch(/Billing or credits exhausted/);
     expect(workerMissReason("", "429 Too Many Requests")).toMatch(/rate-limiting/);
     expect(workerMissReason("", "No model configured for profile property")).toMatch(/no model is connected/);
+  });
+
+  it("names a pack skill the profile does not have instead of echoing the worker's error", () => {
+    expect(workerMissReason("", "ValueError: Unknown skill(s): morning-arrears")).toBe(
+      "Bud's pack skill is missing; re-apply Bud's safeguards on You",
+    );
   });
 
   it("keeps an unknown failure honest but bounded to one line", () => {
@@ -126,6 +132,21 @@ describe("tryHermesLedger (fake pinned CLI)", () => {
     const attempt = await tryHermesLedger(["prop-oak"], { cli: script, root: dir });
     expect(attempt.rows).toEqual(fixture);
     expect(attempt.detail).toMatch(/answered with 1 ledger rows/);
+  });
+
+  it("preloads the shipped morning-arrears skill with -s; the readiness ping loads none", async () => {
+    const ledger = stubHermes("[]");
+    await tryHermesLedger(["prop-oak"], { cli: ledger.script, root: ledger.dir });
+    const args = readFileSync(ledger.argsFile, "utf8").split("\n");
+    const at = args.indexOf("-s");
+    expect(at, `no -s in: ${args.join(" ")}`).toBeGreaterThan(args.indexOf("chat"));
+    expect(args[at + 1]).toBe(LEDGER_SKILL);
+    // Hermes resolves the preloaded name against the profile's installed skills.
+    expect(readFileSync(join(PACK_DIR, "skills", LEDGER_SKILL, "SKILL.md"), "utf8")).toMatch(new RegExp(`^---\\r?\\nname: ${LEDGER_SKILL}\\r?\\n`));
+
+    const ping = stubHermes("OK");
+    await tryHermesPing({ cli: ping.script, root: ping.dir });
+    expect(readFileSync(ping.argsFile, "utf8").split("\n")).not.toContain("-s");
   });
 
   it("misses cleanly when the worker answers chatter", async () => {
@@ -297,9 +318,9 @@ describe.skipIf(process.platform === "win32")("hermes CLI argv contract", () => 
       // record argv without word-splitting (absolute paths: the child's cwd
       // is the caller's, not this directory)
       `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Hermes Agent v0.20.3 (2026.8.16.2)"; exit 0; fi\n` +
-        `printf "%s\\n" "$1|$2|$3|$4|$5" > "${head}"\n` +
-        `printf "%s" "$6" > "${promptFile}"\n` +
-        `printf "%s|%s\\n" "$7" "$8" > "${tail}"\n` +
+        `printf "%s\\n" "$1|$2|$3|$4|$5|$6|$7" > "${head}"\n` +
+        `printf "%s" "$8" > "${promptFile}"\n` +
+        `printf "%s|%s\\n" "$9" "\${10}" > "${tail}"\n` +
         `printf '%s' '[{"propertyId":"prop-oak","daysSinceDue":3,"rentLanded":false,"levyPaid":false,"daysSinceCourtesy":null}]'\n`,
     );
     chmodSync(script, 0o755);
@@ -309,7 +330,8 @@ describe.skipIf(process.platform === "win32")("hermes CLI argv contract", () => 
 
     // the contract: any change to these flags breaks the worker seam and
     // must be deliberate (pin bump), never accidental
-    expect(readFileSync(head, "utf8").trim()).toBe(`--profile|${HERMES_PIN.profile}|chat|-Q|-q`);
+    // -s preloads the shipped pack skill; the prompt naming it does not load it.
+    expect(readFileSync(head, "utf8").trim()).toBe(`--profile|${HERMES_PIN.profile}|chat|-Q|-s|morning-arrears|-q`);
     expect(readFileSync(tail, "utf8").trim()).toBe("--max-turns|6");
     const prompt = readFileSync(promptFile, "utf8");
     expect(prompt).toContain("Morning arrears check. Use skill morning-arrears.");

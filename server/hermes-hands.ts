@@ -35,10 +35,16 @@ export interface HermesPing {
 const TIMEOUT_MS = 60_000;
 const LEDGER_TIMEOUT_MS = 60_000;
 
+/** Shipped in pack/property/skills. Preloaded with `chat -s`: naming a skill in
+ * the prompt alone does not load it in a one-shot `chat -q` run. */
+export const LEDGER_SKILL = "morning-arrears";
+
 /** Worker chatter that explains nothing about the miss to a PM. */
 const WORKER_NOISE = [/^session_id:/i, /security scanner/i, /pattern matching only/i, /^warning:/i];
 
 const WORKER_MISS_REASONS: Array<[RegExp, string]> = [
+  // Hermes refuses to start when no preloaded skill resolves in the profile.
+  [/Unknown skill\(s\)/i, "Bud's pack skill is missing; re-apply Bud's safeguards on You"],
   [/UnrecognizedClient|invalid.?api.?key|incorrect api key|authentication|unauthori[sz]ed|\b401\b|\b403\b/i, "the model provider refused Bud's key; check the model connection on You"],
   [/insufficient|credit|billing|quota|\b402\b/i, "Billing or credits exhausted at the model provider"],
   [/rate.?limit|\b429\b|too many requests/i, "the model provider is rate-limiting; try again shortly"],
@@ -234,7 +240,7 @@ async function scopedHermesLedger(
   // result was a one-of-six answer with the rest held — a missing input, not a weak
   // model, and not something a better provider would have fixed.
   const prompt =
-    `Morning arrears check. Use skill morning-arrears.\n` +
+    `Morning arrears check. Use skill ${LEDGER_SKILL}.\n` +
     `The office book for this run is the working directory. Read DESK-CONTEXT.md there for the\n` +
     `book facts, and the property notes under properties/ (or owners/) for preferences. Notes are\n` +
     `preferences only — they never change balances, day counts, or create a notice. If the book\n` +
@@ -258,7 +264,7 @@ async function scopedHermesLedger(
     };
     const child = execFileCli(
       cli,
-      ["--profile", currentWorkerProfile().profile, "chat", "-Q", "-q", prompt, "--max-turns", "6"],
+      ["--profile", currentWorkerProfile().profile, "chat", "-Q", "-s", LEDGER_SKILL, "-q", prompt, "--max-turns", "6"],
       execOpts,
       (err, stdout, stderr) => {
         if (err) {
