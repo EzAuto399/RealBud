@@ -1,0 +1,37 @@
+name: Windows probe
+
+# Manual, minutes-long diagnosis of the Windows-only pieces (private-storage
+# ACL admission and the smallest suites that depend on it) without waiting
+# for the full CI matrix. Evidence only; it gates nothing.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  acl:
+    name: ACL admission probe (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Runner facts
+        shell: pwsh
+        run: |
+          "PSModulePath=$env:PSModulePath"
+          "TEMP=$env:TEMP RUNNER_TEMP=$env:RUNNER_TEMP"
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString(); (Get-Command Set-Acl).Module.Path; [System.Security.Principal.WindowsIdentity]::GetCurrent().Name'
+      - name: ACL admission in every storage root, inherited and relocated home
+        continue-on-error: true
+        run: node --experimental-strip-types scripts/testing/probe-windows-acl.mjs
+      - name: Smallest ACL-dependent suites
+        run: pnpm exec vitest run server/private-file.test.ts server/private-vault.test.ts server/hermes-profile-storage.test.ts server/windows-file-privacy.test.ts server/windows-file-privacy-sync.test.ts server/windows-file-privacy-diagnostics.test.ts
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
