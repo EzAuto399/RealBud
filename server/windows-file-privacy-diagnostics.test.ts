@@ -16,6 +16,9 @@ function result(error: unknown = null) {
     callback(error, '', '');
   });
 }
+function launched(call = 0) {
+  return (subprocess.run.mock.calls[call] as [string, string[], { env: NodeJS.ProcessEnv }])[2].env;
+}
 
 beforeEach(() => {
   Object.defineProperty(process, 'platform', { ...platform, value: 'win32' });
@@ -99,6 +102,61 @@ describe('Windows privacy subprocess boundary (simulated Windows)', () => {
       await expect(windowsFilePrivacy('C:\\private', 'file')).rejects.toMatchObject({ category: 'system-root-unavailable', nativeExitCode: null });
     }
     expect(subprocess.run).not.toHaveBeenCalled();
+  });
+
+  it('hands the script a path the FileSystem provider accepts, byte-for-byte otherwise', async () => {
+    await windowsFilePrivacy('\\\\?\\C:\\private\\key [file].txt', 'file', true);
+    expect(launched(0).REALBUD_WINDOWS_FILE_PRIVACY_PATH).toBe('C:\\private\\key [file].txt');
+    await windowsFilePrivacy('\\\\?\\UNC\\fictional-host\\share\\private', 'directory');
+    expect(launched(1).REALBUD_WINDOWS_FILE_PRIVACY_PATH).toBe('\\\\fictional-host\\share\\private');
+    // Nothing else is rewritten: a plain path, and one that merely looks close.
+    await windowsFilePrivacy('C:\\private\\\\?\\not-a-prefix', 'file');
+    expect(launched(2).REALBUD_WINDOWS_FILE_PRIVACY_PATH).toBe('C:\\private\\\\?\\not-a-prefix');
+    // A namespaced path that is not absolute once stripped is still refused.
+    await expect(windowsFilePrivacy('\\\\?\\relative', 'file')).rejects.toMatchObject({ category: 'invalid-path-or-kind' });
+    expect(subprocess.run).toHaveBeenCalledTimes(3);
+  });
+
+  it('reports the swallowed native exception the script names, and nothing else', async () => {
+    const line = '[windows-acl] stage=24 index=0 type=System.UnauthorizedAccessException hresult=-2147024891 win32=5';
+    const secret = 'C:\\fictional\\private\\path-and-SID';
+    // execFile decorates its own error with the captured streams.
+    const stderr = `${secret}\r\n${line}\r\n`;
+    subprocess.run.mockImplementation((...args) => {
+      (args.at(-1) as (error: unknown, stdout: string, stderr: string) => void)(
+        Object.assign(new Error(secret), { code: 24, stdout: '0\r\n', stderr }), '0\r\n', stderr,
+      );
+    });
+    let failure: unknown;
+    try { await windowsFilePrivacy('C:\\private', 'directory', true); } catch (error) { failure = error; }
+    expect(failure).toMatchObject({
+      category: 'acl-apply-failed', nativeExitCode: 24,
+      detail: 'stage=24 index=0 type=System.UnauthorizedAccessException hresult=-2147024891 win32=5',
+      message: expect.stringContaining('[windows-acl:acl-apply-failed; exit=24; stage=24 index=0'),
+    });
+    expect(inspect(failure)).not.toContain(secret);
+  });
+
+  it('keeps a stderr line that is not the script\u2019s own out of the failure', async () => {
+    const secret = 'fictional-private-path-and-SID';
+    for (const stderr of [
+      secret,
+      `[windows-acl] stage=24 index=0 type=System.Exception hresult=-1 win32=5 ${secret}`,
+      `[windows-acl] stage=24 index=0 type=${secret} hresult=-1 win32=5`,
+    ]) {
+      subprocess.run.mockImplementation((...args) => {
+        (args.at(-1) as (error: unknown, stdout: string, stderr: string) => void)(
+          Object.assign(new Error(secret), { code: 25, stderr }), '', stderr,
+        );
+      });
+      let failure: unknown;
+      try { await windowsFilePrivacy('C:\\private', 'directory'); } catch (error) { failure = error; }
+      expect(failure).toMatchObject({ category: 'acl-read-failed', detail: null });
+      expect((failure as Error).message).toBe(
+        'Windows file privacy could not be verified. Use a private directory owned by the trusted installer account. [windows-acl:acl-read-failed; exit=25]',
+      );
+      expect(inspect(failure)).not.toContain(secret);
+    }
   });
 
   it('leaves other platforms untouched without launching PowerShell', async () => {

@@ -18,6 +18,8 @@ const recovery = () => new Error('The saved workspace encryption key needs recov
 // one cold powershell.exe instead of one per path; this caller only ever needs
 // a single operation, so it omits REALBUD_WINDOWS_FILE_PRIVACY_COUNT and the
 // script falls back to the unsuffixed PATH/KIND/ACTION triple passed below.
+// A refusal caused by an exception writes one stderr line of numbers and a
+// .NET type name; this caller keeps only the numeric exit, as before.
 //
 // What this policy does and does not claim, checked against the script below:
 // the verifier reads the live descriptor as objects and compares it
@@ -41,13 +43,21 @@ $count = $env:REALBUD_WINDOWS_FILE_PRIVACY_COUNT
 if ([string]::IsNullOrEmpty($count)) { $count = '1' }
 if ($count -notmatch '^([1-9]|[1-5][0-9]|6[0-4])$') { exit 9 }
 $total = [int]$count
-$stage = 20
-try {
-$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
-$system = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
-$allowed = @($sid.Value, 'S-1-5-18', 'S-1-5-32-544')
-} catch {
-  exit $stage
+# The innermost exception names the primitive that refused. Never the message,
+# the path, the identity, or a second line.
+function Report($reportStage, $reportIndex, $reportRecord) {
+  $type = 'unknown'
+  $hresult = 0
+  $win32 = '-'
+  try {
+    $err = $reportRecord.Exception
+    for ($depth = 0; $depth -lt 8 -and $err.InnerException -ne $null; $depth++) { $err = $err.InnerException }
+    $type = $err.GetType().FullName
+    $hresult = [int]$err.HResult
+    if ($err -is [System.ComponentModel.Win32Exception]) { $win32 = [string][int]$err.NativeErrorCode }
+    elseif ($err -is [System.IO.IOException] -and ($hresult -band -65536) -eq -2147024896) { $win32 = [string]($hresult -band 65535) }
+  } catch { }
+  [Console]::Error.WriteLine("[windows-acl] stage=$reportStage index=$reportIndex type=$type hresult=$hresult win32=$win32")
 }
 for ($index = 0; $index -lt $total; $index++) {
 [Console]::Out.WriteLine($index)
@@ -63,10 +73,16 @@ if ([string]::IsNullOrEmpty($path)) { exit 9 }
 if ($kind -ne 'directory' -and $kind -ne 'file') { exit 9 }
 if ($action -ne 'restrict' -and $action -ne 'verify') { exit 9 }
 $directory = $kind -eq 'directory'
-$stage = 20
-try {
+$acl = $null
+$actual = $null
 $cursor = $path
 $target = $true
+$usable = $false
+$stage = 20
+try {
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+$system = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
+$allowed = @($sid.Value, 'S-1-5-18', 'S-1-5-32-544')
 while ($true) {
   if ($target) { $stage = 21 } else { $stage = 22 }
   $attrs = [System.IO.File]::GetAttributes($cursor)
@@ -102,7 +118,6 @@ $actual = Get-Acl -LiteralPath $path
 $stage = 26
 if (-not $actual.AreAccessRulesProtected) { exit 5 }
 if ($allowed -notcontains $actual.GetOwner([System.Security.Principal.SecurityIdentifier]).Value) { exit 2 }
-$usable = $false
 foreach ($rule in $actual.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
   # This is a conservative private-storage admission policy, not an effective
   # access calculation over the current token's enabled and deny-only groups.
@@ -115,7 +130,9 @@ foreach ($rule in $actual.GetAccessRules($true, $true, [System.Security.Principa
 }
 if (-not $usable) { exit 4 }
 } catch {
-  # Never emit the exception: native messages can contain a path or identity.
+  # Never emit the exception object: native messages can contain a path or an
+  # identity. Only the stage, the index, the type name and numeric codes.
+  Report $stage $index $_
   exit $stage
 }
 }
@@ -129,10 +146,20 @@ function privacyRecovery(status) {
   return new Error(`Windows privacy for the saved workspace encryption key needs recovery. No replacement key was created. [windows-acl exit=${exit}]`);
 }
 
+// PowerShell 5.1's FileSystem provider does not accept the Win32 namespaced
+// form behind -LiteralPath, so strip it exactly as `literalPath` in
+// server/windows-file-privacy.ts does and leave every other byte alone.
+function literalPath(target) {
+  if (target.startsWith('\\\\?\\UNC\\')) return `\\\\${target.slice(8)}`;
+  if (target.startsWith('\\\\?\\')) return target.slice(4);
+  return target;
+}
+
 /** No-op off win32, like the server helper. Tests inject a recording stand-in. */
-export function windowsKeyPrivacy(target, kind, restrict = false) {
+export function windowsKeyPrivacy(rawTarget, kind, restrict = false) {
   if (process.platform !== 'win32') return;
   const systemRoot = process.env.SystemRoot;
+  const target = literalPath(rawTarget);
   if (!systemRoot || systemRoot.includes('\0') || !path.isAbsolute(systemRoot) || target.includes('\0') || !path.isAbsolute(target)) throw privacyRecovery(null);
   try {
     execFileSync(path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),

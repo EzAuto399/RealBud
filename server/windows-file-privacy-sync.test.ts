@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { inspect } from 'node:util';
-import { windowsFilePrivacy, windowsFilePrivacySync } from './windows-file-privacy.ts';
+import { windowsFilePrivacy, windowsFilePrivacyBatchSync, windowsFilePrivacySync } from './windows-file-privacy.ts';
 
 const calls = vi.hoisted(() => ({ sync: vi.fn(), async: vi.fn() }));
 vi.mock('node:child_process', () => ({ execFileSync: calls.sync, execFile: calls.async }));
@@ -38,6 +38,40 @@ it.each([
   try { windowsFilePrivacySync('C:\\private', 'file'); } catch (error) { failure = error; }
   expect(failure).toMatchObject({ name: 'WindowsFilePrivacyError', category, nativeExitCode });
   expect(inspect(failure)).not.toContain(secret); expect(failure).not.toHaveProperty('cause');
+});
+
+it('carries the batched script\u2019s one stderr line into the synchronous failure', () => {
+  const secret = 'C:\\fictional\\private\\path';
+  calls.sync.mockImplementation(() => {
+    throw Object.assign(new Error(secret), {
+      status: 24, stdout: Buffer.from('0\r\n1\r\n'), path: secret,
+      stderr: Buffer.from(`${secret}\r\n[windows-acl] stage=24 index=1 type=System.IO.IOException hresult=-2147024891 win32=5\r\n`),
+    });
+  });
+  let failure: unknown;
+  try {
+    windowsFilePrivacyBatchSync([
+      { path: 'C:\\private\\a', kind: 'directory', action: 'verify' },
+      { path: 'C:\\private\\b', kind: 'directory', action: 'restrict' },
+    ]);
+  } catch (error) { failure = error; }
+  expect(failure).toMatchObject({
+    category: 'acl-apply-failed', nativeExitCode: 24, operationIndex: 1,
+    detail: 'stage=24 index=1 type=System.IO.IOException hresult=-2147024891 win32=5',
+    message: expect.stringContaining('exit=24; operation=1/2; stage=24 index=1'),
+  });
+  expect(inspect(failure)).not.toContain(secret);
+});
+
+it('strips the Win32 namespaced prefix the FileSystem provider refuses', () => {
+  windowsFilePrivacyBatchSync([
+    { path: '\\\\?\\C:\\private\\desk.key.wrap', kind: 'file', action: 'restrict' },
+    { path: 'C:\\private', kind: 'directory', action: 'verify' },
+  ]);
+  expect(calls.sync.mock.calls[0]![2].env).toMatchObject({
+    REALBUD_WINDOWS_FILE_PRIVACY_PATH: 'C:\\private\\desk.key.wrap',
+    REALBUD_WINDOWS_FILE_PRIVACY_PATH_1: 'C:\\private',
+  });
 });
 
 it('rejects invalid input before launching and does nothing on other systems', () => {

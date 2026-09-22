@@ -543,3 +543,64 @@ the ACL checks. The same `@(... | ConvertFrom-Json)` shape survives in
 `PRIVATE_FIXTURE_SCRIPT` in `electron/service-smoke.test.mjs`; it was not
 touched here because no run has shown it failing, but it carries the same
 PowerShell 5.1 hazard and should be converted before it is trusted.
+
+## 22 September 2026 — Windows CI ACL failures: named exceptions and `\\?\` paths
+
+Windows CI run 35728411698 (windows-latest, the first complete unit-test run)
+failed 1,042 tests across 96 files. The dominant refusals were
+`[windows-acl:acl-apply-failed; exit=24]` (616) and `acl-read-failed; exit=25`
+(134): stage 24 is `Set-Acl -LiteralPath` and stage 25 is `Get-Acl
+-LiteralPath`, and both sit after an ancestor walk that had already read the
+same path through `[System.IO.File]::GetAttributes` without complaint.
+
+A line-by-line diff of the batched `WINDOWS_ACL` in
+`server/windows-file-privacy.ts` against the pre-batching script
+(`git show d66c669c^:server/windows-file-privacy.ts`) does **not** support the
+working theory that batching caused this. For a one-operation batch — which is
+every `windowsFilePrivacy`/`windowsFilePrivacySync` call, and therefore almost
+all of the failing tests — the two scripts are semantically identical: `$acl`
+was already rebuilt per item, `$path`, `$stage` and `$directory` were already
+assigned before use, `$ErrorActionPreference` is untouched by the `for`, and
+`exit` inside `try` is a flow-control exception PowerShell's `catch` does not
+intercept (the reported 24/25 codes prove the `exit` path works). The
+`[Console]::Out.WriteLine($index)` echo is the batch's documented index channel
+and is parsed only by `attemptedIndex`; it cannot make `Set-Acl` refuse. The
+18 September comparison is also weak: that run was not a complete unit-test run,
+so those 96 files have no green Windows baseline.
+
+What the failure shape does match is the path form. The .NET FileSystem provider
+behind `-LiteralPath` does not accept the Win32 namespaced form on PowerShell
+5.1, while `[System.IO.File]::GetAttributes` does — exactly the split between
+the stages that pass and the stages that fail. `literalPath` on the Node side
+now strips a leading `\\?\` (and rewrites `\\?\UNC\` to `\\`) before the value
+reaches the environment, leaves every other byte alone, and still refuses a
+value that is not absolute once stripped. `electron/desk-key-custody.mjs`
+applies the same rewrite.
+
+The script no longer swallows the exception. Each `catch` writes exactly one
+stderr line — `[windows-acl] stage=<n> index=<i> type=<innermost exception
+FullName> hresult=<int> win32=<NativeErrorCode, or the low word of an
+0x8007 HResult, else `-`>` — with no path, identity or native message. The Node
+side rebuilds that line field by field from a fixed character set into
+`WindowsFilePrivacyError.detail` and appends it to the thrown message; anything
+else on stderr is dropped rather than copied. A deliberate policy refusal
+(exits 2–10) still carries only its numeric code, because it has no exception.
+Each iteration now also re-reads its own identity and clears `$acl`, `$actual`,
+`$cursor`, `$target` and `$usable`, so no operation can observe the previous
+one's state even though no such leak was found.
+
+Proven on macOS: `pnpm exec vitest run server/windows-file-privacy.test.ts
+server/windows-file-privacy-sync.test.ts
+server/windows-file-privacy-diagnostics.test.ts
+electron/desk-key-custody.test.mjs server/hermes-profile-storage.test.ts`
+passes (96 passed, 9 skipped — the skips are the win32-only native cases),
+`pnpm exec tsc -p tsconfig.server.json` is clean, `pnpm check:electron` reports
+21 of 21 ok, and the byte-parity guard still passes.
+
+Not proven: there is no PowerShell on this host, so neither the `Report`
+function nor the `\\?\` rewrite has been executed against a real descriptor.
+Whether the rewrite actually clears exits 24 and 25 is settled only by the next
+windows-latest run; if it does not, the new stderr line now names the exception
+type and Win32 code that the old script discarded, which is what the next
+diagnosis needs. A native case in `server/windows-file-privacy.test.ts` admits a
+fixture through its `\\?\` form and will run there.

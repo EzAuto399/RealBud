@@ -16,19 +16,32 @@ const execFileAsync = promisify(execFile);
 // stops at the first failure with today's numeric exit code; the attempted
 // index (an integer, never a path or identity) is echoed so the caller can say
 // which operation refused.
+//
+// Every value an iteration reads is assigned inside that iteration, so no
+// identity, descriptor, cursor or stage can survive into the next operation.
+// A swallowed exception is the one thing that used to leave no trace, so each
+// catch writes exactly one stderr line of numbers and a .NET type name.
 const WINDOWS_ACL = `
 $ErrorActionPreference = 'Stop'
 $count = $env:REALBUD_WINDOWS_FILE_PRIVACY_COUNT
 if ([string]::IsNullOrEmpty($count)) { $count = '1' }
 if ($count -notmatch '^([1-9]|[1-5][0-9]|6[0-4])$') { exit 9 }
 $total = [int]$count
-$stage = 20
-try {
-$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
-$system = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
-$allowed = @($sid.Value, 'S-1-5-18', 'S-1-5-32-544')
-} catch {
-  exit $stage
+# The innermost exception names the primitive that refused. Never the message,
+# the path, the identity, or a second line.
+function Report($reportStage, $reportIndex, $reportRecord) {
+  $type = 'unknown'
+  $hresult = 0
+  $win32 = '-'
+  try {
+    $err = $reportRecord.Exception
+    for ($depth = 0; $depth -lt 8 -and $err.InnerException -ne $null; $depth++) { $err = $err.InnerException }
+    $type = $err.GetType().FullName
+    $hresult = [int]$err.HResult
+    if ($err -is [System.ComponentModel.Win32Exception]) { $win32 = [string][int]$err.NativeErrorCode }
+    elseif ($err -is [System.IO.IOException] -and ($hresult -band -65536) -eq -2147024896) { $win32 = [string]($hresult -band 65535) }
+  } catch { }
+  [Console]::Error.WriteLine("[windows-acl] stage=$reportStage index=$reportIndex type=$type hresult=$hresult win32=$win32")
 }
 for ($index = 0; $index -lt $total; $index++) {
 [Console]::Out.WriteLine($index)
@@ -44,10 +57,16 @@ if ([string]::IsNullOrEmpty($path)) { exit 9 }
 if ($kind -ne 'directory' -and $kind -ne 'file') { exit 9 }
 if ($action -ne 'restrict' -and $action -ne 'verify') { exit 9 }
 $directory = $kind -eq 'directory'
-$stage = 20
-try {
+$acl = $null
+$actual = $null
 $cursor = $path
 $target = $true
+$usable = $false
+$stage = 20
+try {
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+$system = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
+$allowed = @($sid.Value, 'S-1-5-18', 'S-1-5-32-544')
 while ($true) {
   if ($target) { $stage = 21 } else { $stage = 22 }
   $attrs = [System.IO.File]::GetAttributes($cursor)
@@ -83,7 +102,6 @@ $actual = Get-Acl -LiteralPath $path
 $stage = 26
 if (-not $actual.AreAccessRulesProtected) { exit 5 }
 if ($allowed -notcontains $actual.GetOwner([System.Security.Principal.SecurityIdentifier]).Value) { exit 2 }
-$usable = $false
 foreach ($rule in $actual.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
   # This is a conservative private-storage admission policy, not an effective
   # access calculation over the current token's enabled and deny-only groups.
@@ -96,7 +114,9 @@ foreach ($rule in $actual.GetAccessRules($true, $true, [System.Security.Principa
 }
 if (-not $usable) { exit 4 }
 } catch {
-  # Never emit the exception: native messages can contain a path or identity.
+  # Never emit the exception object: native messages can contain a path or an
+  # identity. Only the stage, the index, the type name and numeric codes.
+  Report $stage $index $_
   exit $stage
 }
 }
@@ -153,19 +173,43 @@ class WindowsFilePrivacyError extends Error {
   readonly nativeExitCode: number | null;
   /** Which operation of a batch refused; null when it is not known. */
   readonly operationIndex: number | null;
+  /** The script's one stderr line, rebuilt from numbers and a .NET type name. */
+  readonly detail: string | null;
 
   constructor(
     category: PrivacyFailure, nativeExitCode: number | null = null, unavailable = false,
-    operationIndex: number | null = null, operationCount = 1,
+    operationIndex: number | null = null, operationCount = 1, detail: string | null = null,
   ) {
-    // A one-operation batch keeps today's exact diagnostic suffix.
+    // A one-operation batch with no native detail keeps today's exact suffix.
     const where = operationCount > 1 && operationIndex !== null ? `; operation=${operationIndex}/${operationCount}` : '';
-    super(`${unavailable ? UNAVAILABLE : UNVERIFIED} [windows-acl:${category}; exit=${nativeExitCode ?? 'unavailable'}${where}]`);
+    const why = detail === null ? '' : `; ${detail}`;
+    super(`${unavailable ? UNAVAILABLE : UNVERIFIED} [windows-acl:${category}; exit=${nativeExitCode ?? 'unavailable'}${where}${why}]`);
     this.name = 'WindowsFilePrivacyError';
     this.category = category;
     this.nativeExitCode = nativeExitCode;
     this.operationIndex = operationCount > 1 ? operationIndex : null;
+    this.detail = detail;
   }
+}
+
+// The only stderr shape this module will ever repeat. It is rebuilt field by
+// field from a fixed character set, so no native message, path or identity can
+// ride along even if the child writes something else on the same stream.
+const DETAIL_LINE =
+  /^\[windows-acl\] stage=(\d{1,3}) index=(-?\d{1,3}) type=([A-Za-z0-9_.+]{1,120}) hresult=(-?\d{1,11}) win32=(-?\d{1,10}|-)$/;
+
+function privacyDetail(stderr: unknown): { text: string; index: number | null } | null {
+  const text = typeof stderr === 'string' ? stderr : Buffer.isBuffer(stderr) ? stderr.toString('utf8') : '';
+  for (const line of text.split(/\r?\n/).slice(-8).reverse()) {
+    const found = DETAIL_LINE.exec(line.trim());
+    if (!found) continue;
+    const index = Number(found[2]);
+    return {
+      text: `stage=${found[1]} index=${found[2]} type=${found[3]} hresult=${found[4]} win32=${found[5]}`,
+      index: Number.isInteger(index) && index >= 0 ? index : null,
+    };
+  }
+  return null;
 }
 
 /** The script echoes the index it attempted; take that integer and nothing else. */
@@ -187,8 +231,22 @@ function nativeFailure(error: unknown, operationIndex: number | null = null, ope
   else if (code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') category = 'output-limit-exceeded';
   else if (failure.killed === true) category = 'process-terminated';
   else if (exit !== null) category = NATIVE_FAILURES[exit as keyof typeof NATIVE_FAILURES] ?? 'native-command-failed';
-  // Do not retain native stderr/stdout, command, signal, path, SID, or cause.
-  return new WindowsFilePrivacyError(category, exit, false, operationIndex, operationCount);
+  // Do not retain native stderr/stdout, command, signal, path, SID, or cause:
+  // only the one line the script itself writes, and only in its exact shape.
+  const detail = privacyDetail(failure.stderr);
+  return new WindowsFilePrivacyError(
+    category, exit, false, operationIndex ?? detail?.index ?? null, operationCount, detail?.text ?? null,
+  );
+}
+
+// PowerShell 5.1's FileSystem provider does not accept the Win32 namespaced
+// form behind -LiteralPath, and Node hands one back on some Windows hosts, so
+// Set-Acl/Get-Acl refuse a path the ancestor walk already accepted. Strip the
+// prefix here and leave every other byte exactly as the caller wrote it.
+function literalPath(path: string): string {
+  if (path.startsWith('\\\\?\\UNC\\')) return `\\\\${path.slice(8)}`;
+  if (path.startsWith('\\\\?\\')) return path.slice(4);
+  return path;
 }
 
 function privacyInvocation(
@@ -203,10 +261,11 @@ function privacyInvocation(
   const env: NodeJS.ProcessEnv = { ...process.env, REALBUD_WINDOWS_FILE_PRIVACY_COUNT: String(operations.length) };
   operations.forEach((operation, index) => {
     const { path, kind, action } = operation ?? ({} as Partial<WindowsFilePrivacyOperation>);
+    const literal = typeof path === 'string' ? literalPath(path) : path;
     if (
-      typeof path !== 'string' ||
-      path.includes('\0') ||
-      !isAbsolute(path) ||
+      typeof literal !== 'string' ||
+      literal.includes('\0') ||
+      !isAbsolute(literal) ||
       (kind !== 'file' && kind !== 'directory') ||
       (action !== 'restrict' && action !== 'verify')
     ) {
@@ -214,7 +273,7 @@ function privacyInvocation(
     }
     // Read by name inside the script; never interpolated into a command.
     const suffix = index === 0 ? '' : `_${index}`;
-    env[`REALBUD_WINDOWS_FILE_PRIVACY_PATH${suffix}`] = path;
+    env[`REALBUD_WINDOWS_FILE_PRIVACY_PATH${suffix}`] = literal;
     env[`REALBUD_WINDOWS_FILE_PRIVACY_KIND${suffix}`] = kind;
     env[`REALBUD_WINDOWS_FILE_PRIVACY_ACTION${suffix}`] = action;
   });
@@ -282,6 +341,7 @@ export function windowsFilePrivacyBatchSync(operations: WindowsFilePrivacyOperat
     throw nativeFailure({
       code: failure.code === 'ENOBUFS' ? 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' : failure.code ?? failure.status,
       killed: failure.killed === true || failure.code === 'ETIMEDOUT',
+      stderr: failure.stderr,
     }, attemptedIndex(failure.stdout, planned.length), planned.length);
   }
   return planned.map(operation => ({ ...operation, applied: true }));

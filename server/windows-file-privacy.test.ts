@@ -90,6 +90,15 @@ describe.skipIf(process.platform !== 'win32')('native Windows privacy admission'
     await expect(windowsFilePrivacy(unreached, 'directory')).rejects.toMatchObject({ category: 'inheritance-not-protected' });
   });
 
+  it('admits the same directory through its Win32 namespaced form', async () => {
+    // Set-Acl/Get-Acl -LiteralPath refuse \\?\ on PowerShell 5.1 even though the
+    // ancestor walk accepts it, so the Node side strips it before the script.
+    const root = await fixture();
+    await expect(windowsFilePrivacy(`\\\\?\\${root}`, 'directory')).resolves.toBeUndefined();
+    expect(windowsFilePrivacyBatchSync([{ path: `\\\\?\\${root}`, kind: 'directory', action: 'restrict' }]))
+      .toEqual([{ path: `\\\\?\\${root}`, kind: 'directory', action: 'restrict', applied: true }]);
+  });
+
   it('rejects an inherited, unprotected existing file without repairing it', async () => {
     const root = await fixture(); const path = join(root, 'inherited.txt'); await writeFile(path, 'preserved');
     await expect(windowsFilePrivacy(path, 'file')).rejects.toMatchObject({ category: 'inheritance-not-protected', nativeExitCode: 5 });
