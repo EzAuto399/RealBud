@@ -381,3 +381,56 @@ deny-free, then the same set refused on one users-readable destination with no
 stage left behind and the other two files and their descriptors unchanged — is
 the one that will say so, alongside the existing fresh-install case that now
 drives a seven-operation batch natively.
+
+## 22 September 2026 — the ACL witness names the rule it refused on
+
+The Package Windows run for `661534f5` reached readiness in 35.5 s with one
+service PowerShell launch, then spent 22.7 s in the smoke's own ACL witness and
+reported `Fresh profile Windows privacy verification failed` with nothing else.
+Two defects, both in `scripts/smoke-company-bundle.mjs`: the witness used a
+single `exit 1` for every rule, and the `catch` around `execute(...)` discarded
+the child's outcome entirely. A run could not say whether a profile was
+actually public or the runner's `D:\a\...` layout had tripped a rule that is
+not about the profile at all.
+
+The witness now exits with a code per rule, mirroring
+`server/windows-file-privacy.ts` where the rule is the same — 2 owner, 3 ACE
+principal, 4 no usable grant, 5 not protected, 6 reparse point, 7 kind
+mismatch, 9 bad input, 10 deny — and adds 8 missing, 11 reparse point in an
+ancestor above the disposable root, 12 unprotected ancestor above it. (8 is the
+one deliberate divergence: the verifier spends 8 on `ancestor-reparse-point`,
+which the witness reports as 6 inside the bound and 11 above it.) 20-26 remain
+the verifier's inspection stages. On a refusal the witness writes one compact
+JSON line — `{ code, rule, index, depth }`, integers and a fixed rule name, no
+path, SID or descriptor, and never the native exception text — and on success
+still writes exactly `private`.
+
+The ancestor walk is now bounded to the disposable root that contains the
+profile tree, inclusive; it no longer climbs to `D:\` or `C:\Users`. The
+product verifier has its own ancestor policy and refuses junctions on its own
+paths, so the witness checking the host's layout proved nothing and could only
+produce false refusals. `REALBUD_SMOKE_WITNESS_FULL_ANCESTRY=1` keeps the
+stricter walk available; above the disposable root it applies rules 11 and 12,
+and on a hosted runner it is expected to refuse, which is why it is off by
+default.
+
+Every run's receipt now carries `witness: { exitCode, signal, code, rule,
+index, depth, stderrTail }` — `stderrTail` redacted through the existing
+secret masking and bounded to 10 lines — or `witness: null` when no witness ran
+(not win32, or the probe failed earlier). The thrown message carries the code
+and rule, and a non-`private` stdout still fails the scenario as before.
+
+Proven: `pnpm exec vitest run electron/service-smoke.test.mjs` passes on macOS
+(10 passed), `node --check scripts/smoke-company-bundle.mjs` is clean. The test
+now asserts `witness` is present on every receipt and `null` off win32, and its
+`why` message carries `witness`, so a Windows failure explains itself without a
+debugger. Two win32-only assertions are added and have not run: the `complete`
+scenario must report `exitCode 0, code null`, and `public profile` — whose
+fixture adds a Users (`S-1-5-32-545`) read ACE — must report code 3
+`grant-not-allowed` at depth 0.
+
+Not proven: no PowerShell exists on this macOS host, so the rewritten witness
+script has never been parsed or executed. Its refusal codes, the JSON line, the
+bounded walk and the `REALBUD_SMOKE_WITNESS_FULL_ANCESTRY` path are all
+source-level only until a win32 Package run exercises them. A green macOS suite
+is not Windows privacy evidence.

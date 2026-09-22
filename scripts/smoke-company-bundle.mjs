@@ -21,7 +21,7 @@ const source = resolve(process.argv[3] || join(root, 'dist-server'));
 const packSource = process.argv[3] ? join(source, 'pack', 'property') : join(root, 'pack', 'property');
 let child, exited, timer, failure, stderr = '', cleanupComplete = false, timedOut = false;
 let profileProof, startupMs, profileCheckMs, stderrDrained, readinessMs;
-let exitCode = null, exitSignal = null, witnessLaunches = 0, witnessMs = 0;
+let exitCode = null, exitSignal = null, witnessLaunches = 0, witnessMs = 0, witnessReport = null;
 const checks = [];
 const execute = promisify(execFile);
 const requiredProfileFiles = ['SOUL.md', 'config.yaml', 'distribution.yaml', 'profile.yaml'];
@@ -53,44 +53,128 @@ function servicePowershellFrom(text) {
   for (const match of text.matchAll(POWERSHELL_MARKER)) last = match;
   return { launches: last ? Number(last[1]) : 0, ms: last ? Number(last[2]) : 0 };
 }
-/** Last 20 non-empty stderr lines, with credential-shaped values masked. */
-function diagnosticFrom(text) {
+/** Last `limit` non-empty stderr lines, with credential-shaped values masked. */
+function diagnosticFrom(text, limit = 20) {
   let out = text;
   for (const shape of SECRET_SHAPES) out = out.replace(shape, match => `«redacted ${match.length} chars»`);
   for (const shape of SECRET_VALUES) out = out.replace(shape, (_m, lead, value) => `${lead}«redacted ${value.length} chars»`);
-  return out.split(/\r?\n/).map(line => line.trimEnd()).filter(Boolean).slice(-20).join('\n');
+  return out.split(/\r?\n/).map(line => line.trimEnd()).filter(Boolean).slice(-limit).join('\n');
 }
 
 // Independent read-only ACL witness, not the production verifier or a repair.
-// No descriptor, SID, or path is returned by PowerShell.
+// No descriptor, SID, or path is returned by PowerShell: a refusal writes one
+// compact JSON line of integers and a fixed rule name, and exits with a code
+// per rule so a real privacy defect is never confused with a runner layout.
+// Codes follow server/windows-file-privacy.ts where the rule is the same
+// (2 owner, 3 ACE principal, 4 no usable grant, 5 not protected, 6 reparse
+// point, 7 kind mismatch, 9 bad input, 10 deny) and add 8 missing, 11 reparse
+// point above the disposable root and 12 unprotected ancestor above it. 20-26
+// are the verifier's inspection stages.
+//
+// `exit` inside a `try` is not caught by PowerShell's `catch`, but this script
+// must not depend on that: a rule refusal records its code and throws, and the
+// one `catch` decides what to emit.
 const ACL_WITNESS = Buffer.from(`
 $ErrorActionPreference = 'Stop'
+$stageRules = @{ 9 = 'invalid-invocation'; 20 = 'identity-unavailable'; 21 = 'target-inspection-failed'; 22 = 'ancestor-inspection-failed'; 25 = 'acl-read-failed'; 26 = 'acl-inspection-failed' }
+$failCode = 0
+$failRule = ''
+$stage = 20
+$index = -1
+$depth = 0
+function Refuse($code, $name) { $script:failCode = $code; $script:failRule = $name; throw 'witness refused' }
+function Note($code, $name, $at, $level) { [Console]::Out.Write('{"code":' + $code + ',"rule":"' + $name + '","index":' + $at + ',"depth":' + $level + '}') }
 try {
   $current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
   $allowed = @($current, 'S-1-5-18', 'S-1-5-32-544')
+  $stage = 9
+  $full = $env:REALBUD_SMOKE_WITNESS_FULL_ANCESTRY -eq '1'
+  $root = $env:REALBUD_SMOKE_PRIVATE_ROOT
+  if ([string]::IsNullOrEmpty($root)) { Refuse 9 'invalid-invocation' }
+  $root = $root.TrimEnd('\\')
   $items = @($env:REALBUD_SMOKE_PRIVATE_PATHS | ConvertFrom-Json)
-  if ($items.Count -lt 1 -or $items.Count -gt 256) { exit 1 }
-  foreach ($item in $items) {
-    $cursor = $item.path
-    while (-not [string]::IsNullOrEmpty($cursor)) {
-      if (([IO.File]::GetAttributes($cursor) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { exit 1 }
+  if ($items.Count -lt 1 -or $items.Count -gt 256) { Refuse 9 'invalid-invocation' }
+  for ($index = 0; $index -lt $items.Count; $index++) {
+    $depth = 0
+    $stage = 21
+    $path = $items[$index].path
+    if ([string]::IsNullOrEmpty($path)) { Refuse 9 'invalid-invocation' }
+    $wantDirectory = [bool]$items[$index].directory
+    if (-not ([IO.Directory]::Exists($path) -or [IO.File]::Exists($path))) { Refuse 8 'missing' }
+    $attributes = [IO.File]::GetAttributes($path)
+    if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { Refuse 6 'reparse-point' }
+    if ($wantDirectory -ne ((($attributes -band [IO.FileAttributes]::Directory) -ne 0))) { Refuse 7 'kind-mismatch' }
+    # Bounded ancestry: the profile tree and the disposable root containing it.
+    # The runner's own layout above that root is not this proof's business, and
+    # the product verifier refuses a junction on its own paths independently.
+    $cursor = [IO.Path]::GetDirectoryName($path)
+    $above = $false
+    $depth = 1
+    while (-not [string]::IsNullOrEmpty($cursor) -and $depth -le 64) {
+      $stage = 22
+      $ancestor = [IO.File]::GetAttributes($cursor)
+      if (($ancestor -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        if ($above) { Refuse 11 'ancestor-reparse-point-above-root' } else { Refuse 6 'reparse-point' }
+      }
+      if ($above) {
+        $stage = 25
+        if (-not (Get-Acl -LiteralPath $cursor).AreAccessRulesProtected) { Refuse 12 'ancestor-not-protected' }
+      }
+      if ($cursor.TrimEnd('\\') -eq $root) {
+        if (-not $full) { break }
+        $above = $true
+      }
       $next = [IO.Path]::GetDirectoryName($cursor)
-      if ($next -eq $cursor) { break }; $cursor = $next
+      if ([string]::IsNullOrEmpty($next) -or $next -eq $cursor) { break }
+      $cursor = $next
+      $depth++
     }
-    $acl = Get-Acl -LiteralPath $item.path
-    if (-not $acl.AreAccessRulesProtected -or $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $current) { exit 1 }
+    $depth = 0
+    $stage = 25
+    $acl = Get-Acl -LiteralPath $path
+    $stage = 26
+    if (-not $acl.AreAccessRulesProtected) { Refuse 5 'not-protected' }
+    if ($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $current) { Refuse 2 'owner-not-allowed' }
     $usable = $false
-    foreach ($rule in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
-      if ($rule.AccessControlType -eq 'Deny' -or $allowed -notcontains $rule.IdentityReference.Value) { exit 1 }
-      if ($rule.IdentityReference.Value -eq $current -and
-          ($rule.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0 -and
-          ($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq [System.Security.AccessControl.FileSystemRights]::FullControl) { $usable = $true }
+    foreach ($ace in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
+      if ($ace.AccessControlType -eq 'Deny') { Refuse 10 'deny-rule-present' }
+      if ($allowed -notcontains $ace.IdentityReference.Value) { Refuse 3 'grant-not-allowed' }
+      if ($ace.IdentityReference.Value -eq $current -and
+          ($ace.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0 -and
+          ($ace.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq [System.Security.AccessControl.FileSystemRights]::FullControl) { $usable = $true }
     }
-    if (-not $usable) { exit 1 }
+    if (-not $usable) { Refuse 4 'target-full-control-missing' }
   }
   [Console]::Out.Write('private')
-} catch { exit 1 }
+} catch {
+  # Never emit the exception: a native message can carry a path or an identity.
+  if ($failCode -ne 0) { Note $failCode $failRule $index $depth; exit $failCode }
+  $name = $stageRules[$stage]
+  if (-not $name) { $name = 'witness-failed' }
+  Note $stage $name $index $depth
+  exit $stage
+}
 `, 'utf16le').toString('base64');
+
+/**
+ * The witness's own account of a run: process outcome plus the parsed refusal
+ * line. Only integers and a known-shaped rule name are kept, so no native text
+ * reaches the receipt.
+ */
+function witnessReportFrom({ exitCode, signal, stdout, stderr }) {
+  let code = null, rule = null, index = null, depth = null;
+  const line = String(stdout ?? '').trim();
+  if (line.startsWith('{') && line.length <= 512) {
+    try {
+      const parsed = JSON.parse(line);
+      if (Number.isInteger(parsed.code)) code = parsed.code;
+      if (typeof parsed.rule === 'string' && /^[a-z][a-z-]{0,48}$/.test(parsed.rule)) rule = parsed.rule;
+      if (Number.isInteger(parsed.index)) index = parsed.index;
+      if (Number.isInteger(parsed.depth)) depth = parsed.depth;
+    } catch { /* an unparsable line is reported as no rule, never echoed */ }
+  }
+  return { exitCode, signal, code, rule, index, depth, stderrTail: diagnosticFrom(String(stderr ?? ''), 10) };
+}
 
 async function assertMissing(path) {
   await assert.rejects(lstat(path), error => error?.code === 'ENOENT', 'Fresh fixture contains unexpected profile state');
@@ -139,12 +223,24 @@ async function inspectProfile(home, pack, status, env) {
     witnessLaunches++;
     try {
       witness = await execute(join(env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-NonInteractive', '-EncodedCommand', ACL_WITNESS], {
-        env: { ...env, REALBUD_SMOKE_PRIVATE_PATHS: JSON.stringify(objects) }, shell: false, windowsHide: true,
+        env: {
+          ...env, REALBUD_SMOKE_PRIVATE_PATHS: JSON.stringify(objects), REALBUD_SMOKE_PRIVATE_ROOT: scratch,
+          // Off by default: above the disposable root the layout belongs to the
+          // host, so a hosted runner is expected to report 11 or 12 here.
+          REALBUD_SMOKE_WITNESS_FULL_ANCESTRY: process.env.REALBUD_SMOKE_WITNESS_FULL_ANCESTRY === '1' ? '1' : '',
+        }, shell: false, windowsHide: true,
         // A cold Windows PowerShell 5.1 on a hosted runner took 34 s to start in run 35715811161; 15 s made the witness fail before it ran.
         timeout: 120_000, maxBuffer: 4096,
       });
-    } catch { throw new Error('Fresh profile Windows privacy verification failed'); }
-    finally { witnessMs += Math.round(performance.now() - witnessStarted); }
+    } catch (error) {
+      witnessReport = witnessReportFrom({
+        exitCode: Number.isInteger(error?.code) ? error.code : null,
+        signal: error?.signal ?? null, stdout: error?.stdout, stderr: error?.stderr,
+      });
+      const reported = witnessReport.exitCode ?? (typeof error?.code === 'string' ? error.code : 'unavailable');
+      throw new Error(`Fresh profile Windows privacy verification failed (exit ${reported}, rule ${witnessReport.rule ?? 'unreported'})`);
+    } finally { witnessMs += Math.round(performance.now() - witnessStarted); }
+    witnessReport = witnessReportFrom({ exitCode: 0, signal: null, stdout: witness.stdout, stderr: witness.stderr });
     assert.equal(witness.stdout, 'private', 'Windows ACL witness did not confirm privacy');
   }
   for (const { from, to } of copies) assert.deepEqual(await readFile(to), await readFile(from), 'Shipped safeguard or skill bytes were not provisioned');
@@ -240,6 +336,10 @@ finally {
     // fact the earlier receipt could not report.
     child: { exitCode, signal: exitSignal, killedByWatchdog: timedOut },
     powershell: { service: servicePowershellFrom(stderr), witnessLaunches, witnessMs },
+    // The witness's own outcome, recorded whether it confirmed privacy or
+    // refused, so a Windows failure names its rule instead of one exit 1.
+    // `null` means no witness ran: not a win32 host, or the probe failed first.
+    witness: witnessReport,
     checks, failure, cleanupComplete, ...(failure ? { diagnostic: diagnosticFrom(stderr) } : {}) }, null, 2) + '\n');
   console.log(`${failure ? 'FAILED' : 'PASSED'} compiled company bundle: ${out}`);
   process.exitCode = failure ? 1 : 0;

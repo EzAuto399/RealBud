@@ -168,7 +168,7 @@ describe('installed Windows service acceptance', () => {
       // about this receipt carries what the receipt knows about the child.
       const why = JSON.stringify({
         failure: receipt.failure, child: receipt.child, timings: receipt.timings,
-        powershell: receipt.powershell, diagnostic: receipt.diagnostic,
+        powershell: receipt.powershell, witness: receipt.witness, diagnostic: receipt.diagnostic,
       }, null, 1);
       expect(receipt.source, why).toBe(source);
       expect(receipt.packSource, why).toBe(pack);
@@ -187,6 +187,10 @@ describe('installed Windows service acceptance', () => {
       // failure on top of the one being diagnosed.
       expect(typeof receipt.powershell.service.launches, why).toBe('number');
       expect(typeof receipt.powershell.witnessLaunches, why).toBe('number');
+      // The witness is win32-only, so elsewhere the receipt must say plainly
+      // that none ran rather than leave the field out.
+      expect(receipt, why).toHaveProperty('witness');
+      if (!windows) expect(receipt.witness, why).toBeNull();
       if (scenario !== 'complete') {
         expect(failure, why).toBeDefined();
         expect(typeof receipt.diagnostic, why).toBe('string');
@@ -194,10 +198,15 @@ describe('installed Windows service acceptance', () => {
           expect(receipt.diagnostic, why).toContain('missing-packaged-module.js');
           expect(receipt.child.exitCode, why).toBe(1);
         }
-        if (scenario === 'public profile') expect(receipt.failure, why).toMatch(/not private|privacy verification failed/i);
+        if (scenario === 'public profile') {
+          expect(receipt.failure, why).toMatch(/not private|privacy verification failed/i);
+          // A users-readable ACE is rule 3, never the runner's own layout.
+          if (windows) expect(receipt.witness, why).toMatchObject({ exitCode: 3, code: 3, rule: 'grant-not-allowed', depth: 0 });
+        }
         expect(receipt.profileProof, why).toBeUndefined();
       } else {
         expect(failure, why).toBeUndefined();
+        if (windows) expect(receipt.witness, why).toMatchObject({ exitCode: 0, code: null, rule: null });
         expect(receipt.checks, why).toHaveLength(4);
         expect(receipt.profileProof, why).toMatchObject({ freshHome: true, installed: true, approvalsManual: true, workroomReady: true, modelAttached: false, workerReady: false, files: 6, directories: 5 });
         expect(receipt.timings.startupMs, why).toBeGreaterThanOrEqual(0);
