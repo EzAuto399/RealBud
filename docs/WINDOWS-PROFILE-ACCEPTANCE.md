@@ -760,7 +760,10 @@ Chain of causes, each found from Windows CI evidence and fixed in source:
 
 Evidence: `Windows probe` run 35776835477 @ f5433db — ACL admission 30/30, six ACL suites 6/6,
 private backup boundaries from source 6 PASS (the POSIX key-permission check is skipped on
-Windows by design). Installed-package result: Package Windows run 35776819019.
+Windows by design). Installed package: `Package Windows` run 35776819019 @ f5433db passed end to end
+for the first time: installed resources 9/9, compiled office service 4/4 (ready in 14.2 s on that
+runner), private backup boundaries 6/6 with one documented Windows skip (slowest call: restore,
+39 s), native memory storage 15/15, then uninstall. Tier: hosted runner, unsigned NSIS installer.
 
 Cost to watch: every atomic private write on Windows pays one PowerShell admission (about
 0.2–0.4 s), and one restore attempt took 27 s on a runner because restore verifies files one
