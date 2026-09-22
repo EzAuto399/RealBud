@@ -114,17 +114,19 @@ def powershell(script: str, values: dict[str, str], *, label: str) -> str:
 
 GET_ACL = r"""
 $ErrorActionPreference = 'Stop'
-$acl = Get-Acl -LiteralPath $env:REALBUD_ACCEPTANCE_PATH
+$item = if ([System.IO.Directory]::Exists($env:REALBUD_ACCEPTANCE_PATH)) { New-Object System.IO.DirectoryInfo($env:REALBUD_ACCEPTANCE_PATH) } else { New-Object System.IO.FileInfo($env:REALBUD_ACCEPTANCE_PATH) }
+$acl = $item.GetAccessControl()
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 [Console]::Write($acl.Sddl)
 """
 BROAD_GRANT = r"""
 $ErrorActionPreference = 'Stop'
-$acl = Get-Acl -LiteralPath $env:REALBUD_ACCEPTANCE_PATH
+$item = if ([System.IO.Directory]::Exists($env:REALBUD_ACCEPTANCE_PATH)) { New-Object System.IO.DirectoryInfo($env:REALBUD_ACCEPTANCE_PATH) } else { New-Object System.IO.FileInfo($env:REALBUD_ACCEPTANCE_PATH) }
+$acl = $item.GetAccessControl()
 $users = [System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-545')
 $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($users, 'ReadAndExecute', 'Allow')
 $acl.AddAccessRule($rule)
-Set-Acl -LiteralPath $env:REALBUD_ACCEPTANCE_PATH -AclObject $acl
+$item.SetAccessControl($acl)
 """
 JUNCTION = r"""
 $ErrorActionPreference = 'Stop'
