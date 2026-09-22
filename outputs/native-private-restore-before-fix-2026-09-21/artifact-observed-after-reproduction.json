@@ -1,0 +1,18 @@
+{
+  "at": "2026-09-21T05:03:04.376Z",
+  "purpose": "Artifact fingerprint observed after the negative native reproduction and before the announced fresh build; this is not a second test run.",
+  "files": {
+    "app.asar": {
+      "sha256": "423afff25eac23989330f112badb313b50f55258faa3199e339021b20cb7b656",
+      "mtime": "2026-09-21T04:36:38.726Z"
+    },
+    "server/bootstrap.js": {
+      "sha256": "2567a50b4638d2789c135bfa708df7d5d9250bc826fd4267281e2e1641bee9d8",
+      "mtime": "2026-09-21T04:36:38.908Z"
+    },
+    "ui/index.html": {
+      "sha256": "d3201c24260a1c9b61393e62d7f6304ccf4e2332e691ce620a4fca3e85597e38",
+      "mtime": "2026-09-21T04:36:38.795Z"
+    }
+  }
+}

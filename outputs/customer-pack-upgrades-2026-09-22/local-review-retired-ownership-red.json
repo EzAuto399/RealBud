@@ -1,0 +1,25 @@
+{
+  "recordedAt": "2026-09-21T19:05:54.125434+00:00",
+  "kind": "confirmed-failing-regression",
+  "severity": "P2",
+  "command": "pnpm exec vitest run server/customer-pack-upgrades.review.test.ts",
+  "exitCode": 1,
+  "tests": {
+    "passed": 0,
+    "failed": 1
+  },
+  "assertion": "expected preview.canInstall true to be false after confirming both blocked installations",
+  "reproduction": [
+    "Install pack A with current plan and R.",
+    "Upgrade A to retire R.",
+    "Import pack B with identical R: reports localReady true.",
+    "assertReadyForRecipe(R) rejects as retired.",
+    "A rollback preview rejects R as claimed by another pack."
+  ],
+  "productionChangesByReviewer": false,
+  "sourceSha256": {
+    "server/customer-pack-upgrades.review.test.ts": "abaae17a966ba2bef4ae5221c4a9ad8846105a060b5b3b6577268686149ab56b",
+    "server/customer-packs.ts": "4ddc95b9746b86ccc5262581c6f3db8fd8407e1027bd4f08e4f510c81e64d325",
+    "server/customer-pack-upgrades.ts": "6f153498fc38a9f37faa3e2474c14c708c8f4f363006eea43a9a6037d2b5029a"
+  }
+}

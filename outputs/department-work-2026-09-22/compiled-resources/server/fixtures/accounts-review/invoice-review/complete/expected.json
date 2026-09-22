@@ -1,0 +1,36 @@
+{
+  "kind": "accounts-invoice-entry-review",
+  "status": "complete",
+  "coverageComplete": true,
+  "itemArray": "documents",
+  "itemIdKey": "documentId",
+  "itemCount": 4,
+  "items": {
+    "SYN-D001": {
+      "decision": "queue",
+      "proposedEntry.amount": "420.00",
+      "proposedEntry.propertyId": "SYN-P01",
+      "proposedEntry.dueDate": "2026-09-18"
+    },
+    "SYN-D002": {
+      "decision": "queue",
+      "proposedEntry.amount": "180.00",
+      "proposedEntry.propertyId": "SYN-P02"
+    },
+    "SYN-D003": {
+      "decision": "queue",
+      "proposedEntry.amount": "600.00"
+    },
+    "SYN-D004": {
+      "decision": "duplicate",
+      "duplicateOf": "SYN-D001"
+    }
+  },
+  "requiredHolds": [],
+  "requiredSourceIds": {
+    "SYN-D001": [
+      "SYN-ATT001"
+    ]
+  },
+  "actionsPerformed": []
+}

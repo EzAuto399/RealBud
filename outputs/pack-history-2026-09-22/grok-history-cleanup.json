@@ -1,0 +1,14 @@
+{
+  "verifiedAt": "2026-09-21T19:29:06.554201+00:00",
+  "ownedAgentPid": 95437,
+  "collectorPid": 95427,
+  "matchingOwnedProcessRows": [],
+  "processReaped": true,
+  "isolatedHomeRemoved": true,
+  "collectorGlobalConfigUnchanged": true,
+  "globalConfigSha256AtIndependentCheck": "ada54f57ec570d8e70cba35400ea2b557914ede90ffa893b5da122a7f69d6736",
+  "globalConfigUnchangedAtIndependentCheck": true,
+  "rawCredentialsRead": false,
+  "authCopied": false,
+  "retryCount": 0
+}

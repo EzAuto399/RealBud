@@ -1,0 +1,8 @@
+{
+  "output": "/Users/yoda/projects/RealBud/outputs/mail-retention-2026-09-21/morning-final",
+  "checks": [
+    "Actual HTTP agency setup, scoped connector acquisition and three deterministic worker batches produce45 persistent source-linked items; manual run leaves schedule disabled; same request is not repeated",
+    "Real API enforces stale edits, preserves staff decisions on rescan, reads back office timezone, pauses/requires re-review after settings change and denies revoked/unreviewed sources",
+    "Actual application renders45 fixture conversations at desktop and390px without page errors or horizontal overflow"
+  ]
+}

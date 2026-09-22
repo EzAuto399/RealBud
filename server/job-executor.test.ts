@@ -110,6 +110,39 @@ describe("prepare result", () => {
 });
 
 describe("executeRecipeJob", () => {
+  it('claims the run before loading reviewed instructions and retains their receipt on retry', async () => {
+    const runs = store();
+    const source = job({ capabilities: ['analyse', 'draft'] });
+    const instructions = 'Reviewed instruction revision 2: include missing-source uncertainty.';
+    const instructionContext = vi.fn(async (id: string) => {
+      expect(id).toBe(source.id);
+      expect(runs.list(source.id).some(run => run.status === 'running')).toBe(true);
+      return instructions;
+    });
+    const ask = vi.fn(async (prompt: string, options: any) => {
+      expect(prompt).toContain(instructions);
+      expect(options.toolsets).toEqual(['todo']);
+      return { ok: true as const, stdout: JSON.stringify({ summary: 'Checked', evidence: [], outputs: ['Missing sources identified.'], needsApproval: [] }) };
+    });
+    const input = { mode: 'prepare' as const, trigger: 'manual' as const, idempotencyKey: 'reviewed' };
+    const first = await executeRecipeJob(source, input, { store: runs, ask, instructionContext });
+    expect(first.run.status).toBe('completed');
+    expect(first.run.evidence).toContainEqual(expect.objectContaining({ note: expect.stringContaining('Reviewed workflow instruction context sha256=') }));
+    expect((await executeRecipeJob(source, input, { store: runs, ask, instructionContext })).reused).toBe(true);
+    expect(instructionContext).toHaveBeenCalledTimes(1);
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(source.description).not.toContain(instructions);
+  });
+
+  it('records an instruction recovery failure without calling the worker', async () => {
+    const ask = vi.fn();
+    const result = await executeRecipeJob(job(), { mode: 'prepare', trigger: 'manual', idempotencyKey: 'pack-recovery' }, {
+      store: store(), ask, instructionContext: async () => { throw new Error('Pack needs recovery'); },
+    });
+    expect(result.run.status).toBe('failed');
+    expect(result.run.detail).toBe('Pack needs recovery');
+    expect(ask).not.toHaveBeenCalled();
+  });
   it("captures each new book revision at execution, freezes its prompt and retains the source stamp on retry", async () => {
     const runs = store();
     let snapshot = currentBook();

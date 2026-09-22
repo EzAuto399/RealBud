@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "scope": "Bank review amendments, waiting follow-up aging, and native Windows fixture preparation",
+  "source": {
+    "manifest": "source-suite-end.json",
+    "inputs": 1093,
+    "digest": "99b2a2620517f58219815426b361023411d78b552c63b72a9ca65014a96f0968",
+    "unchangedDuringFullSuite": true
+  },
+  "fullSuite": {
+    "receipt": "full-suite.json",
+    "passed": 4451,
+    "failed": 0,
+    "skipped": 149,
+    "files": 348,
+    "durationSeconds": 322.47,
+    "admittedNativeHermesEnabled": true
+  },
+  "builds": {
+    "typecheckUiServer": "package-prepare-final.log",
+    "uiServerUpdaterBrowser": "package-prepare-final.log",
+    "electronSyntax": "electron-syntax.log",
+    "unsignedMac": "package-final.log"
+  },
+  "package": {
+    "path": "package-final/mac-arm64/RealBud.app",
+    "manifest": "package-final.json",
+    "digest": "201423e1bf949a6cab4b2ca349e12d46836f3695796fb4e582ba9557c007603f",
+    "files": 2420,
+    "symlinks": 14,
+    "unchangedDuringFinalChecks": true,
+    "compiledWorkflowFiles": {
+      "server/bank-reference-store.js": "26ddfa1161ef8e9aa4e1ee88f6bcf1ebe80b142ed15e439f60ed5b56a91cc5f5",
+      "server/bank-reference-validation.js": "250991f4eeca2fa0a5fa4fe08f4d7dd2ec9029305dc9bead36193d2cbf3f5cdb",
+      "server/private-workspace-backup.js": "715124b167bc5f14a6549a40a9b66f093ee27d406073b047ca1929ee8be8ab05",
+      "server/private-backup-catalog.js": "01b6f2e6d9cdd18644c6e41ed532824943c97f0c13e3d49249a0c21c9cbd0d42",
+      "server/mail-ingestion.js": "7ecaf9c8147b5af0ed240cc08703cd257216a35e9c56cc10f143ff9cbe389c2a",
+      "server/mail-workspace-integrity.js": "7a19563fa7ff795717b851514d29c0f2bf4ab8495bc4a8f59920d78b757ec40a",
+      "shared/mail-ingestion.js": "6024f7f9268a34a930181bdee4a59323b55e95b0d5c9c880668bf92e895763e7",
+      "shared/bank-review.js": "179a16d6474954ee77a6add7f54079521935238522cc36910146f573eb543cae",
+      "shared/bank-reference-history.js": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    "uiFileCount": 342,
+    "uiMatchesBuiltTree": true,
+    "macSmoke": "mac-smoke-final.log"
+  },
+  "rendered": {
+    "sourceReceipt": "../bank-amendments-2026-09-22/gui-reviewed/receipt.json",
+    "packagedReceipt": "gui-final/receipt.json",
+    "checks": 7,
+    "desktop": 1440,
+    "narrowViewport": 390,
+    "visuallyInspected": true,
+    "cleanup": {
+      "browserClosed": true,
+      "serviceStopped": true,
+      "fixtureRemoved": true
+    },
+    "offOriginBrowserRequests": 0,
+    "browserErrors": 0
+  },
+  "windows": {
+    "fixtureReceipt": "../hermes-windows-acceptance-2026-09-22/profile-fixture-verification.json",
+    "nativeAcceptanceCasesAdded": 6,
+    "nativeExecuted": false,
+    "memoryHoldUnchanged": true
+  },
+  "grok": {
+    "requested": "grok-4.7/xhigh",
+    "completedFixtureReview": {
+      "receipt": "../hermes-windows-acceptance-2026-09-22/grok-acp-windows-fixture-run.json",
+      "actualModel": "grok-4.7-build",
+      "modelCalls": 1,
+      "turns": 1,
+      "seconds": 50.908
+    },
+    "bankReview": {
+      "receipt": "../bank-amendments-2026-09-22/grok-bank-review.md",
+      "status": "timed out at 300 seconds, no final findings",
+      "countedAsApproval": false
+    },
+    "globalSettingsChanged": false
+  },
+  "remainingLocal": [
+    "Installed-pack compatible upgrades/migration and recovery",
+    "Integrated actual managed connector + provider parser rehearsal",
+    "Windows startup batching/profile smoke beyond health"
+  ],
+  "externalGates": [
+    "Native Windows",
+    "Signing and distribution",
+    "Managed-service commissioning",
+    "Authorized customer Gmail and paired bank/REI acceptance",
+    "Independent-device office acceptance and soak"
+  ],
+  "noInstallPublishDeploymentOrCustomerAction": true,
+  "earlierProof": {
+    "initialPackage": "package/mac-arm64/RealBud.app",
+    "note": "Predates final missing-decision integrity guard and historical-decision UI note; final package is authoritative.",
+    "initialSourceBrowserCaptures": "../bank-amendments-2026-09-22/gui",
+    "captureLimitation": "Full-page screenshots included blank space outside the internal scrolling viewport; gui-reviewed and gui-final contain usable viewport captures."
+  }
+}

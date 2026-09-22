@@ -1,0 +1,55 @@
+{
+  "type": "object",
+  "properties": {
+    "recommendation": {
+      "type": "string"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "issue": {
+            "type": "string"
+          },
+          "correction": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "severity",
+          "issue",
+          "correction"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "documentedLimits": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "minimumWindowsTests": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "recommendation",
+    "findings",
+    "documentedLimits",
+    "minimumWindowsTests"
+  ],
+  "additionalProperties": false
+}

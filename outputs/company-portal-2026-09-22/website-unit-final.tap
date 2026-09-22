@@ -1,0 +1,52 @@
+TAP version 13
+# Subtest: mapping issue and redeem hash the pre-saved handle and bind exact target and response
+ok 1 - mapping issue and redeem hash the pre-saved handle and bind exact target and response
+  ---
+  duration_ms: 9.473875
+  type: 'test'
+  ...
+# Subtest: browser identity, purpose and extra fields cannot decorate mapping input
+ok 2 - browser identity, purpose and extra fields cannot decorate mapping input
+  ---
+  duration_ms: 0.657542
+  type: 'test'
+  ...
+# Subtest: unmatched, extended or malformed backend receipts cannot become identity evidence
+ok 3 - unmatched, extended or malformed backend receipts cannot become identity evidence
+  ---
+  duration_ms: 0.688
+  type: 'test'
+  ...
+# Subtest: denials are bounded and private; unavailable responses never leak diagnostics
+ok 4 - denials are bounded and private; unavailable responses never leak diagnostics
+  ---
+  duration_ms: 0.643708
+  type: 'test'
+  ...
+# Subtest: dedicated installed SDK sends only service credentials to fixed allowed HTTPS RPCs
+ok 5 - dedicated installed SDK sends only service credentials to fixed allowed HTTPS RPCs
+  ---
+  duration_ms: 3.095625
+  type: 'test'
+  ...
+# Subtest: SDK response stream is bounded independently of content length and closes failed reads
+ok 6 - SDK response stream is bounded independently of content length and closes failed reads
+  ---
+  duration_ms: 1.610042
+  type: 'test'
+  ...
+# Subtest: SDK deadline includes stalled response bodies and does not depend on fetch honoring abort
+ok 7 - SDK deadline includes stalled response bodies and does not depend on fetch honoring abort
+  ---
+  duration_ms: 12.240583
+  type: 'test'
+  ...
+1..7
+# tests 7
+# suites 0
+# pass 7
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 123.66825

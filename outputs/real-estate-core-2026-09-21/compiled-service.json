@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "platform": "darwin",
+  "arch": "arm64",
+  "node": "v24.18.1",
+  "source": "/Users/yoda/projects/RealBud/outputs/real-estate-core-2026-09-21/package/mac-arm64/RealBud.app/Contents/Resources",
+  "runtime": "installed Electron/Node",
+  "proofLayer": "Compiled service from the selected bundle in an isolated directory; not GUI or two-device acceptance",
+  "checks": [
+    "Compiled server starts outside checkout without node_modules",
+    "Packaged PostgreSQL driver loads; unprovisioned company status is usable",
+    "Packaged TLS certificate generator executes successfully"
+  ],
+  "cleanupComplete": true
+}

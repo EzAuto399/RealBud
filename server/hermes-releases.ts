@@ -16,7 +16,7 @@ export interface HermesRelease {
  * pin the official immutable installer scripts by SHA-256, run the ACP smoke,
  * then recommend. Never follow upstream `latest`.
  */
-export const HERMES_RECOMMENDED_VERSION = "0.21.2" as const;
+export const HERMES_RECOMMENDED_VERSION = "0.21.3" as const;
 
 // Release promotion is a RealBud compatibility decision. Bytes are official,
 // immutable upstream installer scripts; no engine patches or branch tracking.
@@ -55,7 +55,15 @@ export const HERMES_RELEASES: readonly HermesRelease[] = [
     unix: "38547c22f4dd2224ba68a13bc3479309abb17e295b2a2ef79c2d1b8293bd822e",
     windows: "226c70a90ad47e8a4d34cb11aca4ecbeb649e2f9b67fbd009ea49791de2d56f5",
   } },
-  { product: HERMES_RECOMMENDED_VERSION, tag: "v2026.9.11", commit: "939e45c91d751fadd94dcd1b873ac3cb44846213", installers: {
+  // The rollback target. Named literally, NOT via HERMES_RECOMMENDED_VERSION.
+  //
+  // It used to read `product: HERMES_RECOMMENDED_VERSION`, which meant this entry
+  // silently *was* whatever was recommended: promoting 0.21.3 rewrote it into a
+  // second 0.21.3 row (duplicate product, duplicate commit) and dropped 0.21.2 out
+  // of the catalog entirely — so the release an office would roll back to stopped
+  // being installable at the exact moment it became the rollback target. Caught by
+  // server/hermes-release-admission.test.ts when 0.21.3 was promoted.
+  { product: "0.21.2", tag: "v2026.9.11", commit: "939e45c91d751fadd94dcd1b873ac3cb44846213", installers: {
     unix: "5854b15670b51a8daae8f59ddfa917062de9f74be261eb73b4b8d719710f8968",
     windows: "226c70a90ad47e8a4d34cb11aca4ecbeb649e2f9b67fbd009ea49791de2d56f5",
   } },

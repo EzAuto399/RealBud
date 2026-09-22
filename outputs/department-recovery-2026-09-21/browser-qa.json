@@ -1,0 +1,13 @@
+{
+  "date": "2026-09-21T05:08:16.142Z",
+  "checks": [
+    "Mandatory review note/confirmation, draft survives refocusing, cancellation preserves hold",
+    "Actual API recovery persists in PostgreSQL and retains review note after full page reload",
+    "390px mobile recovery, 44px action, no horizontal overflow, release clears departed-holder blocker"
+  ],
+  "rendererErrors": [],
+  "postgres": "postgres (PostgreSQL) 16.15 (Homebrew)",
+  "sourceUi": true,
+  "nativePackage": false,
+  "fictionalDataOnly": true
+}

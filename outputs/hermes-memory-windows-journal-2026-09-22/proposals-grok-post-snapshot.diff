@@ -1,0 +1,14 @@
+--- reviewed packet: _write_stage Windows prefix
++++ final source: _write_stage Windows prefix
+@@ -3,11 +3,6 @@
+     if windows is not None:
+         if len(blob) > review.MAX_BYTES:
+             raise review.ReviewError("capacity")
+-        data = windows.read(stage, limit=review.MAX_BYTES, missing_ok=True)
+-        if data is not None:
+-            if review._sha(data) != digest:
+-                raise review.ReviewError("recovery-required")
+-            return
+         if _count_dir(review, ctx, _proposals_dir(ctx)) + 1 > review.MAX_DIR:
+             raise review.ReviewError("capacity")
+         # A journal-owned stage is created exclusively. It is never repaired

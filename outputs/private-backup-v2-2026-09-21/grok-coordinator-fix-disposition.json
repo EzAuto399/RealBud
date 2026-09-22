@@ -1,0 +1,39 @@
+{
+  "sessionId": "01a0c448-ff95-7af0-84d6-77e81967bc19",
+  "requestedModel": "grok-4.6",
+  "reasoningEffort": "xhigh",
+  "verdict": "changes-required",
+  "disposition": [
+    {
+      "finding": 1,
+      "decision": "accepted",
+      "change": "Withhold copied terminal chunk until same-pass stat and digest verify. Real HTTP small and multi-chunk corruptions both reject and delivered bytes stay below Content-Length."
+    },
+    {
+      "finding": 2,
+      "decision": "partially-accepted",
+      "change": "publishStage already cleared error and journal cold completion already cleared it. Added clear on direct staged/ready success, and after a successful download whose handles all close. Added a persisted recovery-failure then successful held-stage regression. UI already renders selected.operation.error and runtime blocks cleanup-held operations."
+    },
+    {
+      "finding": 3,
+      "decision": "accepted",
+      "change": "Separate random per-boot HMAC key binds exact ticket URL and expiry. Cookie proof is never accepted by master Bearer, header or query. Cookie Path is exact ticket; malformed, expired, tampered or alternate-ticket proofs fail."
+    },
+    {
+      "finding": 4,
+      "decision": "declined",
+      "reason": "Ambiguous duplicate credentials deliberately fail closed. Normal simultaneous tickets use different exact cookie paths. Accepting any duplicate would weaken established boundary behavior."
+    }
+  ],
+  "tests": {
+    "focused": "coordinator-followup-boundaries-final-tests.log",
+    "passed": 106,
+    "failed": 0,
+    "skipped": 0,
+    "browser": "coordinator-browser-scoped-cookie/receipt.json",
+    "browserChecks": 9
+  },
+  "limitations": [
+    "Original Grok verdict covered supplied source, not later fixes. Follow-up receipt is separate."
+  ]
+}

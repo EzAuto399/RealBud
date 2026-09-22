@@ -14,6 +14,9 @@ import { startCompanyPostgresFixture } from "./company/testing-postgres.ts";
 describe.runIf(process.env.REALBUD_TEST_POSTGRES === "1")("company + service administration through the real HTTP server", () => {
   let fixture: Awaited<ReturnType<typeof startCompanyPostgresFixture>>;
   let child: ChildProcess | undefined;
+  let companionChild: ChildProcess | undefined;
+  let companionBase = "";
+  let companionSession = "";
   let data: string;
   let base: string;
   let appSession = "";
@@ -27,10 +30,10 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === "1")("company + service adm
   const memberCredential = { loginName: "bobby", password: "Synthetic-member-password-2026" };
   const password = "Synthetic-service-admin-2026";
 
-  async function request(method: string, path: string, body?: unknown, options: { admin?: string; member?: string; noAppSession?: boolean } = {}) {
-    const response = await fetch(base + path, { method, headers: {
+  async function request(method: string, path: string, body?: unknown, options: { admin?: string; member?: string; noAppSession?: boolean; companion?: boolean } = {}) {
+    const response = await fetch((options.companion ? companionBase : base) + path, { method, headers: {
       "content-type": "application/json",
-      ...(!options.noAppSession && appSession ? { "x-realbud-session": appSession } : {}),
+      ...(!options.noAppSession && appSession ? { "x-realbud-session": options.companion ? companionSession : appSession } : {}),
       ...(options.admin ? { "x-realbud-service-admin": options.admin } : {}),
       ...(options.member ? { "x-realbud-member-session": options.member } : {}),
     }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -47,30 +50,35 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === "1")("company + service adm
     child = undefined;
   }
 
-  async function startServer() {
+  async function startServer(companion = false) {
     const socket = createServer();
     socket.listen(0, "127.0.0.1"); await once(socket, "listening");
     const port = (socket.address() as { port: number }).port;
     await new Promise<void>(resolve => socket.close(() => resolve()));
-    base = `http://127.0.0.1:${port}`;
-    child = spawn(process.execPath, ["--experimental-strip-types", "server/index.ts"], {
+    const origin = `http://127.0.0.1:${port}`;
+    if (companion) companionBase = origin; else base = origin;
+    const profile = companion ? join(data, "companion") : data;
+    if (companion) { await mkdir(profile, { mode: 0o700 }); await writeFile(join(profile, "config.json"), JSON.stringify({ instances: { ghost: { driver: "not-a-real-driver" } } }), { mode: 0o600 }); }
+    const launched = spawn(process.execPath, ["--experimental-strip-types", "server/index.ts"], {
       cwd: process.cwd(), env: { ...process.env, OMB_PORT: String(port), OMB_TEST_FLEET: "1", VITEST: "1",
-        REALBUD_DATA_DIR: data, OMB_DATA_DIR: data, REALBUD_HERMES_HOME: join(data, "hermes"), HERMES_HOME: join(data, "hermes"),
+        REALBUD_DATA_DIR: profile, OMB_DATA_DIR: profile, REALBUD_HERMES_HOME: join(profile, "hermes"), HERMES_HOME: join(profile, "hermes"),
         REALBUD_COMPANY_DATABASE_URL: fixture.applicationUrl, REALBUD_MANAGED_SERVICE: "1", REALBUD_SERVICE_ENTITLEMENT_REQUIRED: "1",
         REALBUD_SERVICE_ADMIN_FILE: join(data, "service-admin.json"),
       }, stdio: ["ignore", "pipe", "pipe"],
     });
     // Consume output without storing source/account content or environment.
-    child.stdout?.resume(); child.stderr?.resume();
+    if (companion) companionChild = launched; else child = launched;
+    launched.stdout?.resume(); launched.stderr?.resume();
     let healthy = false;
     for (let attempt = 0; attempt < 150; attempt++) {
-      if (child.exitCode !== null) throw new Error("Isolated RealBud service exited before health became available.");
-      try { healthy = (await fetch(base + "/api/health")).ok; } catch { /* starting */ }
+      if (launched.exitCode !== null) throw new Error("Isolated RealBud service exited before health became available.");
+      try { healthy = (await fetch(origin + "/api/health")).ok; } catch { /* starting */ }
       if (healthy) break;
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     expect(healthy).toBe(true);
-    appSession = (await request("GET", "/api/session", undefined, { noAppSession: true })).body.token;
+    const session = (await request("GET", "/api/session", undefined, { noAppSession: true, companion })).body.token;
+    if (companion) companionSession = session; else appSession = session;
   }
 
   beforeAll(async () => {
@@ -84,6 +92,7 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === "1")("company + service adm
 
   afterAll(async () => {
     await stopServer();
+    if (companionChild && companionChild.exitCode === null) { const done = once(companionChild, "exit"); companionChild.kill("SIGTERM"); const timer = setTimeout(() => companionChild?.kill("SIGKILL"), 5000); await done; clearTimeout(timer); }
     if (fixture) await fixture.stop();
     if (data) await rm(data, { recursive: true, force: true });
   }, 20_000);
@@ -119,15 +128,16 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === "1")("company + service adm
   });
 
   it("redeems one-use invitations without inheriting service administration", async () => {
+    await startServer(true);
     const invitation = await request("POST", "/api/company/invitations", { displayName: "Bob" }, { member: owner });
     expect(invitation.status).toBe(201);
-    expect((await request("POST", "/api/company/join", { invitationToken: invitation.body.invitationToken })).status).toBe(400);
-    const joined = await request("POST", "/api/company/join", { invitationToken: invitation.body.invitationToken, credential: memberCredential });
+    expect((await request("POST", "/api/company/join", { invitationToken: invitation.body.invitationToken }, { companion: true })).status).toBe(400);
+    const joined = await request("POST", "/api/company/join", { invitationToken: invitation.body.invitationToken, credential: memberCredential }, { companion: true });
     expect(joined.status).toBe(201); member = joined.body.memberToken;
     expect(joined.body.recoveryKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect((await request("POST", "/api/company/sign-in", memberCredential)).body.member.id).toBe(joined.body.member.id);
+    expect((await request("POST", "/api/company/sign-in", memberCredential, { companion: true })).body.member.id).toBe(joined.body.member.id);
     expect(joined.body.member).toMatchObject({ displayName: "Bob", role: "member" });
-    expect((await request("POST", "/api/company/join", { invitationToken: invitation.body.invitationToken, credential: memberCredential })).status).toBe(401);
+    expect((await request("POST", "/api/company/join", { invitationToken: invitation.body.invitationToken, credential: memberCredential }, { companion: true })).status).toBe(409);
     expect((await request("POST", "/api/company/invitations", { displayName: "Wrong" }, { member })).status).toBe(403);
     expect((await request("PATCH", "/api/config", { composio: { apiKey: "must-not-write" } }, { member: owner })).status).toBe(401);
   });

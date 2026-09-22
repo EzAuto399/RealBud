@@ -1,0 +1,21 @@
+PASS Rendered member request and exact owner review start one actual Hermes preparation; only assigned case context reaches the fictional provider and the case remains held for human review.
+PASS Actual service restart preserves the result and original run ID without a second provider request.
+PASS Mobile result view has no horizontal overflow; no uncaught browser errors.
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+locator.waitFor: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for getByRole('button', { name: 'Refresh preparations', exact: true }) to be visible[22m
+
+    at open (/Users/yoda/projects/RealBud/scripts/qa-department-work.mjs:75:451)
+    at async startAnother (/Users/yoda/projects/RealBud/scripts/qa-department-work.mjs:98:5)
+    at async file:///Users/yoda/projects/RealBud/scripts/qa-department-work.mjs:105:17 {
+  log: [
+    "  - waiting for getByRole('button', { name: 'Refresh preparations', exact: true }) to be visible"
+  ],
+  name: 'TimeoutError'
+}
+
+Node.js v24.19.0

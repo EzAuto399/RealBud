@@ -1,0 +1,26 @@
+{
+  "scope": "metadata-only design review, no production-source inspection or approval",
+  "completed": true,
+  "requestedModel": "grok-4.7",
+  "selectedEffort": "xhigh",
+  "actualModelBuckets": [
+    "grok-4.7-build"
+  ],
+  "modelCalls": 1,
+  "numTurns": 1,
+  "stopReason": "end_turn",
+  "terminalAtSeconds": 189.608,
+  "collectionAndCleanupSeconds": 192.83,
+  "promptBytes": 1380,
+  "toolCallCount": 0,
+  "permissionRequestCount": 0,
+  "observedMcpInitialization": {
+    "elapsedMs": 0,
+    "mcpToolCount": 0,
+    "sessionId": "01a0c56d-87a9-7183-a4a1-b16ebb124bfe"
+  },
+  "observedMcpServerCount": 0,
+  "disposition": "Use the three cases to guide implementation and regression tests; not implementation/test/customer acceptance evidence. Newest 8 wording is advisory shorthand: the deliberate reviewed retention count belongs to RealBud policy and need not stay 8. Plain hashes do not protect from coherent same-user replacement of journal and files.",
+  "mcpIsolationVerified": false,
+  "toolIsolationVerified": false
+}

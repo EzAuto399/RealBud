@@ -1,0 +1,1 @@
+Closed-history browser check exposed a controlled checkbox that deferred its visual selection until an asynchronous page read returned. It could briefly revert on click. Fixed to acknowledge the selected filter immediately and restore it on read failure while preserving the old page. Final browser rerun covers opening accepted history and returning to active drafts.

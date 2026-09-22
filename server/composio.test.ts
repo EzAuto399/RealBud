@@ -1,3 +1,4 @@
+import { withWorkerProfile } from "./hermes-profile.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { authorizeService, checkConnectionAccess, composioTool, connectionStatus, platformProjectKey, platformUserId } from "./composio.ts";
 
@@ -367,4 +368,10 @@ describe("structured authorization links", () => {
     respond(envelope(content(connectionData({ redirect_url }))));
     await expect(authorizeService(cfg, "gmail")).rejects.toThrow(/not a secure URL/);
   });
+});
+
+it("uses the current worker identity for connection setup and status", () => {
+  const cfg = { composio: { key: "ak_fixture" } };
+  expect(withWorkerProfile("member-one", () => platformUserId(cfg))).toBe("seat-member-one");
+  expect(withWorkerProfile("member-two", () => platformUserId(cfg))).toBe("seat-member-two");
 });

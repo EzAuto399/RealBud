@@ -1,0 +1,9 @@
+/* Saved views share the existing desktop rail. On phones a single Views door
+   keeps the four core destinations visible without an unbounded bottom bar. */
+@media (max-width: 599px) {
+  .rb-sidebar-navigation > .rb-workspace-saved-navigation { display: contents; }
+  .rb-workspace-saved-navigation > .rb-workspace-custom-tab { display: none; }
+  .rb-workspace-manage-view .rb-sidebar-label { font-size: 11px; }
+  .rb-workspace-manage-view .rb-sidebar-label > span { display: none; }
+  .rb-workspace-manage-view .rb-sidebar-label::after { content: 'Views'; }
+}

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { X509Certificate } from 'node:crypto';
 import { createHostCertificate, encodeCompanyPairing, parseCompanyPairing, validateHostCertificate } from './host-certificate.ts';
 
@@ -9,6 +9,19 @@ describe('company host identity', () => {
     expect(() => validateHostCertificate(first.cert, first.key, '127.0.0.1')).not.toThrow();
     expect(() => validateHostCertificate(first.cert, second.key, '127.0.0.1')).toThrow();
     expect(() => validateHostCertificate(first.cert, first.key, 'different.example')).toThrow();
+  });
+  it('permits expired material only for local recovery, never new pairing or network admission', async () => {
+    const material = await createHostCertificate('localhost');
+    const pairing = { version: 1 as const, origin: 'https://localhost:55443', certificatePem: material.cert, companyId: '11111111-1111-4111-8111-111111111111' };
+    const code = encodeCompanyPairing(pairing);
+    const now = vi.spyOn(Date, 'now').mockReturnValue(Date.parse(new X509Certificate(material.cert).validTo) + 1000);
+    try {
+      expect(() => parseCompanyPairing(code)).toThrow();
+      expect(() => validateHostCertificate(material.cert, material.key, 'localhost')).toThrow();
+      expect(parseCompanyPairing(code, { allowExpired: true })).toEqual(pairing);
+      expect(() => validateHostCertificate(material.cert, material.key, 'localhost', { allowExpired: true })).not.toThrow();
+      expect(() => validateHostCertificate(material.cert, material.key, 'wrong.example', { allowExpired: true })).toThrow();
+    } finally { now.mockRestore(); }
   });
   it('pairs only with a matching HTTPS host without credentials, paths or extra fields', async () => {
     const material = await createHostCertificate('localhost');

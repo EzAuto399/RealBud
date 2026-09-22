@@ -1,0 +1,18 @@
+{
+  "capturedAt": "2026-09-21T20:46:08.586036+00:00",
+  "scope": "Current source fingerprints for read-only planning; no application tests were run in this pass.",
+  "files": {
+    "server/customer-packs.ts": "b7a57c59ab3c5de08d05f07953d991b8e5c68cff1e8606b36aa3de3c6a4ec18e",
+    "server/customer-pack-upgrades.ts": "10495a2477a25589cd47342255e7f21822613e8d0e7367ef4b0a9a30c2fafd63",
+    "server/private-workspace-backup.ts": "3875f488096fe8e6bb50316700f47d8f1f3943869e9150c99098bef10524e70c",
+    "server/private-backup-capture.ts": "0ad3600c79a071bc4062a7bcd0d3b157a5d2642babbad6d720ba827d82bf7c0b",
+    "server/private-backup-catalog.ts": "5c0260f5c15ede37230b42e5256b38b66155dc41a0098946c213011ef8e6f73c",
+    "server/private-backup-restore-catalog.ts": "11afc3038c184dff82b2569612f5d96ec31ddab311049641982d222ee3fd2d5d",
+    "server/customer-packs.test.ts": "535b303276c987b23cc3d5fe1c211393f9f6b748c85e633d00dee790d5b80b45",
+    "server/customer-pack-upgrades.test.ts": "57520a242c48c3f1b948572f60e0d72b57db36efaef8113e34a5aa98ea25b1d6",
+    "server/private-backup-pack-upgrade.test.ts": "f4a95c2b78da5208a08c10466316e3589d66c672c8a502aaee455cad9812c606",
+    "src/components/schedule/PackSkillReview.tsx": "f6e5ce6da9a9c3e8746117c2cd4880a3978e740a5ca1dfbec4128b60c5132fe0",
+    "src/components/schedule/CustomerPackSetupCard.tsx": "1285250e659b3748f6abed1c002267d4db4432ed3d9d70b139f67039f0931f47",
+    "shared/customer-packs.ts": "d9f7cc66e755882b46ee0d264a9aea33033dcd24f87ae75840092b4aba4cd733"
+  }
+}

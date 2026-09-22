@@ -5,7 +5,7 @@ import { generate } from 'selfsigned';
 /** Native Node implementation on both OSs; never installs an OS trust root. */
 export async function createHostCertificate(hostname: string) {
   if (typeof hostname !== 'string' || hostname.length > 253 || (!isIP(hostname) &&
-    !/^(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i.test(hostname))) throw new Error('Enter this computer’s network name or IP address.');
+    !hostname.split('.').every(label => /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(label)))) throw new Error('Enter this computer’s network name or IP address.');
   const now = Date.now();
   // selfsigned@5 breaks BasicConstraints under current @peculiar; 2.4.1 is sync RSA.
   const material = generate([{ name: 'commonName', value: hostname }], {
@@ -22,10 +22,10 @@ export async function createHostCertificate(hostname: string) {
   return { cert: material.cert, key: material.private };
 }
 
-export function validateHostCertificate(cert: string, key: string, hostname: string): void {
+export function validateHostCertificate(cert: string, key: string, hostname: string, options: { allowExpired?: boolean } = {}): void {
   const certificate = new X509Certificate(cert);
   const validHost = isIP(hostname) ? certificate.checkIP(hostname) : certificate.checkHost(hostname, { wildcards: false });
-  if (!validHost || Date.parse(certificate.validFrom) > Date.now() || Date.parse(certificate.validTo) <= Date.now() ||
+  if (!validHost || Date.parse(certificate.validFrom) > Date.now() || (!options.allowExpired && Date.parse(certificate.validTo) <= Date.now()) ||
     !certificate.checkPrivateKey(createPrivateKey(key)) || !certificate.verify(createPublicKey(cert))) {
     throw new Error('The host certificate needs service attention. Existing company data has been preserved.');
   }
@@ -38,7 +38,7 @@ export interface CompanyPairing {
   companyId: string;
 }
 
-export function parseCompanyPairing(code: unknown): CompanyPairing {
+export function parseCompanyPairing(code: unknown, options: { allowExpired?: boolean } = {}): CompanyPairing {
   if (typeof code !== 'string' || code.length > 12_000 || !/^RB1\.[A-Za-z0-9_-]+$/.test(code)) throw new Error('This host code is invalid. Copy it again from the host computer.');
   try {
     const value = JSON.parse(Buffer.from(code.slice(4), 'base64url').toString('utf8'));
@@ -50,7 +50,7 @@ export function parseCompanyPairing(code: unknown): CompanyPairing {
     const cert = new X509Certificate(value.certificatePem);
     const hostname = url.hostname.replace(/^\[|\]$/g, '');
     if (!(isIP(hostname) ? cert.checkIP(hostname) : cert.checkHost(hostname, { wildcards: false })) ||
-      Date.parse(cert.validTo) <= Date.now() || Date.parse(cert.validFrom) > Date.now()) throw new Error();
+      (!options.allowExpired && Date.parse(cert.validTo) <= Date.now()) || Date.parse(cert.validFrom) > Date.now()) throw new Error();
     return value as CompanyPairing;
   } catch { throw new Error('This host code is invalid or expired. Copy a current code from the host computer.'); }
 }

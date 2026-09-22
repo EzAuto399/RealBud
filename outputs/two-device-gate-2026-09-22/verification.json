@@ -1,0 +1,126 @@
+{
+  "checkedAt": "2026-09-21T21:42:32.970728+00:00",
+  "scope": "Acceptance checker repair only; no installed-device or customer acceptance",
+  "recovered": {
+    "commit": "b20e1c9a942cde7bc2f2a92c7c973f93fedc78d1",
+    "exactFiles": {
+      "docs/REALBUD-OPERATIONAL-ACCEPTANCE-2026-09-15.json": "c91dd8605e3a63049613c60baec7b0ff55f20aa02726ad200a357e45bde8ea15",
+      "docs/REALBUD-OPERATIONAL-ACCEPTANCE-2026-09-15.md": "0f5c08c26461c572eb245dc3bf912377f51e1982ed2806c4f5440034d279f196",
+      "docs/REALBUD-TWO-DEVICE-ACCEPTANCE-2026-09-15.md": "00225e319fc8f0626cd3d7de2cc6e221797f046a7b2466d66ef072e09c93ea82"
+    },
+    "caseCount": 71,
+    "originalGateRecovered": false,
+    "acceptanceStatesModified": false
+  },
+  "contract": {
+    "path": "docs/acceptance/two-device-v1.json",
+    "sha256": "85f04a699bde98ddafd6113fc484d0fb6440655b4dff90e6c4ae5ecba5e751d2",
+    "policy": "New conservative explicit 71-case participant policy with per-case provenance",
+    "pairings": 4,
+    "workflowRunsPerPairing": 6,
+    "receiptSchemaVersion": 2
+  },
+  "checks": {
+    "node": {
+      "tests": 27,
+      "pass": 27,
+      "fail": 0,
+      "skipped": 0,
+      "durationMs": 18815.463709,
+      "receipt": "checker-tests.log"
+    },
+    "independent": {
+      "probeRows": 25,
+      "scalarMutationChecks": 360,
+      "unexpectedThrows": 0,
+      "receipt": "independent-final-probes.json",
+      "sourceHashesMatched": true,
+      "documentationNote": "Final verification paragraphs appended to reviewed policy documentation after independent source freeze"
+    },
+    "aliases": {
+      "node": "v24.19.0",
+      "checkerSha256": "ed48a7e6ae3c6a13bdfebb204569230badad4aede222cf3533a34c2abf07d49f",
+      "observations": [
+        {
+          "target": "macos-rehearsal",
+          "templateExit": 0,
+          "pairings": 1,
+          "unrunExit": 1,
+          "issues": 303,
+          "nonRepoTemplateExit": 0,
+          "nonRepoUnrunExit": 1
+        },
+        {
+          "target": "full-platform",
+          "templateExit": 0,
+          "pairings": 4,
+          "unrunExit": 1,
+          "issues": 1216,
+          "nonRepoTemplateExit": 0,
+          "nonRepoUnrunExit": 1
+        },
+        {
+          "case": "omitted target on macos-only template",
+          "exit": 1,
+          "target": "full-platform",
+          "evidenceComplete": false
+        }
+      ],
+      "remoteCiRun": false,
+      "deviceAcceptancePerformed": false
+    },
+    "jsonYamlWiring": "passed; wiring-review.md",
+    "scopedDiffCheck": "passed"
+  },
+  "grok": {
+    "checkedAt": "2026-09-21T21:33:13.217940+00:00",
+    "originalReceiptUnchanged": true,
+    "outcome": "interrupted-incomplete-no-terminal-result",
+    "completedReview": false,
+    "originalOwnedPid": 52571,
+    "remainingMatchingProcessRows": [],
+    "noRestart": true,
+    "authContentsRead": false,
+    "authContentsCopied": false,
+    "globalConfigMutation": false,
+    "globalConfigSha256After": "ada54f57ec570d8e70cba35400ea2b557914ede90ffa893b5da122a7f69d6736",
+    "globalConfigUnchanged": true,
+    "disposableHomeExisted": true,
+    "isolatedHomeRemoved": true,
+    "selectedModel": "grok-4.7",
+    "selectedEffort": "xhigh",
+    "findings": null
+  },
+  "files": {
+    "docs/REALBUD-OPERATIONAL-ACCEPTANCE-2026-09-15.json": "c91dd8605e3a63049613c60baec7b0ff55f20aa02726ad200a357e45bde8ea15",
+    "docs/REALBUD-OPERATIONAL-ACCEPTANCE-2026-09-15.md": "0f5c08c26461c572eb245dc3bf912377f51e1982ed2806c4f5440034d279f196",
+    "docs/REALBUD-TWO-DEVICE-ACCEPTANCE-2026-09-15.md": "00225e319fc8f0626cd3d7de2cc6e221797f046a7b2466d66ef072e09c93ea82",
+    "docs/acceptance/two-device-v1.json": "85f04a699bde98ddafd6113fc484d0fb6440655b4dff90e6c4ae5ecba5e751d2",
+    "scripts/check-two-device-acceptance.mjs": "ed48a7e6ae3c6a13bdfebb204569230badad4aede222cf3533a34c2abf07d49f",
+    "scripts/check-two-device-acceptance.test.mjs": "39ae71a71baa3caf6cb9f2b4fdc61adc4a2ef4479847ab61cc26784c0417c144",
+    "package.json": "cdab21a7d29bc472181311ac00a1ba106b2a2a14b2669645add76cad750a6edf",
+    ".github/workflows/ci.yml": "f324ec2bd1e1544d0467ca299bb0fa4e346205640e25ab5416251e5f6d43b7d4",
+    "docs/TWO-DEVICE-EVIDENCE-GATE-2026-09-22.md": "d96b9465dbcc718a90c8c21c6950f471ccb4529d0ea112003a2335c38c690664"
+  },
+  "preservedNegativeEvidence": [
+    "baseline-tests.log",
+    "baseline-template.log",
+    "independent-baseline-probes.json",
+    "independent-candidate-probes.json",
+    "checker-tests-initial-race-fixture.log",
+    "grok-two-device-acp-run.json"
+  ],
+  "notPerformed": [
+    "Remote CI",
+    "Application build or installation",
+    "Native Windows acceptance",
+    "Physical office rehearsal",
+    "Provider/customer access",
+    "Deployment"
+  ],
+  "next": [
+    "Enrolled remote approval with scoped preview disclosure and competing-decision recovery",
+    "Shared-department website execution with current member/scope authority",
+    "Native Windows, hosted-service and live customer acceptance"
+  ]
+}

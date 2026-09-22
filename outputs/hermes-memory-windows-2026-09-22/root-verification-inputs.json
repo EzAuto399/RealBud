@@ -1,0 +1,11 @@
+{
+  "server/helpers/hermes-memory-windows.py": "e838beb06d5c5f132db4e1f5158f97d72b4e7dd90e55eb4a03a7e42f280c8bfa",
+  "server/helpers/hermes-memory-windows-native.py": "b3a9d5bb67b5c2cc2f920b046b1472044204bc872ebef8113cf13d19d8e86213",
+  "server/helpers/hermes-memory-review.py": "5d85df4a7f9dac59e2f389e9dab750fce84da3e9c5619e349b573a7f5347da58",
+  "scripts/testing/hermes-memory-windows-abi.py": "24bb5ba5732a7781de608a72b48c1f1ec2c8d6598fd19b8237b51d0cb2f52ec6",
+  "scripts/testing/hermes-memory-windows-policy.py": "308ea076346c7516ecbcf76feedd53b98f397a74dbeae72fc1c3b05f8c09188b",
+  "scripts/testing/hermes-memory-windows-protocol.py": "4a1fcf11882a309e4d38f71ac062a05269e223fe667abfde703ee2f58735d327",
+  "scripts/bundle-company-deps.mjs": "56ba0a1d5fb9f3874a8e77e082b37f119853b4a1e69015f8f0c3392452a6a628",
+  "scripts/test-windows-installer.ps1": "65d7457b37a787a6802e81c0fe736f24c7458302269e27900ee7c238ea1734cc",
+  ".github/workflows/ci.yml": "2165d31dd7229ef1c806a2e585154790af7e0de6e6513f81598f3ffa14d6bfd5"
+}

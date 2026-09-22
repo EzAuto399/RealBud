@@ -1,0 +1,27 @@
+{
+  "checkedAt": "2026-09-20T13:32:54.697Z",
+  "serverEntry": "/Users/yoda/projects/RealBud/outputs/browser-integration-2026-09-20/package/mac-arm64/RealBud.app/Contents/Resources/server/index.js",
+  "realAuthentication": true,
+  "simulatedBrowserStates": true,
+  "keyboardConnect": true,
+  "desktop": 1365,
+  "mobile": 390,
+  "noHorizontalOverflow": true,
+  "recovery": true,
+  "exactSelectedLoginPage": true,
+  "explicitResumeStep": true,
+  "stopDuringCheck": true,
+  "mutations": [
+    "connect",
+    "select",
+    "stop",
+    "disconnect"
+  ],
+  "handoffActions": [
+    "tabs",
+    "binding",
+    "continue",
+    "resume-step"
+  ],
+  "pageErrors": []
+}

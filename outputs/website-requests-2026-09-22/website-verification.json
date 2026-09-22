@@ -1,0 +1,24 @@
+{
+  "ok": true,
+  "websiteBuild": true,
+  "websiteTests": {
+    "passed": 37,
+    "failed": 0
+  },
+  "postgresAssertions": 72,
+  "portalGuiScenarioGroups": 5,
+  "focusedLint": true,
+  "fullLint": {
+    "preexistingFailures": [
+      "website/app/account/page.tsx:63 react-hooks/purity",
+      "website/app/page.tsx:39 no-html-link-for-pages"
+    ]
+  },
+  "desktopEnvelopeUnchangedByHistoricalLabels": true,
+  "liveDeployment": false,
+  "liveMigration": false,
+  "customerData": false,
+  "supabaseTransport": "local fixture bridge; real PostgreSQL RPC state",
+  "execution": "portal run receipt simulation; actual desktop separately owned",
+  "cleanup": true
+}

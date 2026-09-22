@@ -1,0 +1,39 @@
+{
+  "source": {
+    "passed": 4043,
+    "failed": 0,
+    "skipped": 143,
+    "files": 326,
+    "seconds": 279.08262915039063,
+    "receipt": "full-source-storage-capacity.json"
+  },
+  "inputs": {
+    "file": "storage-capacity-source-inputs.json",
+    "count": 967,
+    "digest": "cd566f1c3166152414805ef38c100a652a067014e3e5316dfe804a9e844525cb",
+    "unchangedAtFullSuiteCompletion": true,
+    "laterChangedFiles": [
+      "server/private-backup-catalog.test.ts",
+      "server/private-backup-catalog.ts"
+    ]
+  },
+  "laterChanges": "Explicit DELETE journal-mode assertion and permanent 8 MiB entry regression; both source changes followed by the focused six-file gate, server typecheck and server build.",
+  "builds": {
+    "serverTypecheck": "catalog-storage-tsc.log",
+    "serverBuild": "storage-capacity-server-build.log",
+    "finalServerTypecheck": "storage-review-followup-tsc.log",
+    "finalServerBuild": "storage-review-followup-server-build.log"
+  },
+  "layer": "Source and fictional local data only. Public v2 UI and fresh macOS/Windows packages are not verified.",
+  "followup": {
+    "passed": 119,
+    "failed": 0,
+    "skipped": 0,
+    "files": 6,
+    "seconds": 49.97,
+    "receipt": "storage-review-followup-tests.log",
+    "recordedInputs": "storage-review-followup-inputs.json",
+    "count": 967,
+    "digest": "17a2ac76dca53a76998b0f74d19be635ad8c9a5221a49ecc565d1bbeafe09d65"
+  }
+}

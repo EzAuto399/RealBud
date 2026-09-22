@@ -1,0 +1,17 @@
+✔ person RPC validates exact authoritative shape and safe fields (1.012ms)
+✔ trusted issuer comes from deployment config with no path or browser data (0.164459ms)
+✔ login sends verified provider identity and rejects remapped backend output (0.513792ms)
+✔ unprovisioned identity is distinguished only by the exact trusted RPC error (0.177333ms)
+✔ person gate rejects legacy, expired, future and different issuer without any RPC (20.3185ms)
+✔ every person gate refreshes current identity and observes revocation, roles and epoch (1.135541ms)
+✔ session round-trip and rejects tampering (4.220875ms)
+✔ person cookie preserves stable binding and seven day authentication age (1.506375ms)
+✔ signed but malformed or downgraded person cookies fail closed (3.318542ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 111.304917

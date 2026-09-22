@@ -1,0 +1,22 @@
+{
+  "startedAt": "2026-09-21T05:09:05.997Z",
+  "elapsedMs": 11932,
+  "postgres": "postgres (PostgreSQL) 16.15 (Homebrew)",
+  "files": [
+    "server/company/department-recovery.integration.test.ts",
+    "server/company/departments.integration.test.ts",
+    "server/company/departments-transport.integration.test.ts",
+    "server/company/membership.integration.test.ts",
+    "server/company/work-items.integration.test.ts",
+    "server/company-host.test.ts"
+  ],
+  "exit": {
+    "exit": 0,
+    "signal": null
+  },
+  "passed": 41,
+  "failed": 0,
+  "skipped": 0,
+  "total": 41,
+  "proof": "Disposable real PostgreSQL, restricted application role, synthetic agencies; no live customer data or remote deployment"
+}

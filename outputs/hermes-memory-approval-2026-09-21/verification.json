@@ -1,0 +1,50 @@
+{
+  "at": "2026-09-21T08:52:05.310389+00:00",
+  "status": "local-source-and-unsigned-mac-package-verified",
+  "sourceDigest": "b4f4ab747125a43b31212674350aa8ddae6a348ba64d0c939ffefcdbfd88141e",
+  "artifactManifestDigest": "4a89849f08cb2bc4d757986a3d4e2dc2682cfb419f45ff6fe2a87e93a6a9d487",
+  "sourceInputs": 1005,
+  "packagedFiles": 2386,
+  "packagedSymlinks": 14,
+  "inputsAndArtifactUnchanged": true,
+  "fullSuite": {
+    "passed": 3689,
+    "skipped": 143,
+    "failed": 0,
+    "files": 311,
+    "durationSeconds": 197.53,
+    "receipt": "full-tests-final.log"
+  },
+  "adapterFocusedTests": 89,
+  "httpMemoryTests": 18,
+  "clientFocusedTests": 28,
+  "nativeRestoreChecks": 8,
+  "nativeReceipt": "native-private-restore/receipt.json",
+  "nativeCleanup": {
+    "capturedServicePids": [
+      90400,
+      90433,
+      90509,
+      90692
+    ],
+    "serviceProcessesExited": true,
+    "scratchRemoved": true
+  },
+  "macSmoke": "passed",
+  "packagePreparation": "passed",
+  "electronSyntax": "passed",
+  "independentReview": "closed findings; script/title provenance, parsed URL origin and conflicting metadata tested",
+  "harnessFollowup": "Only qa-native-private-restore.mjs changed after the frozen build: explicitly await the restore button renderer reload before subsequent navigation. Runtime and packaged source unchanged.",
+  "negativeReceipts": [
+    "full-tests-portal-regression.log",
+    "native-private-restore-navigation-negative/receipt.json"
+  ],
+  "limitations": [
+    "Actual memory HTTP uses a fictional ACP peer, not a paid native-Hermes write",
+    "Actual packaged native restore uses in-memory AES safeStorage fixture, not OS Keychain/DPAPI",
+    "Windows installation, native control and ACL diagnosis are unverified for current source",
+    "Unsigned local build; no deployment or installed app replacement",
+    "Live customer Gmail, paired bank CSV/REI acceptance and managed billing service deployment remain separate",
+    "Pending-memory inbox/full-before-state modifications and streamed private backup v2 remain implementation follow-ups"
+  ]
+}

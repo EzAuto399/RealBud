@@ -3,6 +3,8 @@ import { Pool } from "pg";
 import { CompanyError, createCompanyKernel, type CompanyKernel } from "./company/index.ts";
 import type { CompanySessionResponse, CompanyStatus } from "../shared/company-api.ts";
 import type { ServiceAdminGate } from "../shared/service-admin.ts";
+import { CompanyPortalProofError } from './company/portal-proof.ts';
+import { isBeginCompanyExecution, isConfirmCompanyExecution, isRevokeCompanyExecution, isAdmitCompanyExecution, isCheckCompanyExecution, isRenewCompanyExecution, isSettleCompanyExecution } from '../shared/company-execution.ts';
 
 type Request = Pick<IncomingMessage, "headers">;
 type Reply = { status: number; body: unknown };
@@ -19,6 +21,11 @@ export function companyMemberToken(request: Request): string {
   return typeof value === "string" && /^[A-Za-z0-9_-]{43}$/.test(value) ? value : "";
 }
 
+export function companyExecutionToken(request: Request): string {
+  const value = request.headers['x-realbud-execution-grant'];
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value) ? value : '';
+}
+
 function fields(value: unknown, allowed: string[]): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => !allowed.includes(key))) {
     throw new CompanyError("invalid_input");
@@ -27,6 +34,14 @@ function fields(value: unknown, allowed: string[]): Record<string, unknown> {
 }
 
 function fail(error: unknown, path: string): Reply {
+  if (error instanceof CompanyPortalProofError) {
+    const stale = error.code === 'portal_proof_stale';
+    return { status: error.code === 'portal_proof_unavailable' ? 503 : stale ? 409 : 403,
+      body: { code: error.code, error: error.code === 'portal_proof_unavailable'
+        ? 'The website identity could not be checked. Keep this request and retry when the connection returns.'
+        : stale ? 'This website confirmation expired. Refresh the link status before continuing.'
+        : 'The website confirmation does not match this member and office.' } };
+  }
   if (error instanceof CompanyError) {
     if (error.code === "recovery_required" && path.startsWith("/api/company/work")) {
       return { status: 422, body: { code: error.code, error: "Shared work needs service recovery. The original record is preserved. Contact service administration; retrying will not repair it." } };
@@ -40,6 +55,10 @@ function fail(error: unknown, path: string): Reply {
       claim_busy: "This case is already being worked on.", stale_claim: "This claim is no longer current.",
       recovery_required: "The previous work needs recovery before another claim can start.",
       unsafe_database_role: "Company storage needs a restricted application role. Contact service administration.",
+      owner_transfer_required: "Transfer ownership to another member before leaving this office.",
+      work_resolution_required: path === '/api/company/departments/lifecycle'
+        ? "Resolve all open and interrupted cases before retiring this department. No work was changed."
+        : "Finish, close or reassign your open shared and department work before leaving this office.",
     };
     return { status, body: { code: error.code, error: messages[error.code] } };
   }
@@ -92,6 +111,47 @@ export function createCompanyHost(options: {
           return { status: 200, body: status };
         }
         if (!kernel) return { status: 503, body: { error: "Company storage has not been provisioned. Contact service administration." } };
+        if (method === 'POST' && path.startsWith('/api/company/execution/')) {
+          const scopedToken = companyExecutionToken(request);
+          // This credential is accepted only by the scoped execution operations.
+          // It cannot become a member session or enter generic case mutations.
+          if (path === '/api/company/execution/status') { const input = fields(body, ['version','grantId']); return { status: 200, body: await kernel.statusDepartmentExecution(scopedToken, input as {version:1;grantId:string}) }; }
+          if (path === '/api/company/execution/admit') { if (!isAdmitCompanyExecution(body)) throw new CompanyError('invalid_input'); return { status: 200, body: await kernel.admitDepartmentExecution(scopedToken, body) }; }
+          if (path === '/api/company/execution/check') { if (!isCheckCompanyExecution(body)) throw new CompanyError('invalid_input'); return { status: 200, body: await kernel.checkDepartmentExecution(scopedToken, body) }; }
+          if (path === '/api/company/execution/renew') { if (!isRenewCompanyExecution(body)) throw new CompanyError('invalid_input'); return { status: 200, body: await kernel.renewDepartmentExecution(scopedToken, body) }; }
+          if (path === '/api/company/execution/settle') { if (!isSettleCompanyExecution(body)) throw new CompanyError('invalid_input'); return { status: 200, body: await kernel.settleDepartmentExecution(scopedToken, body) }; }
+        }
+        if (method === 'POST' && path.startsWith('/api/company/execution-grants/')) {
+          if (path === '/api/company/execution-grants/begin') { if (!isBeginCompanyExecution(body)) throw new CompanyError('invalid_input'); return { status: 200, body: await kernel.beginDepartmentExecution(memberToken, body) }; }
+          if (path === '/api/company/execution-grants/confirm') { if (!isConfirmCompanyExecution(body)) throw new CompanyError('invalid_input'); return { status: 200, body: await kernel.confirmDepartmentExecution(memberToken, body) }; }
+          if (path === '/api/company/execution-grants/revoke') { if (!isRevokeCompanyExecution(body)) throw new CompanyError('invalid_input'); return { status: 200, body: await kernel.revokeDepartmentExecution(memberToken, body) }; }
+          if (path === '/api/company/execution-grants/list') {
+            const input = fields(body, ['offset','limit','departmentId']);
+            return { status: 200, body: await kernel.listDepartmentExecutions(memberToken, input as {offset:number;limit:number;departmentId?:string}) };
+          }
+        }
+        if (method === 'POST' && path.startsWith('/api/company/portal-bindings/')) {
+          if (path === '/api/company/portal-bindings/begin') {
+            const input = fields(body, ['version','requestId','memberId']);
+            return { status: 200, body: await kernel.beginPortalMemberBinding(memberToken, input as Parameters<typeof kernel.beginPortalMemberBinding>[1]) };
+          }
+          if (path === '/api/company/portal-bindings/accept' || path === '/api/company/portal-bindings/confirm') {
+            const input = fields(body, ['version','bindingId','requestId','expectedRevision','proofHandle']);
+            return { status: 200, body: await (path.endsWith('/accept') ? kernel.acceptPortalMemberBinding : kernel.confirmPortalMemberBinding)(memberToken, input as Parameters<typeof kernel.acceptPortalMemberBinding>[1]) };
+          }
+          if (path === '/api/company/portal-bindings/revoke') {
+            const input = fields(body, ['version','bindingId','requestId','expectedRevision','note']);
+            return { status: 200, body: await kernel.revokePortalMemberBinding(memberToken, input as Parameters<typeof kernel.revokePortalMemberBinding>[1]) };
+          }
+          if (path === '/api/company/portal-bindings/list') {
+            const input = fields(body, ['offset','limit']);
+            return { status: 200, body: await kernel.listPortalMemberBindings(memberToken, input as Parameters<typeof kernel.listPortalMemberBindings>[1]) };
+          }
+        }
+        if (path === "/api/company/membership/departure-status" && method === "POST") {
+          const input = fields(body, ["operationToken"]);
+          return { status: 200, body: await kernel.departureStatus(input.operationToken as string) };
+        }
         if (path === "/api/company/create" && method === "POST") {
           const denial = admin(request); if (denial) return denial;
           const input = fields(body, ["name", "ownerName", "credential"]);
@@ -147,6 +207,25 @@ export function createCompanyHost(options: {
           const input = fields(body, ["loginName", "password", "currentPassword"]);
           return { status: 200, body: await kernel.enrollMemberCredential(memberToken, input as { loginName: string; password: string; currentPassword?: string }) };
         }
+        if (path === "/api/company/membership/management" && method === "POST") {
+          const input = fields(body, ["offset"]);
+          return { status: 200, body: await kernel.membershipManagement(memberToken, input.offset as number | undefined) };
+        }
+        if (path === "/api/company/membership/leave" && method === "POST") {
+          const input = fields(body, ["operationToken"]);
+          await kernel.leaveMembership(memberToken, input.operationToken as string);
+          return { status: 200, body: { ok: true } };
+        }
+        if (path === "/api/company/ownership/offer" && method === "POST") {
+          const input = fields(body, ["memberId"]);
+          return { status: 200, body: await kernel.offerOwnership(memberToken, input.memberId as string) };
+        }
+        if ((path === "/api/company/ownership/accept" || path === "/api/company/ownership/cancel") && method === "POST") {
+          const input = fields(body, ["transferId"]);
+          if (path.endsWith('/accept')) await kernel.acceptOwnership(memberToken, input.transferId as string);
+          else await kernel.cancelOwnership(memberToken, input.transferId as string);
+          return { status: 200, body: { ok: true } };
+        }
         if (path === "/api/company/workflow-template" && method === "GET") {
           return { status: 200, body: await kernel.readWorkflowTemplate(memberToken) };
         }
@@ -200,6 +279,50 @@ export function createCompanyHost(options: {
           const input = fields(body, ["id", "expectedRevision"]);
           return { status: 200, body: { item: await kernel.closeSharedWork(memberToken, input as unknown as Parameters<typeof kernel.closeSharedWork>[1]) } };
         }
+        if (path === '/api/company/departments/list' && method === 'POST') {
+          const input = fields(body, ['offset']);
+          return { status: 200, body: await kernel.listDepartments(memberToken, input.offset as number | undefined) };
+        }
+        if (path === '/api/company/departments' && method === 'POST') {
+          const input = fields(body, ['requestId', 'name']);
+          return { status: 201, body: { department: await kernel.createDepartment(memberToken, input as Parameters<typeof kernel.createDepartment>[1]) } };
+        }
+        if (path === '/api/company/departments/access' && method === 'POST') {
+          const input = fields(body, ['departmentId', 'offset']);
+          return { status: 200, body: await kernel.departmentAccess(memberToken, input as Parameters<typeof kernel.departmentAccess>[1]) };
+        }
+        if (path === '/api/company/departments/access' && method === 'PUT') {
+          const input = fields(body, ['departmentId', 'memberId', 'access', 'expectedRevision']);
+          return { status: 200, body: { department: await kernel.setDepartmentAccess(memberToken, input as Parameters<typeof kernel.setDepartmentAccess>[1]) } };
+        }
+        if (path === '/api/company/departments/cases' && method === 'POST') {
+          const input = fields(body, ['departmentId', 'offset', 'filter']);
+          return { status: 200, body: await kernel.departmentCases(memberToken, input as Parameters<typeof kernel.departmentCases>[1]) };
+        }
+        if (path === '/api/company/departments/cases/recover' && method === 'POST') {
+          const input = fields(body, ['departmentId', 'caseId', 'requestId', 'expectedFence', 'resolution', 'note']);
+          return { status: 200, body: await kernel.recoverDepartmentCase(memberToken, input as unknown as Parameters<typeof kernel.recoverDepartmentCase>[1]) };
+        }
+        if (path === '/api/company/departments/cases/create' && method === 'POST') {
+          const input = fields(body, ['departmentId', 'requestId', 'title', 'description', 'assigneeMemberId']);
+          return { status: 201, body: await kernel.createDepartmentCase(memberToken, input as unknown as Parameters<typeof kernel.createDepartmentCase>[1]) };
+        }
+        if (path === '/api/company/departments/cases/assign' && method === 'POST') {
+          const input = fields(body, ['departmentId', 'caseId', 'requestId', 'expectedFence', 'assigneeMemberId']);
+          return { status: 200, body: await kernel.assignDepartmentCase(memberToken, input as unknown as Parameters<typeof kernel.assignDepartmentCase>[1]) };
+        }
+        if (path === '/api/company/departments/cases/close' && method === 'POST') {
+          const input = fields(body, ['departmentId', 'caseId', 'requestId', 'expectedFence', 'resolution', 'note']);
+          return { status: 200, body: await kernel.closeDepartmentCase(memberToken, input as unknown as Parameters<typeof kernel.closeDepartmentCase>[1]) };
+        }
+        if (path === '/api/company/departments/assignees' && method === 'POST') {
+          const input = fields(body, ['departmentId', 'offset']);
+          return { status: 200, body: await kernel.departmentAssignees(memberToken, input as unknown as Parameters<typeof kernel.departmentAssignees>[1]) };
+        }
+        if (path === '/api/company/departments/lifecycle' && method === 'POST') {
+          const input = fields(body, ['departmentId', 'requestId', 'expectedRevision', 'retired', 'note']);
+          return { status: 200, body: await kernel.setDepartmentLifecycle(memberToken, input as unknown as Parameters<typeof kernel.setDepartmentLifecycle>[1]) };
+        }
         if (path === "/api/company/scopes" && method === "GET") return { status: 200, body: { scopes: await kernel.listScopes(memberToken) } };
         if (path === "/api/company/scopes" && method === "POST") {
           const input = fields(body, ["kind", "name"]);
@@ -245,11 +368,11 @@ export function createCompanyHost(options: {
 }
 
 /** Explicit trusted configuration only; never reuse the local developer DB. */
-export function configuredCompanyKernel(): { kernel: CompanyKernel | null; close: () => Promise<void> } {
+export function configuredCompanyKernel(options?: Parameters<typeof createCompanyKernel>[1]): { kernel: CompanyKernel | null; close: () => Promise<void> } {
   const connectionString = process.env.REALBUD_COMPANY_DATABASE_URL;
   if (!connectionString) return { kernel: null, close: async () => {} };
   const pool = new Pool({ connectionString, max: 4, connectionTimeoutMillis: 2000, idleTimeoutMillis: 10_000,
     statement_timeout: 10_000, application_name: "realbud-company-service" });
   pool.on("error", () => { /* next request reports a sanitized unavailable state */ });
-  return { kernel: createCompanyKernel(pool), close: () => pool.end() };
+  return { kernel: createCompanyKernel(pool, options), close: () => pool.end() };
 }

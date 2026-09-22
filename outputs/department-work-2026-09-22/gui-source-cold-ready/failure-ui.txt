@@ -1,0 +1,236 @@
+RealBud
+Reconnecting
+
+WORKSPACE
+
+Desk
+Tasks & properties
+Ask
+Work with Bud
+Schedule
+Jobs & routines
+PO
+You
+Office & settings
+Manage views
+Connections
+LOCAL SERVICE
+Reconnecting
+
+New checks and saves are paused. Your existing book stays saved in your private workspace.
+
+Sample book
+·
+Bud setup open
+·
+Next Morning money check 23 Sept, 7:30 am
+You
+
+Jump to a group below, or scroll. Set up only what you need for the work ahead.
+
+Bud
+Office
+Browser
+Apps
+Phone
+Profile
+Advanced
+Service
+Source-run key. This is not a production distribution. Agency data stays local.
+BUD SETUP
+Bud on this computer
+
+Reconnecting
+
+The local service is reconnecting. Keep drafting; new work can start when the connection returns.
+
+Ask your RealBud service administrator to finish setup on this computer. Keep preparing and saving plans in Schedule.
+
+Check again
+
+Company service settings are managed. Personal app connections stay under Apps.
+
+Service administration
+This office
+Agency basics · optional setup details
+This office
+Set the basics for your book. Software and technical details can wait.
+
+Finish setting up this office
+
+1 of 7 filled. The rest of the form can wait.
+
+Agency and named PM
+Agency name and states →
+
+Optional later: pms brand, named exporter, export cadence, export identity column, vendor test account.
+
+Agency name
+Where are your properties?
+
+Choose the states and territories in your book. RealBud uses these for location-specific workflows.
+
+ACT
+NSW
+NT
+QLD
+SA
+TAS
+VIC
+WA
+
+Book timezone: Australia/Brisbane
+
+How we check rent · your office’s workflow
+Software & office contact · optional
+CSV handover notes · optional
+Assisted portal setup · technical details
+Save changes
+Local office collaboration
+
+Optional. Use RealBud on your own, or join colleagues to exchange reviewed work and workflow templates.
+
+Company connection unavailable
+
+One existing office computer can host collaboration. To join it, use your owner’s host code and a private invitation. Your Desk, Ask history and sources stay on this computer; they are not automatically shared.
+
+Joining keeps your existing private Bud, model setup and local work. Only the work you explicitly review and share goes to colleagues.
+
+Keep RealBud open on the host computer and check its network connection. This screen checks again automatically. Work is not replayed when the connection returns.
+
+Connection and work recovery
+
+Company status could not be checked. Try again when the local service is available.
+
+Check company status
+Website account
+Optional. See this computer’s status in your RealBud website account.
+
+This link is separate from local office collaboration. Linking a computer does not join an office host or share work with colleagues.
+
+The website receives this computer’s name, app and Bud versions, readiness, and last check-in. Your conversations, documents, and connected-app keys stay here.
+
+Open Account → Computers, create a link code, then paste it below.
+
+Computer name
+Link code
+Link this computer
+
+Linking enables status reporting. To accept selected work requests, review the separate workspace permission below. Bud setup and service access are managed separately.
+
+Requests from the website
+Choose which work your website account can request in this private workspace. Each request needs your review here.
+
+An account owner can ask this computer to prepare selected work while RealBud is open. They cannot approve it for you or access another person’s workspace.
+
+Website account
+Not linked
+Computer
+This computer
+Private workspace
+Your workspace on this computer
+
+Link this computer to your website account above before enabling requests. Saved request history remains available here.
+
+Website requests are disabled
+
+Workspace name shown on the website
+Work the website may request
+Fictional case review plan
+Prepare the existing approved local plan.
+
+The selected plan names and this workspace name will be shared with your website account. Choose names that are appropriate to share. Source details, messages, drafts and connected-app keys stay on this computer.
+
+I reviewed these names and allow account owners to request this work for my review here.
+Enable reviewed website requests
+Requests and work in progress
+
+No requests are waiting in the loaded history.
+
+Show completed and restored history (0)
+
+Website requests could not be refreshed. Your saved work is unchanged.
+
+Refresh saved status
+
+Website requests do not activate a subscription, change provider settings or authorize bank posting. A website connection can be unavailable while local work remains usable.
+
+People who can review from the website
+Invite a verified person, then confirm them here. Linking a computer or owning the billing account does not give this permission.
+
+Review the complete plan below before creating an invitation. This setup stores permission records on the RealBud website; it sends no plan text, reads no mailbox and starts no work. Remote preparation approval is a separate step.
+
+Refresh access
+Workspace name
+Preparations this person may review
+Fictional case review plan
+Review what may be shared
+Shared reviews and remote preparation
+Off until you enable it here. Workspace enrollment alone does not share a review or start work.
+
+When enabled, this computer may share the complete templates you already reviewed with their confirmed audience. An invited person can request a preparation and approve or reject its exact review on the website. RealBud rechecks the plan, sources and permissions before preparing work.
+
+This workspace
+
+Sharing and remote preparation are off
+
+Results and private execution details stay on this computer. The website receives the reviewed plan, addressed people, decisions and progress.
+
+Confirm an invited person and the intended reviewed work in Workspace access above, resolve any source or permission hold, and finish pending cancellations before enabling sharing.
+
+Check website work
+Requests and preparation
+
+No active requests in the loaded history.
+
+Show completed and restored history (0)
+
+Saved remote work status could not be loaded. Refresh before changing permissions.
+
+Refresh saved sharing status
+
+Turning on sharing does not authorize outgoing messages, payments, bank posting or new schedules. Those actions keep their own approval controls.
+
+Workspace setup · 3 left · Bud, agency name, workflows. Workflow checks are separate.
+Open
+BUD MEMORY
+Bud’s memory
+Review what Bud proposes to remember for future conversations.
+
+These preferences guide future conversations. They do not update business records or grant permission to do work. Saved changes may require a new conversation.
+
+Refresh memory reviews
+
+Memory files need service review. Existing files were preserved.
+
+Interrupted proposals
+
+A proposal may have been interrupted and no longer have a recoverable draft. Closing its record stops retries. Closing does not change saved preferences or undo an earlier memory decision.
+
+Refresh interrupted proposals
+
+Memory files need service review. Existing files were preserved.
+
+CONNECTIONS
+Browser
+RealBud is offline
+Connected apps
+Optional · bring email and files into a task
+Bud on your phone
+Optional · connect a messaging app
+ACCOUNT
+Your profile
+Name and office email
+RealBud service
+Access to managed assistance on this computer.
+
+Development service
+
+This development checkout is not enrolled in managed service.
+
+Refresh service status
+MORE
+Advanced
+Jobs, rules, recovery, and diagnostics
+Service administration
+Unlocked in this window

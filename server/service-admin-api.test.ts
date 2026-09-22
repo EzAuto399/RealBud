@@ -5,6 +5,7 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import { once } from "node:events";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
+import { createServer as createHttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +18,34 @@ const root = mkdtempSync(join(tmpdir(), "realbud-admin-http-"));
 const keys = generateKeyPairSync("ed25519");
 type Installation = { data: string; password: string; base: string; session: string; child: ChildProcess };
 const installations: Installation[] = [];
+const connectorCredential = `rbc_${'b'.repeat(64)}`;
+const accidentalSecret = 'ak_fictional_gateway_diagnostic_only';
+const connectorCalls: Array<{ path: string; authorization: string | undefined; profile: string | string[] | undefined }> = [];
+const releases = new Set<() => void>();
+let holdNextStatus: { entered(): void; released: Promise<void> } | null = null;
+const connector = createHttpServer(async (req, res) => {
+  connectorCalls.push({ path: req.url ?? '', authorization: req.headers.authorization, profile: req.headers['x-realbud-profile'] });
+  if (req.method !== 'GET' || req.url !== '/v1/connectors/status' || req.headers.authorization !== `Bearer ${connectorCredential}` || req.headers['x-realbud-profile'] !== 'property') {
+    res.writeHead(403, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: 'fixture_access_denied' })); return;
+  }
+  const held = holdNextStatus; holdNextStatus = null;
+  if (held) { held.entered(); await held.released; }
+  res.writeHead(200, { 'content-type': 'application/json' });
+  res.end(JSON.stringify({ managed: true, checkedAt: new Date().toISOString(), serviceExpiresAt: Date.now() + 60_000,
+    diagnostic: { credential: accidentalSecret },
+    services: { gmail: { connected: true, status: 'ACTIVE', accountSelectionRequired: false,
+      providerKey: accidentalSecret, accounts: [{ id: 'fixture-mailbox', label: 'Fictional mailbox', status: 'ACTIVE', credential: accidentalSecret }] } },
+    tools: { available: true, names: ['GMAIL_GET_PROFILE'], debug: { credential: accidentalSecret } } }));
+});
+let connectorEndpoint = '';
+function blockNextConnectorCheck() {
+  let entered!: () => void, release!: () => void;
+  const arrived = new Promise<void>(resolve => { entered = resolve; });
+  const released = new Promise<void>(resolve => { release = resolve; });
+  const unblock = () => { releases.delete(unblock); release(); };
+  releases.add(unblock); holdNextStatus = { entered, released };
+  return { arrived, release: unblock };
+}
 
 function grant(installation: Installation, expiresAt: number) {
   const payload = canonicalServiceEntitlementPayload({ schema: 1, licenseId: "fixture-license", companyId: "fixture-company",
@@ -34,11 +63,13 @@ async function request(instance: Installation, path: string, method = "GET", bod
 }
 
 beforeAll(async () => {
+  connector.listen(0, '127.0.0.1'); await once(connector, 'listening');
+  connectorEndpoint = `http://127.0.0.1:${(connector.address() as { port: number }).port}`;
   for (const name of ["A", "B"]) {
     const data = join(root, name); mkdirSync(data, { mode: 0o700 });
     const password = `Fictional-${name}-separate-admin-2026!`;
     writeFileSync(join(data, "config.json"), JSON.stringify({ profile: { name: `Fixture ${name}` },
-      instances: { fixture: { driver: "not-a-real-driver" } }, composio: { key: "ak_fictional-never-contact-provider" } }));
+      instances: { fixture: { driver: "not-a-real-driver" } }, composio: { key: "ak_fictional-never-contact-provider", apiKey: 'ak_fictional_legacy_alias' } }));
     writeFileSync(join(data, "service-admin.json"), JSON.stringify({ version: 1, passwordVerifier: await createServiceAdminPasswordVerifier(password) }), { mode: 0o600 });
     writeFileSync(join(data, "service-installation.json"), JSON.stringify({ schema: 1, companyId: "fixture-company", hostInstallationId: `fixture-${name}` }));
     writeFileSync(join(data, "service-trust-keys.json"), JSON.stringify({ schema: 1, keys: [{ keyId: "fixture-key", publicKeyPem: keys.publicKey.export({ type: "spki", format: "pem" }) }] }));
@@ -65,6 +96,7 @@ beforeAll(async () => {
 }, 40_000);
 
 afterAll(async () => {
+  for (const release of releases) release();
   for (const instance of installations) {
     if (instance.child.exitCode === null && instance.child.signalCode === null) {
       const stopped = once(instance.child, "exit"); instance.child.kill("SIGTERM");
@@ -72,6 +104,8 @@ afterAll(async () => {
       await stopped; clearTimeout(timer);
     }
   }
+  connector.closeAllConnections();
+  await new Promise<void>(resolve => connector.close(() => resolve()));
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -91,6 +125,7 @@ describe("managed service through the real HTTP boundary", () => {
     const before = readFileSync(join(a.data, "config.json"));
     for (const [path, method, body] of [
       ["/api/config", "PUT", { composio: { key: "" } }],
+      ["/api/connected-apps/managed/setup", "POST", { endpoint: 'https://service.example', credential: `rbc_${'a'.repeat(64)}` }],
       ["/api/config?ignored=1", "PATCH", { composio: { apiKey: "ak_replacement" } }],
       ["/api/hermes/model", "POST", { providerId: "openai", apiKey: "replacement" }],
       ["/api/bots/bud", "PATCH", { modelSelection: { instanceId: "own", model: "own" } }],
@@ -141,5 +176,76 @@ describe("managed service through the real HTTP boundary", () => {
     // Recovery is a newly verified grant, never administrator login alone.
     grant(a, Date.now() + 60_000);
     expect((await request(a, "/api/service/status")).body.state).toBe("active");
+  });
+
+  it('replaces local connector credentials only after a checked administrator request and projects all public status', async () => {
+    const b = installations[1]!;
+    const login = await request(b, '/api/service-admin/login', 'POST', { password: b.password });
+    expect(login.status).toBe(200);
+    expect(JSON.parse(readFileSync(join(b.data, 'config.json'), 'utf8')).composio.key).toBe('ak_fictional-never-contact-provider');
+    expect(JSON.parse(readFileSync(join(b.data, 'config.json'), 'utf8')).composio.apiKey).toBe('ak_fictional_legacy_alias');
+    const from = connectorCalls.length;
+    const result = await request(b, '/api/connected-apps/managed/setup', 'POST', { endpoint: connectorEndpoint, credential: connectorCredential }, login.body.token);
+    expect(result.status).toBe(200);
+    expect(result.body.config.composio).toMatchObject({ configured: true, managed: true, apiKeyConfigured: false });
+    const stored = JSON.parse(readFileSync(join(b.data, 'config.json'), 'utf8'));
+    expect(stored.composio).toMatchObject({ key: '', apiKey: '', url: '', selectedAccounts: {}, managed: { endpoint: connectorEndpoint, credential: connectorCredential, profile: 'property' } });
+    expect(connectorCalls.slice(from)).toHaveLength(2); // Admission check, then refreshed desktop status.
+    expect(connectorCalls.slice(from).every(call => call.path === '/v1/connectors/status' && call.authorization === `Bearer ${connectorCredential}` && call.profile === 'property')).toBe(true);
+    const access = await request(b, '/api/connected-apps/status');
+    expect(access.status).toBe(200);
+    expect(access.body.services.gmail).toEqual({ connected: true, status: 'ACTIVE', accountSelectionRequired: false,
+      accounts: [{ id: 'fixture-mailbox', label: 'Fictional mailbox', status: 'ACTIVE' }] });
+    expect(access.body.tools).toEqual({ available: true, names: ['GMAIL_GET_PROFILE'] });
+    for (const output of [result.body, access.body, (await request(b, '/api/config')).body, (await request(b, '/api/config', 'GET', undefined, login.body.token)).body]) {
+      expect(JSON.stringify(output)).not.toContain(connectorCredential);
+      expect(JSON.stringify(output)).not.toContain(accidentalSecret);
+      expect(JSON.stringify(output)).not.toContain('ak_fictional-never-contact-provider');
+      expect(JSON.stringify(output)).not.toContain('ak_fictional_legacy_alias');
+    }
+  });
+
+  it('does not save managed setup if its administrator logs out while access is being checked', async () => {
+    const a = installations[0]!;
+    const login = await request(a, '/api/service-admin/login', 'POST', { password: a.password });
+    expect(login.status).toBe(200);
+    const before = readFileSync(join(a.data, 'config.json'));
+    const held = blockNextConnectorCheck();
+    const setup = request(a, '/api/connected-apps/managed/setup', 'POST', { endpoint: connectorEndpoint, credential: connectorCredential }, login.body.token);
+    try {
+      await held.arrived;
+      expect((await request(a, '/api/service-admin/logout', 'POST', {}, login.body.token)).status).toBe(200);
+    } finally { held.release(); }
+    const result = await setup;
+    expect(result.status).toBe(401);
+    expect(result.body.code).toBe('service_admin_required');
+    expect(readFileSync(join(a.data, 'config.json'))).toEqual(before);
+    expect((await request(a, '/api/config')).body.composio.managed).toBe(false);
+    expect(JSON.stringify(result.body)).not.toContain(connectorCredential);
+  });
+
+  it('rejects concurrent credential writes while managed setup is pending and preserves its checked binding', async () => {
+    const a = installations[0]!;
+    const login = await request(a, '/api/service-admin/login', 'POST', { password: a.password });
+    expect(login.status).toBe(200);
+    const before = readFileSync(join(a.data, 'config.json'));
+    const held = blockNextConnectorCheck();
+    const setup = request(a, '/api/connected-apps/managed/setup', 'POST', { endpoint: connectorEndpoint, credential: connectorCredential }, login.body.token);
+    try {
+      await held.arrived;
+      const callsBeforeConflict = connectorCalls.length;
+      const competingKey = await request(a, '/api/config', 'PUT', { composio: { key: 'ak_fictional_conflicting_key' } }, login.body.token);
+      expect(competingKey.status).toBe(409);
+      expect(competingKey.body.error).toContain('setup is in progress');
+      const competingSetup = await request(a, '/api/connected-apps/managed/setup', 'POST', { endpoint: connectorEndpoint, credential: `rbc_${'c'.repeat(64)}` }, login.body.token);
+      expect(competingSetup.status).toBe(409);
+      expect(connectorCalls).toHaveLength(callsBeforeConflict);
+      expect(readFileSync(join(a.data, 'config.json'))).toEqual(before);
+    } finally { held.release(); }
+    expect((await setup).status).toBe(200);
+    const stored = JSON.parse(readFileSync(join(a.data, 'config.json'), 'utf8'));
+    expect(stored.composio.key).toBe('');
+    expect(stored.composio.managed.credential).toBe(connectorCredential);
+    expect(JSON.stringify((await request(a, '/api/config')).body)).not.toContain(connectorCredential);
   });
 });

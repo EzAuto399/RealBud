@@ -1,0 +1,1 @@
+{"type": "object", "additionalProperties": false, "properties": {"code": {"type": "string"}, "decisions": {"type": "array", "items": {"type": "string"}}, "limits": {"type": "array", "items": {"type": "string"}}}, "required": ["code", "decisions", "limits"]}

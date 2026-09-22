@@ -1,0 +1,41 @@
+{
+  "sessionId": "01a0c497-b89a-7be1-8a67-e04acc956eb1",
+  "stopReason": "end_turn",
+  "requested": {
+    "model": "grok-4.6",
+    "reasoningEffort": "xhigh",
+    "tools": [],
+    "permissionMode": "plan",
+    "subagents": false
+  },
+  "modelUsage": {
+    "grok-4.6-build": {
+      "inputTokens": 59533,
+      "outputTokens": 36386,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "modelCalls": 1,
+      "costUSD": 0.11470988
+    }
+  },
+  "accepted": [
+    "Proposal-only strict schema and minimal result",
+    "SHA256 raw request-body fingerprints",
+    "Constant-time bearer validation",
+    "Explicit discovery-parameter validation",
+    "Active/reasoning gating around calls and replay",
+    "Abort races while actual callback retains concurrency slot"
+  ],
+  "retainedCorrections": [
+    "No terminal eviction: session refuses new RPC IDs at256 so old transport IDs cannot redispatch",
+    "Response close rather than completed IncomingMessage close determines client disconnect",
+    "Cancel generation captured before reading body; late body cannot act in another turn",
+    "Abort race itself is cached as uncertain immediately; a duplicate cannot hang awaiting ignored native abort",
+    "Active/reasoning checked after native settlement before caching success as well as before replies",
+    "Fixed isError tool results match existing RealBud MCP pattern",
+    "Standard MCP params._meta is accepted but never forwarded to native service",
+    "All Unicode bidi controls and final-line-terminator ID boundaries rejected by shared parser"
+  ],
+  "integration": "Selected improvements integrated into the smaller locally tested implementation; generated module not copied wholesale.",
+  "proof": "Grok proposal/source analysis only; real HTTP tests and ACP lifecycle checks are separate."
+}

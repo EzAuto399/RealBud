@@ -1,9 +1,11 @@
 // Cross-platform Hermes CLI stub for tests. POSIX keeps the shell script;
 // Windows gets a node runner resolved through resolveCliSpawn (CreateProcess
 // cannot exec bare #! scripts or .cmd shims without shell:true).
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { privateFixtureDirectory, privateFixtureRoot, writePrivateFixtureFile } from "./private-profile-fixture.ts";
 
 import { HERMES_PIN } from "../hermes-pin.ts";
 
@@ -31,12 +33,12 @@ function writeRunner(path: string, argsFile: string, answer: string, exitCode: n
 
 /** A fake `hermes`: --version prints the pin; chat prints `answer`. */
 export function fakeHermes(answer: string, exitCode = 0, stderr = ""): FakeHermes {
-  const dir = mkdtempSync(join(tmpdir(), "omb-fake-hermes-"));
+  const dir = privateFixtureRoot(join(tmpdir(), "omb-fake-hermes-"));
   const argsFile = join(dir, "args.txt");
   const profile = join(dir, "profiles", HERMES_PIN.profile);
-  mkdirSync(profile, { recursive: true });
-  writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
-  writeFileSync(join(profile, "config.yaml"), "approvals:\n  mode: manual\ncron_mode: deny\n");
+  privateFixtureDirectory(profile);
+  writePrivateFixtureFile(join(profile, "SOUL.md"), "# RealBud\n");
+  writePrivateFixtureFile(join(profile, "config.yaml"), "approvals:\n  mode: manual\ncron_mode: deny\n");
 
   if (process.platform === "win32") {
     const script = join(dir, "fake-hermes-runner.mjs");

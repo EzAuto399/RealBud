@@ -44,6 +44,26 @@ declare global {
     external?: boolean;
   }
 
+  /** Whether this computer is there to do scheduled work when nobody is looking.
+   * Both settings are off until the customer turns them on. */
+  interface ServicePersistenceState {
+    settings: { startOfficeServiceAtLogin: boolean; keepAwakeForSchedules: boolean };
+    /** Whether this build can register itself to start after sign-in, and why
+     * not when it cannot (a development build cannot). */
+    startup: { supported: boolean; reason: "supported" | "platform" | "development"; explanation: string };
+    /** What is actually held right now, not what was decided. */
+    keepAwake: {
+      holding: boolean;
+      state: "off" | "nothing-scheduled" | "on-battery" | "holding";
+      explanation: string;
+    };
+    /** The last thing a window reported about the office's own schedule. */
+    scheduleEnabled: boolean;
+    /** False when a change could not be written to disk, so it will not survive
+     * a restart. Only present on a set. */
+    saved?: boolean;
+  }
+
   interface Window {
     ogb?: {
       platform: NodeJS.Platform;
@@ -85,6 +105,17 @@ declare global {
       serviceStart?(): Promise<{ ok: boolean; status: ServiceLifecycleStatus }>;
       /** Explicitly stop the office service. Closing the window never does this. */
       serviceStop?(): Promise<{ ok: boolean; status: ServiceLifecycleStatus }>;
+      /** Start after sign-in, and keep this computer awake for scheduled work.
+       * `set` also reports whether the office has anything scheduled; the
+       * office owns that fact, the main process only caches the last report. */
+      servicePersistence?: {
+        get(): Promise<ServicePersistenceState>;
+        set(settings: {
+          startOfficeServiceAtLogin?: boolean;
+          keepAwakeForSchedules?: boolean;
+          scheduleEnabled?: boolean;
+        }): Promise<ServicePersistenceState>;
+      };
       /** In-app auto-update (packaged app only; dormant in dev). onState
        * fires immediately with the current state, then on transitions. */
       updater?: {

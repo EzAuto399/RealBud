@@ -1,0 +1,7 @@
+The input did not match the regular expression /Not checked yet · 3\. Choose a workflow pack/. Input:
+
+'Workspace setup 7 steps, in order. Each step reads this workspace’s own recorded state; a step that cannot be read says so instead of looking finished. Hide Done: 4. Connect and check Gmail · 5. Review property references Step 1 of 7: Name your agency Every letter, note and record carries this agency’s name, so it is set before anything else. Not named yet. Training names do not count. Name it on You Later · 2. Set up Bud Later · 3. Choose a workflow pack Later · 6. Approve workflow settings Not checked yet · 7. Enable the schedule — Not checked yet. Turning the schedule on is a separate action you take yourself. Open Agency workflow setup'
+
+
+--- server log ---
+realbud server on http://127.0.0.1:61227

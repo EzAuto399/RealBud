@@ -1,0 +1,37 @@
+{
+  "synthetic": true,
+  "bankBrand": "ANZ",
+  "formatNote": "Synthetic signed-amount supported CSV. Not a verified Austin ANZ service/export layout.",
+  "columns": {
+    "date": "Date",
+    "amount": "Amount",
+    "narrative": "Description",
+    "reference": "Reference"
+  },
+  "dateFormat": "DD/MM/YYYY",
+  "rules": [
+    {
+      "propertyId": "SYN-P01",
+      "reference": "000127",
+      "aliases": [
+        "Synthetic Alex Tenant",
+        "Synthetic Shared Payer"
+      ]
+    },
+    {
+      "propertyId": "SYN-P02",
+      "reference": "000456",
+      "aliases": [
+        "Synthetic Bailey Tenant",
+        "Synthetic Shared Payer"
+      ]
+    },
+    {
+      "propertyId": "SYN-P03",
+      "reference": "000789",
+      "aliases": [
+        "Synthetic Commercial Tenant"
+      ]
+    }
+  ]
+}

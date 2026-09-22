@@ -1,0 +1,18 @@
+{
+  "verifiedAt": "2026-09-21T20:34:14.529Z",
+  "scope": "Actual desktop connector client and gateway in a no-network in-memory fixture; fictional provider only",
+  "reviewedAccount": "account-a",
+  "gatewayCurrentAccount": "account-b",
+  "providerScanCalls": 0,
+  "providerAccountRead": null,
+  "clientResult": "rejected-before-read",
+  "requestFields": [
+    "expectedAccountId",
+    "scope"
+  ],
+  "sourceSha256": {
+    "server/managed-connectors.ts": "bf8b5ee79414b33435ef7cf95c7fb32a65ea3fcac1d213ebde1e9bd62947d61b",
+    "managed-gateway/connectors.ts": "e0043a20f7ffbb1d6a89f5c4428ec034746556339525a36fa15e5f7a5bcee535"
+  },
+  "passed": true
+}

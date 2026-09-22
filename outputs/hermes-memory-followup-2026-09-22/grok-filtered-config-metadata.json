@@ -1,0 +1,182 @@
+{
+  "grokVersion": "1.0.34",
+  "channel": "unknown",
+  "projectTrusted": true,
+  "configSources": {
+    "layers": [
+      {
+        "role": "user",
+        "path": "/Users/yoda/.grok/config.toml"
+      }
+    ]
+  },
+  "externalCompat": {
+    "remoteSettingsLoaded": false,
+    "cells": [
+      {
+        "vendor": "cursor",
+        "surface": "skills",
+        "enabled": true,
+        "source": "default"
+      },
+      {
+        "vendor": "cursor",
+        "surface": "rules",
+        "enabled": true,
+        "source": "default"
+      },
+      {
+        "vendor": "cursor",
+        "surface": "agents",
+        "enabled": true,
+        "source": "default"
+      },
+      {
+        "vendor": "cursor",
+        "surface": "mcps",
+        "enabled": true,
+        "source": "default"
+      },
+      {
+        "vendor": "cursor",
+        "surface": "hooks",
+        "enabled": true,
+        "source": "default"
+      },
+      {
+        "vendor": "cursor",
+        "surface": "sessions",
+        "enabled": true,
+        "source": "default"
+      },
+      {
+        "vendor": "claude",
+        "surface": "skills",
+        "enabled": true,
+        "source": "default"
+      },
+      {
+        "vendor": "claude",
+        "surface": "rules",
+        "enabled": true,
+        "source": "default"
+      },
+      {
+        "vendor": "claude",
+        "surface": "agents",
+        "enabled": true,
+        "source": "default"
+      },
+      {
+        "vendor": "claude",
+        "surface": "mcps",
+        "enabled": true,
+        "source": "default"
+      },
+      {
+        "vendor": "claude",
+        "surface": "hooks",
+        "enabled": true,
+        "source": "default"
+      },
+      {
+        "vendor": "claude",
+        "surface": "sessions",
+        "enabled": true,
+        "source": "default"
+      },
+      {
+        "vendor": "codex",
+        "surface": "sessions",
+        "enabled": true,
+        "source": "default"
+      }
+    ]
+  },
+  "discovered_counts": {
+    "projectInstructions": 2,
+    "hooks": 8,
+    "skills": 441,
+    "agents": 3,
+    "plugins": 1,
+    "mcpServers": 2
+  },
+  "mcpServers": [
+    {
+      "name": "semble",
+      "transport": "stdio",
+      "source": {
+        "type": "configToml",
+        "path": "/Users/yoda/.grok/config.toml"
+      }
+    },
+    {
+      "name": "sentry",
+      "transport": "http",
+      "source": {
+        "type": "plugin",
+        "plugin_name": "sentry",
+        "path": "/Users/yoda/.grok/installed-plugins/plugin-grok-a2eb6643"
+      }
+    }
+  ],
+  "plugins": [
+    {
+      "name": "sentry",
+      "scope": "user",
+      "enabled": true,
+      "provides": {
+        "skills": 33,
+        "agents": 0,
+        "hooks": false,
+        "mcpServers": 1
+      }
+    }
+  ],
+  "configShapes": {
+    "/Users/yoda/.grok/config.toml": {
+      "cli": {
+        "installer": "str",
+        "auto_update": true
+      },
+      "marketplace": {
+        "official_marketplace_auto_installed": true,
+        "default_skills_installs_purged": true,
+        "sources": {
+          "type": "list",
+          "count": 1
+        }
+      },
+      "ui": {
+        "max_thoughts_width": "int",
+        "fork_secondary_model": "str",
+        "yolo": false,
+        "compact_mode": false,
+        "permission_mode": "str"
+      },
+      "plugins": {
+        "enabled": {
+          "type": "list",
+          "count": 1
+        }
+      },
+      "models": {
+        "default": "str",
+        "default_reasoning_effort": "str"
+      },
+      "mcp_servers": {
+        "semble": {
+          "command": "str",
+          "args": {
+            "type": "list",
+            "count": 8
+          },
+          "startup_timeout_sec": "int"
+        }
+      },
+      "privacy": {
+        "privacy_banner_acked": "str"
+      }
+    }
+  }
+}

@@ -1,0 +1,39 @@
+
+> realbud@0.1.19 test:two-device-evidence /Users/yoda/projects/RealBud
+> node --test scripts/check-two-device-acceptance.test.mjs
+
+✔ blank templates fail closed and neither mutate nor accept the operational catalogue (3.638833ms)
+✔ a complete synthetic record proves only checker structure and integrity, not office readiness (13.092583ms)
+✔ the second independent bills workflow cannot be replaced by the handoff case (9.441417ms)
+✔ simulation cannot substitute for native observations (7.1915ms)
+✔ local-integration cannot substitute for native observations (7.393709ms)
+✔ ci cannot substitute for native observations (8.63ms)
+✔ null cannot substitute for native observations (8.647042ms)
+✔ same identity, source account or private worker context fails isolation coverage (23.431917ms)
+✔ wrong executing device, reused job, missing result and unmanaged worker fail (26.642125ms)
+✔ Stop requested, a missing recovery case or only one observed device cannot pass (14.078917ms)
+✔ Mac evidence cannot silently weaken the default full-platform target (4.595125ms)
+✔ full-platform structure requires all four interactive pairings and Windows 11 x64 (62.94275ms)
+✔ physical Mac rehearsal refuses two simulated or virtual desktops (4.276292ms)
+✔ changed or missing evidence files fail even when every observation says pass (5.83275ms)
+✔ evidence paths cannot escape through traversal or a symbolic link (9.166041ms)
+✔ duplicate pairing/case records cannot hide missing observations (8.2005ms)
+✔ CLI returns failure for a missing receipt or an unrun template (91.564125ms)
+✔ contract retains all 71 exact historical cases, four pairings and independent bills runs (0.253375ms)
+✔ missing, damaged and reduced contracts fail admission with an actionable error (7.598792ms)
+✔ exported helpers cannot accept a caller-reduced contract or mutate an admitted policy (1.0245ms)
+✔ every case has the explicit reviewed participant policy, including host and peer Windows roles (0.152917ms)
+✔ missing required participants, duplicate and unknown slots cannot pass any case (17946.430833ms)
+✔ malformed receipt entries fail without crashing the exported checker (79.599792ms)
+✔ receipts cannot reuse an old schema or another contract digest (14.654167ms)
+✔ malformed Windows versions and receipt identity fields are reported without coercion crashes (335.094042ms)
+✔ evidence pathname replacement after open is held before reading outside content (4.263ms)
+✔ CLI emits bound unrun templates for both targets without changing the catalogue (64.135958ms)
+ℹ tests 27
+ℹ suites 0
+ℹ pass 27
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 18815.463709

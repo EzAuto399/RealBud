@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-09-22T00:04:10.689888+00:00",
+  "files": {
+    "website/supabase/migrations/202609220005_company_portal_proofs.sql": "9b47a8cc3949bb6514d50cf17151933f84750141e48ad2856f804404acc12b2a",
+    "website/lib/company-portal.ts": "a0f2a1115cf8143a71b30f4e2116a94900b6ff29288413ed4f94a73f6272ee32",
+    "website/lib/company-portal.test.mjs": "141a42ed2af332425fcde37f9737f2349ca30e1ebd5aaf647bb8248ceadbf858",
+    "website/app/api/account/company-portal/route.ts": "ac842713d804667fbd9c2e8b5b8b040185b66cb832667e7b6e4122af6d3d2baf",
+    "website/app/api/company-portal/redeem/route.ts": "7156799cf61a62b8b69a61c865bbf5f16f8cbfbc1722eb251592545afb0c7e37",
+    "website/scripts/testing/company-portal-postgres.mjs": "25795605ff4249824fdf72f072f5cd17f12166be214c80acc4f4407bb35bccf9"
+  }
+}

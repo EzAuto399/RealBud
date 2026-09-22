@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "at": "2026-09-21T16:21:29Z",
+  "passed": false,
+  "status": "unsupported",
+  "platform": "darwin",
+  "python": "3.14.4",
+  "architecture": "arm64",
+  "windows": [
+    "",
+    "",
+    "",
+    ""
+  ],
+  "selected_module": "/nonexistent/module-must-not-be-imported.py",
+  "script_sha256": "b672dd40aaca823e77c838d84a71cded4c0024fb91646d63bf730bf4b8ab5bbc",
+  "checks": [],
+  "cleanup": true,
+  "native_validation": false,
+  "limits": [
+    "Primitive acceptance only; production platform holds remain unchanged.",
+    "No Hermes runtime, model/provider, customer profile or credential is used.",
+    "No full application, installed GUI, Windows 11 device or power-loss guarantee is implied.",
+    "Ancestor pinning and ancestor-junction refusal belong to the separate portable protocol and are not established by this leaf-primitive script."
+  ],
+  "reason": "A real Windows process is required; no native checks were run."
+}

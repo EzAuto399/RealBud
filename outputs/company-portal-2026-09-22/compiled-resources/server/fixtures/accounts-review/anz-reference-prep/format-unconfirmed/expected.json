@@ -1,0 +1,16 @@
+{
+  "kind": "accounts-anz-reference-candidates",
+  "status": "blocked",
+  "coverageComplete": false,
+  "itemArray": "rows",
+  "itemIdKey": "sourceRow",
+  "itemCount": 0,
+  "items": {},
+  "requiredHolds": [],
+  "actionsPerformed": [],
+  "hostValidation.required": true,
+  "hostValidation.applied": false,
+  "notes": [
+    "A named format-confirmation hold is mandatory. No row assignments or generated export. Coverage is not established for a format-unconfirmed input."
+  ]
+}

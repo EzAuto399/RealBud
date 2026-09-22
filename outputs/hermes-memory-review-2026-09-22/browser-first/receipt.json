@@ -1,0 +1,34 @@
+{
+  "at": "2026-09-21T14:56:01.235Z",
+  "passed": false,
+  "node": "v24.19.0",
+  "platform": "darwin",
+  "runtimePin": "345cd2b057a452236de401d3534b8502a7465e8d",
+  "nativeModules": {
+    "tools/memory_tool.py": "ed9c5db6b3144b88425f7039280239b29a047143aa8ffdfd3b7f47bf7e707143",
+    "tools/memory_tool_store.py": "811ef2eb98a8b3f0448294b2c23d422ff7ebd4dc45835475b12df0557d7e5366",
+    "tools/write_approval.py": "9404792bc8c6637e5bd78a87f5a6dfabda6cd6a1a61083b450647ddb2951c470",
+    "tools/threat_patterns.py": "6ad8947a5a62db44f66b1cd33086e2b51c4a66019ef5301856e5efae59797341",
+    "utils.py": "1414f177e14940750ad80d6dd5020685219ca26b0b7d500299ab2f170118ed07",
+    "hermes_constants.py": "e5f72a309b3689f5fa2e85065e8051f8e6f7686d1ec1741e7543cc5e56bea162",
+    "tools/__init__.py": "7bca460f476ac9ace706c8cfd07e98f8aae34d839862f0f68abafc3a8397cf35",
+    "tools/registry.py": "310a57a5dc5d41c935eacbe707e8a258dc21fd72fd44fccbc33d1a78b7143922"
+  },
+  "sourceHashes": {
+    "server/hermes-memory-review.ts": "7ae43296901f653a6ae59b96e80b6032801a72a1278d3ed76697df7eb83a42b2",
+    "server/helpers/hermes-memory-review.py": "1b206f645d5cf97943411aab75389c96acc546e335f0b265f536d394907cbad6",
+    "shared/hermes-memory-review.ts": "90623a7578eb468e7f6fc1932a898d91c86eae58480da24356955d4462759ce9",
+    "src/components/MemoryReviewPanel.tsx": "8244caef3f75dd734e8d1baa62c4283d9efdb66a6e2daccc28238d23d57a4606",
+    "src/components/YouPage.tsx": "6fa7c49a2cae1c7914c17f77dbc792f7d7acb49d263db5cc88465f1deea8b501",
+    "dist/index.html": "da6d6f4aee3831640597cee9677874b1f907107ce2b7d003adf5d27282c4a6bd",
+    "scripts/qa-hermes-memory-review.mjs": "f864d01279665c2e7138d660062cef4c1fbea9586ce6cf86b49d2c3991b65ffe"
+  },
+  "checks": [],
+  "errors": [],
+  "blockedNetwork": [],
+  "decisions": [],
+  "cleanup": true,
+  "layer": "Actual source bootstrap and authenticated HTTP, built React UI, admitted native memory modules, fictional disposable profile. No Hermes CLI, model/provider calls, customer accounts, installed Electron, OS keychain or Windows device acceptance.",
+  "failure": "Error: EEXIST: file already exists, symlink '/Users/yoda/.realbud/hermes/runtimes/345cd2b057a452236de401d3534b8502a7465e8d-cfb3f08a9ee7/hermes-agent/venv/Lib' -> '/private/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/RealBud memory review QA H4u4gz/workspace/hermes/runtimes/345cd2b057a452236de401d3534b8502a7465e8d/hermes-agent/venv/Lib'\n    at symlinkSync (node:fs:1938:11)\n    at prepareRuntime (file:///Users/yoda/projects/RealBud/scripts/qa-hermes-memory-review.mjs:71:145)\n    at file:///Users/yoda/projects/RealBud/scripts/qa-hermes-memory-review.mjs:103:9\n    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)\n    at async node:internal/modules/esm/loader:643:26\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)",
+  "diagnostic": ""
+}

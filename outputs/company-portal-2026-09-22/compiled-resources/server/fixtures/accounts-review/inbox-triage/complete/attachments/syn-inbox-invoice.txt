@@ -1,0 +1,2 @@
+SYNTHETIC ATTACHMENT ONLY
+Invoice SYN-TRIAGE-INV001, supplier SYN-SUP001, property SYN-P01, AUD 420.00, due 2026-09-18. Triage passes this to invoice review; it does not approve payment.

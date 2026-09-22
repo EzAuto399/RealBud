@@ -5,10 +5,12 @@
 //   node scripts/smoke-mac-package.mjs
 //   OMB_SMOKE_EXECUTABLE=/path/to/RealBud.app/Contents/MacOS/RealBud node scripts/smoke-mac-package.mjs
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { serviceIdentity, findRunningService } from "../electron/service-instance.mjs";
+import { readServiceHandle, requestServiceStop } from "../electron/service-lifecycle.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaultApp = path.join(root, "release", "mac-arm64", "RealBud.app", "Contents", "MacOS", "RealBud");
@@ -22,7 +24,7 @@ if (!existsSync(executable)) {
   throw new Error(`[smoke-mac-package] missing executable: ${executable}\nRun pnpm package:mac first.`);
 }
 
-const sandbox = mkdtempSync(path.join(tmpdir(), "realbud-mac-smoke-"));
+const sandbox = mkdtempSync(path.join(realpathSync(tmpdir()), "realbud-mac-smoke-"));
 const home = path.join(sandbox, "home");
 const dataDir = path.join(home, ".realbud");
 const hermesHome = path.join(home, ".hermes");
@@ -82,6 +84,7 @@ const childEnv = {
   HOME: home,
   HERMES_HOME: hermesHome,
   REALBUD_DATA_DIR: dataDir,
+  REALBUD_LOG_DIR: path.join(sandbox, "electron-logs"),
   OMB_USER_DATA: userDataDir,
   OMB_SMOKE_TEST: "1",
   OMB_SMOKE_RESULT_FILE: resultFile,
@@ -199,6 +202,16 @@ try {
   console.log("[smoke-mac-package] OK: renderer, capabilities, embedded harness, and shutdown");
 } finally {
   await stopProcess();
+  // A packaged service deliberately survives its window. The smoke owns this
+  // disposable installation and must finish shutdown before deleting its data.
+  const identity = serviceIdentity(dataDir);
+  const service = readServiceHandle(dataDir, identity.instanceId);
+  if (service) await requestServiceStop(service, identity);
+  for (let attempt = 0; attempt < 50 && await findRunningService(identity); attempt++) await delay(100);
+  if (await findRunningService(identity)) {
+    succeeded = false;
+    throw new Error(`Disposable service did not stop; retained its data at ${sandbox}`);
+  }
   if (succeeded && process.env.OMB_KEEP_SMOKE_DIR !== "1") {
     rmSync(sandbox, { recursive: true, force: true });
   } else {

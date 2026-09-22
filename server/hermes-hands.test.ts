@@ -1,3 +1,5 @@
+import { withWorkerProfile } from "./hermes-profile.ts";
+import { applyPropertyPack } from "./hermes-pack.ts";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +11,7 @@ import { parseLedgerFacts, tryHermesLedger, tryHermesPing, uncoveredPropertyIds,
 import { seedVault } from "./vault.ts";
 import { HermesAgentDriver } from "./drivers/acp/hermes.ts";
 import { fakeHermes } from "./testing/fake-hermes.ts";
+import { WINDOWS_PROFILE_TEST_OPTIONS } from "./testing/private-profile-fixture.ts";
 
 const fixture: LedgerFacts[] = [
   { propertyId: "prop-oak", daysSinceDue: 3, rentLanded: false, levyPaid: false, daysSinceCourtesy: null },
@@ -18,6 +21,8 @@ const dirs: string[] = [];
 
 function stubHermes(...args: Parameters<typeof fakeHermes>) {
   const fake = fakeHermes(...args);
+  fake.root = realpathSync(fake.root);
+  fake.dir = realpathSync(fake.dir);
   dirs.push(fake.dir);
   return fake;
 }
@@ -168,7 +173,7 @@ describe("tryHermesPing (fake pinned CLI)", () => {
   // and session database. These pin that execution resolves the profile it was
   // given rather than always the shared base — the regression would be silent,
   // since every seat would keep working while quietly sharing each other's state.
-  describe("per-seat worker profiles", () => {
+  describe("per-seat worker profiles", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     const profileArg = (argsFile: string): string => {
       const args = readFileSync(argsFile, "utf8").split("\n");
       const at = args.indexOf("--profile");
@@ -184,6 +189,7 @@ describe("tryHermesPing (fake pinned CLI)", () => {
 
     it("runs the seat's own profile once a seat is given", async () => {
       const { dir, script, argsFile } = stubHermes("OK");
+      withWorkerProfile("dana", () => applyPropertyPack(dir));
       await tryHermesPing({ cli: script, root: dir, memberKey: "dana" });
       expect(profileArg(argsFile)).toBe(`${HERMES_PIN.profile}-dana`);
     });
@@ -192,6 +198,7 @@ describe("tryHermesPing (fake pinned CLI)", () => {
       const seen: string[] = [];
       for (const seat of ["dana", "sam"]) {
         const { dir, script, argsFile } = stubHermes("OK");
+        withWorkerProfile(seat, () => applyPropertyPack(dir));
         await tryHermesPing({ cli: script, root: dir, memberKey: seat });
         seen.push(profileArg(argsFile));
       }
@@ -201,14 +208,17 @@ describe("tryHermesPing (fake pinned CLI)", () => {
 
     it("resolves the same seat to the same profile every time", async () => {
       const first = stubHermes("OK");
+      withWorkerProfile("dana", () => applyPropertyPack(first.dir));
       await tryHermesPing({ cli: first.script, root: first.dir, memberKey: "dana" });
       const second = stubHermes("OK");
+      withWorkerProfile("dana", () => applyPropertyPack(second.dir));
       await tryHermesPing({ cli: second.script, root: second.dir, memberKey: "dana" });
       expect(profileArg(first.argsFile)).toBe(profileArg(second.argsFile));
     });
 
     it("carries the seat through the ledger read too, not just the ping", async () => {
       const { dir, script, argsFile } = stubHermes(JSON.stringify(fixture));
+      withWorkerProfile("sam", () => applyPropertyPack(dir));
       await tryHermesLedger(["prop-oak"], { cli: script, root: dir, memberKey: "sam" });
       expect(profileArg(argsFile)).toBe(`${HERMES_PIN.profile}-sam`);
     });
@@ -217,6 +227,7 @@ describe("tryHermesPing (fake pinned CLI)", () => {
       // A seat key reaches the profile name, which is a directory name. It must be
       // sanitised, so a caller cannot climb out of the profiles directory.
       const { dir, script, argsFile } = stubHermes("OK");
+      withWorkerProfile("../../etc/passwd", () => applyPropertyPack(dir));
       await tryHermesPing({ cli: script, root: dir, memberKey: "../../etc/passwd" });
       const profile = profileArg(argsFile);
       expect(profile).not.toContain("/");
@@ -229,12 +240,14 @@ describe("tryHermesPing (fake pinned CLI)", () => {
       // through the resolver's own unit test.
       const memberId = "3fa85f64-5717-4562-b3fc-2c963f66afa6";
       const { dir, script, argsFile } = stubHermes("OK");
+      withWorkerProfile(memberId, () => applyPropertyPack(dir));
       await tryHermesPing({ cli: script, root: dir, memberKey: memberId });
       expect(profileArg(argsFile)).toBe(`${HERMES_PIN.profile}-${memberId}`);
     });
 
     it("a blank seat is no seat, so a desk that never resolved one keeps the base", async () => {
       const { dir, script, argsFile } = stubHermes("OK");
+      withWorkerProfile("", () => applyPropertyPack(dir));
       await tryHermesPing({ cli: script, root: dir, memberKey: "" });
       expect(profileArg(argsFile)).toBe(HERMES_PIN.profile);
     });
@@ -346,4 +359,11 @@ it("holds an interrupted installation before pinging or reading property facts",
   writeFileSync(join(root, ".realbud-bootstrap.json"), JSON.stringify({ version: 1, pending: true, childPid: null }));
   expect(await tryHermesPing({ root, cli: "must-not-be-spawned" })).toMatchObject({ ok: false, detail: expect.stringContaining("setup did not finish") });
   expect(await tryHermesLedger(["fictional-property"], { root, cli: "must-not-be-spawned" })).toMatchObject({ rows: null, detail: expect.stringContaining("setup did not finish") });
+});
+
+it("does not borrow a configured base pack for an unconfigured member", async () => {
+  const { dir, script, argsFile } = stubHermes("OK");
+  const result = await tryHermesPing({ cli: script, root: dir, memberKey: "new-member" });
+  expect(result).toMatchObject({ ok: false, detail: expect.stringContaining("not set up") });
+  expect(() => readFileSync(argsFile, "utf8")).toThrow();
 });

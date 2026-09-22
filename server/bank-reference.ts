@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { BankSourceArtifact, BankSourceUpload } from "../shared/bank-source.ts";
 
 export interface BankReferenceRule { propertyId: string; reference: string; aliases: string[] }
 export interface BankReferenceInput {
@@ -7,19 +8,55 @@ export interface BankReferenceInput {
   dateFormat: "YYYY-MM-DD" | "DD/MM/YYYY";
   rules: BankReferenceRule[];
 }
+export type BankReferenceUpload = Omit<BankReferenceInput, "csv"> & { source: BankSourceUpload; csv?: never };
 export interface BankReferenceRow {
   id: string; date: string; amount: string; narrative: string; reference: string;
   candidates: string[]; issues: string[];
 }
 export interface BankReferenceBatch {
-  version: 1; originalDigest: string; input: BankReferenceInput; rows: BankReferenceRow[];
+  version: 1 | 2; originalDigest: string; input: BankReferenceInput; rows: BankReferenceRow[];
+  source?: BankSourceArtifact;
 }
 export interface BankReferenceDecision { rowId: string; action: "assign" | "keep"; propertyId?: string; reason: string }
 function fail(message: string): never { throw Object.assign(new Error(message), { status: 400 }); }
-export const bankDigest = (text: string) => createHash("sha256").update(text).digest("hex");
+export const bankDigest = (bytes: string | Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const safeText = (value: unknown, max: number) => typeof value === "string" && value.length <= max && !/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(value);
 const formula = (text: string) => /^[\s\uFEFF]*[=+@\-]/u.test(text);
 const normalized = (text: string) => text.normalize("NFKC").toLocaleLowerCase("en-AU").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+export function decodeBankSource(source: BankSourceUpload): { csv: string; bytes: Buffer; artifact: BankSourceArtifact } {
+  if (!source || typeof source.filename !== "string" || !source.filename.trim() || source.filename.length > 255 ||
+      /[\\/\x00-\x1f\x7f]/.test(source.filename) || [".", ".."].includes(source.filename)) fail("Choose a bank CSV with a valid filename.");
+  if (typeof source.bytesBase64 !== "string" || source.bytesBase64.length > 1_000_000 ||
+      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(source.bytesBase64)) fail("The bank file bytes are not valid. Choose the original CSV again.");
+  const bytes = Buffer.from(source.bytesBase64, "base64");
+  if (!bytes.length || bytes.length > 750_000 || bytes.toString("base64") !== source.bytesBase64) fail("Choose a non-empty CSV smaller than 750 KB.");
+  let csv: string;
+  try { csv = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); }
+  catch { fail("This bank file is not UTF-8. Export a UTF-8 CSV from the bank; the source file has not been changed."); }
+  if (csv.includes("\0")) fail("This bank file contains unsupported encoding or NUL bytes. Export a UTF-8 CSV from the bank.");
+  return { csv, bytes, artifact: { filename: source.filename, bytesBase64: source.bytesBase64,
+    encoding: bytes.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])) ? "utf-8-bom" : "utf-8",
+    byteLength: bytes.length, digest: bankDigest(bytes) } };
+}
+
+/** Old reviews captured text only. Their UTF-8 reconstruction remains available,
+ * but it must never be presented as verified original upload bytes. */
+export function bankBatchSource(batch: BankReferenceBatch) {
+  if (!batch || !batch.input || typeof batch.input.csv !== "string") fail("The source batch failed its integrity check.");
+  if (batch.version === 2) {
+    if (!batch.source) fail("The source batch failed its integrity check.");
+    const decoded = decodeBankSource(batch.source);
+    if (decoded.csv !== batch.input.csv || decoded.artifact.digest !== batch.originalDigest ||
+        decoded.artifact.digest !== batch.source.digest || decoded.artifact.encoding !== batch.source.encoding ||
+        decoded.artifact.byteLength !== batch.source.byteLength) fail("The source batch failed its integrity check.");
+    return { ...decoded, originalBytesCaptured: true };
+  }
+  if (batch.version !== 1 || bankDigest(batch.input.csv) !== batch.originalDigest) fail("The source batch failed its integrity check.");
+  const decoded = decodeBankSource({ filename: `bank-saved-text-${batch.originalDigest.slice(0, 12)}.csv`, bytesBase64: Buffer.from(batch.input.csv, "utf8").toString("base64") });
+  if (decoded.csv !== batch.input.csv) fail("This older saved text cannot be recovered without changing it. Keep the saved review and upload the original file separately.");
+  return { ...decoded, originalBytesCaptured: false };
+}
 
 /** Strict RFC-style CSV. Offsets let export replace only reference cells,
  * preserving original bytes, order, quoting, dates, signed amounts and BOM. */
@@ -74,8 +111,11 @@ function validDate(text: string, format: BankReferenceInput["dateFormat"]): bool
   return y >= 1900 && y <= 2200 && date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
 }
 
-export function createBankReferenceBatch(input: BankReferenceInput): BankReferenceBatch {
-  if (!input || !["YYYY-MM-DD", "DD/MM/YYYY"].includes(input.dateFormat)) fail("Choose the date format used in this bank export.");
+export function createBankReferenceBatch(upload: BankReferenceInput | BankReferenceUpload): BankReferenceBatch {
+  if (!upload || !["YYYY-MM-DD", "DD/MM/YYYY"].includes(upload.dateFormat)) fail("Choose the date format used in this bank export.");
+  const decoded = "source" in upload ? decodeBankSource(upload.source) : null;
+  if (decoded && upload.csv !== undefined) fail("Choose one original bank file; do not supply a second text copy.");
+  const input: BankReferenceInput = { csv: decoded?.csv ?? (upload as BankReferenceInput).csv, columns: upload.columns, dateFormat: upload.dateFormat, rules: upload.rules };
   const table = parseBankCsv(input.csv), headers = table[0].cells;
   const names = input.columns && [input.columns.date, input.columns.amount, input.columns.narrative, input.columns.reference];
   if (!names || new Set(names).size !== 4 || names.some(n => typeof n !== "string" || !headers.includes(n))) fail("Map four different existing columns: date, signed amount, description and reference.");
@@ -88,6 +128,9 @@ export function createBankReferenceBatch(input: BankReferenceInput): BankReferen
     ids.add(rule.propertyId); references.add(rule.reference);
     if (!Array.isArray(rule.aliases) || rule.aliases.length > 20 || rule.aliases.some(a => !safeText(a, 200) || normalized(a).length < 3)) fail("Use clear payer aliases with at least three letters or digits.");
   }
+  // The reference directory is fixed for this batch. Normalize its aliases
+  // once, including when validating historical rows against the original CSV.
+  const matchingRules = input.rules.map(rule => ({ propertyId: rule.propertyId, aliases: rule.aliases.map(alias => ` ${normalized(alias)} `) }));
   const originalDigest = bankDigest(input.csv), duplicateKeys = new Map<string, number>();
   const rows = table.slice(1).map(({ cells }, index): BankReferenceRow => {
     const [date, amount, narrative, reference] = indexes.map(i => cells[i]);
@@ -98,7 +141,7 @@ export function createBankReferenceBatch(input: BankReferenceInput): BankReferen
     // Never emit spreadsheet formulas from any untrusted textual field.
     if (cells.some((value, i) => i !== indexes[1] && formula(value))) fail(`Transaction ${index + 1} contains a spreadsheet formula-like value. Review the source safely before importing.`);
     const haystack = ` ${normalized(narrative)} `;
-    const candidates = input.rules.filter(rule => rule.aliases.some(a => haystack.includes(` ${normalized(a)} `))).map(rule => rule.propertyId);
+    const candidates = matchingRules.filter(rule => rule.aliases.some(alias => haystack.includes(alias))).map(rule => rule.propertyId);
     if (reference.trim()) issues.push("Existing reference; keep unless a reviewed correction is needed.");
     if (!candidates.length) issues.push("No property match; review manually.");
     if (candidates.length > 1) issues.push("More than one property matches; review manually.");
@@ -107,12 +150,15 @@ export function createBankReferenceBatch(input: BankReferenceInput): BankReferen
     return { id: `${originalDigest}:${index + 1}`, date, amount, narrative, reference, candidates, issues };
   });
   for (const row of rows) if (duplicateKeys.get(JSON.stringify([row.date, row.amount, row.narrative, row.reference]))! > 1) row.issues.push("Possible duplicate; both source rows are preserved. Confirm before import.");
-  return { version: 1, originalDigest, input: structuredClone(input), rows };
+  const batch: BankReferenceBatch = { version: decoded ? 2 : 1, originalDigest, input: structuredClone(input), rows,
+    ...(decoded ? { source: decoded.artifact } : {}) };
+  bankBatchSource(batch);
+  return batch;
 }
 
 export function reviewBankReferences(batch: BankReferenceBatch, decisions: BankReferenceDecision[]) {
   // Re-derive from the immutable original; do not trust client candidate rows.
-  if (batch.version !== 1 || bankDigest(batch.input.csv) !== batch.originalDigest) fail("The source batch failed its integrity check.");
+  const source = bankBatchSource(batch);
   const fresh = createBankReferenceBatch(batch.input), table = parseBankCsv(batch.input.csv);
   if (!Array.isArray(decisions) || decisions.length !== fresh.rows.length || new Set(decisions.map(d => d?.rowId)).size !== decisions.length) fail("Review every row exactly once before preparing the export.");
   const refIndex = table[0].cells.indexOf(batch.input.columns.reference);
@@ -128,11 +174,23 @@ export function reviewBankReferences(batch: BankReferenceBatch, decisions: BankR
     if (!rule) fail("Choose a property from this batch's saved reference directory.");
     if (rule.reference === row.reference) return;
     changes.push({ rowId: row.id, from: row.reference, to: rule.reference, reason: decision.reason.trim() });
-    replacements.push({ span: table[index + 1].spans[refIndex], text: /[",\r\n]/.test(rule.reference) ? `"${rule.reference.replaceAll('"', '""')}"` : rule.reference });
+    const span = table[index + 1].spans[refIndex];
+    replacements.push({ span, text: batch.input.csv[span[0]] === '"' || /[",\r\n]/.test(rule.reference) ? `"${rule.reference.replaceAll('"', '""')}"` : rule.reference });
   });
-  let csv = batch.input.csv;
-  for (const { span: [start, end], text } of replacements.reverse()) csv = csv.slice(0, start) + text + csv.slice(end);
+  // Slice unchanged bytes from the captured source. Convert UTF-16 parser
+  // offsets incrementally so multibyte characters cannot shift a replacement.
+  const chunks: Buffer[] = [];
+  let charOffset = 0, byteOffset = 0;
+  for (const { span: [start, end], text } of replacements) {
+    const byteStart = byteOffset + Buffer.byteLength(batch.input.csv.slice(charOffset, start), "utf8");
+    chunks.push(source.bytes.subarray(byteOffset, byteStart), Buffer.from(text, "utf8"));
+    byteOffset = byteStart + Buffer.byteLength(batch.input.csv.slice(start, end), "utf8");
+    charOffset = end;
+  }
+  chunks.push(source.bytes.subarray(byteOffset));
+  const bytes = Buffer.concat(chunks), csv = bytes.toString("utf8");
   const output = parseBankCsv(csv);
   if (output.length !== table.length || output.some((row, i) => row.cells.some((value, c) => c !== refIndex && value !== table[i].cells[c]))) fail("The output failed its transaction integrity check.");
-  return { csv, changes, originalDigest: batch.originalDigest, outputDigest: bankDigest(csv) };
+  return { csv, bytesBase64: bytes.toString("base64"), byteLength: bytes.length, encoding: source.artifact.encoding,
+    changes, originalDigest: batch.originalDigest, outputDigest: bankDigest(bytes) };
 }

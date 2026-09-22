@@ -17,6 +17,7 @@ export const BILL_STATUSES = [
   "company-advance",
   "owner-to-pay",
   "hold",
+  "cancelled",
 ] as const;
 
 export type BillStatus = (typeof BILL_STATUSES)[number];
@@ -36,6 +37,11 @@ export type ExpectedBill = {
   sourceRef: string | null;
   updatedAt: number;
   createdAt: number;
+  /** Source-reviewed occurrence fields; arrival predictions are separate. */
+  sourceKind?: "mail-reviewed";
+  dueDate?: string | null;
+  vendor?: string;
+  revision?: number;
 };
 
 type BillsFile = { version: 1; bills: ExpectedBill[] };
@@ -136,6 +142,7 @@ export function upsertExpectedBill(
   const file = loadFile(dataDir);
   const now = Date.now();
   const id = input.id?.trim() || randomUUID();
+  if (id.startsWith("source-bill:") || id.startsWith("bill-prediction:")) throw Object.assign(new Error("Source-linked bills require their reviewed source and current revision. Open the source bill review."), { status: 409 });
   const existing = file.bills.find((bill) => bill.id === id);
   const bill: ExpectedBill = {
     id,

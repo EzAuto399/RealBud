@@ -1,0 +1,16 @@
+{
+  "at": "2026-09-21T06:49:25.000Z",
+  "node": "24.19.0",
+  "rows": 1000,
+  "rules": 300,
+  "aliasesPerRule": 3,
+  "inputDigest": "ee74f77491ff732bf2e0f2ee59c6498db51e4812d7710683c8269013a301c8bf",
+  "resultDigest": "3afec8e0c1116648e46dce2f8e1b1bf1d0f4972d47e586e46fd6f1b08197edd8",
+  "timingsMs": [
+    144.76299999999998,
+    146.52358300000003,
+    144.662417
+  ],
+  "medianMs": 144.76299999999998,
+  "layer": "Fictional source parser, one Mac while other development work runs; not customer or Windows latency"
+}

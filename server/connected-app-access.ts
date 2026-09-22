@@ -2,8 +2,9 @@ import type { AppConfig } from "./config.ts";
 import { randomUUID } from "node:crypto";
 import { checkConnectionAccess, platformProjectKey, platformUserId } from "./composio.ts";
 import { getGmailReadOnlyAccess, type GmailReadOnlyBinding } from "./composio-gmail.ts";
+import { managedConnectorConfigured } from "./managed-connectors.ts";
 
-export const gmailReadOnlyMode = (cfg: AppConfig): boolean => cfg.composio?.mode === "gmail-readonly";
+export const gmailReadOnlyMode = (cfg: AppConfig): boolean => !managedConnectorConfigured(cfg) && cfg.composio?.mode === "gmail-readonly";
 export function gmailReadOnlyBinding(cfg: AppConfig): GmailReadOnlyBinding | null {
   const saved = cfg.composio?.gmailReadOnly;
   return cfg.composio?.apiKey && saved?.authConfigId && saved.userId
@@ -11,6 +12,7 @@ export function gmailReadOnlyBinding(cfg: AppConfig): GmailReadOnlyBinding | nul
     : null;
 }
 export function connectedAppsConfigured(cfg: AppConfig): boolean {
+  if (managedConnectorConfigured(cfg)) return true;
   return gmailReadOnlyMode(cfg) ? Boolean(gmailReadOnlyBinding(cfg)) : Boolean(cfg.composio?.key);
 }
 export async function checkSelectedConnectionAccess(cfg: AppConfig) {
@@ -60,9 +62,15 @@ export class ConnectedAppAccessCache {
           checkedAt: new Date(this.now()).toISOString(),
           services: {},
           tools: { available: false, names: [] },
-          error: detail && /ak_|Platform project|Connected apps key|For You|consumer key/i.test(detail)
-            ? detail
-            : "Could not verify app access. Check the saved key and provider connection, then try again. No sign-in or email task was started.",
+          error: managedConnectorConfigured(cfg)
+            ? (cause as { status?: number })?.status === 402
+              ? 'Your managed service is paused or expired. Contact service support.'
+              : (cause as { status?: number })?.status === 403
+                ? 'Managed connection access was revoked or changed. Contact service support.'
+                : 'Managed connections could not be verified. Contact service support to check the service and account connection. No email task was started.'
+            : detail && /ak_|Platform project|Connected apps key|For You|consumer key/i.test(detail)
+              ? detail
+              : "Could not verify app access. Check the saved key and provider connection, then try again. No sign-in or email task was started.",
         };
       }
       if (generation !== this.generation) throw Object.assign(new Error("App settings changed during the check. Check access again."), { status: 409 });

@@ -1,0 +1,6 @@
+PASS Direct You navigation resolves the global sidebar book state without opening Desk
+page.waitForEvent: Timeout 30000ms exceeded while waiting for event "download"
+=========================== logs ===========================
+waiting for event "download"
+============================================================
+    at /Users/yoda/projects/RealBud/scripts/qa-private-backup-v2.mjs:81:30

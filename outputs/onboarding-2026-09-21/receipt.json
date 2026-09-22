@@ -1,0 +1,12 @@
+{
+  "at": "2026-09-21T05:10:27.353Z",
+  "passed": true,
+  "layer": "Actual source bootstrap, isolated fictional workspace and built browser UI; not native package or customer data",
+  "checks": [
+    "Guided agency setup precedes portable packs; Austin examples start collapsed and no pack is auto-selected",
+    "Opening guided Gmail setup does not choose a source account",
+    "390px guided setup has no horizontal overflow",
+    "Basic workspace setup states two checks and does not block on PMS export"
+  ],
+  "errors": []
+}

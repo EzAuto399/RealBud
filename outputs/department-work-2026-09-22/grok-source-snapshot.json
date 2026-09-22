@@ -1,0 +1,10 @@
+{
+  "sourceSha256": {
+    "server/department-work.ts": "798fed39d4e1ea9685ab66ee7a6f746a66f1e223bb3d734096db86636bb0dd21",
+    "server/job-executor.ts": "339a0b70387735b852be7d532aef5ca1960872b788d54c00705ed10ea7f9148b"
+  },
+  "packetBytes": 44472,
+  "packetSha256": "76e7e940d1cf0639b71f340c9eb40b0bfbf4f117dc46f8a39b6f1fee0e024041",
+  "containsCustomerData": false,
+  "containsCredentials": false
+}

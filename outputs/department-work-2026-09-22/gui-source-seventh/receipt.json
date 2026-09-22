@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "at": "2026-09-22T01:22:00.896Z",
+  "layer": "Source application+native Hermes fixture",
+  "checks": [
+    "Rendered member request and exact owner review start one actual Hermes preparation; only assigned case context reaches the fictional provider and the case remains held for human review.",
+    "Actual service restart preserves the result and original run ID without a second provider request.",
+    "Mobile result view has no horizontal overflow; no uncaught browser errors."
+  ],
+  "providerRequests": 1,
+  "readinessProbesDenied": 3,
+  "runId": "7dc057bd-657d-4c74-a081-0597f2771430",
+  "errors": [],
+  "limits": [
+    "Fictional identities and provider only",
+    "No native installer, Windows device, website department authority or live customer acceptance"
+  ]
+}

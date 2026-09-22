@@ -1,0 +1,84 @@
+{
+  "generatedAt": "2026-09-21T18:52:49.027Z",
+  "passed": true,
+  "platform": "darwin",
+  "arch": "arm64",
+  "node": "v25.9.0",
+  "scope": "Fresh disposable profile provisioning in compiled/installed-resource service smoke; no production server changes",
+  "checks": [
+    {
+      "command": "pnpm exec vitest run electron/service-smoke.test.mjs",
+      "result": "10 passed, 0 skipped; 1.76 seconds",
+      "coverage": [
+        "complete explicit-resource profile",
+        "missing compiled import",
+        "missing artifact safeguards without checkout fallback",
+        "healthy endpoint with absent profile",
+        "incorrect API policy status",
+        "public profile mode (Windows DACL branch not run)",
+        "unsafe actual policy despite positive API status",
+        "incorrect actual skill bytes",
+        "installer filename selection",
+        "isolated child environment"
+      ]
+    },
+    {
+      "command": "pnpm build:server",
+      "result": "exit 0, bundled 7 dependency modules",
+      "priorAttempt": "Initial build failed on concurrently incomplete PackConfiguration type; pack owner completed it before successful retry."
+    },
+    {
+      "command": "node scripts/smoke-company-bundle.mjs outputs/hermes-windows-acceptance-2026-09-22/compiled-private-profile-smoke.json",
+      "result": "exit 0",
+      "receipt": "outputs/hermes-windows-acceptance-2026-09-22/compiled-private-profile-smoke.json",
+      "timings": {
+        "startupMs": 451,
+        "profileCheckMs": 8,
+        "watchdogMs": 25000,
+        "readinessAttempts": 150,
+        "perHealthRequestMs": 500
+      },
+      "profileProof": {
+        "freshHome": true,
+        "installed": true,
+        "approvalsManual": true,
+        "workroomReady": true,
+        "modelAttached": false,
+        "workerReady": false,
+        "privacy": "POSIX owner and private mode",
+        "files": 7,
+        "directories": 6
+      }
+    },
+    {
+      "command": "node --check on both smoke scripts and focused test; git diff --check on owned smoke/test/docs files",
+      "result": "exit 0"
+    }
+  ],
+  "limits": [
+    "Native Windows, installed Electron, Windows ACL behavior and Windows performance have not been run.",
+    "Default compiled proof composes dist-server and checkout pack/property exactly as the builder inputs; explicit installed-resource mode requires its own pack.",
+    "Current 25-second child watchdog, 10-second profile request, 15-second Windows ACL witness and 45-second installer outer limit are unchanged; native Windows latency is unmeasured.",
+    "Independent Windows witness checks owner/protected DACL/grant masks; it is not token impersonation or a full effective-access proof.",
+    "Does not prove Hermes runtime installation, provider access, GUI, customer PC, two-device behavior or power-loss recovery.",
+    "Windows memory production hold remains unchanged."
+  ],
+  "sha256": {
+    "scripts/smoke-company-bundle.mjs": "028527f1d61cda1430aecfa58183c5dbe9ed37bcc345b0384633be26500235d7",
+    "scripts/smoke-windows-package.mjs": "f73b8a7a2b70290f4842b188ff6a28b39348aa12778d0bfb48db7d1449ceea03",
+    "scripts/service-smoke-env.mjs": "1a518835520f9be47493d164e377dcbb1078abc58a589057d63204c9bcb2db44",
+    "electron/service-smoke.test.mjs": "590ec23d5d5e5a2808c27442135976c71ecb55625c0a2fc03e441a91a7a648fc",
+    "docs/WINDOWS-PROFILE-ACCEPTANCE.md": "d7a9374efdd66473dc907016133935eac44c66033a65dbd0274f1770182b280a",
+    "dist-server/server/bootstrap.js": "ac2b94c9884c920b8a56b50209603dd72e2c5bbfcd3309afbc51b6c65a7e3796",
+    "dist-server/server/index.js": "e34f7ef15f387928e56c49b3a845061ece9eec0991e330971296f848db0762b7",
+    "dist-server/server/hermes-pack.js": "799f561e60c523c688c73b1db8fcfb976c36a2c121ffa6bfae961eba0c24e9cc",
+    "dist-server/server/hermes-profile-storage.js": "e1ee7066ebd56c1738fdcf6d89000627ffedb4f604dac1bfc0ee675595fb80cc",
+    "dist-server/server/windows-file-privacy.js": "a62caf5ee9144713fc9251e3141348834bb41a0d3a283e85cc558206a1db1d5c",
+    "pack/property/SOUL.md": "79fa105a2e33d234cee0fe9ec69a3889874218f100ff3aae961001646eed4025",
+    "pack/property/config.yaml": "9bf7bb1831d5168ca8d2228bde4d41b6357674ad5c0a6d60d91e7b2fba22e86c",
+    "pack/property/distribution.yaml": "16ab4b26c5820004e6368b7afb7b6392667179ec68e9dc21f590f91e1677d25b",
+    "pack/property/profile.yaml": "7d6aa5c2428da79f0765d248ab2b37841754a34929c774d734181662e101a6d7",
+    "pack/property/skills/intake-properties/SKILL.md": "97d66d8c3890c938a3cb3d285a6f696bb61bc9e83f1278e2ea708f27780f2bcc",
+    "pack/property/skills/morning-arrears/SKILL.md": "8717c84daaf112b1135d3458f41085cfc4ca46d69f3fbb1758df0762fdb3b249"
+  }
+}

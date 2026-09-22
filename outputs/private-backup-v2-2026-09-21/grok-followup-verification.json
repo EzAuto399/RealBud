@@ -1,0 +1,74 @@
+{
+  "createdAt": "2026-09-21T10:30:10.787203+00:00",
+  "scope": "Grok review follow-up: batch automatic recovery admission and real Telegram cursor preservation on shutdown",
+  "head": "5856140c6ba49f53e79a7edbf01800e099b53e10",
+  "files": {
+    "server/batches.test.ts": "7422de3f3c05d176fb46f5c49374bf39dec0378cd86fe3408d515bf3e57e3d02",
+    "server/batches.ts": "afca8b619f34194ee7849b25d1181446226ae86aaead9addacd739668d5dbd47",
+    "server/channels-discord.test.ts": "ea73e60254a6d1bec4c6313dd069b818ba6c5d92bc84e346999eedf776b198ac",
+    "server/channels-slack.test.ts": "a46bb184c41623cdec023b17e32aad8556f8afc4992e35cc84a674ec84431ab3",
+    "server/channels-telegram.test.ts": "74f2a83dc0ef2bbf2114a24230097af342cff6c20d9174d3bb167514f3a7a872",
+    "server/channels/discord.ts": "9be768fbf70f0061eca454d39b88ecc882e897890b5eb20aa79dd13c568ef052",
+    "server/channels/slack.ts": "41317d1b23c94796e5532351902605f48f4803e4470651176c359f671e9857d8",
+    "server/channels/telegram.ts": "7881c6bd4661d953251adb33a7a02c7136b2450a817dcbc95bd316e34a47b5d1",
+    "server/index.ts": "009420fe7093b2038364631e81cdaeb5b31b092be7f0feb2f330d7c5245dbab1",
+    "server/private-backup-api.test.ts": "71059bce5c24c3095238cde009c2d512821b20ff6b124d149da418919acea5b1",
+    "server/private-backup-api.ts": "58873c878fdb6339d3588d2376953c25e7c344e5906f5b17cc7dc463ea947a57",
+    "server/private-backup-cold-restore.test.ts": "5d2e5f34b0f6a5a9d4f8f14092b60fda7836eeb29b45ab011eccb7b3ef304648",
+    "server/private-backup-cold-restore.ts": "bf9a5697693a060693c569f0f215a86534cc83fdb6b112e11f370b15130a6ee5",
+    "server/private-backup-v2-bootstrap.test.ts": "93918f14ff17815bac6e239fde805f943590825147b4466bdb3351e3c6d11e2d",
+    "server/private-workspace-backup.test.ts": "0bcbc541c1d7696a4b81ddfc4049908f4375c67e88a8b1ade43b1601312721d3",
+    "server/private-workspace-backup.ts": "976d626ff6f7f3769984089ed1359ee83a82786b3f4959ae3010affbe830ef29",
+    "server/remote-decisions.test.ts": "2b79430d6c8e927e7a4a9256b787994e27a0ed95fe4112023de488a0f735fd4a",
+    "server/remote-decisions.ts": "a83ec4317875100e300e1e81e2d592438497f62bed5e4f516aa0694344f6faea",
+    "server/workspace-activity.test.ts": "24b416fd9fd842bba08215a4588f15a7928c4439990f34eaf7455729dc0c80af",
+    "server/workspace-activity.ts": "0bc3f42799d536379bb6a58363c3ffedd5115c3ffd0e715493848f30244ddc20"
+  },
+  "digest": "0a0cdd8e7404315cc4a19575a9eea0b0107f9aec685eb8cce0d4deb3a25f64ec",
+  "focusedChecks": [
+    {
+      "tests": 87,
+      "log": "grok-review-followup-tests.log"
+    },
+    {
+      "tests": 22,
+      "log": "grok-shutdown-channel-test.log"
+    }
+  ],
+  "fullSource": {
+    "passed": 3965,
+    "failed": 0,
+    "skipped": 143,
+    "files": 323,
+    "durationMs": 266546.82,
+    "success": true,
+    "report": "full-source-grok-followup.json",
+    "exitCode": 0
+  },
+  "limits": [
+    "Source on macOS Node24.19.0; not a rebuilt or installed application",
+    "Existing packaged checkpoint predates these changes",
+    "Native Windows/DPAPI/ACL and live-customer proof remain open"
+  ],
+  "builds": {
+    "frontendAndServerTypecheckAndFrontendBuild": "passed",
+    "serverBundle": "passed",
+    "logs": [
+      "grok-followup-build.log",
+      "grok-followup-server-build.log"
+    ]
+  },
+  "grokFixReview": {
+    "sessionId": "01a0c383-485d-7690-be02-fd6ccfcee89d",
+    "requestedModel": "grok-4.6",
+    "requestedReasoningEffort": "xhigh",
+    "actualModels": [
+      "grok-4.6-build"
+    ],
+    "stopReason": "end_turn",
+    "numTurns": 1,
+    "result": "Both scoped invariants passed source-only review; no tests run by Grok",
+    "report": "grok-fix-check.md"
+  },
+  "diffCheck": "passed"
+}

@@ -57,7 +57,7 @@ describe("JobRunStore", () => {
     });
     recipe.steps[0] = "Changed later";
     recipe.revision = 3;
-    const again = store.enqueue(recipe, {
+    const again = store.enqueue(job(), {
       mode: "prepare",
       trigger: "schedule",
       scheduledFor: 90,
@@ -65,6 +65,7 @@ describe("JobRunStore", () => {
       idempotencyKey: "job-1:2:90",
     });
 
+    expect(() => store.enqueue(recipe, { mode: "prepare", trigger: "schedule", scheduledFor: 90, loopRunId: "loop-1", idempotencyKey: "job-1:2:90" })).toThrow(expect.objectContaining({ status: 409 }));
     expect(first.created).toBe(true);
     expect(again.created).toBe(false);
     expect(again.run.id).toBe(first.run.id);
@@ -220,7 +221,7 @@ describe("JobRunStore", () => {
 
   it("accepts legacy arrays while blocking duplicate receipt identities", () => {
     const file = tempFile();
-    const original = new JobRunStore({ file, now: () => 100 });
+    const original = new JobRunStore({ file: tempFile(), now: () => 100 });
     const run = original.enqueue(job(), { mode: "attended", trigger: "manual", idempotencyKey: "legacy-key" }).run;
     writeFileSync(file, JSON.stringify([run]));
     expect(new JobRunStore({ file, now: () => 101 }).get(run.id)).toEqual(run);
@@ -232,7 +233,7 @@ describe("JobRunStore", () => {
     }
   });
 
-  it("does not publish or retain a queued run when disk space runs out", () => {
+  it("holds a durable intent without publishing it when the activity projection cannot be saved", () => {
     const file = tempFile();
     const emit = vi.fn();
     const store = new JobRunStore({ file, now: () => 100, emit });
@@ -241,22 +242,23 @@ describe("JobRunStore", () => {
     });
     const input = { mode: "attended" as const, trigger: "manual" as const, idempotencyKey: "disk-full-key" };
     expect(() => store.enqueue(job(), input)).toThrow(expect.objectContaining({ status: 503, message: expect.stringContaining("disk space") }));
-    expect(store.list()).toEqual([]);
+    expect(() => store.list()).toThrow(expect.objectContaining({ status: 503 }));
     expect(emit).not.toHaveBeenCalled();
-    expect(store.recovery.active).toBe(false);
-    const retry = store.enqueue(job(), input);
-    expect(retry.created).toBe(true);
-    expect(new JobRunStore({ file, now: () => 101 }).get(retry.run.id)).toEqual(retry.run);
+    expect(store.recovery.active).toBe(true);
+    expect(() => store.enqueue(job(), input)).toThrow(expect.objectContaining({ status: 503 }));
+    const restarted = new JobRunStore({ file, now: () => 101 });
+    const retry = restarted.enqueue(job(), input);
+    expect(retry.created).toBe(false);
+    expect(restarted.get(retry.run.id)).toEqual(retry.run);
   });
 
-  it.each(["start", "evidence", "settle", "seen", "cancel", "sweep"] as const)("rolls back a failed %s write without publishing partial state", (action) => {
+  it.each(["start", "evidence", "settle", "seen", "cancel", "sweep"] as const)("holds a failed %s projection without publishing or replaying its durable transition", (action) => {
     const file = tempFile();
     let now = 100;
     const emit = vi.fn();
     const store = new JobRunStore({ file, now: () => now, emit });
     const run = store.enqueue(job(), { mode: "attended", trigger: "manual", idempotencyKey: `rollback-${action}` }).run;
     if (action === "evidence" || action === "settle") store.start(run.id);
-    const before = store.get(run.id);
     const onDisk = readFileSync(file, "utf8");
     emit.mockClear();
     now += 24 * 60 * 60_000 + 1;
@@ -272,11 +274,15 @@ describe("JobRunStore", () => {
       return store.sweepQueuedAttended();
     };
     expect(change).toThrow(expect.objectContaining({ status: 503 }));
-    expect(store.get(run.id)).toEqual(before);
+    expect(() => store.get(run.id)).toThrow(expect.objectContaining({ status: 503 }));
     expect(readFileSync(file, "utf8")).toBe(onDisk);
     expect(emit).not.toHaveBeenCalled();
-    expect(change).not.toThrow();
-    expect(emit).toHaveBeenCalledOnce();
+    expect(change).toThrow(expect.objectContaining({ status: 503 }));
+    const restarted = new JobRunStore({ file, now: () => now });
+    const saved = restarted.get(run.id)!;
+    expect(saved.status).toBe(action === 'settle' ? 'completed' : action === 'cancel' ? 'cancelled' : action === 'sweep' || action === 'seen' ? 'missed' : 'interrupted');
+    if (action === 'seen') expect(saved.seenAt).toBe(now);
+    if (action === 'evidence' || action === 'settle') expect(saved.evidence[0]?.note).toBe('complete draft');
   });
 
   it("keeps the app available but pauses work if restart recovery cannot be saved", () => {
@@ -292,7 +298,7 @@ describe("JobRunStore", () => {
     expect(restarted.recovery.active).toBe(true);
     expect(() => restarted.list()).toThrow(expect.objectContaining({ status: 503 }));
     expect(readFileSync(file, "utf8")).toBe(before);
-    expect(new JobRunStore({ file, now: () => 300 }).get(run.id)).toMatchObject({ status: "interrupted", finishedAt: 300 });
+    expect(new JobRunStore({ file, now: () => 300 }).get(run.id)).toMatchObject({ status: "interrupted", finishedAt: 200 });
   });
 
   it("does not revert an already-renamed receipt when the final directory flush fails", () => {

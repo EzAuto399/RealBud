@@ -1,0 +1,78 @@
+Disposable PostgreSQL company verification
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/Users/yoda/projects/RealBud[39m
+
+ [32m✓[39m server/company-installation-provision.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 2452[2mms[22m[39m
+     [33m[2m✓[22m[39m provisions owned storage from the admitted runtime and reports it available [33m 810[2mms[22m[39m
+     [33m[2m✓[22m[39m provisions from the runtime the installer staged, not the build machine [33m 916[2mms[22m[39m
+     [33m[2m✓[22m[39m records which runtime source was admitted, without a terminal step [33m 726[2mms[22m[39m
+ [32m✓[39m server/company-installation-binding.test.ts [2m([22m[2m16 tests[22m[2m)[22m[33m 823[2mms[22m[39m
+ [32m✓[39m server/company/host-transport.test.ts [2m([22m[2m25 tests[22m[2m)[22m[32m 232[2mms[22m[39m
+ [32m✓[39m server/company/member-credentials.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 186[2mms[22m[39m
+ [32m✓[39m server/company-outbox.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 163[2mms[22m[39m
+ [32m✓[39m server/company/host-certificate.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 163[2mms[22m[39m
+ [32m✓[39m server/company/initial-credential.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 95[2mms[22m[39m
+ [32m✓[39m server/company-installation.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 64[2mms[22m[39m
+ [32m✓[39m server/company/host-runtime.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 42[2mms[22m[39m
+ [32m✓[39m server/company/postgres-runtime.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+ [32m✓[39m server/company/workflow-template.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m server/company-departments.integration.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 2869[2mms[22m[39m
+     [33m[2m✓[22m[39m reopens the host and every client, preserving company records, private records and offboarding [33m 524[2mms[22m[39m
+ [32m✓[39m server/company-host.test.ts [2m([22m[2m8 tests[22m[2m)[22m[33m 2775[2mms[22m[39m
+     [33m[2m✓[22m[39m redeems one-use invitations without inheriting service administration [33m 581[2mms[22m[39m
+     [33m[2m✓[22m[39m preserves member sessions across service restart while revoking admin sessions [33m 344[2mms[22m[39m
+ [32m✓[39m server/company-installation.integration.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 3094[2mms[22m[39m
+     [33m[2m✓[22m[39m requires admin, creates a new owned database, then gives the owner independent sign-in [33m 1105[2mms[22m[39m
+     [33m[2m✓[22m[39m renews the host identity, leaves cleanly, and joins another office without changing private work [33m 1255[2mms[22m[39m
+ [32m✓[39m server/company-recovery.integration.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 2803[2mms[22m[39m
+     [33m[2m✓[22m[39m restores only to an empty host, starts held, invalidates tokens and requires explicit owner cutover [33m 486[2mms[22m[39m
+ [32m✓[39m server/company-work.integration.test.ts [2m([22m[2m9 tests[22m[2m)[22m[33m 1942[2mms[22m[39m
+ [32m✓[39m server/company/backup.integration.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 2274[2mms[22m[39m
+ [32m✓[39m server/company/departments-transport.integration.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 970[2mms[22m[39m
+ [32m✓[39m server/company/departments.integration.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 936[2mms[22m[39m
+ [32m✓[39m server/company/initial-enrollment.integration.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 615[2mms[22m[39m
+ [31m❯[39m server/company/member-auth.integration.test.ts [2m([22m[2m6 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 1204[2mms[22m[39m
+     [32m✓[39m signs back into the same owner identity and private knowledge after logout[32m 127[2mms[22m[39m
+     [33m[2m✓[22m[39m commits failed attempts across kernels and casing, then permits sign-in after the block expires [33m 405[2mms[22m[39m
+     [32m✓[39m allows exactly one concurrent recovery and revokes previous sessions without changing identity[32m 157[2mms[22m[39m
+     [33m[2m✓[22m[39m requires the current password for changes and retires other sessions and the old recovery key [33m 304[2mms[22m[39m
+     [32m✓[39m blocks password and recovery access after membership revocation, with no administrator impersonation route[32m 195[2mms[22m[39m
+[31m     [31m×[31m checks the additive credential migration checksum while preserving the original migration[39m[32m 4[2mms[22m[39m
+ [32m✓[39m server/company/membership.integration.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 908[2mms[22m[39m
+ [32m✓[39m server/company/postgres.integration.test.ts [2m([22m[2m14 tests[22m[2m)[22m[33m 417[2mms[22m[39m
+ [32m✓[39m server/company/work-items.integration.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 274[2mms[22m[39m
+ [32m✓[39m server/company/workflow-template.integration.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 58[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m server/company/member-auth.integration.test.ts[2m > [22mdurable independent member authentication[2m > [22mchecks the additive credential migration checksum while preserving the original migration
+[31m[1mAssertionError[22m: expected [ Array(5) ] to deeply equal [ '0001', '0002', '0003' ][39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  [[22m
+[2m    "0001",[22m
+[2m    "0002",[22m
+[2m    "0003",[22m
+[31m+   "0004",[39m
+[31m+   "0005",[39m
+[2m  ][22m
+
+[36m [2m❯[22m server/company/member-auth.integration.test.ts:[2m85:44[22m[39m
+    [90m 83|[39m   it('checks the additive credential migration checksum while preservi…
+    [90m 84|[39m     const before = await admin.query('SELECT id, checksum FROM realbud…
+    [90m 85|[39m     expect(before.rows.map(row => row.id)).toEqual(['0001', '0002', '0…
+    [90m   |[39m                                            [31m^[39m
+    [90m 86|[39m     await migrateCompanySchema(admin, { applicationRole: 'rb_company_t…
+    [90m 87|[39m     expect((await admin.query('SELECT id, checksum FROM realbud_compan…
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m24 passed[39m[22m[90m (25)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m196 passed[39m[22m[90m (197)[39m
+[2m   Start at [22m 13:11:27
+[2m   Duration [22m 28.31s[2m (transform 329ms, setup 128ms, import 1.01s, tests 25.38s, environment 1ms)[22m
+
+JSON report written to /Users/yoda/projects/RealBud/outputs/enterprise-company-2026-09-21/vitest.json

@@ -1,0 +1,9 @@
+{
+  "at": "2026-09-21T21:02:00.014899+00:00",
+  "passed": 4,
+  "failed": 0,
+  "sourceSha256": "de2ac9714785826658882a9a73812e8a25e53e0c5bd66290b959e0df2dc0b520",
+  "fixtureAdjustment": "Normalized pack/recipe definitions through validateCustomerPack for the added removed/reintroduced snapshot control; all cases now also run validatePrivateBusinessFile before common graph admission. Original red only exercised the common graph, not this separate business-file admission.",
+  "networkCalls": 0,
+  "productionEdits": false
+}

@@ -23,7 +23,7 @@ export const ATTEND_ERRORS = {
   plan: "Approve the plan first.",
   attach: "Attach this site first: you sign in, Bud reads and prefills, Submit, Pay and Send stay with you.",
   origins: "Add the portal site to this job before running it beside you.",
-  cua: "Bud needs RealBud's desktop helper running on this Mac or Windows PC before controlling the browser.",
+  cua: "Connect your browser in You → Browser before running this website job.",
   overlap: "This job already has work waiting or running.",
   busy: "Bud is busy with another turn. Stop it or wait, then run again.",
   gone: "That run is no longer waiting.",
@@ -54,7 +54,7 @@ export function portalSignInCompleteIntent(text: string): boolean {
 }
 
 export const SIGN_IN_HANDOFF_CONTINUE =
-  "Stay in Ask on this Mac. Press Continue on the sign-in checkpoint when the portal shows you are signed in — Bud will not open another browser window.";
+  "Stay in Ask on this computer. Press Continue on the sign-in checkpoint when the portal shows you are signed in — Bud will not open another browser window.";
 
 
 export function fenceContextFor(threadId: string): AttendedFenceContext | undefined {
@@ -93,10 +93,11 @@ export function attendBlocked(
  * person's already-open Chrome/Brave tab; do not spawn a throwaway browser. */
 export function portalBrowserPolicy(): string {
   return [
-    "Browser for this job: use one window only — prefer the person's already-open Chrome or Brave tab for an Allowed site.",
-    "Do not launch a new isolated/empty browser, and do not ask them to sign in again in a second window after they already signed in.",
-    "If a controlled window was lost after Stop/restart, reattach to their open portal tab when possible; if you cannot attach, say so in one plain sentence and ask them to bring that tab front — never open yet another fresh login window.",
-    "When they say they are signed in or done, read the Allowed-site page they already have open and report what it shows; do not start another sign-in window.",
+    "Use only RealBud's browser tools for this saved job: browser_tabs, browser_borrow, browser_read, browser_navigate, browser_fill, browser_click_semantic and browser_release.",
+    "Start by finding the already-open job-site tab. Borrow only that tab with the person's confirmation. RealBud uses their selected Chrome or Edge profile and returns the tab when work stops.",
+    "Never launch another browser, run bsk from a shell, use native browser/computer tools, JavaScript, recording or another connection to work around a denial or missing browser connection.",
+    "If sign-in is needed, release the browser first and ask the person to sign in directly. Passwords and verification codes never belong in chat. Stop/restart does not authorize replaying previous steps.",
+    "Read back the current site and result before saying anything is done. A click acknowledgement, download request or successful tool call is not proof that a task completed.",
   ].join(" ");
 }
 

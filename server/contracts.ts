@@ -5,6 +5,9 @@
 // Stream. The shapes and names are kept so the two codebases stay mutually
 // readable.
 
+import type { ApprovalPolicy, MemoryApprovalReview } from '../shared/approval-policy.ts';
+import type { MemoryProposalInput, MemoryProposalResult } from '../shared/hermes-memory-proposal.ts';
+
 export type DriverKind = string;
 export type InstanceId = string;
 export type ThreadId = string;
@@ -74,6 +77,8 @@ export type RuntimeEvent = RuntimeEventBase &
         summary: string;
         choices?: string[];
         params?: unknown;
+        approvalPolicy?: ApprovalPolicy;
+        memoryReview?: MemoryApprovalReview;
         fence?: {
           surface: "portal-read" | "portal-prefill" | "portal-submit";
           origin: string;
@@ -109,6 +114,14 @@ export interface SendTurnInput {
   system?: string;
   /** Per-bot integrations the driver may hand to the agent as tools. */
   integrations?: {
+    /** Host-only proposal capability. The opaque scope binds warm runtime reuse;
+     * only a private MCP descriptor is serialized to the Hermes worker. */
+    memoryProposals?: {
+      scope: string;
+      propose(input: MemoryProposalInput, signal: AbortSignal): Promise<MemoryProposalResult>;
+    };
+    /** A server-bound saved job; never a model-supplied browser or account. */
+    browser?: { runId: string; allowedOrigins: string[]; capabilities: import("../shared/contracts.ts").JobCapability[]; checkpoint?: import("../shared/browser.ts").BrowserCheckpoint };
     composio?: {
       allowedApps?: string[];
       url?: string;

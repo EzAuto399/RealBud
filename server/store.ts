@@ -10,6 +10,7 @@ import { DATA_DIR } from "./config.ts";
 import { newId, type ModelSelection, type ThreadId } from "./contracts.ts";
 import { pickBotName } from "./names.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { HERMES_MEMORY_APPROVAL, validMemoryApprovalReview, type ApprovalPolicy, type MemoryApprovalReview } from '../shared/approval-policy.ts';
 
 export type MausColor =
   | "green"
@@ -31,6 +32,8 @@ export type MausColor =
 export type MausExpression = string;
 
 export interface OptionCardData {
+  approvalPolicy?: ApprovalPolicy;
+  memoryReview?: MemoryApprovalReview;
   title: string;
   subtitle: string;
   options: string[];
@@ -530,6 +533,15 @@ export class Store {
           title: redactSecretsInText(full.card.title),
           subtitle: redactSecretsInText(full.card.subtitle),
         };
+        // Never preserve a credential-bearing or partial memory preview and
+        // then let it authorize the original unseen native change.
+        if (full.card.tool === HERMES_MEMORY_APPROVAL) {
+          const review = full.card.memoryReview;
+          if (!validMemoryApprovalReview(review) || redactSecretsInText(review.description) !== review.description || redactSecretsInText(review.content) !== review.content) {
+            delete full.card.memoryReview;
+          }
+          full.card.approvalPolicy = 'once'; delete full.card.allowKey;
+        }
       }
     }
     t.messages.push(full);

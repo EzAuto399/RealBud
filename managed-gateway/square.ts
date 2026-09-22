@@ -7,6 +7,17 @@ import { CARE_FEE_CENTS } from './billing.ts';
 import { cents, gstCents, periodAt } from './money.ts';
 import { abortable } from './abort.ts';
 interface Mapping {companyId:string;merchantId:string;customerId:string;locationId:string;evidence:string}
+/** Square runs two entirely separate hosts. A sandbox token sent to the
+ * production host fails cryptically, and a production token sent to the sandbox
+ * host silently creates drafts nowhere near the real account. The host therefore
+ * follows the configured environment and is never inferred from the token's
+ * shape. Production is the default, so an existing caller cannot become a
+ * sandbox caller by omission; sandbox is always an explicit, visible choice. */
+export type SquareEnvironment='production'|'sandbox';
+const SQUARE_HOSTS:Record<SquareEnvironment,string>={
+  production:'https://connect.squareup.com',
+  sandbox:'https://connect.squareupsandbox.com',
+};
 export interface Statement {
   id:string;companyId:string;period:string;currency:'AUD';gstInclusive:true;kind:'Usage statement';
   lines:{model:string;rateVersion:string;amountNanoAud:string;units:Record<string,number>}[];
@@ -17,12 +28,17 @@ interface Link {orderId:string;invoiceId?:string;invoiceVersion?:number}
 interface MoneyRecord {amount:number;source:string;updatedAt:string}
 export class SquareBilling {
   readonly ledger:UsageLedger;
+  readonly environment:SquareEnvironment;
+  private readonly host:string;
   private readonly transport:typeof fetch|undefined;
   private readonly secret:()=>Promise<string>;
   readonly notificationUrl:string;
   private readonly signatureKey:()=>Promise<string>;
-  constructor(options:{ledger:UsageLedger;fetch?:typeof fetch;secret:()=>Promise<string>;notificationUrl:string;signatureKey:()=>Promise<string>}) {
+  constructor(options:{ledger:UsageLedger;fetch?:typeof fetch;secret:()=>Promise<string>;notificationUrl:string;signatureKey:()=>Promise<string>;environment?:SquareEnvironment}) {
     this.ledger=options.ledger;this.transport=options.fetch;this.secret=options.secret;this.notificationUrl=options.notificationUrl;this.signatureKey=options.signatureKey;
+    const environment=options.environment ?? 'production';
+    requireThat(environment==='production'||environment==='sandbox','square_environment_invalid');
+    this.environment=environment;this.host=SQUARE_HOSTS[environment];
     requireThat(new URL(this.notificationUrl).protocol==='https:','https_notification_url_required');
   }
   /** Trusted operator seam; no portal route. Mapping changes need an explicit migration. */
@@ -59,7 +75,7 @@ export class SquareBilling {
   }
   private async request(method:'GET'|'POST',path:string,body?:unknown):Promise<Record<string,unknown>> {
     requireThat(this.transport,'external_transport_disabled',503);const signal=AbortSignal.timeout(10000),secret=await abortable(this.secret(),signal);requireThat(secret.length>0,'square_secret_unavailable',503);
-    const response=await abortable(this.transport(`https://connect.squareup.com${path}`,{method,redirect:'error',signal,headers:{Authorization:`Bearer ${secret}`,'Square-Version':'2026-08-19','Content-Type':'application/json'},...(body?{body:canonical(body)}:{})}),signal);
+    const response=await abortable(this.transport(`${this.host}${path}`,{method,redirect:'error',signal,headers:{Authorization:`Bearer ${secret}`,'Square-Version':'2026-08-19','Content-Type':'application/json'},...(body?{body:canonical(body)}:{})}),signal);
     if(!response.ok){void response.body?.cancel().catch(()=>{});requireThat(false,'square_request_failed',502);}
     requireThat(response.body,'invalid_square_response',502);const reader=response.body.getReader();let bytes=0;const chunks:Uint8Array[]=[];
     try {while(true){const part=await abortable(reader.read(),signal);if(part.done)break;bytes+=part.value.length;requireThat(bytes<=1_000_000,'square_response_too_large',502);chunks.push(part.value);}}finally{void reader.cancel().catch(()=>{});}

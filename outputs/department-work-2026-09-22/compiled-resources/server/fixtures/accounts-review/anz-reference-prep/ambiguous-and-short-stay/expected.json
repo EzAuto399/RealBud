@@ -1,0 +1,70 @@
+{
+  "kind": "accounts-anz-reference-candidates",
+  "status": "complete",
+  "coverageComplete": true,
+  "itemArray": "rows",
+  "itemIdKey": "sourceRow",
+  "itemCount": 9,
+  "items": {
+    "1": {
+      "decision": "hold",
+      "propertyId": null,
+      "proposedReference": null
+    },
+    "2": {
+      "decision": "hold",
+      "propertyId": null,
+      "proposedReference": null
+    },
+    "3": {
+      "decision": "hold",
+      "propertyId": null,
+      "proposedReference": null
+    },
+    "4": {
+      "decision": "hold",
+      "propertyId": null,
+      "proposedReference": null
+    },
+    "5": {
+      "decision": "keep",
+      "propertyId": null,
+      "proposedReference": null
+    },
+    "6": {
+      "decision": "keep",
+      "propertyId": null,
+      "proposedReference": null
+    },
+    "7": {
+      "decision": "hold",
+      "propertyId": null,
+      "proposedReference": null
+    },
+    "8": {
+      "decision": "assign",
+      "propertyId": "SYN-P03",
+      "proposedReference": "000789"
+    },
+    "9": {
+      "decision": "hold",
+      "propertyId": null,
+      "proposedReference": null
+    }
+  },
+  "requiredHolds": [
+    "0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544:1",
+    "0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544:2",
+    "0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544:3",
+    "0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544:4",
+    "0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544:7",
+    "0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544:9"
+  ],
+  "actionsPerformed": [],
+  "hostValidation.required": true,
+  "hostValidation.applied": false,
+  "bankRowOrderAndDigest": true,
+  "originalDigest": "0cdc59738d5ef5e7a1c7ad039d29889e85623afb678c3c943b301f1e02a17544",
+  "hostValidation.batchId": "SYN-BANK-BATCH-AMBIGUOUS-AND-SHORT-STAY",
+  "hostValidation.batchRevision": 1
+}

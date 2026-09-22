@@ -269,6 +269,23 @@ describe('company host transport', () => {
     });
   });
 
+  it('keeps local state and every department outbox route off the LAN before member authentication', async () => {
+    // This handler would accept the member if reached. A pinned TLS client and
+    // member credential still cannot turn a local journal into an office API.
+    const handle = vi.fn<Handle>(async () => ({ status: 200, body: { acceptedMember: true } }));
+    await withTransport(handle, async port => {
+      for (const name of ['local-state', 'department-outbox', 'department-outbox/ack', 'department-outbox/archive', 'department-outbox/archive/export']) {
+        for (const method of ['GET', 'POST', 'DELETE']) {
+          const pathName = `/api/company/${name}`;
+          await expect(hostCall(port, pathName, method, { memberToken: 'synthetic-valid-member', ...(method === 'GET' ? {} : { body: {} }) })).rejects.toThrow();
+          const response = await rawHttps(port, pathName, method, { 'x-realbud-member-session': 'synthetic-valid-member', 'content-type': 'application/json' }, method === 'GET' ? undefined : '{}');
+          expect(response.status).toBeGreaterThanOrEqual(400);
+        }
+      }
+      expect(handle).not.toHaveBeenCalled();
+    });
+  });
+
   it('honors cancellation before completion', async () => {
     const handle = vi.fn(async () => new Promise<{ status: number; body: unknown }>(() => {}));
     await withTransport(handle, async (port) => {

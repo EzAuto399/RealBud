@@ -10,6 +10,7 @@ export function youHashTarget(hash: string): string | null {
     case "you-connected-apps": return "you-connected-apps";
     case "you-phone": return "you-phone";
     case "you-office": return "you-office";
+    case "you-browser": return "you-browser";
     case "you-profile": return "you-profile";
     case "you-advanced": return "you-advanced";
     case "you-service-admin": return "you-service-admin";

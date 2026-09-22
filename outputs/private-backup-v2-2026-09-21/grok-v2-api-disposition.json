@@ -1,0 +1,34 @@
+{
+  "sessionId": "01a0c41f-71f8-7a92-bbf4-dd5d5d276798",
+  "stopReason": "end_turn",
+  "modelUsage": {
+    "grok-4.6-build": {
+      "inputTokens": 61233,
+      "outputTokens": 45459,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "modelCalls": 1,
+      "costUSD": 0.1343748
+    }
+  },
+  "requestedModel": "grok-4.6",
+  "requestedEffort": "xhigh",
+  "status": "integrated-with-root-corrections",
+  "sourceOnly": true,
+  "summary": "Add a pure v2 private-backup HTTP boundary in two new files. createPrivateBackupV2Api mirrors the v1 fail-closed host style while preserving the existing v2 client route/request contract: session auth stays on the HTTP host, raw body caps stay on the caller, download token consumption/streaming stay on the coordinator, and this layer never touches disk, network, keys, or workspace selection. Service methods are invoked only after strict input checks; every success projection is revalidated with the shared parsers (id/kind included) so unknown private fields cannot be stripped into a 200/202.",
+  "limitations": [
+    "HTTP host must apply session protection before this function; the boundary does not authenticate or authorize.",
+    "Caller must cap raw request reads at 1MiB before allocating bytes; this layer only rejects an already-allocated buffer.",
+    "Service exceptions propagate with original messages. Root HTTP must map them to safe client bodies or internals leak.",
+    "GET /downloads only returns a token. Coordinator must consume the ticket and stream; this module never opens files or builds disk paths.",
+    "Invalid UUID/token path segments are unmatched 404s, not 400s. Uppercase UUIDs will 404 because shared ids are lowercase hex.",
+    "BackupV2ApiService positional signatures must stay locked with Codex wiring and the storage proposal; this file does not implement transfer/storage.",
+    "Tests use node:test. If the repo runner is vitest-only, the new test file needs the same runner as sibling server tests.",
+    "Invalid service projections throw 500 with the public storage-unavailable copy, which can look like a real storage failure in logs."
+  ],
+  "rootCorrections": [
+    "Malformed added diff header removed and tests converted from node:test to repository Vitest.",
+    "Changed never-returning helper to a declaration for TypeScript control-flow narrowing.",
+    "HTTP host supplies bounded reads, session protection, fixed public errors, and actual native streaming."
+  ]
+}

@@ -1,0 +1,12 @@
+realbud server on http://127.0.0.1:60544
+realbud server on http://127.0.0.1:60617
+
+▲ Next.js 16.3.3
+- Local:         http://127.0.0.1:60536
+- Network:       http://127.0.0.1:60536
+✓ Ready in 130ms
+✓ Running next.config.ts took 96ms
+
+TimeoutError: locator.waitFor: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for getByRole('heading', { name: 'People who can review from the website', exact: true }).locator('..').getByRole('status').filter({ hasText: 'Check this workspace’s sources and settings' }) to be visible[22m

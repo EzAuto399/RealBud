@@ -1,0 +1,40 @@
+{
+  "at": "2026-09-21T08:16:26.745138+00:00",
+  "ownedInputsFrozen": true,
+  "layer": "Actual source HTTP service and isolated built React UI with fictional connector and deterministic worker; explicitly labelled failures and delayed responses only. No live Gmail, paid provider, native Windows or customer acceptance proof.",
+  "sourceHashes": {
+    "src/components/desk/SourceBillsPanel.tsx": "d2e90cdf322e1976d98a889f4855bd68f684859a44a531f611624356300bf170",
+    "src/components/WorkspaceSavedView.tsx": "3cc88725df01d660a18e7324613710d8deeb6df427d616ed5f0ae0e717603e47",
+    "src/lib/bill-review-drafts.ts": "469debc0ce73223afce5536ba416d29d12de04b040da57997203ddbaaedab2d1",
+    "src/lib/bill-review-drafts.test.ts": "66651638a9dc9568af51f6889890442b47edc01b648cc7b0ecd81b2ad384368a",
+    "scripts/qa-source-bills.mjs": "d9b8b5d22853256a9530f1e11a270088f8dc93924cbad36eedbc3471d04eae45"
+  },
+  "browserPassed": true,
+  "browserChecks": 25,
+  "focusedClientTests": 16,
+  "frontendTypecheck": "passed",
+  "scriptSyntax": "passed",
+  "isolatedViteBuild": "passed",
+  "reviewer": "mail_normalized_domain final clear, coordinator 8/8 independently passed",
+  "visualInspection": [
+    "browser/bills-desktop.png",
+    "browser/draft-actions-mobile.png",
+    "browser/mail-picker-uncertain-desktop.png"
+  ],
+  "negativeCheckpoints": [
+    "browser/negative-checkpoint-inflight-assertion.txt",
+    "browser/negative-checkpoint-cancelled-route.txt",
+    "browser/negative-checkpoint-history-checkbox.txt"
+  ],
+  "reviewFindingsResolved": [
+    "Lifecycle and editor generations prevent late draft/source reads replacing a later editor; initial hydration locks editing. Development StrictMode lifecycle replay handled by distinct initialization owner (source-reviewed, not executed as dev build).",
+    "Coordinator refuses older reads after a newer ACK and inconsistent same-revision data.",
+    "Explicit saved-bill selection B wins over prior retained draft A; A data is preserved."
+  ],
+  "proofLimits": [
+    "Cancelable beforeunload event verifies the App listener; it is not native operating-system dialog proof.",
+    "Historical proposal GET never dispatches another POST in the fixture; absent receipts remain unresolved.",
+    "Root separately owns intent-without-run native/manual review and different-key backup/restore checks.",
+    "WorkspaceSavedView change is limited to close action wording."
+  ]
+}

@@ -1,0 +1,51 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ❯ server/private-backup-website-requests.test.ts (11 tests | 6 failed) 1797ms
+     × v1 restores full review evidence and real executor links without remote authority 81ms
+     × v2 restores full review evidence and real executor links without remote authority 76ms
+     × rejects missing-template in remote evidence before archive admission 75ms
+     × rejects missing-audience in remote evidence before archive admission 79ms
+     × rejects foreign-person in remote evidence before archive admission 75ms
+     × rejects wrong-request-key in remote evidence before archive admission 85ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/private-backup-website-requests.test.ts > remote work evidence through encrypted backup and cold restore > v1 restores full review evidence and real executor links without remote authority
+ FAIL  server/private-backup-website-requests.test.ts > remote work evidence through encrypted backup and cold restore > v2 restores full review evidence and real executor links without remote authority
+Error: This job already has work waiting or running.
+ ❯ JobRunStore.enqueue server/job-runs.ts:222:27
+    220|     const active = this.runs.find((run) => run.jobId === recipe.id && …
+    221|     if (active) {
+    222|       throw Object.assign(new Error("This job already has work waiting…
+       |                           ^
+    223|         status: 409,
+    224|         runId: active.id,
+ ❯ populateRemote server/private-backup-website-requests.test.ts:94:49
+ ❯ server/private-backup-website-requests.test.ts:155:67
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  server/private-backup-website-requests.test.ts > remote work evidence through encrypted backup and cold restore > rejects missing-template in remote evidence before archive admission
+ FAIL  server/private-backup-website-requests.test.ts > remote work evidence through encrypted backup and cold restore > rejects missing-audience in remote evidence before archive admission
+ FAIL  server/private-backup-website-requests.test.ts > remote work evidence through encrypted backup and cold restore > rejects foreign-person in remote evidence before archive admission
+ FAIL  server/private-backup-website-requests.test.ts > remote work evidence through encrypted backup and cold restore > rejects wrong-request-key in remote evidence before archive admission
+Error: This job already has work waiting or running.
+ ❯ JobRunStore.enqueue server/job-runs.ts:222:27
+    220|     const active = this.runs.find((run) => run.jobId === recipe.id && …
+    221|     if (active) {
+    222|       throw Object.assign(new Error("This job already has work waiting…
+       |                           ^
+    223|         status: 409,
+    224|         runId: active.id,
+ ❯ populateRemote server/private-backup-website-requests.test.ts:94:49
+ ❯ server/private-backup-website-requests.test.ts:179:44
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  6 failed | 5 passed (11)
+   Start at  09:18:46
+   Duration  2.34s (transform 366ms, setup 20ms, import 447ms, tests 1.80s, environment 0ms)
+

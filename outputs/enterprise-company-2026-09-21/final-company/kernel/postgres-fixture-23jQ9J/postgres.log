@@ -1,0 +1,20 @@
+2026-09-21 13:58:27.281 AEST [59826] LOG:  starting PostgreSQL 16.15 (Homebrew) on aarch64-apple-darwin25.6.0, compiled by Apple clang version 21.0.0 (clang-2100.1.1.101), 64-bit
+2026-09-21 13:58:27.281 AEST [59826] LOG:  listening on Unix socket "/tmp/rbec-1l00QZ/rb-company-pg-eZ9dbn/.s.PGSQL.55447"
+2026-09-21 13:58:27.284 AEST [59829] LOG:  database system was shut down at 2026-09-21 13:58:27 AEST
+2026-09-21 13:58:27.286 AEST [59826] LOG:  database system is ready to accept connections
+2026-09-21 13:58:54.984 AEST [60568] ERROR:  duplicate key value violates unique constraint "member_credentials_company_id_login_name_key"
+2026-09-21 13:58:54.984 AEST [60568] DETAIL:  Key (company_id, login_name)=(21a1f8e6-73dd-46a0-844e-b26c8a446e91, alice) already exists.
+2026-09-21 13:58:54.984 AEST [60568] STATEMENT:  INSERT INTO realbud_company.member_credentials(company_id,member_id,login_name,password_verifier,recovery_hash,revision,failed_attempts)
+	        VALUES($1,$2,$3,$4,$5,1,0)
+2026-09-21 13:58:55.083 AEST [60569] ERROR:  duplicate key value violates unique constraint "member_credentials_company_id_login_name_key"
+2026-09-21 13:58:55.083 AEST [60569] DETAIL:  Key (company_id, login_name)=(674bd811-c1f7-47b9-9326-2def9bc52fd7, shared) already exists.
+2026-09-21 13:58:55.083 AEST [60569] STATEMENT:  INSERT INTO realbud_company.member_credentials(company_id,member_id,login_name,password_verifier,recovery_hash,revision,failed_attempts)
+	        VALUES($1,$2,$3,$4,$5,1,0)
+2026-09-21 13:58:55.670 AEST [60576] WARNING:  there is no transaction in progress
+2026-09-21 13:58:57.559 AEST [59826] LOG:  received fast shutdown request
+2026-09-21 13:58:57.559 AEST [59826] LOG:  aborting any active transactions
+2026-09-21 13:58:57.560 AEST [59826] LOG:  background worker "logical replication launcher" (PID 59832) exited with exit code 1
+2026-09-21 13:58:57.561 AEST [59827] LOG:  shutting down
+2026-09-21 13:58:57.561 AEST [59827] LOG:  checkpoint starting: shutdown immediate
+2026-09-21 13:58:57.663 AEST [59827] LOG:  checkpoint complete: wrote 1029 buffers (6.3%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.044 s, sync=0.031 s, total=0.103 s; sync files=1395, longest=0.001 s, average=0.001 s; distance=5763 kB, estimate=5763 kB; lsn=0/1ABE6A8, redo lsn=0/1ABE6A8
+2026-09-21 13:58:57.666 AEST [59826] LOG:  database system is shut down

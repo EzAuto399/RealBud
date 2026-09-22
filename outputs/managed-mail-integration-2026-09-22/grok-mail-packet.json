@@ -1,0 +1,11 @@
+{
+  "createdAt": "2026-09-21T18:40:33.704713+00:00",
+  "promptBytes": 1048,
+  "promptSha256": "f2078969c44b4812022b1b7d62f758900e5f0335824fb62903c413e8e055f660",
+  "collectorSha256": "14c6fe63947d72154d93ace1f2c6eaaee35a99279633b8cc7b17a6996bc9f67d",
+  "inputScope": "Parent-provided design metadata only; no source or customer account reads",
+  "maxPromptRequests": 1,
+  "deadlineSeconds": 300,
+  "noRetry": true,
+  "actualTestingByThisTask": false
+}

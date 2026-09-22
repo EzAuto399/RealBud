@@ -66,7 +66,7 @@ try {
     REALBUD_COMPANY_HOST_PREVIEW: '1', OMB_PORT: String(port), OMB_STATIC_DIR: join(resources, 'ui'),
     ...(role === 'host' ? { REALBUD_COMPANY_POSTGRES_BIN: resolve(process.env.REALBUD_TEST_POSTGRES_BIN || join(kit, 'postgres/bin')) } : {}) };
   for (const key of ['SystemRoot', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT']) if (process.env[key]) env[key] = process.env[key];
-  child = spawn(process.execPath, [join(resources, 'server/index.js')], { cwd: resources, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+  child = spawn(process.execPath, [join(resources, 'server/bootstrap.js')], { cwd: resources, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
   exited = new Promise((resolve, reject) => {
     child.once('error', reject);
     child.once('exit', (code, signal) => { unexpectedExit = !cancelled; resolve({ code, signal }); });

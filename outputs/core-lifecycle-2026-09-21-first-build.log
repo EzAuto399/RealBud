@@ -1,0 +1,6 @@
+
+> realbud@0.1.19 build /Users/yoda/projects/RealBud
+> tsc -b && tsc -p tsconfig.server.json && vite build
+
+src/App.tsx(187,81): error TS2339: Property 'title' does not exist on type 'WorkspaceTab'.
+ ELIFECYCLE  Command failed with exit code 1.

@@ -1,0 +1,39 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ❯ server/hermes-memory-recovery.native.test.ts (3 tests | 1 failed) 894ms
+     × holds closure if an artifact appears after the displayed inventory 189ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/hermes-memory-recovery.native.test.ts > interrupted closure through host and actual native Hermes > holds closure if an artifact appears after the displayed inventory
+AssertionError: expected { status: 409, body: { …(2) } } to match object { status: 409, …(1) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+    "body": {
+-     "code": "recovery-required",
++     "code": "conflict",
+    },
+    "status": 409,
+  }
+
+ ❯ server/hermes-memory-recovery.native.test.ts:73:111
+     71|     const saved = await readFile(f.journal), nativeId = JSON.parse(sav…
+     72|     const foreign = join(f.pendingDirectory, nativeId + '.json'); awai…
+     73|     expect(await f.service.handle(`${api}/${row.key}/close`, 'POST', {…
+       |                                                                                                               ^
+     74|     expect(await readFile(f.journal)).toEqual(saved); expect(await rea…
+     75|     expect(await readFile(f.memoryFile)).toEqual(before);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 4 passed (5)
+      Tests  1 failed | 195 passed (196)
+   Start at  03:43:40
+   Duration  2.29s (transform 109ms, setup 30ms, import 178ms, tests 1.79s, environment 0ms)
+

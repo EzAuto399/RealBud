@@ -1,5 +1,5 @@
 export const LOCAL_SERVICE_UNAVAILABLE =
-  "RealBud's local service is not responding yet. New checks and saves are paused; your existing book stays on this Mac.";
+  "RealBud's local service is not responding yet. New checks and saves are paused; your existing book stays saved in your private workspace.";
 export const SERVICE_UNAVAILABLE_EVENT = "realbud:service-unavailable";
 
 export function localServiceError(cause?: unknown): Error {

@@ -1,0 +1,60 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ❯ server/private-backup-source-bills.test.ts (5 tests | 1 failed | 4 skipped) 319ms
+     × refuses an otherwise valid imported bill head larger than the live encrypted record ceiling 318ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/private-backup-source-bills.test.ts > source-bill retention through private backup > refuses an otherwise valid imported bill head larger than the live encrypted record ceiling
+AssertionError: promise resolved "{ …(9) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "createdAt": "2026-09-21T06:22:56.814Z",
++   "digest": "8af8468233748e32f5e44838019a0d58ad58a14578c7ca52117d4b4b9981f39e",
++   "excluded": [
++     "Provider keys, connected-account credentials and sign-in sessions",
++     "Shared office database and company membership",
++     "Worker installation, authentication, conversations and memory",
++     "Files outside the listed business folders and external attachments",
++   ],
++   "fileCount": 3,
++   "included": [
++     "Private Desk book and property notes",
++     "Saved mail work and collected source evidence",
++     "Bank originals, reviewed copies, bills and preparation receipts",
++     "Agency settings, saved views, plans and instruction revision history",
++   ],
++   "plainBytes": 10129715,
++   "recordCount": 3,
++   "restoreChanges": [
++     "Use this installation’s protected encryption key",
++     "Clear connected-account selection and setup approvals",
++     "Pause all schedules and require plan review",
++     "Retain job history; interrupt unfinished work and close sign-in handoffs",
++     "Repair the installed instruction pack before running its plans",
++   ],
++   "workspaceId": "58c05218-f5db-4bc8-be42-581a2c9ea47e",
+  }
+
+ ❯ server/private-backup-source-bills.test.ts:62:61
+     60|     });
+     61|     const before = await readFile(join(to.directory, 'desk.json'));
+     62|     await expect(to.service.previewBackup(oversized, phrase)).rejects.…
+       |                                                             ^
+     63|     await expect(to.service.stageRestore({ backup: oversized, passphra…
+     64|     expect(await readFile(join(to.directory, 'desk.json'))).toEqual(be…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 4 skipped (5)
+   Start at  16:22:56
+   Duration  682ms (transform 216ms, setup 20ms, import 264ms, tests 319ms, environment 0ms)
+

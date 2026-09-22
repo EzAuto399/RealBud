@@ -1,0 +1,18 @@
+PASS Both memory reads and decisions reject a missing renderer session before exposing or changing preference data
+PASS Managed administrator protection is configured; ordinary staff cannot mutate provider settings or read provider login codes
+PASS Rendered Ask invokes actual ACP core, proposal-only MCP and native publication; one foreground review is pending and memory is unchanged
+PASS A second rendered Ask with the same request identity returns the same durable review without duplicate pending work
+PASS Actual packaged bootstrap and authenticated HTTP produce a complete native replacement preview in a disposable profile
+PASS Built settings UI shows all literal before/after text and keeps Apply disabled until the exact-version checkbox is checked
+PASS At 390px the complete text remains keyboard focusable and scrolls within its region without overflowing the document
+PASS The UI dispatches one exact reviewed digest, the native file changes to the complete preview, and the persisted receipt confirms application
+PASS Reload rediscovers the persisted decision and offers no second Apply action for a completed review
+PASS A rendered conversation retry after approval returns the saved identity and never recreates completed pending work
+PASS Changing saved memory after preview rejects the stale approval, preserves the newer bytes and proposal, and clears the old confirmation
+PASS A newly reviewed rejection uses its new digest, preserves memory and records the rejected result
+PASS No page errors, off-origin browser requests or admitted source changes occurred
+{
+  "output": "/Users/yoda/projects/RealBud/outputs/hermes-memory-proposals-2026-09-22/gui-packaged",
+  "checks": 13,
+  "cleanup": true
+}

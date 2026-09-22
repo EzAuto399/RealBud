@@ -37,7 +37,7 @@ export function createPhoneConnections(request: (signal: AbortSignal) => Promise
           snapshot = { channels: readChannels(body), error: "" };
         } catch {
           if (current !== generation) return;
-          snapshot = { channels: null, error: "Couldn’t check phone connections. Try again when this Mac is connected." };
+          snapshot = { channels: null, error: "Couldn’t check phone connections. Try again when this computer is connected." };
         } finally { if (current === generation) { flight = null; emit(); } }
       })();
       return flight;

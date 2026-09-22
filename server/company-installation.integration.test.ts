@@ -16,9 +16,8 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === '1')('owned host setup and 
   let sharedScope = '';
   const admin = { headers: { 'x-test-admin': 'synthetic' } };
   const request = (token = '', isAdmin = false) => ({ headers: { 'x-realbud-member-session': token, ...(isAdmin ? admin.headers : {}) } });
-  // A seat needs its own member identity to resolve its own worker profile, and a
-  // seat that only ever joins a host has no operator to set REALBUD_MEMBER. The
-  // identity therefore has to arrive from the host session.
+  // Membership binds from an authenticated host session. The separate workspace
+  // manifest keeps the original private worker profile across membership changes.
   const seatIdentities: string[] = [];
   function installation(name: string, onSeatIdentity?: (memberId: string) => void) {
     return createCompanyInstallation({ dataDirectory: join(directory, name), binaryDirectory: process.env.REALBUD_TEST_POSTGRES_BIN,
@@ -71,7 +70,14 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === '1')('owned host setup and 
     // The joining seat adopts the identity it was just issued, so its desk can
     // resolve that seat's own worker profile. Without this a joined seat has no
     // identity at all and would fall back to the shared base profile.
-    expect(seatIdentities).toContain(memberId);    expect((await call(client, 'join', { invitationToken: invitation.body.invitationToken, credential: { loginName: 'bob', password: 'Synthetic-member-password-2026' } })).status).toBe(401);
+    expect(seatIdentities).toContain(memberId);
+    // A bound workspace rejects a second enrollment before contacting the host.
+    expect((await call(client, 'join', { invitationToken: invitation.body.invitationToken, credential: { loginName: 'bob', password: 'Synthetic-member-password-2026' } })).status).toBe(409);
+    const unusedSeat = installation('unused-seat');
+    try {
+      expect((await call(unusedSeat, 'connect-host', { hostCode: code.body.hostCode })).status).toBe(200);
+      expect((await call(unusedSeat, 'join', { invitationToken: invitation.body.invitationToken, credential: { loginName: 'bob-again', password: 'Synthetic-member-password-2026' } })).status).toBe(401);
+    } finally { await unusedSeat.close(); }
     expect(joined.body.recoveryKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect((await call(client, 'knowledge/read', { scopeId: sharedScope, key: 'office-guide' }, member)).body.knowledge.content).toBe('Synthetic shared instructions');
     const ownerScopes = await call(host, 'scopes', undefined, owner);
@@ -140,9 +146,7 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === '1')('owned host setup and 
     host = installation('host'); client = installation('client');
     const hostState = await call(host, 'status');
     expect(hostState.body.configured).toBe(true); expect(hostState.body.networkEnabled).toBe(true);
-    // The seat identity must survive a restart. Writing seat.json without reading it
-    // back left a host whose owner had signed in running as the shared base worker
-    // profile after every launch, while the screen still showed them signed in.
+    // The office binding survives restart independently of private worker identity.
     expect(await host.seatIdentity()).toBe(ownerMemberId);
     const signedIn = await call(client, 'sign-in', { loginName: 'BOB', password: 'Synthetic-member-password-2026' });
     expect(signedIn.status).toBe(200); member = signedIn.body.memberToken;
@@ -151,4 +155,39 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === '1')('owned host setup and 
     expect((await call(client, 'logout', {}, member)).status).toBe(200);
     expect((await call(client, 'me', undefined, member)).status).toBe(401);
   }, 30_000);
+  it('renews the host identity, leaves cleanly, and joins another office without changing private work', async () => {
+    const identity = await client.workspaceIdentity();
+    const before = await readFile(join(directory, 'client/Local notes.txt'), 'utf8');
+    const signed = await call(client, 'sign-in', { loginName: 'bob', password: 'Synthetic-member-password-2026' });
+    member = signed.body.memberToken;
+    expect((await call(host, 'network', { hostname: '127.0.0.1', renewIdentity: true }, owner, true)).status).toBe(200);
+    expect((await call(client, 'status', undefined, member)).status).toBe(503);
+    const replacement = (await call(host, 'host-code', undefined, owner)).body.hostCode;
+    expect((await call(client, 'connect-host', { hostCode: replacement, replaceExisting: true })).status).toBe(200);
+    member = (await call(client, 'sign-in', { loginName: 'bob', password: 'Synthetic-member-password-2026' })).body.memberToken;
+    expect((await call(client, 'leave-office', {}, member)).body.code).toBe('work_resolution_required');
+    const shared = (await call(host, 'work', undefined, owner)).body.items;
+    for (const item of shared) if (item.state !== 'closed') expect((await call(host, 'work/close', { id: item.id, expectedRevision: item.revision }, owner)).status).toBe(200);
+    expect((await call(client, 'leave-office', {}, member)).status).toBe(200);
+    expect((await call(host, 'me', undefined, member)).status).toBe(401);
+    expect(await client.seatIdentity()).toBeNull();
+    expect((await call(client, 'status')).body.remoteJoinAvailable).toBe(true);
+    await client.close(); client = installation('client');
+    expect(await client.workspaceIdentity()).toEqual(identity);
+    const nextHost = installation('next-office');
+    try {
+      expect((await call(nextHost, 'setup', {}, '', true)).status).toBe(200);
+      const nextOwner = (await call(nextHost, 'create', { name: 'Another synthetic office', ownerName: 'New owner', credential: { loginName: 'next.owner', password: 'Synthetic-next-password' } }, '', true)).body;
+      expect((await call(nextHost, 'network', { hostname: '127.0.0.1' }, nextOwner.memberToken, true)).status).toBe(200);
+      const nextCode = (await call(nextHost, 'host-code', undefined, nextOwner.memberToken)).body.hostCode;
+      expect((await call(client, 'connect-host', { hostCode: nextCode })).status).toBe(200);
+      const invited = (await call(nextHost, 'invitations', { displayName: 'Bob' }, nextOwner.memberToken)).body;
+      const joined = await call(client, 'join', { invitationToken: invited.invitationToken, credential: { loginName: 'bob', password: 'Synthetic-next-member-password' } });
+      expect(joined.status).toBe(201); expect(joined.body.member.id).not.toBe(memberId);
+      expect(await client.workspaceIdentity()).toEqual(identity);
+      expect(await readFile(join(directory, 'client/Local notes.txt'), 'utf8')).toBe(before);
+      expect((await call(client, 'me', undefined, member)).status).toBe(401);
+    } finally { await nextHost.close(); }
+  }, 30_000);
+
 });

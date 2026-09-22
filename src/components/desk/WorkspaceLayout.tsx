@@ -11,7 +11,7 @@ export function WorkspaceLayout() {
       <label>Rows per page<select aria-label="Rows per page" value={p.pageSize} onChange={e => update({ pageSize: Number(e.target.value) as typeof p.pageSize })}>{[20, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}</select></label>
       <label>Queue width · {p.queueWidth}px<input aria-label="Queue width" type="range" min={240} max={360} step={10} value={p.queueWidth} onChange={e => update({ queueWidth: Number(e.target.value) })} /></label>
       <label className="workspace-layout-check"><input type="checkbox" checked={p.showBud} onChange={e => update({ showBud: e.target.checked })} />Keep Bud panel open on wide screens</label>
-      <p>{saved ? "Saved on this Mac. Automatic layouts adapt as your book grows." : "Storage is unavailable. These settings apply for this session."}</p>
+      <p>{saved ? "Saved in this app or browser. Automatic layouts adapt as your book grows." : "Storage is unavailable. These settings apply for this session."}</p>
       <button type="button" onClick={() => update(DEFAULT_WORKSPACE)}>Reset layout</button>
     </div>
   </details>;

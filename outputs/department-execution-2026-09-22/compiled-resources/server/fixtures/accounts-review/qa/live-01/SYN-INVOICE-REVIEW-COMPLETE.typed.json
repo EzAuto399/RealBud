@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "kind": "accounts-invoice-entry-review",
+  "sourceReference": "QA-SYN-INVOICE-REVIEW-COMPLETE-ea2ea628-4dde-4392-980d-400a205b566a",
+  "status": "complete",
+  "coverageComplete": true,
+  "documents": [
+    {
+      "documentId": "SYN-D001",
+      "decision": "queue",
+      "duplicateOf": null,
+      "conflictGroup": null,
+      "proposedEntry": {
+        "supplierId": "SYN-SUP001",
+        "invoiceId": "SYN-INV001",
+        "propertyId": "SYN-P01",
+        "amount": "420.00",
+        "currency": "AUD",
+        "dueDate": "2026-09-18",
+        "costType": "water"
+      },
+      "sourceIds": [
+        "SYN-D001-EMAIL",
+        "SYN-ATT001"
+      ],
+      "reason": "Read attachment syn-invoice-001.txt (SYN-ATT001, available): supplier, invoice, property code, amount, currency, due date and cost type all explicit. Property code SYN-CODE01 maps to approved propertyId SYN-P01. First of two identical copies (same supplier+invoice+property+version 1+amount); queued as the single candidate."
+    },
+    {
+      "documentId": "SYN-D002",
+      "decision": "queue",
+      "duplicateOf": null,
+      "conflictGroup": null,
+      "proposedEntry": {
+        "supplierId": "SYN-SUP002",
+        "invoiceId": "SYN-INV002",
+        "propertyId": "SYN-P02",
+        "amount": "180.00",
+        "currency": "AUD",
+        "dueDate": "2026-09-20",
+        "costType": "gardening"
+      },
+      "sourceIds": [
+        "SYN-D002-EMAIL",
+        "SYN-ATT002"
+      ],
+      "reason": "Read attachment syn-invoice-002.txt (SYN-ATT002, available): all invoice fields explicit. Property code SYN-CODE02 maps to approved propertyId SYN-P02. Single copy, no conflicting revision."
+    },
+    {
+      "documentId": "SYN-D003",
+      "decision": "queue",
+      "duplicateOf": null,
+      "conflictGroup": null,
+      "proposedEntry": {
+        "supplierId": "SYN-SUP003",
+        "invoiceId": "SYN-INV003",
+        "propertyId": "SYN-P01",
+        "amount": "600.00",
+        "currency": "AUD",
+        "dueDate": "2026-09-25",
+        "costType": "council"
+      },
+      "sourceIds": [
+        "SYN-D003-EMAIL",
+        "SYN-ATT003"
+      ],
+      "reason": "Read attachment syn-invoice-003.txt (SYN-ATT003, available): all invoice fields explicit. Property code SYN-CODE01 maps to approved propertyId SYN-P01. Single copy, no conflicting revision."
+    },
+    {
+      "documentId": "SYN-D004",
+      "decision": "duplicate",
+      "duplicateOf": "SYN-D001",
+      "conflictGroup": null,
+      "proposedEntry": {
+        "supplierId": null,
+        "invoiceId": null,
+        "propertyId": null,
+        "amount": null,
+        "currency": null,
+        "dueDate": null,
+        "costType": null
+      },
+      "sourceIds": [
+        "SYN-D004-EMAIL",
+        "SYN-ATT001"
+      ],
+      "reason": "Identical copy: same attachment SYN-ATT001 at version 1, same supplier+invoice+property+amount as SYN-D001. Points to first documentId SYN-D001 and raises no second candidate. No amount or due-date change is asserted, so this is duplicate and not a conflicting revision."
+    }
+  ],
+  "holds": [],
+  "actionsPerformed": []
+}

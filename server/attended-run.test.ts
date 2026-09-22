@@ -35,10 +35,10 @@ describe("worker sign-in handover requests", () => {
 describe("portal browser policy (RealBud layer)", () => {
   it("prefers the person's open browser and forbids a second isolated login window", () => {
     const policy = portalBrowserPolicy();
-    expect(policy).toMatch(/already-open Chrome or Brave/i);
-    expect(policy).toMatch(/Do not launch a new isolated/i);
-    expect(policy).toMatch(/never open yet another fresh login window/i);
-    expect(policy).toMatch(/When they say they are signed in or done/i);
+    expect(policy).toMatch(/already-open job-site tab/i);
+    expect(policy).toMatch(/Never launch another browser/i);
+    expect(policy).toMatch(/Stop\/restart does not authorize replaying/i);
+    expect(policy).toMatch(/release the browser first/i);
   });
 
   it("embeds that policy in the attended job system block", () => {
@@ -51,8 +51,8 @@ describe("portal browser policy (RealBud layer)", () => {
     });
     expect(block).toContain("Vantage login");
     expect(block).toContain("vantagestrata.residentportal.au.resvu.io");
-    expect(block).toMatch(/already-open Chrome or Brave/i);
-    expect(block).toMatch(/Do not launch a new isolated/i);
+    expect(block).toMatch(/already-open job-site tab/i);
+    expect(block).toMatch(/Never launch another browser/i);
     expect(block).toContain("Inputs and context:\nRead only the supplied account; do not use connected apps.");
     expect(block).toContain("do not expand the allowed sites or tool permissions");
     expect(block).toContain("naming the source site");
@@ -279,7 +279,15 @@ posixOnly("attended run route (fake ACP)", () => {
       }),
     );
 
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    // This route suite supplies a synthetic browser connection, just as it
+    // supplies a fake ACP worker. Broker/runtime suites exercise real ownership.
+    const browserFixture = join(home, "browser-fixture.mjs");
+    writeFileSync(browserFixture, `import { existsSync } from "node:fs";
+import { browserRuntime } from ${JSON.stringify(new URL("./browser-runtime.ts", import.meta.url).href)};
+browserRuntime.status = async () => ({ state: existsSync(${JSON.stringify(cuaPath)}) ? "ready" : "disconnected", enabled: true, browsers: [], selectedBrowserId: "fixture", active: false, checkedAt: Date.now(), version: "0.3.0", port: 52800, detail: "Synthetic browser connection" });
+browserRuntime.resumeConnection = async () => {};
+`);
+    child = spawn(process.execPath, ["--import", browserFixture, join(SERVER_DIR, "index.ts")], {
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

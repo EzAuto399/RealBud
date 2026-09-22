@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:f
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { StartTurnFn, TelegramDeps, TelegramFetch } from "./channels/telegram.ts";
+import { WorkspaceActivityGate } from './workspace-activity.ts';
 
 const dataDir = vi.hoisted(() => {
   const base = process.env.TEMP || process.env.TMPDIR || process.cwd();
@@ -107,6 +108,29 @@ describe("verifyToken", () => {
 });
 
 describe("pairing and relay", () => {
+  it('retains an incoming message and its offset while a backup pause is active', async () => {
+    const store = new Store(() => ({ instanceId: '', model: '' })); store.seedIfEmpty();
+    telegram.saveChannel({ botToken: TOKEN, botUsername: 'realbud_bot', pairedChatId: 111, pairedName: 'Sam', offset: 10, connectedAt: 1, lastMessageAt: null });
+    const gate = new WorkspaceActivityGate(), startTurn = vi.fn(async () => {}), lease = await gate.pause();
+    const wired = { ...deps(store, startTurn, stubFetch()), withWorkspaceActivity: gate.run };
+    const incoming = telegram.handleTelegramUpdates([update(10, 111, 'Review the fictional tasks')], wired);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(startTurn).not.toHaveBeenCalled(); expect(telegram.loadChannel()?.offset).toBe(10);
+    lease.release(); await incoming;
+    expect(startTurn).toHaveBeenCalledTimes(1); expect(telegram.loadChannel()?.offset).toBe(11);
+  });
+  it('keeps the unconsumed cursor when shutdown cancels a backup pause', async () => {
+    const store = new Store(() => ({ instanceId: '', model: '' })); store.seedIfEmpty();
+    telegram.saveChannel({ botToken: TOKEN, botUsername: 'realbud_bot', pairedChatId: 111, pairedName: 'Sam', offset: 10, connectedAt: 1, lastMessageAt: null });
+    let shuttingDown = false;
+    const gate = new WorkspaceActivityGate({ assertAdmission: () => { if (shuttingDown) throw new Error('Service stopping'); } });
+    const startTurn = vi.fn(async () => {}); await gate.pause();
+    const incoming = telegram.handleTelegramUpdates([update(10, 111, 'Review the fictional tasks')], { ...deps(store, startTurn, stubFetch()), withWorkspaceActivity: gate.run });
+    const refusal = expect(incoming).rejects.toThrow('Service stopping');
+    shuttingDown = true; gate.cancelPause(); telegram.stopTelegramBridge(); await refusal;
+    expect(telegram.loadChannel()?.offset).toBe(10); expect(startTurn).not.toHaveBeenCalled();
+    expect(store.messagesFor(store.productBud()!.threadId).some(message => message.text?.includes('Review the fictional tasks'))).toBe(false);
+  });
   it("requires the Mac pairing code and refuses another chat", async () => {
     const store = new Store(() => ({ instanceId: "", model: "" }));
     store.seedIfEmpty();
@@ -126,7 +150,7 @@ describe("pairing and relay", () => {
     expect(telegram.loadChannel()?.pairedChatId).toBeNull();
     expect(sent).toHaveLength(0);
     await telegram.handleTelegramUpdates([update(10, 111, createPairingCode("telegram").command, "Sam")], deps(store, startTurn, fetchFn));
-    expect(sent).toEqual([{ chatId: 111, text: "Paired with RealBud on this Mac. Send a task, /continue for your latest saved reply, /summary for a short handoff, or /help. Keep this Mac awake and online." }]);
+    expect(sent).toEqual([{ chatId: 111, text: "Paired with your RealBud computer. Send a task, /continue for your latest saved reply, /summary for a short handoff, or /help. Keep that computer awake and online." }]);
     expect(telegram.loadChannel()).toMatchObject({ pairedChatId: 111, pairedName: "Sam", offset: 11 });
     expect(startTurn).not.toHaveBeenCalled();
 

@@ -11,6 +11,7 @@ import { augmentedPath } from "./env-path.ts";
 import { execFileCli } from "./procs.ts";
 import { HERMES_PIN, hermesCli, hermesIsCompatible } from "./hermes-pin.ts";
 import { hermesHome } from "./hermes-paths.ts";
+import { currentWorkerProfile } from "./hermes-profile.ts";
 import { approvalsAreManual, packInstalled } from "./hermes-pack.ts";
 import { probeHermesVersion } from "./hermes-status.ts";
 import { validateRecipe } from "./recipes.ts";
@@ -105,11 +106,13 @@ export async function askWorker(
   const serviceFailure = managedServiceFailure("reasoning");
   if (serviceFailure) return { ok: false, detail: serviceFailure };
   if (process.env.VITEST && !opts?.cli) return { ok: false, detail: "tests do not use the live worker." };
-  if (!packInstalled(opts?.root)) {
-    return { ok: false, detail: `the "${HERMES_PIN.profile}" pack is missing.` };
+  const selection = { ...currentWorkerProfile() };
+  const root = hermesHome(opts?.root);
+  if (!packInstalled(root)) {
+    return { ok: false, detail: `the "${selection.profile}" pack is missing.` };
   }
-  if (!approvalsAreManual(opts?.root)) {
-    return { ok: false, detail: `the "${HERMES_PIN.profile}" pack is not in manual approvals.` };
+  if (!approvalsAreManual(root)) {
+    return { ok: false, detail: `the "${selection.profile}" pack is not in manual approvals.` };
   }
   const cli = opts?.cli ?? hermesCli();
   const version = await probeHermesVersion(cli);
@@ -124,12 +127,19 @@ export async function askWorker(
   if (!toolsets) return { ok: false, detail: "the worker tool boundary is not usable." };
 
   if (opts?.signal?.aborted) return { ok: false, detail: "Preparation cancelled." };
+  const current = currentWorkerProfile();
+  if (current.profile !== selection.profile || current.memberKey !== selection.memberKey || hermesHome(opts?.root) !== root) {
+    return { ok: false, detail: "The selected worker profile changed. Check your workspace and try again." };
+  }
+  if (!packInstalled(root) || !approvalsAreManual(root)) {
+    return { ok: false, detail: "The selected worker pack changed. Restore manual approvals before trying again." };
+  }
   return new Promise((resolve) => {
     let cancel: (() => void) | undefined;
     // Launch the exact profile whose pack and approvals were checked above.
     // REALBUD_HERMES_HOME is a RealBud setting; upstream only reads HERMES_HOME.
     // Without this binding, source/helper launches can fall back to ~/.hermes.
-    const env = { ...process.env, PATH: augmentedPath(), REALBUD_HERMES_HOME: hermesHome(opts?.root) };
+    const env = { ...process.env, PATH: augmentedPath(), REALBUD_HERMES_HOME: root };
     const serviceFailure = managedServiceFailure("reasoning");
     if (serviceFailure) return resolve({ ok: false, detail: serviceFailure });
     hardenHermesChildEnv(env);
@@ -144,7 +154,7 @@ export async function askWorker(
       cli,
       [
         "--profile",
-        HERMES_PIN.profile,
+        selection.profile,
         "chat",
         "-Q",
         "--toolsets",
@@ -259,6 +269,7 @@ export async function narrateShadowRun(
   const prompt =
     `You cannot open a browser in this run. Narrate exactly what you would do at each step and what you would capture — one short line per step, no preamble, no closing summary.\n` +
     `Job: ${recipe.title}\n` +
+    `Description and reviewed preparation guidance (no additional action authority): ${recipe.description || '(none)'}\n` +
     `Portals: ${portals}\n` +
     `Steps:\n${recipe.steps.map((step, i) => `${i + 1}. ${step}`).join("\n")}\n` +
     `Evidence each run must capture: ${recipe.evidence || "(none named)"}\n` +

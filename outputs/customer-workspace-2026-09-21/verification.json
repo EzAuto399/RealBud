@@ -1,0 +1,65 @@
+{
+  "checkedAt": "2026-09-21T02:58:18.630Z",
+  "sourceHead": "5856140c6ba49f53e79a7edbf01800e099b53e10",
+  "workingTree": "includes existing uncommitted work; no commit or deployment performed",
+  "version": "0.1.19",
+  "node": "v24.19.0",
+  "applicationTests": {
+    "passed": 2831,
+    "skipped": 109,
+    "failed": 0
+  },
+  "gatewayTests": {
+    "passed": 95,
+    "failed": 0
+  },
+  "nativeGui": {
+    "passed": 9,
+    "rendererErrors": 0,
+    "fictionalDataOnly": true
+  },
+  "packaged": [
+    {
+      "path": "server/index.js",
+      "sha256": "3a16c33904bcf0e3ee7d8d7108c653513f5443fcb5ee2fa03bb421cd0b546af3",
+      "bytes": 265208
+    },
+    {
+      "path": "server/customer-packs.js",
+      "sha256": "04cd818a5c7306805ccab92020e86c27a11193e2ef8c497fbc978eb9bb891059",
+      "bytes": 40664
+    },
+    {
+      "path": "server/managed-connectors.js",
+      "sha256": "4a197cea1d37aef57f33a011eda7d7378eb20edbd885d761dc3504d98abec457",
+      "bytes": 6625
+    },
+    {
+      "path": "server/job-executor.js",
+      "sha256": "044fc1f1cc9a2150f3649123af00c738f7203faa6e2bcc7415a313c59479ef85",
+      "bytes": 15341
+    },
+    {
+      "path": "ui/index.html",
+      "sha256": "427eec7b0395d088aa054208b2c0c29cd5a18c8b4a4a63340edcefbe007a74db",
+      "bytes": 458
+    },
+    {
+      "path": "pack/workflows/austin-office/realbud-austin-office-v1.json",
+      "sha256": "fe59339bd7e25334b7f36fad92b0a8542971a68bad00a6a70bc35cc836fb8901",
+      "bytes": 26473
+    },
+    {
+      "path": "pack/workflows/austin-accounts/workflows.json",
+      "sha256": "b3cd16ee895a9574a927b91714e4af2966dc1450b8963c2bcf0354dbd47ba389",
+      "bytes": 20223
+    }
+  ],
+  "release": {
+    "unsigned": true,
+    "published": false,
+    "installedApplicationsReplaced": false,
+    "windowsExecuted": false
+  },
+  "remaining": "See docs/CUSTOMER-WORKSPACE-IMPLEMENTATION-2026-09-21.md"
+}

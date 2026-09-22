@@ -1,0 +1,23 @@
+test_domain_failure_survives_both_context_layers (__main__.CombinedProtocolTests.test_domain_failure_survives_both_context_layers) ... ok
+test_facade_and_protocol_publish_replace_and_replay (__main__.CombinedProtocolTests.test_facade_and_protocol_publish_replace_and_replay) ... ok
+test_protocol_missing_ancestor_is_not_empty_data (__main__.CombinedProtocolTests.test_protocol_missing_ancestor_is_not_empty_data) ... ok
+test_target_lock_routes_to_whole_file_protocol (__main__.CombinedProtocolTests.test_target_lock_routes_to_whole_file_protocol) ... ok
+test_both_equal_names_are_held (__main__.FacadeTests.test_both_equal_names_are_held) ... ok
+test_capacity_counts_unrelated_names_before_new_stage (__main__.FacadeTests.test_capacity_counts_unrelated_names_before_new_stage) ... ok
+test_changed_destination_does_not_replace (__main__.FacadeTests.test_changed_destination_does_not_replace) ... ok
+test_collision_between_read_and_move_does_not_clobber (__main__.FacadeTests.test_collision_between_read_and_move_does_not_clobber) ... ok
+test_delete_pending_is_not_promoted_to_deleted (__main__.FacadeTests.test_delete_pending_is_not_promoted_to_deleted) ... ok
+test_memory_also_requires_its_native_target_lock (__main__.FacadeTests.test_memory_also_requires_its_native_target_lock) ... ok
+test_mutations_require_the_review_lock (__main__.FacadeTests.test_mutations_require_the_review_lock) ... ok
+test_nested_duplicate_lock_is_refused (__main__.FacadeTests.test_nested_duplicate_lock_is_refused) ... ok
+test_new_receipt_publishes_whole_file (__main__.FacadeTests.test_new_receipt_publishes_whole_file) ... ok
+test_partial_stage_preserves_every_byte (__main__.FacadeTests.test_partial_stage_preserves_every_byte) ... ok
+test_receipt_replacement_checks_old_bytes (__main__.FacadeTests.test_receipt_replacement_checks_old_bytes) ... ok
+test_uncertain_move_replay_flushes_without_rewrite (__main__.FacadeTests.test_uncertain_move_replay_flushes_without_rewrite) ... ok
+test_unlock_failure_still_clears_facade_lock_ownership (__main__.FacadeTests.test_unlock_failure_still_clears_facade_lock_ownership) ... ok
+test_write_failure_preserves_old_and_retries_exact_stage (__main__.FacadeTests.test_write_failure_preserves_old_and_retries_exact_stage) ... ok
+
+----------------------------------------------------------------------
+Ran 18 tests in 0.026s
+
+OK

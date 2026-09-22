@@ -1,0 +1,29 @@
+{
+  "ok": true,
+  "at": "2026-09-22T08:43:19.665Z",
+  "layer": "Actual desktop service and rendered UI + built Next + disposable PostgreSQL; fictional provider, mailbox and CLI fixtures",
+  "checks": [
+    "Actual desktop GUI reviews complete templates for both adapters, saves encrypted consent, recovers a lost parent-publication reply through atomic withdrawal, then establishes a new protocol2 generation and publishes a pending invitation through actual Next/PostgreSQL, with zero source scans or worker calls.",
+    "Legacy and other-agency acceptance are denied. Actual portal acceptance stays pending until attended desktop confirmation; lost committed confirmation response reconciles the same permission, and other agency sees no connection.",
+    "Unchanged cold restart plus the existing connection status check restores the same reviewed descriptors and confirmed person without re-enrollment or business source reads.",
+    "Workspace connections render at 360, 768 and 1280 with no horizontal overflow; the disconnect confirm opens as a modal dialog with focus on Keep connection, Escape closes it, focus returns to the trigger and nothing is revoked.",
+    "Portal self-revocation while desktop is stopped is observed after cold restart; local disable preserves protocol2 marker and rejects v1 re-enrollment; no source/worker effects occurred."
+  ],
+  "errors": [],
+  "scanCalls": 0,
+  "workerCalls": 0,
+  "site": {
+    "rpcCount": 51,
+    "violations": [],
+    "databaseErrors": [],
+    "authRejections": [],
+    "migrationHashes": {
+      "portalPeople": "17d9df75b244cb13e356ccfff3c27591aaf7a38aec0f0c4ce003d671cb79904d",
+      "remoteApprovers": "17825f58da8cac746e98b5ac36d8ba7005210882b564174bc53fdfa236297b08"
+    }
+  },
+  "limits": [
+    "No remote review upload/decision/claim execution yet",
+    "No hosted deployment or native Windows proof"
+  ]
+}

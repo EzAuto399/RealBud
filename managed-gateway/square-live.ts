@@ -1,5 +1,5 @@
 /** Square-backed draft invoice helpers for operator/sandbox wiring. */
-import { SquareBilling } from "./square.ts";
+import { SquareBilling, type SquareEnvironment } from "./square.ts";
 import { digest, type UsageLedger } from "./ledger.ts";
 import type { PortalPrincipal } from "./contracts.ts";
 
@@ -9,6 +9,9 @@ export function createSquareBilling(options: {
   notificationUrl: string;
   signatureKey: string;
   fetchImpl?: typeof fetch;
+  /** Which Square host to talk to. Defaults to production; pass 'sandbox'
+   * explicitly so a sandbox token can never be aimed at the real account. */
+  environment?: SquareEnvironment;
 }): SquareBilling {
   return new SquareBilling({
     ledger: options.ledger,
@@ -16,6 +19,7 @@ export function createSquareBilling(options: {
     secret: async () => options.accessToken,
     notificationUrl: options.notificationUrl,
     signatureKey: async () => options.signatureKey,
+    environment: options.environment,
   });
 }
 

@@ -1,0 +1,12 @@
+{
+  "admittedRuntime": "345cd2b057a452236de401d3534b8502a7465e8d",
+  "nativeFiles": {
+    "tools/memory_tool_store.py": "811ef2eb98a8b3f0448294b2c23d422ff7ebd4dc45835475b12df0557d7e5366",
+    "utils.py": "1414f177e14940750ad80d6dd5020685219ca26b0b7d500299ab2f170118ed07",
+    "tools/write_approval.py": "9404792bc8c6637e5bd78a87f5a6dfabda6cd6a1a61083b450647ddb2951c470"
+  },
+  "promptBytes": 17630,
+  "promptSha256": "fd4c31a19e2ff71b6b4b4af45bc89e8ae209d8519f7863cda2fd514c5a330ab9",
+  "productionEdits": false,
+  "WindowsExecuted": false
+}

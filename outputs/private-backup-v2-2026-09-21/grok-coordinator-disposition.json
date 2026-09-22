@@ -1,0 +1,34 @@
+{
+  "sessionId": "01a0c373-e0ba-7f20-8341-57fe2a3a4f03",
+  "requestedModel": "grok-4.6",
+  "requestedReasoningEffort": "xhigh",
+  "actualModels": [
+    "grok-4.6-build"
+  ],
+  "stopReason": "end_turn",
+  "numTurns": 1,
+  "scope": "Read-only design review from a source packet; no delegated edits or tools",
+  "usage": {
+    "input_tokens": 63169,
+    "cache_read_input_tokens": 9984,
+    "cache_creation_input_tokens": 0,
+    "output_tokens": 12973,
+    "reasoning_tokens": 7297,
+    "total_tokens": 86126
+  },
+  "accepted": [
+    "Reuse existing capture/catalog/archive/transfer/prepared/cold modules",
+    "Durable operation ownership and reservation journal",
+    "Bind reviewed archive digest to prepared stage; preserve staged evidence",
+    "Release host snapshot lease before archive sealing/download",
+    "Reconcile dead-owner and lost-response state before retry"
+  ],
+  "corrections": [
+    "Retain already implemented client route/request contract; do not adopt proposed alternate routes",
+    "Upload seal uses ordered chunk commitment; whole archive digest is a separate returned identity",
+    "Target key stays in existing protected custody; encrypt journal payloads with it rather than persisting key material in an operation",
+    "Durable checking/sealing intent is allowed when owner-bound and recovered to interrupted after confirmed owner exit",
+    "Host pause and kill tests added after the design packet supersede its stale new-code checklist"
+  ],
+  "remaining": "Implement, integrate and test the public v2 coordinator, quota, HTTP and UI. Review output is not implementation proof."
+}

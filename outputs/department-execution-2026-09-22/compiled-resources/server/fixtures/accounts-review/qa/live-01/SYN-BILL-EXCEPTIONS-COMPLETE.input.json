@@ -1,0 +1,171 @@
+{
+  "version": 1,
+  "synthetic": true,
+  "sourceReference": "QA-SYN-BILL-EXCEPTIONS-COMPLETE-0fc657b8-80cc-4b2d-9cfb-cfd5ba5f0a13",
+  "asOf": "2026-09-14",
+  "timezone": "Australia/Brisbane",
+  "reviewer": {
+    "name": "Kevin",
+    "role": "accounts",
+    "roleConfirmation": "user-confirmed",
+    "scenario": "synthetic"
+  },
+  "coverage": {
+    "complete": true,
+    "agreedAccounts": [
+      "SYN-ACCOUNT-FINANCE",
+      "SYN-ACCOUNT-ADMIN"
+    ],
+    "from": "2026-09-01T00:00:00+10:00",
+    "toExclusive": "2026-09-15T00:00:00+10:00",
+    "accounts": [
+      {
+        "accountId": "SYN-ACCOUNT-FINANCE",
+        "folders": [
+          "inbox"
+        ],
+        "expectedThreadCount": 0,
+        "returnedThreadCount": 0,
+        "paginationComplete": true,
+        "pageIds": [
+          1
+        ],
+        "failedPages": [],
+        "threadHistoryComplete": true
+      },
+      {
+        "accountId": "SYN-ACCOUNT-ADMIN",
+        "folders": [
+          "inbox"
+        ],
+        "expectedThreadCount": 0,
+        "returnedThreadCount": 0,
+        "paginationComplete": true,
+        "pageIds": [
+          1
+        ],
+        "failedPages": [],
+        "threadHistoryComplete": true
+      }
+    ],
+    "failedSources": [],
+    "missingAttachments": [],
+    "newThreadsSinceLastRun": 0
+  },
+  "register": [
+    {
+      "occurrenceId": "SYN-B01",
+      "propertyId": "SYN-P01",
+      "expectedBy": "2026-09-12"
+    },
+    {
+      "occurrenceId": "SYN-B02",
+      "propertyId": "SYN-P02",
+      "expectedBy": "2026-09-12"
+    },
+    {
+      "occurrenceId": "SYN-B03",
+      "propertyId": "SYN-P03",
+      "expectedBy": "2026-09-12"
+    },
+    {
+      "occurrenceId": "SYN-B04",
+      "propertyId": "SYN-P04",
+      "expectedBy": "2026-09-12"
+    },
+    {
+      "occurrenceId": "SYN-B05",
+      "propertyId": "SYN-P05",
+      "expectedBy": "2026-09-20"
+    },
+    {
+      "occurrenceId": "SYN-B06",
+      "propertyId": "SYN-P06",
+      "expectedBy": "2026-09-12"
+    }
+  ],
+  "invoices": [
+    {
+      "sourceId": "SYN-ACCEPTED-I01",
+      "invoiceId": "SYN-BILLINV01",
+      "occurrenceId": "SYN-B01",
+      "propertyId": "SYN-P01",
+      "accepted": true,
+      "amount": "420.00",
+      "dueDate": "2026-09-13"
+    },
+    {
+      "sourceId": "SYN-ACCEPTED-I02",
+      "invoiceId": "SYN-BILLINV02",
+      "occurrenceId": "SYN-B02",
+      "propertyId": "SYN-P02",
+      "accepted": true,
+      "amount": "420.00",
+      "dueDate": "2026-09-13"
+    },
+    {
+      "sourceId": "SYN-ACCEPTED-I03",
+      "invoiceId": "SYN-BILLINV03",
+      "occurrenceId": "SYN-B03",
+      "propertyId": "SYN-P03",
+      "accepted": true,
+      "amount": "420.00",
+      "dueDate": "2026-09-13"
+    },
+    {
+      "sourceId": "SYN-ACCEPTED-I06",
+      "invoiceId": "SYN-BILLINV06",
+      "occurrenceId": "SYN-B06",
+      "propertyId": "SYN-P06",
+      "accepted": true,
+      "amount": "420.00",
+      "dueDate": "2026-09-18"
+    }
+  ],
+  "states": [
+    {
+      "occurrenceId": "SYN-B01",
+      "paymentArranged": true,
+      "paymentConfirmed": false,
+      "funding": "sufficient",
+      "advanceMade": false
+    },
+    {
+      "occurrenceId": "SYN-B02",
+      "paymentConfirmed": true,
+      "paymentReceiptId": "SYN-PAYREC02",
+      "funding": "sufficient",
+      "advanceMade": true,
+      "advanceId": "SYN-ADV02",
+      "recoveryConfirmed": false,
+      "ownerFundsArrived": true
+    },
+    {
+      "occurrenceId": "SYN-B03",
+      "paymentConfirmed": true,
+      "paymentReceiptId": "SYN-PAYREC03",
+      "funding": "sufficient",
+      "advanceMade": true,
+      "advanceId": "SYN-ADV03",
+      "recoveryConfirmed": true,
+      "recoveryReceiptId": "SYN-RECOVER03"
+    },
+    {
+      "occurrenceId": "SYN-B04",
+      "funding": "unknown",
+      "advanceMade": false
+    },
+    {
+      "occurrenceId": "SYN-B05",
+      "funding": "unknown",
+      "advanceMade": false
+    },
+    {
+      "occurrenceId": "SYN-B06",
+      "paymentConfirmed": false,
+      "funding": "insufficient",
+      "advanceMade": false,
+      "ownerToPay": true
+    }
+  ]
+}

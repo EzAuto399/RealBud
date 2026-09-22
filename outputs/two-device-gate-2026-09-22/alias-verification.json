@@ -1,0 +1,32 @@
+{
+  "node": "v24.19.0",
+  "checkerSha256": "ed48a7e6ae3c6a13bdfebb204569230badad4aede222cf3533a34c2abf07d49f",
+  "observations": [
+    {
+      "target": "macos-rehearsal",
+      "templateExit": 0,
+      "pairings": 1,
+      "unrunExit": 1,
+      "issues": 303,
+      "nonRepoTemplateExit": 0,
+      "nonRepoUnrunExit": 1
+    },
+    {
+      "target": "full-platform",
+      "templateExit": 0,
+      "pairings": 4,
+      "unrunExit": 1,
+      "issues": 1216,
+      "nonRepoTemplateExit": 0,
+      "nonRepoUnrunExit": 1
+    },
+    {
+      "case": "omitted target on macos-only template",
+      "exit": 1,
+      "target": "full-platform",
+      "evidenceComplete": false
+    }
+  ],
+  "remoteCiRun": false,
+  "deviceAcceptancePerformed": false
+}

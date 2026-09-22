@@ -1,0 +1,108 @@
+{
+  "checkpoint": "stable-portal-identity",
+  "completedAt": "2026-09-21T22:06:36.421061+00:00",
+  "goalStatus": "active",
+  "previousGoalWork": "progress: identity implementation and actual integration verification",
+  "scope": "Local website identity prerequisite; remote enrollment and execution not enabled",
+  "source": {
+    "files": 110,
+    "changedDuringFinalChecks": [],
+    "before": "source-before-checks.json",
+    "after": "source-after-checks.json",
+    "migrationSha256": "17d9df75b244cb13e356ccfff3c27591aaf7a38aec0f0c4ce003d671cb79904d"
+  },
+  "checks": {
+    "websiteUnitTests": {
+      "passed": 47,
+      "failed": 0,
+      "focusedSessionPersonTestsIncluded": 10,
+      "log": "website-tests.log"
+    },
+    "postgres": {
+      "assertions": 110,
+      "receipt": "sql-verification.json"
+    },
+    "builtIdentityHttpBrowser": {
+      "groups": 10,
+      "receipt": "http-ui/receipt.json"
+    },
+    "legacyCommandsHttpBrowser": {
+      "groups": 5,
+      "receipt": "commands-regression/receipt.json"
+    },
+    "productionWebsiteBuild": {
+      "exitCode": 0,
+      "log": "website-build.log",
+      "buildId": "LHpYFuT7VOOndBSlZA2ZV"
+    },
+    "websiteTypecheck": {
+      "exitCode": 0,
+      "log": "website-typecheck.log"
+    },
+    "scopedLint": {
+      "exitCode": 1,
+      "errors": 1,
+      "warnings": 0,
+      "preExisting": "Unchanged account/page.tsx Date.now server-render purity warning is an ESLint error",
+      "log": "scoped-lint-final.log"
+    }
+  },
+  "visualInspection": {
+    "files": [
+      "http-ui/identity-verified-desktop.png",
+      "http-ui/identity-legacy-mobile.png",
+      "http-ui/identity-stale-mobile.png"
+    ],
+    "observed": "Readable desktop/mobile identity and recovery states, no horizontal overflow; keyboard focus verified in browser",
+    "boundary": "Website only; initial desktop request list captured while loading; identity panel is resolved"
+  },
+  "fixedIntegrationFindings": [
+    "Supabase verifyOtp stores user session per client even without persistence; identity RPC now uses a separate fresh service client",
+    "Next layout denial did not prevent protected admin child content in streamed response; each of three pages checks authority before rendering"
+  ],
+  "preservedNegativeEvidence": [
+    "http-ui-before-callback-fix/receipt.json",
+    "callback-auth-diagnosis.json",
+    "http-ui-before-admin-page-guards/receipt.json",
+    "scoped-lint-final.log"
+  ],
+  "independentReview": "review-final.md",
+  "grok": {
+    "requestedModel": "grok-4.7",
+    "reasoningEffort": "xhigh",
+    "returnedModelOption": "grok-4.6",
+    "returnedReasoningEffort": "xhigh",
+    "completed": false,
+    "failure": "Requested model and xhigh effort were not confirmed by session options; no prompt sent.",
+    "promptRequestsSent": 0,
+    "toolCallCount": 0,
+    "permissionRequestCount": 0,
+    "processReaped": true,
+    "remainingOwnedGroupPids": [],
+    "isolatedHomeRemoved": true,
+    "globalConfigUnchanged": true,
+    "elapsedSeconds": 4.512,
+    "exitCode": 143
+  },
+  "limits": [
+    "External Supabase provider response fictional; no live provider/customer access",
+    "No hosted migration, deployment or outbound messages",
+    "Legacy cookies retain existing billing and protocol-1 request behavior, not remote person authority",
+    "Identity precheck does not atomically authorize a later separate effect",
+    "No remote approver enrollment, disclosure, protocol-2 decisions or department execution yet",
+    "No new desktop package or installed Windows/macOS acceptance",
+    "No multi-agency throughput benchmark",
+    "Full office two-device and customer workday gates remain"
+  ],
+  "next": "Attended two-party enrollment and protocol-2 disclosure/review/claim integration, followed by scoped department execution",
+  "evidenceSha256": {
+    "review-final.md": "a1fadaf7fab3a17b359dcf1c87211574e47b29ede330e614a36601db42e3fb36",
+    "review-final-source-fingerprints.json": "f31ffb7d51dddbd0f87e79af54c3b6f1a14fbcabf4b9722fad5abd9fb5345b96",
+    "website-build.log": "9b91cb117df1bfb9d43c713d9c4713fe86ff47a67abd483b553456cc51bf7bae",
+    "website-typecheck.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "website-tests.log": "984dc63d8c0abf7e78884246af16b7983a71ae564b504f0620de0869cdb9c68e",
+    "sql-verification.json": "f8e8ddb5a2b96c3aa8cbc1c2c339314cd968b09c3db9def007410af2a42bfb22",
+    "http-ui/receipt.json": "828a49d353d2a73c7d5d099078fd60ca1fefdfdc29bfdcb1898737467f75eeff",
+    "commands-regression/receipt.json": "68308a819b16b6892a1971e4b81f73b577e2b8bed8609d78816fcf18c2b32eb1"
+  }
+}

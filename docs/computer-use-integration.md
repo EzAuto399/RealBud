@@ -1,5 +1,7 @@
 # Computer use & browser use in RealBud
 
+> Historical proposal. The browser-default decision below is superseded by [the 20 September saved-job BrowserSkill integration](BROWSER-INTEGRATION-2026-09-20.md). Retain this document as design history; do not use its embedded-browser or zero-extension claims as current product behavior.
+
 Decision doc, 2026-08-12. How bots in RealBud get local computer use and
 browser use, out of the box, with no separate installs. Based on a survey of
 OSS chat-app MCP hosts, macOS control servers, browser-automation stacks, and

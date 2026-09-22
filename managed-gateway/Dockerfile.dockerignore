@@ -1,0 +1,9 @@
+**
+!managed-gateway/
+!managed-gateway/*.ts
+!managed-gateway/package.json
+!managed-gateway/tsconfig.json
+!server/
+!server/composio-gmail.ts
+!shared/
+!shared/mail-ingestion.ts

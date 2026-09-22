@@ -1,6 +1,6 @@
 /** Our OpenAI org, one API key per office. Operator mapping + monthly wholesale → retail.
  * Clients never see the key, USD, or margin. Website Charge stays accepted AUD. */
-import { canonical, id, integer, nano, object, requireThat, type PortalPrincipal } from './contracts.ts';
+import { canonical, id, integer, requireThat, type PortalPrincipal } from './contracts.ts';
 import { digest, UsageLedger } from './ledger.ts';
 import { periodAt, retailProposal } from './money.ts';
 import type { OpenAICostsSnapshot } from './openai-costs.ts';

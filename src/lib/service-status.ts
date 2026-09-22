@@ -63,14 +63,22 @@ export function serviceLifecycleCopy(value: unknown): { title: string; detail: s
   const restarts = Number.isSafeInteger(status.restarts) && status.restarts > 0 ? status.restarts : 0;
   const attempts = restarts === 1 ? "once" : `${restarts} times`;
 
-  // The office is serving. Say nothing, whatever a development supervisor thinks.
-  if (status.running === true) return null;
+  // Availability does not establish control authority. Older services can
+  // answer normally without the per-process capability used by this app.
+  if (status.running === true) {
+    if (status.manageable !== true || status.external === true) return {
+      title: "This window cannot stop the running service",
+      detail: "It may have been started by another RealBud window or an older installation. Use the app that started it, or ask RealBud support to identify it before stopping anything. This window has no verified permission to stop it.",
+      canRetry: false,
+    };
+    return null;
+  }
 
   // Running but started outside this installation: a truthful report, no controls.
   if (status.running === false && status.external === true) {
     return {
-      title: "Another RealBud service is using this office's port",
-      detail: "RealBud did not start it and will not stop it. Close the other RealBud, then start the office service again.",
+      title: "The office service connection needs checking",
+      detail: "Another RealBud service may be using this computer. This window cannot manage it. Ask RealBud support to identify the running service before starting another one.",
       canRetry: false,
     };
   }
@@ -79,7 +87,7 @@ export function serviceLifecycleCopy(value: unknown): { title: string; detail: s
   if (status.running === false) {
     return {
       title: "The office service is not running",
-      detail: "RealBud is not sharing this office's records and scheduled work right now. Your saved work is safe and nothing was sent, paid or submitted.",
+      detail: "RealBud cannot confirm the office service is available. Sharing and scheduled work may be interrupted. Check recent work and the connected system before retrying a job; its last action may already have completed.",
       canRetry: true,
     };
   }
@@ -88,20 +96,35 @@ export function serviceLifecycleCopy(value: unknown): { title: string; detail: s
     case "exhausted":
       return {
         title: "The office service has stopped",
-        detail: "RealBud tried to restart it and gave up. Saved work is safe and nothing was sent, paid or submitted. Restart it below; if it stops again, contact RealBud support.",
+        detail: "Automatic restart attempts have stopped. Review recent work and the connected system before retrying interrupted jobs to avoid duplicates. Start the service below; if it stops again, contact RealBud support.",
         canRetry: true,
       };
     case "failed":
       return {
         title: "The office service did not start",
-        detail: `It has not been running${restarts ? ` after ${attempts}` : ""}. Check that nothing else is using RealBud's ports, then restart it below.`,
+        detail: `The start was not confirmed${restarts ? ` after retrying ${attempts}` : ""}. Start it below; if it fails again, contact RealBud support. Review recent work before retrying interrupted jobs.`,
         canRetry: true,
       };
     case "restarting":
-      return { title: "Restarting the office service", detail: "RealBud is bringing the office back. This usually takes a few seconds.", canRetry: false };
+      return { title: "Restarting the office service", detail: "RealBud is trying to bring the office back. Wait for its status before continuing. Review recent work before retrying an interrupted job.", canRetry: false };
     case "exited":
-      return { title: "The office service stopped", detail: `RealBud is restarting it (attempt ${restarts}). Saved work is safe.`, canRetry: false };
+      return { title: "The office service stopped", detail: `RealBud is restarting it (attempt ${restarts}). Interrupted jobs may have an unknown result. Check recent work and the connected system before retrying them.`, canRetry: false };
     default:
       return null;
   }
+}
+
+/** A successful request alone is insufficient: require the resulting state. */
+export function serviceActionFeedback(action: "start" | "stop", result: unknown): { ok: boolean; message: string } {
+  const value = result as { ok?: unknown; status?: { running?: unknown } } | null;
+  const ok = value?.ok === true && value.status?.running === (action === "start");
+  if (!ok) return {
+    ok: false,
+    message: action === "stop"
+      ? "The service stop was not confirmed. It may still be running. Check its status before closing this computer; review interrupted work before retrying it."
+      : "The service start was not confirmed. Check its status again. If it remains unavailable, contact RealBud support before retrying interrupted work.",
+  };
+  return { ok: true, message: action === "stop"
+    ? "The office service has stopped. Review recent work before restarting interrupted jobs; their last result may be unknown."
+    : "The office service is running. Review recent work before retrying interrupted jobs to avoid duplicates." };
 }

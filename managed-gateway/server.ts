@@ -17,6 +17,8 @@ import { GatewayError, requireThat } from "./contracts.ts";
 import { directProvider } from "./direct-provider.ts";
 import { createSquareBilling } from "./square-live.ts";
 import { OpenAICostsPoller } from "./openai-costs.ts";
+import { connectorRegistry, ManagedConnectors } from "./connectors.ts";
+import { composeProvisioning } from "./provisioning.ts";
 
 function loadLocalEnv() {
   const file = resolve(dirname(fileURLToPath(import.meta.url)), ".env.local");
@@ -75,6 +77,11 @@ requireThat(paymentKey.byteLength >= 32, "REALBUD_PAYMENT_WEBHOOK_KEY invalid");
 const squareToken = process.env.SQUARE_ACCESS_TOKEN || "";
 const squareNotify = process.env.SQUARE_NOTIFICATION_URL || "";
 const squareSig = process.env.SQUARE_WEBHOOK_SIGNATURE_KEY || "";
+// Square's sandbox and production are separate hosts with separate tokens. Aim
+// the client at the host that matches the configured mode, so a sandbox token
+// is never sent to the production host (and vice versa). `live` is the only mode
+// that may touch the real account.
+const squareEnvironment = paymentMode === "sandbox" ? "sandbox" : "production";
 export const square =
   squareToken && squareNotify && squareSig
     ? createSquareBilling({
@@ -82,6 +89,7 @@ export const square =
         accessToken: squareToken,
         notificationUrl: squareNotify,
         signatureKey: squareSig,
+        environment: squareEnvironment,
       })
     : null;
 
@@ -186,10 +194,31 @@ if (openaiAdmin) {
   setInterval(tick, 60_000).unref();
 }
 
+// Vendor-side installation provisioning, from the environment alone. Disabled
+// unless REALBUD_ENABLE_PROVIDER=1, like every other outbound provider here. A
+// deployment that enables it but misses a variable answers 503 naming that
+// variable, rather than booting with a half-built Composio or Modelvia client.
+// `fetch` is handed over only when the gate is open, so nothing can call out
+// while provisioning is disabled.
+const provisioningComposition = composeProvisioning({
+  env: process.env,
+  ledger,
+  fetch: process.env.REALBUD_ENABLE_PROVIDER === "1" ? fetch : (async () => {
+    throw new GatewayError("provisioning_disabled", 503);
+  }),
+});
+
 const server = createGatewayServer({
   gateway,
   billing,
   allowedOrigins: siteOrigins,
+  ...("provisioning" in provisioningComposition
+    ? { provisioning: provisioningComposition.provisioning }
+    : { provisioningUnavailable: provisioningComposition.unavailable }),
+  ...(process.env.REALBUD_GATEWAY_CONNECTOR_REGISTRY ? { connectors: new ManagedConnectors({ ledger,
+    devices: () => connectorRegistry(process.env.REALBUD_GATEWAY_CONNECTOR_REGISTRY!),
+    secret: name => process.env[name],
+  }) } : {}),
   health: {
     squareConfigured: !!square,
     // Which mode the gateway is in, so an operator can see that a sandbox/live
@@ -217,6 +246,8 @@ server.listen(port, "0.0.0.0", () => {
       routes: [...routes.keys()],
       paymentMode,
       squareConfigured: !!square,
+      // A code, never a value: says which variable a deployment still has to set.
+      provisioning: "provisioning" in provisioningComposition ? "composed" : provisioningComposition.unavailable,
     }),
   );
 });

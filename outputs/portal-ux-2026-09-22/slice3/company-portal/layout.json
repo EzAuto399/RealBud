@@ -1,0 +1,20 @@
+[
+  {
+    "path": "/account/company-portal",
+    "width": 360,
+    "scroll": 360,
+    "wide": []
+  },
+  {
+    "path": "/account/company-portal",
+    "width": 768,
+    "scroll": 768,
+    "wide": []
+  },
+  {
+    "path": "/account/company-portal",
+    "width": 1280,
+    "scroll": 1280,
+    "wide": []
+  }
+]

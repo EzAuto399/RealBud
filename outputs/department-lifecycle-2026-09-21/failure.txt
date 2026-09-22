@@ -1,0 +1,210 @@
+RealBud
+App connected
+
+WORKSPACE
+
+Desk
+Tasks & properties
+Ask
+Work with Bud
+Schedule
+Jobs & routines
+PO
+You
+Office & settings
+Manage views
+Connections
+PRACTICE SAFELY
+Run the sample morning
+
+Use labelled training facts to learn the full Desk flow. This practice stays in your private workspace and does not contact your PMS.
+
+Run sample morning
+Sample book
+·
+Bud setup open
+·
+Next Morning money check 22 Sept, 7:30 am
+You
+
+Jump to a group below, or scroll. Set up only what you need for the work ahead.
+
+Bud
+Office
+Browser
+Apps
+Phone
+Profile
+Advanced
+Service
+Source-run key. This is not a production distribution. Agency data stays local.
+BUD SETUP
+Bud on this computer
+
+Model needed
+
+Connect a model for Bud. Your request stays here while you finish setup.
+
+Ask your RealBud service administrator to finish setup on this computer. Keep preparing and saving plans in Schedule.
+
+Check again
+
+Company service settings are managed. Personal app connections stay under Apps.
+
+Service administration
+This office
+Agency basics · optional setup details
+This office
+Set the basics for your book. Software and technical details can wait.
+
+Finish setting up this office
+
+1 of 7 filled. The rest of the form can wait.
+
+Agency and named PM
+Agency name and states →
+
+Optional later: pms brand, named exporter, export cadence, export identity column, vendor test account.
+
+Agency name
+Where are your properties?
+
+Choose the states and territories in your book. RealBud uses these for location-specific workflows.
+
+ACT
+NSW
+NT
+QLD
+SA
+TAS
+VIC
+WA
+
+Book timezone: Australia/Brisbane
+
+How we check rent · your office’s workflow
+Software & office contact · optional
+CSV handover notes · optional
+Assisted portal setup · technical details
+Save changes
+Local office collaboration
+
+Optional. Use RealBud on your own, or join colleagues to exchange reviewed work and workflow templates.
+
+Local office · preview
+
+One existing office computer can host collaboration. To join it, use your owner’s host code and a private invitation. Your Desk, Ask history and sources stay on this computer; they are not automatically shared.
+
+Company
+Fictional Acacia office
+Signed in
+Practice owner
+Role
+Owner
+
+This session stays in this app window. Company membership does not grant access to a colleague’s private accounts or conversations.
+
+Members, invitations and ownership
+Departments and access
+
+Departments organise access to shared office records. Each person keeps their own Bud, browser sign-ins and private work on their computer.
+
+Joining a department does not move private Desk items or start work on another computer. Reviewed handoffs remain under Shared work on Desk.
+
+Operations
+Retired · records are read only
+View work
+in Operations
+Manage Operations
+Reopen department
+: Operations
+
+Retired 9/21/2026, 4:05:06 PM. Fictional department has completed its work. Retain the record.
+
+New department name
+Create department
+Department work · Operations
+
+Keep shared case records, name the person responsible and record human decisions. Private Desk work and reviewed handoffs stay in their existing views. These controls never start work on another computer.
+
+Retired department · records are read only. Case history and review notes are retained.
+
+Needs review
+All work
+
+Fictional invoice follow-up
+
+Completed
+
+Assigned to: Practice colleague · no longer has editing access
+
+Case details
+
+Completed by Practice owner · 9/21/2026, 4:05:05 PM
+
+Reviewed with the fictional colleague. The reference was confirmed.
+
+Refresh department work
+
+Department retired. Its case history is still available through View work.
+
+Refresh departments
+Set up or change your sign-in
+Invite a member
+Member’s name
+
+The invitation creates a member, not an owner. It can be used once before it expires. Anyone with it can join, so share it privately.
+
+Create invitation
+Sign out of company
+
+Signing out ends this window’s session. It does not leave the office, unlink its host or remove your local work.
+
+Current availability
+Connection and work recovery
+Archived share receipts
+Archived department update receipts
+
+Refresh local recovery
+
+Check company status
+Website account
+Optional. See this computer’s status in your RealBud website account.
+
+This link is separate from local office collaboration. Linking a computer does not join an office host or share work with colleagues.
+
+The website receives this computer’s name, app and Bud versions, readiness, and last check-in. Your conversations, documents, and connected-app keys stay here.
+
+Open Account → Computers, create a link code, then paste it below.
+
+Computer name
+Link code
+Link this computer
+
+Linking does not activate model access or allow remote control. Bud setup and service access are managed separately.
+
+Workspace setup · 2 left · Bud, agency name. Workflow checks are separate.
+Open
+CONNECTIONS
+Browser
+Not connected
+Connected apps
+Optional · bring email and files into a task
+Bud on your phone
+Optional · connect a messaging app
+ACCOUNT
+Your profile
+Name and office email
+RealBud service
+Access to managed assistance on this computer.
+
+Service setup needed
+
+Contact RealBud support to restore managed assistance. Your saved work remains available; you can still stop running work and review results.
+
+Refresh service status
+MORE
+Advanced
+Jobs, rules, recovery, and diagnostics
+Service administration
+Administrator sign-in · technical setup

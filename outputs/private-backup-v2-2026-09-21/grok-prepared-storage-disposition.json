@@ -1,0 +1,34 @@
+{
+  "sessionId": "01a0c41b-46dc-7153-8130-4ed843b3cfcd",
+  "stopReason": "end_turn",
+  "modelUsage": {
+    "grok-4.6-build": {
+      "inputTokens": 66383,
+      "outputTokens": 43432,
+      "cacheReadInputTokens": 128,
+      "cacheCreationInputTokens": 0,
+      "modelCalls": 1,
+      "costUSD": 0.13376348
+    }
+  },
+  "requestedModel": "grok-4.6",
+  "requestedEffort": "xhigh",
+  "status": "integrated-with-root-corrections",
+  "sourceOnly": true,
+  "summary": "Account for DELETE rollback spill without turning off cache_spill or widening the writer contract: export preparedStorageBudget() from the same limitsCheck as create (page-aligned main ceiling plus pages*(4096+8)+2*4096*(pages+1)+1MiB), switch temp_store to MEMORY, distinguish main vs journal ceilings in ownedFiles, and before substantial body writes force a bounded header republish then synchronously admit the live journal's page/sector at offsets 24/20 (power-of-two 512..4096, page 4096) or 503-rollback. SQLITE_FULL stays 413.",
+  "limitations": [
+    "Windows may open the DELETE journal without FILE_SHARE_READ; a second fd then fails and every write becomes typed 503. That is the main portability concern for live sector admission. Unix same-process read after DatabaseSync UPDATE is the intended path.",
+    "Admission inspects declared page/sector at 24/20 and treats missing/unreadable journals as unsupported. If a VFS delayed those fields as well as magic, a healthy volume would 503-rollback before body writes. Do not substitute PRAGMA journal_size_limit or a persisted sector claim.",
+    "open() inventory uses the absolute max main/rollback ceilings because the header is not readable yet. Per-store leftover journals and aggregate retained reservations stay the coordinator's startup job; this component still re-admits sector on every later transaction.",
+    "temp_store=MEMORY is connection-local and is not the rollback journal. It avoids *-temp files but can grow RAM if SQLite materializes a large temp btree. Current writers are keyed inserts/updates with cache_spill left on and cache_size=-2048.",
+    "pages+1 headers is for this no-savepoint/no-ATTACH DELETE writer. Nested savepoints or a future pager that emits more segment headers would under-budget; do not add them. Extreme sector sizes during create autocommit are only covered by the 1MiB bootstrap, then refused on the first admitted transaction.",
+    "Byte-identical sqlite after priming rollback, zero-filled leftover journals, and crash-copy reopen depend on SQLite restoring pages and ignoring non-hot magic. If a platform extends the file on ROLLBACK or rejects a non-hot leftover, keep the logical summary assertions and drop raw-byte or garbage-journal expectations rather than widening limits.",
+    "configure requires PRAGMA temp_store === 2 after MEMORY. A binding that returns 'memory' would fail closed on create/open. Header JSON remains bounded by META_BYTES=4096 so priming stays one page; nonce rewrite does not change ciphertext length or schema."
+  ],
+  "rootCorrections": [
+    "Invalid unified hunk contexts required inspected manual integration.",
+    "PRAGMA assignment returns no row; checked MEMORY with a separate query.",
+    "Authenticated journal open checks use O_NOFOLLOW and fstat identity and private permission checks.",
+    "A smaller transaction may still fit after SQLITE_FULL; regression verifies recovery without requiring permanent refusal."
+  ]
+}

@@ -1,0 +1,17 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > hits an actual SQLite page cap without staging partial database bytes, then retries into a fresh prepared store 73ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid internal byte capacity 0 before writing 16ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid internal byte capacity 65537 before writing 15ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid internal byte capacity 1099511627776 before writing 16ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid internal byte capacity NaN before writing 18ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > does not accept an asynchronous lease assertion as successful admission 15ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > awaits progress persistence and rechecks admission before publishing a seal 22ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > propagates failed progress persistence without sealing or publishing a restore 19ms
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  21:48:31
+   Duration  536ms (transform 216ms, setup 19ms, import 257ms, tests 196ms, environment 0ms)
+

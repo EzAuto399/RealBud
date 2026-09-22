@@ -1,0 +1,285 @@
+{
+  "startedAt": "2026-09-21T18:55:14.907025+00:00",
+  "requestedModel": "grok-4.7",
+  "reasoningEffort": "xhigh",
+  "hardTimeoutSeconds": 300,
+  "transport": "fresh agent --no-leader stdio ACP",
+  "maxPromptRequests": 1,
+  "turnLimitScope": "One ACP prompt; cancel/stop on any tool-call or client permission request. Top-level --max-turns is not forwarded to the agent branch in the inspected official source.",
+  "prompt": "Review frozen source excerpts only; no tools/web/edits/questions. Find concrete rollback, retired-plan or interrupted-resume defects. Return JSON {\"findings\":[{\"file\":\"...\",\"line\":1,\"severity\":\"P1|P2\",\"failure\":\"interleaving\",\"fix\":\"precise fix\"}],\"limits\":[\"...\"]}, <=500 words. Empty findings allowed. Host journal queue is exclusive; recipe writes/reset are atomic revision-CAS. Bounded journal schema/digest validation is omitted: do not infer it. Retired plans stay saved but unavailable until reviewed rollback. Affected plans must remain paused with approvals/schedules cleared. This is code review, not approval or test proof.\n\nFILE server/customer-pack-upgrades.ts SHA256 742545536c8102bc11ad4135d47243b5e77d18ef21ec9d0f69b911582fe9082e\n\n92:export async function previewPackChange(entry: PackUpgradeState, targetPack: CustomerPack, allEntries: PackUpgradeState[], deps: Dependencies,\n93:  rollback?: PackSnapshot): Promise<{ preview: CustomerPackChangePreview; change: PackTransition }> {\n94:  const conflicts: string[] = [];\n95:  if (entry.transition) conflicts.push('Finish the saved pack change before previewing another version.');\n96:  if ((entry.history?.length ?? 0) >= 8) conflicts.push('Eight prior configurations are retained. Export the pack history and ask service support to archive it before another change.');\n97:  if (targetPack.id !== entry.pack.id || !rollback && targetPack.revision <= entry.pack.revision) conflicts.push('Choose a newer revision of this same pack, or explicitly preview a saved rollback.');\n98:  for (const role of AGENCY_RECIPE_ROLES) {\n99:    const required = workflowRecipeId(entry.pack.id, role);\n100:    if (required && !targetPack.recipes.some(r => r.id === required)) conflicts.push(`Keep ${required}: this installed RealBud version uses that fixed business-workflow role. A host adapter migration is required before removing it.`);\n101:  }\n102:  const local = new Map(deps.listRecipes().map(recipe => [recipe.id, recipe]));\n103:  const base = new Map(entry.pack.recipes.map(recipe => [recipe.id, recipe]));\n104:  const desired = new Map((rollback?.recipes ?? targetPack.recipes).map(recipe => [recipe.id, recipe]));\n105:  const recipes: RecipeChange[] = [], displayed: CustomerPackChangePreview['recipes'] = [];\n106:  const recipeIds = [...new Set([...base.keys(), ...desired.keys()])];\n107:  for (const id of recipeIds) {\n108:    if (allEntries.some(other => other.pack.id !== entry.pack.id && (other.pack.recipes.some(r => r.id === id) || other.retiredRecipeIds?.includes(id))))\n109:      conflicts.push(`${id} is claimed by another pack. Resolve plan ownership before changing it.`);\n110:    const current = local.get(id), before = current ? definition(current) : null, published = base.get(id), wanted = desired.get(id);\n111:    if (published && !current) conflicts.push(`${id} is missing. Repair its installed plan before upgrading.`);\n112:    if (!published && current && !entry.retiredRecipeIds?.includes(id)) conflicts.push(`${id} already exists outside this pack. Rename the incoming plan or resolve its ownership first.`);\n113:    let after = wanted ? definition(wanted) : before!;\n114:    if (!after) continue;\n115:    if (current && wanted) {\n116:      const original = definition(published ?? wanted), merged: Record<string, unknown> = { ...definition(current) };\n117:      for (const field of Object.keys(original) as (keyof CustomerPackRecipe)[]) {\n118:        if (field === 'id' || field === 'schedule') continue;\n119:        if (same(after[field], original[field])) continue;\n120:        if (same(before![field], original[field]) || same(before![field], after[field])) merged[field] = after[field];\n121:        else conflicts.push(`${id}: both your local plan and the incoming version changed ${field}. Resolve that field in the plan or revise the pack, then preview again.`);\n122:      }\n123:      after = definition(merged as CustomerPackRecipe);\n124:    }\n125:    after = off(after);\n126:    recipes.push({ id, revision:current?.revision ?? 0,beforeStamp:current ? stamp(current) : null,before,after,retired:!wanted });\n127:    displayed.push({ id, action:!wanted ? 'retire' : !before ? 'add' : same(off(before),after) ? 'preserve' : 'update',before,after });\n128:  }\n129:  const overrides: Record<string, SkillOverride> = {};\n130:  for (const skill of targetPack.skills) {\n131:    const override = entry.overrides?.[skill.id] ?? rollback?.overrides?.[skill.id];\n132:    if (override) overrides[skill.id] = structuredClone(override);\n133:  }\n134:  const target: PackConfiguration = { pack:targetPack,digest:digest(targetPack),...(Object.keys(overrides).length ? {overrides} : {}) };\n135:  const previousArtifacts = new Map(deps.artifacts(entry).map(a => [a.key,a])), nextArtifacts = new Map(deps.artifacts(target).map(a => [a.key,a]));\n\n152:  const retiredRecipeIds = [...new Set([...(entry.retiredRecipeIds ?? []),...recipes.filter(r => r.retired).map(r => r.id)])].filter(id => !desired.has(id));\n153:  const before: PackSnapshot = {pack:entry.pack,digest:entry.digest,...(entry.overrides ? {overrides:entry.overrides} : {}),generation:entry.generation ?? 1,\n154:    savedAt:new Date().toISOString(),recipes:entry.pack.recipes.map(r => local.get(r.id)).filter((r):r is Recipe => !!r).map(definition),retiredRecipeIds:entry.retiredRecipeIds ?? []};\n155:  const change: PackTransition = { version:1,action:rollback ? 'rollback' : 'upgrade',requestDigest:'',previewDigest:'',fromGeneration:entry.generation ?? 1,\n156:    fromDigest:entry.digest,scope:deps.scope(),target,before,recipes,artifacts,retiredRecipeIds };\n157:  change.previewDigest = transitionDigest(change);\n\n165:export function checkPackRecipeStage(change: PackTransition, current: Recipe[]): 'before' | 'paused' | 'after' {\n166:  const local = new Map(current.map(r=>[r.id,r]));\n167:  const paused = (row:RecipeChange, target:CustomerPackRecipe, revision:number) => {\n168:    const saved=local.get(row.id);\n169:    return !!saved && saved.revision===revision && saved.status==='shadow' && saved.schedule===null && saved.planApprovedAt===null && saved.approvedRevision===null && same(definition(saved),target);\n170:  };\n171:  if (change.recipes.every(r=>paused(r,r.after,r.revision===0 ? 1 : r.revision+1+(same(off(r.before!),r.after)?0:1)))) return 'after';\n172:  if (change.recipes.every(r=>r.before===null ? !local.has(r.id) : paused(r,off(r.before),r.revision+1))) return 'paused';\n173:  if (change.recipes.every(r=>r.before===null ? !local.has(r.id) : local.has(r.id)&&stamp(local.get(r.id)!)===r.beforeStamp)) return 'before';\n174:  return bad('Plans changed during this pack update. Keep the saved change and ask service support to reconcile the listed plans; no newer plan was overwritten.');\n175:}\n176:\n177:export function packRecipeWrites(change: PackTransition) {\n178:  return change.recipes.map(r=>({...r.after,status:'shadow',expectedRevision:r.revision===0 ? 0 : r.revision+1}));\n\nFILE server/customer-packs.ts SHA256 bd9e9bb6ac33dccaacd04269562f704f8af0f8cafc136fd69030329b15010d65\n\n261:  async function finishChange(entries:Record<string,Journal>,entry:Journal) {\n262:    const change=entry.transition;\n263:    if (!change) return fail('No reviewed pack change is waiting for recovery.',409);\n264:    const completed=completeChange(entries,entry); assertJournalFits(completed);\n265:    const assertCurrent=()=>{\n266:      if(scope()!==change.scope) return fail('Select the same Bud profile and workroom used to review this change before resuming it.',409);\n267:      if((options.activeRecipeIds?.() ?? []).some(id=>change.recipes.some(r=>r.id===id))) return fail('Wait for this pack\u2019s queued or running work to finish before resuming its change.',409);\n268:    };\n269:    assertCurrent();\n270:    const paths=new Map([...changeDeps.artifacts(change.before),...changeDeps.artifacts(change.target)].map(a=>[a.key,a.path]));\n271:    for(const other of Object.values(entries).filter(e=>e.pack.id!==entry.pack.id)) {\n272:      if(other.pack.recipes.some(r=>change.recipes.some(c=>c.id===r.id))) return fail('Another pack now claims an affected plan. Resolve ownership before resuming.',409);\n273:      for(const artifact of changeDeps.artifacts(other)) for(const item of change.artifacts)\n274:        if(paths.get(item.key)===artifact.path && item.after!==artifact.contents) return fail('Another pack now owns an affected instruction file. Resolve shared ownership before resuming.',409);\n275:    }\n276:    const state=async (item:typeof change.artifacts[number])=>{\n277:      const path=paths.get(item.key); if(!path) return fail('The saved instruction target needs service recovery.',409);\n278:      const previous=item.before===null ? await artifactState(path,item.after ?? '')==='missing' : await artifactState(path,item.before)==='identical';\n279:      const next=item.after===null ? await artifactState(path,item.before ?? '')==='missing' : await artifactState(path,item.after)==='identical';\n280:      if(!previous&&!next) return fail(`Instruction ${item.key} changed after review. Preserve that file and reconcile it before resuming.`,409);\n281:      return {path,next};\n282:    };\n283:    // Validate every file and plan before the first mutation. Paused plans and\n284:    // the pending journal prevent interrupted instructions from being used.\n285:    for(const artifact of change.artifacts) await state(artifact);\n286:    let stage=checkPackRecipeStage(change,listRecipes());\n287:    assertCurrent();\n288:    if(stage==='before') {\n289:      resetApprovals(change.recipes.filter(r=>r.revision>0).map(r=>({id:r.id,revision:r.revision})));\n290:      stage=checkPackRecipeStage(change,listRecipes());\n291:    }\n292:    for(const artifact of change.artifacts) {\n293:      assertCurrent(); const current=await state(artifact); if(current.next) continue;\n294:      await safeAncestors(dirname(current.path)); assertCurrent();\n295:      if(artifact.after===null) { await unlink(current.path); fsyncDir(dirname(current.path)); }\n296:      else {\n297:        await mkdir(dirname(current.path),{recursive:true,mode:0o700});\n298:        // Only the exact reviewed before/after state is replaceable.\n299:        const checked=await state(artifact); if(!checked.next) writeFileAtomic(current.path,artifact.after,0o600);\n300:      }\n301:      if(!(await state(artifact)).next) return fail('Instruction readback is incomplete. Plans remain paused; resume the saved change.',409);\n302:    }\n303:    assertCurrent(); stage=checkPackRecipeStage(change,listRecipes());\n304:    if(stage!=='after') saveRecipes(packRecipeWrites(change));\n305:    if(checkPackRecipeStage(change,listRecipes())!=='after') return fail('Plan readback is incomplete. Resume the saved pack change.',409);\n306:    for(const artifact of change.artifacts) if(!(await state(artifact)).next) return fail('Instruction readback is incomplete. Plans remain paused.',409);\n307:    assertCurrent(); await persistJournals(completed);\n308:    return status(completed[entry.pack.id]);\n309:  }\n\n523:        const input=fields(body,packChange[2]==='resume-change' ? ['expectedInstalledDigest','expectedInstalledRevision','expectedPreviewDigest'] : ['installationRevision']);\n524:        if(packChange[2]==='resume-change') return exclusive(async()=>{\n525:          const entries=await journals(),entry=entries[packChange[1]];\n526:          if(!entry||entry.digest!==input.expectedInstalledDigest||(entry.generation ?? 1)!==input.expectedInstalledRevision||entry.transition?.previewDigest!==input.expectedPreviewDigest)\n527:            return fail('The saved change no longer matches this screen. Refresh setup before resuming.',409);\n528:          return {status:200,body:await finishChange(entries,entry)};\n529:        });\n530:        const entry=(await journals())[packChange[1]],prior=entry?.history?.find(s=>s.generation===input.installationRevision);\n531:        if(!prior) return fail('That saved configuration is unavailable. Refresh pack history.',404);\n",
+  "promptBytes": 11965,
+  "promptSha256": "5c3f1b0621ee104c805a0a7fc4630ef7003aaf42aa4a72f1bd5e469b4434f746",
+  "profileSha256": "8faac3060bb02780ac1c384b973c8dc02de290d9af3d071a54bf3bedec33c178",
+  "processOverrides": {
+    "GROK_DISABLE_AUTOUPDATER": "1",
+    "GROK_MEMORY": "0",
+    "GROK_SUBAGENTS": "0",
+    "GROK_CURSOR_SKILLS_ENABLED": "0",
+    "GROK_CURSOR_RULES_ENABLED": "0",
+    "GROK_CURSOR_AGENTS_ENABLED": "0",
+    "GROK_CURSOR_MCPS_ENABLED": "0",
+    "GROK_CURSOR_HOOKS_ENABLED": "0",
+    "GROK_CLAUDE_SKILLS_ENABLED": "0",
+    "GROK_CLAUDE_RULES_ENABLED": "0",
+    "GROK_CLAUDE_AGENTS_ENABLED": "0",
+    "GROK_CLAUDE_MCPS_ENABLED": "0",
+    "GROK_CLAUDE_HOOKS_ENABLED": "0"
+  },
+  "credentialsReadByHarness": false,
+  "credentialsCopied": false,
+  "rawDiagnosticsPersisted": false,
+  "authentication": "Existing cached auth via opaque symlink in disposable private GROK_HOME; harness never opens auth contents.",
+  "globalConfigSha256Before": "ada54f57ec570d8e70cba35400ea2b557914ede90ffa893b5da122a7f69d6736",
+  "promptRequestsSent": 1,
+  "updates": {
+    "available_commands_update": 3,
+    "session_info_update": 1,
+    "agent_thought_chunk": 420
+  },
+  "safeEvents": [],
+  "assistantText": "",
+  "toolCallCount": 0,
+  "permissionRequestCount": 0,
+  "unsupportedClientRequests": [],
+  "mcpIsolationVerified": false,
+  "toolIsolationVerified": false,
+  "cliVersion": "grok 1.0.34 (3736acbc8658)",
+  "argv": [
+    "/Users/yoda/.local/bin/grok",
+    "--no-auto-update",
+    "--disable-web-search",
+    "--permission-mode",
+    "plan",
+    "agent",
+    "--no-leader",
+    "--model",
+    "grok-4.7",
+    "--reasoning-effort",
+    "xhigh",
+    "--agent-profile",
+    "/Users/yoda/projects/RealBud/outputs/customer-pack-upgrades-2026-09-22/grok-pack-acp-profile.md",
+    "stdio"
+  ],
+  "ownedPid": 86981,
+  "requests": [
+    {
+      "id": 1,
+      "method": "initialize",
+      "atSeconds": 0.047
+    },
+    {
+      "id": 2,
+      "method": "session/new",
+      "atSeconds": 1.089
+    },
+    {
+      "id": 3,
+      "method": "session/prompt",
+      "atSeconds": 1.32
+    }
+  ],
+  "elapsedSeconds": 303.348,
+  "firstStdoutSeconds": 1.089,
+  "stdoutBytes": 674063,
+  "initialize": {
+    "protocolVersion": 1,
+    "agentInfo": null,
+    "agentCapabilities": {
+      "loadSession": true,
+      "promptCapabilities": {
+        "image": false,
+        "audio": false,
+        "embeddedContext": true
+      },
+      "mcpCapabilities": {
+        "http": true,
+        "sse": true
+      },
+      "sessionCapabilities": {
+        "list": {},
+        "resume": {},
+        "close": {}
+      },
+      "auth": {},
+      "_meta": {
+        "x.ai/fs_notify": true,
+        "x.ai/hooks": {
+          "blockingEvents": [
+            "pre_tool_use",
+            "stop",
+            "subagent_stop"
+          ],
+          "decisions": [
+            "deny",
+            "block"
+          ],
+          "stopSignals": [
+            "continue",
+            "stopReason",
+            "additionalContext"
+          ]
+        },
+        "x.ai/capabilities": {
+          "toolOverrides": {
+            "x_keyword_search": true,
+            "x_semantic_search": true,
+            "x_user_search": false,
+            "x_thread_fetch": false
+          }
+        }
+      }
+    }
+  },
+  "initializeMetaKeys": [
+    "agentId",
+    "agentInstanceId",
+    "agentVersion",
+    "availableCommands",
+    "cancelRewind",
+    "currentWorkingDirectory",
+    "defaultAuthMethodId",
+    "feedbackTraceOffer",
+    "grokShell",
+    "hostname",
+    "mcpApps",
+    "mcpServers",
+    "metadata",
+    "modelState",
+    "sessionRecap",
+    "voiceMode",
+    "x.ai/mcp/sdk",
+    "x.ai/pluginDirs"
+  ],
+  "initializeMcpShape": "list",
+  "initializeMcpCount": 0,
+  "initializeMcpNames": [],
+  "authMethodIds": [
+    "cached_token",
+    "grok.com"
+  ],
+  "observedMcpServerCount": 0,
+  "observedMcpServerNames": [],
+  "notificationMethods": {
+    "_x.ai/mcp/servers_updated": 1,
+    "_x.ai/mcp_initialized": 1,
+    "_x.ai/session_notification": 2,
+    "_x.ai/sessions/changed": 1,
+    "_x.ai/queue/changed": 2,
+    "_x.ai/models/update": 2,
+    "_x.ai/settings/update": 2,
+    "_x.ai/announcements/update": 3
+  },
+  "notificationShapes": {
+    "_x.ai/mcp/servers_updated": [
+      "mcpServers"
+    ],
+    "_x.ai/mcp_initialized": [
+      "elapsedMs",
+      "mcpToolCount",
+      "sessionId"
+    ],
+    "_x.ai/session_notification": [
+      "sessionId",
+      "update"
+    ],
+    "_x.ai/sessions/changed": [
+      "removed",
+      "upserted"
+    ],
+    "_x.ai/queue/changed": [
+      "entries",
+      "runningKind",
+      "runningPromptId",
+      "runningText",
+      "sessionId"
+    ],
+    "_x.ai/models/update": [
+      "availableModels",
+      "currentModelId"
+    ],
+    "_x.ai/settings/update": [
+      "allow_access",
+      "announcements",
+      "auto_permission_mode_enabled",
+      "campaigns",
+      "collapsed_edit_blocks",
+      "consent_gate",
+      "dock_enabled",
+      "gate_label",
+      "gate_message",
+      "gate_url",
+      "group_tool_verbs",
+      "permission_mode",
+      "privacy_banner_reshow_days",
+      "privacy_notice_rollout",
+      "prompt_suggestions_enabled",
+      "session_picker_grouped",
+      "sharing_enabled",
+      "show_resolved_model",
+      "slash_command_tags",
+      "subscription_tier_display",
+      "subscription_watch_interval_secs",
+      "terminal_theme_enabled",
+      "tips"
+    ],
+    "_x.ai/announcements/update": [
+      "announcements",
+      "gen"
+    ]
+  },
+  "firstStderrSeconds": 1.207,
+  "stderrBytes": 5568,
+  "observedMcpInitialization": {
+    "elapsedMs": 0,
+    "mcpToolCount": 0,
+    "sessionId": "01a0c552-8a23-7360-b846-29c6804c9093"
+  },
+  "sessionId": "01a0c552-8a23-7360-b846-29c6804c9093",
+  "sessionConfigOptions": [
+    {
+      "id": "model",
+      "name": "Model",
+      "category": "model",
+      "type": "select",
+      "currentValue": "grok-4.7"
+    },
+    {
+      "id": "reasoning_effort",
+      "name": "Reasoning Effort",
+      "category": "thought_level",
+      "type": "select",
+      "currentValue": "xhigh"
+    }
+  ],
+  "sessionMeta": {},
+  "sessionMetaKeys": [
+    "codebaseIndexed",
+    "currentWorkingDirectory",
+    "feedbackEnabled",
+    "gitRoot",
+    "isGitRepo",
+    "showNonGitWarning",
+    "x.ai/memoryMode",
+    "x.ai/sessionConfig",
+    "x.ai/sessionDetail"
+  ],
+  "sessionResultKeys": [
+    "_meta",
+    "configOptions",
+    "models",
+    "sessionId"
+  ],
+  "returnedModelOption": "grok-4.7",
+  "returnedReasoningEffort": "xhigh",
+  "timedOut": true,
+  "completed": false,
+  "failure": "Hard 300-second deadline reached.",
+  "cancelSent": true,
+  "shutdown": "owned-group-sigterm",
+  "exitCode": 0,
+  "remainingOwnedGroupPids": [],
+  "processReaped": true,
+  "isolatedHomeRemoved": true,
+  "globalConfigSha256After": "ada54f57ec570d8e70cba35400ea2b557914ede90ffa893b5da122a7f69d6736",
+  "globalConfigUnchanged": true
+}

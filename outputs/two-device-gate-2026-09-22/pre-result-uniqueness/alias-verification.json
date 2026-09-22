@@ -1,0 +1,31 @@
+{
+  "node": "v24.19.0",
+  "observations": [
+    {
+      "target": "macos-rehearsal",
+      "templateExit": 0,
+      "pairings": 1,
+      "unrunExit": 1,
+      "issues": 302,
+      "nonRepoTemplateExit": 0,
+      "nonRepoUnrunExit": 1
+    },
+    {
+      "target": "full-platform",
+      "templateExit": 0,
+      "pairings": 4,
+      "unrunExit": 1,
+      "issues": 1212,
+      "nonRepoTemplateExit": 0,
+      "nonRepoUnrunExit": 1
+    },
+    {
+      "case": "omitted target on macos-only template",
+      "exit": 1,
+      "target": "full-platform",
+      "evidenceComplete": false
+    }
+  ],
+  "remoteCiRun": false,
+  "deviceAcceptancePerformed": false
+}

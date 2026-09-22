@@ -1,0 +1,26 @@
+{
+  "at": "2026-09-22T01:15:54.743706+00:00",
+  "scope": "assigned-case isolated worker, native macOS runtime, fictional loopback provider",
+  "tests": {
+    "receipt": "worker-final-11b.json",
+    "passed": 11,
+    "failed": 0,
+    "pending": 0
+  },
+  "typecheck": {
+    "command": "npx tsc --noEmit -p tsconfig.server.json",
+    "exitCode": 0
+  },
+  "source": {
+    "server/department-worker.ts": "021f9e65e485db72578c5a186c6fd443d096eff534e98ed68aadc7dfa199e7e9",
+    "server/helpers/department-worker.py": "589e9988cfc4106f079376d306a2d788a4bae2297d882f9975e5b0e7092311dd",
+    "server/department-worker.test.ts": "4ddca1f631309dd1723e026b742e22481a1fd7bc655c62b11495b7680456fc37",
+    "scripts/testing/department-worker-fixture.mjs": "d9a6777c135e8040d024439d867dc2ac04b7dd8be6993246a57aae4e60b8b64a"
+  },
+  "runtime": "345cd2b057a452236de401d3534b8502a7465e8d",
+  "unverified": [
+    "Windows installed execution",
+    "live providers",
+    "packaged GUI integration (root-owned)"
+  ]
+}

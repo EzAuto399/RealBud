@@ -4,11 +4,14 @@
  * https://docs.composio.dev/reference/api-reference/connected-accounts/getConnectedAccounts
  */
 import type { ConnectionServiceStatus } from "./composio.ts";
+import { parseMailScanRequest, parseMailScanResult, type MailMessage, type MailScanRequest, type MailScanResult, type MailThread } from '../shared/mail-ingestion.ts';
 export interface GmailReadOnlyBinding {
   apiKey: string;
   authConfigId: string;
   userId: string;
   accountId?: string;
+  /** Optional protected-service check immediately before every upstream call. */
+  assertAuthority?: () => void;
 }
 
 export interface GmailReadOnlyAccount { id: string; label?: string; status: string }
@@ -31,7 +34,7 @@ function bindingCopy(input: GmailReadOnlyBinding): GmailReadOnlyBinding {
   if (!record(input) || typeof input.apiKey !== "string" || !/^[A-Za-z0-9_-]{8,1024}$/.test(input.apiKey) || input.apiKey.startsWith("ck_")) fail("provide a project API key in connection settings.");
   if (!identifier(input.authConfigId) || typeof input.userId !== "string" || !/^[A-Za-z0-9._@:+-]{1,256}$/.test(input.userId) ||
     (input.accountId !== undefined && !identifier(input.accountId)) || [input.authConfigId, input.userId, input.accountId].some(value => value?.includes(input.apiKey))) fail("the saved account binding is invalid.");
-  return { apiKey: input.apiKey, authConfigId: input.authConfigId, userId: input.userId, ...(input.accountId ? { accountId: input.accountId } : {}) };
+  return { apiKey: input.apiKey, authConfigId: input.authConfigId, userId: input.userId, ...(input.accountId ? { accountId: input.accountId } : {}), ...(input.assertAuthority ? { assertAuthority: input.assertAuthority } : {}) };
 }
 function exactScopes(value: unknown): string[] {
   const values = typeof value === "string" && value.length <= 4096 ? value.trim().split(/[\s,]+/) : value;
@@ -73,6 +76,7 @@ async function readJson(response: Response, signal: AbortSignal): Promise<Object
 async function rest(binding: GmailReadOnlyBinding, path: string, signal: AbortSignal, body?: unknown): Promise<ObjectValue> {
   try {
     signal.throwIfAborted();
+    binding.assertAuthority?.();
     const response = await fetch(`${BASE}${path}`, {
       method: body === undefined ? "GET" : "POST", redirect: "error", signal,
       headers: { "x-api-key": binding.apiKey, accept: "application/json", ...(body === undefined ? {} : { "content-type": "application/json" }) },
@@ -85,7 +89,9 @@ async function rest(binding: GmailReadOnlyBinding, path: string, signal: AbortSi
       if (response.status >= 400 && response.status < 500) fail("the provider refused the request. Check the saved configuration and account.", 400);
       throw new Error("Provider unavailable");
     }
-    return await readJson(response, signal);
+    const result = await readJson(response, signal);
+    binding.assertAuthority?.();
+    return result;
   } catch (error) {
     if (error instanceof GmailReadOnlyError) throw error;
     throw new Error("Gmail read-only: the connection was interrupted or its result could not be confirmed. No automatic retry was made.");
@@ -356,4 +362,143 @@ export function createGmailReadOnlyTransport(input: GmailReadOnlyBinding): { req
       throw new Error("Gmail read-only: the read was interrupted or its result could not be confirmed. No automatic retry was made.");
     }
   } };
+}
+
+/** Host-owned, explicitly scoped source acquisition. This is deliberately NOT
+ * an MCP tool: worker text cannot widen the window, choose an account or page. */
+export async function scanGmailReadOnly(input: GmailReadOnlyBinding, raw: MailScanRequest, inputSignal: AbortSignal): Promise<MailScanResult> {
+  const binding = bindingCopy(input), request = parseMailScanRequest(raw);
+  const signal = AbortSignal.any([inputSignal, AbortSignal.timeout(240_000)]);
+  await verifyConfig(binding, signal);
+  const account = await verifyAccount(binding, signal), tools = await discoverTools(binding, signal);
+  const result: MailScanResult = { accountId: account.id, windowStartAt: request.windowStartAt, windowEndAt: request.windowEndAt, threads: [], pages: 0, paginationComplete: false, gaps: [] };
+  const gap = (text: string) => { if (!result.gaps.includes(text) && result.gaps.length < 200) result.gaps.push(text); };
+  const from = Math.floor(request.windowStartAt / 1000), until = Math.ceil(request.windowEndAt / 1000);
+  const execute = async (slug: Slug, args: ObjectValue) => {
+    const value = await rest(binding, `/tools/execute/${slug}`, signal, {
+      connected_account_id: account.id, user_id: binding.userId, version: tools[slug].version, arguments: args,
+    });
+    if (value.successful !== true || (value.error !== undefined && value.error !== null && value.error !== '') || !record(value.data)) fail('the provider could not confirm this mail read.', 502);
+    return value.data;
+  };
+  const ids = new Set<string>(), cursors = new Set<string>(); let cursor: string | undefined;
+  // List identity first, then fetch the complete returned conversations. Search
+  // timestamps are epoch seconds, avoiding Gmail's date-string PST behavior.
+  for (let page = 0; page < 20; page++) {
+    const tool = tools.GMAIL_LIST_THREADS;
+    const args = executionArguments(tool, from, until);
+    const queryName = ['query', 'q'].find(k => Object.hasOwn(args, k))!;
+    args[queryName] = `{in:inbox${request.includeSent ? ' in:sent' : ''}} after:${from} before:${until}`;
+    args[['max_results', 'maxResults'].find(k => Object.hasOwn(args, k))!] = Math.min(50, 100 - ids.size);
+    if (cursor) {
+      const candidates = ['page_token', 'pageToken'].filter(k => record(tool.fields[k]));
+      if (candidates.length !== 1 || tool.fields[candidates[0]].type !== 'string') fail('the pagination schema needs review.', 502);
+      args[candidates[0]] = cursor;
+    }
+    const data = await execute('GMAIL_LIST_THREADS', args); result.pages++;
+    const rows = data.threads === undefined && data.resultSizeEstimate === 0 ? [] : data.threads;
+    if (!Array.isArray(rows) || rows.length > 50 ||
+      (data.resultSizeEstimate !== undefined && (!Number.isSafeInteger(data.resultSizeEstimate) || data.resultSizeEstimate < 0))) fail('the thread page was incomplete.', 502);
+    for (const row of rows) {
+      if (!record(row) || !threadId(row.id)) fail('the provider returned an invalid thread identity.', 502);
+      // Mailboxes change during pagination. Repeated threads are deduped, but
+      // coverage is held because page-based listing is not a mailbox snapshot.
+      if (ids.has(row.id)) gap('The mailbox changed during pagination; repeat the scan to reconcile coverage.');
+      ids.add(row.id);
+    }
+    if (data.nextPageToken === undefined || data.nextPageToken === null || data.nextPageToken === '') {
+      if (data.resultSizeEstimate !== undefined && data.resultSizeEstimate > ids.size) gap('The provider estimated more conversations but did not return a next page; coverage needs review.');
+      else result.paginationComplete = true;
+      break;
+    }
+    if (typeof data.nextPageToken !== 'string' || !data.nextPageToken || data.nextPageToken.length > 2048 || /[\u0000-\u001f\u007f]/.test(data.nextPageToken) || cursors.has(data.nextPageToken)) fail('the provider repeated or returned an invalid page cursor.', 502);
+    if (ids.size >= 100) { gap('The scan reached its 100-conversation limit; narrow the history window.'); break; }
+    cursor = data.nextPageToken; cursors.add(cursor);
+  }
+  if (!result.paginationComplete) gap('More mailbox pages remain; this scan is partial.');
+  // Previously observed unresolved conversations take precedence over new ones
+  // when the bounded window contains more than this run can read.
+  const selected = [...new Set([...request.carryThreadIds, ...ids])];
+  if (selected.length > 100) gap('Some conversations were held by the 100-conversation limit.');
+  let count = 0, textBytes = 0, evidenceBytes = 0, sizeLimitReached = false;
+  const clean = (value: unknown, max: number) => safeText(value, max).replaceAll(binding.apiKey, '[private app key]');
+  const fitText = (value: string, bytes: number) => {
+    let low = 0, high = Math.min(value.length, bytes);
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if (Buffer.byteLength(value.slice(0, middle)) <= bytes) low = middle; else high = middle - 1;
+    }
+    // Never split a supplementary Unicode character at the truncation boundary.
+    if (low && /[\uD800-\uDBFF]/.test(value[low - 1])) low--;
+    return value.slice(0, low);
+  };
+  for (const id of selected.slice(0, 100)) {
+    signal.throwIfAborted();
+    if (sizeLimitReached) break;
+    if (count >= request.maxMessages) { gap('The approved message limit was reached; some conversations remain unread.'); break; }
+    const data = await execute('GMAIL_FETCH_MESSAGE_BY_THREAD_ID', executionArguments(tools.GMAIL_FETCH_MESSAGE_BY_THREAD_ID, from, until, id));
+    if (data.id !== id || !Array.isArray(data.messages) || data.messages.length > 100 || !data.messages.length) fail('the returned conversation identity or history was incomplete.', 502);
+    const thread: MailThread = { id, messages: [], historyComplete: true };
+    for (const rawMessage of data.messages) {
+      if (count >= request.maxMessages) { thread.historyComplete = false; gap('The approved message limit interrupted a conversation.'); break; }
+      if (!record(rawMessage) || rawMessage.threadId !== id || !threadId(rawMessage.id) || !/^\d{10,16}$/.test(String(rawMessage.internalDate))) fail('a message identity or date was incomplete.', 502);
+      const at = Number(rawMessage.internalDate);
+      if (!Number.isSafeInteger(at)) fail('a message date was invalid.', 502);
+      if (at >= request.windowEndAt) { thread.historyComplete = false; gap('A conversation changed after this scan began; newer mail is held for the next scan.'); continue; }
+      if (!record(rawMessage.payload) || !Array.isArray(rawMessage.payload.headers) || rawMessage.payload.headers.length > 200) fail('a message payload was incomplete.', 502);
+      const headers: Record<string, string> = {};
+      for (const h of rawMessage.payload.headers) if (record(h) && typeof h.name === 'string' && ['from', 'to', 'subject'].includes(h.name.toLowerCase())) headers[h.name.toLowerCase()] = clean(h.value, 2048);
+      const labels = rawMessage.labelIds;
+      const direction = !Array.isArray(labels) || labels.some(l => typeof l !== 'string') || labels.includes('DRAFT') ? 'unknown' : labels.includes('SENT') ? 'outgoing' : 'incoming';
+      if (direction === 'unknown') gap('Some messages have unverified incoming/outgoing direction.');
+      const m: MailMessage = { id: rawMessage.id, threadId: id, at, direction, from: headers.from ?? '', to: headers.to ?? '', subject: headers.subject ?? '', body: '', bodyTruncated: false, attachments: [] };
+      let parts = 0; const plain: string[] = [], html: string[] = [];
+      const visit = (part: unknown, depth: number) => {
+        if (!record(part) || ++parts > 200 || depth > 8) fail('a message exceeded the supported MIME limits.', 502);
+        if (part.filename || part.body?.attachmentId) {
+          const attachmentId = clean(part.body?.attachmentId || `inline-${parts}`, 512);
+          m.attachments.push({ id: attachmentId, name: clean(part.filename, 255), mimeType: clean(part.mimeType, 120), size: Number.isSafeInteger(part.body?.size) && part.body.size >= 0 ? part.body.size : null });
+          if (m.attachments.length > 100) fail('a message exceeded the attachment limit.', 502);
+          gap('Attachment contents were not read. Any decision needing an attachment must stay held.'); return;
+        }
+        if (['text/plain', 'text/html'].includes(part.mimeType) && typeof part.body?.data === 'string') {
+          if (part.body.data.length > 200_000 || !/^[A-Za-z0-9_-]*={0,2}$/.test(part.body.data)) fail('a message body encoding was unsupported.', 502);
+          const bytes = Buffer.from(part.body.data, 'base64url');
+          if (bytes.toString('base64url') !== part.body.data.replace(/=+$/, '')) fail('a message body encoding was unsupported.', 502);
+          let decoded: string;
+          try { decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+          catch { fail('a message body encoding was unsupported.', 502); }
+          m.bodyTruncated ||= decoded.length > 12_000;
+          (part.mimeType === 'text/plain' ? plain : html).push(clean(decoded, 12_000));
+        } else if (['text/plain', 'text/html'].includes(part.mimeType) && part.body?.size !== 0) {
+          // A missing data field is only a confirmed empty body when the provider
+          // explicitly reports zero bytes. Never turn absent content into proof.
+          m.bodyTruncated = true;
+          gap('Some message text was unavailable; decisions needing that content must stay held.');
+        } else if (!['text/plain', 'text/html'].includes(part.mimeType) && (part.body?.size > 0 || part.body?.data)) {
+          m.bodyTruncated = true;
+          gap('Some MIME content was not read; decisions needing that content must stay held.');
+        }
+        if (part.parts !== undefined) { if (!Array.isArray(part.parts)) fail('a MIME part was incomplete.', 502); for (const child of part.parts) visit(child, depth + 1); }
+      };
+      visit(rawMessage.payload, 0);
+      const body = (plain.length ? plain : html).join('\n');
+      m.body = fitText(body.slice(0, 12_000), Math.max(0, 400_000 - textBytes));
+      m.bodyTruncated ||= body.length > m.body.length; textBytes += Buffer.byteLength(m.body);
+      if (m.bodyTruncated) gap('Some message text exceeded the review limit and was truncated.');
+      const messageBytes = Buffer.byteLength(JSON.stringify(m));
+      // Reserve space for thread identities and coverage gaps. Large headers or
+      // attachment metadata are bounded too, not just the message body text.
+      if (evidenceBytes + messageBytes > 700_000) {
+        sizeLimitReached = true; thread.historyComplete = false;
+        gap('The mail evidence size limit was reached; some messages remain unread.'); break;
+      }
+      evidenceBytes += messageBytes;
+      thread.messages.push(m); count++;
+    }
+    thread.messages.sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
+    if (thread.messages.length) result.threads.push(thread);
+  }
+  signal.throwIfAborted(); binding.assertAuthority?.();
+  return parseMailScanResult(result, request, account.id);
 }

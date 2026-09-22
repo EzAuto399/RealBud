@@ -1,3 +1,4 @@
+import type { WorkspaceActivity } from '../workspace-activity.ts';
 import { matchesPairingCode, clearPairingCode } from "../channel-pairing.ts";
 import { channelContinuation } from "../channel-continuation.ts";
 // RealBud owns the Discord channel: REST verify + Gateway v10 over the
@@ -45,6 +46,8 @@ export type StartTurnFn = (
 ) => Promise<void>;
 
 export type DiscordDeps = {
+  /** Host admission and drain boundary; channel queues remain intact. */
+  withWorkspaceActivity?: WorkspaceActivity;
   store: Store;
   startTurn: StartTurnFn;
   subscribe: (listener: (event: RuntimeEvent) => void) => () => void;
@@ -61,7 +64,7 @@ export type DiscordSocketLike = {
 
 export type DiscordWebSocketFactory = (url: string) => DiscordSocketLike;
 
-const PAIR_REPLY = "Paired with RealBud on this Mac. Send a task, /continue for your latest saved reply, /summary for a short handoff, or /help. Keep this Mac awake and online.";
+const PAIR_REPLY = "Paired with your RealBud computer. Send a task, /continue for your latest saved reply, /summary for a short handoff, or /help. Keep that computer awake and online.";
 const ELSEWHERE_REPLY = "This Bud is paired elsewhere.";
 const BAD_TOKEN = "that token did not answer — check it against the Discord developer portal";
 const CLIP_AT = 1900;
@@ -264,7 +267,11 @@ function queueAsk(item: QueuedAsk): void {
   inboundQueue = [item];
 }
 
-async function enqueueOrStart(prefixed: string, deps: DiscordDeps, userMessage?: Message): Promise<void> {
+function enqueueOrStart(prefixed: string, deps: DiscordDeps, userMessage?: Message): Promise<void> {
+  const work = () => enqueueOrStartAdmitted(prefixed, deps, userMessage);
+  return deps.withWorkspaceActivity ? deps.withWorkspaceActivity(work) : work();
+}
+async function enqueueOrStartAdmitted(prefixed: string, deps: DiscordDeps, userMessage?: Message): Promise<void> {
   const bot = deps.store.productBud();
   if (!bot) return;
   const message =
@@ -274,8 +281,8 @@ async function enqueueOrStart(prefixed: string, deps: DiscordDeps, userMessage?:
     const replaced = inboundQueue.length > 0;
     queueAsk({ text: prefixed, userMessage: message });
     await relayText(replaced
-      ? "Your latest follow-up replaces the waiting request. Both messages are saved in Ask on your Mac. Bud will pick up the latest one after the current work finishes."
-      : "Saved in Ask on your Mac. Bud is working and will pick this up next. If RealBud restarts first, open Ask to resume the saved request.", deps);
+      ? "Your latest follow-up replaces the waiting request. Both messages are saved in Ask on desktop. Bud will pick up the latest one after the current work finishes."
+      : "Saved in Ask on desktop. Bud is working and will pick this up next. If RealBud restarts first, open Ask to resume the saved request.", deps);
     return;
   }
   pendingRelay = { threadId: bot.threadId, userMessageId: message.id };
@@ -361,7 +368,11 @@ function asInbound(value: unknown): { channelId: string; name: string; text: str
   };
 }
 
-export async function handleInbound(value: unknown, deps: DiscordDeps): Promise<void> {
+export function handleInbound(value: unknown, deps: DiscordDeps): Promise<void> {
+  const work = () => handleInboundAdmitted(value, deps);
+  return deps.withWorkspaceActivity ? deps.withWorkspaceActivity(work) : work();
+}
+async function handleInboundAdmitted(value: unknown, deps: DiscordDeps): Promise<void> {
   bound = deps;
   const inbound = asInbound(value);
   if (!inbound || inbound.bot || !inbound.dm || !inbound.text) return;
@@ -441,6 +452,9 @@ function asInteraction(value: unknown): {
 }
 
 export async function handleInteraction(value: unknown, deps: DiscordDeps): Promise<void> {
+  // Keep the transport acknowledgement responsive. Channel metadata is excluded
+  // from private business backups; decideRemotely gates and rechecks the actual
+  // Desk decision after any snapshot pause.
   bound = deps;
   const interaction = asInteraction(value);
   if (!interaction) return;

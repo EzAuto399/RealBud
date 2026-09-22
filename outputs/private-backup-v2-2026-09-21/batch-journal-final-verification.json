@@ -1,0 +1,27 @@
+{
+  "source": {
+    "passed": 4023,
+    "failed": 0,
+    "skipped": 143,
+    "files": 325,
+    "seconds": 271.28
+  },
+  "inputs": {
+    "file": "batch-journal-final-inputs.json",
+    "count": 966,
+    "digest": "c1ddd1cc1af1eb4031ee04bbccf29c4afd6c873ca25b6c5187999a0805a59273",
+    "changed": []
+  },
+  "browser": {
+    "passed": true,
+    "checks": 8,
+    "errors": [],
+    "receipt": "batch-journal-browser-final/receipt.json"
+  },
+  "builds": {
+    "frontend": "batch-journal-final-build.log",
+    "server": "batch-journal-final-server-build.log",
+    "serverTypecheck": "batch-journal-final-tsc.log"
+  },
+  "layer": "Source, built UI and fictional local workflows. No fresh desktop package, OS key custody, Windows or live customer acceptance."
+}

@@ -1,0 +1,32 @@
+{
+  "kind": "accounts-inbox-triage",
+  "status": "partial",
+  "coverageComplete": false,
+  "itemArray": "threads",
+  "itemIdKey": "threadId",
+  "itemCount": 12,
+  "items": {
+    "SYN-T001": {
+      "disposition": "hold"
+    },
+    "SYN-T004": {
+      "owner": "property-manager"
+    },
+    "SYN-T011": {
+      "disposition": "hold"
+    },
+    "SYN-T012": {
+      "disposition": "hold"
+    }
+  },
+  "requiredHolds": [
+    "SYN-T001",
+    "SYN-T011",
+    "SYN-T012"
+  ],
+  "actionsPerformed": [],
+  "skillSource": "email-inbox-triage@0.1.0",
+  "notes": [
+    "Coverage gap must be named; no inbox-zero/missing-bill proof. No external action."
+  ]
+}

@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "layer": "isolated Node24 synthetic catalog; no HTTP/archive/native restore",
+  "node": "v24.19.0",
+  "captureMs": 3904.19,
+  "peakSampleRss": 126042112,
+  "maxRssKiB": 123168,
+  "snapshots": [
+    {
+      "label": "empty",
+      "elapsedMs": 0,
+      "catalogId": "343f9afd-4810-44ef-ab28-0b349afb23b8",
+      "workspaceId": "4689cbf4-ff1f-41f0-bcd0-e1613ff9156e",
+      "entries": 2,
+      "files": 2,
+      "records": 0,
+      "plainBytes": 664,
+      "digest": "d4a70bc9400e004dd89e32d3e6450ff117ddafc071dbad014b4fe5d17166e6ab",
+      "sealed": false,
+      "rss": 116293632,
+      "heapUsed": 11700264,
+      "external": 10088767
+    },
+    {
+      "label": "1000-records-validated",
+      "elapsedMs": 93.71,
+      "catalogId": "343f9afd-4810-44ef-ab28-0b349afb23b8",
+      "workspaceId": "4689cbf4-ff1f-41f0-bcd0-e1613ff9156e",
+      "entries": 1002,
+      "files": 2,
+      "records": 1000,
+      "plainBytes": 19955664,
+      "digest": "8ea8d69078a58782ac54e3f67b55dbe7939295d88be8e745a32b4b6bd58a0f67",
+      "sealed": false,
+      "rss": 117489664,
+      "heapUsed": 12176200,
+      "external": 12491128
+    },
+    {
+      "label": "5101-records-sealed",
+      "elapsedMs": 486.34,
+      "catalogId": "343f9afd-4810-44ef-ab28-0b349afb23b8",
+      "workspaceId": "4689cbf4-ff1f-41f0-bcd0-e1613ff9156e",
+      "entries": 5103,
+      "files": 2,
+      "records": 5101,
+      "plainBytes": 101791119,
+      "digest": "a4d2b61cc938a7174a396fb6dfd76f27f4ad3da4f7c8f986a9b79b57effe65ae",
+      "sealed": true,
+      "rss": 113229824,
+      "heapUsed": 12150200,
+      "external": 13091662
+    },
+    {
+      "label": "5101-records-reopened",
+      "elapsedMs": 509.36,
+      "catalogId": "343f9afd-4810-44ef-ab28-0b349afb23b8",
+      "workspaceId": "4689cbf4-ff1f-41f0-bcd0-e1613ff9156e",
+      "entries": 5103,
+      "files": 2,
+      "records": 5101,
+      "plainBytes": 101791119,
+      "digest": "a4d2b61cc938a7174a396fb6dfd76f27f4ad3da4f7c8f986a9b79b57effe65ae",
+      "sealed": true,
+      "rss": 113000448,
+      "heapUsed": 12209416,
+      "external": 13581033
+    }
+  ]
+}

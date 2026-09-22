@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -9,8 +9,14 @@ import { applyPropertyPack, propertyProfileDir } from "./hermes-pack.ts";
 import { readRuntimeSelection, releaseHome, resetRuntimeSelectionForTests, saveRuntimeSelection, selectedHermesCli } from "./hermes-runtime-selection.ts";
 import { runtimeCli } from "./hermes-paths.ts";
 import { acquireWorkerSetupLock, bootstrapPlan, runWorkerBootstrap } from "./worker-bootstrap.ts";
+import * as profileStorage from "./hermes-profile-storage.ts";
+
+import { privateFixtureRoot, writePrivateFixtureFile } from "./testing/private-profile-fixture.ts";
 
 let home: string;
+const mkdtempSync = privateFixtureRoot;
+// This file exercises repeated genuine Windows ACL subprocesses during setup.
+if (process.platform === "win32") vi.setConfig({ testTimeout: 120_000 });
 const version = `Hermes Agent v${HERMES_RECOMMENDED.product} (${HERMES_RECOMMENDED.tag.slice(1)})`;
 const run: typeof runWorkerBootstrap = async opts => {
   const cli = runtimeCli(opts.home); mkdirSync(dirname(cli), { recursive: true }); writeFileSync(cli, "fixture");
@@ -21,15 +27,43 @@ beforeEach(() => {
   vi.stubEnv("REALBUD_HERMES_HOME", home); vi.stubEnv("REALBUD_HERMES_CLI", "");
   resetRuntimeSelectionForTests();
 });
-afterEach(async () => { cancelBootstrapInstall(); await waitForBootstrapStop(); vi.unstubAllEnvs(); resetRuntimeSelectionForTests(); rmSync(home, { recursive: true, force: true }); });
+afterEach(async () => { cancelBootstrapInstall(); await waitForBootstrapStop(); vi.restoreAllMocks(); vi.unstubAllEnvs(); resetRuntimeSelectionForTests(); rmSync(home, { recursive: true, force: true }); });
 const start = (extra: Parameters<typeof startRuntimeUpdate>[0] = {}) => startRuntimeUpdate({ home, run, verify: async () => version, ...extra });
+
+it("privately admits a previously absent home before launching first-install bootstrap", async () => {
+  const absent = join(home, "new-owned-home");
+  vi.stubEnv("REALBUD_HERMES_HOME", absent);
+  const admit = vi.spyOn(profileStorage, "ensureProfileDirectory");
+  const runner = vi.fn<typeof runWorkerBootstrap>(async options => {
+    expect(admit).toHaveBeenCalledWith(absent);
+    expect(existsSync(absent)).toBe(true);
+    if (process.platform !== "win32") expect(statSync(absent).mode & 0o077).toBe(0);
+    await run(options);
+  });
+  start({ home: absent, run: runner, firstInstall: true });
+  await waitForBootstrapStop();
+  expect(runner).toHaveBeenCalledOnce();
+  expect(installStatus().state).toBe("done");
+  expect(existsSync(join(propertyProfileDir(absent), "config.yaml"))).toBe(true);
+});
+
+it("refuses an existing unverified home before installer or verification work starts", () => {
+  const before = installStatus(), contents = readdirSync(home);
+  const runner = vi.fn<typeof runWorkerBootstrap>(), verify = vi.fn(async () => version);
+  vi.spyOn(profileStorage, "ensureProfileDirectory").mockImplementation(() => {
+    throw new Error("Private home needs recovery.");
+  });
+  expect(() => start({ run: runner, verify })).toThrow("Private home needs recovery.");
+  expect(runner).not.toHaveBeenCalled(); expect(verify).not.toHaveBeenCalled();
+  expect(installStatus()).toEqual(before); expect(readdirSync(home)).toEqual(contents);
+});
 
 it("stages an official runtime without changing the current executable or private profile", async () => {
   applyPropertyPack(home);
   const profile = propertyProfileDir(home);
   const config = readFileSync(join(profile, "config.yaml"), "utf8") + "\nupdates:\n  check: false\nmemory:\n  user_profile: keep\n";
   writeFileSync(join(profile, "config.yaml"), config);
-  writeFileSync(join(profile, ".env"), "TEST_KEY=keep-private");
+  writePrivateFixtureFile(join(profile, ".env"), "TEST_KEY=keep-private");
   writeFileSync(join(profile, "MEMORY.md"), "User memory");
   expect(selectedHermesCli()).toBe("hermes");
   start(); await waitForBootstrapStop();
@@ -153,13 +187,15 @@ it("keeps a custom CLI outside managed installation", () => {
 
 // The promotion procedure says smoke a candidate before recommending it, but staging
 // used to be hardcoded to HERMES_RECOMMENDED and refused once that was selected — so
-// staging 0.21.3 required promoting it first, which is the thing the smoke gates.
-// These pin that a catalog release can now be staged without becoming recommended.
-const candidateRelease = HERMES_RELEASES.find(release => release.product === "0.21.3")!;
+// staging a candidate required promoting it first, which is the thing the smoke gates.
+// These pin that a catalog release can be staged without becoming recommended. The
+// candidate is now the previous release, which keeps the invariant testable after
+// 0.21.3 was promoted.
+const candidateRelease = HERMES_RELEASES.find(release => release.product === "0.21.2")!;
 
 it("stages a catalog candidate while RECOMMENDED stays on the shipped release", async () => {
   applyPropertyPack(home);
-  expect(HERMES_RECOMMENDED.product).toBe("0.21.2");
+  expect(HERMES_RECOMMENDED.product).toBe("0.21.3");
   start({ release: candidateRelease, verify: async () => `Hermes Agent v${candidateRelease.product} (${candidateRelease.tag.slice(1)})` });
   await waitForBootstrapStop();
   expect(installStatus().state).toBe("done");
@@ -169,8 +205,10 @@ it("stages a catalog candidate while RECOMMENDED stays on the shipped release", 
 });
 
 it("refuses to stage a release that is not in the install catalog", () => {
+  const admit = vi.spyOn(profileStorage, "ensureProfileDirectory");
   const forged = { product: "9.9.9", tag: "v2099.1.1", commit: "f".repeat(40), installers: { unix: "x", windows: "y" } };
   expect(() => start({ release: forged })).toThrow(/not in the install catalog/);
+  expect(admit).not.toHaveBeenCalled();
 });
 
 it.each(["darwin", "linux", "win32"] as const)("never rewrites the shared launcher in a private %s installation", platform => {

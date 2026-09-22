@@ -1,0 +1,64 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > preserves exact ordinary bytes, logical ordering, revision and insertion order across restart and a different key 38ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > does not trust a collection missing required identity or Desk records 7ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > rejects unapproved file identity ../config.json 9ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > rejects unapproved file identity /tmp/payload 9ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > rejects unapproved file identity C:\payload 9ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > rejects unapproved file identity vault/workflow-inputs/CON.json 9ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > rejects unapproved file identity workflow-state.sqlite 8ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > rejects unapproved file identity config.json 9ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > rejects duplicate/case-folded file paths and global workflow identities atomically 9ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > enforces encoding, workspace and declared capacity without partial admission 21ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > refuses unknown kinds, invalid revisions and closed oversized drafts before insertion 11ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > retains exact bank original and reviewed artifact bytes 12ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > requires the owned identity and unchanged installation key on reopen 11ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > seals atomically and refuses mutations from a stale independent worker and reopened handle 116ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > does not publish a seal for an incomplete graph and rejects invalid UTF-8 JSON 8ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > refuses preexisting directories, links and unrecognized internal schema 9ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > refuses hardlinked or broadened catalog permissions without repairing them 11ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > detects authenticated entry corruption: delete 9ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > detects authenticated entry corruption: payload-swap 16ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > detects authenticated entry corruption: metadata-swap 9ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > retains historical bill aliases, inactive patterns and reservations, using the same v1 invariant 30ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > rejects an individually readable bill graph missing bill-source-alias 19ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > rejects an individually readable bill graph missing bill-pattern-slot 20ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > rejects an individually readable bill graph missing bill-arrival-slot 18ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > rejects an individually readable bill graph missing bill-origin 18ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > rejects an individually readable bill graph missing bill-occurrence 22ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > rejects an individually readable bill graph missing bill-register 18ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > validates normalized and inert legacy mail with exact origin-era ordering and prepared input 71ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > holds missing/conflicting mail evidence: all-legacy 47ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > holds missing/conflicting mail evidence: mail-source 53ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > holds missing/conflicting mail evidence: mail-receipt 45ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > holds missing/conflicting mail evidence: mail-item 45ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > holds missing/conflicting mail evidence: ordered-origin 48ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > accepts an unrelated workroom input without inventing mail state 9ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > preserves every draft state and checks optional-present proposal links before preview 29ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > retains permanent execution/request/checkpoint bindings and rejects missing retry receipts 51ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > retains more than 5,000 records and 96 MiB without full-history record reads 4523ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > admits more than the v1 3,000-file ceiling and enumerates names without dropping any file 1695ms
+ ✓ server/private-backup-catalog.test.ts > physical sqlite storage bounds > hits sqlite page limits, preserves admitted rows across reopen, and reapplies the cap 112ms
+ ✓ server/private-backup-catalog.test.ts > physical sqlite storage bounds > opens legacy maxEntries/maxBytes headers without rewriting them 13ms
+ ✓ server/private-backup-catalog.test.ts > physical sqlite storage bounds > rejects an oversized physical catalog file and leaves the original bytes in place 286ms
+ ✓ server/private-backup-catalog.test.ts > physical sqlite storage bounds > rejects explicit storage caps outside the documented range 1ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > hits an actual SQLite page cap without staging partial database bytes, then retries into a fresh prepared store 83ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > preserves a pre-existing build allocation when exclusive creation fails 23ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > holds unexpected files in its own build allocation instead of recursively deleting them 27ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid build allocation ../other before preparation 16ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid build allocation /tmp/other before preparation 16ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid build allocation unknown before preparation 16ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid internal byte capacity 0 before writing 16ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid internal byte capacity 65537 before writing 17ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid internal byte capacity 1099511627776 before writing 17ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid internal byte capacity NaN before writing 17ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > does not accept an asynchronous lease assertion as successful admission 16ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > awaits progress persistence and rechecks admission before publishing a seal 25ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > propagates failed progress persistence without sealing or publishing a restore 22ms
+
+ Test Files  2 passed (2)
+      Tests  55 passed (55)
+   Start at  22:03:44
+   Duration  8.34s (transform 271ms, setup 22ms, import 359ms, tests 7.83s, environment 0ms)
+

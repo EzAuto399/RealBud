@@ -1,0 +1,13 @@
+{
+  "recordedAt": "2026-09-21T20:32:48.510059+00:00",
+  "evidence": "Observed output from the no-network Node24 inline actual client-to-gateway reproduction before the expectedAccountId fix. Source hashes were not captured for that run.",
+  "reviewedAccount": "account-a",
+  "gatewayCurrentAccount": "account-b",
+  "providerScanCalls": 1,
+  "providerAccountRead": "account-b",
+  "clientResult": "rejected-after-read",
+  "networkCalls": 0,
+  "provider": "Fictional scan callback only; no customer data or real provider keys",
+  "sourceHashesCaptured": false,
+  "passed": false
+}

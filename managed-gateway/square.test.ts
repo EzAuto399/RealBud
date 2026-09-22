@@ -77,6 +77,44 @@ test('Square disabled transport cannot read a secret or create an outbox dispatc
   }finally{f.close();}
 });
 
+test('Sandbox mode talks to the sandbox host, never the production account',async()=>{
+  // A sandbox token aimed at the production host fails cryptically; a production
+  // token aimed at the sandbox host creates drafts nowhere near the real account.
+  // Both are avoided by pinning the host to the configured environment.
+  for (const [environment,expected] of [['sandbox','https://connect.squareupsandbox.com'],['production','https://connect.squareup.com']] as const) {
+    const f=fixture();try{
+      const hosts:string[]=[];
+      const transport=(async(url,options)=>{
+        const path=new globalThis.URL(String(url)).pathname;hosts.push(new globalThis.URL(String(url)).origin);
+        const body=JSON.parse(String(options?.body??'{}'));
+        // Minimal successful draft flow: merchant lookup, then order, then invoice.
+        if(path==='/v2/merchants/merchant-a')return Response.json({merchant:{id:'merchant-a'}});
+        if(path==='/v2/locations/location-a')return Response.json({location:{id:'location-a',merchant_id:'merchant-a',currency:'AUD',status:'ACTIVE'}});
+        if(path==='/v2/orders')return Response.json({order:{...body.order,id:'order-a',version:1,total_money:{amount:12500,currency:'AUD'},total_tax_money:{amount:1136,currency:'AUD'}}});
+        if(path==='/v2/invoices')return Response.json({invoice:{...body.invoice,id:'invoice-a',status:'DRAFT',version:0,payment_requests:[{...body.invoice.payment_requests[0],computed_amount_money:{amount:12500,currency:'AUD'}}]}});
+        throw Error(`unexpected ${path}`);
+      }) as typeof fetch;
+      const square=new SquareBilling({ledger:f.ledger,fetch:transport,secret:async()=>'tok',notificationUrl:URL,signatureKey:async()=>KEY,environment});
+      assert.equal(square.environment,environment);
+      square.map({companyId:f.tenant.companyId,merchantId:'merchant-a',customerId:'customer-a',locationId:'location-a',evidence:'fixture-mapping'});
+      const statement=square.closeStatement(f.tenant.companyId,'2026-08','care');
+      square.accept(f.owner,statement.id,digest(statement));
+      await square.createDraft(f.owner,statement.id,'2026-09-30');
+      assert(hosts.length>0,`${environment} made no request`);
+      assert.deepEqual([...new Set(hosts)],[expected],`${environment} used the wrong host`);
+    }finally{f.close();}
+  }
+});
+
+test('Square configuration defaults to production and rejects an unknown environment',async()=>{
+  const f=fixture();try{
+    // Omission must not silently become sandbox, which would hide real drafts.
+    const plain=new SquareBilling({ledger:f.ledger,secret:async()=>'tok',signatureKey:async()=>KEY,notificationUrl:URL});
+    assert.equal(plain.environment,'production');
+    assert.throws(()=>new SquareBilling({ledger:f.ledger,secret:async()=>'tok',signatureKey:async()=>KEY,notificationUrl:URL,environment:'staging' as never}),/square_environment_invalid/);
+  }finally{f.close();}
+});
+
 test('Square mismatched payment currency, recipient or changed invoice totals never create receipt money',async()=>{
   const s=setup();try{const statement=s.statement();await s.square.createDraft(s.f.owner,statement.id,'2026-09-30');
     const payment={id:'bad-payment',status:'COMPLETED',location_id:'location-a',order_id:'order-a',customer_id:'customer-a',source_type:'CARD',total_money:{amount:100,currency:'USD'},updated_at:'2026-09-15T00:00:00Z'};s.payments.set(payment.id,payment);const event=s.sign('payment.updated',payment.id,'bad-event');

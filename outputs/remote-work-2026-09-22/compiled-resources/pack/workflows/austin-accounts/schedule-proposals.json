@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "status": "proposed-paused",
+  "source": "User requested four accounts preparation routines; clocks and source bindings not accepted.",
+  "timezoneCandidate": "Australia/Brisbane",
+  "timezoneConfirmed": false,
+  "activationPerformed": false,
+  "scheduler": "RealBud owns activation; this file arms no scheduler and contains no Hermes cron.",
+  "workflows": [
+    {
+      "workflowId": "wf-austin-accounts-inbox-triage",
+      "status": "paused-proposal",
+      "schedule": null,
+      "cadenceCandidate": "At the start of each agreed office day",
+      "time": null,
+      "weekdays": null,
+      "requiresConfirmation": [
+        "Accounts and folders",
+        "Complete-thread retrieval bounds",
+        "Office workdays and time",
+        "Reviewer and handoff recipients"
+      ]
+    },
+    {
+      "workflowId": "wf-austin-accounts-invoice-review",
+      "status": "paused-proposal",
+      "schedule": null,
+      "cadenceCandidate": "After an explicitly supplied inbox invoice-candidate batch, or manual Run now",
+      "time": null,
+      "weekdays": null,
+      "requiresConfirmation": [
+        "Attachment source/binding",
+        "Property mapping",
+        "Invoice entry owner",
+        "Accepted evidence handoff"
+      ]
+    },
+    {
+      "workflowId": "wf-austin-accounts-bill-exceptions",
+      "status": "paused-proposal",
+      "schedule": null,
+      "cadenceCandidate": "Each agreed accounts review window, even when no new email arrived",
+      "time": null,
+      "weekdays": null,
+      "requiresConfirmation": [
+        "Accepted history and financial state",
+        "Expected-arrival windows",
+        "Unfinished funding/payment/recovery owner",
+        "Office review window"
+      ]
+    },
+    {
+      "workflowId": "wf-austin-accounts-anz-reference-prep",
+      "status": "paused-proposal",
+      "schedule": null,
+      "cadenceCandidate": "About every two days, anchored only after Kevin confirms actual workdays and export coverage",
+      "interviewIntervalHintDays": 2,
+      "time": null,
+      "weekdays": null,
+      "requiresConfirmation": [
+        "Exact ANZ service/export layout",
+        "Last reconciled date and export interval",
+        "Approved reference directory",
+        "Batch review and REI handoff",
+        "Calendar anchor, weekends and holidays"
+      ]
+    }
+  ]
+}

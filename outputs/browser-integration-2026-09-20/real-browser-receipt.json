@@ -1,0 +1,15 @@
+{
+  "at": "2026-09-20T13:31:33.612Z",
+  "cli": "0.3.0",
+  "extension": "0.3.0",
+  "scope": "Disposable browser; fictional locally served bank page",
+  "connected": true,
+  "explicitBorrow": true,
+  "read": true,
+  "paymentControlBlocked": true,
+  "readback": true,
+  "verifiedLogin": true,
+  "humanSelectedReturnedTab": true,
+  "changedAccountWithheld": true,
+  "sessionsReleased": true
+}

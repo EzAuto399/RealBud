@@ -1,7 +1,8 @@
 import { WorkflowDatabase, workflowConflict, type WorkflowRecord } from "./workflow-database.ts";
 
 export interface LoginBinding {
-  version: 1; pid: number; windowId: number; origin: string; accountMarker: string; readyMarker: string;
+  version: 1; pid?: number; windowId?: number; origin: string; accountMarker: string; readyMarker: string;
+  browser?: { browserId: string; tabId: number };
 }
 export interface HumanHandoff {
   version: 1; runId: string; threadId: string; botId: string; jobRevision: number;
@@ -11,12 +12,14 @@ export interface HumanHandoff {
   steps?: string[]; resumedRunId?: string; resumeStep?: number;
 }
 export function validateLoginBinding(binding: LoginBinding): LoginBinding {
-  if (!binding || binding.version !== 1 || !Number.isSafeInteger(binding.pid) || binding.pid < 1 || !Number.isSafeInteger(binding.windowId) || binding.windowId < 1) throw Object.assign(new Error("Choose the exact browser window for this sign-in check."), { status: 400 });
+  if (!binding || binding.version !== 1 || (binding.browser
+    ? typeof binding.browser.browserId !== "string" || !/^[A-Za-z0-9_.:-]{1,200}$/.test(binding.browser.browserId) || !Number.isSafeInteger(binding.browser.tabId) || binding.browser.tabId < 1 || binding.pid !== undefined || binding.windowId !== undefined
+    : !Number.isSafeInteger(binding.pid) || Number(binding.pid) < 1 || !Number.isSafeInteger(binding.windowId) || Number(binding.windowId) < 1)) throw Object.assign(new Error("Choose the exact browser window for this sign-in check."), { status: 400 });
   let url: URL;
   try { url = new URL(binding.origin); } catch { throw Object.assign(new Error("Choose a valid HTTPS site."), { status: 400 }); }
   if (url.protocol !== "https:" || url.origin !== binding.origin || url.username || url.password) throw Object.assign(new Error("Sign-in checks need an exact HTTPS origin."), { status: 400 });
-  for (const marker of [binding.accountMarker, binding.readyMarker]) if (typeof marker !== "string" || marker.trim().length < 4 || marker.length > 120 || /[\r\n\x00]/.test(marker)) throw Object.assign(new Error("Use visible account and signed-in page labels, never a password or code."), { status: 400 });
-  return structuredClone(binding);
+  for (const marker of [binding.accountMarker, binding.readyMarker]) if (typeof marker !== "string" || marker.trim().length < 4 || marker.length > 120 || /[\r\n\x00]/.test(marker) || /^[\d\s-]+$/.test(marker)) throw Object.assign(new Error("Use visible account and signed-in page labels, never an account number, password or code."), { status: 400 });
+  return { ...structuredClone(binding), accountMarker: binding.accountMarker.trim(), readyMarker: binding.readyMarker.trim() };
 }
 const active = (state: HumanHandoff["state"]) => state !== "closed";
 export interface HandoffHost {
@@ -55,7 +58,7 @@ export class HumanHandoffs {
   async release(record: WorkflowRecord<HumanHandoff>) {
     try {
       await this.host.release(record.value.threadId);
-      return this.change(record, { state: "awaiting_login", detail: "Bud's computer connection is stopped. Sign in directly in the application, then press Continue. Keep passwords and codes out of chat." });
+      return this.change(record, { state: "awaiting_login", detail: "Bud's computer connection is stopped. Sign in directly in the application, then choose the page to check. Keep passwords and codes out of chat." });
     } catch {
       const current = this.get(record.id);
       if (current.revision !== record.revision) return current;
@@ -76,7 +79,7 @@ export class HumanHandoffs {
     let record = this.get(id);
     if (record.revision !== revision || record.value.state !== "awaiting_login") throw workflowConflict();
     if (record.value.expiresAt <= this.now()) return this.change(record, { state: "recovery_required", detail: "This checkpoint expired. Review the saved job and establish a fresh sign-in checkpoint." });
-    if (!record.value.binding) throw Object.assign(new Error("This site's account and signed-in page check has not been calibrated. Your setup person must connect that check before Continue can resume work."), { status: 409 });
+    if (!record.value.binding) throw Object.assign(new Error("Choose the signed-in page and save its visible labels before continuing."), { status: 409 });
     record = this.change(record, { state: "checking", detail: "Checking the saved site, account and signed-in page once. No typing or submissions are allowed." });
     let verified = false;
     try { verified = await this.host.verify(record.value.binding!, `${id}:${record.revision}`); }
@@ -91,7 +94,7 @@ export class HumanHandoffs {
       ? { state: "recovery_required", detail: "The check ended, but computer release could not be confirmed. Close RealBud or retry release before entering credentials." }
       : verified
         ? { state: "verified", detail: "The saved site, account and signed-in page were confirmed. The earlier run remains interrupted: review its last completed action before starting the next step. No earlier actions were replayed." }
-        : { state: "awaiting_login", detail: "The expected account and signed-in page could not both be confirmed. Bud is stopped again. Finish signing in or ask your setup person to check the saved window, then try Continue." });
+        : { state: "awaiting_login", detail: "The expected account and signed-in page could not both be confirmed. Bud is stopped again. Finish signing in or change the page check, then try Continue." });
   }
   async stop(id: string, revision: number) {
     const record = this.get(id);

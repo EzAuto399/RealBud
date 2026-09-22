@@ -1,0 +1,46 @@
+{
+  "grok-observation-account-green.json": {
+    "bytes": 651,
+    "sha256": "bb32cab443943691221f536334a475b3987e32e640205945e373447f286999c3"
+  },
+  "grok-observation-account-red.json": {
+    "bytes": 578,
+    "sha256": "7ecdfeadb769774496a4666cea3b9a6f141ab5efa4872951d98b8110d9ce8e00"
+  },
+  "grok-observation-account-repro.mjs": {
+    "bytes": 3331,
+    "sha256": "07535393cae91925b587c4eb9cbbfc717b7851377a415e4e7633d77baf1160de"
+  },
+  "grok-observation-acp-profile.md": {
+    "bytes": 451,
+    "sha256": "97203afe2dbe820373a81b6dbb184db22bc7e9ca5390fa127b6f0a8c7479a93a"
+  },
+  "grok-observation-acp-prompt.txt": {
+    "bytes": 1839,
+    "sha256": "6b9140d9f963f11b96ba82eecf3590ee22cc86dc5633494e790b1980bd2eda36"
+  },
+  "grok-observation-acp-review.py": {
+    "bytes": 18743,
+    "sha256": "410f171fa5f01b3093f4269d2af63085aa05fd981771a4de89c648ff15327d66"
+  },
+  "grok-observation-acp-run.json": {
+    "bytes": 14528,
+    "sha256": "eca79023d7cc8df838bd33cc7955e8264e4dca8c7b94264e7c5cf393d7fb9338"
+  },
+  "grok-observation-cleanup.json": {
+    "bytes": 447,
+    "sha256": "d5d6312d390680aa1a33164aae5cdc02f0bdb3b8f913c31583eecf3fcdeb24af"
+  },
+  "grok-observation-disposition.json": {
+    "bytes": 2514,
+    "sha256": "b41c762e3ea744da8ebf39a53c1ecc71159e92db2cdc21746fb83db146e9bc1e"
+  },
+  "grok-observation-finalize.py": {
+    "bytes": 6383,
+    "sha256": "a4cab145bf412904c1238d1cf20ec8e0fc989e512536ea0e73a75265a38d9644"
+  },
+  "grok-observation-review.md": {
+    "bytes": 3904,
+    "sha256": "9ba31f35be440adf40f768fca801d9263b394de4c789caab6259220ece116122"
+  }
+}

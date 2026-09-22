@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "at": "2026-09-21T17:19:03Z",
+  "passed": false,
+  "status": "unsupported",
+  "platform": "darwin",
+  "python": "3.14.4",
+  "architecture": "arm64",
+  "windows": [
+    "",
+    "",
+    "",
+    ""
+  ],
+  "selected_module": "/nonexistent-realbud-fictional-helper.py",
+  "script_sha256": "2d6812d9cf7d40ecba0465d15a5e21c9957f0dbf51c63282ea5475f96ed4a5f8",
+  "checks": [],
+  "cleanup": true,
+  "native_validation": false,
+  "limits": [
+    "Primitive acceptance only; production platform holds remain unchanged.",
+    "No Hermes runtime, model/provider, customer profile or credential is used.",
+    "No full application, installed GUI, Windows 11 device or power-loss guarantee is implied.",
+    "Ancestor pinning and ancestor-junction refusal belong to the separate portable protocol and are not established by this leaf-primitive script.",
+    "Successful deletion requests are not journal completion; namespace/journal reconciliation requires the separate protocol."
+  ],
+  "reason": "A real Windows process is required; no native checks were run."
+}

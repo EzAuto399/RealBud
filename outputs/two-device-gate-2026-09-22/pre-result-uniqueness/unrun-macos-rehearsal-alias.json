@@ -1,0 +1,846 @@
+{
+  "schemaVersion": 2,
+  "contractId": "realbud-two-device-2026-09-22",
+  "contractSha256": "85f04a699bde98ddafd6113fc484d0fb6440655b4dff90e6c4ae5ecba5e751d2",
+  "target": "macos-rehearsal",
+  "sourceManifestSha256": null,
+  "protocolVersion": null,
+  "reviewerAlias": null,
+  "reviewedAt": null,
+  "note": "Fill from actual installed-device runs. Preserve failures; a template is not passing evidence. Evidence paths are relative to this receipt directory.",
+  "pairings": [
+    {
+      "id": "macos-macos",
+      "companyAlias": null,
+      "devices": [
+        {
+          "slot": "A",
+          "memberAlias": null,
+          "deviceAlias": null,
+          "providerUserAlias": null,
+          "os": "macos",
+          "osVersion": null,
+          "architecture": "arm64",
+          "environment": null,
+          "artifactSha256": null,
+          "hermesVersion": null,
+          "hermesCommit": null,
+          "cuaVersion": null
+        },
+        {
+          "slot": "B",
+          "memberAlias": null,
+          "deviceAlias": null,
+          "providerUserAlias": null,
+          "os": "macos",
+          "osVersion": null,
+          "architecture": "arm64",
+          "environment": null,
+          "artifactSha256": null,
+          "hermesVersion": null,
+          "hermesCommit": null,
+          "cuaVersion": null
+        }
+      ],
+      "workflowRuns": [
+        {
+          "id": "morning-a",
+          "caseId": "OP-019",
+          "member": "A",
+          "status": "not-run",
+          "proofLayer": null,
+          "jobId": null,
+          "attemptId": null,
+          "companyAlias": null,
+          "workerContextAlias": null,
+          "executionDeviceAlias": null,
+          "providerUserAlias": null,
+          "connectedAccountAlias": null,
+          "resultReceiptId": null,
+          "executionRoute": null,
+          "evidence": []
+        },
+        {
+          "id": "morning-b",
+          "caseId": "OP-020",
+          "member": "B",
+          "status": "not-run",
+          "proofLayer": null,
+          "jobId": null,
+          "attemptId": null,
+          "companyAlias": null,
+          "workerContextAlias": null,
+          "executionDeviceAlias": null,
+          "providerUserAlias": null,
+          "connectedAccountAlias": null,
+          "resultReceiptId": null,
+          "executionRoute": null,
+          "evidence": []
+        },
+        {
+          "id": "bills-a",
+          "caseId": "OP-026",
+          "member": "A",
+          "status": "not-run",
+          "proofLayer": null,
+          "jobId": null,
+          "attemptId": null,
+          "companyAlias": null,
+          "workerContextAlias": null,
+          "executionDeviceAlias": null,
+          "providerUserAlias": null,
+          "connectedAccountAlias": null,
+          "resultReceiptId": null,
+          "executionRoute": null,
+          "evidence": []
+        },
+        {
+          "id": "bills-b",
+          "caseId": "OP-026",
+          "member": "B",
+          "status": "not-run",
+          "proofLayer": null,
+          "jobId": null,
+          "attemptId": null,
+          "companyAlias": null,
+          "workerContextAlias": null,
+          "executionDeviceAlias": null,
+          "providerUserAlias": null,
+          "connectedAccountAlias": null,
+          "resultReceiptId": null,
+          "executionRoute": null,
+          "evidence": []
+        },
+        {
+          "id": "bank-a",
+          "caseId": "OP-032",
+          "member": "A",
+          "status": "not-run",
+          "proofLayer": null,
+          "jobId": null,
+          "attemptId": null,
+          "companyAlias": null,
+          "workerContextAlias": null,
+          "executionDeviceAlias": null,
+          "providerUserAlias": null,
+          "connectedAccountAlias": null,
+          "resultReceiptId": null,
+          "executionRoute": null,
+          "evidence": []
+        },
+        {
+          "id": "bank-b",
+          "caseId": "OP-033",
+          "member": "B",
+          "status": "not-run",
+          "proofLayer": null,
+          "jobId": null,
+          "attemptId": null,
+          "companyAlias": null,
+          "workerContextAlias": null,
+          "executionDeviceAlias": null,
+          "providerUserAlias": null,
+          "connectedAccountAlias": null,
+          "resultReceiptId": null,
+          "executionRoute": null,
+          "evidence": []
+        }
+      ],
+      "checks": [
+        {
+          "caseId": "OP-001",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-002",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-003",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-004",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-005",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-006",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-007",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-008",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-009",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-010",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-011",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-012",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-013",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-014",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-015",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-016",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-017",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-018",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-019",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-020",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-021",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-022",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-023",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-024",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-025",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-026",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-027",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-028",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-029",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-030",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-031",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-032",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-033",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-034",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-035",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-036",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-037",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-038",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-039",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-040",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-041",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-042",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-043",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-044",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-045",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-046",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-047",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-048",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-049",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-050",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-051",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-052",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-053",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-054",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-055",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-056",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-057",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-058",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-059",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-060",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-061",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-062",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-063",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-064",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-065",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-066",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-067",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-068",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-070",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        },
+        {
+          "caseId": "OP-071",
+          "status": "not-run",
+          "proofLayer": null,
+          "participants": [
+            "A",
+            "B"
+          ],
+          "evidence": []
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://realbud.invalid/contracts/accounts-inbox-triage.schema.json",
+  "title": "accounts-inbox-triage",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "kind": {
+      "const": "accounts-inbox-triage"
+    },
+    "sourceReference": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "complete",
+        "partial",
+        "blocked"
+      ]
+    },
+    "coverageComplete": {
+      "type": "boolean"
+    },
+    "skillSource": {
+      "enum": [
+        "email-inbox-triage@0.1.0"
+      ]
+    },
+    "threads": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "threadId": {
+            "type": "string"
+          },
+          "disposition": {
+            "enum": [
+              "urgent-review",
+              "reply-review",
+              "action-review",
+              "waiting",
+              "reference",
+              "noise",
+              "hold"
+            ]
+          },
+          "owner": {
+            "enum": [
+              "accounts-reviewer",
+              "property-manager",
+              "source-owner",
+              "unassigned"
+            ]
+          },
+          "priority": {
+            "enum": [
+              "high",
+              "normal",
+              "low"
+            ]
+          },
+          "sourceMessageIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reason": {
+            "type": "string"
+          },
+          "nextAction": {
+            "type": "string"
+          },
+          "missingFacts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "threadId",
+          "disposition",
+          "owner",
+          "priority",
+          "sourceMessageIds",
+          "reason",
+          "nextAction",
+          "missingFacts"
+        ]
+      }
+    },
+    "holds": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "itemId": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "itemId",
+          "reason"
+        ]
+      }
+    },
+    "actionsPerformed": {
+      "type": "array",
+      "maxItems": 0
+    }
+  },
+  "required": [
+    "version",
+    "kind",
+    "sourceReference",
+    "status",
+    "coverageComplete",
+    "skillSource",
+    "threads",
+    "holds",
+    "actionsPerformed"
+  ]
+}

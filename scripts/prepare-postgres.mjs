@@ -34,6 +34,7 @@ import {
   isRuntimeEntry,
 } from './postgres-artifacts.mjs';
 import { assessRelocatability, relocatabilityProblem } from './postgres-relocatable.mjs';
+import { copyPackageRuntime, listPackageZip, windowsTar } from './package-files.mjs';
 
 const run = promisify(execFile);
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -120,10 +121,7 @@ async function obtainArchive(artifact) {
 
 /** Archive entries, as paths relative to the archive root. */
 async function listArchive(archive) {
-  // `unzip -Z1` lists entry names and is available on the Info-ZIP builds used
-  // on both packaging hosts.
-  const { stdout } = await run('unzip', ['-Z1', archive], { timeout: 300_000, maxBuffer: 64 * 1024 * 1024 });
-  return stdout.split('\n').map(line => line.trim()).filter(Boolean);
+  return listPackageZip(archive);
 }
 
 /**
@@ -141,7 +139,7 @@ async function listArchive(archive) {
  */
 async function extract(archive, entries, destination) {
   const [command, args] = PLATFORM === 'win32'
-    ? ['tar', ['-xf', archive, '-C', destination]]
+    ? [windowsTar(), ['-xf', archive, '-C', destination]]
     : ['ditto', ['-x', '-k', archive, destination]];
   await run(command, args, { timeout: 900_000, maxBuffer: 64 * 1024 * 1024 });
 
@@ -222,7 +220,7 @@ async function main() {
     }
 
     await mkdir(stage, { recursive: true, mode: 0o755 });
-    await run('cp', ['-R', `${runtime}/.`, stage], { timeout: 900_000 });
+    await copyPackageRuntime(runtime, stage);
 
     // Normalise executable permissions and record hashes of what we ship.
     const recorded = [];

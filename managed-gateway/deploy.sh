@@ -15,11 +15,50 @@ if [[ -z "${REALBUD_GATEWAY_PORTAL_SECRET:-}" ]]; then
   echo "Export REALBUD_GATEWAY_PORTAL_SECRET (>=32 chars) before deploy"
   exit 1
 fi
+
+# Installation provisioning. Every one of these is a vendor credential or an
+# identifier the operator holds; none has a safe default, and a deployment that
+# omits one answers 503 on /ready and on both provisioning routes. Fail loudly
+# here rather than shipping a gateway that looks healthy and cannot provision.
+missing=()
+for name in \
+  REALBUD_COMPOSIO_ORG_KEY \
+  REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL \
+  REALBUD_MODELVIA_OPERATOR_SECRET \
+  REALBUD_MODELVIA_OPERATOR_SUBJECT \
+  REALBUD_MODELVIA_CLIENT_ID \
+  REALBUD_GATEWAY_PUBLIC_ORIGIN
+do
+  [[ -n "${!name:-}" ]] || missing+=("$name")
+done
+if (( ${#missing[@]} )); then
+  echo "Export these before deploy (values are never echoed): ${missing[*]}"
+  exit 1
+fi
+# Modelvia's verifier refuses a shorter operator secret outright.
+if (( ${#REALBUD_MODELVIA_OPERATOR_SECRET} < 32 )); then
+  echo "REALBUD_MODELVIA_OPERATOR_SECRET must be at least 32 characters"
+  exit 1
+fi
+
 fly secrets set \
   REALBUD_GATEWAY_PORTAL_SECRET="$REALBUD_GATEWAY_PORTAL_SECRET" \
   REALBUD_PAYMENT_WEBHOOK_KEY="${REALBUD_PAYMENT_WEBHOOK_KEY:-$(openssl rand -hex 32)}" \
   REALBUD_FINGERPRINT_KEY="${REALBUD_FINGERPRINT_KEY:-$(openssl rand -hex 32)}" \
   REALBUD_ALLOWED_ORIGINS="https://realbud.app,https://www.realbud.app" \
+  REALBUD_ENABLE_PROVIDER="1" \
+  REALBUD_COMPOSIO_ORG_KEY="$REALBUD_COMPOSIO_ORG_KEY" \
+  REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL="$REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL" \
+  REALBUD_MODELVIA_OPERATOR_SECRET="$REALBUD_MODELVIA_OPERATOR_SECRET" \
+  REALBUD_MODELVIA_OPERATOR_SUBJECT="$REALBUD_MODELVIA_OPERATOR_SUBJECT" \
+  REALBUD_MODELVIA_CLIENT_ID="$REALBUD_MODELVIA_CLIENT_ID" \
+  ${REALBUD_MODELVIA_MODELS:+REALBUD_MODELVIA_MODELS="$REALBUD_MODELVIA_MODELS"} \
   -a realbud-managed-gateway
-fly deploy -a realbud-managed-gateway
+# The public origin is a non-secret, but it differs per deployment, so it is set
+# here rather than pinned in fly.toml.
+fly config env set REALBUD_GATEWAY_PUBLIC_ORIGIN="$REALBUD_GATEWAY_PUBLIC_ORIGIN" -a realbud-managed-gateway 2>/dev/null || \
+  fly secrets set REALBUD_GATEWAY_PUBLIC_ORIGIN="$REALBUD_GATEWAY_PUBLIC_ORIGIN" -a realbud-managed-gateway
+
+fly deploy "$ROOT" --config "$ROOT/managed-gateway/fly.toml" --dockerfile "$ROOT/managed-gateway/Dockerfile" -a realbud-managed-gateway
 echo "Set website REALBUD_GATEWAY_URL to the app URL from: fly status -a realbud-managed-gateway"
+echo "Check provisioning: curl -fsS \"\$REALBUD_GATEWAY_URL/ready\" — 200 means composed, 503 names the variable still to set."

@@ -52,6 +52,14 @@ function keepPrivateFile(path: string): void {
   hardenedFiles.add(path);
 }
 
+/** Exact bundled defaults distinguish a fresh restore target from edited notes. */
+export const DEFAULT_VAULT_DOCUMENTS: Readonly<Record<string,string>> = {
+  'USER.md': '# You\n\nThis is the property manager RealBud works for.\n',
+  'README.md': ['# Book','','Notes on each property live in properties/. They are preferences, not law.',
+    'Desk shop rules and the ledger win. Do not invent a legal clock.','Process for notices and trust sits with the licensee.',''].join('\n'),
+  [LAW_REFERENCE_FILE]: LAW_REFERENCE_MARKDOWN,
+};
+
 export function seedVault(book?: string): string {
   const dir = bookDir(book);
   ensurePrivateDir(dir);
@@ -60,21 +68,14 @@ export function seedVault(book?: string): string {
   ensurePrivateDir(join(dir, "decisions"));
   const user = join(dir, "USER.md");
   if (!existsSync(user)) {
-    writeFileSync(user, "# You\n\nThis is the property manager RealBud works for.\n", { mode: 0o600 });
+    writeFileSync(user, DEFAULT_VAULT_DOCUMENTS['USER.md'], { mode: 0o600 });
   }
   keepPrivateFile(user);
   const readme = join(dir, "README.md");
   if (!existsSync(readme)) {
     writeFileSync(
       readme,
-      [
-        "# Book",
-        "",
-        "Notes on each property live in properties/. They are preferences, not law.",
-        "Desk shop rules and the ledger win. Do not invent a legal clock.",
-        "Process for notices and trust sits with the licensee.",
-        "",
-      ].join("\n"),
+      DEFAULT_VAULT_DOCUMENTS['README.md'],
       { mode: 0o600 },
     );
   }

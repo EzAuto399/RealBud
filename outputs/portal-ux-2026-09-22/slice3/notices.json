@@ -1,0 +1,122 @@
+[
+  {
+    "path": "/account",
+    "width": 360,
+    "colorScheme": "light",
+    "words": "✕\n\nRealBud service did not answer\n\nWe could not load your account summary, so this page has nothing to show yet. Nothing on your account has changed. Try again in a moment, and contact support if it keeps happening.\n\nTry again"
+  },
+  {
+    "path": "/account",
+    "width": 768,
+    "colorScheme": "light",
+    "words": "✕\n\nRealBud service did not answer\n\nWe could not load your account summary, so this page has nothing to show yet. Nothing on your account has changed. Try again in a moment, and contact support if it keeps happening.\n\nTry again"
+  },
+  {
+    "path": "/account",
+    "width": 1280,
+    "colorScheme": "light",
+    "words": "✕\n\nRealBud service did not answer\n\nWe could not load your account summary, so this page has nothing to show yet. Nothing on your account has changed. Try again in a moment, and contact support if it keeps happening.\n\nTry again"
+  },
+  {
+    "path": "/account/ai-billing",
+    "width": 360,
+    "colorScheme": "light",
+    "words": "!\n\nBilling is not connected on this site yet\n\nThe billing service is not configured for this address, so usage and invoices cannot be shown. Contact support; your account and computers are unaffected.\n\nContact support"
+  },
+  {
+    "path": "/account/ai-billing",
+    "width": 768,
+    "colorScheme": "light",
+    "words": "!\n\nBilling is not connected on this site yet\n\nThe billing service is not configured for this address, so usage and invoices cannot be shown. Contact support; your account and computers are unaffected.\n\nContact support"
+  },
+  {
+    "path": "/account/ai-billing",
+    "width": 1280,
+    "colorScheme": "light",
+    "words": "!\n\nBilling is not connected on this site yet\n\nThe billing service is not configured for this address, so usage and invoices cannot be shown. Contact support; your account and computers are unaffected.\n\nContact support"
+  },
+  {
+    "path": "/account/invoices",
+    "width": 360,
+    "colorScheme": "light",
+    "words": "✕\n\nRealBud service did not answer\n\nWe could not load your invoices, so this page has nothing to show yet. Nothing on your account has changed. Try again in a moment, and contact support if it keeps happening.\n\nTry again"
+  },
+  {
+    "path": "/account/invoices",
+    "width": 768,
+    "colorScheme": "light",
+    "words": "✕\n\nRealBud service did not answer\n\nWe could not load your invoices, so this page has nothing to show yet. Nothing on your account has changed. Try again in a moment, and contact support if it keeps happening.\n\nTry again"
+  },
+  {
+    "path": "/account/invoices",
+    "width": 1280,
+    "colorScheme": "light",
+    "words": "✕\n\nRealBud service did not answer\n\nWe could not load your invoices, so this page has nothing to show yet. Nothing on your account has changed. Try again in a moment, and contact support if it keeps happening.\n\nTry again"
+  },
+  {
+    "path": "/account/rates",
+    "width": 360,
+    "colorScheme": "light",
+    "words": "✕\n\nRealBud service did not answer\n\nWe could not load your rate card, so this page has nothing to show yet. Nothing on your account has changed. Try again in a moment, and contact support if it keeps happening.\n\nTry again"
+  },
+  {
+    "path": "/account/rates",
+    "width": 768,
+    "colorScheme": "light",
+    "words": "✕\n\nRealBud service did not answer\n\nWe could not load your rate card, so this page has nothing to show yet. Nothing on your account has changed. Try again in a moment, and contact support if it keeps happening.\n\nTry again"
+  },
+  {
+    "path": "/account/rates",
+    "width": 1280,
+    "colorScheme": "light",
+    "words": "✕\n\nRealBud service did not answer\n\nWe could not load your rate card, so this page has nothing to show yet. Nothing on your account has changed. Try again in a moment, and contact support if it keeps happening.\n\nTry again"
+  },
+  {
+    "path": "/account/limits",
+    "width": 360,
+    "colorScheme": "light",
+    "words": "✕\n\nRealBud service did not answer\n\nWe could not load your spending limits, so this page has nothing to show yet. Nothing on your account has changed. Try again in a moment, and contact support if it keeps happening.\n\nTry again"
+  },
+  {
+    "path": "/account/limits",
+    "width": 768,
+    "colorScheme": "light",
+    "words": "✕\n\nRealBud service did not answer\n\nWe could not load your spending limits, so this page has nothing to show yet. Nothing on your account has changed. Try again in a moment, and contact support if it keeps happening.\n\nTry again"
+  },
+  {
+    "path": "/account/limits",
+    "width": 1280,
+    "colorScheme": "light",
+    "words": "✕\n\nRealBud service did not answer\n\nWe could not load your spending limits, so this page has nothing to show yet. Nothing on your account has changed. Try again in a moment, and contact support if it keeps happening.\n\nTry again"
+  },
+  {
+    "path": "/account",
+    "width": 1280,
+    "colorScheme": "dark",
+    "words": "✕\n\nRealBud service did not answer\n\nWe could not load your account summary, so this page has nothing to show yet. Nothing on your account has changed. Try again in a moment, and contact support if it keeps happening.\n\nTry again"
+  },
+  {
+    "path": "/account/ai-billing",
+    "width": 1280,
+    "colorScheme": "dark",
+    "words": "!\n\nBilling is not connected on this site yet\n\nThe billing service is not configured for this address, so usage and invoices cannot be shown. Contact support; your account and computers are unaffected.\n\nContact support"
+  },
+  {
+    "path": "/account/invoices",
+    "width": 1280,
+    "colorScheme": "dark",
+    "words": "✕\n\nRealBud service did not answer\n\nWe could not load your invoices, so this page has nothing to show yet. Nothing on your account has changed. Try again in a moment, and contact support if it keeps happening.\n\nTry again"
+  },
+  {
+    "path": "/account/rates",
+    "width": 1280,
+    "colorScheme": "dark",
+    "words": "✕\n\nRealBud service did not answer\n\nWe could not load your rate card, so this page has nothing to show yet. Nothing on your account has changed. Try again in a moment, and contact support if it keeps happening.\n\nTry again"
+  },
+  {
+    "path": "/account/limits",
+    "width": 1280,
+    "colorScheme": "dark",
+    "words": "✕\n\nRealBud service did not answer\n\nWe could not load your spending limits, so this page has nothing to show yet. Nothing on your account has changed. Try again in a moment, and contact support if it keeps happening.\n\nTry again"
+  }
+]

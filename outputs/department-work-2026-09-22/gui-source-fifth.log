@@ -1,0 +1,16 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+locator.selectOption: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for getByLabel('Open case assigned to me', { exact: true })[22m
+
+    at /Users/yoda/projects/RealBud/scripts/qa-department-work.mjs:77:66 {
+  log: [
+    "  - waiting for getByLabel('Open case assigned to me', { exact: true })"
+  ],
+  name: 'TimeoutError'
+}
+
+Node.js v24.19.0

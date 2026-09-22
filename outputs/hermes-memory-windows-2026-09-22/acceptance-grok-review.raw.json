@@ -1,0 +1,67 @@
+{
+  "text": "{\"verdict\":\"changes-required\",\"findings\":[{\"severity\":\"high\",\"file\":\"scripts/testing/hermes-memory-windows-native.py\",\"line\":239,\"issue\":\"Hard-link restoration false-fails. alias.unlink() runs while rig.file()'s handle is still open. File opens use share mode 1 (FILE_SHARE_READ) and never FILE_SHARE_DELETE, and this open is not renameable, so DeleteFile on the alias gets a sharing violation. The links==1 and same-identity asserts after the finally are unreachable, so the suite cannot pass. Source-only; not executed.\",\"fix\":\"Keep the open handle only for the multi-link open/snapshot refusals and the byte check. Close it, then unlink the alias, then reopen and require links==1, the same volume serial and file index, and BEFORE. Unlink only if the alias exists so a failed os.link is not replaced by FileNotFoundError.\"},{\"severity\":\"high\",\"file\":\"scripts/testing/hermes-memory-windows-native.py\",\"line\":261,\"issue\":\"Junction non-follow can false-pass. refuses() treats every NativeError as success and drops code. Opening with FILE_FLAG_OPEN_REPARSE_POINT fails in snapshot as unsafe-storage because the leaf has FILE_ATTRIBUTE_REPARSE_POINT. Removing that flag follows the junction, then snapshot raises conflict because final_path is the target. Bytes stay intact, so the check still passes. Source-only; not executed.\",\"fix\":\"Catch NativeError on the junction open and require code unsafe-storage. conflict means the target was followed. Keep the preserved-byte check and rmdir of the junction only.\"},{\"severity\":\"medium\",\"file\":\"scripts/testing/hermes-memory-windows-native.py\",\"line\":204,\"issue\":\"Inherited-child binding is only half-tested. Refusal without a root and success with rig.root_handle do not prove the root must contain the child. A backend that accepts any private directory and skips the ancestor/prefix check still passes, with SDDL and bytes unchanged.\",\"fix\":\"Add a second private directory that does not contain the child. verify_private(child, private_root=that handle) must raise NativeError. Re-read SDDL and bytes so the refusal did not repair anything. Keep the no-root refusal and the real-root admission.\"},{\"severity\":\"medium\",\"file\":\"scripts/testing/hermes-memory-windows-native.py\",\"line\":420,\"issue\":\"Receipt status is untruthful when a check fails and cleanup also fails. finally always replaces status with cleanup-failed, so a real assertion failure (active_check and failure still set) is reported as cleanup-failed. passed stays false, but the primary status is wrong.\",\"fix\":\"If status is already failed, keep it and only record handles_drained/cleanup false. Set cleanup-failed only when the checks had otherwise passed.\"}],\"coverage_limits\":[\"Source review only; this harness was not executed on Windows. Hard-link sharing and junction follow-versus-conflict are inferred from the supplied open flags, snapshot order, and Win32 share rules.\",\"Leaf primitives only. Ancestor pinning and ancestor-junction refusal are explicitly out of scope and are not missing tests. A pass would not admit the backend or lift production Windows holds.\",\"Selected-module no-fallback and non-Windows exit 2 (no import, no fixture, passed false) match the source and were not run.\",\"Win32Native.delete is not exercised. No-clobber publication and post-sharing replace re-check same-handle bytes/identity before close; only the dedicated replacement check re-opens the destination and compares file index. Sharing denial correctly accepts any NativeError (backend maps Win32 32 to unavailable, not conflict).\"]}",
+  "stopReason": "end_turn",
+  "sessionId": "01a0c4cd-9707-77f3-ac85-5add7c736758",
+  "requestId": "b46349df-d9e4-40d0-a5ba-5cfc8fae9650",
+  "thought": "The user wants me to review a Windows-native acceptance harness against a backend API. They explicitly say:\n{\n  \"verdict\": \"changes-required\",\n  \"findings\": [\n    \"Windows sharing semantics not fully validated: harness assumes FILE_SHARE_READ|WRITE|DELETE but backend may reject DELETE on open handles; test will falsely pass.\",\n    \"No-clobber/replace byte and identity assertions lack explicit ACL check before 0-byte write; backend could reject due to inherited private-root binding.\",\n    \"Cleanup/owned handle lifetime not asserted: finally block assumes rig=None but no test verifies handle close before receipt write.\",\n    \"Inherited-file private-root binding not exercised: no test creates file under private root and verifies ACL mutation refusal.\",\n    \" - Receipt write after status logic creates race if write fails on non-Windows exit2 path.\",\n    \"Module no-fallback guarantee incomplete: no test for load failure after is_file/is_symlink check; backend import side effects (ctypes) not isolated.\",\n    \"Unsupported non-Windows exit2 truthful but receipt[' cleanup'] misleading when nothing created.\"\n  ],\n  \"coverage_limits\": [\n    \"Windows tests not executed; harness proves only leaf primitives.\",\n    \"Ancestor pinning and full portable protocol out of scope.\",\n    \"Backend defects reported only if they invalidate harness primitives.",
+  "usage": {
+    "input_tokens": 70872,
+    "cache_read_input_tokens": 1152,
+    "cache_creation_input_tokens": 0,
+    "output_tokens": 84456,
+    "reasoning_tokens": 83637,
+    "total_tokens": 156480
+  },
+  "num_turns": 1,
+  "total_cost_usd": 0.649056,
+  "total_cost_usd_ticks": 6490560000,
+  "modelUsage": {
+    "grok-4.7-build": {
+      "inputTokens": 70872,
+      "outputTokens": 84456,
+      "cacheReadInputTokens": 1152,
+      "cacheCreationInputTokens": 0,
+      "modelCalls": 1,
+      "costUSD": 0.649056
+    }
+  },
+  "structuredOutput": {
+    "verdict": "changes-required",
+    "findings": [
+      {
+        "severity": "high",
+        "file": "scripts/testing/hermes-memory-windows-native.py",
+        "line": 239,
+        "issue": "Hard-link restoration false-fails. alias.unlink() runs while rig.file()'s handle is still open. File opens use share mode 1 (FILE_SHARE_READ) and never FILE_SHARE_DELETE, and this open is not renameable, so DeleteFile on the alias gets a sharing violation. The links==1 and same-identity asserts after the finally are unreachable, so the suite cannot pass. Source-only; not executed.",
+        "fix": "Keep the open handle only for the multi-link open/snapshot refusals and the byte check. Close it, then unlink the alias, then reopen and require links==1, the same volume serial and file index, and BEFORE. Unlink only if the alias exists so a failed os.link is not replaced by FileNotFoundError."
+      },
+      {
+        "severity": "high",
+        "file": "scripts/testing/hermes-memory-windows-native.py",
+        "line": 261,
+        "issue": "Junction non-follow can false-pass. refuses() treats every NativeError as success and drops code. Opening with FILE_FLAG_OPEN_REPARSE_POINT fails in snapshot as unsafe-storage because the leaf has FILE_ATTRIBUTE_REPARSE_POINT. Removing that flag follows the junction, then snapshot raises conflict because final_path is the target. Bytes stay intact, so the check still passes. Source-only; not executed.",
+        "fix": "Catch NativeError on the junction open and require code unsafe-storage. conflict means the target was followed. Keep the preserved-byte check and rmdir of the junction only."
+      },
+      {
+        "severity": "medium",
+        "file": "scripts/testing/hermes-memory-windows-native.py",
+        "line": 204,
+        "issue": "Inherited-child binding is only half-tested. Refusal without a root and success with rig.root_handle do not prove the root must contain the child. A backend that accepts any private directory and skips the ancestor/prefix check still passes, with SDDL and bytes unchanged.",
+        "fix": "Add a second private directory that does not contain the child. verify_private(child, private_root=that handle) must raise NativeError. Re-read SDDL and bytes so the refusal did not repair anything. Keep the no-root refusal and the real-root admission."
+      },
+      {
+        "severity": "medium",
+        "file": "scripts/testing/hermes-memory-windows-native.py",
+        "line": 420,
+        "issue": "Receipt status is untruthful when a check fails and cleanup also fails. finally always replaces status with cleanup-failed, so a real assertion failure (active_check and failure still set) is reported as cleanup-failed. passed stays false, but the primary status is wrong.",
+        "fix": "If status is already failed, keep it and only record handles_drained/cleanup false. Set cleanup-failed only when the checks had otherwise passed."
+      }
+    ],
+    "coverage_limits": [
+      "Source review only; this harness was not executed on Windows. Hard-link sharing and junction follow-versus-conflict are inferred from the supplied open flags, snapshot order, and Win32 share rules.",
+      "Leaf primitives only. Ancestor pinning and ancestor-junction refusal are explicitly out of scope and are not missing tests. A pass would not admit the backend or lift production Windows holds.",
+      "Selected-module no-fallback and non-Windows exit 2 (no import, no fixture, passed false) match the source and were not run.",
+      "Win32Native.delete is not exercised. No-clobber publication and post-sharing replace re-check same-handle bytes/identity before close; only the dedicated replacement check re-opens the destination and compares file index. Sharing denial correctly accepts any NativeError (backend maps Win32 32 to unavailable, not conflict)."
+    ]
+  }
+}

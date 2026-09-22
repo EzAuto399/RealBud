@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "synthetic": true,
+  "sourceReference": "QA-SYN-ANZ-REFERENCE-PREP-COMPLETE-6dba07cb-adf0-41b3-9685-85c4cc085eb2",
+  "asOf": "2026-09-14",
+  "timezone": "Australia/Brisbane",
+  "reviewer": {
+    "name": "Kevin",
+    "role": "accounts",
+    "roleConfirmation": "user-confirmed",
+    "scenario": "synthetic"
+  },
+  "coverage": {
+    "complete": true,
+    "accountId": "SYN-ANZ-TRUST-EXPORT",
+    "from": "2026-09-12",
+    "toExclusive": "2026-09-14",
+    "lastReconciledThrough": "2026-09-11",
+    "failedSources": []
+  },
+  "bankBrand": "ANZ",
+  "formatConfirmed": true,
+  "formatConfirmationSource": "synthetic-test-layout-only",
+  "mappingApproved": true,
+  "batchId": "bank:70ce96f3060d9a5559954fe3438cca012d34a1540a0cfb5e35a6b38997376336",
+  "batchRevision": 1,
+  "batch": {
+    "version": 1,
+    "originalDigest": "70ce96f3060d9a5559954fe3438cca012d34a1540a0cfb5e35a6b38997376336",
+    "input": {
+      "csv": "Date,Amount,Description,Reference,Memo\r\n12/09/2026,650.00,Synthetic Alex Tenant,,preserve-1\r\n12/09/2026,700.00,Synthetic Bailey Tenant,000456,preserve-2\r\n13/09/2026,-25.00,Synthetic Bank Charge,,preserve-3\r\n",
+      "columns": {
+        "date": "Date",
+        "amount": "Amount",
+        "narrative": "Description",
+        "reference": "Reference"
+      },
+      "dateFormat": "DD/MM/YYYY",
+      "rules": [
+        {
+          "propertyId": "SYN-P01",
+          "reference": "000127",
+          "aliases": [
+            "Synthetic Alex Tenant",
+            "Synthetic Shared Payer"
+          ]
+        },
+        {
+          "propertyId": "SYN-P02",
+          "reference": "000456",
+          "aliases": [
+            "Synthetic Bailey Tenant",
+            "Synthetic Shared Payer"
+          ]
+        },
+        {
+          "propertyId": "SYN-P03",
+          "reference": "000789",
+          "aliases": [
+            "Synthetic Commercial Tenant"
+          ]
+        }
+      ]
+    },
+    "rows": [
+      {
+        "id": "70ce96f3060d9a5559954fe3438cca012d34a1540a0cfb5e35a6b38997376336:1",
+        "date": "12/09/2026",
+        "amount": "650.00",
+        "narrative": "Synthetic Alex Tenant",
+        "reference": "",
+        "candidates": [
+          "SYN-P01"
+        ],
+        "issues": []
+      },
+      {
+        "id": "70ce96f3060d9a5559954fe3438cca012d34a1540a0cfb5e35a6b38997376336:2",
+        "date": "12/09/2026",
+        "amount": "700.00",
+        "narrative": "Synthetic Bailey Tenant",
+        "reference": "000456",
+        "candidates": [
+          "SYN-P02"
+        ],
+        "issues": [
+          "Existing reference; keep unless a reviewed correction is needed."
+        ]
+      },
+      {
+        "id": "70ce96f3060d9a5559954fe3438cca012d34a1540a0cfb5e35a6b38997376336:3",
+        "date": "13/09/2026",
+        "amount": "-25.00",
+        "narrative": "Synthetic Bank Charge",
+        "reference": "",
+        "candidates": [],
+        "issues": [
+          "Not an incoming payment; keep unchanged for separate review.",
+          "No property match; review manually."
+        ]
+      }
+    ]
+  }
+}

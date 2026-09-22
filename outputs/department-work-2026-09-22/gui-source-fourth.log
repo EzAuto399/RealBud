@@ -1,0 +1,22 @@
+node:internal/process/promises:394
+    triggerUncaughtException(err, true /* fromPromise */);
+    ^
+
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ 'Bearer no-key-required'
+- 'Bearer fictional-selected-profile-key'
+          ^
+
+    at Server.<anonymous> (file:///Users/yoda/projects/RealBud/scripts/qa-department-work.mjs:45:57)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: 'Bearer no-key-required',
+  expected: 'Bearer fictional-selected-profile-key',
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.19.0

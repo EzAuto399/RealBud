@@ -1,0 +1,148 @@
+{
+  "at": "2026-09-21T17:26:15.352720+00:00",
+  "status": "local-journal-integration-complete-windows-memory-held",
+  "sourceHead": "5856140c6ba49f53e79a7edbf01800e099b53e10",
+  "sourceInputs": {
+    "server/helpers/hermes-memory-proposals.py": "13f9c35ccb5d6d6c1f20743592348f306b1ba4b18beb2e608a19915ffe3213df",
+    "server/helpers/hermes-memory-review.py": "2a1ce893919e7ec84d5a5a7fc302b6bddf6df54d93ae951980933b236b8c26a4",
+    "server/helpers/hermes-memory-windows-journal.py": "467310a21292240f581b7b696353cee47d58328efc3131324ec9a28fae9f5ddb",
+    "server/helpers/hermes-memory-windows-native.py": "89688faf5523e2ea68c5ca75b1987f88b89c558ba7fe94b23fa3a49f010fbbfa",
+    "server/helpers/hermes-memory-windows.py": "dcd60d8134bfbc6d64cfedccd93dbf6c834d8528ae6b23468d3b359a4ea0f208",
+    "scripts/testing/hermes-memory-windows-abi.py": "a9e6b88160f60620b7cf319035b958f8c1f0c1dd3c6c5344d3b0e37ac7523c18",
+    "scripts/testing/hermes-memory-windows-journal-io.py": "303c6d1427aa57571182a6a5855c030021278707c57fefbe782b227619f276fd",
+    "scripts/testing/hermes-memory-windows-journal.py": "e4da997285187d44b30cbf9ed12ecfda34a7bace9936eff63b82758a64a645dd",
+    "scripts/testing/hermes-memory-windows-native.py": "2d6812d9cf7d40ecba0465d15a5e21c9957f0dbf51c63282ea5475f96ed4a5f8",
+    "scripts/testing/hermes-memory-windows-policy.py": "957058e2824d5ddc633810bc5d8c3a3a133cf43a49b75139721e6140262d3f03",
+    "scripts/testing/hermes-memory-windows-protocol.py": "335276ff097814be4ec0b61a4f56b5d3fbbb56dd882b0fe3d36046afdc88e219",
+    "scripts/bundle-company-deps.mjs": "89303566852726d3fbbc683e3425edec8124d4ec54e03f7cafbdb0fe4f8ba9b1",
+    ".github/workflows/ci.yml": "5d786d52db68fbad284649c20f645b18efff9b7e5e8c55dd79c5503e4d45c563"
+  },
+  "sourceDigest": "ded6d9e7ee1a1520215176ae94916b55e9765450f975f01f541645e391d30634",
+  "sourceInputsUnchangedSinceChecks": true,
+  "checks": {
+    "portablePrimitiveProtocol": {
+      "passed": 71,
+      "abi": 19,
+      "policy": 19,
+      "protocol": 33
+    },
+    "facade": {
+      "passed": 18,
+      "dictionaryStorage": 14,
+      "realFacadeAndProtocolWithFictionalNative": 4
+    },
+    "actualHelperWithFakeWindowsIO": {
+      "passed": 25,
+      "receipt": "journal-tests-final.json",
+      "faultPoints": 11
+    },
+    "proposalTransitions": {
+      "passed": 10,
+      "receipt": "proposals-state-checks.json"
+    },
+    "posixSubprocessFaults": {
+      "passed": 15,
+      "log": "proposals-posix-faults.log"
+    },
+    "nativeHermesAndActualHttp": {
+      "passed": 39,
+      "actualHermes": 36,
+      "fictionalAcpHttp": 3,
+      "log": "native-http-tests.log"
+    },
+    "hostAndPackaging": {
+      "passed": 156,
+      "log": "host-packaging-tests.log"
+    },
+    "serverBuild": {
+      "passed": true,
+      "log": "server-build-final.log"
+    },
+    "exactBuiltHelperResources": {
+      "passed": true,
+      "count": 5,
+      "receipt": "built-helpers.json"
+    },
+    "builtResolutionProbes": {
+      "passed": 2
+    },
+    "yamlParse": {
+      "passed": true
+    },
+    "syntaxAndNativeHarness": {
+      "pythonSourcesParsed": 11,
+      "nativeAcceptanceCasesPrepared": 15,
+      "win32Executed": false
+    },
+    "nativeWindows": {
+      "executed": false,
+      "preparedCases": 15,
+      "macGuardExit": 2,
+      "receipt": "native-macos-held.json"
+    }
+  },
+  "reviews": [
+    {
+      "scope": "native lock/absence",
+      "requestedModel": "grok-4.7",
+      "reasoningEffort": "xhigh",
+      "state": "timed-out-no-verdict",
+      "process": {
+        "exitCode": 124,
+        "elapsedSeconds": 600.034
+      },
+      "receipt": "native-lock-contract-receipt.json"
+    },
+    {
+      "scope": "proposal transitions",
+      "requestedModel": "grok-4.7",
+      "reasoningEffort": "xhigh",
+      "state": "timed-out-no-verdict",
+      "exitCode": -15,
+      "elapsedSeconds": 600.04,
+      "receipt": "proposals-grok-run.json"
+    },
+    {
+      "scope": "journal facade",
+      "requestedModel": "grok-4.7",
+      "reasoningEffort": "xhigh",
+      "state": "timed-out-no-verdict",
+      "exitCode": -15,
+      "elapsedSeconds": 600.03,
+      "receipt": "journal-io-grok-run.json"
+    },
+    {
+      "scope": "integration harness",
+      "requestedModel": "grok-4.7",
+      "reasoningEffort": "xhigh",
+      "state": "timed-out-no-verdict",
+      "exitCode": -15,
+      "elapsedSeconds": 600.05,
+      "receipt": "journal-tests-grok-run.json"
+    }
+  ],
+  "release": {
+    "windowsMemoryHoldRemoved": false,
+    "freshAppPackaged": false,
+    "installedAppChanged": false,
+    "remoteCiTriggered": false,
+    "liveCustomerOrProviderActions": false,
+    "upstreamHermesChanged": false
+  },
+  "limits": [
+    "Portable storage fixtures do not establish Win32/NTFS/ACL/CRT locking or native concurrency.",
+    "Actual-helper fault tests replace the complete IO facade and run the admitted runtime on macOS.",
+    "Windows profile provisioning and full native/installed GUI acceptance remain required.",
+    "No hardware power-loss guarantee.",
+    "No fresh full-suite or full-app packaging run; previous typed-proposal package remains latest verified app.",
+    "All four requested small Grok4.7/xhigh reviews timed out with no structured result; no model approval or returned model identity inferred."
+  ],
+  "documentation": {
+    "docs/HERMES-WINDOWS-MEMORY-JOURNAL-2026-09-22.md": "f47279473f442ab60969e9b355ebe1eb2d0bf368956634055797c1719a30f2e3",
+    "docs/HERMES-WINDOWS-MEMORY-STORAGE-2026-09-22.md": "cdf11a762b394ddcb27e408080cc9b6715cedee347740e9c41651118c1a7f65a",
+    "docs/REAL-ESTATE-CORE-2026-09-21.md": "c0a0d2bb2e8968c9a4664a3793c2fe0985b5bd7f5cb4ae4b6626bed938c90d4f",
+    "docs/BUSINESS-DESKTOP-2026-09-21.md": "8496442a1a25082f6064f54fe9459c3cfd419e30114a5808d9130f730c5445c1",
+    "docs/END-STATE.md": "5b69d0ab66ce84da0c2438ffc6c8ae93c5c26fff9f6ed5f8f6f2c9ef37219920",
+    "docs/CUSTOMER-WORKSPACE-IMPLEMENTATION-2026-09-21.md": "6839c86cc8a9eed0fce77f7944263b48872deb33b2b56d3e447d54b475ae42f4"
+  }
+}

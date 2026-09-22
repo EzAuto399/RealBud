@@ -1,0 +1,53 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ❯ server/source-bill-retention-review.test.ts (2 tests | 2 failed) 20ms
+     × does not bless an external write occurring after commit as already validated 15ms
+     × invalidates derived counts when an enclosing transaction rolls back a completed register change 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/source-bill-retention-review.test.ts > independent source-bill transaction cache review > does not bless an external write occurring after commit as already validated
+AssertionError: expected [Function] to throw an error
+
+- Expected:
+null
+
++ Received:
+undefined
+
+ ❯ server/source-bill-retention-review.test.ts:44:55
+     42|     try {
+     43|       expect(f.register.counts().occurrences).toBe(1);
+     44|       expect(() => f.register.getOccurrence(bill.id)).toThrow(/recover…
+       |                                                       ^
+     45|       expect(raw.prepare("SELECT COUNT(*) AS count FROM workflow_recor…
+     46|     } finally { raw.close(); }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  server/source-bill-retention-review.test.ts > independent source-bill transaction cache review > invalidates derived counts when an enclosing transaction rolls back a completed register change
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ server/source-bill-retention-review.test.ts:58:24
+     56|     })).toThrow('Fictional enclosing work failed');
+     57|     const page = f.register.occurrencePage({ propertyId: 'fictional-pr…
+     58|     expect(page.total).toBe(0); expect(page.items).toEqual([]);
+       |                        ^
+     59|     expect(f.register.counts().occurrences).toBe(0);
+     60|     expect(f.register.findBySourceIdentity(previewBillSource(f.source)…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  16:14:28
+   Duration  193ms (transform 72ms, setup 23ms, import 66ms, tests 20ms, environment 0ms)
+

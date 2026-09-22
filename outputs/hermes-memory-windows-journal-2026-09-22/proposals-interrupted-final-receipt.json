@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "at": "2026-09-21T17:44:28.228959+00:00",
+  "result": "passed",
+  "sourceFrozen": true,
+  "sourceHashes": {
+    "server/helpers/hermes-memory-proposals.py": "a53b7de7676b8aa4cb773c98bd210e9008e7256e43710fef9585add92639c138",
+    "server/helpers/hermes-memory-review.py": "4213a361f494ab7277baa4f167560612867c9ccc16d1d831c7b972b369c36500",
+    "scripts/testing/hermes-memory-interrupted-recovery.py": "9516b76a07ef809b87d8e8fa7a392cb62fc54d3e28b6e9834acbe62b94fd6ddd"
+  },
+  "checks": [
+    {
+      "layer": "23 new subprocess closure/recovery checks; native admitted POSIX locks and one selected fictional Windows IO journey",
+      "passed": 23,
+      "failed": 0,
+      "elapsedSeconds": 7.183,
+      "log": "proposals-interrupted-tests-final.log",
+      "logSha256": "8677ed90f1f955d9c84a3cd42576115c997d1147f8aa368d1f991537bdb88aef"
+    },
+    {
+      "layer": "15 existing actual POSIX proposal crash/replay regressions",
+      "passed": 15,
+      "failed": 0,
+      "elapsedSeconds": 2.855,
+      "log": "proposals-interrupted-posix-final.log",
+      "logSha256": "be3066002d0f193cb739e31cd2eaf1cccacaea3331b2b7e038d19a9c39080b08"
+    },
+    {
+      "layer": "25 existing actual native parser/dry-run journal regressions with fictional Windows IO",
+      "passed": 25,
+      "failed": 0,
+      "elapsedSeconds": 6.013,
+      "log": "proposals-interrupted-windows-final.log",
+      "logSha256": "94c5d99bb113aaafffacbe6454e6497283cab8cc6b5b87ab3865723cd3cbc4eb"
+    }
+  ],
+  "syntax": "passed",
+  "contract": {
+    "commands": [
+      "interrupted-list",
+      "interrupted-close"
+    ],
+    "closedJournalVersion": 2,
+    "preservesV1PreparedAndPublished": true,
+    "domainSeparatedRecoveryDigest": true,
+    "strictAbsentPaths": [
+      "proposal stage",
+      "native pending",
+      "private cleanup claim",
+      "any human receipt"
+    ],
+    "collisionScope": "all valid full-key journal names sharing a native 8hex ID",
+    "closeReplay": "same signed original recovery digest; exact terminal record retained; new artifacts refused"
+  },
+  "limits": {
+    "actualWinApiExecuted": false,
+    "productionWindowsAdmissionChanged": false,
+    "humanApprovalCreated": false,
+    "memoryMutationByClose": false,
+    "realProfilesUsed": false,
+    "providerCalls": false,
+    "grokCallsThisSlice": false
+  },
+  "negativeEvidence": [
+    "proposals-interrupted-tests-fixture-failure.log: fictional pending parent was0755; corrected fixture to create0700 explicitly, no policy weakened."
+  ],
+  "remainingOwnedProcesses": false,
+  "uiHostIntegration": "Root owns TS service/admin/broker/UI wiring and its separate acceptance."
+}

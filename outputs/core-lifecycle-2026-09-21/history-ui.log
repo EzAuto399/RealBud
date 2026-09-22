@@ -1,0 +1,3 @@
+PASS Authenticated history migrates all55legacy job receipts and pages them without loss or duplicates; malformed requests fail
+PASS History loads on demand, renders evidence as text, pages forward/back, retains the current page on a read failure, and refreshes
+PASS Routine history switches independently and both desktop and390px views fit without page errors

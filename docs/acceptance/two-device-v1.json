@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 1,
+  "id": "realbud-two-device-2026-09-22",
+  "receiptSchemaVersion": 2,
+  "provenance": {
+    "status": "New explicit policy derived from preserved specifications; the original release-gate object was not recovered. Historical catalogue states are not current acceptance.",
+    "commit": "b20e1c9a942cde7bc2f2a92c7c973f93fedc78d1",
+    "specifications": [
+      "docs/REALBUD-OPERATIONAL-ACCEPTANCE-2026-09-15.md",
+      "docs/REALBUD-TWO-DEVICE-ACCEPTANCE-2026-09-15.md"
+    ],
+    "participantRationale": "docs/TWO-DEVICE-EVIDENCE-GATE-2026-09-22.md"
+  },
+  "catalogue": {
+    "path": "docs/REALBUD-OPERATIONAL-ACCEPTANCE-2026-09-15.json",
+    "sha256": "c91dd8605e3a63049613c60baec7b0ff55f20aa02726ad200a357e45bde8ea15",
+    "caseCount": 71
+  },
+  "targets": {
+    "macos-rehearsal": [
+      "macos-macos"
+    ],
+    "full-platform": [
+      "macos-macos",
+      "macos-windows",
+      "windows-macos",
+      "windows-windows"
+    ]
+  },
+  "windows_only_cases": [
+    "OP-069"
+  ],
+  "workflow_runs": [
+    {
+      "id": "morning-a",
+      "caseId": "OP-019",
+      "member": "A"
+    },
+    {
+      "id": "morning-b",
+      "caseId": "OP-020",
+      "member": "B"
+    },
+    {
+      "id": "bills-a",
+      "caseId": "OP-026",
+      "member": "A"
+    },
+    {
+      "id": "bills-b",
+      "caseId": "OP-026",
+      "member": "B"
+    },
+    {
+      "id": "bank-a",
+      "caseId": "OP-032",
+      "member": "A"
+    },
+    {
+      "id": "bank-b",
+      "caseId": "OP-033",
+      "member": "B"
+    }
+  ],
+  "participants_by_case": {
+    "OP-001": "host",
+    "OP-002": "both",
+    "OP-003": "peer",
+    "OP-004": "host",
+    "OP-005": "both",
+    "OP-006": "both",
+    "OP-007": "both",
+    "OP-008": "both",
+    "OP-009": "both",
+    "OP-010": "both",
+    "OP-011": "both",
+    "OP-012": "both",
+    "OP-013": "both",
+    "OP-014": "both",
+    "OP-015": "both",
+    "OP-016": "both",
+    "OP-017": "both",
+    "OP-018": "both",
+    "OP-019": "host",
+    "OP-020": "peer",
+    "OP-021": "both",
+    "OP-022": "both",
+    "OP-023": "both",
+    "OP-024": "both",
+    "OP-025": "both",
+    "OP-026": "both",
+    "OP-027": "both",
+    "OP-028": "both",
+    "OP-029": "both",
+    "OP-030": "both",
+    "OP-031": "both",
+    "OP-032": "host",
+    "OP-033": "peer",
+    "OP-034": "both",
+    "OP-035": "both",
+    "OP-036": "both",
+    "OP-037": "both",
+    "OP-038": "both",
+    "OP-039": "both",
+    "OP-040": "both",
+    "OP-041": "both",
+    "OP-042": "both",
+    "OP-043": "both",
+    "OP-044": "both",
+    "OP-045": "both",
+    "OP-046": "both",
+    "OP-047": "both",
+    "OP-048": "both",
+    "OP-049": "both",
+    "OP-050": "both",
+    "OP-051": "both",
+    "OP-052": "both",
+    "OP-053": "both",
+    "OP-054": "both",
+    "OP-055": "both",
+    "OP-056": "both",
+    "OP-057": "both",
+    "OP-058": "both",
+    "OP-059": "both",
+    "OP-060": "both",
+    "OP-061": "both",
+    "OP-062": "both",
+    "OP-063": "both",
+    "OP-064": "both",
+    "OP-065": "both",
+    "OP-066": "both",
+    "OP-067": "both",
+    "OP-068": "both",
+    "OP-069": "windows",
+    "OP-070": "both",
+    "OP-071": "both"
+  }
+}

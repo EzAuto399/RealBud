@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "recordedAt": "2026-09-21T19:13:24.937767+00:00",
+  "scope": "final pack upgrade, ownership and host-clock pause source freeze",
+  "checks": [
+    {
+      "command": "pnpm exec vitest run server/customer-pack-upgrades.review.test.ts server/customer-pack-upgrades.test.ts server/customer-packs.test.ts",
+      "passed": 48,
+      "failed": 0,
+      "exitCode": 0,
+      "proof": "Observed terminal session 79764 exit 0; followed only by removal of unused test variable."
+    },
+    {
+      "command": "pnpm typecheck",
+      "exitCode": 0,
+      "proof": "Final observed terminal session 39611 exit 0 after unused test variable removal."
+    },
+    {
+      "command": "pnpm exec vitest run src/components/schedule/CustomerPackChangeReview.test.ts",
+      "passed": 2,
+      "failed": 0,
+      "exitCode": 0,
+      "proof": "Earlier final UI test run chunk bfae7e; UI source unchanged since."
+    }
+  ],
+  "sha256": {
+    "server/customer-packs.ts": "b4feb4be1b1386e345d5edcd623e87c3b94df7e9fd22d8c051ea28f533996804",
+    "server/customer-pack-upgrades.ts": "e60e13bb0184495d61077f6d5b006b030ed78d0800b717c3f4ed14009ce60218",
+    "server/customer-pack-upgrades.test.ts": "57520a242c48c3f1b948572f60e0d72b57db36efaef8113e34a5aa98ea25b1d6",
+    "server/customer-packs.test.ts": "535b303276c987b23cc3d5fe1c211393f9f6b748c85e633d00dee790d5b80b45",
+    "server/customer-pack-upgrades.review.test.ts": "ad2335191c30bfbc96d9f98b5d281688f254d5517688da439f654c1a2ab8e98e",
+    "shared/customer-packs.ts": "7474ddfb6ed612e585d972d8e9b674419f79808d8b0d8beb32a4c728bb83c836",
+    "src/components/schedule/CustomerPackSetupCard.tsx": "9b25af96f6619b8e6cefce03d4b250ee25490b8984e84a9556c64ac7e96c1763",
+    "src/components/schedule/CustomerPackChangeReview.tsx": "c29e5235ab1e843b7110aca330979c75bcaa3cdd7ca425ff3ac3a90f7fde25b5",
+    "src/components/schedule/CustomerPackChangeReview.test.ts": "904c66399c6417b76e55c27f65f36f5ceea72eab3d5d0173c3631d6ff405d7cb"
+  },
+  "coverage": [
+    "Explicit reviewed merge/rollback and exact request retry; preserved local edits/skill overrides/business records.",
+    "Durable interruption and stale file/plan/scope recovery; retired artifacts and plan execution holds.",
+    "Foreign active/retired/pending target ownership refusal; legacy duplicate holds; normal manual adoption and own repair.",
+    "Host clock callback failure before file or approval mutation for initial import, upgrade, rollback, native skill proposal and revert; recovery; no re-pause on completed retry."
+  ],
+  "limits": [
+    "This receipt covers domain tests, server-rendered UI and typechecking. Root owns real managed-mail, HTTP/browser, packaged and release receipts.",
+    "No live customer account or native Windows verification performed by this agent."
+  ]
+}

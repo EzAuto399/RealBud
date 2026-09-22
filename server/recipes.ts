@@ -317,7 +317,7 @@ function upsertRecipe(recipes: Recipe[], input: unknown): Recipe[] {
     description: row.description === undefined && existing ? existing.description : fields.description,
     capabilities: row.capabilities === undefined && existing ? existing.capabilities : fields.capabilities,
     limits: row.limits === undefined && existing ? existing.limits : fields.limits,
-    siteNotes: fields.siteNotes ?? existing?.siteNotes ?? null,
+    siteNotes: row.siteNotes === undefined && existing ? existing.siteNotes ?? null : fields.siteNotes,
   };
   const material = (recipe: Pick<Recipe, "title" | "description" | "steps" | "allowedOrigins" | "evidence" | "capabilities" | "limits" | "siteNotes" | "schedule">) =>
     JSON.stringify({
@@ -366,6 +366,24 @@ export function saveRecipesAtomically(inputs: unknown[]): Recipe[] {
   let next = current;
   for (const input of inputs) next = upsertRecipe(next, input);
   if (inputs.length) persist(next);
+  return next;
+}
+
+/** Reviewed instruction updates change what a plan will read. Invalidate every
+ * dependent plan together before switching the instructions; never restore a
+ * prior approval or clock on a later revert. */
+export function resetRecipeApprovalsAtomically(expected: { id: string; revision: number }[]): Recipe[] {
+  const current = loadRecipes(true);
+  if (!Array.isArray(expected) || new Set(expected.map(item => item?.id)).size !== expected.length) bad('Choose each dependent plan once.');
+  for (const item of expected) {
+    if (!Number.isSafeInteger(item?.revision) || item.revision < 1) bad('The expected plan version is invalid.');
+    const saved = current.find(recipe => recipe.id === item?.id);
+    if (!saved) throw Object.assign(new Error('A dependent plan is missing. Refresh pack setup before updating instructions.'), { status: 409 });
+    assertRecipeRevision(saved, item.revision);
+  }
+  const ids = new Set(expected.map(item => item.id));
+  const next = current.map(recipe => ids.has(recipe.id) ? { ...recipe, status: 'shadow' as const, schedule: null, planApprovedAt: null, approvedRevision: null, revision: recipe.revision + 1, updatedAt: Date.now() } : recipe);
+  if (expected.length) persist(next);
   return next;
 }
 

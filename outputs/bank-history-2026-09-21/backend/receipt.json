@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "recordedAt": "2026-09-21T06:52:07.906Z",
+  "runtime": "v24.19.0",
+  "proofLayer": "local encrypted SQLite unit tests plus actual isolated source bootstrap HTTP",
+  "result": "passed",
+  "tests": {
+    "files": 3,
+    "passed": 60,
+    "failed": 0,
+    "command": "pnpm exec vitest run server/bank-reference.test.ts server/bank-reference-history.test.ts server/bank-reference-http.test.ts --reporter=dot",
+    "durationSeconds": 2.29
+  },
+  "checks": {
+    "serverTypecheck": "pass",
+    "ownedDiffCheck": "pass",
+    "actualEncryptedBatches": 501,
+    "stableInsertionPagination": true,
+    "oldReviewedSourceAndOutputBytes": true,
+    "realMultiHandleWorkerRaces": true,
+    "malformedStoredRecordHoldsWithoutRewrite": true,
+    "legacyV1ReferenceQuoteWriterCompatible": true,
+    "protectedHttpAndStrictQueries": true,
+    "metadataUsesStreamingProjection": true
+  },
+  "code": [
+    {
+      "file": "server/bank-reference-store.ts",
+      "sha256": "ae41dfeec6ee8756147e15d7c0b86555999d75a39c35549ff2b491b5d92a42e2"
+    },
+    {
+      "file": "server/bank-reference-validation.ts",
+      "sha256": "8a783fba19593bdeda764fb36827b7f49a8117b8bde3ef4ff92e79fdf7028810"
+    },
+    {
+      "file": "server/bank-reference-query.ts",
+      "sha256": "d560a90daec59d577973ffbce1dcc02b931a55a8590094e90920b2c21c77aac4"
+    },
+    {
+      "file": "shared/bank-reference-history.ts",
+      "sha256": "99092e69c49018a387353385ef88cee432f493792a44ad22f7fc0332ac668097"
+    },
+    {
+      "file": "server/bank-reference-history.test.ts",
+      "sha256": "640d21737af048a3497ec1c6b37c59231c5e5b74aed71d84d06dc2d3b2d893e7"
+    },
+    {
+      "file": "server/bank-reference-http.test.ts",
+      "sha256": "bf549597e031c0c2df18379bdf0361901e57be7d7b50287373522dc09df84f2d"
+    }
+  ],
+  "limits": [
+    "No live bank or REI Cloud account access or import was exercised.",
+    "This receipt does not prove packaged or Windows execution.",
+    "Per-file and per-record size limits remain; portable backup version 1 remains bounded to 5000 records.",
+    "The rolling 500-bank-batch admission cap is removed; retention remains bounded by available storage."
+  ]
+}

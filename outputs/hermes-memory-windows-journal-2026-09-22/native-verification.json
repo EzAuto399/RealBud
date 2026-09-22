@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "recordedUtc": "2026-09-21T17:21:06.895122+00:00",
+  "sourceFrozen": true,
+  "files": {
+    "server/helpers/hermes-memory-windows-native.py": "89688faf5523e2ea68c5ca75b1987f88b89c558ba7fe94b23fa3a49f010fbbfa",
+    "server/helpers/hermes-memory-windows.py": "dcd60d8134bfbc6d64cfedccd93dbf6c834d8528ae6b23468d3b359a4ea0f208",
+    "scripts/testing/hermes-memory-windows-abi.py": "a9e6b88160f60620b7cf319035b958f8c1f0c1dd3c6c5344d3b0e37ac7523c18",
+    "scripts/testing/hermes-memory-windows-policy.py": "957058e2824d5ddc633810bc5d8c3a3a133cf43a49b75139721e6140262d3f03",
+    "scripts/testing/hermes-memory-windows-protocol.py": "335276ff097814be4ec0b61a4f56b5d3fbbb56dd882b0fe3d36046afdc88e219"
+  },
+  "checks": [
+    {
+      "command": "python3 scripts/testing/hermes-memory-windows-abi.py",
+      "passed": 19,
+      "failed": 0,
+      "scope": "Portable fake-DLL ctypes ABI fixtures; no native Windows execution."
+    },
+    {
+      "command": "python3 scripts/testing/hermes-memory-windows-policy.py",
+      "passed": 19,
+      "failed": 0,
+      "scope": "Actual policy with fictional in-memory Win32 bindings, plus protocol integration."
+    },
+    {
+      "command": "python3 scripts/testing/hermes-memory-windows-protocol.py",
+      "passed": 33,
+      "failed": 0,
+      "scope": "Fictional handle protocol and production hold regressions; no native Windows execution."
+    }
+  ],
+  "totalPassed": 71,
+  "api": [
+    "read(path, limit=131072, missing_ok=False) -> bytes | None",
+    "verify_directory(path) -> None",
+    "ensure_directory(path) -> None; one child level, existing profile root verify-only",
+    "names(path, limit=2000, missing_ok=True) -> list[str]",
+    "flush_file(path, expected_digest=None) -> None",
+    "lock(lock_path, timeout_ms=1000) -> context manager; timeout 0..10000 ms",
+    "delete_exact(path, expected_digest) -> deleted | deletion-requested"
+  ],
+  "decisions": [
+    "Only failed OPEN_EXISTING CreateFileW ERROR_FILE_NOT_FOUND(2) produces not-found; ERROR_PATH_NOT_FOUND(3), access, sharing, and non-open failures never establish absence.",
+    "Missing leaves are accepted only after all existing parents and protected profile root are pinned and verified; absent ancestors remain unavailable.",
+    "Directory enumeration uses GetFileInformationByHandleEx restart/continuation on a pinned directory with bounded UTF16 record parsing, item counts, and page counts.",
+    "Special empty private lock handles share read/write and deny delete; ordinary source handle sharing remains unchanged.",
+    "LockFileEx uses immediate exclusive byte0 length1 and retries only ERROR_LOCK_VIOLATION within a finite monotonic deadline; UnlockFileEx exact-range release is checked.",
+    "Existing caller domain exceptions survive successful lock release and cleanup unchanged; release or close failures remain visible fixed errors.",
+    "Deletion-requested becomes deleted only after own checked close and strict leaf absence probe while verified ancestors remain pinned; replacement and deferred deletion are preserved.",
+    "No production Windows hold, upstream runtime, global ACL policy, or customer profile was changed."
+  ],
+  "review": {
+    "artifact": "native-lock-contract-receipt.json",
+    "status": "incomplete-no-verdict"
+  },
+  "unverified": [
+    "Actual Windows NTFS behavior, Win32 ACL effects and ABI execution.",
+    "Independent-process msvcrt/LockFileEx contention and release on Windows.",
+    "Native directory enumeration, sharing, delayed deletion and rename behavior on Windows.",
+    "Installed/package activation, production admission, physical power loss durability."
+  ],
+  "nativeAcceptancePreparedByRoot": {
+    "mandatoryCases": 15,
+    "executedOnWindows": false
+  }
+}

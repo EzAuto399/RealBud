@@ -1,0 +1,8 @@
+SYNTHETIC INVOICE — NOT PAYABLE
+Supplier ID: SYN-SUP005
+Invoice ID: SYN-INV105
+Property code: UNKNOWN-SYN-CODE
+Amount: 99.00
+Currency: AUD
+Cost type: maintenance
+

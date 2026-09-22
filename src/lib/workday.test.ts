@@ -30,7 +30,7 @@ describe("workdayGuide", () => {
   it("keeps the book visible but pauses actions while the local service reconnects", () => {
     const guide = workdayGuide({ connected: false, desk: snapshot(), workerReady: true });
     expect(guide).toMatchObject({ phase: "offline", action: null, title: "Reconnecting" });
-    expect(guide.detail).toContain("book stays on this Mac");
+    expect(guide.detail).toContain("book stays saved in your private workspace");
   });
 
   it("routes recovery to the dedicated recovery surface", () => {

@@ -1,0 +1,51 @@
+{
+  "ok": true,
+  "checks": [
+    "AI usage & billing serves a skeleton, a visually hidden loading label and aria-busy in its first HTML, before any data arrives.",
+    "None of the six billing-group pages renders a transport status, a bare failure code or an \"Oops\".",
+    "Overview, AI usage & billing, invoices, usage, rates and limits render at 360, 768, 1280 px with no horizontal overflow and no element past the viewport.",
+    "The overview failure states its cause in a sentence, offers a Retry link back to the same URL, and that link takes keyboard focus with the 3 px ring.",
+    "A blocked billing account explains itself, links Support, offers no pointless retry, exposes no Pay control, and keeps a live status line."
+  ],
+  "cleanup": true,
+  "browserErrors": [],
+  "offOriginRequests": [],
+  "stats": {
+    "rpcCount": 37,
+    "violations": [
+      {
+        "method": "GET",
+        "path": "/rest/v1/usage_months"
+      },
+      {
+        "method": "GET",
+        "path": "/rest/v1/usage_months"
+      },
+      {
+        "method": "GET",
+        "path": "/rest/v1/usage_months"
+      },
+      {
+        "method": "GET",
+        "path": "/rest/v1/usage_months"
+      }
+    ],
+    "databaseErrors": [],
+    "authRejections": [],
+    "migrationHashes": {
+      "portalPeople": "17d9df75b244cb13e356ccfff3c27591aaf7a38aec0f0c4ce003d671cb79904d"
+    }
+  },
+  "layers": {
+    "portal": "actual built Next pages, cookies and APIs rendered in Chromium",
+    "database": "actual disposable PostgreSQL RPCs",
+    "provider": "fictional local Supabase verification response",
+    "gateway": "none: this harness serves no managed-gateway or platform-billing transport"
+  },
+  "limits": [
+    "No deployed site, real customer account or real provider sign-in.",
+    "The managed gateway and platform billing are not served by this harness, so the loaded and empty billing/usage/invoice states are not rendered here — only the loading markup and the unavailable and blocked states.",
+    "The gateway fixture serves no portal path, so the rendered failure copy is the unreachable branch; the other branches are covered by lib/portal-errors.test.mjs.",
+    "A screenshot is not customer acceptance."
+  ]
+}

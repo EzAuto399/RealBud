@@ -1,0 +1,50 @@
+{
+  "at": "2026-09-22T00:15:02.037Z",
+  "scope": "Attended portal-person to company-member identity mapping; no department execution authority",
+  "applicationTests": {
+    "passed": 185,
+    "failed": 0,
+    "skipped": 0,
+    "files": 14,
+    "receipt": "final-regression.json"
+  },
+  "websiteTests": {
+    "passed": 70,
+    "failed": 0,
+    "receipt": "website-suite.tap"
+  },
+  "websiteSql": {
+    "assertions": 63,
+    "receipt": "website-postgres-final.json"
+  },
+  "gui": {
+    "source": {
+      "groups": 5,
+      "receipt": "gui-source-final/receipt.json",
+      "cleanup": true
+    },
+    "compiled": {
+      "groups": 5,
+      "receipt": "gui-compiled-final/receipt.json",
+      "cleanup": true
+    }
+  },
+  "builds": {
+    "desktop": "passed",
+    "website": "passed",
+    "compiledService": "passed"
+  },
+  "sourceManifest": "source-manifest.json",
+  "compiledManifest": "compiled-manifest.json",
+  "compiledFiles": 775,
+  "negativeEvidence": [
+    "root-regression.json (before source startup fix)",
+    "gui-integration-initial/ (before final certificate gate)",
+    "gui-compiled/ (incomplete fixture staging, now corrected)"
+  ],
+  "limits": [
+    "Department execution admission and scoped background credentials remain to implement",
+    "No live source/provider account access or hosted migration",
+    "No native Windows or fresh macOS installer/device acceptance"
+  ]
+}

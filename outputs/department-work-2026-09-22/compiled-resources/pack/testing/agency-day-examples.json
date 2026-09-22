@@ -1,0 +1,156 @@
+{
+  "syntheticOnly": true,
+  "company": "Fictional Acacia Agency \u2014 manual acceptance cards, not an importable workflow pack. Each card describes behavior to verify, not a delivered feature. Use synthetic records only.",
+  "roles": [
+    {
+      "id": "owner-admin",
+      "displayName": "Owner / Admin",
+      "department": "Owner",
+      "responsibility": "Company-scoped members, offboarding, and local workflow oversight; no sends."
+    },
+    {
+      "id": "accounts-manager",
+      "displayName": "Accounts Manager",
+      "department": "Accounts",
+      "responsibility": "Expected-bill queues and bank-reference prep for human review; no posting."
+    },
+    {
+      "id": "accounts-assistant",
+      "displayName": "Accounts Assistant",
+      "department": "Accounts",
+      "responsibility": "Member-scoped matching cards only; cannot send or move money."
+    },
+    {
+      "id": "property-manager",
+      "displayName": "Property Manager",
+      "department": "Property Management",
+      "responsibility": "Daily property priority cards, private notes, handover drafts."
+    },
+    {
+      "id": "leasing-staff",
+      "displayName": "Leasing Staff",
+      "department": "Leasing",
+      "responsibility": "Listing and inspection cards; read-only shares; no tenant selection."
+    },
+    {
+      "id": "maintenance-staff",
+      "displayName": "Maintenance Staff",
+      "department": "Maintenance",
+      "responsibility": "Review fictional repair information and source-linked drafts. Company case ownership is a service primitive, not yet shared desktop job execution."
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "daily-priorities-owner",
+      "department": "Owner",
+      "request": "Owner reviews the fictional office priorities for property aliases ACACIA-04 and WHARF-09.",
+      "expectedResult": "Check source references and sample labels. Company-wide Desk aggregation remains a product gap; the company service currently shares scoped records and templates.",
+      "requiredBoundary": "explicit-shared-scope; local-workflow; syntheticOnly; not-a-workflow-pack-import"
+    },
+    {
+      "id": "daily-priorities-pm",
+      "department": "Property Management",
+      "request": "Property manager lists today's local priorities for FIGTREE-STUDIO-2 and SALT-LANE-WORKSHOP.",
+      "expectedResult": "Member-scoped priority cards; no tenant selection; follow-up stays a draft pending human review.",
+      "requiredBoundary": "member-scope; local-workflow; pms-authoritative; no-tenant-selection"
+    },
+    {
+      "id": "expected-bills-accounts",
+      "department": "Accounts",
+      "request": "Accounts manager prepares expected-bill cards from pms:src:KAPOK-LOT-04.",
+      "expectedResult": "Draft expected-bill queue only; no payment, posting, or send; PMS remains source of truth.",
+      "requiredBoundary": "explicit-shared-scope; pms-authoritative; human-review-required; no-financial-transaction; no-send"
+    },
+    {
+      "id": "bank-reference-prep",
+      "department": "Accounts",
+      "request": "Accounts assistant imports a synthetic bank CSV with reference TRAINING-TRUST-A and prepares a human review sheet.",
+      "expectedResult": "Retain source rows and unresolved matches. Import and preparation do not post reconciliation or move money; a bank-feed integration is not assumed.",
+      "requiredBoundary": "member-scope; bank-authoritative; human-review-required; no-send"
+    },
+    {
+      "id": "handover-pm-to-leasing",
+      "department": "Property Management",
+      "request": "PM explicitly copies an approved handover for RIVERBEND-B into a team scope granted to Leasing.",
+      "expectedResult": "Leasing sees only the reviewed handover. PM private notes stay private, including from the company owner. UI handover integration remains to be built.",
+      "requiredBoundary": "explicit-shared-scope; local-workflow; no-tenant-selection; private-notes-not-leaked"
+    },
+    {
+      "id": "handover-maintenance-to-accounts",
+      "department": "Maintenance",
+      "request": "Maintenance prepares a source-linked cost expectation for fictional repair MNT-8841 and explicitly shares a reviewed copy with Accounts.",
+      "expectedResult": "Accounts can read the agreed team scope. No invoice is sent, no payment is made, and unconfirmed access remains visibly unconfirmed.",
+      "requiredBoundary": "explicit-shared-scope; human-review-required; no-legal-drafting; no-send"
+    },
+    {
+      "id": "private-notes-member-scope",
+      "department": "Property Management",
+      "request": "PM adds a private note on FIGTREE-STUDIO-2 intended only for that member.",
+      "expectedResult": "Note stays member-scoped; leasing, maintenance, and read-only shares cannot read it.",
+      "requiredBoundary": "member-scope; private-notes"
+    },
+    {
+      "id": "read-only-share",
+      "department": "Leasing",
+      "request": "Leasing shares the KAPOK-LOT-04 listing card read-only with the accounts assistant.",
+      "expectedResult": "Assistant can view alias and source ID only; cannot claim, edit, or see contacts/secrets.",
+      "requiredBoundary": "member-scope; read-only-share; no-secrets; durable-claim-not-granted"
+    },
+    {
+      "id": "simultaneous-same-job-claims",
+      "department": "Maintenance",
+      "request": "Two accounts staff claim the same fictional bill-review case at the same moment.",
+      "expectedResult": "Exactly one active holder; the second receives claim_busy. An expired or revoked claim requires recovery review and is never automatically reassigned.",
+      "requiredBoundary": "durable-claim; member-scope"
+    },
+    {
+      "id": "employee-offboarding",
+      "department": "Owner",
+      "request": "Owner revokes a practice staff member while that member holds a case.",
+      "expectedResult": "Existing sessions and later sign-in are denied. The active case enters recovery_required; it is not released for automatic repeat. Private notes are retained and remain inaccessible to other members.",
+      "requiredBoundary": "explicit-shared-scope; member-scope; durable-claim; offboarding; no-send"
+    },
+    {
+      "id": "lost-connectivity",
+      "department": "Accounts",
+      "request": "Disconnect the company host while a staff member views shared procedures.",
+      "expectedResult": "Report the company connection unavailable without replacing the office with a fresh database or claiming stale content is current; reconnect to the same saved host.",
+      "requiredBoundary": "local-workflow; no-send; human-review-required"
+    },
+    {
+      "id": "stale-approval",
+      "department": "Accounts",
+      "request": "Accounts manager reopens a stale approval card for bank:ref:TRUST-FEED-A after local TTL.",
+      "expectedResult": "Card marked stale; prior approval is not reused as authority; PMS/bank must be re-checked by a human.",
+      "requiredBoundary": "stale-approval; pms-authoritative; bank-authoritative; human-review-required"
+    },
+    {
+      "id": "wrong-connected-account",
+      "department": "Accounts",
+      "request": "Assistant selects fictional mail account fixture_B while the saved operation permits only fixture_A.",
+      "expectedResult": "Reject execution before transport; the wrong account receives no read or write call. Verify broker approval against the exact selected account.",
+      "requiredBoundary": "bank-authoritative; human-review-required; no-financial-transaction"
+    },
+    {
+      "id": "expired-login",
+      "department": "Leasing",
+      "request": "Expire or revoke a staff session, then try a company read or mutation from the existing client.",
+      "expectedResult": "Request is denied until a valid sign-in. Reauthentication does not grant job approval or run pending work.",
+      "requiredBoundary": "member-scope; local-workflow; expired-login; no-send"
+    },
+    {
+      "id": "interrupted-computer-work",
+      "department": "Property Management",
+      "request": "Interrupt an attended fictional portal job after preparation and before a final action.",
+      "expectedResult": "Retain receipts, stop execution and require recovery review; do not repeat an uncertain external action. Shared company case ownership still needs wiring to desktop execution.",
+      "requiredBoundary": "local-workflow; durable-claim; interrupted-work"
+    },
+    {
+      "id": "safe-repeat-import",
+      "department": "Accounts",
+      "request": "Accounts manager repeats import of the same three-workflow test pack after an interrupted setup.",
+      "expectedResult": "The second import leaves one copy of each recipe, keeps approvals revoked and schedules off, and does not copy credentials or office records.",
+      "requiredBoundary": "pms-authoritative; local-workflow; safe-repeat-import; human-review-required; no-send"
+    }
+  ]
+}

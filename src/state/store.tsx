@@ -31,6 +31,7 @@ import { notifyDeskNeedsYou } from "@/lib/notify-desktop";
 import { STREAM_COMMIT_INTERVAL_MS } from "@/lib/chat-scroll";
 import { readWorkerIssues, type WorkerIssue } from "@/lib/worker-issues";
 import type { AskWorkContext } from "@/lib/work-continuation";
+import type { ApprovalPolicy, MemoryApprovalReview } from "@shared/approval-policy";
 
 export type { MausColor } from "@/lib/mascot";
 
@@ -60,6 +61,10 @@ export interface OptionCardData {
   allowKey?: string;
   /** Fenced portal request from request.opened. */
   fence?: RequestFence;
+  /** Provider approval can only release this one request, never save a grant. */
+  approvalPolicy?: ApprovalPolicy;
+  /** Exact native memory change validated by the server; summary is not a substitute. */
+  memoryReview?: MemoryApprovalReview;
 }
 
 export interface Message {
@@ -188,6 +193,7 @@ export interface ConfigStatus {
   xai?: { configured: boolean };
   composio: {
     configured: boolean;
+    managed?: boolean;
     apiKeyConfigured?: boolean;
     /** Older servers omit mode; the existing consumer connection remains the default. */
     mode?: "consumer" | "gmail-readonly";
@@ -252,6 +258,9 @@ export interface HermesStatus {
   lastTest?: { at: number; ok: boolean; detail: string; kind: "ping" | "recheck" } | null;
   lastPing?: { at: number; ok: boolean; detail: string; kind: "ping" | "recheck" } | null;
   model?: { attached: boolean; provider: string | null; model: string | null };
+  /** How this office's model access is held. A provisioned installation never
+   * collects a provider key; a withdrawn grant is a hold, not a missing model. */
+  modelAccess?: { managed: boolean; withdrawn: boolean; attached: boolean; detail: string };
 }
 
 interface AppState {
@@ -265,7 +274,8 @@ interface AppState {
   workerIssues: WorkerIssue[];
   /** selected chat — a bot id OR a group id */
   selectedId: string;
-  activeView: "chat" | "schedule" | "desk" | "ask" | "you";
+  activeView: "chat" | "schedule" | "desk" | "ask" | "you" | "workspace";
+  workspaceTabId: string | null;
   /** Bumped when a caller sends the user to Desk straight into Book mode. */
   deskBookNonce: number;
   loops: Loop[];
@@ -305,6 +315,7 @@ type Action =
   | { type: "stageAskContext"; context: AskWorkContext }
   | { type: "consumeAskContext"; id: string }
   | { type: "showYou" }
+  | { type: "showWorkspaceTab"; id?: string }
   | { type: "loopsHydrated"; loops: Loop[]; runs: LoopRun[]; recovery?: ScheduleRecovery }
   | { type: "scheduleRecovery"; recovery: ScheduleRecovery }
   | { type: "jobRuns"; runs: JobRun[] }
@@ -486,6 +497,8 @@ function reducer(state: AppState, action: Action): AppState {
         appSettingsOpen: false,
         pluginsOpen: false,
       };
+    case 'showWorkspaceTab':
+      return { ...state, activeView: 'workspace', workspaceTabId: action.id ?? null, settingsOpen: false, computerOpen: false, appSettingsOpen: false, pluginsOpen: false };
     case "scheduleRecovery": {
       const recovery = mergeScheduleRecovery(state.scheduleRecovery, action.recovery);
       return { ...state, scheduleRecovery: recovery, loops: recovery.active ? state.loops.map((loop) => ({ ...loop, nextRunAt: null })) : state.loops };
@@ -829,6 +842,7 @@ const initialState: AppState = {
   workerIssues: [],
   selectedId: "",
   activeView: "desk",
+  workspaceTabId: null,
   deskBookNonce: 0,
   loops: [],
   loopRuns: [],
@@ -893,7 +907,10 @@ export async function api(path: string, init?: RequestInit, opts?: { timeoutMs?:
   }
   if (body.code === "service_admin_required") clearServiceAdminSession(administratorRequestToken);
   if (isLocalServiceProxyFailure(res.status, body.error)) unavailable();
-  if (!res.ok) throw Object.assign(new Error(body.error ?? `${res.status} ${res.statusText}`), { status: res.status });
+  if (!res.ok) throw Object.assign(new Error(body.error ?? `${res.status} ${res.statusText}`), {
+    status: res.status,
+    ...(typeof body.code === "string" && /^[a-z_]{1,64}$/.test(body.code) ? { code: body.code } : {}),
+  });
   return body;
 }
 
@@ -1271,8 +1288,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let alive = true;
     const stopOfficeSources = watchOfficeSources();
+    let deskLoad = 0, deskEvents = 0;
     const loadAll = () => {
       void refreshActivity();
+      // Saved-view and settings deep links may never mount DeskPage. Hydrate
+      // the shared book here so their sidebar has actual workday context.
+      const load = ++deskLoad, events = deskEvents;
+      api('/api/desk').then(snapshot => {
+        if (alive && load === deskLoad && events === deskEvents) rawDispatch({type:'deskSnapshot',snapshot});
+      }).catch(() => {});
       api("/api/bots")
         .then(({ bots, groups }) => alive && rawDispatch({ type: "hydrate", bots, groups: groups ?? [] }))
         .catch(() => {});
@@ -1405,6 +1429,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           rawDispatch({ type: "jobRun", run: frame.run });
           break;
         case "desk":
+          deskEvents++;
           rawDispatch({ type: "deskSnapshot", snapshot: frame.snapshot });
           notifyDeskNeedsYou(frame.snapshot);
           break;

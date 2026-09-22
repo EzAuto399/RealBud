@@ -214,9 +214,14 @@ function record(value: unknown): value is Record<string, unknown> {
  */
 export function isPrivilegedServiceMutation(path: string, method: string, body?: unknown): boolean {
   if (["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase())) return false;
+  // Staff may decide a complete, scoped preference proposal. The dedicated
+  // handler admits only its exact digest/decision body; provider setup stays
+  // under service administration, including every other Hermes mutation.
+  if (method === 'POST' && /^\/api\/hermes\/memory-reviews\/[a-f0-9]{8}\/decision$/.test(path)) return false;
+  if (method === 'POST' && /^\/api\/hermes\/memory-reviews\/interrupted\/[a-f0-9]{64}\/close$/.test(path)) return false;
   if (/^\/api\/hermes(?:\/|$)/.test(path)) return true;
   if (/^\/api\/instances(?:\/|$)/.test(path)) return true;
-  if (path === "/api/connected-apps/gmail-readonly/setup" || path === "/api/connected-apps/mode") return true;
+  if (path === "/api/connected-apps/gmail-readonly/setup" || path === "/api/connected-apps/managed/setup" || path === "/api/connected-apps/mode") return true;
   if (/^\/api\/channels\/(?:telegram|discord|slack)$/.test(path)) return true;
   if (/^\/api\/local-computer\/(?:pull|run|start|remove)$/.test(path)) return true;
   if (path === "/api/config") {

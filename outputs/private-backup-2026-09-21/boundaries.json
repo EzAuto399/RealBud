@@ -1,0 +1,25 @@
+{
+  "at": "2026-09-21T04:37:23.583Z",
+  "passed": true,
+  "mode": "source",
+  "platform": "darwin",
+  "arch": "arm64",
+  "executable": "/Users/yoda/.nvm/versions/node/v24.19.0/bin/node",
+  "resources": null,
+  "bootstrap": "/Users/yoda/projects/RealBud/server/bootstrap.ts",
+  "runtime": {
+    "node": "24.19.0",
+    "electron": null
+  },
+  "layer": "Actual source Node/bootstrap HTTP and isolated filesystem; fictional fixtures; not physical customer device, GUI, managed-service or live integration proof",
+  "checks": [
+    "Actual sensitive backup routes reject missing session and foreign origin",
+    "Private notes, workflow inputs, instruction packs and edited personal instructions block replacement and remain intact",
+    "Existing company enrollment files block restoration",
+    "Stale preview and concurrent unfinished business requests refuse staging without stranding the workspace",
+    "A staged restore holds business reads, writes, exports and duplicate restore attempts",
+    "POSIX bootstrap refuses a public destination key without consuming the staged restore; private permissions permit recovery",
+    "Cold bootstrap completes once with unchanged destination key, matching durable completion receipt and disabled schedules"
+  ],
+  "skipped": []
+}

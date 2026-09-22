@@ -1,0 +1,12 @@
+realbud server on http://127.0.0.1:57304
+realbud server on http://127.0.0.1:57370
+
+▲ Next.js 16.3.3
+- Local:         http://127.0.0.1:57296
+- Network:       http://127.0.0.1:57296
+✓ Ready in 58ms
+✓ Running next.config.ts took 14ms
+
+AssertionError [ERR_ASSERTION]: Startup must reconcile the remote revocation
+
+'stale' !== 'revoked'

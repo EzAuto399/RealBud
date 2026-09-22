@@ -1,0 +1,7 @@
+
+> realbud@0.1.19 build /Users/yoda/projects/RealBud
+> tsc -b && tsc -p tsconfig.server.json && vite build
+
+server/index.test.ts(275,46): error TS18046: 'value' is of type 'unknown'.
+server/index.test.ts(275,87): error TS18046: 'value' is of type 'unknown'.
+ ELIFECYCLE  Command failed with exit code 2.

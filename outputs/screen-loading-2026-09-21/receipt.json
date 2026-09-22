@@ -1,0 +1,15 @@
+{
+  "at": "2026-09-21T04:54:03.138Z",
+  "passed": true,
+  "layer": "Built React UI in Chrome; real isolated source bootstrap; asset faults injected; no customer accounts",
+  "checks": [
+    "Desk opens without downloading settings, schedule, saved-view manager, setup or onboarding chunks",
+    "Lazy screens navigate and preserve their deep-link routes with the real API",
+    "Setup opens, switches sections and closes with keyboard while retaining the underlying screen",
+    "A failed settings asset shows recovery, leaves Desk navigation usable, and reload succeeds after the asset recovers",
+    "A failed setup asset remains keyboard-dismissable in an accessible dialog and fits390px",
+    "A new private browser session loads the actual welcome screen"
+  ],
+  "errors": [],
+  "expectedErrors": []
+}

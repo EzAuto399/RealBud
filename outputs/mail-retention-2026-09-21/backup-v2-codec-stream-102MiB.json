@@ -1,0 +1,10 @@
+{
+  "generatedContentBytes": 106954752,
+  "archiveBytes": 107011010,
+  "entries": 17,
+  "matchingReceipts": true,
+  "peakArrayBufferDelta": 13044976,
+  "retainedArrayBufferDelta": 65536,
+  "peakRssDelta": 57540608,
+  "measurement": "Fresh native Node process; GC every 32 consumed 64-KiB chunks measures bounded retained buffers, not a production RSS guarantee."
+}

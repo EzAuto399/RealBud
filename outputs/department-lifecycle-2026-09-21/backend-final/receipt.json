@@ -1,0 +1,97 @@
+{
+  "at": "2026-09-21T05:48:02.161Z",
+  "node": "v24.19.0",
+  "postgres": "postgres (PostgreSQL) 16.15 (Homebrew)",
+  "syntheticOnly": true,
+  "stopped": true,
+  "exitCode": 0,
+  "tests": 99,
+  "passed": 99,
+  "failed": 0,
+  "skipped": 0,
+  "files": [
+    {
+      "path": "server/company/department-lifecycle.integration.test.ts",
+      "sha256": "d49090644cd14176ab09eb125dfffc380bcbafbbed2bf2d457e8daa3ba07aa21"
+    },
+    {
+      "path": "server/company/department-recovery.integration.test.ts",
+      "sha256": "62099d61d8f6328c60be740c761da36114c590340f18662774bc0c52acd1dcbc"
+    },
+    {
+      "path": "server/company/departments.integration.test.ts",
+      "sha256": "2677fc7da9d58a33ca331eea98ce274b13e830f77f1c38f4ff0ad99111a3422e"
+    },
+    {
+      "path": "server/company/departments-transport.integration.test.ts",
+      "sha256": "59a3f2ca282ff0d624dd4f1cf3a7a5817cc46865032f9733a465cba2ccc84c52"
+    },
+    {
+      "path": "server/company/membership.integration.test.ts",
+      "sha256": "547133fe6f4f269a0c461cd95796afd0dc373bd981e2bcd1f5387e97c80c7eff"
+    },
+    {
+      "path": "server/company/backup.integration.test.ts",
+      "sha256": "e51aaa58d09d42f59cda6a8499991dc20c29879cba44297e4ae60f8859debca9"
+    },
+    {
+      "path": "server/company/multi-agency-transport.integration.test.ts",
+      "sha256": "560dfcbe44825a285bf810b193d0b572f165020894fa26262acbc066384e5249"
+    },
+    {
+      "path": "server/company/work-items.integration.test.ts",
+      "sha256": "b167969e7f77efef650aad909c346cfe858fb352900221a061f97e7057700049"
+    },
+    {
+      "path": "server/company/postgres.integration.test.ts",
+      "sha256": "351093f2c3772b6901bc9842ff4b93e43bf1ba04da95c7b57f26efa6cbea1b46"
+    },
+    {
+      "path": "server/company/host-transport.test.ts",
+      "sha256": "526007228cb8c1b528c5a5b1ff94414bf9fb87edaccec5e9eae47dd346e5b609"
+    }
+  ],
+  "source": [
+    {
+      "path": "server/company/case-records.ts",
+      "sha256": "9f3058be42eb2982fe1edd6b3dc1e5ce0a946ccd92d2e58e55dda98b9d14b68e"
+    },
+    {
+      "path": "server/company/departments.ts",
+      "sha256": "0a7d17849c291e491cfee25ff6b1eaac5261357c4ec177991e797d7e816c32e7"
+    },
+    {
+      "path": "server/company/index.ts",
+      "sha256": "6f2ded6c29ae01cbcca934b18433e5f2737e9b04d66139a240a4038b0a40ca78"
+    },
+    {
+      "path": "server/company/membership.ts",
+      "sha256": "ec7eb230b13d96de7234a0692692e288e195fe12bf99e1ce969819ce6113febd"
+    },
+    {
+      "path": "server/company/schema.ts",
+      "sha256": "7026533383bf33371f1b422c419a06c57b835fa2f7a600b67153d3bf1facaf5e"
+    },
+    {
+      "path": "server/company/backup.ts",
+      "sha256": "ce3d0908becbc4daec81b7d9a695f2e8b368b2e6975b55cb6b4c1022ff3cc512"
+    },
+    {
+      "path": "server/company-host.ts",
+      "sha256": "9e2a73ecee1e305126cb04bf331c9c7dcd560c132117e8ee0688f1d0b4db637f"
+    },
+    {
+      "path": "server/company/host-transport.ts",
+      "sha256": "0b54b3fbfd0bfdf329b2f964d31c17dd0779e17be55ae949bafd3c2705f3dd37"
+    },
+    {
+      "path": "shared/company-api.ts",
+      "sha256": "b4235a69802bece2d0b6a617adf163df4b9f2b3d3e9446c86b79c52d894129ea"
+    }
+  ],
+  "limits": [
+    "Synthetic PostgreSQL and pinned TLS tests; no live customer data or external workflow execution.",
+    "UI, package and installed-device verification are separate gates.",
+    "Office backup remains capped at32MB/100000records; no new archive/purge policy."
+  ]
+}

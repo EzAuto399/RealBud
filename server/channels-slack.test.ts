@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vites
 
 import type { SlackDeps, SlackFetch, StartTurnFn } from "./channels/slack.ts";
 import type { Draft } from "../shared/contracts.ts";
+import { WorkspaceActivityGate } from './workspace-activity.ts';
 
 const dataDir = vi.hoisted(() => {
   const base = process.env.TEMP || process.env.TMPDIR || process.cwd();
@@ -88,6 +89,17 @@ afterAll(() => {
 });
 
 describe("Slack channel", () => {
+  it('preserves incoming work and polling position until the backup pause releases', async () => {
+    const startTurn = vi.fn(async () => {}), wired = deps({ startTurn, fetch: stubFetch() });
+    slack.bindSlackBridge(wired); await slack.connectSlack(TOKEN, null, wired.fetch);
+    await slack.handleSlackInbound([{ channelId: 'D_PAIR', userId: 'U_SAM', name: 'Sam', text: createPairingCode('slack', wired.now!()).command, ts: '10.1' }], wired);
+    const gate = new WorkspaceActivityGate(), lease = await gate.pause();
+    const incoming = slack.handleSlackInbound([{ channelId: 'D_PAIR', userId: 'U_SAM', name: 'Sam', text: 'Review the fictional tasks', ts: '11.1' }], { ...wired, withWorkspaceActivity: gate.run });
+    await new Promise(resolve => setImmediate(resolve)); expect(startTurn).not.toHaveBeenCalled();
+    expect(slack.loadChannel()?.lastTsByChannel.D_PAIR).toBe('10.1');
+    lease.release(); await incoming; expect(startTurn).toHaveBeenCalledTimes(1);
+    expect(slack.loadChannel()?.lastTsByChannel.D_PAIR).toBe('11.1');
+  });
   it("rejects a bad bot token without writing channel-slack.json", async () => {
     await expect(slack.connectSlack(TOKEN, null, stubFetch({ auth: "fail" }))).rejects.toThrow(/did not answer/i);
     expect(slack.loadChannel()).toBeNull();
@@ -109,7 +121,7 @@ describe("Slack channel", () => {
     );
     expect(slack.loadChannel()?.pairedChannelId).toBe("D_PAIR");
     expect(slack.loadChannel()?.pairedName).toBe("Sam Office");
-    expect(posts.some((p) => p.text.includes("Paired with RealBud"))).toBe(true);
+    expect(posts.some((p) => p.text.includes("Paired with your RealBud computer"))).toBe(true);
 
     await slack.handleSlackInbound(
       [{ channelId: "D_OTHER", userId: "U_OTHER", name: "Other", text: "hi", ts: "11.1" }],

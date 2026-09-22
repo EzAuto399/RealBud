@@ -1,18 +1,49 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { applyPropertyPack, ensurePropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, migratePropertyProfileFromLegacyHermes, packInstalled, propertyProfileDir, propertyWorkroomReady, yamlBlock } from "./hermes-pack.ts";
+import { applyPropertyPack, ensurePropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, learningPolicyReady, migratePropertyProfileFromLegacyHermes, packInstalled, propertyProfileDir, propertyWorkroomReady, stagedLearningSupported, yamlBlock } from "./hermes-pack.ts";
+import { releaseHome, resetRuntimeSelectionForTests, saveRuntimeSelection, selectedHermesCli } from "./hermes-runtime-selection.ts";
+import { runtimeCli } from "./hermes-paths.ts";
+import { dirname } from "node:path";
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
+import { parse } from "yaml";
+
+import { privateFixtureDirectory, privateFixtureRoot, writePrivateFixtureFile as writeFileSync, WINDOWS_PROFILE_TEST_OPTIONS } from "./testing/private-profile-fixture.ts";
 
 const dirs: string[] = [];
+const mkdtempSync = privateFixtureRoot;
 
 afterEach(() => {
+  resetRuntimeSelectionForTests();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-describe("applyPropertyPack", () => {
+describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
+  it.runIf(process.platform !== "win32")("keeps newly installed and repaired policy files private", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-profile-private-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home);
+    expect(statSync(dir).mode & 0o077).toBe(0);
+    const paths = [join(home, "auth.json"), ...["SOUL.md", "config.yaml", "distribution.yaml", "profile.yaml"].map(name => join(dir, name))];
+    for (const path of paths) expect(statSync(path).mode & 0o077, path).toBe(0);
+    applyPropertyPack(home);
+    for (const path of paths) expect(statSync(path).mode & 0o077, path).toBe(0);
+  });
+  it("repairs missing learning sections as plain mappings understood by Hermes", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-profile-mapping-")); dirs.push(home);
+    const dir = propertyProfileDir(home); privateFixtureDirectory(dir);
+    const path = join(dir, "config.yaml");
+    writeFileSync(path, "model:\n  provider: retained\n");
+    applyPropertyPack(home);
+    const saved = readFileSync(path, "utf8");
+    expect(saved).not.toContain("!!omap");
+    expect(parse(saved, { version: "1.1" })).toMatchObject({
+      model: { provider: "retained" }, skills: { write_approval: true }, memory: { write_approval: true },
+      auxiliary: { background_review: { enabled: false, extra_tools: [] } },
+    });
+    expect(learningPolicyReady(home)).toBe(true);
+  });
   it("initializes a new profile once and preserves every existing profile setting on restart", () => {
     const home = mkdtempSync(join(tmpdir(), "realbud-profile-startup-")); dirs.push(home);
     const { dir, wrote } = ensurePropertyPack(home);
@@ -25,7 +56,7 @@ describe("applyPropertyPack", () => {
   });
   it("preserves an incomplete existing profile for explicit repair and establishes private root auth", () => {
     const home = mkdtempSync(join(tmpdir(), "realbud-profile-incomplete-")); dirs.push(home);
-    const dir = propertyProfileDir(home); mkdirSync(dir, { recursive: true });
+    const dir = propertyProfileDir(home); privateFixtureDirectory(dir);
     writeFileSync(join(dir, "SOUL.md"), "Existing profile");
     writeFileSync(join(dir, "config.yaml"), "{broken");
     expect(ensurePropertyPack(home).wrote).toEqual([]);
@@ -37,7 +68,7 @@ describe("applyPropertyPack", () => {
     const home = mkdtempSync(join(tmpdir(), "realbud-profile-preserve-")); dirs.push(home);
     const { dir } = applyPropertyPack(home);
     const path = join(dir, "config.yaml");
-    writeFileSync(path, readFileSync(path, "utf8") + "\nupdates:\n  check: false\nmemory:\n  user_profile: retained\nmcp_servers:\n  office:\n    enabled: false\n");
+    writeFileSync(path, readFileSync(path, "utf8").replace("memory:\n", "memory:\n  user_profile: retained\n") + "\nupdates:\n  check: false\nmcp_servers:\n  office:\n    enabled: false\n");
     const skill = join(dir, "skills", "local-skill.md"); writeFileSync(skill, "My learned procedure");
     writeFileSync(join(dir, "MEMORY.md"), "Operator preferences");
     writeFileSync(join(dir, ".env"), "TEST_KEY=retained");
@@ -57,6 +88,55 @@ describe("applyPropertyPack", () => {
     for (const text of ["{broken", "approvals:\n  mode: manual\napprovals:\n  mode: off\n"]) {
       writeFileSync(path, text); expect(() => applyPropertyPack(home)).toThrow(/kept/); expect(readFileSync(path, "utf8")).toBe(text);
     }
+  });
+  it("requires explicit repair for absent, duplicate or malformed learning gates", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-learning-policy-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home); const path = join(dir, "config.yaml");
+    const baseline = readFileSync(path, "utf8");
+    expect(learningPolicyReady(home)).toBe(true);
+    for (const text of [baseline.replace(/write_approval: true/g, "write_approval: false"), baseline + "skills:\n  write_approval: false\n", baseline + "broken: [\n"]) {
+      writeFileSync(path, text);
+      expect(learningPolicyReady(home)).toBe(false);
+      expect(propertyWorkroomReady(home)).toBe(false);
+      expect(ensurePropertyPack(home).wrote).toEqual([]);
+      expect(readFileSync(path, "utf8")).toBe(text);
+    }
+    writeFileSync(path, baseline.replace(/write_approval: true/g, "write_approval: false"));
+    applyPropertyPack(home);
+    expect(learningPolicyReady(home)).toBe(true);
+  });
+  it("enables staged background learning only for the admitted executable in this process", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-learning-release-")); dirs.push(home);
+    const commit = "345cd2b057a452236de401d3534b8502a7465e8d";
+    const cli = runtimeCli(releaseHome(home, commit));
+    mkdirSync(dirname(cli), { recursive: true }); writeFileSync(cli, "fictional executable marker");
+    saveRuntimeSelection(home, { version: 1, selected: commit, previous: null });
+    expect(stagedLearningSupported(home)).toBe(true);
+    const { dir } = applyPropertyPack(home);
+    expect(readFileSync(join(dir, "config.yaml"), "utf8")).toMatch(/background_review:\n\s+enabled: true/);
+    expect(learningPolicyReady(home)).toBe(true);
+
+    resetRuntimeSelectionForTests();
+    saveRuntimeSelection(home, { version: 1, selected: null, previous: null });
+    selectedHermesCli(home); // Cache the old worker before a staged update.
+    saveRuntimeSelection(home, { version: 1, selected: commit, previous: null });
+    expect(stagedLearningSupported(home)).toBe(false);
+    expect(learningPolicyReady(home)).toBe(false);
+    applyPropertyPack(home);
+    expect(readFileSync(join(dir, "config.yaml"), "utf8")).toMatch(/background_review:\n\s+enabled: false/);
+    expect(propertyWorkroomReady(home)).toBe(true);
+  });
+  it("keeps custom skill and memory settings while removing background tool/provider escapes", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-learning-preserve-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home); const path = join(dir, "config.yaml");
+    writeFileSync(path, "skills:\n  disabled: [sample]\n  write_approval: false\nmemory:\n  memory_enabled: false\n  write_approval: false\nauxiliary:\n  title:\n    model: retained\n  background_review:\n    enabled: true\n    provider: unreviewed\n    extra_tools: [terminal]\n");
+    applyPropertyPack(home);
+    const saved = readFileSync(path, "utf8");
+    expect(saved).toContain("disabled: [ sample ]");
+    expect(saved).toContain("memory_enabled: false");
+    expect(saved).toContain("model: retained");
+    expect(saved).not.toContain("unreviewed");
+    expect(learningPolicyReady(home)).toBe(true);
   });
   it("repairs bounded source-read limits without changing the model or repairing on startup", () => {
     const home = mkdtempSync(join(tmpdir(), "realbud-read-budget-")); dirs.push(home);
@@ -102,7 +182,7 @@ describe("applyPropertyPack", () => {
     const home = mkdtempSync(join(tmpdir(), "realbud-hermes-legacy-"));
     dirs.push(home);
     const profile = join(home, "profiles", "property");
-    mkdirSync(profile, { recursive: true });
+    privateFixtureDirectory(profile);
     writeFileSync(join(profile, "config.yaml"), "approvals:\n  mode: manual\nterminal:\n  backend: none\n");
     expect(approvalsAreManual(home)).toBe(true);
     expect(propertyWorkroomReady(home)).toBe(false);
@@ -160,7 +240,7 @@ describe("migratePropertyProfileFromLegacyHermes", () => {
     const home = mkdtempSync(join(tmpdir(), "realbud-hermes-mig-"));
     dirs.push(home);
     const profile = join(home, "profiles", "property");
-    mkdirSync(profile, { recursive: true });
+    privateFixtureDirectory(profile);
     writeFileSync(join(profile, "SOUL.md"), "# RealBud hands\n");
     writeFileSync(join(profile, "auth.json"), JSON.stringify({ version: 1, credential_pool: { "xai-oauth": [{}] } }));
     // Second empty home: migrate is no-op when pack already installed on root.

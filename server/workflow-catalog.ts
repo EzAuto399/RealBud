@@ -10,6 +10,7 @@ export interface EvaluatorSpec {
 }
 
 export const EVALUATOR_CATALOG: readonly EvaluatorSpec[] = [
+  { id: 'inbound-triage', version: 1, loopId: 'inbound-triage', mayLaunchCua: false },
   { id: "morning-money", version: 1, loopId: "morning-arrears", mayLaunchCua: false },
   { id: "owner-letter", version: 1, loopId: "owner-letter", mayLaunchCua: false },
 ];

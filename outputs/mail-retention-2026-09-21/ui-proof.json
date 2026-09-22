@@ -1,0 +1,24 @@
+{
+  "at": "2026-09-21T07:41:10.189193+00:00",
+  "ownedUiSourceFrozen": true,
+  "layer": "Source HTTP and isolated built React UI with fictional connectors/workers; explicitly labelled lost-response and failed-read injections. Not packaged/native/customer/Windows evidence.",
+  "mailChecks": 8,
+  "sourceBillChecks": 15,
+  "focusedClientTests": 30,
+  "frontendTypecheck": "passed",
+  "isolatedViteBuild": "passed",
+  "sourceHashes": {
+    "src/components/desk/MailWorkPanel.tsx": "972cd3955988d3ddd21bb2a01733aece081aba972cb8f85248edb96f8d9d4906",
+    "src/components/desk/SourceBillsPanel.tsx": "720a8cc4bf9fd25a05044a75260b545d2ad94c431f92fcd9082cba0cb79dcc7b",
+    "src/lib/mail-pages.ts": "687da86e0d7daee6cd0107d446e0312c7fd7b405b23b8a8115a6880054b1b79d",
+    "src/lib/mail-pages.test.ts": "a51c66c8ea540885170561cf1a01e5df1364fb264017fb9fd36fcba8060daf54",
+    "scripts/qa-source-bills.mjs": "aea8100c1e6578e0085bea0804cc25cf702e236b6fae64d735d2a54c020dacb5",
+    "scripts/qa-mail-retention.mjs": "5389ee42a4f66b53b6d04a5b4d5b7617ec263b02d8284609b63229cb82566d81"
+  },
+  "negativeCheckpoints": [
+    "browser/bootstrap-red.json",
+    "browser/label-checkpoint.json",
+    "source-bills/label-checkpoint.json"
+  ],
+  "remaining": "Proposal request IDs remain retained on ambiguous results. A durable intent without a replayable run needs the explicit backend reconciliation semantics tracked by root; UI does not infer nonadmission from4xx."
+}

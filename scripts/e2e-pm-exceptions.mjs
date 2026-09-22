@@ -8,6 +8,7 @@
 //
 //   node --experimental-strip-types scripts/e2e-pm-exceptions.mjs
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -262,7 +263,41 @@ try {
     check("manual Run now still settles when used", Boolean(settled));
   }
   await api("PATCH", "/api/loops/morning-arrears", { enabled: true });
-  check("inbound Run now stays 409", (await api("POST", "/api/loops/inbound-triage/run", {})).status === 409);
+
+  // Morning priorities is built and manually runnable, but its clock only
+  // starts once agency setup adopts the reviewed schedule. An unidentified
+  // Run now is refused; an identified one is accepted and then held because
+  // no morning plan has been approved — nothing is collected or sent, and the
+  // schedule is still off afterwards.
+  const inboundBefore = (await api("GET", "/api/loops")).body?.loops?.find((l) => l.id === "inbound-triage");
+  check(
+    "inbound is available but its clock stays off until agency setup",
+    inboundBefore?.available === true && inboundBefore?.enabled === false && inboundBefore?.nextRunAt === null,
+    `available=${inboundBefore?.available} enabled=${inboundBefore?.enabled} nextRunAt=${inboundBefore?.nextRunAt}`,
+  );
+  const inboundUnidentified = await api("POST", "/api/loops/inbound-triage/run", {});
+  check(
+    "inbound Run now without a request identifier is 400",
+    inboundUnidentified.status === 400 && /request identifier/i.test(String(inboundUnidentified.body?.error ?? "")),
+    `${inboundUnidentified.status} · ${inboundUnidentified.body?.error}`,
+  );
+  const inboundRun = await api("POST", "/api/loops/inbound-triage/run", {
+    requestId: randomUUID(),
+    expectedRevision: inboundBefore?.revision,
+  });
+  const inboundSettled = inboundRun.status === 201 ? await waitForRun(inboundRun.body?.run?.id) : null;
+  check(
+    "identified inbound Run now is accepted and held on plan approval",
+    inboundRun.status === 201 && inboundSettled?.status === "failed" &&
+      /approve the current morning plan/i.test(String(inboundSettled?.detail ?? "")),
+    `${inboundRun.status} · ${inboundSettled?.status} · ${inboundSettled?.detail}`,
+  );
+  const inboundAfter = (await api("GET", "/api/loops")).body?.loops?.find((l) => l.id === "inbound-triage");
+  check(
+    "the held inbound run left the schedule off",
+    inboundAfter?.enabled === false && inboundAfter?.nextRunAt === null,
+    `enabled=${inboundAfter?.enabled} nextRunAt=${inboundAfter?.nextRunAt}`,
+  );
 
   const recipe = await api("POST", "/api/recipes", {
     draft: {

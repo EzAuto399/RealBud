@@ -1,0 +1,40 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+···························································································································································································································································································································stderr | server/channels-telegram.test.ts > remote decisions > does not report failed delivery as an actionable card
+offline
+
+stderr | server/channels-telegram.test.ts > remote decisions > does not report failed delivery as an actionable card
+[remote-decisions] telegram review card delivery was not confirmed.
+
+·············································································································································································································································································································································································································································································································································································································································································-······················································································································-·------···························································································································································································································································································································································································································································································································stderr | server/remote-decisions.test.ts > review card identity and recovery > keeps a saved decision successful when notification fails
+[remote-decisions] Decision saved; its notification update failed.
+
+stderr | server/remote-decisions.test.ts > review card identity and recovery > recovers failed delivery using the same card identity
+[remote-decisions] telegram review card delivery was not confirmed.
+
+··············································································································································································································································································································································································································································································································································································································································································································································································································································stderr | server/harness/bus.test.ts > EventBus > drops events claiming a different driver kind (cross-driver invariant)
+bus: dropped cross-driver event from inst-1
+
+stderr | server/harness/bus.test.ts > EventBus > a throwing listener does not starve the others
+bus: listener threw Error: bad listener
+    at /Users/yoda/projects/RealBud/server/harness/bus.test.ts:91:13
+    at EventBus.publish (/Users/yoda/projects/RealBud/server/harness/bus.ts:41:9)
+    at /Users/yoda/projects/RealBud/server/harness/bus.test.ts:95:9
+    at file:///Users/yoda/projects/RealBud/node_modules/.pnpm/@vitest+runner@4.1.10/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+    at file:///Users/yoda/projects/RealBud/node_modules/.pnpm/@vitest+runner@4.1.10/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+    at file:///Users/yoda/projects/RealBud/node_modules/.pnpm/@vitest+runner@4.1.10/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+    at new Promise (<anonymous>)
+    at runWithCancel (file:///Users/yoda/projects/RealBud/node_modules/.pnpm/@vitest+runner@4.1.10/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)
+    at file:///Users/yoda/projects/RealBud/node_modules/.pnpm/@vitest+runner@4.1.10/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+    at new Promise (<anonymous>)
+
+······························································································{"at":"2026-09-21T07:01:37.357Z","event":"crash","detail":"worker failed with XAI_API_KEY=«redacted 24 chars» in env"}
+···········································································································································································································································································································································································································································································································································································································································································································································································································································································································································------···---------------------------------------------------------------------------------------------------------------------------------
+
+ Test Files  278 passed | 17 skipped (295)
+      Tests  3412 passed | 143 skipped (3555)
+   Start at  16:58:56
+   Duration  171.89s (transform 2.44s, setup 1.17s, import 6.39s, tests 145.37s, environment 13ms)
+
+JSON report written to /Users/yoda/projects/RealBud/outputs/bank-history-2026-09-21/full-source.result.json

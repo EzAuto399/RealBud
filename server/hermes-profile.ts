@@ -1,22 +1,8 @@
-// Which Hermes profile a given execution uses.
-//
-// The template-OS rule: RealBud ships ONE base Bud profile. A department or seat
-// ("Accounts", "Property Management") is *configuration*, never a code branch —
-// nothing here knows the word "accounts", and adding a department must not
-// require editing this file.
-//
-// Today every worker runs the base profile, which is exactly the current
-// behaviour, so this module is a seam rather than a behaviour change. It exists
-// so the one place that decides worker isolation is explicit, tested, and
-// callable from each execution route (Ask, hands, jobs) instead of four
-// hardcoded `HERMES_PIN.profile` reads. Per-member isolation then becomes a
-// change to this contract plus its call sites — not a hunt through the runtime.
-//
-// Why a member cannot simply share the base profile: one Hermes profile carries
-// one private memory, skills store and session database. Two people (or two
-// departments) sharing one profile share memory and create two writers on the
-// same state, which is corruption, not cooperation.
-
+// A worker operation has one immutable identity across setup, tools and execution.
+// The base profile remains available for an office of one. Member profiles never
+// inherit the base profile's credentials, memory or sessions.
+import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash } from "node:crypto";
 import { HERMES_PIN } from "./hermes-pin.ts";
 
 /** Longest profile name we will construct; Hermes profile names are directory names. */
@@ -63,10 +49,18 @@ function sanitize(value: string): string {
 export function hermesProfileFor(baseProfile: string, memberKey?: string | null): ProfileSelection {
   const base = sanitize(baseProfile);
   if (!base) throw new Error("A base Hermes profile is required to select a worker profile.");
-  const key = typeof memberKey === "string" ? sanitize(memberKey) : "";
-  if (!key) return { profile: base };
-  const profile = `${base}-${key}`.slice(0, MAX_PROFILE_NAME).replace(/-+$/g, "");
-  return { profile, memberKey: key };
+  if (base !== baseProfile || base.length > 32) throw new Error("Invalid base Hermes profile.");
+  const identity = typeof memberKey === "string" ? memberKey : "";
+  if (!identity) return { profile: base };
+  const key = sanitize(identity) || "member";
+  const plain = `${base}-${key}`;
+  // A double-hyphen digest namespace cannot alias a plain normalized ID.
+  // Preserve existing UUID/lowercase IDs. Lossy normalization and truncation
+  // must not let distinct authenticated identities share a directory.
+  const digest = createHash("sha256").update(identity).digest("hex").slice(0, 20);
+  const profile = key === identity && plain.length <= MAX_PROFILE_NAME
+    ? plain : `${plain.slice(0, MAX_PROFILE_NAME - 23).replace(/-+$/g, "")}--m${digest}`;
+  return { profile, memberKey: identity };
 }
 
 /**
@@ -78,4 +72,12 @@ export function hermesProfilesFor(baseProfile: string, memberKeys: readonly stri
   const names = new Set<string>([hermesProfileFor(baseProfile).profile]);
   for (const key of memberKeys) names.add(hermesProfileFor(baseProfile, key).profile);
   return [...names].sort();
+}
+
+const workerScope = new AsyncLocalStorage<Readonly<ProfileSelection>>();
+export function currentWorkerProfile(): Readonly<ProfileSelection> {
+  return workerScope.getStore() ?? hermesProfileFor(baseWorkerProfile());
+}
+export function withWorkerProfile<T>(memberKey: string | null | undefined, work: () => T): T {
+  return workerScope.run(Object.freeze(hermesProfileFor(baseWorkerProfile(), memberKey)), work);
 }

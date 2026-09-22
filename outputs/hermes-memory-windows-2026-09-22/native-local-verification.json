@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "checkedAt": "2026-09-21T16:35:45.992786+00:00",
+  "status": "local-fake-bindings-passed",
+  "sourceSha256": {
+    "server/helpers/hermes-memory-windows-native.py": "b3a9d5bb67b5c2cc2f920b046b1472044204bc872ebef8113cf13d19d8e86213",
+    "outputs/hermes-memory-windows-2026-09-22/native-abi-checks.py": "24bb5ba5732a7781de608a72b48c1f1ec2c8d6598fd19b8237b51d0cb2f52ec6",
+    "scripts/testing/hermes-memory-windows-policy.py": "5725cf494638878be960e28ec3d5c2f109655502fe9778c0fd40e33cc9871e56",
+    "outputs/hermes-memory-windows-2026-09-22/native-additional-guards.py": "990f61e1359b7d1e992364ed75046388f05ec13c8636c1804d9c4ab5f0c63e66"
+  },
+  "command": "python3 -I -B outputs/hermes-memory-windows-2026-09-22/native-abi-checks.py",
+  "log": "outputs/hermes-memory-windows-2026-09-22/native-abi-checks.log",
+  "proofLayer": "portable import, fail-closed non-Windows real constructor, raw ctypes fake DLL structures/call-order/bounds tests",
+  "notVerified": [
+    "real Win32 API execution",
+    "native ACL inheritance behavior",
+    "actual sharing violations and NTFS rename/delete semantics",
+    "Windows 11 device or installed package",
+    "directory durability or physical power-loss safety"
+  ],
+  "productionWindowsHoldRemoved": false,
+  "globalWindowsAclPolicyChanged": false,
+  "grokImplementationProposal": "Completed and inspected; see native-grok-proposal-receipt.json. Two additional guards adopted; proposal not approved wholesale.",
+  "suites": [
+    {
+      "command": "python3 -I -B outputs/hermes-memory-windows-2026-09-22/native-abi-checks.py",
+      "tests": 12,
+      "result": "passed",
+      "log": "native-abi-checks.log"
+    },
+    {
+      "command": "python3 -I -B scripts/testing/hermes-memory-windows-policy.py",
+      "tests": 13,
+      "result": "passed",
+      "log": "native-policy-checks.log"
+    },
+    {
+      "command": "python3 -I -B outputs/hermes-memory-windows-2026-09-22/native-additional-guards.py",
+      "tests": 2,
+      "result": "passed",
+      "log": "native-additional-guards.log",
+      "note": "Metadata test includes nine integer-field subcases; test method counts are not Windows execution."
+    }
+  ],
+  "knownLimits": [
+    "Caller must pin every ancestor and own native locking/CAS/recovery.",
+    "Existing files are verify-only; no global ACL policy repair or relaxation.",
+    "Delete marks opened object; own close does not prove terminal path absence if another compatible handle exists.",
+    "Windows holds remain in place."
+  ]
+}

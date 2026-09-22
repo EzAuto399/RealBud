@@ -1,0 +1,80 @@
+{
+  "ok": true,
+  "at": "2026-09-21T23:36:33.514Z",
+  "layer": "Actual desktop service/executors and rendered desktop+portal UI + built Next + disposable PostgreSQL; fictional connector and Hermes CLI",
+  "checks": [
+    "Actual desktop GUI reviews complete templates for both adapters, saves encrypted consent, recovers a lost parent-publication reply through atomic withdrawal, then establishes a new protocol2 generation and publishes a pending invitation through actual Next/PostgreSQL, with zero source scans or worker calls.",
+    "Legacy and other-agency acceptance are denied. Actual portal acceptance stays pending until attended desktop confirmation; lost committed confirmation response reconciles the same permission, and other agency sees no connection.",
+    "An invited portal user requests the existing recipe adapter while desktop sharing defaults off; request persists queued, another agency sees nothing, and no review upload, worker or mailbox scan starts.",
+    "Explicit desktop GUI opt-in shares the complete reviewed recipe template. Portal verifies and approves the exact review; lost committed review, decision, claim and event replies reconcile with identical persisted IDs/bodies, one SQL review/claim and exactly one existing-executor worker call.",
+    "The morning adapter renders the full typed mailbox-alias review on mobile, then invokes the existing loop and fictional scoped connector exactly once, retaining one local review item and leaving its schedule off. Both desktop and portal render without horizontal overflow.",
+    "Actual SIGKILL after a committed claim but before enqueue settles interrupted without a worker. SIGKILL after durable enqueue and completed executor result, with the running acknowledgement held, reattaches that same result and reports completion. Neither cold restart replays execution.",
+    "A cold headless restart preserves activation and completed local outcomes. Approval followed by portal revocation while the computer is stopped cannot produce another worker or source scan; the original sharing setting remains visible but held. SQL shared projections contain neither raw mailbox identifier, source message nor private execution binding."
+  ],
+  "errors": [],
+  "scanCalls": 1,
+  "workerCalls": 3,
+  "lostReplies": [
+    {
+      "path": "/api/installations/v2/work/review",
+      "bodyDigest": "e38a51e43e7451d1a2e80a95d74fed8d8f92bf4f0ff9c5e6a290c12b22d44c47"
+    },
+    {
+      "path": "/api/installations/v2/work/claim",
+      "bodyDigest": "83635d3a2c93d396e6a4d822150dc5a80592358a520bc9aaecea9a608eec989d"
+    },
+    {
+      "path": "/api/installations/v2/work/ack",
+      "bodyDigest": "dde0284a61bf3c05ece2cf2806988023cc6cdb7c1bd9d0471ad1d923d3646ee6"
+    }
+  ],
+  "decisionAttempts": [
+    {
+      "operation": "decide",
+      "requestId": "9e8bbaa7-781e-4276-b25c-58086e4798b6",
+      "decisionId": "63cdc8b8-1506-42f0-9442-c81df7ae08e8",
+      "reviewId": "bc84288f-2a1e-4a58-ae67-3fb05359ebfc"
+    },
+    {
+      "operation": "decide",
+      "requestId": "39a0a130-0937-453b-a4af-dbecc9974339",
+      "decisionId": "f49b8024-7641-427e-b1de-4766f3e10ca6",
+      "reviewId": "7b8e57da-444f-408b-a762-d47040bbcdd0"
+    },
+    {
+      "operation": "decide",
+      "requestId": "868d869e-a7a7-407a-a4d0-7276c0138829",
+      "decisionId": "7249fc5d-457a-415d-a843-802a18643da6",
+      "reviewId": "ac5bde06-3424-4ad4-8f85-01078a4061ca"
+    },
+    {
+      "operation": "decide",
+      "requestId": "b093a1da-f34e-4bc2-8587-2a26e48c39ba",
+      "decisionId": "beffab79-dba1-4814-a77a-e31e904a0466",
+      "reviewId": "d2cbee1a-ef12-4841-a184-8397e1d690eb"
+    },
+    {
+      "operation": "decide",
+      "requestId": "4874af5f-9d3d-436b-9e02-4212bd6e1535",
+      "decisionId": "70806d55-1cb4-4ed3-836b-98412e5590cc",
+      "reviewId": "52276e9f-3fee-48de-a380-24e1359f9a86"
+    }
+  ],
+  "site": {
+    "rpcCount": 294,
+    "violations": [],
+    "databaseErrors": [
+      "remote_work_conflict"
+    ],
+    "authRejections": [],
+    "migrationHashes": {
+      "portalPeople": "17d9df75b244cb13e356ccfff3c27591aaf7a38aec0f0c4ce003d671cb79904d",
+      "remoteApprovers": "17825f58da8cac746e98b5ac36d8ba7005210882b564174bc53fdfa236297b08",
+      "remoteWork": "9bf243d8ffac46d376f6a396d7b0138ed76671a46638646f1bce7fa3eda7c423"
+    }
+  },
+  "limits": [
+    "No hosted deployment, real provider/customer accounts or native Windows proof",
+    "Fixture CLI output proves integration with existing executors, not real model quality"
+  ]
+}

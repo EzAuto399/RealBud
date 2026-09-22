@@ -123,7 +123,7 @@ export function ProfileFields() {
               ? "Enter a complete email address, or leave it blank."
               : saveState === "error"
                 ? "Could not save. Your changes are still here; leave the field to try again."
-                : "Saved on this Mac as you go."}
+                : "Saved in your RealBud settings as you go."}
       </div>
     </div>
   );

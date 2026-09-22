@@ -1,0 +1,324 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { spawn } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
+import { createBackupOperationStore, type BackupOperationStore, type BackupOperationRecord, type BackupOperationStoreOptions } from './private-backup-operations.ts';
+import type { PrivateBackupTransferOperation } from '../shared/private-backup-transfers.ts';
+import { encryptJson, decryptJson } from './desk-crypto.ts';
+import { PRIVATE_BACKUP_COMPLETION_FILE, type BackupColdCompletion } from './private-backup-completion.ts';
+
+const roots: string[] = [], stores: BackupOperationStore[] = [];
+const digest = (value: string) => createHash('sha256').update(value).digest('hex');
+const workspaceId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const archiveWorkspace = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const folder = () => { const root = mkdtempSync(join(realpathSync(tmpdir()), 'RealBud operation journal Ω ')); roots.push(root); return root; };
+async function setup(options: Partial<BackupOperationStoreOptions> = {}) {
+  const settings = { directory: join(folder(), 'operations'), workspaceId, key: randomBytes(32), now: () => 1000, ...options };
+  const store = await createBackupOperationStore(settings); stores.push(store); return { store, settings };
+}
+function operation(kind: 'export' | 'upload' = 'export', id: string = randomUUID()): PrivateBackupTransferOperation {
+  return { version: 2, id, workspaceId, kind, phase: kind === 'export' ? 'capturing' : 'uploading', createdAt: 10, updatedAt: 10, expiresAt: null,
+    progress: { completedBytes: 0, totalBytes: kind === 'upload' ? 123 : null }, canCancel: true, requiresPassphrase: false,
+    ...(kind === 'upload' ? { receivedBytes: 0, prefixCommitment: digest('[]') } : {}) };
+}
+function change(store: BackupOperationStore, record: BackupOperationRecord, update: (record: BackupOperationRecord) => void) { return store.update(record.operation.id, record.revision, update); }
+function reviewed(store: BackupOperationStore, restoredWorkspaceId = archiveWorkspace) {
+  let r = store.create(operation('upload'), 100);
+  r = change(store, r, next => { next.operation.phase = 'uploaded'; next.operation.receivedBytes = 123; next.operation.progress.completedBytes = 123;
+    next.operation.artifact = { archiveBytes: 123, archiveDigest: digest('fixture ciphertext') }; next.operation.requiresPassphrase = true; });
+  r = change(store, r, next => { next.operation.phase = 'checking'; next.operation.requiresPassphrase = false; });
+  return change(store, r, next => { next.operation.phase = 'reviewed'; next.operation.preview = { digest: next.operation.artifact!.archiveDigest, workspaceId: restoredWorkspaceId,
+    createdAt: '2026-09-21T00:00:00.000Z', fileCount: 2, recordCount: 0, plainBytes: 30, included: ['Private saved work'], excluded: ['Credentials'], restoreChanges: ['Pause work'] };
+    next.references.preview = { directoryId: randomUUID(), catalogId: randomUUID(), workspaceId: restoredWorkspaceId, digest: digest('catalog'), createdAt: '2026-09-21T00:00:00.000Z', databasePresent: false }; });
+}
+function staged(store: BackupOperationStore, restoredWorkspaceId = archiveWorkspace) {
+  let r = reviewed(store, restoredWorkspaceId);
+  r = change(store, r, next => { next.operation.phase = 'staging'; next.operation.canCancel = false; next.restoreHeld = true;
+    next.references.prepared = { directoryId: randomUUID(), storeId: randomUUID(), workspaceId: restoredWorkspaceId, digest: digest('prepared') }; });
+  return change(store, r, next => { next.operation.phase = 'staged'; });
+}
+function coldProof(record: BackupOperationRecord): BackupColdCompletion {
+  const p = record.references.prepared!;
+  return { version: 1, operationId: record.operation.id, previousWorkspaceId: record.operation.workspaceId, workspaceId: p.workspaceId,
+    directoryId: p.directoryId, storeId: p.storeId, preparedDigest: p.digest, receipt: record.operation.preview!, restoredAt: '2026-09-21T12:00:00.000Z' };
+}
+function writeColdProof(directory: string, key: Buffer, proof: BackupColdCompletion) {
+  mkdirSync(join(directory, 'company-installation'), { recursive: true, mode: 0o700 });
+  writeFileSync(join(directory, 'company-installation/workspace.json'), JSON.stringify({ version: 1, id: proof.workspaceId, workerMemberKey: null }), { mode: 0o600 });
+  writeFileSync(join(directory, PRIVATE_BACKUP_COMPLETION_FILE), JSON.stringify(encryptJson(key, proof)), { mode: 0o600 });
+}
+afterEach(() => { vi.restoreAllMocks(); for (const s of stores.splice(0)) { try { s.close(); } catch { /* intentional corrupted/moved fixture */ } } for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+
+describe('durable private backup operation records', () => {
+  it('keeps encrypted records, immutable snapshots, revision checks and request replay', async () => {
+    const { store, settings } = await setup();
+    const input = operation(), first = store.create(input, 100);
+    input.progress.completedBytes = 50; first.operation.progress.completedBytes = 80;
+    expect(store.get(input.id).operation.progress.completedBytes).toBe(0);
+    const copy = store.get(input.id); copy.references.capture = { directoryId: randomUUID(), catalogId: randomUUID(), workspaceId, digest: digest('source'), createdAt: '2026-09-21T00:00:00.000Z', databasePresent: false };
+    expect(store.get(input.id).references).toEqual({});
+    const next = change(store, store.get(input.id), r => { r.operation.phase = 'sealing'; r.references = copy.references; });
+    expect(next.revision).toBe(2); expect(next.operation.updatedAt).toBe(1000);
+    expect(() => store.update(input.id, 1, r => { r.operation.phase = 'failed'; })).toThrow(/progress changed/i);
+    expect(store.create(operation('export', input.id), 100)).toEqual(next);
+    expect(() => store.create(operation('upload', input.id), 100)).toThrow(/different request/);
+    expect(store.usage()).toMatchObject({ records: 1, active: 1, reservedBytes: 100 });
+    const bytes = readFileSync(join(settings.directory, 'operations.sqlite'));
+    expect(bytes.includes(settings.key)).toBe(false); expect(bytes.includes(Buffer.from(workspaceId))).toBe(false);
+    expect(bytes.includes(Buffer.from('sealing'))).toBe(false); expect(bytes.includes(Buffer.from(copy.references.capture!.digest))).toBe(false);
+    if (process.platform !== 'win32') expect(statSync(join(settings.directory, 'operations.sqlite')).mode & 0o777).toBe(0o600);
+  });
+
+  it('atomically refuses quota overbooking and retains reservations after cancellation until cleanup', async () => {
+    const { store } = await setup({ limits: { records: 3, active: 2, reservationBytes: 200 } });
+    let first = store.create(operation(), 120);
+    expect(() => store.create(operation(), 90)).toThrow(/fully reserved/);
+    const second = store.create(operation(), 80);
+    expect(() => store.create(operation(), 1)).toThrow(/reached their limit/);
+    expect(() => change(store, second, r => { r.reservedBytes = 81; })).toThrow(/fully reserved/);
+    expect(store.get(second.operation.id)).toEqual(second);
+    first = change(store, first, r => { r.operation.phase = 'cancelled'; r.operation.canCancel = false; });
+    expect(store.prune(1001)).toBe(0); expect(store.usage().reservedBytes).toBe(200);
+    first = change(store, first, r => { r.reservedBytes = 0; });
+    expect(store.prune(1000)).toBe(0); expect(store.prune(1001)).toBe(1);
+    expect(() => store.get(first.operation.id)).toThrow(/not found/); expect(store.usage()).toMatchObject({ records: 1, reservedBytes: 80 });
+    expect(store.create(operation(), 120).reservedBytes).toBe(120);
+  });
+
+  it('refuses identity changes, non-transactional callbacks and unsupported private metadata', async () => {
+    const { store } = await setup(), first = store.create(operation(), 100);
+    for (const mutation of [
+      (r: BackupOperationRecord) => { r.operation.id = randomUUID(); },
+      (r: BackupOperationRecord) => { r.operation.workspaceId = randomUUID(); },
+      (r: BackupOperationRecord) => { r.operation.createdAt++; },
+      (r: BackupOperationRecord) => { Object.assign(r.references, { path: '/private/never-serialize', passphrase: 'never-save-this' }); },
+      (r: BackupOperationRecord) => { Object.assign(r.operation, { secret: 'do-not-save' }); },
+    ]) { expect(() => change(store, first, mutation)).toThrow(); expect(store.get(first.operation.id)).toEqual(first); }
+    expect(() => change(store, first, async r => { await Promise.resolve(); r.reservedBytes = 0; throw new Error('asynchronous edit'); })).toThrow(/synchronously/);
+    await Promise.resolve(); expect(store.get(first.operation.id)).toEqual(first);
+    expect(() => change(store, first, r => { r.operation.phase = 'uploaded'; })).toThrow();
+  });
+
+  it('cannot advertise completion for a failed export or advance upload progress backwards', async () => {
+    const { store } = await setup();
+    let exportRecord = store.create(operation(), 10);
+    exportRecord = change(store, exportRecord, r => { r.operation.phase = 'failed'; });
+    expect(() => change(store, exportRecord, r => { r.operation.phase = 'completed'; r.operation.canCancel = false; r.operation.progress = { completedBytes: 123, totalBytes: 123 }; r.operation.artifact = { archiveBytes: 123, archiveDigest: digest('export') }; })).toThrow();
+    let upload = store.create(operation('upload'), 10);
+    upload = change(store, upload, r => { r.operation.receivedBytes = 123; r.operation.progress.completedBytes = 123; });
+    expect(() => change(store, upload, r => { r.operation.receivedBytes = 0; r.operation.progress.completedBytes = 0; })).toThrow();
+    expect(() => store.create({ ...operation('upload', upload.operation.id), progress: { completedBytes: 0, totalBytes: 124 } }, 10)).toThrow(/different request/);
+  });
+
+  it('retains restore-held artifacts across cancellation, pruning, reopen and failed apply', async () => {
+    const { store, settings } = await setup(); let r = staged(store);
+    expect(() => change(store, r, next => { next.restoreHeld = false; })).toThrow();
+    expect(() => change(store, r, next => { next.operation.phase = 'cancelled'; delete next.operation.artifact; delete next.operation.preview; })).toThrow();
+    expect(() => change(store, r, next => { next.reservedBytes = 0; })).toThrow();
+    expect(store.prune(10_000)).toBe(0); store.close();
+    const { store: reopened } = await setup(settings); expect(reopened.get(r.operation.id)).toEqual(r);
+    r = change(reopened, r, next => { next.operation.phase = 'applying'; });
+    r = change(reopened, r, next => { next.operation.phase = 'failed'; delete next.operation.preview; next.operation.error = { code: 'recovery-required' }; });
+    expect(r.restoreHeld).toBe(true); expect(r.references.prepared).toBeDefined();
+    expect(() => change(reopened, r, next => { next.operation.phase = 'checking'; })).toThrow(/retained/);
+    expect(reopened.prune(10_000)).toBe(0);
+  });
+
+  it('freezes reviewed and prepared identities through completion and retains reservations until cleanup', async () => {
+    const { store, settings } = await setup(); let r = staged(store, workspaceId);
+    expect(() => change(store, r, next => { next.operation.phase = 'completed'; })).toThrow(/transition/);
+    expect(() => change(store, r, next => { next.references.prepared!.storeId = randomUUID(); })).toThrow(/retained/);
+    expect(() => change(store, r, next => { delete next.references.prepared; })).toThrow(/retained/);
+    r = change(store, r, next => { next.operation.phase = 'applying'; });
+    expect(() => change(store, r, next => { next.operation.phase = 'completed'; next.operation.artifact!.archiveDigest = digest('different'); next.operation.preview!.digest = digest('different'); })).toThrow();
+    expect(() => change(store, r, next => { next.operation.phase = 'completed'; })).toThrow(/transition/);
+    expect(store.get(r.operation.id)).toEqual(r);
+    const directory = folder(); store.close(); writeColdProof(directory, settings.key, coldProof(r));
+    const { store: reopened } = await setup({ ...settings, restoreDirectory: directory });
+    r = reopened.get(r.operation.id);
+    expect(r.operation.phase).toBe('completed');
+    expect(r.reservedBytes).toBe(100); expect(r.restoreHeld).toBe(true); expect(reopened.prune(10_000)).toBe(0);
+  });
+
+  it('reconciles an authenticated cold completion without relabelling old transfers or releasing their disk reservations', async () => {
+    const { store, settings } = await setup({ limits: { reservationBytes: 200 } }), directory = folder();
+    const oldExport = store.create(operation(), 100), restored = staged(store), proof = coldProof(restored); store.close();
+    writeColdProof(directory, settings.key, proof);
+    const { store: reopened } = await setup({ ...settings, workspaceId: archiveWorkspace, restoreDirectory: directory });
+    expect(reopened.list()).toEqual({ items: [], total: 0, next: null });
+    expect(() => reopened.get(oldExport.operation.id)).toThrow(/not found/); expect(() => reopened.get(restored.operation.id)).toThrow(/not found/);
+    expect(reopened.usage()).toMatchObject({ records: 2, workspaceRecords: 0, active: 0, reservedBytes: 200 });
+    expect(() => reopened.create({ ...operation(), workspaceId: archiveWorkspace }, 1)).toThrow(/fully reserved/);
+    const db = new DatabaseSync(join(settings.directory, 'operations.sqlite'), { readOnly: true });
+    try {
+      const row = db.prepare('SELECT payload FROM operations WHERE id=?').get(restored.operation.id)!;
+      expect(decryptJson(settings.key, JSON.parse(String(row.payload)))).toMatchObject({ restoreHeld: true, reservedBytes: 100, operation: { workspaceId, phase: 'completed', artifact: restored.operation.artifact } });
+    } finally { db.close(); }
+    reopened.close(); const again = await setup({ ...settings, workspaceId: archiveWorkspace }); expect(again.store.list().total).toBe(0);
+  });
+
+  it('reconciles a same-workspace completion once without changing it on a later restart', async () => {
+    const { store, settings } = await setup(), directory = folder(), r = staged(store, workspaceId); store.close();
+    writeColdProof(directory, settings.key, coldProof(r));
+    const { store: reopened } = await setup({ ...settings, restoreDirectory: directory });
+    const completed = reopened.get(r.operation.id); expect(completed.operation.phase).toBe('completed'); expect(completed.revision).toBe(r.revision + 1);
+    reopened.close(); const { store: again } = await setup({ ...settings, now: () => 2000, restoreDirectory: directory });
+    expect(again.get(r.operation.id)).toEqual(completed);
+  });
+
+  it('replays a completion whose journal commit outlived its process before proof consumption', async () => {
+    const { store, settings } = await setup(), directory = folder(), r = staged(store); store.close();
+    writeColdProof(directory, settings.key, coldProof(r));
+    const module = pathToFileURL(join(process.cwd(), 'server/private-backup-operations.ts')).href;
+    const program = `import { createBackupOperationStore } from ${JSON.stringify(module)}; let text=''; for await(const chunk of process.stdin) text+=chunk; const { key, ...settings }=JSON.parse(text); await createBackupOperationStore({...settings,key:Buffer.from(key,'hex'),fault(point){if(point==='completion-committed'){process.stdout.write('committed\\n');Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0);}}});`;
+    const next = { ...settings, workspaceId: archiveWorkspace, restoreDirectory: directory };
+    const envModule: string = '../scripts/service-smoke-env.mjs'; const { serviceSmokeEnv } = await import(envModule);
+    const child = spawn(process.execPath, ['--input-type=module', '-e', program], { env: serviceSmokeEnv({ executable: process.execPath, home: directory, data: directory, scratch: directory, port: 0 }), stdio: ['pipe', 'pipe', 'pipe'] });
+    let output = '', errors = '', timer: ReturnType<typeof setTimeout> | undefined;
+    const closed = new Promise<void>((resolve, reject) => { child.once('close', () => resolve()); child.once('error', reject); });
+    child.stderr.on('data', chunk => { errors = (errors + chunk).slice(-2000); });
+    const ready = new Promise<void>((resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(`Fixture completion did not commit: ${errors}`)), 5000);
+      child.stdout.on('data', chunk => { output = (output + chunk).slice(-100); if (output.includes('committed\n')) resolve(); });
+      void closed.then(() => reject(new Error(`Fixture completion exited: ${errors}`)), reject);
+    });
+    child.stdin.end(JSON.stringify({ ...next, key: settings.key.toString('hex') }));
+    try { await ready; expect(existsSync(join(directory, PRIVATE_BACKUP_COMPLETION_FILE))).toBe(true); await expect(createBackupOperationStore(next)).rejects.toThrow(/Another running service/); }
+    finally { clearTimeout(timer); if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); await closed; }
+    const { store: reopened } = await setup(next);
+    expect(reopened.list().total).toBe(0); expect(reopened.usage().reservedBytes).toBe(100);
+    expect(existsSync(join(directory, PRIVATE_BACKUP_COMPLETION_FILE))).toBe(false);
+    const db = new DatabaseSync(join(settings.directory, 'operations.sqlite'), { readOnly: true });
+    try { expect(db.prepare('SELECT revision FROM operations WHERE id=?').get(r.operation.id)?.revision).toBe(r.revision + 1); } finally { db.close(); }
+  }, 15_000);
+
+  it.each(['absent', 'plaintext', 'wrong-key', 'previous-workspace', 'archive-workspace', 'operation', 'prepared', 'archive-digest', 'pending-stage', 'changed-workspace'])('refuses %s reconciliation evidence and retains the journal', async fault => {
+    const { store, settings } = await setup(), directory = folder(), r = staged(store), proof = coldProof(r); store.close();
+    if (fault === 'previous-workspace') proof.previousWorkspaceId = randomUUID();
+    if (fault === 'archive-workspace') { proof.workspaceId = randomUUID(); proof.receipt = { ...proof.receipt, workspaceId: proof.workspaceId }; }
+    if (fault === 'operation') proof.operationId = randomUUID();
+    if (fault === 'prepared') proof.preparedDigest = digest('different prepared data');
+    if (fault === 'archive-digest') proof.receipt = { ...proof.receipt, digest: digest('different archive') };
+    writeColdProof(directory, fault === 'wrong-key' ? randomBytes(32) : settings.key, proof);
+    if (fault === 'plaintext') writeFileSync(join(directory, PRIVATE_BACKUP_COMPLETION_FILE), JSON.stringify(proof));
+    if (fault === 'absent') rmSync(join(directory, PRIVATE_BACKUP_COMPLETION_FILE));
+    if (fault === 'pending-stage') writeFileSync(join(directory, 'private-workspace-restore-v2.json'), 'unfinished', { mode: 0o600 });
+    if (fault === 'changed-workspace') writeFileSync(join(directory, 'company-installation/workspace.json'), JSON.stringify({ version: 1, id: randomUUID(), workerMemberKey: null }));
+    const before = readFileSync(join(settings.directory, 'operations.sqlite'));
+    await expect(createBackupOperationStore({ ...settings, workspaceId: archiveWorkspace, restoreDirectory: directory })).rejects.toThrow();
+    expect(readFileSync(join(settings.directory, 'operations.sqlite'))).toEqual(before);
+    const { store: old } = await setup(settings); expect(old.get(r.operation.id)).toEqual(r);
+  });
+
+  it('interrupts dead computations on reopen while keeping sealed upload evidence and requesting the passphrase again', async () => {
+    const { store, settings } = await setup(); const exp = store.create(operation(), 20);
+    let uploaded = store.create(operation('upload'), 20);
+    uploaded = change(store, uploaded, r => { r.operation.receivedBytes = 123; r.operation.progress.completedBytes = 123; r.operation.artifact = { archiveBytes: 123, archiveDigest: digest('ciphertext') }; r.operation.phase = 'uploaded'; });
+    uploaded = change(store, uploaded, r => { r.operation.phase = 'checking'; });
+    store.close(); const { store: reopened } = await setup(settings);
+    expect(reopened.get(exp.operation.id).operation).toMatchObject({ phase: 'interrupted', requiresPassphrase: true, error: { code: 'interrupted' } });
+    expect(reopened.get(uploaded.operation.id).operation).toMatchObject({ phase: 'interrupted', requiresPassphrase: true, artifact: uploaded.operation.artifact, receivedBytes: 123 });
+    expect(reopened.usage().reservedBytes).toBe(40);
+  });
+
+  it('paginates stable operation identities with bounded pages and refuses unknown workspace/key reuse', async () => {
+    const { store, settings } = await setup({ limits: { active: 4 } });
+    const records = Array.from({ length: 4 }, () => store.create(operation(), 1));
+    const first = store.list({ limit: 2 }), last = store.list({ limit: 2, after: first.next! });
+    expect(first.total).toBe(4); expect(last.next).toBeNull();
+    expect([...first.items, ...last.items].map(r => r.operation.id)).toEqual(records.map(r => r.operation.id).sort());
+    expect(() => store.list({ limit: 21 })).toThrow(/Invalid/); expect(() => store.list({ after: '../path' })).toThrow(/Invalid/);
+    store.close(); const bytes = readFileSync(join(settings.directory, 'operations.sqlite'));
+    await expect(createBackupOperationStore({ ...settings, workspaceId: archiveWorkspace })).rejects.toThrow(/recovery/);
+    await expect(createBackupOperationStore({ ...settings, key: randomBytes(32) })).rejects.toThrow(/recovery/);
+    expect(readFileSync(join(settings.directory, 'operations.sqlite'))).toEqual(bytes);
+    await setup(settings);
+  });
+
+  it('refuses a second owner in the same process without changing the active journal', async () => {
+    const { store, settings } = await setup(), r = store.create(operation(), 20);
+    await expect(createBackupOperationStore(settings)).rejects.toThrow(/Another running service/);
+    expect(store.get(r.operation.id)).toEqual(r);
+  });
+
+  it('admits only one of two simultaneous initializers and keeps the winning journal usable', async () => {
+    const settings = { directory: join(folder(), 'operations'), key: randomBytes(32), workspaceId };
+    const attempts = await Promise.allSettled([createBackupOperationStore(settings), createBackupOperationStore(settings)]);
+    const opened = attempts.flatMap(result => result.status === 'fulfilled' ? [result.value] : []); stores.push(...opened);
+    expect(opened).toHaveLength(1); expect(attempts.filter(result => result.status === 'rejected')).toHaveLength(1);
+    const saved = opened[0].create(operation(), 10); expect(opened[0].get(saved.operation.id)).toEqual(saved);
+  });
+
+  it.each(['initial-ready', 'initial-linked'] as const)('recovers after an actual process kill at %s without treating a partial database as initialized', async point => {
+    const root = folder(), settings = { directory: join(root, 'operations'), key: randomBytes(32), workspaceId };
+    const module = pathToFileURL(join(process.cwd(), 'server/private-backup-operations.ts')).href;
+    const program = `import { createBackupOperationStore } from ${JSON.stringify(module)}; let text=''; for await(const chunk of process.stdin) text+=chunk; const { key, point, ...settings }=JSON.parse(text); await createBackupOperationStore({...settings,key:Buffer.from(key,'hex'),fault(at){if(at===point){process.stdout.write('initializing\\n');Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0);}}});`;
+    const envModule: string = '../scripts/service-smoke-env.mjs'; const { serviceSmokeEnv } = await import(envModule);
+    const child = spawn(process.execPath, ['--input-type=module', '-e', program], { env: serviceSmokeEnv({ executable: process.execPath, home: root, data: root, scratch: root, port: 0 }), stdio: ['pipe', 'pipe', 'pipe'] });
+    let errors = '', output = '', timer: ReturnType<typeof setTimeout> | undefined;
+    const closed = new Promise<void>((resolve, reject) => { child.once('close', () => resolve()); child.once('error', reject); });
+    child.stderr.on('data', chunk => { errors = (errors + chunk).slice(-2000); });
+    const ready = new Promise<void>((resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(`Fixture initializer did not start: ${errors}`)), 5000);
+      child.stdout.on('data', chunk => { output = (output + chunk).slice(-100); if (output.includes('initializing\n')) resolve(); });
+      void closed.then(() => reject(new Error(`Fixture initializer exited: ${errors}`)), reject);
+    });
+    child.stdin.end(JSON.stringify({ ...settings, key: settings.key.toString('hex'), point }));
+    try { await ready; if (point === 'initial-linked') expect(statSync(join(settings.directory, 'operations.sqlite')).size).toBeGreaterThan(0); }
+    finally { clearTimeout(timer); if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); await closed; }
+    const { store } = await setup(settings); expect(store.usage()).toMatchObject({ records: 0, reservedBytes: 0 });
+    const saved = store.create(operation(), 10); expect(store.get(saved.operation.id)).toEqual(saved);
+    expect(statSync(join(settings.directory, 'operations.sqlite')).nlink).toBe(1);
+  }, 15_000);
+
+  it('preserves an empty pre-existing fixed journal rather than assuming that it never contained records', async () => {
+    const root = folder(); writeFileSync(join(root, 'operations.sqlite'), '', { mode: 0o600 });
+    await expect(createBackupOperationStore({ directory: root, key: randomBytes(32), workspaceId })).rejects.toThrow(/recovery/);
+    expect(readFileSync(join(root, 'operations.sqlite')).length).toBe(0);
+  });
+
+  it('refuses swapped files, extra schema and malformed encrypted rows without replacing original evidence', async () => {
+    const { store, settings } = await setup(), path = join(settings.directory, 'operations.sqlite'); store.create(operation(), 10); store.close();
+    const db = new DatabaseSync(path); db.exec('CREATE TABLE unexpected (value TEXT)'); db.close();
+    const bytes = readFileSync(path); await expect(createBackupOperationStore(settings)).rejects.toThrow(/recovery/); expect(readFileSync(path)).toEqual(bytes);
+    const second = await setup(), row = second.store.create(operation(), 10), secondPath = join(second.settings.directory, 'operations.sqlite');
+    const sql = new DatabaseSync(secondPath); sql.prepare('UPDATE operations SET payload=? WHERE id=?').run('not-encrypted', row.operation.id); sql.close();
+    expect(() => second.store.get(row.operation.id)).toThrow(/recovery/);
+    const third = await setup(), thirdPath = join(third.settings.directory, 'operations.sqlite');
+    renameSync(thirdPath, `${thirdPath}.saved`); const replacement = new DatabaseSync(thirdPath); replacement.close();
+    expect(() => third.store.usage()).toThrow(/recovery/);
+  });
+
+  it.skipIf(process.platform === 'win32')('refuses public or multiply linked journal files', async () => {
+    const { store, settings } = await setup(), path = join(settings.directory, 'operations.sqlite'); store.close();
+    chmodSync(path, 0o644); await expect(createBackupOperationStore(settings)).rejects.toThrow(/recovery/);
+    chmodSync(path, 0o600); linkSync(path, `${path}.hardlink`); await expect(createBackupOperationStore(settings)).rejects.toThrow(/recovery/);
+    rmSync(`${path}.hardlink`); renameSync(path, `${path}.original`); symlinkSync(`${path}.original`, path); await expect(createBackupOperationStore(settings)).rejects.toThrow(/recovery/);
+  });
+
+  it('survives an actual killed owner and refuses takeover while that owner remains alive', async () => {
+    const root = folder(), settings = { directory: join(root, 'operations'), key: randomBytes(32), workspaceId };
+    const initial = operation(), module = pathToFileURL(join(process.cwd(), 'server/private-backup-operations.ts')).href;
+    const program = `import { createBackupOperationStore } from ${JSON.stringify(module)}; let text=''; for await(const chunk of process.stdin) text+=chunk; const { key, initial, ...settings }=JSON.parse(text); const store=await createBackupOperationStore({...settings,key:Buffer.from(key,'hex')}); store.create(initial,100); process.stdout.write('owned\\n'); setInterval(()=>{},1000);`;
+    const envModule: string = '../scripts/service-smoke-env.mjs'; const { serviceSmokeEnv } = await import(envModule);
+    const child = spawn(process.execPath, ['--input-type=module', '-e', program], { env: serviceSmokeEnv({ executable: process.execPath, home: root, data: root, scratch: root, port: 0 }), stdio: ['pipe', 'pipe', 'pipe'] });
+    let errors = '', output = '', timer: ReturnType<typeof setTimeout> | undefined;
+    const closed = new Promise<void>((resolve, reject) => { child.once('close', () => resolve()); child.once('error', reject); });
+    child.stderr.on('data', chunk => { errors = (errors + chunk).slice(-2000); });
+    const ready = new Promise<void>((resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(`Fixture owner did not start: ${errors}`)), 5000);
+      child.stdout.on('data', chunk => { output = (output + chunk).slice(-100); if (output.includes('owned\n')) resolve(); });
+      void closed.then(() => reject(new Error(`Fixture owner exited: ${errors}`)), reject);
+    });
+    child.stdin.end(JSON.stringify({ ...settings, key: settings.key.toString('hex'), initial }));
+    try { await ready; await expect(createBackupOperationStore(settings)).rejects.toThrow(/Another running service/); }
+    finally { clearTimeout(timer); if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); await closed; }
+    const { store } = await setup(settings);
+    expect(store.get(initial.id).operation).toMatchObject({ phase: 'interrupted', requiresPassphrase: true });
+    expect(store.usage()).toMatchObject({ records: 1, reservedBytes: 100 });
+  }, 15_000);
+});

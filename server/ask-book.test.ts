@@ -172,20 +172,19 @@ describe("ask book", () => {
     expect(prompt).toContain("Do not diagnose safety, promise attendance or dispatch anyone");
   });
 
-  it("lets Bud drive a named portal page through computer tools and stop before submit", () => {
+  it("uses the connected browser only for exact saved-job sites and stops for human actions", () => {
     const prompt = productBudSystemPrompt();
-    expect(prompt).toMatch(/drive this Mac's browser through the computer tools/i);
-    expect(prompt).toMatch(/already-open Chrome or Brave/i);
-    expect(prompt).toMatch(/do not launch a new isolated browser/i);
-    expect(prompt).toMatch(/Every computer action asks the user first/i);
-    expect(prompt).toMatch(/Only visit sites named in a saved job/i);
-    expect(prompt).toMatch(/prepare and stop/i);
+    expect(prompt).toMatch(/browser connected in You → Browser/i);
+    expect(prompt).toMatch(/saved job that names the exact HTTPS site/i);
+    expect(prompt).toMatch(/Do not launch a separate browser/i);
+    expect(prompt).toMatch(/use another computer backend or run a browser CLI to bypass/i);
+    expect(prompt).toMatch(/Stop and release the browser before the person takes over/i);
     expect(prompt).toMatch(/Never send, pay, submit, publish, sign/i);
   });
 
   it("offers a saved job instead of refusing a portal login request", () => {
     const prompt = productBudSystemPrompt();
-    expect(prompt).toMatch(/do not refuse/i);
+    expect(prompt).toMatch(/Ask the person to open and sign in to that site/i);
     expect(prompt).toMatch(/Run beside me/);
     expect(prompt).toMatch(/never move money/);
   });

@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "checks": [
+    "Legacy account/v1 access remains compatible, but legacy session cannot enter person gate."
+  ],
+  "cleanup": true
+}

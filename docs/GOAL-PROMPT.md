@@ -1,301 +1,68 @@
-# RealBud — complete goal prompt
+# RealBud — current working direction
 
-Date: 2026-09-04 (next wave in `docs/NEXT-WAVE.md`)  
-Repo: `EzAuto399/RealBud` (local: `/Users/yoda/projects/RealBud`)  
-Use: paste this whole file into a new session, or point an agent at it. If a later idea fights this document, **this document wins**.
+Updated 21 September 2026 from the owner's product clarification. Repo: `EzAuto399/RealBud`; local path: `/Users/yoda/projects/RealBud`.
 
-Related: `DESIGN.md`, `docs/OFFICE-DESIGN.md`, `docs/PRODUCT-DESIGN-PLAN.md`, `docs/NEXT-WAVE.md`, `docs/IDENTITY.md`, `docs/PRODUCT-BRIEF.md`, `docs/WORKFLOW-PLAN.md`, `docs/PILOT-CONTRACT.md`, `docs/APPROACH.md`, `pack/property/SOUL.md`, `CLAUDE.md`
+Use this as a concise starting point, then inspect current source and task-specific evidence. Current user instructions take precedence. The former PM-only goal prompt is preserved as a [historical snapshot](history/GOAL-PROMPT-2026-09-04.md); it does not override this direction.
 
----
+Owner development preference: use the authenticated Grok CLI with `grok-4.7` and `--reasoning-effort xhigh` substantially for bounded specialist implementation and independent review through this goal. Earlier 22 September checks listed 4.7, but the latest fresh session exposes only 4.6 and 4.5; see `outputs/remote-enrollment-2026-09-22/grok-model-selection-run.json`. Preserve historical receipts and verify available choices before each new call; do not silently use 4.6 for a requested 4.7 review. Verify the actual model and terminal outcome of each new call. Prefer small focused packets; preserve timeout receipts and never treat incomplete reviews as approval. Codex owns scope, integration and verification; preserve concrete run receipts, explicit file ownership and other people's edits. Grok is development tooling, not another RealBud runtime agent. Current availability and completed reviews are recorded in [the core implementation receipt](REAL-ESTATE-CORE-2026-09-21.md).
 
-## Paste block (short)
+Working invocation evidence: a fresh ACP `grok agent --no-leader ... stdio` session completed a bounded Windows-fixture review with actual `grok-4.7-build`, xhigh, one model call and one turn. Use the collector and cleanup recipe in `outputs/hermes-windows-acceptance-2026-09-22/grok-acp-diagnosis.md`. Root `--max-turns` is not forwarded to the agent branch; the collector enforces one prompt and a 300-second total deadline. The latest managed-mail review also completed with actual `grok-4.7-build`; its three cases are now tested through source and packaged desktops. Bank and pack source reviews timed out without final findings. The later compact archive design review completed on 4.7/xhigh and its scope/crash/backup cases are covered in the archive receipt. Do not count a timeout as a completed review or infer complete context/tool isolation from CLI flags.
 
-You are building **RealBud**, a vertical Australian property-management desk. Not a PMS. Not Hermes. Not an agent OS.
+## Product
 
-**Wall line:** The PM talks to RealBud. RealBud does the routine work. It only reaches someone else when asked — and never sends a notice or moves trust.
+Build **RealBud**, a standalone, extensible business work operating system for individuals and offices. A person can work alone, join an office, participate in departments and retain their private workspace. Austin Realty is the first customer workflow pack. Property-management language, rules and REI adapters belong to that pack rather than defining every future workspace.
 
-RealBud owns the window (Desk · Ask · Schedule · You). Pinned Hermes profile `property` is the only worker, headless. Models attach on that profile. One user: the PM. One thread: Ask (and later the PM’s own WhatsApp/Telegram). Named loops on RealBud’s clock. Computer use is a trained portal adapter after Allow, not a playground. The book (`~/.realbud/vault`) is the only memory Hermes may use. `desk.json` is shop rules; evaluate never reads the book. PMS is the legal/money record; we operate it (CSV first, then API/click).
+RealBud owns the interface, authoritative work state, permissions, review, scheduling and recovery. Hermes is the headless worker behind it. Keep the upstream runtime unmodified and use reviewed releases; inspect `server/hermes-pin.ts` and `server/hermes-releases.ts` rather than relying on a version in an old document. Never launch Hermes.app or treat a worker's prompt/permission mode as authority to bypass RealBud controls.
 
-Hard gates: no send, no trust, no statutory draft, no invented legal clock, no Hermes.app, no Hermes source edits, no extra RealBud agents, no tenant-facing bot, no law crawler.
+Read the [business OS and Austin decision](decisions/2026-09-21-business-os-and-austin-workflows.md) for the architecture, acceptance criteria and implementation gaps. The [current end state](END-STATE.md) is the short product map.
 
-Current software is a training appliance (fixture book + CSV + fake portal) whose **beta door is done**: their export matches by address or their property code, morning cards land on Desk, the PM Copies into their PMS. Notes, Ask→Desk, intake, editable clocks, Friday owner letter v0, in-app worker attach, recovery-key unlock, first-run + go-live, worker-coverage holds, batch persist, last-checked times, and You → This office (eight visit fields, empty until typed) also shipped. A named office on that form still gates inbound, Pocket, and the graduate installer. Attended portal is Attach + Run beside me (2026-09-02) — not that form. Do not add surfaces. Do not rebuild PropertyMe.
+## Austin outcomes
 
----
+- Acquire the daily bank CSV for an approved account and range, preserve the source bytes, correct only approved references, review uncertain rows and deliver an artifact REI Cloud actually recognizes. Keep upload, validation, import and financial posting as distinct outcomes with evidence and recovery. REI remains the financial source of truth.
+- Read approved Gmail history through Composio, propose property/bill patterns, accept reviewed facts and show expected arrivals and verified due dates in RealBud's calendar. Prediction, invoice receipt, payment arranged and payment confirmed are different states.
+- Run a customer-configured morning scan around 08:00 in the office timezone. Maintain a ranked list of urgent work, actions, waiting/follow-ups and updates, with source links and reasons. Preserve human changes across scans and show missed/incomplete work honestly.
 
-## 1. What we are
+The existing supplied-file workflows and local CSV review are components, not proof that any of these outcomes is integrated end to end. Do not expose a schedule switch as working until its acquisition, persistence, review and recovery path works.
 
-A **supervised unregistered assistant** for Australian residential property managers, sold first through a **licence-training provider** to people who just passed.
+## Extensibility and managed boundary
 
-We sit **on** the agency PMS (PropertyMe, Property Tree, Reapit PM — confirm on the visit; do not assume). We take hours off the PM: routine loops plus the odd interrupt. A licensed person still sends notices and still moves trust money.
+Users may customize views, tabs, filters, mappings, workflow rules and schedules within their role. Hermes can propose these changes. Use validated, versioned workspace definitions with preview, approval where needed and recovery to a working version. Desk, Ask, Schedule and You are default navigation, not a permanent ban on useful customer views. Keep the default experience plain and usable for nontechnical staff.
 
-We **operate their system** so we can cover the jobs AiMe-class tools already sell (courtesy arrears, log a job, draft a reply, owner update) **and** the week those tools do not run (inbound/emergency, a portal with no API, a file note AiMe never sees). Native AiMe will feel smoother *inside* PropertyMe. We win by working **any** PMS, across the book + mail + one trained click, for shops that have no AiMe.
+RealBud retains service/provider configuration, master credentials, billing, entitlements and core authorization. Customers connect their own permitted source accounts without receiving Composio organization/project keys. Vendor-only custody requires an independently protected service; a hidden local setting or same-user worker is not sufficient. Current local key storage is a migration gap. Moving connector calls to a managed service also requires a truthful data-flow and retention contract.
 
-**Sales line:** “It works the system you already have — and the requests that never land in AiMe.”  
-**Not:** “We replaced PropertyMe.”
+Do not enable arbitrary privileged extensions or resurrect legacy agent/model/plugin surfaces to approximate customization. Generated code needs a real isolation/capability boundary before execution. Reuse Hermes capabilities through RealBud's approved tool paths and scoped APIs. Every server operation still validates identity, scope, revision and action authority.
 
-### What we are not
+## Durable constraints
 
-PMS, trust accountant, solicitor, Tapi, Hermes, OpenMausBot, OpenManus, Obsidian, a second brain, a tenant call-centre, a bot roster.
+- Preserve private/member/company/department isolation across setup, join, disconnect, transfer and recovery. A UI filter is not access control. Existing profile names, persisted data and recovery formats need compatible migrations, not broad renaming.
+- Preserve source evidence and immutable reviewed artifacts. Accept AI output only through typed validation and review appropriate to the effect. Repeated source acquisition must not duplicate tasks, bills or external imports.
+- Distinguish planned work, review, attempted action, confirmed success, failure and unknown result. Reconcile an unknown external effect before retry. Do not equate approval with execution or an uploaded CSV with accepted REI receipts.
+- Local reads, focused fixes, disposable tests and builds within the user's request are authorized. Live customer access, sending, financial actions, deployment and destructive changes need authority for that action. A workflow design is not a live-action grant.
+- Do not invent statutory deadlines, payment confirmation or legal facts. Existing PM controls against trust movement and unapproved sending remain in force; generalizing the shell is not permission to weaken them.
+- Never log or include secrets/customer contents in shared test fixtures or ordinary telemetry. Models and approved connectors receive only the data needed for an authorized operation.
+- Use RealBud's durable scheduler, not an independent Hermes cron path. A local device cannot perform a scan while it is off; show the missed/late state and resume only under the workflow's recovery policy.
+- Preserve unrelated changes in this shared tree. Use the smallest maintainable integration, inspect wiring and failure paths, and verify visible changes in a rendered UI. Do not stop at a first implementation if the authorized outcome is still incomplete.
 
-Do not ship under the names **PropertyMe**, **Hermes**, **OpenMausBot**, or **OpenManus**. Product name is **RealBud**. Data dir `~/.realbud`. App id `com.realbud.app`.
+## Current evidence and next implementation
 
----
+Start with [attended enrollment](REMOTE-APPROVER-ENROLLMENT-2026-09-22.md), [reviewed instruction history](SKILL-HISTORY-ARCHIVAL-2026-09-22.md), [website requests and local review](WEBSITE-REQUESTS-IMPLEMENTATION-2026-09-22.md), [history archival](PACK-HISTORY-ARCHIVAL-2026-09-22.md) and the latest source. The website can now request two explicitly published preparations, with exact local approval, existing executor receipts and recovery. The reporting link alone grants no execution authority. Fully remote approval and shared-department execution still require the additional enrolled capabilities in the protocol. These receipts are local evidence, not a live Austin rollout.
 
-## 2. Who talks to it
+The next sequence is source/evidence and managed-credential boundaries; complete Austin bank, bill and morning-task workflows; bounded workspace customization; then installed-device and office acceptance. Use the detailed decision's acceptance gates. Keep source, local tests, packaged builds, installed devices, live integrations and customer acceptance separate in every report.
 
-**The PM is the only user.**
+Related implementation references: `docs/ROUTINES.md`, `docs/WORKER-LIFECYCLE.md`, `docs/OFFICE-LIFECYCLE.md`, `docs/OFFICE-RECOVERY-RUNBOOK.md`, `docs/CONNECTION-LAYER.md`, `docs/HOSTED-ARCHITECTURE.md`. Older plans describe their dated scope; use the current decision when product direction conflicts.
 
-```
-PM  ── Desk or Ask or (later) phone ──▶  RealBud.app
-                                              │
-                                              │  same property worker
-                                              ▼
-                                         Hermes `property` (headless)
-                                              │
-                         only if the PM asked, and after Allow
-                                              ▼
-                              tenant / owner / tradie / PMS click
-```
+Latest checkpoint: [reviewed instruction archival and recovery](SKILL-HISTORY-ARCHIVAL-2026-09-22.md) is implemented. The full default Vitest suite passes 4,575 tests; a separate 42/42 native Hermes run resolves those opt-in skips, yielding 4,617 unique passing tests, zero failures and 149 remaining environment-gated skips. The final unsigned Mac candidate passes all four archival/revert/crash GUI groups, native startup and fresh private-profile checks; both encrypted backup formats preserve the complete archive graph and reset authority. The latest concrete-source Grok 4.7/xhigh attempt timed out without a review; independent reproductions and fixes are recorded separately. Source/package fingerprints and prior negative evidence are in the receipt.
 
-Messaging is how the **PM** uses the desk from a pocket. It is not how tenants talk to an agent. Auto-texting a tenant is send. Forbidden unless the PM asked and tapped Allow.
+The [two-device evidence checker repair](TWO-DEVICE-EVIDENCE-GATE-2026-09-22.md) now recovers the exact 71-case catalogue, formalizes the previously missing participant policy, binds schema-2 receipts to the contract digest, and runs explicit Node tests in normal QA and all three CI platforms. Templates and checker tests are not installed-device acceptance. The historical core register is no longer a dependency; its missing gate was not falsely presented as recovered.
 
-When pocket exists: RealBud starts the `property` gateway, allowlist = that PM only. WhatsApp **Business Cloud API** on a dedicated path for the PM — not Baileys QR on a personal phone. No tenant channel. No full terminal on the chat adapter. No Hermes setup wizard. `cron_mode: deny` stays.
+The [stable portal identity prerequisite](PORTAL-IDENTITY-2026-09-22.md) is locally implemented and verified: immutable provider/person/account bindings, identity epochs, strict signed sessions and current account/operator gates. Evidence includes 47 website unit tests, 110 PostgreSQL assertions, ten actual identity/browser groups and five request-compatibility groups; build/type checks passed. Actual integration checks exposed and fixed SDK user-session contamination and streamed admin child-content leakage. One unchanged account-overview lint error remains. No hosted migration or live provider sign-in occurred. The latest Grok session requested 4.7/xhigh but reported 4.6/xhigh; it stopped before any prompt, with cleanup verified. Do not treat it as a 4.7 review.
 
----
+The [attended remote-approver enrollment checkpoint](REMOTE-APPROVER-ENROLLMENT-2026-09-22.md) established local disclosure consent, portal candidate acceptance, attended confirmation and revocation recovery. The subsequent [remote work checkpoint](REMOTE-WORK-2026-09-22.md) implements complete protocol-2 review publication, decisions, online claims and both existing private-workspace executors. Actual source and isolated compiled desktop/Next/PostgreSQL/browser flows pass, including lost replies, SIGKILL before/after enqueue, headless revocation and mobile review. Both encrypted backup formats retain evidence and invalidate restored authority. Final source regression details and exact hashes are in that checkpoint; no hosted deployment or native installer acceptance is implied.
 
-## 3. Topology (locked)
+The [attended company-member binding checkpoint](COMPANY-PORTAL-BINDING-2026-09-22.md) now completes the identity/host prerequisite: independent fixed-origin proof redemption, member acceptance, owner confirmation, exact retries, certificate-rotation fencing and inert restore. Final checks pass 185 focused application tests, 70 website tests and 63 website PostgreSQL assertions. Actual source and isolated compiled desktop/Next/two-database flows each pass five groups, including restart, lost replies, pinned TLS and disconnect. This mapping does not authorize a department worker.
 
-```
-                 PM (only user)
-          Desk app          phone later
-               \                /
-                ▼              ▼
-           RealBud.app
-           Desk · Ask · Schedule · You
-                    │
-                    │  ACP / CLI / trained CUA
-                    ▼
-           Hermes `property`   pin v0.20.3 / tag v2026.8.16.2
-           SOUL · PM skills · model on the profile
-           cwd = ~/.realbud/vault
-           approvals.mode: manual   cron_mode: deny
-                    │
-         ┌──────────┼──────────────┐
-         ▼          ▼              ▼
-   desk.json      the book        PMS
-   shop rules     notes/SOP       money + legal file
-   evaluate       preferences     we read / operate
-                  not law         human sends
-```
+The [department execution authority checkpoint](DEPARTMENT-EXECUTION-AUTHORITY-2026-09-22.md) adds member-created/owner-confirmed single-case grants, dedicated background credentials, exact admission and renewal receipts, current scoped case reads, terminal lifecycle fencing and inert restore. Its internal encrypted installation client and real PostgreSQL/TLS path are implemented; verification and concrete limits are in the checkpoint. This is company authority, not completed website or worker integration.
 
-| Store | Holds | May override |
-|---|---|---|
-| PMS | Money, legal file | Nothing we invent |
-| `~/.realbud/desk.json` | Properties, options, drafts, ledger, evaluate | Notes cannot |
-| `~/.realbud/vault` | Narrative: `properties/<id>.md`, later owners/, decisions/, empty sop/ + reference/ | Preferences only |
+Next connect **the existing recipe executor and actual setup/recovery UI** to that authority, checking actual recipe/instruction/source digests and company permission at every source/provider entry. Persist the durable existing executor key before enqueue; keep the fixed start deadline separate from renewable company ownership. Then add purpose-specific online website work proof through the current confirmed portal/member mappings and exact reviewed descriptor/claim. Background work must continue using scoped delegation, never a stored general member session. Keep Morning private until a department source scope exists. The two databases are separate authorities. Preserve private protocol partitioning and managed credential/subscription boundaries. See `outputs/remote-work-2026-09-22/department-integration-next-map.md` for existing executor anchors; identity and delegation are now implemented prerequisites, not reasons to repeat those layers.
 
-**Hard rule:** `evaluateProperty` never reads the vault. Notes colour a draft. They do not change `draft` / `escalate` / `clear` / `skip` / `hold`.
-
-Worker identity stays in `pack/property/SOUL.md` → `~/.hermes/profiles/property/`. Do not put a second SOUL in the vault. Ignore Hermes `memories/`. Two brains is the failure mode.
-
----
-
-## 4. Window (locked)
-
-Four places. Nothing else on first paint.
-
-| Nav | Job |
-|---|---|
-| **Desk** | The work. Drafts, escalations, holds, property cards, Notes. Allow / Deny / Copy. |
-| **Ask** | One thread with the one worker (canonical id `bud`). “What’s waiting?”, “draft Friday for Oak”, “pipe burst.” Same Hermes ACP. |
-| **Schedule** | Named loops on RealBud’s clock. Not Hermes cron. Not a prompt runner. |
-| **You** | Name, Hands (pin + pack + test), later Pocket. |
-
-Ask is not a second inbox. If Ask drafts a courtesy or a job, it becomes a **Desk** card. Approve once.
-
-**Out of the default window:** Workshop, New assistant, New room, groups, Plugins, Computer playground, Chief of Staff, model shop, ⌘1–9 bot hopping, leftover Koda. Product mode already denies many of those routes — keep it that way. CUA is a **skill on a loop**, not a pane.
-
-Onboarding: name → three rules → Desk. No engines, no mic, no WhatsApp setup.
-
----
-
-## 5. Workflows (the only ones)
-
-**Routine — clock.** Schedule (e.g. 7:30 morning arrears) → Hermes or CSV supplies ledger facts → Desk evaluate (shop rules, not law) → cards → PM Allow/Deny → Copy, or one trained PMS/portal click after Allow. Lid shut: catch-up on open. Nothing sends while nobody is looking.
-
-**Routine — PM asks.** Ask or later phone → worker uses book + desk facts → answer, or a Desk card if something must leave the building.
-
-**Reach someone else.** Only because the PM asked, and only after Allow. Never auto. Never statutory. Never trust.
-
-**Here and there.** “Pipe burst at Oak” → classify, escalate card, spend-cap / after-hours from property options + note. Do not call the plumber. Do not pay.
-
-**Operate their PMS.** Read API where it exists; CSV/export until then; trained computer use only for the click the API will not give (create job, comment, courtesy reminder). Train once → recipe → named loop. Bounded tools only (`navigate`, `read`, `fill`, `click_semantic`). Bud may prefill. Submit stays human. Fake portal already proves this; live portal waits on `docs/PILOT-CONTRACT.md`.
-
-Loops (catalog, not agents):
-
-| Loop | Status |
-|---|---|
-| Morning arrears / money | Built (fixture + CSV + Hermes fail-closed) |
-| Friday owner letter | Built (v0: Desk facts + Notes, Copy-only) |
-| Inbound / emergency triage | Declared |
-
-Same worker. Different option sets on the property card. Not an emergency-bot / tenant-bot roster.
-
-### Routines: editable, still RealBud’s clock
-
-Full design (usability, eng, Hermes capability): `docs/ROUTINES.md`.
-
-The PM must be able to **see, turn on/off, retiming, and (later) add** routines from **Schedule** and from **Ask**. That is not Hermes Bot Mode cron and not the old OpenMausBot “pick a bot + free-text prompt.”
-
-| Piece | Owner | Hermes |
-|---|---|---|
-| When (7:30, Friday 4pm, weekdays) | RealBud Schedule | Never (`cron_mode: deny`) |
-| What lands on Desk | RealBud evaluate | Facts / draft text only |
-| How facts are read | Skill on `property` pack | `hermes -p property` |
-| Edit UI | Schedule form + Ask propose | No cron UI, no skill hub |
-
-**A routine is a typed loop, not a prompt.**
-
-Each routine is: `kind` (from a small catalog) + `when` + `which properties` + `enabled`. Kind is one of: morning-money, owner-letter, inbound-triage. Adding a routine means picking a kind that already has an evaluator + Hermes skill — not inventing a new agent.
-
-**GUI (Schedule)**  
-- List: name, next run, last result, On/Paused, Run now.  
-- Edit: time, weekdays, which properties (all vs this book vs one card).  
-- Add: choose a **kind that exists**. If the kind is still declared (owner-letter), the card stays “Planned” until that loop is built. No blank prompt box.
-
-**Ask (in-chat)**  
-Same objects, different door. “Run money check at 8 instead of 7:30.” “Pause Oak on the morning loop.” “Add Friday owner letters at 4.” Ask does **not** start a cron. It **proposes a Schedule change** as a Desk/Schedule card. Allow applies it. Deny leaves the clock alone. Same pattern as courtesy drafts.
-
-**Seamless with Hermes**  
-- One worker, one book, one SOUL.  
-- Clock tick → named skill → JSON/draft → Desk.  
-- Editing “how” (which bank, which CSV) is property options + skill, not a new bot.  
-- Lid shut: catch-up on open (already). Later launchd only writes a result file RealBud reads — still fail-closed, still no send.
-
-**Forbidden (looks like “routines” but is the old OS)**  
-- Free-text prompt saved as a job.  
-- Hermes gateway cron / `/cron`.  
-- “New assistant” per routine.  
-- Always-allow. A routine may **never** send, pay, or issue a notice even if the PM typed that in Ask.  
-- Ask applying a schedule change without Allow.
-
-**Build order (do not jump)**  
-1. Schedule edit of **existing** loops: time, weekdays, enable (GUI). Ask can propose those same fields.  
-2. Property scope on a loop (“all” vs one property).  
-3. Build owner-letter as a real kind, then it appears in Add.  
-4. Do not build “create any routine from chat” until kinds 1–3 exist and a named office has used the clock.
-
----
-
-## 6. Hard gates (never “be helpful”)
-
-- No trust EFT, disbursement, recon, or “pay the levy from the receipt.”
-- No draft or send of Form 11/12, NSW termination, VIC NTV, rent-increase, entry notices.
-- Day counts on Desk are **shop reminder rules**, not state law. One early day voids insurance. Do not invent a legal clock.
-- `POST /api/desk/drafts/:id/send` stays **403**. Courtesy disclaimer cannot be stripped.
-- No Always-allow, `--yolo`, Hermes cron, Hermes.app, Hermes source edits.
-- No TICA, lock changes, legal advice, inspection app, payments licence.
-- No photos of tenant belongings published.
-- No back-dating a maintenance request or a notice.
-- **The user never touches Hermes.** No Terminal, no `hermes` CLI in any user flow, no Hermes vocabulary outside Advanced diagnostics. RealBud drives the worker programmatically — install, model/auth config, updates — and translates every result into RealBud UI.
-- Law is a **refusal**, not a feature. No crawler, no national notice-period table. Quote a government page only if a human filed it with `source` + `retrieved` + `review_by`. Stale = do not use. SOP is the licensee’s or training partner’s; we author one page only: *no notices, no trust, escalate emergencies.*
-- Serving a notice on WhatsApp is not reliable service. Courtesy + disclaimer, or escalate.
-
----
-
-## 7. Stack (locked)
-
-| Piece | Rule |
-|---|---|
-| Window | This repo (OpenMausBot MIT fork). We own chrome. |
-| Worker | Hermes Agent **v0.20.3** (`v2026.8.16.2`, commit in `server/hermes-pin.ts`). Profile `property`. Pin and bump when **we** choose. Do not track `main`. |
-| Models | `hermes -p property model`. Not RealBud agents. |
-| Computer use | Bundled Cua, pin in `server/cua-bounded.ts` (0.19.3). macOS host for live. Bounded session + recipe. Linux/Windows: CSV + fake portal only until the contract says otherwise. |
-| OpenMausBot upstream | Harness/safety only (PATH, ports, redact, stall watchdog, proxy paths, permission broker). Not iOS, extra engines, teams, plugins, model shop. |
-| Install | RealBud.app + pinned Hermes + `pack/property`. Home screen says RealBud. Hands in You/Settings. |
-
-Forking Hermes Desktop is rejected. Overlaying Hermes.app is rejected.
-
----
-
-## 8. Where the software actually is (2026-08-29)
-
-Shipped, not slides:
-
-- Appliance chrome: Desk / Ask / Schedule / You. Warm Ledger tokens. Desk V3 book.
-- Product mode: one Bud thread; denied bot/group/plugin/cloud-computer routes
-- Desk book: add/edit/remove properties, options, locked `never`
-- Morning evaluate + Allow/Deny/Edit/Copy; send 403
-- CSV import matching by **address or property code** (`parsePmsExport`; identity-column aliases), freshness / unmatched / partial / reversed holds; ambiguous rows become row-level holds (batch-reject stays schema-only; zero-match imports never fake live)
-- **Notes on the property card; vault seeded as Hermes cwd; Allow appends to the note + decisions log; evaluate never reads the vault (regression-tested)**
-- **Ask → Desk: "Put on Desk" plus paste/drop intake that stages book cards for one Allow**
-- In-app worker install, model attach, Test hands, recovery-key reveal/unlock
-- Hermes pin, pack, fail-closed Recheck (spawn now also requires `approvals.mode: manual`)
-- Gate hardening: product mode denies `autoApprove`/`alwaysAllow`/`chiefOfStaff` on bot PATCH, Bud rename and Bud delete; auto-answer of permissions is off in product mode
-- Named loops with an editable clock (PATCH time/weekdays/enabled + revision, no backfill) and Schedule GUI chips
-- Shared this-morning brief: Recheck lands every known address; seeded demo kinds stay on the book and do not count as Held; inbox stays not connected until a named office reads mail
-- **Friday owner letter v0** (`server/owner-letter.ts`): one factual catch-up per property per week from Desk facts + Notes; Copy-only; Run now or the Friday clock lands it on Desk
-- Bounded fake-portal prefill; Bud submit 403
-- Attended live portal (“Run beside me”) behind per-job Attach; pay/sign/notice/send stay outside Bud (`docs/PORTAL-WORK.md`)
-- Pilot contract still **demo** until You → This office is filled with a real shop (`agency: RealBud Demo Book` does not count)
-
-Not shipped (see `docs/NEXT-WAVE.md`; W1–W5 are done):
-
-- Ask proposing a Schedule change as a card (PR C — deferred until a named office asks)
-- Inbound / emergency triage loop
-- Named paying/pilot agency
-- PropertyMe OAuth (read) — visit must confirm PMS + CSV pain
-- PM pocket messaging
-- Installer a graduate can double-click
-- Unattended CUA / Submit standing rule / money·sign·notice Submit (never)
-
----
-
-## 9. Beta bar (real-estate integration)
-
-Beta is **not** more architecture. Beta is one PM and a **real book**.
-
-**Door (must) — done at HEAD:**
-
-1. ✅ Import **their** arrears/export (identity-column mapper; reject ambiguous batches today).
-2. ✅ Match rows to Desk properties by **address or their property code**, not fixture ids.
-3. ✅ Morning cards from those facts (still shop rules, still no send).
-4. ✅ PM Copies into the PMS they already use.
-5. ✅ Hands stay honest (Worker live or CSV live — never silently Demo; miss or uncovered property ⇒ hold).
-
-**Sells — all shipped at HEAD:**
-
-6. ✅ Notes on the property card; Hermes cwd = vault; Allow appends to the note.
-7. ✅ Ask writes Desk (one Allow place).
-8. ✅ Friday owner letter v0 from Desk facts + Notes, Copy only (`server/owner-letter.ts`; clock or Run now).
-
-**Also done:** ambiguous/unmatched CSV rows are row-level hold work items; batch-reject stays for broken schemas; zero-match imports keep the book's honest hands.
-
-**After a named shop is in `docs/PILOT-CONTRACT.md`:**
-
-9. One vendor-test portal, bounded CUA, human Submit.
-10. Pocket: Telegram or WhatsApp Cloud, this PM only.
-11. PropertyMe **read** API only if the visit says they are on PropertyMe **and** CSV is the pain.
-
-**Not beta:** tenant WhatsApp, law crawler, trust, Form 11, Tapi, vault page, extra agents, Computer playground, “we replaced PropertyMe.”
-
-Architecture is ahead of integration. Prefer **their file in, our ids out** over another workflow engine.
-
----
-
-## 10. How to work in this repo
-
-- Local path: `/Users/yoda/projects/PropertyMe`. GitHub: `EzAuto399/RealBud`.
-- YAGNI. No unrequested abstractions. Tests for evaluate, gates, CSV parse, product-mode denials, send 403.
-- First-run and Desk copy must not contain `Obsidian`, `vault`, or `second brain`. UI noun is **Notes**.
-- Internal env `OMB_*` may stay for harness. User-facing strings say RealBud.
-- If a change does not make the worker **more PM and less general agent**, it is out.
-- Stop when a principal can say: “I can see what it used, it cannot send, and it did not invent a clock.”
-
-### Next build if no other instruction
-
-W1–W5 and the morning brief in `docs/NEXT-WAVE.md` are shipped. Stop unless a named office in `docs/PILOT-CONTRACT.md` asks for one gated item. Do not fake an inbox read.
-
-The visit still finishes the product. Fill the eight fields in `docs/PILOT-CONTRACT.md`. After a named agency: installer a graduate can double-click, then vendor-test portal prep.
-
-Do not start a law shelf, a vault page, a second agent, Ask-proposes-clock-changes (PR C), inbound mail, or live CUA until the pilot contract names a real agency and it asks for one.
+Retain native Windows GUI/key-custody/full memory-journal/update/uninstall, fresh macOS installer/profile, hosted-service, two-device and customer acceptance gates. Pack configuration and reviewed instruction archival are complete at their documented bounds; do not repeat them. None of the fictional-provider, checker or compiled/unsigned-package evidence is live office proof.

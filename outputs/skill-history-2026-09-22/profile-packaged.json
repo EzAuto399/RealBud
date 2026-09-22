@@ -1,0 +1,35 @@
+{
+  "passed": true,
+  "platform": "darwin",
+  "arch": "arm64",
+  "node": "v24.18.1",
+  "source": "/Users/yoda/projects/RealBud/outputs/skill-history-2026-09-22/package/mac-arm64/RealBud.app/Contents/Resources",
+  "packSource": "/Users/yoda/projects/RealBud/outputs/skill-history-2026-09-22/package/mac-arm64/RealBud.app/Contents/Resources/pack/property",
+  "runtime": "installed Electron/Node",
+  "proofLayer": "Compiled service and fresh private profile from the selected inputs; not Hermes runtime installation, model access, GUI or two-device acceptance",
+  "timings": {
+    "startupMs": 758,
+    "profileCheckMs": 29,
+    "watchdogMs": 25000,
+    "readinessAttempts": 150,
+    "perHealthRequestMs": 500
+  },
+  "profileProof": {
+    "freshHome": true,
+    "installed": true,
+    "approvalsManual": true,
+    "workroomReady": true,
+    "modelAttached": false,
+    "workerReady": false,
+    "privacy": "POSIX owner and private mode",
+    "files": 7,
+    "directories": 6
+  },
+  "checks": [
+    "Compiled server starts outside checkout without node_modules",
+    "Packaged PostgreSQL driver loads; unprovisioned company status is usable",
+    "Packaged TLS certificate generator executes successfully",
+    "Fresh private Hermes profile has shipped safeguards and skills, private storage, and no model credentials"
+  ],
+  "cleanupComplete": true
+}

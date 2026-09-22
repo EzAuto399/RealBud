@@ -1,0 +1,45 @@
+{
+  "ok": true,
+  "assertions": 110,
+  "database": "disposable PostgreSQL",
+  "externalNetwork": false,
+  "checks": [
+    "legacy billing read",
+    "canonical identity",
+    "first binding",
+    "duplicate email ambiguity",
+    "provider immutability",
+    "epoch tampering",
+    "email/company/role/disabled ABA",
+    "same provider concurrent replay",
+    "competing provider first-bind race",
+    "observed rename/disable/provision transaction contention",
+    "deletion/recreation tombstones",
+    "RLS and RPC permissions",
+    "fixed search_path"
+  ],
+  "completedAt": "2026-09-21T21:55:50.567154+00:00",
+  "node": "24.19.0",
+  "postgres": "16.15 (Homebrew)",
+  "command": "/Users/yoda/.nvm/versions/node/v24.19.0/bin/node website/scripts/test-portal-people-postgres.mjs",
+  "exitCode": 0,
+  "files": {
+    "website/supabase/migrations/202609220002_portal_people.sql": "17d9df75b244cb13e356ccfff3c27591aaf7a38aec0f0c4ce003d671cb79904d",
+    "website/scripts/test-portal-people-postgres.mjs": "9b2ffe0e9c867938f86a0fffea1caf422ba8033baa3ac1e1f7fc488c7c143cb0"
+  },
+  "additionalVerifiedChecks": [
+    "ON CONFLICT no orphan registry rows",
+    "rolled-back first binding leaves no provider mapping",
+    "same-provider different-account race",
+    "UTF16 lengths and ECMAScript boundary whitespace",
+    "invalid document rolls back inserted binding",
+    "repeatable read and serializable RPC refusal",
+    "held old repeatable-read snapshot refused after actual disable"
+  ],
+  "limits": [
+    "No deployed migration",
+    "No real provider callback",
+    "No remote execution grant added",
+    "Per-RPC identity check does not make a later financial or execution effect atomic"
+  ]
+}

@@ -14,6 +14,8 @@ export interface AppConfig {
    * apiKey = optional alias used by Gmail read-only setup / catalog;
    * userId = Platform user id for this office Mac (optional). */
   composio?: { key?: string; apiKey?: string; url?: string; userId?: string;
+    /** Protected gateway access only; never an upstream Composio project key. */
+    managed?: { endpoint: string; credential: string; profile: string };
     mode?: "consumer" | "gmail-readonly";
     officeApps?: string[];
     excludedApps?: string[];

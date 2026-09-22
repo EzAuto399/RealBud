@@ -1,0 +1,49 @@
+{
+  "at": "2026-09-21T21:14:24.082026+00:00",
+  "scope": "Reviewed instruction history domain and contracts; local fictional-data validation only",
+  "tests": {
+    "files": 6,
+    "tests": 85,
+    "new_skill_history_tests": 19,
+    "duration_seconds": 14.18,
+    "result": "passed",
+    "command": "node node_modules/vitest/vitest.mjs run server/customer-pack-skill-history.test.ts server/customer-packs.test.ts server/customer-pack-upgrades.test.ts server/customer-pack-upgrades.review.test.ts server/customer-pack-archive.test.ts server/customer-pack-archive.review.test.ts"
+  },
+  "server_typecheck": {
+    "result": "passed",
+    "command": "node node_modules/typescript/bin/tsc -p tsconfig.server.json --pretty false"
+  },
+  "files": {
+    "server/customer-packs.ts": "5dcbff5a493b48028f600b17d12759545a2f293c1593a4ea73db4235c3920e52",
+    "server/customer-pack-upgrades.ts": "0c1e2a39798d5258b59c195fb70f07193ea03ebc52f0d63f363bf5d51e17f0c1",
+    "server/customer-pack-skill-history.ts": "b51708ba0adcffde2153be5749ec29512d91dab755dea7c1e69be6278421c206",
+    "server/customer-pack-skill-history.test.ts": "aed2bbad146316a73d81931e2a300c7068b71002184abe7e0b82f5ed2d3e0743",
+    "server/customer-packs.test.ts": "3eabf55730a0cf9afe42ea02d3a27f24bce855d281dc641898d963f510b56a50",
+    "server/private-json.ts": "e5c230d98505b9b0c0c84a7945972ec4d5b8e633dadc5c61558388d10bf4d36c",
+    "shared/customer-packs.ts": "317f8d03ea6a2d5d12d2340c5d6c47f5a30f51469b0aad2b16b6e3858e562b0c"
+  },
+  "coverage": [
+    "100 inline revisions archived, proposal101, archived revert102 and stable archive head",
+    "active native bytes, runtime context, recipe binding, approvals and schedules unchanged during archival",
+    "six persistence interruption stages with cold recovery and exact retry",
+    "actual private writer accepts valid compact intent temporarily above 2 MB and completes below normal cap",
+    "near-cap completed state rejected when archival cannot free enough space",
+    "lineage-scoped active digest commitment validated after further proposal",
+    "stale pages, legacy digest-only revert rejection, true A-to-B-to-A stale review rejection",
+    "configuration removal, independent reintroduction, historical source selection and rollback retain correct roots",
+    "foreign, hardlinked and changed temporary evidence preserved",
+    "scope switch after immutable file holds journal until original scope resumes",
+    "legacy metadata preserved for recovery, damaged pending revert rejected before effects",
+    "Discovered red-to-green actual removal/config-archival-only skill root forces live journal version2"
+  ],
+  "boundaries": [
+    "No deployment or live customer/provider action",
+    "Root agent owns complete app suite, UI, builds and package proof",
+    "Backup worker owns encrypted backup and restore validation"
+  ],
+  "independent_review": {
+    "result": "11/11 passed across 3 files; reviewer reports no remaining concrete findings",
+    "source_hash_matched": "5dcbff5a493b48028f600b17d12759545a2f293c1593a4ea73db4235c3920e52",
+    "grok": "One bounded concrete-source attempt timed out without answer; cleanup verified by reviewer; no fabricated Grok endorsement"
+  }
+}

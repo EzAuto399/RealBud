@@ -1,16 +1,51 @@
+import { appVersion } from "./app-version.ts";
+import { createWorkspaceTabsHandler } from "./workspace-tabs.ts";
+import { createCustomerPackService } from "./customer-packs.ts";
+import { managedConnectorAccess, managedConnectorConfigured, managedConnectorSettings } from "./managed-connectors.ts";
+import { createOfficeLink, installationWorkerVersion } from "./office-link.ts";
+import { createWorkerModelAccess } from "./worker-model-access.ts";
+import { setWorkerModelAccessSnapshot } from "./hermes-runtime-env.ts";
+import { recordRemoteEvidence } from './website-remote-evidence.ts';
+import { createRemoteDisclosureReview } from './website-remote-disclosure.ts';
+import { createWebsiteExecutionContext } from './website-execution-context.ts';
+import { createWebsiteRequests } from './website-requests.ts';
+import { createWebsiteWorkAdapters, websiteWorkSettingsMutation } from './website-work-adapters.ts';
+import { createDepartmentWork } from './department-work.ts';
+import { askDepartmentWorker } from './department-worker.ts';
+import { companyMemberToken } from './company-host.ts';
+import type { DepartmentWorkPrepare } from '../shared/department-work.ts';
+import type { ConfirmCompanyExecution, RevokeCompanyExecution } from '../shared/company-execution.ts';
+import { currentWorkerProfile, withWorkerProfile } from "./hermes-profile.ts";
+import { createHermesMemoryReviewService, memoryReviewContext } from './hermes-memory-review.ts';
+import { MEMORY_REVIEW_API } from '../shared/hermes-memory-review.ts';
+import { createPrivateWorkspaceBackup } from './private-workspace-backup.ts';
+import { createPrivateBackupApi } from './private-backup-api.ts';
+import { createPrivateBackupCoordinator } from './private-backup-coordinator.ts';
+import { handlePrivateBackupV2Http } from './private-backup-http.ts';
+import { withDurablePrivateBackupRestore } from './private-backup-legacy-api.ts';
+import { WorkspaceActivityGate } from './workspace-activity.ts';
+import { PRIVATE_BACKUP_MAX_BYTES } from '../shared/private-workspace-backup.ts';
+import { createAgencySetupService } from './agency-setup.ts';
+import { workflowRecipeId } from '../shared/agency-workflow-packs.ts';
+import { createMailIngestionService } from './mail-ingestion.ts';
+import { runMorningMailWorkflow } from './morning-mail-workflow.ts';
+import { scanGmailReadOnly } from './composio-gmail.ts';
+import { scanManagedMail } from './managed-connectors.ts';
 import { askControlReply, parseAskControlIntent } from "./ask-control-intent.ts";
 import { createPairingCode } from "./channel-pairing.ts";
 // RealBud server — the harness host. Clients hold no transports
 // (upstream rule): the React app dispatches typed commands over HTTP and
 // folds one SSE event stream; every provider process runs here.
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { readFileSync, unlinkSync } from "node:fs";
+import { readFileSync, unlinkSync, existsSync, readdirSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join } from "node:path";
 import { askMessageSizeError } from "../shared/ask-message.ts";
 import { serviceInstanceId } from "../shared/service-identity.mjs";
 
 import { approvalKey, autoDecision } from "./auto-approve.ts";
+import { HERMES_MEMORY_APPROVAL, requiresOnceApproval, reservedApprovalKey } from '../shared/approval-policy.ts';
+import { permissionCardFields, guardPermissionDecision, canUseReviewedPortalRules } from './permission-policy.ts';
 import { applyLawDrift, lawWatchView, persistLawWatchResult, runLawWatch, setLawWatchScheduled } from "./law-watch.ts";
 import { addPortalRule, addRule, evaluateRules, isPortalRuleSurface, loadRules, parsePortalRuleKey, removeRule } from "./rules.ts";
 import { appendHistory, listHistory } from "./computer-history.ts";
@@ -26,6 +61,12 @@ import {
   listWorkflowPackStatus,
 } from "./workflow-packs.ts";
 import { groupExpectedBills, listExpectedBills, upsertExpectedBill } from "./expected-bills.ts";
+import { expectedBillsPage } from './expected-bills-page.ts';
+import { SourceBillRegister } from './source-bills.ts';
+import { createSourceBillsApi } from './source-bills-api.ts';
+import { createBillProposals, readBillProposal } from './bill-proposals.ts';
+import { BillReviewDraftStore } from './bill-review-drafts.ts';
+import { createBillReviewApi } from './bill-review-api.ts';
 import { portalJobIntentReply } from "./portal-job-intent.ts";
 import { scheduleIntentReply } from "./schedule-intent.ts";
 import {
@@ -62,7 +103,8 @@ import { executeRecipeJob } from "./job-executor.ts";
 import { manualRecipeRequestKey } from "./manual-job-request.ts";
 import { BatchService } from "./batches.ts";
 import { jobRuns, READY_BESIDE_YOU } from "./job-runs.ts";
-import { bankReferenceStore, humanHandoffs } from "./workflow-services.ts";
+import { bankReferenceStore, humanHandoffs, workflowDatabase } from "./workflow-services.ts";
+import { mailWorkspaceQuery } from './mail-workspace-query.ts';
 import { cuaHumanControl } from "./cua-human-control.ts";
 import * as box from "./box.ts";
 import * as composio from "./composio.ts";
@@ -97,7 +139,9 @@ import {
 import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { cuaAttendedReady, readCuaConnection } from "./local-computer.ts";
-import { applyPropertyPack, ensurePropertyPack, hermesHome } from "./hermes-pack.ts";
+import { browserRuntime } from "./browser-runtime.ts";
+import { releaseBrowserBrokers } from "./browser-broker.ts";
+import { applyPropertyPack, ensurePropertyPack, hermesHome, propertyProfileDir } from "./hermes-pack.ts";
 import { applyHandsReadiness, hermesStatus } from "./hermes-status.ts";
 import { bootstrapPlan, bootstrapPending } from "./worker-bootstrap.ts";
 import { tryHermesPing } from "./hermes-hands.ts";
@@ -109,7 +153,7 @@ import { readArtifact } from "./audit-artifacts.ts";
 import { readCsvMapping } from "./csv-ledger.ts";
 import { inspectLedgerColumns } from "./import-inspect.ts";
 import { Desk } from "./desk.ts";
-import { seedVault } from "./vault.ts";
+import { seedVault, DEFAULT_VAULT_DOCUMENTS } from "./vault.ts";
 import { openTerminalAndRun, setupCommandFor } from "./engine-setup.ts";
 import { attachModel, installInFlight, installStatus, listModelOptions, listModels, modelStatus, PROVIDER_OPTIONS, cancelBootstrapInstall, waitForBootstrapStop } from "./hermes-bridge.ts";
 import { cancelOAuth, oauthStatus, startOAuth } from "./hermes-oauth.ts";
@@ -121,9 +165,10 @@ import { createCompanyInstallation } from "./company-installation.ts";
 import { normalizeCompanyWorkflowTemplate } from "./company/workflow-template.ts";
 import { managedService } from "./managed-service.ts";
 import { isPrivilegedServiceMutation, isPrivilegedServiceRead } from "./service-admin.ts";
+import { serviceControl } from "./service-control.ts";
 import { careCredentialsLocked, careStatus, lockCare, unlockCare, serviceAdmin } from "./care-unlock.ts";
 import { CANONICAL_BUD_ID, CANONICAL_BUD_NAME, PRODUCT_MODE, PRODUCT_TURN_DEFAULTS, isCanonicalBud, productDenied, productRuntimeEventVisible } from "./product-mode.ts";
-import { coverageFromUncoveredHeld, LoopManager, type LoopId } from "./routines.ts";
+import { coverageFromUncoveredHeld, LoopManager, type LoopId, type LoopExecuteResult } from "./routines.ts";
 import { hostAllowed, needsSession, originAllowed, SESSION_TOKEN, sessionOk } from "./session-auth.ts";
 import { evaluatorForLoop } from "./workflow-catalog.ts";
 import { containsCredential } from "./redact.ts";
@@ -179,6 +224,9 @@ const STATIC_DIR = process.env.OMB_STATIC_DIR || null;
 
 /** Published on /api/health so the desktop app can recognise its own service. */
 const SERVICE_INSTANCE_ID = serviceInstanceId(DATA_DIR);
+const SERVICE_CONTROL = serviceControl(process.env.REALBUD_SERVICE_CONTROL_TOKEN, SERVICE_INSTANCE_ID);
+// Keep the shutdown capability in this process; workers inherit no copy.
+delete process.env.REALBUD_SERVICE_CONTROL_TOKEN;
 const MIME: Record<string, string> = {
   ".html": "text/html",
   ".js": "text/javascript",
@@ -349,6 +397,12 @@ function lastAssistantText(threadId: string, since: number): string {
   return texts.at(-1)?.text ?? "";
 }
 
+async function releaseComputerControl() {
+  await releaseBrowserBrokers();
+  await browserRuntime.stop();
+  if (!PRODUCT_MODE) await cuaHumanControl("release");
+}
+
 function signInHandoffs() {
   return humanHandoffs({
     release: async (threadId) => {
@@ -365,10 +419,12 @@ function signInHandoffs() {
       }
       watchdog.settle(threadId);
       if (owner && ownsBusy) { store.patchBot(owner.id, { busy: false }); broadcast({ kind: "bot", bot: store.bot(owner.id) }); }
-      await cuaHumanControl("release");
+      await releaseComputerControl();
     },
-    verify: async (binding, requestId) => (await cuaHumanControl("verify", binding, requestId)).verified === true,
-    restore: async () => { await cuaHumanControl("restore"); },
+    verify: async (binding, requestId) => binding.browser
+      ? browserRuntime.verifyLogin({ ...binding, ...binding.browser })
+      : !PRODUCT_MODE && (await cuaHumanControl("verify", binding, requestId)).verified === true,
+    restore: async () => { if (PRODUCT_MODE) await browserRuntime.resumeConnection(); else await cuaHumanControl("restore"); },
     resume: async (handoff, step) => {
       const old = jobRuns.get(handoff.value.runId);
       const recipe = old ? getRecipe(old.jobId) : undefined;
@@ -388,7 +444,8 @@ function signInHandoffs() {
         capabilities: fenceCapabilitiesFor(oneStep),
       });
       try {
-        await startTurn(bud.id, `Continue only reviewed step ${step + 1}: ${selected}`, { threadId: handoff.value.threadId, systemExtra: `${attendedJobSystemBlock(oneStep)}\nThis is recovery from an interrupted run. Earlier steps are outside this attempt. Never replay them or infer that they completed.`, computer: true, signInResumeId: handoff.id });
+        const instructions = await customerPacks.instructionContext(recipe.id);
+        await startTurn(bud.id, `Continue only reviewed step ${step + 1}: ${selected}`, { threadId: handoff.value.threadId, systemExtra: `${attendedJobSystemBlock(oneStep)}\n${instructions ? `Reviewed workflow guidance (no additional authority):\n${instructions}\n` : ''}This is recovery from an interrupted run. Earlier steps are outside this attempt. Never replay them or infer that they completed.`, computer: true, signInResumeId: handoff.id });
       } catch (error) { settleAttendedTurn(handoff.value.threadId, { ok: false, stopReason: "error", detail: "The selected recovery step could not start. Check this receipt before retrying." }); throw error; }
       return running.id;
     },
@@ -421,7 +478,7 @@ function settleAttendedTurn(
     ? humanSigninNeeded(currentText) : null;
   if (signIn && fenceContextFor(threadId)) {
     void pauseAttendedForLogin(threadId, signIn).catch(async error => {
-      await cuaHumanControl("release").catch(() => {});
+      await releaseComputerControl().catch(() => {});
       reportJobHistoryFailure(error);
       publishWorkerIssue({ source: "runtime", summary: "Sign-in handover needs attention", detail: "The sign-in request could not be saved or released safely. Close RealBud before entering credentials and review Work activity." });
     });
@@ -498,21 +555,21 @@ function publishWorkerIssue(input: Parameters<typeof noteWorkerIssue>[0]): void 
 /** Clear a recovered hands miss, or retry the ping when the last receipt failed. Reload still does not invent ready. */
 async function healHandsReadiness(): Promise<void> {
   const last = readHandsPing(DATA_DIR);
-  if (last?.ok) {
+  const status = await hermesStatus();
+  if (last?.ok && last.workerFingerprint === status.workerFingerprint) {
     resolveWorkerIssues("hands");
     return;
   }
-  const status = await hermesStatus();
   if (
     !status.cli.installed ||
-    !status.cli.matchesPin ||
+    !(status.cli.compatible ?? status.cli.matchesPin) ||
     !status.pack.installed ||
     !status.pack.approvalsManual ||
     !status.pack.workroomReady
   ) {
     return;
   }
-  const ping = await tryHermesPing({ memberKey: MEMBER_KEY });
+  const ping = await tryHermesPing({ memberKey: currentWorkerProfile().memberKey });
   writeHandsPing(DATA_DIR, {
     at: Date.now(),
     ok: ping.ok,
@@ -636,11 +693,24 @@ async function denyPendingRequests(threadId: string, instance: ProviderInstance 
 // records the active member here before dispatching its turn.
 const groupSpeakers = new Map<string, { botId: string; name: string; color: string }>();
 let loops: LoopManager | null = null;
+const websiteRunContext = createWebsiteExecutionContext({
+  binding: requestId => websiteRequests.executionBinding(requestId),
+  check: execution => websiteWork.check(execution.descriptor, execution.binding),
+});
+const checkWebsiteExecution = websiteRunContext.check;
+let privateRestoreLocked = false;
+let shuttingDown = false;
+const workspaceActivity = new WorkspaceActivityGate({ assertAdmission: () => {
+  if (privateRestoreLocked || shuttingDown) throw Object.assign(new Error('The service is held for restore or shutdown. Restart RealBud before starting work.'), { status: 409 });
+} });
+let privateBackupRequests = 0;
+let privateBackupEpoch = 0;
 const desk = new Desk({ memberKey: MEMBER_KEY });
 const batches = new BatchService({
+  canRecover: () => !workspaceActivity.paused && !privateRestoreLocked && !shuttingDown,
   snapshot: () => desk.snapshot(),
   notes: id => desk.notesFor(id).body,
-  available: async () => applyHandsReadiness(await hermesStatus(), readHandsPing(DATA_DIR)).ready,
+  available: () => withWorkerProfile(desk.memberKeyForWorker(), async () => applyHandsReadiness(await hermesStatus(), readHandsPing(DATA_DIR)).ready),
 });
 try {
   writeDeskContext(desk.snapshot());
@@ -655,7 +725,7 @@ let localVmLifecycleBusy = false;
 
 function attachFenceToOpened(event: RuntimeEvent): RuntimeEvent {
   if (event.type !== "request.opened" || event.requestType !== "permission") return event;
-  if (event.tool === "bud_connected_app_action") return event;
+  if (event.tool === "bud_connected_app_action" || event.tool === HERMES_MEMORY_APPROVAL) return event;
   if (!isComputerTool(event.tool, event.summary)) return event;
   const fence = fenceContextFor(event.threadId);
   if (!fence) return event;
@@ -664,7 +734,7 @@ function attachFenceToOpened(event: RuntimeEvent): RuntimeEvent {
     { tool: event.tool, params: event.params, summary: event.summary },
   );
   const payload = fencePayload(decision);
-  return payload ? { ...event, fence: payload } : event;
+  return payload ? { ...event, ...(canUseReviewedPortalRules(event, decision) ? { approvalPolicy: undefined } : {}), fence: payload } : event;
 }
 
 bus.subscribe((raw: RuntimeEvent) => {
@@ -806,12 +876,13 @@ bus.subscribe((raw: RuntimeEvent) => {
       break;
     case "request.opened": {
       const permission = event.requestType === "permission";
+      const onceApproval = permission && requiresOnceApproval(event);
       // Auto mode / always-allow: answer routine tool permissions for the
       // bot so it keeps working. A QUESTION always reaches the human — the
       // whole point of asking is that a person decides — and anything that
       // looks destructive stops even in auto mode.
       const asker = bot ?? (speaker ? store.bot(speaker.botId) : undefined);
-      if (permission && asker && event.requestId && event.tool !== "bud_connected_app_action" && isComputerTool(event.tool, event.summary)) {
+      if (permission && asker && event.requestId && event.tool !== HERMES_MEMORY_APPROVAL && event.tool !== "bud_connected_app_action" && isComputerTool(event.tool, event.summary)) {
         const fence = fenceContextFor(event.threadId);
         const request = { tool: event.tool, params: event.params, summary: event.summary };
         const instance = event.providerInstanceId
@@ -826,7 +897,7 @@ bus.subscribe((raw: RuntimeEvent) => {
               await instance?.adapter.respondToRequest(event.threadId, requestId, { behavior: "deny", message: "Human sign-in is required. Do not read or type credentials." }).catch(() => {});
               await paused;
             } catch (error) {
-              await cuaHumanControl("release").catch(() => {});
+              await releaseComputerControl().catch(() => {});
               reportJobHistoryFailure(error);
               publishWorkerIssue({ source: "runtime", summary: "Sign-in handover needs attention", detail: "The saved sign-in checkpoint could not be confirmed. Close RealBud before entering credentials, then check saved work with your setup person." });
             }
@@ -861,13 +932,13 @@ bus.subscribe((raw: RuntimeEvent) => {
         }
         const decision = fenceDecision({ ...fence, rules: loadRules() }, request);
         const allowNote = decision.kind === "allow" ? ruleAllowNote(decision) : undefined;
-        recordFenceEvidence(
+        if (!(onceApproval && decision.kind === 'allow')) recordFenceEvidence(
           event.threadId,
           decision.kind === "allow"
             ? { at: Date.now(), kind: "action", note: allowNote! }
             : fenceEvidence(request, decision),
         );
-        if (decision.kind === "deny" || decision.kind === "allow") {
+        if (decision.kind === "deny" || decision.kind === "allow" && !onceApproval) {
           const reason = decision.kind === "deny" ? (decision.reason ?? "Denied.") : allowNote!;
           const toolId = event.tool || "computer";
           const spoken =
@@ -895,7 +966,7 @@ bus.subscribe((raw: RuntimeEvent) => {
                   options: ["Allow", "Deny"],
                   requestId,
                   tool: event.tool,
-                  allowKey: approvalKey(event.tool, event.summary),
+                  ...permissionCardFields(event),
                 },
               });
               askMessageByRequest.set(`${event.threadId}:${requestId}`, card.id);
@@ -909,7 +980,7 @@ bus.subscribe((raw: RuntimeEvent) => {
       // Product mode uses standing rules (guards still win).
       let settled: string | null = null;
       let ruleDeny = false;
-      if (permission && asker && event.requestId && event.tool !== "bud_connected_app_action") {
+      if (permission && !onceApproval && asker && event.requestId && event.tool !== "bud_connected_app_action") {
         if (!PRODUCT_MODE) {
           settled = autoDecision(asker, event.tool, event.summary);
         } else {
@@ -959,7 +1030,7 @@ bus.subscribe((raw: RuntimeEvent) => {
                 options: ["Allow", "Deny"],
                 requestId,
                 tool,
-                allowKey: approvalKey(tool, summary),
+                ...permissionCardFields(event),
                 held: "Auto mode couldn't answer this one.",
               },
             });
@@ -976,16 +1047,16 @@ bus.subscribe((raw: RuntimeEvent) => {
         role: "bot",
         kind: "options",
         card: {
-          title: permission ? "Approval needed" : "Your bot has a question",
+          title: permission ? event.tool === HERMES_MEMORY_APPROVAL ? 'Review memory change' : "Approval needed" : "Your bot has a question",
           subtitle: submitSummary ?? event.summary,
           options: event.choices?.length ? event.choices : permission ? ["Allow", "Deny"] : [],
           requestId: event.requestId,
           tool: permission ? event.tool : undefined,
           // the exact grant "always allow" would remember, decided here so
           // client and server can never derive it differently
-          allowKey: permission ? approvalKey(event.tool, event.summary) : undefined,
+          ...(permission ? permissionCardFields(event) : {}),
           // in auto mode a card can only mean the guard stopped it — say so
-          held: permission && asker?.autoApprove ? "This looked destructive, so auto mode stopped to ask." : undefined,
+          held: onceApproval ? 'This request needs your approval once. Saved rules do not apply.' : permission && asker?.autoApprove ? "This looked destructive, so auto mode stopped to ask." : undefined,
           ...(event.type === "request.opened" && event.fence ? { fence: event.fence } : {}),
         },
       });
@@ -998,7 +1069,7 @@ bus.subscribe((raw: RuntimeEvent) => {
         const resolvedCard = messageId
           ? store.messagesFor(event.threadId).find((m) => m.id === messageId)?.card
           : undefined;
-        recordFenceEvidence(event.threadId, {
+        if (resolvedCard?.tool !== HERMES_MEMORY_APPROVAL) recordFenceEvidence(event.threadId, {
           at: Date.now(),
           kind: "action",
           note:
@@ -1190,7 +1261,13 @@ async function finalScreenFrame(botId: string): Promise<Frame | null> {
 }
 
 // ── turn dispatch (upstream ProviderCommandReactor, miniature) ──────────
-async function startTurn(
+async function startTurn(...args: Parameters<typeof startSeatTurn>) {
+  return workspaceActivity.run(() => {
+    if (privateRestoreLocked || shuttingDown) throw Object.assign(new Error('The service is held for restore or shutdown. Restart RealBud before starting work.'), {status:409});
+    return withWorkerProfile(desk.memberKeyForWorker(), () => startSeatTurn(...args));
+  });
+}
+async function startSeatTurn(
   botId: string,
   text: string,
   opts?: {
@@ -1517,15 +1594,24 @@ async function startTurn(
       if (gmailBinding?.accountId && (!PRODUCT_MODE || allowedApps.includes("gmail"))) integrations.composio = { ...(PRODUCT_MODE ? { allowedApps } : {}), key: gmailBinding.apiKey, gmailReadOnly: {
         authConfigId: gmailBinding.authConfigId, userId: gmailBinding.userId, accountId: gmailBinding.accountId, requestId: newId(),
       } };
-      else if (!gmailReadOnlyMode(cfg) && cfg.composio?.key && (!PRODUCT_MODE || allowedApps.length)) {
-        const mcp = await composio.resolveConnectedAppsMcp(cfg, desk.memberKeyForWorker());
+      else if (!gmailReadOnlyMode(cfg) && connectedAppsConfigured(cfg) && (!PRODUCT_MODE || allowedApps.length)) {
+        const mcp = await composio.resolveConnectedAppsMcp(cfg, currentWorkerProfile().memberKey);
         integrations.composio = { ...(PRODUCT_MODE ? { allowedApps } : {}), key: mcp.key, url: mcp.url, headers: mcp.headers };
       }
       if (PRODUCT_MODE) {
+        if (instance.driverKind === 'hermesAgent' && !opts?.systemExtra) {
+          const memberKey = currentWorkerProfile().memberKey ?? '';
+          const proposalIntegration = memoryReviews.proposalIntegration(threadId, () => (desk.memberKeyForWorker() ?? '') === memberKey);
+          if (proposalIntegration) integrations.memoryProposals = proposalIntegration;
+        }
         const handoffOk = !signInHandoffs().isHolding() || signInHandoffs().canResume(opts?.signInResumeId);
-        const cua = handoffOk ? readCuaConnection() : null;
-        const mountComputer = handoffOk && Boolean(cua || opts?.computer);
-        if (cua) integrations.localComputer = cua;
+        const browserJob = handoffOk ? fenceContextFor(threadId) : undefined;
+        if (browserJob) {
+          const binding = opts?.signInResumeId ? signInHandoffs().get(opts.signInResumeId).value.binding : undefined;
+          if (opts?.signInResumeId && !binding?.browser) throw new Error("Choose and check the connected browser page before resuming this step.");
+          integrations.browser = { runId: browserJob.runId, allowedOrigins: [...browserJob.allowedOrigins], capabilities: [...browserJob.capabilities],
+            ...(binding?.browser ? { checkpoint: { ...binding.browser, origin: binding.origin, accountMarker: binding.accountMarker } } : {}) };
+        }
         managedService.assertCapability("reasoning");
         await instance.adapter.sendTurn({
           threadId,
@@ -1534,11 +1620,11 @@ async function startTurn(
           resumeCursor: rewound ? undefined : task.resumeCursors[instanceId],
           transcript,
           system: [productBudSystemPrompt(), officeSourceTurnContext(allowedApps),
+            integrations.memoryProposals ? 'For requested conversational preference changes, use memory_propose from memory-proposals with a complete typed add, replace, remove or batch payload. Use the same requestId and exact payload to check an interrupted proposal. The tool only creates a pending review: it does not apply or approve memory. Direct the person to You → Bud → Bud’s memory to review the complete change. Do not claim it was saved to memory until its human decision is confirmed. Preferences do not change business records, credentials or work permissions.' : undefined,
             allowedApps.length ? `Selected office account IDs: ${JSON.stringify(Object.fromEntries(allowedApps.map(slug => [slug, cfg.composio?.selectedAccounts?.[slug] ?? access?.services[slug]?.accounts.find(account => /^active$/i.test(account.status))?.id])))}. Use only these accounts. If the tool cannot target an account unambiguously, ask before proceeding.` : undefined,
-            gmailReadOnlyMode(cfg) && allowedApps.includes("gmail") ? "This connection provides only GMAIL_GET_PROFILE, GMAIL_LIST_THREADS and GMAIL_FETCH_MESSAGE_BY_THREAD_ID. Use only the account and thread IDs allowed by the server. No alternate mail or computer route is allowed." : undefined,
+            (gmailReadOnlyMode(cfg) || managedConnectorConfigured(cfg)) && allowedApps.includes("gmail") ? "This connection provides only GMAIL_GET_PROFILE, GMAIL_LIST_THREADS and GMAIL_FETCH_MESSAGE_BY_THREAD_ID. Use only the account and thread IDs allowed by the server. No alternate mail or computer route is allowed." : undefined,
             opts?.systemExtra].filter(Boolean).join("\n\n"),
           integrations,
-          ...(mountComputer ? { computer: true } : {}),
         });
         if (rewound) store.patchBot(bot.id, { rewound: false, resumeCursors: {} });
         return;
@@ -1754,7 +1840,11 @@ async function waitUntilTurnStopped(instance: ProviderInstance | null, threadId:
 // ── named loops: the RealBud clock presses Desk Recheck ────────────────
 // RealBud owns WHEN; Hermes owns HOW (headless, facts only, no cron).
 // A loop is never a bot turn, a prompt, or a second agent.
+let mailAuthorityEpoch = 0;
+let websiteAuthorityEpoch = 0;
 function commitDesk(snapshot: ReturnType<Desk["snapshot"]>) {
+  mailAuthorityEpoch++;
+  websiteAuthorityEpoch++;
   try {
     writeDeskContext(snapshot);
   } catch {
@@ -1766,6 +1856,7 @@ function commitDesk(snapshot: ReturnType<Desk["snapshot"]>) {
 
 bindRemoteDecisions({
   desk,
+  withWorkspaceActivity: workspaceActivity.run,
   commit: commitDesk,
   channels: [telegramDecisionAdapter(), discordDecisionAdapter(), slackDecisionAdapter()],
   storeDir: DATA_DIR,
@@ -1816,10 +1907,19 @@ loops = new LoopManager({
       patchRecipeStatus(recipeId, approved ? "active" : "shadow");
     }
   },
-  execute: async (loop, run) => {
+  execute: (loop, run) => withWorkerProfile(desk.memberKeyForWorker(), async (): Promise<LoopExecuteResult> => {
+    if (privateRestoreLocked) return {ok:false,detail:'Private restore is staged; restart the service before running work.'};
     jobRuns.sweepQueuedAttended();
     if (desk.recovery.active) return { ok: false, detail: "desk is in recovery — schedules are paused" };
+    if (loop.id === 'inbound-triage') return websiteRunContext.runLoop(run.requestId, () => runMorningMailWorkflow(run, {
+      collect: async () => { await checkWebsiteExecution(); return mailWorkspace.collect(); }, prepareInput: async () => { await checkWebsiteExecution(); return mailWorkspace.prepareInput(); }, applyReview: async result => { await checkWebsiteExecution(); return mailWorkspace.applyReview(result); },
+      recipe: async () => { const selected = (await agencySetup.getConfiguration()).settings.workflowPackId; const id = workflowRecipeId(selected,'inbox-triage'); return id ? getRecipe(id) : undefined; },
+      admitPack: async id => { const selected = (await agencySetup.getConfiguration()).settings.workflowPackId; if (!selected) throw new Error('Choose the agency workflow pack.'); await customerPacks.packRecipeBinding(selected,id); },
+      execute: (recipe, input) => executeRecipeJob(recipe, input, { readBookSnapshot: () => desk.snapshot(), instructionContext: async id => { const instructions = await customerPacks.instructionContext(id); await checkWebsiteExecution(); return instructions; } }),
+    }));
     if (loop.id.startsWith("recipe-")) {
+      try { await customerPacks.assertReadyForRecipe(loop.id.slice('recipe-'.length)); }
+      catch { return { ok: false, detail: 'This workflow pack needs recovery. Open customer pack setup.' }; }
       const recipe = getRecipe(loop.id.slice("recipe-".length));
       if (!recipe) return { ok: false, detail: "that job is no longer on the book" };
       if (recipeHasPortalCapability(recipe.capabilities)) {
@@ -1845,7 +1945,7 @@ loops = new LoopManager({
         scheduledFor: run.scheduledFor,
         loopRunId: run.id,
         idempotencyKey: `${recipe.id}:${recipe.revision}:${run.manual ? `manual:${run.id}` : `schedule:${run.scheduledFor}`}`,
-      }, { readBookSnapshot: () => desk.snapshot() });
+      }, { readBookSnapshot: () => desk.snapshot(), instructionContext: id => customerPacks.instructionContext(id) });
       const ok = executed.run.status === "completed" || executed.run.status === "awaiting-approval";
       const status = executed.run.status === "awaiting-approval" ? "awaiting-approval"
         : executed.run.status === "partial" ? "partial" : ok ? "completed" : "failed";
@@ -1874,9 +1974,8 @@ loops = new LoopManager({
     if (snapshot.mode === "demo") return { ok: true, detail: snapshot.handsDetail ?? "Demo check completed." };
     const live = snapshot.hands === "hermes" || snapshot.hands === "csv";
     return { ok: live, detail: snapshot.handsDetail ?? (live ? "Desk check completed." : "live check did not use live facts") };
-  },
+  }),
 });
-loops.start();
 
 // ── config hot-reload ─────────────────────────────────────────────────
 // ── group turn engine ──────────────────────────────────────────────────
@@ -2033,7 +2132,7 @@ function startGroupTurn(groupId: string, text: string) {
 function configStatus(req?: IncomingMessage) {
   return {
     xai: { configured: Boolean(cfg.xai?.key) },
-    composio: { configured: Boolean(cfg.composio?.key), apiKeyConfigured: Boolean(cfg.composio?.apiKey),
+    composio: { configured: connectedAppsConfigured(cfg), apiKeyConfigured: Boolean(cfg.composio?.apiKey), managed: managedConnectorConfigured(cfg),
       mode: gmailReadOnlyMode(cfg) ? "gmail-readonly" : "consumer", readOnlyConfigured: Boolean(gmailReadOnlyBinding(cfg)),
       ...(cfg.composio?.gmailReadOnly?.authConfigId ? { readOnlyAuthConfigId: cfg.composio.gmailReadOnly.authConfigId } : {}),
     },
@@ -2049,6 +2148,9 @@ function configStatus(req?: IncomingMessage) {
 }
 
 function invalidateConnectedAppAuthority() {
+  mailAuthorityEpoch++;
+  websiteAuthorityEpoch++;
+  mailWorkspace.cancel();
   connectedAppAccess.invalidate();
   revokeConnectedAppsBrokers();
   broadcast({ kind: "office-sources-changed" });
@@ -2262,20 +2364,48 @@ const companyHost = createCompanyInstallation({ dataDirectory: DATA_DIR,
   // not expose the legacy API or enable shared workers. Storage creation still
   // needs an admitted database runtime and service-administrator authority.
   previewEnabled: process.env.REALBUD_COMPANY_HOST_PREVIEW !== "0",
-  // A member signing in to an office host is this seat's identity. Adopt it on the
-  // running desk so the next worker spawn uses that seat's profile, without a
-  // restart. The env var stays the operator override for a seat launched with a
-  // known member id; this is the path a seat that *joins* a host takes.
+  // Membership and private worker identity are separate. Pin the existing
+  // physical profile once at startup; office sign-in never moves the private Bud.
+  initialWorkerKey: MEMBER_KEY || undefined,
+  privateStateKey: Buffer.from(desk.recoveryKeyHex(), 'hex'),
+  executionWorkerBinding: () => createHash('sha256').update(JSON.stringify({ config: cfg, profile: currentWorkerProfile().profile, worker: readHandsPing(DATA_DIR)?.workerFingerprint })).digest('hex'),
   onSeatIdentity: memberId => {
-    desk.setMemberKey(memberId);
     oplog("seat", `adopted member identity ${memberId.slice(0, 8)}…`);
   },
   authorizeAdmin: req => serviceAdmin.authorize(req), hasAdminSession: req => serviceAdmin.status(req).authenticated });
 
-const server = createServer(async (req, res) => {
+// Vendor provisioning arrives with the pairing redeem: the connector credential
+// goes to config, the model key to the private vault, and the worker sees it
+// only through the launch-time snapshot below. Nothing here awaits a network.
+const workerModelAccess = createWorkerModelAccess({ directory: DATA_DIR, key: Buffer.from(desk.recoveryKeyHex(), 'hex') });
+const refreshWorkerModelAccess = async () => {
+  try { setWorkerModelAccessSnapshot(await workerModelAccess.env()); }
+  catch (error) { setWorkerModelAccessSnapshot({}); oplog("boot", `model access needs recovery: ${error instanceof Error ? error.message : String(error)}`); }
+};
+void refreshWorkerModelAccess();
+const officeLink = createOfficeLink({
+  directory: DATA_DIR,
+  appVersion: appVersion(),
+  provisioning: {
+    apply: async (provisioning, installationId) => { await workerModelAccess.apply(provisioning, installationId); await refreshWorkerModelAccess(); },
+    withdraw: async () => { const changed = await workerModelAccess.withdraw(); await refreshWorkerModelAccess(); return changed; },
+    withdrawn: () => workerModelAccess.withdrawn(),
+    active: async () => (await workerModelAccess.state()).provisioned,
+    reconcile: async () => { const changed = await workerModelAccess.reconcile(); if (changed) await refreshWorkerModelAccess(); return changed; },
+    clear: async () => { await workerModelAccess.clear(); await refreshWorkerModelAccess(); },
+  },
+  report: () => withWorkerProfile(desk.memberKeyForWorker(), async () => {
+    const status = applyHandsReadiness(await hermesStatus(), readHandsPing(DATA_DIR));
+    return { appVersion: appVersion(),
+      workerVersion: installationWorkerVersion(status.cli.versionText), workerReady: status.ready };
+  }),
+});
+
+const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWorker(), async () => {
   const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
   const path = url.pathname;
   const method = req.method ?? "GET";
+  let countedPrivateRequest = false;
   try {
     if (needsSession(path, method)) {
       const gate = sessionOk(req, PORT);
@@ -2283,6 +2413,25 @@ const server = createServer(async (req, res) => {
     } else if (path.startsWith("/api/") && path !== "/api/health" && path !== "/api/session" && !path.startsWith("/api/internal/")) {
       const gate = sessionOk(req, PORT);
       if (!gate.ok && gate.status === 403) return json(res, 403, { error: gate.error });
+    }
+    // Staging is an installation-wide barrier. Reads that can recover or
+    // refresh business stores also remain held until the cold restore finishes.
+    const restoreControl = /^\/api\/private-backup(?:\/|$)/.test(path) ||
+      ['/api/health','/api/session','/api/service/stop','/api/service/status','/api/service-admin/status'].includes(path);
+    if (workspaceActivity.paused && path.startsWith('/api/') && !restoreControl && path !== '/api/events')
+      return json(res, 409, { error: 'RealBud is briefly holding work while it captures your backup. Wait for the backup to finish, then retry.', code: 'private_snapshot_active' });
+    if (privateRestoreLocked && path.startsWith('/api/') && !restoreControl)
+      return json(res,409,{error:'Private restore is staged. Restart the RealBud service to finish before doing more work.',code:'private_restore_staged'});
+    if (path.startsWith('/api/') && !restoreControl && path !== '/api/events') {
+      countedPrivateRequest = true; privateBackupRequests++;
+      if (!['GET','HEAD','OPTIONS'].includes(method) && !path.startsWith('/api/private-backup')) privateBackupEpoch++;
+    }
+    if (/^\/api\/private-backup(?:\/|$)/.test(path)) {
+      res.setHeader('cache-control','no-store');
+      if (!privateBackupCoordinator) return json(res,503,{error:'Backup storage needs recovery. Existing business files are preserved.',code:'storage-unavailable'});
+      if (await handlePrivateBackupV2Http(req,res,url,privateBackupCoordinator)) return;
+      const result = await privateBackupApi(path,method,method === 'GET' ? undefined : await readBody(req,PRIVATE_BACKUP_MAX_BYTES + 4096));
+      return json(res,result!.status,result!.body);
     }
     // Privileged service settings use an independent per-renderer identity.
     const adminState = serviceAdmin.status(req);
@@ -2297,6 +2446,17 @@ const server = createServer(async (req, res) => {
         if (!adminGate.ok) return json(res, adminGate.status, { error: adminGate.error, code: "service_admin_required" });
         res.setHeader("x-realbud-service-admin-expires", String(adminGate.expiresAt));
       }
+    }
+    // Fence in-flight source proposals before any local setup/plan mutation can
+    // yield. A rejected edit may hold a proposal but can never broaden access.
+    if (!['GET','HEAD','OPTIONS'].includes(method) && (
+      /^\/api\/(?:agency-setup|customer-packs|hermes|connected-apps|service-admin|config)(?:\/|$)/.test(path) ||
+      /^\/api\/recipes(?:\/|$)/.test(path) && ['PATCH','PUT','DELETE'].includes(method))) mailAuthorityEpoch++;
+    if (websiteWorkSettingsMutation(path, method)) websiteAuthorityEpoch++;
+    if (path === "/api/service/stop" && method === "POST") {
+      if (!SERVICE_CONTROL.accepts(req, await readBody(req))) return json(res, 403, { error: "This desktop does not control the current office service." });
+      res.once("finish", () => { setImmediate(() => process.emit("SIGTERM")); });
+      return json(res, 200, { stopping: true });
     }
     if (path === "/api/service-admin/status" && method === "GET") {
       res.setHeader("cache-control", "no-store");
@@ -2321,7 +2481,25 @@ const server = createServer(async (req, res) => {
     if (path.startsWith("/api/company/")) {
       res.setHeader("cache-control", "no-store");
       if (!["GET", "HEAD"].includes(method) && !String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
-      const response = await companyHost.handle(path, method, req, ["GET", "HEAD"].includes(method) ? undefined : await readBody(req, 32_768));
+      if (path.startsWith('/api/company/department-work/')) {
+        if (method !== 'POST') return json(res,405,{error:'Use the department preparation controls.'});
+        const body=await readBody(req,32_768), session=companyMemberToken(req);
+        if (!session) return json(res,401,{error:'Sign in to this office to review department work.'});
+        const operation=path.slice('/api/company/department-work/'.length);
+        if (operation==='catalog' && body && Object.keys(body).join(',')==='departmentId') return json(res,200,await departmentWork.catalog(session,body.departmentId));
+        if (operation==='prepare') return json(res,200,await departmentWork.prepare(session,body as DepartmentWorkPrepare));
+        if (operation==='list') return json(res,200,await departmentWork.list(session,body));
+        if (operation==='confirm') return json(res,200,await departmentWork.confirm(session,body as ConfirmCompanyExecution));
+        if (operation==='revoke') return json(res,200,await departmentWork.revoke(session,body as RevokeCompanyExecution));
+        if (operation==='reconcile' && body && Object.keys(body).join(',')==='grantId') return json(res,200,await departmentWork.reconcile(session,body.grantId));
+        return json(res,400,{error:'Check the department preparation request.'});
+      }
+      const recoveryUpload = path === "/api/company/host-recovery/restore" && method === "POST";
+      if (recoveryUpload) {
+        const gate = serviceAdmin.authorize(req);
+        if (!gate.ok) return json(res, gate.status, { error: gate.error, code: "service_admin_required" });
+      }
+      const response = await companyHost.handle(path, method, req, ["GET", "HEAD"].includes(method) ? undefined : await readBody(req, recoveryUpload ? 49 * 1024 * 1024 : 32_768));
       const adminAfterCompany = serviceAdmin.status(req);
       if (adminAfterCompany.authenticated && adminAfterCompany.expiresAt) res.setHeader("x-realbud-service-admin-expires", String(adminAfterCompany.expiresAt));
       return json(res, response.status, response.body);
@@ -2451,6 +2629,57 @@ const server = createServer(async (req, res) => {
     }
 
     // ── named loops (RealBud clock; never a bot, never Hermes cron) ─────
+    if (path.startsWith('/api/agency-setup')) {
+      if (desk.recovery.active && method !== 'GET') return json(res, 503, { error: 'Recover the private book before changing workflow setup.' });
+      const previous = method === 'PUT' ? (await agencySetup.getConfiguration()).revision : undefined;
+      const result = await agencySetup.handle(path, method, method === 'GET' ? undefined : await readBody(req, 400_000));
+      if (previous !== undefined && (await agencySetup.getConfiguration()).revision !== previous) { mailWorkspace.cancel(); loops!.setEnabled('inbound-triage', false); }
+      return json(res, result?.status ?? 404, result?.body ?? { error: 'Unknown agency setup action.' });
+    }
+    const mailQuery = path.startsWith('/api/mail-workspace') ? mailWorkspaceQuery(url.searchParams,
+      method === 'GET' && path === '/api/mail-workspace/items' ? 'tasks' : method === 'GET' && path === '/api/mail-workspace/scans' ? 'scans' : 'none') : undefined;
+    if (path === '/api/mail-workspace' && method === 'GET') {
+      const state = await mailWorkspace.get(), loop = loops!.listLoops().find(l => l.id === 'inbound-triage')!;
+      const latest = loops!.listRuns().filter(r => r.loopId === 'inbound-triage').sort((a,b) => b.createdAt-a.createdAt)[0];
+      return json(res, 200, { ...state, schedule: { revision: loop.revision, enabled: loop.enabled, available: loop.available && !loops!.recovery.active,
+        timezone: loop.schedule.timezone ?? loops!.timezone, localTime: loop.schedule.time, weekdays: loop.schedule.weekdays, nextRunAt: loop.nextRunAt,
+        detail: 'Starts at this office time while this computer is running. Missed and late work is recorded in Schedule.' },
+        operation: latest ? { state: ['queued','running'].includes(latest.status) ? 'running' : ['completed','awaiting-approval','partial'].includes(latest.status) ? 'complete' : latest.status === 'interrupted' ? 'interrupted' : 'failed',
+          kind: 'review', startedAt: latest.startedAt ?? latest.createdAt, detail: latest.detail ?? 'Morning review queued.', requestId: latest.requestId } : null });
+    }
+    if (path === '/api/mail-workspace/items' && method === 'GET') return json(res, 200, await mailWorkspace.page(mailQuery));
+    if (path === '/api/mail-workspace/scans' && method === 'GET') return json(res, 200, await mailWorkspace.scanHistory(mailQuery));
+    if (path.startsWith('/api/mail-workspace') && method !== 'GET' && desk.recovery.active) return json(res, 503, { error: 'The private book needs recovery. Mail changes are paused.' });
+    if (path === '/api/mail-workspace/scan' && method === 'POST') {
+      const body = await readBody(req); if (!body || Object.keys(body).length) return json(res, 400, { error: 'Mail scope comes from reviewed agency settings.' });
+      return json(res, 200, await mailWorkspace.collect());
+    }
+    if (path === '/api/mail-workspace/review' && method === 'POST') {
+      const body = await readBody(req);
+      if (!body || Object.keys(body).some(k => !['requestId','expectedRevision'].includes(k)) || !body.requestId || body.expectedRevision === undefined) return json(res,400,{error:'Provide the request ID and current schedule revision.'});
+      const run = loops!.runNow('inbound-triage', { requestId: body.requestId, expectedRevision: body.expectedRevision });
+      if (!run) return json(res,409,{error:'Morning priorities is unavailable. Check agency setup and Schedule.'});
+      return json(res, 202, { run });
+    }
+    if (path === '/api/mail-workspace/schedule' && method === 'PATCH') {
+      const body = await readBody(req);
+      if (!body || Object.keys(body).join(',') !== 'enabled' || typeof body.enabled !== 'boolean') return json(res,400,{error:'Choose whether the reviewed morning schedule is enabled.'});
+      if (!body.enabled) return json(res,200,{loop:loops!.setEnabled('inbound-triage',false)});
+      await refreshOfficeSources(); const authority = await agencySetup.assertWorkflowReady('morning-priorities');
+      const settings = authority.settings;
+      return json(res,200,{loop:loops!.patchClock('inbound-triage',{enabled:true,time:settings.morningReview.localTime,weekdays:settings.morningReview.weekdays,timezone:settings.timeZone})});
+    }
+    const mailItem = path.match(/^\/api\/mail-workspace\/items\/([a-f0-9]{64})(\/source)?$/);
+    if (mailItem && method === 'GET' && mailItem[2]) return json(res,200,await mailWorkspace.source(mailItem[1]));
+    if (mailItem && method === 'GET' && !mailItem[2]) return json(res, 200, { item: await mailWorkspace.getItem(mailItem[1]) });
+    if (mailItem && method === 'PATCH' && !mailItem[2]) return json(res,200,await mailWorkspace.update(mailItem[1],await readBody(req,10_000)));
+    if (path === '/api/loops/history' && method === 'GET') {
+      return json(res, 200, loops!.history({
+        cursor: url.searchParams.get('cursor') ?? undefined,
+        limit: url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : undefined,
+        loopId: url.searchParams.get('loopId') ?? undefined,
+      }));
+    }
     if (path === "/api/loops" && method === "GET") {
       const fromParam = url.searchParams.get("from");
       const toParam = url.searchParams.get("to");
@@ -2465,6 +2694,7 @@ const server = createServer(async (req, res) => {
     let loopMatch = path.match(/^\/api\/loops\/([\w-]+)\/run$/);
     if (loopMatch && method === "POST") {
       const body = await readBody(req);
+      if(loopMatch[1] === 'inbound-triage' && (!body.requestId || body.expectedRevision === undefined)) return json(res,400,{error:'Morning review requires its request identifier and current schedule revision.'});
       try {
         if (desk.recovery.active) return json(res, 503, { error: "The book is in recovery. Scheduled work is paused; keep the previous request until its result can be checked." });
         const request = body.requestId === undefined ? undefined : {
@@ -2482,6 +2712,7 @@ const server = createServer(async (req, res) => {
     }
     loopMatch = path.match(/^\/api\/loops\/([\w-]+)$/);
     if (loopMatch && method === "PATCH") {
+      if (loopMatch[1] === 'inbound-triage') return json(res,409,{error:'Use Morning priorities to adopt the reviewed agency schedule.'});
       const body = await readBody(req);
       if (body.enabled === undefined && body.time === undefined && body.weekdays === undefined) {
         return json(res, 400, { error: "nothing to change — send enabled, time, or weekdays" });
@@ -2685,7 +2916,7 @@ const server = createServer(async (req, res) => {
         if (!run?.threadId || run.status !== "running" || fenceContextFor(run.threadId)?.runId !== run.id) return json(res, 409, { error: "That attended job is no longer running. Refresh Work activity." });
         return json(res, 200, await pauseAttendedForLogin(run.threadId, body.reason === "mfa" ? "mfa" : "login"));
       }
-      const match = path.match(/^\/api\/human-handoffs\/(handover:[\w-]+)\/(continue|stop|retry-release|binding|close|resume-step)$/);
+      const match = path.match(/^\/api\/human-handoffs\/(handover:[\w-]+)\/(continue|stop|retry-release|binding|close|resume-step|tabs)$/);
       if (!match || method !== "POST") return json(res, 404, { error: "Unknown sign-in action." });
       const body = await readBody(req, 4096), [, id, action] = match;
       if (action === "continue") return json(res, 200, await handoffs.continue(id, body.revision));
@@ -2694,28 +2925,45 @@ const server = createServer(async (req, res) => {
       if (action === "resume-step") return json(res, 200, await handoffs.resumeStep(id, body.revision, body.step));
       if (action === "retry-release") return json(res, 200, await handoffs.retryRelease(id, body.revision));
       const sourceRun = jobRuns.get(handoffs.get(id).value.runId);
+      if (action === "tabs") {
+        const handoff = handoffs.get(id);
+        if (!sourceRun || handoff.revision !== body.revision || handoff.value.state !== "awaiting_login") return json(res, 409, { error: "This sign-in checkpoint changed. Refresh it before choosing a page." });
+        return json(res, 200, { tabs: await browserRuntime.chooseLoginTabs(sourceRun.spec.allowedOrigins) });
+      }
       let bindingHost = "";
+      if (PRODUCT_MODE && !body.binding?.browser) return json(res, 400, { error: "Choose the signed-in page from your connected browser and save its visible labels." });
       try { bindingHost = new URL(body.binding?.origin).hostname; } catch { /* rejected below */ }
       if (!sourceRun || !bindingHost || !originMatches(bindingHost, sourceRun.spec.allowedOrigins)) return json(res, 403, { error: "The sign-in check must use a site in this saved job." });
+      if (body.binding?.browser && body.binding.browser.browserId !== (await browserRuntime.status()).selectedBrowserId) return json(res, 409, { error: "Choose a page from the browser selected on this computer." });
       return json(res, 200, handoffs.bind(id, body.revision, body.binding));
     }
     if (path === "/api/bank-reference" || path.startsWith("/api/bank-reference/")) {
       const gate = sessionOk(req, PORT);
       if (!gate.ok) return json(res, gate.status, { error: gate.error });
+      const { bankReferenceQuery } = await import('./bank-reference-query.ts');
+      const bankQuery = bankReferenceQuery(url.searchParams,path === '/api/bank-reference' && method === 'GET');
       const banks = bankReferenceStore();
       if (path === "/api/bank-reference/settings" && method === "GET") return json(res, 200, { settings: banks.settings() });
-      if (path === "/api/bank-reference" && method === "GET") return json(res, 200, { batches: banks.list() });
-      if (path === "/api/bank-reference" && method === "POST") return json(res, 200, banks.create(await readBody(req, 1_100_000)));
-      const match = path.match(/^\/api\/bank-reference\/(bank:[a-f0-9]{64})(?:\/(review|export|original))?$/);
+      if (path === "/api/bank-reference" && method === "GET") return json(res, 200, banks.page(bankQuery));
+      if (path === "/api/bank-reference" && method === "POST") return json(res, 200, banks.create(await readBody(req, 2_000_000)));
+      const match = path.match(/^\/api\/bank-reference\/(bank:[a-f0-9]{64}(?::r(?:[2-9]|[1-9][0-9]{1,5}))?)(?:\/(review|export|original|amend))?$/);
       if (!match) return json(res, 404, { error: "Unknown bank review." });
       const [, id, action] = match;
       if (!action && method === "GET") return json(res, 200, banks.get(id));
+      if (action === 'amend' && method === 'POST') return json(res, 200, banks.amend(id, await readBody(req, 2_000_000)));
       if (action === "review" && method === "POST") {
         const body = await readBody(req, 2_000_000);
         return json(res, 200, banks.review(id, body.revision, body.decisions));
       }
       if ((action === "export" || action === "original") && method === "POST") return json(res, 200, banks.export(id, action === "original"));
       return json(res, 405, { error: "Unsupported bank review action." });
+    }
+    if (path === '/api/job-runs/history' && method === 'GET') {
+      return json(res, 200, jobRuns.history({
+        cursor: url.searchParams.get('cursor') ?? undefined,
+        limit: url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : undefined,
+        jobId: url.searchParams.get('jobId') ?? undefined,
+      }));
     }
     if (path === "/api/job-runs" && method === "GET") {
       const jobId = url.searchParams.get("jobId")?.trim() || undefined;
@@ -2731,6 +2979,16 @@ const server = createServer(async (req, res) => {
         const status = (error as { status?: number }).status ?? 500;
         return json(res, status, { error: error instanceof Error ? error.message : String(error) });
       }
+    }
+    if (path.startsWith('/api/workspace-tabs')) {
+      res.setHeader('cache-control', 'no-store');
+      const result = await workspaceTabs.handle(path, method, method === 'GET' ? undefined : await readBody(req));
+      if (result) return json(res, result.status, result.body);
+    }
+    if (path.startsWith('/api/customer-packs')) {
+      res.setHeader('cache-control', 'no-store');
+      const result = await customerPacks.handle(path, method, method === 'GET' ? undefined : await readBody(req, 2_000_000));
+      if (result) return json(res, result.status, result.body);
     }
     // ── office workflow packs (RealBud clock + recipe templates) ─────
     if (path === "/api/workflow-packs" && method === "GET") {
@@ -2761,8 +3019,24 @@ const server = createServer(async (req, res) => {
       }
     }
     if (path === "/api/expected-bills" && method === "GET") {
-      const bills = listExpectedBills();
-      return json(res, 200, { bills, groups: groupExpectedBills(bills) });
+      return json(res, 200, expectedBillsPage(url.searchParams, listExpectedBills, sourceBills));
+    }
+    if (/^\/api\/bill-review-drafts(?:\/|$)/.test(path) || path.startsWith('/api/bill-proposals/')) {
+      res.setHeader('cache-control', 'no-store');
+      if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && !String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) {
+        return json(res, 415, { error: 'content-type must be application/json' });
+      }
+      const result = billReviewApi(url, method, ['GET', 'HEAD', 'OPTIONS'].includes(method) ? undefined : await readBody(req, 70_000));
+      return json(res, result?.status ?? 404, result?.body ?? { error: 'Unknown saved review action.' });
+    }
+    if (path === '/api/bill-proposals' && method === 'POST') {
+      if (desk.recovery.active) return json(res,503,{error:'Recover the private book before preparing bills.'});
+      const result = await billProposals(await readBody(req,10_000));
+      return json(res,['queued','running'].includes(result.run.status)?202:200,result);
+    }
+    if (/^\/api\/bill-(?:register|evidence|occurrences|series|scan)(?:\/|$)/.test(path)) {
+      const result = await sourceBillsApi(url,method,method === 'GET' ? undefined : await readBody(req,30_000));
+      return json(res,result?.status ?? 404,result?.body ?? {error:'Unknown bill action.'});
     }
     if (path === "/api/expected-bills" && method === "POST") {
       if (desk.recovery.active) {
@@ -2845,9 +3119,11 @@ const server = createServer(async (req, res) => {
       }
       const body = await readBody(req);
       if (loops.recovery.active) return json(res, 503, { error: loops.recovery.detail });
-      const before = typeof body.draft?.id === "string" ? getRecipe(body.draft.id) : undefined;
+      const draftId = typeof body.draft?.id === 'string' ? body.draft.id.trim() : null;
+      const before = draftId ? getRecipe(draftId) : undefined;
+      if (draftId && body.draft.status === 'active') await customerPacks.assertReadyForRecipe(draftId);
       const recipes = saveRecipe(body.draft);
-      const saved = recipes.find((recipe) => recipe.id === body.draft?.id);
+      const saved = recipes.find((recipe) => recipe.id === draftId);
       if (saved && (!before || saved.revision !== before.revision)) loops.adoptRecipePlan(saved.id);
       return json(res, 201, { recipes });
     }
@@ -2860,11 +3136,12 @@ const server = createServer(async (req, res) => {
     const recipeRun = path.match(/^\/api\/recipes\/([\w-]+)\/run$/);
     if (recipeRun && method === "POST") {
       const body = await readBody(req);
+      await customerPacks.assertReadyForRecipe(recipeRun[1]);
       const recipe = getRecipe(recipeRun[1]);
       if (!recipe) return json(res, 404, { error: "no such recipe" });
       try {
         const idempotencyKey = manualRecipeRequestKey(recipe, body, "shadow");
-        const existing = jobRuns.list(recipe.id).find((run) => run.idempotencyKey === idempotencyKey);
+        const existing = jobRuns.getByIdempotencyKey(idempotencyKey);
         if (existing) return json(res, ["queued", "running"].includes(existing.status) ? 202 : 200, {
           run: existing,
           reused: true,
@@ -2875,7 +3152,7 @@ const server = createServer(async (req, res) => {
           mode: "shadow",
           trigger: "manual",
           idempotencyKey,
-        });
+        }, { instructionContext: id => customerPacks.instructionContext(id) });
         return json(res, ["queued", "running"].includes(executed.run.status) ? 202 : 200, {
           run: executed.run, session: executed.session, reused: executed.reused,
         });
@@ -2886,6 +3163,7 @@ const server = createServer(async (req, res) => {
     }
     const recipeAttend = path.match(/^\/api\/recipes\/([\w-]+)\/attend$/);
     if (recipeAttend && method === "POST") {
+      await customerPacks.assertReadyForRecipe(recipeAttend[1]);
       const recipe = getRecipe(recipeAttend[1]);
       const bud = store.productBud();
       const attendBody = await readBody(req);
@@ -2901,7 +3179,7 @@ const server = createServer(async (req, res) => {
         return json(res, 409, { error: "The older queued run was cancelled. Review and approve the current plan, then start it again." });
       }
       const blocked = attendBlocked(recipe, {
-        cuaReady: cuaAttendedReady(),
+        cuaReady: PRODUCT_MODE ? (await browserRuntime.status()).state === "ready" : cuaAttendedReady(),
         busy: Boolean(bud?.busy),
         inFlight: Boolean(
           recipe &&
@@ -2912,6 +3190,9 @@ const server = createServer(async (req, res) => {
       });
       if (blocked) return json(res, blocked.status, { error: blocked.error });
       if (!recipe || !bud) return json(res, 404, { error: ATTEND_ERRORS.unknown });
+      await customerPacks.assertReadyForRecipe(recipe.id);
+      const latestRecipe = getRecipe(recipe.id);
+      if (!latestRecipe || latestRecipe.revision !== recipe.revision) return json(res, 409, { error: 'This workflow changed while readiness was checked. Review the current plan before starting.' });
       const threadId = bud.threadId;
       try {
         const running = queued
@@ -2934,9 +3215,10 @@ const server = createServer(async (req, res) => {
           allowedOrigins: [...running.spec.allowedOrigins],
           capabilities: fenceCapabilitiesFor(recipe),
         });
+        const instructions = await customerPacks.instructionContext(recipe.id);
         await startTurn(bud.id, attendedUserText(recipe), {
           threadId,
-          systemExtra: attendedJobSystemBlock(recipe),
+          systemExtra: [attendedJobSystemBlock(recipe), instructions && `Reviewed workflow instructions (do not extend the granted capabilities):\n${instructions}`].filter(Boolean).join('\n\n'),
           computer: true,
         });
         return json(res, 202, { run: jobRuns.get(running.id) ?? running });
@@ -2958,11 +3240,12 @@ const server = createServer(async (req, res) => {
     const recipePrepare = path.match(/^\/api\/recipes\/([\w-]+)\/prepare$/);
     if (recipePrepare && method === "POST") {
       const body = await readBody(req);
+      await customerPacks.assertReadyForRecipe(recipePrepare[1]);
       const recipe = getRecipe(recipePrepare[1]);
       if (!recipe) return json(res, 404, { error: "no such recipe" });
       try {
         const idempotencyKey = manualRecipeRequestKey(recipe, body, "prepare");
-        const existing = jobRuns.list(recipe.id).find((run) => run.idempotencyKey === idempotencyKey);
+        const existing = jobRuns.getByIdempotencyKey(idempotencyKey);
         if (existing) return json(res, ["queued", "running"].includes(existing.status) ? 202 : 200, {
           run: existing, reused: true,
         });
@@ -2974,7 +3257,7 @@ const server = createServer(async (req, res) => {
           mode: "prepare",
           trigger: "manual",
           idempotencyKey,
-        }, { readBookSnapshot: () => desk.snapshot() });
+        }, { readBookSnapshot: () => desk.snapshot(), instructionContext: id => customerPacks.instructionContext(id) });
         return json(res, ["queued", "running"].includes(executed.run.status) ? 202 : 200, {
           run: executed.run, reused: executed.reused,
         });
@@ -2997,6 +3280,7 @@ const server = createServer(async (req, res) => {
         if ((body.planApproved === true || body.status === "active") && loops.recovery.active) {
           return json(res, 503, { error: loops.recovery.detail });
         }
+        if (body.planApproved === true || body.status === 'active') await customerPacks.assertReadyForRecipe(recipeMatch[1]);
         const recipes = patchRecipe(recipeMatch[1], body);
         if (body.planApproved === true || body.status === "active") loops.adoptRecipePlan(recipeMatch[1]);
         return json(res, 200, { recipes });
@@ -3341,6 +3625,94 @@ const server = createServer(async (req, res) => {
     }
 
     // ── pinned Hermes worker (Desk hands; never Hermes Desktop) ────────
+    if (path === "/api/browser" && method === "GET") return json(res, 200, await browserRuntime.status());
+    if (path.startsWith("/api/browser/") && method === "POST") {
+      const body = await readBody(req);
+      if (path === "/api/browser/connect") return json(res, 200, await browserRuntime.connect());
+      if (path === "/api/browser/select") return json(res, 200, await browserRuntime.select(String(body.browserId ?? "")));
+      if (path === "/api/browser/stop" || path === "/api/browser/disconnect") {
+        // Revoke tool access before releasing the browser, including an in-flight approval.
+        await releaseBrowserBrokers();
+        return json(res, 200, await browserRuntime.stop(path.endsWith("disconnect")));
+      }
+    }
+    if (path === "/api/office-link" && method === "GET") return json(res, 200, await officeLink.status());
+    if (path === "/api/office-link" && method === "POST") {
+      await officeLink.link(await readBody(req));
+      // A missed report must not hide a successfully persisted link.
+      await officeLink.report().catch(() => {});
+      return json(res, 200, await officeLink.status());
+    }
+    if (path === "/api/office-link/report" && method === "POST") {
+      await officeLink.report(); return json(res, 200, await officeLink.status());
+    }
+    if (path === "/api/office-link" && method === "DELETE") {
+      await websiteRequests.disable();
+      await officeLink.disconnect(); return json(res, 200, await officeLink.status());
+    }
+    if (path === '/api/website-requests' || path.startsWith('/api/website-requests/')) {
+      res.setHeader('cache-control', 'no-store');
+      if (path === '/api/website-requests/remote-work' && method === 'GET') {
+        const raw = url.searchParams.get('before');
+        if (raw !== null && (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw)) || Number(raw) < 1)) return json(res, 400, { error: 'Invalid history page.' });
+        return json(res, 200, { status: await websiteRequests.remoteWork.status(), ...websiteRequests.remoteWork.list(raw ? { before: Number(raw) } : {}) });
+      }
+      if (path.startsWith('/api/website-requests/remote-work/') && method === 'POST') {
+        const body = await readBody(req, 4096);
+        if (!body || typeof body !== 'object' || Array.isArray(body)) return json(res, 400, { error: 'Use an object for this work action.' });
+        const action = path.slice('/api/website-requests/remote-work/'.length);
+        if (action === 'cancel') {
+          if (Object.keys(body).length !== 2 || typeof body.id !== 'string' || !Number.isSafeInteger(body.expectedRevision) || body.expectedRevision < 1) return json(res, 400, { error: 'Use the current work request and revision.' });
+          return json(res, 200, await websiteRequests.remoteWork.cancel(body.id, body.expectedRevision));
+        }
+        if (Object.keys(body).length) return json(res, 400, { error: 'This action does not accept additional settings.' });
+        if (action === 'enable') await websiteRequests.remoteWork.enable();
+        else if (action === 'disable') await websiteRequests.remoteWork.disable();
+        else if (action === 'sync') await websiteRequests.remoteWork.sync();
+        else return json(res, 404, { error: 'Unknown remote work action.' });
+        return json(res, 200, { status: await websiteRequests.remoteWork.status(), ...websiteRequests.remoteWork.list() });
+      }
+      if(path==='/api/website-requests/remote' && method==='GET')return json(res,200,await websiteRequests.remote.status());
+      if(path.startsWith('/api/website-requests/remote/') && method==='POST'){
+        const body=await readBody(req,8192);
+        const action=path.slice('/api/website-requests/remote/'.length);
+        if(action==='preview')return json(res,200,await websiteRequests.withRemoteActivity(()=>remoteDisclosureReview.preview(body)));
+        if(action==='approve-disclosure')return json(res,200,await websiteRequests.withRemoteActivity(()=>remoteDisclosureReview.approve(body)));
+        if(action==='prepare')return json(res,200,await websiteRequests.remote.prepare(body));
+        if(action==='begin')return json(res,200,await websiteRequests.remote.begin(body));
+        if(action==='confirm')return json(res,200,await websiteRequests.remote.confirm(body));
+        if(action==='sync' || action==='revoke'){
+          if(Object.keys(body).some(key=>key!=='enrollmentId') || action==='revoke'&&typeof body.enrollmentId!=='string')return json(res,400,{error:'Use the current invitation only.'});
+          return json(res,200,action==='sync'?await websiteRequests.remote.sync(body.enrollmentId):await websiteRequests.remote.revoke(body.enrollmentId));
+        }
+        if(action==='disable'&&Object.keys(body).length===0){await websiteRequests.disable();return json(res,200,await websiteRequests.remote.status());}
+        return json(res,404,{error:'Unknown workspace access action.'});
+      }
+      if (path === '/api/website-requests' && method === 'GET') {
+        const raw = url.searchParams.get('before');
+        if (raw !== null && (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw)) || Number(raw) < 1)) return json(res, 400, { error: 'Invalid history page.' });
+        return json(res, 200, { status: await websiteRequests.status(), ...websiteRequests.list(raw ? { before: Number(raw) } : {}) });
+      }
+      if (method === 'POST') {
+        const body = await readBody(req, 8192);
+        if (path === '/api/website-requests/enroll') return json(res, 200, await websiteRequests.enroll(body));
+        if (path === '/api/website-requests/disable') return json(res, 200, await websiteRequests.disable());
+        if (path === '/api/website-requests/sync') { await websiteRequests.sync(); return json(res, 200, { status: await websiteRequests.status(), ...websiteRequests.list() }); }
+        const match = path.match(/^\/api\/website-requests\/([a-f0-9-]{36})\/(preview|decision|cancel)$/);
+        if (match) {
+          if (match[2] !== 'decision' && Object.keys(body).some(key=>key!=='expectedRevision')) return json(res,400,{error:'Use the current request revision only.'});
+          if (match[2] === 'preview') return json(res, 200, await websiteRequests.preview(match[1], body.expectedRevision));
+          if (match[2] === 'decision') return json(res, 200, await websiteRequests.decide(match[1], body));
+          return json(res, 200, await websiteRequests.cancel(match[1], body.expectedRevision));
+        }
+      }
+      return json(res, 404, { error: 'Unknown website request action.' });
+    }
+    if (path === MEMORY_REVIEW_API || path.startsWith(`${MEMORY_REVIEW_API}/`)) {
+      res.setHeader('cache-control', 'no-store');
+      const result = await memoryReviews.handle(path, method, method === 'POST' ? await readBody(req, 8192) : undefined, url.searchParams);
+      return json(res, result!.status, result!.body);
+    }
     if (path === "/api/hermes" && method === "GET") {
       const status = applyHandsReadiness(await hermesStatus(), readHandsPing(DATA_DIR));
       const current = modelStatus();
@@ -3374,7 +3746,7 @@ const server = createServer(async (req, res) => {
         return json(res, 415, { error: "content-type must be application/json" });
       }
       await readBody(req);
-      const ping = await tryHermesPing({ memberKey: MEMBER_KEY });
+      const ping = await tryHermesPing({ memberKey: currentWorkerProfile().memberKey });
       writeHandsPing(DATA_DIR, { at: Date.now(), ok: ping.ok, detail: ping.detail, kind: "ping", workerFingerprint: ping.workerFingerprint });
       if (ping.ok) {
         resolveWorkerIssues("hands");
@@ -3404,7 +3776,7 @@ const server = createServer(async (req, res) => {
           ? store.adoptBud(productHermesSelection(status.model || "default"))
           : null;
         if (bud) broadcast({ kind: "bot", bot: publicBot(bud) });
-        const ping = await tryHermesPing({ memberKey: MEMBER_KEY });
+        const ping = await tryHermesPing({ memberKey: currentWorkerProfile().memberKey });
         // Connecting a model performs the same authoritative hands check as
         // the standalone action. Persist it so a reload cannot forget a
         // successful check or falsely present a failed one as ready.
@@ -3717,6 +4089,7 @@ const server = createServer(async (req, res) => {
         if (!Array.isArray(body.alwaysAllow) || body.alwaysAllow.some((t: unknown) => typeof t !== "string")) {
           return json(res, 400, { error: "alwaysAllow must be a list of tool keys" });
         }
+        if (body.alwaysAllow.some((key: string) => reservedApprovalKey(key))) return json(res, 400, { error: 'Memory changes require a separate review each time and cannot use saved grants.' });
         patch.alwaysAllow = [...new Set(body.alwaysAllow as string[])].slice(0, 200);
       }
       const bot = store.patchBot(m[1], patch);
@@ -3917,10 +4290,14 @@ const server = createServer(async (req, res) => {
     if (m && method === "POST") {
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
-      const { requestId, decision } = parseRequestDecision(await readBody(req));
+      const parsed = parseRequestDecision(await readBody(req));
+      const { requestId } = parsed;
       if (!askMessageByRequest.has(`${bot.threadId}:${requestId}`)) {
         return json(res, 409, { error: "This request is no longer waiting. Refresh the conversation to see its result." });
       }
+      const liveMessageId = askMessageByRequest.get(`${bot.threadId}:${requestId}`);
+      const card = store.messagesFor(bot.threadId).find(message => message.id === liveMessageId)?.card;
+      const decision = guardPermissionDecision(card, parsed.decision, parsed.rule);
       const instance = registry.get(bot.modelSelection.instanceId);
       if (!instance) return json(res, 409, { error: "provider unavailable" });
       await instance.adapter.respondToRequest(bot.threadId, requestId, decision);
@@ -3942,7 +4319,8 @@ const server = createServer(async (req, res) => {
       }
       const card = store
         .messagesFor(threadId)
-        .find((message) => message.card?.requestId === requestId);
+        .find((message) => message.id === askMessageByRequest.get(`${threadId}:${requestId}`));
+      decision = guardPermissionDecision(card?.card, decision, parsed.rule);
       const fence = fenceContextFor(threadId);
       // A session grant tells the worker to stop asking for that tool, and the
       // fence only sees what the worker asks. During an attended run every
@@ -4103,7 +4481,7 @@ const server = createServer(async (req, res) => {
     // port. `instanceId` is a hash of this installation's data directory, so it
     // matches for this office only and discloses no path.
     if (method === "GET" && path === "/api/health") {
-      return json(res, 200, { app: "realbud", pid: process.pid, static: Boolean(STATIC_DIR), instanceId: SERVICE_INSTANCE_ID });
+      return json(res, 200, { app: "realbud", pid: process.pid, static: Boolean(STATIC_DIR), instanceId: SERVICE_INSTANCE_ID, controlId: SERVICE_CONTROL.id });
     }
 
     // ── provider instances (model picker) ──
@@ -4134,6 +4512,30 @@ const server = createServer(async (req, res) => {
       return json(res, ok ? 200 : 502, { ok, command });
     }
 
+    if (path === '/api/connected-apps/managed/setup' && method === 'POST') {
+      const gate = serviceAdmin.authorize(req);
+      if (!gate.ok) return json(res, gate.status, { error: gate.error, code: 'service_admin_required' });
+      const body = await readBody(req, 8192);
+      if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).sort().join(',') !== 'credential,endpoint') return json(res, 400, { error: 'Provide the managed service URL and installation credential.' });
+      if (savingConnectedApps || creatingGmailLink) return json(res, 409, { error: 'Connected apps setup is in progress. Wait for the result before saving again.' });
+      savingConnectedApps = true;
+      try {
+        const managed = { endpoint: body.endpoint, credential: body.credential, profile: currentWorkerProfile().profile };
+        const candidate = { ...cfg, composio: { ...cfg.composio, managed } };
+        managedConnectorSettings(candidate);
+        const previous = JSON.stringify(cfg.composio);
+        await managedConnectorAccess(candidate);
+        const stillAdmin = serviceAdmin.authorize(req);
+        if (!stillAdmin.ok) return json(res, stillAdmin.status, { error: stillAdmin.error, code: 'service_admin_required' });
+        if (JSON.stringify(cfg.composio) !== previous) return json(res, 409, { error: 'Connection settings changed while checking access. Review the current setup.' });
+        invalidateConnectedAppAuthority();
+        saveConfig({ composio: { managed, key: '', apiKey: '', url: '', selectedAccounts: {} } });
+        Object.assign(cfg, loadConfig());
+        broadcast({ kind: 'config', ...configStatus() });
+        await officeSourcesChanged();
+        return json(res, 200, { config: configStatus(req) });
+      } finally { savingConnectedApps = false; }
+    }
     // ── app config (API keys — never echoed back, booleans only) ──
     if (method === "GET" && path === "/api/config") {
       return json(res, 200, configStatus(req));
@@ -4338,7 +4740,7 @@ const server = createServer(async (req, res) => {
     // ── connectors (Composio) ──
     if (method === "GET" && path === "/api/connectors/catalog") {
       const { cards, source } = await composio.listToolkits(cfg);
-      return json(res, 200, { configured: Boolean(cfg.composio?.key), source, cards });
+      return json(res, 200, { configured: connectedAppsConfigured(cfg), source, cards });
     }
     if (method === "GET" && path === "/api/connectors") {
       const services = (url.searchParams.get("services") ?? "").split(",").filter(Boolean);
@@ -4410,8 +4812,10 @@ const server = createServer(async (req, res) => {
     const code = typeof (e as { code?: unknown })?.code === "string" ? (e as { code: string }).code : undefined;
     const error = e instanceof Error ? e.message : String(e);
     return json(res, status, code ? { error, code } : { error });
+  } finally {
+    if (countedPrivateRequest) privateBackupRequests--;
   }
-});
+}));
 
 installCrashHandlers();
 
@@ -4433,50 +4837,325 @@ function channelsStatus(): ChannelsPayload {
 
 bindTelegramBridge({
   store,
+  withWorkspaceActivity: workspaceActivity.run,
   startTurn,
   subscribe: (listener) => bus.subscribe(listener),
   broadcast,
 });
 bindDiscordBridge({
   store,
+  withWorkspaceActivity: workspaceActivity.run,
   startTurn,
   subscribe: (listener) => bus.subscribe(listener),
   broadcast,
 });
 bindSlackBridge({
   store,
+  withWorkspaceActivity: workspaceActivity.run,
   startTurn,
   subscribe: (listener) => bus.subscribe(listener),
   broadcast,
 });
 
+// Restore identity before accepting requests or resuming queued/background work.
+// An unreadable saved identity must not silently run under another profile.
+const workspaceIdentity = await companyHost.workspaceIdentity();
+desk.setMemberKey(workspaceIdentity.workerMemberKey ?? '');
+const memoryReviews = createHermesMemoryReviewService({ context: () => memoryReviewContext(workspaceIdentity.id),
+  key: () => Buffer.from(desk.recoveryKeyHex(), 'hex'), withActivity: workspaceActivity.run });
+const workspaceTabs = createWorkspaceTabsHandler({ directory: DATA_DIR, workspaceId: workspaceIdentity.id });
+const customerPacks = createCustomerPackService({ directory: DATA_DIR,
+  pauseSchedules: async packId => {
+    if ((await agencySetup.getConfiguration()).settings.workflowPackId !== packId) return;
+    mailWorkspace.cancel();
+    loops!.setEnabled('inbound-triage', false);
+  },
+  activeRecipeIds: () => jobRuns.list().filter(run => run.status === 'queued' || run.status === 'running').map(run => run.jobId),
+  profileDirectory: () => propertyProfileDir(), workroomDirectory: () => join(DATA_DIR, 'vault'),
+  readiness: async () => {
+    const worker = applyHandsReadiness(await hermesStatus(), readHandsPing(DATA_DIR));
+    const access = connectedAppAccess.status(connectedAppsConfigured(cfg));
+    const checked = access.checkedAt ? Date.parse(access.checkedAt) : NaN;
+    const mailReady = access.services.gmail?.connected && access.tools.available && Number.isFinite(checked) && Date.now() - checked < 60_000;
+    const billCount = listExpectedBills().length + sourceBills().counts().occurrences;
+    return {
+      worker: { label: 'Bud setup', state: worker.ready ? 'passed' : 'needed', detail: worker.ready ? 'The selected private worker passes its local readiness checks. No paid model call was made.' : 'Finish the selected private worker setup before running a workflow.', nextAction: 'Open You → Bud setup.' },
+      'mail-account': { label: 'Gmail connection', state: mailReady ? 'passed' : 'needed', detail: mailReady ? 'The selected Gmail account and read tools were checked in the last minute. Mail history and attachments are not workflow acceptance.' : 'Check the selected Gmail account in Connected apps; importing a pack does not access your mailbox.', nextAction: 'Open Connected apps and check Gmail access.' },
+      'bill-register': { label: 'Expected bills register', state: billCount ? 'passed' : 'needed', detail: billCount ? `${billCount} saved expected bill records are available. Confirm their property mappings and date basis before use.` : 'Add reviewed bill evidence and property mappings before accepting bill patterns.', nextAction: 'Open Desk → Expected bills.' },
+    };
+  },
+});
+const mailBindingRevision = () => createHash('sha256').update(JSON.stringify({ workspace: workspaceIdentity.id, profile: currentWorkerProfile().profile, connection: cfg.composio })).digest('hex');
+const agencySetup = createAgencySetupService({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, actorId: () => workspaceIdentity.id,
+  // Verifying the agency's own private account is what starts bounded history
+  // acquisition. Start and return: never await the collection here.
+  onGmailVerified: event => { void mailWorkspace.startHistory(event); },
+  checkGmail: async accountId => {
+    const access = await refreshOfficeSources();
+    if (!access.tools.available || !access.services.gmail?.connected || !access.services.gmail.accounts.some(a => a.id === accountId && /^active$/i.test(a.status))) throw Object.assign(new Error('This exact private Gmail source could not be verified.'), { status: 409 });
+  },
+  observe: async settings => {
+    const access = connectedAppAccess.status(connectedAppsConfigured(cfg)), gmail = access.services.gmail;
+    const direct = gmailReadOnlyMode(cfg) ? gmailReadOnlyBinding(cfg) : null;
+    const sourceAllowed = (managedConnectorConfigured(cfg) || !!direct?.accountId) && !cfg.composio?.excludedApps?.includes('gmail');
+    const accountId = managedConnectorConfigured(cfg) ? gmail?.accounts[0]?.id ?? null : direct?.accountId ?? null;
+    const properties = desk.snapshot().properties.map(p => ({ id: p.id, label: p.address }));
+    const recipeId = workflowRecipeId(settings.workflowPackId,'inbox-triage');
+    const recipe = recipeId ? getRecipe(recipeId) : undefined, worker = applyHandsReadiness(await hermesStatus(),readHandsPing(DATA_DIR));
+    let packBinding: string | null = null; try { if (recipe && settings.workflowPackId) packBinding = await customerPacks.packRecipeBinding(settings.workflowPackId,recipe.id); } catch { /* observable hold */ }
+    const packReady = !!packBinding;
+    const planReady = !!recipe && recipeClockRunnable(recipe) && worker.ready && packReady;
+    const invoiceId = workflowRecipeId(settings.workflowPackId,'invoice-review');
+    const invoiceRecipe = invoiceId ? getRecipe(invoiceId) : undefined;
+    let invoiceBinding: string | null = null;
+    try { if (invoiceRecipe && settings.workflowPackId) invoiceBinding = await customerPacks.packRecipeBinding(settings.workflowPackId,invoiceRecipe.id); } catch { /* observable hold */ }
+    const billsReady = !!invoiceRecipe && recipeClockRunnable(invoiceRecipe) && worker.ready && !!invoiceBinding;
+    const scan = (await mailWorkspace.get()).latestScan;
+    return {
+      gmail: { accounts: (gmail?.accounts ?? []).map(a => ({ id: a.id, label: a.label ?? 'Private Gmail account', status: /^active$/i.test(a.status) ? 'active' as const : 'unavailable' as const })), accountId,
+        state: sourceAllowed && gmail?.connected && access.tools.available ? 'verified' as const : 'unverified' as const, checkedAt: access.checkedAt ? Date.parse(access.checkedAt) : null, bindingRevision: mailBindingRevision() },
+      properties: { state: 'available' as const, revision: createHash('sha256').update(JSON.stringify(properties)).digest('hex'), items: properties },
+      billRegister: { state: 'available' as const, count: listExpectedBills().length + sourceBills().counts().occurrences },
+      mailHistory: await mailWorkspace.historyStatus(),
+      workflows: {
+        'bank-references': { state: 'available' as const, bindingRevision: 'bank-reference-source-v2', detail: 'The local bank reference review is available. Bank sign-in, export layout and REI acceptance remain separate checks.' },
+        'bills-calendar': { state: billsReady ? 'available' as const : 'needs-review' as const,
+          bindingRevision:createHash('sha256').update(JSON.stringify({recipe:invoiceRecipe ? [invoiceRecipe.id,invoiceRecipe.revision,invoiceRecipe.approvedRevision,invoiceRecipe.status] : null,invoiceBinding,register:1,reader:1})).digest('hex'),
+          detail:billsReady ? 'The reviewed invoice plan, source collector and source-linked register are available. Staff accept bill facts and arrival patterns; unread attachments remain explicit gaps.' : 'Import the selected office pack, approve its invoice review plan and finish Bud setup. Source-linked bill records remain available for manual review.',
+          ...(scan ? { sourceReceipt:{id:scan.id,capturedAt:scan.startedAt,state:scan.status === 'complete' ? 'complete' as const : scan.status === 'partial' ? 'partial' as const : 'held' as const,accountId:scan.accountId} } : {}),
+        },
+        'morning-priorities': { state: planReady ? 'available' as const : 'needs-review' as const, bindingRevision: createHash('sha256').update(JSON.stringify({ recipe: recipe ? [recipe.id,recipe.revision,recipe.approvedRevision,recipe.status] : null, packBinding, reader: 1 })).digest('hex'),
+          detail: planReady ? 'The reviewed plan, private worker and source collector are available. Each run still checks account authority and records coverage.' : 'Import the office pack, approve the morning inbox plan and finish Bud setup before reviewing this workflow.',
+          ...(scan ? { sourceReceipt: { id: scan.id, capturedAt: scan.startedAt, state: scan.status === 'complete' ? 'complete' as const : scan.status === 'partial' ? 'partial' as const : 'held' as const, accountId: scan.accountId } } : {}) },
+      },
+    };
+  },
+});
+const mailWorkspace = createMailIngestionService({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, key: Buffer.from(desk.recoveryKeyHex(),'hex'), workroomDirectory: join(DATA_DIR,'vault'), database: workflowDatabase,
+  authorize: async purpose => {
+    if (desk.recovery.active) throw Object.assign(new Error('The private book needs recovery.'), { status: 503 });
+    await refreshOfficeSources();
+    await checkWebsiteExecution();
+    const ready = await agencySetup.assertWorkflowReady(purpose);
+    if (!ready.settings.gmailAccountId) throw new Error('Choose and review the private Gmail source.');
+    return { accountId: ready.settings.gmailAccountId, bindingRevision: createHash('sha256').update(`${mailBindingRevision()}:${ready.evidenceDigest}`).digest('hex'), settings: ready.settings, settingsRevision: ready.revision };
+  },
+  scan: async (authority, request, signal) => {
+    await checkWebsiteExecution();
+    const connectionRevision = mailBindingRevision();
+    const assertAuthority = () => { signal.throwIfAborted(); if (mailBindingRevision() !== connectionRevision) throw new Error('Mail authority changed.'); };
+    assertAuthority();
+    if (managedConnectorConfigured(cfg)) return scanManagedMail(structuredClone(cfg), authority.accountId, request, signal);
+    const binding = gmailReadOnlyMode(cfg) ? gmailReadOnlyBinding(cfg) : null;
+    if (!binding || binding.accountId !== authority.accountId) throw new Error('The reviewed Gmail binding is unavailable.');
+    return scanGmailReadOnly({ ...binding, assertAuthority }, request, signal);
+  },
+});
+// Restore only the connection. An interrupted browser job always stays held.
+const sourceBillRegisters = new WeakMap<ReturnType<typeof workflowDatabase>, SourceBillRegister>();
+const billDraftStores = new WeakMap<ReturnType<typeof workflowDatabase>, BillReviewDraftStore>();
+const billReviewApi = createBillReviewApi({
+  drafts: () => {
+    const database = workflowDatabase();
+    let drafts = billDraftStores.get(database);
+    if (!drafts) { drafts = new BillReviewDraftStore(database, { workspaceId: workspaceIdentity.id }); billDraftStores.set(database, drafts); }
+    return drafts;
+  },
+  proposal: requestId => readBillProposal({ database: workflowDatabase, runs: () => jobRuns.list(), findRunByKey: key => jobRuns.getByIdempotencyKey(key) }, requestId),
+  recovery: () => desk.recovery.active,
+});
+const sourceBills = () => {
+  const database = workflowDatabase();
+  let register = sourceBillRegisters.get(database);
+  if (!register) { register = new SourceBillRegister(database,{dataDir:DATA_DIR}); sourceBillRegisters.set(database,register); }
+  return register;
+};
+const billMailSource = async (itemId:string,messageId:string)=>{
+  const saved=await mailWorkspace.source(itemId),message=saved.thread.messages.find(m=>m.id===messageId);
+  if(!message) throw Object.assign(new Error('This message is unavailable in the saved conversation.'),{status:404});
+  return {accountId:saved.accountId,receiptId:saved.receiptId,threadId:saved.thread.id,message};
+};
+const sourceBillsApi = createSourceBillsApi({ register:sourceBills, actorId:()=>workspaceIdentity.id, recovery:()=>desk.recovery.active,
+  propertyIds:()=>desk.snapshot().properties.map(p=>p.id), collect:()=>mailWorkspace.collect('bills-calendar'),
+  source:billMailSource,
+  savedThread: async (accountId,threadId) => {
+    const itemId = createHash('sha256').update(JSON.stringify([workspaceIdentity.id,accountId,threadId])).digest('hex');
+    return { itemId, ...await mailWorkspace.source(itemId) };
+  },
+});
+const billProposals = createBillProposals({database:workflowDatabase,workroom:join(DATA_DIR,'vault'),source:billMailSource,runs:()=>jobRuns.list(),findRunByKey:key=>jobRuns.getByIdempotencyKey(key),
+  // Read the authoritative recipe registry synchronously as well: edits from
+  // Ask, distillation and the clock bypass the HTTP recipe mutation door.
+  epoch:()=>`${mailAuthorityEpoch}:${mailWorkspace.epoch}:${mailBindingRevision()}:${createHash('sha256').update(JSON.stringify(listRecipes())).digest('hex')}`,
+  authorize:async()=>{
+    if(desk.recovery.active) throw Object.assign(new Error('The private book needs recovery.'),{status:503});
+    await refreshOfficeSources();
+    const ready=await agencySetup.assertWorkflowReady('bills-calendar'),id=workflowRecipeId(ready.settings.workflowPackId,'invoice-review'),recipe=id?getRecipe(id):undefined;
+    if(!recipe || !ready.settings.workflowPackId || !recipeClockRunnable(recipe)) throw Object.assign(new Error('Approve the invoice plan in the selected office pack.'),{status:409});
+    const packBinding=await customerPacks.packRecipeBinding(ready.settings.workflowPackId,recipe.id);
+    return {settings:ready.settings,evidenceDigest:ready.evidenceDigest,recipe,packBinding};
+  },
+  execute:(recipe,idempotencyKey,prepareInput)=>executeRecipeJob(recipe,{mode:'prepare',trigger:'manual',idempotencyKey},{readBookSnapshot:()=>desk.snapshot(),instructionContext:async id=>{
+    const instructions=await customerPacks.instructionContext(id); await prepareInput(); return instructions;
+  }}),
+});
+const departmentWork = createDepartmentWork({
+  db: workflowDatabase(), client: companyHost.departmentExecution,
+  forward: (session,path,body) => companyHost.handle(path,path==='/api/company/me'?'GET':'POST',{headers:{'x-realbud-member-session':session}},body),
+  recipes: listRecipes, instructions: id=>customerPacks.instructionContext(id), assertRecipeReady: id=>customerPacks.assertReadyForRecipe(id),
+  epoch:()=>`${websiteAuthorityEpoch}:${createHash('sha256').update(JSON.stringify(listRecipes())).digest('hex')}`,
+  assertAdmission: () => {
+    if (privateRestoreLocked || shuttingDown || workspaceActivity.paused || desk.recovery.active || loops?.recovery.active || jobRuns.recovery.active) throw Object.assign(new Error('Resolve workspace recovery or restart before department preparation.'),{status:409});
+    managedService.assertCapability('reasoning');
+  },
+  runContext: work=>workspaceActivity.run(()=>withWorkerProfile(desk.memberKeyForWorker(),work)),
+  findJob: key=>jobRuns.getByIdempotencyKey(key),
+  execute: (recipe,idempotencyKey,dependencies)=>executeRecipeJob(recipe,{mode:'prepare',trigger:'manual',idempotencyKey},dependencies),
+  ask: (prompt,opts,check)=>askDepartmentWorker(prompt,{...opts,beforeLaunch:check,beforeRequest:check}),
+});
+const websiteWork = createWebsiteWorkAdapters({
+  workspaceId: workspaceIdentity.id, recipes: listRecipes,
+  instructions: id => customerPacks.instructionContext(id), assertRecipeReady: id => customerPacks.assertReadyForRecipe(id),
+  agency: () => agencySetup.get(), morningLoop: () => loops?.listLoops().find(loop=>loop.id==='inbound-triage'),
+  authority: () => createHash('sha256').update(JSON.stringify({ config: cfg, profile: currentWorkerProfile().profile, worker: readHandsPing(DATA_DIR)?.workerFingerprint })).digest('hex'),
+  revisionEpoch: () => websiteAuthorityEpoch,
+  assertAdmission: () => {
+    if (privateRestoreLocked || shuttingDown || desk.recovery.active || loops?.recovery.active || jobRuns.recovery.active) throw Object.assign(new Error('Resolve the current workspace recovery or restart before starting work.'), { status: 409 });
+    managedService.assertCapability('reasoning');
+  },
+  bookRevision: () => desk.revision,
+  runMorning: (requestId, expectedRevision) => loops!.runNow('inbound-triage', { requestId, expectedRevision }),
+  findMorning: requestId => loops!.getRunByRequest(requestId), findJob: key => jobRuns.getByIdempotencyKey(key),
+  execute: (recipe, idempotencyKey, beforeWorker, assertBook) => executeRecipeJob(recipe, { mode: 'prepare', trigger: 'manual', idempotencyKey }, {
+    instructionContext: async () => { const instructions=await beforeWorker(); await checkWebsiteExecution(); return instructions; }, readBookSnapshot: () => { assertBook(); return desk.snapshot(); },
+  }),
+});
+const remoteDisclosureReview=createRemoteDisclosureReview({db:workflowDatabase(),workspaceId:workspaceIdentity.id,capture:websiteWork.remoteDisclosure,catalog:websiteWork.getCatalog});
+const websiteRequests = createWebsiteRequests({
+  directory: DATA_DIR, db: workflowDatabase(), officeLink,
+  identity: () => ({ workspaceId: workspaceIdentity.id, workerProfileKey: workspaceIdentity.workerMemberKey ?? null }),
+  ...websiteWork,
+  authority: () => createHash('sha256').update(JSON.stringify({ config: cfg, profile: currentWorkerProfile().profile, worker: readHandsPing(DATA_DIR)?.workerFingerprint })).digest('hex'),
+  revisionEpoch: () => websiteAuthorityEpoch,
+  requireRemoteScopes: scopes => remoteDisclosureReview.requireApproved(scopes),
+  remoteTemplate: scope => remoteDisclosureReview.approvedTemplate(scope),
+  refreshRemoteSources: async () => { await refreshOfficeSources(); },
+  onRemoteEvidence: value => recordRemoteEvidence(workflowDatabase(),value),
+  dispatch: execution => websiteRunContext.run(execution.requestId, () => websiteWork.dispatch(execution)),
+  cancel: async run => {
+    // Invalidates the actual in-flight collector; preparation already handed to
+    // a worker retains its real running receipt until that worker settles.
+    if (loops?.activeRun('inbound-triage')?.id === run.id) mailWorkspace.cancel();
+  },
+  withActivity: work => workspaceActivity.run(() => withWorkerProfile(desk.memberKeyForWorker(), work)),
+  barrier: () => { if (privateRestoreLocked || shuttingDown) throw Object.assign(new Error('Website requests are paused for restore or restart.'), { status: 409 }); },
+});
+await websiteRequests.recover().catch(() => oplog('boot', 'Website request history needs recovery. Existing history was preserved.'));
+// Private backups contain business data only. Restores replace a fresh
+// installation's sample book, never merge onto an occupied workspace.
+function assertPrivateBackupIdle(ignoreRequests = false) {
+  if (desk.recovery.active || loops?.recovery.active) throw Object.assign(new Error('Resolve the existing recovery hold before backing up or restoring private work.'),{status:503});
+  if (!ignoreRequests && privateBackupRequests > 0 || store.bots.some(bot=>bot.busy || bot.queuedMessage) || mailWorkspace.busy || deskCheckFlight.running() ||
+      websiteRequests.busy || departmentWork.busy || jobRuns.list().some(run=>run.status==='running'||run.status==='queued') || batches.list().some(batch=>batch.status==='running') || loops?.busy || installInFlight())
+    throw Object.assign(new Error('Wait for current work and setup to finish, then retry the private backup action.'),{status:409});
+}
+function privateRestoreReadiness() {
+  const bootstrap = process.env.REALBUD_RESTORE_BOOTSTRAP === '1';
+  try {
+    if (!bootstrap) throw new Error('Start this installation through the RealBud desktop service before restoring.');
+    const book=desk.snapshot();
+    if (!companyHost.privateRestoreFresh || desk.recovery.active || book.mode !== 'demo' || book.revision !== 1 || workflowDatabase().hasRecords() ||
+        listRecipes().length || jobRuns.list().length || batches.list().length || loops?.listRuns().length)
+      throw new Error('Restore requires a fresh workspace with only its untouched sample book. Existing private work is kept.');
+    for (const name of ['agency-setup.json','workspace-views/tabs.json','customer-packs.json','expected-bills.json','office-link/link.json','website-requests/grant.json','website-requests/remote-approvers.json','website-requests/remote-work.json'])
+      if (existsSync(join(DATA_DIR,name))) throw new Error('This workspace already has business settings or records. Restore on a fresh installation.');
+    const companyDirectory=join(DATA_DIR,'company-installation');
+    if (readdirSync(companyDirectory).some(name=>!['workspace.json','private'].includes(name)) ||
+        existsSync(join(companyDirectory,'private')) && readdirSync(join(companyDirectory,'private')).length)
+      throw new Error('This installation has company membership or private evidence. Restore on a fresh installation.');
+    for (const directory of ['properties','owners','decisions','workflow-inputs','workflow-support']) {
+      const path=join(DATA_DIR,'vault',directory);
+      if (existsSync(path) && readdirSync(path).length) throw new Error('This workspace has private notes or workflow instructions. Restore on a fresh installation.');
+    }
+    for (const [name,expected] of Object.entries(DEFAULT_VAULT_DOCUMENTS)) {
+      const path=join(DATA_DIR,'vault',name);
+      if (!existsSync(path) || readFileSync(path,'utf8') !== expected) throw new Error('This workspace has edited personal or office instructions. Restore on a fresh installation.');
+    }
+    return {canRestore:!privateRestoreLocked,reason:privateRestoreLocked?'A restore is staged. Restart the RealBud service to finish.':'A reviewed backup can replace the untouched sample book.',bootstrap};
+  } catch(error) {return {canRestore:false,reason:error instanceof Error?error.message:'Existing workspace storage needs review.',bootstrap};}
+}
+function assertPrivateBackupFresh() {
+  // The API sets the write barrier before the domain's async preparation. The
+  // barrier is not itself occupied data and must not invalidate its own check.
+  const locked=privateRestoreLocked;
+  try { privateRestoreLocked=false; const state=privateRestoreReadiness(); if(!state.canRestore) throw Object.assign(new Error(state.reason),{status:409}); }
+  finally {privateRestoreLocked=locked;}
+}
+const privateBackupEpochValue = () => `${privateBackupEpoch}:${mailAuthorityEpoch}:${mailWorkspace.epoch}:${desk.revision}:${createHash('sha256').update(JSON.stringify(listRecipes())).digest('hex')}`;
+async function privateBackupSnapshotLease() {
+  assertPrivateBackupIdle(true);
+  if (privateRestoreLocked || shuttingDown) throw Object.assign(new Error('Finish the staged restore or service restart before creating a backup.'), { status: 409 });
+  loops?.stop();
+  try {
+    const lease = await workspaceActivity.pause({ timeoutMs: 60_000, onReleased: () => { if (!privateRestoreLocked && !shuttingDown) loops?.start(); } });
+    try {
+      // Existing read requests may still be finishing when the UI starts an
+      // export. The pause rejects new reads; drain admitted ones before capture.
+      const deadline = Date.now() + 60_000;
+      while (privateBackupRequests > 0) { lease.assertCurrent(); if (Date.now() >= deadline) throw Object.assign(new Error('Current workspace requests did not finish.'), { status: 409 }); await new Promise(resolve => setTimeout(resolve, 20)); }
+      assertPrivateBackupIdle(); lease.assertCurrent(); return lease;
+    }
+    catch (error) { lease.release(); throw error; }
+  } catch (error) { if (!workspaceActivity.paused && !privateRestoreLocked && !shuttingDown) loops?.start(); throw error; }
+}
+function beginPrivateRestore() {
+  if (privateRestoreLocked) return;
+  assertPrivateBackupIdle(); assertPrivateBackupFresh();
+  privateRestoreLocked=true; loops?.stop(); officeLink.stop(); websiteRequests.stop(); departmentWork.stop();
+  stopTelegramBridge(); stopDiscordBridge(); stopSlackBridge(); stopRemoteDecisionFlush();
+}
+const legacyPrivateBackup = createPrivateWorkspaceBackup({directory:DATA_DIR,key:()=>Buffer.from(desk.recoveryKeyHex(),'hex'),workspaceId:workspaceIdentity.id,
+  epoch:privateBackupEpochValue,assertIdle:assertPrivateBackupIdle,assertFresh:assertPrivateBackupFresh,snapshotLease:privateBackupSnapshotLease});
+let privateBackupCoordinator: Awaited<ReturnType<typeof createPrivateBackupCoordinator>> | undefined;
+try {
+  privateBackupCoordinator = await createPrivateBackupCoordinator({directory:DATA_DIR,key:Buffer.from(desk.recoveryKeyHex(),'hex'),workspaceId:workspaceIdentity.id,
+    epoch:privateBackupEpochValue,assertIdle:assertPrivateBackupIdle,assertFresh:assertPrivateBackupFresh,snapshotLease:privateBackupSnapshotLease,beginRestore:beginPrivateRestore,
+    ...(process.env.REALBUD_TEST_LAB === '1' ? { diagnostic: (event: unknown) => console.error('Backup test diagnostic', JSON.stringify(event)) } : {})});
+} catch { oplog('boot','Backup transfer storage requires recovery. Existing files were preserved.'); }
+const privateBackup = privateBackupCoordinator ? withDurablePrivateBackupRestore(legacyPrivateBackup,privateBackupCoordinator) : legacyPrivateBackup;
+const privateBackupApi=createPrivateBackupApi({service:()=>privateBackup,restoreReadiness:privateRestoreReadiness,
+  snapshotActive:()=>workspaceActivity.paused,
+  // The durable coordinator establishes the sticky barrier only after fully
+  // preparing the reviewed archive. The old JSON API uses that same path.
+  beginRestore:()=>{assertPrivateBackupIdle();assertPrivateBackupFresh();},
+  restoreFailed:async()=>{},
+});
+void browserRuntime.resumeConnection().catch(() => {});
 server.listen(PORT, "127.0.0.1", () => {
+  if (!privateRestoreLocked) loops?.start();
+  // An approved window that was never confirmed is still missing coverage, so a
+  // restart continues the saved checkpoint under its own authority re-check. It
+  // reads nothing when no window is pending.
+  if (!privateRestoreLocked) void mailWorkspace.resumeHistoryIfPending().catch(() => {});
   console.log(`realbud server on http://127.0.0.1:${PORT}`);
   oplog("boot", `listening on 127.0.0.1:${PORT}`);
   setWorkerIssueListener((issue) => broadcast({ kind: "worker.issue", issue }));
   // A renderer/server restart must not silently drop a follow-up the user
   // already scheduled. Claim and resume each durable slot once at boot.
   for (const bot of store.bots) {
-    if (bot.busy || !bot.queuedMessage) continue;
+    if (privateRestoreLocked || bot.busy || !bot.queuedMessage) continue;
     const queued = store.takeQueuedMessage(bot.id, bot.queuedMessage.threadId);
     if (queued) void dispatchQueuedMessage(bot.id, queued);
   }
-  if (!process.env.VITEST) {
+  if (!process.env.VITEST && !privateRestoreLocked) {
     startTelegramBridge();
     startDiscordBridge();
     startSlackBridge();
     startRemoteDecisionFlush();
-    // Adopt a seat identity recorded on an earlier run before the readiness ping, so
-    // a host whose owner signed in last time pings as that seat's worker rather than
-    // the shared base. The desk was built before the company host existed, so it is
-    // told here; a failure to read is not fatal, it just leaves the base profile.
-    void companyHost.seatIdentity().then(memberId => {
-      if (memberId) {
-        desk.setMemberKey(memberId);
-        oplog("seat", `resumed member identity ${memberId.slice(0, 8)}…`);
-      }
-    }).catch(() => {});
-    void healHandsReadiness();
+    void withWorkerProfile(desk.memberKeyForWorker(), healHandsReadiness);
+    officeLink.start();
+    websiteRequests.start();
+    departmentWork.start();
   }
 });
 
@@ -4489,7 +5168,13 @@ if (process.env.REALBUD_TEST_LAB === "1" && process.send) {
 }
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    workspaceActivity.cancelPause();
     oplog("shutdown", signal);
+    officeLink.stop();
+    websiteRequests.stop();
+    departmentWork.stop();
     stopTelegramBridge();
     stopDiscordBridge();
     stopSlackBridge();
@@ -4498,6 +5183,6 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     batches.stop();
     watchdog.stop();
     cancelBootstrapInstall();
-    void Promise.allSettled([registry.disposeAll(), waitForBootstrapStop(), companyHost.close()]).finally(() => process.exit(0));
+    void Promise.allSettled([registry.disposeAll(), waitForBootstrapStop(), departmentWork.drain().finally(()=>companyHost.close()), browserRuntime.shutdown(), privateBackupCoordinator?.close(), memoryReviews.close()]).finally(() => process.exit(0));
   });
 }

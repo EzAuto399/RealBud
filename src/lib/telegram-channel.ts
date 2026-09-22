@@ -90,7 +90,7 @@ export function channelStatusLine(
   now = Date.now(),
 ): string {
   if (!status.paired) {
-    return "Create a pairing code on this Mac, then send it to the bot in a private chat.";
+    return "Create a pairing code on this computer, then send it to the bot in a private chat.";
   }
   const who = status.pairedName?.trim() ? `Paired with ${status.pairedName.trim()}` : "Paired";
   return status.lastMessageAt ? `${who} · last message ${relativeAgo(status.lastMessageAt, now)}` : who;

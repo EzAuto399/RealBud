@@ -56,6 +56,16 @@ contextBridge.exposeInMainWorld("ogb", {
   /** Explicitly stop the office service. Closing the window never does this. */
   serviceStop: () => ipcRenderer.invoke("service:stop"),
 
+  /** Whether this computer is there to do scheduled work when nobody is
+   * looking: start the office service after sign-in, and hold the computer
+   * awake while something is scheduled. `set` also carries the window's report
+   * of whether anything is scheduled — the office owns that fact, the main
+   * process only caches the last report so a sign-in launch can act on it. */
+  servicePersistence: {
+    get: () => ipcRenderer.invoke("service:persistence:get"),
+    set: (settings) => ipcRenderer.invoke("service:persistence:set", settings),
+  },
+
   /** In-app auto-update. State object:
    *  { status: "idle"|"checking"|"available"|"downloading"|"downloaded"|"error",
    *    version?, percent?, message? }. onState fires immediately with the

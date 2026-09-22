@@ -98,7 +98,7 @@ describe("LoopManager catalog", () => {
     expect(loops.map((loop) => loop.id)).toEqual(["morning-arrears", "owner-letter", "inbound-triage"]);
     expect(loops[0]).toMatchObject({ available: true, enabled: true, name: "Morning money check" });
     expect(loops[1]).toMatchObject({ available: true, enabled: true });
-    expect(loops[2]).toMatchObject({ available: false, enabled: false });
+    expect(loops[2]).toMatchObject({ available: true, enabled: false });
     expect(loops[0].nextRunAt).not.toBeNull();
     expect(loops[1].nextRunAt).not.toBeNull();
     expect(loops[2].nextRunAt).toBeNull();
@@ -111,15 +111,13 @@ describe("LoopManager catalog", () => {
     expect(JSON.stringify(manager.listLoops().map((loop) => loop.description))).not.toMatch(/Hermes/i);
   });
 
-  it("refuses to enable or run a loop that is not available yet; owner-letter v0 runs", () => {
+  it("allows a deliberate manual inbox review without enabling its recurring schedule", async () => {
     const { manager, calls } = makeManager();
-    expect(() => manager.setEnabled("inbound-triage", true)).toThrow(/not built yet/);
-    expect(manager.runNow("inbound-triage")).toBeNull();
-    // owner-letter v0 is built: Run now goes through the injected executor
-    const run = manager.runNow("owner-letter");
-    expect(run).not.toBeNull();
-    void manager.tick();
-    expect(calls.some((loop) => loop.id === "owner-letter")).toBe(true);
+    expect(manager.listLoops().find(loop => loop.id === 'inbound-triage')?.enabled).toBe(false);
+    expect(manager.runNow('inbound-triage')).not.toBeNull();
+    await manager.tick();
+    expect(calls.some(loop => loop.id === 'inbound-triage')).toBe(true);
+    expect(manager.listLoops().find(loop => loop.id === 'inbound-triage')?.enabled).toBe(false);
   });
 
   it("persists the enabled flag across reloads", () => {
@@ -459,22 +457,12 @@ describe("LoopManager clock retune (PR A)", () => {
     expect(calls).toHaveLength(0); // no surprise run for the earlier slot
   });
 
-  it("lets a planned loop retune its clock but still refuses to enable it", () => {
+  it("retunes the inbox clock without enabling collection until explicitly enabled", () => {
     const { manager } = makeManager();
-    const patched = manager.patchClock("inbound-triage", { time: "09:15", weekdays: [1, 2, 3, 4, 5] });
-    expect(patched.schedule.time).toBe("09:15");
+    const patched = manager.patchClock('inbound-triage', { time: '09:15', weekdays: [1,2,3,4,5], timezone: 'Australia/Brisbane' });
+    expect(patched.schedule).toMatchObject({ time: '09:15', timezone: 'Australia/Brisbane' });
     expect(patched.enabled).toBe(false);
-    expect(() => manager.patchClock("inbound-triage", { enabled: true })).toThrow(/not built yet/);
-    // Declared-but-not-built is a state conflict, not malformed input, so it must be
-    // 409 — the same code the run route returns. It used to surface as 400 because
-    // this throw carried no status and the PATCH handler defaults to 400.
-    let status: number | undefined;
-    try {
-      manager.patchClock("inbound-triage", { enabled: true });
-    } catch (error) {
-      status = (error as { status?: number }).status;
-    }
-    expect(status).toBe(409);
+    expect(manager.patchClock('inbound-triage', { enabled: true }).enabled).toBe(true);
   });
 
   it("rejects malformed clock patches with a 400 status", () => {
@@ -700,5 +688,26 @@ describe("LoopManager recipe loops", () => {
     await manager.tick();
     expect(calls.filter((loop) => loop.id === "recipe-job-1")).toHaveLength(2);
     expect(manager.listLoops().find((loop) => loop.id === "recipe-job-1")?.waitingForPlan).toBe(false);
+  });
+});
+
+describe('explicit office timezone for the morning mailbox', () => {
+  it('keeps a reviewed office zone across reload and host timezone changes', async () => {
+    const file=tempFile(); let now=Date.parse('2026-09-21T21:59:00Z'); const execute=vi.fn(async()=>({ok:true,detail:'Collected'}));
+    const manager=new LoopManager({file,now:()=>now,hostTimezone:'UTC',execute});
+    manager.patchClock('inbound-triage',{enabled:true,time:'08:00',weekdays:[1,2,3,4,5],timezone:'Australia/Brisbane'});
+    const before=manager.listLoops().find(l=>l.id==='inbound-triage')!;
+    expect(before.nextRunAt).toBe(Date.parse('2026-09-21T22:00:00Z'));
+    const restored=new LoopManager({file,now:()=>now,hostTimezone:'America/New_York',execute});
+    const current=restored.listLoops().find(l=>l.id==='inbound-triage')!;
+    expect(current.schedule.timezone).toBe('Australia/Brisbane'); expect(current.timezonePaused).toBe(false);
+    expect(restored.listLoops().find(l=>l.id==='morning-arrears')?.timezonePaused).toBe(true);
+    now=Date.parse('2026-09-21T22:01:00Z'); await restored.tick(); expect(execute).toHaveBeenCalledTimes(1);
+    await restored.tick(); expect(execute).toHaveBeenCalledTimes(1);
+  });
+  it('rejects malformed office zones without altering a saved clock',()=>{
+    const {manager}=makeManager(); const before=manager.listLoops();
+    expect(()=>manager.patchClock('inbound-triage',{timezone:'bad/timezone',enabled:true})).toThrow(/timezone/);
+    expect(manager.listLoops()).toEqual(before);
   });
 });

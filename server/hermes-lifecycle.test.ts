@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,9 +8,11 @@ import { installInFlight, startInstall } from "./hermes-bridge.ts";
 import { repairExistingProfile, startRepair, uninstallWorker } from "./hermes-lifecycle.ts";
 import { fakeHermesVersion } from "./testing/fake-hermes.ts";
 
+import { privateFixtureDirectory, privateFixtureRoot, writePrivateFixtureFile, WINDOWS_PROFILE_TEST_OPTIONS } from "./testing/private-profile-fixture.ts";
+
 const dirs: string[] = [];
 const tempDir = (prefix: string) => {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
+  const dir = privateFixtureRoot(join(tmpdir(), prefix));
   dirs.push(dir);
   return dir;
 };
@@ -30,7 +32,7 @@ describe("uninstallWorker", () => {
     const agent = join(home, "hermes-agent");
     const profile = join(home, "profiles", HERMES_PIN.profile);
     mkdirSync(join(agent, "bin"), { recursive: true });
-    mkdirSync(profile, { recursive: true });
+    privateFixtureDirectory(profile);
     mkdirSync(join(home, "profiles", "personal"), { recursive: true });
     mkdirSync(join(data, "vault", "properties"), { recursive: true });
     writeFileSync(join(agent, "bin", "hermes"), "#!/bin/sh\n");
@@ -67,7 +69,7 @@ describe("uninstallWorker", () => {
     const data = tempDir("realbud-life-guard-data-");
     const outside = tempDir("realbud-life-outside-");
     const profile = join(home, "profiles", HERMES_PIN.profile);
-    mkdirSync(profile, { recursive: true });
+    privateFixtureDirectory(profile);
     writeFileSync(join(profile, "SOUL.md"), "# keep\n");
     writeFileSync(join(outside, "precious.txt"), "do-not-delete");
     writeFileSync(join(data, "config.json"), '{"ok":true}');
@@ -82,16 +84,16 @@ describe("uninstallWorker", () => {
   });
 });
 
-describe("startRepair", () => {
+describe("startRepair", WINDOWS_PROFILE_TEST_OPTIONS, () => {
   it("repairs the property pack without replacing an independent 0.21 runtime or model", async () => {
     const home = tempDir("realbud-repair-profile-");
     const profile = join(home, "profiles", HERMES_PIN.profile);
     const agent = join(home, "hermes-agent");
-    mkdirSync(profile, { recursive: true });
+    privateFixtureDirectory(profile);
     mkdirSync(agent, { recursive: true });
     writeFileSync(join(agent, "keep.txt"), "independent runtime");
-    writeFileSync(join(profile, "config.yaml"), "model:\n  default: fixture-model\n");
-    writeFileSync(join(profile, ".env"), "FIXTURE_KEY=keep-this-fixture\n");
+    writePrivateFixtureFile(join(profile, "config.yaml"), "model:\n  default: fixture-model\n");
+    writePrivateFixtureFile(join(profile, ".env"), "FIXTURE_KEY=keep-this-fixture\n");
     const cli = fakeHermesVersion("Hermes Agent v0.21.0 (2026.8.31)");
     dirs.push(dirname(cli));
     const status = await repairExistingProfile({ root: home, cli });
@@ -105,8 +107,8 @@ describe("startRepair", () => {
   it("holds an unknown release without altering its profile", async () => {
     const home = tempDir("realbud-repair-unsupported-");
     const profile = join(home, "profiles", HERMES_PIN.profile);
-    mkdirSync(profile, { recursive: true });
-    writeFileSync(join(profile, "config.yaml"), "keep this unchanged");
+    privateFixtureDirectory(profile);
+    writePrivateFixtureFile(join(profile, "config.yaml"), "keep this unchanged");
     const cli = fakeHermesVersion("Hermes Agent v0.22.0 (2026.9.9)");
     dirs.push(dirname(cli));
     await expect(repairExistingProfile({ root: home, cli })).rejects.toMatchObject({ status: 409 });

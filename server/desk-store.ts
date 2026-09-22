@@ -1,8 +1,9 @@
 // Encrypted Desk store. On-disk authority is V3 after open; Desk mutates a V2 working copy.
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync } from "node:fs";
+import { closeSync, constants, existsSync, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import type { DeskSnapshot, LedgerFacts, Property, RecoveryState } from "../shared/contracts.ts";
+import { DEFAULT_RETENTION_DAYS } from "../shared/office.ts";
 import type { DeskFileV2 } from "../shared/desk-v2.ts";
 import { emptyV3, type DeskFileV3 } from "../shared/desk-v3.ts";
 import { writeFileAtomic } from "./atomic.ts";
@@ -53,7 +54,7 @@ export function emptyV2(book: { properties: Property[]; ledger: LedgerFacts[] })
     revision: 1,
     mode: "demo",
     timezone: hostTimezone(),
-    retentionDays: 90,
+    retentionDays: DEFAULT_RETENTION_DAYS,
     properties: book.properties,
     ledger: book.ledger,
     drafts: [],
@@ -108,6 +109,7 @@ export class DeskStore {
     this.data = loaded.data;
     this.v3 = loaded.v3;
     this.recovery = loaded.recovery;
+    this.protectOwnedFile();
   }
 
   /** Re-read desk.json after an unlock restored files on disk. */
@@ -119,6 +121,7 @@ export class DeskStore {
     this.data = loaded.data;
     this.v3 = loaded.v3;
     this.recovery = loaded.recovery;
+    this.protectOwnedFile();
     this.keyInfo = loaded.key;
   }
 
@@ -144,7 +147,9 @@ export class DeskStore {
         key: this.keyInfo.key,
         migratedAt: Date.now(),
         book,
-        timezone: "Australia/Sydney",
+        // Only consulted for a legacy V1 book, which carries no timezone. Stamp the
+        // host zone like the fresh-book paths; never a fixed Australian default.
+        timezone: hostTimezone(),
       });
       if (!result.ok) {
         const quarantined: string[] = [...result.recovery.quarantined];
@@ -278,10 +283,23 @@ export class DeskStore {
     this.writeV3(this.v3);
   }
 
-  private writeV3(v3: DeskFileV3): void {
-    mkdirSync(dirname(this.file), { recursive: true });
+  /** Older atomic writes inherited the process umask. Tighten only this
+   * owned, unlinked regular file by handle; never rewrite historical bytes. */
+  private protectOwnedFile(): void {
+    if (process.platform === 'win32' || !existsSync(this.file)) return;
+    const before = lstatSync(this.file);
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.uid !== process.getuid?.() || !(before.mode & 0o077)) return;
+    const handle = openSync(this.file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     try {
-      DeskStore.atomicWrite(this.file, JSON.stringify(encryptJson(this.keyInfo.key, v3)));
+      const current = fstatSync(handle);
+      if (current.isFile() && current.nlink === 1 && current.dev === before.dev && current.ino === before.ino && current.uid === before.uid) fchmodSync(handle, 0o600);
+    } finally { closeSync(handle); }
+  }
+
+  private writeV3(v3: DeskFileV3): void {
+    mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 });
+    try {
+      DeskStore.atomicWrite(this.file, JSON.stringify(encryptJson(this.keyInfo.key, v3)), 0o600);
     } catch (error) {
       throwStorageWriteError(error);
     }
@@ -289,9 +307,9 @@ export class DeskStore {
 
   private rotateBackup(): void {
     try {
-      mkdirSync(this.backupDir, { recursive: true });
+      mkdirSync(this.backupDir, { recursive: true, mode: 0o700 });
       const dest = join(this.backupDir, `desk-${this.data.revision}.json`);
-      writeFileAtomic(dest, readFileSync(this.file, "utf8"));
+      writeFileAtomic(dest, readFileSync(this.file, "utf8"), 0o600);
       const files = readdirSync(this.backupDir)
         .filter((name) => name.startsWith("desk-"))
         .sort();

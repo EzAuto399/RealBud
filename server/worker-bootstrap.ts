@@ -7,6 +7,7 @@ import { writeFileAtomic } from "./atomic.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HERMES_RECOMMENDED, type HermesRelease } from "./hermes-releases.ts";
+import { windowsHermesRuntimeEnv } from "./hermes-runtime-env.ts";
 import { augmentedPath } from "./env-path.ts";
 import { killCliTree, spawnCli } from "./procs.ts";
 
@@ -126,7 +127,8 @@ export async function downloadBootstrap(plan: { url: string; sha256: string }, s
 type StageRun = (invocation: { command: string; args: string[] }, home: string, signal: AbortSignal, recordHome?: string) => Promise<void>;
 export const runBootstrapStage: StageRun = (invocation, home, signal, recordHome = home) => new Promise((resolve, reject) => {
   signal.throwIfAborted();
-  const env: NodeJS.ProcessEnv = { ...process.env, PATH: augmentedPath(), HERMES_HOME: home, UV_NO_CONFIG: "1" };
+  let env: NodeJS.ProcessEnv = { ...process.env, PATH: augmentedPath(), HERMES_HOME: home, UV_NO_CONFIG: "1" };
+  if (process.platform === "win32") env = windowsHermesRuntimeEnv(home, env);
   // Install stages need no provider credentials or personal Python overrides.
   for (const key of Object.keys(env)) if (/API_KEY$|_TOKEN$|_SECRET$|_PASSWORD$|^PYTHON(PATH|HOME)$|^VIRTUAL_ENV$/.test(key)) delete env[key];
   saveRecord(recordHome, { version: 1, pending: true, childPid: null, spawning: true });

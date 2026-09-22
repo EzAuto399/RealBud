@@ -1,0 +1,11 @@
+{
+  "output": "/Users/yoda/projects/RealBud/outputs/skill-history-2026-09-22/gui-packaged",
+  "checks": [
+    "Legacy 100-revision fixture is readable; proposal 101 is held without changing active instructions, approved scheduled plan or saved work; default history has no full instruction text.",
+    "Rendered archival requires explicit review; real EACCES preserves the full hot history and saved intent. Cold restart plus lost-response recovery commits one 98-revision archive and keeps active bytes, plan approval/schedule and saved work unchanged.",
+    "Real native proposal 101 preserves the archive head. Paged UI opens full archived baseline; stale confirmation after revision 102 is rejected and refreshed. Fresh confirmation appends revision 103 with plans and schedules held.",
+    "Actual SIGKILL during a partial immutable archive write leaves hot history and old head intact. Cold mobile UI recovery creates one second batch, removes only its owned temporary file, and returns all 103 unique revisions across bounded pages after another restart."
+  ],
+  "errors": [],
+  "denied": []
+}

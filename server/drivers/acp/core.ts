@@ -35,9 +35,12 @@ import { newEventId, newId } from "../../contracts.ts";
 import { computerProxyEnv } from "../../container-computer.ts";
 import { augmentedPath } from "../../env-path.ts";
 import { readCuaConnection } from "../../local-computer.ts";
+import { startBrowserBroker, type BrowserBroker } from "../../browser-broker.ts";
+import { startMemoryProposalBroker } from "../../hermes-memory-proposal-broker.ts";
 import { CONNECTED_APP_APPROVAL, connectedAppsBrokerGeneration, startConnectedAppsBroker, type ConnectedAppsBroker } from "../../connected-apps-broker.ts";
 import { createGmailReadOnlyTransport } from "../../composio-gmail.ts";
 import { toolFingerprint } from "../../tool-fingerprint.ts";
+import { HERMES_MEMORY_APPROVAL, hermesMemoryPermission } from "./hermes-memory-approval.ts";
 
 const COMPUTER_PROXY_PATH = SPAWNED_PROXIES.computer;
 import { appendNative } from "../native.ts";
@@ -211,6 +214,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
 
       const acpMcpServers = (turn: SendTurnInput): AcpMcpServer[] => {
         const servers: AcpMcpServer[] = [];
+        if (DRIVER_KIND === "hermesAgent" && turn.integrations?.memoryProposals) {
+          const capability = turn.integrations.memoryProposals;
+          if (typeof capability.scope !== "string" || !capability.scope || capability.scope.length > 4096 || typeof capability.propose !== "function") {
+            throw new Error("Bud’s memory proposal scope is unavailable. Start a new request.");
+          }
+          servers.push({ type: "http", name: "memory-proposals", url: "http://127.0.0.1/realbud-memory-proposals", headers: [] });
+        }
+        if (turn.integrations?.browser) servers.push({ type: "http", name: "browser", url: "http://127.0.0.1/realbud-browser", headers: [] });
         const acpEnv = (env: Record<string, string>) =>
           Object.entries(env).map(([name, value]) => ({ name, value: String(value) }));
         const composio = turn.integrations?.composio;
@@ -229,18 +240,18 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           servers.push({ name: "agents", command: agents.command, args: agents.args, env: acpEnv(agents.env) });
         }
         const computer = turn.integrations?.computer;
-        if (computer) {
+        if (computer && !turn.integrations?.browser) {
           servers.push({
             name: "computer",
             command: process.execPath,
             args: [COMPUTER_PROXY_PATH],
             env: acpEnv({ ELECTRON_RUN_AS_NODE: "1", ...computerProxyEnv(computer) }),
           });
-        } else if (turn.integrations?.localComputer) {
+        } else if (turn.integrations?.localComputer && !turn.integrations?.browser) {
           const local = turn.integrations.localComputer;
           servers.push({ name: "computer", command: local.command, args: local.args, env: acpEnv(local.env ?? {}) });
         }
-        if (turn.computer === true && !servers.some((server) => server.name === "computer")) {
+        if (turn.computer === true && !turn.integrations?.browser && !servers.some((server) => server.name === "computer")) {
           const conn = readCuaConnection();
           if (conn) {
             servers.push({
@@ -254,8 +265,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         return servers;
       };
 
-      const signatureFor = (cwd: string, args: string[], mcpServers: AcpMcpServer[], composio?: NonNullable<SendTurnInput["integrations"]>["composio"]) =>
+      const signatureFor = (cwd: string, args: string[], mcpServers: AcpMcpServer[], composio?: NonNullable<SendTurnInput["integrations"]>["composio"], memoryScope?: string) =>
         createHash("sha256").update(JSON.stringify({ cli: config.cli, cwd, args, mcpServers,
+          ...(mcpServers.some(server => server.name === "memory-proposals") ? { memoryScope } : {}),
           ...(composio?.allowedApps ? { allowedApps: composio.allowedApps } : {}),
           ...(composio?.gmailReadOnly ? { gmailReadOnly: composio.gmailReadOnly, appKey: composio.key } : {}),
           ...(mcpServers.some(server => server.name === "connected-apps") ? { appGeneration: connectedAppsBrokerGeneration() } : {}),
@@ -301,6 +313,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         let stderr = "";
         let runtime!: SessionRuntime;
         let appBroker: ConnectedAppsBroker | undefined;
+        let browserBroker: BrowserBroker | undefined;
+        let memoryBroker: Awaited<ReturnType<typeof startMemoryProposalBroker>> | undefined;
+        const memoryScope = DRIVER_KIND === "hermesAgent" ? firstTurn.integrations?.memoryProposals?.scope : undefined;
+        const currentMemoryIntegration = () => {
+          const run = current;
+          if (closed || !run || run.settled || run.cancellationRequested || !run.promptSent || !memoryScope) return undefined;
+          const integration = run.turn.integrations?.memoryProposals;
+          return integration?.scope === memoryScope && typeof integration.propose === "function" ? integration : undefined;
+        };
         const rpcPending = new Map<
           number,
           { resolve: (value: any) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> | null }
@@ -330,7 +351,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           });
 
         const removeRuntime = () => {
+          browserBroker?.close();
           appBroker?.close();
+          memoryBroker?.close();
           if (idleTimer) clearTimeout(idleTimer);
           idleTimer = null;
           if (warm.get(threadId) === runtime) warm.delete(threadId);
@@ -364,7 +387,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const settle = (run: RunningTurn, ok: boolean, stopReason: string | null, keepWarm: boolean) => {
           if (run.settled) return;
           run.settled = true;
+          // A browser capability belongs to one job attempt, never a warm chat.
+          if (browserBroker) { browserBroker.close(); keepWarm = false; }
           appBroker?.cancelPending();
+          memoryBroker?.cancelPending();
           if (run.interruptTimer) clearTimeout(run.interruptTimer);
           for (const finish of [...run.asks.values()]) finish({ behavior: "cancel" });
           const tracked = active.get(threadId);
@@ -408,6 +434,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             });
 
           const toolCall = params.toolCall ?? {};
+          const memoryPermission = DRIVER_KIND === "hermesAgent" ? hermesMemoryPermission(toolCall) : { kind: "other" as const };
+          if (memoryPermission.kind === "invalid-memory") {
+            emit({ ...eventBase(run), type: "runtime.error", message: "This memory change cannot be reviewed completely here. Only one fully shown addition can be approved; replacements, removals and batches need separate full-entry review. No memory change was approved." });
+            return send({ jsonrpc: "2.0", id: message.id, result: cancelled });
+          }
           const rawInput = toolCall.rawInput;
           const kind = String(toolCall.kind ?? "");
           const command = typeof rawInput?.command === "string" ? rawInput.command : "";
@@ -415,12 +446,16 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const scriptRequest = [rawInput?.name, rawInput?.tool, kind, toolCall.title, command]
             .some(value => typeof value === "string" && /^\s*execute_code\b/i.test(value)) ||
             typeof rawInput?.code === "string";
+          const unidentifiedCallback = !actionName && rawInput?.description !== undefined;
+          const conflictingAction = [rawInput?.name, rawInput?.tool]
+            .some(name => name !== undefined && name !== actionName);
           // Hermes exposes arbitrary Python via a whole-script callback. Never
           // convert it (or an unidentified action) into blanket session trust.
           // Its established, clearly identified terminal command flow retains
           // its existing session approvals; other engines are unchanged.
           const singleApproval = DRIVER_KIND === "hermesAgent" &&
-            (scriptRequest || kind !== "execute" || !command.trim() ||
+            (memoryPermission.kind === "memory" || unidentifiedCallback || conflictingAction || scriptRequest ||
+              typeof toolCall.kind !== "string" || kind !== "execute" || !command.trim() ||
               (Boolean(actionName) && !["terminal", "shell"].includes(actionName)));
           const onceOption = () => options.find(option => option.kind === "allow_once" && typeof option.optionId === "string")?.optionId ?? null;
           if (config.fullAuto && !singleApproval) {
@@ -432,14 +467,22 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               result: allow ? { outcome: { outcome: "selected", optionId: allow } } : cancelled,
             });
           }
-          const tool = actionName
+          const tool = memoryPermission.kind === "memory" ? HERMES_MEMORY_APPROVAL : actionName
             ? actionName
             : kind === "execute"
               ? "shell"
               : kind === "edit"
                 ? "edit"
                 : kind || (typeof toolCall.title === "string" ? toolCall.title : "tool");
-          const summary = String(
+          // Only an unambiguous named browser action may be refined by the
+          // host's separately validated job fence. Preserve hard manual review
+          // when any source field identified script execution or an unknown
+          // callback, even if the projected tool/URL resembles navigation.
+          const providerOnce = singleApproval && memoryPermission.kind === "other" &&
+            !scriptRequest && !unidentifiedCallback && !conflictingAction && typeof toolCall.kind === "string" && kind === tool &&
+            ["navigate", "read", "fill"].includes(tool) &&
+            [rawInput?.name, rawInput?.tool].every(name => name === undefined || name === tool);
+          const summary = memoryPermission.kind === "memory" ? memoryPermission.review.description : String(
             rawInput?.command ?? rawInput?.url ?? rawInput?.label ?? toolCall.title ?? tool,
           ).slice(0, 200);
           const requestId = newId();
@@ -482,6 +525,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             requestType: "permission",
             tool,
             summary: singleApproval ? `${summary.slice(0, 165)} (approval applies once)` : summary,
+            ...(singleApproval ? { approvalPolicy: providerOnce ? "provider-once" as const : "once" as const } : {}),
+            ...(memoryPermission.kind === "memory" ? { memoryReview: memoryPermission.review } : {}),
             ...(rawInput !== undefined ? { params: rawInput } : {}),
           });
         };
@@ -599,6 +644,49 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         });
 
         const ready = (async () => {
+          if (memoryScope && mcpServers.some(server => server.name === "memory-proposals")) {
+            memoryBroker = await startMemoryProposalBroker({
+              isActive: () => Boolean(currentMemoryIntegration()),
+              assertCapability: () => managedService.assertCapability("reasoning"),
+              propose: async (proposal, signal) => {
+                const run = current, integration = currentMemoryIntegration();
+                if (!run || !integration || signal.aborted) throw new Error("This memory proposal request stopped. Review saved proposals before trying again.");
+                managedService.assertCapability("reasoning");
+                const result = await integration.propose(proposal, signal);
+                if (signal.aborted || current !== run || currentMemoryIntegration() !== integration) throw new Error("This memory proposal request stopped. Review saved proposals before trying again.");
+                managedService.assertCapability("reasoning");
+                return result;
+              },
+            });
+            if (closed) { memoryBroker.close(); throw new Error("Bud’s memory proposal session stopped."); }
+            mcpServers = mcpServers.map(server => server.name === "memory-proposals" ? memoryBroker!.descriptor : server);
+          }
+          if (firstTurn.integrations?.browser) {
+            const browser = firstTurn.integrations.browser;
+            browserBroker = await startBrowserBroker({
+              threadId, runId: browser.runId,
+              checkpoint: browser.checkpoint,
+              context: { allowedOrigins: browser.allowedOrigins, capabilities: browser.capabilities },
+              isActive: () => Boolean(current && !current.settled && !current.cancellationRequested && !closed),
+              approve: (tool, params, summary, signal) => new Promise<boolean>(resolve => {
+                const run = current;
+                if (!run || run.settled || run.cancellationRequested || !run.promptSent || closed || signal.aborted) { resolve(false); return; }
+                const requestId = newId();
+                const finish = (decision: { behavior: string; scope?: "once" | "session" }) => {
+                  if (!run.asks.delete(requestId)) return;
+                  clearTimeout(timer); signal.removeEventListener("abort", aborted);
+                  const allowed = decision.behavior === "allow" && decision.scope !== "session" && !run.settled && !run.cancellationRequested && !closed && !signal.aborted;
+                  emit({ ...eventBase(run), type: "request.resolved", requestId, behavior: allowed ? "allow" : "deny", source: "user" }); resolve(allowed);
+                };
+                const aborted = () => finish({ behavior: "deny" });
+                const timer = setTimeout(aborted, 5 * 60_000); timer.unref();
+                run.asks.set(requestId, finish); signal.addEventListener("abort", aborted, { once: true });
+                emit({ ...eventBase(run), type: "request.opened", requestId, requestType: "permission", tool, params, summary });
+              }),
+            });
+            if (closed) { browserBroker.close(); throw new Error("Browser work stopped."); }
+            mcpServers = mcpServers.map(server => server.name === "browser" ? browserBroker!.descriptor : server);
+          }
           if (firstTurn.integrations?.composio) {
             const { key, url, headers, gmailReadOnly, allowedApps } = firstTurn.integrations.composio;
             if (gmailReadOnly && (typeof gmailReadOnly.requestId !== "string" || !gmailReadOnly.requestId.trim())) throw new Error("Gmail review needs a fresh request identity.");
@@ -689,7 +777,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // resolved session capabilities at the actual prompt boundary,
             // including a computer mounted through the CUA fallback.
             managedService.assertCapability("reasoning");
-            if (mcpServers.some(server => server.name === "computer")) managedService.assertCapability("computer-use");
+            if (mcpServers.some(server => server.name === "computer" || server.name === "browser")) managedService.assertCapability("computer-use");
             if (!sessionAnnounced) {
               sessionAnnounced = true;
               emit({
@@ -736,7 +824,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const interrupt = async (run: RunningTurn) => {
           if (run.settled) return run.done;
           run.cancellationRequested = true;
+          browserBroker?.close();
           appBroker?.cancelPending();
+          memoryBroker?.cancelPending();
           for (const finish of [...run.asks.values()]) finish({ behavior: "cancel" });
           if (sessionId && run.promptSent) {
             send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
@@ -805,9 +895,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (active.has(threadId)) throw new Error("a turn is already running on this thread");
         const cwd = turn.cwd ?? config.workspace ?? homedir();
         const mcpServers = acpMcpServers(turn);
-        if (mcpServers.some(server => server.name === "computer")) managedService.assertCapability("computer-use");
+        if (mcpServers.some(server => server.name === "computer" || server.name === "browser")) managedService.assertCapability("computer-use");
         const args = support.spawnArgs(config, turn);
-        const signature = signatureFor(cwd, args, mcpServers, turn.integrations?.composio);
+        const signature = signatureFor(cwd, args, mcpServers, turn.integrations?.composio, turn.integrations?.memoryProposals?.scope);
         let runtime = warm.get(threadId);
         // A rewind or poisoned-session recovery deliberately clears the
         // persisted cursor. Do not let the warm-process optimization undo

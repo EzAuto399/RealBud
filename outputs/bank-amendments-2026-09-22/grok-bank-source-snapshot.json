@@ -1,0 +1,14 @@
+{
+  "snapshotAt": "2026-09-21T18:18:51.100296+00:00",
+  "files": {
+    "shared/bank-review.ts": "2fb1857ceb7f6f7f54a68e2c3ce1b4a43a88f6c1239d845479125c361c76904c",
+    "server/bank-reference-store.ts": "d78fbd8912ead1b463bcd637f02f2424c77c9dfaf512abc05029ccedb7246a8b",
+    "server/bank-reference-validation.ts": "2d2ca141af423b54b0c7f5045adbb5d141b326a089622702cbc9b75dbc8e29f5"
+  },
+  "rootEditingConcurrently": true,
+  "packetKind": "compact design-only paraphrase; no source CSV, customer records, credentials or local paths sent",
+  "promptBytes": 3155,
+  "promptSha256": "2edb493eb7a5eba8fc793b0a66fa43ab966065bcdd1c3f06147446dc28396af3",
+  "sourceToPromptNote": "Cross-record validator landed during reading; final packet reflects its one-hop implementation. Backup integration described as planned and no claims made about its implementation.",
+  "collectorSha256": "7e9562b576f0bfbdcae37c6e62a4cde402ce2b3153a1a9434ac52fba383cbbc7"
+}

@@ -1,0 +1,6 @@
+PASS Desk opens without downloading settings, schedule, saved-view manager, setup or onboarding chunks
+PASS Lazy screens navigate and preserve their deep-link routes with the real API
+PASS Setup opens, switches sections and closes with keyboard while retaining the underlying screen
+PASS A failed settings asset shows recovery, leaves Desk navigation usable, and reload succeeds after the asset recovers
+PASS A failed setup asset remains keyboard-dismissable in an accessible dialog and fits390px
+PASS A new private browser session loads the actual welcome screen

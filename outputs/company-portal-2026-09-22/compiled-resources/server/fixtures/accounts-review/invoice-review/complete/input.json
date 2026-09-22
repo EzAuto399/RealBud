@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "synthetic": true,
+  "sourceReference": "SYN-INVOICES-COMPLETE-ATTACHMENT-ONLY",
+  "asOf": "2026-09-14",
+  "timezone": "Australia/Brisbane",
+  "reviewer": {
+    "name": "Kevin",
+    "role": "accounts",
+    "roleConfirmation": "user-confirmed",
+    "scenario": "synthetic"
+  },
+  "coverage": {
+    "complete": true,
+    "agreedAccounts": [
+      "SYN-ACCOUNT-FINANCE",
+      "SYN-ACCOUNT-ADMIN"
+    ],
+    "from": "2026-09-01T00:00:00+10:00",
+    "toExclusive": "2026-09-15T00:00:00+10:00",
+    "accounts": [
+      {
+        "accountId": "SYN-ACCOUNT-FINANCE",
+        "folders": [
+          "inbox"
+        ],
+        "expectedThreadCount": 0,
+        "returnedThreadCount": 0,
+        "paginationComplete": true,
+        "pageIds": [
+          1
+        ],
+        "failedPages": [],
+        "threadHistoryComplete": true
+      },
+      {
+        "accountId": "SYN-ACCOUNT-ADMIN",
+        "folders": [
+          "inbox"
+        ],
+        "expectedThreadCount": 0,
+        "returnedThreadCount": 0,
+        "paginationComplete": true,
+        "pageIds": [
+          1
+        ],
+        "failedPages": [],
+        "threadHistoryComplete": true
+      }
+    ],
+    "failedSources": [],
+    "missingAttachments": []
+  },
+  "propertyMap": [
+    {
+      "propertyCode": "SYN-CODE01",
+      "propertyId": "SYN-P01",
+      "approved": true
+    },
+    {
+      "propertyCode": "SYN-CODE02",
+      "propertyId": "SYN-P02",
+      "approved": true
+    }
+  ],
+  "documents": [
+    {
+      "documentId": "SYN-D001",
+      "sourceId": "SYN-D001-EMAIL",
+      "body": "Please see attachment; no invoice fields are in this email body.",
+      "attachmentIds": [
+        "SYN-ATT001"
+      ],
+      "receivedAt": "2026-09-14T08:00:00+10:00",
+      "version": "1"
+    },
+    {
+      "documentId": "SYN-D002",
+      "sourceId": "SYN-D002-EMAIL",
+      "body": "Please see attachment; no invoice fields are in this email body.",
+      "attachmentIds": [
+        "SYN-ATT002"
+      ],
+      "receivedAt": "2026-09-14T08:00:00+10:00",
+      "version": "1"
+    },
+    {
+      "documentId": "SYN-D003",
+      "sourceId": "SYN-D003-EMAIL",
+      "body": "Please see attachment; no invoice fields are in this email body.",
+      "attachmentIds": [
+        "SYN-ATT003"
+      ],
+      "receivedAt": "2026-09-14T08:00:00+10:00",
+      "version": "1"
+    },
+    {
+      "documentId": "SYN-D004",
+      "sourceId": "SYN-D004-EMAIL",
+      "body": "Please see attachment; no invoice fields are in this email body.",
+      "attachmentIds": [
+        "SYN-ATT001"
+      ],
+      "receivedAt": "2026-09-14T08:00:00+10:00",
+      "version": "1"
+    }
+  ],
+  "documentCount": 4,
+  "attachments": [
+    {
+      "attachmentId": "SYN-ATT001",
+      "path": "workflow-inputs/attachments/syn-invoice-001.txt",
+      "available": true
+    },
+    {
+      "attachmentId": "SYN-ATT002",
+      "path": "workflow-inputs/attachments/syn-invoice-002.txt",
+      "available": true
+    },
+    {
+      "attachmentId": "SYN-ATT003",
+      "path": "workflow-inputs/attachments/syn-invoice-003.txt",
+      "available": true
+    }
+  ],
+  "allowedAttachmentPaths": [
+    "workflow-inputs/attachments/syn-invoice-001.txt",
+    "workflow-inputs/attachments/syn-invoice-002.txt",
+    "workflow-inputs/attachments/syn-invoice-003.txt"
+  ]
+}

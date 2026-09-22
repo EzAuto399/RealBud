@@ -1,0 +1,154 @@
+// Actual desktop HTTP application + fixture connector + deterministic CLI.
+// Fictional data only. This proves wiring/recovery, not real Gmail/LLM behavior.
+import { serviceSmokeEnv } from './service-smoke-env.mjs';
+if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE.');
+const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { createServer } from 'node:http';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+const root=resolve(dirname(fileURLToPath(import.meta.url)),'..'), temp=mkdtempSync(join(realpathSync(tmpdir()),'rb-morning-'));
+const data=join(temp,'data'), output=resolve(process.env.QA_OUTPUT || join(root,'outputs/mail-retention-2026-09-21/browser')); mkdirSync(data,{mode:0o700});mkdirSync(output,{recursive:true});
+const wait=ms=>new Promise(r=>setTimeout(r,ms)), checks=[],errors=[]; let child,browser,page,logs='',scanCalls=0,revoked=false,failure; const pass = text => { checks.push(text); console.log('PASS '+text); }; const readUrls=[]; const sourceAt=Date.now()-86400000;
+const credential=`rbc_${'b'.repeat(64)}`;
+const connector=createServer(async(req,res)=>{
+  res.setHeader('content-type','application/json');
+  if(revoked||req.headers.authorization!==`Bearer ${credential}`||req.headers['x-realbud-profile']!=='property'){res.writeHead(403);res.end('{"error":"fixture_revoked"}');return;}
+  if(req.url==='/v1/connectors/status'){res.end(JSON.stringify({managed:true,checkedAt:new Date().toISOString(),serviceExpiresAt:Date.now()+3600000,services:{gmail:{connected:true,status:'ACTIVE',accounts:[{id:'fixture-mail',label:'Fictional accounts inbox',status:'ACTIVE'}],accountSelectionRequired:false}},tools:{available:true,names:['GMAIL_GET_PROFILE','GMAIL_LIST_THREADS','GMAIL_FETCH_MESSAGE_BY_THREAD_ID']}}));return;}
+  if(req.url==='/v1/connectors/mail-scan'){
+    let raw='';for await(const part of req)raw+=part;const body=JSON.parse(raw);if(body.expectedAccountId!=='fixture-mail'||!body.scope){res.writeHead(409).end('{}');return;}const request=body.scope;scanCalls++;
+    res.end(JSON.stringify({accountId:'fixture-mail',windowStartAt:request.windowStartAt,windowEndAt:request.windowEndAt,pages:1,paginationComplete:true,gaps:[],threads:Array.from({length:45},(_,i)=>{
+      const id=(i+1).toString(16);return{id,historyComplete:true,messages:[{id:(i+1001).toString(16),threadId:id,at:sourceAt+i,direction:'incoming',from:'fictional@example.test',to:'office@example.test',subject:`Fictional property request ${String(i+1).padStart(3,'0')}`,body:'Please review this fictional maintenance request. No work has been approved.',bodyTruncated:false,attachments:[]}]};})}));return;
+  }res.writeHead(404);res.end('{}');
+});
+try{
+  connector.listen(0,'127.0.0.1');await once(connector,'listening');const endpoint=`http://127.0.0.1:${connector.address().port}`;
+  const reserve=createServer();reserve.listen(0,'127.0.0.1');await once(reserve,'listening');const port=reserve.address().port;await new Promise(r=>reserve.close(r));const base=`http://127.0.0.1:${port}`;
+  const worker=join(temp,'fictional-worker.mjs'), workerCalls=join(temp,'worker-calls.json');
+  writeFileSync(worker,`#!${process.execPath}\nimport {readFileSync,writeFileSync,existsSync} from 'node:fs';
+if(process.argv.includes('--version')){console.log('Hermes Agent v0.21.3 (2026.9.14)');process.exit(0);}
+const inputPath=${JSON.stringify(join(data,'vault/workflow-inputs/accounts-inbox.json'))};
+if(!existsSync(inputPath)){console.log('{}');process.exit(0);}
+const input=JSON.parse(readFileSync(inputPath,'utf8'));
+const result={version:1,kind:'accounts-inbox-triage',skillSource:'email-inbox-triage@0.1.0',sourceReference:input.sourceReference,status:'complete',coverageComplete:true,holds:[],actionsPerformed:[],threads:input.threads.map(t=>({threadId:t.threadId,disposition:'action-review',owner:'property-manager',priority:t.threadId==='23'?'high':'normal',sourceMessageIds:t.messages.map(m=>m.messageId),reason:'Fictional source asks for maintenance review.',nextAction:'Review internally; no external action was taken.',missingFacts:[]}))};
+const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readFileSync(log,'utf8'));}catch{}calls.push({source:input.sourceReference,count:input.threads.length});writeFileSync(log,JSON.stringify(calls));
+console.log(JSON.stringify({summary:'Fictional deterministic preparation',evidence:['Fictional fixture sources'],outputs:[JSON.stringify(result)],needsApproval:[]}));\n`,{mode:0o700});chmodSync(worker,0o700);
+  writeFileSync(join(data,'config.json'),JSON.stringify({instances:{fixture:{driver:'not-a-real-driver'}},composio:{managed:{endpoint,credential,profile:'property'}}}),{mode:0o600});
+  child=spawn(process.execPath,[join(root,'server/index.ts')],{cwd:root,env:{...serviceSmokeEnv({ executable:process.execPath,home:temp,data,scratch:temp,port }),REALBUD_MANAGED_SERVICE:'0',REALBUD_HERMES_CLI:worker,REALBUD_TEST_LAB:'1',OMB_STATIC_DIR:resolve(process.env.REALBUD_UI_DIR||join(root,'outputs/mail-retention-2026-09-21/ui'))},stdio:['ignore','pipe','pipe']});
+  for(const stream of [child.stdout,child.stderr])stream.on('data',b=>{logs=(logs+b).slice(-30000);});
+  let ready=false;for(let i=0;i<100;i++){if(child.exitCode!==null)break;try{if((await(await fetch(base+'/api/health')).json()).pid===child.pid){ready=true;break;}}catch{}await wait(100);}assert.ok(ready,logs);
+  assert.equal((await fetch(base+'/api/mail-workspace')).status,401);assert.equal((await fetch(base+'/api/agency-setup')).status,401);
+  const token=(await(await fetch(base+'/api/session')).json()).token;
+  const request=async(path,method='GET',body,expected=200)=>{const r=await fetch(base+path,{method,signal:AbortSignal.timeout(60000),headers:{'content-type':'application/json','x-realbud-session':token},...(body===undefined?{}:{body:JSON.stringify(body)})});const v=await r.json();assert.equal(r.status,expected,`${path}: ${JSON.stringify(v)}`);return v;};
+  await request('/api/hermes/apply-pack','POST',{});
+  const exported=await request('/api/customer-packs/office-core/export');const preview=await request('/api/customer-packs/preview','POST',{pack:exported});
+  await request('/api/customer-packs/install','POST',{pack:exported,expectedDigest:preview.digest});
+  const recipe=(await request('/api/recipes')).recipes.find(r=>r.id==='wf-office-core-inbox-triage');assert.ok(recipe);
+  await request(`/api/recipes/${recipe.id}`,'PATCH',{expectedRevision:recipe.revision,planApproved:true,status:'active'});
+  const workerStatus=await request('/api/hermes');assert.ok(workerStatus.workerFingerprint);
+  writeFileSync(join(data,'hands-ping.json'),JSON.stringify({at:Date.now(),ok:true,detail:'Deterministic fixture readiness; not a live model test',kind:'ping',workerFingerprint:workerStatus.workerFingerprint}),{mode:0o600});
+  await request('/api/connected-apps/check','POST',{});
+  let setup=await request('/api/agency-setup');const settings={...setup.state.settings,agencyName:'Fictional Agency One',workflowPackId:'office-core',timeZone:'Australia/Brisbane',gmailAccountId:'fixture-mail',selectedWorkflows:['morning-priorities']};
+  setup=await request('/api/agency-setup','PUT',{expectedRevision:setup.state.revision,settings});
+  setup=await request('/api/agency-setup/check-gmail','POST',{expectedRevision:setup.state.revision});
+  const workflow=setup.workflows.find(w=>w.id==='morning-priorities');assert.ok(workflow.canReview,JSON.stringify(workflow));
+  await request('/api/agency-setup/workflows/morning-priorities/review','POST',{expectedRevision:setup.state.revision,expectedEvidenceDigest:workflow.evidenceDigest});
+  for(let i=0;i<12;i++) await request('/api/mail-workspace/scan','POST',{});
+  let state=await request('/api/mail-workspace');assert.equal(state.counts.total,45);assert.equal(Object.hasOwn(state,'items'),false);
+  const all=(await request('/api/mail-workspace/items?group=all&limit=100')).items;
+  const oldest=all[30], otherSearch=all[31], waiting=all.find(item=>item.threadId==='2d'), done=all.find(item=>item.threadId==='2c');
+  await request(`/api/mail-workspace/items/${waiting.id}`,'PATCH',{expectedRevision:waiting.revision,disposition:'waiting'});
+  await request(`/api/mail-workspace/items/${done.id}`,'PATCH',{expectedRevision:done.revision,status:'done'});
+  state=await request('/api/mail-workspace');assert.equal(state.counts.open,43);assert.equal(state.counts.waiting,1);assert.equal(state.counts.done,1);
+  browser=await chromium.launch({headless:true,...(process.env.CHROME_EXECUTABLE?{executablePath:process.env.CHROME_EXECUTABLE}:{})});
+  const context=await browser.newContext({viewport:{width:1440,height:1000},reducedMotion:'reduce'});
+  await context.route('**/*', route=>new URL(route.request().url()).origin===base?route.continue():route.abort());
+  await context.addInitScript(()=>localStorage.setItem('realbud.first-run-done','1'));
+  page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));page.on('request',request=>{if(request.method()==='GET')readUrls.push(new URL(request.url()).pathname+new URL(request.url()).search);});
+  await page.goto(base+'/#/desk');const summary=page.getByRole('region',{name:'Mail priorities summary',exact:true});
+  await summary.getByText('43 need attention · 1 waiting',{exact:true}).waitFor();
+  assert.ok(readUrls.some(url=>url.startsWith('/api/mail-workspace/items?')&&url.includes('limit=3')));
+  await summary.getByRole('button',{name:'Open mail priorities',exact:true}).click();
+  const panel=page.getByRole('region',{name:'Mail priorities and follow-ups',exact:true});await panel.waitFor();
+  await panel.getByText('Showing 20 of 43 conversations',{exact:false}).waitFor();
+  assert.equal(await panel.getByRole('button',{name:'Review or edit this item',exact:true}).count(),20);
+  assert.equal(await panel.getByRole('heading',{name:oldest.subject,exact:true}).count(),0);
+  pass('Real HTTP metadata has global counts without tasks; Desk requests three rows and full mail view initially fetches twenty of43 open conversations');
+  const search=panel.getByLabel('Find a conversation',{exact:true});await search.fill(oldest.subject);
+  await panel.getByText('Showing 1 of 1 conversations',{exact:false}).waitFor();
+  await panel.getByRole('button',{name:'Review or edit this item',exact:true}).click();const editor=panel.getByRole('form',{name:'Review saved mail item',exact:true});
+  await editor.getByLabel('Your note',{exact:true}).fill('Keep this unsaved staff note across page changes');
+  await search.fill(otherSearch.subject);await panel.getByText('Showing 1 of 1 conversations',{exact:false}).waitFor();
+  assert.equal(await editor.getByLabel('Your note',{exact:true}).inputValue(),'Keep this unsaved staff note across page changes');
+  await panel.getByRole('button',{name:'Refresh saved mail work',exact:true}).click();await panel.getByText('Saved work and receipt refreshed.',{exact:true}).waitFor();
+  assert.equal(await editor.getByText('This saved item changed elsewhere.',{exact:false}).count(),0);
+  assert.equal(await editor.getByLabel('Your note',{exact:true}).inputValue(),'Keep this unsaved staff note across page changes');
+  assert.ok(readUrls.some(url=>url===`/api/mail-workspace/items/${oldest.id}`));
+  pass('Search reaches an old conversation outside the first page; its open editor and note survive a different search and direct-item refresh');
+  await search.fill('');await panel.getByText('Showing 20 of 43 conversations',{exact:false}).waitFor();
+  const concurrent=(await request(`/api/mail-workspace/items/${waiting.id}`)).item;
+  await request(`/api/mail-workspace/items/${waiting.id}`,'PATCH',{expectedRevision:concurrent.revision,note:'Independent fictional update changes page revision'});
+  await panel.getByRole('button',{name:'Load more conversations',exact:true}).click();
+  await panel.getByRole('alert').filter({hasText:/changed|Refresh/i}).last().waitFor();
+  assert.equal(await panel.getByRole('button',{name:'Review or edit this item',exact:true}).count(),20);
+  assert.equal(await editor.getByLabel('Your note',{exact:true}).inputValue(),'Keep this unsaved staff note across page changes');
+  pass('Real concurrent HTTP edit makes continuation return409; already loaded rows and the off-page staff draft remain visible');
+  await panel.getByRole('button',{name:'Refresh saved mail work',exact:true}).click();await panel.getByText('Saved work and receipt refreshed.',{exact:true}).waitFor();
+  await panel.getByRole('button',{name:'Load more conversations',exact:true}).click();await panel.getByText('Showing 40 of 43 conversations',{exact:false}).waitFor();
+  await panel.getByRole('button',{name:'Load more conversations',exact:true}).click();await panel.getByText('Showing 43 of 43 conversations',{exact:false}).waitFor();
+  assert.equal(await panel.getByRole('button',{name:'Review or edit this item',exact:true}).count(),43);
+  pass('Fresh revision pages append all43 matching conversations once without pulling full history into the first request');
+  const latest=(await request(`/api/mail-workspace/items/${oldest.id}`)).item;
+  await request(`/api/mail-workspace/items/${oldest.id}`,'PATCH',{expectedRevision:latest.revision,owner:'Fictional other reviewer'});
+  await panel.getByRole('button',{name:'Refresh saved mail work',exact:true}).click();await editor.getByText('This saved item changed elsewhere.',{exact:false}).waitFor();
+  assert.equal(await editor.getByLabel('Your note',{exact:true}).inputValue(),'Keep this unsaved staff note across page changes');
+  assert.ok(await editor.getByRole('button',{name:'Save reviewed item',exact:true}).isDisabled());
+  await editor.getByRole('button',{name:'Reload this item and discard my edits',exact:true}).click();
+  const discard=panel.getByRole('alertdialog',{name:'Discard unsaved mail edits',exact:true});await discard.waitFor();
+  await discard.getByRole('button',{name:'Keep editing this item',exact:true}).click();
+  assert.equal(await editor.getByLabel('Your note',{exact:true}).inputValue(),'Keep this unsaved staff note across page changes');
+  await editor.getByRole('button',{name:'Reload this item and discard my edits',exact:true}).click();await discard.getByRole('button',{name:'Discard unsaved item edits',exact:true}).click();
+  assert.equal(await editor.getByLabel('Responsible reviewer (local label)',{exact:true}).inputValue(),'Fictional other reviewer');
+  await editor.getByLabel('Your note',{exact:true}).fill('Fictional reviewed note kept after saved revision');
+  await editor.getByRole('button',{name:'Save reviewed item',exact:true}).click();await editor.waitFor({state:'hidden'});
+  assert.equal((await request(`/api/mail-workspace/items/${oldest.id}`)).item.note,'Fictional reviewed note kept after saved revision');
+  pass('Direct stale-item detection preserves edits, requires explicit discard with cancel, then saves a reviewed note against the fresh item revision');
+  let failedReads=0;
+  await page.route('**/api/mail-workspace/items?**',route=>{failedReads++;return route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Explicit fictional browser read failure'})});});
+  await panel.getByRole('button',{name:'Refresh saved mail work',exact:true}).click();await panel.getByRole('alert').filter({hasText:'Explicit fictional browser read failure'}).waitFor();
+  assert.equal(await panel.getByRole('button',{name:'Review or edit this item',exact:true}).count(),20);assert.ok(failedReads>0);
+  await page.unroute('**/api/mail-workspace/items?**');
+  await panel.getByRole('button',{name:'Refresh saved mail work',exact:true}).click();await panel.getByText('Saved work and receipt refreshed.',{exact:true}).waitFor();
+  pass('Explicitly injected503 task-page read preserves loaded rows and refresh recovers after the injection is removed');
+  await panel.getByText('Collection history',{exact:true}).click();await panel.getByRole('button',{name:'Refresh collection history',exact:true}).click();
+  await panel.getByText('10 of 12 retained collections shown.',{exact:true}).waitFor();await panel.getByRole('button',{name:'Load more collection receipts',exact:true}).click();
+  await panel.getByText('12 of 12 retained collections shown.',{exact:true}).waitFor();
+  pass('Actual saved collection history pages retain twelve receipts including earlier source windows');
+  await panel.getByText('Collection history',{exact:true}).click();
+  await page.screenshot({path:join(output,'mail-overview-desktop.png')}); await panel.getByText('Showing 20 of 43 conversations',{exact:false}).scrollIntoViewIfNeeded(); await page.screenshot({path:join(output,'mail-retained-desktop.png')});
+  await page.setViewportSize({width:390,height:844});await panel.scrollIntoViewIfNeeded();assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+  await search.fill(oldest.subject);await panel.getByText('Showing 1 of 1 conversations',{exact:false}).waitFor();
+  await search.focus(); await page.keyboard.press('Tab'); assert.equal(await page.locator(':focus').innerText(),'View source conversation'); await page.keyboard.press('Enter'); const source=panel.getByRole('complementary',{name:'Saved source conversation',exact:true});await source.waitFor();
+  await source.screenshot({path:join(output,'mail-source-mobile.png')});
+  await panel.getByRole('button',{name:'Review or edit this item',exact:true}).click();await editor.getByLabel('Your note',{exact:true}).fill('Fictional mobile unsaved draft');
+  await editor.getByRole('button',{name:'Cancel item edits',exact:true}).click();await discard.waitFor(); assert.equal(await page.locator(':focus').getAttribute('aria-label'),'Discard unsaved mail edits'); await discard.screenshot({path:join(output,'mail-discard-mobile.png')});
+  await discard.getByRole('button',{name:'Keep editing this item',exact:true}).click();assert.equal(await editor.getByLabel('Your note',{exact:true}).inputValue(),'Fictional mobile unsaved draft');
+  await editor.screenshot({path:join(output,'mail-editor-mobile.png')});
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));assert.deepEqual(errors,[]);
+  pass('Desktop and390px mobile show retained source evidence, editable notes and explicit discard cancellation with keyboard source opening and focused discard, without horizontal overflow or page errors');
+} catch(error) {
+  failure=error instanceof Error?error.stack:String(error);
+  if(page)writeFileSync(join(output,'failure.txt'),await page.locator('body').innerText().catch(()=>''));
+  await page?.screenshot({path:join(output,'failure.png'),fullPage:true}).catch(()=>{});
+} finally {
+  await browser?.close();
+  if(child && child.exitCode===null && child.signalCode===null){child.kill('SIGTERM');await Promise.race([once(child,'exit'),wait(4000)]);if(child.exitCode===null && child.signalCode===null){child.kill('SIGKILL');await Promise.race([once(child,'exit'),wait(4000)]);}}
+  await new Promise(resolve=>connector.close(resolve));
+  const cleaned=!child||child.exitCode!==null||child.signalCode!==null;if(cleaned)rmSync(temp,{recursive:true,force:true});else failure??='Owned fixture child did not exit; scratch preserved.';
+  writeFileSync(join(output,'receipt.json'),JSON.stringify({at:new Date().toISOString(),passed:!failure,layer:'Actual local HTTP and built React UI with fictional connector and deterministic worker. One explicitly labelled503 browser injection. No live Gmail/customer/Windows proof.',checks,scanCalls,errors,failure,cleanup:{childExited:cleaned,scratchRemoved:cleaned},...(failure?{diagnostic:logs}:{})},null,2));
+  if(failure){console.error(failure);process.exitCode=1;}else console.log(JSON.stringify({output,checks},null,2));
+}

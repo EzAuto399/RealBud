@@ -1,0 +1,104 @@
+{
+  "checkpoint": "Attended remote-approver enrollment",
+  "completedAt": "2026-09-21T22:56:00.251222+00:00",
+  "scope": "Local enrollment, consent, identity confirmation, revocation and recovery; not remote work approval/execution or production release",
+  "source": {
+    "repository": "/Users/yoda/projects/RealBud",
+    "head": "5856140c6ba49f53e79a7edbf01800e099b53e10",
+    "uncommittedWorkPreserved": true,
+    "before": "source-before-recovery-verification.json",
+    "after": "source-after-recovery-checks.json",
+    "files": 1102,
+    "productAndUnitSourceUnchangedDuringFinalChecks": true,
+    "harnessOnlyChange": "Explicit connector-status outage makes held UI observable despite renderer automatic source checking"
+  },
+  "checks": {
+    "fullSource": {
+      "command": "pnpm test",
+      "exitCode": 0,
+      "passed": 4630,
+      "failed": 0,
+      "skipped": 191,
+      "filesPassed": 345,
+      "filesSkipped": 21,
+      "durationSeconds": 369.92,
+      "log": "full-vitest.log"
+    },
+    "focusedDomain": {
+      "passed": 75,
+      "failed": 0,
+      "includedInFullSource": true,
+      "receipt": "../portal-identity-2026-09-22/remote-enrollment-read-reconciliation-tests.json"
+    },
+    "websiteUnit": {
+      "passed": 55,
+      "failed": 0,
+      "log": "website-tests-final.log"
+    },
+    "postgres": {
+      "assertions": 179,
+      "receipt": "sql-verification.json",
+      "unchangedSourceHashesVerified": true
+    },
+    "desktopBuild": {
+      "command": "pnpm build",
+      "exitCode": 0,
+      "log": "desktop-build-final.log"
+    },
+    "websiteBuild": {
+      "command": "pnpm build",
+      "cwd": "website",
+      "exitCode": 0,
+      "log": "website-build-final.log"
+    },
+    "actualGUI": {
+      "passedGroups": 4,
+      "receipt": "gui-source/receipt.json",
+      "cleanup": "gui-source/cleanup.json",
+      "sourceScans": 0,
+      "workerCalls": 0,
+      "rpcCount": 40,
+      "errors": [],
+      "visualInspection": [
+        "gui-source/desktop-source-hold.png",
+        "gui-source/portal-confirmed-mobile.png",
+        "gui-source/desktop-candidate-mobile.png"
+      ]
+    },
+    "review": "review-final.md",
+    "gitDiffCheck": "passed"
+  },
+  "preservedNegatives": [
+    "full-vitest-during-edits.log",
+    "gui-before-label-fix.log",
+    "gui-before-startup-wait.log",
+    "gui-before-revocation-fix.log",
+    "gui-restart-diagnostic.log",
+    "gui-before-outage-fixture.log",
+    "../portal-identity-2026-09-22/remote-enrollment-read-reconciliation-old-expectations.json"
+  ],
+  "grok": {
+    "requestedModel": "grok-4.7",
+    "requestedEffort": "xhigh",
+    "originalReview": "grok-remote-enrollment-acp-run.json",
+    "metadataFollowup": "grok-model-selection-run.json",
+    "offeredModels": [
+      "grok-4.6",
+      "grok-4.5"
+    ],
+    "promptRequestsSent": 0,
+    "reviewCompleted": false,
+    "processReaped": true,
+    "globalConfigUnchanged": true,
+    "isolatedHomeRemoved": true,
+    "remainingOwnedGroupPids": []
+  },
+  "remaining": [
+    "Protocol2 work-review upload, audience decision and online claim wired into existing executors",
+    "Scoped shared-department execution",
+    "Hosted migration/service and real provider/customer acceptance",
+    "Native Windows installed workflows, key custody, updates and uninstall",
+    "Fresh packaged macOS and two-device acceptance for the latest source"
+  ],
+  "nextImplementationMap": "decision-claim-integration-map.md"
+}

@@ -1,0 +1,86 @@
+Disposable PostgreSQL company verification
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/Users/yoda/projects/RealBud[39m
+
+ [31m❯[39m server/company/postgres.integration.test.ts [2m([22m[2m17 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[33m 421[2mms[22m[39m
+     [32m✓[39m refuses superuser runtime credentials and checks migration checksums[32m 18[2mms[22m[39m
+     [32m✓[39m serializes single-host bootstrap and persists the resulting office[32m 19[2mms[22m[39m
+     [32m✓[39m stores only token hashes and redeems one invitation exactly once across pools[32m 18[2mms[22m[39m
+     [32m✓[39m rejects expired/revoked invitations and revoked/expired sessions[32m 20[2mms[22m[39m
+     [32m✓[39m holds owner recovery without owner proof, preserving sessions and private confidentiality[32m 22[2mms[22m[39m
+     [32m✓[39m keeps private scopes private even from the company owner and separates companies[32m 23[2mms[22m[39m
+     [32m✓[39m serializes competing first knowledge revisions and preserves revision history[32m 24[2mms[22m[39m
+     [32m✓[39m rejects concurrent stale grant edits and reads after revocation across warm instances[32m 22[2mms[22m[39m
+     [32m✓[39m RLS hides private content and pooled transaction actor context clears on success and failure[32m 25[2mms[22m[39m
+     [32m✓[39m allows one case claimant, renews its lease and fences a released generation[32m 34[2mms[22m[39m
+     [32m✓[39m holds an expired claim and refuses late renewal or completion[32m 25[2mms[22m[39m
+     [32m✓[39m revokes members without releasing unsettled work to another claimant[32m 24[2mms[22m[39m
+[31m     [31m×[31m fences active work when editing access is removed, even if access is later restored ('read')[39m[32m 25[2mms[22m[39m
+[31m     [31m×[31m fences active work when editing access is removed, even if access is later restored ('none')[39m[32m 22[2mms[22m[39m
+     [32m✓[39m preserves claims when editing authority remains and does not affect another scope[32m 37[2mms[22m[39m
+     [32m✓[39m concurrent session revocations are idempotent without a lock-upgrade deadlock[32m 17[2mms[22m[39m
+     [32m✓[39m member revocation waits for an already-authorized write then denies every later write[32m 33[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 2 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m server/company/postgres.integration.test.ts[2m > [22mcompany kernel on real PostgreSQL[2m > [22mfences active work when editing access is removed, even if access is later restored ('read')
+[31m[1mAssertionError[22m: expected { status: 'claimed', fence: '1', …(2) } to deeply equal { status: 'recovery_required', …(3) }[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[32m-   "claim_token_hash": null,[39m
+[32m-   "fence": "2",[39m
+[32m-   "lease_expires_at": null,[39m
+[32m-   "status": "recovery_required",[39m
+[31m+   "claim_token_hash": "38dcb34bd555aaa41c22bfe882dffa74e9bdb1c848188697771b978b7f0c80cc",[39m
+[31m+   "fence": "1",[39m
+[31m+   "lease_expires_at": 2026-09-21T03:15:47.158Z,[39m
+[31m+   "status": "claimed",[39m
+[2m  }[22m
+
+[36m [2m❯[22m server/company/postgres.integration.test.ts:[2m234:28[22m[39m
+    [90m232|[39m       const removed = await kernel.setScopeGrant(owner.sessionToken, {…
+    [90m233|[39m       const held = await admin.query('SELECT status,fence,claim_token_…
+    [90m234|[39m       expect(held.rows[0]).toEqual({ status: 'recovery_required', fenc…
+    [90m   |[39m                            [31m^[39m
+    [90m235|[39m       await kernel.setScopeGrant(owner.sessionToken, { scopeId: scope.…
+    [90m236|[39m       await expect(other.renewClaim(member.sessionToken, { ...claim, t…
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m server/company/postgres.integration.test.ts[2m > [22mcompany kernel on real PostgreSQL[2m > [22mfences active work when editing access is removed, even if access is later restored ('none')
+[31m[1mAssertionError[22m: expected { status: 'claimed', fence: '1', …(2) } to deeply equal { status: 'recovery_required', …(3) }[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[32m-   "claim_token_hash": null,[39m
+[32m-   "fence": "2",[39m
+[32m-   "lease_expires_at": null,[39m
+[32m-   "status": "recovery_required",[39m
+[31m+   "claim_token_hash": "856334c122f3bafb3157e7dd789eb73e53dc1e75d16d6ca81c0f66412f46fdd8",[39m
+[31m+   "fence": "1",[39m
+[31m+   "lease_expires_at": 2026-09-21T03:15:47.183Z,[39m
+[31m+   "status": "claimed",[39m
+[2m  }[22m
+
+[36m [2m❯[22m server/company/postgres.integration.test.ts:[2m234:28[22m[39m
+    [90m232|[39m       const removed = await kernel.setScopeGrant(owner.sessionToken, {…
+    [90m233|[39m       const held = await admin.query('SELECT status,fence,claim_token_…
+    [90m234|[39m       expect(held.rows[0]).toEqual({ status: 'recovery_required', fenc…
+    [90m   |[39m                            [31m^[39m
+    [90m235|[39m       await kernel.setScopeGrant(owner.sessionToken, { scopeId: scope.…
+    [90m236|[39m       await expect(other.renewClaim(member.sessionToken, { ...claim, t…
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m15 passed[39m[22m[90m (17)[39m
+[2m   Start at [22m 13:15:16
+[2m   Duration [22m 658ms[2m (transform 128ms, setup 23ms, import 137ms, tests 421ms, environment 0ms)[22m
+
+JSON report written to /Users/yoda/projects/RealBud/outputs/enterprise-company-2026-09-21/vitest.json

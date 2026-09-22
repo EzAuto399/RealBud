@@ -1,0 +1,21 @@
+{
+  "ok": true,
+  "checks": [
+    "Staff UI saves both changed and unchanged transaction decisions with exact original bytes",
+    "Lost amendment response reconciles the committed version on explicit retry without a duplicate",
+    "Correction form preserves structured payer aliases, punctuation and whitespace without text round-trip changes",
+    "Corrected mapping needs fresh row decisions; stale concurrent correction and premature download are refused",
+    "Both versions remain reachable with distinct byte-checked downloads and an earlier-version warning",
+    "Actual service restart retains linked review history, all decisions and both exact artifacts",
+    "No browser errors or off-origin browser requests"
+  ],
+  "errors": [],
+  "unexpectedNetwork": [],
+  "cleanup": {
+    "browserClosed": true,
+    "serviceStopped": true,
+    "fixtureRemoved": true
+  },
+  "runtime": "Packaged Electron Node service and packaged UI",
+  "scope": "Real local HTTP and built browser UI; fictional sources; no bank, Gmail, REI, provider or installed-device acceptance"
+}

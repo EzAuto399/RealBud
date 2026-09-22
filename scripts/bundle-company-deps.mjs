@@ -17,7 +17,7 @@ await mkdir(vendor, { recursive: true });
 // "Cannot find module dist-server/shared/service-identity.mjs" — the compiled
 // server/index.js imports that path and nothing ever put it there. Copy the
 // non-TypeScript inputs the server actually loads, preserving relative paths.
-const NON_TS = /\.(mjs|d\.mts|json|ya?ml|md|txt|csv|html)$/;
+const NON_TS = /\.(mjs|d\.mts|json|ya?ml|md|txt|csv|html|py)$/;
 async function copyRuntimeInputs(sourceDir, targetDir) {
   let copied = 0;
   for (const entry of await readdir(sourceDir, { withFileTypes: true })) {
@@ -25,7 +25,7 @@ async function copyRuntimeInputs(sourceDir, targetDir) {
     const to = join(targetDir, entry.name);
     if (entry.isDirectory()) {
       // Mirrors tsconfig.server.build.json: the test tree is not shipped.
-      if (from === join(root, 'server/testing')) continue;
+      if (from === join(root, 'server/testing') || entry.name === '__pycache__') continue;
       await mkdir(to, { recursive: true });
       copied += await copyRuntimeInputs(from, to);
     } else if (NON_TS.test(entry.name)) {
@@ -70,8 +70,17 @@ if (missingRuntimeInputs.length) {
 }
 
 
-const bundles = { pg: 'Pool', selfsigned: 'generate' };
-const receipt = { node: process.version, bundles: {}, rewritten: [] };
+const bundles = { pg: 'Pool', selfsigned: 'generate', yaml: 'parseDocument, isMap, YAMLMap' };
+// These helpers are resolved dynamically rather than by JS imports. Verify the
+// exact shipped bytes as part of every server build; no checkout fallback.
+const helpers = {};
+for (const name of ['hermes-memory-review.py', 'hermes-memory-proposals.py', 'hermes-memory-windows.py', 'hermes-memory-windows-native.py', 'hermes-memory-windows-journal.py', 'department-worker.py']) {
+  const source = await readFile(join(root, 'server/helpers', name));
+  const packaged = await readFile(join(server, 'helpers', name));
+  if (!source.equals(packaged)) throw new Error(`Packaged memory helper differs from source: ${name}`);
+  helpers[name] = { sha256: createHash('sha256').update(packaged).digest('hex') };
+}
+const receipt = { node: process.version, bundles: {}, helpers, rewritten: [] };
 for (const [name, exports] of Object.entries(bundles)) {
   const file = join(vendor, `${name}.mjs`);
   const result = await build({
@@ -90,7 +99,7 @@ async function rewrite(directory) {
     if (entry.isDirectory()) await rewrite(file);
     else if (entry.name.endsWith('.js')) {
       const before = await readFile(file, 'utf8');
-      const after = before.replace(/(\bfrom\s*|\bimport\s*\(\s*)(['"])(pg|selfsigned)\2/g, (_match, prefix, quote, name) => {
+      const after = before.replace(/(\bfrom\s*|\bimport\s*\(\s*)(['"])(pg|selfsigned|yaml)\2/g, (_match, prefix, quote, name) => {
         let path = relative(dirname(file), join(vendor, `${name}.mjs`)).replaceAll('\\', '/');
         if (!path.startsWith('.')) path = './' + path;
         return `${prefix}${quote}${path}${quote}`;

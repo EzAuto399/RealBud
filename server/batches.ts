@@ -3,9 +3,10 @@
 import { randomUUID, createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { BATCH_LIMIT, BATCH_HISTORY_ITEMS, BATCH_AUTO_ATTEMPTS, BATCH_TASKS, batchCounts, type BatchItem, type WorkBatch, type BatchTask } from "../shared/batches.ts";
+import { BATCH_LIMIT, BATCH_HISTORY_ITEMS, BATCH_AUTO_ATTEMPTS, BATCH_TASKS, batchCounts, type WorkBatch, type BatchTask } from "../shared/batches.ts";
 import type { DeskSnapshot } from "../shared/contracts.ts";
 import { DATA_DIR } from "./config.ts";
+import { validStoredWorkBatches } from "./batch-persistence.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { deskContextMarkdown } from "./desk-context.ts";
 import { askWorker } from "./recipe-draft.ts";
@@ -21,41 +22,13 @@ type Dependencies = {
   snapshot: () => DeskSnapshot;
   notes: (id: string) => string;
   available: () => Promise<boolean>;
+  /** Reversible host admission for timer/startup recovery; never stops or
+   * clears saved work. Rechecked after asynchronous worker readiness. */
+  canRecover?: () => boolean;
   ask?: typeof askWorker;
   retryDelayMs?: number;
 };
 
-function validStored(value: unknown): value is WorkBatch[] {
-  if (!Array.isArray(value) || value.length > 100) return false;
-  const ids = new Set<string>();
-  const keys = new Set<string>();
-  return value.every(batch => {
-    if (!batch || typeof batch.id !== "string" || ids.has(batch.id)) return false;
-    ids.add(batch.id);
-    if (typeof batch.requestKey !== "string" || !/^[\w-]{8,100}$/.test(batch.requestKey) || keys.has(batch.requestKey)) return false;
-    keys.add(batch.requestKey);
-    if (!(Object.hasOwn(BATCH_TASKS, batch.task)) || !["running", "paused", "finished"].includes(batch.status)
-      || !Number.isInteger(batch.revision) || batch.revision < 1 || !Number.isInteger(batch.sourceRevision)
-      || !Number.isFinite(batch.createdAt) || !Number.isFinite(batch.updatedAt) || typeof batch.sample !== "boolean" || typeof batch.retryOnly !== "boolean"
-      || ![batch.requestKey, batch.requestHash, batch.instruction, batch.detail].every(v => typeof v === "string")
-      || (batch.autoContinue !== undefined && typeof batch.autoContinue !== "boolean")
-      || (batch.waitingForWorker !== undefined && typeof batch.waitingForWorker !== "boolean")
-      || batch.instruction.length > 1000 || batch.detail.length > 2000 || !/^[a-f0-9]{64}$/.test(batch.requestHash)
-      || !Array.isArray(batch.items) || !batch.items.length || batch.items.length > BATCH_LIMIT) return false;
-    const properties = new Set<string>();
-    return batch.items.every((item: BatchItem) => {
-      if (!item || typeof item.propertyId !== "string" || properties.has(item.propertyId)) return false;
-      properties.add(item.propertyId);
-      return [item.address, item.source, item.output, item.detail].every(v => typeof v === "string")
-        && item.source.length <= 16_000 && item.output.length <= MAX_OUTPUT
-        && ["queued", "running", "ready", "needs-review", "failed", "interrupted"].includes(item.status)
-        && Number.isInteger(item.attempt) && item.attempt >= 0 && Array.isArray(item.gaps)
-        && item.gaps.length <= 20 && item.gaps.every(v => typeof v === "string" && v.length <= 500)
-        && (item.reviewedAt === undefined || Number.isFinite(item.reviewedAt))
-        && (item.retryAt === undefined || (Number.isFinite(item.retryAt) && item.retryAt >= 0));
-    });
-  });
-}
 
 export class BatchService {
   private batches: WorkBatch[] = [];
@@ -76,7 +49,7 @@ export class BatchService {
     if (!existsSync(this.file)) return;
     try {
       const data: unknown = JSON.parse(readFileSync(this.file, "utf8"));
-      if (!validStored(data)) throw new Error("invalid batch history");
+      if (!validStoredWorkBatches(data)) throw new Error("invalid batch history");
       this.batches = data;
       if (data.some(batch => batch.status === "running" || batch.items.some(item => item.status === "running"))) {
         this.commit(next => {
@@ -203,13 +176,13 @@ export class BatchService {
   }
   /** Timer and startup share a single readiness probe; never overlap workers. */
   async recoverReadyWork() {
-    if (this.recovering || this.stopped || this.error || this.runners.size || this.deps.snapshot().recovery.active) return;
+    if (this.recovering || this.stopped || this.error || this.runners.size || this.deps.snapshot().recovery.active || this.deps.canRecover?.() === false) return;
     const candidate = this.batches.find(b => b.status === "paused" && b.autoContinue && b.waitingForWorker);
     if (!candidate) return;
     this.recovering = true;
     try {
       const available = await this.deps.available().catch(() => false);
-      if (!available || this.stopped || this.error || this.runners.size || this.deps.snapshot().recovery.active) return;
+      if (!available || this.stopped || this.error || this.runners.size || this.deps.snapshot().recovery.active || this.deps.canRecover?.() === false) return;
       const current = this.batches.find(b => b.id === candidate.id);
       if (!current?.waitingForWorker || current.status !== "paused") return;
       this.commit(next => { const b = next.find(b => b.id === candidate.id)!; b.status = "running"; b.waitingForWorker = false; b.detail = "Connection restored. Continuing saved work."; this.touch(b); });

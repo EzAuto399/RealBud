@@ -1,0 +1,110 @@
+{
+  "grok-skill-implementation-acp-profile.md": {
+    "bytes": 460,
+    "sha256": "c33930c09d9863efaf0418434c0f12b9b2a3067454a810d48712086cd51fdc55"
+  },
+  "grok-skill-implementation-acp-prompt.txt": {
+    "bytes": 1987,
+    "sha256": "fd29afdc7fb05edb234a585994f2cd3f9b275e36daddbaa082952af0a6399002"
+  },
+  "grok-skill-implementation-acp-review.py": {
+    "bytes": 18959,
+    "sha256": "c2eae43a843a111b3d0310f4d169debb2428306e9939ee1ce4a72f04c37312be"
+  },
+  "grok-skill-implementation-acp-run.json": {
+    "bytes": 9379,
+    "sha256": "6d1233fe299d35ce75f6bd164c1fb05a506283341e5e699f673486dc031d005a"
+  },
+  "grok-skill-implementation-cleanup.json": {
+    "bytes": 380,
+    "sha256": "32c06be83bdaa91d35275afc557ffc7d0301d6c8232d715c3003bee2e9b81447"
+  },
+  "grok-skill-implementation-disposition.json": {
+    "bytes": 1077,
+    "sha256": "d206cc06bdd56a8ba5938b4efc69b9516125cb623b3aa7eec12b52dccd0c9820"
+  },
+  "grok-skill-implementation-finalize.py": {
+    "bytes": 3691,
+    "sha256": "d8f4ffff72647ceb02ea917db0a0a7a31d4fe4611ce7dfb9e16c52eeb19f269e"
+  },
+  "grok-skill-implementation-review.md": {
+    "bytes": 1197,
+    "sha256": "d01253cb7cab6701e61e8669aaadaf896617d2e5af3dc8a6221f896e60ef5d88"
+  },
+  "independent-final-source-fingerprints.json": {
+    "bytes": 1035,
+    "sha256": "e5e82aba5ee209baced0be2636db072ee9e66e8b35441b87b235fa8f550deb92"
+  },
+  "independent-fixture.ts": {
+    "bytes": 3796,
+    "sha256": "8fa8de0733451dd743033ab3c7a6d0f6c22ab46120b26f98103231be1bfbebd1"
+  },
+  "independent-history-consistency-green-evidence.json": {
+    "bytes": 526,
+    "sha256": "0430ce372754673a5947b6378e5d6631c9a4f45a86d80462ad2fde6be9b8d6e9"
+  },
+  "independent-history-consistency-green.json": {
+    "bytes": 2337,
+    "sha256": "de8eada63418720c49a5eee4a8a477ac04e55b2e3b748739e78cefb50bbdf908"
+  },
+  "independent-history-consistency-red-evidence.json": {
+    "bytes": 793,
+    "sha256": "b370aaec4b5ee7d5974b157b82ad5905fbb17f71ddec9106ae0fa503d926437b"
+  },
+  "independent-history-consistency-red.json": {
+    "bytes": 4698,
+    "sha256": "8f961d67319a623ca67bfedb0ede643ac10d7089f865ab3aca46b343fdbf6500"
+  },
+  "independent-history-consistency.test.ts": {
+    "bytes": 4960,
+    "sha256": "b8b0f2d3dd38a1d6593005aa88b15a867390ebffa76de984beed037e29175bd5"
+  },
+  "independent-intent-budget.json": {
+    "bytes": 1956,
+    "sha256": "cfa9d77e915b9f3e3d0773167f0e611e84f179669bbb2c7e1d77ec95e077e366"
+  },
+  "independent-intent-budget.test.ts": {
+    "bytes": 3005,
+    "sha256": "6355e06e365e6e7befbf01c3a309bafbc1c8f0e93fdfc649623a5fbd70038778"
+  },
+  "independent-live-downgrade-red.json": {
+    "bytes": 3216,
+    "sha256": "4a832abcf32184be16e0dd911d8babf50c0eecd4e6fec921fb84af83563fe47e"
+  },
+  "independent-review-acceptance.md": {
+    "bytes": 1683,
+    "sha256": "290e5475758c981c67b199de89a8c0aba8a35587096ca66d37b91e4d16f3617d"
+  },
+  "independent-review-final-evidence.json": {
+    "bytes": 1474,
+    "sha256": "73996ea9bcb6404d7f79295f0af416311629368f358852eb16ec39da5910b713"
+  },
+  "independent-review-final-suite.json": {
+    "bytes": 5722,
+    "sha256": "5acfb7e3012371c9ddbe0579d8975c544f725e79878b4efb2df0dd882c2f9b62"
+  },
+  "independent-review-suite.json": {
+    "bytes": 5283,
+    "sha256": "7e708345f7c344e9fab17145bd272e0f60570036bb7db5575be926cdec0085c0"
+  },
+  "independent-review.md": {
+    "bytes": 5504,
+    "sha256": "dff4d4c8b2fb13977ae52d53a7d4ae1ea1a3ec5828d6d1eeff0404df458ac8c4"
+  },
+  "independent-review.vitest.config.ts": {
+    "bytes": 293,
+    "sha256": "43ac41eef019770fe2673d131dbfb847662862dad186e990307c44475bf01ef1"
+  },
+  "independent-service-recovery-green.json": {
+    "bytes": 1941,
+    "sha256": "8037b4a539c048a6f60370588a019154dfa89fddca8333290bfdc04d4571db0b"
+  },
+  "independent-service-recovery.test.ts": {
+    "bytes": 6189,
+    "sha256": "762e70a0022d3e9f085b77127aa73a17cd1f1bfef766810427411fd948ebe74e"
+  },
+  "independent-source-fingerprints.json": {
+    "bytes": 945,
+    "sha256": "6e802ef0ee2cb35e3ab32f74cb6e56cb602adef6b329c3eedca6c738d14b501e"
+  }
+}

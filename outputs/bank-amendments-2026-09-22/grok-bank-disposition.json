@@ -1,0 +1,40 @@
+{
+  "scope": "One metadata/design-only Grok bank-amendment review; no product edits or native/live tests",
+  "result": "timeout-no-review-result",
+  "requestedModel": "grok-4.7",
+  "acceptedModelAlias": "grok-4.7",
+  "acceptedReasoningEffort": "xhigh",
+  "actualBackendModel": null,
+  "actualBackendModelReason": "No terminal usage result was received; prior runs cannot supply this run model identity.",
+  "promptRequestsSent": 1,
+  "nativeModelCallCount": null,
+  "nativeModelCallCountReason": "No terminal usage result; exactly one prompt sent by collector.",
+  "deadlineSeconds": 300,
+  "elapsedWithCleanupSeconds": 303.274,
+  "exitCodeAfterShutdown": 0,
+  "exitCodeDoesNotMeanSuccess": true,
+  "reasoningChunkCount": 31,
+  "reasoningContentPersisted": false,
+  "assistantTextBytes": 0,
+  "observedMcpServers": 0,
+  "observedMcpToolCount": 0,
+  "toolCallCount": 0,
+  "failureDiagnosis": "Initialization and session creation completed, zero MCP startup tools were reported, and reasoning updates arrived; the sole prompt did not produce a final answer before 300s. Exact latency cause is unproved.",
+  "approvalOrReviewFindings": null,
+  "sourceSnapshotSha256": {
+    "shared/bank-review.ts": "2fb1857ceb7f6f7f54a68e2c3ce1b4a43a88f6c1239d845479125c361c76904c",
+    "server/bank-reference-store.ts": "d78fbd8912ead1b463bcd637f02f2424c77c9dfaf512abc05029ccedb7246a8b",
+    "server/bank-reference-validation.ts": "2d2ca141af423b54b0c7f5045adbb5d141b326a089622702cbc9b75dbc8e29f5"
+  },
+  "sourceSha256AfterRun": {
+    "shared/bank-review.ts": "2fb1857ceb7f6f7f54a68e2c3ce1b4a43a88f6c1239d845479125c361c76904c",
+    "server/bank-reference-store.ts": "0f277199dabe5ca37063f99f274a94ec321ffc8ba220b489bcb7950a406dd60e",
+    "server/bank-reference-validation.ts": "2d2ca141af423b54b0c7f5045adbb5d141b326a089622702cbc9b75dbc8e29f5"
+  },
+  "sourceChangedDuringRun": [
+    "server/bank-reference-store.ts"
+  ],
+  "cleanupReceipt": "grok-bank-cleanup.json",
+  "noRetry": true,
+  "productSourceEditedByThisTask": false
+}

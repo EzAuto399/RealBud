@@ -115,7 +115,7 @@ export function AskReadiness({ onSetup }: { onSetup: () => void }) {
         </p>
         <p className="mt-0.5 text-ink-muted">
           {restoring
-            ? "Bud’s worker moved past the build RealBud supports. Re-pinning automatically — keep this Mac awake."
+            ? "Bud’s worker moved past the build RealBud supports. Re-pinning automatically — keep this computer awake."
             : checking
               ? "You can keep drafting. Your work will start when you choose."
               : error

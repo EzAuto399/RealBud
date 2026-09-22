@@ -1,0 +1,30 @@
+{
+  "grok-history-acp-profile.md": {
+    "bytes": 450,
+    "sha256": "93f81c4059d53fe7115c32213d37c20a836126733c426a8dfb19e2c6c554b2c6"
+  },
+  "grok-history-acp-prompt.txt": {
+    "bytes": 1381,
+    "sha256": "decb80dd8f94b0d9734e3149c4b83c31d61f9830d5a06f7fe41669d4f4aa355c"
+  },
+  "grok-history-acp-review.py": {
+    "bytes": 18260,
+    "sha256": "bd2e70cc2378e2c006b917c497ba8b26fb0d6516132ca5f818e01bb4e31b5033"
+  },
+  "grok-history-acp-run.json": {
+    "bytes": 14008,
+    "sha256": "791ae2855ee6cf1856f8678bceecbef594e2bdba7b919f81e99eb38383541a16"
+  },
+  "grok-history-cleanup.json": {
+    "bytes": 472,
+    "sha256": "3e61e0ceec2f6ee0005d5564e687011ef19cdfc27da9c5fb95b76ffff18783ec"
+  },
+  "grok-history-disposition.json": {
+    "bytes": 1025,
+    "sha256": "dc5bcda679de1735712d975edbad9f520e8b77d061319604a5fd816cc5e69150"
+  },
+  "grok-history-review.md": {
+    "bytes": 2630,
+    "sha256": "f37a09d3dd51d511dd2c42bcf7039c514d50c7a877ddc557d20afcad4219ecc3"
+  }
+}

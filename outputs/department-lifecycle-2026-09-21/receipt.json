@@ -1,0 +1,23 @@
+{
+  "at": "2026-09-21T06:05:57.751Z",
+  "passed": true,
+  "checks": [
+    "Lost create response survives full reload; durable confirmed request acknowledges without duplicate case or automatic worker action",
+    "Explicit encrypted pending-journal fixture survives owned service restart; exact HTTP replay returns the one committed PostgreSQL case and clears the journal",
+    "Human assignment and unassignment persist through the actual API to PostgreSQL",
+    "Retirement is a separate explicit action and unfinished cases block confirmation",
+    "Stale fence refuses closure and clears privileged decision state without changing the current case",
+    "Confirmed human closure requires note and checkbox, preserves focus draft, and works at390px without overflow",
+    "Retired department survives reload with closure evidence and no case editing controls",
+    "Retired owner can reduce and revoke retained history access; removed access has no upgrade option",
+    "Explicit note and confirmation reopen the department without reopening completed cases or restoring removed access",
+    "Explicit encrypted pending journal fixture: real browser local archive and private download retain unknown outcome and exact input without changing PostgreSQL case",
+    "Explicit encrypted confirmed journal fixture: real browser local archive and private download retain saved outcome and exact input without changing PostgreSQL case",
+    "A real revoked session clears the privileged case draft and token; no case or pending journal is created"
+  ],
+  "rendererErrors": [],
+  "postgres": "postgres (PostgreSQL) 16.15 (Homebrew)",
+  "sourceUi": true,
+  "nativePackage": false,
+  "fictionalDataOnly": true
+}

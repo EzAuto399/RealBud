@@ -1,0 +1,28 @@
+{
+  "sessionId": "01a0c3cc-c4cb-7131-90f3-355e0a81c75a",
+  "requestedModel": "grok-4.6",
+  "requestedReasoningEffort": "xhigh",
+  "actualModels": [
+    "grok-4.6-build"
+  ],
+  "stopReason": "end_turn",
+  "scope": "Readonly architecture proposal; not integrated code or runtime proof",
+  "accepted": [
+    "Durable resource allocations before creating artifact bytes",
+    "Cancellation intent before abort, drain, close, authenticated deletion, fsync and reservation release",
+    "Internal cleanup visibility separate from current-workspace public operations",
+    "Retain staged or uncertain restore evidence and original operation ownership",
+    "Filesystem free-space check is admission only, not an OS reservation"
+  ],
+  "corrections": [
+    "Prepared sqliteBytes=3GiB caps the main database only, not main plus rollback; its budget must add journal overhead",
+    "Upload preview/stage retains both decoded and transformed catalogs unless code safely removes one; charge both at peak",
+    "Preserve the existing cold restore prepared path and catalog/prepared known-file admission; proposed new layout and OWNER sibling assumptions do not fit current readers",
+    "Do not pass a freely trusted previousWorkspaceId into transfer storage or rebind only its owner header; prefer per-workspace transport journals with internal terminal cleanup",
+    "Do not refuse all legacy v1 imports once a v2 journal exists; implement conversion or exact bound completion while preserving valid legacy inputs",
+    "Do not delete unknown-operation orphan files based only on a marker/PID; preserve unattributed artifacts and charge or block admission",
+    "Match the existing POST/PUT client route and body contract; no proposed PATCH routes",
+    "Physical statfs accounting must be serialized against coordinator writers/cleanup, with conservative scratch attribution; proposal subtracts scanned bytes too broadly"
+  ],
+  "next": "Implement minimal artifact allocation and cleanup protocol after physical component bounds. Public coordinator and v1 coexistence remain open."
+}

@@ -32,7 +32,7 @@ export function buildHandoffPayload(
   opts: { mode: HandoffMode; messageId?: string },
 ): HandoffBuild {
   const bot = store.productBud();
-  if (!bot) return { ok: false, error: "Bud is not available yet. Open RealBud on your Mac and finish Bud setup." };
+  if (!bot) return { ok: false, error: "Bud is not available yet. Open RealBud on your computer and finish Bud setup." };
   const messages = textMessages(store);
 
   if (opts.mode === "result") {
@@ -50,13 +50,13 @@ export function buildHandoffPayload(
       : "Reply from Ask:";
     return {
       ok: true,
-      text: clip(`${header}\n\n${body}`, "Open Ask on your Mac for the full reply."),
+      text: clip(`${header}\n\n${body}`, "Open Ask on desktop for the full reply."),
     };
   }
 
   const recent = messages.slice(-SUMMARY_TURNS);
   if (recent.length === 0) {
-    return { ok: false, error: "There is nothing to summarise yet. Send a task here or in Ask on your Mac." };
+    return { ok: false, error: "There is nothing to summarise yet. Send a task here or in Ask on desktop." };
   }
   const lines = recent.map((m) => {
     const who = m.role === "user" ? "You" : "Bud";
@@ -66,7 +66,7 @@ export function buildHandoffPayload(
   });
   return {
     ok: true,
-    text: clip(`Ask handoff summary:\n\n${lines.join("\n")}`, "Open Ask on your Mac for the full conversation."),
+    text: clip(`Ask handoff summary:\n\n${lines.join("\n")}`, "Open Ask on desktop for the full conversation."),
   };
 }
 
@@ -80,7 +80,7 @@ export async function deliverToPairedPhone(
       await channel.sendDigest(text);
       return { ok: true, deliveredVia: channel.id, label: channel.label };
     } catch {
-      return { ok: false, error: `Could not deliver to ${channel.label}. Keep this Mac awake and try again.` };
+      return { ok: false, error: `Could not deliver to ${channel.label}. Keep your RealBud computer awake and try again.` };
     }
   }
   return { ok: false, error: "Pair Telegram, Discord or Slack first (You → Phone)." };

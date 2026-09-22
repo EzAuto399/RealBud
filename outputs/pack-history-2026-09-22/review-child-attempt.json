@@ -1,0 +1,15 @@
+{
+  "scope": "Abandoned duplicate child-crash harness attempt",
+  "observedAtLocal": "2026-09-22T05:35:39+10:00",
+  "result": "The two owned seeded recovery and history admission regressions passed after worker fixes. The additional child test did not start application code because Node could not resolve an unavailable tsx package.",
+  "counts": {
+    "passed": 2,
+    "failed": 1
+  },
+  "productionDefect": false,
+  "action": "Removed duplicate child test at root request; actual child SIGKILL integration belongs to root scripts/qa-pack-upgrades.mjs. No rerun of this harness.",
+  "childExit": {
+    "code": 1,
+    "signal": null
+  }
+}

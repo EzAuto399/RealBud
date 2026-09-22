@@ -1,0 +1,13 @@
+PASS Rendered member request and exact owner review start one actual Hermes preparation; only assigned case context reaches the fictional provider and the case remains held for human review.
+PASS Actual service restart preserves the result and original run ID without a second provider request.
+PASS Mobile result view has no horizontal overflow; no uncaught browser errors.
+PASS Actual owner withdrawal aborts in-flight department preparation; a late provider response is not accepted and retrying factual delivery does not invoke the worker again.
+file:///Users/yoda/projects/RealBud/scripts/qa-department-work.mjs:26
+async function eventually(fn){for(let i=0;i<150;i++){if(await fn())return;await wait(200);}throw new Error('Fixture observation deadline exceeded.');}
+                                                                                                 ^
+
+Error: Fixture observation deadline exceeded.
+    at eventually (file:///Users/yoda/projects/RealBud/scripts/qa-department-work.mjs:26:98)
+    at async file:///Users/yoda/projects/RealBud/scripts/qa-department-work.mjs:132:17
+
+Node.js v24.19.0

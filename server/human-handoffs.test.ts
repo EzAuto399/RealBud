@@ -23,7 +23,7 @@ describe("durable human sign-in handovers", () => {
     expect(held.value.botId).toBe("bud");
     expect((await service.open(input)).id).toBe(held.id);
     expect(host.release).toHaveBeenCalledTimes(1);
-    await expect(service.continue(held.id, held.revision)).rejects.toThrow(/calibrated/);
+    await expect(service.continue(held.id, held.revision)).rejects.toThrow(/save its visible labels/);
     expect(host.verify).not.toHaveBeenCalled();
   });
   it("rejects open without a Bud botId", async () => {
@@ -101,6 +101,18 @@ describe("durable human sign-in handovers", () => {
     const later = new HumanHandoffs(db, host, () => held.value.expiresAt + 1);
     expect((await later.continue(held.id, held.revision)).value.state).toBe("recovery_required");
     expect(host.verify).not.toHaveBeenCalled();
+  });
+  it("binds and corrects an exact browser tab while rejecting numeric credentials and mixed bindings", async () => {
+    const { service } = setup();
+    const browser = { version: 1 as const, browser: { browserId: "work-profile", tabId: 4 }, origin: "https://bank.example", accountMarker: "  Office account  ", readyMarker: "Transaction history" };
+    const opened = await service.open(input);
+    const bound = service.bind(opened.id, opened.revision, browser);
+    expect(bound.value.binding).toEqual({ ...browser, accountMarker: "Office account" });
+    const corrected = service.bind(bound.id, bound.revision, { ...browser, browser: { ...browser.browser, tabId: 5 } });
+    expect(corrected.value.binding?.browser?.tabId).toBe(5);
+    expect(() => service.bind(bound.id, bound.revision, browser)).toThrow(/changed/);
+    expect(() => validateLoginBinding({ ...browser, pid: 1, windowId: 2 })).toThrow();
+    expect(() => validateLoginBinding({ ...browser, accountMarker: "123-456 789" })).toThrow(/account number/);
   });
   it("does not reset a missing key under existing saved work", async () => {
     const { dir, service } = setup(); await service.open(input);

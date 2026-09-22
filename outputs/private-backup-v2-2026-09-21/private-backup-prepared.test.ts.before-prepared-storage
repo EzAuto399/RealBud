@@ -1,0 +1,94 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import { mkdtempSync, realpathSync, rmSync, readFileSync, symlinkSync, linkSync, chmodSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
+import { PrivateBackupPreparedStore, PRIVATE_BACKUP_PREPARED_CHUNK_BYTES as CHUNK } from './private-backup-prepared.ts';
+
+const roots: string[] = [], stores: PrivateBackupPreparedStore[] = [];
+const sha = (value: Uint8Array | string) => createHash('sha256').update(value).digest('hex');
+async function fixture(limits?: Parameters<typeof PrivateBackupPreparedStore.create>[0]['limits']) {
+  const root = mkdtempSync(join(realpathSync(tmpdir()), 'RealBud prepared Ω ')); roots.push(root);
+  const directory = join(root, 'prepared'), key = randomBytes(32), workspaceId = randomUUID();
+  const store = await PrivateBackupPreparedStore.create({ directory, key, workspaceId, limits }); stores.push(store);
+  const options = { directory, key, workspaceId, storeId: store.storeId }; return { root, store, options };
+}
+async function reopen(options: Parameters<typeof PrivateBackupPreparedStore.open>[0]) { const store = await PrivateBackupPreparedStore.open(options); stores.push(store); return store; }
+async function* bytes(value: Buffer | string) { const buffer = Buffer.from(value); for (let offset = 0; offset < buffer.length; offset += CHUNK) yield buffer.subarray(offset, offset + CHUNK); }
+async function digest(input: AsyncIterable<Buffer>) { const h = createHash('sha256'); let count = 0; for await (const b of input) { expect(b.length).toBeLessThanOrEqual(CHUNK); h.update(b); count += b.length; } return { digest: h.digest('hex'), bytes: count }; }
+afterEach(async () => { for (const store of stores.splice(0)) await store.close(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+
+describe('exact encrypted prepared restore artifacts', () => {
+  it('streams a database beyond the v1 48 MiB limit and reopens exact bytes with immutable removal metadata', async () => {
+    const f = await fixture(), total = 52 * CHUNK + 17, h = createHash('sha256');
+    async function* generated() { for (let offset = 0; offset < total; offset += CHUNK) { const b = Buffer.alloc(Math.min(CHUNK, total - offset), Math.floor(offset / CHUNK) % 251); h.update(b); yield b; } }
+    await f.store.addFile('workflow-state.sqlite', null, generated()); const expected = h.digest('hex');
+    await f.store.addRemoval('vault/USER.md', sha('fictional before'));
+    expect(() => [...f.store.entries()]).toThrow(/sealed/);
+    const summary = await f.store.seal(); await f.store.close();
+    const opened = await reopen(f.options); expect(await opened.validate()).toEqual(summary);
+    expect(await digest(opened.readFile('workflow-state.sqlite'))).toEqual({ digest: expected, bytes: total });
+    expect([...opened.entries()][1]).toMatchObject({ path: 'vault/USER.md', beforeHash: sha('fictional before'), intendedHash: null, bytes: 0 });
+    await expect(opened.addFile('vault/README.md', null, bytes('changed'))).rejects.toThrow(/sealed/);
+    await expect(opened.readFile('vault/USER.md')[Symbol.asyncIterator]().next()).rejects.toThrow(/not found/);
+  }, 30_000);
+
+  it('authenticates owned identity and does not persist plaintext names, content or keys', async () => {
+    const f = await fixture(), text = 'Fictional secret content Ω';
+    await f.store.addFile('vault/USER.md', null, bytes(text)); await f.store.seal(); await f.store.close();
+    const disk = readFileSync(join(f.options.directory, 'prepared.sqlite'));
+    for (const needle of [Buffer.from(text), Buffer.from('vault/USER.md'), f.options.key]) expect(disk.includes(needle)).toBe(false);
+    await expect(reopen({ ...f.options, key: randomBytes(32) })).rejects.toThrow();
+    await expect(reopen({ ...f.options, workspaceId: randomUUID() })).rejects.toThrow();
+    await expect(reopen({ ...f.options, storeId: randomUUID() })).rejects.toThrow();
+  });
+
+  it.each(['chunk', 'ordinal', 'orphan', 'schema'])('refuses %s corruption before a complete artifact is accepted', async attack => {
+    const f = await fixture(); await f.store.addFile('vault/USER.md', null, bytes(Buffer.alloc(CHUNK + 1, 3))); await f.store.seal(); await f.store.close();
+    const db = new DatabaseSync(join(f.options.directory, 'prepared.sqlite'));
+    try {
+      if (attack === 'chunk') db.exec('UPDATE prepared_chunks SET payload=zeroblob(length(payload)) WHERE ordinal=0');
+      if (attack === 'ordinal') db.exec('UPDATE prepared_chunks SET ordinal=ordinal+10');
+      if (attack === 'orphan') db.exec("INSERT INTO prepared_chunks VALUES ('unowned',0,X'00')");
+      if (attack === 'schema') db.exec('CREATE TABLE injected (value TEXT)');
+    } finally { db.close(); }
+    await expect((async () => { const s = await reopen(f.options); await s.validate(); })()).rejects.toThrow(/recovery/);
+  });
+
+  it('rolls back partial producers and capacity failures without exposing entries', async () => {
+    const f = await fixture({ bytes: 1024, fileBytes: 512 });
+    await expect(f.store.addFile('vault/USER.md', null, (async function* () { yield Buffer.from('partial'); throw new Error('fictional producer'); })())).rejects.toThrow('fictional producer');
+    expect(f.store.summary().entries).toBe(0);
+    await expect(f.store.addFile('vault/USER.md', null, bytes(Buffer.alloc(513)))).rejects.toMatchObject({ status: 413 });
+    expect(f.store.summary().entries).toBe(0);
+    await f.store.addFile('vault/USER.md', null, bytes('complete')); await f.store.seal();
+    expect(await digest(f.store.readFile('vault/USER.md'))).toEqual({ digest: sha('complete'), bytes: 8 });
+  });
+
+  it('aborts a stuck producer, drains its transaction on close and leaves a reusable empty store', async () => {
+    const f = await fixture(); let started!: () => void, finish!: (value: IteratorResult<Uint8Array>) => void;
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    const source: AsyncIterable<Uint8Array> = { [Symbol.asyncIterator]() { return { next() { started(); return new Promise(resolve => { finish = resolve; }); }, async return() { return { done: true, value: undefined }; } }; } };
+    const active = f.store.addFile('vault/USER.md', null, source); const rejected = expect(active).rejects.toThrow(/cancelled/);
+    await entered; await expect(f.store.addRemoval('vault/README.md', null)).rejects.toThrow(/busy/);
+    await f.store.close(); await rejected; finish({ done: false, value: Buffer.from('late bytes') });
+    const opened = await reopen(f.options); expect(opened.summary().entries).toBe(0);
+    await opened.addFile('vault/USER.md', null, bytes('fresh')); await opened.seal();
+    expect(await digest(opened.readFile('vault/USER.md'))).toEqual({ digest: sha('fresh'), bytes: 5 });
+  });
+
+  it('rejects case aliases and stale open-handle writes after another handle seals', async () => {
+    const f = await fixture(), other = await reopen(f.options);
+    await f.store.addFile('vault/properties/Case.md', null, bytes('one'));
+    await expect(other.addFile('vault/properties/case.md', null, bytes('two'))).rejects.toThrow(/duplicate/);
+    await f.store.seal(); await expect(other.addRemoval('vault/USER.md', null)).rejects.toThrow(/sealed/);
+  });
+
+  it.each(['symlink', 'hardlink', 'permissions'])('refuses %s storage', async attack => {
+    const f = await fixture(); await f.store.close(); const file = join(f.options.directory, 'prepared.sqlite');
+    if (attack === 'symlink') { const alias = join(f.root, 'alias'); symlinkSync(f.options.directory, alias); await expect(reopen({ ...f.options, directory: alias })).rejects.toThrow(); }
+    if (attack === 'hardlink') { linkSync(file, join(f.root, 'linked.sqlite')); await expect(reopen(f.options)).rejects.toThrow(); }
+    if (attack === 'permissions' && process.platform !== 'win32') { chmodSync(file, 0o644); await expect(reopen(f.options)).rejects.toThrow(); }
+  });
+});

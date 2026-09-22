@@ -6,6 +6,15 @@ const cfg = { composio: { key: "ak_fictional" } };
 const evidence = () => ({ checkedAt: new Date(1000).toISOString(), services: {}, tools: { available: true, names: ["COMPOSIO_MULTI_EXECUTE_TOOL"] } });
 
 describe("connected app observations", () => {
+  it.each([[402, 'paused or expired'], [403, 'revoked or changed'], [502, 'could not be verified']])('explains managed service failure %s without exposing provider diagnostics', async (status, phrase) => {
+    const check = vi.fn().mockRejectedValue(Object.assign(new Error('private-provider-diagnostic'), { status }));
+    const cache = new ConnectedAppAccessCache(check, () => 1000);
+    const result = await cache.refresh({ composio: { managed: { endpoint: 'https://service.example', credential: `rbc_${'a'.repeat(64)}`, profile: 'property' } } });
+    expect(result.error).toContain(phrase);
+    expect(result.error).toContain('service support');
+    expect(result.tools.available).toBe(false);
+    expect(JSON.stringify(result)).not.toContain('private-provider-diagnostic');
+  });
   it("never equates a saved key with checked access", () => {
     const cache = new ConnectedAppAccessCache();
     expect(cache.status(true)).toMatchObject({ configured: true, checkedAt: "", tools: { available: false } });

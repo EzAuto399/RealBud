@@ -1,0 +1,48 @@
+Disposable PostgreSQL company verification
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/Users/yoda/projects/RealBud[39m
+
+ [32m✓[39m server/company-host.test.ts [2m([22m[2m8 tests[22m[2m)[22m[33m 2693[2mms[22m[39m
+     [33m[2m✓[22m[39m redeems one-use invitations without inheriting service administration [33m 583[2mms[22m[39m
+     [33m[2m✓[22m[39m preserves member sessions across service restart while revoking admin sessions [33m 340[2mms[22m[39m
+ [32m✓[39m server/company-departments.integration.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 2547[2mms[22m[39m
+     [33m[2m✓[22m[39m reopens the host and every client, preserving company records, private records and offboarding [33m 506[2mms[22m[39m
+ [32m✓[39m server/company-installation.integration.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 2591[2mms[22m[39m
+     [33m[2m✓[22m[39m requires admin, creates a new owned database, then gives the owner independent sign-in [33m 724[2mms[22m[39m
+     [33m[2m✓[22m[39m renews the host identity, leaves cleanly, and joins another office without changing private work [33m 1171[2mms[22m[39m
+ [32m✓[39m server/company-recovery.integration.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 2665[2mms[22m[39m
+     [33m[2m✓[22m[39m restores only to an empty host, starts held, invalidates tokens and requires explicit owner cutover [33m 364[2mms[22m[39m
+ [32m✓[39m server/company/multi-agency-transport.integration.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 2617[2mms[22m[39m
+     [33m[2m✓[22m[39m binds credentials, invitations, records and department permissions to the selected office [33m 406[2mms[22m[39m
+ [32m✓[39m server/company-installation-provision.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 3215[2mms[22m[39m
+     [33m[2m✓[22m[39m provisions owned storage from the admitted runtime and reports it available [33m 886[2mms[22m[39m
+     [33m[2m✓[22m[39m provisions from the runtime the installer staged, not the build machine [33m 1462[2mms[22m[39m
+     [33m[2m✓[22m[39m records which runtime source was admitted, without a terminal step [33m 865[2mms[22m[39m
+ [32m✓[39m server/company/backup.integration.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 2141[2mms[22m[39m
+ [32m✓[39m server/company-work.integration.test.ts [2m([22m[2m9 tests[22m[2m)[22m[33m 1652[2mms[22m[39m
+ [32m✓[39m server/company/work-items.integration.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 248[2mms[22m[39m
+ [32m✓[39m server/company/member-auth.integration.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 1148[2mms[22m[39m
+     [33m[2m✓[22m[39m commits failed attempts across kernels and casing, then permits sign-in after the block expires [33m 376[2mms[22m[39m
+ [32m✓[39m server/company/departments-transport.integration.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 929[2mms[22m[39m
+ [32m✓[39m server/company/departments.integration.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 923[2mms[22m[39m
+ [32m✓[39m server/company/membership.integration.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 866[2mms[22m[39m
+ [32m✓[39m server/company-installation-binding.test.ts [2m([22m[2m16 tests[22m[2m)[22m[33m 856[2mms[22m[39m
+ [32m✓[39m server/company/initial-enrollment.integration.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 559[2mms[22m[39m
+ [32m✓[39m server/company/postgres.integration.test.ts [2m([22m[2m17 tests[22m[2m)[22m[33m 438[2mms[22m[39m
+ [32m✓[39m server/company/host-transport.test.ts [2m([22m[2m25 tests[22m[2m)[22m[32m 220[2mms[22m[39m
+ [32m✓[39m server/company/member-credentials.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 185[2mms[22m[39m
+ [32m✓[39m server/company-outbox.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 146[2mms[22m[39m
+ [32m✓[39m server/company/host-certificate.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 144[2mms[22m[39m
+ [32m✓[39m server/company/initial-credential.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 94[2mms[22m[39m
+ [32m✓[39m server/company/workflow-template.integration.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 52[2mms[22m[39m
+ [32m✓[39m server/company-installation.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 55[2mms[22m[39m
+ [32m✓[39m server/company/host-runtime.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 39[2mms[22m[39m
+ [32m✓[39m server/company/postgres-runtime.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 21[2mms[22m[39m
+ [32m✓[39m server/company/workflow-template.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 3[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m26 passed[39m[22m[90m (26)[39m
+[2m      Tests [22m [1m[32m203 passed[39m[22m[90m (203)[39m
+[2m   Start at [22m 13:58:27
+[2m   Duration [22m 29.81s[2m (transform 302ms, setup 119ms, import 946ms, tests 27.05s, environment 1ms)[22m
+
+JSON report written to /Users/yoda/projects/RealBud/outputs/enterprise-company-2026-09-21/final-company/vitest.json

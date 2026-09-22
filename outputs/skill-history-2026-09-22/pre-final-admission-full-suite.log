@@ -1,0 +1,18 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ✓ server/batches.test.ts (41 tests) 29501ms
+     ✓ completes 20 independent properties and preserves progress on reload  400ms
+     ✓ completes 50 independent properties and preserves progress on reload  1146ms
+     ✓ completes 100 independent properties and preserves progress on reload  2191ms
+     ✓ completes 150 independent properties and preserves progress on reload  3310ms
+     ✓ completes 200 independent properties and preserves progress on reload  4526ms
+     ✓ completes 500 independent properties and preserves progress on reload  15401ms
+ ✓ server/private-backup-restore-catalog.test.ts (16 tests) 24260ms
+     ✓ rejects unrestorable batch expanded-size as a typed preparation failure without sealing output  9198ms
+     ✓ matches v1 authority resets for Desk v3, agency, plans, schedules and handoffs  392ms
+     ✓ retains exact ordinary bytes and 5,101 rows in original order without collecting their bodies  12897ms
+     ✓ matches v1 execution rows, exact projection bytes and checkpoint hashes while retaining old request identities  307ms
+     ✓ rejects a regenerated execution projection above 8 MiB before preparing any destination rows  458ms
+ ✓ server/private-backup-v2-integration.test.ts (1 test) 20810ms
+     ✓ captures, transfers, prepares and cold-restores over 5,000 records with exact bank bytes and a different destination key  20809ms

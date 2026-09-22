@@ -44,7 +44,30 @@ type ModelStatus = {
   model: string | null;
   keyPresent: boolean;
   keyHint: string | null;
+  /** The RealBud service holds this office's model access. No provider key is
+   * collected, stored or shown on this computer. */
+  managed?: boolean;
+  managedWithdrawn?: boolean;
 };
+
+/** One office-facing line for managed access. Upstream protocol names belong
+ * only in Advanced diagnostics, never here. */
+const MANAGED_MODEL_LINE = "Model access: managed by RealBud service (Modelvia)";
+
+/**
+ * Whether the model sheet may render provider-credential controls at all.
+ *
+ * A provisioned office never can: the provider, endpoint and credential come
+ * from the service grant, and this computer must not collect or store a
+ * provider key. Exported so the rule is provable without driving the sheet's
+ * click-only open state.
+ */
+export function showsProviderCredentialFields(input: {
+  managed: boolean; usesProfileLogin: boolean; hasOauthOffer: boolean; useApiKey: boolean; oauthFailed: boolean;
+}): boolean {
+  if (input.managed) return false;
+  return !input.usesProfileLogin && (!input.hasOauthOffer || input.useApiKey || input.oauthFailed);
+}
 
 type ModelPickerOption = {
   id: string;
@@ -149,7 +172,9 @@ export function BudSetupCard(props: BudSetupCardProps) {
 function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupCardProps) {
   const { state, dispatch, refreshHermes } = useStore();
   const [busy, setBusy] = useState<BusyAction | null>(null);
-  const readinessPending = useSyncExternalStore(budReadinessCheck.subscribe, budReadinessCheck.isRunning);
+  // The third argument is the same reader: the check lives in this process, so
+  // a static render sees the true pending state instead of throwing.
+  const readinessPending = useSyncExternalStore(budReadinessCheck.subscribe, budReadinessCheck.isRunning, budReadinessCheck.isRunning);
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState<{ ok: boolean; detail: string } | null>(null);
   const [install, setInstall] = useState<InstallStatus | null>(null);
@@ -190,7 +215,14 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
     selectedProvider.id !== providerId,
   );
   const oauthActive = Boolean(oauth && (oauth.state === "starting" || oauth.state === "waiting"));
-  const showApiKeyFields = !usesProfileLogin && (!oauthOffer || useApiKey || oauth?.state === "error");
+  // A provisioned office never sees a provider picker, a sign-in offer or a key
+  // field: the provider, endpoint and credential all come from the service
+  // grant. Only the model name is still this office's to choose.
+  const managedAccess = Boolean(model?.managed ?? status?.modelAccess?.managed);
+  const showApiKeyFields = showsProviderCredentialFields({
+    managed: managedAccess, usesProfileLogin, hasOauthOffer: Boolean(oauthOffer),
+    useApiKey, oauthFailed: oauth?.state === "error",
+  });
   const profileLoginNeedsRefresh = Boolean(
     usesProfileLogin
       && lastTest
@@ -445,6 +477,12 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
       return "Adds Bud's private workroom and keeps every consequential action with you.";
     }
     if (step === "model") {
+      if (status?.modelAccess?.withdrawn) return status.modelAccess.detail;
+      if (managedAccess) {
+        return modelAttached
+          ? `${MANAGED_MODEL_LINE} · ${model?.model}. No provider key is stored on this computer.`
+          : `${MANAGED_MODEL_LINE}. Choose which model Bud should use.`;
+      }
       if (modelAttached) {
         return `${providerLabel(model?.provider)} · ${model?.model}. Credential saved privately.`;
       }
@@ -619,7 +657,11 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
     try {
       const res = await api("/api/hermes/model", {
         method: "POST",
-        body: JSON.stringify({ providerId, apiKey, model: modelId, baseUrl: baseUrl || undefined }),
+        // A managed office sends no credential and no endpoint: the server
+        // takes both from the grant and refuses a pasted key outright.
+        body: JSON.stringify(managedAccess
+          ? { providerId, apiKey: "", model: modelId }
+          : { providerId, apiKey, model: modelId, baseUrl: baseUrl || undefined }),
       });
       setModel(res.model ?? null);
       setModelReadState("loaded");
@@ -873,12 +915,16 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
         {!installActive && journey.stage === "model" && !sheet ? (
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <div className="text-[14px] font-medium text-ink">Connect Bud's model</div>
-              <p className="mt-0.5 text-[12.5px] text-ink-muted">Choose the provider your office already uses. RealBud stores the key only in Bud's private storage.</p>
+              <div className="text-[14px] font-medium text-ink">{managedAccess ? "Choose Bud's model" : "Connect Bud's model"}</div>
+              <p className="mt-0.5 text-[12.5px] text-ink-muted">
+                {managedAccess
+                  ? `${MANAGED_MODEL_LINE}. No provider key is collected or stored on this computer.`
+                  : "Choose the provider your office already uses. RealBud stores the key only in Bud's private storage."}
+              </p>
             </div>
             <button type="button" onClick={openModelSheet} disabled={locked} className={primaryButton}>
               <KeyRound size={14} />
-              Connect model
+              {managedAccess ? "Choose model" : "Connect model"}
             </button>
           </div>
         ) : null}
@@ -1015,18 +1061,25 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
               {usesProfileLogin || model?.keyPresent ? "Change model" : "Connect a model"}
             </h3>
             <p className="mt-1 text-[12.5px] leading-relaxed text-ink-muted">
-              {usesProfileLogin
-                ? "This keeps Bud's current private login. Only the model choice changes."
-                : oauthOffer && !useApiKey
-                  ? "Sign in with your provider account, then pick a model Bud can use. Keys stay optional."
-                  : "The provider key is written directly to Bud's private storage. It never enters Ask, Desk, analytics, or logs."}
+              {managedAccess
+                ? "Your RealBud service holds this office's model access. Choose which model Bud should use."
+                : usesProfileLogin
+                  ? "This keeps Bud's current private login. Only the model choice changes."
+                  : oauthOffer && !useApiKey
+                    ? "Sign in with your provider account, then pick a model Bud can use. Keys stay optional."
+                    : "The provider key is written directly to Bud's private storage. It never enters Ask, Desk, analytics, or logs."}
             </p>
-            {model?.keyPresent && model.keyHint ? (
+            {managedAccess ? (
+              <p role="status" className="mt-2 rounded border border-line bg-sheet p-3 text-[12.5px] text-ink">
+                {MANAGED_MODEL_LINE}. No provider key is collected or stored on this computer.
+              </p>
+            ) : model?.keyPresent && model.keyHint ? (
               <p className="mt-2 text-[12.5px] text-ink-muted">
                 {model.keyHint.includes("profile login") ? "Login saved" : "Key saved"} · {model.keyHint}
               </p>
             ) : null}
             <div className="mt-4 grid gap-4 md:grid-cols-2">
+              {managedAccess ? null : (
               <label className="text-[12.5px] font-medium text-ink">
                 Provider
                 <select
@@ -1050,6 +1103,25 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
                   ))}
                 </select>
               </label>
+              )}
+              {managedAccess ? (
+                <label className="text-[12.5px] font-medium text-ink">
+                  Model ID
+                  <input
+                    type="text"
+                    value={modelId}
+                    onChange={(event) => setModelId(event.target.value)}
+                    placeholder={model?.model ?? "auto"}
+                    autoComplete="off"
+                    autoCapitalize="off"
+                    spellCheck={false}
+                    className={fieldClass}
+                  />
+                  <span className="mt-1.5 block font-normal text-ink-muted">
+                    Optional. Your RealBud service picks a model for each task unless you name one here.
+                  </span>
+                </label>
+              ) : (
               <div>
                 <label className="text-[12.5px] font-medium text-ink" htmlFor="bud-model-choice">
                   Model
@@ -1094,8 +1166,9 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
                     : "Models come from Bud's installed Hermes catalogue."}
                 </span>
               </div>
+              )}
             </div>
-            {modelChoice === CUSTOM_MODEL ? (
+            {!managedAccess && modelChoice === CUSTOM_MODEL ? (
               <label className="mt-4 block text-[12.5px] font-medium text-ink">
                 Custom model ID
                 <input
@@ -1113,7 +1186,7 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
                 </span>
               </label>
             ) : null}
-            {usesProfileLogin && !profileLoginNeedsRefresh ? (
+            {managedAccess ? null : usesProfileLogin && !profileLoginNeedsRefresh ? (
               <div className="mt-4 border border-agency/20 bg-agency/5 px-3 py-2.5 text-[12.5px] text-ink" role="status">
                 Using the saved {providerLabel(providerId)}. RealBud will not replace it or ask for a provider key.
               </div>
@@ -1289,13 +1362,15 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
                   busy === "oauth" ||
                   !modelId.trim() ||
                   (
-                    !usesProfileLogin
+                    !managedAccess
+                    && !usesProfileLogin
                     && showApiKeyFields
                     && !apiKey.trim()
                     && !(model?.provider === providerId && model.keyPresent)
                   )
                   || (
-                    !usesProfileLogin
+                    !managedAccess
+                    && !usesProfileLogin
                     && !showApiKeyFields
                     && !(oauth?.state === "approved" || (model?.provider === providerId && model.keyPresent))
                   )

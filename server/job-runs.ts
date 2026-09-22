@@ -6,8 +6,6 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import {
-  JOB_CAPABILITIES,
-  type JobCapability,
   type JobRun,
   type JobRunEvidence,
   type JobRunMode,
@@ -19,8 +17,11 @@ import {
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 import { oplog } from "./oplog.ts";
-import { redactSecretsInText } from "./redact.ts";
-import { JOB_OUTPUT_MAX_CHARS, JOB_OUTPUT_TOTAL_CHARS, JOB_OUTPUT_TOO_LARGE } from "../shared/job-output.ts";
+import { cleanText, cleanEvidence, cleanApprovals, parseJobRun } from './job-run-validation.ts';
+import { ExecutionHistory, executionDigest } from './execution-history.ts';
+import { jobHistoryBinding } from './execution-history-backup.ts';
+import type { WorkflowDatabase } from './workflow-database.ts';
+import type { ExecutionHistoryQuery } from '../shared/execution-history.ts';
 
 export type {
   JobRun,
@@ -33,9 +34,6 @@ export type {
 
 const MAX_RUNS = 1_000;
 const MAX_DETAIL = 2_000;
-const MAX_NOTE = 500;
-const MAX_EVIDENCE = 50;
-const MAX_APPROVALS = 20;
 // A held approval is a finished receipt, not an executing attempt. Keeping it
 // out of this set prevents one safely-held result from deadlocking every later
 // occurrence of a recurring job.
@@ -58,11 +56,13 @@ export const READY_BESIDE_YOU =
 
 interface JobRunsFile {
   version: 1;
+  executionHistory?: 1;
   runs: JobRun[];
 }
 
 export interface JobRunStoreOptions {
   file?: string;
+  database?: WorkflowDatabase;
   now?: () => number;
   emit?: (payload: { kind: "job.run"; run: JobRun }) => void;
 }
@@ -121,153 +121,16 @@ function snapshot(recipe: Recipe): JobRunSpecSnapshot {
   };
 }
 
-function isStatus(value: unknown): value is JobRunStatus {
-  return (
-    value === "queued" ||
-    value === "running" ||
-    value === "awaiting-approval" ||
-    value === "completed" ||
-    value === "partial" ||
-    value === "failed" ||
-    value === "interrupted" ||
-    value === "cancelled" ||
-    value === "missed"
-  );
-}
-
-function isMode(value: unknown): value is JobRunMode {
-  return value === "shadow" || value === "prepare" || value === "attended";
-}
-
-function isTrigger(value: unknown): value is JobRunTrigger {
-  return value === "manual" || value === "schedule";
-}
-
-function finite(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
-
-function cleanText(value: unknown, max: number): string {
-  return redactSecretsInText(typeof value === "string" ? value : "").trim().slice(0, max);
-}
-
-function cleanEvidence(items: ReadonlyArray<JobRunEvidence> | undefined, now: number, requireComplete = false): JobRunEvidence[] {
-  if (!items) return [];
-  const out: JobRunEvidence[] = [];
-  let outputChars = 0;
-  for (const item of items.slice(0, MAX_EVIDENCE)) {
-    if (!item || !["observation", "output", "approval", "action", "denied", "asked", "note"].includes(item.kind)) continue;
-    const limit = item.kind === "output" ? Math.min(JOB_OUTPUT_MAX_CHARS, JOB_OUTPUT_TOTAL_CHARS - outputChars) : MAX_NOTE;
-    const cleaned = redactSecretsInText(typeof item.note === "string" ? item.note : "").trim();
-    if (requireComplete && item.kind === "output" && cleaned.length > limit) throw new Error(JOB_OUTPUT_TOO_LARGE);
-    const note = cleaned.length > limit && item.kind === "output"
-      ? "[Saved output exceeds the supported size. Review the original receipt before using it.]"
-      : cleaned.slice(0, limit);
-    if (!note) continue;
-    if (item.kind === "output") outputChars += note.length;
-    out.push({ at: finite(item.at) ? item.at : now, note, kind: item.kind });
-  }
-  return out;
-}
-
-function cleanApprovals(items: ReadonlyArray<string> | undefined): string[] {
-  if (!items) return [];
-  return items
-    .slice(0, MAX_APPROVALS)
-    .map((item) => cleanText(item, MAX_NOTE))
-    .filter(Boolean);
-}
-
-function asSnapshot(value: unknown): JobRunSpecSnapshot | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const row = value as Record<string, unknown>;
-  if (typeof row.title !== "string" || typeof row.description !== "string" || typeof row.evidence !== "string") return null;
-  if (!Array.isArray(row.steps) || !row.steps.every((item) => typeof item === "string")) return null;
-  if (!Array.isArray(row.allowedOrigins) || !row.allowedOrigins.every((item) => typeof item === "string")) return null;
-  if (
-    !Array.isArray(row.capabilities) ||
-    row.capabilities.length < 1 ||
-    row.capabilities.length > JOB_CAPABILITIES.length ||
-    !row.capabilities.every(
-      (item) => typeof item === "string" && (JOB_CAPABILITIES as readonly string[]).includes(item),
-    )
-  ) return null;
-  if (!row.limits || typeof row.limits !== "object" || Array.isArray(row.limits)) return null;
-  const limits = row.limits as Record<string, unknown>;
-  if (
-    !Number.isInteger(limits.maxRuntimeMinutes) ||
-    Number(limits.maxRuntimeMinutes) < 1 ||
-    Number(limits.maxRuntimeMinutes) > 5 ||
-    !Number.isInteger(limits.maxTurns) ||
-    Number(limits.maxTurns) < 1 ||
-    Number(limits.maxTurns) > 12
-  ) return null;
-  return {
-    title: row.title,
-    description: row.description,
-    steps: [...row.steps],
-    allowedOrigins: [...row.allowedOrigins],
-    evidence: row.evidence,
-    capabilities: [...row.capabilities] as JobCapability[],
-    limits: { maxRuntimeMinutes: Number(limits.maxRuntimeMinutes), maxTurns: Number(limits.maxTurns) },
-  };
-}
-
-function asRun(value: unknown): JobRun | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const row = value as Record<string, unknown>;
-  const spec = asSnapshot(row.spec);
-  if (!spec) return null;
-  if (
-    typeof row.id !== "string" ||
-    typeof row.jobId !== "string" ||
-    typeof row.jobTitle !== "string" ||
-    !finite(row.jobRevision) ||
-    !isMode(row.mode) ||
-    !isStatus(row.status) ||
-    !isTrigger(row.trigger) ||
-    !finite(row.scheduledFor) ||
-    typeof row.idempotencyKey !== "string" ||
-    !finite(row.attempt) ||
-    typeof row.detail !== "string" ||
-    !finite(row.createdAt) ||
-    !Array.isArray(row.evidence) ||
-    !Array.isArray(row.approvalRequests)
-  ) {
-    return null;
-  }
-  const evidence = cleanEvidence(row.evidence as JobRunEvidence[], row.createdAt);
-  const approvalRequests = cleanApprovals(row.approvalRequests.filter((item) => typeof item === "string") as string[]);
-  return {
-    id: row.id,
-    jobId: row.jobId,
-    jobTitle: row.jobTitle,
-    jobRevision: row.jobRevision,
-    mode: row.mode,
-    status: row.status,
-    trigger: row.trigger,
-    scheduledFor: row.scheduledFor,
-    ...(typeof row.loopRunId === "string" ? { loopRunId: row.loopRunId } : {}),
-    idempotencyKey: row.idempotencyKey,
-    attempt: row.attempt,
-    spec,
-    evidence,
-    approvalRequests,
-    detail: cleanText(row.detail, MAX_DETAIL),
-    createdAt: row.createdAt,
-    ...(finite(row.startedAt) ? { startedAt: row.startedAt } : {}),
-    ...(finite(row.finishedAt) ? { finishedAt: row.finishedAt } : {}),
-    ...(finite(row.seenAt) ? { seenAt: row.seenAt } : {}),
-    ...(typeof row.legacySessionId === "string" ? { legacySessionId: row.legacySessionId } : {}),
-    ...(typeof row.threadId === "string" && row.threadId ? { threadId: row.threadId } : {}),
-  };
-}
+export const jobRunBinding = jobHistoryBinding;
 
 export class JobRunStore {
   private readonly file: string;
   private readonly now: () => number;
   private emit?: JobRunStoreOptions["emit"];
   private runs: JobRun[];
+  private ledger?: ExecutionHistory<JobRun>;
+  private legacyHash = executionDigest('absent');
+  private migratedProjection = false;
   private recoveryDetail: string | null = null;
 
   constructor(options: JobRunStoreOptions = {}) {
@@ -276,6 +139,11 @@ export class JobRunStore {
     this.emit = options.emit;
     this.runs = this.load();
     if (this.recovery.active) return;
+    try {
+      this.ledger = new ExecutionHistory({ type: 'job', file: this.file, database: options.database, expectedFileHash: this.legacyHash, requireExisting: this.migratedProjection, parse: parseJobRun,
+        binding: jobRunBinding, requestKey: run => run.idempotencyKey, subject: run => run.jobId });
+      this.runs = this.ledger.load(this.runs, null).runs;
+    } catch { this.recoveryDetail = HISTORY_RECOVERY; return; }
     const recovered = this.runs.map(cloneRun);
     const now = this.now();
     let changed = false;
@@ -318,9 +186,21 @@ export class JobRunStore {
 
   get(id: string): JobRun | undefined {
     this.assertWritable();
-    const run = this.runs.find((item) => item.id === id);
+    const run = this.readHistory(() => this.ledger?.get(id));
     return run ? cloneRun(run) : undefined;
   }
+
+  getByIdempotencyKey(key: string): JobRun | undefined {
+    this.assertWritable();
+    return this.readHistory(() => this.ledger?.byRequest(key.trim()));
+  }
+
+  history(query: Omit<ExecutionHistoryQuery, 'subjectId'> & { jobId?: string } = {}) {
+    this.assertWritable();
+    return this.readHistory(() => this.ledger!.page({ ...query, subjectId: query.jobId }));
+  }
+
+  close() { this.ledger?.close(); }
 
   enqueue(recipe: Recipe, input: EnqueueJobRunInput): { run: JobRun; created: boolean } {
     this.assertWritable();
@@ -328,8 +208,15 @@ export class JobRunStore {
     if (!key || key.length > 300) {
       throw Object.assign(new Error("A bounded idempotency key is required."), { status: 400 });
     }
-    const duplicate = this.runs.find((run) => run.idempotencyKey === key);
-    if (duplicate) return { run: cloneRun(duplicate), created: false };
+    const duplicate = this.getByIdempotencyKey(key);
+    if (duplicate) {
+      if (duplicate.jobId !== recipe.id || duplicate.jobRevision !== recipe.revision || duplicate.mode !== input.mode || duplicate.trigger !== input.trigger ||
+        jobRunBinding(duplicate) !== jobRunBinding({ ...duplicate, spec: snapshot(recipe) }) || (input.scheduledFor !== undefined && input.scheduledFor !== duplicate.scheduledFor) ||
+        input.loopRunId !== duplicate.loopRunId || (input.threadId !== undefined && input.threadId !== duplicate.threadId)) {
+        throw Object.assign(new Error('That request belongs to another job, plan or input. Check its original result.'), { status: 409 });
+      }
+      return { run: cloneRun(duplicate), created: false };
+    }
     const active = this.runs.find((run) => run.jobId === recipe.id && IN_FLIGHT.has(run.status));
     if (active) {
       throw Object.assign(new Error("This job already has work waiting or running."), {
@@ -357,7 +244,7 @@ export class JobRunStore {
       detail: cleanText(input.detail ?? "Queued by RealBud.", MAX_DETAIL) || "Queued by RealBud.",
       createdAt: now,
     };
-    this.commit([...this.runs, run].slice(-MAX_RUNS));
+    this.commit(this.trim([...this.runs, run]));
     this.emitRun(run);
     return { run: cloneRun(run), created: true };
   }
@@ -466,20 +353,35 @@ export class JobRunStore {
     return cloneRun(run);
   }
 
+  private readHistory<T>(read: () => T): T {
+    this.assertWritable();
+    try { return read(); }
+    catch (error) {
+      if ((error as { status?: number }).status === 503) this.recoveryDetail = HISTORY_RECOVERY;
+      throw error;
+    }
+  }
+
   private assertWritable(): void {
     if (this.recoveryDetail) throw Object.assign(new Error(this.recoveryDetail), { status: 503 });
   }
 
   private requireWritable(id: string): JobRun {
     this.assertWritable();
-    const run = this.runs.find((item) => item.id === id);
+    const run = this.readHistory(() => this.ledger?.get(id));
     if (!run) throw Object.assign(new Error("no such job run"), { status: 404 });
     return run;
   }
 
   private load(): JobRun[] {
     try {
-      const parsed: unknown = JSON.parse(readFileSync(this.file, "utf8"));
+      const contents = readFileSync(this.file, "utf8");
+      this.legacyHash = executionDigest(contents);
+      const parsed: unknown = JSON.parse(contents);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && 'executionHistory' in parsed) {
+        if (parsed.executionHistory !== 1) throw new Error('Unknown execution projection');
+        this.migratedProjection = true;
+      }
       const list =
         parsed && typeof parsed === "object" &&
           ((parsed as { version?: unknown }).version === undefined || (parsed as { version?: unknown }).version === 1) &&
@@ -492,14 +394,14 @@ export class JobRunStore {
         this.recoveryDetail = HISTORY_RECOVERY;
         return [];
       }
-      const parsedRuns = list.map(asRun);
+      const parsedRuns = list.map(parseJobRun);
       const valid = parsedRuns.filter((run): run is JobRun => Boolean(run));
       const ids = new Set(valid.map((run) => run.id));
       const keys = new Set(valid.map((run) => run.idempotencyKey));
       if (valid.length !== list.length || ids.size !== valid.length || keys.size !== valid.length) {
         this.recoveryDetail = HISTORY_RECOVERY;
       }
-      return valid.slice(-MAX_RUNS);
+      return valid;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") this.recoveryDetail = HISTORY_RECOVERY;
       return [];
@@ -507,15 +409,26 @@ export class JobRunStore {
   }
 
   private replace(run: JobRun): void {
-    this.commit(this.runs.map((item) => item.id === run.id ? run : item));
+    const found = this.runs.some(item => item.id === run.id);
+    this.commit(this.trim(found ? this.runs.map(item => item.id === run.id ? run : item) : [...this.runs, run]));
+  }
+
+  private trim(runs: JobRun[]): JobRun[] {
+    const next = [...runs];
+    while (next.length > MAX_RUNS) {
+      const index = next.findIndex(run => !IN_FLIGHT.has(run.status));
+      if (index < 0) break;
+      next.splice(index, 1);
+    }
+    return next;
   }
 
   private commit(next: JobRun[]): void {
     this.assertWritable();
-    const contents = `${JSON.stringify({ version: 1, runs: next } satisfies JobRunsFile, null, 2)}\n`;
+    const contents = `${JSON.stringify({ version: 1, executionHistory: 1, runs: next } satisfies JobRunsFile, null, 2)}\n`;
     try {
       mkdirSync(dirname(this.file), { recursive: true });
-      writeFileAtomic(this.file, contents, 0o600);
+      this.ledger!.save(next, null, contents, () => writeFileAtomic(this.file, contents, 0o600));
     } catch {
       // writeFileAtomic can fail during the directory fsync after rename.
       // Preserve the actual receipt in that case and stop further work until
@@ -528,7 +441,8 @@ export class JobRunStore {
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") this.recoveryDetail = HISTORY_RECOVERY;
       }
-      throw Object.assign(new Error(this.recoveryDetail ?? WRITE_FAILED), { status: 503 });
+      this.recoveryDetail ??= WRITE_FAILED + ' Job runs are paused; restart to reconcile the retained execution intent.';
+      throw Object.assign(new Error(this.recoveryDetail), { status: 503 });
     }
     this.runs = next;
   }

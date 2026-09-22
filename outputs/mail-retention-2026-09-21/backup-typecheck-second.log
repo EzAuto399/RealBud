@@ -1,0 +1,12 @@
+server/mail-workspace-http.test.ts(45,17): error TS2339: Property 'pid' does not exist on type '{}'.
+server/mail-workspace-http.test.ts(49,11): error TS2571: Object is of type 'unknown'.
+server/mail-workspace-http.test.ts(64,12): error TS2571: Object is of type 'unknown'.
+server/mail-workspace-http.test.ts(65,12): error TS2571: Object is of type 'unknown'.
+server/mail-workspace-http.test.ts(102,12): error TS18046: 'source' is of type 'unknown'.
+server/mail-workspace-http.test.ts(103,12): error TS18046: 'source' is of type 'unknown'.
+server/mail-workspace-http.test.ts(105,12): error TS18046: 'scans' is of type 'unknown'.
+server/mail-workspace-http.test.ts(105,41): error TS18046: 'scans' is of type 'unknown'.
+server/mail-workspace-http.test.ts(105,78): error TS18046: 'scans' is of type 'unknown'.
+server/mail-workspace-http.test.ts(106,12): error TS2571: Object is of type 'unknown'.
+server/mail-workspace-http.test.ts(106,78): error TS18046: 'scans' is of type 'unknown'.
+server/mail-workspace-http.test.ts(120,12): error TS2571: Object is of type 'unknown'.

@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "status": "incomplete",
+  "requestedModel": "grok-4.7",
+  "requestedReasoningEffort": "xhigh",
+  "observedModel": null,
+  "question": "Source-free contract review of native byte-zero locking and exact leaf absence against admitted Hermes msvcrt lock behavior.",
+  "prompt": {
+    "model": "grok-4.7",
+    "reasoningEffort": "xhigh",
+    "promptBytes": 4404,
+    "promptSha256": "cbf6ab8fc1f03aedbd23cb8b3c16913d17b78609018e81c02bdaea040875478a",
+    "deadlineSeconds": 600,
+    "tools": false,
+    "web": false,
+    "subagents": false
+  },
+  "process": {
+    "exitCode": 124,
+    "elapsedSeconds": 600.034
+  },
+  "stdoutBytes": 0,
+  "structuredVerdict": null,
+  "approval": false,
+  "retryPerformed": false,
+  "originalDiagnostics": {
+    "bytes": 694056,
+    "sha256": "ad6e9e1aaa4796ca09827ea4647840d28e74d00200c39a9576f3235d3e57f462"
+  },
+  "diagnosticsDisposition": "Raw CLI diagnostics omitted; not a review verdict.",
+  "limits": [
+    "The single max-one-turn, tools-disabled, web-disabled, subagents-disabled call reached its 600-second hard deadline.",
+    "No Grok findings or approval are inferred from partial diagnostics.",
+    "Implementation and local test results are independent evidence, recorded separately."
+  ]
+}

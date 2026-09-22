@@ -4,9 +4,12 @@ import {
   agencyIsNamed,
   coerceOffice,
   emptyOffice,
+  MAX_RETENTION_DAYS,
+  MIN_RETENTION_DAYS,
   officeContractComplete,
   officeFilledCount,
   parseOfficePatch,
+  parseRetentionDays,
 } from "../../shared/office";
 
 const named = {
@@ -61,6 +64,41 @@ describe("office visit fields", () => {
       ok: true,
       value: { pmUser: "Alex", pmsBrand: "other" },
     });
+  });
+
+  it("keeps retention a whole number of days, or nothing", () => {
+    expect(parseRetentionDays(90)).toEqual({ ok: true, value: 90 });
+    expect(parseRetentionDays(null)).toEqual({ ok: true, value: null });
+    expect(parseRetentionDays(MIN_RETENTION_DAYS).ok).toBe(true);
+    expect(parseRetentionDays(MAX_RETENTION_DAYS).ok).toBe(true);
+  });
+
+  it("refuses a retention window that would destroy the book immediately", () => {
+    // 0 days would mean "destroy now", so this floor is a safety property.
+    expect(parseRetentionDays(0).ok).toBe(false);
+    expect(parseRetentionDays(1).ok).toBe(false);
+    expect(parseRetentionDays(-5).ok).toBe(false);
+  });
+
+  it("refuses a retention window beyond the ceiling", () => {
+    expect(parseRetentionDays(MAX_RETENTION_DAYS + 1).ok).toBe(false);
+    expect(parseRetentionDays(Number.MAX_SAFE_INTEGER).ok).toBe(false);
+  });
+
+  it("refuses a retention window that is not a whole number", () => {
+    expect(parseRetentionDays(90.5).ok).toBe(false);
+    expect(parseRetentionDays("90").ok).toBe(false);
+    expect(parseRetentionDays(Number.NaN).ok).toBe(false);
+    expect(parseRetentionDays(undefined).ok).toBe(false);
+  });
+
+  it("names the safe alternative when retention is rejected", () => {
+    const low = parseRetentionDays(0);
+    expect(low.ok).toBe(false);
+    if (!low.ok) expect(low.error).toMatch(new RegExp(String(MIN_RETENTION_DAYS)));
+    const high = parseRetentionDays(MAX_RETENTION_DAYS + 1);
+    expect(high.ok).toBe(false);
+    if (!high.ok) expect(high.error).toMatch(/until you decide/i);
   });
 
   it("coerces a loose snapshot office back onto closed unions", () => {

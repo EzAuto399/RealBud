@@ -1,3 +1,4 @@
+import { currentWorkerProfile, withWorkerProfile } from "./hermes-profile.ts";
 // Drive Hermes device-code OAuth for the property profile from RealBud.
 // Spawns `hermes -p property auth add <provider> --type oauth --no-browser`,
 // parses the printed user code + verification URL, and watches auth.json.
@@ -9,7 +10,7 @@ import type { ChildProcess } from "node:child_process";
 import { WORKER_OAUTH_LOGINS } from "../shared/worker-providers.ts";
 import { augmentedPath } from "./env-path.ts";
 import { hermesHome, propertyProfileDir } from "./hermes-pack.ts";
-import { hermesCli, HERMES_PIN } from "./hermes-pin.ts";
+import { hermesCli } from "./hermes-pin.ts";
 import { killCliTree, spawnCli } from "./procs.ts";
 
 export const HERMES_OAUTH_PROVIDERS = ["openai-codex", "xai-oauth"] as const;
@@ -29,6 +30,8 @@ export interface OAuthSessionPublic {
 
 type OAuthSession = OAuthSessionPublic & {
   child: ChildProcess | null;
+  memberKey?: string;
+  profile: string;
   root?: string;
   buffer: string;
   sawAuthAtStart: boolean;
@@ -154,7 +157,7 @@ function ingestOutput(session: OAuthSession, chunk: string): void {
 
 function evaluateApproval(session: OAuthSession): void {
   if (session.state === "cancelled" || session.state === "error" || session.state === "approved") return;
-  const present = authHasProvider(session.providerId, session.root);
+  const present = withWorkerProfile(session.memberKey, () => authHasProvider(session.providerId, session.root));
   if (!present) return;
   // A credential that already existed at start is not proof this attempt
   // succeeded — wait for a clean CLI exit in that case.
@@ -191,6 +194,8 @@ export function startOAuth(
     error: null,
     startedAt: Date.now(),
     child: null,
+    memberKey: currentWorkerProfile().memberKey,
+    profile: currentWorkerProfile().profile,
     root: opts?.root,
     buffer: "",
     sawAuthAtStart: authHasProvider(oauthId, opts?.root),
@@ -217,7 +222,7 @@ export function startOAuth(
   try {
     child = spawnCli(
       cli,
-      ["-p", HERMES_PIN.profile, "auth", "add", oauthId, "--type", "oauth", "--no-browser"],
+      ["-p", currentWorkerProfile().profile, "auth", "add", oauthId, "--type", "oauth", "--no-browser"],
       { env, stdio: ["ignore", "pipe", "pipe"] },
     );
   } catch (err) {
@@ -261,7 +266,7 @@ export function startOAuth(
 
 export function oauthStatus(sessionId: string): OAuthSessionPublic {
   const session = sessions.get(sessionId);
-  if (!session) {
+  if (!session || session.profile !== currentWorkerProfile().profile) {
     throw Object.assign(new Error("login session not found"), { status: 404 });
   }
   if (session.state === "starting" || session.state === "waiting") {
@@ -281,7 +286,7 @@ export function oauthStatus(sessionId: string): OAuthSessionPublic {
 
 export function cancelOAuth(sessionId: string): OAuthSessionPublic {
   const session = sessions.get(sessionId);
-  if (!session) {
+  if (!session || session.profile !== currentWorkerProfile().profile) {
     throw Object.assign(new Error("login session not found"), { status: 404 });
   }
   if (session.state === "approved") return publicSession(session);
@@ -302,4 +307,8 @@ export function resetOAuthSessionsForTests(): void {
   }
   sessions.clear();
   activeSessionId = null;
+}
+
+export function oauthInFlight(): boolean {
+  return [...sessions.values()].some(session => session.state === "starting" || session.state === "waiting");
 }

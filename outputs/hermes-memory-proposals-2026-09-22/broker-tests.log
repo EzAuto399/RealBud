@@ -1,0 +1,11 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ✓ server/hermes-memory-proposal-broker.test.ts (50 tests) 591ms
+
+ Test Files  1 passed (1)
+      Tests  50 passed (50)
+   Start at  01:45:06
+   Duration  730ms (transform 47ms, setup 22ms, import 48ms, tests 591ms, environment 0ms)
+
+JSON report written to /Users/yoda/projects/RealBud/outputs/hermes-memory-proposals-2026-09-22/broker-tests.json

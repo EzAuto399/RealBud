@@ -1,0 +1,386 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ❯ server/bill-proposals-retention.test.ts (7 tests | 7 failed) 172ms
+     × admits request 1001 and retains every old identity and historical replay 57ms
+     × reuses a competing identical winner with its own later asOf and never enters the losing executor 23ms
+     × rejects a competing different payload before any losing executor or input write 23ms
+     × rejects a competing different source before any losing executor or input write 22ms
+     × rejects a competing different authority before any losing executor or input write 20ms
+     × preserves a competing identical intent without a run and requires explicit recovery 13ms
+     × rejects a saved input changed without changing its source digest and preserves its bytes 13ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 7 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/bill-proposals-retention.test.ts > permanent invoice proposal requests across independent database handles > admits request 1001 and retains every old identity and historical replay
+Error: Invoice preparation history is full (1,000 saved requests). Previous requests are preserved. Contact RealBud service support before preparing another invoice.
+ ❯ fail server/bill-proposals.ts:12:78
+     10| import { validateAccountsReview } from './accounts-review.ts';
+     11|
+     12| const fail = (message: string, status = 409): never => { throw Object.…
+       |                                                                              ^
+     13| const hash = (value: unknown) => createHash('sha256').update(JSON.stri…
+     14| // Align the preparation ledger with the retained job history. Request…
+ ❯ server/bill-proposals.ts:100:65
+ ❯ server/bill-proposals-retention.test.ts:60:42
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/7]⎯
+
+ FAIL  server/bill-proposals-retention.test.ts > permanent invoice proposal requests across independent database handles > reuses a competing identical winner with its own later asOf and never enters the losing executor
+AssertionError: expected [ 1, 1 ] to deeply equal [ +0, 1 ]
+
+- Expected
++ Received
+
+  [
+-   0,
++   1,
+    1,
+  ]
+
+ ❯ server/bill-proposals-retention.test.ts:81:21
+     79|     expect(receipt.value.input.asOf).toBe('2026-09-21T08:00:01.000Z');
+     80|     gate.release(); expect(await pending).toEqual(winner);
+     81|     expect(f.calls).toEqual([0, 1]); expect(readFileSync(f.inputPath))…
+       |                     ^
+     82|     expect(f.handles[0].get('bill-proposal', `bill-proposal:${request.…
+     83|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/7]⎯
+
+ FAIL  server/bill-proposals-retention.test.ts > permanent invoice proposal requests across independent database handles > rejects a competing different payload before any losing executor or input write
+AssertionError: promise resolved "{ run: { …(15) }, …(2) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "proposal": {
++     "conflictGroup": null,
++     "decision": "hold",
++     "documentId": "mail-8dd6dc3f8df66eb97e9f63bccef293df024a509319035d30b5ae626351ed4f5c",
++     "duplicateOf": null,
++     "proposedEntry": {
++       "amount": null,
++       "costType": null,
++       "currency": null,
++       "dueDate": null,
++       "invoiceId": null,
++       "propertyId": null,
++       "supplierId": null,
++     },
++     "reason": "Review the saved source.",
++     "sourceIds": [
++       "abc1",
++     ],
++   },
++   "run": {
++     "approvalRequests": [],
++     "attempt": 1,
++     "createdAt": 1,
++     "detail": "",
++     "evidence": [
++       {
++         "at": 1,
++         "kind": "output",
++         "note": "{\"version\":1,\"kind\":\"accounts-invoice-entry-review\",\"sourceReference\":\"realbud-bill:45c7a733e7b28299f0c5fdde257ad6e074ed7a904a2f625c1cc02c1995ffae6e\",\"status\":\"partial\",\"coverageComplete\":false,\"holds\":[{\"itemId\":\"mail-8dd6dc3f8df66eb97e9f63bccef293df024a509319035d30b5ae626351ed4f5c\",\"reason\":\"Review the saved source.\"}],\"actionsPerformed\":[],\"documents\":[{\"documentId\":\"mail-8dd6dc3f8df66eb97e9f63bccef293df024a509319035d30b5ae626351ed4f5c\",\"decision\":\"hold\",\"duplicateOf\":null,\"conflictGroup\":null,\"proposedEntry\":{\"supplierId\":null,\"invoiceId\":null,\"propertyId\":null,\"amount\":null,\"currency\":null,\"dueDate\":null,\"costType\":null},\"sourceIds\":[\"abc1\"],\"reason\":\"Review the saved source.\"}]}",
++       },
++     ],
++     "id": "run-bill-proposal:454d7c99-66c9-4096-ae15-679869590738",
++     "idempotencyKey": "bill-proposal:454d7c99-66c9-4096-ae15-679869590738",
++     "jobId": "wf-office-core-invoice-review",
++     "jobRevision": 2,
++     "jobTitle": "Fictional invoice review",
++     "mode": "prepare",
++     "scheduledFor": 1,
++     "spec": {
++       "allowedOrigins": [],
++       "capabilities": [
++         "analyse",
++       ],
++       "description": "Prepare one saved message.",
++       "evidence": "Source-bound proposal",
++       "limits": {
++         "maxRuntimeMinutes": 5,
++         "maxTurns": 10,
++       },
++       "steps": [],
++       "title": "Fictional invoice review",
++     },
++     "status": "awaiting-approval",
++     "trigger": "manual",
++   },
++   "sourceDigest": "45c7a733e7b28299f0c5fdde257ad6e074ed7a904a2f625c1cc02c1995ffae6e",
+  }
+
+ ❯ server/bill-proposals-retention.test.ts:93:36
+     91|     await createBillProposals(winnerOptions)(winnerRequest);
+     92|     const input = readFileSync(f.inputPath), receipt = f.handles[1].ge…
+     93|     const rejected = expect(pending).rejects.toMatchObject({ status: 4…
+       |                                    ^
+     94|     expect(f.calls).toEqual([0, 1]); expect(readFileSync(f.inputPath))…
+     95|     expect(f.handles[0].get('bill-proposal', `bill-proposal:${request.…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/7]⎯
+
+ FAIL  server/bill-proposals-retention.test.ts > permanent invoice proposal requests across independent database handles > rejects a competing different source before any losing executor or input write
+AssertionError: expected Error: The saved invoice proposal does no… { status: … } to match object { status: 409 }
+
+- Expected
++ Received
+
+- {
+-   "status": 409,
++ Error {
++   "status": 503,
+  }
+
+ ❯ server/bill-proposals-retention.test.ts:93:36
+     91|     await createBillProposals(winnerOptions)(winnerRequest);
+     92|     const input = readFileSync(f.inputPath), receipt = f.handles[1].ge…
+     93|     const rejected = expect(pending).rejects.toMatchObject({ status: 4…
+       |                                    ^
+     94|     expect(f.calls).toEqual([0, 1]); expect(readFileSync(f.inputPath))…
+     95|     expect(f.handles[0].get('bill-proposal', `bill-proposal:${request.…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/7]⎯
+
+ FAIL  server/bill-proposals-retention.test.ts > permanent invoice proposal requests across independent database handles > rejects a competing different authority before any losing executor or input write
+AssertionError: promise resolved "{ run: { …(15) }, …(2) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "proposal": {
++     "conflictGroup": null,
++     "decision": "hold",
++     "documentId": "mail-8dd6dc3f8df66eb97e9f63bccef293df024a509319035d30b5ae626351ed4f5c",
++     "duplicateOf": null,
++     "proposedEntry": {
++       "amount": null,
++       "costType": null,
++       "currency": null,
++       "dueDate": null,
++       "invoiceId": null,
++       "propertyId": null,
++       "supplierId": null,
++     },
++     "reason": "Review the saved source.",
++     "sourceIds": [
++       "abc1",
++     ],
++   },
++   "run": {
++     "approvalRequests": [],
++     "attempt": 1,
++     "createdAt": 1,
++     "detail": "",
++     "evidence": [
++       {
++         "at": 1,
++         "kind": "output",
++         "note": "{\"version\":1,\"kind\":\"accounts-invoice-entry-review\",\"sourceReference\":\"realbud-bill:45c7a733e7b28299f0c5fdde257ad6e074ed7a904a2f625c1cc02c1995ffae6e\",\"status\":\"partial\",\"coverageComplete\":false,\"holds\":[{\"itemId\":\"mail-8dd6dc3f8df66eb97e9f63bccef293df024a509319035d30b5ae626351ed4f5c\",\"reason\":\"Review the saved source.\"}],\"actionsPerformed\":[],\"documents\":[{\"documentId\":\"mail-8dd6dc3f8df66eb97e9f63bccef293df024a509319035d30b5ae626351ed4f5c\",\"decision\":\"hold\",\"duplicateOf\":null,\"conflictGroup\":null,\"proposedEntry\":{\"supplierId\":null,\"invoiceId\":null,\"propertyId\":null,\"amount\":null,\"currency\":null,\"dueDate\":null,\"costType\":null},\"sourceIds\":[\"abc1\"],\"reason\":\"Review the saved source.\"}]}",
++       },
++     ],
++     "id": "run-bill-proposal:8b0d2a87-8fca-43e7-bcf1-80ca16eb95a4",
++     "idempotencyKey": "bill-proposal:8b0d2a87-8fca-43e7-bcf1-80ca16eb95a4",
++     "jobId": "wf-office-core-invoice-review",
++     "jobRevision": 2,
++     "jobTitle": "Fictional invoice review",
++     "mode": "prepare",
++     "scheduledFor": 1,
++     "spec": {
++       "allowedOrigins": [],
++       "capabilities": [
++         "analyse",
++       ],
++       "description": "Prepare one saved message.",
++       "evidence": "Source-bound proposal",
++       "limits": {
++         "maxRuntimeMinutes": 5,
++         "maxTurns": 10,
++       },
++       "steps": [],
++       "title": "Fictional invoice review",
++     },
++     "status": "awaiting-approval",
++     "trigger": "manual",
++   },
++   "sourceDigest": "45c7a733e7b28299f0c5fdde257ad6e074ed7a904a2f625c1cc02c1995ffae6e",
+  }
+
+ ❯ server/bill-proposals-retention.test.ts:93:36
+     91|     await createBillProposals(winnerOptions)(winnerRequest);
+     92|     const input = readFileSync(f.inputPath), receipt = f.handles[1].ge…
+     93|     const rejected = expect(pending).rejects.toMatchObject({ status: 4…
+       |                                    ^
+     94|     expect(f.calls).toEqual([0, 1]); expect(readFileSync(f.inputPath))…
+     95|     expect(f.handles[0].get('bill-proposal', `bill-proposal:${request.…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/7]⎯
+
+ FAIL  server/bill-proposals-retention.test.ts > permanent invoice proposal requests across independent database handles > preserves a competing identical intent without a run and requires explicit recovery
+AssertionError: promise resolved "{ run: { …(15) }, …(2) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "proposal": {
++     "conflictGroup": null,
++     "decision": "hold",
++     "documentId": "mail-8dd6dc3f8df66eb97e9f63bccef293df024a509319035d30b5ae626351ed4f5c",
++     "duplicateOf": null,
++     "proposedEntry": {
++       "amount": null,
++       "costType": null,
++       "currency": null,
++       "dueDate": null,
++       "invoiceId": null,
++       "propertyId": null,
++       "supplierId": null,
++     },
++     "reason": "Review the saved source.",
++     "sourceIds": [
++       "abc1",
++     ],
++   },
++   "run": {
++     "approvalRequests": [],
++     "attempt": 1,
++     "createdAt": 1,
++     "detail": "",
++     "evidence": [
++       {
++         "at": 1,
++         "kind": "output",
++         "note": "{\"version\":1,\"kind\":\"accounts-invoice-entry-review\",\"sourceReference\":\"realbud-bill:45c7a733e7b28299f0c5fdde257ad6e074ed7a904a2f625c1cc02c1995ffae6e\",\"status\":\"partial\",\"coverageComplete\":false,\"holds\":[{\"itemId\":\"mail-8dd6dc3f8df66eb97e9f63bccef293df024a509319035d30b5ae626351ed4f5c\",\"reason\":\"Review the saved source.\"}],\"actionsPerformed\":[],\"documents\":[{\"documentId\":\"mail-8dd6dc3f8df66eb97e9f63bccef293df024a509319035d30b5ae626351ed4f5c\",\"decision\":\"hold\",\"duplicateOf\":null,\"conflictGroup\":null,\"proposedEntry\":{\"supplierId\":null,\"invoiceId\":null,\"propertyId\":null,\"amount\":null,\"currency\":null,\"dueDate\":null,\"costType\":null},\"sourceIds\":[\"abc1\"],\"reason\":\"Review the saved source.\"}]}",
++       },
++     ],
++     "id": "run-bill-proposal:5be7e845-21bc-462e-9a1b-30790082b480",
++     "idempotencyKey": "bill-proposal:5be7e845-21bc-462e-9a1b-30790082b480",
++     "jobId": "wf-office-core-invoice-review",
++     "jobRevision": 2,
++     "jobTitle": "Fictional invoice review",
++     "mode": "prepare",
++     "scheduledFor": 1,
++     "spec": {
++       "allowedOrigins": [],
++       "capabilities": [
++         "analyse",
++       ],
++       "description": "Prepare one saved message.",
++       "evidence": "Source-bound proposal",
++       "limits": {
++         "maxRuntimeMinutes": 5,
++         "maxTurns": 10,
++       },
++       "steps": [],
++       "title": "Fictional invoice review",
++     },
++     "status": "awaiting-approval",
++     "trigger": "manual",
++   },
++   "sourceDigest": "45c7a733e7b28299f0c5fdde257ad6e074ed7a904a2f625c1cc02c1995ffae6e",
+  }
+
+ ❯ server/bill-proposals-retention.test.ts:103:36
+    101|     await expect(createBillProposals({ ...f.options[1], execute: async…
+    102|     const receipt = f.handles[1].get('bill-proposal', `bill-proposal:$…
+    103|     const rejected = expect(pending).rejects.toMatchObject({ status: 4…
+       |                                    ^
+    104|     expect(f.calls).toEqual([0, 0]); expect(f.handles[0].get('bill-pro…
+    105|     expect(() => readFileSync(f.inputPath)).toThrow();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/7]⎯
+
+ FAIL  server/bill-proposals-retention.test.ts > permanent invoice proposal requests across independent database handles > rejects a saved input changed without changing its source digest and preserves its bytes
+AssertionError: promise resolved "{ run: { …(15) }, …(2) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "proposal": {
++     "conflictGroup": null,
++     "decision": "hold",
++     "documentId": "mail-8dd6dc3f8df66eb97e9f63bccef293df024a509319035d30b5ae626351ed4f5c",
++     "duplicateOf": null,
++     "proposedEntry": {
++       "amount": null,
++       "costType": null,
++       "currency": null,
++       "dueDate": null,
++       "invoiceId": null,
++       "propertyId": null,
++       "supplierId": null,
++     },
++     "reason": "Review the saved source.",
++     "sourceIds": [
++       "abc1",
++     ],
++   },
++   "run": {
++     "approvalRequests": [],
++     "attempt": 1,
++     "createdAt": 1,
++     "detail": "",
++     "evidence": [
++       {
++         "at": 1,
++         "kind": "output",
++         "note": "{\"version\":1,\"kind\":\"accounts-invoice-entry-review\",\"sourceReference\":\"realbud-bill:45c7a733e7b28299f0c5fdde257ad6e074ed7a904a2f625c1cc02c1995ffae6e\",\"status\":\"partial\",\"coverageComplete\":false,\"holds\":[{\"itemId\":\"mail-8dd6dc3f8df66eb97e9f63bccef293df024a509319035d30b5ae626351ed4f5c\",\"reason\":\"Review the saved source.\"}],\"actionsPerformed\":[],\"documents\":[{\"documentId\":\"mail-8dd6dc3f8df66eb97e9f63bccef293df024a509319035d30b5ae626351ed4f5c\",\"decision\":\"hold\",\"duplicateOf\":null,\"conflictGroup\":null,\"proposedEntry\":{\"supplierId\":null,\"invoiceId\":null,\"propertyId\":null,\"amount\":null,\"currency\":null,\"dueDate\":null,\"costType\":null},\"sourceIds\":[\"abc1\"],\"reason\":\"Review the saved source.\"}]}",
++       },
++     ],
++     "id": "run-bill-proposal:fb9e7e25-9c71-486d-b7e8-d3b963063189",
++     "idempotencyKey": "bill-proposal:fb9e7e25-9c71-486d-b7e8-d3b963063189",
++     "jobId": "wf-office-core-invoice-review",
++     "jobRevision": 2,
++     "jobTitle": "Fictional invoice review",
++     "mode": "prepare",
++     "scheduledFor": 1,
++     "spec": {
++       "allowedOrigins": [],
++       "capabilities": [
++         "analyse",
++       ],
++       "description": "Prepare one saved message.",
++       "evidence": "Source-bound proposal",
++       "limits": {
++         "maxRuntimeMinutes": 5,
++         "maxTurns": 10,
++       },
++       "steps": [],
++       "title": "Fictional invoice review",
++     },
++     "status": "awaiting-approval",
++     "trigger": "manual",
++   },
++   "sourceDigest": "45c7a733e7b28299f0c5fdde257ad6e074ed7a904a2f625c1cc02c1995ffae6e",
+  }
+
+ ❯ server/bill-proposals-retention.test.ts:113:60
+    111|     const forged = structuredClone(receipt.value); (forged.input.docum…
+    112|     const changed = f.handles[1].update('bill-proposal', id, receipt.r…
+    113|     await expect(createBillProposals(f.options[0])(request)).rejects.t…
+       |                                                            ^
+    114|     expect(f.calls).toEqual([1, 0]); expect(readFileSync(f.inputPath))…
+    115|     expect(f.handles[0].get('bill-proposal', id)).toEqual(changed);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/7]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  7 failed (7)
+   Start at  17:06:52
+   Duration  365ms (transform 95ms, setup 17ms, import 103ms, tests 172ms, environment 0ms)
+

@@ -1,0 +1,52 @@
+{
+  "timestamp": "2026-09-22T00:45:56.109502+00:00",
+  "scope": "Company department delegation authority and encrypted installation client. Not actual recipe worker, website approval or GUI execution.",
+  "sourceRegression": {
+    "uniquePassed": 368,
+    "failed": 0,
+    "skipped": 0,
+    "files": 38,
+    "reportsInSupersessionOrder": [
+      "company-regression.json",
+      "remaining-regression.json",
+      "credential-regression-final.json"
+    ],
+    "reconciliation": "reconciled-tests.json"
+  },
+  "compiledAuthorityTransport": {
+    "passed": 3,
+    "failed": 0,
+    "skipped": 0,
+    "report": "compiled-transport.json",
+    "runtimeModulesUnchangedAfterFinalBuild": true,
+    "testModulesExcluded": true
+  },
+  "domainAndBackupSubset": {
+    "passed": 23,
+    "report": "../company-execution-2026-09-22/domain-backup-final.json",
+    "sourceHashesRechecked": true
+  },
+  "builds": {
+    "desktop": "desktop-build.log",
+    "service": "service-build-final.log",
+    "typecheck": "final-typecheck.log"
+  },
+  "migrations": {
+    "priorSevenUnchanged": true,
+    "report": "migration-continuity.json"
+  },
+  "manifests": {
+    "source": "source-manifest.json",
+    "compiled": "compiled-manifest.json",
+    "compiledFiles": 407
+  },
+  "negativeEvidence": [
+    "initial-client-transport.json",
+    "client-transport.json",
+    "company-regression.json",
+    "remaining-regression.json"
+  ],
+  "noActualWorkerOrProviderCall": true,
+  "noNativeInstallerOrDeployment": true,
+  "nextGate": "Connect the actual existing executor and attended setup/recovery UI; then compose online website effect proof without reusing private approval."
+}

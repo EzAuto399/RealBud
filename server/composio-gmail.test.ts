@@ -56,6 +56,17 @@ const data = (result: any) => JSON.parse(result.content[0].text);
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("Gmail read-only configuration and connection identity", () => {
+  it('checks managed authority before any provider request', async () => {
+    const calls = fixture();
+    await expect(getGmailReadOnlyAccess({ ...binding, assertAuthority: () => { throw new Error('revoked'); } })).rejects.toThrow();
+    expect(calls).toHaveLength(0);
+  });
+  it('rechecks managed authority after a provider response before following requests', async () => {
+    let revoked = false;
+    const calls = fixture({ override: () => { revoked = true; return response(config()); } });
+    await expect(getGmailReadOnlyAccess({ ...binding, assertAuthority: () => { if (revoked) throw new Error('revoked'); } })).rejects.toThrow();
+    expect(calls).toHaveLength(1);
+  });
   it("projects only the verified enabled Gmail OAuth2 configuration", async () => {
     fixture();
     const result = await verifyGmailReadOnlyConfig(binding);

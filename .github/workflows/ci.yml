@@ -32,8 +32,32 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Portable Windows memory policy and recovery protocol
+        run: |
+          python --version
+          python scripts/testing/hermes-memory-windows-abi.py
+          python scripts/testing/hermes-memory-windows-policy.py
+          python scripts/testing/hermes-memory-windows-protocol.py
+          python scripts/testing/hermes-memory-windows-journal-io.py
+      - name: Native Windows memory storage candidate (production hold stays)
+        if: matrix.os == 'windows-latest'
+        run: python scripts/testing/hermes-memory-windows-native.py --receipt outputs/windows-memory-ci.json
+      - name: Preserve native memory acceptance evidence
+        if: always() && matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-memory-source-proof
+          path: outputs/windows-memory-ci.json
+          if-no-files-found: warn
+          retention-days: 14
       - run: pnpm typecheck
       - run: pnpm test
+      - name: Two-device evidence contract tests
+        run: pnpm test:two-device-evidence
+      - name: Release guard tests
+        # Pure fs/path guards on notarisation acceptance and artifact
+        # promotion — portable, so every host runs them.
+        run: pnpm test:release-guards
       - run: pnpm check:electron
       - name: coverage thresholds (ubuntu only — fastest, same numbers)
         if: matrix.os == 'ubuntu-latest'

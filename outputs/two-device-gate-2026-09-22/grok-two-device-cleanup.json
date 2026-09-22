@@ -1,0 +1,16 @@
+{
+  "checkedAt": "2026-09-21T21:33:13.217940+00:00",
+  "originalReceiptUnchanged": true,
+  "outcome": "interrupted-incomplete-no-terminal-result",
+  "completedReview": false,
+  "originalOwnedPid": 52571,
+  "remainingMatchingProcessRows": [],
+  "noRestart": true,
+  "authContentsRead": false,
+  "authContentsCopied": false,
+  "globalConfigMutation": false,
+  "globalConfigSha256After": "ada54f57ec570d8e70cba35400ea2b557914ede90ffa893b5da122a7f69d6736",
+  "globalConfigUnchanged": true,
+  "disposableHomeExisted": true,
+  "isolatedHomeRemoved": true
+}

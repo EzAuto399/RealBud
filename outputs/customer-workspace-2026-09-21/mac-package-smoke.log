@@ -1,0 +1,5 @@
+
+> realbud@0.1.19 qa:package:mac /Users/yoda/projects/RealBud
+> node scripts/smoke-mac-package.mjs
+
+[smoke-mac-package] OK: renderer, capabilities, embedded harness, and shutdown

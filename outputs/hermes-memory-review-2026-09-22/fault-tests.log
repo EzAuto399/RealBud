@@ -1,0 +1,18 @@
+test_altered_current_memory_holds_intent_and_preserves_new_content (__main__.HermesMemoryReviewFaults.test_altered_current_memory_holds_intent_and_preserves_new_content) ... ok
+test_changed_config_holds_saved_intent_without_applying (__main__.HermesMemoryReviewFaults.test_changed_config_holds_saved_intent_without_applying) ... ok
+test_changed_runtime_binding_holds_saved_intent (__main__.HermesMemoryReviewFaults.test_changed_runtime_binding_holds_saved_intent) ... ok
+test_cleanup_collision_preserves_unreviewed_replacement (__main__.HermesMemoryReviewFaults.test_cleanup_collision_preserves_unreviewed_replacement) ... ok
+test_copied_receipt_is_invalid_for_another_pending_id (__main__.HermesMemoryReviewFaults.test_copied_receipt_is_invalid_for_another_pending_id) ... ok
+test_crash_after_cleanup_claim_rename_finishes_saved_claim (__main__.HermesMemoryReviewFaults.test_crash_after_cleanup_claim_rename_finishes_saved_claim) ... ok
+test_crash_after_memory_fsync_resumes_recorded_approval_once (__main__.HermesMemoryReviewFaults.test_crash_after_memory_fsync_resumes_recorded_approval_once) ... ok
+test_crash_after_rename_before_fsync_redurabilizes_before_final_receipt (__main__.HermesMemoryReviewFaults.test_crash_after_rename_before_fsync_redurabilizes_before_final_receipt) ... ok
+test_final_receipt_before_cleanup_retries_without_memory_write (__main__.HermesMemoryReviewFaults.test_final_receipt_before_cleanup_retries_without_memory_write) ... ok
+test_new_native_proposal_beside_saved_claim_is_never_deleted (__main__.HermesMemoryReviewFaults.test_new_native_proposal_beside_saved_claim_is_never_deleted) ... ok
+test_public_snapshot_hash_is_not_approval_authority (__main__.HermesMemoryReviewFaults.test_public_snapshot_hash_is_not_approval_authority) ... ok
+test_rejected_receipt_before_cleanup_resumes_without_memory_changes (__main__.HermesMemoryReviewFaults.test_rejected_receipt_before_cleanup_resumes_without_memory_changes) ... ok
+test_saved_intent_before_write_requires_original_decision_and_digest (__main__.HermesMemoryReviewFaults.test_saved_intent_before_write_requires_original_decision_and_digest) ... ok
+
+----------------------------------------------------------------------
+Ran 13 tests in 2.700s
+
+OK

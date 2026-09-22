@@ -1,0 +1,102 @@
+{
+  "grokVersion": "1.0.34",
+  "projectTrusted": true,
+  "discoveredCounts": {
+    "projectInstructions": 1,
+    "mcpServers": 1,
+    "hooks": 1,
+    "skills": 387,
+    "plugins": 0
+  },
+  "activeCounts": {
+    "projectInstructions": 0,
+    "mcpServers": 0,
+    "hooks": 0,
+    "skills": 219,
+    "plugins": 0
+  },
+  "compatibilityScanners": [
+    {
+      "vendor": "cursor",
+      "surface": "skills",
+      "enabled": false,
+      "source": "env"
+    },
+    {
+      "vendor": "cursor",
+      "surface": "rules",
+      "enabled": false,
+      "source": "env"
+    },
+    {
+      "vendor": "cursor",
+      "surface": "agents",
+      "enabled": false,
+      "source": "env"
+    },
+    {
+      "vendor": "cursor",
+      "surface": "mcps",
+      "enabled": false,
+      "source": "env"
+    },
+    {
+      "vendor": "cursor",
+      "surface": "hooks",
+      "enabled": false,
+      "source": "env"
+    },
+    {
+      "vendor": "cursor",
+      "surface": "sessions",
+      "enabled": true,
+      "source": "default"
+    },
+    {
+      "vendor": "claude",
+      "surface": "skills",
+      "enabled": false,
+      "source": "env"
+    },
+    {
+      "vendor": "claude",
+      "surface": "rules",
+      "enabled": false,
+      "source": "env"
+    },
+    {
+      "vendor": "claude",
+      "surface": "agents",
+      "enabled": false,
+      "source": "env"
+    },
+    {
+      "vendor": "claude",
+      "surface": "mcps",
+      "enabled": false,
+      "source": "env"
+    },
+    {
+      "vendor": "claude",
+      "surface": "hooks",
+      "enabled": false,
+      "source": "env"
+    },
+    {
+      "vendor": "claude",
+      "surface": "sessions",
+      "enabled": true,
+      "source": "default"
+    },
+    {
+      "vendor": "codex",
+      "surface": "sessions",
+      "enabled": true,
+      "source": "default"
+    }
+  ],
+  "mcpNames": [
+    "semble"
+  ],
+  "globalConfigRead": false
+}

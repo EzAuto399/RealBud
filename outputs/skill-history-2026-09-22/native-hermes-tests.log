@@ -1,0 +1,19 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ✓ server/hermes-memory-proposals-http.test.ts (3 tests) 2198ms
+     ✓ publishes a native pending replacement from Product Ask without applying memory or exposing approval authority  427ms
+     ✓ reuses the durable proposal identity on a new turn and cannot turn it into a tool approval  313ms
+     ✓ applies only through the authenticated review decision and never recreates completed pending work on conversation retry  442ms
+ ✓ server/hermes-memory-recovery.native.test.ts (3 tests) 1024ms
+     ✓ discovers a real crash, closes once, survives service restart and stops same-request publication  548ms
+ ✓ server/hermes-memory-review.native.test.ts (36 tests) 6921ms
+     ✓ shows the whole replaced entry and untouched entries; applies once and returns the recorded result  303ms
+     ✓ waits for an unresponsive owned process to exit after its decision deadline  3514ms
+
+ Test Files  3 passed (3)
+      Tests  42 passed (42)
+   Start at  07:22:50
+   Duration  10.49s (transform 88ms, setup 24ms, import 139ms, tests 10.14s, environment 0ms)
+
+JSON report written to /Users/yoda/projects/RealBud/outputs/skill-history-2026-09-22/native-hermes-tests.json

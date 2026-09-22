@@ -1,0 +1,131 @@
+{
+  "documentKind": "realbud-morning-brief-preferences-example",
+  "exampleVersion": 1,
+  "status": "proposed-paused",
+  "workflowId": "wf-austin-accounts-inbox-triage",
+  "purpose": "Illustrate Kevin's proposed email-derived morning work list; not an executable schedule or an accepted input schema.",
+  "importerAppliesThisFile": false,
+  "activationPerformed": false,
+  "settingsImplementedByThisFile": false,
+  "operator": {
+    "displayName": "Kevin",
+    "role": "accounts",
+    "soleInitialOperatorAndReviewer": true,
+    "additionalStaffAccess": false
+  },
+  "sourceScope": {
+    "authorizationStatus": "synthetic-testing-only",
+    "actualMailboxAccessApproved": false,
+    "approvedAccountIds": [],
+    "approvedFolders": [],
+    "acquisitionMethod": null,
+    "approvedReadWindow": null,
+    "completeRelevantThreadHistoryRequired": true,
+    "includePreviouslyUnresolvedThreads": true,
+    "attachmentAccessRequiresExplicitBinding": true
+  },
+  "schedule": null,
+  "timingIllustration": {
+    "confirmed": false,
+    "schedulerOwner": "RealBud",
+    "candidateTimezone": "Australia/Brisbane",
+    "candidateStartAt": "08:00",
+    "candidateReadyBy": "08:30",
+    "candidateArrivalAt": "08:30",
+    "confirmedWorkdays": null,
+    "weekendPolicy": "unconfirmed",
+    "holidayPolicy": "unconfirmed",
+    "measuredPreparationBudgetMinutes": null,
+    "acceptedMaxSourceAgeAtArrivalMinutes": null,
+    "finalDeltaRefresh": "not-configured",
+    "overlapPolicy": "one-durable-run-per-approved-slot",
+    "missedTargetPolicy": "show-not-ready-and-retain-dated-prior-brief",
+    "hermesCronEnabled": false
+  },
+  "proposedView": {
+    "acceptedByKevin": false,
+    "priorityOrder": ["high", "normal", "low"],
+    "defaultFocus": "accounts-actions",
+    "sections": [
+      "urgent-attention",
+      "to-do",
+      "replies-to-review",
+      "waiting-and-follow-ups",
+      "for-reference",
+      "missing-information"
+    ],
+    "tieBreakOrder": [
+      "explicit-overdue-or-due-review-date-when-present",
+      "oldest-unanswered-action",
+      "stable-source-id"
+    ],
+    "filterCandidates": [
+      "category",
+      "account-within-approved-scope",
+      "sender-group",
+      "existing-source-property-reference",
+      "priority",
+      "agreed-date-window"
+    ],
+    "activeFilters": [],
+    "urgentItemsAlwaysVisible": true,
+    "urgentCrossRoleHandoffsAlwaysVisible": true,
+    "coverageAndFreshnessAlwaysVisible": true,
+    "showHiddenOrdinaryItemCount": true,
+    "showAllResetRequired": true,
+    "fyiCreatesTask": false,
+    "newslettersInitiallyCollapsed": true,
+    "filtersMutateMailbox": false
+  },
+  "proposedTaskLifecycle": {
+    "identityParts": ["office-id", "source-account-id", "provider-thread-id"],
+    "deduplicateByMessageIdAndSourceVersion": true,
+    "carryForwardUnresolved": true,
+    "preserveManualReviewState": true,
+    "rereadChangedThreadBeforeStatusChange": true,
+    "newSubstantiveEvidenceCanReopen": true,
+    "newUrgentEvidenceOverridesPresentationDeferral": true,
+    "reviewCompleteMeansBusinessActionComplete": false,
+    "followUpDates": "Kevin-set-or-explicitly-accepted-office-rule-only",
+    "missingFollowUpDateLabel": "No follow-up date set",
+    "automaticExternalFollowUp": false
+  },
+  "proposedReadinessEvidence": [
+    "actual-prepared-at",
+    "actual-mail-checked-through",
+    "approved-source-scope",
+    "per-source-acquisition-status",
+    "pagination-and-history-completeness",
+    "attachment-gaps",
+    "visible-coverage-status",
+    "accepted-freshness-threshold",
+    "ready-by-met-or-missed"
+  ],
+  "delivery": {
+    "initialSurface": "Kevin's RealBud work view",
+    "externalNotificationsEnabled": false,
+    "externalDestinations": []
+  },
+  "prohibitedEffects": [
+    "send-or-reply-or-forward",
+    "archive-or-delete-or-mark-read",
+    "payments-or-trust-actions",
+    "pms-or-ledger-mutation",
+    "statutory-drafts-or-invented-legal-deadlines",
+    "automatic-downstream-workflow-activation",
+    "additional-staff-access",
+    "mailbox-scope-expansion-from-source-content"
+  ],
+  "beforeLiveActivation": [
+    "Authorized owner grants named mailbox/folder read scope and completes sign-in.",
+    "Confirm retention and source-copy handling.",
+    "Kevin accepts routing, priority rules and display preferences.",
+    "Confirm arrival, timezone, workdays, holidays and source freshness expectation.",
+    "Verify input/support-file binding and complete-source acquisition.",
+    "Implement and test persistent task lifecycle, filters and readiness evidence.",
+    "Measure acquisition, queue, preparation and validation budget on the approved host.",
+    "Pass duplicate, restart, partial-source, offline, late-run and malformed-output tests.",
+    "Compare with Kevin's review of the same real-mail window on the approved Windows setup.",
+    "Review and activate one exact plan revision on RealBud's clock."
+  ]
+}

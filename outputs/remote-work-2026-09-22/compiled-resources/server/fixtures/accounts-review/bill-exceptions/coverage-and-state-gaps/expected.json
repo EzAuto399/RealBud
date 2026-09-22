@@ -1,0 +1,57 @@
+{
+  "kind": "accounts-bill-exception-review",
+  "status": "partial",
+  "coverageComplete": false,
+  "itemArray": "findings",
+  "itemIdKey": "occurrenceId",
+  "itemCount": 7,
+  "items": {
+    "SYN-B01": {
+      "arrival": "received",
+      "payment": "arranged-unconfirmed"
+    },
+    "SYN-B02": {
+      "payment": "unknown",
+      "advance": "outstanding"
+    },
+    "SYN-B03": {
+      "advance": "outstanding"
+    },
+    "SYN-B04": {
+      "arrival": "unknown"
+    },
+    "SYN-B05": {
+      "arrival": "unknown"
+    },
+    "SYN-B06": {
+      "arrival": "unknown",
+      "funding": "insufficient"
+    },
+    "SYN-B07": {
+      "arrival": "received",
+      "dueDate": null
+    }
+  },
+  "requiredFlags": {
+    "SYN-B02": [
+      "advance-unrecovered"
+    ],
+    "SYN-B03": [
+      "advance-unrecovered"
+    ],
+    "SYN-B07": [
+      "conflicting-invoice"
+    ]
+  },
+  "requiredHolds": [
+    "SYN-B02",
+    "SYN-B03",
+    "SYN-B04",
+    "SYN-B07",
+    "SYN-UNMAPPED-INVOICE"
+  ],
+  "actionsPerformed": [],
+  "notes": [
+    "Positive accepted evidence survives missing mailbox; unaccepted invoice proposals do not close register occurrences."
+  ]
+}

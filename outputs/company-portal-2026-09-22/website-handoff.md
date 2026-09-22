@@ -1,0 +1,15 @@
+# Attended company mapping website proof exchange
+
+Mapping only: `member-map` and `member-confirm`. These proofs do not authorize company membership, ownership, department access, work admission, or execution. The company host independently checks its stored challenge, current company session and actual member/owner state.
+
+The browser persists a 256-bit handle before issue. POST `/api/account/company-portal` requires existing allowed browser origin/JSON and a fresh current version-2 portal person. SQL rechecks immutable identity under the existing identity advisory lock. The database stores the handle hash only. Exact request/handle/body retry preserves the original deadline, capped by challenge expiry, issue time plus ten minutes, and authentication time plus ten minutes.
+
+POST `/api/company-portal/redeem` is the narrow handle exchange: no browser-asserted actor or reusable command token. SQL checks exact target, current original person identity and epoch, then creates one receipt for the persisted redemption ID. Same retry checks identity again and returns the original receipt and deadline. Another target, purpose or redemption conflicts. Receipt duration is at most sixty seconds and never exceeds original proof expiry. Revocation after website redemption but before a separate company transaction is not claimed to be atomic across the two databases.
+
+All table access is denied to anon/authenticated/service_role; only the issue, redeem and prune RPCs are granted to service_role with fixed search path. Prune removes expired personal payload while retaining request/handle/redemption tombstones. A person has a lifetime limit of 1,000 proof rows, including tombstones; capacity returns a bounded support error. No automatic pruning scheduler is installed by this slice.
+
+Both route bodies stream-count at 4KB. The dedicated administrative Supabase client pins configured HTTPS origin and a three-RPC allowlist, uses service credentials, rejects redirects, bounds response streams at 16KB, and enforces a ten-second deadline including stalled bodies. RPC results must match exact shared contracts and target; successful and error responses are no-store, without CORS or secret logging.
+
+Verification: `node --test website/lib/company-portal.test.mjs` passes 7 tests; `node website/scripts/testing/company-portal-postgres.mjs` passes 63 assertions against disposable PostgreSQL 16.15. The SQL checks include a real observed advisory-lock revocation race, identity A-B-A epoch changes, exact lost-reply retries, expiry/authentication caps, cross-person/target/purpose/redemption denial, pruning tombstones, capacity, and privileges. Node tests use the installed Supabase SDK with fake HTTP transport, verifying credential separation, malformed receipt rejection, streamed bounds, redaction, and deadlines. Website `npx tsc --noEmit` also passes after the shared contract target fix. Source hashes and exact test receipts are adjacent. No live providers or deployed database were used.
+
+Root owns real Next HTTP/browser integration, company-host admission and UI checks. Earlier receipts remain beside final receipts as historical evidence.

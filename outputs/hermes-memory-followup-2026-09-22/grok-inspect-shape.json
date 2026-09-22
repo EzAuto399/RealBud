@@ -1,0 +1,189 @@
+{
+  "exitCode": 0,
+  "elapsedSeconds": 0.488,
+  "stderrBytes": 0,
+  "rawConfigPersisted": false,
+  "shape": {
+    "grokVersion": "str",
+    "channel": "str",
+    "cwd": "str",
+    "projectRoot": "str",
+    "projectTrusted": "bool",
+    "projectInstructions": {
+      "type": "list",
+      "count": 2,
+      "itemShape": {
+        "path": "str",
+        "scope": "str",
+        "fileType": "str",
+        "sizeBytes": "int",
+        "approxTokens": "int",
+        "vendor": "str",
+        "compatibilityStatus": "str"
+      }
+    },
+    "permissions": {
+      "sources": {
+        "type": "list",
+        "count": 0,
+        "itemShape": null
+      },
+      "loaded": "int",
+      "skipped": {
+        "type": "list",
+        "count": 0,
+        "itemShape": null
+      },
+      "mcpServerAllowlist": {
+        "type": "list",
+        "count": 0,
+        "itemShape": null
+      },
+      "mcpLockdownSources": {
+        "type": "list",
+        "count": 0,
+        "itemShape": null
+      },
+      "mcpManagedServersOnly": "str",
+      "marketplaceAllowlist": {
+        "type": "list",
+        "count": 0,
+        "itemShape": null
+      },
+      "marketplaceLockdownSources": {
+        "type": "list",
+        "count": 0,
+        "itemShape": null
+      },
+      "managedMarketplaces": {
+        "type": "list",
+        "count": 0,
+        "itemShape": null
+      },
+      "managedSettingsPath": "str",
+      "managedSettingsExists": "bool",
+      "managedSettingsActive": "bool",
+      "claudeBypassLockAdvisory": "bool"
+    },
+    "loginPolicy": {
+      "disableApiKeyAuth": "NoneType",
+      "forceLoginTeamUuid": "NoneType",
+      "apiKeyAuthDisabled": "bool"
+    },
+    "hooks": {
+      "type": "list",
+      "count": 8,
+      "itemShape": {
+        "event": "str",
+        "hookType": "str",
+        "target": "str",
+        "source": {
+          "type": "str",
+          "path": "str"
+        },
+        "matcher": "NoneType"
+      }
+    },
+    "skills": {
+      "type": "list",
+      "count": 441,
+      "itemShape": {
+        "name": "str",
+        "description": "str",
+        "source": {
+          "type": "str",
+          "path": "str"
+        },
+        "userInvocable": "bool",
+        "vendor": "str",
+        "compatibilityStatus": "str"
+      }
+    },
+    "agents": {
+      "type": "list",
+      "count": 3,
+      "itemShape": {
+        "name": "str",
+        "description": "str",
+        "source": {
+          "type": "str"
+        }
+      }
+    },
+    "plugins": {
+      "type": "list",
+      "count": 1,
+      "itemShape": {
+        "name": "str",
+        "scope": "str",
+        "path": "str",
+        "enabled": "bool",
+        "provides": {
+          "skills": "int",
+          "agents": "int",
+          "hooks": "bool",
+          "mcpServers": "int"
+        }
+      }
+    },
+    "marketplaces": {
+      "type": "list",
+      "count": 0,
+      "itemShape": null
+    },
+    "mcpServers": {
+      "type": "list",
+      "count": 2,
+      "itemShape": {
+        "name": "str",
+        "transport": "str",
+        "target": "str",
+        "source": {
+          "type": "str",
+          "path": "str"
+        }
+      }
+    },
+    "lspServers": {
+      "type": "list",
+      "count": 0,
+      "itemShape": null
+    },
+    "configSources": {
+      "layers": {
+        "type": "list",
+        "count": 1,
+        "itemShape": {
+          "role": "str",
+          "path": "str"
+        }
+      }
+    },
+    "externalCompat": {
+      "remoteSettingsLoaded": "bool",
+      "cells": {
+        "type": "list",
+        "count": 13,
+        "itemShape": {
+          "vendor": "str",
+          "surface": "str",
+          "enabled": "bool",
+          "source": "str"
+        }
+      }
+    },
+    "configWarnings": {
+      "type": "list",
+      "count": 1,
+      "itemShape": {
+        "target": "str",
+        "path": "str",
+        "kind": "str",
+        "reason": "str"
+      }
+    }
+  },
+  "configSourcePaths": [
+    "/Users/yoda/.grok/downloads/grok-1.0.34-macos-aarch64"
+  ]
+}

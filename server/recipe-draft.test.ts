@@ -3,16 +3,54 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { fakeHermes } from "./testing/fake-hermes.ts";
+import { privateFixtureDirectory, writePrivateFixtureFile } from "./testing/private-profile-fixture.ts";
+import * as workerProfiles from "./hermes-profile.ts";
+import * as workerStatus from "./hermes-status.ts";
 import { askWorker, draftRecipeFromText, lastJsonObject, shapeRecipeDraft } from "./recipe-draft.ts";
 
 const dirs: string[] = [];
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
 describe("complete worker JSON", () => {
+  it("launches each selected member profile without reading the base or another member profile", async () => {
+    const { dir } = fakeHermes("unused"); dirs.push(dir);
+    const script = join(dir, "member-profile.mjs");
+    writeFileSync(script, `#!/usr/bin/env node\nimport { readFileSync } from 'node:fs';\nimport { join } from 'node:path';\nif (process.argv.includes('--version')) { console.log('Hermes Agent v0.20.3 (2026.8.16.2)'); process.exit(0); }\nconst args=process.argv.slice(2);const profile=args[args.indexOf('--profile')+1];\nconsole.log(JSON.stringify({profile,soul:readFileSync(join(process.env.HERMES_HOME,'profiles',profile,'SOUL.md'),'utf8')}));\n`);
+    chmodSync(script, 0o755);
+    for (const member of ['alice', 'bob']) {
+      const selection=workerProfiles.hermesProfileFor('property',member);
+      const path=join(dir,'profiles',selection.profile);privateFixtureDirectory(path);
+      writePrivateFixtureFile(join(path,'SOUL.md'),`Fictional ${member} private profile`);
+      writePrivateFixtureFile(join(path,'config.yaml'),'approvals:\n  mode: manual\ncron_mode: deny\n');
+      const result=await workerProfiles.withWorkerProfile(member,()=>askWorker('Profile boundary',{cli:script,root:dir}));
+      expect(result.ok).toBe(true);
+      if(result.ok)expect(JSON.parse(result.stdout)).toEqual({profile:selection.profile,soul:`Fictional ${member} private profile`});
+    }
+  });
+
+  it("does not fall back to an installed base pack when the selected member pack is missing", async () => {
+    const {dir,script,argsFile}=fakeHermes('must not launch');dirs.push(dir);
+    expect(await workerProfiles.withWorkerProfile('missing',()=>askWorker('No fallback',{cli:script,root:dir}))).toMatchObject({ok:false});
+    expect(existsSync(argsFile)).toBe(false);
+  });
+
+  it("holds launch when the selected identity changes during the awaited version probe", async () => {
+    const {dir,script,argsFile}=fakeHermes('must not launch');dirs.push(dir);
+    let selection=workerProfiles.hermesProfileFor('property');
+    vi.spyOn(workerProfiles,'currentWorkerProfile').mockImplementation(()=>selection);
+    vi.spyOn(workerStatus,'probeHermesVersion').mockImplementation(async()=>{
+      await Promise.resolve();selection=workerProfiles.hermesProfileFor('property','other-member');
+      return 'Hermes Agent v0.20.3 (2026.8.16.2)';
+    });
+    expect(await askWorker('Changed selection',{cli:script,root:dir})).toMatchObject({ok:false});
+    expect(existsSync(argsFile)).toBe(false);
+  });
+
   it("launches the checked profile instead of an ambient personal Hermes home", async () => {
     const { dir } = fakeHermes("unused"); dirs.push(dir);
     const captured = join(dir, "worker-environment.json");

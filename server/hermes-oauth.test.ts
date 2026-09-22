@@ -1,3 +1,4 @@
+import { withWorkerProfile } from "./hermes-profile.ts";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -158,4 +159,18 @@ printf '%s\\n' '{"version":1,"credential_pool":{"openai-codex":[{"opaque":"ok"}]
     expect(cancelled.state).toBe("cancelled");
     expect(oauthStatus(started.sessionId).state).toBe("cancelled");
   });
+});
+
+it.skipIf(process.platform === "win32")("keeps a member OAuth session and credential checks inside that profile", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "realbud-oauth-member-")); dirs.push(dir);
+  const profile = join(dir, "profiles", "property-dana"); mkdirSync(profile, { recursive: true });
+  writeFileSync(join(profile, "SOUL.md"), "# Synthetic profile");
+  const cli = join(dir, "fake-member.mjs");
+  writeFileSync(cli, `#!${process.execPath}\nconsole.log('Waiting for sign-in'); setTimeout(() => {}, 10000);\n`); chmodSync(cli, 0o755);
+  const session = withWorkerProfile("dana", () => startOAuth("openai-codex", { root: dir, cli }));
+  expect(() => withWorkerProfile("sam", () => oauthStatus(session.sessionId))).toThrow(/not found/);
+  expect(() => withWorkerProfile("sam", () => cancelOAuth(session.sessionId))).toThrow(/not found/);
+  writeFileSync(join(profile, "auth.json"), JSON.stringify({ credential_pool: { "openai-codex": [{ opaque: "fixture" }] } }));
+  expect(withWorkerProfile("dana", () => oauthStatus(session.sessionId)).state).toBe("approved");
+  expect(authHasProvider("openai-codex", dir)).toBe(false);
 });

@@ -1,0 +1,64 @@
+{
+  "scope": "One design-only acceptance review, using parent-supplied metadata",
+  "result": "completed-design-review",
+  "requestedModel": "grok-4.7",
+  "acceptedReasoningEffort": "xhigh",
+  "actualModelUsageKeys": [
+    "grok-4.7-build"
+  ],
+  "modelCalls": 1,
+  "numTurns": 1,
+  "terminalSeconds": 115.671,
+  "elapsedWithCleanupSeconds": 118.711,
+  "stopReason": "end_turn",
+  "exitCode": 0,
+  "toolCallCount": 0,
+  "observedMcpServers": 0,
+  "observedMcpTools": 0,
+  "fullContextIsolationVerified": false,
+  "recommendations": [
+    {
+      "title": "Session bind ignores client account",
+      "setup": "Fixture: A and B server-bound mailboxes; fake Gmail fetch answers only for A. No live provider. Recommended: desktop client auths as A and posts B's id on real gateway HTTP; ManagedConnectors, Composio parser, ingestion, morning-task are real.",
+      "assertions": [
+        "Bound mailbox is A's session only, never client id B.",
+        "Fake fetch runs only for A; B is never read.",
+        "Mail and morning task persist only on A; B is empty.",
+        "No client account override in response or rows."
+      ]
+    },
+    {
+      "title": "In-flight revoke keeps prior staff work",
+      "setup": "Fixture: prior staff mail and morning task ingested; second Gmail body blocked on fake fetch. Interleave: real sync, gateway revoke or cancel mid-read, then late success. Parser and store real. Not a live call.",
+      "assertions": [
+        "Late success is not committed after revoke or cancel.",
+        "Prior staff mail and morning task stay unchanged.",
+        "No new mail or task row from the late payload.",
+        "Status stays revoked or cancelled; later sync does not replay."
+      ]
+    },
+    {
+      "title": "Canary key stays only at the gateway",
+      "setup": "Fixture canary only in gateway secret at fake fetch boundary. Recommended: authed desktop client runs real HTTP, ManagedConnectors, Composio parse, ingestion, morning-task, and a forced fetch error. Scan client, logs, diagnostics, rows. No customer keys.",
+      "assertions": [
+        "Only gateway fetch boundary sees the canary; client gets none.",
+        "Canary absent from HTTP responses, diagnostics, and tasks.",
+        "Canary absent from persisted mail, tasks, and errors.",
+        "Missing key fails closed at gateway; client is never asked for it."
+      ]
+    }
+  ],
+  "interpretationLimits": [
+    "Forged B account input may be rejected or remain pinned to authenticated A according to the existing public contract; never fetch or persist B. Do not invent a new account-selection behavior from this review.",
+    "Exercise cancellation and revocation separately. The stale in-flight response/generation must not replay; a fresh explicitly authorized sync after cancellation or reauthorization may still be allowed.",
+    "Canary scans should include error paths and captured logs/diagnostics, not only successful JSON responses. Use fictional provider responses and keys only."
+  ],
+  "notProven": [
+    "The suggested tests passed",
+    "Live Composio/Gmail authorization or delivery",
+    "Actual customer accounts or Windows/macOS device behavior",
+    "Full context or tool availability isolation"
+  ],
+  "productSourceEditedByThisTask": false,
+  "retryCount": 0
+}

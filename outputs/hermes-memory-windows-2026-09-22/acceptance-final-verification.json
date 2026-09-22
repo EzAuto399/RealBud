@@ -1,0 +1,68 @@
+{
+  "at": "2026-09-21T16:49:57Z",
+  "scope": "Windows leaf primitive acceptance harness only; production Windows admission and journal completion remain separate.",
+  "script": "scripts/testing/hermes-memory-windows-native.py",
+  "script_sha256": "e84042b9fd1e918dca6c84946cf3928a83796b6a5b84da6ab8a24a0fe18212d7",
+  "backend_observed": "server/helpers/hermes-memory-windows-native.py",
+  "backend_observed_sha256": "b3a9d5bb67b5c2cc2f920b046b1472044204bc872ebef8113cf13d19d8e86213",
+  "syntax": {
+    "method": "ast.parse without importing backend",
+    "python": "3.14.4",
+    "passed": true
+  },
+  "macos_guard": {
+    "receipt": "outputs/hermes-memory-windows-2026-09-22/acceptance-macos-final-unsupported.json",
+    "actual_exit_code": 2,
+    "status": "unsupported",
+    "passed": false,
+    "native_checks": 0,
+    "selected_module": "/nonexistent/module-must-not-be-imported.py",
+    "cleanup": true
+  },
+  "required_windows_checks": [
+    "Private empty creation precedes content; Unicode and spaced paths round-trip with stable identity",
+    "Missing opens and existing create collisions cannot create, replace or truncate data",
+    "An inherited child requires its containing protected root; absent and unrelated roots are refused without repair",
+    "An explicit broad grant is refused with or without a private root, without repair or data changes",
+    "Ordinary-file admission refuses multiple links and preserves the original identity after owned alias cleanup",
+    "A target junction is refused without following or mutating its target",
+    "Handle-bound same-volume no-clobber publication moves one complete file",
+    "No-clobber publication collision preserves both identities and byte sequences",
+    "Whole-file replacement preserves private ACL and uses the staged identity",
+    "Real sharing denial preserves old and staged files without fallback; retry is flushed after release",
+    "Exact-handle deletion invalidates that handle and preserves an unrelated sibling",
+    "Delete-sharing reader proves deferred deletion until final close; no journal completion is inferred"
+  ],
+  "review": {
+    "requested_model": "grok-4.7",
+    "reasoning_effort": "xhigh",
+    "actual_model": [
+      "grok-4.7-build"
+    ],
+    "session_id": "01a0c4cd-9707-77f3-ac85-5add7c736758",
+    "exit_code": 0,
+    "stop_reason": "end_turn",
+    "model_calls": 1,
+    "elapsed_seconds": 831.89,
+    "prompt_sha256": "b24026dde6e13799b4beb51f6963217c8cbc9669091a45adde5487aed7ddfbc5",
+    "frozen_input_hashes": {
+      "scripts/testing/hermes-memory-windows-native.py": "816f8e6e347ba3f1ebf0bb33e37109c5bcf7c7b056297c92aba3391b36242079",
+      "server/helpers/hermes-memory-windows-native.py": "61ffd50da933fe09021b04616dc5c7d8161bc0edbd2c5e225d397c25c9e0a71a"
+    },
+    "verdict": "changes-required",
+    "findings": 4,
+    "disposition": "All four findings resolved in source after frozen packet; deletion and flush extensions also postdate frozen packet and are not Grok approval."
+  },
+  "native_windows_validation": {
+    "executed": false,
+    "reason": "Current host is macOS; requires a real Windows process on supported local NTFS."
+  },
+  "ready_command": "python scripts/testing/hermes-memory-windows-native.py --module <exact installed or source hermes-memory-windows-native.py> --receipt <fresh receipt.json>",
+  "limits": [
+    "Primitive acceptance only; production platform holds remain unchanged.",
+    "No Hermes runtime, model/provider, customer profile or credential is used.",
+    "No full application, installed GUI, Windows 11 device or power-loss guarantee is implied.",
+    "Ancestor pinning and ancestor-junction refusal belong to the separate portable protocol and are not established by this leaf-primitive script.",
+    "Successful deletion requests are not journal completion; namespace/journal reconciliation requires the separate protocol."
+  ]
+}

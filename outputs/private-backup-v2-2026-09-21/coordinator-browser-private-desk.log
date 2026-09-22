@@ -1,0 +1,3 @@
+PASS Direct You navigation resolves the global sidebar book state without opening Desk
+download.path: canceled
+    at /Users/yoda/projects/RealBud/scripts/qa-private-backup-v2.mjs:81:237

@@ -1,0 +1,20 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: /api/website-requests/remote/sync: {"error":"Another website request update is running. Try again shortly."}
+
+409 !== 200
+
+    at request (file:///Users/yoda/projects/RealBud/scripts/qa-remote-enrollment.mjs:37:379)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async file:///Users/yoda/projects/RealBud/scripts/qa-remote-enrollment.mjs:80:293 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 409,
+  expected: 200,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.19.0

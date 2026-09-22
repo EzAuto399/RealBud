@@ -1,0 +1,44 @@
+# Department execution authority checkpoint
+
+This checkpoint implements the company authority and recoverable installation credential needed for an assigned department case. It does **not** yet connect that authority to the real recipe executor, website work approval or a customer-facing setup screen. The goal remains active. Current verification is recorded in `outputs/department-execution-2026-09-22/verification.json`.
+
+## Verification
+
+Final reconciled source checks pass **368 unique tests across 38 files, zero failures and zero skips**. This combines the broad company regression with explicit disposable-database runs for the legacy suites and the focused rerun after the migration-manifest test correction. Each test's latest report is retained in `reconciled-tests.json`; earlier failures are not erased. These are company/regression checks, not a full all-product suite.
+
+The three actual PostgreSQL/TLS/encrypted-client scenarios also pass against isolated **compiled authority modules**. The final staged modules match the tested runtime bytes; 407 compiled files are hashed, and test modules are excluded from the service build. This is not a desktop installer or a rendered GUI test. Desktop build, server build and full TypeScript checks pass. Migration continuity independently matches all seven previous schema checksums against the preceding compiled company-portal checkpoint.
+
+## Implemented behavior
+
+An assigned member with current department write access begins a grant for one case, recipe identity/digests and executor workspace/worker binding. The host derives the company/member, host incarnation/certificate, current department revision, case fence and selected case source. The current company owner confirms that immutable specification. The grant lasts at most seven days and can admit one execution. This is the `local-department-prepare-v1` namespace; a portal identity mapping or private website approval cannot act as this credential.
+
+The private installation client generates and encrypts the grant secret before sending the request. It verifies its real signed-in seat at setup and binds the saved record to the actual office, host certificate, workspace and current worker/configuration digest. Background calls use the dedicated grant credential. They do not keep a general member session. A lost response retains the exact request, secret and receipt identity for retry after a cold client restart.
+
+Admission claims the existing assigned case under the current department permission and expected fence. It stores the claim-secret hash and immutable execution receipt. Competing requests, including two independently confirmed grants for the same case, cannot acquire the same fence. The initial start deadline is at most 60 seconds and is clipped by the initial lease and grant expiry. Company leases can be renewed for up to five minutes at a time, clipped by grant expiry. Each renewal has an immutable request/receipt ID; replay never refreshes the original start deadline. Ongoing checks can validate a still-running lease after the start deadline has passed. The worker integration must call the separate `beforeDispatch` check immediately before its first durable enqueue.
+
+Each protected check resolves the actual active company member, current owner confirmation, department revision/access, assignment, case fence, source digest, host incarnation and certificate. Role/active changes carry a durable epoch; membership/department lifecycle changes revoke affected grants and fence cases. Removing and restoring a permission or ownership role does not revive prior authority. The database lookup uses a transaction-local secret-hash predicate only to identify the grant, then switches to the actual member's RLS context. The certificate gate covers the database transaction through COMMIT. External provider calls are never inside this transaction.
+
+The only company source returned is the selected case ID, title and description. Arbitrary knowledge, private Desk data and private inbox sources are not included. The host binds the declared recipe metadata; the next executor integration must resolve that exact recipe and instruction digest against the actual local registry before using it.
+
+All factual settlements—prepared, interrupted or failed—leave the case in `recovery_required` for human review. They do not close or release a business case. A stale result cannot overwrite a later owner recovery. If the host denies settlement after authority loss, the encrypted local journal retains the exact factual run result for attended reconciliation.
+
+## Integration and recovery boundaries
+
+- Shared types and strict validators: `shared/company-execution.ts`.
+- Company authority, migration and restore: `server/company/department-execution.ts`, additive schema `0008`, existing company kernel and backup modules.
+- Attended grant APIs: exact POST `/api/company/execution-grants/{begin,confirm,revoke,list}`, with a current company member session.
+- Scoped APIs: exact POST `/api/company/execution/{admit,check,renew,settle}`, with `x-realbud-execution-grant`. That credential is never accepted as a member session or by generic case/knowledge APIs. Pinned TLS sends it only after certificate verification and only to these four paths.
+- Private installation client: `server/company-execution-client.ts`, exposed internally as `companyHost.departmentExecution`. Its background methods are not renderer routes. Actual desktop setup/worker wiring remains unfinished.
+- Backup accepts only exact trusted schema manifests for `0005`, `0006`, `0007` or current `0008`; older snapshots gain no execution authority. Restore preserves history, revokes grants, rotates host incarnation and holds claimed cases. Executor secrets stay in the installation's encrypted vault, outside the portable office database backup.
+
+The current bounded implementation retains at most 1,000 grant records per company. The installation journal also has explicit renewal-count and byte limits; it holds before unsafe growth instead of writing unreadable state. This capacity is a documented implementation limit, not a long-term execution-history/archive solution.
+
+The new client validates that a returned lease receipt belongs to a saved admission or renewal intent, including an intent whose committed response was lost. Independent review reproduced acceptance of an unknown receipt ID; that issue is fixed and covered by a regression test. An initial typecheck caught normal source/import errors before verification. Two early transport-fixture failures came from creating multiple offices under a single-office host and then reusing an existing department name; the fixture was corrected without changing those product checks. A broader run exposed a pre-existing test that mistook `-o` inside a temporary directory name for a PostgreSQL argument; its assertion now checks argv entries. The legacy credential test also still expected only five migrations; it now checks the full current manifest while retaining its tampered-checksum rejection. Adding shared test discovery initially emitted a shared test module into the service build; the build now excludes shared tests, and the staged artifact was checked after removal. All negative reports are retained.
+
+## Next required product integration
+
+1. Resolve the local granted recipe and instructions, add scoped case input through the existing job executor, persist the durable job key before enqueue, and repeat current company permission checks at source/provider entry and result handling. No parallel department executor should be introduced.
+2. Connect the member/owner setup and case status/recovery UI to the actual internal client, without exposing grant/claim secrets or copying a general sign-in session into background storage. Verify the rendered flow with real application services.
+3. Add a purpose-specific website work proof tied to the actual reviewed descriptor, requester/decider mappings, original online claim and local company target. Preserve the existing private protocol. Preview happens before website approval; it must not borrow future approval to read a company source. The website and company databases are separate authorities, not one atomic revocation transaction.
+4. Exercise actual worker interruptions before/after enqueue, provider/source denial, local settlement reconciliation, host disconnect/replacement, and both source and compiled GUI flows. Keep private Morning work separate until its department-specific connector/source scope exists.
+5. Retain all broader goal gates: managed provider/connector enforcement, Windows and macOS installed-device behavior, full onboarding/workflow acceptance, live integrations and customer proof. This checkpoint invokes no real provider or customer account, performs no deployment and proves no native installer or live-office outcome.

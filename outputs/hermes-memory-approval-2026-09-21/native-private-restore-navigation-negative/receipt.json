@@ -1,0 +1,48 @@
+{
+  "at": "2026-09-21T08:47:42.091Z",
+  "passed": false,
+  "executable": "/Users/yoda/projects/RealBud/outputs/hermes-memory-approval-2026-09-21/package/mac-arm64/RealBud.app/Contents/MacOS/RealBud",
+  "resources": "/Users/yoda/projects/RealBud/outputs/hermes-memory-approval-2026-09-21/package/mac-arm64/RealBud.app/Contents/Resources",
+  "artifact": {
+    "app.asar": "fa6579cbfd68b1836cb037da509970140c43dd6f8ca7e7e3f76530677c388a13",
+    "server/bootstrap.js": "2567a50b4638d2789c135bfa708df7d5d9250bc826fd4267281e2e1641bee9d8",
+    "ui/index.html": "11a5518d2e9849894a13faf0039f5d115bfb49d976928566c3e6546a98f78ba2"
+  },
+  "runtime": {
+    "node": "24.18.1",
+    "electron": "43.4.0",
+    "packaged": true,
+    "resources": "/Users/yoda/projects/RealBud/outputs/hermes-memory-approval-2026-09-21/package/mac-arm64/RealBud.app/Contents/Resources",
+    "initialLogs": "/private/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/RealBud native restore lcFQSk/electron/logs",
+    "logs": "/private/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/RealBud native restore lcFQSk/electron/logs"
+  },
+  "checks": [
+    "Actual packaged app and preload adopt the isolated target service before the safeStorage fixture is installed",
+    "Real preload stop/start migrates existing custody to the mocked protected store and preserves the same key without a plaintext key file",
+    "Native Restore restart button performs real preload/main IPC and cold bootstrap, preserving target custody and exact restored bank bytes",
+    "Compiled normalized bill history, paused pattern and old source alias survive the native different-key restore and resolve through real HTTP",
+    "Compiled proposal intent survives native different-key restore exactly and its unfinished retry cannot admit another worker"
+  ],
+  "errors": [],
+  "cleanup": {
+    "capturedServicePids": [
+      88566,
+      88633,
+      88711
+    ],
+    "serviceProcessesExited": true,
+    "scratchRemoved": true
+  },
+  "limitations": [
+    "Actual packaged Mac runtime, main, native preload IPC, detached service, bootstrap and UI",
+    "safeStorage is an in-memory AES fixture; OS Keychain/DPAPI protection and keychain prompts are not tested",
+    "Only fictional isolated data and allowlisted process environment without provider credentials; renderer and Electron requests are guarded after attachment, not process-wide network isolation",
+    "Unsigned local package; not customer installation, Windows or reboot survival"
+  ],
+  "failure": "page.goto: Timeout 20000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:28799/#/desk\", waiting until \"load\"\u001b[22m\n\n    at /Users/yoda/projects/RealBud/scripts/qa-native-private-restore.mjs:290:14",
+  "diagnostics": {
+    "sourceLog": "realbud server on http://127.0.0.1:50811\nrealbud server on http://127.0.0.1:28799\n",
+    "nativeLog": "Debugger listening on ws://127.0.0.1:50862/d80bf57b-95dd-48ac-bdfb-d18fd0f0dc3b\nFor help, see: https://nodejs.org/learn/getting-started/debugging\n\nDevTools listening on ws://127.0.0.1:50863/devtools/browser/f070a5db-fa1f-4cde-b6e2-10594bb24eae\nDebugger attached.\nDebugger ending on ws://127.0.0.1:50862/d80bf57b-95dd-48ac-bdfb-d18fd0f0dc3b\nFor help, see: https://nodejs.org/learn/getting-started/debugging\n",
+    "retainedDirectory": null
+  }
+}

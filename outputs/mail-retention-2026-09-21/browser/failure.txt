@@ -1,0 +1,113 @@
+RealBud
+App connected
+
+WORKSPACE
+
+Desk
+Tasks & properties
+Ask
+Work with Bud
+Schedule
+Jobs & routines
+You
+Office & settings
+Mail priorities
+Mail priorities and follow-ups
+Manage views
+Connections
+PRACTICE SAFELY
+Run the sample morning
+
+Use labelled training facts to learn the full Desk flow. This practice stays in your private workspace and does not contact your PMS.
+
+Run sample morning
+Sample book
+·
+Bud ready
+·
+Next Morning money check 22 Sept, 7:30 am
+
+Saved view · Mail priorities and follow-ups
+
+Mail priorities
+
+Needs attention · This private workspace. Opening a view does not start a job.
+
+Manage views
+Mail priorities and follow-ups
+
+A persistent review list from the private Gmail account and scope you chose in Agency workflow setup. Collecting messages and preparing a priority list are separate steps.
+
+Collect reviewed Gmail scope
+Collect and prepare priorities with Bud
+Refresh saved mail work
+
+Bud’s preparation uses the configured model service. These actions do not send replies, change Gmail labels, download attachment contents, pay bills or import accounting records.
+
+Latest source collection: complete
+Sep 21, 2026, 5:33 PM
+
+45 messages · 45 conversations · 1 pages
+
+Source window: Sep 14, 2026, 5:33 PM to Sep 21, 2026, 5:33 PM. Australia/Brisbane.
+
+No prepared review is recorded yet.
+
+Morning schedule
+
+Off · 08:00 · Australia/Brisbane
+
+Starts at this office time while this computer is running. Missed and late work is recorded in Schedule.
+
+Enable reviewed morning schedule
+
+The local service must be running and connected. The scheduled time is a start time; source and model work can finish later.
+
+Needs attention (43)
+Waiting (1)
+Reference (0)
+Snoozed (0)
+Done (1)
+Find a conversation
+
+Showing 1 of 1 conversations in Needs attention matching “Fictional property request 036”. Search covers all retained conversations.
+
+Fictional property request 036
+normal priority
+
+Source or decision needed · unassigned · Needs human review
+
+New source evidence — review what changed before closing this item.
+
+Review the source or ask Bud to prepare the morning list.
+
+New conversation collected; its meaning has not been reviewed.
+
+Last source message Sep 20, 2026, 5:33 PM
+
+View source conversation
+Review or edit this item
+Mark done
+Review: Fictional property request 035
+Priority
+High
+Normal
+Low
+Responsible reviewer (local label)
+What this conversation needs
+Urgent review
+Reply to review
+Action to review
+Waiting for a response
+Reference only
+No action needed
+Source or decision needed
+Work status
+Open
+Snoozed
+Done
+Next action
+Your note
+Save reviewed item
+Cancel item edits
+Collection history

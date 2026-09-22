@@ -1,5 +1,5 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdtempSync, readFileSync, copyFileSync, rmSync, writeFileSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as atomic from "./atomic.ts";
@@ -151,6 +151,10 @@ describe("occurrence claims and manual recovery", () => {
       },
       execute: async () => {
         writeFileSync(crashCopy, readFileSync(path));
+        // A crash snapshot now includes the authoritative encrypted ledger and
+        // its key; copying only the rolling JSON must fail closed.
+        copyFileSync(join(dirname(path), 'workflow-state.sqlite'), join(dirname(crashCopy), 'workflow-state.sqlite'));
+        copyFileSync(join(dirname(path), 'desk.key'), join(dirname(crashCopy), 'desk.key'));
         return { ok: true, detail: "Prepared" };
       },
     }));

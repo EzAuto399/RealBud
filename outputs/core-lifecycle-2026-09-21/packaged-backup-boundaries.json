@@ -1,0 +1,25 @@
+{
+  "at": "2026-09-21T05:15:06.867Z",
+  "passed": true,
+  "mode": "packaged",
+  "platform": "darwin",
+  "arch": "arm64",
+  "executable": "/Users/yoda/projects/RealBud/outputs/core-lifecycle-2026-09-21/package/mac-arm64/RealBud.app/Contents/MacOS/RealBud",
+  "resources": "/Users/yoda/projects/RealBud/outputs/core-lifecycle-2026-09-21/package/mac-arm64/RealBud.app/Contents/Resources",
+  "bootstrap": "/Users/yoda/projects/RealBud/outputs/core-lifecycle-2026-09-21/package/mac-arm64/RealBud.app/Contents/Resources/server/bootstrap.js",
+  "runtime": {
+    "node": "24.18.1",
+    "electron": "43.4.0"
+  },
+  "layer": "Actual packaged Electron/Node and compiled bootstrap HTTP and isolated filesystem; fictional fixtures; not physical customer device, GUI, managed-service or live integration proof",
+  "checks": [
+    "Actual sensitive backup routes reject missing session and foreign origin",
+    "Private notes, workflow inputs, instruction packs and edited personal instructions block replacement and remain intact",
+    "Existing company enrollment files block restoration",
+    "Stale preview and concurrent unfinished business requests refuse staging without stranding the workspace",
+    "A staged restore holds business reads, writes, exports and duplicate restore attempts",
+    "POSIX bootstrap refuses a public destination key without consuming the staged restore; private permissions permit recovery",
+    "Cold bootstrap completes once with unchanged destination key, matching durable completion receipt and disabled schedules"
+  ],
+  "skipped": []
+}

@@ -1,0 +1,33 @@
+{
+  "sources": {
+    "server/customer-pack-upgrades.ts": "742545536c8102bc11ad4135d47243b5e77d18ef21ec9d0f69b911582fe9082e",
+    "server/customer-packs.ts": "bd9e9bb6ac33dccaacd04269562f704f8af0f8cafc136fd69030329b15010d65"
+  },
+  "ranges": {
+    "server/customer-pack-upgrades.ts": [
+      [
+        92,
+        135
+      ],
+      [
+        152,
+        157
+      ],
+      [
+        165,
+        178
+      ]
+    ],
+    "server/customer-packs.ts": [
+      [
+        261,
+        309
+      ],
+      [
+        523,
+        531
+      ]
+    ]
+  },
+  "promptBytes": 11965
+}

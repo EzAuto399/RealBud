@@ -1,0 +1,345 @@
+{
+  "checkedAt": "2026-09-21T21:24:18.579484+00:00",
+  "scope": "Reviewed instruction history archival, bounded history/revert UI and encrypted backup/restore on macOS; reusable RealBud goal remains active",
+  "source": {
+    "sha256": "403e2f68ee0c2beae922851842bf082060cdf71afc279a35ccaaab62ed7170c7",
+    "files": 1128,
+    "unchangedThroughChecks": true
+  },
+  "artifact": {
+    "path": "/Users/yoda/projects/RealBud/outputs/skill-history-2026-09-22/package/mac-arm64/RealBud.app",
+    "sha256": "1f98a981c3a8fddc74fe4f4b40bb52cf50cdfeb6702dd2eb29c7ea6a86fa2fdd",
+    "entries": 2442,
+    "unsigned": true,
+    "installedAppReplaced": false,
+    "unchangedThroughChecks": true
+  },
+  "checks": {
+    "fullSuite": {
+      "passed": 4575,
+      "failed": 0,
+      "skipped": 191,
+      "files": 363,
+      "success": true,
+      "receipt": "full-suite.json"
+    },
+    "nativeHermes": {
+      "passed": 42,
+      "failed": 0,
+      "skipped": 0,
+      "files": 3,
+      "success": true,
+      "receipt": "native-hermes-tests.json"
+    },
+    "combinedUniqueTests": {
+      "uniquePassed": 4617,
+      "failed": 0,
+      "remainingEnvironmentSkipped": 149,
+      "total": 4766,
+      "method": "Union of the full default suite and 42 separately enabled native Hermes cases, keyed by file, full test name and occurrence; no duplicate test instances added"
+    },
+    "domain": {
+      "at": "2026-09-21T21:14:24.082026+00:00",
+      "scope": "Reviewed instruction history domain and contracts; local fictional-data validation only",
+      "tests": {
+        "files": 6,
+        "tests": 85,
+        "new_skill_history_tests": 19,
+        "duration_seconds": 14.18,
+        "result": "passed",
+        "command": "node node_modules/vitest/vitest.mjs run server/customer-pack-skill-history.test.ts server/customer-packs.test.ts server/customer-pack-upgrades.test.ts server/customer-pack-upgrades.review.test.ts server/customer-pack-archive.test.ts server/customer-pack-archive.review.test.ts"
+      },
+      "server_typecheck": {
+        "result": "passed",
+        "command": "node node_modules/typescript/bin/tsc -p tsconfig.server.json --pretty false"
+      },
+      "files": {
+        "server/customer-packs.ts": "5dcbff5a493b48028f600b17d12759545a2f293c1593a4ea73db4235c3920e52",
+        "server/customer-pack-upgrades.ts": "0c1e2a39798d5258b59c195fb70f07193ea03ebc52f0d63f363bf5d51e17f0c1",
+        "server/customer-pack-skill-history.ts": "b51708ba0adcffde2153be5749ec29512d91dab755dea7c1e69be6278421c206",
+        "server/customer-pack-skill-history.test.ts": "aed2bbad146316a73d81931e2a300c7068b71002184abe7e0b82f5ed2d3e0743",
+        "server/customer-packs.test.ts": "3eabf55730a0cf9afe42ea02d3a27f24bce855d281dc641898d963f510b56a50",
+        "server/private-json.ts": "e5c230d98505b9b0c0c84a7945972ec4d5b8e633dadc5c61558388d10bf4d36c",
+        "shared/customer-packs.ts": "317f8d03ea6a2d5d12d2340c5d6c47f5a30f51469b0aad2b16b6e3858e562b0c"
+      },
+      "coverage": [
+        "100 inline revisions archived, proposal101, archived revert102 and stable archive head",
+        "active native bytes, runtime context, recipe binding, approvals and schedules unchanged during archival",
+        "six persistence interruption stages with cold recovery and exact retry",
+        "actual private writer accepts valid compact intent temporarily above 2 MB and completes below normal cap",
+        "near-cap completed state rejected when archival cannot free enough space",
+        "lineage-scoped active digest commitment validated after further proposal",
+        "stale pages, legacy digest-only revert rejection, true A-to-B-to-A stale review rejection",
+        "configuration removal, independent reintroduction, historical source selection and rollback retain correct roots",
+        "foreign, hardlinked and changed temporary evidence preserved",
+        "scope switch after immutable file holds journal until original scope resumes",
+        "legacy metadata preserved for recovery, damaged pending revert rejected before effects",
+        "Discovered red-to-green actual removal/config-archival-only skill root forces live journal version2"
+      ],
+      "boundaries": [
+        "No deployment or live customer/provider action",
+        "Root agent owns complete app suite, UI, builds and package proof",
+        "Backup worker owns encrypted backup and restore validation"
+      ],
+      "independent_review": {
+        "result": "11/11 passed across 3 files; reviewer reports no remaining concrete findings",
+        "source_hash_matched": "5dcbff5a493b48028f600b17d12759545a2f293c1593a4ea73db4235c3920e52",
+        "grok": "One bounded concrete-source attempt timed out without answer; cleanup verified by reviewer; no fabricated Grok endorsement"
+      }
+    },
+    "independent": {
+      "passed": 11,
+      "failed": 0,
+      "skipped": 0,
+      "files": 3,
+      "success": true,
+      "receipt": "independent-review-final-suite.json"
+    },
+    "backupOwned": {
+      "passed": 22,
+      "failed": 0,
+      "skipped": 0,
+      "files": 2,
+      "success": true,
+      "receipt": "backup-owned-final-tests.json"
+    },
+    "uiSource": {
+      "checkedAt": "2026-09-21T21:04:13.556Z",
+      "layer": "actual source HTTP service and compiled renderer on macOS",
+      "fixture": "100 explicitly seeded fictional retained revisions, two actual staged proposals, one actual reviewed archived revert; no model or customer data",
+      "checks": [
+        "Legacy 100-revision fixture is readable; proposal 101 is held without changing active instructions, approved scheduled plan or saved work; default history has no full instruction text.",
+        "Rendered archival requires explicit review; real EACCES preserves the full hot history and saved intent. Cold restart plus lost-response recovery commits one 98-revision archive and keeps active bytes, plan approval/schedule and saved work unchanged.",
+        "Real native proposal 101 preserves the archive head. Paged UI opens full archived baseline; stale confirmation after revision 102 is rejected and refreshed. Fresh confirmation appends revision 103 with plans and schedules held.",
+        "Actual SIGKILL during a partial immutable archive write leaves hot history and old head intact. Cold mobile UI recovery creates one second batch, removes only its owned temporary file, and returns all 103 unique revisions across bounded pages after another restart."
+      ],
+      "browserErrors": [],
+      "deniedExternalRequests": [],
+      "final": {
+        "activeRevision": 103,
+        "hotRevisions": 2,
+        "digest": "277fc6f7dbfaf87a1917483bbe8f5d7682d35d76a1c269d1bdb139c859aaa4a0",
+        "batches": 2,
+        "revisions": 101,
+        "throughRevision": 101
+      },
+      "limits": [
+        "No Windows installation or device proof",
+        "No live Hermes model, provider account or customer acceptance"
+      ],
+      "cleanup": "Owned browser/service closed and disposable workspace removed in finally"
+    },
+    "uiPackaged": {
+      "checkedAt": "2026-09-21T21:16:51.377Z",
+      "layer": "actual packaged HTTP service and renderer on macOS",
+      "fixture": "100 explicitly seeded fictional retained revisions, two actual staged proposals, one actual reviewed archived revert; no model or customer data",
+      "checks": [
+        "Legacy 100-revision fixture is readable; proposal 101 is held without changing active instructions, approved scheduled plan or saved work; default history has no full instruction text.",
+        "Rendered archival requires explicit review; real EACCES preserves the full hot history and saved intent. Cold restart plus lost-response recovery commits one 98-revision archive and keeps active bytes, plan approval/schedule and saved work unchanged.",
+        "Real native proposal 101 preserves the archive head. Paged UI opens full archived baseline; stale confirmation after revision 102 is rejected and refreshed. Fresh confirmation appends revision 103 with plans and schedules held.",
+        "Actual SIGKILL during a partial immutable archive write leaves hot history and old head intact. Cold mobile UI recovery creates one second batch, removes only its owned temporary file, and returns all 103 unique revisions across bounded pages after another restart."
+      ],
+      "browserErrors": [],
+      "deniedExternalRequests": [],
+      "final": {
+        "activeRevision": 103,
+        "hotRevisions": 2,
+        "digest": "32e6ce54f36453ead3778c146bae102a81b31456dca4188ab7784ebb9ebf90e5",
+        "batches": 2,
+        "revisions": 101,
+        "throughRevision": 101
+      },
+      "limits": [
+        "No Windows installation or device proof",
+        "No live Hermes model, provider account or customer acceptance"
+      ],
+      "cleanup": "Owned browser/service closed and disposable workspace removed in finally"
+    },
+    "previousCustomerPackGui": {
+      "checkedAt": "2026-09-21T21:03:57.594Z",
+      "layer": "actual local HTTP server and rendered browser with fictional pending proposal; no live worker/model/account proof",
+      "checks": [
+        "Read and mutation routes reject unauthenticated requests",
+        "Rendered preview is read-only; confirmed import persists four shadow plans, real instruction dependencies, and incomplete live acceptance",
+        "Exact native staged edit is visibly reviewed, applied to owned skill, and reverted as revision 3 with baseline/history retained",
+        "Generic office pack preview/import installs independent owned instructions alongside Austin without selecting the active agency pack or changing Austin bytes",
+        "Reload and repeat import preserve revisions; 390 px view has no horizontal overflow or browser errors"
+      ],
+      "errors": [],
+      "installed": {
+        "id": "austin-office",
+        "revision": 1,
+        "localReady": true,
+        "checks": [
+          {
+            "id": "installation",
+            "state": "passed"
+          },
+          {
+            "id": "worker",
+            "state": "needed"
+          },
+          {
+            "id": "browser-account",
+            "state": "unknown"
+          },
+          {
+            "id": "bank-mapping",
+            "state": "unknown"
+          },
+          {
+            "id": "input-coverage",
+            "state": "unknown"
+          },
+          {
+            "id": "workflow-acceptance",
+            "state": "unknown"
+          },
+          {
+            "id": "mail-account",
+            "state": "needed"
+          },
+          {
+            "id": "bill-register",
+            "state": "needed"
+          },
+          {
+            "id": "timezone",
+            "state": "unknown"
+          }
+        ]
+      },
+      "skillRevisions": [
+        {
+          "revision": 3,
+          "active": true,
+          "reason": "Reviewed revert to instruction revision 1 from configuration 1"
+        },
+        {
+          "revision": 2,
+          "active": false,
+          "reason": "Reviewed native proposal 1234abcd"
+        },
+        {
+          "revision": 1,
+          "active": false,
+          "reason": "Published pack baseline"
+        }
+      ]
+    },
+    "nativeMacSmoke": {
+      "passed": true,
+      "receipt": "mac-smoke.log"
+    },
+    "freshPrivateProfile": {
+      "passed": true,
+      "platform": "darwin",
+      "arch": "arm64",
+      "node": "v24.18.1",
+      "source": "/Users/yoda/projects/RealBud/outputs/skill-history-2026-09-22/package/mac-arm64/RealBud.app/Contents/Resources",
+      "packSource": "/Users/yoda/projects/RealBud/outputs/skill-history-2026-09-22/package/mac-arm64/RealBud.app/Contents/Resources/pack/property",
+      "runtime": "installed Electron/Node",
+      "proofLayer": "Compiled service and fresh private profile from the selected inputs; not Hermes runtime installation, model access, GUI or two-device acceptance",
+      "timings": {
+        "startupMs": 758,
+        "profileCheckMs": 29,
+        "watchdogMs": 25000,
+        "readinessAttempts": 150,
+        "perHealthRequestMs": 500
+      },
+      "profileProof": {
+        "freshHome": true,
+        "installed": true,
+        "approvalsManual": true,
+        "workroomReady": true,
+        "modelAttached": false,
+        "workerReady": false,
+        "privacy": "POSIX owner and private mode",
+        "files": 7,
+        "directories": 6
+      },
+      "checks": [
+        "Compiled server starts outside checkout without node_modules",
+        "Packaged PostgreSQL driver loads; unprovisioned company status is usable",
+        "Packaged TLS certificate generator executes successfully",
+        "Fresh private Hermes profile has shipped safeguards and skills, private storage, and no model credentials"
+      ],
+      "cleanupComplete": true
+    },
+    "compiledComparison": {
+      "server": {
+        "checked": 340,
+        "mismatches": [],
+        "extraPackagedFiles": []
+      },
+      "shared": {
+        "checked": 49,
+        "mismatches": [],
+        "extraPackagedFiles": []
+      },
+      "support": {
+        "checked": 3,
+        "mismatches": [],
+        "extraPackagedFiles": []
+      },
+      "renderer": {
+        "checked": 342,
+        "mismatches": [],
+        "extraPackagedFiles": []
+      },
+      "hermesPack": {
+        "checked": 6,
+        "mismatches": [],
+        "extraPackagedFiles": []
+      }
+    },
+    "packagePreparation": {
+      "passed": true,
+      "receipt": "package-prepare.log"
+    },
+    "packageBuild": {
+      "passed": true,
+      "receipt": "package-build.log"
+    }
+  },
+  "grok": {
+    "requestedModel": "grok-4.7",
+    "requestedEffort": "xhigh",
+    "result": "review-deadline-timeout; no final answer or terminal actual-model usage bucket",
+    "reviewDeadlineSeconds": 290,
+    "cleanupSeconds": 293.195,
+    "promptCount": 1,
+    "retryCount": 0,
+    "cleanup": {
+      "verifiedAt": "2026-09-21T21:11:34.174833+00:00",
+      "ownedAgentPid": 39421,
+      "matchingOwnedProcessRows": [],
+      "processReaped": true,
+      "isolatedHomeRemoved": true,
+      "globalConfigSha256": "ada54f57ec570d8e70cba35400ea2b557914ede90ffa893b5da122a7f69d6736",
+      "globalConfigUnchanged": true,
+      "authContentsRead": false,
+      "authContentsCopied": false,
+      "modelRetryCount": 0
+    }
+  },
+  "reviewFindingsResolved": [
+    "Historical active digest commitments now constrain later hot and archived revision identities within each lineage",
+    "Live downgrade admission now requires root v2 even when the only skill head is inside an archived configuration",
+    "Actual private writer re-admits only the validated compact intent above the normal journal limit",
+    "Pending instruction updates validate revision continuation and complete plan set before effects"
+  ],
+  "preservedEarlierEvidence": [
+    "Two fixture-only source GUI failures are retained; final source and packaged runs have zero browser errors and denied external requests",
+    "Early package typing failure fixed before final package preparation",
+    "Two full-suite attempts deliberately stopped before final source freeze; they do not count as completed test runs",
+    "Superseded package manifests and rehearsal receipts retained under pre-final-admission and pre-downgrade-fix names"
+  ],
+  "remaining": [
+    "Repair authoritative missing two-device checker contracts and test wiring",
+    "Remote approver enrollment and shared-department execution",
+    "Native installed Windows GUI/key custody/Hermes-memory/update/uninstall and two physical office devices",
+    "Hosted connector commissioning/revocation and deployed end-to-end operation",
+    "Real Gmail/LLM consent, paired bank CSV/REI recognition and customer workday acceptance"
+  ]
+}

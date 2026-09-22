@@ -11,7 +11,7 @@ import {
 
 import { identifyEmail, setEmailGateDone, track } from "@/lib/analytics";
 import { isRecoveryWriteError } from "@/lib/api-error";
-import { markFirstRunDone } from "@/lib/first-run";
+import { markFirstRunDone, officeContactNamed } from "@/lib/first-run";
 import { api, useStore } from "@/state/store";
 import { MausAvatar } from "./Avatar";
 
@@ -111,6 +111,17 @@ export function Onboarding({ onDone }: { onDone: (setup?: "bud") => void }) {
     setBusy("finish");
     setError("");
     setRecoveryBlocked(false);
+    // The book on this computer may already record its contact: the first-run
+    // flag lives in browser storage, which a cleared profile or a private window
+    // loses while the saved book survives. Replaying this screen must not write a
+    // fresh name over that saved one, so enter the workspace and leave the book
+    // as it is. An empty contact is still filled below — the check reads the same
+    // field the write touches, so it never trades an overwrite for a lost name.
+    if (officeContactNamed(state.desk)) {
+      track("onboarding_completed", { engines_available: -1, mic: "n/a" });
+      enterWorkspace(email.trim() ? "submitted" : "skipped", destination);
+      return;
+    }
     let enteredDesk = false;
     try {
       const snapshot = await api("/api/desk/agency", {
@@ -238,7 +249,7 @@ export function Onboarding({ onDone }: { onDone: (setup?: "bud") => void }) {
                     {!emailOk ? (
                       <span className="mt-1.5 block font-normal text-danger">Enter a complete email address, or leave it blank.</span>
                     ) : (
-                      <span className="mt-1.5 block font-normal text-ink-muted">Stored on this Mac with your RealBud settings.</span>
+                      <span className="mt-1.5 block font-normal text-ink-muted">Stored with your private RealBud settings.</span>
                     )}
                   </label>
                 </div>

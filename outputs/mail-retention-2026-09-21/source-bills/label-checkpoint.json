@@ -1,0 +1,12 @@
+{
+  "at": "2026-09-21T07:33:35.282Z",
+  "passed": false,
+  "layer": "Actual local HTTP app + built UI; fictional connector + deterministic invoice worker; not live Gmail/Hermes/customer/Windows proof",
+  "checks": [
+    "Full bills view collects only the real HTTP host-reviewed fictional Gmail scope without enabling a schedule"
+  ],
+  "scanCalls": 1,
+  "errors": [],
+  "failure": "locator.selectOption: Error: strict mode violation: getByRole('region', { name: 'Source-linked bills and calendar' }).getByRole('form', { name: 'Review source bill' }).getByLabel('Saved conversation') resolved to 2 elements:\n    1) <input value=\"\" maxlength=\"200\" aria-label=\"Find a saved conversation\" placeholder=\"Subject, reviewer, note or next action\" class=\"min-h-11 w-full rounded-lg border border-line bg-sheet px-3 py-2 text-sm text-ink mt-1\"/> aka getByRole('textbox', { name: 'Find a saved conversation' })\n    2) <select aria-label=\"Saved conversation\" class=\"min-h-11 w-full rounded-lg border border-line bg-sheet px-3 py-2 text-sm text-ink mt-1\">…</select> aka getByLabel('Saved conversation', { exact: true })\n\nCall log:\n\u001b[2m  - waiting for getByRole('region', { name: 'Source-linked bills and calendar' }).getByRole('form', { name: 'Review source bill' }).getByLabel('Saved conversation')\u001b[22m\n\n    at /Users/yoda/projects/RealBud/scripts/qa-source-bills.mjs:81:137",
+  "diagnostic": "realbud server on http://127.0.0.1:51658\n"
+}

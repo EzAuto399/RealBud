@@ -1,0 +1,514 @@
+// Recurring portal jobs. The book stores the card; a run is a later session.
+import { randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { JOB_CAPABILITIES, } from "../shared/contracts.js";
+import { writeFileAtomic } from "./atomic.js";
+import { DATA_DIR } from "./config.js";
+import { parseClockTime, parseWeekdays } from "./routines.js";
+export { recipeClockRunnable } from "../shared/contracts.js";
+const MAX_TITLE = 80;
+const MAX_STEPS = 12;
+const MAX_STEP = 200;
+const MAX_ORIGINS = 5;
+const MAX_EVIDENCE = 200;
+const MAX_DESCRIPTION = 4_000;
+const ORIGIN_RE = /^[a-z0-9.-]+\.[a-z]{2,}$/;
+export const DEFAULT_JOB_CAPABILITIES = ["read-book", "analyse", "draft"];
+export const DEFAULT_JOB_LIMITS = { maxRuntimeMinutes: 2, maxTurns: 6 };
+function recipesPath() {
+    return join(DATA_DIR, "recipes.json");
+}
+function bad(message) {
+    throw Object.assign(new Error(message), { status: 400 });
+}
+function isStatus(value) {
+    return value === "shadow" || value === "active" || value === "paused";
+}
+function asPlanApprovedAt(value) {
+    return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+}
+function asRevision(value) {
+    return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : 1;
+}
+function asUpdatedAt(value, createdAt) {
+    return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : createdAt;
+}
+function parseCapabilities(value) {
+    if (value === undefined)
+        return [...DEFAULT_JOB_CAPABILITIES];
+    if (!Array.isArray(value) || value.length < 1 || value.length > JOB_CAPABILITIES.length) {
+        bad(`Choose between 1 and ${JOB_CAPABILITIES.length} safe job capabilities.`);
+    }
+    const out = [];
+    for (const raw of value) {
+        if (typeof raw !== "string" || !JOB_CAPABILITIES.includes(raw)) {
+            bad("That job asks for a capability Bud cannot be granted.");
+        }
+        const capability = raw;
+        if (!out.includes(capability))
+            out.push(capability);
+    }
+    if (!out.length)
+        bad("Choose at least one safe job capability.");
+    if (out.includes("portal-prefill") && !out.includes("portal-read"))
+        out.unshift("portal-read");
+    if (out.includes("portal-submit") && !out.includes("portal-prefill")) {
+        bad("Add prefill before Bud may press Submit.");
+    }
+    return out;
+}
+export function recipeHasPortalCapability(capabilities) {
+    return (capabilities.includes("portal-read") ||
+        capabilities.includes("portal-prefill") ||
+        capabilities.includes("portal-submit"));
+}
+export function fenceCapabilitiesFor(recipe) {
+    if (recipe.submitAcknowledgedAt != null)
+        return [...recipe.capabilities];
+    return recipe.capabilities.filter((capability) => capability !== "portal-submit");
+}
+function asAttachment(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        return null;
+    const row = value;
+    if (row.acknowledged !== "human-login-and-submit")
+        return null;
+    if (typeof row.attachedAt !== "number" || !Number.isFinite(row.attachedAt) || row.attachedAt <= 0)
+        return null;
+    return { attachedAt: row.attachedAt, acknowledged: "human-login-and-submit" };
+}
+function parseLimits(value) {
+    if (value === undefined)
+        return { ...DEFAULT_JOB_LIMITS };
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        bad("Job limits must name maxRuntimeMinutes and maxTurns.");
+    }
+    const row = value;
+    if (!Number.isInteger(row.maxRuntimeMinutes) || Number(row.maxRuntimeMinutes) < 1 || Number(row.maxRuntimeMinutes) > 5) {
+        bad("Job runtime must be between 1 and 5 minutes.");
+    }
+    if (!Number.isInteger(row.maxTurns) || Number(row.maxTurns) < 1 || Number(row.maxTurns) > 12) {
+        bad("Job turns must be between 1 and 12.");
+    }
+    return { maxRuntimeMinutes: Number(row.maxRuntimeMinutes), maxTurns: Number(row.maxTurns) };
+}
+/** Bare https host: lowercase, drop scheme/path/port, drop a leading www. */
+export function normalizeOrigin(raw) {
+    let host = raw.trim().toLowerCase();
+    host = host.replace(/^https?:\/\//, "");
+    const cut = host.search(/[/?#]/);
+    if (cut !== -1)
+        host = host.slice(0, cut);
+    const colon = host.lastIndexOf(":");
+    if (colon !== -1 && /^\d+$/.test(host.slice(colon + 1)))
+        host = host.slice(0, colon);
+    if (host.startsWith("www."))
+        host = host.slice(4);
+    return ORIGIN_RE.test(host) ? host : null;
+}
+/** Optional clock. Missing or unusable cadence becomes null — never fails the card. */
+export function parseRecipeSchedule(value) {
+    if (value == null)
+        return null;
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        return null;
+    const row = value;
+    const time = parseClockTime(row.time);
+    const weekdays = parseWeekdays(row.weekdays);
+    if (!time || !weekdays)
+        return null;
+    return { time, weekdays };
+}
+export function validateRecipe(input) {
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+        bad("That is not a job card.");
+    }
+    const row = input;
+    if (typeof row.title !== "string")
+        bad("Give the job a name — 1 to 80 characters.");
+    const title = row.title.trim();
+    if (!title || title.length > MAX_TITLE)
+        bad("Give the job a name — 1 to 80 characters.");
+    if (row.description !== undefined && typeof row.description !== "string") {
+        bad("Job description must be at most 4000 characters.");
+    }
+    const description = typeof row.description === "string" ? row.description.trim() : "";
+    if (description.length > MAX_DESCRIPTION)
+        bad("Job description must be at most 4000 characters.");
+    if (!Array.isArray(row.steps))
+        bad("List between 1 and 12 steps.");
+    if (row.steps.length < 1 || row.steps.length > MAX_STEPS)
+        bad("List between 1 and 12 steps.");
+    const steps = [];
+    for (const step of row.steps) {
+        if (typeof step !== "string")
+            bad("Each step must be 1 to 200 characters.");
+        const trimmed = step.trim();
+        if (!trimmed || trimmed.length > MAX_STEP)
+            bad("Each step must be 1 to 200 characters.");
+        steps.push(trimmed);
+    }
+    if (!Array.isArray(row.allowedOrigins))
+        bad("Name at most 5 portal sites.");
+    if (row.allowedOrigins.length > MAX_ORIGINS)
+        bad("Name at most 5 portal sites.");
+    const allowedOrigins = [];
+    for (const origin of row.allowedOrigins) {
+        if (typeof origin !== "string") {
+            bad("Use a portal hostname like propertyme.com.au — no path or port.");
+        }
+        const host = normalizeOrigin(origin);
+        if (!host)
+            bad("Use a portal hostname like propertyme.com.au — no path or port.");
+        if (!allowedOrigins.includes(host))
+            allowedOrigins.push(host);
+    }
+    if (row.evidence !== undefined && typeof row.evidence !== "string") {
+        bad("Evidence must be at most 200 characters.");
+    }
+    const evidence = typeof row.evidence === "string" ? row.evidence.trim() : "";
+    if (evidence.length > MAX_EVIDENCE)
+        bad("Evidence must be at most 200 characters.");
+    if (row.siteNotes !== undefined && row.siteNotes !== null && typeof row.siteNotes !== "string") {
+        bad("Site notes must be at most 500 characters.");
+    }
+    const siteNotes = typeof row.siteNotes === "string" ? row.siteNotes.trim() : "";
+    if (siteNotes.length > 500)
+        bad("Site notes must be at most 500 characters.");
+    const capabilities = parseCapabilities(row.capabilities);
+    if (recipeHasPortalCapability(capabilities) && allowedOrigins.length < 1) {
+        bad("Name the portal site this job may open.");
+    }
+    return {
+        title,
+        description,
+        steps,
+        allowedOrigins,
+        evidence,
+        capabilities,
+        limits: parseLimits(row.limits),
+        siteNotes: siteNotes || null,
+        schedule: parseRecipeSchedule(row.schedule),
+    };
+}
+function asRecipe(value) {
+    if (!value || typeof value !== "object")
+        return null;
+    const row = value;
+    if (typeof row.id !== "string" || !row.id.trim())
+        return null;
+    if (typeof row.title !== "string")
+        return null;
+    if (!Array.isArray(row.steps) || !row.steps.every((step) => typeof step === "string"))
+        return null;
+    if (!Array.isArray(row.allowedOrigins) || !row.allowedOrigins.every((origin) => typeof origin === "string")) {
+        return null;
+    }
+    if (typeof row.evidence !== "string")
+        return null;
+    if (!isStatus(row.status))
+        return null;
+    if (typeof row.createdAt !== "number" || !Number.isFinite(row.createdAt))
+        return null;
+    try {
+        const fields = validateRecipe(row);
+        const createdAt = row.createdAt;
+        const revision = asRevision(row.revision);
+        const planApprovedAt = asPlanApprovedAt(row.planApprovedAt);
+        const explicitApproved = typeof row.approvedRevision === "number" && Number.isInteger(row.approvedRevision) && row.approvedRevision > 0
+            ? row.approvedRevision
+            : null;
+        return {
+            id: row.id,
+            ...fields,
+            status: row.status,
+            createdAt,
+            planApprovedAt,
+            revision,
+            updatedAt: asUpdatedAt(row.updatedAt, createdAt),
+            // A legacy approved row had only one implicit revision.
+            approvedRevision: planApprovedAt ? (explicitApproved ?? 1) : null,
+            attachment: asAttachment(row.attachment),
+            submitAcknowledgedAt: asPlanApprovedAt(row.submitAcknowledgedAt),
+        };
+    }
+    catch {
+        return null;
+    }
+}
+function persist(recipes) {
+    mkdirSync(DATA_DIR, { recursive: true });
+    writeFileAtomic(recipesPath(), `${JSON.stringify({ recipes }, null, 2)}\n`, 0o600);
+}
+export function loadRecipes(strict = false) {
+    try {
+        const parsed = JSON.parse(readFileSync(recipesPath(), "utf8"));
+        const list = Array.isArray(parsed)
+            ? parsed
+            : parsed && typeof parsed === "object" && Array.isArray(parsed.recipes)
+                ? parsed.recipes
+                : null;
+        if (!list) {
+            if (strict)
+                throw new Error("Invalid recipe store");
+            return [];
+        }
+        const out = [];
+        for (const row of list) {
+            const recipe = asRecipe(row);
+            if (strict && (!recipe || out.some((item) => item.id === recipe.id))) {
+                throw new Error("Invalid or duplicate recipe");
+            }
+            if (recipe)
+                out.push(recipe);
+        }
+        return out;
+    }
+    catch (error) {
+        if (strict && error.code !== "ENOENT") {
+            throw Object.assign(new Error("Saved jobs need recovery. Repair the recipe store before importing packs; no jobs were changed."), { status: 409 });
+        }
+        return [];
+    }
+}
+export function listRecipes() {
+    return loadRecipes();
+}
+export function getRecipe(id) {
+    return loadRecipes().find((recipe) => recipe.id === id);
+}
+/** Optional for older callers; the plan editor always supplies its read version. */
+export function assertRecipeRevision(current, expectedRevision) {
+    if (expectedRevision === undefined)
+        return;
+    if (!Number.isInteger(expectedRevision) || Number(expectedRevision) < 0) {
+        bad("The saved job version is invalid. Reload the job and try again.");
+    }
+    if ((current?.revision ?? 0) !== expectedRevision) {
+        throw Object.assign(new Error("This job changed elsewhere. Reload the saved plan before saving or approving it."), { status: 409 });
+    }
+}
+function upsertRecipe(recipes, input) {
+    const fields = validateRecipe(input);
+    const row = input && typeof input === "object" ? input : {};
+    const id = typeof row.id === "string" && row.id.trim() ? row.id.trim() : randomUUID();
+    const existing = recipes.find((item) => item.id === id);
+    assertRecipeRevision(existing, row.expectedRevision);
+    const now = Date.now();
+    const createdAt = existing?.createdAt ??
+        (typeof row.createdAt === "number" && Number.isFinite(row.createdAt) ? row.createdAt : now);
+    const status = isStatus(row.status) ? row.status : (existing?.status ?? "shadow");
+    const effective = {
+        ...fields,
+        description: row.description === undefined && existing ? existing.description : fields.description,
+        capabilities: row.capabilities === undefined && existing ? existing.capabilities : fields.capabilities,
+        limits: row.limits === undefined && existing ? existing.limits : fields.limits,
+        siteNotes: row.siteNotes === undefined && existing ? existing.siteNotes ?? null : fields.siteNotes,
+    };
+    const material = (recipe) => JSON.stringify({
+        title: recipe.title,
+        description: recipe.description,
+        steps: recipe.steps,
+        allowedOrigins: recipe.allowedOrigins,
+        evidence: recipe.evidence,
+        capabilities: recipe.capabilities,
+        limits: recipe.limits,
+        siteNotes: recipe.siteNotes ?? null,
+        schedule: recipe.schedule,
+    });
+    const changed = existing ? material(existing) !== material(effective) : false;
+    const originsChanged = existing != null && JSON.stringify(existing.allowedOrigins) !== JSON.stringify(effective.allowedOrigins);
+    const capabilitiesChanged = existing != null && JSON.stringify(existing.capabilities) !== JSON.stringify(effective.capabilities);
+    const recipe = {
+        id,
+        ...effective,
+        status,
+        createdAt,
+        planApprovedAt: changed ? null : (existing?.planApprovedAt ?? null),
+        revision: existing ? (changed ? existing.revision + 1 : existing.revision) : 1,
+        updatedAt: existing ? (changed ? now : existing.updatedAt) : createdAt,
+        approvedRevision: changed ? null : (existing?.approvedRevision ?? null),
+        attachment: originsChanged ? null : (existing?.attachment ?? null),
+        submitAcknowledgedAt: originsChanged || capabilitiesChanged ? null : (existing?.submitAcknowledgedAt ?? null),
+    };
+    const next = recipes.filter((item) => item.id !== id);
+    next.push(recipe);
+    return next;
+}
+export function saveRecipe(input) {
+    const next = upsertRecipe(loadRecipes(), input);
+    persist(next);
+    return next;
+}
+/** Validate every row and version before the single durable replace. Synchronous
+ * in the local service, so a concurrent request cannot interleave these writes. */
+export function saveRecipesAtomically(inputs) {
+    const current = loadRecipes(true);
+    let next = current;
+    for (const input of inputs)
+        next = upsertRecipe(next, input);
+    if (inputs.length)
+        persist(next);
+    return next;
+}
+/** Reviewed instruction updates change what a plan will read. Invalidate every
+ * dependent plan together before switching the instructions; never restore a
+ * prior approval or clock on a later revert. */
+export function resetRecipeApprovalsAtomically(expected) {
+    const current = loadRecipes(true);
+    if (!Array.isArray(expected) || new Set(expected.map(item => item?.id)).size !== expected.length)
+        bad('Choose each dependent plan once.');
+    for (const item of expected) {
+        if (!Number.isSafeInteger(item?.revision) || item.revision < 1)
+            bad('The expected plan version is invalid.');
+        const saved = current.find(recipe => recipe.id === item?.id);
+        if (!saved)
+            throw Object.assign(new Error('A dependent plan is missing. Refresh pack setup before updating instructions.'), { status: 409 });
+        assertRecipeRevision(saved, item.revision);
+    }
+    const ids = new Set(expected.map(item => item.id));
+    const next = current.map(recipe => ids.has(recipe.id) ? { ...recipe, status: 'shadow', schedule: null, planApprovedAt: null, approvedRevision: null, revision: recipe.revision + 1, updatedAt: Date.now() } : recipe);
+    if (expected.length)
+        persist(next);
+    return next;
+}
+export function patchRecipe(id, patch) {
+    const wantsStatus = patch.status !== undefined && patch.status !== "";
+    const wantsApprove = patch.planApproved === true;
+    const wantsAttach = patch.attach === true;
+    const wantsDetach = patch.attach === false;
+    const wantsSubmitAck = patch.submitAcknowledged === true;
+    const wantsSubmitOff = patch.submitAcknowledged === false;
+    const wantsOrigins = Array.isArray(patch.allowedOrigins);
+    const wantsEnsurePortal = patch.ensurePortal === true;
+    if (wantsStatus && !isStatus(patch.status)) {
+        throw Object.assign(new Error("Status must be shadow, active, or paused."), { status: 400 });
+    }
+    if (!wantsStatus &&
+        !wantsApprove &&
+        !wantsAttach &&
+        !wantsDetach &&
+        !wantsSubmitAck &&
+        !wantsSubmitOff &&
+        !wantsOrigins) {
+        throw Object.assign(new Error("Status must be shadow, active, or paused."), { status: 400 });
+    }
+    const recipes = loadRecipes();
+    const idx = recipes.findIndex((recipe) => recipe.id === id);
+    if (idx < 0)
+        throw Object.assign(new Error("no such recipe"), { status: 404 });
+    const current = recipes[idx];
+    if (!current)
+        throw Object.assign(new Error("no such recipe"), { status: 404 });
+    assertRecipeRevision(current, patch.expectedRevision);
+    let allowedOrigins = current.allowedOrigins;
+    let capabilities = [...current.capabilities];
+    let materialChanged = false;
+    if (wantsOrigins) {
+        const nextOrigins = [];
+        for (const raw of patch.allowedOrigins) {
+            if (typeof raw !== "string")
+                continue;
+            const host = normalizeOrigin(raw);
+            if (!host) {
+                throw Object.assign(new Error("Use a portal hostname like propertyme.com.au — no path or port."), {
+                    status: 400,
+                });
+            }
+            if (!nextOrigins.includes(host))
+                nextOrigins.push(host);
+        }
+        if (nextOrigins.length > MAX_ORIGINS) {
+            throw Object.assign(new Error("Name at most 5 portal sites."), { status: 400 });
+        }
+        if (nextOrigins.length < 1) {
+            throw Object.assign(new Error("Name the portal site this job may open."), { status: 400 });
+        }
+        if (JSON.stringify(current.allowedOrigins) !== JSON.stringify(nextOrigins)) {
+            allowedOrigins = nextOrigins;
+            materialChanged = true;
+        }
+    }
+    if (wantsEnsurePortal || (wantsOrigins && !recipeHasPortalCapability(capabilities))) {
+        for (const cap of ["portal-read", "portal-prefill"]) {
+            if (!capabilities.includes(cap)) {
+                capabilities.push(cap);
+                materialChanged = true;
+            }
+        }
+    }
+    if (wantsAttach && (!allowedOrigins.length || !recipeHasPortalCapability(capabilities))) {
+        throw Object.assign(new Error("Add the portal site and a portal capability before attaching it."), {
+            status: 409,
+        });
+    }
+    if (wantsSubmitAck && !capabilities.includes("portal-submit")) {
+        throw Object.assign(new Error("Add 'Bud may press Submit' only on a job with the portal-submit capability."), {
+            status: 409,
+        });
+    }
+    const now = Date.now();
+    recipes[idx] = {
+        ...current,
+        allowedOrigins,
+        capabilities,
+        status: wantsStatus && isStatus(patch.status) ? patch.status : wantsApprove ? "active" : current.status,
+        planApprovedAt: materialChanged
+            ? null
+            : wantsApprove
+                ? (current.approvedRevision === current.revision ? (current.planApprovedAt ?? now) : now)
+                : current.planApprovedAt,
+        approvedRevision: materialChanged ? null : wantsApprove ? current.revision : current.approvedRevision,
+        revision: materialChanged ? current.revision + 1 : current.revision,
+        updatedAt: materialChanged || wantsApprove || wantsAttach || wantsDetach || wantsSubmitAck || wantsSubmitOff || wantsStatus
+            ? now
+            : current.updatedAt,
+        attachment: wantsAttach
+            ? { attachedAt: now, acknowledged: "human-login-and-submit" }
+            : wantsDetach || materialChanged
+                ? null
+                : current.attachment,
+        submitAcknowledgedAt: wantsSubmitAck
+            ? (current.submitAcknowledgedAt ?? now)
+            : wantsSubmitOff || materialChanged
+                ? null
+                : current.submitAcknowledgedAt,
+    };
+    // Approve after a same-request origin set: stamp the new revision.
+    if (wantsApprove && materialChanged) {
+        const row = recipes[idx];
+        recipes[idx] = {
+            ...row,
+            planApprovedAt: now,
+            approvedRevision: row.revision,
+            status: wantsStatus && isStatus(patch.status) ? patch.status : "active",
+        };
+    }
+    // Attach after a same-request origin set (and optional approve).
+    if (wantsAttach) {
+        const row = recipes[idx];
+        if (!row.allowedOrigins.length || !recipeHasPortalCapability(row.capabilities)) {
+            throw Object.assign(new Error("Add the portal site and a portal capability before attaching it."), {
+                status: 409,
+            });
+        }
+        recipes[idx] = {
+            ...row,
+            attachment: row.attachment ?? { attachedAt: now, acknowledged: "human-login-and-submit" },
+        };
+    }
+    persist(recipes);
+    return recipes;
+}
+export function patchRecipeStatus(id, status) {
+    return patchRecipe(id, { status });
+}
+export function deleteRecipe(id) {
+    const recipes = loadRecipes();
+    const next = recipes.filter((recipe) => recipe.id !== id);
+    if (next.length === recipes.length)
+        throw Object.assign(new Error("no such recipe"), { status: 404 });
+    persist(next);
+    return next;
+}

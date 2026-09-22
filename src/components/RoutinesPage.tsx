@@ -37,6 +37,7 @@ import { buildWorkActivity, routineRunsForActivity } from "@/lib/work-activity";
 import { JobWorkspace } from "./schedule/JobWorkspace";
 import { WorkflowPacksCard } from "./schedule/WorkflowPacksCard";
 import { JobRunFeed } from "./desk/JobRunFeed";
+import { ExecutionHistory } from "./schedule/ExecutionHistory";
 import { beginLoopRequest, pendingLoopRequest, resumeLoopRequest, confirmLoopReceipt, rejectLoopRequest, type PendingLoopRequest } from "@/lib/manual-loop-request";
 
 function RunStatus({ status }: { status: LoopRunStatus }) {
@@ -750,6 +751,7 @@ export function RoutinesPage({ onSetup, onShowAsk }: { onSetup?: () => void; onS
           ) : null}
         </section>
 
+        <div className="mt-5"><ExecutionHistory /></div>
         <div className="mt-8">
           <WorkflowPacksCard onInstalled={refreshSchedule} />
         </div>

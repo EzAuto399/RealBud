@@ -1,0 +1,11 @@
+
+> realbud@0.1.19 typecheck /Users/yoda/projects/RealBud
+> tsc -b && tsc -p tsconfig.server.json
+
+server/private-backup-http.ts(58,72): error TS2345: Argument of type 'PrivateBackupDownloadTicket | null' is not assignable to parameter of type '{ url: string; expiresAt: number; }'.
+  Type 'null' is not assignable to type '{ url: string; expiresAt: number; }'.
+server/session-auth.test.ts(140,131): error TS2345: Argument of type '{ authorization: string; 'x-realbud-session'?: undefined; } | { 'x-realbud-session': string; authorization?: undefined; }' is not assignable to parameter of type 'Record<string, string>'.
+  Type '{ authorization: string; 'x-realbud-session'?: undefined; }' is not assignable to type 'Record<string, string>'.
+    Property ''x-realbud-session'' is incompatible with index signature.
+      Type 'undefined' is not assignable to type 'string'.
+ ELIFECYCLE  Command failed with exit code 2.

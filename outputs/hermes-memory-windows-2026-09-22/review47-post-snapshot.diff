@@ -1,0 +1,56 @@
+--- reviewed/server/helpers/hermes-memory-windows.py
++++ current/server/helpers/hermes-memory-windows.py
+@@ -164,8 +164,15 @@
+     def _mutation(self):
+         if not callable(self.mutation_lock):
+             self._fail("unavailable")
+-        with self.mutation_lock():
+-            yield
++        try:
++            with self.mutation_lock():
++                yield
++        except self.error as error:
++            raise self.error(error.code) from None
++        except Exception:
++            # A host-owned lock can fail on enter or exit. Its native exception
++            # may contain a private path; never expose it through this boundary.
++            raise self.error("unavailable") from None
+ 
+     def read(self, path, *, limit=MAX_BYTES):
+         with self._parents(path) as (stack, paths, _parents, root):
+@@ -234,6 +241,9 @@
+             data = self._read_handle(handle, paths[0], root)
+             if hashlib.sha256(data).hexdigest() != expected_digest:
+                 self._fail("conflict")
+-            # Deletion binds to the open object, then completes when its owned
+-            # handle closes. A close error propagates instead of claiming done.
++            # This binds disposition to the checked object. Other pre-existing
++            # delete-sharing readers can defer removal beyond our owned close.
++            # The caller must reconcile name absence/journal state before
++            # recording terminal cleanup; a close error still propagates.
+             self.native.delete(handle)
++        return "deletion-requested"
+--- reviewed/server/helpers/hermes-memory-windows-native.py
++++ current/server/helpers/hermes-memory-windows-native.py
+@@ -193,6 +193,8 @@
+         self._handles.add(handle)
+         try:
+             handle._initial = self.snapshot(handle)
++            if new and not directory and handle._initial.size != 0:
++                raise NativeError("conflict")
+             if new:
+                 self.verify_private(handle)
+             return handle
+@@ -241,6 +243,12 @@
+         numbers = (value.volume_serial, value.file_index, value.attributes, value.links,
+                    value.size, value.creation_ticks, value.last_write_ticks, value.volume_flags, value.drive_type)
+         if any(type(n) is not int or n < 0 for n in numbers) or not value.volume_serial or not value.file_index or not value.creation_ticks or value.links < 1:
++            raise NativeError("unsafe-storage")
++        if any(n > 0xFFFFFFFF for n in (value.volume_serial, value.attributes, value.links,
++                                       value.volume_flags, value.drive_type)) or any(
++            n > 0xFFFFFFFFFFFFFFFF for n in (value.file_index, value.size,
++                                            value.creation_ticks, value.last_write_ticks)
++        ):
+             raise NativeError("unsafe-storage")
+         if value.filesystem != "NTFS" or value.drive_type != DRIVE_FIXED or not value.volume_flags & FILE_PERSISTENT_ACLS:
+             raise NativeError("unsafe-storage")

@@ -1,0 +1,8 @@
+{
+  "checkedAt": "2026-09-21T14:13:26.458231+00:00",
+  "manifest": "coordinator-final-inputs.json",
+  "inputCount": 981,
+  "unchanged": true,
+  "changed": [],
+  "scope": "Full suite and server build completed before later Grok follow-up fixes."
+}

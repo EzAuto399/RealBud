@@ -1,0 +1,21 @@
+{
+  "at": "2026-09-21T16:37:39.046113+00:00",
+  "files": {
+    "server/helpers/hermes-memory-windows.py": {
+      "reviewedSha256": "46ae82871600ce6a0003092b05dad3557ebbad7c4e601ef77b57fac21021d695",
+      "currentSha256": "e838beb06d5c5f132db4e1f5158f97d72b4e7dd90e55eb4a03a7e42f280c8bfa",
+      "changedAfterSnapshot": true
+    },
+    "server/helpers/hermes-memory-windows-native.py": {
+      "reviewedSha256": "61ffd50da933fe09021b04616dc5c7d8161bc0edbd2c5e225d397c25c9e0a71a",
+      "currentSha256": "b3a9d5bb67b5c2cc2f920b046b1472044204bc872ebef8113cf13d19d8e86213",
+      "changedAfterSnapshot": true
+    }
+  },
+  "changesByOwners": [
+    "Root: sanitize lock exceptions and explicit deletion-requested contract",
+    "Native owner: reject nonempty newly created file and out-of-range metadata"
+  ],
+  "noRerunRequested": true,
+  "productionEditsByReviewer": false
+}

@@ -1,0 +1,85 @@
+{
+  "layer": "Actual admitted Hermes parser/dry-run and owned journal logic with explicit POSIX-backed fake Windows IO; no WinAPI",
+  "terminal_test_receipt": "journal-tests-final.json",
+  "tests_run": 25,
+  "passed": true,
+  "syntax": "ast.parse passed",
+  "test_inventory": [
+    "test_after_final_receipt_retry_only_cleans_up",
+    "test_after_memory_write_retry_flushes_without_rewrite",
+    "test_after_publication_crash_reconciles_once",
+    "test_after_published_receipt_replays_exactly",
+    "test_before_final_receipt_retry_flushes_without_rewrite",
+    "test_before_memory_write_retry_writes_once",
+    "test_before_publication_crash_retries_once",
+    "test_before_published_receipt_crash_reconciles_once",
+    "test_changed_claim_is_preserved_without_duplicate_memory_write",
+    "test_changed_memory_after_intent_preserves_current_content",
+    "test_changed_stage_preserves_unreviewed_bytes",
+    "test_colliding_destination_preserves_both_files",
+    "test_delete_request_is_not_terminal_cleanup",
+    "test_equal_bytes_in_two_names_are_not_a_valid_move_replay",
+    "test_human_approval_before_proposal_receipt_never_restages",
+    "test_human_rejection_before_proposal_receipt_never_restages",
+    "test_native_dry_run_rejects_missing_replace_match",
+    "test_prepared_intent_with_both_names_missing_is_held",
+    "test_propose_list_preview_approve_and_exact_replay",
+    "test_public_json_and_direct_dispatch_cannot_bypass_windows_hold",
+    "test_reject_and_replay_never_writes_memory",
+    "test_review_intent_retry_writes_once",
+    "test_stage_crash_retries_once",
+    "test_unsigned_orphan_stage_is_not_adopted",
+    "test_untrusted_request_and_payload_fields_are_rejected"
+  ],
+  "source_hashes": {
+    "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-windows-journal.py": "e4da997285187d44b30cbf9ed12ecfda34a7bace9936eff63b82758a64a645dd",
+    "/Users/yoda/projects/RealBud/server/helpers/hermes-memory-review.py": "2a1ce893919e7ec84d5a5a7fc302b6bddf6df54d93ae951980933b236b8c26a4",
+    "/Users/yoda/projects/RealBud/server/helpers/hermes-memory-proposals.py": "13f9c35ccb5d6d6c1f20743592348f306b1ba4b18beb2e608a19915ffe3213df",
+    "/Users/yoda/.realbud/hermes/runtimes/345cd2b057a452236de401d3534b8502a7465e8d-cfb3f08a9ee7/hermes-agent/tools/memory_tool.py": "ed9c5db6b3144b88425f7039280239b29a047143aa8ffdfd3b7f47bf7e707143",
+    "/Users/yoda/.realbud/hermes/runtimes/345cd2b057a452236de401d3534b8502a7465e8d-cfb3f08a9ee7/hermes-agent/tools/memory_tool_store.py": "811ef2eb98a8b3f0448294b2c23d422ff7ebd4dc45835475b12df0557d7e5366"
+  },
+  "sources_still_match_receipt": true,
+  "native_windows_validation": false,
+  "prior_failure_disposition": "journal-tests-first.json had one harness error-category expectation; unknown payload fields correctly return unsupported, whereas unknown request fields return invalid. Source contract inspected, exact harness expectation corrected; no production change required.",
+  "post_grok_snapshot_changes": [
+    "Use a distinct FixtureStorageError with .code and error_type to exercise the actual dispatcher error mapping.",
+    "Align unsupported unknown-payload category to existing strict schema.",
+    "Forbid selected-path direct scandir and _open_nofollow fallback in addition to link/rename/replace/unlink and native MemoryStore writes.",
+    "Clarify that production WindowsJournalIO/storage/native backend and concurrency are outside this fake-facade suite.",
+    "Require the exact review lock for mutations and exact memory lock for memory writes; create only one directory level; missing_ok reads still fail when the parent is absent."
+  ],
+  "grok_review": {
+    "terminal_run_receipt": "journal-tests-grok-run.json",
+    "requested_model": "grok-4.7",
+    "reasoning_effort": "xhigh",
+    "prompt_bytes": 7005,
+    "max_turns": 1,
+    "tools": [],
+    "elapsed_seconds": 600.05,
+    "timed_out": true,
+    "grok_exit_code": -15,
+    "structured_output": false,
+    "actual_returned_model": null,
+    "disposition": "Bounded process terminated and reaped after hard timeout; no findings or approval available; no retry."
+  },
+  "limits": [
+    "No WinAPI, ACL, sharing, filesystem durability, installed Windows application, GUI, provider or customer validation.",
+    "The production WindowsJournalIO, WindowsMemoryStorage and native backend are not called; this suite substitutes the entire IO facade and does not prove concurrency.",
+    "Faults are actual child-process exits against fictional fixture files; fake IO does not reproduce native Windows storage guarantees.",
+    "Public main and dispatch platform holds remain enforced; no JSON or environment test override is added."
+  ],
+  "supersedes": "journal-tests-verification.json",
+  "host": {
+    "platform": "Darwin",
+    "architecture": "arm64",
+    "harness_python": "3.14.4"
+  },
+  "elapsed_seconds": 5.702,
+  "current_observed_hashes": {
+    "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-windows-journal.py": "e4da997285187d44b30cbf9ed12ecfda34a7bace9936eff63b82758a64a645dd",
+    "/Users/yoda/projects/RealBud/server/helpers/hermes-memory-review.py": "2a1ce893919e7ec84d5a5a7fc302b6bddf6df54d93ae951980933b236b8c26a4",
+    "/Users/yoda/projects/RealBud/server/helpers/hermes-memory-proposals.py": "13f9c35ccb5d6d6c1f20743592348f306b1ba4b18beb2e608a19915ffe3213df",
+    "/Users/yoda/.realbud/hermes/runtimes/345cd2b057a452236de401d3534b8502a7465e8d-cfb3f08a9ee7/hermes-agent/tools/memory_tool.py": "ed9c5db6b3144b88425f7039280239b29a047143aa8ffdfd3b7f47bf7e707143",
+    "/Users/yoda/.realbud/hermes/runtimes/345cd2b057a452236de401d3534b8502a7465e8d-cfb3f08a9ee7/hermes-agent/tools/memory_tool_store.py": "811ef2eb98a8b3f0448294b2c23d422ff7ebd4dc45835475b12df0557d7e5366"
+  }
+}

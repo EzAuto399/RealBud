@@ -1,7 +1,7 @@
 // Read-only receipt completeness gate. This does not operate either desktop or
 // establish that a human's recorded observation is correct.
 import { createHash } from 'node:crypto';
-import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -11,23 +11,83 @@ const hash = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const readJson = file => JSON.parse(readFileSync(file, 'utf8'));
 
-export function loadContract() {
-  const register = readJson(path.join(root, 'docs/REALBUD-CORE-EXECUTION-2026-09-14.json'));
-  const catalogue = readJson(path.join(root, 'docs/REALBUD-OPERATIONAL-ACCEPTANCE-2026-09-15.json'));
-  const gate = register.two_device_release_gate;
-  if (!gate || catalogue.cases.length !== catalogue.caseCount) throw new Error('Acceptance contract is missing or inconsistent.');
-  return { ...gate, caseIds: catalogue.cases.map(item => item.id) };
+const cataloguePath = 'docs/REALBUD-OPERATIONAL-ACCEPTANCE-2026-09-15.json';
+const catalogueDigest = 'c91dd8605e3a63049613c60baec7b0ff55f20aa02726ad200a357e45bde8ea15';
+const caseIds = Array.from({ length: 71 }, (_, i) => `OP-${String(i + 1).padStart(3, '0')}`);
+const targets = {
+  'macos-rehearsal': ['macos-macos'],
+  'full-platform': ['macos-macos', 'macos-windows', 'windows-macos', 'windows-windows'],
+};
+const workflowRuns = [
+  ['morning-a', 'OP-019', 'A'], ['morning-b', 'OP-020', 'B'],
+  ['bills-a', 'OP-026', 'A'], ['bills-b', 'OP-026', 'B'],
+  ['bank-a', 'OP-032', 'A'], ['bank-b', 'OP-033', 'B'],
+];
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+const admittedContracts = new WeakSet();
+function freeze(value) {
+  if (value && typeof value === 'object') {
+    for (const child of Object.values(value)) freeze(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+function requireContract(contract) {
+  if (!admittedContracts.has(contract)) throw new Error('Load a verified acceptance contract before checking or creating receipts.');
+}
+
+export function loadContract({ directory = root } = {}) {
+  try {
+    const bytes = readFileSync(path.join(directory, 'docs/acceptance/two-device-v1.json'));
+    const gate = JSON.parse(bytes);
+    const catalogueBytes = readFileSync(path.join(directory, cataloguePath));
+    const catalogue = JSON.parse(catalogueBytes);
+    if (gate?.schemaVersion !== 1 || gate.receiptSchemaVersion !== 2 || !text(gate.id)
+      || gate.catalogue?.path !== cataloguePath || gate.catalogue.sha256 !== catalogueDigest
+      || sha256(catalogueBytes) !== catalogueDigest || gate.catalogue.caseCount !== 71
+      || catalogue?.caseCount !== 71 || !Array.isArray(catalogue.cases)
+      || !same(catalogue.cases.map(item => item?.id), caseIds)
+      || !object(gate.targets) || !same(Object.keys(gate.targets).sort(), Object.keys(targets).sort())
+      || Object.entries(targets).some(([id, pairs]) => !same(gate.targets[id], pairs))
+      || !same(gate.windows_only_cases, ['OP-069'])
+      || !Array.isArray(gate.workflow_runs)
+      || !same(gate.workflow_runs.map(run => [run?.id, run?.caseId, run?.member]), workflowRuns)
+      || !object(gate.participants_by_case)
+      || !same(Object.keys(gate.participants_by_case).sort(), caseIds)
+      || Object.entries(gate.participants_by_case).some(([id, mode]) =>
+        id === 'OP-069' ? mode !== 'windows' : !['host', 'peer', 'both'].includes(mode))) {
+      throw new Error('unsupported schema, changed catalogue or incomplete release policy');
+    }
+    const contract = freeze({ ...gate, caseIds, digest: sha256(bytes) });
+    admittedContracts.add(contract);
+    return contract;
+  } catch (error) {
+    throw new Error(`Acceptance contract is missing or inconsistent: ${error.message}`, { cause: error });
+  }
 }
 
 function requiredChecks(contract, pairing) {
   return contract.caseIds.filter(id => pairing.includes('windows') || !contract.windows_only_cases.includes(id));
 }
 
+function requiredParticipants(contract, caseId, pairing) {
+  switch (contract.participants_by_case[caseId]) {
+    case 'host': return ['A'];
+    case 'peer': return ['B'];
+    case 'both': return ['A', 'B'];
+    case 'windows': return ['A', 'B'].filter((_, index) => pairing.split('-')[index] === 'windows');
+    default: throw new Error(`Missing participant policy: ${caseId}`);
+  }
+}
+
 export function createTemplate(contract, target) {
-  const pairs = contract.targets[target];
+  requireContract(contract);
+  const pairs = Object.hasOwn(contract.targets, target) ? contract.targets[target] : null;
   if (!pairs) throw new Error(`Unknown acceptance target: ${target}`);
   return {
-    schemaVersion: 1, target, sourceManifestSha256: null, protocolVersion: null,
+    schemaVersion: 2, contractId: contract.id, contractSha256: contract.digest,
+    target, sourceManifestSha256: null, protocolVersion: null,
     reviewerAlias: null, reviewedAt: null,
     note: 'Fill from actual installed-device runs. Preserve failures; a template is not passing evidence. Evidence paths are relative to this receipt directory.',
     pairings: pairs.map(id => ({
@@ -41,15 +101,16 @@ export function createTemplate(contract, target) {
         companyAlias: null, workerContextAlias: null, executionDeviceAlias: null, providerUserAlias: null, connectedAccountAlias: null,
         resultReceiptId: null, executionRoute: null, evidence: [] })),
       checks: requiredChecks(contract, id).map(caseId => ({ caseId, status: 'not-run', proofLayer: null,
-        participants: contract.both_members_cases.includes(caseId) ? ['A', 'B'] : [], evidence: [] })),
+        participants: requiredParticipants(contract, caseId, id), evidence: [] })),
     })),
   };
 }
 
 export function checkEvidence(record, contract, { target = 'full-platform', evidenceRoot = '.' } = {}) {
+  requireContract(contract);
   const issues = [];
   const require = (condition, message) => { if (!condition) issues.push(message); };
-  const requiredPairs = contract.targets[target];
+  const requiredPairs = Object.hasOwn(contract.targets, target) ? contract.targets[target] : null;
   if (!requiredPairs) throw new Error(`Unknown acceptance target: ${target}`);
   const unique = (items, key) => new Set(items.map(item => item?.[key])).size === items.length;
   const list = value => Array.isArray(value) ? value : [];
@@ -57,15 +118,37 @@ export function checkEvidence(record, contract, { target = 'full-platform', evid
   function verifyFiles(files, label) {
     require(Array.isArray(files) && files.length > 0, `${label}: missing evidence files`);
     for (const file of list(files)) {
+      let descriptor;
       try {
         if (!text(file?.path) || path.isAbsolute(file.path) || !hash(file.sha256)) throw new Error('invalid relative path or digest');
         const resolved = realpathSync(path.resolve(base, file.path));
         const relative = path.relative(base, resolved);
         if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error('evidence escapes receipt directory');
-        const info = statSync(resolved);
+        descriptor = openSync(resolved, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+        const info = fstatSync(descriptor);
         if (!info.isFile() || info.size === 0 || info.size > 16 * 1024 * 1024) throw new Error('expected a nonempty evidence file up to 16 MiB');
-        if (sha256(readFileSync(resolved)) !== file.sha256) throw new Error('evidence digest changed');
+        const verifyBinding = () => {
+          if (realpathSync(path.resolve(base, file.path)) !== resolved) throw new Error('evidence path changed during verification');
+          const current = statSync(resolved);
+          if (current.dev !== info.dev || current.ino !== info.ino) throw new Error('evidence file replaced during verification');
+        };
+        verifyBinding();
+        // Bound the read even when a file grows after admission. Hash the same
+        // open regular file that was checked, never reopen its pathname.
+        const bytes = Buffer.alloc(info.size + 1);
+        let count = 0;
+        while (count < bytes.length) {
+          const got = readSync(descriptor, bytes, count, bytes.length - count, null);
+          if (got === 0) break;
+          count += got;
+        }
+        if (count !== info.size) throw new Error('evidence size changed during verification');
+        if (sha256(bytes.subarray(0, count)) !== file.sha256) throw new Error('evidence digest changed');
+        const after = fstatSync(descriptor);
+        if (info.size !== after.size || info.mtimeMs !== after.mtimeMs || info.ctimeMs !== after.ctimeMs) throw new Error('evidence changed during verification');
+        verifyBinding();
       } catch (error) { issues.push(`${label}: ${error.message}`); }
+      finally { if (descriptor !== undefined) closeSync(descriptor); }
     }
   }
   function passed(item, label) {
@@ -73,7 +156,8 @@ export function checkEvidence(record, contract, { target = 'full-platform', evid
     require(item?.proofLayer === 'installed-device', `${label}: installed-device evidence required`);
     verifyFiles(item?.evidence, label);
   }
-  require(record?.schemaVersion === 1, 'Unsupported or absent receipt schema');
+  require(record?.schemaVersion === 2, 'Unsupported or absent receipt schema; generate a fresh template');
+  require(record?.contractId === contract.id && record?.contractSha256 === contract.digest, 'Receipt must identify the exact current acceptance contract');
   require(record?.target === target, 'Receipt target does not match the explicitly requested gate');
   require(hash(record?.sourceManifestSha256), 'Exact candidate source manifest SHA-256 is required');
   require(text(record?.protocolVersion), 'Company protocol version is required');
@@ -91,7 +175,7 @@ export function checkEvidence(record, contract, { target = 'full-platform', evid
       const d = devices.find(item => item?.slot === slot);
       for (const key of ['memberAlias', 'deviceAlias', 'providerUserAlias', 'osVersion', 'hermesVersion', 'hermesCommit', 'cuaVersion']) require(text(d?.[key]), `${id}/${slot}: missing ${key}`);
       require(d?.os === id.split('-')[index], `${id}/${slot}: wrong operating system`);
-      if (d?.os === 'windows') require(/^Windows 11(?:\s|$)/i.test(d?.osVersion ?? ''), `${id}/${slot}: Windows 11 desktop acceptance required`);
+      if (d?.os === 'windows') require(typeof d.osVersion === 'string' && /^Windows 11(?:\s|$)/i.test(d.osVersion), `${id}/${slot}: Windows 11 desktop acceptance required`);
       require(d?.architecture === (d?.os === 'windows' ? 'x64' : 'arm64'), `${id}/${slot}: target architecture not demonstrated`);
       require(hash(d?.artifactSha256), `${id}/${slot}: installed artifact digest required`);
       require(typeof d?.hermesCommit === 'string' && /^[a-f0-9]{40}$/.test(d.hermesCommit), `${id}/${slot}: exact Hermes commit required`);
@@ -115,9 +199,10 @@ export function checkEvidence(record, contract, { target = 'full-platform', evid
       }
     }
     require(unique(runs, 'jobId'), `${id}: reusing one job cannot prove separate workflow runs`);
+    require(unique(runs, 'resultReceiptId'), `${id}: reusing one result receipt cannot prove separate workflow runs`);
     const aContexts = new Set(runs.filter(r => r?.member === 'A').map(r => r.workerContextAlias));
     require(!runs.some(r => r?.member === 'B' && aContexts.has(r.workerContextAlias)), `${id}: private worker contexts overlap`);
-    const mornings = runs.filter(r => r?.id?.startsWith('morning-'));
+    const mornings = runs.filter(r => typeof r?.id === 'string' && r.id.startsWith('morning-'));
     require(unique(mornings, 'connectedAccountAlias'), `${id}: both users need their own source account`);
     const checks = list(pair.checks);
     const caseIds = requiredChecks(contract, id);
@@ -126,7 +211,12 @@ export function checkEvidence(record, contract, { target = 'full-platform', evid
     for (const caseId of caseIds) {
       const check = checks.find(item => item?.caseId === caseId);
       passed(check, `${id}/${caseId}`);
-      if (contract.both_members_cases.includes(caseId)) require(['A', 'B'].every(slot => list(check?.participants).includes(slot)), `${id}/${caseId}: both members/devices must be observed`);
+      const participants = list(check?.participants);
+      require(Array.isArray(check?.participants) && new Set(participants).size === participants.length
+        && participants.every(slot => ['A', 'B'].includes(slot))
+        && (caseId !== 'OP-069' || participants.every(slot => id.split('-')[slot === 'A' ? 0 : 1] === 'windows'))
+        && requiredParticipants(contract, caseId, id).every(slot => participants.includes(slot)),
+      `${id}/${caseId}: required members/devices must be observed without duplicate or unknown slots`);
     }
   }
   return { target, evidenceComplete: issues.length === 0, issues,

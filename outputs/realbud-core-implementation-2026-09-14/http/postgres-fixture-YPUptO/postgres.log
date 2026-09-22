@@ -1,0 +1,11 @@
+2026-09-21 15:46:07.971 AEST [11520] LOG:  starting PostgreSQL 16.15 (Homebrew) on aarch64-apple-darwin25.6.0, compiled by Apple clang version 21.0.0 (clang-2100.1.1.101), 64-bit
+2026-09-21 15:46:07.971 AEST [11520] LOG:  listening on Unix socket "/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/rb-company-pg-IDov28/.s.PGSQL.55447"
+2026-09-21 15:46:07.975 AEST [11523] LOG:  database system was shut down at 2026-09-21 15:46:07 AEST
+2026-09-21 15:46:07.977 AEST [11520] LOG:  database system is ready to accept connections
+2026-09-21 15:46:08.477 AEST [11520] LOG:  received fast shutdown request
+2026-09-21 15:46:08.477 AEST [11520] LOG:  aborting any active transactions
+2026-09-21 15:46:08.478 AEST [11520] LOG:  background worker "logical replication launcher" (PID 11526) exited with exit code 1
+2026-09-21 15:46:08.478 AEST [11521] LOG:  shutting down
+2026-09-21 15:46:08.478 AEST [11521] LOG:  checkpoint starting: shutdown immediate
+2026-09-21 15:46:08.534 AEST [11521] LOG:  checkpoint complete: wrote 995 buffers (6.1%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.048 s, sync=0.009 s, total=0.057 s; sync files=375, longest=0.001 s, average=0.001 s; distance=4876 kB, estimate=4876 kB; lsn=0/19E0A78, redo lsn=0/19E0A78
+2026-09-21 15:46:08.537 AEST [11520] LOG:  database system is shut down

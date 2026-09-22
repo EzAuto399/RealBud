@@ -1,3 +1,4 @@
+import type { WorkspaceActivity } from './workspace-activity.ts';
 // Remote Desk decisions over a paired channel. One pending card per
 // channel. Push receipts survive restart in bind.storeDir so Telegram is
 // not re-flooded with the same Allow/Deny card after every boot.
@@ -34,6 +35,7 @@ export type RemoteDesk = {
 };
 
 export type RemoteDecisionsBind = {
+  withWorkspaceActivity?: WorkspaceActivity;
   desk: RemoteDesk;
   channels: RemoteChannelAdapter[];
   commit: (snapshot: DeskSnapshot) => void | Promise<void>;
@@ -169,7 +171,18 @@ export function notifyDeskSnapshot(_snapshot: DeskSnapshot): Promise<void> {
   return flight;
 }
 
-export async function decideRemotely(
+export function decideRemotely(
+  channel: RemoteChannelId,
+  chatKey: string,
+  decisionId: string,
+  decision: "allow" | "deny",
+  reason: string | undefined,
+  byName: string,
+): Promise<RemoteDecideResult> {
+  const work = () => decideRemotelyAdmitted(channel, chatKey, decisionId, decision, reason, byName);
+  return bound?.withWorkspaceActivity ? bound.withWorkspaceActivity(work) : work();
+}
+async function decideRemotelyAdmitted(
   channel: RemoteChannelId,
   chatKey: string,
   decisionId: string,

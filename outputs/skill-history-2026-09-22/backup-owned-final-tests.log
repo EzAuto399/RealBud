@@ -1,0 +1,14 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ✓ server/private-backup-skill-history.test.ts (9 tests) 1797ms
+     ✓ v1 preserves shared and removed-skill archive roots, rekeys, repairs native instructions and performs reviewed archived revert  540ms
+     ✓ v2 preserves shared and removed-skill archive roots, rekeys, repairs native instructions and performs reviewed archived revert  681ms
+ ✓ server/customer-pack-skill-backup.test.ts (13 tests) 20ms
+
+ Test Files  2 passed (2)
+      Tests  22 passed (22)
+   Start at  07:08:47
+   Duration  2.32s (transform 276ms, setup 23ms, import 366ms, tests 1.82s, environment 0ms)
+
+JSON report written to /Users/yoda/projects/RealBud/outputs/skill-history-2026-09-22/backup-owned-final-tests.json

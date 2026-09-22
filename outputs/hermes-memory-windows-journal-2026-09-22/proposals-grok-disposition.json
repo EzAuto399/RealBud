@@ -1,0 +1,23 @@
+{
+  "at": "2026-09-21T17:23:01.768332+00:00",
+  "reviewStatus": "bounded-attempt-timed-out",
+  "model": "grok-4.7",
+  "effort": "xhigh",
+  "elapsedSeconds": 600.04,
+  "exitCode": -15,
+  "structuredResultAvailable": false,
+  "approvalClaimed": false,
+  "restarted": false,
+  "findingsFromModel": null,
+  "manualHardening": {
+    "finding": "New publication must not adopt an existing stage, even if content matches.",
+    "resolution": "Windows _write_stage unconditionally uses exclusive write_new; legitimate prepared stage recovery remains separate.",
+    "tested": true,
+    "deltaReceipt": "proposals-grok-post-snapshot.json"
+  },
+  "limits": [
+    "The timed-out model run supplies no independent review conclusion.",
+    "Portable synthetic IO probes do not execute Windows APIs.",
+    "Windows production holds remain intact."
+  ]
+}

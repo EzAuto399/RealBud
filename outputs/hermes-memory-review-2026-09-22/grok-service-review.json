@@ -1,0 +1,55 @@
+{
+  "text": "{\"verdict\":\"changes-required\",\"findings\":[{\"severity\":\"medium\",\"file\":\"src/components/MemoryReviewPanel.tsx\",\"detail\":\"MemoryReviewSession does not single-flight reads against a server that admits only one command per profile. refresh() only treats busy as blocking when more is true (and the Refresh button stays enabled during list/preview), and select() allows another preview while busy==='preview'. A second GET hits busy while the first success is dropped by the revision guard, so a valid page/preview is discarded and the UI stores the busy/unavailable error.\",\"fix\":\"Serialize session HTTP: refuse refresh/select/start while deciding or busy, disable those controls whenever busy is set, and do not bump revision for a call that did not start.\"},{\"severity\":\"medium\",\"file\":\"src/components/MemoryReviewPanel.tsx\",\"detail\":\"The session's 15s request timeout is shorter than the helper's 20s deadline, and handle() does not take a client abort. A slow decide is failed in the UI while the helper is still running; the catch path immediately lists, gets busy, and readPage's error path sets missing=!!selectedId even though the item was not shown to be gone. That hides Apply/Reject/Resume behind “Refresh saved reviews…” and reports unknownResult/unavailable for an in-flight CAS.\",\"fix\":\"Keep the client timeout above validateRuntime plus the helper deadline (or abort the helper on client timeout and map in-flight decide to recovery-required). On list failure after decide, do not set missing; keep the item uncertain and retry list after the in-flight decide drain.\"},{\"severity\":\"medium\",\"file\":\"server/hermes-memory-review.ts\",\"detail\":\"After a decide helper returns, run() still fail('stale-review') if options.context() identity changed, and fail('unavailable') if stdout is not a strict {ok,result} envelope (including JSON/UTF-8 parse failure in runMemoryReviewHelper on exit 0). Those paths can fire after the helper has already applied/rejected. stale-review then causes the UI to list the new context, which may not be the store that was mutated, so the applied result is not confirmed and looks like a failed review.\",\"fix\":\"Once decide has been sent to the helper, do not classify outcomes as stale-review/unavailable: return a parsed MemoryReviewDecision, or fail('recovery-required'). Keep the pre-invoke identity check so a decide is not started on a different profile.\"}],\"limits\":[\"Native helper, CAS implementation, spawnCli/killCliTree, api(), containsCredential, HTTP/auth binding, and propertyProfileDir/currentWorkerProfile were not in the supplied sources; helper behavior was assumed to match the documented protocol.\",\"No tests or runtime execution; findings are from the supplied TypeScript/React boundaries only.\"]}",
+  "stopReason": "end_turn",
+  "sessionId": "01a0c471-5b4c-7830-bf1b-c49affeefa3f",
+  "requestId": "30e3570f-a009-4c17-bfb9-ae2d359b5079",
+  "thought": "The user wants me to review TypeScript/React service and UI boundaries for concrete correctness/security bugs. They've given very specific constraints:\n```json\n{\n  \"findings\": [\n    {\n      \"file\": \"shared/hermes-memory-review.ts\",\n      \"severity\": \"low\",\n      \"type\": \"validation\",\n      \"description\": \"parseMemoryReviewPage allows pending items with null action/target/origin/createdAt fields\",\n      \"impact \": \"recovery state handling\",\n      \"location\": \"parseMemoryReviewPage\",\n      \"line\": 142\n    },\n    {\n      \"file\": \"shared/hermes-memory-review.ts\",\n      \"severity\": \"low\",\n      \"type\": \"validation\",\n      \"description\": \"parseMemoryReviewPreview charLimit logic permits remove actions that exceed limit when after.length < before.length\",\n      \"impact\": \"preview truncation edge case\",\n      \"location\": \"parseMemoryReviewPreview\",\n      \"line\": 178\n    },\n    {\n      \"file\": \"server/hermes-memory-review.ts\",\n      \"severity\": \"medium\",\n \"type\": \"memory\",\n      \"description\": \"runMemoryReviewHelper stdout size check stops processing but still concatenates remaining chunks before treating as killed\",\n      \"impact\": \"partial response corruption on timeout\",\n      \"location\": \"runMemoryReviewHelper\",\n      \"line\": 89\n    },\n    {\n      \"file\": \"server/hermes-memory-review.ts\",\n      \"severity\": \"low\",\n      \"type\": \"lifecycle\",\n      \"description\": \"child process close event may fire after timeout kill but before signal listener removal\",\n      \"impact\": \"potential double-clearTimeout\",\n      \"location\": \"runMemoryReview Helper\",\n      \"line\": 112\n    },\n    {\n      \"file\": \"server/hermes-memory-review.ts\",\n      \"severity\": \"medium\",\n      \"type\": \"authority\",\n      \"description\": \"createHermesMemoryReviewService checks JSON.stringify(options.context()) !== identity after validateRuntime but before invoke - TOCTOU window allows stale context during shutdown\",\n      \"impact\": \"stale-review false negative on concurrent close\",\n      \"location\": \"createHermesMemoryReviewService\",\n      \"line\": 167\n    },\n    {\n      \"file\": \"server/hermes-memory-review.ts\",\n      \"severity\": \"low\",\n      \"type\": \"lifecycle\",\n      \"description\": \"close() aborts controllers but does not drain active set before Promise.allSettled(drains)\",\n      \"impact\": \"race where new request can still acquire lock after close\",\n      \"location\": \"close\",\n      \"line\": 203 \" }\n  ],\n  \"summary\": \"5 concrete defects found across validation, memory handling, and shutdown lifecycle. No critical security issues identified.",
+  "usage": {
+    "input_tokens": 66304,
+    "cache_read_input_tokens": 0,
+    "cache_creation_input_tokens": 0,
+    "output_tokens": 36278,
+    "reasoning_tokens": 35668,
+    "total_tokens": 102582
+  },
+  "num_turns": 1,
+  "total_cost_usd": 0.11909384,
+  "total_cost_usd_ticks": 1190938400,
+  "modelUsage": {
+    "grok-4.6-build": {
+      "inputTokens": 66304,
+      "outputTokens": 36278,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "modelCalls": 1,
+      "costUSD": 0.11909384
+    }
+  },
+  "structuredOutput": {
+    "verdict": "changes-required",
+    "findings": [
+      {
+        "severity": "medium",
+        "file": "src/components/MemoryReviewPanel.tsx",
+        "detail": "MemoryReviewSession does not single-flight reads against a server that admits only one command per profile. refresh() only treats busy as blocking when more is true (and the Refresh button stays enabled during list/preview), and select() allows another preview while busy==='preview'. A second GET hits busy while the first success is dropped by the revision guard, so a valid page/preview is discarded and the UI stores the busy/unavailable error.",
+        "fix": "Serialize session HTTP: refuse refresh/select/start while deciding or busy, disable those controls whenever busy is set, and do not bump revision for a call that did not start."
+      },
+      {
+        "severity": "medium",
+        "file": "src/components/MemoryReviewPanel.tsx",
+        "detail": "The session's 15s request timeout is shorter than the helper's 20s deadline, and handle() does not take a client abort. A slow decide is failed in the UI while the helper is still running; the catch path immediately lists, gets busy, and readPage's error path sets missing=!!selectedId even though the item was not shown to be gone. That hides Apply/Reject/Resume behind “Refresh saved reviews…” and reports unknownResult/unavailable for an in-flight CAS.",
+        "fix": "Keep the client timeout above validateRuntime plus the helper deadline (or abort the helper on client timeout and map in-flight decide to recovery-required). On list failure after decide, do not set missing; keep the item uncertain and retry list after the in-flight decide drain."
+      },
+      {
+        "severity": "medium",
+        "file": "server/hermes-memory-review.ts",
+        "detail": "After a decide helper returns, run() still fail('stale-review') if options.context() identity changed, and fail('unavailable') if stdout is not a strict {ok,result} envelope (including JSON/UTF-8 parse failure in runMemoryReviewHelper on exit 0). Those paths can fire after the helper has already applied/rejected. stale-review then causes the UI to list the new context, which may not be the store that was mutated, so the applied result is not confirmed and looks like a failed review.",
+        "fix": "Once decide has been sent to the helper, do not classify outcomes as stale-review/unavailable: return a parsed MemoryReviewDecision, or fail('recovery-required'). Keep the pre-invoke identity check so a decide is not started on a different profile."
+      }
+    ],
+    "limits": [
+      "Native helper, CAS implementation, spawnCli/killCliTree, api(), containsCredential, HTTP/auth binding, and propertyProfileDir/currentWorkerProfile were not in the supplied sources; helper behavior was assumed to match the documented protocol.",
+      "No tests or runtime execution; findings are from the supplied TypeScript/React boundaries only."
+    ]
+  }
+}

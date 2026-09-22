@@ -6,6 +6,7 @@ import {
   PMS_BRAND_LABELS, PMS_BRANDS, coerceOffice, readClosed, type OfficeInput,
 } from "../../../shared/office";
 import { cn } from "@/lib/cn";
+import { officeSetup } from "@/lib/office-setup";
 import { Card } from "../SettingsPrimitives";
 import {
   defaultRentWorkflow, RENT_RECEIPT_CHANNELS, RENT_RECEIPT_CHANNEL_LABELS,
@@ -28,7 +29,8 @@ type OfficeChanges = { name?: string; jurisdictions?: string[]; office?: OfficeI
 
 export function OfficeCard({ agencyName, timezone, jurisdictions, office, profileName, revision, onSave, onReload }: {
   agencyName: string;
-  timezone: string;
+  /** The zone the book recorded, or null when it has none. Never a fixture. */
+  timezone: string | null;
   jurisdictions: string[];
   office?: OfficeInput | null;
   profileName?: string;
@@ -81,19 +83,33 @@ export function OfficeCard({ agencyName, timezone, jurisdictions, office, profil
   return <Card title="This office" subtitle="Set the basics for your book. Software and technical details can wait.">
     <form onSubmit={event => { event.preventDefault(); void save(); }}>
       <fieldset disabled={busy} className="flex min-w-0 flex-col gap-4">
-        <label className={labelClass}>Agency name
-          <input aria-label="Agency name" value={name} maxLength={80} onChange={event => edit({ name: event.target.value })} placeholder="Your agency" className={inputClass} />
-        </label>
-        <fieldset>
-          <legend className={labelClass}>Where are your properties?</legend>
-          <p className="mt-1 text-[12px] text-ink-muted">Choose the states and territories in your book. RealBud uses these for location-specific workflows.</p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {AU_JURISDICTIONS.map(code => <button key={code} type="button" aria-pressed={states.includes(code)} onClick={() => edit({ jurisdictions: states.includes(code) ? states.filter(item => item !== code) : [...states, code] })} className={cn("rounded-md border px-3 py-2 text-[12px] focus-visible:outline-2 focus-visible:outline-agency", states.includes(code) ? "border-agency bg-selected text-agency" : "border-line text-ink-secondary hover:text-ink")}>{code}</button>)}
-          </div>
-        </fieldset>
-        <p className="text-[12px] text-ink-muted">Book timezone: {timezone}</p>
+        {/* The strip tracks the draft, not the saved book: it must clear as the
+            fields above are filled, without waiting for a save. */}
+        <OfficeSetupStrip agencyName={name} jurisdictions={states} office={draft} />
+        {/* Ids here are the walkthrough's scroll targets. Renaming one without
+            updating src/lib/office-setup.ts sends the strip to nowhere. */}
+        <div id="office-group-identity" className="flex scroll-mt-6 flex-col gap-4">
+          <label className={labelClass}>Agency name
+            <input aria-label="Agency name" value={name} maxLength={80} onChange={event => edit({ name: event.target.value })} placeholder="Your agency" className={inputClass} />
+          </label>
+          <fieldset>
+            <legend className={labelClass}>Where are your properties?</legend>
+            <p className="mt-1 text-[12px] text-ink-muted">Choose the states and territories in your book. RealBud uses these for location-specific workflows.</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {AU_JURISDICTIONS.map(code => <button key={code} type="button" aria-pressed={states.includes(code)} onClick={() => edit({ jurisdictions: states.includes(code) ? states.filter(item => item !== code) : [...states, code] })} className={cn("rounded-md border px-3 py-2 text-[12px] focus-visible:outline-2 focus-visible:outline-agency", states.includes(code) ? "border-agency bg-selected text-agency" : "border-line text-ink-secondary hover:text-ink")}>{code}</button>)}
+            </div>
+          </fieldset>
+          {/* A book with no recorded zone has no zone to show. Naming the
+              computer's own zone keeps the working assumption visible instead of
+              dressing a fixture up as the office's setting. */}
+          <p className="text-[12px] text-ink-muted">
+            {timezone
+              ? `Book timezone: ${timezone}`
+              : `Book timezone: not recorded yet. RealBud uses this computer’s timezone (${Intl.DateTimeFormat().resolvedOptions().timeZone}) until the book records one.`}
+          </p>
+        </div>
 
-        <details className={detailClass}>
+        <details id="office-group-rent" className={cn(detailClass, "scroll-mt-6")}>
           <summary className={summaryClass}>How we check rent <span className="font-normal text-ink-muted">· your office’s workflow</span></summary>
           <div className={fieldsClass}>
             <p className="text-[13px] text-ink-secondary">Tell Bud how your office handles payment evidence. You can explain exceptions for a particular property in Ask.</p>
@@ -122,7 +138,7 @@ export function OfficeCard({ agencyName, timezone, jurisdictions, office, profil
           </div>
         </details>
 
-        <details className={detailClass}>
+        <details id="office-group-software" className={cn(detailClass, "scroll-mt-6")}>
           <summary className={summaryClass}>Software & office contact <span className="font-normal text-ink-muted">· optional</span></summary>
           <div className={fieldsClass}>
             <label className={labelClass}>Property management software
@@ -138,7 +154,7 @@ export function OfficeCard({ agencyName, timezone, jurisdictions, office, profil
           </div>
         </details>
 
-        <details className={detailClass}>
+        <details id="office-group-csv" className={cn(detailClass, "scroll-mt-6")}>
           <summary className={summaryClass}>CSV handover notes <span className="font-normal text-ink-muted">· optional</span></summary>
           <div className={fieldsClass}>
             <p className="text-[12px] text-ink-muted">For offices sharing responsibility for exports. Import and matching are reviewed when you upload a CSV in Properties; these notes do not configure an import or schedule.</p>
@@ -158,7 +174,7 @@ export function OfficeCard({ agencyName, timezone, jurisdictions, office, profil
           </div>
         </details>
 
-        <details className={detailClass}>
+        <details id="office-group-portal" className={cn(detailClass, "scroll-mt-6")}>
           <summary className={summaryClass}>Assisted portal setup <span className="font-normal text-ink-muted">· technical details</span></summary>
           <div className={fieldsClass}>
             <p className="text-[12px] text-ink-muted">Only fill these during an assisted portal trial. They record setup details; they do not sign in, connect a portal or give Bud permission to act.</p>
@@ -182,4 +198,63 @@ export function OfficeCard({ agencyName, timezone, jurisdictions, office, profil
       {error && <p role="alert" className="mt-3 text-[12.5px] text-danger">{error}{!conflict && " Your edits are kept; try saving again."}</p>}
     </form>
   </Card>;
+}
+
+/**
+ * The walkthrough for this form. It reads the same office contract the fields
+ * below write, so it can only ever ask for something this card can satisfy.
+ * It disappears once the essentials are done — an office that is set up should
+ * not keep being told it is set up.
+ */
+function OfficeSetupStrip({
+  agencyName,
+  jurisdictions,
+  office,
+}: {
+  agencyName: string;
+  jurisdictions: readonly string[];
+  office: OfficeInput;
+}) {
+  const setup = officeSetup({ agencyName, jurisdictions, office: coerceOffice(office) });
+  if (setup.complete) return null;
+
+  const jump = (id: string) => {
+    const target = document.getElementById(id);
+    if (!target) return;
+    // A collapsed <details> hides its fields; open it so the jump lands on
+    // something visible rather than a closed summary.
+    if (target instanceof HTMLDetailsElement) target.open = true;
+    target.scrollIntoView({ block: "start", behavior: "smooth" });
+  };
+
+  return (
+    <section
+      className="rounded-lg border border-agency/30 bg-selected/50 p-3"
+      aria-label="Finish setting up this office"
+    >
+      <p className="text-[13px] font-medium text-ink">Finish setting up this office</p>
+      <p className="mt-0.5 text-[12.5px] text-ink-secondary">
+        {setup.doneCount} of {setup.total} filled. The rest of the form can wait.
+      </p>
+      <ul className="mt-2 space-y-1.5">
+        {setup.remaining.map((item) => (
+          <li key={item.id}>
+            <button
+              type="button"
+              onClick={() => jump(item.groupId)}
+              className="flex w-full items-center justify-between gap-3 rounded border border-line bg-sheet px-2.5 py-1.5 text-left text-[12.5px] text-ink hover:bg-raised focus-visible:outline-2 focus-visible:outline-agency"
+            >
+              <span>{item.label}</span>
+              <span className="shrink-0 text-[12px] text-agency">{item.groupLabel} →</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      {setup.optional.length > 0 && (
+        <p className="mt-2 text-[12px] text-ink-muted">
+          Optional later: {setup.optional.map((item) => item.label.toLowerCase()).join(", ")}.
+        </p>
+      )}
+    </section>
+  );
 }

@@ -1,0 +1,80 @@
+{
+  "requestedModel": "grok-4.6",
+  "reasoningEffort": "xhigh",
+  "sessionId": "01a0c4c2-bc8e-70e0-a3c0-57265c21304b",
+  "models": [
+    "grok-4.6-build"
+  ],
+  "stopReason": "end_turn",
+  "status": "proposal-inspected-selective-guards-adopted",
+  "lines": 1094,
+  "decisions": [
+    "Object-level CreateFile share pins exclude DELETE (and WRITE on files); ancestor pinning and atomic/storage protocol stay with the caller.",
+    "Privacy is the conservative allowlist (token user, SYSTEM, Administrators), present protected DACL, no deny/unknown/foreign ACEs; inherited children are a separate opt-in via a live private_root handle.",
+    "CREATE_NEW / CreateDirectoryW take an explicit in-process SDDL then verify the actual descriptor before any content write; existing ACLs are never rewritten and failed directory verify does not delete.",
+    "Win32Native talks only the injectable binding protocol; CtypesBindings loads kernel32/advapi32 solely on Windows or when both fake DLLs are supplied, with portable DWORD/BOOL/WORD/BYTE and packed identity structs."
+  ],
+  "implementationApproval": false,
+  "process": {
+    "exitCode": 0,
+    "elapsedSeconds": 866.937
+  },
+  "prompt": {
+    "requestedModel": "grok-4.6",
+    "reasoningEffort": "xhigh",
+    "promptBytes": 12770,
+    "promptSha256": "f258b2a423c794b78a75f4487db9eb2a28e12cc1987b8ebfca66e037b94cf616",
+    "tools": false,
+    "web": false,
+    "subagents": false,
+    "timeoutSeconds": 1800
+  },
+  "proposedSourceSha256": "65dd2f9ac145c49faab8d3f7a2122140e1b1ab3ed68b27a9af49c5017c7745b4",
+  "finalSourceSha256": "b3a9d5bb67b5c2cc2f920b046b1472044204bc872ebef8113cf13d19d8e86213",
+  "finalSource": "server/helpers/hermes-memory-windows-native.py",
+  "adopted": [
+    "Reject newly created non-directory handle if metadata reports nonzero initial size; preserve bytes and close handle before returning fixed conflict.",
+    "Validate all identity metadata numbers fit their actual DWORD or 64-bit Windows field widths."
+  ],
+  "notAdopted": [
+    {
+      "location": "native-grok-proposed.py:649-694",
+      "reason": "CreateFileW flags omit FILE_FLAG_OPEN_REPARSE_POINT; opening a symlink can follow its target before reparse metadata is checked."
+    },
+    {
+      "location": "native-grok-proposed.py:929-943 and983-991",
+      "reason": "First snapshot initializes canonical path from actual handle rather than binding it to caller-requested path."
+    },
+    {
+      "location": "native-grok-proposed.py:906-914",
+      "reason": "Failure cleanup catches close failure but still marks the handle closed, losing truthful ownership/release state."
+    },
+    {
+      "location": "native-grok-proposed.py:304-336",
+      "reason": "Drive-root paths are refused; the root protocol needs to pin drive-root ancestors."
+    },
+    {
+      "location": "native-grok-proposed.py:562-567 and605-646",
+      "reason": "Descriptor/token cleanup ignores native failures; final code checks resource release and keeps fixed errors."
+    }
+  ],
+  "notInDispatchedProposal": [
+    "DELETE-capable source handles",
+    "FileRenameInfo relative leaf and RootDirectory handle binding",
+    "FileDispositionInfo delete-request semantics",
+    "FILE_FLAG_WRITE_THROUGH on mutation handles"
+  ],
+  "scopeLimits": [
+    "Implementation proposal, not source-review approval.",
+    "Root owns independent final4.7 review.",
+    "No native Windows execution or platform admission.",
+    "Handle deletion may remain pending while other compatible handles survive.",
+    "Source/parent sharing, NTFS data/metadata behavior and installed Windows11 evidence remain unverified."
+  ],
+  "proposalLimits": [
+    "NTFS + FILE_PERSISTENT_ACLS + DRIVE_FIXED only; reparse/device attributes, UNC/device/ADS/relative paths, impersonation, and non-disk handles are refused.",
+    "Synchronous IO is capped at 128KiB; write is first-shot into a newly created zero-size file; flush is not durability, rename atomicity, or crash safety.",
+    "This module is not wired into the helper and does not implement rename, replace, hardlink, publication, delete, registry, or ACL repair.",
+    "NativeError never surfaces OS text, paths, SIDs, or native codes; import on non-Windows does not load DLLs."
+  ]
+}

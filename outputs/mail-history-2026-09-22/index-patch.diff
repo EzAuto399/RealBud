@@ -1,0 +1,37 @@
+# Host wiring for automatic Gmail history collection (packet: mail-history 2026-09-22).
+# 1. server/index.ts is owned by another session, so this patch is delivered here instead of applied.
+# 2. onGmailVerified starts collection when POST /api/agency-setup/check-gmail (or the plan review that completes it) projects the selected account as verified; the service dedupes per (accountId, settingsRevision) and the host never awaits the run.
+# 3. observe() reports mailWorkspace.historyStatus() so the setup 'gmail' check says how far collection got, without claiming completeness or changing the check state.
+# 4. resumeHistoryIfPending() at boot continues a checkpoint whose approved windows were never confirmed; it re-verifies authority itself and reads nothing when nothing is pending.
+# 5. Verified with tsc -p tsconfig.server.json over a copy of the tree with this patch applied: clean. Apply with: git apply outputs/mail-history-2026-09-22/index-patch.diff
+--- a/server/index.ts
++++ b/server/index.ts
+@@ -4868,6 +4868,9 @@
+ });
+ const mailBindingRevision = () => createHash('sha256').update(JSON.stringify({ workspace: workspaceIdentity.id, profile: currentWorkerProfile().profile, connection: cfg.composio })).digest('hex');
+ const agencySetup = createAgencySetupService({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, actorId: () => workspaceIdentity.id,
++  // Verifying the agency's own private account is what starts bounded history
++  // acquisition. Start and return: never await the collection here.
++  onGmailVerified: event => { void mailWorkspace.startHistory(event); },
+   checkGmail: async accountId => {
+     const access = await refreshOfficeSources();
+     if (!access.tools.available || !access.services.gmail?.connected || !access.services.gmail.accounts.some(a => a.id === accountId && /^active$/i.test(a.status))) throw Object.assign(new Error('This exact private Gmail source could not be verified.'), { status: 409 });
+@@ -4894,6 +4897,7 @@
+         state: sourceAllowed && gmail?.connected && access.tools.available ? 'verified' as const : 'unverified' as const, checkedAt: access.checkedAt ? Date.parse(access.checkedAt) : null, bindingRevision: mailBindingRevision() },
+       properties: { state: 'available' as const, revision: createHash('sha256').update(JSON.stringify(properties)).digest('hex'), items: properties },
+       billRegister: { state: 'available' as const, count: listExpectedBills().length + sourceBills().counts().occurrences },
++      mailHistory: await mailWorkspace.historyStatus(),
+       workflows: {
+         'bank-references': { state: 'available' as const, bindingRevision: 'bank-reference-source-v2', detail: 'The local bank reference review is available. Bank sign-in, export layout and REI acceptance remain separate checks.' },
+         'bills-calendar': { state: billsReady ? 'available' as const : 'needs-review' as const,
+@@ -5110,6 +5114,10 @@
+ void browserRuntime.resumeConnection().catch(() => {});
+ server.listen(PORT, "127.0.0.1", () => {
+   if (!privateRestoreLocked) loops?.start();
++  // An approved window that was never confirmed is still missing coverage, so a
++  // restart continues the saved checkpoint under its own authority re-check. It
++  // reads nothing when no window is pending.
++  if (!privateRestoreLocked) void mailWorkspace.resumeHistoryIfPending().catch(() => {});
+   console.log(`realbud server on http://127.0.0.1:${PORT}`);
+   oplog("boot", `listening on 127.0.0.1:${PORT}`);
+   setWorkerIssueListener((issue) => broadcast({ kind: "worker.issue", issue }));

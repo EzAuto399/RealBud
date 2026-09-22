@@ -1,0 +1,59 @@
+{
+  "at": "2026-09-21T16:27:52.758144+00:00",
+  "sessionId": "01a0c4c7-126f-7fd0-b27c-f1ef10c7818f",
+  "requestedModel": "grok-4.6",
+  "observedModelUsage": [
+    "grok-4.6-build"
+  ],
+  "reasoningEffort": "xhigh",
+  "reviewPacketBytes": 17630,
+  "cliTurns": 1,
+  "findings": [
+    {
+      "severity": "high",
+      "issue": "Hermes Windows persistence is incompatible with the hold: atomic_replace retries then _rewrite_in_place or _copy_fallback; fsync_directory is a no-op; stage_write can return an id after a failed persist. _write_file is that path.",
+      "disposition": "Accepted as a required Windows implementation boundary. Actual admitted native code confirms it; report lists the exact seams. No upstream changes made."
+    },
+    {
+      "severity": "high",
+      "issue": "ReplaceIfExists=true plus crash/retry is the remaining correctness defect. Locks die with the process. A kill after a successful memory or receipt rename, or an ambiguous rename/flush, retried as replace, overwrites whatever now occupies the live name. Same for a second generated leaf after a successful no-clobber rename.",
+      "disposition": "Accepted recovery invariant, already part of the proposed journal protocol. A native return or process restart is not authority to replay replacement or generate a second proposal; reconcile signed intent/context/digests."
+    },
+    {
+      "severity": "high",
+      "issue": "Design C understates post-rename sharing. The source handle keeps DELETE and GENERIC_WRITE (FlushFileBuffers requires GENERIC_WRITE). A second open is admitted only if its share mask allows every existing granted access, so FILE_SHARE_DELETE alone is insufficient; FILE_SHARE_WRITE is also required.",
+      "disposition": "Accepted clarification. Report already specifies READ|WRITE|DELETE sharing for a verification reopen while the original source retains write/delete access; parent was notified before Grok completed. Retain source handle throughout."
+    },
+    {
+      "severity": "medium",
+      "issue": "ReplaceIfExists=true is not destination identity CAS (D1). An old target handle that denies DELETE blocks our replace (typically winerror 5). Sharing DELETE allows uncoordinated path substitution. Native .lock coordinates only participants on that lockfile identity (D11); msvcrt LK_LOCK is offset-based and retries up to 10s. Packet does not prove Windows O_NOFOLLOW/OPEN_REPARSE_POINT on the reused lock open.",
+      "disposition": "Accepted documented scope limit. Cooperative native lock required; no target identity CAS claim. Do not introduce dual-rename/missing-target state without protocol changes and tests."
+    },
+    {
+      "severity": "medium",
+      "issue": "Parent pin and ACL claims are accurate only as stated in A/B, not as a child-namespace lock. Omitting FILE_SHARE_DELETE on directory handles pins those directory objects, not child names or FILE_DELETE_CHILD. PROTECTED_DACL blocks inheritance into the parent, not emission of its OI/CI ACEs. CreateFile on an existing name ignores the creation SD. NULL DACL grants everyone. Same-SID peers can still name children.",
+      "disposition": "Accepted private namespace limit. Per-child HANDLE ACL checks required; protected parent inheritance and directory pins alone do not make all existing children private or freeze child names."
+    },
+    {
+      "severity": "medium",
+      "issue": "winerror 5 is ambiguous: Hermes measured a held CPython target reader returns 5, and a real ACL denial is also 5. Classifying 5 as busy-only or ACL-only is wrong.",
+      "disposition": "Accepted. Error5 is not definitive evidence of either contention or ACL denial. Bounded retry, revalidation, preserved journal and no copy/truncate."
+    },
+    {
+      "severity": "low",
+      "issue": "MoveFileExW and CreateHardLinkW look like durability or CAS shortcuts and are not. MOVEFILE_WRITE_THROUGH\u2019s explicit flush text is copy/delete; REPLACE_EXISTING is path-based; COPY_ALLOWED can copy and leave source. Hardlink then unlink can leave nlink=2, which current admission rejects.",
+      "disposition": "Accepted design comparison. Prefer source-HANDLE rename. Do not reinterpret this as a claim that same-volume MoveFileEx WRITE_THROUGH is definitely ignored."
+    }
+  ],
+  "reviewQualifications": [
+    "Grok is a bounded source/document review, not independent Windows execution.",
+    "The final suggested test saying power-pull is not a release gate is not accepted as a product release decision. Keep the explicit Windows feature hold. Process-crash evidence and power-loss evidence are separate; any advertised power-loss durability needs the appropriate supported-system proof.",
+    "Restart cannot reuse a closed source HANDLE; persisted file IDs alone are not permanent authority after deletion. Native recovery must use signed context and content digests plus newly validated live identity. No requirement to trust a historical ID alone is adopted.",
+    "Reading/HMAC from the retained source verifies the source object, but does not alone establish the current destination name. Where destination-name confirmation is required, use a compatible read reopen and compare both live handles, while retaining original source.",
+    "WRITE_THROUGH plus checked pre/post FlushFileBuffers is the recommended request to NTFS, not a documented arbitrary-filesystem multi-file atomic commit.",
+    "Root selected retained-source-HANDLE readback and keeps restrictive source sharing. This addresses the reopen conflict without broadening source access. Name reconciliation remains required for unknown rename outcomes."
+  ],
+  "productionFilesEdited": false,
+  "platformHoldRemoved": false,
+  "WindowsExecutionPerformed": false
+}

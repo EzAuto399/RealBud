@@ -1,0 +1,10 @@
+{
+  "at": "2026-09-21T08:34:30.190Z",
+  "passed": true,
+  "layer": "Actual PendingApproval server-rendered fixture with production CSS, fictional store only; not connected ACP or actual approval dispatch proof",
+  "checks": [
+    "Both exact native single-add descriptions, missing review, replace, remove and batch states render desktop and390px without horizontal overflow",
+    "Missing or unsupported native changes disable Allow even with complete:true; no reusable controls",
+    "Full content is keyboard-scrollable and retains its final line"
+  ]
+}

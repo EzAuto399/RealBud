@@ -1,0 +1,1 @@
+{"status":303,"location":"/sign-in?reason=identity-unavailable","stats":{"rpcCount":1,"violations":[],"databaseErrors":[],"authRejections":[{"method":"POST","path":"/rest/v1/rpc/realbud_portal_person_login"}],"migrationHashes":{"portalPeople":"17d9df75b244cb13e356ccfff3c27591aaf7a38aec0f0c4ce003d671cb79904d"}},"bindings":"0"}

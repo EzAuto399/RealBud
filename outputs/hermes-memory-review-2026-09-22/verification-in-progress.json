@@ -1,0 +1,17 @@
+{
+  "layer": "Source regression and local unsigned macOS package smoke; packaged memory browser journey and final recovery review pending",
+  "passed": 4247,
+  "failed": 0,
+  "skipped": 143,
+  "testFiles": 335,
+  "sourceInputCount": 1047,
+  "sourceDigest": "d417c1df45caff57af7a927d88d66bcea895b7d3a9a1ac508f70ca5f07850584",
+  "changedInputsAtSuiteCompletion": [],
+  "sourceBrowserReceipt": "browser-managed-final/receipt.json",
+  "nativeTestsPassed": 23,
+  "nativeFaultTestsPassed": 13,
+  "packageManifest": "package-manifest.json",
+  "macSmokePassed": true,
+  "installedAppChanged": false,
+  "windowsMemoryInbox": "Held pending native per-file ACL/durable-rename admission"
+}

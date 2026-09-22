@@ -2,11 +2,15 @@
 // a code-owned evaluator and writes proposals through Desk. A loop never
 // launches Cua, waits for approval, or performs a background handoff.
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { writeFileAtomic } from "./atomic.ts";
-import { readLoopsFile, validTimezone, type LoopsFile } from "./routine-persistence.ts";
+import { parseLoopsFile, validTimezone, type LoopsFile } from "./routine-persistence.ts";
+import { ExecutionHistory, executionDigest } from './execution-history.ts';
+import { loopHistoryBinding, parseHistoryLoopRun } from './execution-history-backup.ts';
+import type { WorkflowDatabase } from './workflow-database.ts';
+import type { ExecutionHistoryQuery } from '../shared/execution-history.ts';
 import { MANUAL_JOB_REQUEST_ID } from "../shared/manual-job-request.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { DATA_DIR } from "./config.ts";
@@ -15,6 +19,9 @@ import { evaluatorForLoop } from "./workflow-catalog.ts";
 import { recipeClockRunnable, type Loop, type LoopId, type LoopRun, type LoopRunStatus, type LoopSchedule, type Recipe } from "../shared/contracts.ts";
 
 export type { Loop, LoopId, LoopRun, LoopRunStatus, LoopSchedule };
+
+export const loopRunBinding = loopHistoryBinding;
+export const parseHistoricalLoopRun = parseHistoryLoopRun;
 
 export interface LoopExecuteResult {
   ok: boolean;
@@ -27,6 +34,7 @@ export interface LoopExecuteResult {
 
 export interface LoopManagerOptions {
   file?: string;
+  database?: WorkflowDatabase;
   now?: () => number;
   emit?: (payload: unknown) => void;
   timezone?: string;
@@ -136,13 +144,13 @@ export const LOOP_CATALOG: ReadonlyArray<Omit<Loop, "enabled" | "nextRunAt" | "t
   },
   {
     id: "inbound-triage",
-    name: "Inbound triage",
+    name: "Morning priorities",
     description:
-      "Scheduled inbox sorting is not available yet. Use connected Gmail or Microsoft 365 in Ask.",
-    available: false,
-    schedule: { type: "daily", time: "09:00", weekdays: WEEKDAYS },
+      "Collects your reviewed Gmail scope, prepares priorities with Bud and keeps your saved task decisions. Starts only after agency setup and plan review.",
+    available: true,
+    schedule: { type: "daily", time: "08:00", weekdays: WEEKDAYS },
     evaluatorId: "inbound-triage",
-    evaluatorVersion: 0,
+    evaluatorVersion: 1,
   },
 ];
 
@@ -204,7 +212,8 @@ export function nextOccurrence(schedule: LoopSchedule, after: number, timeZone?:
     const wall = wallInZone(after + offset * 86_400_000, timeZone);
     const candidate = utcFromWall(timeZone, wall.year, wall.month, wall.day, hour, minute);
     const candWall = wallInZone(candidate, timeZone);
-    if (candidate > after && weekdays.has(candWall.dow)) return candidate;
+    // A nonexistent DST minute is skipped, not silently moved an hour later.
+    if (candidate > after && candWall.hour === hour && candWall.minute === minute && weekdays.has(candWall.dow)) return candidate;
   }
   return null;
 }
@@ -218,7 +227,7 @@ export class LoopManager {
   private runs: LoopRun[] = [];
   private handledThrough = new Map<LoopId, number>();
   /** PM-retuned clocks; null means the catalog schedule still stands. */
-  private overrides = new Map<LoopId, { time: string; weekdays: number[] } | null>();
+  private overrides = new Map<LoopId, { time: string; weekdays: number[]; timezone?: string } | null>();
   private revisions = new Map<LoopId, number>();
   private savedState: LoopsFile["state"] = {};
   /** Recipe catalog clocks (before a PM retune). */
@@ -233,6 +242,7 @@ export class LoopManager {
   private readonly hostTz: string;
   private recoveryDetail: string | null = null;
   private executing = new Set<LoopId>();
+  private ledger?: ExecutionHistory<LoopRun, Omit<LoopsFile, "version" | "runs">>;
 
   constructor(options: LoopManagerOptions) {
     this.options = options;
@@ -241,10 +251,26 @@ export class LoopManager {
     const requestedHost = options.hostTimezone ?? hostTimezone();
     this.hostTz = validTimezone(requestedHost) ? requestedHost : "UTC";
     let saved: LoopsFile = { version: 3, timezone: this.hostTz, state: {}, runs: [] };
+    let savedHash = executionDigest('absent'), migratedProjection = false;
     try {
-      saved = readLoopsFile(this.file, this.hostTz);
+      if (statSync(this.file).size > 8 * 1024 * 1024) throw new Error('Schedule history exceeds the supported file size');
+      const contents = readFileSync(this.file, 'utf8'), raw: unknown = JSON.parse(contents);
+      savedHash = executionDigest(contents);
+      if (raw && typeof raw === 'object' && 'executionHistory' in raw) {
+        if (raw.executionHistory !== 1) throw new Error('Unknown execution projection');
+        migratedProjection = true;
+      }
+      saved = parseLoopsFile(raw, this.hostTz);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") this.recoveryDetail = HISTORY_RECOVERY;
+    }
+    if (!this.recoveryDetail) {
+      try {
+        this.ledger = new ExecutionHistory({ type: 'loop', file: this.file, database: options.database, expectedFileHash: savedHash, requireExisting: migratedProjection,
+          parse: parseHistoricalLoopRun, binding: loopRunBinding, requestKey: run => run.requestId, subject: run => run.loopId });
+        const retained = this.ledger.load(saved.runs, { timezone: saved.timezone, state: saved.state });
+        saved = parseLoopsFile({ version: 3, ...retained.context, runs: retained.runs }, this.hostTz);
+      } catch { this.recoveryDetail = HISTORY_RECOVERY; }
     }
     const timezone = options.timezone ?? saved.timezone;
     if (!validTimezone(timezone) || !validTimezone(requestedHost)) this.recoveryDetail = HISTORY_RECOVERY;
@@ -255,7 +281,8 @@ export class LoopManager {
     const paused = this.timezone !== this.hostTz;
     this.loops = LOOP_CATALOG.map((loop) => {
       const spec = evaluatorForLoop(loop.id);
-      const enabled = loop.available && savedState[loop.id]?.enabled !== false;
+      // First-run inbox access must be deliberately enabled after scope review.
+      const enabled = loop.available && (loop.id === 'inbound-triage' ? savedState[loop.id]?.enabled === true : savedState[loop.id]?.enabled !== false);
       const handled = Number.isFinite(savedState[loop.id]?.handledThrough)
         ? savedState[loop.id]!.handledThrough
         : this.now() - 1;
@@ -265,7 +292,7 @@ export class LoopManager {
       const savedSchedule = savedState[loop.id]?.schedule;
       const override =
         savedSchedule && parseClockTime(savedSchedule.time) && parseWeekdays(savedSchedule.weekdays)
-          ? { time: savedSchedule.time, weekdays: parseWeekdays(savedSchedule.weekdays)! }
+          ? { time: savedSchedule.time, weekdays: parseWeekdays(savedSchedule.weekdays)!, ...(savedSchedule.timezone ? { timezone: savedSchedule.timezone } : {}) }
           : null;
       this.overrides.set(loop.id, override);
       this.revisions.set(loop.id, Number.isInteger(savedState[loop.id]?.revision) ? savedState[loop.id]!.revision! : 1);
@@ -277,8 +304,8 @@ export class LoopManager {
         schedule,
         revision: this.revisions.get(loop.id)!,
         enabled,
-        timezonePaused: paused,
-        nextRunAt: enabled && !paused ? nextOccurrence(schedule, Math.max(this.now(), this.handledThrough.get(loop.id) ?? 0), this.zoneForClock()) : null,
+        timezonePaused: paused && !schedule.timezone,
+        nextRunAt: enabled && (!paused || !!schedule.timezone) ? nextOccurrence(schedule, Math.max(this.now(), this.handledThrough.get(loop.id) ?? 0), this.zoneForClock(schedule)) : null,
       };
     });
     this.refreshRecipeLoops();
@@ -318,6 +345,25 @@ export class LoopManager {
       .map((run) => ({ ...run }));
   }
 
+  getRun(id: string): LoopRun | undefined {
+    this.assertWritable();
+    return this.readHistory(() => this.ledger?.get(id));
+  }
+
+  /** Durable lookup also covers receipts evicted from the recent-run projection. */
+  getRunByRequest(requestId: string): LoopRun | undefined {
+    this.assertWritable();
+    if (!MANUAL_JOB_REQUEST_ID.test(requestId)) throw Object.assign(new Error('Invalid run request ID.'), { status: 400 });
+    return this.readHistory(() => this.ledger?.byRequest(requestId.toLowerCase()));
+  }
+
+  history(query: Omit<ExecutionHistoryQuery, 'subjectId'> & { loopId?: string } = {}) {
+    this.assertWritable();
+    return this.readHistory(() => this.ledger!.page({ ...query, subjectId: query.loopId }));
+  }
+
+  close() { this.stop(); this.ledger?.close(); }
+
   activeRun(loopId: LoopId): LoopRun | null {
     const run = this.runs.find((r) => r.loopId === loopId && ["queued", "running"].includes(r.status));
     return run ? { ...run } : null;
@@ -328,7 +374,7 @@ export class LoopManager {
    * retune never backfills an already-passed slot. An idempotent PATCH
    * (values identical to current) is acknowledged without touching the
    * bookmark or revision, so it can never swallow a pending slot. */
-  patchClock(id: LoopId, patch: { enabled?: boolean; time?: string; weekdays?: number[] }): Loop {
+  patchClock(id: LoopId, patch: { enabled?: boolean; time?: string; weekdays?: number[]; timezone?: string }): Loop {
     this.assertWritable();
     this.refreshRecipeLoops();
     this.assertWritable();
@@ -345,7 +391,7 @@ export class LoopManager {
     if (wantsEnable && !loop.available) {
       throw Object.assign(new Error("that loop is declared but not built yet"), { status: 409 });
     }
-    if (patch.enabled === undefined && patch.time === undefined && patch.weekdays === undefined) {
+    if (patch.enabled === undefined && patch.time === undefined && patch.weekdays === undefined && patch.timezone === undefined) {
       throw Object.assign(new Error("nothing to change — send enabled, time, or weekdays"), { status: 400 });
     }
     if (patch.time !== undefined && !parseClockTime(patch.time)) {
@@ -354,16 +400,18 @@ export class LoopManager {
     if (patch.weekdays !== undefined && !parseWeekdays(patch.weekdays)) {
       throw Object.assign(new Error("weekdays must be a non-empty list of numbers 0–6"), { status: 400 });
     }
+    if (patch.timezone !== undefined && !validTimezone(patch.timezone)) throw Object.assign(new Error('Choose a valid office timezone.'), { status: 400 });
     const currentOverride = this.overrides.get(id);
     const nextTime = patch.time ?? currentOverride?.time ?? loop.schedule.time;
+    const nextZone = patch.timezone ?? currentOverride?.timezone ?? loop.schedule.timezone;
     // compare by content: catalog arrays are shared references
     const nextDays = (patch.weekdays ?? currentOverride?.weekdays ?? loop.schedule.weekdays).slice().sort((a, b) => a - b);
     const clockChanged =
-      (patch.time !== undefined || patch.weekdays !== undefined) &&
-      (nextTime !== loop.schedule.time || nextDays.join(",") !== loop.schedule.weekdays.join(","));
+      (patch.time !== undefined || patch.weekdays !== undefined || patch.timezone !== undefined) &&
+      (nextTime !== loop.schedule.time || nextDays.join(",") !== loop.schedule.weekdays.join(",") || nextZone !== loop.schedule.timezone);
     if (!clockChanged && !wantsEnable) return cloneLoop(loop);
     this.commit(() => {
-      if (clockChanged) this.overrides.set(id, { time: nextTime, weekdays: nextDays });
+      if (clockChanged) this.overrides.set(id, { time: nextTime, weekdays: nextDays, ...(nextZone ? { timezone: nextZone } : {}) });
       // A deliberate clock change starts strictly forward, including resume.
       this.handledThrough.set(id, Math.max(this.handledThrough.get(id) ?? 0, this.now()));
       if (wantsEnable) {
@@ -372,9 +420,10 @@ export class LoopManager {
       }
       const catalogSchedule = LOOP_CATALOG.find((item) => item.id === id)?.schedule ?? this.recipeBase.get(id);
       loop.schedule = { type: "daily", ...(this.overrides.get(id) ?? catalogSchedule ?? loop.schedule) };
+      loop.timezonePaused = !loop.schedule.timezone && this.timezone !== this.hostTz;
       loop.revision = (this.revisions.get(id) ?? 1) + 1;
       this.revisions.set(id, loop.revision);
-      loop.nextRunAt = loop.enabled && !loop.timezonePaused ? nextOccurrence(loop.schedule, this.now(), this.zoneForClock()) : null;
+      loop.nextRunAt = loop.enabled && !loop.timezonePaused ? nextOccurrence(loop.schedule, this.now(), this.zoneForClock(loop.schedule)) : null;
     });
     if (wantsEnable) {
       const recipeId = recipeIdFromLoopId(id);
@@ -412,7 +461,7 @@ export class LoopManager {
         !Number.isSafeInteger(request.expectedRevision) || request.expectedRevision < 1) {
         throw Object.assign(new Error("A valid request ID and saved schedule revision are required."), { status: 400 });
       }
-      const existing = this.runs.find((run) => run.requestId === request.requestId.toLowerCase());
+      const existing = this.readHistory(() => this.ledger!.byRequest(request.requestId.toLowerCase()));
       if (existing) {
         if (existing.loopId !== id || existing.loopRevision !== request.expectedRevision) {
           throw Object.assign(new Error("That request belongs to another schedule or version. Check its original result."), { status: 409 });
@@ -426,7 +475,7 @@ export class LoopManager {
     if (request && loop && request.expectedRevision !== loop.revision) {
       throw Object.assign(new Error("This schedule changed. Reload it before starting a new run."), { status: 409 });
     }
-    if (!loop || !loop.available || (!loop.enabled && !loop.waitingForPlan)) return null;
+    if (!loop || !loop.available || (!loop.enabled && !loop.waitingForPlan && id !== 'inbound-triage')) return null;
     if (this.activeRun(id) || this.executing.has(id)) throw Object.assign(new Error("this loop is already running"), { status: 409 });
     let run!: LoopRun;
     this.commit(() => {
@@ -440,14 +489,22 @@ export class LoopManager {
 
   markSeen(id: string): LoopRun | null {
     this.assertWritable();
-    const run = this.runs.find((candidate) => candidate.id === id);
+    const run = this.getRun(id);
     if (!run) return null;
     if (!run.seenAt) {
-      this.commit(() => { run.seenAt = this.now(); });
+      this.commit(() => {
+        run.seenAt = this.now();
+        const index = this.runs.findIndex(item => item.id === id);
+        if (index >= 0) this.runs[index] = run;
+        else this.runs.push(run);
+        this.trimRuns();
+      });
       this.emitRun(run);
     }
     return { ...run };
   }
+
+  get busy() { return this.ticking || this.executing.size > 0; }
 
   start() {
     if (this.timer || this.recovery.active) return;
@@ -480,7 +537,7 @@ export class LoopManager {
         const recent = now - CATCH_UP_MS;
         // Compress ancient downtime into one explicit missed receipt per loop.
         // Only the recent catch-up window is enumerated, irrespective of file age.
-        const first = nextOccurrence(loop.schedule, handled, this.zoneForClock());
+        const first = nextOccurrence(loop.schedule, handled, this.zoneForClock(loop.schedule));
         if (handled < recent && first != null && first < recent) {
           let missed!: LoopRun;
           this.commit(() => {
@@ -493,8 +550,8 @@ export class LoopManager {
           this.emitRun(missed);
           handled = this.handledThrough.get(loop.id)!;
         }
-        for (let at = nextOccurrence(loop.schedule, handled, this.zoneForClock()); at != null && at <= now;
-          at = nextOccurrence(loop.schedule, Math.max(at, this.handledThrough.get(loop.id) ?? at), this.zoneForClock())) {
+        for (let at = nextOccurrence(loop.schedule, handled, this.zoneForClock(loop.schedule)); at != null && at <= now;
+          at = nextOccurrence(loop.schedule, Math.max(at, this.handledThrough.get(loop.id) ?? at), this.zoneForClock(loop.schedule))) {
           let run!: LoopRun;
           this.commit(() => {
             const occupied = Boolean(this.activeRun(loop.id)) || this.executing.has(loop.id);
@@ -513,13 +570,13 @@ export class LoopManager {
           this.assertWritable();
         }
         loop.nextRunAt = loop.enabled && !loop.timezonePaused
-          ? nextOccurrence(loop.schedule, Math.max(now, this.handledThrough.get(loop.id) ?? handled), this.zoneForClock()) : null;
+          ? nextOccurrence(loop.schedule, Math.max(now, this.handledThrough.get(loop.id) ?? handled), this.zoneForClock(loop.schedule)) : null;
         this.emitLoop(loop);
       }
       for (const run of [...this.runs].reverse()) {
         if (run.status !== "queued") continue;
         const loop = this.loops.find((candidate) => candidate.id === run.loopId);
-        if (!loop || !loop.available || (!loop.enabled && !loop.waitingForPlan) || (run.loopRevision != null && run.loopRevision !== loop.revision)) {
+        if (!loop || !loop.available || (!loop.enabled && !loop.waitingForPlan && !(loop.id === 'inbound-triage' && run.manual)) || (run.loopRevision != null && run.loopRevision !== loop.revision)) {
           this.commit(() => {
             run.status = "interrupted";
             run.finishedAt = this.now();
@@ -606,12 +663,16 @@ export class LoopManager {
       createdAt: this.now(),
     };
     this.runs.push(run);
+    this.trimRuns();
+    return run;
+  }
+
+  private trimRuns(): void {
     while (this.runs.length > MAX_RUNS) {
       const removable = this.runs.findIndex((item) => item.status !== "queued" && item.status !== "running");
       if (removable < 0) break;
       this.runs.splice(removable, 1);
     }
-    return run;
   }
 
   private emitLoop(loop: Loop) {
@@ -627,8 +688,17 @@ export class LoopManager {
    * from the running clock. `this.timezone` always resolves (option, saved file,
    * then host), and a zone that disagrees with the host pauses the clock rather
    * than firing in the wrong hour. */
-  private zoneForClock(): string {
-    return this.timezone;
+  private zoneForClock(schedule?: LoopSchedule): string {
+    return schedule?.timezone ?? this.timezone;
+  }
+
+  private readHistory<T>(read: () => T): T {
+    this.assertWritable();
+    try { return read(); }
+    catch (error) {
+      if ((error as { status?: number }).status === 503) this.hold(HISTORY_RECOVERY);
+      throw error;
+    }
   }
 
   private assertWritable(): void {
@@ -673,10 +743,11 @@ export class LoopManager {
       schedule: this.overrides.get(loop.id) ?? undefined,
       revision: this.revisions.get(loop.id) ?? 1,
     };
-    const contents = JSON.stringify({ version: 3, timezone: this.timezone, state, runs: this.runs } satisfies LoopsFile, null, 2);
+    const saved: LoopsFile & { executionHistory: 1 } = { version: 3, executionHistory: 1, timezone: this.timezone, state, runs: this.runs };
+    const contents = JSON.stringify(saved, null, 2);
     try {
       mkdirSync(dirname(this.file), { recursive: true });
-      writeFileAtomic(this.file, contents, 0o600);
+      this.ledger!.save(this.runs, { timezone: this.timezone, state }, contents, () => writeFileAtomic(this.file, contents, 0o600));
       this.savedState = state;
     } catch {
       let written = false;
@@ -727,7 +798,7 @@ export class LoopManager {
         const savedSchedule = saved?.schedule;
         const override =
           savedSchedule && parseClockTime(savedSchedule.time) && parseWeekdays(savedSchedule.weekdays)
-            ? { time: savedSchedule.time, weekdays: parseWeekdays(savedSchedule.weekdays)! }
+            ? { time: savedSchedule.time, weekdays: parseWeekdays(savedSchedule.weekdays)!, ...(savedSchedule.timezone ? { timezone: savedSchedule.timezone } : {}) }
             : null;
         this.overrides.set(id, override);
       }
@@ -750,9 +821,9 @@ export class LoopManager {
         existing.schedule = schedule;
         existing.revision = this.revisions.get(id)!;
         existing.enabled = enabled;
-        existing.timezonePaused = paused;
+        existing.timezonePaused = paused && !schedule.timezone;
         existing.waitingForPlan = waitingForPlan;
-        existing.nextRunAt = enabled && !paused ? nextOccurrence(schedule, Math.max(this.now(), this.handledThrough.get(id) ?? 0), this.zoneForClock()) : null;
+        existing.nextRunAt = enabled && (!paused || !!schedule.timezone) ? nextOccurrence(schedule, Math.max(this.now(), this.handledThrough.get(id) ?? 0), this.zoneForClock(schedule)) : null;
         continue;
       }
       this.loops.push({
@@ -765,9 +836,9 @@ export class LoopManager {
         revision: this.revisions.get(id)!,
         evaluatorId: "recipe",
         evaluatorVersion: 1,
-        timezonePaused: paused,
+        timezonePaused: paused && !schedule.timezone,
         waitingForPlan,
-        nextRunAt: enabled && !paused ? nextOccurrence(schedule, Math.max(this.now(), this.handledThrough.get(id) ?? 0), this.zoneForClock()) : null,
+        nextRunAt: enabled && (!paused || !!schedule.timezone) ? nextOccurrence(schedule, Math.max(this.now(), this.handledThrough.get(id) ?? 0), this.zoneForClock(schedule)) : null,
       });
     }
   }

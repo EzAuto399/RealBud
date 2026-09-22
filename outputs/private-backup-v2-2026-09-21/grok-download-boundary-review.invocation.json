@@ -1,0 +1,7 @@
+{
+  "requestedModel": "grok-4.6",
+  "reasoningEffort": "xhigh",
+  "maxTurns": 1,
+  "tools": [],
+  "promptFile": "grok-download-boundary-review.prompt.md"
+}

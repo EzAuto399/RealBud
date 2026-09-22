@@ -1,0 +1,10 @@
+{
+  "checkedAt": "2026-09-21T21:39:50.384657+00:00",
+  "sha256": {
+    "scripts/check-two-device-acceptance.mjs": "ed48a7e6ae3c6a13bdfebb204569230badad4aede222cf3533a34c2abf07d49f",
+    "scripts/check-two-device-acceptance.test.mjs": "39ae71a71baa3caf6cb9f2b4fdc61adc4a2ef4479847ab61cc26784c0417c144",
+    "docs/acceptance/two-device-v1.json": "85f04a699bde98ddafd6113fc484d0fb6440655b4dff90e6c4ae5ecba5e751d2",
+    "docs/REALBUD-OPERATIONAL-ACCEPTANCE-2026-09-15.json": "c91dd8605e3a63049613c60baec7b0ff55f20aa02726ad200a357e45bde8ea15",
+    "docs/TWO-DEVICE-EVIDENCE-GATE-2026-09-22.md": "d444eec9f28eb356dbd8bc03eea8bc34d32cd5572d90d76258265b12286bc2de"
+  }
+}

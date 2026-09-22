@@ -5,7 +5,7 @@
 // the shadow-instance behavior end to end while it's at it.
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,7 +53,7 @@ const api = async (method: string, path: string, body?: unknown): Promise<{ stat
 };
 
 beforeAll(async () => {
-  home = mkdtempSync(join(tmpdir(), "omb-api-test-"));
+  home = mkdtempSync(join(realpathSync(tmpdir()), "omb-api-test-"));
   staticDir = join(home, "static");
   const workerCli = join(home, "hermes.mjs");
   writeFileSync(workerCli, `#!${process.execPath}\nconsole.log("Hermes Agent v0.21.0 (2026.8.31)");\n`);
@@ -267,6 +267,18 @@ afterAll(async () => {
 });
 
 describe("harness HTTP API", () => {
+  it("keeps remote preparation off and validates its protected HTTP actions", async () => {
+    expect((await fetch(`${BASE}/api/website-requests/remote-work`)).status).toBe(401);
+    expect((await fetch(`${BASE}/api/website-requests/remote-work/enable`, {method:'POST',headers:{'content-type':'application/json'},body:'{}'})).status).toBe(401);
+    const response=await fetch(`${BASE}/api/website-requests/remote-work`,{headers:{'x-realbud-session':session}});
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    const value=await response.json() as {status:{enabled:boolean};records:unknown[]};expect(value.status.enabled).toBe(false);expect(value.records).toEqual([]);
+    for(const before of ['0','-1','1.5','invalid','9007199254740992']) expect((await api('GET',`/api/website-requests/remote-work?before=${before}`)).status).toBe(400);
+    for(const body of [null,[],{token:'client-cannot-set-authority'}]) expect((await api('POST','/api/website-requests/remote-work/enable',body)).status).toBe(400);
+    expect((await api('POST','/api/website-requests/remote-work/cancel',{id:'invalid',expectedRevision:0})).status).toBe(400);
+    expect((await api('POST','/api/website-requests/remote-work/disable',{})).status).toBe(200);
+  });
+
   // /api/session hands out the token guarding the whole local API. It is reached
   // without the session gate, and hostAllowed/originAllowed treat a missing Origin
   // as allowed — so a browser fetch started by another site could collect the token.
@@ -393,7 +405,7 @@ describe("harness HTTP API", () => {
     expect(String(created.body.error)).toMatch(/one Bud thread/i);
   });
 
-  it("lists the named loops and refuses to run a planned one", async () => {
+  it("lists the built morning workflow disabled and holds it until agency review", async () => {
     const { status, body } = await api("GET", "/api/loops");
     expect(status).toBe(200);
     expect(body.loops.filter((loop: { id: string }) => !String(loop.id).startsWith("recipe-")).map((loop: { id: string }) => loop.id)).toEqual([
@@ -405,12 +417,16 @@ describe("harness HTTP API", () => {
     expect(morning).toMatchObject({ available: true, enabled: true });
     const ownerLetter = body.loops.find((loop: { id: string }) => loop.id === "owner-letter");
     expect(ownerLetter).toMatchObject({ available: true, enabled: true });
-    const planned = body.loops.find((loop: { id: string }) => loop.id === "inbound-triage");
-    expect(planned).toMatchObject({ available: false, enabled: false });
-    expect(planned).not.toHaveProperty("prompt");
+    const inbound = body.loops.find((loop: { id: string }) => loop.id === "inbound-triage");
+    expect(inbound).toMatchObject({ available: true, enabled: false });
+    expect(inbound).not.toHaveProperty("prompt");
 
     const run = await api("POST", "/api/loops/inbound-triage/run", {});
-    expect(run.status).toBe(409);
+    expect(run.status).toBe(400);
+    expect(String(run.body.error)).toMatch(/request identifier/);
+    expect((await api('POST','/api/mail-workspace/review',{})).status).toBe(400);
+    expect((await api('POST','/api/mail-workspace/scan',{})).status).toBe(409);
+    expect((await api('PATCH','/api/mail-workspace/schedule',{enabled:true})).status).toBe(409);
 
     // owner-letter v0 runs: it drafts Copy-only cards on Desk
     const letter = await api("POST", "/api/loops/owner-letter/run", {});
@@ -436,13 +452,14 @@ describe("harness HTTP API", () => {
     expect(retune.status).toBe(200);
     expect(retune.body.loop).toMatchObject({ schedule: { time: "08:15" }, revision: expect.any(Number) });
 
-    const planned = await api("PATCH", "/api/loops/inbound-triage", { time: "09:15" });
-    expect(planned.status).toBe(200);
-    const enablePlanned = await api("PATCH", "/api/loops/inbound-triage", { enabled: true });
-    // 409, not 400: a declared-but-not-built loop is a state conflict, and the run
-    // route answers 409 for the same loop. Retuning its clock above still succeeds.
-    expect(enablePlanned.status).toBe(409);
-    expect(String(enablePlanned.body.error)).toMatch(/not built yet/);
+    const inbound = await api("PATCH", "/api/loops/inbound-triage", { time: "09:15" });
+    expect(inbound.status).toBe(409);
+    const enableInbound = await api("PATCH", "/api/loops/inbound-triage", { enabled: true });
+    // This source-bound schedule can only adopt reviewed agency settings.
+    expect(enableInbound.status).toBe(409);
+    expect(String(enableInbound.body.error)).toMatch(/reviewed agency schedule/);
+    const state = (await api('GET','/api/mail-workspace')).body;
+    expect(state.schedule).toMatchObject({enabled:false,localTime:'08:00'});
 
     const empty = await api("PATCH", "/api/loops/morning-arrears", {});
     expect(empty.status).toBe(400);
@@ -453,7 +470,6 @@ describe("harness HTTP API", () => {
 
     // put the clock back for the rest of the suite
     await api("PATCH", "/api/loops/morning-arrears", { time: "07:30" });
-    await api("PATCH", "/api/loops/inbound-triage", { time: "09:00" });
   });
 
   it("refuses to run setup for an engine with no installer", async () => {

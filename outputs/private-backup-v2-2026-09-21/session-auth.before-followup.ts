@@ -1,0 +1,127 @@
+// Per-boot API session + loopback Host/Origin checks.
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import type { IncomingMessage } from "node:http";
+
+export const SESSION_TOKEN = randomBytes(24).toString("hex");
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
+
+export function hostAllowed(hostHeader: string | undefined, listenPort: number): boolean {
+  if (!hostHeader) return false;
+  const raw = hostHeader.split(",")[0]?.trim() ?? "";
+  const [hostname, port] = raw.startsWith("[")
+    ? [raw.slice(0, raw.indexOf("]") + 1), raw.slice(raw.lastIndexOf(":") + 1)]
+    : raw.includes(":")
+      ? [raw.slice(0, raw.lastIndexOf(":")), raw.slice(raw.lastIndexOf(":") + 1)]
+      : [raw, ""];
+  if (!LOOPBACK_HOSTS.has(hostname.toLowerCase())) return false;
+  if (!port) return true;
+  return Number(port) === listenPort;
+}
+
+export function originAllowed(origin: string | undefined, listenPort: number): boolean {
+  if (!origin || origin === "null") return true;
+  try {
+    const url = new URL(origin);
+    if (!LOOPBACK_HOSTS.has(url.hostname.toLowerCase())) return false;
+    if (!url.port) return url.protocol === "http:" || url.protocol === "https:";
+    const port = Number(url.port);
+    const configuredUiPort = Number(process.env.OMB_UI_PORT);
+    const uiPortAllowed = Number.isInteger(configuredUiPort) && configuredUiPort > 0 && configuredUiPort <= 65_535
+      ? port === configuredUiPort
+      : false;
+    return port === listenPort || port === 5199 || port === 5173 || uiPortAllowed;
+  } catch {
+    return false;
+  }
+}
+
+/** Native downloads cannot attach the renderer's custom header. Grant a
+ * short-lived HttpOnly cookie on the authenticated ticket response, accepted
+ * solely by the exact backup-download GET route. It grants no other API access. */
+export function privateBackupDownloadSessionCookie(): string {
+  return `realbud-backup-download=${SESSION_TOKEN}; HttpOnly; SameSite=Strict; Path=/api/private-backup/v2/downloads/; Max-Age=300`;
+}
+function tokenFromRequest(req: IncomingMessage): string | null {
+  const auth = req.headers.authorization;
+  if (auth?.startsWith("Bearer ")) return auth.slice(7).trim();
+  const header = req.headers["x-realbud-session"];
+  if (typeof header === "string" && header.trim()) return header.trim();
+  try {
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    if ((req.method ?? 'GET') === 'GET' && /^\/api\/private-backup\/v2\/downloads\/[A-Za-z0-9_-]{32,128}$/.test(url.pathname)) {
+      const values = (req.headers.cookie ?? '').split(';').map(part => part.trim()).filter(part => part.startsWith('realbud-backup-download='));
+      if (values.length === 1) return values[0]!.slice('realbud-backup-download='.length);
+    }
+    const q = url.searchParams.get("session");
+    if (q) return q;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+export function tokensEqual(got: string, want: string): boolean {
+  const a = Buffer.from(got);
+  const b = Buffer.from(want);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+export function sessionOk(req: IncomingMessage, listenPort: number): { ok: true } | { ok: false; status: number; error: string } {
+  if (!hostAllowed(typeof req.headers.host === "string" ? req.headers.host : undefined, listenPort)) {
+    return { ok: false, status: 403, error: "refused host" };
+  }
+  const origin = typeof req.headers.origin === "string" ? req.headers.origin : undefined;
+  if (!originAllowed(origin, listenPort)) {
+    return { ok: false, status: 403, error: "refused origin" };
+  }
+  const token = tokenFromRequest(req);
+  if (!token || !tokensEqual(token, SESSION_TOKEN)) {
+    return { ok: false, status: 401, error: "session required" };
+  }
+  return { ok: true };
+}
+
+export function needsSession(path: string, method?: string): boolean {
+  if (path === "/api/health" || path === "/api/session") return false;
+  if (!path.startsWith("/api/")) return false;
+  if (path.startsWith("/api/internal/")) return false;
+  // Ask can create a provider sign-in or execute an approved app operation.
+  // Protect every mutation of its bot/thread state, including queued work,
+  // edits, steering and approval responses. Keep legacy read-only views intact.
+  if (method && !["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase()) &&
+    /^\/api\/(?:bots|threads|instances)(?:\/|$)/.test(path)) return true;
+  return (
+    path === "/api/config" ||
+    path.startsWith("/api/hermes") ||
+    path.startsWith("/api/care") ||
+    path.startsWith("/api/service-admin") ||
+    path.startsWith("/api/service/") ||
+    path.startsWith("/api/tts") ||
+    path.startsWith("/api/company") ||
+    path.startsWith("/api/connected-apps") ||
+    path === "/api/browser" || path.startsWith("/api/browser/") ||
+    path.startsWith("/api/desk") ||
+    path.startsWith("/api/channels") ||
+    path.startsWith("/api/rules") ||
+    path.startsWith("/api/law-watch") ||
+    path.startsWith("/api/workflow-packs") ||
+    path.startsWith("/api/customer-packs") ||
+    path.startsWith("/api/agency-setup") ||
+    path.startsWith("/api/private-backup") ||
+    path.startsWith("/api/mail-workspace") ||
+    path.startsWith("/api/workspace-tabs") ||
+    path.startsWith("/api/expected-bills") ||
+    /^\/api\/bill-(?:register|evidence|occurrences|series|scan|proposals|review-drafts)(?:\/|$)/.test(path) ||
+    path.startsWith("/api/recipes") ||
+    path.startsWith("/api/job-runs") ||
+    path.startsWith("/api/computer-history") ||
+    path.startsWith("/api/worker-issues") ||
+    path.startsWith("/api/loops") ||
+    path.startsWith("/api/loop-runs") ||
+    path.startsWith("/api/artifacts") ||
+    path.startsWith("/api/portal") ||
+    path.startsWith("/api/imports") ||
+    path.startsWith("/api/events")
+  );
+}

@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "checkedAt": "2026-09-21T15:50:32.175982+00:00",
+  "layer": "local macOS subprocess crash/replay with admitted native Hermes store and fictional temporary profiles",
+  "result": "passed",
+  "tests": 15,
+  "elapsedSeconds": 2.695,
+  "platform": "Darwin",
+  "pythonVersion": "3.11.14",
+  "nativeRuntimeId": "345cd2b057a452236de401d3534b8502a7465e8d-cfb3f08a9ee7",
+  "command": "REALBUD_TEST_HERMES_RUNTIME=<admitted runtime> <admitted runtime>/venv/bin/python -I -B scripts/testing/hermes-memory-proposal-faults.py",
+  "log": "outputs/hermes-memory-proposals-2026-09-22/fault-tests.log",
+  "sourceSha256": {
+    "scripts/testing/hermes-memory-proposal-faults.py": "12f0913d626da40a548099b4d4cd8ca5493f79331a0d5dcfa09ba604b500d406",
+    "server/helpers/hermes-memory-proposals.py": "b66ed9a9539551f5a053372ebdf7fec40a2a47c5f67e33383feafb609d739e8e",
+    "server/helpers/hermes-memory-review.py": "d91f2d33831adcbde7fa920a9e94e751df934d8d201cd2fe0a50e072a4c38684"
+  },
+  "nativeSourceSha256": {
+    "tools/memory_tool.py": "ed9c5db6b3144b88425f7039280239b29a047143aa8ffdfd3b7f47bf7e707143",
+    "tools/memory_tool_store.py": "811ef2eb98a8b3f0448294b2c23d422ff7ebd4dc45835475b12df0557d7e5366",
+    "tools/write_approval.py": "9404792bc8c6637e5bd78a87f5a6dfabda6cd6a1a61083b450647ddb2951c470"
+  },
+  "crashCheckpoints": [
+    "durable prepared journal",
+    "durable private stage",
+    "hard link created before stage unlink",
+    "stage unlinked before published journal",
+    "published journal saved before output"
+  ],
+  "invariants": [
+    "stable pending ID and one publication across retries",
+    "no memory mutation before human review",
+    "no recreate or second apply after approval or rejection",
+    "approval and rejection after unlink crash finish the same prepared journal",
+    "changed same-id payload denied",
+    "missing published pending held without recreation",
+    "third hard link, foreign replacement, and corrupt stage preserved",
+    "foreign pending created during publication is not overwritten"
+  ],
+  "checks": [
+    "15 subprocess unittest cases passed",
+    "Python AST syntax parsed",
+    "git diff --no-index --check passed for new test script"
+  ],
+  "notVerified": [
+    "physical power loss or storage-controller durability",
+    "Windows filesystem/ACL admission",
+    "live profile/provider/customer workflow"
+  ],
+  "boundaries": [
+    "no production helper fault flags",
+    "no upstream modifications",
+    "no real profiles or customer data",
+    "no provider calls"
+  ]
+}

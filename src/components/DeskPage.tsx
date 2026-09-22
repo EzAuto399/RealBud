@@ -33,11 +33,13 @@ import { GoLiveCard } from "./desk/GoLiveCard";
 import { JobRunFeed } from "./desk/JobRunFeed";
 import { SharedWorkPanel } from "./desk/SharedWorkPanel";
 import { ExpectedBillsBoard } from "./desk/ExpectedBillsBoard";
+import { MailWorkPanel } from './desk/MailWorkPanel';
 import { BatchWorkspace } from "./desk/BatchWorkspace";
 import { CASE_KIND_LABELS } from "./desk/labels";
 import { MorningBrief, MorningEmpty } from "./desk/MorningBrief";
 import { isDemoWorkerMiss, morningBrief } from "@/lib/morning-brief";
 import { deskCheckAction, workdayGuide } from "@/lib/workday";
+import { coerceOffice } from "../../shared/office";
 import { recheckProgress } from "@/lib/task-progress";
 import { api, useStore } from "@/state/store";
 
@@ -536,7 +538,7 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
             setQueueOpen(false);
           }}
         />}
-        {mode !== "batch" ? <div className="mt-3"><ExpectedBillsBoard /><SharedWorkPanel /></div> : null}
+        {mode !== "batch" ? <div className="mt-3 space-y-3"><MailWorkPanel compact /><ExpectedBillsBoard compact /><SharedWorkPanel /></div> : null}
         {/* Setup stays available with the expanded overview and on You. */}
         {mode === "batch" || !briefExpanded ? null : (
           <GoLiveCard
@@ -544,6 +546,8 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
             agencyName={snap.book?.agency.name ?? ""}
             workerReady={Boolean(state.hermes?.ready)}
             compact
+            jurisdictions={snap.book?.agency.jurisdictions ?? []}
+            office={snap.book?.office ? coerceOffice(snap.book.office) : undefined}
             onConnectExport={() => setMode("book")}
             onAttachWorker={() => { openWorkspaceSetup("bud"); }}
             onNameAgency={() => { openWorkspaceSetup("office"); }}

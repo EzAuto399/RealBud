@@ -1,0 +1,13 @@
+Disposable PostgreSQL company verification
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/Users/yoda/projects/RealBud[39m
+
+ [32m✓[39m server/company-departments.integration.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 2704[2mms[22m[39m
+     [33m[2m✓[22m[39m reopens the host and every client, preserving company records, private records and offboarding [33m 504[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m11 passed[39m[22m[90m (11)[39m
+[2m   Start at [22m 13:19:56
+[2m   Duration [22m 3.15s[2m (transform 188ms, setup 24ms, import 234ms, tests 2.70s, environment 0ms)[22m
+
+JSON report written to /Users/yoda/projects/RealBud/outputs/enterprise-company-2026-09-21/focused-correction/vitest.json

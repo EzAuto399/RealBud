@@ -1,0 +1,165 @@
+{
+  "version": 1,
+  "synthetic": true,
+  "sourceReference": "QA-SYN-INVOICE-REVIEW-CORRECTION-AND-GAPS-dc01efb3-a64b-4980-b11d-4db076c18d9d",
+  "asOf": "2026-09-14",
+  "timezone": "Australia/Brisbane",
+  "reviewer": {
+    "name": "Kevin",
+    "role": "accounts",
+    "roleConfirmation": "user-confirmed",
+    "scenario": "synthetic"
+  },
+  "coverage": {
+    "complete": false,
+    "agreedAccounts": [
+      "SYN-ACCOUNT-FINANCE",
+      "SYN-ACCOUNT-ADMIN"
+    ],
+    "from": "2026-09-01T00:00:00+10:00",
+    "toExclusive": "2026-09-15T00:00:00+10:00",
+    "accounts": [
+      {
+        "accountId": "SYN-ACCOUNT-FINANCE",
+        "folders": [
+          "inbox"
+        ],
+        "expectedThreadCount": 0,
+        "returnedThreadCount": 0,
+        "paginationComplete": true,
+        "pageIds": [
+          1
+        ],
+        "failedPages": [],
+        "threadHistoryComplete": true
+      },
+      {
+        "accountId": "SYN-ACCOUNT-ADMIN",
+        "folders": [
+          "inbox"
+        ],
+        "expectedThreadCount": 0,
+        "returnedThreadCount": 0,
+        "paginationComplete": true,
+        "pageIds": [
+          1
+        ],
+        "failedPages": [],
+        "threadHistoryComplete": true
+      }
+    ],
+    "failedSources": [],
+    "missingAttachments": [
+      "SYN-ATT104"
+    ]
+  },
+  "propertyMap": [
+    {
+      "propertyCode": "SYN-CODE01",
+      "propertyId": "SYN-P01",
+      "approved": true
+    },
+    {
+      "propertyCode": "SYN-CODE02",
+      "propertyId": "SYN-P02",
+      "approved": true
+    }
+  ],
+  "documents": [
+    {
+      "documentId": "SYN-D101",
+      "sourceId": "SYN-D101-EMAIL",
+      "body": "Please see attachment; no invoice fields are in this email body.",
+      "attachmentIds": [
+        "SYN-ATT101"
+      ],
+      "receivedAt": "2026-09-14T08:00:00+10:00",
+      "version": "1"
+    },
+    {
+      "documentId": "SYN-D102",
+      "sourceId": "SYN-D102-EMAIL",
+      "body": "Please see attachment; no invoice fields are in this email body.",
+      "attachmentIds": [
+        "SYN-ATT101"
+      ],
+      "receivedAt": "2026-09-14T08:00:00+10:00",
+      "version": "1"
+    },
+    {
+      "documentId": "SYN-D103",
+      "sourceId": "SYN-D103-EMAIL",
+      "body": "Please see attachment; no invoice fields are in this email body.",
+      "attachmentIds": [
+        "SYN-ATT103"
+      ],
+      "receivedAt": "2026-09-14T08:00:00+10:00",
+      "version": "2"
+    },
+    {
+      "documentId": "SYN-D104",
+      "sourceId": "SYN-D104-EMAIL",
+      "body": "Please see attachment; no invoice fields are in this email body.",
+      "attachmentIds": [
+        "SYN-ATT104"
+      ],
+      "receivedAt": "2026-09-14T08:00:00+10:00",
+      "version": "1"
+    },
+    {
+      "documentId": "SYN-D105",
+      "sourceId": "SYN-D105-EMAIL",
+      "body": "Please see attachment; no invoice fields are in this email body.",
+      "attachmentIds": [
+        "SYN-ATT105"
+      ],
+      "receivedAt": "2026-09-14T08:00:00+10:00",
+      "version": "1"
+    },
+    {
+      "documentId": "SYN-D106",
+      "sourceId": "SYN-D106-EMAIL",
+      "body": "Please see attachment; no invoice fields are in this email body.",
+      "attachmentIds": [
+        "SYN-ATT106"
+      ],
+      "receivedAt": "2026-09-14T08:00:00+10:00",
+      "version": "1"
+    }
+  ],
+  "documentCount": 6,
+  "attachments": [
+    {
+      "attachmentId": "SYN-ATT101",
+      "path": "workflow-inputs/attachments/syn-invoice-101.txt",
+      "available": true
+    },
+    {
+      "attachmentId": "SYN-ATT103",
+      "path": "workflow-inputs/attachments/syn-invoice-103.txt",
+      "available": true
+    },
+    {
+      "attachmentId": "SYN-ATT104",
+      "path": "workflow-inputs/attachments/syn-invoice-104.txt",
+      "available": false
+    },
+    {
+      "attachmentId": "SYN-ATT105",
+      "path": "workflow-inputs/attachments/syn-invoice-105.txt",
+      "available": true
+    },
+    {
+      "attachmentId": "SYN-ATT106",
+      "path": "workflow-inputs/attachments/syn-invoice-106.txt",
+      "available": true
+    }
+  ],
+  "allowedAttachmentPaths": [
+    "workflow-inputs/attachments/syn-invoice-101.txt",
+    "workflow-inputs/attachments/syn-invoice-103.txt",
+    "workflow-inputs/attachments/syn-invoice-104.txt",
+    "workflow-inputs/attachments/syn-invoice-105.txt",
+    "workflow-inputs/attachments/syn-invoice-106.txt"
+  ]
+}

@@ -266,7 +266,7 @@ describe("Gmail read-only setup HTTP boundary", () => {
 
   it("verifies before saving, preserves consumer access, and generates a private stable binding without switching mode", async () => {
     const result = await setup();
-    expect(result.body.composio).toEqual({ configured: true, apiKeyConfigured: true, mode: "consumer", readOnlyConfigured: true, readOnlyAuthConfigId: AUTH_CONFIG });
+    expect(result.body.composio).toEqual({ configured: true, apiKeyConfigured: true, managed: false, mode: "consumer", readOnlyConfigured: true, readOnlyAuthConfigId: AUTH_CONFIG });
     expectPublic(result.body);
     const saved = diskConfig().composio;
     expect(saved.key).toBe(PLATFORM_KEY);

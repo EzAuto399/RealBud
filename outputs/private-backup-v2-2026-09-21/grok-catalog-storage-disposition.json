@@ -1,0 +1,32 @@
+{
+  "sessionId": "01a0c3c8-d012-79a1-9aa2-517e5a69cdd4",
+  "requestedModel": "grok-4.6",
+  "requestedReasoningEffort": "xhigh",
+  "actualModels": [
+    "grok-4.6-build"
+  ],
+  "stopReason": "end_turn",
+  "scope": "Two-file proposal reviewed and integrated with corrections; no delegated commands or tests",
+  "accepted": [
+    "Optional persisted physical main SQLite ceiling and legacy two-key header support",
+    "Verified page limit on create and each open",
+    "Typed SQLITE_FULL preserving original error through automatic rollback",
+    "Bounds before JavaScript payload allocation",
+    "Actual capacity and reopen tests"
+  ],
+  "corrections": [
+    "Original rollback formula missed sector/header spill overhead. Main spilling is now explicitly disabled and checked; rollback budget includes per-page eight-byte records and 128KiB sector allowance",
+    "Derived bill lookups use a separate capped64MiB in-memory SQLite database, so full graph validation does not dirty a large main-catalog transaction",
+    "Retain filtered SQL identity iteration and one-statement bounded projections instead of loading every body for every kind",
+    "Handle removal of an actual hot journal during SQLite recovery; the pre-open directory listing cannot prove it still exists",
+    "Round defaults to pages; explicit ceilings are page-aligned; 64GiB generic main maximum covers older declared16GiB/1m limits without clamping the derived formula",
+    "Add actual killed-writer recovery and pass host physical ceiling into archive decode"
+  ],
+  "verification": [
+    "catalog-storage-initial-tests.log:55pass",
+    "catalog-storage-kill-tests.log:5pass38deselected",
+    "storage-capacity-integrated.log:118pass6files",
+    "catalog-storage-tsc.log:pass"
+  ],
+  "limits": "No global quota/HTTP/UI proof. Helper budget applies only to catalog connections with spilling disabled, not prepared or builder stores.64MiB derived lookup cap may refuse an over-capacity graph without creating a partial backup."
+}

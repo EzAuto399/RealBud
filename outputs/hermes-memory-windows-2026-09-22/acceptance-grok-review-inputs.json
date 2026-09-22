@@ -1,0 +1,4 @@
+{
+  "scripts/testing/hermes-memory-windows-native.py": "816f8e6e347ba3f1ebf0bb33e37109c5bcf7c7b056297c92aba3391b36242079",
+  "server/helpers/hermes-memory-windows-native.py": "61ffd50da933fe09021b04616dc5c7d8161bc0edbd2c5e225d397c25c9e0a71a"
+}

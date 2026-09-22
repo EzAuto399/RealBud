@@ -1,0 +1,32 @@
+{
+  "date": "2026-09-21",
+  "scope": "Local source-bound invoice proposal admission, durable replay and typed projection",
+  "command": "pnpm exec vitest run server/bill-proposals.test.ts",
+  "result": "passed",
+  "tests": 23,
+  "typecheck": "pnpm typecheck passed",
+  "diffCheck": "git diff --check passed",
+  "evidence": {
+    "storage": "Real encrypted WorkflowDatabase in disposable temporary directories",
+    "source": "Fictional saved message and attachment metadata",
+    "execution": "Deterministic injected executor with claimed JobRun before input preparation",
+    "externalCalls": 0,
+    "acceptedBills": 0
+  },
+  "covered": [
+    "Source and exact account binding before intent creation",
+    "Caller authority and attachment path injection rejection",
+    "UUID normalization and changed payload conflict",
+    "Durable restart replay without a duplicate worker call",
+    "Concurrent preparation admission and active input preservation",
+    "Interrupted intent retained without automatic paid retry",
+    "Plan or authority drift blocks replay and post-run projection",
+    "Source changes during asynchronous authority refresh are held",
+    "Authority mutation during each pre-dispatch source read is held before worker dispatch",
+    "A stale final source snapshot cannot bypass the synchronous mutation generation",
+    "Replay mutation during a pending source read blocks projection",
+    "Malformed, foreign-document and wrong-revision output are held",
+    "Attachment contents and whole-inbox coverage remain explicitly incomplete"
+  ],
+  "unverified": ["Live Gmail account", "Paid Hermes model execution", "Installed desktop", "Real customer acceptance"]
+}

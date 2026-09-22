@@ -1,0 +1,30 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ❯ server/private-backup-operations.test.ts (36 tests | 1 failed) 1355ms
+     × refuses legacy held reference cleanup and colliding generated identities 32ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/private-backup-operations.test.ts > durable backup resource allocations > refuses legacy held reference cleanup and colliding generated identities
+AssertionError: expected 'staged' to be 'completed' // Object.is equality
+
+Expected: "completed"
+Received: "staged"
+
+ ❯ server/private-backup-operations.test.ts:548:34
+    546|     const { store: completed } = await setup({ ...settings, restoreDir…
+    547|     const done = completed.get(held.operation.id);
+    548|     expect(done.operation.phase).toBe('completed');
+       |                                  ^
+    549|     expect(() => completed.releaseCleanedReservation(done.operation.id…
+    550|     expect(completed.get(done.operation.id)).toMatchObject({ restoreHe…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 3 passed (4)
+      Tests  1 failed | 67 passed (68)
+   Start at  22:53:23
+   Duration  6.06s (transform 276ms, setup 32ms, import 378ms, tests 5.41s, environment 0ms)
+

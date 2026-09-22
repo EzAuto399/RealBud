@@ -1,0 +1,21 @@
+{
+  "at": "2026-09-21T07:40:14.040Z",
+  "passed": true,
+  "layer": "Actual local HTTP and built React UI with fictional connector and deterministic worker. One explicitly labelled503 browser injection. No live Gmail/customer/Windows proof.",
+  "checks": [
+    "Real HTTP metadata has global counts without tasks; Desk requests three rows and full mail view initially fetches twenty of43 open conversations",
+    "Search reaches an old conversation outside the first page; its open editor and note survive a different search and direct-item refresh",
+    "Real concurrent HTTP edit makes continuation return409; already loaded rows and the off-page staff draft remain visible",
+    "Fresh revision pages append all43 matching conversations once without pulling full history into the first request",
+    "Direct stale-item detection preserves edits, requires explicit discard with cancel, then saves a reviewed note against the fresh item revision",
+    "Explicitly injected503 task-page read preserves loaded rows and refresh recovers after the injection is removed",
+    "Actual saved collection history pages retain twelve receipts including earlier source windows",
+    "Desktop and390px mobile show retained source evidence, editable notes and explicit discard cancellation with keyboard source opening and focused discard, without horizontal overflow or page errors"
+  ],
+  "scanCalls": 12,
+  "errors": [],
+  "cleanup": {
+    "childExited": true,
+    "scratchRemoved": true
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "fullTestCount": 4115,
+  "passed": true,
+  "snapshotStayedUnchanged": false,
+  "changed": [
+    "server/private-backup-coordinator.test.ts",
+    "server/private-backup-coordinator.ts"
+  ],
+  "note": "Grok follow-up edited these files during the broad run. Preserve the count as an intermediate run; final suite uses a new frozen snapshot."
+}

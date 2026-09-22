@@ -1,0 +1,14 @@
+
+> realbud@0.1.19 test /Users/yoda/projects/RealBud
+> vitest run
+
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+{"at":"2026-09-21T07:43:18.444Z","event":"crash","detail":"worker failed with XAI_API_KEY=«redacted 24 chars» in env"}
+
+ Test Files  285 passed | 17 skipped (302)
+      Tests  3488 passed | 143 skipped (3631)
+   Start at  17:39:50
+   Duration  220.54s (transform 2.67s, setup 1.29s, import 7.25s, tests 191.78s, environment 13ms)
+

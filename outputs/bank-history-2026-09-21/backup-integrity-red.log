@@ -1,0 +1,107 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ❯ server/private-backup-bank-retention.test.ts (3 tests | 2 failed | 1 skipped) 310ms
+     × rejects forged saved row facts before restore despite matching uploaded hashes 163ms
+     × rejects forged prepared non-reference bytes before restore despite matching uploaded hashes 146ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/private-backup-bank-retention.test.ts > retained bank history through private backup > rejects forged saved row facts before restore despite matching uploaded hashes
+AssertionError: promise resolved "{ …(9) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "createdAt": "2026-09-21T06:35:46.449Z",
++   "digest": "d01e9bdf50238313556f8b5e6073ead22209e7b570ac1507bf1f430598359895",
++   "excluded": [
++     "Provider keys, connected-account credentials and sign-in sessions",
++     "Shared office database and company membership",
++     "Worker installation, authentication, conversations and memory",
++     "Files outside the listed business folders and external attachments",
++   ],
++   "fileCount": 3,
++   "included": [
++     "Private Desk book and property notes",
++     "Saved mail work and collected source evidence",
++     "Bank originals, reviewed copies, bills and preparation receipts",
++     "Agency settings, saved views, plans and instruction revision history",
++   ],
++   "plainBytes": 3506,
++   "recordCount": 1,
++   "restoreChanges": [
++     "Use this installation’s protected encryption key",
++     "Clear connected-account selection and setup approvals",
++     "Pause all schedules and require plan review",
++     "Retain job history; interrupt unfinished work and close sign-in handoffs",
++     "Repair the installed instruction pack before running its plans",
++   ],
++   "workspaceId": "49626052-12aa-405c-8ec4-4d2c849874ee",
+  }
+
+ ❯ server/private-backup-bank-retention.test.ts:52:60
+     50|       } finally { passKey.fill(0); }
+     51|       const before = await readFile(join(to.directory, 'desk.json'));
+     52|       await expect(to.service.previewBackup(forged, phrase)).rejects.t…
+       |                                                            ^
+     53|       await expect(to.service.stageRestore({ backup: forged, passphras…
+     54|       expect(await readFile(join(to.directory, 'desk.json'))).toEqual(…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  server/private-backup-bank-retention.test.ts > retained bank history through private backup > rejects forged prepared non-reference bytes before restore despite matching uploaded hashes
+AssertionError: promise resolved "{ …(9) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "createdAt": "2026-09-21T06:35:46.602Z",
++   "digest": "0f5e1a8d578c238e12325f530e34a6a50ca5a7f5e350b885c2fa8c45b95f079d",
++   "excluded": [
++     "Provider keys, connected-account credentials and sign-in sessions",
++     "Shared office database and company membership",
++     "Worker installation, authentication, conversations and memory",
++     "Files outside the listed business folders and external attachments",
++   ],
++   "fileCount": 3,
++   "included": [
++     "Private Desk book and property notes",
++     "Saved mail work and collected source evidence",
++     "Bank originals, reviewed copies, bills and preparation receipts",
++     "Agency settings, saved views, plans and instruction revision history",
++   ],
++   "plainBytes": 3506,
++   "recordCount": 1,
++   "restoreChanges": [
++     "Use this installation’s protected encryption key",
++     "Clear connected-account selection and setup approvals",
++     "Pause all schedules and require plan review",
++     "Retain job history; interrupt unfinished work and close sign-in handoffs",
++     "Repair the installed instruction pack before running its plans",
++   ],
++   "workspaceId": "c8a8913a-846a-46bc-82dc-35510e33bfab",
+  }
+
+ ❯ server/private-backup-bank-retention.test.ts:52:60
+     50|       } finally { passKey.fill(0); }
+     51|       const before = await readFile(join(to.directory, 'desk.json'));
+     52|       await expect(to.service.previewBackup(forged, phrase)).rejects.t…
+       |                                                            ^
+     53|       await expect(to.service.stageRestore({ backup: forged, passphras…
+     54|       expect(await readFile(join(to.directory, 'desk.json'))).toEqual(…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 1 skipped (3)
+   Start at  16:35:46
+   Duration  653ms (transform 207ms, setup 23ms, import 246ms, tests 310ms, environment 0ms)
+

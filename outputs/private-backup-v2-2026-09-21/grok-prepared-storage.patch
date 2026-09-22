@@ -1,0 +1,245 @@
+--- a/server/private-backup-prepared.ts
++++ b/server/private-backup-prepared.ts
+@@ -1,10 +1,11 @@
+ /** Exact, already-prepared destination bytes for a future cold restore.
+  * This private database is created by RealBud, never supplied by an archive.
+  * A completed read and full validate() are required before publishing files.
+  * This store does not interpret business ciphertext or apply a restore. */
+ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
++import { closeSync, lstatSync, openSync, readSync } from 'node:fs';
+ import { lstat, mkdir, open, readdir } from 'node:fs/promises';
+ import { dirname, join, parse, resolve } from 'node:path';
+ import { setImmediate as yieldTurn } from 'node:timers/promises';
+ import { DatabaseSync } from 'node:sqlite';
+ import { fsyncDir } from './atomic.ts';
+@@ -32,12 +33,16 @@ interface OperationOptions { signal?: AbortSignal }
+ const FILE = 'prepared.sqlite';
++const JOURNAL = `${FILE}-journal`;
+ const DATABASE = 'workflow-state.sqlite';
+ const CHUNK = PRIVATE_BACKUP_PREPARED_CHUNK_BYTES;
+ const OVERHEAD = 29; // version + nonce + GCM tag
+ const META_BYTES = 4096;
+ const PAGE_BYTES = 4096;
++const BOOTSTRAP_BYTES = 1024 * 1024;
++const JOURNAL_HEADER_BYTES = 28;
+ const TABLES = {
+   prepared_header: 'CREATE TABLE prepared_header (id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL) STRICT',
+   prepared_entries: 'CREATE TABLE prepared_entries (sequence INTEGER PRIMARY KEY, entry_id TEXT NOT NULL UNIQUE, lookup TEXT NOT NULL UNIQUE, payload BLOB NOT NULL) STRICT',
+   prepared_chunks: 'CREATE TABLE prepared_chunks (entry_id TEXT NOT NULL, ordinal INTEGER NOT NULL, payload BLOB NOT NULL, PRIMARY KEY(entry_id,ordinal)) STRICT',
+ };
+@@ -52,8 +57,9 @@ function exact(v: unknown, keys: string[]): v is Record<string, unknown> {
+   return object(v) && Object.keys(v).sort().join(',') === [...keys].sort().join(',');
+ }
+ function fail(message = 'The prepared backup needs recovery. Its original files were preserved.', status = 503): never {
+   throw Object.assign(new Error(message), { status });
+ }
++function unsupported(): never { fail('Prepared backup storage is on an unsupported filesystem.', 503); }
+ function validPath(path: unknown): path is string { return path === DATABASE || isPrivateBackupPath(path); }
+ function keyCheck(key: Buffer): void { if (!Buffer.isBuffer(key) || key.length !== 32) fail('A protected installation key is required.', 400); }
+ function limitsCheck(value: unknown): asserts value is PreparedLimits {
+   if (!exact(value, ['bytes', 'fileBytes', 'entries', 'sqliteBytes']) ||
+       !Object.entries(PRIVATE_BACKUP_PREPARED_LIMITS).every(([k, max]) => integer(value[k], k === 'sqliteBytes' ? 65_536 : 1) && Number(value[k]) <= max)) {
+     fail('The prepared backup limits are invalid.', 400);
+   }
+ }
++export function preparedStorageBudget(limits?: Partial<PreparedLimits>): { databaseBytes: number; rollbackBytes: number; totalBytes: number } {
++  const value = { ...PRIVATE_BACKUP_PREPARED_LIMITS, ...limits };
++  limitsCheck(value);
++  const pages = Math.floor(value.sqliteBytes / PAGE_BYTES);
++  const databaseBytes = pages * PAGE_BYTES;
++  const rollbackBytes = pages * (PAGE_BYTES + 8) + 2 * PAGE_BYTES * (pages + 1) + BOOTSTRAP_BYTES;
++  return { databaseBytes, rollbackBytes, totalBytes: databaseBytes + rollbackBytes };
++}
++/** DELETE journal header: sector-size at 20, page-size at 24. Magic may be unsynced zeros. */
++export function preparedRollbackJournalBounds(header: Uint8Array): { pageBytes: number; sectorBytes: number } {
++  if (header.byteLength < JOURNAL_HEADER_BYTES) unsupported();
++  const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
++  const sectorBytes = view.getUint32(20), pageBytes = view.getUint32(24);
++  if (pageBytes !== PAGE_BYTES || !integer(sectorBytes, 512) || sectorBytes > PAGE_BYTES || (sectorBytes & (sectorBytes - 1)) !== 0) unsupported();
++  return { pageBytes, sectorBytes };
++}
++function admitRollbackJournal(directory: string): void {
++  const path = join(directory, JOURNAL);
++  let stat;
++  try { stat = lstatSync(path); } catch { unsupported(); }
++  if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size < JOURNAL_HEADER_BYTES) unsupported();
++  const fd = openSync(path, 'r'), bytes = Buffer.alloc(JOURNAL_HEADER_BYTES);
++  try {
++    if (readSync(fd, bytes, 0, JOURNAL_HEADER_BYTES, 0) < JOURNAL_HEADER_BYTES) unsupported();
++    preparedRollbackJournalBounds(bytes);
++  } finally { bytes.fill(0); closeSync(fd); }
++}
+ async function next<T>(iterator: AsyncIterator<T>, signal: AbortSignal): Promise<IteratorResult<T>> {
+@@ -88,16 +124,17 @@ async function privateDirectory(directory: string): Promise<void> {
+   if (process.platform !== 'win32' && ((stat.mode & 0o077) !== 0 || typeof process.getuid === 'function' && stat.uid !== process.getuid())) fail('Prepared backup storage permissions need recovery.');
+   await windowsFilePrivacy(directory, 'directory');
+ }
+-async function ownedFiles(directory: string, maxBytes: number): Promise<void> {
++async function ownedFiles(directory: string, budget = preparedStorageBudget()): Promise<void> {
+   await privateDirectory(directory);
+   const names = await readdir(directory);
+-  if (!names.includes(FILE) || names.some(name => name !== FILE && name !== `${FILE}-journal`)) fail();
++  if (!names.includes(FILE) || names.some(name => name !== FILE && name !== JOURNAL)) fail();
+   for (const name of names) {
+     const path = join(directory, name), stat = await lstat(path);
+-    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > maxBytes ||
++    const maxBytes = name === FILE ? budget.databaseBytes : budget.rollbackBytes;
++    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > maxBytes ||
+         process.platform !== 'win32' && ((stat.mode & 0o077) !== 0 || typeof process.getuid === 'function' && stat.uid !== process.getuid())) fail();
+     await windowsFilePrivacy(path, 'file');
+   }
+ }
+ function configure(db: DatabaseSync, maxBytes: number): void {
+-  db.exec('PRAGMA trusted_schema=OFF; PRAGMA synchronous=FULL; PRAGMA journal_mode=DELETE; PRAGMA temp_store=FILE; PRAGMA cache_size=-2048; PRAGMA busy_timeout=0;');
+-  const page = db.prepare('PRAGMA page_size').get()?.page_size;
+-  if (page !== PAGE_BYTES) fail();
++  db.exec('PRAGMA trusted_schema=OFF; PRAGMA synchronous=FULL; PRAGMA cache_size=-2048; PRAGMA busy_timeout=0;');
++  if (db.prepare('PRAGMA journal_mode=DELETE').get()?.journal_mode !== 'delete') fail();
++  if (db.prepare('PRAGMA temp_store=MEMORY').get()?.temp_store !== 2) fail();
++  if (db.prepare('PRAGMA page_size').get()?.page_size !== PAGE_BYTES) fail();
+   const max = Math.floor(maxBytes / PAGE_BYTES);
+   if (db.prepare(`PRAGMA max_page_count=${max}`).get()?.max_page_count !== max) fail('Prepared backup storage has reached its capacity.', 413);
+ }
+@@ -141,8 +178,8 @@ export class PrivateBackupPreparedStore {
+   static async open(options: { directory: string; key: Buffer; storeId: string; workspaceId: string }): Promise<PrivateBackupPreparedStore> {
+     keyCheck(options.key);
+     if (!uuid(options.storeId) || !uuid(options.workspaceId)) fail();
+     const directory = resolve(options.directory);
+-    await ownedFiles(directory, PRIVATE_BACKUP_PREPARED_LIMITS.sqliteBytes);
++    await ownedFiles(directory);
+     let db: DatabaseSync | undefined, store: PrivateBackupPreparedStore | undefined;
+     try {
+       db = new DatabaseSync(join(directory, FILE));
+       db.exec('PRAGMA trusted_schema=OFF; PRAGMA busy_timeout=0;');
+       schemaCheck(db); configure(db, PRIVATE_BACKUP_PREPARED_LIMITS.sqliteBytes);
+@@ -280,12 +317,15 @@ export class PrivateBackupPreparedStore {
+   }
+   private async transaction<T>(signal: AbortSignal, body: (header: Header) => Promise<T>): Promise<T> {
+     aborted(signal);
+-    await ownedFiles(this.directory, PRIVATE_BACKUP_PREPARED_LIMITS.sqliteBytes);
++    await ownedFiles(this.directory, preparedStorageBudget(this.header().limits));
+     aborted(signal);
+     let began = false;
+     try {
+       this.db.exec('BEGIN IMMEDIATE'); began = true;
+-      const result = await body(this.header());
++      const header = this.header();
++      this.saveHeader(header);
++      admitRollbackJournal(this.directory);
++      const result = await body(header);
+       aborted(signal); this.db.exec('COMMIT'); began = false;
+       return result;
+     } catch (error) {
+       if (began) { try { this.db.exec('ROLLBACK'); } catch { /* SQLite may already have rolled back a full disk transaction. */ } }
+       const code = (error as { code?: unknown; errcode?: unknown }).code;
+--- a/server/private-backup-prepared.test.ts
++++ b/server/private-backup-prepared.test.ts
+@@ -1,8 +1,8 @@
+ import { afterEach, describe, expect, it } from 'vitest';
+-import { mkdtempSync, realpathSync, rmSync, readFileSync, symlinkSync, linkSync, chmodSync } from 'node:fs';
++import { mkdtempSync, realpathSync, rmSync, readFileSync, readdirSync, writeFileSync, symlinkSync, linkSync, chmodSync } from 'node:fs';
+ import { tmpdir } from 'node:os';
+ import { join } from 'node:path';
+ import { createHash, randomBytes, randomUUID } from 'node:crypto';
+ import { DatabaseSync } from 'node:sqlite';
+-import { PrivateBackupPreparedStore, PRIVATE_BACKUP_PREPARED_CHUNK_BYTES as CHUNK } from './private-backup-prepared.ts';
++import { PrivateBackupPreparedStore, PRIVATE_BACKUP_PREPARED_CHUNK_BYTES as CHUNK, PRIVATE_BACKUP_PREPARED_LIMITS, preparedStorageBudget, preparedRollbackJournalBounds } from './private-backup-prepared.ts';
+@@ -118,4 +118,99 @@ describe('exact encrypted prepared restore artifacts', () => {
+     if (attack === 'hardlink') { linkSync(file, join(f.root, 'linked.sqlite')); await expect(reopen(f.options)).rejects.toThrow(); }
+     if (attack === 'permissions' && process.platform !== 'win32') { chmodSync(file, 0o644); await expect(reopen(f.options)).rejects.toThrow(); }
+   });
++
++  it('publishes a conservative storage budget from the same limits as create', () => {
++    const pages = PRIVATE_BACKUP_PREPARED_LIMITS.sqliteBytes / 4096;
++    const rollbackBytes = pages * (4096 + 8) + 2 * 4096 * (pages + 1) + 1024 * 1024;
++    expect(preparedStorageBudget()).toEqual({
++      databaseBytes: pages * 4096, rollbackBytes, totalBytes: pages * 4096 + rollbackBytes,
++    });
++    const tiny = preparedStorageBudget({ sqliteBytes: 65_536 });
++    expect(tiny.databaseBytes).toBe(65_536);
++    expect(tiny.rollbackBytes).toBe(16 * (4096 + 8) + 2 * 4096 * 17 + 1024 * 1024);
++    expect(tiny.rollbackBytes).toBeGreaterThan(tiny.databaseBytes);
++    expect(preparedStorageBudget({ sqliteBytes: 65_536 + 4095 }).databaseBytes).toBe(65_536);
++    expect(() => preparedStorageBudget({ sqliteBytes: 65_535 })).toThrow(/limits/);
++  });
++
++  it('observes DELETE journal sector during a transaction and reopens after an interrupted write', async () => {
++    const f = await fixture(); let started!: () => void;
++    const entered = new Promise<void>(resolve => { started = resolve; });
++    const source: AsyncIterable<Uint8Array> = { [Symbol.asyncIterator]() { return { next() { started(); return new Promise(() => {}); }, async return() { return { done: true, value: undefined }; } }; } };
++    const active = f.store.addFile('vault/USER.md', null, source); const rejected = expect(active).rejects.toThrow(/cancelled/);
++    await entered;
++    const directory = f.options.directory;
++    expect(readdirSync(directory).sort()).toEqual(['prepared.sqlite', 'prepared.sqlite-journal']);
++    const sqlite = readFileSync(join(directory, 'prepared.sqlite'));
++    const journal = readFileSync(join(directory, 'prepared.sqlite-journal'));
++    const declared = preparedRollbackJournalBounds(journal);
++    expect(declared.pageBytes).toBe(4096);
++    expect(declared.sectorBytes).toBeGreaterThanOrEqual(512);
++    expect(declared.sectorBytes).toBeLessThanOrEqual(4096);
++    expect(declared.sectorBytes & (declared.sectorBytes - 1)).toBe(0);
++    await f.store.close(); await rejected;
++    writeFileSync(join(directory, 'prepared.sqlite'), sqlite, { mode: 0o600 });
++    writeFileSync(join(directory, 'prepared.sqlite-journal'), journal, { mode: 0o600 });
++    if (process.platform !== 'win32') {
++      chmodSync(join(directory, 'prepared.sqlite'), 0o600);
++      chmodSync(join(directory, 'prepared.sqlite-journal'), 0o600);
++    }
++    const opened = await reopen(f.options);
++    expect(opened.summary().entries).toBe(0);
++    await opened.addFile('vault/USER.md', null, bytes('fresh'));
++    expect(opened.summary().entries).toBe(1);
++  });
++
++  it('refuses an unsupported rollback journal sector', () => {
++    const header = Buffer.alloc(28);
++    header.writeUInt32BE(4096, 24); header.writeUInt32BE(4096, 20);
++    expect(preparedRollbackJournalBounds(header)).toEqual({ pageBytes: 4096, sectorBytes: 4096 });
++    header.writeUInt32BE(512, 20);
++    expect(preparedRollbackJournalBounds(header).sectorBytes).toBe(512);
++    header.writeUInt32BE(8192, 20);
++    try { preparedRollbackJournalBounds(header); throw new Error('expected refusal'); }
++    catch (error) { expect(error).toMatchObject({ status: 503, message: expect.stringMatching(/unsupported filesystem/) }); }
++    header.writeUInt32BE(768, 20);
++    expect(() => preparedRollbackJournalBounds(header)).toThrow(/unsupported filesystem/);
++    header.writeUInt32BE(4096, 20); header.writeUInt32BE(512, 24);
++    expect(() => preparedRollbackJournalBounds(header)).toThrow(/unsupported filesystem/);
++    expect(() => preparedRollbackJournalBounds(Buffer.alloc(27))).toThrow(/unsupported filesystem/);
++  });
++
++  it('rolls back header priming so a refused write leaves current source bytes unchanged', async () => {
++    const f = await fixture();
++    await f.store.addFile('vault/USER.md', null, bytes('keep'));
++    const path = join(f.options.directory, 'prepared.sqlite');
++    const before = readFileSync(path);
++    await expect(f.store.addFile('vault/README.md', null, (async function* () { throw new Error('fictional producer'); })())).rejects.toThrow('fictional producer');
++    expect(readFileSync(path)).toEqual(before);
++    expect(f.store.summary()).toMatchObject({ entries: 1, bytes: 4 });
++  });
++
++  it('returns 413 when SQLite reaches the main page ceiling', async () => {
++    const f = await fixture({ sqliteBytes: 65_536 });
++    let error: unknown;
++    for (let i = 0; i < 16 && !error; i++) {
++      try { await f.store.addFile(`vault/properties/${i}.md`, null, bytes(Buffer.alloc(8_000, i))); }
++      catch (caught) { error = caught; }
++    }
++    expect(error).toMatchObject({ status: 413, message: expect.stringMatching(/capacity/) });
++    const entries = f.store.summary().entries;
++    await expect(f.store.addRemoval('vault/USER.md', null)).rejects.toMatchObject({ status: 413 });
++    expect(f.store.summary().entries).toBe(entries);
++  });
++
++  it('does not reject a rollback journal that exceeds the store main ceiling', async () => {
++    const f = await fixture({ sqliteBytes: 65_536 });
++    const budget = preparedStorageBudget({ sqliteBytes: 65_536 });
++    await f.store.close();
++    const journal = join(f.options.directory, 'prepared.sqlite-journal');
++    writeFileSync(journal, Buffer.alloc(budget.databaseBytes + 1), { mode: 0o600 });
++    if (process.platform !== 'win32') chmodSync(journal, 0o600);
++    const opened = await reopen(f.options);
++    expect(opened.summary().entries).toBe(0);
++    await opened.addFile('vault/USER.md', null, bytes('ok'));
++    expect(opened.summary().entries).toBe(1);
++  });
+ });

@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://realbud.invalid/contracts/accounts-bill-exception-review.schema.json",
+  "title": "accounts-bill-exception-review",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "kind": {
+      "const": "accounts-bill-exception-review"
+    },
+    "sourceReference": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "complete",
+        "partial",
+        "blocked"
+      ]
+    },
+    "coverageComplete": {
+      "type": "boolean"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "occurrenceId": {
+            "type": "string"
+          },
+          "propertyId": {
+            "type": "string"
+          },
+          "arrival": {
+            "enum": [
+              "received",
+              "missing",
+              "not-due",
+              "unknown"
+            ]
+          },
+          "dueDate": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "payment": {
+            "enum": [
+              "confirmed",
+              "arranged-unconfirmed",
+              "unknown"
+            ]
+          },
+          "funding": {
+            "enum": [
+              "sufficient",
+              "insufficient",
+              "unknown"
+            ]
+          },
+          "advance": {
+            "enum": [
+              "none",
+              "outstanding",
+              "recovered",
+              "unknown"
+            ]
+          },
+          "flags": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "due-without-confirmed-payment",
+                "insufficient-funds",
+                "advance-unrecovered",
+                "owner-to-pay",
+                "conflicting-invoice",
+                "missing-arrival",
+                "coverage-gap",
+                "missing-due-date"
+              ]
+            }
+          },
+          "sourceIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurrenceId",
+          "propertyId",
+          "arrival",
+          "dueDate",
+          "payment",
+          "funding",
+          "advance",
+          "flags",
+          "sourceIds",
+          "reason"
+        ]
+      }
+    },
+    "holds": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "itemId": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "itemId",
+          "reason"
+        ]
+      }
+    },
+    "actionsPerformed": {
+      "type": "array",
+      "maxItems": 0
+    }
+  },
+  "required": [
+    "version",
+    "kind",
+    "sourceReference",
+    "status",
+    "coverageComplete",
+    "findings",
+    "holds",
+    "actionsPerformed"
+  ]
+}

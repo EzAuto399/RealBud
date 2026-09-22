@@ -1,0 +1,25 @@
+{
+  "passed": true,
+  "checks": [
+    "Actual upload and original download preserve BOM, Unicode, quoted multiline values, newlines and filename",
+    "Actual reviewed binary download changes only the approved reference and retains its quoting",
+    "Reloaded saved review retains the original byte artifact",
+    "Unsupported encoding clears the pending upload and leaves saved reviews unchanged",
+    "Legacy text reviews remain available with an explicit original-byte limitation",
+    "No browser JavaScript errors"
+  ],
+  "actual": [
+    "built React UI",
+    "local HTTP API",
+    "encrypted saved review",
+    "browser binary downloads"
+  ],
+  "synthetic": [
+    "bank CSV and property mapping"
+  ],
+  "notProven": [
+    "customer bank format",
+    "REI import acceptance",
+    "native installed Windows"
+  ]
+}

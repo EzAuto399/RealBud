@@ -1,53 +1,143 @@
 import { useEffect, useState } from "react";
 
-import { goLiveActionCount, goLiveComplete, goLiveRows, type GoLiveRow } from "@/lib/go-live";
+import { propertyExportRow, type GoLiveWorkflow } from "@/lib/go-live";
+import {
+  SETUP_STEP_COUNT,
+  budStatusLine,
+  currentSetupStep,
+  readAgencySetupFacts,
+  setupSequence,
+  setupSequenceComplete,
+  type AgencySetupRead,
+  type ScheduleRead,
+  type SetupStep,
+} from "@/lib/setup-sequence";
+import type { Office } from "@/lib/office-setup";
+import { api, useStore } from "@/state/store";
+
+const STATE_LABEL: Record<SetupStep["state"], string> = {
+  done: "Done",
+  current: "Now",
+  later: "Later",
+  unknown: "Not checked yet",
+};
 
 export function GoLiveCard({
   mode,
   agencyName,
   workerReady,
   compact = false,
+  workflow = "workspace",
+  agencySetup,
   onConnectExport,
-  onAttachWorker,
-  attachWorkerLabel = "Open You",
-  onSaveAgency,
-  onNameAgency,
 }: {
   mode: "demo" | "live";
   agencyName: string;
   workerReady: boolean;
   compact?: boolean;
+  workflow?: GoLiveWorkflow;
+  /** Supply the host facts to skip this card's own bounded read of them. */
+  agencySetup?: AgencySetupRead;
   onConnectExport: () => void;
+  /**
+   * Still accepted from the Desk and You callers. Each of the three steps has
+   * its own single action (the agency setup card, or Connections on You), and
+   * Bud is a status line rather than a step, so these place no control here.
+   */
+  jurisdictions?: readonly string[];
+  office?: Office | null;
   onAttachWorker?: () => void;
   attachWorkerLabel?: string;
   onSaveAgency?: (name: string) => void;
   onNameAgency?: () => void;
 }) {
-  const rows = goLiveRows({ mode, agencyName, workerReady });
-  const [name, setName] = useState("");
+  const { state, dispatch } = useStore();
   const [open, setOpen] = useState(!compact);
-  const left = goLiveActionCount(rows);
+  // Unknown setup state stays unknown: a failed or slow read may never read as
+  // finished setup, so the step carries its own honest wording instead.
+  const [read, setRead] = useState<AgencySetupRead>(undefined);
+  const supplied = agencySetup !== undefined;
+  // The store already hydrates the loops once per session, so the schedule fact
+  // reuses that slice instead of reading /api/loops again. Anything short of a
+  // finished read stays "not checked yet".
+  const routines = state?.activityLoad?.routines;
+  const schedule: ScheduleRead =
+    routines === "ready"
+      ? {
+          read: "ready",
+          loops: (state.loops ?? []).map((loop) => ({
+            id: loop.id,
+            available: loop.available,
+            enabled: loop.enabled,
+            nextRunAt: loop.nextRunAt,
+          })),
+        }
+      : { read: routines === "error" ? "error" : "loading" };
+  const steps = setupSequence({
+    officeAgencyName: agencyName,
+    agencySetup: supplied ? agencySetup : read,
+    schedule,
+  });
+  const current = currentSetupStep(steps);
+  const exportRow = propertyExportRow({ mode, workflow });
 
   useEffect(() => {
     if (compact) setOpen(false);
   }, [compact]);
 
-  if (goLiveComplete(rows)) return null;
+  useEffect(() => {
+    if (supplied) return;
+    let alive = true;
+    const controller = new AbortController();
+    // A hung read must become a visible "could not be read", never a permanent
+    // "Reading…", and leaving the card cancels it.
+    const timer = setTimeout(() => controller.abort(), 15_000);
+    void api("/api/agency-setup", { signal: controller.signal })
+      .then((view: unknown) => {
+        if (alive) setRead(readAgencySetupFacts(view));
+      })
+      .catch(() => {
+        if (alive) setRead("unavailable");
+      });
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [supplied]);
+
+  const openWorkflowSetup = () => {
+    // Schedule's own section scroll runs off the hash once its screen mounts;
+    // the direct call covers the case where that section is already on screen.
+    if (typeof location !== "undefined") location.hash = "schedule-packs";
+    dispatch({ type: "showRoutines" });
+    if (typeof document !== "undefined") document.getElementById("schedule-packs")?.scrollIntoView({ block: "start" });
+  };
+
+  // Accounts are connected on You; the other two steps are taken in the agency
+  // setup card on Schedule. Each step has exactly one of these.
+  const openStep = (step: SetupStep) => {
+    if (step.target === "you-connected-apps") {
+      if (typeof location !== "undefined") location.hash = "you-connected-apps";
+      dispatch({ type: "showYou" });
+      return;
+    }
+    openWorkflowSetup();
+  };
+
+  if (setupSequenceComplete(steps) && (!exportRow || exportRow.done)) return null;
 
   if (compact && !open) {
-    const waiting = rows
-      .filter((row) => row.state === "action")
-      .map((row) => (row.id === "agency" ? "agency name" : row.id === "worker" ? "Bud" : row.id));
     return (
-      <section className="mt-3 border border-line bg-sheet px-3.5 py-2" aria-label="Go live">
+      <section className="mt-3 border border-line bg-sheet px-3.5 py-2" aria-label="Workspace setup">
         <button
           type="button"
           onClick={() => setOpen(true)}
           className="flex w-full items-center justify-between gap-2 text-left text-[13px] text-ink"
         >
           <span>
-            Go live · {left} left
-            <span className="text-ink-muted"> · {waiting.join(", ") || "none"}. Desk already works.</span>
+            Workspace setup · {current ? `Step ${current.number} of ${SETUP_STEP_COUNT}: ${current.title}` : "every step checked"}
+            <span className="text-ink-muted"> · Each workflow is still reviewed on its own.</span>
           </span>
           <span className="text-[12px] text-agency">Open</span>
         </button>
@@ -55,12 +145,17 @@ export function GoLiveCard({
     );
   }
 
+  const done = steps.filter((step) => step.state === "done");
+  const ahead = steps.filter((step) => step.state === "later" || step.state === "unknown");
+
   return (
-    <section className="mt-3 rounded-lg border border-line bg-sheet px-3.5 py-3" aria-label="Go live">
+    <section className="mt-3 rounded-lg border border-line bg-sheet px-3.5 py-3" aria-label="Workspace setup">
       <div className="flex items-start justify-between gap-2">
         <div>
-          <div className="text-[13px] font-medium text-ink">Go live</div>
-          <p className="mt-0.5 text-[12px] text-ink-muted">Three steps when you are ready. The sample book already works on Desk.</p>
+          <div className="text-[13px] font-medium text-ink">Workspace setup</div>
+          <p className="mt-0.5 text-[12px] text-ink-muted">
+            {SETUP_STEP_COUNT} steps, in order. Each step reads this workspace’s own recorded state; a step that cannot be read says so instead of looking finished.
+          </p>
         </div>
         {compact ? (
           <button type="button" onClick={() => setOpen(false)} className="text-[12px] text-ink-muted hover:text-ink">
@@ -68,92 +163,66 @@ export function GoLiveCard({
           </button>
         ) : null}
       </div>
-      <ul className="mt-2 space-y-2">
-        {rows.map((row) => (
-          <GoLiveRowView
-            key={row.id}
-            row={row}
-            name={name}
-            onName={setName}
-            onConnectExport={onConnectExport}
-            onAttachWorker={onAttachWorker}
-            attachWorkerLabel={attachWorkerLabel}
-            onSaveAgency={onSaveAgency}
-            onNameAgency={onNameAgency}
-          />
-        ))}
-      </ul>
-    </section>
-  );
-}
 
-function GoLiveRowView({
-  row,
-  name,
-  onName,
-  onConnectExport,
-  onAttachWorker,
-  attachWorkerLabel,
-  onSaveAgency,
-  onNameAgency,
-}: {
-  row: GoLiveRow;
-  name: string;
-  onName: (value: string) => void;
-  onConnectExport: () => void;
-  onAttachWorker?: () => void;
-  attachWorkerLabel: string;
-  onSaveAgency?: (name: string) => void;
-  onNameAgency?: () => void;
-}) {
-  return (
-    <li className="flex flex-wrap items-start justify-between gap-2 text-[12.5px]">
-      <div className="min-w-0 flex-1">
-        <div className="text-ink">
-          <span className={row.state === "done" ? "text-agency" : "text-hold"}>{row.state === "done" ? "Done" : "Action"}</span>
-          {" · "}
-          {row.title}
-        </div>
-        <p className="text-ink-muted">{row.detail}</p>
-        {row.id === "agency" && row.state === "action" && onNameAgency ? (
-          <button type="button" onClick={onNameAgency} className="pm-control mt-1.5 rounded border border-line bg-sheet px-3 text-[13px] text-ink">
-            Name it on You
-          </button>
-        ) : null}
-        {row.id === "agency" && row.state === "action" && !onNameAgency && onSaveAgency ? (
-          <div className="mt-1.5 flex flex-wrap items-center gap-2">
-            <label className="sr-only" htmlFor="go-live-agency">
-              Agency name
-            </label>
-            <input
-              id="go-live-agency"
-              type="text"
-              value={name}
-              onChange={(event) => onName(event.target.value)}
-              placeholder="Agency name"
-              className="min-w-[12rem] flex-1 rounded border border-line bg-inset px-2 py-1.5 text-[13px] text-ink"
-            />
-            <button
-              type="button"
-              disabled={!name.trim()}
-              onClick={() => onSaveAgency(name.trim())}
-              className="rounded bg-agency px-2.5 py-1.5 text-[12px] font-medium text-white disabled:opacity-40"
-            >
-              Save
-            </button>
+      {done.length ? (
+        <p className="mt-2 text-[12px] text-ink-muted">
+          Done: {done.map((step) => `${step.number}. ${step.title}`).join(" · ")}
+        </p>
+      ) : null}
+
+      {current ? (
+        <div className="mt-2 rounded border border-line bg-inset px-3 py-2">
+          <div className="text-[13px] font-medium text-ink">
+            Step {current.number} of {SETUP_STEP_COUNT}: {current.title}
           </div>
-        ) : null}
-      </div>
-      {row.state === "action" && row.id === "export" ? (
-        <button type="button" onClick={onConnectExport} className="text-[12px] text-agency hover:underline">
-          Open properties
-        </button>
+          <p className="mt-0.5 text-[12.5px] text-ink-secondary">{current.why}</p>
+          <p className="mt-0.5 text-[12.5px] text-ink-muted">{current.status}</p>
+          <button
+            type="button"
+            onClick={() => openStep(current)}
+            aria-label={current.actionLabel}
+            className="pm-control mt-1.5 rounded border border-line bg-sheet px-3 text-[13px] text-ink"
+          >
+            {current.actionLabel}
+          </button>
+        </div>
+      ) : (
+        <p className="mt-2 text-[12.5px] text-ink-secondary">Every setup step is recorded as done. Each run is still reviewed on its own.</p>
+      )}
+
+      {ahead.length ? (
+        <ol className="mt-2 space-y-1">
+          {ahead.map((step) => (
+            <li key={step.id} className="text-[12.5px] text-ink-muted">
+              <span className="text-ink-muted">{STATE_LABEL[step.state]}</span>
+              {" · "}
+              {step.number}. {step.title}
+              {step.state === "unknown" ? <span className="text-hold"> — {step.status}</span> : null}
+            </li>
+          ))}
+        </ol>
       ) : null}
-      {row.state === "action" && row.id === "worker" && onAttachWorker ? (
-        <button type="button" onClick={onAttachWorker} className="text-[12px] text-agency hover:underline">
-          {attachWorkerLabel}
-        </button>
+
+      {exportRow && !exportRow.done ? (
+        <div className="mt-2 border-t border-line pt-2 text-[12.5px]">
+          <div className="text-ink">Also needed for this workflow · {exportRow.title}</div>
+          <p className="text-ink-muted">{exportRow.detail}</p>
+          <button
+            type="button"
+            onClick={onConnectExport}
+            aria-label="Open properties"
+            className="pm-control mt-1.5 rounded border border-line bg-sheet px-3 text-[13px] text-ink"
+          >
+            Open properties
+          </button>
+        </div>
       ) : null}
-    </li>
+
+      {/* Bud is not a step: this setup can be read and reviewed before a worker
+          is installed, so its readiness is one status line under the path. */}
+      <p className="mt-2 border-t border-line pt-2 text-[12px] text-ink-muted">
+        {budStatusLine(workerReady)} · setup can be reviewed before Bud is installed.
+      </p>
+    </section>
   );
 }

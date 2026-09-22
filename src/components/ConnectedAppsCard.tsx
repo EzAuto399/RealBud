@@ -46,7 +46,7 @@ export function ConnectedAppsCard({ onAsk }: { onAsk?: () => void } = {}) {
   const currentState = useRef(state);
   currentState.current = state;
   const mode = connectedAppsMode(state.config?.composio);
-  const readOnly = mode === "gmail-readonly";
+  const readOnly = mode === "gmail-readonly" || state.config?.composio.managed === true;
   const configured = selectedConnectedAppsConfigured(state.config?.composio);
   const budId = resolveProductBudId(state.bots);
   const budBusy = Boolean(state.bots.find((bot) => bot.id === budId)?.busy);

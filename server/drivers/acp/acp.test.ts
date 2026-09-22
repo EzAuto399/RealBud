@@ -1,3 +1,4 @@
+import { withWorkerProfile } from "../../hermes-profile.ts";
 // ACP driver contract tests, run against the scripted fake ACP CLI in
 // server/testing/fake-acp-cli.ts. Covers the shared acp/core.ts runtime via
 // its two harness shims (grok = fail-closed auth, gemini = lenient auth):
@@ -24,6 +25,7 @@ import { seedVault } from "../../vault.ts";
 import { revokeConnectedAppsBrokers } from "../../connected-apps-broker.ts";
 import * as gmail from "../../composio-gmail.ts";
 import { ServiceEntitlementError } from "../../service-entitlement.ts";
+import { HERMES_MEMORY_APPROVAL } from "./hermes-memory-approval.ts";
 
 const { assertCapability } = vi.hoisted(() => ({ assertCapability: vi.fn() }));
 vi.mock("../../managed-service.ts", () => ({ managedService: { assertCapability } }));
@@ -103,10 +105,26 @@ describe("ACP turns (fake CLI)", () => {
     delete process.env.FAKE_ACP_DUMP;
     delete process.env.FAKE_ACP_TOOL;
     delete process.env.FAKE_ACP_TOOL_INPUT;
+    delete process.env.FAKE_ACP_SCRIPT;
     delete process.env.XAI_API_KEY;
     recorder?.stop();
     await instance?.dispose();
     rmSync(scratch, { recursive: true, force: true });
+  });
+
+  it("replaces a warm Hermes process when the authenticated member changes", async () => {
+    const dump = join(scratch, "seat.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    await create(HermesAgentDriver);
+    const first = await withWorkerProfile("dana", () => instance.adapter.sendTurn({ threadId: "seat", text: "one" }));
+    await recorder.until(e => e.type === "turn.completed" && e.turnId === first.turnId);
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.argv).toContain("property-dana");
+    const second = await withWorkerProfile("sam", () => instance.adapter.sendTurn({ threadId: "seat", text: "two" }));
+    await recorder.until(e => e.type === "turn.completed" && e.turnId === second.turnId);
+    const changed = JSON.parse(readFileSync(dump, "utf8"));
+    expect(changed.argv).toContain("property-sam");
+    expect(changed.argv).not.toContain("property-dana");
   });
 
   it("normalizes a full turn into the canonical event sequence", async () => {
@@ -178,6 +196,27 @@ describe("ACP turns (fake CLI)", () => {
     expect(recorder.events.filter((event) => event.type === "session.started")).toHaveLength(1);
     expect(recorder.events.filter((event) => event.type === "turn.started")).toHaveLength(2);
     expect(recorder.events.filter((event) => event.type === "turn.completed")).toHaveLength(2);
+  });
+
+  it("mounts a private browser capability for one job and revokes it on interruption", async () => {
+    const dump = join(scratch, "browser-job.json"); process.env.FAKE_ACP_DUMP = dump;
+    await create(HermesAgentDriver, "hang");
+    await instance.adapter.sendTurn({ threadId: "t-browser-job", text: "Read the saved job site", computer: true,
+      integrations: { browser: { runId: "run-browser", allowedOrigins: ["portal.example"], capabilities: ["portal-read"] },
+        localComputer: { command: "must-not-mount", args: [], env: {} } } });
+    await vi.waitFor(() => expect(JSON.parse(readFileSync(dump, "utf8")).promptCount).toBe(1));
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.mcpServers.map((server: { name: string }) => server.name)).toEqual(["browser"]);
+    const descriptor = seen.mcpServers[0];
+    const request = () => fetch(descriptor.url, { method: "POST", headers: Object.fromEntries(descriptor.headers.map((row: { name: string; value: string }) => [row.name, row.value])),
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
+    const listing = await (await request()).json() as { result: { tools: Array<{ name: string }> } };
+    expect(listing.result.tools.some((tool: { name: string }) => tool.name === "browser_borrow")).toBe(true);
+    expect(assertCapability).toHaveBeenCalledWith("computer-use");
+    expect(readFileSync(join(NATIVE_DIR, "t-browser-job.ndjson"), "utf8")).not.toContain(descriptor.headers[0].value);
+    await instance.adapter.interruptTurn("t-browser-job");
+    await expect(request()).rejects.toThrow();
+    expect(instance.adapter.hasSession("t-browser-job")).toBe(false);
   });
 
   it("drops a warm session when RealBud clears the cursor for a rewind or recovery", async () => {
@@ -410,6 +449,8 @@ describe("ACP turns (fake CLI)", () => {
     { name: "code payload", rawInput: { code: "print(1)" } },
     { name: "unidentified execution", rawInput: {} },
     { name: "unknown named action", rawInput: { name: "future_script_tool", command: "print(1)" } },
+    { name: "unknown native callback", rawInput: { description: "Change durable future state", command: "git is our preferred change tracker" } },
+    { name: "conflicting named terminal callback", rawInput: { name: "terminal", tool: "future_action", command: "git is our preferred change tracker" } },
   ])("keeps Hermes $name permission one-shot even when fullAuto or session approval is requested", async ({ rawInput }) => {
     const dump = join(scratch, "script-approval.json");
     process.env.FAKE_ACP_DUMP = dump;
@@ -418,7 +459,7 @@ describe("ACP turns (fake CLI)", () => {
     await create(HermesAgentDriver, "permission", true);
     await instance.adapter.sendTurn({ threadId: "t-script-perm", text: "go" });
     const opened = await recorder.until(event => event.type === "request.opened");
-    expect(opened).toMatchObject({ summary: expect.stringContaining("approval applies once") });
+    expect(opened).toMatchObject({ summary: expect.stringContaining("approval applies once"), approvalPolicy: "once" });
     await instance.adapter.respondToRequest("t-script-perm", opened.requestId!, { behavior: "allow", scope: "session" });
     await recorder.until(event => event.type === "turn.completed");
     expect(JSON.parse(readFileSync(dump, "utf8")).selectedPermissionOption).toBe("allow-once");
@@ -437,6 +478,31 @@ describe("ACP turns (fake CLI)", () => {
     expect(JSON.parse(readFileSync(dump, "utf8")).selectedPermissionOption).toBeNull();
   });
 
+  it.each([
+    { name: 'typed navigation', kind: 'navigate', title: 'Open approved portal', rawInput: { url: 'https://example.invalid/bills' }, policy: 'provider-once' },
+    { name: 'typed read', kind: 'read', title: 'Read approved portal', rawInput: { name: 'read', url: 'https://example.invalid/bills' }, policy: 'provider-once' },
+    { name: 'typed fill', kind: 'fill', title: 'Fill approved form', rawInput: { tool: 'fill', url: 'https://example.invalid/bills', field: 'reference', value: 'fictional' }, policy: 'provider-once' },
+    { name: 'script title disguised as navigation', kind: 'navigate', title: 'execute_code print(1)', rawInput: { url: 'https://example.invalid/bills' }, policy: 'once' },
+    { name: 'script body disguised as navigation', kind: 'navigate', title: 'Open approved portal', rawInput: { url: 'https://example.invalid/bills', code: 'print(1)' }, policy: 'once' },
+    { name: 'unknown callback disguised as navigation', kind: 'navigate', title: 'Open approved portal', rawInput: { url: 'https://example.invalid/bills', description: 'Unknown durable change' }, policy: 'once' },
+    { name: 'conflicting browser action metadata', kind: 'navigate', title: 'Open approved portal', rawInput: { name: 'navigate', tool: 'future_action', url: 'https://example.invalid/bills' }, policy: 'once' },
+    { name: 'browser name with unknown action kind', kind: 'future_action', title: 'Open approved portal', rawInput: { name: 'navigate', url: 'https://example.invalid/bills' }, policy: 'once' },
+    { name: 'coercible non-string browser kind', kind: ['navigate'], title: 'Open approved portal', rawInput: { url: 'https://example.invalid/bills' }, policy: 'once' },
+    { name: 'coercible non-string terminal kind', kind: ['execute'], title: 'echo hi', rawInput: { command: 'echo hi' }, policy: 'once' },
+  ])('retains approval provenance for $name and still grants only provider allow_once', async ({ kind, title, rawInput, policy }) => {
+    const dump = join(scratch, 'browser-provenance.json'), script = join(scratch, 'browser-provenance-callback.json');
+    writeFileSync(script, JSON.stringify({ tool: kind, rawInput, title }));
+    process.env.FAKE_ACP_SCRIPT = script; process.env.FAKE_ACP_DUMP = dump;
+    await create(HermesAgentDriver, 'permission', true);
+    await instance.adapter.sendTurn({ threadId: 'browser-provenance', text: 'go' });
+    const opened = await recorder.until(event => event.type === 'request.opened');
+    expect(opened).toMatchObject({ approvalPolicy: policy });
+    expect(JSON.parse(readFileSync(dump, 'utf8')).selectedPermissionOption ?? null).toBeNull();
+    await instance.adapter.respondToRequest('browser-provenance', opened.requestId!, { behavior: 'allow', scope: 'session' });
+    await recorder.until(event => event.type === 'turn.completed');
+    expect(JSON.parse(readFileSync(dump, 'utf8')).selectedPermissionOption).toBe('allow-once');
+  });
+
   it("preserves Hermes session permission for an identified terminal command", async () => {
     const dump = join(scratch, "terminal-session.json");
     process.env.FAKE_ACP_DUMP = dump;
@@ -446,6 +512,73 @@ describe("ACP turns (fake CLI)", () => {
     await instance.adapter.respondToRequest("t-terminal-session", opened.requestId!, { behavior: "allow", scope: "session" });
     await recorder.until(event => event.type === "turn.completed");
     expect(JSON.parse(readFileSync(dump, "utf8")).selectedPermissionOption).toBe("allow_session");
+  });
+
+  it.each([false, true])("requires explicit one-time review of complete native memory text with fullAuto=%s", async fullAuto => {
+    const dump = join(scratch, 'memory-permission.json'), script = join(scratch, 'memory-callback.json');
+    const description = 'Save to memory: add to memory', content = 'git is our preferred change tracker\n' + 'Private fictional detail '.repeat(50);
+    writeFileSync(script, JSON.stringify({ tool: 'execute', rawInput: { command: content, description }, title: `${description}: ${content}` }));
+    process.env.FAKE_ACP_SCRIPT = script; process.env.FAKE_ACP_DUMP = dump;
+    await create(HermesAgentDriver, 'permission', fullAuto);
+    await instance.adapter.sendTurn({ threadId: 'memory-review', text: 'go' });
+    const opened = await recorder.until(event => event.type === 'request.opened');
+    expect(opened).toMatchObject({ tool: HERMES_MEMORY_APPROVAL, approvalPolicy: 'once',
+      memoryReview: { description, content, complete: true }, params: { command: content, description } });
+    expect(JSON.parse(readFileSync(dump, 'utf8')).selectedPermissionOption ?? null).toBeNull();
+    await instance.adapter.respondToRequest('memory-review', opened.requestId!, { behavior: 'allow', scope: 'session' });
+    await recorder.until(event => event.type === 'turn.completed');
+    expect(JSON.parse(readFileSync(dump, 'utf8')).selectedPermissionOption).toBe('allow-once');
+  });
+
+  it('does not approve native memory when only a session grant is offered', async () => {
+    const dump = join(scratch, 'memory-no-once.json'), script = join(scratch, 'memory-callback.json');
+    const description = 'Save to memory: add to user profile', content = 'Fictional user preference';
+    writeFileSync(script, JSON.stringify({ tool: 'execute', rawInput: { command: content, description }, title: `${description}: ${content}` }));
+    process.env.FAKE_ACP_SCRIPT = script; process.env.FAKE_ACP_DUMP = dump;
+    await create(HermesAgentDriver, 'permission-session-only', true);
+    await instance.adapter.sendTurn({ threadId: 'memory-no-once', text: 'go' });
+    const opened = await recorder.until(event => event.type === 'request.opened');
+    await instance.adapter.respondToRequest('memory-no-once', opened.requestId!, { behavior: 'allow', scope: 'session' });
+    await recorder.until(event => event.type === 'turn.completed');
+    expect(JSON.parse(readFileSync(dump, 'utf8')).selectedPermissionOption).toBeNull();
+  });
+
+  it.each(['malformed', 'credential-shaped', 'destructive substring'])('rejects %s native memory before fullAuto or raw-content emission', async failure => {
+    const dump = join(scratch, 'memory-held.json'), script = join(scratch, 'memory-held-callback.json');
+    const description = failure === 'destructive substring' ? 'Save to memory: remove from memory' : 'Save to memory: add to memory';
+    const content = failure === 'credential-shaped' ? 'api_key=fictional_rejected_credential' : 'git is our preferred change tracker';
+    writeFileSync(script, JSON.stringify({ tool: 'execute', rawInput: { command: content, description }, title: failure === 'malformed' ? 'execute' : `${description}: ${content}` }));
+    process.env.FAKE_ACP_DUMP = dump; process.env.FAKE_ACP_SCRIPT = script;
+    await create(HermesAgentDriver, 'permission', true);
+    await instance.adapter.sendTurn({ threadId: 'memory-held', text: 'go' });
+    await recorder.until(event => event.type === 'turn.completed');
+    expect(JSON.parse(readFileSync(dump, 'utf8')).selectedPermissionOption).toBeNull();
+    expect(recorder.events.some(event => event.type === 'request.opened')).toBe(false);
+    expect(JSON.stringify(recorder.events)).not.toContain(content);
+  });
+
+  it('retains the established session path for explicitly identified terminal commands', async () => {
+    const dump = join(scratch, 'named-terminal.json');
+    process.env.FAKE_ACP_DUMP = dump; process.env.FAKE_ACP_TOOL = 'execute';
+    process.env.FAKE_ACP_TOOL_INPUT = JSON.stringify({ name: 'terminal', command: 'echo hi', description: 'Run terminal command' });
+    await create(HermesAgentDriver, 'permission');
+    await instance.adapter.sendTurn({ threadId: 'named-terminal', text: 'go' });
+    const opened = await recorder.until(event => event.type === 'request.opened');
+    expect(opened).toMatchObject({ tool: 'terminal' }); expect(opened).not.toHaveProperty('approvalPolicy');
+    await instance.adapter.respondToRequest('named-terminal', opened.requestId!, { behavior: 'allow', scope: 'session' });
+    await recorder.until(event => event.type === 'turn.completed');
+    expect(JSON.parse(readFileSync(dump, 'utf8')).selectedPermissionOption).toBe('allow_session');
+  });
+
+  it('rejects a memory action masked by a conflicting terminal name before fullAuto', async () => {
+    const dump = join(scratch, 'masked-memory.json');
+    process.env.FAKE_ACP_DUMP = dump; process.env.FAKE_ACP_TOOL = 'execute';
+    process.env.FAKE_ACP_TOOL_INPUT = JSON.stringify({ name: 'terminal', tool: HERMES_MEMORY_APPROVAL, command: 'git is our preferred change tracker' });
+    await create(HermesAgentDriver, 'permission', true);
+    await instance.adapter.sendTurn({ threadId: 'masked-memory', text: 'go' });
+    await recorder.until(event => event.type === 'turn.completed');
+    expect(JSON.parse(readFileSync(dump, 'utf8')).selectedPermissionOption).toBeNull();
+    expect(recorder.events.some(event => event.type === 'request.opened')).toBe(false);
   });
 
   it("puts Hermes in workspace-scoped accept-edits mode before the prompt", async () => {

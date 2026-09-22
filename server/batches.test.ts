@@ -14,7 +14,7 @@ function deferred<T>() {
   const promise = new Promise<T>(done => { resolve = done; });
   return { promise, resolve };
 }
-function setup() {
+function setup(canRecover?: () => boolean) {
   const dir = mkdtempSync(join(tmpdir(), "realbud-batches-")); dirs.push(dir);
   const desk = new Desk({ file: join(dir, "desk.json") });
   const snapshot = desk.snapshot();
@@ -22,7 +22,7 @@ function setup() {
   const available = vi.fn(async () => true);
   const notes = vi.fn((id: string) => `Private reference for ${id}`);
   const file = join(dir, "batches.json");
-  const deps = { retryDelayMs: 0, file, snapshot: () => snapshot, notes, ask, available };
+  const deps = { retryDelayMs: 0, file, snapshot: () => snapshot, notes, ask, available, canRecover };
   const service = new BatchService(deps); services.push(service);
   const input = { task: "owner-update", propertyIds: ["prop-oak", "prop-pine"], instruction: "Concise please", requestKey: "request-0001", expectedRevision: snapshot.revision };
   return { service, snapshot, ask, available, notes, input, file, deps };
@@ -209,6 +209,28 @@ describe("durable property batches", () => {
 
 
 describe("persistent portfolio preparation", () => {
+  it.each(['before probe', 'during probe'] as const)('preserves automatic recovery while the host pauses %s', async when => {
+    let held = false;
+    const { service, input, available, ask, file } = setup(() => !held);
+    available.mockResolvedValue(false);
+    const created = service.create({ ...input, autoContinue: true }); await service.wait(created.id);
+    const before = readFileSync(file), calls = available.mock.calls.length;
+    expect(service.get(created.id)).toMatchObject({ status: 'paused', waitingForWorker: true });
+    if (when === 'before probe') {
+      held = true; await service.recoverReadyWork(); expect(available).toHaveBeenCalledTimes(calls);
+    } else {
+      const probe = deferred<boolean>(); available.mockReturnValueOnce(probe.promise);
+      const recovery = service.recoverReadyWork(); expect(available).toHaveBeenCalledTimes(calls + 1);
+      held = true; probe.resolve(true); await recovery;
+    }
+    expect(readFileSync(file)).toEqual(before); expect(ask).not.toHaveBeenCalled();
+    expect(service.get(created.id)).toMatchObject({ status: 'paused', waitingForWorker: true });
+    held = false; available.mockResolvedValue(true);
+    await service.recoverReadyWork(); await service.wait(created.id);
+    expect(service.get(created.id).status).toBe('finished'); expect(ask).toHaveBeenCalledTimes(2);
+    expect(service.get(created.id).items.map(item => item.attempt)).toEqual([1, 1]);
+  });
+
   it.each([20, 50, 100, 150, 200, 500])("completes %i independent properties and preserves progress on reload", async count => {
     const { service, snapshot, input, ask, deps } = setup();
     snapshot.properties = Array.from({ length: count }, (_, n) => ({ ...snapshot.properties[0], id: `portfolio-${n}`, address: `${n} Portfolio Road` }));

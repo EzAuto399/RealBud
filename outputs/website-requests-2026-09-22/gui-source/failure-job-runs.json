@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "executionHistory": 1,
+  "runs": [
+    {
+      "id": "409daa91-97d5-422d-92d8-1c8a836bd94d",
+      "jobId": "fictional-briefing",
+      "jobTitle": "Fictional briefing",
+      "jobRevision": 1,
+      "mode": "prepare",
+      "status": "completed",
+      "trigger": "manual",
+      "scheduledFor": 1790021641511,
+      "idempotencyKey": "fictional-briefing:1:prepare:manual:35db7311-6bc8-40d0-bd7a-62de8daf6dab",
+      "attempt": 1,
+      "spec": {
+        "title": "Fictional briefing",
+        "description": "Prepare a fictional internal briefing.",
+        "steps": [
+          "Review the fictional facts."
+        ],
+        "allowedOrigins": [],
+        "evidence": "Fictional notes",
+        "capabilities": [
+          "analyse",
+          "draft"
+        ],
+        "limits": {
+          "maxRuntimeMinutes": 1,
+          "maxTurns": 4
+        }
+      },
+      "evidence": [
+        {
+          "at": 1790021641570,
+          "note": "Fictional evidence",
+          "kind": "observation"
+        },
+        {
+          "at": 1790021641570,
+          "note": "Prepared fictional briefing.",
+          "kind": "output"
+        }
+      ],
+      "approvalRequests": [],
+      "detail": "Fictional preparation",
+      "createdAt": 1790021641511,
+      "startedAt": 1790021641525,
+      "finishedAt": 1790021641571
+    }
+  ]
+}

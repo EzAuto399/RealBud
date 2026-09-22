@@ -1,0 +1,13 @@
+{
+  "name": "email-inbox-triage",
+  "version": "0.1.0",
+  "author": "Ben Barclay (benbarclay), Hermes Agent",
+  "license": "MIT",
+  "upstreamCommit": "29112bef099274229cadff79cdff7bf7b99c4b77",
+  "upstreamUrl": "https://github.com/NousResearch/hermes-agent/blob/29112bef099274229cadff79cdff7bf7b99c4b77/skills/email/email-inbox-triage/SKILL.md",
+  "sha256": "cd57ccc9d563b5186012b41d6bbf52e96c2837c5b8e79d524e8e5e6a44af6021",
+  "unmodified": true,
+  "bindingPath": "workflow-support/email-inbox-triage/SKILL.md",
+  "allowedReuse": "Host-approved file guidance: scope, complete-thread reading, classification and review presentation. No native skill_view, connectors, cron, scripts or mutation step.",
+  "importLimitation": "Version1 JSON import installs recipe plans only. A trusted host/test fixture binder must supply this separately approved read-only file."
+}

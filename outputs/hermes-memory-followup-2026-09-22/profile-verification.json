@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "recordedUtc": "2026-09-21T17:50:15.532567+00:00",
+  "platform": "macOS",
+  "status": "passed",
+  "counts": {
+    "passed": 180,
+    "skipped": 6
+  },
+  "sourceUnchangedDuringVerification": true,
+  "files": {
+    "server/hermes-profile-storage.ts": "b4f41dbcb03934308186fc65ea74ca446b452fb325ea1cf0f59291153ea5636c",
+    "server/hermes-profile-storage.test.ts": "bbaad55e7170c2de16c01b6b753a0fbd374bb9d41c2c956ea2b29c87b273fce3",
+    "server/windows-file-privacy.ts": "f401829296ee278904a5f134692b59ddf951fd48903e790351c0f054f68c951c",
+    "server/windows-file-privacy-sync.test.ts": "837dd551aacefb8aecbb06189a9a68d8239297f06d20f78d47162b8fe7a0f13e",
+    "server/hermes-pack.ts": "f3325339ff90a8081c5c65d01f9250409aa7f454480eed604e445f93439acc28",
+    "server/hermes-pack.test.ts": "c982a64ef4368d8d5bc2531fc56ff2a9987ce9bf579f22d5a2b23381e1b79a8b",
+    "server/hermes-bridge.ts": "9766fe9f729c9083db126c0bcbb88582147470a9bcf83608301c9b8a294793e0",
+    "server/hermes-bridge.test.ts": "247c1c40476f979c5e4ef033973589a550ff928060674e55317e902055505215",
+    "server/hermes-update.ts": "b7440390c113e33b7d49cfe84a4dc2141025a028120f01dd13f843e6691ccc74",
+    "server/hermes-update.test.ts": "8a66f146c7f43f61c08d90098a18ec434dcdda259d4a1a7be68cf7e22dd02e90",
+    "server/gates.test.ts": "a80abd0451124f38bd3c5c558596504fda890779d7d4a93df7bffd26dece0f9a",
+    "server/hermes-hands.test.ts": "c5213ea87f4caf76dbafd21c469e231670b06058df018fb75e5f9b3f1ced1c5e",
+    "server/hermes-lifecycle.test.ts": "74400a92cfe2a48e5eba67750ef2b589849f9c6b18cfab4422de3e17c70caa39"
+  },
+  "checks": [
+    {
+      "command": [
+        "pnpm",
+        "exec",
+        "vitest",
+        "run",
+        "server/hermes-profile-storage.test.ts",
+        "server/windows-file-privacy-sync.test.ts",
+        "server/hermes-profile.test.ts",
+        "server/hermes-pack.test.ts",
+        "server/hermes-bridge.test.ts",
+        "server/windows-file-privacy-diagnostics.test.ts",
+        "server/windows-file-privacy.test.ts",
+        "server/gates.test.ts",
+        "server/hermes-hands.test.ts",
+        "server/hermes-update.test.ts",
+        "server/hermes-lifecycle.test.ts"
+      ],
+      "exitCode": 0,
+      "log": "outputs/hermes-memory-followup-2026-09-22/profile-tests.log"
+    },
+    {
+      "command": [
+        "pnpm",
+        "exec",
+        "tsc",
+        "-p",
+        "tsconfig.server.json",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "log": "outputs/hermes-memory-followup-2026-09-22/profile-typecheck.log"
+    }
+  ],
+  "scope": [
+    "Profile setup/startup/repair, provider config and .env writes use bounded nofollow/identity-checked private storage.",
+    "Existing Windows ACLs verify-only; new empty objects restricted before content. POSIX existing modes unchanged, published config/.env0600.",
+    "First runtime installation admits a new owned home before bootstrap descendants, after validation. Existing unsafe homes refuse before installer work.",
+    "Shipped skills copied as verified bounded private files without replacing locally maintained skills.",
+    "Unused Windows legacy recursive migration fails before source/destination mutation; POSIX behavior retained.",
+    "Synchronous ACL export reuses unchanged existing PowerShell policy and sanitized error taxonomy.",
+    "Profile IDs, provider routing, upstream Hermes, native memory helpers and public Windows memory holds were not changed by this wave."
+  ],
+  "limits": [
+    "No native Windows execution: ACL effects, NTFS sharing/publication, genuine Windows setup and native memory admission remain unverified.",
+    "Six actual-Windows ACL tests were skipped on macOS; simulated ACL tests are not native proof.",
+    "Existing broad Hermes test fixtures may require explicit private ACL preparation before a genuine Windows CI run.",
+    "Installed-profile startup performs eight to nine sequential verify-only PowerShell checks, each with a 15-second timeout; real Windows startup latency is unmeasured.",
+    "Config and .env are separate whole-file operations; this does not create a multi-file transaction or automatic rollback after uncertain publication.",
+    "Profile provisioning uses Node filesystem identity checks and path publication, not the unadmitted native journal handle/locking protocol; no adversarial same-user writer or physical power-loss guarantee is claimed.",
+    "No new Grok review was launched; separate CLI timeout diagnosis remains with another agent."
+  ]
+}

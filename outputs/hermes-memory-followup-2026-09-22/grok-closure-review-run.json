@@ -1,0 +1,215 @@
+{
+  "startedAt": "2026-09-21T17:42:01.599397+00:00",
+  "cliVersion": "1.0.34 (3736acbc8658)",
+  "requestedModel": "grok-4.7",
+  "reasoningEffort": "xhigh",
+  "requestedSession": "8b54be2e-d24f-4aa8-86c1-adfd78e19caa",
+  "hardTimeoutSeconds": 180,
+  "prompt": "Review this new interrupted-memory-proposal closure contract for one material correctness gap. This is a design review, not a code or runtime audit. No tools. A prepared proposal journal has full 64-hex request identity, native8-hex pending ID, workspace/profile/runtime binding, request/pending digests, time, HMAC and no payload. Publication may have crashed after durable preparation, before a payload stage. Staff GET lists bounded full-key metadata; only a valid signed prepared journal with strict absence of stage, pending, cleanup claim and any human-decision receipt is closable. All directory ancestry must be admitted; missing parent, ACL denial or full-key collision on native ID blocks closure. POST carries only exact displayed recovery digest to full-key URL. Under the same native review lock, host revalidates identity, journal signature, digest and artifact absence, atomically replaces journal with signed v2 closed retaining original immutable fields, close time and domain-separated recovery digest, then checks absence again. Replay is valid only for same key/digest and artifacts still absent. It never writes memory, deletes payload, or creates approval/rejection. Existing published/invalid records are not closable. GUI requires confirmation, serializes requests, reconciles a lost reply via GET and only reports closed on exact key+digest; never automatic POST retry. Same-key future proposal returns terminal closed; model cannot close and receives fixed no-retry instruction. Existing review/decide unaffected. Tell us strongest remaining correctness risk or say none, and one precise validation case. Do not assume arbitrary code is safe. Return schema only.",
+  "reviewKind": "closure-contract-design",
+  "promptBytes": 1688,
+  "maxTurns": 1,
+  "processOverrides": {
+    "GROK_DISABLE_AUTOUPDATER": "1",
+    "GROK_MEMORY": "0",
+    "GROK_SUBAGENTS": "0",
+    "GROK_CURSOR_SKILLS_ENABLED": "0",
+    "GROK_CURSOR_RULES_ENABLED": "0",
+    "GROK_CURSOR_AGENTS_ENABLED": "0",
+    "GROK_CURSOR_MCPS_ENABLED": "0",
+    "GROK_CURSOR_HOOKS_ENABLED": "0",
+    "GROK_CLAUDE_SKILLS_ENABLED": "0",
+    "GROK_CLAUDE_RULES_ENABLED": "0",
+    "GROK_CLAUDE_AGENTS_ENABLED": "0",
+    "GROK_CLAUDE_MCPS_ENABLED": "0",
+    "GROK_CLAUDE_HOOKS_ENABLED": "0"
+  },
+  "rawDiagnosticsPersisted": false,
+  "credentialsReadByHarness": false,
+  "authentication": "Opaque auth.json symlink in private disposable GROK_HOME; no credential contents copied or printed.",
+  "globalConfigSha256Before": "ada54f57ec570d8e70cba35400ea2b557914ede90ffa893b5da122a7f69d6736",
+  "isolationPreflight": {
+    "grokVersion": "1.0.34",
+    "projectTrusted": true,
+    "discoveredCounts": {
+      "projectInstructions": 1,
+      "mcpServers": 1,
+      "hooks": 1,
+      "skills": 387,
+      "plugins": 0
+    },
+    "activeCounts": {
+      "projectInstructions": 0,
+      "mcpServers": 0,
+      "hooks": 0,
+      "skills": 219,
+      "plugins": 0
+    },
+    "compatibilityScanners": [
+      {
+        "vendor": "cursor",
+        "surface": "skills",
+        "enabled": false,
+        "source": "env"
+      },
+      {
+        "vendor": "cursor",
+        "surface": "rules",
+        "enabled": false,
+        "source": "env"
+      },
+      {
+        "vendor": "cursor",
+        "surface": "agents",
+        "enabled": false,
+        "source": "env"
+      },
+      {
+        "vendor": "cursor",
+        "surface": "mcps",
+        "enabled": false,
+        "source": "env"
+      },
+      {
+        "vendor": "cursor",
+        "surface": "hooks",
+        "enabled": false,
+        "source": "env"
+      },
+      {
+        "vendor": "cursor",
+        "surface": "sessions",
+        "enabled": true,
+        "source": "default"
+      },
+      {
+        "vendor": "claude",
+        "surface": "skills",
+        "enabled": false,
+        "source": "env"
+      },
+      {
+        "vendor": "claude",
+        "surface": "rules",
+        "enabled": false,
+        "source": "env"
+      },
+      {
+        "vendor": "claude",
+        "surface": "agents",
+        "enabled": false,
+        "source": "env"
+      },
+      {
+        "vendor": "claude",
+        "surface": "mcps",
+        "enabled": false,
+        "source": "env"
+      },
+      {
+        "vendor": "claude",
+        "surface": "hooks",
+        "enabled": false,
+        "source": "env"
+      },
+      {
+        "vendor": "claude",
+        "surface": "sessions",
+        "enabled": true,
+        "source": "default"
+      },
+      {
+        "vendor": "codex",
+        "surface": "sessions",
+        "enabled": true,
+        "source": "default"
+      }
+    ],
+    "mcpNames": [
+      "semble"
+    ],
+    "globalConfigRead": false
+  },
+  "argv": [
+    "/Users/yoda/.local/bin/grok",
+    "--model",
+    "grok-4.7",
+    "--reasoning-effort",
+    "xhigh",
+    "--session-id",
+    "8b54be2e-d24f-4aa8-86c1-adfd78e19caa",
+    "--no-subagents",
+    "--tools",
+    "",
+    "--deny",
+    "MCPTool",
+    "--disable-web-search",
+    "--permission-mode",
+    "plan",
+    "--max-turns",
+    "1",
+    "--verbatim",
+    "--system-prompt-override",
+    "Review only the supplied contract. Return the schema JSON. Do not use tools.",
+    "--json-schema",
+    "{\"type\": \"object\", \"properties\": {\"risk\": {\"type\": \"string\"}, \"validation\": {\"type\": \"string\"}}, \"required\": [\"risk\", \"validation\"], \"additionalProperties\": false}",
+    "--output-format",
+    "streaming-messages-json",
+    "--single",
+    "Review this new interrupted-memory-proposal closure contract for one material correctness gap. This is a design review, not a code or runtime audit. No tools. A prepared proposal journal has full 64-hex request identity, native8-hex pending ID, workspace/profile/runtime binding, request/pending digests, time, HMAC and no payload. Publication may have crashed after durable preparation, before a payload stage. Staff GET lists bounded full-key metadata; only a valid signed prepared journal with strict absence of stage, pending, cleanup claim and any human-decision receipt is closable. All directory ancestry must be admitted; missing parent, ACL denial or full-key collision on native ID blocks closure. POST carries only exact displayed recovery digest to full-key URL. Under the same native review lock, host revalidates identity, journal signature, digest and artifact absence, atomically replaces journal with signed v2 closed retaining original immutable fields, close time and domain-separated recovery digest, then checks absence again. Replay is valid only for same key/digest and artifacts still absent. It never writes memory, deletes payload, or creates approval/rejection. Existing published/invalid records are not closable. GUI requires confirmation, serializes requests, reconciles a lost reply via GET and only reports closed on exact key+digest; never automatic POST retry. Same-key future proposal returns terminal closed; model cannot close and receives fixed no-retry instruction. Existing review/decide unaffected. Tell us strongest remaining correctness risk or say none, and one precise validation case. Do not assume arbitrary code is safe. Return schema only."
+  ],
+  "ownedPid": 63643,
+  "firstStderrSeconds": 0.841,
+  "firstStdoutSeconds": 3.913,
+  "timedOut": true,
+  "exitCode": -15,
+  "elapsedSeconds": 180.156,
+  "stdoutBytes": 8517,
+  "stderrBytes": 5568,
+  "safeFrames": [
+    {
+      "type": "system",
+      "subtype": "init",
+      "session_id": "8b54be2e-d24f-4aa8-86c1-adfd78e19caa",
+      "model": "grok-4.7",
+      "mcp_servers": [
+        {
+          "name": "semble",
+          "status": "connected"
+        }
+      ],
+      "tools": [
+        "run_terminal_command",
+        "read_file",
+        "search_replace",
+        "list_dir",
+        "grep",
+        "kill_command_or_subagent",
+        "todo_write",
+        "get_command_or_subagent_output",
+        "scheduler_create",
+        "scheduler_delete",
+        "scheduler_list",
+        "monitor",
+        "search_tool",
+        "use_tool",
+        "workflow",
+        "enter_plan_mode",
+        "exit_plan_mode",
+        "ask_user_question",
+        "send_feedback",
+        "image_gen",
+        "image_edit",
+        "image_to_video",
+        "reference_to_video",
+        "write"
+      ]
+    }
+  ],
+  "terminalResult": null,
+  "passed": false,
+  "isolatedHomeRemoved": true,
+  "processReaped": true,
+  "globalConfigSha256After": "ada54f57ec570d8e70cba35400ea2b557914ede90ffa893b5da122a7f69d6736",
+  "globalConfigUnchanged": true
+}

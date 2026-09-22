@@ -1,0 +1,43 @@
+server/mail-workspace-http.test.ts(45,17): error TS2339: Property 'pid' does not exist on type '{}'.
+server/mail-workspace-http.test.ts(49,11): error TS2571: Object is of type 'unknown'.
+server/mail-workspace-http.test.ts(64,12): error TS2571: Object is of type 'unknown'.
+server/mail-workspace-http.test.ts(65,12): error TS2571: Object is of type 'unknown'.
+server/mail-workspace-http.test.ts(102,12): error TS18046: 'source' is of type 'unknown'.
+server/mail-workspace-http.test.ts(103,12): error TS18046: 'source' is of type 'unknown'.
+server/mail-workspace-http.test.ts(105,12): error TS18046: 'scans' is of type 'unknown'.
+server/mail-workspace-http.test.ts(105,41): error TS18046: 'scans' is of type 'unknown'.
+server/mail-workspace-http.test.ts(105,78): error TS18046: 'scans' is of type 'unknown'.
+server/mail-workspace-http.test.ts(106,12): error TS2571: Object is of type 'unknown'.
+server/mail-workspace-http.test.ts(106,78): error TS18046: 'scans' is of type 'unknown'.
+server/mail-workspace-http.test.ts(120,12): error TS2571: Object is of type 'unknown'.
+server/morning-mail-scheduler.test.ts(29,95): error TS2345: Argument of type '{ recipe: () => Recipe; admitPack: Mock<() => Promise<void>>; collect: Mock<() => Promise<MailWorkspaceSnapshot>>; prepareInput: Mock<...>; execute: Mock<...>; applyReview: Mock<...>; }' is not assignable to parameter of type 'Dependencies'.
+  The types returned by 'collect(...)' are incompatible between these types.
+    Type 'Promise<MailWorkspaceSnapshot>' is not assignable to type 'Promise<MailWorkspaceMetadata>'.
+      Type 'MailWorkspaceSnapshot' is missing the following properties from type 'MailWorkspaceMetadata': counts, nextSnoozeAt
+server/morning-mail-scheduler.test.ts(50,95): error TS2345: Argument of type '{ recipe: () => Recipe; admitPack: Mock<() => Promise<void>>; collect: Mock<() => Promise<MailWorkspaceSnapshot>>; prepareInput: Mock<...>; execute: Mock<...>; applyReview: Mock<...>; }' is not assignable to parameter of type 'Dependencies'.
+  The types returned by 'collect(...)' are incompatible between these types.
+    Type 'Promise<MailWorkspaceSnapshot>' is not assignable to type 'Promise<MailWorkspaceMetadata>'.
+      Type 'MailWorkspaceSnapshot' is missing the following properties from type 'MailWorkspaceMetadata': counts, nextSnoozeAt
+server/morning-mail-scheduler.test.ts(70,102): error TS2345: Argument of type '{ recipe: () => Recipe; admitPack: Mock<() => Promise<void>>; collect: Mock<() => Promise<MailWorkspaceSnapshot>>; prepareInput: Mock<...>; execute: Mock<...>; applyReview: Mock<...>; }' is not assignable to parameter of type 'Dependencies'.
+  The types returned by 'collect(...)' are incompatible between these types.
+    Type 'Promise<MailWorkspaceSnapshot>' is not assignable to type 'Promise<MailWorkspaceMetadata>'.
+      Type 'MailWorkspaceSnapshot' is missing the following properties from type 'MailWorkspaceMetadata': counts, nextSnoozeAt
+server/morning-mail-scheduler.test.ts(78,110): error TS2345: Argument of type '{ recipe: () => Recipe; admitPack: Mock<() => Promise<void>>; collect: Mock<() => Promise<MailWorkspaceSnapshot>>; prepareInput: Mock<...>; execute: Mock<...>; applyReview: Mock<...>; }' is not assignable to parameter of type 'Dependencies'.
+  The types returned by 'collect(...)' are incompatible between these types.
+    Type 'Promise<MailWorkspaceSnapshot>' is not assignable to type 'Promise<MailWorkspaceMetadata>'.
+      Type 'MailWorkspaceSnapshot' is missing the following properties from type 'MailWorkspaceMetadata': counts, nextSnoozeAt
+server/morning-mail-scheduler.test.ts(85,103): error TS2345: Argument of type '{ recipe: () => Recipe; admitPack: Mock<() => Promise<void>>; collect: Mock<() => Promise<MailWorkspaceSnapshot>>; prepareInput: Mock<...>; execute: Mock<...>; applyReview: Mock<...>; }' is not assignable to parameter of type 'Dependencies'.
+  The types returned by 'collect(...)' are incompatible between these types.
+    Type 'Promise<MailWorkspaceSnapshot>' is not assignable to type 'Promise<MailWorkspaceMetadata>'.
+      Type 'MailWorkspaceSnapshot' is missing the following properties from type 'MailWorkspaceMetadata': counts, nextSnoozeAt
+server/private-backup-mail-retention.test.ts(51,121): error TS2322: Type '{ workflowPackId: string; agencyName: string; timeZone: string; gmailAccountId: string; selectedWorkflows: "morning-priorities"[]; mailScope: { historyDays: number; includeSent: boolean; maxMessages: number; attachments: "metadata-only"; }; propertyReferences: AgencyReference[]; morningReview: { localTime: string; w...' is not assignable to type 'AgencySetupSettings'.
+  Types of property 'workflowPackId' are incompatible.
+    Type 'string' is not assignable to type '"office-core" | "austin-office" | null'.
+server/private-backup-mail-retention.test.ts(147,84): error TS2698: Spread types may only be created from object types.
+server/private-backup-mail-retention.test.ts(147,104): error TS18046: 'value' is of type 'unknown'.
+server/private-backup-mail-validation.test.ts(23,121): error TS2322: Type '{ workflowPackId: string; agencyName: string; timeZone: string; gmailAccountId: string; selectedWorkflows: "morning-priorities"[]; mailScope: { historyDays: number; includeSent: boolean; maxMessages: number; attachments: "metadata-only"; }; propertyReferences: AgencyReference[]; morningReview: { localTime: string; w...' is not assignable to type 'AgencySetupSettings'.
+  Types of property 'workflowPackId' are incompatible.
+    Type 'string' is not assignable to type '"office-core" | "austin-office" | null'.
+server/testing/mail-backup-fixture.ts(20,70): error TS2345: Argument of type '{ workflowPackId: string; agencyName: string; timeZone: string; gmailAccountId: string; selectedWorkflows: "morning-priorities"[]; mailScope: { historyDays: number; includeSent: boolean; maxMessages: number; attachments: "metadata-only"; }; propertyReferences: AgencyReference[]; morningReview: { localTime: string; w...' is not assignable to parameter of type 'AgencySetupSettings'.
+  Types of property 'workflowPackId' are incompatible.
+    Type 'string' is not assignable to type '"office-core" | "austin-office" | null'.

@@ -1,0 +1,49 @@
+{
+  "recordedAt": "2026-09-21T19:37:17.424529+00:00",
+  "reviewScope": [
+    "server/customer-packs.ts",
+    "server/customer-pack-upgrades.ts",
+    "server/private-workspace-backup.ts",
+    "server/private-backup-capture.ts",
+    "server/private-backup-catalog.ts"
+  ],
+  "testCommand": "PATH=/Users/yoda/.nvm/versions/node/v24.19.0/bin:$PATH pnpm exec vitest run server/customer-pack-archive.review.test.ts --reporter=dot",
+  "testExitCode": 0,
+  "testFilesPassed": 1,
+  "testsPassed": 2,
+  "durationSeconds": 1.39,
+  "typecheckCommand": "PATH=/Users/yoda/.nvm/versions/node/v24.19.0/bin:$PATH pnpm exec tsc --noEmit -p tsconfig.server.json",
+  "typecheckExitCode": 0,
+  "resolvedFindings": [
+    {
+      "problem": "Missing recent generation accepted beside intact archive chain.",
+      "resolution": "Journal coverage must be contiguous after archive through-generation; archive counts require equality and per-batch generations must be contiguous.",
+      "proof": "Owned missing-generation admission test passes."
+    },
+    {
+      "problem": "Partial private atomic archive temporary left after crash survives successful resume and blocks backup discovery.",
+      "resolution": "Reconcile only saved-intent target UUID-temporaries with private regular single-link identity, matching intended payload prefix and unchanged content; verify final archive before removing owned staging and publishing journal.",
+      "proof": "Owned seeded partial-write cold-resume test now passes real backup filesystem discovery. Worker owns adversarial temporary-file regressions; root owns actual whole-application child SIGKILL proof."
+    },
+    {
+      "problem": "First archive pack-directory entry had no parent flush before journal publication.",
+      "resolution": "Explicit fsync of data root and customer-pack-history after private directory admission, before archive and journal publication.",
+      "proof": "Direct final source inspection; not physical power-loss evidence."
+    }
+  ],
+  "remainingFindings": "No additional demonstrated defect in this bounded review. This is not a blanket production or native Windows approval.",
+  "limits": [
+    "Review tests use fictional disposable files; partial-write regression seeds the production temporary-file shape rather than killing a process.",
+    "Backup source and graph admission inspected; root owns full archive backup/restore integration tests.",
+    "Intermediate duplicate child test failed solely due absent tsx before application started and was removed; see review-child-attempt.json."
+  ],
+  "filesSha256AtReceipt": {
+    "server/customer-pack-archive.review.test.ts": "237368b4b1d723c2e10b7e81751f6054f7c163037b0461568bc48d02a8d9f634",
+    "server/customer-packs.ts": "b7a57c59ab3c5de08d05f07953d991b8e5c68cff1e8606b36aa3de3c6a4ec18e",
+    "server/customer-pack-upgrades.ts": "10495a2477a25589cd47342255e7f21822613e8d0e7367ef4b0a9a30c2fafd63",
+    "server/private-workspace-backup.ts": "9b25867831b2a88e4b6ead0da80b2a76062c5150cb692608657f3edf76917a29",
+    "server/private-backup-capture.ts": "0ad3600c79a071bc4062a7bcd0d3b157a5d2642babbad6d720ba827d82bf7c0b",
+    "server/private-backup-catalog.ts": "12c4be562a28544fe20411936b67b2fadf8a223d0fc75fe06a77883b5c89cf65"
+  },
+  "testFrozen": true
+}

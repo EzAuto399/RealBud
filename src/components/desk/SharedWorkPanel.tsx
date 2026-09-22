@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CompanyStatus } from '@shared/company-api';
-import type { SharedWorkItem, SharedWorkPerson, SharedWorkPurpose } from '@shared/company-work';
+import type { SharedWorkItem, SharedWorkPerson, SharedWorkPurpose, ShareWorkInput } from '@shared/company-work';
 import { companyApi } from '@/lib/company-api';
 import { SharedWorkDetails } from './SharedWorkDetails';
 import type { SharedWorkEvidence } from '@shared/company-work';
@@ -34,12 +34,12 @@ function when(value: string): string {
   return Number.isFinite(time) ? new Date(time).toLocaleString() : value;
 }
 
-export function SharedWorkPanel({ initialDraft }: { initialDraft?: { title: string; summary: string } } = {}) {
-  const [expanded, setExpanded] = useState(false);
+export function SharedWorkPanel({ initialDraft, initialExpanded = false, initialFilter = 'with-me' }: { initialDraft?: { title: string; summary: string }; initialExpanded?: boolean; initialFilter?: 'with-me' | 'by-me' } = {}) {
+  const [expanded, setExpanded] = useState(initialExpanded);
   const [company, setCompany] = useState<CompanyStatus | null>(null);
   const [members, setMembers] = useState<SharedWorkPerson[]>([]);
   const [items, setItems] = useState<SharedWorkItem[]>([]);
-  const [filter, setFilter] = useState<'with-me' | 'by-me'>('with-me');
+  const [filter, setFilter] = useState<'with-me' | 'by-me'>(initialFilter);
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -60,6 +60,7 @@ export function SharedWorkPanel({ initialDraft }: { initialDraft?: { title: stri
   const loadGeneration = useRef(0);
   const identityRef = useRef<{ companyId: string; memberId: string } | null>(null);
   const requestId = useRef('');
+  const frozenShare = useRef<ShareWorkInput | null>(null);
   const reviewHeading = useRef<HTMLHeadingElement>(null);
   const titleField = useRef<HTMLInputElement>(null);
   const previousPreview = useRef(false);
@@ -73,7 +74,7 @@ export function SharedWorkPanel({ initialDraft }: { initialDraft?: { title: stri
     setEvidence({ label: '', sourceRef: '', sourceVersion: '', text: '' });
     setPreview(false);
     setShareLocked(false);
-    requestId.current = '';
+    requestId.current = ''; frozenShare.current = null;
     setTitle('');
     setSummary('');
     setPage(0);
@@ -81,6 +82,7 @@ export function SharedWorkPanel({ initialDraft }: { initialDraft?: { title: stri
   };
 
   const load = async () => {
+    if (busyRef.current) return;
     const generation = ++loadGeneration.current;
     setLoading(true);
     setError('');
@@ -100,10 +102,29 @@ export function SharedWorkPanel({ initialDraft }: { initialDraft?: { title: stri
         setSelectedId('');
         return;
       }
-      const [people, work] = await Promise.all([companyApi.workMembers(), companyApi.sharedWork({ offset: page * 10, filter })]);
+      const [people, work, outbox] = await Promise.all([companyApi.workMembers(), companyApi.sharedWork({ offset: page * 10, filter }), companyApi.pendingShare()]);
       if (!mounted.current || generation !== loadGeneration.current) return;
       setMembers(people.members);
       setItems(work.items);
+      if (outbox.pending?.phase === 'pending') {
+        const input = outbox.pending.input;
+        requestId.current = input.requestId; frozenShare.current = input;
+        setTitle(input.title); setSummary(input.summary); setPurpose(input.purpose);
+        setRecipientId(input.recipientMemberIds[0] ?? '');
+        setIncludeEvidence(Boolean(input.evidence));
+        setEvidence(input.evidence ?? { label: '', sourceRef: '', sourceVersion: '', text: '' });
+        setShareLocked(true); setPreview(false);
+        setNotice('Restored an unfinished share from this computer. Retry checks the same request; it will not create another copy.');
+      } else if (outbox.pending?.phase === 'confirmed') {
+        if (requestId.current === outbox.pending.input.requestId) {
+          requestId.current = ''; frozenShare.current = null; setShareLocked(false); setPreview(false);
+          setTitle(''); setSummary(''); setRecipientId(''); setIncludeEvidence(false);
+        }
+        setNotice(`Your share “${outbox.pending.input.title}” was saved. Its current state is in Shared work.`);
+        void companyApi.acknowledgeShare(outbox.pending.input.requestId).catch(() => {});
+      } else if (outbox.otherOfficePending) {
+        setError('An unfinished share belongs to another office. Reconnect that office and confirm it before sharing here.');
+      }
     } catch (cause) {
       if (!mounted.current || generation !== loadGeneration.current) return;
       const sessionLost = ended(cause) || statusOf(cause) === 401;
@@ -168,7 +189,7 @@ export function SharedWorkPanel({ initialDraft }: { initialDraft?: { title: stri
       } else if ([403, 404, 503].includes(statusOf(cause) ?? 0)) {
         clearVisible(false);
       }
-      setError(statusOf(cause) === 409
+      setError(statusOf(cause) === 409 && !(cause as { code?: string }).code
         ? 'This shared work changed. Refresh to see the current revision. Your unsaved text is still here.'
         : messageOf(cause));
     } finally {
@@ -197,20 +218,22 @@ export function SharedWorkPanel({ initialDraft }: { initialDraft?: { title: stri
     const check = await sameIdentity();
     check();
     if (!requestId.current) requestId.current = crypto.randomUUID();
-    let saved: SharedWorkItem;
-    try {
-      const { item } = await companyApi.shareWork({
+    const input = frozenShare.current ?? {
         requestId: requestId.current, title, summary, purpose, recipientMemberIds: [recipientId],
         assigneeMemberId: purpose === 'share-result' ? null : recipientId,
         evidence: includeEvidence ? evidence : null,
-      });
+    };
+    frozenShare.current = input;
+    let saved: SharedWorkItem;
+    try {
+      const { item } = await companyApi.shareWork(input);
       check();
       // Audience is current access, not the immutable creation request. It may
       // shrink before an idempotent response arrives; the kernel checks that
       // the request id and original recipient selection match on every retry.
-      if (item.id !== requestId.current || item.title !== title || item.summary !== summary ||
-          item.purpose !== purpose || item.owner.id !== identityRef.current?.memberId ||
-          JSON.stringify(item.evidence ? { label: item.evidence.label, sourceRef: item.evidence.sourceRef, sourceVersion: item.evidence.sourceVersion, text: item.evidence.text } : null) !== JSON.stringify(includeEvidence ? evidence : null)) {
+      if (item.id !== requestId.current || item.title !== input.title || item.summary !== input.summary ||
+          item.purpose !== input.purpose || item.owner.id !== identityRef.current?.memberId ||
+          JSON.stringify(item.evidence ? { label: item.evidence.label, sourceRef: item.evidence.sourceRef, sourceVersion: item.evidence.sourceVersion, text: item.evidence.text } : null) !== JSON.stringify(input.evidence ?? null)) {
         throw new Error('The saved shared work did not match the preview. Retry the same request to check it.');
       }
       saved = item;
@@ -218,6 +241,7 @@ export function SharedWorkPanel({ initialDraft }: { initialDraft?: { title: stri
       if (!mounted.current || !identityRef.current || startVersion !== companyApi.sessionVersion()) throw cause;
       const status = statusOf(cause);
       if (status !== 400 && status !== 401 && status !== 403) setShareLocked(true);
+      else if (!shareLocked) frozenShare.current = null;
       throw cause;
     }
     // A successful write is final even if a later refresh cannot reach the host.
@@ -226,10 +250,11 @@ export function SharedWorkPanel({ initialDraft }: { initialDraft?: { title: stri
     setSelectedId(saved.id);
     setFilter('by-me'); setPage(0);
     setShareLocked(false); setPreview(false);
-    setTitle(''); setSummary(''); setRecipientId(''); requestId.current = '';
+    setTitle(''); setSummary(''); setRecipientId(''); requestId.current = ''; frozenShare.current = null;
     setIncludeEvidence(false); setEvidence({ label: '', sourceRef: '', sourceVersion: '', text: '' });
     setNotice(saved.state === 'closed' ? 'This request was already saved and is now closed.'
       : saved.state === 'responded' ? 'This request was already saved and has a response.' : 'Reviewed work saved. Its current audience is shown below.');
+    void companyApi.acknowledgeShare(saved.id).catch(() => {});
   };
 
   const me = company?.member?.id;
@@ -239,7 +264,7 @@ export function SharedWorkPanel({ initialDraft }: { initialDraft?: { title: stri
     : item.owner.id !== me && (item.assignee?.id === me || item.audience.some(person => person.id === me))));
   const selected = items.find(item => item.id === selectedId);
   const recipient = others.find(person => person.id === recipientId);
-  const editingLocked = busy || shareLocked;
+  const editingLocked = busy || loading || shareLocked;
   const evidenceReady = !includeEvidence || Object.values(evidence).every(value => value.trim());
   const evidencePreview = includeEvidence && <div className="mt-3 border-t border-line pt-3"><p className="font-medium">Evidence copy: {evidence.label}</p><p className={muted}>{evidence.sourceRef} · {evidence.sourceVersion}</p><p className="mt-2 whitespace-pre-wrap break-words text-sm">{evidence.text}</p></div>;
 
@@ -249,6 +274,7 @@ export function SharedWorkPanel({ initialDraft }: { initialDraft?: { title: stri
       {expanded && (
         <div id="shared-work-panel" className="mt-3" aria-busy={loading || busy}>
           <p className={muted}>Share a result or ask a colleague to review it. Only content you review and select is shared. Your chats and connected accounts stay private.</p>
+          {shareLocked && frozenShare.current && <p className={muted}>Saved audience: {frozenShare.current.recipientMemberIds.map(id => members.find(person => person.id === id)?.displayName ?? id).join(", ")}. Retrying preserves this exact selection.</p>}
           {loading && <p role="status" className={muted}>Loading shared work…</p>}
           {error && <p id="shared-work-error" role="alert" className="mt-2 text-sm text-danger">{error}</p>}
           <p role="status" className={muted}>{notice}</p>
@@ -290,13 +316,13 @@ export function SharedWorkPanel({ initialDraft }: { initialDraft?: { title: stri
                     <p className={muted}>Invite a colleague under You → This office before sharing work.</p>
                   ) : shareLocked ? (
                     <>
-                      <p role="status" className={muted}>The share may already exist. Retry uses the same request. Cancel does not undo a share that already landed. Refresh to check.</p>
+                      <p role="status" className={muted}>The share may already exist. Its reviewed content is saved on this computer. Retry uses the same request, including after restarting RealBud.</p>
                       <p className="mt-2 text-sm text-ink">Audience: {recipient?.displayName ?? 'Unknown'}</p>
                       <p className="text-sm text-ink">Purpose: {purposeLabel(purpose)}</p>
                       <p className="text-sm text-ink">Title: {title}</p>
                       <p className="mt-2 whitespace-pre-wrap break-words text-sm text-ink">{summary}</p>
                       <button type="button" className={`${button} mt-2 mr-2`} disabled={busy} onClick={() => void perform(shareNow)}>Retry share</button>
-                      <button type="button" className={`${button} mt-2`} disabled={busy} onClick={() => { setShareLocked(false); setPreview(false); requestId.current = ''; setNotice('Cancelled this attempt. If the host already saved it, it will still appear after refresh.'); }}>Cancel share</button>
+                      <button type="button" className={`${button} mt-2`} disabled={busy} onClick={() => void load()}>Refresh saved state</button>
                     </>
                   ) : preview ? (
                     <>

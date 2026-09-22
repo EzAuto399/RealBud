@@ -1,0 +1,66 @@
+{
+  "helperProposal": {
+    "sessionId": "01a0c460-526b-7580-b783-7fcd77933bf6",
+    "model": "grok-4.6-build",
+    "requestedEffort": "xhigh",
+    "outcome": "proposal integrated with material corrections",
+    "corrections": [
+      "Actual native pending schema and seconds-to-milliseconds metadata",
+      "Keyed and domain-separated approval token and receipt MAC",
+      "Exact receipt id/file binding and state validation",
+      "Native Path lock integration and locked-target reread validation",
+      "Configuration refresh and immediate state rechecks",
+      "Private bounded reads including missing paths, identity changes and links",
+      "Full before/after roundtrip and native drift/limits preserved",
+      "Pending cleanup claims preserve concurrent replacements",
+      "Fsync and verify recovered memory before final receipt",
+      "Recorded decision/digest in recovery list, no fresh preview for unfinished intent",
+      "External memory provider coexists with builtin; target flags remain authoritative",
+      "Windows feature held pending per-file ACL and durable rename admission"
+    ]
+  },
+  "serviceReview": {
+    "sessionId": "01a0c471-5b4c-7830-bf1b-c49affeefa3f",
+    "model": "grok-4.6-build",
+    "requestedEffort": "xhigh",
+    "outcome": "changes-required; accepted fixes verified by focused tests and actual managed source/package browser flows",
+    "accepted": [
+      "Serialize UI reads and effect restart without discarding first successful read",
+      "Keep client timeout above helper deadline and preserve uncertainty on failed reconciliation",
+      "Post-dispatch ambiguous decision replies report recovery required"
+    ]
+  },
+  "limits": [
+    "Grok output is reviewed development input, not product runtime or whole-product approval",
+    "Native test profiles are fictional; no user/customer memory read",
+    "Physical power-loss, native Windows, signed installation and live customer proof are separate"
+  ],
+  "recoveryReview": {
+    "sessionId": "01a0c480-643b-7c41-8138-842f11b4198c",
+    "requestedModel": "grok-4.6",
+    "requestedEffort": "xhigh",
+    "outcome": "approved",
+    "findings": [],
+    "limits": [
+      "Windows new inbox is not admitted until native per-file ACL/durable rename; this is not a whole-app Windows unsupported claim.",
+      "Same-OS-user/admin tampering of helper-owned private paths is outside the filesystem isolation guarantee.",
+      "Native stage_write can replace a pending pathname and ignores the helper review lock; MemoryStore mutations cooperate only on the target .lock.",
+      "Config/pending/current are rechecked immediately before memory write, not as an OS multi-file transaction.",
+      "Helper is host-only with HMAC key via stdin; HTTP cannot select paths, key, profile, or runtime.",
+      "Omitted helpers (_write_receipt, _parse_pending, _finish_remove_pending, _apply_dry, _file_lock, contextmanager wrappers) are review context, not independently verified here.",
+      "_cmd_decide handles phase=final only before the target lock; a concurrent waiter that missed that check can see unavailable/stale-review. HMAC beforeDigest blocks a second memory write; a later call that sees final remains idempotent."
+    ],
+    "scope": "Bounded recovery/decision functions in prompt; omitted helpers not independently re-reviewed. Later control-character and byte-limit checks do not change the audited recovery algorithm.",
+    "model": "grok-4.6-build"
+  },
+  "modelAvailability": {
+    "receipt": "grok-models.txt",
+    "authenticated": "grok.com",
+    "listed": [
+      "grok-4.6",
+      "grok-4.5"
+    ],
+    "grok47Available": false
+  },
+  "postReviewCodexFix": "Lost-response UI reconciliation binds both original expected digest and original decision, including stop/start. 19 focused UI tests, typecheck/build, final packaged ten-check browser journey and native Mac smoke passed; see verification.json."
+}

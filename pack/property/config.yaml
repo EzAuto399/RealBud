@@ -1,6 +1,9 @@
 # Locked RealBud worker. Do not flip approvals to off/smart/yolo.
 # Attach Bud's own model login from RealBud (You → Bud). Do not inherit a
 # Hermes Desktop profile login. Change with: hermes -p property model
+# A provisioned installation gets its model from the RealBud service instead:
+# the grant writes model.provider/base_url/api_mode here and keeps the key out
+# of this profile entirely. Never paste a provider key into .env on one.
 # Bud gets a private working home and starts in RealBud's property vault.
 # Safe reads, research, calculations, code, and working-file edits may run;
 # dangerous commands still route through the manual approval callback below.
@@ -33,6 +36,16 @@ toolsets:
   - delegation
 security:
   redact_secrets: true
+# Native foreground and background learning proposes durable changes for review.
+# RealBud enables the learner only for its exact admitted runtime during Repair.
+skills:
+  write_approval: true
+memory:
+  write_approval: true
+auxiliary:
+  background_review:
+    enabled: false
+    extra_tools: []
 delegation:
   max_concurrent_children: 2
   max_iterations: 24

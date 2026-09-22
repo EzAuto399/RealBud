@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "recordedAt": "2026-09-21T19:01:44.408567+00:00",
+  "scope": "customer workflow pack upgrade domain and UI source freeze",
+  "checks": [
+    {
+      "command": "pnpm exec vitest run server/customer-pack-upgrades.test.ts server/customer-packs.test.ts src/components/schedule/CustomerPackChangeReview.test.ts",
+      "passed": 40,
+      "failed": 0,
+      "proof": "Observed terminal exit 0; before final type-only complete UI fixture correction."
+    },
+    {
+      "command": "pnpm typecheck",
+      "exitCode": 0,
+      "proof": "Observed final terminal session 95794 exit 0 after complete typed fixture correction."
+    },
+    {
+      "command": "pnpm exec vitest run src/components/schedule/CustomerPackChangeReview.test.ts",
+      "passed": 2,
+      "failed": 0,
+      "exitCode": 0,
+      "proof": "Observed final terminal chunk bfae7e, start 05:01:07; after final fixture correction."
+    }
+  ],
+  "sha256": {
+    "server/customer-packs.ts": "4ddc95b9746b86ccc5262581c6f3db8fd8407e1027bd4f08e4f510c81e64d325",
+    "server/customer-pack-upgrades.ts": "6f153498fc38a9f37faa3e2474c14c708c8f4f363006eea43a9a6037d2b5029a",
+    "server/customer-pack-upgrades.test.ts": "b2b7916165145c601555361b0c218a67a20be817794ba5baca73f810c8a1af73",
+    "shared/customer-packs.ts": "7474ddfb6ed612e585d972d8e9b674419f79808d8b0d8beb32a4c728bb83c836",
+    "src/components/schedule/CustomerPackSetupCard.tsx": "9b25af96f6619b8e6cefce03d4b250ee25490b8984e84a9556c64ac7e96c1763",
+    "src/components/schedule/CustomerPackChangeReview.tsx": "c29e5235ab1e843b7110aca330979c75bcaa3cdd7ca425ff3ac3a90f7fde25b5",
+    "src/components/schedule/CustomerPackChangeReview.test.ts": "904c66399c6417b76e55c27f65f36f5ceea72eab3d5d0173c3631d6ff405d7cb"
+  },
+  "limits": [
+    "Domain and server-rendered UI checks only in this receipt. Root owns actual HTTP/browser/package verification.",
+    "No live customer account or native Windows verification performed in this task."
+  ]
+}

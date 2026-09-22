@@ -1,0 +1,8 @@
+{
+  "reviewedSourceSha256": "8f30fa8f855133a679f5c743d429dad7efdf71e1257ba8df42249da1e94742ff",
+  "currentSourceSha256": "13f9c35ccb5d6d6c1f20743592348f306b1ba4b18beb2e608a19915ffe3213df",
+  "delta": "New Windows stage creation always uses exclusive write_new; existing matching bytes are no longer adopted. Existing signed prepared stages recover through _recover_prepared.",
+  "scope": "Only _write_stage Windows prefix, captured directly from preserved model packet and current source.",
+  "regression": "10 isolated transition checks and 15 POSIX proposal fault checks passed.",
+  "modelRestarted": false
+}

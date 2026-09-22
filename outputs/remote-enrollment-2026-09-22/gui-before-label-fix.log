@@ -1,0 +1,16 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+locator.waitFor: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for getByText('Identity connected', { exact: true }) to be visible[22m
+
+    at /Users/yoda/projects/RealBud/scripts/qa-remote-enrollment.mjs:79:141 {
+  log: [
+    "  - waiting for getByText('Identity connected', { exact: true }) to be visible"
+  ],
+  name: 'TimeoutError'
+}
+
+Node.js v24.19.0

@@ -1,0 +1,52 @@
+{
+  "ok": true,
+  "assertions": 140,
+  "database": "disposable PostgreSQL",
+  "externalNetwork": false,
+  "completedAt": "2026-09-21T22:29:31.546191+00:00",
+  "node": "24.19.0",
+  "postgres": "16.15 (Homebrew)",
+  "command": "/Users/yoda/.nvm/versions/node/v24.19.0/bin/node website/scripts/test-remote-approvers-postgres.mjs",
+  "exitCode": 0,
+  "files": {
+    "website/supabase/migrations/202609220003_remote_approvers.sql": "f713d3a24f43ccc1a52b470aac0d218dedb5f92037b3d6681c2e06ef7f5a592f",
+    "website/scripts/test-remote-approvers-postgres.mjs": "8b750046f92d6ba94e8bcede6bf8c65eae76dabdec0f90c5fa9b58b432b0f05e",
+    "shared/website-remote-approvers.ts": "fc7b4c2f3f0a0e85d0e7cc16a98dcac74ba44743d5ff261d51c1bb926f828c71"
+  },
+  "checks": [
+    "protocol2 attended parent enrollment and exact replay",
+    "monotonic generation and token nonreuse",
+    "permanent installation/workspace protocol2 floor",
+    "all v1 execution surfaces reject protocol2 before replay",
+    "v1 untouched workspace execution remains functional",
+    "strict exact scope and bounded fixed expiry admission",
+    "current stable person identity inside effects",
+    "fresh login window evaluated after lock acquisition",
+    "candidate acceptance does not grant approval",
+    "exact attended candidate confirmation and replay",
+    "cross company/report-token denial",
+    "competing-person and same-person acceptance races",
+    "concurrent confirmation replay",
+    "durable five-attempt challenge denial",
+    "spent challenge cannot disable confirmed approver",
+    "identity disable and company ABA hold stale authority",
+    "self-revoke stale epoch using current same-person identity",
+    "bounded own-person inventory with target descriptions",
+    "actual advisory lock waiting against account disable",
+    "actual revoke wait concurrent confirmation timestamp ordering",
+    "challenge expiry no late grant",
+    "64 enrollment capacity and replay at capacity",
+    "RLS helper denial and service RPC grants",
+    "shared runtime response validators",
+    "authenticated server clock calibration with unchanged retry expiry",
+    "clock rejects report/crosscompany/wronggeneration/revokedparent/revokedinstallation credentials",
+    "exact 600000ms fresh-auth boundary red/green and 599999ms acceptance"
+  ],
+  "limits": [
+    "No deployment or external provider/customer calls",
+    "Enrollment only; no remote execution protocol2 publication or claim implemented",
+    "Local desktop and website integration are parent-owned separate evidence"
+  ],
+  "priorReceipt": "sql-127-verification.json",
+  "negativeEvidence": "sql-freshness-boundary-red.log"
+}

@@ -1,0 +1,21 @@
+realbud server on http://127.0.0.1:55558
+realbud server on http://127.0.0.1:55693
+realbud server on http://127.0.0.1:55714
+realbud server on http://127.0.0.1:55736
+
+▲ Next.js 16.3.3
+- Local:         http://127.0.0.1:55550
+- Network:       http://127.0.0.1:55550
+✓ Ready in 86ms
+✓ Running next.config.ts took 15ms
+
+AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
++ actual - expected
+
++ [
++   {
++     method: 'POST',
++     path: '/rest/v1/rpc/realbud_installation_scope'
++   }
++ ]
+- []

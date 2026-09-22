@@ -5,6 +5,23 @@ import { containsCredential, redactSecrets, redactSecretsInText } from "./redact
 const flat = (value: unknown) => JSON.stringify(value);
 
 describe("redactSecrets", () => {
+  it('masks managed installation credentials in config and free text', () => {
+    const credential = `rbc_${'a'.repeat(64)}`;
+    expect(JSON.stringify(redactSecrets({ composio: { managed: { endpoint: 'https://service.example', credential } } }))).not.toContain(credential);
+    expect(redactSecretsInText(`Use ${credential}`)).not.toContain(credential);
+    expect(containsCredential(credential)).toBe(true);
+  });
+  it('masks the per-installation model gateway key wherever it is echoed', () => {
+    const key = `rbk_${'b'.repeat(40)}`;
+    expect(redactSecretsInText(`base https://api.modelvia.dev key ${key}`)).not.toContain(key);
+    expect(JSON.stringify(redactSecrets({ model: { provider: 'modelvia', baseUrl: 'https://api.modelvia.dev', key } }))).not.toContain(key);
+    expect(JSON.stringify(redactSecrets([{ name: 'REALBUD_MODEL_KEY', value: key }]))).not.toContain(key);
+    expect(containsCredential(key)).toBe(true);
+    // The key id is an operator reference, not a secret: it must stay readable.
+    expect(redactSecretsInText('keyId rbkkey-2026-09-22-01')).toBe('keyId rbkkey-2026-09-22-01');
+    // The gateway's own operator key prefix stays covered.
+    expect(redactSecretsInText(`mgt_${'c'.repeat(40)}`)).toContain('redacted');
+  });
   it("masks tokens in an ACP session/new, keeping the shape", () => {
     const sessionNew = {
       method: "session/new",
@@ -26,6 +43,14 @@ describe("redactSecrets", () => {
     expect(out).toContain("OMB_COMMS_TOKEN");
     expect(out).toContain("bot-123");
     expect(out).toContain("«redacted 24 chars»");
+  });
+
+  it('masks Composio project and consumer credentials pasted without field names', () => {
+    for (const prefix of ['ak_', 'ck_']) {
+      const credential = prefix + 'fixture'.repeat(6);
+      expect(redactSecretsInText(`Use ${credential}`)).not.toContain(credential);
+      expect(containsCredential(credential)).toBe(true);
+    }
   });
 
   it("masks Notion integration tokens before chat, cards, or logs can persist them", () => {

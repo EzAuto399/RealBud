@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "at": "2026-09-21T17:52:47.605654+00:00",
+  "result": "passed",
+  "sourceFrozen": true,
+  "sourceHashes": {
+    "server/helpers/hermes-memory-proposals.py": "e24757cca7f49a32fd96dd1f3b171152cb5f71d6828505f4a0cd891223cf5c3c",
+    "server/helpers/hermes-memory-review.py": "e9581dbf5f4cac39653d09c4dc81c74ea11c9539b8f02930436318a6008319e0",
+    "scripts/testing/hermes-memory-interrupted-recovery.py": "0c9648e216fbb61e7c35a084532e546273decab8688df540e00849efe1208006"
+  },
+  "priorReceipt": "proposals-interrupted-final-receipt.json",
+  "negativeReproduction": "proposals-interrupted-ancestry-before.json",
+  "confirmedDefect": "A saved proposal plus deleted empty claims/pending ancestry was recreated and became closable on all6 POSIX/synthetic-Windows fixtures.",
+  "fix": [
+    "Evidence parents are initialized before the first durable proposal intent.",
+    "Any existing full-key proposal journal makes evidence parent checks verify-only.",
+    "Windows ordinary review refresh cannot recreate missing evidence ancestry before interrupted-list checks it.",
+    "Existing prepared/closed journal bytes and memory remain unchanged on missing-parent refusal.",
+    "Fresh empty profiles still initialize private parents."
+  ],
+  "compatibilityLimit": "Historical journals whose evidence parent never existed or was deleted stay held; no inferred reconstruction or directory repair.",
+  "checks": [
+    {
+      "layer": "25 closure tests; includes12 prepared/closed, POSIX/synthetic-Windows, missing-ancestry subcases",
+      "passed": 25,
+      "failed": 0,
+      "seconds": 11.698,
+      "log": "proposals-interrupted-ancestry-tests.log",
+      "logSha256": "f108f6cdc73760b045110596faf0721381f920eacbdae4bb36890e03cb8967f8"
+    },
+    {
+      "layer": "15 actual POSIX proposal crash/replay regressions",
+      "passed": 15,
+      "failed": 0,
+      "seconds": 2.908,
+      "log": "proposals-interrupted-ancestry-posix.log",
+      "logSha256": "2b4e28fd1c3606c38c1f5e7bb10717d9c8341267eb777dec8926c06ac72817b6"
+    },
+    {
+      "layer": "25 actual-helper journal cases with synthetic Windows IO",
+      "passed": 25,
+      "failed": 0,
+      "seconds": 6.394,
+      "log": "proposals-interrupted-ancestry-windows.log",
+      "logSha256": "229043ea6779c98355a882f4e9c52bdc9b7ce96017965efe6990bc76fb293f3c"
+    }
+  ],
+  "nativeWindowsExecuted": false,
+  "productionWindowsHoldChanged": false,
+  "remainingOwnedProcesses": false
+}

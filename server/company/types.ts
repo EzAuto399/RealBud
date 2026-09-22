@@ -30,7 +30,7 @@ export interface CaseClaim {
   claimToken: string;
   expiresAt: string;
 }
-export type CompanyErrorCode = 'invalid_input' | 'unauthenticated' | 'forbidden' | 'not_found' | 'conflict' | 'claim_busy' | 'stale_claim' | 'recovery_required' | 'owner_proof_required' | 'unsafe_database_role';
+export type CompanyErrorCode = 'invalid_input' | 'unauthenticated' | 'forbidden' | 'not_found' | 'conflict' | 'claim_busy' | 'stale_claim' | 'recovery_required' | 'owner_proof_required' | 'owner_transfer_required' | 'work_resolution_required' | 'unsafe_database_role';
 export class CompanyError extends Error {
   readonly code: CompanyErrorCode;
   constructor(code: CompanyErrorCode, message: string = code) {

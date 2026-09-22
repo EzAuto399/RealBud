@@ -1,0 +1,5 @@
+
+> realbud@0.1.19 build:server
+> tsc -p tsconfig.server.build.json && node scripts/bundle-company-deps.mjs
+
+Bundled company dependencies into packaged server; rewrote 7 modules.

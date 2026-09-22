@@ -12,11 +12,15 @@ import { HERMES_RECOMMENDED, HERMES_RECOMMENDED_VERSION, HERMES_RELEASES } from 
 import { bootstrapInvocation, bootstrapPlan } from "./worker-bootstrap.ts";
 
 describe("what a fresh install receives", () => {
-  it("recommends 0.21.2 by name, not by position in the catalog", () => {
-    expect(HERMES_RECOMMENDED_VERSION).toBe("0.21.2");
+  it("recommends 0.21.3 by name, not by position in the catalog", () => {
+    // Promoted 2026-09-19 after the pin procedure completed: the tag-exact build
+    // was staged via startRuntimeUpdate({ release }), `pnpm qa:acp-smoke` answered
+    // the RealBud handshake on both 0.21.2 (control) and 0.21.3, and only then did
+    // this constant move. Rollback stays available at 0.21.2.
+    expect(HERMES_RECOMMENDED_VERSION).toBe("0.21.3");
     expect(HERMES_RECOMMENDED.product).toBe(HERMES_RECOMMENDED_VERSION);
-    expect(HERMES_RECOMMENDED.tag).toBe("v2026.9.11");
-    expect(HERMES_RECOMMENDED.commit).toBe("939e45c91d751fadd94dcd1b873ac3cb44846213");
+    expect(HERMES_RECOMMENDED.tag).toBe("v2026.9.14");
+    expect(HERMES_RECOMMENDED.commit).toBe("345cd2b057a452236de401d3534b8502a7465e8d");
   });
 
   it("never recommends the compatibility floor", () => {
@@ -26,25 +30,25 @@ describe("what a fresh install receives", () => {
     expect(HERMES_RECOMMENDED.commit).not.toBe(HERMES_PIN.commit);
   });
 
-  // Replaces "does not admit 0.21.3 anywhere". 0.21.3 is now admitted as an
-  // installable, supported candidate so it can be staged and smoked, but it must
-  // not yet be what a fresh office receives — the pin procedure still requires an
-  // ACP smoke against the new worker. The guard moves from "absent" to
-  // "present but never recommended", which is the invariant that actually matters.
-  it("admits 0.21.3 as a candidate but never recommends or defaults to it", () => {
+  // 0.21.3 was admitted as an installable candidate so it could be staged and
+  // smoked, and is now the recommended release. 0.21.2 stays admitted as the
+  // rollback target: an office that updates can always return to it, so it must
+  // remain supported and installable even though it is no longer recommended.
+  it("keeps 0.21.2 admitted as the rollback release after promoting 0.21.3", () => {
     const catalog: readonly { product: string; tag: string; commit: string }[] = HERMES_RELEASES;
     const compatible: readonly { product: string; calendar: string }[] = HERMES_COMPATIBLE_RELEASES;
-    const candidate = catalog.find(release => release.product === "0.21.3");
-    expect(candidate, "0.21.3 must be installable so it can be evaluated").toBeDefined();
-    expect(candidate?.tag).toBe("v2026.9.14");
+    const candidate = catalog.find(release => release.product === "0.21.2");
+    expect(candidate, "0.21.2 must stay installable so Restore can select it").toBeDefined();
+    expect(candidate?.tag).toBe("v2026.9.11");
     // The v2026.9.14 TAG commit, not a main-branch head. This machine's personal
     // Hermes also says "v0.21.3 (2026.9.14)" but is built from upstream 6005aa1f,
     // 1653 commits ahead of the tag.
-    expect(candidate?.commit).toBe("345cd2b057a452236de401d3534b8502a7465e8d");
-    expect(compatible.some(release => release.product === "0.21.3" && release.calendar === "2026.9.14")).toBe(true);
-    // The two things that would actually ship it to a new office:
-    expect(HERMES_RECOMMENDED_VERSION).not.toBe("0.21.3");
-    expect(HERMES_RECOMMENDED.product).not.toBe("0.21.3");
+    expect(candidate?.commit).toBe("939e45c91d751fadd94dcd1b873ac3cb44846213");
+    expect(compatible.some(release => release.product === "0.21.2" && release.calendar === "2026.9.11")).toBe(true);
+    // A fresh office still receives the newest admitted release, which is now the
+    // former control. Promotion moved the recommendation; it did not remove anything.
+    expect(HERMES_RECOMMENDED_VERSION).toBe("0.21.3");
+    expect(HERMES_RECOMMENDED.product).toBe("0.21.3");
   });
 
   it("keeps the rollback/floor release installable rather than deleting it", () => {

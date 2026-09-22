@@ -115,7 +115,9 @@ function hooks(calls: string[][], spawnEnv?: { current?: NodeJS.ProcessEnv }) {
     spawnServer: (file: string, args: readonly string[], env: NodeJS.ProcessEnv) => {
       expect(file.endsWith('postgres')).toBe(true);
       expect(args).toEqual(['-D', expect.any(String)]);
-      expect(args.join(' ')).not.toContain('-o');
+      // Paths may legitimately contain "-o". Reject the option as an argv
+      // entry without confusing a randomly generated directory with a flag.
+      expect(args.some(arg => /^-o(?:$|[^/\\])/.test(arg))).toBe(false);
       expect(env.PGPASSWORD).toBeUndefined();
       if (spawnEnv) spawnEnv.current = env;
       return fakeProcess();

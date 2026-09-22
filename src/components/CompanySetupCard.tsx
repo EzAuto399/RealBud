@@ -4,6 +4,11 @@ import { companyApi } from "@/lib/company-api";
 import { SERVICE_ADMIN_CHANGED } from "@/lib/service-admin-session";
 import { monitorCompanyStatus } from "@/lib/company-status-monitor";
 import { Card } from "./SettingsPrimitives";
+import { CompanyMembers } from './CompanyMembers';
+import { CompanyDepartments } from './CompanyDepartments';
+import { CompanyPortalBindingsCard } from './company/CompanyPortalBindingsCard';
+import { CompanyRecovery } from './CompanyRecovery';
+import { CompanyHostRecovery } from './CompanyHostRecovery';
 
 const inputClass = "mt-1 w-full rounded-lg border border-line bg-inset px-3 py-2 text-[14px] text-ink placeholder:text-ink-muted focus-visible:outline-2 focus-visible:outline-agency";
 const controlClass = "min-h-10 rounded-lg border px-3 py-2 text-[13px] font-medium focus-visible:outline-2 focus-visible:outline-agency disabled:cursor-not-allowed disabled:opacity-50";
@@ -13,6 +18,7 @@ const labelClass = "text-[12.5px] text-ink-secondary";
 
 /** Local company foundation only. It does not switch Desk, Ask or source access. */
 export function CompanySetupCard() {
+  const [intent, setIntent] = useState<"solo" | "join" | "host">("solo");
   const [status, setStatus] = useState<CompanyStatus | null>(null);
   const [mode, setMode] = useState<"create" | "join" | "signin" | "recover" | null>(null);
   const [loginName, setLoginName] = useState("");
@@ -93,7 +99,7 @@ export function CompanySetupCard() {
     if (!active.current) return;
     lastIdentity.current = `${result.company.id}:${result.member.id}`;
     setConnectionError("");
-    setStatus(previous => ({ ...previous, storageAvailable: true, configured: true, setupAllowed: false, ownerRecoveryAllowed: previous?.ownerRecoveryAllowed, transport: previous?.transport ?? "local-only", limitations: previous?.limitations ?? [], company: result.company, member: result.member }));
+    setStatus(previous => ({ ...previous, storageAvailable: true, configured: true, setupAllowed: false, ownerRecoveryAllowed: previous?.ownerRecoveryAllowed, transport: previous?.transport ?? "local-only", limitations: previous?.limitations ?? [], company: result.company, member: result.member, enrollmentPending: false }));
     setPassword(""); setCurrentPassword(""); setRecoveryKey(""); setSavedRecoveryKey(result.recoveryKey ?? "");
     setInvitationToken(""); setInvitation(null); setMode(null);
     setNotice(`Signed in as ${result.member.displayName}.`);
@@ -121,19 +127,23 @@ export function CompanySetupCard() {
     try { await navigator.clipboard.writeText(invitation.invitationToken); setNotice("Invitation copied. Share it privately with the intended person."); }
     catch { invitationInput.current?.focus(); invitationInput.current?.select(); setNotice("Copy was unavailable. The invitation is selected so you can copy it."); }
   };
-  const canInvite = status?.member?.role === "owner";
+  const chooseSetup = !!status && !status.storageAvailable && !status.remoteHost;
+  const hostHeld = !!status?.hostMode && status.hostMode !== "active";
+  const canInvite = status?.member?.role === "owner" && !hostHeld;
 
   return <Card>
     <section aria-labelledby={`${id}-heading`} aria-busy={!!busy} className="flex flex-col gap-4">
       <div>
-        <h3 ref={heading} tabIndex={-1} id={`${id}-heading`} className="text-[15px] font-medium text-ink focus:outline-none">Company</h3>
-        <p className="mt-0.5 text-[13px] leading-relaxed text-ink-secondary">Set up a company identity and individual member sessions.</p>
+        <h3 ref={heading} tabIndex={-1} id={`${id}-heading`} className="text-[15px] font-medium text-ink focus:outline-none">Local office collaboration</h3>
+        <p className="mt-0.5 text-[13px] leading-relaxed text-ink-secondary">Optional. Use RealBud on your own, or join colleagues to exchange reviewed work and workflow templates.</p>
       </div>
-      <div className="rounded-lg border border-line bg-inset p-3 text-[12.5px] leading-relaxed text-ink-secondary">
-        <p className="font-medium text-ink">{connectionError ? "Company connection unavailable" : status?.transport === "encrypted-company" ? "Company host reached" : "Company setup preview"}</p>
-        <p className="mt-1">Set up this computer as the host, or connect using your owner’s host code. Company sign-in and shared company records are separate from your existing Desk, Ask and sources, which remain local.</p>
+      {chooseSetup && <div className="space-y-2"><p className="text-[13px] text-ink-secondary">Keep your private workspace independent, or add collaboration when you need it.</p><div className="flex flex-wrap gap-2" role="group" aria-label="Choose collaboration setup"><button className={intent === 'solo' ? primaryClass : buttonClass} aria-pressed={intent === 'solo'} disabled={!!busy} onClick={() => setIntent('solo')}>Use on my own</button><button className={intent === 'join' ? primaryClass : buttonClass} aria-pressed={intent === 'join'} disabled={!!busy} onClick={() => setIntent('join')}>Join an office</button><button className={intent === 'host' ? primaryClass : buttonClass} aria-pressed={intent === 'host'} disabled={!!busy} onClick={() => setIntent('host')}>Host this office</button></div></div>}
+      {(!chooseSetup || intent !== 'solo') && <div className="rounded-lg border border-line bg-inset p-3 text-[12.5px] leading-relaxed text-ink-secondary">
+        <p className="font-medium text-ink">{connectionError ? "Company connection unavailable" : hostHeld ? "Office host on hold" : status?.transport === "encrypted-company" ? "Company host reached" : status?.configured ? "Local office · preview" : "Company setup preview"}</p>
+        <p className="mt-1">One existing office computer can host collaboration. To join it, use your owner’s host code and a private invitation. Your Desk, Ask history and sources stay on this computer; they are not automatically shared.</p>
+        {!status?.member && <p className="mt-2">Joining keeps your existing private Bud, model setup and local work. Only the work you explicitly review and share goes to colleagues.</p>}
         {connectionError && <p className="mt-2">Keep RealBud open on the host computer and check its network connection. This screen checks again automatically. Work is not replayed when the connection returns.</p>}
-      </div>
+      </div>}
       {status?.member && status.company ? <>
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-[13px]">
           <dt className="text-ink-secondary">Company</dt><dd className="break-words font-medium text-ink">{status.company.name}</dd>
@@ -141,6 +151,10 @@ export function CompanySetupCard() {
           <dt className="text-ink-secondary">Role</dt><dd className="capitalize text-ink">{status.member.role}</dd>
         </dl>
         <p className="text-[12px] leading-relaxed text-ink-muted">This session stays in this app window. Company membership does not grant access to a colleague’s private accounts or conversations.</p>
+        {hostHeld && <p role="status" className="text-[13px] text-ink-secondary">Collaboration is held for recovery or retirement. {status.remoteHost ? "The owner must finish the host cutover. Your private work stays available." : "Complete Host backup and recovery below before inviting people or changing shared work."}</p>}
+        {!hostHeld && <CompanyMembers key={`${status.company.id}:${status.member.id}`} status={status} onChanged={() => refresh()} />}
+        {!hostHeld && <CompanyDepartments key={`departments:${status.company.id}:${status.member.id}:${status.member.role}`} />}
+      {!hostHeld && <CompanyPortalBindingsCard key={`portal:${status.company.id}:${status.member.id}:${status.member.role}`} status={status} />}
         <details className="rounded-lg border border-line p-3">
           <summary className="cursor-pointer text-[13px] font-medium text-ink">Set up or change your sign-in</summary>
           <p className="mt-2 text-[12px] text-ink-secondary">New members set their sign-in when joining. Use this if you joined an older version without a password, or want to change your sign-in. Save your personal recovery key somewhere private.</p>
@@ -159,6 +173,7 @@ export function CompanySetupCard() {
           <p className="mt-2 text-[12px] text-ink-secondary">Keep RealBud open on the host computer, awake and on your office network. Service administrator sign-in is required to enable joining.</p>
           {!status.networkEnabled && <form className="mt-3 flex flex-col gap-3" onSubmit={event => { event.preventDefault(); void run("Enabling joining…", async () => { await companyApi.enableJoining(hostname); setStatus(await companyApi.status()); setHostCode(await companyApi.hostCode()); }); }}><label className={labelClass}>This computer’s network name or IP address<input value={hostname} onChange={event => setHostname(event.target.value)} required maxLength={253} className={inputClass} placeholder="For example, office-host.local" /></label><button disabled={!!busy} className={`${buttonClass} self-start`}>Enable joining</button></form>}
           {status.networkEnabled && <button disabled={!!busy} className={`${buttonClass} mt-3`} onClick={() => void run("Getting host code…", async () => { setHostCode(await companyApi.hostCode()); })}>Show host code</button>}
+          <details className="mt-3"><summary className="cursor-pointer py-2 text-[13px]">Renew certificate or change network address</summary><p className="text-[12px] text-ink-secondary">This replaces the network identity and briefly disconnects members. Everyone must use the new host code with “Reconnect to replacement host”. Their office membership and private work stay unchanged.</p><form className="mt-2 space-y-2" onSubmit={event => { event.preventDefault(); void run('Renewing host identity…', async () => { await companyApi.enableJoining(hostname, true); setStatus(await companyApi.status()); setHostCode(await companyApi.hostCode()); setNotice('Network identity renewed. Give every member the new host code.'); }); }}><label className={labelClass}>Current network name or IP address<input className={inputClass} value={hostname} onChange={event => setHostname(event.target.value)} required maxLength={253} /></label><button className={buttonClass} disabled={!!busy}>Renew identity and disconnect current clients</button></form></details>
           {hostCode && <><label className={`${labelClass} mt-3 block`}>Host code<textarea readOnly value={hostCode} rows={3} className={inputClass} onFocus={event => event.target.select()} /></label><p className="mt-2 text-[12px] text-ink-secondary">Give this code and a private invitation to the intended member. The host code identifies this computer; it does not grant membership.</p></>}
         </details>}
         {canInvite && <form onSubmit={event => { event.preventDefault(); void invite(); }}>
@@ -179,6 +194,7 @@ export function CompanySetupCard() {
           <button type="button" onClick={() => void copyInvitation()} className={`${buttonClass} mt-3`}>Copy invitation</button>
         </div>}
         <button type="button" onClick={() => void signOut()} disabled={!!busy} className={`${buttonClass} self-start`}>Sign out of company</button>
+        <p className="text-[12px] leading-relaxed text-ink-muted">Signing out ends this window’s session. It does not leave the office, unlink its host or remove your local work.</p>
       </> : status?.storageAvailable ? <>
         <p className="text-[13px] leading-relaxed text-ink-secondary">{status.configured ? "Sign in to your company, or join with an invitation from its owner." : status.setupAllowed ? "Create a company as its owner." : "A service administrator needs to sign in under Advanced to enable company setup."}</p>
         <div className="flex flex-wrap gap-2">
@@ -214,12 +230,16 @@ export function CompanySetupCard() {
             <button type="submit" disabled={!loginName || !password || (mode === "create" ? !name.trim() || !ownerName.trim() : mode === "join" ? !invitationToken.trim() : false)} className={`${primaryClass} self-start`}>{mode === "create" ? "Create and sign in" : mode === "join" ? "Join and sign in" : mode === "recover" ? "Recover my sign-in" : "Sign in"}</button>
           </fieldset>
         </form>}
-      </> : status && <p className="text-[13px] leading-relaxed text-ink-secondary">{status.storageSetupAvailable ? "Prepare storage on this computer, then create your company. Your existing local desk stays available." : "To set up this computer as the host, your service administrator needs to sign in under Advanced. To join an existing company, use the host code from its owner."}</p>}
-      {!status?.storageAvailable && status?.storageSetupAvailable && <button disabled={!!busy} className={`${primaryClass} self-start`} onClick={() => void run("Setting up this host…", async () => { await companyApi.setup(); setStatus(await companyApi.status()); setNotice("Host storage is ready. Create your company next."); })}>Set up this computer as host</button>}
-      {status?.remoteJoinAvailable && <form onSubmit={event => { event.preventDefault(); void run("Connecting to host…", async () => { await companyApi.connectHost(hostCode.trim()); setHostCode(""); setStatus(await companyApi.status()); setMode("join"); }); }}><label className={labelClass}>Connect to an existing host<textarea value={hostCode} onChange={event => setHostCode(event.target.value)} required maxLength={12000} rows={3} className={inputClass} placeholder="Paste the host code from your company owner" /></label><button disabled={!!busy} className={`${buttonClass} mt-3`}>Connect to host</button></form>}
+      </> : status && (!chooseSetup || intent === "host") && <p className="text-[13px] leading-relaxed text-ink-secondary">{status.storageSetupAvailable ? "Prepare storage on this computer, then create your company. Your existing local desk stays available." : "To set up this computer as the host, your service administrator needs to sign in under Advanced. To join an existing company, use the host code from its owner."}</p>}
+      {!status?.storageAvailable && status?.storageSetupAvailable && intent === "host" && <button disabled={!!busy} className={`${primaryClass} self-start`} onClick={() => void run("Setting up this host…", async () => { await companyApi.setup(); setStatus(await companyApi.status()); setNotice("Host storage is ready. Create your company next."); })}>Set up this computer as host</button>}
+      {status?.remoteJoinAvailable && intent === "join" && <form onSubmit={event => { event.preventDefault(); void run("Connecting to host…", async () => { await companyApi.connectHost(hostCode.trim()); setHostCode(""); setStatus(await companyApi.status()); setMode("join"); }); }}><label className={labelClass}>Connect to an existing host<textarea value={hostCode} onChange={event => setHostCode(event.target.value)} required maxLength={12000} rows={3} className={inputClass} placeholder="Paste the host code from your company owner" /></label><button disabled={!!busy} className={`${buttonClass} mt-3`}>Connect to host</button></form>}
+      {status?.enrollmentPending && <p role="alert" className="text-[13px] text-ink-secondary">An earlier setup attempt needs confirmation. Sign in with the username and password you chose. If your recovery key was not shown, use “Set up or change your sign-in” after signing in to create a new one.</p>}
+      {status?.networkError && <p role="alert" className="text-[13px] text-danger">{status.networkError}</p>}
       {status?.setupError && <p role="alert" className="text-[13px] text-danger">{status.setupError}</p>}
       {!!status?.limitations.length && <details className="text-[12px] text-ink-secondary"><summary className="cursor-pointer py-1 focus-visible:outline-2 focus-visible:outline-agency">Current availability</summary><ul className="mt-2 list-disc space-y-1 pl-4">{status.limitations.map((limitation, index) => <li key={index}>{limitation}</li>)}</ul></details>}
       {error && <p role="alert" className="text-[13px] leading-relaxed text-danger">{error}</p>}
+      {status && <CompanyHostRecovery status={status} onChanged={() => refresh()} />}
+      <CompanyRecovery onChanged={() => refresh()} />
       {connectionError && <p role="alert" className="text-[13px] leading-relaxed text-danger">{connectionError}</p>}
       <p role="status" aria-live="polite" className="text-[12.5px] text-ink-secondary">{busy || (!connectionError ? notice : "")}</p>
       <button type="button" disabled={!!busy} onClick={() => void refresh()} className={`${buttonClass} self-start`}>Check company status</button>

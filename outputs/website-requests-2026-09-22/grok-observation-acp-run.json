@@ -1,0 +1,375 @@
+{
+  "startedAt": "2026-09-21T20:28:40.671590+00:00",
+  "requestedModel": "grok-4.7",
+  "reasoningEffort": "xhigh",
+  "hardTimeoutSeconds": 300,
+  "reviewDeadlineSeconds": 290,
+  "transport": "fresh agent --no-leader stdio ACP",
+  "maxPromptRequests": 1,
+  "turnLimitScope": "One ACP prompt; cancel/stop on any tool-call or client permission request. Top-level --max-turns is not forwarded to the agent branch in the inspected official source.",
+  "prompt": "Review sanitized implementation metadata only; no tools/web. RealBud local preparation needs preview bound to plan/instruction hashes, agency/source review, worker profile and online claim. Mutation epoch increments before agency/config/pack/recipe changes, Desk commits and connector invalidation. Async checks stamp captured epoch; synchronous enqueue rejects epoch changes. Broad POST /connected-apps/* also incremented on /check, so observation-only UI refresh killed concurrent morning work. Proposed website epoch excludes ONLY POST /connected-apps/check; all mutation fences remain. /check calls cache.refresh(cfg): config snapshot, pending-check dedup, generation increment on invalidation, late old-generation results rejected. Failed checks replace success with unavailable state; cache expires after five minutes. Agency readiness requires exact active Gmail account, fresh cache, reviewed source/settings and plan. Adapter capture checks agency snapshot twice around awaited instructions, captured epoch, cfg/profile and recipe digests. Before mail collection, authorize refreshes access, repeats website binding check and requires current agency review. After scan, collector authorizes again and compares account/settings/source digest. Managed provider checks current tenant/device/account/billing on each call. Generic preparation exposes file/web tools, not mail access. Revocation cannot undo already started effects.\nGive top 3 concrete residual race/authority tests for the narrow exclusion. Distinguish config mutations from changed observations: must observing revoked/wrong-account access fence previously validated preparation? Specify causal interleavings. JSON {\"cases\":[{\"title\":\"...\",\"setup\":\"...\",\"assertions\":[\"...\"]}]} exactly 3 cases, max 4 assertions each, under 280 words. Advice only, not test evidence.",
+  "promptBytes": 1838,
+  "promptSha256": "05132b6d79552c9b3f76393824d31e24a2e2de2ba6958004cc6a7c4593333171",
+  "profileSha256": "97203afe2dbe820373a81b6dbb184db22bc7e9ca5390fa127b6f0a8c7479a93a",
+  "processOverrides": {
+    "GROK_DISABLE_AUTOUPDATER": "1",
+    "GROK_MEMORY": "0",
+    "GROK_SUBAGENTS": "0",
+    "GROK_CURSOR_SKILLS_ENABLED": "0",
+    "GROK_CURSOR_RULES_ENABLED": "0",
+    "GROK_CURSOR_AGENTS_ENABLED": "0",
+    "GROK_CURSOR_MCPS_ENABLED": "0",
+    "GROK_CURSOR_HOOKS_ENABLED": "0",
+    "GROK_CLAUDE_SKILLS_ENABLED": "0",
+    "GROK_CLAUDE_RULES_ENABLED": "0",
+    "GROK_CLAUDE_AGENTS_ENABLED": "0",
+    "GROK_CLAUDE_MCPS_ENABLED": "0",
+    "GROK_CLAUDE_HOOKS_ENABLED": "0"
+  },
+  "credentialsReadByHarness": false,
+  "credentialsCopied": false,
+  "rawDiagnosticsPersisted": false,
+  "authentication": "Existing cached auth via opaque symlink in disposable private GROK_HOME; harness never opens auth contents.",
+  "globalConfigSha256Before": "ada54f57ec570d8e70cba35400ea2b557914ede90ffa893b5da122a7f69d6736",
+  "promptRequestsSent": 1,
+  "updates": {
+    "available_commands_update": 4,
+    "agent_thought_chunk": 38,
+    "session_info_update": 1,
+    "agent_message_chunk": 420
+  },
+  "safeEvents": [],
+  "assistantText": "{\"cases\":[{\"title\":\"Revoked check fences mail, not epoch\",\"setup\":\"Prep at epoch E with hashes H, profile P, recipe R, fresh Gmail A. Worker W holds E. POST /connected-apps/check then sees A revoked or account B.\",\"assertions\":[\"E is unchanged, so W stays enqueued and its stamped epoch still matches.\",\"Refresh stores unavailable, bumps generation, and readiness loses exact account and fresh success.\",\"Pre-mail authorize refreshes access, rechecks binding and review, and withholds mail; generic prep stays file/web.\",\"Prior effects stay; no new mail starts.\"]},{\"title\":\"Check splits the two agency snapshots\",\"setup\":\"Adapter saves S0 (A success, E, cfg/profile/recipe digests) and awaits instructions. /check writes revoked A or B at G+1. Late G success returns. Then pre-scan authorize, scan, post-scan compare.\",\"assertions\":[\"The second snapshot mismatches, so mail does not start from S0.\",\"Late G success cannot replace unavailable.\",\"If scan started, post-scan account/settings/source compare drops the batch; started effects remain.\",\"Dedup must not apply an older pending success after the newer revocation.\"]},{\"title\":\"TTL observation versus config mutation\",\"setup\":\"Valid prep, T0 success cache (five minutes), epoch E. A: /check same account still success. B: /check wrong or revoked account before expiry. C: pack, recipe, agency, config, Desk commit, or connector invalidation; no /check.\",\"assertions\":[\"A keeps E and does not stop other work with the same H, P, and R.\",\"B keeps E, but mail authorize fails; T0 success must not outlive that observation.\",\"C bumps E before visibility; enqueue of E is rejected; async work stamped E ignores the new cfg.\",\"Provider rechecks tenant, device, account, and billing, so B fails with no epoch change.\"]}]}",
+  "toolCallCount": 0,
+  "permissionRequestCount": 0,
+  "unsupportedClientRequests": [],
+  "mcpIsolationVerified": false,
+  "toolIsolationVerified": false,
+  "cliVersion": "grok 1.0.34 (3736acbc8658)",
+  "argv": [
+    "/Users/yoda/.local/bin/grok",
+    "--no-auto-update",
+    "--disable-web-search",
+    "--permission-mode",
+    "plan",
+    "agent",
+    "--no-leader",
+    "--model",
+    "grok-4.7",
+    "--reasoning-effort",
+    "xhigh",
+    "--agent-profile",
+    "/Users/yoda/projects/RealBud/outputs/website-requests-2026-09-22/grok-observation-acp-profile.md",
+    "stdio"
+  ],
+  "ownedPid": 21830,
+  "requests": [
+    {
+      "id": 1,
+      "method": "initialize",
+      "atSeconds": 0.061
+    },
+    {
+      "id": 2,
+      "method": "session/new",
+      "atSeconds": 1.323
+    },
+    {
+      "id": 3,
+      "method": "session/prompt",
+      "atSeconds": 1.619
+    }
+  ],
+  "elapsedSeconds": 114.189,
+  "firstStdoutSeconds": 1.323,
+  "stdoutBytes": 847195,
+  "initialize": {
+    "protocolVersion": 1,
+    "agentInfo": null,
+    "agentCapabilities": {
+      "loadSession": true,
+      "promptCapabilities": {
+        "image": false,
+        "audio": false,
+        "embeddedContext": true
+      },
+      "mcpCapabilities": {
+        "http": true,
+        "sse": true
+      },
+      "sessionCapabilities": {
+        "list": {},
+        "resume": {},
+        "close": {}
+      },
+      "auth": {},
+      "_meta": {
+        "x.ai/fs_notify": true,
+        "x.ai/hooks": {
+          "blockingEvents": [
+            "pre_tool_use",
+            "stop",
+            "subagent_stop"
+          ],
+          "decisions": [
+            "deny",
+            "block"
+          ],
+          "stopSignals": [
+            "continue",
+            "stopReason",
+            "additionalContext"
+          ]
+        },
+        "x.ai/capabilities": {
+          "toolOverrides": {
+            "x_keyword_search": true,
+            "x_semantic_search": true,
+            "x_user_search": false,
+            "x_thread_fetch": false
+          }
+        }
+      }
+    }
+  },
+  "initializeMetaKeys": [
+    "agentId",
+    "agentInstanceId",
+    "agentVersion",
+    "availableCommands",
+    "cancelRewind",
+    "currentWorkingDirectory",
+    "defaultAuthMethodId",
+    "feedbackTraceOffer",
+    "grokShell",
+    "hostname",
+    "mcpApps",
+    "mcpServers",
+    "metadata",
+    "modelState",
+    "sessionRecap",
+    "voiceMode",
+    "x.ai/mcp/sdk",
+    "x.ai/pluginDirs"
+  ],
+  "initializeMcpShape": "list",
+  "initializeMcpCount": 0,
+  "initializeMcpNames": [],
+  "authMethodIds": [
+    "cached_token",
+    "grok.com"
+  ],
+  "observedMcpServerCount": 0,
+  "observedMcpServerNames": [],
+  "notificationMethods": {
+    "_x.ai/mcp/servers_updated": 1,
+    "_x.ai/mcp_initialized": 1,
+    "_x.ai/session_notification": 4,
+    "_x.ai/sessions/changed": 2,
+    "_x.ai/queue/changed": 3,
+    "_x.ai/models/update": 2,
+    "_x.ai/settings/update": 2,
+    "_x.ai/announcements/update": 3,
+    "_x.ai/session/prompt_complete": 1
+  },
+  "notificationShapes": {
+    "_x.ai/mcp/servers_updated": [
+      "mcpServers"
+    ],
+    "_x.ai/mcp_initialized": [
+      "elapsedMs",
+      "mcpToolCount",
+      "sessionId"
+    ],
+    "_x.ai/session_notification": [
+      "_meta",
+      "sessionId",
+      "update"
+    ],
+    "_x.ai/sessions/changed": [
+      "removed",
+      "upserted"
+    ],
+    "_x.ai/queue/changed": [
+      "entries",
+      "sessionId"
+    ],
+    "_x.ai/models/update": [
+      "availableModels",
+      "currentModelId"
+    ],
+    "_x.ai/settings/update": [
+      "allow_access",
+      "announcements",
+      "auto_permission_mode_enabled",
+      "campaigns",
+      "collapsed_edit_blocks",
+      "consent_gate",
+      "dock_enabled",
+      "gate_label",
+      "gate_message",
+      "gate_url",
+      "group_tool_verbs",
+      "permission_mode",
+      "privacy_banner_reshow_days",
+      "privacy_notice_rollout",
+      "prompt_suggestions_enabled",
+      "session_picker_grouped",
+      "sharing_enabled",
+      "show_resolved_model",
+      "slash_command_tags",
+      "subscription_tier_display",
+      "subscription_watch_interval_secs",
+      "terminal_theme_enabled",
+      "tips"
+    ],
+    "_x.ai/announcements/update": [
+      "announcements",
+      "gen"
+    ],
+    "_x.ai/session/prompt_complete": [
+      "agentResult",
+      "promptId",
+      "sessionId",
+      "stopReason"
+    ]
+  },
+  "firstStderrSeconds": 1.511,
+  "stderrBytes": 5568,
+  "observedMcpInitialization": {
+    "elapsedMs": 0,
+    "mcpToolCount": 0,
+    "sessionId": "01a0c5a8-1499-7d71-970c-fa6efca6a39d"
+  },
+  "sessionId": "01a0c5a8-1499-7d71-970c-fa6efca6a39d",
+  "sessionConfigOptions": [
+    {
+      "id": "model",
+      "name": "Model",
+      "category": "model",
+      "type": "select",
+      "currentValue": "grok-4.7"
+    },
+    {
+      "id": "reasoning_effort",
+      "name": "Reasoning Effort",
+      "category": "thought_level",
+      "type": "select",
+      "currentValue": "xhigh"
+    }
+  ],
+  "sessionMeta": {},
+  "sessionMetaKeys": [
+    "codebaseIndexed",
+    "currentWorkingDirectory",
+    "feedbackEnabled",
+    "gitRoot",
+    "isGitRepo",
+    "showNonGitWarning",
+    "x.ai/memoryMode",
+    "x.ai/sessionConfig",
+    "x.ai/sessionDetail"
+  ],
+  "sessionResultKeys": [
+    "_meta",
+    "configOptions",
+    "models",
+    "sessionId"
+  ],
+  "returnedModelOption": "grok-4.7",
+  "returnedReasoningEffort": "xhigh",
+  "terminal": {
+    "stopReason": "end_turn",
+    "_meta": {
+      "sessionId": "01a0c5a8-1499-7d71-970c-fa6efca6a39d",
+      "requestId": "54e01b07-6008-49cc-bbb8-a3a7eb540fb2",
+      "modelId": "grok-4.7",
+      "inputTokens": 32881,
+      "outputTokens": 8002,
+      "reasoningTokens": 7582,
+      "cachedReadTokens": 1152,
+      "totalTokens": 40892,
+      "usage": {
+        "inputTokens": 32881,
+        "outputTokens": 8002,
+        "totalTokens": 40883,
+        "cachedReadTokens": 1152,
+        "cacheCreationTokens": 0,
+        "reasoningTokens": 7582,
+        "modelCalls": 1,
+        "apiDurationMs": 108898,
+        "costUsdTicks": 1120460000,
+        "modelUsage": {
+          "grok-4.7-build": {
+            "inputTokens": 32881,
+            "outputTokens": 8002,
+            "totalTokens": 40883,
+            "cachedReadTokens": 1152,
+            "cacheCreationTokens": 0,
+            "reasoningTokens": 7582,
+            "modelCalls": 1,
+            "apiDurationMs": 108898,
+            "costUsdTicks": 1120460000
+          }
+        },
+        "numTurns": 1
+      }
+    }
+  },
+  "terminalMetaKeys": [
+    "cachedReadTokens",
+    "inputTokens",
+    "modelId",
+    "outputTokens",
+    "promptId",
+    "reasoningTokens",
+    "requestId",
+    "sessionId",
+    "totalTokens",
+    "usage"
+  ],
+  "terminalAtSeconds": 111.195,
+  "structuredOutputValid": true,
+  "structuredOutput": {
+    "cases": [
+      {
+        "title": "Revoked check fences mail, not epoch",
+        "setup": "Prep at epoch E with hashes H, profile P, recipe R, fresh Gmail A. Worker W holds E. POST /connected-apps/check then sees A revoked or account B.",
+        "assertions": [
+          "E is unchanged, so W stays enqueued and its stamped epoch still matches.",
+          "Refresh stores unavailable, bumps generation, and readiness loses exact account and fresh success.",
+          "Pre-mail authorize refreshes access, rechecks binding and review, and withholds mail; generic prep stays file/web.",
+          "Prior effects stay; no new mail starts."
+        ]
+      },
+      {
+        "title": "Check splits the two agency snapshots",
+        "setup": "Adapter saves S0 (A success, E, cfg/profile/recipe digests) and awaits instructions. /check writes revoked A or B at G+1. Late G success returns. Then pre-scan authorize, scan, post-scan compare.",
+        "assertions": [
+          "The second snapshot mismatches, so mail does not start from S0.",
+          "Late G success cannot replace unavailable.",
+          "If scan started, post-scan account/settings/source compare drops the batch; started effects remain.",
+          "Dedup must not apply an older pending success after the newer revocation."
+        ]
+      },
+      {
+        "title": "TTL observation versus config mutation",
+        "setup": "Valid prep, T0 success cache (five minutes), epoch E. A: /check same account still success. B: /check wrong or revoked account before expiry. C: pack, recipe, agency, config, Desk commit, or connector invalidation; no /check.",
+        "assertions": [
+          "A keeps E and does not stop other work with the same H, P, and R.",
+          "B keeps E, but mail authorize fails; T0 success must not outlive that observation.",
+          "C bumps E before visibility; enqueue of E is rejected; async work stamped E ignores the new cfg.",
+          "Provider rechecks tenant, device, account, and billing, so B fails with no epoch change."
+        ]
+      }
+    ]
+  },
+  "completed": true,
+  "shutdown": "stdin-eof",
+  "exitCode": 0,
+  "remainingOwnedGroupPids": [],
+  "processReaped": true,
+  "isolatedHomeRemoved": true,
+  "globalConfigSha256After": "ada54f57ec570d8e70cba35400ea2b557914ede90ffa893b5da122a7f69d6736",
+  "globalConfigUnchanged": true
+}

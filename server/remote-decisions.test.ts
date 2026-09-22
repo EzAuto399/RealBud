@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { WorkspaceActivityGate } from "./workspace-activity.ts";
 
 import type { DeskSnapshot, Draft, Escalation, Property } from "../shared/contracts.ts";
 import {
@@ -233,6 +234,26 @@ describe("notifyDeskSnapshot", () => {
 });
 
 describe("decideRemotely", () => {
+  it.each(['unchanged', 'edited', 'unpaired'] as const)("rechecks a paused phone decision after resumption: %s", async change => {
+    const gate = new WorkspaceActivityGate(), desk = fakeDesk(snapshot([draft("d-1", 10)]));
+    let pairedKey = "chat-1";
+    const commit = vi.fn();
+    bindRemoteDecisions({ desk, commit, channels: [{ ...stubChannel("telegram", []), pairedKey: () => pairedKey }],
+      withWorkspaceActivity: gate.run, now: () => Date.UTC(2026, 7, 31, 0) });
+    await notifyDeskSnapshot(desk.snapshot());
+    const decisionId = pendingDecisionId("telegram")!, lease = await gate.pause();
+    const decision = decideRemotely("telegram", "chat-1", decisionId, "allow", undefined, "Sam");
+    await new Promise(resolve => setImmediate(resolve));
+    expect(desk.snapshot().drafts[0]!.status).toBe("pending");
+    expect(commit).not.toHaveBeenCalled(); expect(gate.queued).toBe(1);
+    if (change === 'edited') desk.editDraft("d-1", "Wording changed after the card was sent");
+    if (change === 'unpaired') pairedKey = "chat-2";
+    lease.release();
+    expect((await decision).ok).toBe(change === 'unchanged');
+    expect(desk.snapshot().drafts[0]!.status).toBe(change === 'unchanged' ? "allowed" : "pending");
+    expect(commit).toHaveBeenCalledTimes(change === 'unchanged' ? 1 : 0);
+  });
+
   it("does not approve wording changed after the phone card was delivered", async () => {
     const desk = fakeDesk(snapshot([draft("d-1", 10)]));
     bindRemoteDecisions({ desk, commit: () => {}, channels: [stubChannel("telegram", [])], now: () => Date.UTC(2026, 7, 31, 0) });

@@ -1,0 +1,23 @@
+{
+  "sessionId": "01a0c3da-9d0a-7750-a8c5-cd74825d9ca9",
+  "requestedModel": "grok-4.6",
+  "requestedReasoningEffort": "xhigh",
+  "actualModels": [
+    "grok-4.6-build"
+  ],
+  "stopReason": "end_turn",
+  "scope": "Independent readonly review of the catalog source packet; code changed further as recorded below",
+  "accepted": [
+    "Explicitly verify DELETE journal mode rather than assuming the PRAGMA selected it",
+    "Distinguish new controlled-writer capacity from pre-existing legacy recovery artifacts",
+    "A full derived in-memory lookup store must refuse seal rather than silently omit graph evidence"
+  ],
+  "resolved_or_not_reproduced": [
+    "The claimed2MiB hard cache limit is not a SQLite cache_size guarantee. Actual8MiB random-byte insert, seal, reopen and exact validation passed with cache_spill=OFF and the2MiB suggested cache; receipt catalog-max-entry-receipt.json and a permanent regression test added",
+    "The packet predated bounds on filePaths lookup/kind columns and the kind-filtered query-plan check; current source already includes both",
+    "Existing AES envelopes use Base64 and fit the16MiB encoded bound for8MiB plain entries; hypothetical alternate hex/Buffer envelope encodings are not this writer",
+    "Actual killed legacy writer produced changed main pages and a real hot journal; open recovered exact original bytes and reapplied cap. A cold/unattributed oversized sidecar remains held and preserved, not silently deleted",
+    "Returned controlled connections enforce the main ceiling and selected journal mode. Hot-journal replay necessarily precedes decrypted header admission; a future coordinator must inventory existing artifacts under its retained reservation or hold legacy/unattributed storage before using this per-writer budget"
+  ],
+  "remaining": "No aggregate quota proof; resource allocation/cleanup and v1 coexistence still require implementation. Header/schema checks preserve rather than repair unsupported legacy files.64MiB lookup cap remains explicit."
+}

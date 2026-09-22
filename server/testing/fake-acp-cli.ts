@@ -107,7 +107,7 @@ function driveMcp(entry: McpEntry, calls: Array<{ name: string; args: (prev: str
 }
 
 function scriptedTurn() {
-  let tool = process.env.FAKE_ACP_TOOL ?? "";
+  let tool: unknown = process.env.FAKE_ACP_TOOL ?? "";
   let rawInput = {};
   let reply = process.env.FAKE_ACP_REPLY ?? "";
   let title = "";
@@ -115,7 +115,7 @@ function scriptedTurn() {
   if (process.env.FAKE_ACP_SCRIPT) {
     try {
       const script = JSON.parse(readFileSync(process.env.FAKE_ACP_SCRIPT, "utf8"));
-      if (typeof script.tool === "string") tool = script.tool;
+      if (Object.hasOwn(script, "tool")) tool = script.tool;
       if (script.rawInput && typeof script.rawInput === "object") rawInput = script.rawInput;
       if (typeof script.reply === "string") reply = script.reply;
       if (typeof script.title === "string") title = script.title;

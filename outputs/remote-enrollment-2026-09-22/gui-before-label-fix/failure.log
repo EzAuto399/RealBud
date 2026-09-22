@@ -1,0 +1,11 @@
+realbud server on http://127.0.0.1:53490
+
+▲ Next.js 16.3.3
+- Local:         http://127.0.0.1:53482
+- Network:       http://127.0.0.1:53482
+✓ Ready in 119ms
+✓ Running next.config.ts took 72ms
+
+TimeoutError: locator.waitFor: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for getByText('Identity connected', { exact: true }) to be visible[22m

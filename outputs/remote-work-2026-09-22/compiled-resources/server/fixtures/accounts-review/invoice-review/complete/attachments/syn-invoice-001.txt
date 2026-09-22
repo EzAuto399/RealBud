@@ -1,0 +1,9 @@
+SYNTHETIC INVOICE — NOT PAYABLE
+Supplier ID: SYN-SUP001
+Invoice ID: SYN-INV001
+Property code: SYN-CODE01
+Amount: 420.00
+Currency: AUD
+Due date: 2026-09-18
+Cost type: water
+

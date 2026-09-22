@@ -1,0 +1,24 @@
+{
+  "helpers": {
+    "hermes-memory-proposals.py": {
+      "sha256": "e24757cca7f49a32fd96dd1f3b171152cb5f71d6828505f4a0cd891223cf5c3c",
+      "sourceBuiltPackagedMatch": true
+    },
+    "hermes-memory-review.py": {
+      "sha256": "e9581dbf5f4cac39653d09c4dc81c74ea11c9539b8f02930436318a6008319e0",
+      "sourceBuiltPackagedMatch": true
+    },
+    "hermes-memory-windows.py": {
+      "sha256": "dcd60d8134bfbc6d64cfedccd93dbf6c834d8528ae6b23468d3b359a4ea0f208",
+      "sourceBuiltPackagedMatch": true
+    },
+    "hermes-memory-windows-journal.py": {
+      "sha256": "467310a21292240f581b7b696353cee47d58328efc3131324ec9a28fae9f5ddb",
+      "sourceBuiltPackagedMatch": true
+    },
+    "hermes-memory-windows-native.py": {
+      "sha256": "89688faf5523e2ea68c5ca75b1987f88b89c558ba7fe94b23fa3a49f010fbbfa",
+      "sourceBuiltPackagedMatch": true
+    }
+  }
+}

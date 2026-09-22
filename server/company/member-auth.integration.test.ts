@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { createCompanyKernel, migrateCompanySchema, type CompanyKernel } from './index.ts';
+import { companySchemaManifest } from './schema.ts';
 
 const url = process.env.REALBUD_COMPANY_TEST_URL;
 const password = 'Synthetic-member-password-2026';
@@ -82,7 +83,7 @@ describe.skipIf(!url)('durable independent member authentication', () => {
   });
   it('checks the additive credential migration checksum while preserving the original migration', async () => {
     const before = await admin.query('SELECT id, checksum FROM realbud_company.schema_migrations ORDER BY id');
-    expect(before.rows.map(row => row.id)).toEqual(['0001', '0002', '0003']);
+    expect(before.rows).toEqual(companySchemaManifest());
     await migrateCompanySchema(admin, { applicationRole: 'rb_company_test_app' });
     expect((await admin.query('SELECT id, checksum FROM realbud_company.schema_migrations ORDER BY id')).rows).toEqual(before.rows);
     await admin.query("UPDATE realbud_company.schema_migrations SET checksum='tampered' WHERE id='0002'");

@@ -1,9 +1,10 @@
 // Executed by the installed application's own Electron/Node on a clean CI
 // Windows Server host. This does not certify Windows 11 or customer workflows.
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
@@ -11,8 +12,31 @@ assert.equal(process.platform, "win32"); assert.equal(process.arch, "x64");
 const resources = resolve(process.argv[2]);
 const receiptFile = resolve(process.argv[3]);
 const checks = [];
-for (const file of ["cua-driver.exe", "cua-driver-uia.exe", "cua-cursor-theme.exe", "cua_driver_sdk.dll", "cua-sdk/cua-sdk.mjs", "cua-sdk/native/cua_driver_sdk.dll", "cua-sdk/native/cua_driver_node_runtime.node", "server/index.js", "ui/index.html", "RealBud Speech.exe"]) assert.ok(existsSync(join(resources, file)), `missing packaged ${file}`);
-checks.push("Installed resources include browser/native helpers, speech helper, SDK, server and UI");
+for (const file of ["cua-driver.exe", "cua-driver-uia.exe", "cua-cursor-theme.exe", "cua_driver_sdk.dll", "cua-sdk/cua-sdk.mjs", "cua-sdk/native/cua_driver_sdk.dll", "cua-sdk/native/cua_driver_node_runtime.node", "server/index.js", "server/bootstrap.js", "server/hermes-pack.js", "server/hermes-profile-storage.js", "server/windows-file-privacy.js", "pack/property/SOUL.md", "pack/property/config.yaml", "pack/property/distribution.yaml", "pack/property/profile.yaml", "pack/property/skills/intake-properties/SKILL.md", "pack/property/skills/morning-arrears/SKILL.md", "ui/index.html", "RealBud Speech.exe"]) assert.ok(existsSync(join(resources, file)), `missing packaged ${file}`);
+checks.push("Installed resources include native helpers, speech helper, SDK, server and UI");
+// The installer runs smoke-company-bundle separately against these exact
+// resources. That proof requires real fresh-profile startup and privacy, not
+// this resource inventory or service health alone.
+checks.push("Installed resources include private-profile provisioning code and shipped property safeguards");
+const browser = join(resources, "browser");
+const browserManifest = JSON.parse(readFileSync(join(browser, "runtime.json"), "utf8"));
+assert.equal(browserManifest.version, "0.3.0");
+assert.equal(browserManifest.platform, "win32"); assert.equal(browserManifest.arch, "x64");
+assert.equal(createHash("sha256").update(readFileSync(join(browser, "bsk.exe"))).digest("hex"), browserManifest.sha256);
+assert.equal(execFileSync(join(browser, "bsk.exe"), ["--version"], { encoding: "utf8", timeout: 10000, windowsHide: true }).trim(), "bsk 0.3.0");
+checks.push("Installed BrowserSkill executable matches its manifest and runs at the pinned version");
+const postgres = join(resources, "postgres");
+const pgManifest = JSON.parse(readFileSync(join(postgres, "runtime.json"), "utf8"));
+assert.equal(pgManifest.schema, 2); assert.equal(pgManifest.platform, "win32"); assert.equal(pgManifest.architecture, "x64");
+for (const name of ["postgres.exe", "initdb.exe", "pg_ctl.exe"]) {
+  const binary = join(postgres, "bin", name);
+  const recorded = pgManifest.binaries.find(item => item.name === name);
+  assert.ok(recorded, `missing PostgreSQL manifest entry: ${name}`);
+  assert.equal(createHash("sha256").update(readFileSync(binary)).digest("hex"), recorded.sha256);
+  assert.match(execFileSync(binary, ["--version"], { encoding: "utf8", timeout: 10000, windowsHide: true }), /PostgreSQL\) 16\./);
+}
+assert.ok(existsSync(join(postgres, "share", "postgres.bki")));
+checks.push("Installed PostgreSQL tools retain their hashes and load their Windows dependencies");
 assert.match(execFileSync(join(resources, "cua-driver.exe"), ["--version"], { encoding: "utf8", timeout: 10000 }), /0\.19\.3/);
 checks.push("Installed Windows Cua executable runs and reports the pinned version");
 
@@ -69,6 +93,7 @@ try {
   checks.push("Installed Windows SDK starts a private host and exposes browser/native control tools");
   await host.stop(); driver.uniffiDestroy(); driver = null; host.uniffiDestroy(); host = null;
   checks.push("Private Windows desktop host stops cleanly");
-  writeFileSync(receiptFile, JSON.stringify({ passed: true, generatedAt: new Date().toISOString(), platform: process.platform, arch: process.arch, electron: process.versions.electron, node: process.versions.node, sourceRevision: process.env.REALBUD_BUILD_SHA, checks, notProven: ["Windows 11", "customer x64 PC", "login and MFA", "browser or native UI actions", "Hermes model login", "update and human takeover", "live microphone dictation quality"] }, null, 2));
+  mkdirSync(dirname(receiptFile), { recursive: true });
+  writeFileSync(receiptFile, JSON.stringify({ passed: true, generatedAt: new Date().toISOString(), platform: process.platform, arch: process.arch, electron: process.versions.electron, node: process.versions.node, sourceRevision: process.env.REALBUD_BUILD_SHA, checks, notProven: ["Windows 11", "customer x64 PC", "login and MFA", "browser or native UI actions", "Hermes install or model login", "PostgreSQL office provisioning or backup/restore", "GUI or update and human takeover", "live microphone dictation quality"] }, null, 2));
   console.log(checks.join("\n"));
 } finally { if (host) await host.stop().catch(() => {}); driver?.uniffiDestroy?.(); host?.uniffiDestroy?.(); rmSync(scratch, { recursive: true, force: true }); }

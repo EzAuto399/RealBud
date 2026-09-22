@@ -1,0 +1,1 @@
+{"ok":true,"assertions":72,"checks":["exact inputs","enrollment replay","submission replay","phase CAS","claim lease","restart review","cross company","report credential rejected","cancel claim race","revoke claim race","expiry","pagination","disabled account","installation revocation","RLS and RPC grants"],"database":"disposable PostgreSQL","externalNetwork":false}

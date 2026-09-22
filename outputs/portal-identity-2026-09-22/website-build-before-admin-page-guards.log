@@ -1,0 +1,80 @@
+
+> realbud-site@0.1.0 build /Users/yoda/projects/RealBud/website
+> next build
+
+▲ Next.js 16.3.3 (Turbopack)
+- Environments: .env.local
+✓ Running next.config.ts took 55ms
+
+⚠ The "middleware" file convention is deprecated. Please use "proxy" instead.
+
+  To migrate automatically, run:
+  npx @next/codemod@canary middleware-to-proxy .
+
+  Learn more: https://nextjs.org/docs/messages/middleware-to-proxy
+  Creating an optimized production build ...
+✓ Compiled successfully in 1459ms
+  Running TypeScript ...
+  Finished TypeScript in 1117ms ...
+  Collecting page data using 11 workers ...
+  Generating static pages using 11 workers (0/23) ...
+  Generating static pages using 11 workers (5/23) 
+  Generating static pages using 11 workers (11/23) 
+  Generating static pages using 11 workers (17/23) 
+✓ Generating static pages using 11 workers (23/23) in 529ms
+  Finalizing page optimization ...
+
+Route (app)                                                Revalidate  Expire
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /account
+├ ƒ /account/ai-billing
+├ ƒ /account/installations
+├ ƒ /account/invoices
+├ ƒ /account/limits
+├ ƒ /account/rates
+├ ƒ /account/support
+├ ƒ /account/usage
+├ ƒ /admin
+├ ƒ /admin/margin
+├ ƒ /admin/offices
+├ ƒ /api/account/ai-billing
+├ ƒ /api/account/ai-billing/analytics
+├ ƒ /api/account/ai-billing/checkout
+├ ƒ /api/account/ai-billing/invoices/[id]
+├ ƒ /api/account/installation-commands
+├ ƒ /api/account/installation-commands/[id]/cancel
+├ ƒ /api/account/installation-commands/grants/[id]/revoke
+├ ƒ /api/account/installations
+├ ƒ /api/account/invoices
+├ ƒ /api/account/invoices/[id]
+├ ƒ /api/account/limits
+├ ƒ /api/account/person
+├ ƒ /api/account/rates
+├ ƒ /api/account/usage
+├ ƒ /api/admin/margin
+├ ƒ /api/admin/offices
+├ ƒ /api/auth/logout
+├ ƒ /api/auth/request
+├ ƒ /api/installations/command-grants
+├ ƒ /api/installations/commands/ack
+├ ƒ /api/installations/commands/claim
+├ ƒ /api/installations/commands/poll
+├ ƒ /api/installations/redeem
+├ ƒ /api/installations/report
+├ ƒ /api/pilot
+├ ƒ /auth/callback
+├ ○ /download                                                      5m      1y
+├ ○ /privacy
+├ ○ /robots.txt
+├ ƒ /sign-in/[[...sign-in]]
+├ ƒ /sign-up/[[...sign-up]]
+├ ○ /sitemap.xml
+└ ○ /start
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

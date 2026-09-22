@@ -1,0 +1,109 @@
+RealBud
+App connected
+
+WORKSPACE
+
+Desk
+Tasks & properties
+Ask
+Work with Bud
+Schedule
+Jobs & routines
+You
+Office & settings
+Bills and calendar
+Bills
+Manage views
+Connections
+PRACTICE SAFELY
+Run the sample morning
+
+Use labelled training facts to learn the full Desk flow. This practice stays in your private workspace and does not contact your PMS.
+
+Run sample morning
+Sample book
+·
+Bud ready
+·
+Next Morning money check 22 Sept, 7:30 am
+
+Saved view · Bills
+
+Bills and calendar
+
+All · This private workspace. Opening a view does not start a job.
+
+Manage views
+Bills board
+
+Saved bills by property, with source review and a calendar for confirmed due dates and expected arrivals.
+
+No earlier bill-register records. Source-reviewed bills and calendar appear below.
+
+Received bills and expected arrivals
+
+Review facts from saved Gmail messages. Confirm recurring arrival patterns separately; an expected arrival is not an invoice or payment.
+
+Refresh bills and sources
+Property filter
+All available properties
+12 Oak St, Dickson ACT
+4/22 Harbour Rd, Kingston ACT
+8 Pine Ave, Braddon ACT
+91 King St, Narrabundah ACT
+3 Birch Cl, Watson ACT
+2/5 Flora St, Ainslie ACT
+Fictional Oak Street
+Fictional Pine Street
+Review a bill from saved mail
+Check inbox for bills
+
+This checks the Gmail account, date range and message limit reviewed in Agency setup. It saves available conversations for bill review; attachment contents need separate checking.
+
+Latest mail collection: partial · 1 conversations
+Saved bill reviews (2 of 2)
+
+Drafts are encrypted in this workspace. Reopening a review requires checking its source again; saving a draft does not accept a bill.
+
+Refresh saved reviews
+Include closed reviews
+
+Bill review · Saved for later · 9/21/2026, 6:13:35 PM
+
+Continue saved review
+
+Bill review · Saved for later · 9/21/2026, 6:13:37 PM
+
+Continue saved review
+Bill calendar
+
+Showing 1 entries from Sep 21, 2026 to Mar 20, 2027 · all pages loaded. Predictions remain separate from actual due dates.
+
+Calendar from
+Calendar to
+Show calendar range
+
+Actual due date · Oct 10, 2026
+
+Fictional Oak Street · Water · Fictional Water
+
+Date entered in the received bill’s source review.
+
+Open received bill
+Received bill records (1 of 1)
+Fictional Oak Street · Water
+Received · revision 1
+
+Fictional Water · A$123.45
+
+Invoice date: Sep 20, 2026 · Actual due: Oct 10, 2026
+
+Keep this bill draft during an uncertain proposal result
+
+Review reason: Fictional source body and property checked; attachment remains unread
+
+Source and correction history (0)
+Review or correct bill
+Review recurring arrivals
+
+Waiting for the saved result…

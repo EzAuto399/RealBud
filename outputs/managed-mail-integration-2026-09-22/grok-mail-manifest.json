@@ -1,0 +1,12 @@
+{
+  "artifacts": {
+    "grok-mail-disposition.json": "903273de7ebfd7ba42ca3763e8a57532acbb1c7cea9b0be111188e9847401c92",
+    "grok-mail-acp-prompt.txt": "aadacb5fab4f0f59f598d088a3b6909a127d994f19c2d244a321bc6a4fe8716c",
+    "grok-mail-cleanup.json": "d4a7b1ca83c3f6900fdd433acf77e8ea0f7058ef27f9ad0dbc54be7f90f5712d",
+    "grok-mail-packet.json": "549519ae79b3818dd83dee4358ae623318ef2a7365a711ecd92c99363ae9cebc",
+    "grok-mail-review.md": "790b2aeb6550870a6d2e8ec269fd1996fddd61fe3071bcac9203d47a44dbcc82",
+    "grok-mail-acp-profile.md": "251e4b1808ed2b5f42da8c2474f0305d92d8a14fb3081e558227d6c7c98ceb53",
+    "grok-mail-acp-run.json": "b30e0ffaa8dfbbd774e95afca34371c2ffac8ac55e155a27830c89e1aca88f62",
+    "grok-mail-acp-review.py": "14c6fe63947d72154d93ace1f2c6eaaee35a99279633b8cc7b17a6996bc9f67d"
+  }
+}

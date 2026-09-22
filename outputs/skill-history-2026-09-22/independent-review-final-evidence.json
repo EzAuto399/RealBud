@@ -1,0 +1,24 @@
+{
+  "capturedAt": "2026-09-21T21:14:40.128638+00:00",
+  "passed": 11,
+  "failed": 0,
+  "suites": 3,
+  "sourceFiles": {
+    "server/customer-packs.ts": "5dcbff5a493b48028f600b17d12759545a2f293c1593a4ea73db4235c3920e52",
+    "server/customer-pack-skill-history.ts": "b51708ba0adcffde2153be5749ec29512d91dab755dea7c1e69be6278421c206",
+    "server/customer-pack-skill-backup.ts": "de2ac9714785826658882a9a73812e8a25e53e0c5bd66290b959e0df2dc0b520",
+    "server/private-json.ts": "e5c230d98505b9b0c0c84a7945972ec4d5b8e633dadc5c61558388d10bf4d36c",
+    "server/private-workspace-backup.ts": "c888be10e4b1aa955cb342dce3ed2bb2ae38c83852a5ed9de398217f7118b64a",
+    "server/private-backup-capture.ts": "05c67493b3868c49b8041d14c90ae1046cddb693571ef1540a846a4697b71e1b",
+    "shared/customer-packs.ts": "317f8d03ea6a2d5d12d2340c5d6c47f5a30f51469b0aad2b16b6e3858e562b0c"
+  },
+  "resolvedFindings": [
+    "Historical active digest contradictions in later hot/archive history",
+    "Live v2 gate for sole skill heads inside immutable configuration history"
+  ],
+  "parentFoundWriterIssue": "Independently green through actual writer after owner fix; no reviewer red claim.",
+  "remainingConcreteFindingsInReviewedScope": [],
+  "providerOrNetworkTests": false,
+  "productionEditsByReviewer": false,
+  "grok": "One prompt selected grok-4.7 / xhigh; timed out at 290 seconds, cleanup finished at 293.195 seconds. No final answer or terminal usage, no retry; independent cleanup verified."
+}

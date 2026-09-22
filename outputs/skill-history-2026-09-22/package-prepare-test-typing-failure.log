@@ -1,0 +1,12 @@
+
+> realbud@0.1.19 package:prepare /Users/yoda/projects/RealBud
+> pnpm build && pnpm build:server && pnpm build:updater && pnpm build:browser
+
+
+> realbud@0.1.19 build /Users/yoda/projects/RealBud
+> tsc -b && tsc -p tsconfig.server.json && vite build
+
+server/private-backup-skill-history.test.ts(94,75): error TS2339: Property 'skip' does not exist on type '"symlink-file" | "hardlink-file" | "unknown-file" | "unknown-folder" | "reserved-empty-folder"'.
+  Property 'skip' does not exist on type '"symlink-file"'.
+ ELIFECYCLE  Command failed with exit code 2.
+ ELIFECYCLE  Command failed with exit code 2.

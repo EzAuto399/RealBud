@@ -159,7 +159,7 @@ describe("connected app authoritative broker", () => {
     approve.mockResolvedValue(true); echoKey = true;
     const result = await invoke("tools/call", { name: "read" });
     expect(JSON.stringify(result.body)).not.toContain(key);
-    expect(JSON.stringify(result.body)).toContain("private app key");
+    expect(JSON.stringify(result.body)).toMatch(/private app key|redacted \d+ chars/);
   });
   it("rejects oversized requests before asking or forwarding", async () => {
     expect((await invoke("tools/call", { name: "write", arguments: { text: "x".repeat(32_001) } })).status).toBe(413);

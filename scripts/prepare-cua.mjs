@@ -11,6 +11,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { build } from "esbuild";
+import { assertDesktopPackagingTarget, windowsTar } from "./package-files.mjs";
+
+assertDesktopPackagingTarget();
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const run = promisify(execFile);
@@ -69,7 +72,7 @@ async function officialBinary() {
   }
   const archive = join(cache, release.file);
   await writeFile(archive, bytes);
-  if (isWindows) await run("tar.exe", ["-xf", archive, "-C", cache, executable, "cua-driver-uia.exe", "cua-cursor-theme.exe", "cua_driver_sdk.dll", "cua_driver_node_runtime.node"]);
+  if (isWindows) await run(windowsTar(), ["-xf", archive, "-C", cache, executable, "cua-driver-uia.exe", "cua-cursor-theme.exe", "cua_driver_sdk.dll", "cua_driver_node_runtime.node"]);
   else {
     await run("/usr/bin/tar", ["-xzf", archive, "-C", cache, executable]);
     await chmod(cachedBinary, 0o755);

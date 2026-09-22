@@ -171,9 +171,9 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === '1')('fictional agency depa
     await grant('accounts', staff.assistant, []);
     expect([403, 404]).toContain((await read(staff.assistant, scopes.accounts.id, 'bills-review')).status);
     expect([403, 404]).toContain((await call(staff.assistant, 'cases/renew', { ...lease(claimed.body), ttlMs: 60_000 })).status);
-    expect((await call(staff.accounts, 'cases/claim', { caseId: created.body.caseId, ttlMs: 60_000 })).body.code).toBe('claim_busy');
+    expect((await call(staff.accounts, 'cases/claim', { caseId: created.body.caseId, ttlMs: 60_000 })).body.code).toBe('recovery_required');
     await grant('accounts', staff.assistant, ['read', 'write']);
-    expect((await call(staff.assistant, 'cases/settle', { ...lease(claimed.body), outcome: 'released' })).status).toBe(200);
+    expect((await call(staff.assistant, 'cases/settle', { ...lease(claimed.body), outcome: 'released' })).body.code).toBe('stale_claim');
   });
 
   it('lets only the owner cancel an unused invitation and prevents its redemption', async () => {
@@ -182,8 +182,15 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === '1')('fictional agency depa
     const body = { invitationId: invitation.body.invitationId };
     expect((await call(staff.leasing, 'invitations/revoke', body)).status).toBe(403);
     expect((await call(owner, 'invitations/revoke', body)).status).toBe(200);
-    expect((await request(staff.leasing.app, 'join', { invitationToken: invitation.body.invitationToken,
-      credential: { loginName: 'cancelled', password } })).status).toBe(401);
+    // Existing members are rejected locally before enrollment. Use a fresh
+    // workspace to prove that the host itself rejects the cancelled invitation.
+    const fresh = installation('cancelled-invitation');
+    try {
+      const hostCode = (await call(owner, 'host-code')).body.hostCode;
+      expect((await request(fresh, 'connect-host', { hostCode })).status).toBe(200);
+      expect((await request(fresh, 'join', { invitationToken: invitation.body.invitationToken,
+        credential: { loginName: 'cancelled', password } })).status).toBe(401);
+    } finally { await fresh.close(); }
   });
 
   it('offboards a staff member, revokes sign-in and holds their active job for recovery', async () => {

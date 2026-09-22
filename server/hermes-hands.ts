@@ -12,9 +12,9 @@ import { execFileCli } from "./procs.ts";
 import type { LedgerFacts } from "../shared/contracts.ts";
 import { asBoolean, asFiniteNumber, asNonEmptyString, asNullableNumber } from "./decode.ts";
 import { hermesCli, hermesIsCompatible } from "./hermes-pin.ts";
-import { baseWorkerProfile, hermesProfileFor } from "./hermes-profile.ts";
+import { currentWorkerProfile, withWorkerProfile } from "./hermes-profile.ts";
 import { approvalsAreManual, packInstalled } from "./hermes-pack.ts";
-import { probeHermesVersion, hermesReadinessFingerprint, workerSetupPending } from "./hermes-status.ts";
+import { probeHermesVersion, hermesReadinessFingerprint, modelAccessStatus, workerSetupPending } from "./hermes-status.ts";
 import { seedVault } from "./vault.ts";
 
 export type HandsSource = "demo" | "hermes" | "held" | "csv" | "fixture";
@@ -62,7 +62,7 @@ export function workerMissReason(stdout: string, stderr: string): string {
   return last.length > 120 ? `${last.slice(0, 117)}…` : last;
 }
 
-export async function tryHermesPing(opts?: {
+async function scopedHermesPing(opts?: {
   cli?: string;
   timeoutMs?: number;
   root?: string;
@@ -80,6 +80,10 @@ export async function tryHermesPing(opts?: {
   const serviceFailure = managedServiceFailure("reasoning");
   if (serviceFailure) return done(false, serviceFailure);
   if (process.env.VITEST && !opts?.cli) return done(false, "tests do not ping the live worker");
+  // A withdrawn grant holds with its own reason. Running the check would spend
+  // a minute to produce an auth failure the office cannot act on.
+  const access = modelAccessStatus(opts?.root);
+  if (access.withdrawn) return done(false, access.detail);
   if (workerSetupPending(opts?.root)) return done(false, "Bud setup did not finish. Finish setup before checking the connection.");
   if (!packInstalled(opts?.root)) return done(false, "Bud is not set up — open Bud on You.");
   if (!approvalsAreManual(opts?.root)) {
@@ -107,7 +111,7 @@ export async function tryHermesPing(opts?: {
     };
     const child = execFileCli(
       cli,
-      ["--profile", hermesProfileFor(baseWorkerProfile(), opts?.memberKey).profile, "chat", "-Q", "--toolsets", "todo", "-q", "Reply with exactly one word: OK. Do not use tools.", "--max-turns", "1"],
+      ["--profile", currentWorkerProfile().profile, "chat", "-Q", "--toolsets", "todo", "-q", "Reply with exactly one word: OK. Do not use tools.", "--max-turns", "1"],
       execOpts,
       (err, stdout, stderr) => {
         const clean = (s: string) =>
@@ -191,7 +195,7 @@ function parseLedgerRows(raw: string): LedgerFacts[] | null {
   }
 }
 
-export async function tryHermesLedger(
+async function scopedHermesLedger(
   propertyIds: string[],
   opts?: {
     cli?: string;
@@ -206,6 +210,8 @@ export async function tryHermesLedger(
   const serviceFailure = managedServiceFailure("reasoning");
   if (serviceFailure) return miss(serviceFailure);
   if (process.env.VITEST && !opts?.cli) return miss("tests do not use the live worker — unknown facts stay held");
+  const access = modelAccessStatus(opts?.root);
+  if (access.withdrawn) return miss(`${access.detail} Facts stay held.`);
   if (workerSetupPending(opts?.root)) return miss("Bud setup did not finish. Finish setup before checking property facts.");
   if (!packInstalled(opts?.root)) {
     return miss("Bud is not set up — open Bud on You. Facts stay held.");
@@ -252,7 +258,7 @@ export async function tryHermesLedger(
     };
     const child = execFileCli(
       cli,
-      ["--profile", hermesProfileFor(baseWorkerProfile(), opts?.memberKey).profile, "chat", "-Q", "-q", prompt, "--max-turns", "6"],
+      ["--profile", currentWorkerProfile().profile, "chat", "-Q", "-q", prompt, "--max-turns", "6"],
       execOpts,
       (err, stdout, stderr) => {
         if (err) {
@@ -279,4 +285,11 @@ export async function tryHermesLedger(
       },
     );
   });
+}
+
+export function tryHermesPing(opts?: Parameters<typeof scopedHermesPing>[0]): Promise<HermesPing> {
+  return withWorkerProfile(opts?.memberKey ?? currentWorkerProfile().memberKey, () => scopedHermesPing(opts));
+}
+export function tryHermesLedger(propertyIds: string[], opts?: Parameters<typeof scopedHermesLedger>[1]): Promise<HermesLedgerAttempt> {
+  return withWorkerProfile(opts?.memberKey ?? currentWorkerProfile().memberKey, () => scopedHermesLedger(propertyIds, opts));
 }

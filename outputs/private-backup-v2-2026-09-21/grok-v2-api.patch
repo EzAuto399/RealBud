@@ -1,0 +1,674 @@
+diff --git a/server/private-backup-v2-api.ts b/server/private-backup-v2-api.ts
+new file mode 100644
+index 0000000..a1b2c3d
+--- /dev/null
++++ b/server/private-backup-v2-api.ts
+@@ -0,0 +1,327 @@
++import {
++  PRIVATE_BACKUP_TRANSFER_API,
++  PRIVATE_BACKUP_TRANSFER_CHUNK_BYTES,
++  PRIVATE_BACKUP_TRANSFER_ERRORS,
++  PRIVATE_BACKUP_TRANSFER_MAX_BYTES,
++  PRIVATE_BACKUP_TRANSFER_MAX_ITEMS,
++  parsePrivateBackupDownloadTicket,
++  parsePrivateBackupTransferOperation,
++  parsePrivateBackupTransferPage,
++  privateBackupTransferDigest,
++  privateBackupTransferId,
++  type PrivateBackupDownloadTicket,
++  type PrivateBackupTransferOperation,
++  type PrivateBackupTransferPage,
++} from '../shared/private-backup-transfers.ts';
++
++const FIELDS = 'Use the supported private-backup fields.';
++const CONFIRM = 'Confirm staging this reviewed backup.';
++const INVALID = PRIVATE_BACKUP_TRANSFER_ERRORS['storage-unavailable'];
++const TOKEN = /^[A-Za-z0-9_-]{32,128}$/;
++const CURSOR = /^[A-Za-z0-9_-]{1,512}$/;
++const DECIMAL = /^(?:0|[1-9][0-9]*)$/;
++
++export interface BackupV2ApiService {
++  list(input: { limit: number; cursor?: string }): Promise<PrivateBackupTransferPage>;
++  get(id: string): Promise<PrivateBackupTransferOperation>;
++  startExport(id: string, passphrase: string): Promise<PrivateBackupTransferOperation>;
++  startUpload(id: string, totalBytes: number): Promise<PrivateBackupTransferOperation>;
++  appendUpload(id: string, offset: number, bytes: Uint8Array, sha256: string): Promise<PrivateBackupTransferOperation>;
++  sealUpload(id: string, totalBytes: number, chunkCommitment: string): Promise<PrivateBackupTransferOperation>;
++  preview(id: string, passphrase: string, expectedArchiveDigest: string): Promise<PrivateBackupTransferOperation>;
++  stage(id: string, expectedArchiveDigest: string): Promise<PrivateBackupTransferOperation>;
++  cancel(id: string): Promise<PrivateBackupTransferOperation>;
++  downloadTicket(id: string, expectedArchiveDigest: string): Promise<PrivateBackupDownloadTicket>;
++}
++
++type V2Request = {
++  path: string;
++  method: string;
++  query?: URLSearchParams;
++  body?: unknown;
++  bytes?: Uint8Array;
++  chunkDigest?: unknown;
++};
++
++type V2Result = { status: number; body: unknown } | { status: 200; downloadTicket: string };
++
++type Route =
++  | { name: 'operations' }
++  | { name: 'exports' }
++  | { name: 'uploads' }
++  | { name: 'operation'; id: string }
++  | { name: 'download-ticket'; id: string }
++  | { name: 'cancel'; id: string }
++  | { name: 'chunks'; id: string }
++  | { name: 'seal'; id: string }
++  | { name: 'preview'; id: string }
++  | { name: 'stage'; id: string }
++  | { name: 'download'; token: string };
++
++const fail = (message: string, status = 400): never => {
++  throw Object.assign(new Error(message), { status });
++};
++
++function unknown(): { status: number; body: unknown } {
++  return { status: 404, body: { error: 'Unknown private-backup action.' } };
++}
++
++function fields(body: unknown, allowed: readonly string[]): Record<string, unknown> {
++  if (!body || typeof body !== 'object' || Array.isArray(body)) fail(FIELDS);
++  const value = body as Record<string, unknown>;
++  if (Object.keys(value).length !== allowed.length || allowed.some((key) => !Object.hasOwn(value, key))) fail(FIELDS);
++  return value;
++}
++
++function emptyBody(body: unknown): void {
++  if (body === undefined) return;
++  fields(body, []);
++}
++
++function readQuery(query: URLSearchParams | undefined, allowed: readonly string[]): Map<string, string> {
++  const out = new Map<string, string>();
++  if (query === undefined) return out;
++  if (!(query instanceof URLSearchParams)) fail(FIELDS);
++  for (const name of new Set(query.keys())) {
++    if (!allowed.includes(name)) fail(FIELDS);
++    const all = query.getAll(name);
++    if (all.length !== 1) fail(FIELDS);
++    out.set(name, all[0]!);
++  }
++  return out;
++}
++
++function noQuery(query: URLSearchParams | undefined): void {
++  if (readQuery(query, []).size) fail(FIELDS);
++}
++
++function decimal(value: string, min: number, max: number): number {
++  if (!DECIMAL.test(value)) fail(FIELDS);
++  const n = Number(value);
++  if (!Number.isSafeInteger(n) || n < min || n > max) fail(FIELDS);
++  return n;
++}
++
++function needId(value: unknown): string {
++  if (!privateBackupTransferId(value)) fail(FIELDS);
++  return value;
++}
++
++function needDigest(value: unknown): string {
++  if (!privateBackupTransferDigest(value)) fail(FIELDS);
++  return value;
++}
++
++function needPassphrase(value: unknown): string {
++  if (typeof value !== 'string' || value.length < 16 || value.length > 256) fail(FIELDS);
++  return value;
++}
++
++function needTotalBytes(value: unknown): number {
++  if (!Number.isSafeInteger(value) || Number(value) < 1 || Number(value) > PRIVATE_BACKUP_TRANSFER_MAX_BYTES) fail(FIELDS);
++  return value as number;
++}
++
++function needOffset(value: string | undefined): number {
++  if (value === undefined || !DECIMAL.test(value)) fail(FIELDS);
++  const n = Number(value);
++  if (!Number.isSafeInteger(n) || n < 0 || n % PRIVATE_BACKUP_TRANSFER_CHUNK_BYTES !== 0) fail(FIELDS);
++  return n;
++}
++
++function needBytes(bytes: Uint8Array | undefined): Uint8Array {
++  if (!(bytes instanceof Uint8Array) || bytes.byteLength < 1 || bytes.byteLength > PRIVATE_BACKUP_TRANSFER_CHUNK_BYTES) {
++    fail(FIELDS);
++  }
++  return bytes;
++}
++
++function needOp(raw: unknown, expect: { id: string; kind?: 'export' | 'upload' }): PrivateBackupTransferOperation {
++  const operation = parsePrivateBackupTransferOperation(raw);
++  if (!operation || operation.id !== expect.id || (expect.kind !== undefined && operation.kind !== expect.kind)) {
++    fail(INVALID, 500);
++  }
++  return operation;
++}
++
++function needPage(raw: unknown): PrivateBackupTransferPage {
++  const page = parsePrivateBackupTransferPage(raw);
++  if (!page) fail(INVALID, 500);
++  return page;
++}
++
++function needTicket(raw: unknown): PrivateBackupDownloadTicket {
++  const ticket = parsePrivateBackupDownloadTicket(raw);
++  if (!ticket) fail(INVALID, 500);
++  return ticket;
++}
++
++function wrapped(status: number, operation: PrivateBackupTransferOperation): { status: number; body: unknown } {
++  return { status, body: { operation } };
++}
++
++function route(rest: string): Route | null {
++  const parts = rest.split('/');
++  if (parts.length === 1 && parts[0] === 'operations') return { name: 'operations' };
++  if (parts.length === 1 && parts[0] === 'exports') return { name: 'exports' };
++  if (parts.length === 1 && parts[0] === 'uploads') return { name: 'uploads' };
++  if (parts.length === 2 && parts[0] === 'operations' && privateBackupTransferId(parts[1])) {
++    return { name: 'operation', id: parts[1] };
++  }
++  if (parts.length === 2 && parts[0] === 'downloads' && TOKEN.test(parts[1]!)) {
++    return { name: 'download', token: parts[1]! };
++  }
++  if (parts.length === 3 && privateBackupTransferId(parts[1])) {
++    const id = parts[1]!;
++    if (parts[0] === 'operations' && parts[2] === 'download-ticket') return { name: 'download-ticket', id };
++    if (parts[0] === 'operations' && parts[2] === 'cancel') return { name: 'cancel', id };
++    if (parts[0] === 'uploads' && parts[2] === 'chunks') return { name: 'chunks', id };
++    if (parts[0] === 'uploads' && parts[2] === 'seal') return { name: 'seal', id };
++    if (parts[0] === 'uploads' && parts[2] === 'preview') return { name: 'preview', id };
++    if (parts[0] === 'uploads' && parts[2] === 'stage') return { name: 'stage', id };
++  }
++  return null;
++}
++
++/** Session protection is supplied by the HTTP host and must apply before this
++ * function. Request path and query cannot choose disk directories, keys, or
++ * workspaces. Caller limits raw request reads before allocating body. Download
++ * token consumption and streaming are host/coordinator-owned. */
++export function createPrivateBackupV2Api(host: { service: () => BackupV2ApiService }) {
++  return async (request: V2Request): Promise<V2Result | null> => {
++    const { path, method, query, body, bytes, chunkDigest } = request;
++    if (path !== PRIVATE_BACKUP_TRANSFER_API && !path.startsWith(`${PRIVATE_BACKUP_TRANSFER_API}/`)) return null;
++
++    const matched = route(path === PRIVATE_BACKUP_TRANSFER_API ? '' : path.slice(PRIVATE_BACKUP_TRANSFER_API.length + 1));
++    if (!matched) return unknown();
++
++    if (matched.name === 'operations' && method === 'GET') {
++      const found = readQuery(query, ['limit', 'cursor']);
++      const limit = found.has('limit')
++        ? decimal(found.get('limit')!, 1, PRIVATE_BACKUP_TRANSFER_MAX_ITEMS)
++        : PRIVATE_BACKUP_TRANSFER_MAX_ITEMS;
++      const cursor = found.get('cursor');
++      if (cursor !== undefined && !CURSOR.test(cursor)) fail(FIELDS);
++      return { status: 200, body: needPage(await host.service().list(cursor === undefined ? { limit } : { limit, cursor })) };
++    }
++
++    if (matched.name === 'exports' && method === 'POST') {
++      noQuery(query);
++      const found = fields(body, ['id', 'passphrase']);
++      const id = needId(found.id);
++      return wrapped(202, needOp(await host.service().startExport(id, needPassphrase(found.passphrase)), { id, kind: 'export' }));
++    }
++
++    if (matched.name === 'uploads' && method === 'POST') {
++      noQuery(query);
++      const found = fields(body, ['id', 'totalBytes']);
++      const id = needId(found.id);
++      return wrapped(201, needOp(await host.service().startUpload(id, needTotalBytes(found.totalBytes)), { id, kind: 'upload' }));
++    }
++
++    if (matched.name === 'operation' && method === 'GET') {
++      noQuery(query);
++      return wrapped(200, needOp(await host.service().get(matched.id), { id: matched.id }));
++    }
++
++    if (matched.name === 'download-ticket' && method === 'POST') {
++      noQuery(query);
++      const found = fields(body, ['expectedArchiveDigest']);
++      return { status: 200, body: needTicket(await host.service().downloadTicket(matched.id, needDigest(found.expectedArchiveDigest))) };
++    }
++
++    if (matched.name === 'cancel' && method === 'POST') {
++      noQuery(query);
++      emptyBody(body);
++      return wrapped(200, needOp(await host.service().cancel(matched.id), { id: matched.id }));
++    }
++
++    if (matched.name === 'chunks' && method === 'PUT') {
++      const offset = needOffset(readQuery(query, ['offset']).get('offset'));
++      if (body !== undefined) fail(FIELDS);
++      const chunk = needBytes(bytes);
++      return wrapped(
++        200,
++        needOp(await host.service().appendUpload(matched.id, offset, chunk, needDigest(chunkDigest)), {
++          id: matched.id,
++          kind: 'upload',
++        }),
++      );
++    }
++
++    if (matched.name === 'seal' && method === 'POST') {
++      noQuery(query);
++      const found = fields(body, ['totalBytes', 'chunkCommitment']);
++      return wrapped(
++        200,
++        needOp(await host.service().sealUpload(matched.id, needTotalBytes(found.totalBytes), needDigest(found.chunkCommitment)), {
++          id: matched.id,
++          kind: 'upload',
++        }),
++      );
++    }
++
++    if (matched.name === 'preview' && method === 'POST') {
++      noQuery(query);
++      const found = fields(body, ['passphrase', 'expectedArchiveDigest']);
++      return wrapped(
++        202,
++        needOp(await host.service().preview(matched.id, needPassphrase(found.passphrase), needDigest(found.expectedArchiveDigest)), {
++          id: matched.id,
++          kind: 'upload',
++        }),
++      );
++    }
++
++    if (matched.name === 'stage' && method === 'POST') {
++      noQuery(query);
++      if (!body || typeof body !== 'object' || Array.isArray(body)) fail(FIELDS);
++      const found = body as Record<string, unknown>;
++      if (Object.keys(found).some((key) => key !== 'expectedArchiveDigest' && key !== 'confirm')) fail(FIELDS);
++      if (found.confirm !== true) fail(CONFIRM);
++      return wrapped(202, needOp(await host.service().stage(matched.id, needDigest(found.expectedArchiveDigest)), {
++        id: matched.id,
++        kind: 'upload',
++      }));
++    }
++
++    if (matched.name === 'download' && method === 'GET') {
++      noQuery(query);
++      return { status: 200, downloadTicket: matched.token };
++    }
++
++    return unknown();
++  };
++}
++diff --git a/server/private-backup-v2-api.test.ts b/server/private-backup-v2-api.test.ts
+new file mode 100644
+index 0000000..d4e5f6a
+--- /dev/null
++++ b/server/private-backup-v2-api.test.ts
+@@ -0,0 +1,332 @@
++import assert from 'node:assert/strict';
++import { test } from 'node:test';
++import {
++  PRIVATE_BACKUP_TRANSFER_API as API,
++  PRIVATE_BACKUP_TRANSFER_CHUNK_BYTES as CHUNK,
++  PRIVATE_BACKUP_TRANSFER_ERRORS,
++  PRIVATE_BACKUP_TRANSFER_MAX_BYTES as MAX,
++  type PrivateBackupDownloadTicket,
++  type PrivateBackupTransferOperation,
++  type PrivateBackupTransferPage,
++} from '../shared/private-backup-transfers.ts';
++import { createPrivateBackupV2Api, type BackupV2ApiService } from './private-backup-v2-api.ts';
++
++const FIELDS = 'Use the supported private-backup fields.';
++const CONFIRM = 'Confirm staging this reviewed backup.';
++const INVALID = PRIVATE_BACKUP_TRANSFER_ERRORS['storage-unavailable'];
++const ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
++const OTHER = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
++const WS = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
++const DIGEST = 'ab'.repeat(32);
++const PASS = 'p'.repeat(16);
++const TOKEN = 'A'.repeat(32);
++const UNKNOWN = { status: 404, body: { error: 'Unknown private-backup action.' } };
++
++const EXPORT_OP: PrivateBackupTransferOperation = {
++  version: 2,
++  id: ID,
++  workspaceId: WS,
++  kind: 'export',
++  phase: 'ready',
++  createdAt: 1,
++  updatedAt: 2,
++  expiresAt: null,
++  progress: { completedBytes: 1024, totalBytes: 1024 },
++  canCancel: true,
++  requiresPassphrase: false,
++  artifact: { archiveBytes: 1024, archiveDigest: DIGEST },
++};
++
++const UPLOAD_OP: PrivateBackupTransferOperation = {
++  version: 2,
++  id: ID,
++  workspaceId: WS,
++  kind: 'upload',
++  phase: 'uploading',
++  createdAt: 1,
++  updatedAt: 2,
++  expiresAt: null,
++  progress: { completedBytes: 0, totalBytes: CHUNK },
++  canCancel: true,
++  requiresPassphrase: false,
++  receivedBytes: 0,
++  prefixCommitment: DIGEST,
++};
++
++const PAGE: PrivateBackupTransferPage = {
++  version: 2,
++  workspaceId: WS,
++  limits: { archiveBytes: MAX, chunkBytes: CHUNK },
++  items: [EXPORT_OP],
++  total: 1,
++  nextCursor: null,
++};
++
++const TICKET: PrivateBackupDownloadTicket = {
++  url: `${API}/downloads/${TOKEN}`,
++  filename: 'Work.realbud-backup',
++  expiresAt: 99,
++  archiveBytes: 1024,
++  archiveDigest: DIGEST,
++};
++
++function stub(overrides: Partial<BackupV2ApiService> = {}): BackupV2ApiService {
++  const nope = async () => {
++    throw new Error('service called');
++  };
++  return {
++    list: nope,
++    get: nope,
++    startExport: nope,
++    startUpload: nope,
++    appendUpload: nope,
++    sealUpload: nope,
++    preview: nope,
++    stage: nope,
++    cancel: nope,
++    downloadTicket: nope,
++    ...overrides,
++  };
++}
++
++function api(overrides: Partial<BackupV2ApiService> = {}) {
++  return createPrivateBackupV2Api({ service: () => stub(overrides) });
++}
++
++async function rejectStatus(run: Promise<unknown>, status: number, message?: string) {
++  await assert.rejects(run, (error: unknown) => {
++    assert.ok(error instanceof Error);
++    assert.notEqual(error.message, 'service called');
++    assert.equal((error as Error & { status?: number }).status, status);
++    if (message !== undefined) assert.equal(error.message, message);
++    assert.doesNotMatch(error.message, /\/tmp|secret-key|scratch/i);
++    return true;
++  });
++}
++
++function duplicateLimit() {
++  const query = new URLSearchParams();
++  query.append('limit', '1');
++  query.append('limit', '2');
++  return query;
++}
++
++test('returns null outside the v2 prefix', async () => {
++  const handle = api();
++  assert.equal(await handle({ path: '/api/private-backup', method: 'GET' }), null);
++  assert.equal(await handle({ path: '/api/private-backup/v2x/operations', method: 'GET' }), null);
++  assert.equal(await handle({ path: '/api/other', method: 'GET' }), null);
++});
++
++test('unknown methods and routes are 404 without service', async () => {
++  const handle = api();
++  assert.deepEqual(await handle({ path: `${API}/operations`, method: 'POST' }), UNKNOWN);
++  assert.deepEqual(await handle({ path: `${API}/exports`, method: 'GET' }), UNKNOWN);
++  assert.deepEqual(await handle({ path: `${API}/nope`, method: 'GET' }), UNKNOWN);
++  assert.deepEqual(await handle({ path: `${API}/operations/${ID}/extra`, method: 'GET' }), UNKNOWN);
++  assert.deepEqual(await handle({ path: `${API}/operations/not-a-uuid`, method: 'GET' }), UNKNOWN);
++  assert.deepEqual(await handle({ path: `${API}/downloads/short`, method: 'GET' }), UNKNOWN);
++  assert.deepEqual(await handle({ path: `${API}/downloads/${TOKEN}`, method: 'POST' }), UNKNOWN);
++});
++
++test('malformed input never reaches the service', async () => {
++  const handle = api();
++  const bytes = new Uint8Array([1]);
++  const cases: Array<{ name: string; request: Parameters<ReturnType<typeof api>>[0] }> = [
++    { name: 'list unknown workspace query', request: { path: `${API}/operations`, method: 'GET', query: new URLSearchParams({ workspaceId: WS }) } },
++    { name: 'list path query', request: { path: `${API}/operations`, method: 'GET', query: new URLSearchParams({ path: '/tmp' }) } },
++    { name: 'list duplicate limit', request: { path: `${API}/operations`, method: 'GET', query: duplicateLimit() } },
++    { name: 'list invalid cursor', request: { path: `${API}/operations`, method: 'GET', query: new URLSearchParams({ cursor: '+++' }) } },
++    { name: 'list limit 21', request: { path: `${API}/operations`, method: 'GET', query: new URLSearchParams({ limit: '21' }) } },
++    { name: 'get rejects query', request: { path: `${API}/operations/${ID}`, method: 'GET', query: new URLSearchParams({ key: 'k' }) } },
++    { name: 'export extra key', request: { path: `${API}/exports`, method: 'POST', body: { id: ID, passphrase: PASS, key: 'k' } } },
++    { name: 'export short passphrase', request: { path: `${API}/exports`, method: 'POST', body: { id: ID, passphrase: 'p'.repeat(15) } } },
++    { name: 'export long passphrase', request: { path: `${API}/exports`, method: 'POST', body: { id: ID, passphrase: 'p'.repeat(257) } } },
++    { name: 'upload totalBytes 0', request: { path: `${API}/uploads`, method: 'POST', body: { id: ID, totalBytes: 0 } } },
++    { name: 'upload totalBytes too large', request: { path: `${API}/uploads`, method: 'POST', body: { id: ID, totalBytes: MAX + 1 } } },
++    { name: 'chunks extra query', request: { path: `${API}/uploads/${ID}/chunks`, method: 'PUT', query: new URLSearchParams({ offset: '0', dir: '/tmp' }), bytes, chunkDigest: DIGEST } },
++    { name: 'chunks missing offset', request: { path: `${API}/uploads/${ID}/chunks`, method: 'PUT', bytes, chunkDigest: DIGEST } },
++    { name: 'chunks unaligned offset', request: { path: `${API}/uploads/${ID}/chunks`, method: 'PUT', query: new URLSearchParams({ offset: '1' }), bytes, chunkDigest: DIGEST } },
++    { name: 'chunks empty bytes', request: { path: `${API}/uploads/${ID}/chunks`, method: 'PUT', query: new URLSearchParams({ offset: '0' }), bytes: new Uint8Array(), chunkDigest: DIGEST } },
++    { name: 'chunks json body', request: { path: `${API}/uploads/${ID}/chunks`, method: 'PUT', query: new URLSearchParams({ offset: '0' }), body: {}, bytes, chunkDigest: DIGEST } },
++    { name: 'chunks uppercase digest', request: { path: `${API}/uploads/${ID}/chunks`, method: 'PUT', query: new URLSearchParams({ offset: '0' }), bytes, chunkDigest: DIGEST.toUpperCase() } },
++    { name: 'seal archive digest field', request: { path: `${API}/uploads/${ID}/seal`, method: 'POST', body: { totalBytes: 1, expectedArchiveDigest: DIGEST } } },
++    { name: 'preview chunkCommitment field', request: { path: `${API}/uploads/${ID}/preview`, method: 'POST', body: { passphrase: PASS, chunkCommitment: DIGEST } } },
++    { name: 'cancel extra field', request: { path: `${API}/operations/${ID}/cancel`, method: 'POST', body: { id: ID } } },
++    { name: 'ticket extra path field', request: { path: `${API}/operations/${ID}/download-ticket`, method: 'POST', body: { expectedArchiveDigest: DIGEST, path: '/tmp' } } },
++  ];
++  for (const { name, request } of cases) {
++    try {
++      await rejectStatus(handle(request), 400, FIELDS);
++    } catch (error) {
++      assert.fail(`${name}: ${(error as Error).message}`);
++    }
++  }
++});
++
++test('rejects stage confirm before service access', async () => {
++  const handle = api();
++  await rejectStatus(
++    handle({ path: `${API}/uploads/${ID}/stage`, method: 'POST', body: { expectedArchiveDigest: DIGEST, confirm: false } }),
++    400,
++    CONFIRM,
++  );
++  await rejectStatus(
++    handle({ path: `${API}/uploads/${ID}/stage`, method: 'POST', body: { expectedArchiveDigest: DIGEST } }),
++    400,
++    CONFIRM,
++  );
++});
++
++test('download GET only validates the token and does not call the service', async () => {
++  const handle = api();
++  assert.deepEqual(await handle({ path: `${API}/downloads/${TOKEN}`, method: 'GET' }), {
++    status: 200,
++    downloadTicket: TOKEN,
++  });
++  await rejectStatus(
++    handle({ path: `${API}/downloads/${TOKEN}`, method: 'GET', query: new URLSearchParams({ path: '/tmp' }) }),
++    400,
++    FIELDS,
++  );
++});
++
++test('forwards valid requests through parsed public projections', async () => {
++  const bytes = new Uint8Array([7, 8, 9]);
++  const calls: unknown[] = [];
++  const handle = api({
++    list: async (input) => {
++      calls.push(['list', input]);
++      return PAGE;
++    },
++    get: async (id) => {
++      calls.push(['get', id]);
++      return EXPORT_OP;
++    },
++    startExport: async (id, passphrase) => {
++      calls.push(['startExport', id, passphrase]);
++      return EXPORT_OP;
++    },
++    startUpload: async (id, totalBytes) => {
++      calls.push(['startUpload', id, totalBytes]);
++      return UPLOAD_OP;
++    },
++    appendUpload: async (id, offset, got, sha256) => {
++      assert.equal(got, bytes);
++      calls.push(['appendUpload', id, offset, sha256]);
++      return UPLOAD_OP;
++    },
++    sealUpload: async (id, totalBytes, chunkCommitment) => {
++      calls.push(['sealUpload', id, totalBytes, chunkCommitment]);
++      return UPLOAD_OP;
++    },
++    preview: async (id, passphrase, expectedArchiveDigest) => {
++      calls.push(['preview', id, passphrase, expectedArchiveDigest]);
++      return UPLOAD_OP;
++    },
++    stage: async (id, expectedArchiveDigest) => {
++      calls.push(['stage', id, expectedArchiveDigest]);
++      return UPLOAD_OP;
++    },
++    cancel: async (id) => {
++      calls.push(['cancel', id]);
++      return EXPORT_OP;
++    },
++    downloadTicket: async (id, expectedArchiveDigest) => {
++      calls.push(['downloadTicket', id, expectedArchiveDigest]);
++      return TICKET;
++    },
++  });
++
++  assert.deepEqual(
++    await handle({ path: `${API}/operations`, method: 'GET', query: new URLSearchParams({ limit: '4', cursor: 'next_cursor-1' }) }),
++    { status: 200, body: PAGE },
++  );
++  assert.deepEqual(await handle({ path: `${API}/exports`, method: 'POST', body: { id: ID, passphrase: PASS } }), {
++    status: 202,
++    body: { operation: EXPORT_OP },
++  });
++  assert.deepEqual(await handle({ path: `${API}/uploads`, method: 'POST', body: { id: ID, totalBytes: 1 } }), {
++    status: 201,
++    body: { operation: UPLOAD_OP },
++  });
++  assert.deepEqual(await handle({ path: `${API}/operations/${ID}`, method: 'GET' }), {
++    status: 200,
++    body: { operation: EXPORT_OP },
++  });
++  assert.deepEqual(
++    await handle({
++      path: `${API}/uploads/${ID}/chunks`,
++      method: 'PUT',
++      query: new URLSearchParams({ offset: '0' }),
++      bytes,
++      chunkDigest: DIGEST,
++    }),
++    { status: 200, body: { operation: UPLOAD_OP } },
++  );
++  assert.deepEqual(
++    await handle({ path: `${API}/uploads/${ID}/seal`, method: 'POST', body: { totalBytes: 1, chunkCommitment: DIGEST } }),
++    { status: 200, body: { operation: UPLOAD_OP } },
++  );
++  assert.deepEqual(
++    await handle({
++      path: `${API}/uploads/${ID}/preview`,
++      method: 'POST',
++      body: { passphrase: PASS, expectedArchiveDigest: DIGEST },
++    }),
++    { status: 202, body: { operation: UPLOAD_OP } },
++  );
++  assert.deepEqual(
++    await handle({ path: `${API}/uploads/${ID}/stage`, method: 'POST', body: { expectedArchiveDigest: DIGEST, confirm: true } }),
++    { status: 202, body: { operation: UPLOAD_OP } },
++  );
++  assert.deepEqual(await handle({ path: `${API}/operations/${ID}/cancel`, method: 'POST' }), {
++    status: 200,
++    body: { operation: EXPORT_OP },
++  });
++  assert.deepEqual(
++    await handle({ path: `${API}/operations/${ID}/download-ticket`, method: 'POST', body: { expectedArchiveDigest: DIGEST } }),
++    { status: 200, body: TICKET },
++  );
++  assert.deepEqual(await handle({ path: `${API}/downloads/${TOKEN}`, method: 'GET' }), {
++    status: 200,
++    downloadTicket: TOKEN,
++  });
++
++  assert.deepEqual(calls, [
++    ['list', { limit: 4, cursor: 'next_cursor-1' }],
++    ['startExport', ID, PASS],
++    ['startUpload', ID, 1],
++    ['get', ID],
++    ['appendUpload', ID, 0, DIGEST],
++    ['sealUpload', ID, 1, DIGEST],
++    ['preview', ID, PASS, DIGEST],
++    ['stage', ID, DIGEST],
++    ['cancel', ID],
++    ['downloadTicket', ID, DIGEST],
++  ]);
++});
++
++test('get and cancel may target either operation kind', async () => {
++  assert.deepEqual(await api({ get: async () => UPLOAD_OP })({ path: `${API}/operations/${ID}`, method: 'GET' }), {
++    status: 200,
++    body: { operation: UPLOAD_OP },
++  });
++  assert.deepEqual(await api({ cancel: async () => EXPORT_OP })({ path: `${API}/operations/${ID}/cancel`, method: 'POST' }), {
++    status: 200,
++    body: { operation: EXPORT_OP },
++  });
++});
++
++test('rejects foreign ids, wrong kinds, and private fields in service output', async () => {
++  await rejectStatus(
++    api({ get: async () => ({ ...EXPORT_OP, id: OTHER }) })({ path: `${API}/operations/${ID}`, method: 'GET' }),
++    500,
++    INVALID,
++  );
++  await rejectStatus(
++    api({ startUpload: async () => EXPORT_OP })({ path: `${API}/uploads`, method: 'POST', body: { id: ID, totalBytes: 1 } }),
++    500,
++    INVALID,
++  );
++  await rejectStatus(
++    api({ startExport: async () => UPLOAD_OP })({ path: `${API}/exports`, method: 'POST', body: { id: ID, passphrase: PASS } }),
++    500,
++    INVALID,
++  );
++  await rejectStatus(
++    api({ get: async () => ({ ...EXPORT_OP, path: '/tmp/scratch', key: 'secret-key' }) })({
++      path: `${API}/operations/${ID}`,
++      method: 'GET',
++    }),
++    500,
++    INVALID,
++  );
++  await rejectStatus(
++    api({ downloadTicket: async () => ({ ...TICKET, filename: '../secret.realbud-backup' }) })({
++      path: `${API}/operations/${ID}/download-ticket`,
++      method: 'POST',
++      body: { expectedArchiveDigest: DIGEST },
++    }),
++    500,
++    INVALID,
++  );
++});
++
++test('does not map service exceptions into a response body', async () => {
++  const handle = api({
++    list: async () => {
++      throw new Error('ENOENT /var/secret-key');
++    },
++  });
++  await assert.rejects(handle({ path: `${API}/operations`, method: 'GET' }), (error: unknown) => {
++    assert.ok(error instanceof Error);
++    assert.equal(error.message, 'ENOENT /var/secret-key');
++    return true;
++  });
++});

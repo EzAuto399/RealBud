@@ -1,0 +1,39 @@
+{
+  "at": "2026-09-21T17:01:30.190412+00:00",
+  "taskStatus": "bounded-attempt-concluded",
+  "modelReviewStatus": "timed-out-no-result",
+  "localFindingStatus": "owner-fixes-verified-or-contract-corrected",
+  "productionEditsByReviewer": false,
+  "WindowsExecuted": false,
+  "platformHoldRemoved": false,
+  "releaseSignoff": false,
+  "ownCliProcessTerminated": true,
+  "processExitCode": -15,
+  "localLockFixChecksPassed": 4,
+  "currentSourceHashes": {
+    "server/helpers/hermes-memory-windows.py": "e838beb06d5c5f132db4e1f5158f97d72b4e7dd90e55eb4a03a7e42f280c8bfa",
+    "server/helpers/hermes-memory-windows-native.py": "b3a9d5bb67b5c2cc2f920b046b1472044204bc872ebef8113cf13d19d8e86213"
+  },
+  "files": {
+    "review47-post-snapshot.json": "cbcda8314b582fe914546b43d9e183f07fed8cd1010b9e517c4979fef02aaabc",
+    "review47-grok.schema.json": "321eea66e24d5d34e71a21e614b9e2e316b7aee89e0c069e9768942845abc2dd",
+    "review47-local-checks.json": "ad75f8228820d37798c068f04d768abe75bb757993fe21c80aa070e54f2518c1",
+    "review47-disposition.json": "4691ac2288e51a85c6ffd3f4e9d69621582751dbacd110c9df46724921080b0e",
+    "review47-run.json": "c3a42e89b5c74d6677355cec65aeacbd9a9b20eb52c78f723fa6042965bd28c4",
+    "review47-lock-fix-check.py": "770ee277def8350a395a85a910eca0f2b9bd5c63625b0091c08dcc8c241b962b",
+    "review47-local-checks.py": "1c5ccac2ae7b922f4ddf76f37b53d9e25cabc3d3741ad9dc646b431ea0baba0c",
+    "review47-grok.prompt.md": "3de0f8fd563bf1865229b00fe253694676dcbfb769668d00e5612b4e135d1467",
+    "review47-local-observations.md": "0e022d5b66bf5e65d280d702e7d0c85942b54ddd127dc3106d3d039792ce4c9f",
+    "review47-grok.stderr": "ef63207dd26644d238b38a6435601d3d09d940d63b69f4ad21ecc7edc22c579f",
+    "review47-run.py": "5ce685adc99561644eb5af96e9e9985f3bca3e3e65eef6e8df08674bff6947e1",
+    "review47-grok.raw.json": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "review47-input.json": "9ec0927c6c81f17bd11e043c4fecb27510309e82291abe8d51d38dc43e33b603",
+    "review47-lock-fix-check.json": "a131586508ff1b1e735481b6d2e5c25802a5c55e3428ed7bdb9fd01b1d78d713",
+    "review47-post-snapshot.diff": "2f01cc030e6c04f2d6ded53e55acd909c42a8b761ce62564cf2ac3519f7934ab"
+  },
+  "parentReportedEvidence": {
+    "reportedBy": "root",
+    "independentlyRerunHere": false,
+    "summary": "46 portable Windows checks; 36 POSIX native checks; host108 with3 HTTP skipped then actual HTTP3 passed separately with admitted runtime; typecheck and server build passed; four helper manifest hashes matched. These are not actual Windows execution."
+  }
+}

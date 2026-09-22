@@ -1,0 +1,17 @@
+{
+  "startedAt": "2026-09-21T03:19:55.674Z",
+  "elapsedMs": 4224,
+  "postgres": "postgres (PostgreSQL) 16.15 (Homebrew)",
+  "files": [
+    "server/company-departments.integration.test.ts"
+  ],
+  "exit": {
+    "exit": 0,
+    "signal": null
+  },
+  "passed": 11,
+  "failed": 0,
+  "skipped": 0,
+  "total": 11,
+  "proof": "Disposable real PostgreSQL, restricted application role, synthetic agencies; no live customer data or remote deployment"
+}

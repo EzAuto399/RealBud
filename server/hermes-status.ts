@@ -1,3 +1,4 @@
+import { currentWorkerProfile } from "./hermes-profile.ts";
 import { bootstrapPending } from "./worker-bootstrap.ts";
 // Read-only worker checks. Hermes is independently installed; RealBud owns
 // the supported adapter contract and its private property profile.
@@ -7,7 +8,8 @@ import { join } from "node:path";
 import { augmentedPath } from "./env-path.ts";
 import { execCli } from "./procs.ts";
 import { HERMES_PIN, HERMES_COMPATIBLE_RELEASES, hermesCli, hermesInstallCommand, hermesMatchesPin, hermesIsCompatible, parseHermesVersion } from "./hermes-pin.ts";
-import { approvalsAreManual, hermesHome, packInstalled, propertyProfileDir, propertyWorkroomReady } from "./hermes-pack.ts";
+import { approvalsAreManual, hermesHome, MANAGED_MODEL_PROVIDER, managedModelProfile, packInstalled, propertyProfileDir, propertyWorkroomReady } from "./hermes-pack.ts";
+import { workerModelGrant } from "./worker-model-access.ts";
 import type { HandsLast } from "./hands-last.ts";
 import { readRuntimeSelection } from "./hermes-runtime-selection.ts";
 
@@ -36,6 +38,40 @@ export interface HermesStatus {
   ready: boolean;
   workerFingerprint?: string;
   model?: { attached: boolean; provider: string | null; model: string | null };
+  modelAccess?: ModelAccessStatus;
+}
+
+/** How this installation's model access is held. `managed` installations never
+ * collect a provider key; `withdrawn` is a hold, not "nothing attached". */
+export interface ModelAccessStatus {
+  managed: boolean;
+  withdrawn: boolean;
+  /** A managed grant is only attached once the profile actually selects the
+   * gateway, names a model and has no `.env` key left to shadow the grant. */
+  attached: boolean;
+  detail: string;
+}
+
+/** Office-facing wording. The protocol name stays out of it. */
+export function modelAccessStatus(root?: string): ModelAccessStatus {
+  const grant = workerModelGrant();
+  if (grant.state === "withdrawn") {
+    return { managed: false, withdrawn: true, attached: false,
+      detail: "Model access was withdrawn for this computer. Your records are kept. Ask service support to restore access." };
+  }
+  if (grant.state !== "active") return { managed: false, withdrawn: false, attached: false, detail: "" };
+  const profile = managedModelProfile(root);
+  const selects = profile.provider === MANAGED_MODEL_PROVIDER && profile.baseUrl === grant.baseUrl;
+  if (!selects || profile.envKeyPresent) {
+    return { managed: true, withdrawn: false, attached: false,
+      detail: "Model access is managed by RealBud service (Modelvia), but Bud's private setup has not taken it up yet. Repair Bud to finish." };
+  }
+  if (!profile.model) {
+    return { managed: true, withdrawn: false, attached: false,
+      detail: "Model access: managed by RealBud service (Modelvia). Choose which model Bud should use to finish setup." };
+  }
+  return { managed: true, withdrawn: false, attached: true,
+    detail: "Model access: managed by RealBud service (Modelvia). No provider key is stored on this computer." };
 }
 
 /** A passing check belongs to this worker and profile, never an earlier setup.
@@ -55,6 +91,9 @@ export function hermesReadinessFingerprint(version: string, root?: string): stri
 }
 
 export function applyHandsReadiness(status: HermesStatus, lastPing: HandsLast | null): HermesStatus {
+  // A withdrawn grant is a hold with its own explanation, not "not attached":
+  // nothing on this computer is broken and every record stays readable.
+  if (status.modelAccess?.withdrawn) return { ...status, ready: false, detail: status.modelAccess.detail };
   if (status.bootstrapPending || !status.cli.installed || !(status.cli.compatible ?? status.cli.matchesPin) ||
       !status.pack.installed || !status.pack.approvalsManual || !status.pack.workroomReady) return { ...status, ready: false };
   const version = parseHermesVersion(status.cli.versionText ?? "").product ?? "supported";
@@ -111,8 +150,10 @@ export async function hermesStatus(opts?: { root?: string; cli?: string; platfor
   const compatible = versionText != null && hermesIsCompatible(versionText);
   const version = parseHermesVersion(versionText ?? "").product ?? "supported";
   const pack = { installed: packInstalled(opts?.root), approvalsManual: approvalsAreManual(opts?.root), workroomReady: propertyWorkroomReady(opts?.root) };
+  const modelAccess = modelAccessStatus(opts?.root);
   let detail: string;
-  if (probe.state === "missing") detail = `The worker is not installed. Install the supported v${HERMES_PIN.product} worker, then apply Bud's hands safeguards.`;
+  if (modelAccess.withdrawn) detail = modelAccess.detail;
+  else if (probe.state === "missing") detail = `The worker is not installed. Install the supported v${HERMES_PIN.product} worker, then apply Bud's hands safeguards.`;
   else if (probe.state === "timeout") detail = "The installed worker took too long to report its version. Retry the check; reinstalling is not required by this result.";
   else if (probe.state === "error") detail = "The worker could not report its version. Check that Bud starts, then retry the check.";
   else if (!compatible) detail = `This worker release has not been checked with RealBud. Supported releases are ${HERMES_COMPATIBLE_RELEASES.map(release => `${release.product} (${release.calendar})`).join(", ")}; the fallback pin is v${HERMES_PIN.product}.`;
@@ -126,7 +167,8 @@ export async function hermesStatus(opts?: { root?: string; cli?: string; platfor
     cli: { installed: probe.state !== "missing", versionText, matchesPin, compatible, probeState: probe.state },
     pack, homeDir: hermesHome(opts?.root), profileDir: propertyProfileDir(opts?.root),
     installCommand: hermesInstallCommand(opts?.platform ?? process.platform), bootstrapPending: workerSetupPending(opts?.root),
-    installerAvailable: ["darwin", "linux", "win32"].includes(opts?.platform ?? process.platform), signInCommand: `hermes -p ${HERMES_PIN.profile} model`,
-    detail, ready: false, ...(versionText ? { workerFingerprint: hermesReadinessFingerprint(versionText, opts?.root) } : {}),
+    installerAvailable: ["darwin", "linux", "win32"].includes(opts?.platform ?? process.platform), signInCommand: `hermes -p ${currentWorkerProfile().profile} model`,
+    detail, ready: false, modelAccess,
+    ...(versionText ? { workerFingerprint: hermesReadinessFingerprint(versionText, opts?.root) } : {}),
   };
 }

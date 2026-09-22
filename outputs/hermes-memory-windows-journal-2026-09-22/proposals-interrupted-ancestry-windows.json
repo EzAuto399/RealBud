@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "at": "2026-09-21T17:52:00Z",
+  "layer": "Actual admitted Hermes parser/dry-run and owned journal logic with explicit POSIX-backed fake Windows IO; no WinAPI",
+  "passed": true,
+  "tests_run": 25,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "elapsed_seconds": 6.394,
+  "native_windows_validation": false,
+  "source_hashes": {
+    "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-windows-journal.py": "e4da997285187d44b30cbf9ed12ecfda34a7bace9936eff63b82758a64a645dd",
+    "/Users/yoda/projects/RealBud/server/helpers/hermes-memory-review.py": "e9581dbf5f4cac39653d09c4dc81c74ea11c9539b8f02930436318a6008319e0",
+    "/Users/yoda/projects/RealBud/server/helpers/hermes-memory-proposals.py": "e24757cca7f49a32fd96dd1f3b171152cb5f71d6828505f4a0cd891223cf5c3c",
+    "/Users/yoda/.realbud/hermes/runtimes/345cd2b057a452236de401d3534b8502a7465e8d-cfb3f08a9ee7/hermes-agent/tools/memory_tool.py": "ed9c5db6b3144b88425f7039280239b29a047143aa8ffdfd3b7f47bf7e707143",
+    "/Users/yoda/.realbud/hermes/runtimes/345cd2b057a452236de401d3534b8502a7465e8d-cfb3f08a9ee7/hermes-agent/tools/memory_tool_store.py": "811ef2eb98a8b3f0448294b2c23d422ff7ebd4dc45835475b12df0557d7e5366"
+  },
+  "sources_unchanged": true,
+  "failed_tests": [],
+  "limits": [
+    "No WinAPI, ACL, sharing, filesystem durability, installed Windows application, GUI, provider or customer validation.",
+    "The production WindowsJournalIO, WindowsMemoryStorage and native backend are not called; this suite substitutes the entire IO facade and does not prove concurrency.",
+    "Faults are actual child-process exits against fictional fixture files; fake IO does not reproduce native Windows storage guarantees.",
+    "Public main and dispatch platform holds remain enforced; no JSON or environment test override is added."
+  ]
+}

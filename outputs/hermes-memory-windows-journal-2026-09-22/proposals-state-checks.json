@@ -1,0 +1,50 @@
+{
+  "passed": 10,
+  "failed": 0,
+  "checks": [
+    {
+      "name": "stage-only publishes once",
+      "passed": true
+    },
+    {
+      "name": "pending-only reconciles without restaging",
+      "passed": true
+    },
+    {
+      "name": "both names held",
+      "passed": true
+    },
+    {
+      "name": "both missing never reconstructed",
+      "passed": true
+    },
+    {
+      "name": "mismatched stage preserved",
+      "passed": true
+    },
+    {
+      "name": "mismatched pending preserved",
+      "passed": true
+    },
+    {
+      "name": "lost move response reconciles without second move",
+      "passed": true
+    },
+    {
+      "name": "disabled recovery cannot publish stage",
+      "passed": true
+    },
+    {
+      "name": "new publication rejects an existing matching stage",
+      "passed": true
+    },
+    {
+      "name": "stage creation collision is preserved",
+      "passed": true
+    }
+  ],
+  "sourceSha256": "13f9c35ccb5d6d6c1f20743592348f306b1ba4b18beb2e608a19915ffe3213df",
+  "scope": "actual proposal transition functions with synthetic dictionary IO and isolated commit/readiness callbacks",
+  "WindowsNativeExecuted": false,
+  "realProfilesAccessed": false
+}

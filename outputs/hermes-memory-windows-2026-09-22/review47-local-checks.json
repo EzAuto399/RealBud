@@ -1,0 +1,9 @@
+{
+  "probe": "mutation_lock_exception_redaction",
+  "errorClass": "OSError",
+  "isFixedError": false,
+  "syntheticSentinelEscaped": true,
+  "sourceSha256": "46ae82871600ce6a0003092b05dad3557ebbad7c4e601ef77b57fac21021d695",
+  "WindowsExecuted": false,
+  "realProfilesAccessed": false
+}
