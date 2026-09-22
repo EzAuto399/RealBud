@@ -12,6 +12,7 @@ on:
       - .github/workflows/windows-probe.yml
       - scripts/testing/probe-windows-acl.mjs
       - scripts/testing/probe-windows-powershell-env.mjs
+      - scripts/qa-private-backup-boundaries.mjs
       - server/windows-file-privacy*.ts
       - server/private-file.ts
       - server/private-vault.ts
@@ -49,3 +50,8 @@ jobs:
         run: pnpm exec vitest run server/private-file.test.ts server/private-vault.test.ts server/hermes-profile-storage.test.ts server/windows-file-privacy.test.ts server/windows-file-privacy-sync.test.ts server/windows-file-privacy-diagnostics.test.ts
         env:
           NODE_OPTIONS: --max-old-space-size=4096
+      - name: Private backup restore boundaries from source
+        if: always()
+        run: node scripts/qa-private-backup-boundaries.mjs
+        env:
+          QA_OUTPUT: outputs/windows-probe-private-backup.json
