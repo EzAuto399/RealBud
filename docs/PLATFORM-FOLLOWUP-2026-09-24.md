@@ -58,9 +58,8 @@ A subsequent review found a remaining cancellation lifecycle gap in this sealed
 the saved onboarding stage at recovery, with no route back to ordinary welcome.
 Root confirmed the stage bypass and transfer-only cancellation in source. The
 successful native cancellation checks above prove temporary-file removal and
-preserved freshness, not return-to-welcome. The canonical owner is implementing
-a guarded return path and lifecycle tests; that follow-up is not yet verified or
-included in these packages. Keep the sealed artifacts unchanged.
+preserved freshness, not return-to-welcome. The guarded follow-up below closes
+this gap in `b8aa9f2f`. It is not included in the historical `4c0c203f` packages, which remain unchanged.
 
 The canonical owner's five-file follow-up is now adopted into this isolated
 candidate after checking every source hash against its receipt. **Back to
@@ -73,8 +72,122 @@ candidate checks pass **1054 / 0 / 0** renderer/onboarding tests and full
 typechecking. Evidence: `welcome-cancel-integration/` under the current output
 root. The native harness now requires no-file and removed-upload return/reload
 journeys and separately exercises normal setup through actual service restarts.
-Fresh package execution for this follow-up remains pending at this source
-checkpoint; the sealed `4c0c203f` kit does not contain it.
+The sealed `4c0c203f` kit does not contain this follow-up; the fresh package and
+native results below apply to `b8aa9f2f`.
+
+The follow-up is committed at `b8aa9f2fee9dcc634e8ff8f9153103701aa4e1ca`.
+Its fresh Mac build and Developer ID signature, 69 deployment targets, native
+renderer and four service checks pass. Root verified all 9,391 tracked build
+inputs and 2,489 inventory entries. The subsequent backup check **fails**:
+export sealing returns HTTP 507, so no download arrives. The full package
+receipt remains `passed: false`. At that point the native welcome/return
+journeys were not run and no replacement test kit was assembled.
+
+The production reservation calculation requires at least **8,787,760,608 bytes
+(8.18424 GiB)** free for export with its current defaults. `statfs` observed
+**7,952,850,944 bytes (7.40667 GiB)** available. No storage guard, QA prerequisite
+or timeout was relaxed. No internal-disk retry or artifact deletion was attempted.
+The backup listener is closed, recorded native PID 68613 is gone, and no candidate
+artifact process remains. The outer package fixture, signed artifacts, logs and
+failed receipts are preserved. The existing backup harness removed its own
+scratch after stopping its child; that failed workspace is not retained.
+
+Evidence: `mac-b8aa9f2f/package-receipt.json`, `mac-b8aa9f2f/backup/receipt.json`,
+`mac-b8aa9f2f/backup.log`, `mac-b8aa9f2f/root-compiled-only-verification.json`
+and `welcome-cancel-integration/storage-block.json` under the current output
+root. Source/hash verification is not a replacement successful QA receipt.
+
+The user subsequently supplied external storage. The canonical owner prepared
+an owned APFS volume at `/Volumes/RealBud-TestLab` (UUID
+`F77091CA-9120-47EF-AE4C-7DB9A995FFCD`) and assigned `qa/tmp` and `qa/output`
+to this task. The successful requalification copied the original signed bits,
+verified their unchanged hashes and all 9,391 Git build inputs, then passed
+69 deployment targets, the native renderer, four service, nine backup and seven
+boundary checks. It did **not** rebuild, re-sign or attempt notarization.
+The original HTTP 507 receipt remains unchanged. A preceding external attempt
+stopped before launch because an aggregate Git-output buffer was too small;
+streamed blob hashing fixed that QA transport limit without changing assertions.
+Both earlier failure receipts are retained.
+
+Current Mac package evidence:
+`/Volumes/RealBud-TestLab/qa/output/mac-b8aa9f2f-requalified-v2/`.
+Receipt SHA256:
+`996e5519d134cdf67a47d094917afb4475fff738fa4766a69ba19e6361efc572`.
+The Developer ID signed DMG is 292,834,826 bytes, SHA256
+`0daf42fbe4ae17b017f260cfd3fabea4d0ae6af2a729e17c6155bf042bb35bed`;
+the ZIP is 292,098,250 bytes, SHA256
+`fef1908feaf72e22338861d8ba13a9cb6a4e0436b7b4022752207a8927351839`.
+
+Against that unchanged package, the committed `b8aa9f2f` native harness passes:
+
+- **8 cancellation/setup groups:** both Back to welcome paths and reload retain
+  the sample book, profile, custody and transfer history. Normal setup writes the
+  profile and office once each and survives real service restarts at rules and
+  completion. No target onboarding/profile/agency API fixture is used.
+- **14 full restore groups:** both return paths, wrong-passphrase refusal,
+  reviewed-restore return guard, correct preview, real restart and restored
+  bank/bill/mail/draft history pass. Ten freshness checkpoints and three restarts
+  preserve the expected book and key state.
+
+Receipts are `/Volumes/RealBud-TestLab/qa/output/welcome-cancel-b8aa9f2f/receipt.json`
+(SHA256 `a9484742f386e2496bb22b122ddbc5bb2b223673119db0ad557f500a8b0c11b3`)
+and `/Volumes/RealBud-TestLab/qa/output/welcome-restore-b8aa9f2f/receipt.json`
+(SHA256 `27e78118308245a117458168f1b880485e40c12ae2b8560a1b40f54e2fb4cf39`).
+Root visually inspected the actual desktop/390 px welcome and return screens,
+normal setup after restart and staged restore; verified all eight captured
+service PIDs absent and both scratch directories removed. SafeStorage remains
+an in-memory AES fixture: real OS Keychain/DPAPI and permission prompts are
+unverified. This proves native Mac UI behavior with fictional local data.
+
+The same source's [Windows installer run 35930608755](https://github.com/EzAuto399/RealBud/actions/runs/35930608755)
+passes native build, install, 12 runtime, four service, six backup and 15
+memory-primitive checks, then uninstall; one POSIX-only case is skipped. The
+managed-worker download job remains deliberately excluded. This still does not
+establish Windows 11 ordinary-user GUI/office or cancellation-flow acceptance.
+The EXE is 161,206,052 bytes, SHA256
+`7c0d23b61259ddb65eeee4a94655e383b3d20bf7b18e78260eb39d0b45616967`.
+Root verified the installer, all four linked probe hashes, native job source and
+artifact metadata. It is unsigned. Evidence: `windows-b8aa9f2f-installer/` and
+`windows-b8aa9f2f-installed/` under the current output root.
+
+After preserving the completed `4c0c203f` CI run, PR 6 was advanced to this
+follow-up. Full [CI run 35932325154](https://github.com/EzAuto399/RealBud/actions/runs/35932325154)
+for `b8aa9f2f` has passed Mac **5915 / 0 / 281** and Ubuntu **5910 / 0 / 286**.
+Ubuntu also passes its separate coverage rerun, PM e2e and production UI/server
+builds. The three Windows shards remain running at this checkpoint. Root verified tested merge
+`39302f2dc725a1f026eb904bcbe793ef4f3ad4c1` has the exact `b8aa9f2f` tree
+`e2523628229bd224f2775add04f5bd02b3df04e6`. Evidence: `ci-b8aa9f2f/` under
+the current output root. Linux package and launch are explicitly skipped.
+The automatically repeated Windows privacy probe
+`35932325206` was cancelled as duplicate coverage; the full Windows matrix and
+separate native installer run remain. No fourth restricted-office attempt or
+managed-runtime download retry was dispatched.
+
+## Current private installer kit
+
+The new `b8aa9f2f` kit is assembled at
+`/Volumes/RealBud-TestLab/qa/output/installer-test-kit-b8aa9f2f/`.
+Its 47 manifest files contain both platforms' installers and linked evidence,
+14-group restore and 8-group cancellation receipts, actual UI screenshots,
+build/install guides, a focused 20-minute acceptance checklist and blank device
+results. All copied file hashes match. The gate passes both current receipts
+and rejects 14 deliberately incomplete, mismatched or stale evidence variants,
+including the previous package's receipt. Source comparison is empty: both
+installers contain the exact same application revision.
+
+Input packet, positive/negative checks and assembly receipt are under
+`outputs/platform-followup-2026-09-24/installer-test-kit-b8aa9f2f-inputs/` and
+`welcome-cancel-integration/kit-gate-controls.json`. Earlier sealed kits remain
+unchanged. The included follow-up document is the captured assembly checkpoint;
+later CI and archive results are recorded in this current document and handoff.
+The completed archive is
+`/Volumes/RealBud-TestLab/qa/output/RealBud-0.1.19-mac-windows-test-kit-b8aa9f2f.zip`:
+**750,367,893 bytes**, SHA256
+`e828c8fb5a5a46b18c48cb26bd4a14cbebc33384c9a7e71b5d1f35026518c96f`.
+All 49 archive entries, exact inventory and decompressed file hashes pass.
+Root additionally confirmed the archive inventory, sizes, completion hashes and
+that the helper is byte-identical to the reviewed version. The verification
+receipt is beside the archive and copied into the input-evidence directory.
 
 ## Packaged Mac two-service team proof
 
@@ -133,9 +246,9 @@ scratch/helper removal and uninstall pass. Root verified four linked receipt
 hashes and five committed QA input hashes; `windows-startup-4c0c203f/`. This is
 not another unchanged office attempt or a normal-user Windows test.
 
-## Fresh compiled installers
+## Historical compiled installers (before cancellation fix)
 
-Both new artifacts contain application source
+Both historical artifacts contain application source
 `4c0c203fd5e951c4cd03422b97511546db8d345d`.
 
 | Artifact | Bytes | SHA256 |
@@ -167,10 +280,11 @@ or CI success does not establish ordinary-user Windows office acceptance.
 
 The current regression status is available in [draft PR 6](https://github.com/EzAuto399/RealBud/pull/6). Fresh package results above are separately source-bound; do not substitute historical CI for changed-source checks.
 
-Current compiled-source [CI run 35926417555](https://github.com/EzAuto399/RealBud/actions/runs/35926417555)
+Previous compiled-source [CI run 35926417555](https://github.com/EzAuto399/RealBud/actions/runs/35926417555)
 has passed Mac **5872 / 0 / 281** and Ubuntu **5867 / 0 / 286**. Ubuntu also
 passes its separate coverage rerun, PM e2e battery and production UI/server
-builds. Three Windows unit/contract shards remain running at this checkpoint.
+builds. All three Windows shards pass: combined **5848 / 0 / 305**. The complete
+run is successful; these totals precede the cancellation follow-up.
 Root verified the tested merge `cd4d214568eb7cd3a5d709804d625e7d5e92248d` has
 the same tree as compiled source `4c0c203f`, and parsed the completed raw logs.
 Evidence: `outputs/platform-followup-2026-09-24/ci-4c0c203f/`.
