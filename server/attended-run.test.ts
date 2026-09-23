@@ -5,12 +5,20 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import type { Recipe } from "../shared/contracts.ts";
-import { ATTEND_ERRORS, ATTENDED_UNVERIFIED_RESULT, attendBlocked, attendedJobSystemBlock, attendedSettleStatus, fenceEvidence, humanSigninNeeded, portalBrowserPolicy, portalSignInCompleteIntent, submitHoldLine } from "./attended-run.ts";
+import type { JobCapability, Recipe } from "../shared/contracts.ts";
+import { ATTEND_ERRORS, ATTENDED_UNVERIFIED_RESULT, attendBlocked, attendedJobSystemBlock, attendedSettleStatus, browserActionEvidence, fenceEvidence, grantedBrowserTools, humanSigninNeeded, portalBrowserPolicy, portalSignInCompleteIntent, submitHoldLine } from "./attended-run.ts";
 import { JobRunStore } from "./job-runs.ts";
-import { removeFixture } from "./testing/private-fixture.ts";
+import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
+import { BrowserApprovalStore } from "./browser-authority.ts";
+import { startBrowserBroker, type BrowserActionRecord } from "./browser-broker.ts";
+import { BrowserRuntime } from "./browser-runtime.ts";
+import { legacyBrowserActions, parseBrowserTaskGrant, type BrowserActionClass, type BrowserTaskGrant, type BrowserTaskUpload } from "../shared/browser-task.ts";
 import { startCuaControl } from "../electron/cua-control.mjs";
 let fixtureControl: Awaited<ReturnType<typeof startCuaControl>>;
+const taskGrant = (actions: BrowserActionClass[], uploads: BrowserTaskUpload[] = []): BrowserTaskGrant => parseBrowserTaskGrant({
+  version: 1, purpose: "browser-task-grant", id: "grant-fictional-1", runId: "run-1", route: "ask", request: { text: "Fictional task", sha256: "a".repeat(64) },
+  sites: ["portal.example"], browser: { id: null, accountMarker: null }, actions, consequential: "ask-each", uploads, expiresAt: null, budget: null,
+});
 describe("worker sign-in handover requests", () => {
   it.each(["Please sign in to continue.", "Login is required before I can read the bank export.", "Waiting for you to finish sign-in."])("recognizes a request without a password tool: %s", text => expect(humanSigninNeeded(text)).toBe("login"));
   it("recognizes a verification-code request", () => expect(humanSigninNeeded("Please complete the verification code in the bank window.")).toBe("mfa"));
@@ -49,6 +57,8 @@ describe("portal browser policy (RealBud layer)", () => {
       steps: ["Open portal", "Read dashboard"],
       allowedOrigins: ["vantagestrata.residentportal.au.resvu.io"],
       evidence: "Dashboard read-back",
+      capabilities: ["portal-read"],
+      submitAcknowledgedAt: null,
     });
     expect(block).toContain("Vantage login");
     expect(block).toContain("vantagestrata.residentportal.au.resvu.io");
@@ -57,6 +67,43 @@ describe("portal browser policy (RealBud layer)", () => {
     expect(block).toContain("Inputs and context:\nRead only the supplied account; do not use connected apps.");
     expect(block).toContain("do not expand the allowed sites or tool permissions");
     expect(block).toContain("naming the source site");
+  });
+
+  it("lists the browser tools the run's grant allows", () => {
+    const tools = (block: string) => block.match(/browser tools for this saved job: ([^.]+)\./)?.[1];
+    expect(tools(portalBrowserPolicy())).toBe("browser_tabs, browser_borrow, browser_read, browser_navigate, browser_fill, browser_click_semantic and browser_release");
+    expect(tools(attendedJobSystemBlock(recipe({ capabilities: ["portal-read"] }))))
+      .toBe("browser_tabs, browser_borrow, browser_read, browser_navigate, browser_click_semantic and browser_release");
+    expect(tools(attendedJobSystemBlock(recipe()))).toContain("browser_fill");
+    const task = taskGrant(["read", "navigate", "click", "fill", "keys", "download", "upload"], [{ name: "fictional-lease.pdf", sha256: "b".repeat(64) }]);
+    expect(tools(attendedJobSystemBlock(recipe(), task))).toBe("browser_tabs, browser_borrow, browser_read, browser_navigate, browser_fill, browser_click_semantic, browser_press, browser_select, browser_download, browser_upload and browser_release");
+    // Upload needs files given to the task; keys and downloads need their own action class.
+    expect(grantedBrowserTools(taskGrant(["read", "upload"]), true)).toEqual(["browser_tabs", "browser_borrow", "browser_read", "browser_release"]);
+    expect(portalBrowserPolicy([])).toMatch(/^This job has no browser tools\./);
+  });
+
+  it("names exactly the tools the broker offers for that grant", async () => {
+    const root = privateTempRoot(join(tmpdir(), "rb-attended-tools-"));
+    const runtime = new BrowserRuntime({ root, command: async () => ({}), executable: async () => "/fixture/bsk", startDaemon: async () => {} });
+    const offered = async (options: { capabilities: JobCapability[]; grant?: BrowserTaskGrant }) => {
+      const broker = await startBrowserBroker({ runtime, threadId: "thread-1", runId: "run-1", context: { allowedOrigins: ["portal.example"], capabilities: options.capabilities },
+        ...(options.grant ? { grant: options.grant } : {}), approvals: new BrowserApprovalStore({ file: join(root, "approvals.json") }),
+        isActive: () => true, approve: async () => false, assertCapability: () => {} });
+      try {
+        const response = await fetch(broker.descriptor.url, { method: "POST", headers: { "content-type": "application/json", authorization: broker.descriptor.headers[0].value },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) });
+        return ((await response.json()) as { result: { tools: Array<{ name: string }> } }).result.tools.map(tool => tool.name);
+      } finally { broker.close(); await broker.released(); }
+    };
+    try {
+      const all = taskGrant(["read", "navigate", "fill", "click", "download", "upload", "keys", "submit"], [{ name: "fictional-lease.pdf", sha256: "b".repeat(64) }]);
+      expect(grantedBrowserTools(all, true)).toEqual(await offered({ capabilities: ["portal-read"], grant: all }));
+      const prefill: JobCapability[] = ["portal-read", "portal-prefill", "portal-submit"];
+      expect(grantedBrowserTools({ actions: legacyBrowserActions(prefill), uploads: [] }, false)).toEqual(await offered({ capabilities: prefill }));
+      // A read-only job is still offered browser_fill (the authority refuses it), so the policy does not name it.
+      const readOnly = await offered({ capabilities: ["portal-read"] });
+      expect(readOnly.filter(tool => !grantedBrowserTools({ actions: legacyBrowserActions(["portal-read"]), uploads: [] }, false).includes(tool))).toEqual(["browser_fill"]);
+    } finally { await removeFixture(root); }
   });
 
   it.each(["done", "Done.", "signed in", "I'm signed in", "ok we are signed in", "finished signing in"])(
@@ -83,6 +130,49 @@ describe("fence evidence identity", () => {
       kind: "denied",
       note: "Tried to open a page. Only sites named in a saved job. Ask Bud to set the routine up as a job first.",
     });
+  });
+});
+
+describe("browser action records in the run's evidence", () => {
+  const base: BrowserActionRecord = { grantId: "legacy-0123456789abcdef0123456789abcdef", tool: "browser_press", origin: "https://portal.example", path: "/levies/pay",
+    label: 'textbox "Amount (AUD)" value="1,240.00"', class: "consequential", decision: "approved", outcome: "succeeded", key: "Enter" };
+  const entry = (note: string) => ({ at: 7, kind: "action" as const, note });
+
+  it("keeps the record's identifiers and hashes, never a field value or a file path", () => {
+    const pressed = browserActionEvidence(entry('Pressed Enter in textbox "Amount (AUD)" value="1,240.00" on portal.example.'), base);
+    expect(pressed).toEqual({ at: 7, kind: "action", note: 'Pressed Enter in textbox "Amount (AUD)" on portal.example. Action record: tool=browser_press class=consequential decision=approved outcome=succeeded key=Enter page=https://portal.example/levies/pay control="Amount (AUD)" grant=legacy-0123456789abcdef0123456789abcdef' });
+    expect(pressed.note).not.toContain("1,240.00");
+    const typed = browserActionEvidence(entry('Pressed Shift+q in textbox "Notes" on portal.example.'), { ...base, key: "Shift+q", class: "routine", decision: "allowed", label: 'textbox "Notes"' });
+    expect(typed.note).toMatch(/^Pressed a character in textbox "Notes" on portal\.example\. Action record: .* key=character /);
+    expect(typed.note).not.toMatch(/\bq\b/);
+    const chosen = browserActionEvidence(entry("Chose an option."), { ...base, tool: "browser_select", key: undefined, valuesHash: "c".repeat(64), label: 'combobox "Frequency"' });
+    expect(chosen.note).toContain(`values-sha256=${"c".repeat(64)}`);
+    const downloaded = browserActionEvidence(entry("Downloaded 'Fictional statement.pdf'."), { ...base, tool: "browser_download", key: undefined, class: "routine", decision: "allowed", label: 'link "Download statement"',
+      download: { name: "Fictional statement.pdf", size: 1234, sha256: "d".repeat(64), contentType: "application/pdf" } });
+    expect(downloaded.note).toContain(`file-sha256=${"d".repeat(64)} bytes=1234 type=application/pdf`);
+    const uploaded = browserActionEvidence(entry("Uploaded the task's file."), { ...base, tool: "browser_upload", key: undefined, outcome: "unknown", label: 'button "Choose file"',
+      upload: { fileIdHash: "e".repeat(64), sha256: "f".repeat(64) } });
+    expect(uploaded.note).toContain("outcome=unknown");
+    expect(uploaded.note).toContain(`file-sha256=${"f".repeat(64)} file-id-sha256=${"e".repeat(64)}`);
+    for (const item of [pressed, chosen, downloaded, uploaded]) expect(item.note).not.toMatch(/\/synthetic|\/Users|\.part\b|incoming/);
+    // A malformed hash is dropped rather than kept as text.
+    expect(browserActionEvidence(entry("x"), { ...base, valuesHash: "not-a-hash /synthetic/file" }).note).not.toContain("not-a-hash");
+  });
+
+  it("stays within the evidence note limit, redacted, and keeps the record whole", async () => {
+    const long = browserActionEvidence(entry(`Pressed Enter with api_key=fictionalfictional123 ${"filler ".repeat(120)}`),
+      { ...base, path: `/${"p".repeat(300)}`, grantId: `g${"1".repeat(199)}`, label: `button "${"L".repeat(300)}"` });
+    expect(long.note.length).toBeLessThanOrEqual(500);
+    expect(long.note).not.toContain("fictionalfictional123");
+    expect(long.note).toMatch(/… Action record: tool=browser_press .* grant=g1{47}$/);
+    // The run store keeps the note whole: nothing past its 500-character limit is cut.
+    const dir = mkdtempSync(join(tmpdir(), "rb-attended-evidence-"));
+    const store = new JobRunStore({ file: join(dir, "job-runs.json") });
+    try {
+      const run = store.enqueue(recipe(), { mode: "attended", trigger: "manual", idempotencyKey: "fictional-evidence-1" }).run;
+      store.start(run.id, "Running.");
+      expect(store.appendEvidence(run.id, [long]).evidence.at(-1)?.note).toBe(long.note);
+    } finally { store.close(); await removeFixture(dir); }
   });
 });
 

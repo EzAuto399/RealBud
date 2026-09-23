@@ -76,6 +76,7 @@ import {
   attendedSettleStatus,
   ATTENDED_UNVERIFIED_RESULT,
   attendedUserText,
+  browserActionEvidence,
   fenceContextFor,
   fenceEvidence,
   humanSigninNeeded,
@@ -746,7 +747,8 @@ let localVmLifecycleBusy = false;
  * decision without re-evaluating it. Native computer-tool requests have no
  * broker, so the job fence below still decides them. */
 const brokerDecided = (event: RuntimeEvent): boolean => event.type === "request.opened" && event.fence !== undefined;
-onBrowserDecision(({ threadId, entry }) => recordFenceEvidence(threadId, entry));
+// A dispatched action carries its structured record; the run keeps it with the note (hashes, never values or paths).
+onBrowserDecision(({ threadId, entry, action }) => recordFenceEvidence(threadId, action ? browserActionEvidence(entry, action) : entry));
 
 function attachFenceToOpened(event: RuntimeEvent): RuntimeEvent {
   if (event.type !== "request.opened" || event.requestType !== "permission") return event;

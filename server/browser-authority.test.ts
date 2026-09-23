@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import {
   authorizeBrowserAction,
   BrowserApprovalStore,
@@ -305,6 +307,110 @@ describe("keys, dropdowns, downloads and uploads", () => {
       expect(authorizeBrowserAction(task(), observation, tool, { ref: "@e1", ...extra }, { rules: everyRule }).decision, `${tool} ${control}`).not.toBe("allow");
     }
     expect(consequential).toBeGreaterThan(60);
+  });
+});
+
+// Observations in the helper's own format (server/fixtures/browser, same syntax
+// as outputs/browser-integration-2026-09-20/fictional-observation.txt).
+const vom = (name: string, url = "https://portal.example/levies/pay") =>
+  page(readFileSync(fileURLToPath(new URL(`./fixtures/browser/${name}.vom.txt`, import.meta.url)), "utf8"), url);
+const shown = (facts: ReadonlyArray<{ name: string; value: string | null }>) =>
+  Object.fromEntries(facts.filter(fact => fact.name !== "documentHash" && fact.name !== "bodyHash").map(fact => [fact.name, fact.value]));
+const LOT_12 = { recipient: "Fictional Owners Corporation SP 12345", amount: "1240.00", currency: "AUD", reference: "FICT-LOT12-Q3" };
+const BODY = "Hello Fictional Owner, The fictional Lot 12 levy of A$1,240.00 is due on 30 September.";
+
+describe("facts from the helper's observation (VOM)", () => {
+  it.each([
+    ["a strata levy form", "strata-levy-payment", "@e6", "pay", LOT_12],
+    ["one bill's row in a bills table", "bills-table", "@e11", "pay", { recipient: "Fictional Plumbing Pty Ltd", amount: "480.00", currency: "$", reference: "INV-FICT-7" }],
+    ["another bill's row in the same table", "bills-table", "@e12", "pay", { recipient: "Fictional Roofing Pty Ltd", amount: "1920.50", currency: "$", reference: "INV-FICT-8" }],
+    ["the first of two levy forms", "adversarial-two-levy-forms", "@e6", "pay", LOT_12],
+    ["the second of two levy forms", "adversarial-two-levy-forms", "@e10", "pay", { recipient: "Fictional Owners Corporation SP 67890", amount: "2480.00", currency: "AUD", reference: "FICT-LOT14-Q3" }],
+    ["an email compose dialog", "email-compose", "@e24", "send", { to: "fictional.owner@example.test", subject: "Fictional Lot 12 levy reminder", bodyExcerpt: BODY }],
+    ["a document signing form", "document-signing", "@e5", "sign", { document: "Fictional Lot 12 By-law Consent" }],
+  ] as const)("confirms the facts of %s", (_name, fixture, ref, kind, expected) => {
+    const auth = authorizeBrowserAction(grant(), vom(fixture), "browser_click_semantic", { ref }, { now: 1_000 });
+    expect(auth).toMatchObject({ decision: "ask", once: true, classification: { class: "consequential", kind } });
+    if (auth.decision !== "ask" || !auth.draft) throw new Error("expected an approval draft");
+    expect(auth.draft.unconfirmed).toEqual([]);
+    expect(shown(auth.draft.facts)).toEqual(expected);
+  });
+
+  it("shows the levy as the form states it and binds the whole message body", () => {
+    const levy = authorizeBrowserAction(grant(), vom("strata-levy-payment"), "browser_click_semantic", { ref: "@e6" });
+    expect(levy.decision === "ask" && levy.summary).toBe("Pay AUD 1240.00 to Fictional Owners Corporation SP 12345 (reference FICT-LOT12-Q3) by pressing 'Pay now' on portal.example. This approval is for this one payment and expires in 2 minutes.");
+    const mail = authorizeBrowserAction(grant(), vom("email-compose"), "browser_click_semantic", { ref: "@e24" });
+    if (mail.decision !== "ask" || !mail.draft) throw new Error("expected an approval draft");
+    expect(mail.draft.facts.find(fact => fact.name === "bodyHash")?.value).toBe(createHash("sha256").update(BODY).digest("hex"));
+    // The other form's payee and amount never reach this form's card.
+    const first = authorizeBrowserAction(grant(), vom("adversarial-two-levy-forms"), "browser_click_semantic", { ref: "@e6" });
+    expect(JSON.stringify(first)).not.toMatch(/67890|2480|LOT14/);
+  });
+
+  it.each([
+    ["the recorded helper page: Transfer money beside a transaction list", "recorded-fictional-bank", "@e3", ["recipient", "amount", "currency"]],
+    ["Pay levy now beside a list of statements", "statement-download", "@e9", ["recipient", "amount", "currency"]],
+    ["Pay all over a table of bills", "bills-table", "@e13", ["recipient", "amount", "currency"]],
+    ["two payments with no form between them", "adversarial-two-payments-no-form", "@e5", ["recipient", "amount", "currency"]],
+    ["a payee shown in a different region", "adversarial-payee-other-region", "@e6", ["recipient"]],
+    ["an amount only in an aria-label and a button name", "adversarial-levy-aria-only-amount", "@e6", ["amount", "currency"]],
+    ["an amount only in hidden text", "adversarial-levy-hidden-amount", "@e6", ["amount", "currency"]],
+    ["a control behind the focused dialog", "adversarial-levy-behind-dialog", "@e6", ["recipient", "amount", "currency"]],
+  ])("does not confirm %s, so there is no approval card", (_name, fixture, ref, missing) => {
+    const auth = authorizeBrowserAction(grant(), vom(fixture), "browser_click_semantic", { ref });
+    expect(auth).toMatchObject({ decision: "deny", classification: { class: "consequential", kind: "pay" } });
+    if (auth.decision !== "deny" || !auth.draft) throw new Error("expected a denied draft");
+    expect(auth.draft.unconfirmed).toEqual(missing);
+    expect(auth.reason).toMatch(/cannot be approved\. It stays with the person\.$/);
+  });
+
+  it("binds the amount in the form: a changed amount is a different approval, refused at dispatch", () => {
+    const seen = authorizeBrowserAction(grant(), vom("strata-levy-payment"), "browser_click_semantic", { ref: "@e6" });
+    const changed = authorizeBrowserAction(grant(), vom("adversarial-levy-amount-changed"), "browser_click_semantic", { ref: "@e6" });
+    if (seen.decision !== "ask" || !seen.draft || changed.decision !== "ask" || !changed.draft) throw new Error("expected approval drafts");
+    expect(shown(changed.draft.facts)).toEqual({ ...LOT_12, amount: "12400.00" });
+    // The broker re-observes before dispatch and requires the approved fingerprint (server/browser-broker.ts).
+    expect(changed.draft.fingerprint).not.toBe(seen.draft.fingerprint);
+    expect(changed.draft.effect).not.toBe(seen.draft.effect);
+  });
+
+  it("reads a label beside its field, term and definition, and a label split from its value", () => {
+    const text = [
+      "@vom 1", "@view 1280x900", "@layers 1 focus=L1", "L1 page", '  RootWebArea "Fictional garden invoice"', '    dialog "Confirm payment"',
+      '      term "Biller"', '      definition "Fictional Gardening"', '      LabelText "Amount"', '      @e2 textbox value="75.50"', '      StaticText "$"',
+      '      StaticText "Invoice:"', '      StaticText "FICT-GARDEN-3"', '      @e3 button "Confirm payment"',
+    ].join("\n");
+    const draft = browserApprovalDraft("pay", page(text), "@e3", 'button "Confirm payment"');
+    expect(draft.unconfirmed).toEqual([]);
+    expect(shown(draft.facts)).toEqual({ recipient: "Fictional Gardening", amount: "75.50", currency: "$", reference: "FICT-GARDEN-3" });
+  });
+
+  it("downloads a statement as reading; the page's payment still needs its facts", () => {
+    const task = parseBrowserTaskGrant({ ...grant(), actions: ["read", "navigate", "click", "download"] });
+    expect(authorizeBrowserAction(task, vom("statement-download"), "browser_download", { ref: "@e7" })).toMatchObject({
+      decision: "ask", once: false, classification: { class: "routine", action: "download" },
+      summary: 'Download the file from link "Download Q3 2026 statement (PDF)" on portal.example into this task\'s private folder.',
+    });
+  });
+
+  it.each([
+    ["A$1,240.00", "1240.00", "AUD"],
+    ["AUD 1,240.00", "1240.00", "AUD"],
+    ["1,240.00 AUD", "1240.00", "AUD"],
+    ["US$95", "95", "USD"],
+    ["$1,240.00", "1240.00", "$"],
+  ])("normalises the amount %s", (written, amount, currency) => {
+    const draft = browserApprovalDraft("pay", page(`Payee: Fictional Plumbing\nAmount: ${written}\n@e1 button "Pay"`), "@e1", 'button "Pay"');
+    expect(shown(draft.facts)).toMatchObject({ amount, currency });
+  });
+
+  it("takes a bare number's currency from its label or the one currency shown, never a guess", () => {
+    const draft = (text: string) => browserApprovalDraft("pay", page(`Payee: Fictional Plumbing\n${text}\n@e9 button "Pay"`), "@e9", 'button "Pay"');
+    expect(shown(draft('@e1 textbox "Amount (AUD)" value="1,240.00"').facts)).toMatchObject({ amount: "1240.00", currency: "AUD" });
+    expect(shown(draft('Balance: A$1,240.00\n@e1 textbox "Amount" value="1240"').facts)).toMatchObject({ amount: "1240", currency: "AUD" });
+    // The same amount written twice is one amount.
+    expect(draft('Amount: $1,240.00\n@e1 textbox "Amount" value="1240.00"').unconfirmed).toEqual([]);
+    expect(draft('@e1 textbox "Amount" value="1,240.00"').unconfirmed).toEqual(["currency"]);
   });
 });
 

@@ -1,0 +1,34 @@
+@vom 1
+@view 1280x900
+@layers 2 focus=L2
+L1 page
+  RootWebArea "Fictional Mail — Inbox"
+    navigation "Folders"
+      @e1 link "Inbox"
+      @e2 link "Sent"
+    main
+      heading "Inbox"
+        StaticText "Inbox"
+      table "From Subject fictional.tenant@example.test Fictional repair request"
+        row "From Subject"
+          columnheader "From"
+          columnheader "Subject"
+        row "fictional.tenant@example.test Fictional repair request"
+          cell "fictional.tenant@example.test"
+          cell "Fictional repair request"
+L2 dialog
+  dialog "New message"
+    heading "New message"
+      StaticText "New message"
+    form "Compose"
+      LabelText "To"
+        @e21 textbox "To" value="fictional.owner@example.test"
+        StaticText "To"
+      LabelText "Subject"
+        @e22 textbox "Subject" value="Fictional Lot 12 levy reminder"
+        StaticText "Subject"
+      @e23 textbox "Message body" [multiline]
+        StaticText "Hello Fictional Owner,"
+        StaticText "The fictional Lot 12 levy of A$1,240.00 is due on 30 September."
+      @e24 button "Send"
+      @e25 button "Discard draft"

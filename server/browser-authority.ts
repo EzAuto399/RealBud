@@ -320,15 +320,50 @@ export interface BrowserApprovalDraft {
 export const BROWSER_APPROVAL_TTL_MS = 120_000;
 
 const CODES = "AUD|USD|NZD|GBP|EUR|CAD|SGD|HKD|JPY";
+/** A$, US$ and the like name their currency; a bare $ stays "$". */
+const DOLLARS: Record<string, string> = { a: "AUD", au: "AUD", us: "USD", nz: "NZD", c: "CAD", ca: "CAD", s: "SGD", hk: "HKD" };
+const DOLLAR_PREFIX = "AU|A|US|NZ|CA|C|HK|S";
 const NUMBER = String.raw`\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?`;
-const MONEY = new RegExp(String.raw`(?:\b(${CODES})\s?)?([$£€])\s?(${NUMBER})(?![\d,])(?:\s?(${CODES})\b)?|\b(${CODES})\s?(${NUMBER})(?![\d,])`, "gi");
-function moneyIn(text: string): Array<{ amount: string; currency: string }> {
+const MONEY = new RegExp(String.raw`(?:\b(${CODES})\s?|\b(${DOLLAR_PREFIX})(?=\$))?([$£€])\s?(${NUMBER})(?![\d,])(?:\s?(${CODES})\b)?` +
+  String.raw`|\b(${CODES})\s?(${NUMBER})(?![\d,])|(?<![\w$£€.,])(${NUMBER})\s?(${CODES})\b`, "gi");
+type Money = { amount: string; currency: string | null };
+function moneyIn(text: string): Money[] {
   return [...text.matchAll(MONEY)].map(match => ({
-    amount: (match[3] ?? match[6]).replace(/,/g, ""),
-    currency: (match[1] ?? match[4] ?? match[5])?.toUpperCase() ?? match[2],
+    amount: (match[4] ?? match[7] ?? match[8]).replace(/,/g, ""),
+    currency: (match[1] ?? (match[2] ? DOLLARS[match[2].toLowerCase()] : undefined) ?? match[5] ?? match[6] ?? match[9])?.toUpperCase() ?? match[3] ?? null,
   }));
 }
+const BARE_AMOUNT = new RegExp(String.raw`^\s*(${NUMBER})\s*$`);
+const CURRENCY_TOKEN = new RegExp(String.raw`^(?:(${DOLLAR_PREFIX})?\$|([£€])|(${CODES}))$`, "i");
+function currencyToken(token: string): string | null {
+  const match = token.trim().match(CURRENCY_TOKEN);
+  if (!match) return null;
+  return match[1] ? DOLLARS[match[1].toLowerCase()] : match[3] ? match[3].toUpperCase() : match[2] ?? "$";
+}
+const oneOf = (values: Iterable<string>): string | null => { const set = new Set(values); return set.size === 1 ? [...set][0] : null; };
+/** "Amount (AUD)", "Amount in A$": the currency a bare number in that field is in. */
+const labelCurrency = (label: string): string | null =>
+  oneOf(label.split(/[\s()[\]:*,]+/).map(currencyToken).filter((code): code is string => code !== null));
+/** A label compared by its words: case, a trailing colon, a required-field star,
+ * a parenthetical and a currency ("Amount (AUD) *", "Amount in A$") do not count. */
+function labelKey(label: string): string {
+  const kept: string[] = [];
+  for (const token of label.replace(/\([^)]*\)/g, " ").replace(/[*:]/g, " ").trim().split(/\s+/)) {
+    if (currencyToken(token)) { if (kept.at(-1)?.toLowerCase() === "in") kept.pop(); continue; }
+    if (token) kept.push(token.toLowerCase());
+  }
+  return kept.join(" ");
+}
+/** The one currency written on the page region, for fields that hold a bare number. */
+function sharedCurrency(text: string): string | null {
+  return oneOf(text.split("\n").flatMap(line => [...moneyIn(line).map(money => money.currency ?? ""), currencyToken(line) ?? ""]).filter(Boolean));
+}
+/** Equal amounts written differently (1,240 and 1240.00) are one amount. */
+function distinctMoney(found: Money[]): Money[] {
+  return [...new Map(found.map(money => [`${money.currency ?? "?"} ${Number(money.amount).toFixed(2)}`, money])).values()];
+}
 type Pair = { label: string; value: string };
+const LABEL_VALUE = /^([A-Za-z][A-Za-z0-9 /()#&.'-]{0,60}?)\s*:\s+(\S.{0,299})$/;
 function observedPairs(text: string): Pair[] {
   const pairs: Pair[] = [];
   for (const raw of text.split("\n")) {
@@ -336,7 +371,7 @@ function observedPairs(text: string): Pair[] {
     const field = line.match(/^(?:@e\d+\s+)?[\w-]+\s+"([^"]{1,200})"\s+value="([^"]{0,2000})"/);
     if (field) { pairs.push({ label: field[1].trim(), value: field[2].trim() }); continue; }
     const content = line.replace(/^@e\d+\s+[\w-]+\s+/, "").replace(/^"(.*)"$/, "$1");
-    const pair = content.match(/^([A-Za-z][A-Za-z0-9 /()#&.'-]{0,60}?)\s*:\s+(\S.{0,299})$/);
+    const pair = content.match(LABEL_VALUE);
     if (pair) pairs.push({ label: pair[1].trim(), value: pair[2].trim().replace(/^"(.*)"$/, "$1") });
   }
   return pairs;
@@ -344,9 +379,173 @@ function observedPairs(text: string): Pair[] {
 function headings(text: string): string[] {
   return [...new Set(text.split("\n").map(line => line.match(/^\s*(?:[-│├└─ ]*)?(?:@e\d+\s+)?heading\b[^"]*"([^"]{1,200})"/)?.[1]?.trim()).filter((v): v is string => Boolean(v)))];
 }
+
+// ── the helper's observation (VOM) ───────────────────────────────────────
+// `@vom 1`, `@view`, `@layers N focus=Lx`, then layers (`L1 page`) holding an
+// indented tree of `@eN role "name" value="…" [flag]`. Facts come only from
+// text a person sees (StaticText, paragraphs, table cells, definitions, field
+// values) inside the form, dialog or table row that holds the pressed control.
+// A name that is not shown (a group's aria-label, a button's name) and hidden
+// nodes never confirm a fact; another form, dialog or row never supplies one.
+interface VomNode { indent: number; ref: string | null; role: string; name: string | null; value: string | null; flags: string[]; parent: VomNode | null; children: VomNode[] }
+export const isVomObservation = (text: string): boolean => /^\s*@vom\s+\d+[^\S\n]*(?:\n|$)/.test(text);
+const QUOTED = String.raw`"((?:[^"\\]|\\.)*)"`;
+const VOM_NODE = new RegExp(String.raw`^(?:(@e\d+)\s+)?([A-Za-z][\w-]*)(?:\s+${QUOTED})?(.*)$`);
+const VOM_VALUE = new RegExp(String.raw`(?:^|\s)value=${QUOTED}`);
+const unescapeVom = (text: string) => text.replace(/\\(.)/g, "$1");
+function parseVom(text: string): { nodes: VomNode[]; focus: string | null } {
+  const nodes: VomNode[] = []; const stack: VomNode[] = []; let focus: string | null = null;
+  for (const raw of text.split("\n")) {
+    const line = raw.replace(/\s+$/, "");
+    const body = line.trimStart(); const indent = line.length - body.length;
+    if (!body) continue;
+    if (indent === 0 && /^@(?:vom|view|layers)\b/.test(body)) { focus = body.match(/^@layers\b.*\bfocus=(L\d+)\b/)?.[1] ?? focus; continue; }
+    const layer = indent === 0 ? body.match(/^(L\d+)\s+\S/) : null;
+    const match = layer ? null : body.match(VOM_NODE);
+    if (!layer && !match) continue;
+    while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
+    const rest = match?.[4] ?? "";
+    const value = rest.match(VOM_VALUE);
+    const node: VomNode = {
+      indent, ref: match?.[1] ?? null, role: layer ? "layer" : match![2].toLowerCase(),
+      name: layer ? layer[1] : match![3] === undefined ? null : unescapeVom(match![3]),
+      value: value ? unescapeVom(value[1]) : /\[empty\]/i.test(rest) ? "" : null,
+      flags: [...rest.replace(VOM_VALUE, " ").matchAll(/\[([A-Za-z-]+)[^\]]*\]/g)].map(flag => flag[1].toLowerCase()),
+      parent: stack.at(-1) ?? null, children: [],
+    };
+    node.parent?.children.push(node); stack.push(node); nodes.push(node);
+  }
+  return { nodes, focus };
+}
+const HIDDEN_FLAGS = new Set(["hidden", "invisible", "aria-hidden"]);
+const hiddenNode = (node: VomNode) => node.flags.some(flag => HIDDEN_FLAGS.has(flag));
+/** Fields whose value is what is entered: their text is read as the value, not as page text. */
+const FIELD_ROLE = /^(textbox|searchbox|textarea|editable|textfield|combobox|spinbutton|slider)$/;
+/** Option lists show choices, not the chosen value. */
+const CHOICE_LIST = new Set(["listbox", "option", "menu", "menuitem", "menuitemradio", "menuitemcheckbox", "menulistpopup", "menulistoption"]);
+/** Nodes whose name is their visible content (the helper prints some without StaticText children). */
+const TEXT_BLOCK = new Set(["paragraph", "listitem", "cell", "gridcell", "columnheader", "rowheader", "term", "definition", "descriptionlistterm", "descriptionlistdetail", "heading", "labeltext", "caption", "status", "note"]);
+const CELL_ROLE = new Set(["cell", "gridcell", "rowheader", "columnheader"]);
+const TABLE_ROLE = new Set(["table", "grid", "treegrid"]);
+/** The record a control acts on. */
+const RECORD_ROLE = new Set(["form", "dialog", "alertdialog", "row"]);
+/** Wider page areas, used only when the control is in no record. */
+const REGION_ROLE = new Set(["region", "article", "tabpanel", "complementary", "main"]);
+const clean = (text: string) => text.replace(/\s+/g, " ").trim();
+function shownTexts(node: VomNode, into: string[] = []): string[] {
+  for (const child of node.children) {
+    if (hiddenNode(child) || FIELD_ROLE.test(child.role) || CHOICE_LIST.has(child.role)) continue;
+    if (child.role === "statictext") { if (child.name) into.push(child.name); } else shownTexts(child, into);
+  }
+  return into;
+}
+const blockText = (node: VomNode): string => clean(shownTexts(node).join(" ") || (node.name ?? ""));
+/** A field's entered value: its value attribute, [empty], or the text an editable region shows. */
+function fieldValue(node: VomNode): string | null {
+  if (node.value !== null) return clean(node.value);
+  const texts: string[] = [];
+  const walk = (at: VomNode) => { for (const child of at.children) { if (hiddenNode(child) || CHOICE_LIST.has(child.role)) continue; if (child.role === "statictext" && child.name) texts.push(child.name); else walk(child); } };
+  walk(node);
+  return texts.length ? clean(texts.join(" ")) : null;
+}
+const ancestorsOf = (node: VomNode): VomNode[] => { const out: VomNode[] = []; for (let at = node.parent; at; at = at.parent) out.push(at); return out; };
+const nextSibling = (node: VomNode): VomNode | undefined => node.parent?.children.slice(node.parent.children.indexOf(node) + 1).find(sibling => !hiddenNode(sibling));
+function firstField(node: VomNode): VomNode | undefined {
+  for (const child of node.children) {
+    if (hiddenNode(child)) continue;
+    if (FIELD_ROLE.test(child.role)) return child;
+    const inner = firstField(child); if (inner) return inner;
+  }
+  return undefined;
+}
+const cellsOf = (row: VomNode) => row.children.filter(child => CELL_ROLE.has(child.role) && !hiddenNode(child));
+function rowsOf(table: VomNode): VomNode[] {
+  const rows: VomNode[] = [];
+  const walk = (at: VomNode) => { for (const child of at.children) { if (hiddenNode(child) || TABLE_ROLE.has(child.role)) continue; if (child.role === "row") rows.push(child); else walk(child); } };
+  walk(table); return rows;
+}
+/** Column header → cell for a data row; a two-cell row without column headers is a key and its value. */
+function rowPairs(row: VomNode): Pair[] {
+  const table = ancestorsOf(row).find(node => TABLE_ROLE.has(node.role));
+  const header = table ? rowsOf(table).find(candidate => cellsOf(candidate).some(cell => cell.role === "columnheader")) : undefined;
+  if (row === header) return [];
+  const cells = cellsOf(row).map(cell => ({ role: cell.role, text: blockText(cell) }));
+  const heads = header ? cellsOf(header).map(blockText) : null;
+  if (heads && heads.length === cells.length) return cells.map((cell, index) => ({ label: heads[index], value: cell.text }));
+  if (!heads && cells.length === 2) return [{ label: cells[0].text, value: cells[1].text }];
+  return [];
+}
+interface FactSource { text: string; pairs: Pair[]; headings: string[] }
+/** The form, dialog or row holding `ref` (else its region or layer, when no other
+ * control of the same kind shares it), read into shown text and label/value pairs.
+ * Null when the control is missing, repeated, hidden, or outside the focused layer. */
+function vomFactSource(text: string, ref: string, kind: BrowserConsequentialKind): FactSource | null {
+  const { nodes, focus } = parseVom(text);
+  const targets = nodes.filter(node => node.ref === ref);
+  if (targets.length !== 1) return null;
+  const target = targets[0]; const ancestors = ancestorsOf(target);
+  if (hiddenNode(target) || ancestors.some(hiddenNode)) return null;
+  const layer = ancestors.find(node => node.role === "layer");
+  if (focus && layer && layer.name !== focus) return null;
+  const record = ancestors.find(node => RECORD_ROLE.has(node.role));
+  const root = record ?? ancestors.find(node => REGION_ROLE.has(node.role)) ?? layer ?? ancestors.at(-1) ?? target;
+  const sameKind = (node: VomNode) => node !== target && node.ref !== null && consequentialKind(node.name ?? "") === kind;
+  const scoped: Array<{ node: VomNode; shown: boolean }> = [];
+  const walk = (node: VomNode, shown: boolean) => {
+    if (hiddenNode(node)) return;
+    // Outside a record, another form or dialog, a list of records (a table with
+    // column headers) and a row with its own such control hold other actions' facts.
+    if (!record && node !== root && (node.role === "form" || node.role === "dialog" || node.role === "alertdialog" ||
+      TABLE_ROLE.has(node.role) && rowsOf(node).some(row => cellsOf(row).some(cell => cell.role === "columnheader")) ||
+      node.role === "row" && nodes.some(other => sameKind(other) && ancestorsOf(other).includes(node)))) return;
+    scoped.push({ node, shown });
+    const inner = shown && !FIELD_ROLE.test(node.role) && !CHOICE_LIST.has(node.role);
+    for (const child of node.children) walk(child, inner);
+  };
+  walk(root, true);
+  if (!record && scoped.some(({ node }) => sameKind(node))) return null;
+  const units: string[] = []; const pairs: Pair[] = []; const heads: string[] = [];
+  const add = (label: string | null | undefined, value: string | null | undefined) => {
+    const key = clean(label ?? "").replace(/\s*:$/, ""); const shown = clean(value ?? "");
+    if (key && key.length <= 80 && shown.length <= 2000) pairs.push({ label: key, value: shown });
+  };
+  const labelValue = (unit: string) => { const pair = unit.match(LABEL_VALUE); if (pair) add(pair[1], pair[2].replace(/^"(.*)"$/, "$1")); };
+  for (const { node, shown } of scoped) {
+    if (!shown) continue;
+    if (node.role === "statictext" && node.name) {
+      units.push(node.name); labelValue(clean(node.name));
+      const next = nextSibling(node);
+      if (/:\s*$/.test(node.name) && next) add(node.name, FIELD_ROLE.test(next.role) ? fieldValue(next) : next.role === "statictext" ? next.name : blockText(next));
+    } else if (TEXT_BLOCK.has(node.role)) {
+      const block = blockText(node); if (block) { units.push(block); labelValue(block); }
+      if (node.role === "heading" && block) heads.push(block);
+    }
+    if (FIELD_ROLE.test(node.role)) {
+      const value = fieldValue(node);
+      if (value) units.push(value);
+      if (node.name) add(node.name, value);
+    }
+    if (node.role === "labeltext") {
+      const field = firstField(node) ?? [nextSibling(node)].find(next => next && FIELD_ROLE.test(next.role));
+      if (field) add(node.name ?? blockText(node), fieldValue(field));
+    }
+    if (node.role === "term" || node.role === "descriptionlistterm") {
+      const next = nextSibling(node);
+      if (next && (next.role === "definition" || next.role === "descriptionlistdetail")) add(blockText(node), blockText(next));
+    }
+    if (node.role === "row") for (const pair of rowPairs(node)) add(pair.label, pair.value);
+  }
+  return { text: units.join("\n"), pairs, headings: [...new Set(heads)] };
+}
+/** Plain `Label: value` text reads the whole observation; the helper's VOM reads only the pressed control's form or region. */
+function factSource(text: string, ref: string, kind: BrowserConsequentialKind): FactSource {
+  if (!isVomObservation(text)) return { text, pairs: observedPairs(text), headings: headings(text) };
+  return vomFactSource(text, ref, kind) ?? { text: "", pairs: [], headings: [] };
+}
+
 /** Exactly one distinct value confirms a fact; none or several do not. */
 function pick(pairs: Pair[], label: RegExp): { value: string | null; present: boolean } {
-  const values = [...new Set(pairs.filter(pair => label.test(pair.label) && pair.value).map(pair => pair.value))];
+  const values = [...new Set(pairs.filter(pair => label.test(labelKey(pair.label)) && pair.value).map(pair => pair.value))];
   return { value: values.length === 1 ? values[0] : null, present: values.length > 0 };
 }
 function fact(name: BrowserFactName, value: string | null): BrowserApprovalFact {
@@ -354,30 +553,34 @@ function fact(name: BrowserFactName, value: string | null): BrowserApprovalFact 
   const shown = value === null ? null : redactSecretsInText(value).slice(0, 300);
   return { name, value: shown, confirmed: value !== null && shown === value && value.trim().length > 0 };
 }
-function paymentFacts(text: string, pairs: Pair[]): BrowserApprovalFact[] {
-  const labelled = (label: RegExp) => {
-    const found = pairs.filter(pair => label.test(pair.label)).flatMap(pair => moneyIn(pair.value));
-    return [...new Map(found.map(money => [`${money.currency} ${money.amount}`, money])).values()];
-  };
+function paymentFacts({ text, pairs }: FactSource): BrowserApprovalFact[] {
+  const currency = sharedCurrency(text);
+  const labelled = (label: RegExp) => distinctMoney(pairs.filter(pair => label.test(labelKey(pair.label))).flatMap(pair => {
+    const money = moneyIn(pair.value);
+    if (money.length) return money;
+    // A field holding a bare number takes its label's currency, else the one currency the region shows.
+    const bare = pair.value.match(BARE_AMOUNT);
+    return bare ? [{ amount: bare[1].replace(/,/g, ""), currency: labelCurrency(pair.label) ?? currency }] : [];
+  }));
   let amounts = labelled(/^(payment amount|transfer amount|amount to pay|you pay|you will pay|amount)$/i);
-  if (!amounts.length) amounts = labelled(/^(total|total amount|total to pay|amount due)$/i);
-  if (!amounts.length) amounts = [...new Map(moneyIn(text).map(money => [`${money.currency} ${money.amount}`, money])).values()];
+  if (!amounts.length) amounts = labelled(/^(total|total amount|total to pay|total due|amount due)$/i);
+  if (!amounts.length) amounts = distinctMoney(moneyIn(text));
   const money = amounts.length === 1 ? amounts[0] : null;
   const recipient = pick(pairs, /^(payee|payee name|pay to|paying|recipient|recipient name|beneficiary|biller|biller name|account name|to|to account|transfer to)$/i);
   const reference = pick(pairs, /^(reference|payment reference|ref|description|crn|customer reference(?: number)?|invoice(?: number)?)$/i);
   return [fact("recipient", recipient.value), fact("amount", money?.amount ?? null), fact("currency", money?.currency ?? null),
     ...(reference.present ? [fact("reference", reference.value)] : [])];
 }
-function documentFacts(text: string, pairs: Pair[]): BrowserApprovalFact[] {
-  const titled = pick(pairs, /^(document|document title|document name|agreement|contract|lease|notice|title|form)$/i);
-  const heads = headings(text);
+function documentFacts(text: string, source: FactSource): BrowserApprovalFact[] {
+  const titled = pick(source.pairs, /^(document|document title|document name|agreement|contract|lease|notice|title|form)$/i);
+  const heads = source.headings;
   const title = titled.value ?? (!titled.present && heads.length === 1 ? heads[0] : null);
   return [fact("document", title), fact("documentHash", sha256(text.replace(/@e\d+/g, "@e")))];
 }
 function messageFacts(pairs: Pair[]): BrowserApprovalFact[] {
   const to = pick(pairs, /^(to|recipients?|send to|email to)$/i);
   const subject = pick(pairs, /^subject$/i);
-  const body = pick(pairs, /^(message|body|email body|reply|text)$/i);
+  const body = pick(pairs, /^(message|message body|body|email body|reply|text)$/i);
   // The hash binds the whole message; the excerpt only shows the person what is sent:
   // redacted before it is shortened, so a secret across the cut is never half shown.
   const excerpt: BrowserApprovalFact[] = body.value === null ? [] : [{ name: "bodyExcerpt", value: redactSecretsInText(body.value).slice(0, 200), confirmed: true }];
@@ -399,11 +602,11 @@ function controlName(label: string): string {
 /** `via` names a key or dropdown choice; without it the control is pressed. */
 export function browserApprovalDraft(kind: BrowserConsequentialKind, observation: BrowserObservation, ref: string, label: string, now = Date.now(), via?: string): BrowserApprovalDraft {
   const text = observation.text ?? "";
-  const pairs = observedPairs(text);
-  const facts = kind === "pay" ? paymentFacts(text, pairs)
-    : kind === "sign" || kind === "notice" ? documentFacts(text, pairs)
-      : kind === "send" ? messageFacts(pairs)
-        : targetFacts(text, label, kind);
+  const source = factSource(text, ref, kind);
+  const facts = kind === "pay" ? paymentFacts(source)
+    : kind === "sign" || kind === "notice" ? documentFacts(text, source)
+      : kind === "send" ? messageFacts(source.pairs)
+        : targetFacts(source.text, label, kind);
   const url = new URL(observation.url);
   const host = hostOf(url);
   const control = controlName(label);

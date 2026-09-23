@@ -1,0 +1,35 @@
+@vom 1
+@view 1280x900
+@layers 1 focus=L1
+L1 page
+  RootWebArea "Fictional Strata Portal — Pay levy"
+    banner
+      StaticText "Fictional Strata Portal"
+      @e1 link "My account"
+    navigation "Main"
+      @e2 link "Levies"
+      @e3 link "Statements"
+    main
+      heading "Pay levy"
+        StaticText "Pay levy"
+      paragraph "This is a local test page. No real accounts or money."
+        StaticText "This is a local test page. No real accounts or money."
+      form "Levy payment"
+        heading "Lot 12 quarterly levy"
+          StaticText "Lot 12 quarterly levy"
+        paragraph "Payee: Fictional Owners Corporation SP 12345"
+          StaticText "Payee: Fictional Owners Corporation SP 12345"
+        paragraph "BSB: ***-**3"
+          StaticText "BSB: ***-**3"
+        paragraph "Account number: *****678"
+          StaticText "Account number: *****678"
+        paragraph "Levy due: A$1,240.00"
+          StaticText "Levy due: A$1,240.00"
+        LabelText "Amount (AUD)"
+          @e4 textbox "Amount (AUD)" value="12,400.00"
+          StaticText "Amount (AUD)"
+        LabelText "Payment reference"
+          @e5 textbox "Payment reference" value="FICT-LOT12-Q3"
+          StaticText "Payment reference"
+        @e6 button "Pay now"
+        @e7 button "Back"
