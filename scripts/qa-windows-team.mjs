@@ -55,13 +55,76 @@ async function save(file, value) {
 }
 const safeFailure = (error, stage) => ({ stage, reason: error?.code || error?.name || 'failure' });
 
+// Query the actual service's token, not the PowerShell observer's identity.
+// CheckTokenMembership requires an impersonation token; duplication preserves
+// enabled/deny-only group state. Never emit names, SIDs or token contents.
+const WINDOWS_TOKEN_CLASSIFIER = String.raw`
+$ErrorActionPreference = 'Stop'
+try {
+  Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
+public static class RealBudTeamToken {
+  [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+  [DllImport("advapi32.dll", SetLastError=true)] static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+  [DllImport("advapi32.dll", SetLastError=true)] static extern bool DuplicateToken(IntPtr token, int level, out IntPtr duplicate);
+  [DllImport("advapi32.dll", SetLastError=true)] static extern bool CheckTokenMembership(IntPtr token, byte[] sid, out bool member);
+  [DllImport("advapi32.dll", SetLastError=true)] static extern bool GetTokenInformation(IntPtr token, int kind, out uint value, uint size, out uint returned);
+  static byte[] Sid(WellKnownSidType kind) {
+    var sid = new SecurityIdentifier(kind, null); var bytes = new byte[sid.BinaryLength]; sid.GetBinaryForm(bytes, 0); return bytes;
+  }
+  static string Failure(int pid, string stage, uint error) {
+    return "{\"schema\":1,\"pid\":" + pid + ",\"outcome\":\"query-failed\",\"stage\":\"" + stage + "\",\"win32Error\":" + error + "}";
+  }
+  public static string Inspect(int pid) {
+    IntPtr process = IntPtr.Zero, token = IntPtr.Zero, duplicate = IntPtr.Zero;
+    string stage = "open-process";
+    try {
+      process = OpenProcess(0x1000, false, pid); // PROCESS_QUERY_LIMITED_INFORMATION
+      if (process == IntPtr.Zero) return Failure(pid, stage, unchecked((uint)Marshal.GetLastWin32Error()));
+      stage = "open-token";
+      if (!OpenProcessToken(process, 0x000A, out token)) return Failure(pid, stage, unchecked((uint)Marshal.GetLastWin32Error())); // QUERY | DUPLICATE
+      stage = "duplicate-token";
+      if (!DuplicateToken(token, 2, out duplicate)) return Failure(pid, stage, unchecked((uint)Marshal.GetLastWin32Error())); // SecurityImpersonation
+      bool admin, powerUsers;
+      stage = "administrator-membership";
+      if (!CheckTokenMembership(duplicate, Sid(WellKnownSidType.BuiltinAdministratorsSid), out admin)) return Failure(pid, stage, unchecked((uint)Marshal.GetLastWin32Error()));
+      stage = "power-users-membership";
+      if (!CheckTokenMembership(duplicate, Sid(WellKnownSidType.BuiltinPowerUsersSid), out powerUsers)) return Failure(pid, stage, unchecked((uint)Marshal.GetLastWin32Error()));
+      uint elevated, elevationType, returned;
+      stage = "elevation";
+      if (!GetTokenInformation(token, 20, out elevated, 4, out returned)) return Failure(pid, stage, unchecked((uint)Marshal.GetLastWin32Error()));
+      if (returned != 4 || elevated > 1) return Failure(pid, stage, 13);
+      stage = "elevation-type";
+      if (!GetTokenInformation(token, 18, out elevationType, 4, out returned)) return Failure(pid, stage, unchecked((uint)Marshal.GetLastWin32Error()));
+      if (returned != 4 || elevationType < 1 || elevationType > 3) return Failure(pid, stage, 13);
+      return "{\"schema\":1,\"pid\":" + pid + ",\"outcome\":\"queried\",\"administratorEnabled\":" + (admin ? "true" : "false") +
+        ",\"powerUsersEnabled\":" + (powerUsers ? "true" : "false") + ",\"elevated\":" + (elevated == 1 ? "true" : "false") + ",\"elevationType\":" + elevationType + "}";
+    } catch { return Failure(pid, stage, 0); }
+    finally {
+      if (duplicate != IntPtr.Zero) CloseHandle(duplicate);
+      if (token != IntPtr.Zero) CloseHandle(token);
+      if (process != IntPtr.Zero) CloseHandle(process);
+    }
+  }
+}
+'@
+  $diagnosticPid = [int]$env:REALBUD_TEAM_DIAGNOSTIC_PID
+  if ($diagnosticPid -le 0) { throw 'Invalid diagnostic pid' }
+  [Console]::Out.WriteLine([RealBudTeamToken]::Inspect($diagnosticPid))
+} catch { exit 1 }
+`;
+
 // Fixture-only observation, installed before the compiled bootstrap imports
-// child_process. Native arguments, environment and stdio pass through unchanged.
+// child_process. Exact owned-server stderr alone changes from ignore to a drained
+// pipe; native arguments, environment and other stdio remain unchanged.
 // Only fixed classifications and numeric lifecycle data cross fixture IPC;
 // neither native output nor argument/environment values are published.
 const NATIVE_DIAGNOSTIC_ENTRY = String.raw`
 import { createRequire, syncBuiltinESMExports } from 'node:module';
-import { basename, dirname, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 const cp = createRequire(import.meta.url)('node:child_process');
 const root = resolve(process.argv[3]).toLowerCase();
@@ -72,6 +135,10 @@ const markers = output => {
   const text = String(output || '').slice(0, 131072);
   return [
     ['permission-denied', /permission denied|access is denied|access denied/i],
+    ['postgres-admin-token-refused', /Execution of PostgreSQL by a user with administrative permissions is not\s+permitted\./],
+    ['token-membership-query-failed', /could not check access token membership: error code/i],
+    ['winsock-startup-failed', /WSAStartup failed:/],
+    ['configuration-refused', /configuration file.*(?:contains errors|could not|cannot)|could not (?:open|access).*configuration file|unrecognized configuration parameter/i],
     ['admin-or-restricted-token', /administrative permissions|administrator|restricted token|CreateRestrictedToken|CreateProcessAsUser/i],
     ['process-creation-failed', /could not (?:execute|start|fork|create process)|failed to (?:execute|start|fork|create process)/i],
     ['native-library-unavailable', /(?:dll|library).*(?:not found|missing|could not|failed)|(?:could not|failed to) load/i],
@@ -124,15 +191,65 @@ if (typeof realPromise === 'function') Object.defineProperty(observedFile, custo
 cp.execFile = observedFile;
 const realSpawn = cp.spawn;
 cp.spawn = function(file, ...rest) {
-  const child = realSpawn.call(this, file, ...rest);
+  const [args, options] = rest;
+  const ownedData = process.env.REALBUD_DATA_DIR && resolve(process.env.REALBUD_DATA_DIR, 'company-installation/postgres/data').toLowerCase();
+  const observeStderr = accepts(file) && basename(file).toLowerCase() === 'postgres.exe' && Array.isArray(args) && args.length === 2 &&
+    args[0] === '-D' && typeof args[1] === 'string' && ownedData && resolve(args[1]).toLowerCase() === ownedData &&
+    options?.detached === false && Array.isArray(options.stdio) && options.stdio.length === 3 && options.stdio.every(value => value === 'ignore');
+  const actual = observeStderr ? [args, { ...options, stdio: ['ignore', 'ignore', 'pipe'] }] : rest;
+  const child = realSpawn.call(this, file, ...actual);
   if (accepts(file)) {
     const started = performance.now(), base = { binary: basename(file).toLowerCase(), operation: 'server' };
     child.once('spawn', () => emit({ ...base, event: 'spawn', pid: child.pid }));
     child.once('error', error => emit({ ...base, event: 'error', code: code(error.code), elapsedMs: Math.round(performance.now() - started) }));
     child.once('exit', (status, signal) => emit({ ...base, event: 'exit', code: code(status), signal: /^SIG[A-Z]+$/.test(signal || '') ? signal : null, elapsedMs: Math.round(performance.now() - started) }));
+    if (observeStderr) {
+      let tail = Buffer.alloc(0), bytes = 0, readFailed = false;
+      const found = new Set();
+      child.stderr?.on('data', chunk => {
+        bytes += chunk.length;
+        // Retain at most 4 KiB; scan bounded windows so split error lines match.
+        for (let offset = 0; offset < chunk.length; offset += 4096) {
+          const window = Buffer.concat([tail, chunk.subarray(offset, offset + 4096)]);
+          for (const label of markers(window.toString('utf8'))) found.add(label);
+          tail = Buffer.from(window.subarray(Math.max(0, window.length - 4096)));
+        }
+      });
+      child.stderr?.once('error', () => { readFailed = true; });
+      child.once('close', () => emit({ ...base, event: 'stderr', observation: 'ignored-to-drained-pipe',
+        stderrBytes: bytes, readFailed, markers: [...found], elapsedMs: Math.round(performance.now() - started) }));
+    }
   }
   return child;
 };
+function tokenResult(output, expectedPid) {
+  try {
+    const value = JSON.parse(output);
+    if (!value || typeof value !== 'object' || Array.isArray(value) || value.schema !== 1 || value.pid !== expectedPid) return null;
+    const exact = keys => Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+    if (value.outcome === 'queried' && exact(['schema', 'pid', 'outcome', 'administratorEnabled', 'powerUsersEnabled', 'elevated', 'elevationType']) &&
+      ['administratorEnabled', 'powerUsersEnabled', 'elevated'].every(key => typeof value[key] === 'boolean') && [1, 2, 3].includes(value.elevationType)) return value;
+    if (value.outcome === 'query-failed' && exact(['schema', 'pid', 'outcome', 'stage', 'win32Error']) &&
+      ['open-process', 'open-token', 'duplicate-token', 'administrator-membership', 'power-users-membership', 'elevation', 'elevation-type'].includes(value.stage) &&
+      Number.isInteger(value.win32Error) && value.win32Error >= 0 && value.win32Error <= 0xffffffff) return value;
+  } catch { /* No raw classifier output crosses IPC. */ }
+  return null;
+}
+if (process.platform === 'win32') {
+  const started = performance.now(), base = { binary: 'powershell.exe', operation: 'service-token', event: 'inspection' };
+  try {
+    const systemRoot = process.env.SystemRoot || process.env.SYSTEMROOT;
+    if (!systemRoot || !isAbsolute(systemRoot) || !process.argv[4]) throw new Error('Classifier unavailable');
+    const output = cp.execFileSync(resolve(systemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+      ['-NoProfile', '-NonInteractive', '-EncodedCommand', process.argv[4]], {
+        env: { ...process.env, REALBUD_TEAM_DIAGNOSTIC_PID: String(process.pid) }, windowsHide: true,
+        timeout: 15_000, maxBuffer: 2048, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+      });
+    emit({ ...base, ...(tokenResult(output, process.pid) || { outcome: 'classifier-output-invalid' }), elapsedMs: Math.round(performance.now() - started) });
+  } catch (error) {
+    emit({ ...base, outcome: 'classifier-unavailable', code: code(error.code), elapsedMs: Math.round(performance.now() - started) });
+  }
+}
 syncBuiltinESMExports();
 await import(pathToFileURL(process.argv[2]).href);
 `;
@@ -230,7 +347,7 @@ if (scenarioMode) {
     await mkdir(env.APPDATA, { recursive: true }); await mkdir(env.LOCALAPPDATA, { recursive: true });
     const entry = join(home, 'team-native-diagnostics.mjs');
     await writeFile(entry, NATIVE_DIAGNOSTIC_ENTRY, { mode: 0o600 });
-    const child = spawn(executable, [entry, join(resources, 'server/bootstrap.js'), join(resources, 'postgres/bin')], { cwd: resources, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+    const child = spawn(executable, [entry, join(resources, 'server/bootstrap.js'), join(resources, 'postgres/bin'), Buffer.from(WINDOWS_TOKEN_CLASSIFIER, 'utf16le').toString('base64')], { cwd: resources, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
     const context = { role, child, data, url: `http://127.0.0.1:${port}`, ports: new Set([port]), token: '', member: '', admin: '' };
     contexts.add(context); observedPids.push(child.pid); observedPorts.push(port);
     child.on('message', message => {
@@ -335,7 +452,7 @@ if (scenarioMode) {
     cleanupComplete = contexts.size === 0 && cleanupErrors.length === 0;
     await save(join(output, 'scenario.json'), { schema: 1, passed: !failure && cleanupComplete && checks.length === 7,
       runtime: { node: process.versions.node, electron: process.versions.electron }, checks, requests, generations, failure, cleanupErrors,
-      cleanupComplete, observedPids, observedPorts, nativeDiagnostics, setupDiagnostics, diagnosticEntrySha256: hash(NATIVE_DIAGNOSTIC_ENTRY), scratch });
+      cleanupComplete, observedPids, observedPorts, nativeDiagnostics, setupDiagnostics, diagnosticEntrySha256: hash(NATIVE_DIAGNOSTIC_ENTRY), tokenClassifierSha256: hash(WINDOWS_TOKEN_CLASSIFIER), scratch });
     process.exitCode = !failure && cleanupComplete && checks.length === 7 ? 0 : 1;
     // A failed graceful shutdown must let the supervisor close the complete Job.
     if (!cleanupComplete) process.exit(1);
