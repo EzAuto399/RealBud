@@ -49,7 +49,8 @@ describe("Ask browser task cards", () => {
     const { store, file } = fixture();
     const record = await store.propose(proposal("Download this month's invoices from portal.fictional-strata.example"), NOW);
     expect(record).toMatchObject({ status: "proposed", grant: null, sites: [SITE], siteSource: "request", actions: ["read", "navigate", "click", "download"], minutes: ASK_TASK_MINUTES, budget: ASK_TASK_BUDGET });
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    // Windows reports no Unix mode; its protection is the ACL the private writer applies.
+    if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(0o600);
     const saved = JSON.parse(readFileSync(file, "utf8"));
     expect(saved).toMatchObject({ version: 1, purpose: "browser-tasks", tasks: [{ version: 1, purpose: "browser-task", id: record.id }] });
     expect(browserTaskCardView(record)).toEqual({

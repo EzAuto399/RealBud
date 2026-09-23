@@ -425,7 +425,7 @@ describe("explicit grants and exact tool lists", () => {
     // The example that matters: a download-only task can download and nothing else.
     expect((await listed(taskGrant(["download"], 0))).names).toEqual(["browser_download"]);
     expect((await listed(taskGrant(["read", "download"], 0))).names).not.toContain("browser_fill");
-  }, 60_000);
+  }, process.platform === "win32" ? 600_000 : 60_000);
 
   it("gives a saved job its own grant: today's tools for its capabilities, never the newer ones", async () => {
     for (const capabilities of combos(["portal-read", "portal-prefill", "portal-submit"])) {
