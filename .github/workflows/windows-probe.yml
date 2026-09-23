@@ -14,6 +14,22 @@ on:
         options:
           - privacy
           - retention
+          - team
+      installer_run_id:
+        description: Exact existing installer workflow run for the team proof
+        type: string
+        required: true
+        default: '35854230714'
+      installer_sha256:
+        description: Expected installer SHA256 for the team proof
+        type: string
+        required: true
+        default: '602bcd3455199b8b39164d124f557b6cf0daece756d1fe190f93bdf36a8eb542'
+      compiled_source_sha:
+        description: Full compiled application source SHA for the team proof
+        type: string
+        required: true
+        default: '0f4edd5f7deff900651251e5889941f4d06e5fa9'
   # Dispatch only resolves on the default branch, so a pull request that touches
   # the Windows privacy pieces runs the probe on its own.
   pull_request:
@@ -104,7 +120,7 @@ permissions:
 jobs:
   acl:
     name: ACL admission probe (windows-latest)
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.suite != 'retention' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.suite != 'retention' && inputs.suite != 'team') }}
     runs-on: windows-latest
     # The fixture-dependent suites below took about 80 min in failing CI shards
     # (several slow tests are now skipped or bounded on Windows); allow for that.
@@ -242,3 +258,78 @@ jobs:
           server/private-backup-bank-retention.test.ts
         env:
           NODE_OPTIONS: --max-old-space-size=6144
+
+  team:
+    name: Installed two-service company proof (windows-latest)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.suite == 'team' }}
+    runs-on: windows-latest
+    # Leave time for bounded failure cleanup and receipt upload after the probe.
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - name: Validate the native team harness syntax
+        shell: pwsh
+        run: |
+          node --check scripts/qa-windows-team.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'JavaScript syntax check failed.' }
+          $tokens = $null
+          $parseErrors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path scripts/testing/test-windows-team.ps1), [ref]$tokens, [ref]$parseErrors)
+          if ($parseErrors.Count) { $parseErrors | ForEach-Object { Write-Error $_.Message }; throw 'PowerShell syntax check failed.' }
+      - name: Verify and download the explicitly selected installer artifact
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TEAM_INSTALLER_RUN_ID: ${{ inputs.installer_run_id }}
+          TEAM_INSTALLER_SHA256: ${{ inputs.installer_sha256 }}
+          TEAM_COMPILED_SOURCE_SHA: ${{ inputs.compiled_source_sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $runId = $env:TEAM_INSTALLER_RUN_ID
+          $expected = $env:TEAM_INSTALLER_SHA256
+          $source = $env:TEAM_COMPILED_SOURCE_SHA
+          if ($runId -notmatch '^\d+$' -or $expected -notmatch '^[0-9a-f]{64}$' -or $source -notmatch '^[0-9a-f]{40}$') { throw 'Exact run and digest inputs required.' }
+          $metadata = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$runId/artifacts" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Artifact metadata lookup failed.' }
+          $selected = @($metadata.artifacts | Where-Object { $_.name -eq 'windows-installer' })
+          if ($selected.Count -ne 1 -or $selected[0].expired -or $selected[0].workflow_run.head_sha -ne $source) { throw 'Requested installer artifact/source is unavailable or mismatched.' }
+          $destination = Join-Path $env:RUNNER_TEMP 'realbud-team-installer'
+          if (Test-Path -LiteralPath $destination) { throw 'Artifact directory already exists.' }
+          gh run download $runId --repo $env:GITHUB_REPOSITORY --name windows-installer --dir $destination
+          if ($LASTEXITCODE -ne 0) { throw 'Exact artifact download failed.' }
+          $installers = @(Get-ChildItem -LiteralPath $destination -Filter 'RealBud-*-setup.exe' -File)
+          if ($installers.Count -ne 1) { throw 'Expected exactly one installer executable.' }
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $installers[0].FullName).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw 'Installer digest mismatch; nothing will be installed.' }
+          [ordered]@{ schema = 1; runId = $runId; artifactId = [string]$selected[0].id; artifactName = 'windows-installer'; expired = $false
+            compiledSourceRevision = $source; installerSha256 = $actual; installerBytes = $installers[0].Length; expiresAt = $selected[0].expires_at
+          } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $destination 'artifact.json')
+      - name: Install, prove native office lifecycle, and uninstall
+        shell: pwsh
+        env:
+          TEAM_INSTALLER_SHA256: ${{ inputs.installer_sha256 }}
+          TEAM_COMPILED_SOURCE_SHA: ${{ inputs.compiled_source_sha }}
+        run: |
+          $destination = Join-Path $env:RUNNER_TEMP 'realbud-team-installer'
+          $installer = @(Get-ChildItem -LiteralPath $destination -Filter 'RealBud-*-setup.exe' -File)
+          if ($installer.Count -ne 1) { throw 'Expected exactly one verified installer.' }
+          $harnessSource = git rev-parse HEAD
+          ./scripts/testing/test-windows-team.ps1 -Installer $installer[0].FullName `
+            -ArtifactReceipt (Join-Path $destination 'artifact.json') `
+            -ReceiptDirectory (Join-Path $env:GITHUB_WORKSPACE 'outputs/windows-team') `
+            -ExpectedInstallerSha256 $env:TEAM_INSTALLER_SHA256 -CompiledSourceSha $env:TEAM_COMPILED_SOURCE_SHA -HarnessSourceSha $harnessSource
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-two-service-proof
+          path: outputs/windows-team/
+          if-no-files-found: warn
+          retention-days: 14
