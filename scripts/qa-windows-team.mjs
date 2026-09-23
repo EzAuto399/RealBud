@@ -101,6 +101,32 @@ function parseFixtureOwner(output, expectedPid) {
     [1, 2, 3].includes(value.elevationType), 'Fixture ownership inspection did not return the exact fixed schema');
   return value;
 }
+function inspectFixtureOwner(run, expectedPid) {
+  let output, failure, threw = false;
+  try { output = run(); }
+  catch (error) { threw = true; failure = error; output = error?.stdout; }
+  const codes = new Set(['ETIMEDOUT', 'ENOBUFS', 'ENOENT', 'EACCES', 'EPERM', 'EINVAL', 'ENOMEM', 'EMFILE', 'ENFILE', 'EIO', 'UNKNOWN']);
+  const signals = new Set(['SIGABRT', 'SIGBREAK', 'SIGBUS', 'SIGFPE', 'SIGILL', 'SIGINT', 'SIGKILL', 'SIGSEGV', 'SIGTERM']);
+  const execution = {
+    completed: !threw,
+    status: !threw ? 0 : Number.isInteger(failure?.status) && failure.status >= -2147483648 && failure.status <= 0xffffffff ? failure.status : null,
+    signal: !failure?.signal ? null : signals.has(failure.signal) ? failure.signal : 'other',
+    code: !failure?.code ? null : codes.has(failure.code) ? failure.code : 'other',
+    stdoutBytes: typeof output === 'string' || Buffer.isBuffer(output) ? Math.min(Buffer.byteLength(output), 2049) : null,
+  };
+  let value;
+  if (execution.stdoutBytes === null || execution.stdoutBytes === 0) {
+    value = { schema: 1, pid: expectedPid, outcome: 'inspection-refused', reason: 'reply-unavailable' };
+  } else if (execution.stdoutBytes > 2048) {
+    value = { schema: 1, pid: expectedPid, outcome: 'inspection-refused', reason: 'reply-too-large' };
+  } else {
+    try { value = parseFixtureOwner(output, expectedPid); }
+    catch { value = { schema: 1, pid: expectedPid, outcome: 'inspection-refused', reason: 'reply-schema' }; }
+  }
+  // A reply is evidence only. A thrown process carrying valid-looking success
+  // JSON must still fail the caller's execution and ownership checks.
+  return { ...value, execution };
+}
 
 // Fixture-only observation, installed before the compiled bootstrap imports
 // child_process. Exact owned-server stderr alone changes from ignore to a drained
@@ -330,12 +356,12 @@ if (scenarioMode) {
     const inspectNewObject = async (file, kind, label) => {
       if (elevatedMode) return;
       stage = `fixture-${role}-${label}`;
-      const response = execFileSync(restrictedLauncher, ['--inspect', String(process.pid), file], {
+      const value = inspectFixtureOwner(() => execFileSync(restrictedLauncher, ['--inspect', String(process.pid), file], {
         env: process.env, windowsHide: true, timeout: 3000, maxBuffer: 2048, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
-      });
-      const value = parseFixtureOwner(response, process.pid);
+      }), process.pid);
       fixtureOwnership.push({ role, kind, label, ...value }); await progress();
-      check(value.outcome === 'queried' && value.sameUser && !value.administratorEnabled && !value.powerUsersEnabled && value.tokenDefaultOwnerIsUser && value.objectOwnerIsUser,
+      check(value.execution.completed && value.execution.status === 0 && value.execution.signal === null &&
+        value.outcome === 'queried' && value.sameUser && !value.administratorEnabled && !value.powerUsersEnabled && value.tokenDefaultOwnerIsUser && value.objectOwnerIsUser,
         'The restricted fixture must create its private objects with the same user owner before ACL restriction');
     };
     if (!existsSync(data)) { await mkdir(data); await inspectNewObject(data, 'directory', 'private-root'); protect(data, 'directory', true); }
