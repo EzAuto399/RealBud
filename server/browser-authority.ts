@@ -45,6 +45,10 @@ export const FINANCIAL_PAGE = /\b(bank|banking|transaction|statement|balance|acc
 export const SUBMIT_CONTROL = /\b(submit|save|continue|next|confirm|lodge|create|update)\b/i;
 const AFFIRMATIVE = /\b(yes|ok|okay|proceed|agree|accept|finish|done|complete)\b/i;
 const READ_AFFORDANCE = /\b(view|show|statement|transaction|history|download|export|search|filter|previous|next page)\b/i;
+/** Words that say a control delivers a file rather than acting on something. */
+const DOWNLOAD_AFFORDANCE = /\b(download|export|pdf|csv|xlsx?|docx?|zip|print|receipt|statement|invoice|report|attachment|save as)\b/i;
+const TEXT_ROLE = /^(textbox|searchbox|textarea|editable|textfield)$/;
+const CHOICE_ROLE = /^(combobox|listbox|option|radio|radiogroup|slider|spinbutton|menuitemradio)$/;
 /** Page evidence that an affirmative control completes a consequential action. */
 const PAGE_KINDS: ReadonlyArray<{ kind: BrowserConsequentialKind; test: (text: string) => boolean }> = [
   { kind: "pay", test: text => moneyIn(text).length > 0 && /\b(payee|pay to|biller|beneficiary|recipient|transfer to|payment method)\b/i.test(text) },
@@ -66,6 +70,10 @@ const STALE_CONTROL = "Read the page again before choosing a control. The previo
 const CREDENTIAL = "This account, payment or security step stays with the person. Stop browser work before they take over.";
 const FINANCIAL_FILL = "This page is for reading. Enter bank and financial details yourself.";
 const READ_ONLY = "This job is read-only. Add prefill on Schedule if Bud should fill forms.";
+const KEY_SPEC = "Use one key, such as Enter, Tab, Escape or an arrow key, with optional Ctrl, Alt, Shift or Meta.";
+const CHOICES = "Choose one to twenty option values from the observed list.";
+const UPLOAD_NOT_GRANTED = "Only files given to this task can be uploaded. Ask the person to add the file to the task.";
+const ASK_ONCE = "Bud asks before this step, once, with the details shown on the page.";
 
 // ── page and URL helpers (shared with the broker) ────────────────────────
 export const browserLoginFields = (text: string): boolean => text.split("\n").some(line => /\b(input|textbox|password|editable)\b/i.test(line) && /password|passcode|\botp\b|one.time|verification code|\bmfa\b|\b2fa\b|security code|\bpin\b/i.test(line));
@@ -118,8 +126,35 @@ export function legacyBrowserGrant(input: { runId: string; allowedOrigins: reado
   });
 }
 
+// ── keys ─────────────────────────────────────────────────────────────────
+const KEY_NAMES: Record<string, string> = {
+  enter: "Enter", return: "Enter", tab: "Tab", escape: "Escape", esc: "Escape", space: "Space", backspace: "Backspace", delete: "Delete",
+  arrowup: "ArrowUp", arrowdown: "ArrowDown", arrowleft: "ArrowLeft", arrowright: "ArrowRight", home: "Home", end: "End", pageup: "PageUp", pagedown: "PageDown",
+};
+const MODIFIERS: Record<string, string> = { ctrl: "Ctrl", control: "Ctrl", alt: "Alt", option: "Alt", shift: "Shift", meta: "Meta", cmd: "Meta", command: "Meta" };
+const NAVIGATION_KEYS = new Set(["Tab", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"]);
+const named = (table: Record<string, string>, name: string): string | undefined => Object.hasOwn(table, name.toLowerCase()) ? table[name.toLowerCase()] : undefined;
+export interface BrowserKey { spec: string; key: string; modifiers: string[] }
+/** One key with optional modifiers, in the helper's spelling. Anything else is refused. */
+export function browserKey(value: unknown): BrowserKey | null {
+  if (typeof value !== "string" || value.length > 40 || /[\u0000-\u001f\u007f]/.test(value)) return null;
+  const parts = value.split("+").map(part => part.trim());
+  const base = parts.pop() ?? "";
+  const modifiers = parts.map(part => named(MODIFIERS, part));
+  if (modifiers.some(modifier => !modifier) || new Set(modifiers).size !== modifiers.length) return null;
+  const key = named(KEY_NAMES, base) ?? (/^[A-Za-z0-9.,;'`=/\\[\]]$/.test(base) ? base : null);
+  if (!key) return null;
+  const ordered = ["Ctrl", "Alt", "Shift", "Meta"].filter(modifier => modifiers.includes(modifier));
+  return { spec: [...ordered, key].join("+"), key, modifiers: ordered };
+}
+/** Option values for a dropdown: data from the model, checked for shape only. */
+export function browserChoices(value: unknown): string[] | null {
+  return Array.isArray(value) && value.length >= 1 && value.length <= 20 &&
+    value.every(item => typeof item === "string" && item.length <= 200 && !/[\u0000-\u001f\u007f]/.test(item)) ? [...value as string[]] : null;
+}
+
 // ── classification ───────────────────────────────────────────────────────
-export type BrowserStep = "list" | "borrow" | "read" | "navigate" | "fill" | "click" | "release";
+export type BrowserStep = "list" | "borrow" | "read" | "navigate" | "fill" | "click" | "press" | "select" | "download" | "upload" | "release";
 export type BrowserClassification =
   | { class: "routine"; step: BrowserStep; action: BrowserActionClass; label?: string }
   | { class: "consequential"; step: BrowserStep; kind: BrowserConsequentialKind; label?: string; reason: string }
@@ -130,8 +165,13 @@ export interface BrowserObservation { url: string; text?: string }
 type Args = Record<string, unknown>;
 
 const STEPS: Record<string, BrowserStep> = {
-  tabs: "list", borrow: "borrow", read: "read", navigate: "navigate", fill: "fill", click_semantic: "click", release: "release",
+  tabs: "list", borrow: "borrow", read: "read", navigate: "navigate", fill: "fill", click_semantic: "click",
+  press: "press", select: "select", download: "download", upload: "upload", release: "release",
 };
+/** The grant's action class each newer tool needs before its effect is weighed. */
+const TOOL_ACTIONS: Partial<Record<BrowserStep, BrowserActionClass>> = { press: "keys", select: "fill", download: "download", upload: "upload" };
+/** Steps whose consequential instance can be approved once, bound to the page's facts. */
+const APPROVABLE: ReadonlySet<BrowserStep> = new Set(["click", "press", "select"]);
 export function browserStep(tool: string): BrowserStep | null {
   const name = tool.trim().toLowerCase().replace(/^mcp__[^_]+__/, "").replace(/^browser_/, "");
   return Object.hasOwn(STEPS, name) ? STEPS[name] : null;
@@ -169,23 +209,96 @@ export function classifyBrowserAction(grant: BrowserTaskGrant, observation: Brow
     if (financial) return { class: "consequential", step, kind: "pay", label, reason: FINANCIAL_FILL };
     return { class: "routine", step, action: "fill", label };
   }
-  const reason = "Bud asks before this step, once, with the details shown on the page.";
-  if (kind) return { class: "consequential", step, kind, label, reason };
+  const control: Control = { step, label, text, financial, kind };
+  if (step === "press") {
+    const key = browserKey(args.key);
+    return key ? pressKey(control, key) : { class: "out-of-scope", step, reason: KEY_SPEC };
+  }
+  if (step === "select") {
+    const values = browserChoices(args.values);
+    return values ? choose(control, values) : { class: "out-of-scope", step, reason: CHOICES };
+  }
+  if (step === "download") return download(control);
+  if (step === "upload") {
+    const granted = typeof args.file === "string" && grant.uploads.some(file => file.name === args.file);
+    if (!granted) return { class: "out-of-scope", step, reason: UPLOAD_NOT_GRANTED };
+    // The upload itself submits nothing, but the person should see the form it joins.
+    if (kind || financial || pageConsequentialKind(text)) return { class: "unknown", step, label, reason: "This page can pay, sign, send or change an account. Uploading does not submit it; check the form before approving." };
+    return { class: "routine", step, action: "upload", label };
+  }
+  return pressControl(control);
+}
+
+type Control = { step: BrowserStep; label: string; text: string; financial: boolean; kind: BrowserConsequentialKind | null };
+const roleOf = (label: string) => label.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
+/** A control being pressed: a click, or Enter or Space on a button or link. */
+function pressControl({ step, label, text, financial, kind }: Control): BrowserClassification {
+  if (kind) return { class: "consequential", step, kind, label, reason: ASK_ONCE };
   const affirmative = SUBMIT_CONTROL.test(label) || AFFIRMATIVE.test(label);
   if (financial) {
     // On a bank page, a confirming step may move money; reading stays routine.
-    if (affirmative) return { class: "consequential", step, kind: "pay", label, reason };
+    if (affirmative) return { class: "consequential", step, kind: "pay", label, reason: ASK_ONCE };
     if (READ_AFFORDANCE.test(label)) return { class: "routine", step, action: "click", label };
     return { class: "unknown", step, label, reason: "Bud could not tell what this control does on a financial page." };
   }
   const pageKind = affirmative ? pageConsequentialKind(text) : null;
-  if (pageKind) return { class: "consequential", step, kind: pageKind, label, reason };
+  if (pageKind) return { class: "consequential", step, kind: pageKind, label, reason: ASK_ONCE };
   if (SUBMIT_CONTROL.test(label)) return { class: "routine", step, action: "submit", label };
   return { class: "routine", step, action: "click", label };
 }
+/** A form submitted without its button (Enter in a field, a save shortcut): exactly like its submit. */
+function submitForm({ step, label, text, financial, kind }: Control): BrowserClassification {
+  const pageKind = kind ?? (financial ? "pay" : pageConsequentialKind(text));
+  if (pageKind) return { class: "consequential", step, kind: pageKind, label, reason: ASK_ONCE };
+  return { class: "routine", step, action: "submit", label };
+}
+/** A dropdown or choice change. A change can submit its form, so a form with
+ * consequential signals is treated like its submit; a bank page asks. */
+function choose({ step, label, text, financial, kind }: Control, values: string[]): BrowserClassification {
+  const effect = kind ?? consequentialKind(values.join(" ")) ?? pageConsequentialKind(text);
+  if (effect) return { class: "consequential", step, kind: effect, label, reason: ASK_ONCE };
+  if (financial) return { class: "unknown", step, label, reason: "Bud could not tell whether this choice submits a form on a financial page." };
+  return { class: "routine", step, action: "fill", label };
+}
+function pressKey(control: Control, key: BrowserKey): BrowserClassification {
+  const { step, label } = control;
+  const role = roleOf(label); const text = TEXT_ROLE.test(role); const choice = CHOICE_ROLE.test(role);
+  const command = key.modifiers.includes("Ctrl") || key.modifiers.includes("Meta");
+  const shortcut = command || key.modifiers.includes("Alt");
+  if (command && /^[vx]$/i.test(key.key)) return { class: "out-of-scope", step, reason: "Pasting and cutting stay with the person. Use browser_fill with a reviewed value." };
+  if (key.key === "Enter" || (command && /^s$/i.test(key.key))) {
+    if (key.key === "Enter" && !text && !choice) return pressControl(control);
+    // Searching reads; any other Enter in a field submits the form it belongs to.
+    const search = key.key === "Enter" && !command && (role === "searchbox" || /\bsearch\b/i.test(label));
+    if (search && !control.kind && !control.financial && !pageConsequentialKind(control.text)) return { class: "routine", step, action: "keys", label };
+    return submitForm(control);
+  }
+  if (key.key === "Space" && !text && !shortcut) return choice ? choose(control, []) : pressControl(control);
+  if (shortcut) return { class: "unknown", step, label, reason: "Bud could not tell what this shortcut does on the page." };
+  if (NAVIGATION_KEYS.has(key.key)) {
+    if (choice && key.key !== "Tab" && key.key !== "Escape") return choose(control, []);
+    return { class: "routine", step, action: "keys", label };
+  }
+  // A character, Space, Backspace or Delete.
+  if (text) {
+    if (control.kind || control.financial) return { class: "out-of-scope", step, reason: control.kind ? CREDENTIAL : FINANCIAL_FILL };
+    return { class: "routine", step, action: "fill", label };
+  }
+  if (choice) return choose(control, []);
+  if (key.key === "Delete" || key.key === "Backspace") return { class: "consequential", step, kind: "delete", label, reason: ASK_ONCE };
+  return { class: "unknown", step, label, reason: "Bud could not tell what this key does outside a text field." };
+}
+/** Downloading is reading, unless the control would also act. */
+function download({ step, label, text, financial, kind }: Control): BrowserClassification {
+  const affirmative = SUBMIT_CONTROL.test(label) || AFFIRMATIVE.test(label);
+  const effect = kind ?? (affirmative ? (financial ? "pay" : pageConsequentialKind(text)) : null);
+  if (!effect) return { class: "routine", step, action: "download", label };
+  if (DOWNLOAD_AFFORDANCE.test(label)) return { class: "unknown", step, label, reason: "Bud could not tell whether this control only downloads a file." };
+  return { class: "consequential", step, kind: effect, label, reason: "This control may do more than download a file. Use the reviewed click step, which asks the person once." };
+}
 
 // ── verified facts ───────────────────────────────────────────────────────
-export type BrowserFactName = "recipient" | "amount" | "currency" | "reference" | "document" | "documentHash" | "to" | "subject" | "bodyHash" | "target";
+export type BrowserFactName = "recipient" | "amount" | "currency" | "reference" | "document" | "documentHash" | "to" | "subject" | "bodyHash" | "bodyExcerpt" | "target";
 export interface BrowserApprovalFact { name: BrowserFactName; value: string | null; confirmed: boolean }
 export interface BrowserApprovalDraft {
   kind: BrowserConsequentialKind;
@@ -198,6 +311,9 @@ export interface BrowserApprovalDraft {
   observationHash: string;
   /** Binds the approval to the kind, site, control and confirmed facts. */
   fingerprint: string;
+  /** Kind, site and confirmed facts only: an unknown outcome blocks the same
+   * effect through any control, key or dropdown, not just the one pressed. */
+  effect: string;
   expiresAt: number;
   summary: string;
 }
@@ -262,7 +378,10 @@ function messageFacts(pairs: Pair[]): BrowserApprovalFact[] {
   const to = pick(pairs, /^(to|recipients?|send to|email to)$/i);
   const subject = pick(pairs, /^subject$/i);
   const body = pick(pairs, /^(message|body|email body|reply|text)$/i);
-  return [fact("to", to.value), ...(subject.present ? [fact("subject", subject.value)] : []), fact("bodyHash", body.value === null ? null : sha256(body.value))];
+  // The hash binds the whole message; the excerpt only shows the person what is sent:
+  // redacted before it is shortened, so a secret across the cut is never half shown.
+  const excerpt: BrowserApprovalFact[] = body.value === null ? [] : [{ name: "bodyExcerpt", value: redactSecretsInText(body.value).slice(0, 200), confirmed: true }];
+  return [fact("to", to.value), ...(subject.present ? [fact("subject", subject.value)] : []), fact("bodyHash", body.value === null ? null : sha256(body.value)), ...excerpt];
 }
 function targetFacts(text: string, label: string, kind: BrowserConsequentialKind): BrowserApprovalFact[] {
   const asked = [...new Set([...text.matchAll(/are you sure you want to ([^?\n"]{3,200})\?/gi)].map(match => match[1].trim()))];
@@ -272,12 +391,13 @@ function targetFacts(text: string, label: string, kind: BrowserConsequentialKind
   return [fact("target", target)];
 }
 const NOUNS: Record<BrowserConsequentialKind, string> = { pay: "payment", sign: "signature", send: "message", notice: "notice", delete: "deletion", "account-change": "account change" };
-const FACT_WORDS: Record<BrowserFactName, string> = { recipient: "payee", amount: "amount", currency: "currency", reference: "reference", document: "document title", documentHash: "document", to: "recipient", subject: "subject", bodyHash: "message text", target: "item it changes" };
+const FACT_WORDS: Record<BrowserFactName, string> = { recipient: "payee", amount: "amount", currency: "currency", reference: "reference", document: "document title", documentHash: "document", to: "recipient", subject: "subject", bodyHash: "message text", bodyExcerpt: "message text", target: "item it changes" };
 function controlName(label: string): string {
   return label.match(/"([^"]{1,120})"/)?.[1] ?? label.slice(0, 120);
 }
 
-export function browserApprovalDraft(kind: BrowserConsequentialKind, observation: BrowserObservation, ref: string, label: string, now = Date.now()): BrowserApprovalDraft {
+/** `via` names a key or dropdown choice; without it the control is pressed. */
+export function browserApprovalDraft(kind: BrowserConsequentialKind, observation: BrowserObservation, ref: string, label: string, now = Date.now(), via?: string): BrowserApprovalDraft {
   const text = observation.text ?? "";
   const pairs = observedPairs(text);
   const facts = kind === "pay" ? paymentFacts(text, pairs)
@@ -303,10 +423,17 @@ export function browserApprovalDraft(kind: BrowserConsequentialKind, observation
     facts,
     unconfirmed: facts.filter(item => !item.confirmed).map(item => item.name),
     observationHash: sha256(text),
-    fingerprint: sha256(JSON.stringify([kind, url.origin, control, confirmed])),
+    fingerprint: sha256(JSON.stringify(via ? [kind, url.origin, control, confirmed, via] : [kind, url.origin, control, confirmed])),
+    effect: sha256(JSON.stringify([kind, url.origin, confirmed])),
     expiresAt: now + BROWSER_APPROVAL_TTL_MS,
-    summary: `${what} by pressing '${control}' on ${host}. This approval is for this one ${NOUNS[kind]} and expires in 2 minutes.`,
+    summary: `${what} by ${via ?? `pressing '${control}'`} on ${host}. This approval is for this one ${NOUNS[kind]} and expires in 2 minutes.`,
   };
+}
+const shownChoices = (values: unknown) => (browserChoices(values) ?? []).map(value => `'${redactSecretsInText(value).slice(0, 60)}'`).join(", ");
+function approvalVia(step: BrowserStep, args: Args, label: string): string | undefined {
+  if (step === "press") return `pressing ${browserKey(args.key)?.spec ?? "a key"} in '${controlName(label)}'`;
+  if (step === "select") return `choosing ${shownChoices(args.values) || "an option"} in '${controlName(label)}', which may submit the form`;
+  return undefined;
 }
 
 // ── authorisation ────────────────────────────────────────────────────────
@@ -345,26 +472,35 @@ export function authorizeBrowserAction(grant: BrowserTaskGrant, observation: Bro
   const site = siteFor(grant, url);
   const host = hostOf(url);
   const label = "label" in classification && classification.label ? controlName(classification.label) : "";
+  // A newer tool needs its own class first: Enter is never a way round a missing keys grant.
+  const toolAction = classification.step ? TOOL_ACTIONS[classification.step] : undefined;
+  if (toolAction && !grant.actions.includes(toolAction)) return deny(missingAction(toolAction));
   if (classification.class === "consequential") {
-    // Only a click on an observed control can be bound to the page's facts.
-    if (classification.step !== "click") return deny(classification.reason);
-    if (!grant.actions.includes("click")) return deny(missingAction("click"));
-    const draft = browserApprovalDraft(classification.kind, observation!, String(args.ref), classification.label!, now);
+    // Only an observed control (pressed, keyed or chosen) can be bound to the page's facts.
+    if (!APPROVABLE.has(classification.step)) return deny(classification.reason);
+    if (!toolAction && !grant.actions.includes("click")) return deny(missingAction("click"));
+    const draft = browserApprovalDraft(classification.kind, observation!, String(args.ref), classification.label!, now, approvalVia(classification.step, args, classification.label!));
     if (draft.unconfirmed.length) {
       const missing = [...new Set(draft.unconfirmed.map(name => FACT_WORDS[name]))].join(", ");
       return deny(`Bud could not confirm the ${missing} on this page, so this ${NOUNS[classification.kind]} cannot be approved. It stays with the person.`, draft);
     }
     return { decision: "ask", classification, once: true, summary: draft.summary, draft, fence: { surface: "portal-submit", origin: site, ruleOffer: null } };
   }
+  const key = classification.step === "press" ? browserKey(args.key)!.spec : "";
   if (classification.class === "unknown") {
-    if (!grant.actions.includes("click")) return deny(missingAction("click"));
-    return { decision: "ask", classification, once: true, draft: null, fence: { surface: "portal-read", origin: site, ruleOffer: null },
-      summary: `Use ${label} on ${host}. ${classification.reason} This approval applies once.` };
+    if (!toolAction && !grant.actions.includes("click")) return deny(missingAction("click"));
+    const what = classification.step === "press" ? `Press ${key} in ${label} on ${host}.`
+      : classification.step === "select" ? `Choose ${shownChoices(args.values)} in ${label} on ${host}.`
+        : classification.step === "download" ? `Download the file from ${label} on ${host}.`
+          : classification.step === "upload" ? `Upload the task's file '${String(args.file)}' into ${label} on ${host}.` : `Use ${label} on ${host}.`;
+    return { decision: "ask", classification, once: true, draft: null, fence: { surface: classification.step === "upload" ? "portal-prefill" : "portal-read", origin: site, ruleOffer: null },
+      summary: `${what} ${classification.reason} This approval applies once.` };
   }
   const { action, step } = classification;
   if (!grant.actions.includes(action)) return deny(missingAction(action));
-  const surface: PortalRuleSurface | "portal-submit" = action === "fill" ? "portal-prefill" : action === "submit" ? "portal-submit" : "portal-read";
-  const rulable = step === "borrow" || step === "read" || step === "navigate" || step === "fill";
+  const surface: PortalRuleSurface | "portal-submit" = action === "fill" || action === "upload" ? "portal-prefill" : action === "submit" ? "portal-submit" : "portal-read";
+  // Downloading is reading; keys, dropdowns and uploads always ask.
+  const rulable = step === "borrow" || step === "read" || step === "navigate" || step === "fill" || step === "download";
   if (rulable && surface !== "portal-submit" && ruleAllows(options.rules, surface, site, url)) {
     return { decision: "allow", classification, fence: { surface, origin: site, ruleOffer: null }, note: `allowed by rule · ${portalRuleLabel(surface, site)}` };
   }
@@ -373,7 +509,11 @@ export function authorizeBrowserAction(grant: BrowserTaskGrant, observation: Bro
     : step === "read" ? `Read the current page on ${url.hostname} for this job.`
       : step === "navigate" ? `Open ${target!.hostname}${target!.pathname} in this job's borrowed tab.`
         : step === "fill" ? `Prepare the field ${classification.label} on ${url.hostname}.`
-          : action === "submit" ? submitPressSummary(label, site) : `Use ${classification.label} on ${url.hostname}.`;
+          : step === "press" ? (action === "submit" ? `Bud wants to press ${key} in '${label}' on ${site}. Check the form in the browser first.` : `Press ${key} in ${classification.label} on ${url.hostname}.`)
+            : step === "select" ? `Choose ${shownChoices(args.values)} in ${classification.label} on ${url.hostname}.`
+              : step === "download" ? `Download the file from ${classification.label} on ${url.hostname} into this task's private folder.`
+                : step === "upload" ? `Upload the task's file '${String(args.file)}' into ${classification.label} on ${url.hostname}.`
+                  : action === "submit" ? submitPressSummary(label, site) : `Use ${classification.label} on ${url.hostname}.`;
   return {
     decision: "ask", classification, once: false, draft: null, summary,
     fence: { surface, origin: site, ruleOffer: rulable && surface !== "portal-submit" ? { surface, origin: site, label: portalRuleLabel(surface, site) } : null },
@@ -381,7 +521,8 @@ export function authorizeBrowserAction(grant: BrowserTaskGrant, observation: Bro
 }
 
 // ── persisted approval records ───────────────────────────────────────────
-export type BrowserApprovalDecision = "pending" | "approved" | "denied" | "expired" | "changed" | "unconfirmed";
+/** `stopped`: browser work was stopped while the card was still open and unexpired, which is not a refusal. */
+export type BrowserApprovalDecision = "pending" | "approved" | "denied" | "expired" | "changed" | "unconfirmed" | "stopped";
 export type BrowserApprovalOutcome = "not-dispatched" | "dispatching" | "succeeded" | "unknown";
 export interface BrowserApprovalRecord extends BrowserApprovalDraft {
   version: 1;
@@ -395,7 +536,7 @@ export interface BrowserApprovalRecord extends BrowserApprovalDraft {
   decision: BrowserApprovalDecision;
   outcome: BrowserApprovalOutcome;
 }
-const DECISIONS: readonly BrowserApprovalDecision[] = ["pending", "approved", "denied", "expired", "changed", "unconfirmed"];
+const DECISIONS: readonly BrowserApprovalDecision[] = ["pending", "approved", "denied", "expired", "changed", "unconfirmed", "stopped"];
 const OUTCOMES: readonly BrowserApprovalOutcome[] = ["not-dispatched", "dispatching", "succeeded", "unknown"];
 const MAX_RECORDS = 500;
 const MAX_BYTES = 4_000_000;
@@ -408,6 +549,8 @@ function validRecord(value: unknown): value is BrowserApprovalRecord {
   const row = value as Record<string, unknown>;
   return row.version === 1 && row.purpose === "browser-approval" && typeof row.id === "string" && /^[0-9a-f-]{36}$/.test(row.id) &&
     typeof row.fingerprint === "string" && /^[0-9a-f]{64}$/.test(row.fingerprint) && typeof row.origin === "string" &&
+    // Records saved before the effect hash existed still match by fingerprint.
+    (row.effect === undefined || typeof row.effect === "string" && /^[0-9a-f]{64}$/.test(row.effect)) &&
     typeof row.createdAt === "number" && typeof row.expiresAt === "number" && Array.isArray(row.facts) &&
     DECISIONS.includes(row.decision as BrowserApprovalDecision) && OUTCOMES.includes(row.outcome as BrowserApprovalOutcome);
 }
@@ -464,10 +607,11 @@ export class BrowserApprovalStore {
       return structuredClone(record);
     });
   }
-  /** An earlier approval of the same action whose result was never confirmed. */
-  unresolved(fingerprint: string, now = Date.now()): Promise<BrowserApprovalRecord | undefined> {
+  /** An earlier approval of the same action, or of the same effect through
+   * another control or key, whose result was never confirmed. */
+  unresolved(fingerprint: string, now = Date.now(), effect?: string): Promise<BrowserApprovalRecord | undefined> {
     return this.exclusive(async () => {
-      const row = (await this.load()).find(item => item.fingerprint === fingerprint &&
+      const row = (await this.load()).find(item => (item.fingerprint === fingerprint || (effect !== undefined && item.effect === effect)) &&
         (item.outcome === "dispatching" || item.outcome === "unknown") && now - item.createdAt < UNRESOLVED_HOLD_MS);
       return row ? structuredClone(row) : undefined;
     });

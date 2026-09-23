@@ -1,16 +1,27 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
+import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { BrowserRuntime, type BrowserJson } from "./browser-runtime.ts";
+import { addBrowserTaskUpload, browserTaskWorkroom, BrowserRuntime, type BrowserJson } from "./browser-runtime.ts";
 import { startBrowserBroker, jobBrowserUrl, observationRefs, browserLoginFields, onBrowserDecision, type BrowserBroker, type BrowserDecisionEvent } from "./browser-broker.ts";
 import { BrowserApprovalStore } from "./browser-authority.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import type { BrowserCheckpoint } from "../shared/browser.ts";
+import { parseBrowserTaskGrant, type BrowserActionClass } from "../shared/browser-task.ts";
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
-async function fixture(checkpoint?: BrowserCheckpoint, job: { capabilities?: Array<"portal-read" | "portal-prefill" | "portal-submit">; rules?: Array<{ key: string; decision: "allow" | "deny" }> } = {}) {
+const sha256 = (bytes: Buffer | string) => createHash("sha256").update(bytes).digest("hex");
+type Task = { actions: BrowserActionClass[]; files?: Array<{ name: string; bytes: Buffer }>; extraUploads?: Array<{ name: string; sha256: string }> };
+async function fixture(checkpoint?: BrowserCheckpoint, job: { capabilities?: Array<"portal-read" | "portal-prefill" | "portal-submit">; rules?: Array<{ key: string; decision: "allow" | "deny" }>; task?: Task } = {}) {
   const root = privateTempRoot(join(tmpdir(), "rb-browser-broker-")); cleanup.push(() => removeFixture(root));
+  const workroom = browserTaskWorkroom(root, "grant-fictional-1");
+  const uploads = [...await Promise.all((job.task?.files ?? []).map(file => addBrowserTaskUpload(workroom, file.name, file.bytes))), ...(job.task?.extraUploads ?? [])];
+  const grant = job.task ? parseBrowserTaskGrant({ version: 1, purpose: "browser-task-grant", id: "grant-fictional-1", runId: "run-1", route: "ask",
+    request: { text: "Fictional task", sha256: sha256("Fictional task") }, sites: ["portal.example"], browser: { id: null, accountMarker: null },
+    actions: job.task.actions, consequential: "ask-each", uploads, expiresAt: null, budget: null }) : undefined;
+  let downloadBytes: Buffer = Buffer.from("%PDF-1.7\nFictional statement\n"); const uploaded: Buffer[] = [];
   let session = false; let page = '@e1 button "Show details"\n@e2 textbox "Reference"\n@e3 button "Transfer money"';
   let url = "https://portal.example/work"; let unknown = false; let scope = "user";
   const calls: string[][] = [];
@@ -23,6 +34,9 @@ async function fixture(checkpoint?: BrowserCheckpoint, job: { capabilities?: Arr
     if (args[0] === "observe") return { text: page, tab_id: 1, ref_count: 3, truncated: false };
     if (unknown) throw new Error("Lost reply");
     if (args[0] === "tab" && args[1] === "borrow") scope = "agent";
+    // The helper writes the capture itself, to the path RealBud chose.
+    if (args[0] === "download") { await writeFile(args[args.indexOf("--out") + 1], downloadBytes); return { ok: true, suggested_filename: "Fictional statement.pdf" }; }
+    if (args[0] === "upload") uploaded.push(await readFile(args[args.indexOf("--file") + 1]));
     return { ok: true };
   };
   const runtime = new BrowserRuntime({ root, command, executable: async () => "/fixture/bsk", startDaemon: async () => {} });
@@ -32,7 +46,7 @@ async function fixture(checkpoint?: BrowserCheckpoint, job: { capabilities?: Arr
   let clock = 1_000_000;
   const approve = vi.fn(async (..._args: unknown[]) => true);
   const start = async () => {
-    const started = await startBrowserBroker({ runtime, operations, approvals, checkpoint, threadId: "thread-1", runId: "run-1", now: () => clock,
+    const started = await startBrowserBroker({ runtime, operations, approvals, checkpoint, threadId: "thread-1", runId: "run-1", now: () => clock, ...(grant ? { grant } : {}),
       context: { allowedOrigins: ["portal.example"], capabilities: job.capabilities ?? ["portal-read", "portal-prefill"], ...(job.rules ? { rules: job.rules } : {}) },
       isActive: () => true, approve, assertCapability: () => {} });
     cleanup.push(async () => { started.close(); await started.released(); });
@@ -40,13 +54,16 @@ async function fixture(checkpoint?: BrowserCheckpoint, job: { capabilities?: Arr
   };
   const broker = await start();
   let next = 0;
-  const request = async (name: string, args: BrowserJson = {}, requestId: number = ++next, target: BrowserBroker = broker) => {
-    const response = await fetch(target.descriptor.url, { method: "POST", headers: { "content-type": "application/json", authorization: target.descriptor.headers[0].value }, body: JSON.stringify({ jsonrpc: "2.0", id: requestId, method: "tools/call", params: { name, arguments: args } }) });
-    if (response.status !== 200) return { isError: true, content: [{ text: `HTTP ${response.status}` }] };
-    return (await response.json() as { result: { isError?: boolean; content: Array<{ text: string }> } }).result;
+  const rpc = async (method: string, params: BrowserJson, requestId: number, target: BrowserBroker) => {
+    const response = await fetch(target.descriptor.url, { method: "POST", headers: { "content-type": "application/json", authorization: target.descriptor.headers[0].value }, body: JSON.stringify({ jsonrpc: "2.0", id: requestId, method, params }) });
+    return response.status === 200 ? (await response.json() as { result: unknown }).result : { isError: true, content: [{ text: `HTTP ${response.status}` }] };
   };
+  const request = async (name: string, args: BrowserJson = {}, requestId: number = ++next, target: BrowserBroker = broker) =>
+    await rpc("tools/call", { name, arguments: args }, requestId, target) as { isError?: boolean; content: Array<{ text: string }> };
+  const listTools = async () => (await rpc("tools/list", {}, ++next, broker) as { tools: Array<{ name: string; inputSchema: { properties: Record<string, { enum?: string[] }> } }> }).tools;
   const ready = async () => { await request("browser_borrow", { tab_id: 1 }); await request("browser_read", { tab_id: 1 }); };
-  return { request, ready, broker, approve, calls, operations, approvals, runtime, start, page: (text: string) => { page = text; }, url: (value: string) => { url = value; },
+  return { request, listTools, ready, broker, approve, calls, operations, approvals, runtime, start, workroom, uploaded, uploads, download: (bytes: Buffer) => { downloadBytes = bytes; },
+    page: (text: string) => { page = text; }, url: (value: string) => { url = value; },
     unknown: () => { unknown = true; }, known: () => { unknown = false; }, returnTab: () => { scope = "user"; }, advance: (ms: number) => { clock += ms; } };
 }
 describe("saved-job browser broker", () => {
@@ -151,6 +168,16 @@ describe("consequential browser steps need a once-only approval of the verified 
     expect((await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" })).isError).toBe(true);
     expect(clicks(f)).toBe(1);
   });
+  it("records a Stop while the card is open as stopped, not as the person's refusal", async () => {
+    const f = await fixture(); f.page(PAY_PAGE); await f.ready();
+    let answer: (value: boolean) => void = () => {};
+    f.approve.mockImplementationOnce(() => new Promise<boolean>(resolve => { answer = resolve; }));
+    const pending = f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" }).catch(() => undefined);
+    await vi.waitFor(async () => expect((await f.approvals.list()).map(row => row.decision)).toEqual(["pending"]));
+    f.broker.close(); answer(false); await pending; await f.broker.released();
+    await vi.waitFor(async () => expect(await f.approvals.list()).toMatchObject([{ decision: "stopped", outcome: "not-dispatched" }]));
+    expect(clicks(f)).toBe(0);
+  });
   it("records a refusal and presses nothing", async () => {
     const f = await fixture(); f.page(PAY_PAGE); await f.ready();
     f.approve.mockImplementationOnce(async () => false);
@@ -215,5 +242,126 @@ describe("consequential browser steps need a once-only approval of the verified 
     const f = await fixture(undefined, { capabilities: ["portal-read"] }); await f.ready();
     expect((await f.request("browser_fill", { tab_id: 1, ref: "@e2", value: "Fictional" })).isError).toBe(true);
     expect(f.calls.some(a => a[0] === "fill")).toBe(false);
+  });
+});
+
+const ALL: BrowserActionClass[] = ["read", "navigate", "fill", "click", "download", "upload", "keys", "submit"];
+const FORM_PAGE = '@e1 textbox "Property code"\n@e2 combobox "Sort by"\n@e3 link "Download report"\n@e4 button "Choose file"\n@e5 button "Show details"';
+const PAY_FORM = `${PAY_PAGE}\n@e3 textbox "Amount"`;
+describe("keys, dropdowns, downloads and uploads", () => {
+  const dispatched = (f: Awaited<ReturnType<typeof fixture>>, verb: string) => f.calls.filter(a => a[0] === verb);
+  const logged = (seen: BrowserDecisionEvent[]) => seen.filter(event => event.action).map(event => event.action!);
+  const watch = () => { const seen: BrowserDecisionEvent[] = []; const stop = onBrowserDecision(event => seen.push(event)); cleanup.push(async () => stop()); return seen; };
+
+  it("offers the newer tools only to an explicit grant with their action class, and lists only granted files", async () => {
+    const saved = await fixture(undefined, { capabilities: ["portal-read", "portal-prefill", "portal-submit"] });
+    expect((await saved.listTools()).map(tool => tool.name)).toEqual(["browser_tabs", "browser_borrow", "browser_read", "browser_navigate", "browser_fill", "browser_click_semantic", "browser_release"]);
+    await saved.ready(); saved.page(FORM_PAGE); await saved.request("browser_read", { tab_id: 1 });
+    expect((await saved.request("browser_select", { tab_id: 1, ref: "@e2", values: ["date"] })).content[0].text).toBe("This browser tool or its arguments are not available.");
+    const task = await fixture(undefined, { task: { actions: ["read", "keys", "upload"], files: [{ name: "fictional-lease.pdf", bytes: Buffer.from("fictional lease") }] } });
+    const tools = await task.listTools();
+    expect(tools.map(tool => tool.name)).toEqual(["browser_tabs", "browser_borrow", "browser_read", "browser_navigate", "browser_fill", "browser_click_semantic", "browser_press", "browser_upload", "browser_release"]);
+    expect(tools.find(tool => tool.name === "browser_upload")!.inputSchema.properties.file.enum).toEqual(["fictional-lease.pdf"]);
+  });
+
+  it("presses a key in an observed control after review and logs it", async () => {
+    const seen = watch();
+    const f = await fixture(undefined, { task: { actions: ["read", "keys"] } }); f.page(FORM_PAGE); await f.ready();
+    const result = await f.request("browser_press", { tab_id: 1, ref: "@e1", key: "shift+tab" });
+    expect(result.isError).not.toBe(true);
+    expect(dispatched(f, "press")).toEqual([["press", "Shift+Tab", "--ref", "@e1", "--session", "owned", "--tab-id", "1"]]);
+    expect(f.approve.mock.calls.at(-1)!.slice(0, 3)).toEqual(["browser_press", { url: "https://portal.example/work", label: 'textbox "Property code"', key: "Shift+Tab" }, 'Press Shift+Tab in textbox "Property code" on portal.example.']);
+    expect(logged(seen)).toEqual([{ grantId: "grant-fictional-1", tool: "browser_press", origin: "https://portal.example", path: "/work", label: 'textbox "Property code"', class: "routine", decision: "approved", outcome: "succeeded", key: "Shift+Tab" }]);
+    // Enter on a button presses it: without the click class, no key is a way round.
+    expect((await f.request("browser_read", { tab_id: 1 })).isError).not.toBe(true);
+    expect((await f.request("browser_press", { tab_id: 1, ref: "@e5", key: "Enter" })).content[0].text).toBe("This task does not include that browser step. Ask again with the step you need.");
+    expect(dispatched(f, "press")).toHaveLength(1);
+  });
+
+  it("chooses dropdown values and logs only their hash", async () => {
+    const seen = watch();
+    const f = await fixture(undefined, { task: { actions: ["read", "fill"] } }); f.page(FORM_PAGE); await f.ready();
+    expect((await f.request("browser_select", { tab_id: 1, ref: "@e2", values: ["-date", "name"] })).isError).not.toBe(true);
+    expect(dispatched(f, "select")).toEqual([["select", "--ref", "@e2", "--value=-date", "--value=name", "--session", "owned", "--tab-id", "1"]]);
+    expect(logged(seen)).toMatchObject([{ tool: "browser_select", outcome: "succeeded", valuesHash: sha256(JSON.stringify(["-date", "name"])) }]);
+    expect(JSON.stringify(seen)).not.toContain("name\"]");
+  });
+
+  it("downloads into the task's private folder at a path RealBud chose, with a receipt whose hash matches the bytes", async () => {
+    const seen = watch();
+    const f = await fixture(undefined, { task: { actions: ["read", "download"] } }); f.page(FORM_PAGE); await f.ready();
+    const bytes = Buffer.from("%PDF-1.7\nFictional statement for September\n"); f.download(bytes);
+    const result = await f.request("browser_download", { tab_id: 1, ref: "@e3" });
+    expect(result.isError).not.toBe(true);
+    const receipt = JSON.parse(result.content[0].text).downloaded;
+    expect(receipt).toEqual({ name: "Fictional statement.pdf", size: bytes.length, sha256: sha256(bytes), contentType: "application/pdf" });
+    const [command] = dispatched(f, "download"); const out = command[command.indexOf("--out") + 1];
+    expect(out.startsWith(join(f.workroom, "incoming"))).toBe(true);
+    const saved = join(f.workroom, "downloads", receipt.name);
+    expect(sha256(await readFile(saved))).toBe(receipt.sha256);
+    if (process.platform !== "win32") expect((await stat(saved)).mode & 0o777).toBe(0o600);
+    expect(await readdir(join(f.workroom, "incoming"))).toEqual([]);
+    expect(logged(seen)).toMatchObject([{ tool: "browser_download", outcome: "succeeded", download: receipt }]);
+    // A second download of the same name never replaces the first.
+    await f.request("browser_read", { tab_id: 1 });
+    expect(JSON.parse((await f.request("browser_download", { tab_id: 1, ref: "@e3" })).content[0].text).downloaded.name).toBe("Fictional statement (2).pdf");
+  });
+
+  it("uploads only a granted file, resolved and re-verified by RealBud", async () => {
+    const seen = watch(); const bytes = Buffer.from("fictional lease, version 1");
+    const f = await fixture(undefined, { task: { actions: ["read", "upload"], files: [{ name: "fictional-lease.pdf", bytes }], extraUploads: [{ name: "fictional-missing.pdf", sha256: sha256("gone") }] } });
+    f.page(FORM_PAGE); await f.ready();
+    const refused = await f.request("browser_upload", { tab_id: 1, ref: "@e4", file: "../../fictional-other.pdf" });
+    expect(refused.content[0].text).toBe("Only files given to this task can be uploaded. Ask the person to add the file to the task.");
+    const asked = f.approve.mock.calls.length;
+    expect((await f.request("browser_upload", { tab_id: 1, ref: "@e4", file: "fictional-missing.pdf" })).content[0].text).toMatch(/missing or has changed\. Nothing was uploaded/);
+    expect(f.approve.mock.calls.length).toBe(asked);
+    expect(dispatched(f, "upload")).toHaveLength(0);
+    expect((await f.request("browser_upload", { tab_id: 1, ref: "@e4", file: "fictional-lease.pdf" })).isError).not.toBe(true);
+    const [command] = dispatched(f, "upload");
+    expect(command[command.indexOf("--file") + 1]).toBe(join(f.workroom, "uploads", "fictional-lease.pdf"));
+    expect(f.uploaded).toEqual([bytes]);
+    expect(logged(seen)).toMatchObject([{ tool: "browser_upload", outcome: "succeeded", upload: { fileIdHash: sha256("fictional-lease.pdf"), sha256: sha256(bytes) } }]);
+    // A granted file changed on disk is not the file the person gave.
+    await writeFile(join(f.workroom, "uploads", "fictional-lease.pdf"), "fictional lease, version 2");
+    await f.request("browser_read", { tab_id: 1 });
+    expect((await f.request("browser_upload", { tab_id: 1, ref: "@e4", file: "fictional-lease.pdf" })).content[0].text).toMatch(/missing or has changed/);
+    expect(dispatched(f, "upload")).toHaveLength(1);
+  });
+
+  it("asks once, with the payment's facts, before Enter submits a payment form", async () => {
+    const f = await fixture(undefined, { rules: [{ key: "portal:read:portal.example", decision: "allow" }, { key: "portal:prefill:portal.example", decision: "allow" }], task: { actions: ALL } });
+    f.page(PAY_FORM); await f.ready();
+    expect(f.approve).not.toHaveBeenCalled();
+    const result = await f.request("browser_press", { tab_id: 1, ref: "@e3", key: "Enter" });
+    expect(result.isError).not.toBe(true);
+    const [tool, , summary, , projection] = f.approve.mock.calls.at(-1)!;
+    expect(tool).toBe("browser_press");
+    expect(summary).toBe("Pay AUD 480.00 to Fictional Plumbing Pty Ltd (reference INV-FICTIONAL-7) by pressing Enter in 'Amount' on portal.example. This approval is for this one payment and expires in 2 minutes.");
+    expect(projection).toEqual({ fence: { surface: "portal-submit", origin: "portal.example", ruleOffer: null }, approvalPolicy: "once" });
+    expect(dispatched(f, "press")).toHaveLength(1);
+    expect(await f.approvals.list()).toMatchObject([{ decision: "approved", outcome: "succeeded", kind: "pay", control: { label: "Amount" } }]);
+  });
+
+  it("refuses when a routine key would now submit a payment after the page changed", async () => {
+    const f = await fixture(undefined, { task: { actions: ALL } }); f.page('@e1 textbox "Amount"'); await f.ready();
+    f.approve.mockImplementationOnce(async () => { f.page(PAY_FORM.replace("@e3", "@e1").replace('@e1 button "Pay now"', '@e9 button "Pay now"')); return true; });
+    const result = await f.request("browser_press", { tab_id: 1, ref: "@e1", key: "Enter" });
+    expect(result.isError).toBe(true); expect(result.content[0].text).toBe("The control changed while waiting for review. Read the page and prepare a new step.");
+    expect(dispatched(f, "press")).toHaveLength(0);
+  });
+
+  it("never replays a payment whose Enter had an unknown result, even through its Pay button", async () => {
+    const f = await fixture(undefined, { task: { actions: ALL } }); f.page(PAY_FORM); await f.ready(); f.unknown();
+    expect((await f.request("browser_press", { tab_id: 1, ref: "@e3", key: "Enter" })).isError).toBe(true);
+    expect(dispatched(f, "press")).toHaveLength(1);
+    expect(await f.approvals.list()).toMatchObject([{ decision: "approved", outcome: "unknown" }]);
+    await f.broker.released(); f.known();
+    const next = await f.start();
+    await f.request("browser_borrow", { tab_id: 1 }, 101, next); await f.request("browser_read", { tab_id: 1 }, 102, next);
+    const asked = f.approve.mock.calls.length;
+    const retry = await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" }, 103, next);
+    expect(retry.content[0].text).toMatch(/unknown result\. Check the site yourself/);
+    expect(f.approve.mock.calls.length).toBe(asked); expect(dispatched(f, "click")).toHaveLength(0);
   });
 });

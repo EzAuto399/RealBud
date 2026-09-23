@@ -1,9 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BrowserRuntime, browserStepFailure, type BrowserJson } from "./browser-runtime.ts";
+import { addBrowserTaskUpload, browserDownloadTarget, browserTaskWorkroom, BrowserRuntime, browserStepFailure, grantedUploadPath, saveBrowserDownload, sniffContentType, type BrowserJson } from "./browser-runtime.ts";
+import { windowsFilePrivacy } from "./windows-file-privacy.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
+
+// The real helper by default; one test watches the order of protection.
+vi.mock("./windows-file-privacy.ts", async importOriginal => {
+  const actual = await importOriginal<typeof import("./windows-file-privacy.ts")>();
+  return { ...actual, windowsFilePrivacy: vi.fn(actual.windowsFilePrivacy) };
+});
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(p => removeFixture(p))); });
@@ -107,5 +115,63 @@ describe("private browser connection", () => {
     expect((await new BrowserRuntime(f.options).status()).state).toBe("off");
     const saved = await readFile(join(f.root, "connection.json"), "utf8");
     expect(saved).not.toContain("cookie"); expect(saved).not.toContain("password");
+  });
+});
+
+describe("browser task files", () => {
+  const sha256 = (bytes: Buffer | string) => createHash("sha256").update(bytes).digest("hex");
+  const workroom = () => { const root = privateTempRoot(join(tmpdir(), "rb-browser-files-")); roots.push(root); return browserTaskWorkroom(root, "grant-fictional-1"); };
+  afterEach(() => { vi.mocked(windowsFilePrivacy).mockRestore(); });
+
+  it("protects a new download before writing its bytes, then removes the helper's copy", async () => {
+    const room = workroom(); const staged = await browserDownloadTarget(room);
+    const bytes = Buffer.from("%PDF-1.7\nFictional statement\n"); await writeFile(staged, bytes);
+    const seen: Array<[string, string, boolean | undefined, number | null]> = [];
+    vi.mocked(windowsFilePrivacy).mockImplementation(async (path, kind, restrict) => {
+      seen.push([path, kind, restrict, kind === "file" ? (await readFile(path)).length : null]);
+    });
+    const receipt = await saveBrowserDownload(room, staged, "../../Fictional statement.pdf");
+    expect(receipt).toEqual({ name: "Fictional statement.pdf", size: bytes.length, sha256: sha256(bytes), contentType: "application/pdf" });
+    const saved = join(room, "downloads", receipt.name);
+    // The new folder is restricted as it is created and verified before use; the file is restricted while still empty.
+    expect(seen.filter(([path]) => path === saved || path === join(room, "downloads")).map(([path, kind, restrict, size]) => [path === saved ? "file" : "folder", kind, restrict, size]))
+      .toEqual([["folder", "directory", true, null], ["folder", "directory", undefined, null], ["file", "file", true, 0]]);
+    expect(await readFile(saved)).toEqual(bytes);
+    if (process.platform !== "win32") expect((await stat(saved)).mode & 0o777).toBe(0o600);
+    expect(await readdir(join(room, "incoming"))).toEqual([]);
+  });
+
+  it("keeps nothing when the new file cannot be protected", async () => {
+    const room = workroom(); const staged = await browserDownloadTarget(room); await writeFile(staged, "fictional");
+    vi.mocked(windowsFilePrivacy).mockImplementation(async (_path, kind) => { if (kind === "file") throw new Error("ACL verification failed"); });
+    await expect(saveBrowserDownload(room, staged, "fictional.txt")).rejects.toThrow("ACL verification failed");
+    expect(await readdir(join(room, "downloads"))).toEqual([]);
+    expect(await readdir(join(room, "incoming"))).toEqual([]);
+  });
+
+  it("refuses a missing or linked capture and names files by their bytes, not the site's claim", async () => {
+    const room = workroom();
+    await expect(saveBrowserDownload(room, join(room, "incoming", "never-written.part"), "x.pdf")).rejects.toThrow("The browser did not deliver a file.");
+    const staged = await browserDownloadTarget(room); await writeFile(staged, "<!doctype html><p>Fictional sign-in page</p>");
+    expect(await saveBrowserDownload(room, staged, "CON.pdf")).toMatchObject({ name: "download.html", contentType: "text/html" });
+    expect(sniffContentType(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0]))).toBe("image/png");
+    expect(sniffContentType(Buffer.from([0xff, 0xfe, 0x00, 0x41]))).toBe("application/octet-stream");
+    expect(sniffContentType(Buffer.from("Date,Amount\n20 Sep,120.00\n"))).toBe("text/plain");
+  });
+
+  it("resolves a granted upload only while it is private and unchanged", async () => {
+    const room = workroom();
+    const granted = await addBrowserTaskUpload(room, "fictional-lease.pdf", Buffer.from("fictional lease"));
+    expect(granted).toEqual({ name: "fictional-lease.pdf", sha256: sha256("fictional lease") });
+    await expect(addBrowserTaskUpload(room, "fictional-lease.pdf", Buffer.from("other"))).rejects.toThrow(/already has a file with that name/);
+    await expect(addBrowserTaskUpload(room, "../escape.pdf", Buffer.from("x"))).rejects.toThrow(/plain file name/);
+    expect(await grantedUploadPath(room, granted)).toBe(join(room, "uploads", "fictional-lease.pdf"));
+    await expect(grantedUploadPath(room, { name: "fictional-lease.pdf", sha256: sha256("something else") })).rejects.toThrow(/missing or has changed/);
+    await expect(grantedUploadPath(room, { name: "../../connection.json", sha256: granted.sha256 })).rejects.toThrow(/missing or has changed/);
+    await writeFile(join(room, "uploads", "fictional-lease.pdf"), "fictional lease", { mode: 0o644 });
+    if (process.platform !== "win32") {
+      const { chmod } = await import("node:fs/promises"); await chmod(join(room, "uploads", "fictional-lease.pdf"), 0o644);
+      await expect(grantedUploadPath(room, granted)).rejects.toThrow(/missing or has changed/);
+    }
   });
 });

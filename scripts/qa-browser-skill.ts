@@ -7,16 +7,20 @@ import { join, resolve } from "node:path";
 import { createServer } from "node:net";
 import { once } from "node:events";
 import assert from "node:assert/strict";
-import { BrowserRuntime, browserExecutable } from "../server/browser-runtime.ts";
+import { createHash } from "node:crypto";
+import { addBrowserTaskUpload, BrowserRuntime, browserExecutable, browserTaskWorkroom } from "../server/browser-runtime.ts";
 import { startBrowserBroker } from "../server/browser-broker.ts";
+import { BrowserApprovalStore } from "../server/browser-authority.ts";
 import { ConnectedAppOperationStore } from "../server/connected-app-operations.ts";
+import { parseBrowserTaskGrant } from "../shared/browser-task.ts";
 
 const modulePath = process.env.PLAYWRIGHT_MODULE;
 const extension = process.env.BROWSER_SKILL_EXTENSION;
 if (!modulePath || !extension) throw new Error("Set PLAYWRIGHT_MODULE and BROWSER_SKILL_EXTENSION to the verified test runtimes.");
 const { chromium } = await import(modulePath);
 const temp = await mkdtemp(join(tmpdir(), "rb-real-browser-"));
-const output = resolve("outputs/browser-integration-2026-09-20"); await mkdir(output, { recursive: true });
+// A later run can keep earlier receipts: REALBUD_QA_OUTPUT names a new dated folder.
+const output = resolve(process.env.REALBUD_QA_OUTPUT ?? "outputs/browser-integration-2026-09-20"); await mkdir(output, { recursive: true });
 let daemon: ChildProcess | undefined; let context: any; let broker: Awaited<ReturnType<typeof startBrowserBroker>> | undefined;
 const root = join(temp, "private"); await mkdir(join(root, "bridge"), { recursive: true, mode: 0o700 });
 const listener = createServer(); listener.listen(0, "127.0.0.1"); await once(listener, "listening");
@@ -81,6 +85,66 @@ try {
   const sessions = (await runtime.command(["status"])).sessions as unknown[]; assert.equal(sessions.length, 0);
   await writeFile(join(output, "real-browser-receipt.json"), JSON.stringify({ at: new Date().toISOString(), cli: "0.3.0", extension: "0.3.0", scope: "Disposable browser; fictional locally served bank page", connected: true, explicitBorrow: true, read: true, paymentControlBlocked: true, readback: true, verifiedLogin: true, humanSelectedReturnedTab: true, changedAccountWithheld: true, sessionsReleased: true }, null, 2));
   console.log("Real BrowserSkill + extension: fictional bank read, transfer block, statement click/read-back and release passed.");
+
+  // ── Keys, dropdown, download capture and a granted upload (fictional pages, explicit task grant) ──
+  const sha = (bytes: Buffer | string) => createHash("sha256").update(bytes).digest("hex");
+  const report = "Date,Reference,Amount\n20 September,Sample rent,120.00\n";
+  await context.route("https://practice-forms.example/**", (route: any) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/fictional-report.csv") return route.fulfill({ contentType: "text/csv", headers: { "content-disposition": "attachment; filename=fictional-report.csv" }, body: report });
+    const bill = path === "/bills";
+    return route.fulfill({ contentType: "text/html", body: `<!doctype html><html lang="en"><meta charset="utf-8"><title>Fictional forms — RealBud test</title><style>body{font:18px system-ui;margin:50px}input,select{font:inherit;margin:10px}</style>
+<h1>${bill ? "Pay a bill" : "Fictional property forms"}</h1><p>Local test page. No real accounts or money.</p>${bill ? "<p>Payee: Fictional Plumbing Pty Ltd</p><p>Amount: AUD 480.00</p>" : ""}
+<form onsubmit="event.preventDefault();document.body.dataset.submits=String(Number(document.body.dataset.submits||0)+1)">
+<label>${bill ? "Amount" : "Property code"} <input aria-label="${bill ? "Amount" : "Property code"}"></label>
+${bill ? "" : `<label>Sort by <select aria-label="Sort by" onchange="document.body.dataset.sort=this.value"><option value="date">Date</option><option value="name">Name</option></select></label>
+<label>Lease file <input type="file" aria-label="Lease file" onchange="document.body.dataset.upload=this.files[0].name+':'+this.files[0].size"></label>`}</form>
+${bill ? "" : `<a href="/fictional-report.csv" download>Download report</a>`}</html>` });
+  });
+  await page.goto("https://practice-forms.example/forms"); await page.bringToFront();
+  const lease = Buffer.from("Fictional lease for a local RealBud test.\n");
+  const grantId = "grant-fictional-slice6";
+  const upload = await addBrowserTaskUpload(browserTaskWorkroom(root, grantId), "fictional-lease.txt", lease);
+  const grant = parseBrowserTaskGrant({ version: 1, purpose: "browser-task-grant", id: grantId, runId: "fictional-run-6", route: "ask",
+    request: { text: "Fictional slice 6 check", sha256: sha("Fictional slice 6 check") }, sites: ["practice-forms.example"], browser: { id: null, accountMarker: null },
+    actions: ["read", "navigate", "fill", "click", "download", "upload", "keys", "submit"], consequential: "ask-each", uploads: [upload], expiresAt: null, budget: 40 });
+  const asks: Array<{ tool: string; summary: string }> = [];
+  broker = await startBrowserBroker({ runtime, operations, approvals: new BrowserApprovalStore({ file: join(temp, "approvals.json") }), grant, runId: "fictional-run-6", threadId: "fictional-thread", context: { allowedOrigins: ["practice-forms.example"], capabilities: [] }, isActive: () => true,
+    // Routine steps are approved; the fictional payment is declined, so nothing may be submitted.
+    approve: async (tool: string, _params: unknown, summary: string) => { asks.push({ tool, summary }); return !summary.startsWith("Pay "); }, assertCapability: () => {} });
+  const formsTab = JSON.parse((await call("browser_tabs")).content[0].text).tabs[0].tab_id;
+  const borrowForms = call("browser_borrow", { tab_id: formsTab });
+  await page.getByRole("button", { name: /allow|允许/i }).first().click({ timeout: 15_000 });
+  assert(!(await borrowForms).isError, "forms tab borrowed");
+  let observed = "";
+  const refOf = async (text: string) => {
+    const read = await call("browser_read", { tab_id: formsTab }); assert(!read.isError, JSON.stringify(read));
+    observed = JSON.parse(read.content[0].text).text as string;
+    const ref = observed.split("\n").find(line => line.includes(text) && /@e\d+/.test(line))?.match(/@e\d+/)?.[0]; assert(ref, `${text} in ${observed}`); return ref;
+  };
+  const pressed = await call("browser_press", { tab_id: formsTab, ref: await refOf("Property code"), key: "Enter" }); assert(!pressed.isError, JSON.stringify(pressed));
+  assert.equal(await page.evaluate(() => document.body.dataset.submits), "1");
+  const chosen = await call("browser_select", { tab_id: formsTab, ref: await refOf("Sort by"), values: ["name"] }); assert(!chosen.isError, JSON.stringify(chosen));
+  assert.equal(await page.evaluate(() => document.body.dataset.sort), "name");
+  const uploaded = await call("browser_upload", { tab_id: formsTab, ref: await refOf("Lease file"), file: "fictional-lease.txt" }); assert(!uploaded.isError, JSON.stringify(uploaded));
+  assert.equal(await page.evaluate(() => document.body.dataset.upload), `fictional-lease.txt:${lease.length}`);
+  const refused = await call("browser_upload", { tab_id: formsTab, ref: await refOf("Lease file"), file: "not-granted.txt" }); assert.equal(refused.isError, true);
+  const downloaded = await call("browser_download", { tab_id: formsTab, ref: await refOf("Download report") }); assert(!downloaded.isError, JSON.stringify(downloaded));
+  const receipt = JSON.parse(downloaded.content[0].text).downloaded;
+  assert.equal(receipt.sha256, sha(report)); assert.equal(receipt.size, Buffer.byteLength(report));
+  const navigated = await call("browser_navigate", { tab_id: formsTab, url: "https://practice-forms.example/bills" }); assert(!navigated.isError, JSON.stringify(navigated));
+  const payEnter = await call("browser_press", { tab_id: formsTab, ref: await refOf("Amount"), key: "Enter" });
+  await writeFile(join(output, "fictional-bill-observation.txt"), observed);
+  assert.equal(payEnter.isError, true); assert.equal(await page.evaluate(() => document.body.dataset.submits), undefined);
+  const payAsk = asks.find(ask => ask.tool === "browser_press" && ask.summary.startsWith("Pay "));
+  broker.close(); await broker.released(); assert.equal((await runtime.status()).active, false);
+  await writeFile(join(output, "keys-files-receipt.json"), JSON.stringify({ at: new Date().toISOString(), cli: "0.3.0", extension: "0.3.0",
+    layer: "Bundled bsk 0.3.0 and BrowserSkill extension 0.3.0 in a disposable headless Chromium profile; fictional locally intercepted pages; explicit fictional task grant",
+    enterSubmittedOrdinaryForm: true, selectChangedValue: true, grantedUploadAttached: true, ungrantedUploadRefused: true,
+    download: { name: receipt.name, size: receipt.size, sha256MatchesServedBytes: true, contentType: receipt.contentType },
+    paymentEnter: { dispatched: false, outcome: payAsk ? "one-time approval asked and declined" : payEnter.content[0].text }, sessionsReleased: true,
+    limits: ["No real site, account, or personal browser profile", "Headless Chromium, not an installed person's browser", "Fact extraction from real observations is slice 4 scope; the payment step is only shown not to dispatch"] }, null, 2));
+  console.log("Real BrowserSkill + extension: Enter, dropdown, granted upload, download capture with hash, and payment Enter held passed.");
 } finally {
   broker?.close(); await broker?.released().catch(() => {}); await runtime.shutdown().catch(() => {});
   await context?.close(); if (daemon && daemon.exitCode === null) { daemon.kill(); await Promise.race([once(daemon, "exit"), new Promise(r => setTimeout(r, 3000))]); }

@@ -34,6 +34,8 @@ describe("browser approval card from the broker's record", () => {
       { name: "to", value: "owner@fictional.example", confirmed: true },
       { name: "subject", value: "Levy notice copy", confirmed: true },
       { name: "bodyHash", value: null, confirmed: true },
+      // A redacted, shortened excerpt so the person sees what is being sent.
+      { name: "bodyExcerpt", value: "Please find the levy attached.", confirmed: true },
     ]);
     expect(JSON.stringify(send)).not.toMatch(/[0-9a-f]{64}/);
   });

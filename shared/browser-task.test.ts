@@ -35,6 +35,10 @@ describe("browser task grant", () => {
     ["a bad request hash", { ...grant(), request: { text: "Fictional", sha256: "short" } }],
     ["an extra request key", { ...grant(), request: { text: "Fictional", sha256: "a".repeat(64), scope: "all" } }],
     ["an upload path", { ...grant(), uploads: [{ name: "../fictional.pdf", sha256: "b".repeat(64) }] }],
+    ["an upload name with a drive or stream separator", { ...grant(), uploads: [{ name: "fictional.pdf:hidden", sha256: "b".repeat(64) }] }],
+    ["an upload name that is only dots", { ...grant(), uploads: [{ name: "..", sha256: "b".repeat(64) }] }],
+    ["an upload name with a trailing dot", { ...grant(), uploads: [{ name: "fictional.pdf.", sha256: "b".repeat(64) }] }],
+    ["two uploads with one name", { ...grant(), uploads: [{ name: "Fictional.pdf", sha256: "b".repeat(64) }, { name: "fictional.pdf", sha256: "c".repeat(64) }] }],
     ["an unknown route", { ...grant(), route: "anywhere" }],
     ["a zero budget", { ...grant(), budget: 0 }],
   ])("rejects %s with a user-facing sentence", (_name, value) => {

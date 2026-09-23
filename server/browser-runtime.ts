@@ -1,11 +1,13 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { lstat, readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { lstat, open, readFile, unlink } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DATA_DIR } from "./config.ts";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { privateDirectory, readPrivateJson, writePrivateJson } from "./private-json.ts";
+import { windowsFilePrivacy } from "./windows-file-privacy.ts";
 import type { BrowserStatus, BrowserConnection } from "../shared/browser.ts";
+import { browserTaskUploadName, type BrowserTaskUpload } from "../shared/browser-task.ts";
 
 export const BROWSER_VERSION = "0.3.0";
 export const BROWSER_PORT = 52800;
@@ -254,3 +256,104 @@ export class BrowserRuntime {
   async shutdown(): Promise<void> { try { await this.stop(); } finally { this.daemon?.kill(); this.daemon = null; } }
 }
 export const browserRuntime = new BrowserRuntime();
+
+// ── task files ───────────────────────────────────────────────────────────
+// Downloads land in the task's private folder at a path RealBud chooses;
+// uploads come only from files the grant lists. The model never names a path.
+export const MAX_BROWSER_FILE_BYTES = 50 * 1024 * 1024;
+export interface BrowserDownloadReceipt { name: string; size: number; sha256: string; contentType: string }
+const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+const privateMode = (stat: { mode: number; uid: number }) => process.platform === "win32" || ((stat.mode & 0o077) === 0 && stat.uid === process.getuid?.());
+
+/** The task's private folder, derived from the grant id alone. */
+export function browserTaskWorkroom(root: string, grantId: string): string {
+  return join(root, "tasks", createHash("sha256").update(grantId).digest("hex").slice(0, 32));
+}
+
+/** A fresh path in a private folder for the helper to write one download to. */
+export async function browserDownloadTarget(workroom: string): Promise<string> {
+  await privateDirectory(workroom); await privateDirectory(join(workroom, "incoming"));
+  return join(workroom, "incoming", `${randomUUID()}.part`);
+}
+
+const SIGNATURES: ReadonlyArray<[string, number[]]> = [
+  ["application/pdf", [0x25, 0x50, 0x44, 0x46, 0x2d]], ["image/png", [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]],
+  ["image/jpeg", [0xff, 0xd8, 0xff]], ["image/gif", [0x47, 0x49, 0x46, 0x38]], ["application/zip", [0x50, 0x4b, 0x03, 0x04]], ["application/gzip", [0x1f, 0x8b]],
+];
+const EXTENSIONS: Record<string, string> = { "application/pdf": ".pdf", "image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp", "application/zip": ".zip", "application/gzip": ".gz", "text/html": ".html", "text/plain": ".txt" };
+/** The type the bytes show, never the type the site claims. */
+export function sniffContentType(bytes: Buffer): string {
+  for (const [type, magic] of SIGNATURES) if (magic.every((byte, index) => bytes[index] === byte)) return type;
+  if (bytes.subarray(0, 4).toString("latin1") === "RIFF" && bytes.subarray(8, 12).toString("latin1") === "WEBP") return "image/webp";
+  const head = bytes.subarray(0, 4096);
+  if (!head.length || head.includes(0)) return "application/octet-stream";
+  let text: string;
+  try { text = new TextDecoder("utf-8", { fatal: true }).decode(head, { stream: true }); } catch { return "application/octet-stream"; }
+  const start = text.trimStart().slice(0, 20).toLowerCase();
+  return start.startsWith("<!doctype html") || start.startsWith("<html") ? "text/html" : "text/plain";
+}
+function downloadName(suggested: unknown, contentType: string): string {
+  const name = typeof suggested === "string" ? basename(suggested.replace(/\\/g, "/")) : "";
+  const plain = /^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,119}$/.test(name) && !/[. ]$/.test(name) && !/^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i.test(name);
+  return plain ? name : `download${EXTENSIONS[contentType] ?? ""}`;
+}
+/** A new file, protected (0600 and a private Windows ACL) before any content is written. */
+async function writeNewPrivateBytes(folder: string, name: string, bytes: Buffer, rename = true): Promise<string> {
+  await windowsFilePrivacy(folder, "directory");
+  const dot = name.lastIndexOf("."); const stem = dot > 0 ? name.slice(0, dot) : name; const extension = dot > 0 ? name.slice(dot) : "";
+  for (let attempt = 1; attempt <= 50; attempt++) {
+    const candidate = attempt === 1 ? name : `${stem} (${attempt})${extension}`;
+    const path = join(folder, candidate);
+    let file: Awaited<ReturnType<typeof open>>;
+    try { file = await open(path, "wx", 0o600); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (!rename) throw fail("This task already has a file with that name. Choose another name.");
+      continue;
+    }
+    let complete = false;
+    try {
+      await windowsFilePrivacy(path, "file", true);
+      await file.writeFile(bytes); await file.sync(); complete = true;
+    } finally {
+      await file.close();
+      if (!complete) await unlink(path).catch(() => {});
+    }
+    return candidate;
+  }
+  throw fail("This task's download folder already has too many files with this name. Nothing was kept.");
+}
+
+/** Moves one helper-written download into a new protected file and returns its receipt. */
+export async function saveBrowserDownload(workroom: string, staged: string, suggestedName: unknown): Promise<BrowserDownloadReceipt> {
+  try {
+    const stat = await lstat(staged).catch(() => null);
+    if (!stat) throw fail("The browser did not deliver a file. Check the page before trying again.");
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > MAX_BROWSER_FILE_BYTES) throw fail("The download was not one file within 50 MB. Nothing was kept.");
+    const bytes = await readFile(staged);
+    const contentType = sniffContentType(bytes);
+    const folder = join(workroom, "downloads"); await privateDirectory(folder);
+    const name = await writeNewPrivateBytes(folder, downloadName(suggestedName, contentType), bytes);
+    return { name, size: bytes.length, sha256: digest(bytes), contentType };
+  } finally { await unlink(staged).catch(() => {}); }
+}
+
+/** Adds a file the person chose to the task's private uploads; the grant lists its name and hash. */
+export async function addBrowserTaskUpload(workroom: string, name: string, bytes: Buffer): Promise<BrowserTaskUpload> {
+  if (!browserTaskUploadName(name) || bytes.length > MAX_BROWSER_FILE_BYTES) throw fail("Choose one file up to 50 MB with a plain file name.");
+  await privateDirectory(workroom); const folder = join(workroom, "uploads"); await privateDirectory(folder);
+  await writeNewPrivateBytes(folder, name, bytes, false);
+  return { name, sha256: digest(bytes) };
+}
+
+/** The granted file's path, only while it is private and still matches the grant's hash. */
+export async function grantedUploadPath(workroom: string, upload: BrowserTaskUpload): Promise<string> {
+  const changed = () => fail(`The file '${upload.name}' given to this task is missing or has changed. Nothing was uploaded; add the file to the task again.`);
+  if (!browserTaskUploadName(upload.name)) throw changed();
+  await privateDirectory(workroom); const folder = join(workroom, "uploads"); await privateDirectory(folder);
+  const path = join(folder, upload.name);
+  const stat = await lstat(path).catch(() => null);
+  if (!stat || !stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > MAX_BROWSER_FILE_BYTES || !privateMode(stat)) throw changed();
+  await windowsFilePrivacy(path, "file");
+  if (digest(await readFile(path)) !== upload.sha256) throw changed();
+  return path;
+}

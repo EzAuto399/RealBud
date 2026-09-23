@@ -16,6 +16,8 @@ export type BrowserTaskRoute = (typeof BROWSER_TASK_ROUTES)[number];
 export type BrowserActionClass = (typeof BROWSER_ACTION_CLASSES)[number];
 export type BrowserConsequentialKind = (typeof BROWSER_CONSEQUENTIAL_KINDS)[number];
 
+/** A file the person gave this task to upload. The name is its id: RealBud
+ * resolves it inside the task's private folder, so the model never supplies a path. */
 export interface BrowserTaskUpload {
   name: string;
   sha256: string;
@@ -69,6 +71,11 @@ const label = (value: unknown, max: number): value is string =>
 const requestText = (value: unknown): value is string =>
   typeof value === "string" && value.trim().length > 0 && value.length <= 4000 && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value);
 const timestamp = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0 && value <= 8.64e15;
+/** One plain file name that is the same on every platform: no folders, drive
+ * or stream separators, wildcard characters, or trailing dot or space. */
+export function browserTaskUploadName(value: unknown): value is string {
+  return label(value, 255) && !/[\\/:*?"<>|]/.test(value) && value.trim() === value && !/^\.+$/.test(value) && !value.endsWith(".");
+}
 
 /** An exact HTTPS site: a bare host or an https origin, no path, port or credentials. */
 export function browserTaskSite(value: unknown): value is string {
@@ -110,9 +117,11 @@ export function parseBrowserTaskGrant(value: unknown): BrowserTaskGrant {
   if (!Array.isArray(row.uploads) || row.uploads.length > 20) invalid();
   const uploads = (row.uploads as unknown[]).map(item => {
     const upload = exact(item, ["name", "sha256"]);
-    if (!label(upload.name, 255) || /[\\/]/.test(upload.name as string) || !sha256(upload.sha256)) invalid();
+    if (!browserTaskUploadName(upload.name) || !sha256(upload.sha256)) invalid();
     return { name: upload.name as string, sha256: upload.sha256 as string };
   });
+  // The name is the file's id; two files with one name would be ambiguous.
+  if (new Set(uploads.map(upload => upload.name.toLowerCase())).size !== uploads.length) invalid();
   if (row.expiresAt !== null && !timestamp(row.expiresAt)) invalid();
   if (row.budget !== null && !(Number.isSafeInteger(row.budget) && Number(row.budget) >= 1 && Number(row.budget) <= 10_000)) invalid();
   return {

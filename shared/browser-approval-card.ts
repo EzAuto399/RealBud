@@ -9,7 +9,7 @@ import { BROWSER_CONSEQUENTIAL_KINDS, type BrowserConsequentialKind } from "./br
 
 export const BROWSER_APPROVAL_CARD_VERSION = 1 as const;
 export const BROWSER_APPROVAL_CARD_PURPOSE = "browser-approval-card" as const;
-export const BROWSER_APPROVAL_FACT_NAMES = ["recipient", "amount", "currency", "reference", "document", "documentHash", "to", "subject", "bodyHash", "target"] as const;
+export const BROWSER_APPROVAL_FACT_NAMES = ["recipient", "amount", "currency", "reference", "document", "documentHash", "to", "subject", "bodyHash", "bodyExcerpt", "target"] as const;
 export type BrowserApprovalFactName = (typeof BROWSER_APPROVAL_FACT_NAMES)[number];
 /** Facts that bind the approval to page text; shown as a status, never as a value. */
 export const BROWSER_APPROVAL_HASH_FACTS: readonly BrowserApprovalFactName[] = ["documentHash", "bodyHash"];
@@ -19,7 +19,7 @@ export const BROWSER_APPROVAL_FACTS: Record<BrowserConsequentialKind, { required
   pay: { required: ["recipient", "amount", "currency"], optional: ["reference"] },
   sign: { required: ["document", "documentHash"], optional: [] },
   notice: { required: ["document", "documentHash"], optional: [] },
-  send: { required: ["to", "bodyHash"], optional: ["subject"] },
+  send: { required: ["to", "bodyHash"], optional: ["subject", "bodyExcerpt"] },
   delete: { required: ["target"], optional: [] },
   "account-change": { required: ["target"], optional: [] },
 };
