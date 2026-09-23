@@ -365,9 +365,12 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
         <MorningEmpty brief={{ ...brief, headline: "No cases in this filter." }} actionLabel="Show all tasks" onAction={() => { setFilter("all"); setCaseKind("all"); }} />
       )
     ) : null;
+  // DeskCase uses the empty content only when it has no selected row. A narrow
+  // empty desk can flow as one page without changing an active case's panes.
+  const emptyCanvas = mode === "cases" && !selected && empty !== null;
 
   return (
-    <main className="desk-workspace flex h-full min-w-0 flex-1 flex-col bg-paper" data-density={layout.compact ? "compact" : "comfortable"} data-bud-pinned={preferences.showBud} style={{ "--desk-queue-width": `${preferences.queueWidth}px` } as React.CSSProperties}>
+    <main className="desk-workspace flex h-full min-w-0 flex-1 flex-col bg-paper" data-empty-canvas={emptyCanvas || undefined} data-density={layout.compact ? "compact" : "comfortable"} data-bud-pinned={preferences.showBud} style={{ "--desk-queue-width": `${preferences.queueWidth}px` } as React.CSSProperties}>
       <div aria-live="polite" className="sr-only">
         {announce}
       </div>
@@ -646,7 +649,7 @@ export function DeskPage({ caseEdits }: { caseEdits: Map<string, CaseEdit> }) {
               snap={snap}
               item={selected}
               busy={busy}
-              empty={empty}
+              empty={<div className="desk-empty-canvas h-full">{empty}</div>}
               onAllow={(draft) => void run(`/api/desk/drafts/${draft.id}/allow`, "POST", { expectedRevision: snap.revision }, draft.id, "Wording allowed")}
               onDeny={(draft, reason) =>
                 void run(
@@ -743,8 +746,9 @@ function QueuePane({
     document.getElementById(queueRowId(id))?.scrollIntoView({ block: "nearest" });
   };
   const scrollRef = useWorkspaceScroll("desk-queue");
+  const paneScrollRef = useWorkspaceScroll("desk-queue-pane");
   return (
-    <div className="flex h-full min-h-0 flex-col bg-sheet">
+    <div ref={paneScrollRef} className="desk-queue-pane flex h-full min-h-0 flex-col bg-sheet">
       <div className="flex flex-wrap items-center gap-1.5 border-b border-line px-3 py-2.5">
         <h2 className="mr-1 text-[14px] font-semibold text-ink">Task queue</h2>
         {counts.licensee > 0 ? (

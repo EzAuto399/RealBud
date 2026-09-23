@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseInstallationProvisioning } from "./office-link.ts";
+import { currentUsagePeriod, parseInstallationProvisioning } from "./office-link.ts";
 
 // The first-response wire descriptor emitted by managed-gateway/provisioning.ts.
 // qa-modelvia-app.mjs additionally passes the actual local gateway response
@@ -9,6 +9,17 @@ const gatewayDescriptor = () => ({
   service: { companyId: "fictional-app-company", hostInstallationId: "fixture-installation" },
   connector: { endpoint: "https://fictional-connector.invalid", credential: `rbc_${"a".repeat(64)}`, profile: "property", apps: ["gmail"], projectId: "pr_fictional_app" },
   model: { provider: "modelvia", baseUrl: "https://api.modelvia.dev/v1", projectId: "rb-fixture-installation", key: `rbk_0123456789abcdef_${"A".repeat(43)}`, keyId: "0123456789abcdef", spendCapLabel: "monthly-cap 1000000000 nanoAUD, request-cap 1000000000 nanoAUD, max-concurrent 1" },
+});
+
+describe("usage accounting month", () => {
+  it.each([
+    ["2026-09-30T13:59:59.999Z", "2026-09"],
+    ["2026-09-30T14:00:00.000Z", "2026-10"],
+    ["2026-12-31T14:00:00.000Z", "2027-01"],
+    ["2028-02-29T14:00:00.000Z", "2028-03"],
+  ])("uses the same Brisbane month as the portal at %s", (instant, period) => {
+    expect(currentUsagePeriod(new Date(instant))).toBe(period);
+  });
 });
 
 describe("gateway installation descriptor compatibility", () => {

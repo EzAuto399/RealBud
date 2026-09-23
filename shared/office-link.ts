@@ -177,7 +177,9 @@ const AMOUNT = /^\d{1,60}$/;
 const SIGNED_AMOUNT = /^-?\d{1,60}$/;
 
 export function currentUsagePeriod(now = new Date()): string {
-  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+  // Modelvia and the portal close accounting months in Brisbane (UTC+10,
+  // without daylight saving). The desktop must ask for that same month.
+  return new Date(now.getTime() + 36_000_000).toISOString().slice(0, 7);
 }
 
 function usageInvalid(): never { throw new Error("The usage report could not be read."); }
