@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { createConnection, createServer } from 'node:net';
 import { release, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -55,26 +55,143 @@ async function save(file, value) {
 }
 const safeFailure = (error, stage) => ({ stage, reason: error?.code || error?.name || 'failure' });
 
+// Fixture-only observation, installed before the compiled bootstrap imports
+// child_process. Native arguments, environment and stdio pass through unchanged.
+// Only fixed classifications and numeric lifecycle data cross fixture IPC;
+// neither native output nor argument/environment values are published.
+const NATIVE_DIAGNOSTIC_ENTRY = String.raw`
+import { createRequire, syncBuiltinESMExports } from 'node:module';
+import { basename, dirname, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+const cp = createRequire(import.meta.url)('node:child_process');
+const root = resolve(process.argv[3]).toLowerCase();
+const admitted = new Set(['postgres.exe', 'initdb.exe', 'pg_ctl.exe']);
+const accepts = file => typeof file === 'string' && dirname(resolve(file)).toLowerCase() === root && admitted.has(basename(file).toLowerCase());
+const code = value => Number.isSafeInteger(value) ? value : typeof value === 'string' && /^[A-Z][A-Z0-9_]{0,39}$/.test(value) ? value : null;
+const markers = output => {
+  const text = String(output || '').slice(0, 131072);
+  return [
+    ['permission-denied', /permission denied|access is denied|access denied/i],
+    ['admin-or-restricted-token', /administrative permissions|administrator|restricted token|CreateRestrictedToken|CreateProcessAsUser/i],
+    ['process-creation-failed', /could not (?:execute|start|fork|create process)|failed to (?:execute|start|fork|create process)/i],
+    ['native-library-unavailable', /(?:dll|library).*(?:not found|missing|could not|failed)|(?:could not|failed to) load/i],
+    ['path-unavailable', /no such file|cannot find|not found|does not exist|invalid directory/i],
+    ['locale-unavailable', /invalid locale|locale.*(?:not supported|not recognized|could not)/i],
+    ['version-mismatch', /not the same version|version mismatch|wrong version/i],
+    ['directory-not-empty', /not empty|already exists/i],
+    ['disk-or-memory-exhausted', /no space left|out of memory|not enough memory|cannot allocate memory/i],
+    ['socket-or-port-refused', /could not bind|address already in use|could not create.*socket/i],
+    ['password-file-refused', /password file.*(?:could not|cannot|failed|empty)|could not.*password file/i],
+    ['creating-data-directories', /creating (?:directory|subdirectories)/i],
+    ['selecting-runtime-defaults', /selecting default|selecting dynamic shared memory/i],
+    ['creating-configuration', /creating configuration files/i],
+    ['running-bootstrap', /running bootstrap script/i],
+    ['post-bootstrap', /performing post-bootstrap initialization/i],
+    ['syncing-data', /syncing data to disk/i],
+    ['initdb-completed', /Success\. You can now start the database server/i],
+  ].filter(([, pattern]) => pattern.test(text)).map(([label]) => label);
+};
+let count = 0;
+function emit(value) {
+  if (count++ >= 64 || !process.connected) return;
+  try { process.send({ type: 'realbud-team-native-diagnostic', value }, () => {}); } catch { /* diagnostics cannot change execution */ }
+}
+function begin(file, args, options) {
+  const operation = args.includes('--version') ? 'version' : basename(file).toLowerCase() === 'initdb.exe' ? 'initdb' : args.includes('stop') ? 'stop' : 'server';
+  const base = { binary: basename(file).toLowerCase(), operation };
+  const environmentKeys = ['PATH', 'SystemRoot', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'USERPROFILE', 'HOME', 'TMP', 'TEMP', 'LANG', 'LC_ALL'].filter(key => Object.hasOwn(options?.env || {}, key));
+  emit({ ...base, event: 'begin', environmentKeys });
+  const started = performance.now();
+  return (error, stdout, stderr) => emit({ ...base, event: 'complete', elapsedMs: Math.round(performance.now() - started),
+    code: error ? code(error.code) : 0, signal: /^SIG[A-Z]+$/.test(error?.signal || '') ? error.signal : null,
+    killed: error?.killed === true, stdoutBytes: Buffer.byteLength(String(stdout || '')), stderrBytes: Buffer.byteLength(String(stderr || '')),
+    markers: [...new Set([...markers(stdout), ...markers(stderr)])] });
+}
+const realFile = cp.execFile, custom = Symbol.for('nodejs.util.promisify.custom'), realPromise = realFile[custom];
+function observedFile(file, ...rest) {
+  if (!accepts(file) || typeof rest.at(-1) !== 'function') return realFile.call(this, file, ...rest);
+  const done = rest.at(-1), record = begin(file, Array.isArray(rest[0]) ? rest[0] : [], rest[1]);
+  return realFile.call(this, file, ...rest.slice(0, -1), function(error, stdout, stderr) { record(error, stdout, stderr); return done.call(this, error, stdout, stderr); });
+}
+if (typeof realPromise === 'function') Object.defineProperty(observedFile, custom, { value: function(file, ...rest) {
+  if (!accepts(file)) return realPromise.call(this, file, ...rest);
+  const record = begin(file, Array.isArray(rest[0]) ? rest[0] : [], rest[1]);
+  const original = realPromise.call(this, file, ...rest);
+  const observed = original.then(result => { record(null, result.stdout, result.stderr); return result; }, error => { record(error, error.stdout, error.stderr); throw error; });
+  if (Object.hasOwn(original, 'child')) Object.defineProperty(observed, 'child', Object.getOwnPropertyDescriptor(original, 'child'));
+  return observed;
+} });
+cp.execFile = observedFile;
+const realSpawn = cp.spawn;
+cp.spawn = function(file, ...rest) {
+  const child = realSpawn.call(this, file, ...rest);
+  if (accepts(file)) {
+    const started = performance.now(), base = { binary: basename(file).toLowerCase(), operation: 'server' };
+    child.once('spawn', () => emit({ ...base, event: 'spawn', pid: child.pid }));
+    child.once('error', error => emit({ ...base, event: 'error', code: code(error.code), elapsedMs: Math.round(performance.now() - started) }));
+    child.once('exit', (status, signal) => emit({ ...base, event: 'exit', code: code(status), signal: /^SIG[A-Z]+$/.test(signal || '') ? signal : null, elapsedMs: Math.round(performance.now() - started) }));
+  }
+  return child;
+};
+syncBuiltinESMExports();
+await import(pathToFileURL(process.argv[2]).href);
+`;
+
 if (scenarioMode) {
   // This entry is launched exclusively below through the installed supervisor.
   assert.ok(scratchArg, 'Owned scenario scratch required');
   const scratch = await realpath(scratchArg); const contexts = new Set();
-  const checks = [], requests = [], generations = [], observedPids = [], observedPorts = [];
-  const progress = () => save(join(output, 'scenario-state.json'), { stage, observedPids, observedPorts });
+  const checks = [], requests = [], generations = [], observedPids = [], observedPorts = [], nativeDiagnostics = [], setupDiagnostics = [];
+  const progress = () => save(join(output, 'scenario-state.json'), { stage, observedPids, observedPorts, nativeDiagnostics, setupDiagnostics });
   const { windowsFilePrivacySync: protect } = await import(pathToFileURL(join(resources, 'server/windows-file-privacy.js')).href);
   const { createServiceAdminPasswordVerifier } = await import(pathToFileURL(join(resources, 'server/service-admin.js')).href);
   let stage = 'startup', failure = null, tlsPort, cleanupComplete = false;
   const abort = new AbortController(); const deadline = setTimeout(() => abort.abort(), 420_000);
   const pass = name => { checks.push(name); console.log(`PASS ${name}`); };
+  async function captureSetup(context, response) {
+    const directory = join(context.data, 'company-installation/postgres');
+    const objects = {};
+    for (const name of ['.', 'owner.lock', 'setup-progress.json', 'ownership.json', 'credentials', 'credentials/admin', 'credentials/application', 'initdb-pwfile', 'data', 'data/PG_VERSION', 'data/postgresql.conf', 'data/pg_hba.conf', 'data/postmaster.pid']) {
+      try { const stat = await lstat(join(directory, name)); objects[name] = stat.isSymbolicLink() ? 'symlink' : stat.isDirectory() ? 'directory' : stat.isFile() ? 'file' : 'other'; }
+      catch (error) { objects[name] = error.code === 'ENOENT' ? 'missing' : 'inspection-refused'; }
+    }
+    let phase = null, version = null;
+    if (objects['setup-progress.json'] === 'file') {
+      try {
+        const file = join(directory, 'setup-progress.json'); check((await lstat(file)).size < 2048, 'Progress record too large');
+        const value = JSON.parse(await readFile(file, 'utf8'));
+        phase = value.schemaVersion === 1 && value.kind === 'realbud-owned-postgres-progress' && ['credentials', 'initdb', 'configured', 'bootstrapped'].includes(value.phase) ? value.phase : 'invalid';
+      } catch { phase = 'unreadable'; }
+    }
+    if (objects['data/PG_VERSION'] === 'file') {
+      try { const file = join(directory, 'data/PG_VERSION'); check((await lstat(file)).size < 16, 'Version record too large'); const value = (await readFile(file, 'utf8')).trim(); version = /^\d{1,3}$/.test(value) ? value : 'invalid'; }
+      catch { version = 'unreadable'; }
+    }
+    const message = String(response?.error || '');
+    const command = message.match(/Owned PostgreSQL failed running (postgres|initdb|pg_ctl)\.exe/)?.[1] || null;
+    const responseClass = command ? 'native-command-failed' : /Windows.*privacy|private.*directory/i.test(message) ? 'private-storage-admission' : /runtime.*unavailable|PostgreSQL 16.*missing/i.test(message) ? 'runtime-admission' : /before becoming ready|did not become ready/i.test(message) ? 'native-server-readiness' : 'unclassified';
+    setupDiagnostics.push({ role: context.role, servicePid: context.child.pid, phase, version, objects, responseClass, command });
+  }
   async function call(context, path, body, expected = 200, method = body === undefined ? 'GET' : 'POST', headers = {}, timeout = 90_000) {
     stage = `${context.role} ${method} ${path}`; await progress();
-    const response = await fetch(context.url + path, { method, signal: AbortSignal.any([abort.signal, AbortSignal.timeout(timeout)]),
-      headers: { ...(context.token ? { 'x-realbud-session': context.token } : {}),
-        ...(context.member ? { 'x-realbud-member-session': context.member } : {}),
-        ...(context.admin ? { 'x-realbud-service-admin': context.admin } : {}),
-        ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...headers },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    const result = await response.json(); requests.push({ role: context.role, method, path, status: response.status, expected });
+    const started = performance.now();
+    let response, result;
+    try {
+      response = await fetch(context.url + path, { method, signal: AbortSignal.any([abort.signal, AbortSignal.timeout(timeout)]),
+        headers: { ...(context.token ? { 'x-realbud-session': context.token } : {}),
+          ...(context.member ? { 'x-realbud-member-session': context.member } : {}),
+          ...(context.admin ? { 'x-realbud-service-admin': context.admin } : {}),
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...headers },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+      result = await response.json();
+    } catch (error) {
+      requests.push({ role: context.role, method, path, status: response?.status ?? null, expected, elapsedMs: Math.round(performance.now() - started), outcome: 'transport-or-body-failure' });
+      if (context.role === 'host' && path === '/api/company/setup' && expected === 200) await captureSetup(context, null);
+      await progress(); throw error;
+    }
+    requests.push({ role: context.role, method, path, status: response.status, expected, elapsedMs: Math.round(performance.now() - started) });
+    if (context.role === 'host' && path === '/api/company/setup' && expected === 200) await captureSetup(context, result);
+    await progress();
     check((Array.isArray(expected) ? expected : [expected]).includes(response.status), 'Unexpected company HTTP status');
     return result;
   }
@@ -94,6 +211,7 @@ if (scenarioMode) {
   }
   async function start(role) {
     stage = `start-${role}`;
+    const started = performance.now();
     const home = join(scratch, role), data = join(home, '.realbud');
     await mkdir(home, { recursive: true });
     if (!existsSync(data)) { await mkdir(data); protect(data, 'directory', true); }
@@ -110,9 +228,16 @@ if (scenarioMode) {
       OMB_STATIC_DIR: join(resources, 'ui'), REALBUD_RESOURCES_DIR: resources,
       ...(role === 'host' ? { REALBUD_COMPANY_POSTGRES_BIN: join(resources, 'postgres/bin') } : {}) };
     await mkdir(env.APPDATA, { recursive: true }); await mkdir(env.LOCALAPPDATA, { recursive: true });
-    const child = spawn(executable, [join(resources, 'server/bootstrap.js')], { cwd: resources, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+    const entry = join(home, 'team-native-diagnostics.mjs');
+    await writeFile(entry, NATIVE_DIAGNOSTIC_ENTRY, { mode: 0o600 });
+    const child = spawn(executable, [entry, join(resources, 'server/bootstrap.js'), join(resources, 'postgres/bin')], { cwd: resources, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
     const context = { role, child, data, url: `http://127.0.0.1:${port}`, ports: new Set([port]), token: '', member: '', admin: '' };
     contexts.add(context); observedPids.push(child.pid); observedPorts.push(port);
+    child.on('message', message => {
+      if (message?.type !== 'realbud-team-native-diagnostic' || !message.value || nativeDiagnostics.length >= 128) return;
+      nativeDiagnostics.push({ role, servicePid: child.pid, ...message.value });
+      if (message.value.event === 'spawn' && Number.isSafeInteger(message.value.pid) && message.value.pid > 0 && !observedPids.includes(message.value.pid)) observedPids.push(message.value.pid);
+    });
     if (role === 'host' && tlsPort) context.ports.add(tlsPort);
     context.exit = new Promise(resolveExit => {
       child.once('error', () => resolveExit({ code: null, signal: null }));
@@ -130,17 +255,19 @@ if (scenarioMode) {
       await sleep(200);
     }
     check(ready, 'Installed service readiness failed');
+    context.startupMs = Math.round(performance.now() - started);
     context.token = (await call(context, '/api/session')).token; await captureDatabase(context);
     return context;
   }
   async function stop(context) {
+    const started = performance.now();
     let markerValid = true; try { await captureDatabase(context); } catch { markerValid = false; }
     if (context.child.exitCode === null && !context.child.signalCode && context.child.connected) context.child.send({ type: 'realbud-test-stop' }, () => {});
     let ended; try { ended = await bounded(context.exit, 35_000, 'Service stop timed out'); } catch { /* native Job remains the fail-safe */ }
     const pidsGone = !alive(context.child.pid) && !alive(context.postgresPid);
     const portsClosed = (await Promise.all([...context.ports].map(closedPort))).every(Boolean);
     const orderly = ended?.code === 0 && ended?.signal === null;
-    generations.push({ role: context.role, pid: context.child.pid, postgresPid: context.postgresPid ?? null, markerValid, orderly, pidsGone, portsClosed });
+    generations.push({ role: context.role, pid: context.child.pid, postgresPid: context.postgresPid ?? null, startupMs: context.startupMs ?? null, stopMs: Math.round(performance.now() - started), markerValid, orderly, pidsGone, portsClosed });
     if (markerValid && pidsGone && portsClosed) contexts.delete(context);
     check(markerValid && orderly && pidsGone && portsClosed, 'Owned service cleanup unconfirmed');
   }
@@ -208,7 +335,7 @@ if (scenarioMode) {
     cleanupComplete = contexts.size === 0 && cleanupErrors.length === 0;
     await save(join(output, 'scenario.json'), { schema: 1, passed: !failure && cleanupComplete && checks.length === 7,
       runtime: { node: process.versions.node, electron: process.versions.electron }, checks, requests, generations, failure, cleanupErrors,
-      cleanupComplete, observedPids, observedPorts, scratch });
+      cleanupComplete, observedPids, observedPorts, nativeDiagnostics, setupDiagnostics, diagnosticEntrySha256: hash(NATIVE_DIAGNOSTIC_ENTRY), scratch });
     process.exitCode = !failure && cleanupComplete && checks.length === 7 ? 0 : 1;
     // A failed graceful shutdown must let the supervisor close the complete Job.
     if (!cleanupComplete) process.exit(1);
