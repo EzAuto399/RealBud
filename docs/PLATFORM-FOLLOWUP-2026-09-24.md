@@ -53,6 +53,15 @@ coordinator deliberately maps status-400 authentication/integrity failures to
 all freshness, failed-operation, cancellation and successful-restore checks remain.
 No production backup change or timeout increase was made.
 
+A subsequent review found a remaining cancellation lifecycle gap in this sealed
+`4c0c203f` build: cancelling the file picker or removing a temporary upload leaves
+the saved onboarding stage at recovery, with no route back to ordinary welcome.
+Root confirmed the stage bypass and transfer-only cancellation in source. The
+successful native cancellation checks above prove temporary-file removal and
+preserved freshness, not return-to-welcome. The canonical owner is implementing
+a guarded return path and lifecycle tests; that follow-up is not yet verified or
+included in these packages. Keep the sealed artifacts unchanged.
+
 ## Packaged Mac two-service team proof
 
 The selected `689dfc60` app's own Electron 43.4.0 / Node 24.18.1 executable now
@@ -143,6 +152,15 @@ or CI success does not establish ordinary-user Windows office acceptance.
 ## Existing proof and remaining gates
 
 The current regression status is available in [draft PR 6](https://github.com/EzAuto399/RealBud/pull/6). Fresh package results above are separately source-bound; do not substitute historical CI for changed-source checks.
+
+Current compiled-source [CI run 35926417555](https://github.com/EzAuto399/RealBud/actions/runs/35926417555)
+has passed Mac **5872 / 0 / 281** and Ubuntu **5867 / 0 / 286**. Ubuntu also
+passes its separate coverage rerun, PM e2e battery and production UI/server
+builds. Three Windows unit/contract shards remain running at this checkpoint.
+Root verified the tested merge `cd4d214568eb7cd3a5d709804d625e7d5e92248d` has
+the same tree as compiled source `4c0c203f`, and parsed the completed raw logs.
+Evidence: `outputs/platform-followup-2026-09-24/ci-4c0c203f/`.
+Linux packaging and launch were explicitly skipped, not tested successfully.
 
 The prior full [CI run 35886041597](https://github.com/EzAuto399/RealBud/actions/runs/35886041597)
 passes for head `2590ad8160c167b465e5bd45d83b9c3e1a369783`'s tree (use the exact
