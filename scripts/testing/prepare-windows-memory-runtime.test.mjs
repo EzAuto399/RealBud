@@ -1,12 +1,12 @@
 // Control-flow tests only. No managed install, uv download or runtime is run.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { sanitizeUvDiagnostic, uvDiagnosticScript, withUvFailureDiagnostic } from './prepare-windows-memory-runtime.mjs';
+import { redactUvDiagnosticLine, sanitizeUvDiagnostic, uvDiagnosticScript, withUvFailureDiagnostic } from './prepare-windows-memory-runtime.mjs';
 
 function fixture(t) {
   const scratch = mkdtempSync(join(tmpdir(), 'fictional-uv-controls-'));
@@ -118,6 +118,48 @@ test('only fixed signals and typed protocol fields survive receipt sanitization'
   assert.throws(() => sanitizeUvDiagnostic({ schema: 1, stage: 'repository', exitCode: 0 }));
 });
 
+const failureLines = [
+  '->   --- uv installer source: fictional example ---',
+  '->   ERROR: OPENAI_API_KEY=fictional-provider-value',
+  '->   ERROR: https://fixture-user:fixture-pass@example.invalid/install?token=fixture-query',
+  '->   ERROR: "C:\\Users\\Fictional Person\\bin\\uv.exe" is unavailable',
+  '->   ERROR: \\\\fictional-server\\private-share\\uv.exe is unavailable',
+  '->   ERROR: Bearer fictional-bearer-value',
+  '->   ERROR: /Users/Fictional-Person/private/uv is unavailable',
+  '->   ERROR: sk-fictionalProviderKeyValue123456',
+  '->   ERROR: fixture-person@example.invalid',
+  '->   ERROR: abcdef0123456789abcdef0123456789abcdef0123456789',
+  '->   ERROR: unsupported archive format',
+  '->   --- uv installer source: fictional mirror ---',
+  '->   ERROR: checksum mismatch',
+  '->   ERROR: native installer exit 23',
+  '->   ERROR: fictional final detail must be retained',
+];
+const forbiddenExcerptBytes = ['fictional-provider-value', 'fixture-user', 'fixture-pass', 'fixture-query',
+  'C:\\Users', 'Fictional Person', 'fictional-server', 'private-share', 'fictional-bearer-value',
+  '/Users/Fictional-Person', 'sk-fictionalProviderKeyValue123456', 'fixture-person@example.invalid',
+  'abcdef0123456789abcdef0123456789abcdef0123456789', 'https://'];
+
+test('failure text is redacted before truncation and bounded at the Node receipt boundary', () => {
+  const safe = failureLines.map(redactUvDiagnosticLine);
+  const serialized = JSON.stringify(safe);
+  for (const forbidden of forbiddenExcerptBytes) assert.ok(!serialized.includes(forbidden), forbidden);
+  assert.ok(serialized.includes('unsupported archive format'));
+  assert.ok(!redactUvDiagnosticLine("ERROR: C:\\Users\\O'Connor\\bin\\uv.exe").includes('Connor'));
+  assert.ok(!redactUvDiagnosticLine('ERROR: \u001b[31msk-fictionalProviderKeyValue123456\u001b[0m').includes('fictionalProvider'));
+  assert.equal(redactUvDiagnosticLine('ERROR: SOME_PROVIDER_KEY=short-value'), 'ERROR: [credential field redacted]');
+  assert.equal(redactUvDiagnosticLine('ERROR: --api-key short-value'), 'ERROR: [credential argument redacted]');
+  assert.equal(redactUvDiagnosticLine({ text: 'untrusted object' }), null);
+  assert.equal(redactUvDiagnosticLine('x'.repeat(8193)), '[oversized installer line omitted]');
+  const value = sanitizeUvDiagnostic({ schema: 1, stage: 'uv', exitCode: 1,
+    failureExcerpt: [null, {}, 'discarded first line', ...failureLines] });
+  assert.equal(value.failureExcerpt.length, 15);
+  assert.ok(value.failureExcerpt.every(line => line.length <= 240));
+  for (const forbidden of forbiddenExcerptBytes) assert.ok(!JSON.stringify(value).includes(forbidden), forbidden);
+  assert.ok(value.failureExcerpt.at(-1).includes('fictional final detail'));
+  assert.deepEqual(sanitizeUvDiagnostic({ schema: 1, stage: 'uv', exitCode: 1, failureExcerpt: [null, {}, 123] }).failureExcerpt, []);
+});
+
 test('the observer uses literal argv and does not persist raw child text', t => {
   const { invocation, scratch } = fixture(t);
   const script = uvDiagnosticScript(invocation, join(scratch, "fictional receipt's.json"));
@@ -138,4 +180,33 @@ test('Windows PowerShell parses the generated observer without running it', { sk
     env: { ...process.env, REALBUD_UV_OBSERVER_FIXTURE: path }, timeout: 30_000, windowsHide: true, stdio: 'ignore',
   });
   assert.ok(!existsSync(join(scratch, 'fixed-signals.json')), 'Parser control must not execute the observer.');
+});
+
+test('native observer writes only a redacted failure tail and preserves nonzero exit', { skip: process.platform !== 'win32' }, t => {
+  const { scratch } = fixture(t);
+  const installer = join(scratch, 'install.ps1'), observer = join(scratch, 'observer.ps1');
+  const resultPath = join(scratch, 'fixed-signals.json');
+  const lines = ['unrelated pre-stage output must not be retained', '[X] uv installed but not found at C:\\Users\\Fictional Person\\uv.exe',
+    '-> uv installer output (last 15 lines):', ...failureLines, '-> Install manually: https://example.invalid/private?token=fixture-query',
+    'unrelated final output must not be retained', '{"stage":"uv","ok":false,"skipped":false}'];
+  const fixtureScript = "param([string]$Stage)\n" + lines.map(line => "Write-Output '" + line.replaceAll("'", "''") + "'").join('\n') + '\nexit 1\n';
+  writeFileSync(installer, '\ufeff' + fixtureScript);
+  const invocation = { command: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', installer, '-Stage', 'uv'] };
+  writeFileSync(observer, '\ufeff' + uvDiagnosticScript(invocation, resultPath));
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', observer],
+    { timeout: 30_000, windowsHide: true, encoding: 'utf8' });
+  assert.equal(result.status, 1, 'Observer must preserve the fictional installer failure.');
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr, '');
+  // Inspect bytes BEFORE Node sanitization to prove masking preceded file I/O.
+  const saved = readFileSync(resultPath, 'utf8');
+  for (const forbidden of forbiddenExcerptBytes) assert.ok(!saved.includes(forbidden), forbidden);
+  assert.ok(!saved.includes('unrelated'));
+  const value = JSON.parse(saved);
+  assert.equal(value.exitCode, 1);
+  assert.equal(value.protocolSeen, true);
+  assert.equal(value.protocolOk, false);
+  assert.equal(value.failureExcerpt.length, 15);
+  assert.ok(value.failureExcerpt.at(-1).includes('fictional final detail'));
+  assert.deepEqual(value.failureExcerpt, sanitizeUvDiagnostic(value).failureExcerpt);
 });

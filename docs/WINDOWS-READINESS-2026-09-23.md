@@ -1,5 +1,12 @@
 # Windows readiness — 23 September 2026
 
+This is the **earlier baseline checkpoint**, retained as historical evidence.
+The user subsequently authorized an isolated candidate, commit/push and native
+builds. Follow [the current platform candidate](PLATFORM-CANDIDATE-2026-09-23.md)
+for the replacement process-containment design and newer build results. Local
+`outputs/windows-readiness-2026-09-23` links below refer to the original working
+checkout; those baseline artifacts were not copied into the candidate.
+
 This checkpoint does **not** establish Windows 11 GUI acceptance, complete feature parity, fresh-device worker/model setup, upgrade/data preservation, live account integration, or customer acceptance. The user has no Windows PC available and asked for the installer and test steps first. The existing Windows-tested installer is prepared; the new working-tree changes still require a fresh Windows build and native tests.
 
 ## Prepared handoff

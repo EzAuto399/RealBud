@@ -45,6 +45,55 @@ profiles still require their own permissions and device evidence.
   Native Windows compilation, installed acceptance and final artifacts are
   recorded separately when they complete.
 
+### Packaged Mac proof
+
+The native Apple Silicon build at `9ec09b6a3ad8fd76015fd3ee5dd10243ef67f0e6`
+produced a Developer ID signed DMG and ZIP. Strict deep signature verification,
+the packaged renderer/startup/shutdown smoke, and four compiled-service checks
+passed. The same package passed nine backup UI checks and seven backup-boundary
+checks using fictional data, including cold-bootstrap restore and exact bank
+file bytes under a different local key. Desktop and 390-pixel views were
+inspected; there were no renderer page errors. These checks use the packaged
+Electron 43.4.0 / Node 24.18.1 runtime.
+
+The initial backup UI fixture still used the retired browser onboarding flag.
+Its failure is retained; the corrected fixture completes scoped onboarding
+through the real API before exercising the unchanged package. This is a fixture
+repair, not a product exemption. Mac notarization and another-Mac Gatekeeper
+acceptance remain unproven.
+
+### Windows native findings
+
+The first candidate run compiled both native launchers and passed the worker
+Job Object tests. A fictional C# stdin reader changed Unicode through the
+Windows console code page; it now reads raw bytes and also checks all 256 byte
+values. The second run passed the launcher fixtures and reached packaging.
+
+[Run 35844973263](https://github.com/EzAuto399/RealBud/actions/runs/35844973263)
+built the NSIS and ZIP at `27ab764ddbfeea121604d59560e0df5aff40711a`.
+It passed 52 focused process/launcher tests (four platform skips), 31 packaging
+fixtures, and nine native diagnostic controls. Installation and verified
+uninstall passed. Installed helper acceptance then timed out in speech.
+The helper initialized speech and the microphone before checking an already
+present stop file; the candidate now checks cancellation first. Native
+verification of that correction remains required. The timeout does not identify
+which Windows initialization call stalled.
+
+The independent managed-worker job currently fails in the actual pinned `uv`
+installer stage. A bounded diagnostic replay confirms that the stage runs and
+returns failure; it does not turn the original failure into a passing result.
+The real journal test has not run yet. The source revision and retained failure
+receipts identify each attempt under the local evidence directory.
+
+Independent source inspection also found a later setup-order defect: the
+reviewed 0.21.2/0.21.3 installers place managed Python inside the repository
+directory, while the repository stage parks any existing non-repository
+directory. Windows setup now creates the repository before Python. The older
+0.20.3/0.21.0 installer hashes were verified too; their repository stages have no
+Python dependency, so the common order remains compatible. Two filesystem
+regressions failed before this correction and passed after it; 32 focused tests
+passed. This does not explain or waive the separate `uv` failure.
+
 Local receipts live under `outputs/platform-candidate-2026-09-23/`. Historical
 receipts referenced by the earlier readiness documents remain in the original
 checkout; they were not copied into this candidate or promoted to new evidence.

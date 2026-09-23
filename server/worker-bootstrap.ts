@@ -72,7 +72,9 @@ function acquireSetup(home: string) {
 
 export const BOOTSTRAP_STAGES = {
   unix: ["prerequisites", "repository", "venv", "python-deps", "node-deps", "path", "config", "complete"],
-  windows: ["uv", "python", "git", "node", "system-packages", "repository", "venv", "dependencies", "node-deps", "path", "config-templates", "platform-sdks", "bootstrap-marker"],
+  // Managed Python lives inside the checkout. Clone first so the repository
+  // stage cannot park a runtime-only directory and strand the interpreter.
+  windows: ["uv", "git", "node", "system-packages", "repository", "python", "venv", "dependencies", "node-deps", "path", "config-templates", "platform-sdks", "bootstrap-marker"],
 } as const;
 export function bootstrapPlan(platform: NodeJS.Platform, release: HermesRelease = HERMES_RECOMMENDED, privateRuntime = false) {
   if (!["darwin", "linux", "win32"].includes(platform)) return null;

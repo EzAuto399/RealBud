@@ -102,6 +102,11 @@ internal static class Program
         stopFile = ArgValue(args, "--stop-file");
         finishFile = ArgValue(args, "--finish-file");
 
+        // A cancelled session must not initialize speech or open the microphone.
+        // Those Windows services may block before the polling loop can run.
+        if (!string.IsNullOrEmpty(stopFile) && File.Exists(stopFile))
+            return;
+
         SpeechRecognitionEngine engine = null;
         try
         {

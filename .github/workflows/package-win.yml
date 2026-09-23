@@ -58,7 +58,7 @@ jobs:
         run: |
           pnpm build:worker:win
           pnpm build:cua-launcher:win
-          pnpm exec vitest run server/one-shot-process.test.ts server/worker-supervisor.native.test.ts server/procs.test.ts electron/cua-launcher.test.mjs electron/cua-lifecycle.test.mjs
+          pnpm exec vitest run server/one-shot-process.test.ts server/worker-supervisor.native.test.ts server/procs.test.ts electron/cua-launcher.test.mjs electron/cua-lifecycle.test.mjs electron/speech-helper-win.test.mjs
       - name: Windows packaging fixtures
         run: pnpm exec vitest run electron/package-files.test.mjs electron/perm-settings.test.mjs electron/service-smoke.test.mjs
       # the packaged app ships compiled JS, so a stale dist/ or dist-server/

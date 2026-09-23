@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -38,6 +38,52 @@ describe("verified setup download", () => {
 });
 
 describe("runtime stage contract", () => {
+  it.each(HERMES_RELEASES)("orders Windows runtime prerequisites safely for $product", release => {
+    for (const privateRuntime of [false, true]) {
+      const spec = bootstrapPlan("win32", release, privateRuntime)!;
+      const before = (first: string, second: string) => {
+        expect(spec.stages.filter(stage => stage === first)).toHaveLength(1);
+        expect(spec.stages.filter(stage => stage === second)).toHaveLength(1);
+        expect((spec.stages as readonly string[]).indexOf(first)).toBeLessThan((spec.stages as readonly string[]).indexOf(second));
+      };
+      before("uv", "python"); before("git", "repository");
+      before("repository", "python"); before("python", "venv"); before("venv", "dependencies");
+      expect(spec.stages.some(stage => stage === "path")).toBe(!privateRuntime);
+      for (const excluded of ["desktop", "gateway", "setup", "configure"]) expect(spec.stages).not.toContain(excluded);
+    }
+  });
+
+  it.each(HERMES_RELEASES.filter(release => release.installers.windows === "226c70a90ad47e8a4d34cb11aca4ecbeb649e2f9b67fbd009ea49791de2d56f5"))(
+    "preserves the checkout-private Python runtime through the Windows $product install", async release => {
+      const options = fixture(), checkout = join(options.home, "hermes-agent");
+      const interpreter = join(checkout, ".hermes-runtime", "python", "fictional-python.exe");
+      const parked = `${checkout}.broken-fixture`, seen: string[] = [];
+      // The reviewed Windows installer provisions Python inside InstallDir,
+      // parks a pre-existing directory without a usable repository, and later
+      // re-resolves that exact interpreter to create the virtual environment.
+      // Model those filesystem effects, not a copy of our stage sequence.
+      await runWorkerBootstrap({ ...options, platform: "win32", release, privateRuntime: true, execute: async invocation => {
+        expect(invocation.args[invocation.args.indexOf("-Commit") + 1]).toBe(release.commit);
+        const stage = invocation.args[invocation.args.indexOf("-Stage") + 1]; seen.push(stage);
+        if (stage === "repository") {
+          if (existsSync(checkout) && !existsSync(join(checkout, ".git"))) renameSync(checkout, parked);
+          mkdirSync(join(checkout, ".git"), { recursive: true });
+        } else if (stage === "python") {
+          mkdirSync(dirname(interpreter), { recursive: true });
+          writeFileSync(interpreter, "fictional managed interpreter");
+        } else if (stage === "venv") {
+          if (!existsSync(interpreter)) throw new Error("Managed Python was displaced before virtual environment creation");
+          mkdirSync(join(checkout, "venv"));
+        }
+      } });
+      expect(readFileSync(interpreter, "utf8")).toBe("fictional managed interpreter");
+      expect(existsSync(join(checkout, "venv"))).toBe(true);
+      expect(existsSync(parked)).toBe(false);
+      expect(seen).not.toContain("path");
+      for (const excluded of ["desktop", "gateway", "setup", "configure"]) expect(seen).not.toContain(excluded);
+    },
+  );
+
   it.each(["darwin", "linux", "win32"] as const)("pins %s and excludes separate apps, gateways and account wizards", platform => {
     const spec = bootstrapPlan(platform)!;
     // The default plan is the recommended release. It used to be

@@ -7,8 +7,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSy
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// These are observations, not automatic root-cause diagnoses. Never retain an
-// upstream message, URL, path, environment value, or exception in the receipt.
+// These are observations, not automatic root-cause diagnoses. The optional
+// failure excerpt below is redacted before either diagnostic file is written.
 export const UV_DIAGNOSTIC_SIGNALS = Object.freeze({
   'powershell-parser': 'ParserError|Unexpected token|Missing closing|The string is missing the terminator',
   'powershell-policy': 'PSSecurityException|running scripts is disabled|AuthorizationManager check failed',
@@ -29,6 +29,32 @@ export const UV_DIAGNOSTIC_SIGNALS = Object.freeze({
   'uv-managed-ready': 'Managed uv found|Managed uv installed',
 });
 export const UV_DIAGNOSTIC_TIMEOUT_MS = 120_000;
+export const UV_EXCERPT_LINES = 15;
+export const UV_EXCERPT_CHARS = 240;
+// Shared by the PowerShell observer and Node receipt boundary. Deliberately
+// more conservative than service-smoke diagnostics: complete URLs and paths,
+// credential-labelled tails, and long opaque values lose their contents.
+const UV_EXCERPT_REDACTIONS = [
+  [String.raw`\x1b\[[0-?]*[ -/]*[@-~]`, ''],
+  [String.raw`[\x00-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]`, ''],
+  [String.raw`(?:https?|ftp|file)://[^\s"'<>]+`, '[url]'],
+  [String.raw`\b[A-Za-z0-9_.-]*(?:key|token|secret|password|passwd|credential|authorization|cookie|session)[A-Za-z0-9_.-]*["']?\s*[=:].*`, '[credential field redacted]'],
+  [String.raw`--?(?:api[-_]?key|token|secret|password|passwd|credential|authorization)\b.*`, '[credential argument redacted]'],
+  [String.raw`\b(?:Bearer|Basic)\s+[^\s,;]+`, '[authorization redacted]'],
+  [String.raw`\b(?:rbk|rbc|mgt|ak|ck|ntn|npm|ghp|gho|ghu|ghs|ghr|secret|github_pat)_[A-Za-z0-9_-]{8,}|\b(?:sk-|xai-|xox[abposr]-)[A-Za-z0-9_-]{8,}|\bAKIA[0-9A-Z]{16}|\bAIza[0-9A-Za-z_-]{20,}|\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`, '[credential redacted]'],
+  [String.raw`(?:\b[A-Za-z]:[\\/]|\\\\)[^\r\n"<>|]*`, '[absolute path]'],
+  [String.raw`(?:^|[\s("'])/(?!/)[^\r\n"<>|]*`, ' [absolute path]'],
+  [String.raw`\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b`, '[email]'],
+  [String.raw`[A-Za-z0-9_+/=-]{32,}`, '[opaque value]'],
+];
+
+export function redactUvDiagnosticLine(value) {
+  if (typeof value !== 'string') return null;
+  if (value.length > 8192) return '[oversized installer line omitted]';
+  let line = value;
+  for (const [pattern, replacement] of UV_EXCERPT_REDACTIONS) line = line.replace(new RegExp(pattern, 'gi'), replacement);
+  return line.trim().slice(0, UV_EXCERPT_CHARS) || null;
+}
 
 const psLiteral = value => `'${String(value).replaceAll("'", "''")}'`;
 export function uvDiagnosticScript(invocation, receiptPath) {
@@ -36,6 +62,8 @@ export function uvDiagnosticScript(invocation, receiptPath) {
   assert.equal(invocation.args[invocation.args.indexOf('-Stage') + 1], 'uv');
   const patterns = Object.entries(UV_DIAGNOSTIC_SIGNALS)
     .map(([key, value]) => `  ${psLiteral(key)} = ${psLiteral(value)}`).join('\n');
+  const redact = UV_EXCERPT_REDACTIONS.map(([pattern, replacement]) =>
+    `  $line = [regex]::Replace($line, ${psLiteral(pattern)}, ${psLiteral(replacement)}, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)`).join('\n');
   return `# Disposable uv diagnostic only. Raw child output is consumed, never written.
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
@@ -46,12 +74,33 @@ $script:protocolOk = $false
 $script:protocolSkipped = $false
 $script:observedLines = 0
 $script:longLineSeen = $false
+$script:uvTailRemaining = 0
+$script:failureExcerpt = [System.Collections.Generic.List[string]]::new()
 $patterns = @{
 ${patterns}
+}
+function Protect-UvLine([string]$line) {
+  if ($line.Length -gt 8192) { return '[oversized installer line omitted]' }
+${redact}
+  $line = $line.Trim()
+  if ($line.Length -gt ${UV_EXCERPT_CHARS}) { $line = $line.Substring(0, ${UV_EXCERPT_CHARS}) }
+  return $line
 }
 function Observe-UvOutput($item) {
   $script:observedLines++
   $text = [string]$item
+  # The pinned installer emits its captured download failures here. Retain
+  # this bounded tail and direct uv errors, not unrelated installer output.
+  $capture = $false
+  if ($text -match '^->\\s+uv installer output \\(last 15 lines\\):') { $script:uvTailRemaining = 15 }
+  elseif ($text -match '^(?:->\\s+Install manually:|\\s*\\{)') { $script:uvTailRemaining = 0 }
+  elseif ($script:uvTailRemaining -gt 0) { $script:uvTailRemaining--; $capture = $true }
+  elseif ($text -match '^\\[X\\]\\s+(?:uv installed but not found|Failed to install uv:)') { $capture = $true }
+  if ($capture) {
+    $safe = Protect-UvLine $text
+    if ($safe) { $script:failureExcerpt.Add($safe) }
+    while ($script:failureExcerpt.Count -gt ${UV_EXCERPT_LINES}) { $script:failureExcerpt.RemoveAt(0) }
+  }
   if ($text.Length -gt 32768) { $script:longLineSeen = $true; $text = $text.Substring(0, 32768) }
   foreach ($key in $patterns.Keys) {
     if ($text -match $patterns[$key]) { $null = $script:signals.Add($key) }
@@ -82,6 +131,7 @@ finally {
     protocolSeen = $script:protocolSeen; protocolOk = $script:protocolOk
     protocolSkipped = $script:protocolSkipped
     observedLines = $script:observedLines; longLineSeen = $script:longLineSeen
+    failureExcerpt = @($script:failureExcerpt)
   }
   [System.IO.File]::WriteAllText(${psLiteral(receiptPath)}, ($result | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
 }
@@ -102,6 +152,8 @@ export function sanitizeUvDiagnostic(value) {
     protocolSkipped: value.protocolSkipped === true,
     observedLines: Number.isSafeInteger(value.observedLines) && value.observedLines >= 0 ? value.observedLines : null,
     longLineSeen: value.longLineSeen === true,
+    failureExcerpt: (Array.isArray(value.failureExcerpt) ? value.failureExcerpt : [])
+      .slice(-UV_EXCERPT_LINES).map(redactUvDiagnosticLine).filter(line => line !== null),
   };
 }
 
@@ -188,7 +240,7 @@ export async function main() {
     runtimeCommit: release.commit, installerSha256: release.installers.windows,
     runtimeDirectory, stages,
     limits: ['Disposable CI runtime setup only; no GUI, account, model request or customer device proof.',
-      'A failed uv stage may be replayed once for fixed diagnostic signals; its original failure remains authoritative. No raw installer output is retained.'],
+      'A failed uv stage may be replayed once for fixed signals and at most 15 redacted failure lines of 240 characters; its original failure remains authoritative. No raw installer output is retained.'],
   };
   const persist = () => {
     receipt.elapsedMs = Date.now() - started;
@@ -229,7 +281,7 @@ export async function main() {
   } catch (error) {
     // No raw installer output is retained. These messages come from the owned
     // bootstrap boundary or assertions; the optional replay contributes only
-    // the fixed signals and protocol fields above.
+    // fixed signals, protocol fields and the bounded redacted failure excerpt.
     receipt.error = error instanceof Error ? error.message : 'Managed setup failed.';
     process.exitCode = 1;
   } finally {
