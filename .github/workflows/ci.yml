@@ -93,6 +93,12 @@ jobs:
       - name: production UI build
         if: matrix.os == 'ubuntu-latest'
         run: pnpm exec vite build
+      # The installed app runs the compiled server with vendored dependencies; the
+      # bundler refuses an import its vendored bundles do not export, which unit
+      # tests from source cannot see (the packaged service once failed to start).
+      - name: packaged server bundle
+        if: matrix.os == 'ubuntu-latest'
+        run: pnpm build:server
 
   package-linux:
     # Linux is a desktop beta without an office host: no PostgreSQL runtime is
