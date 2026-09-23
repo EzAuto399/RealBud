@@ -67,7 +67,19 @@ import { createSourceBillsApi } from './source-bills-api.ts';
 import { createBillProposals, readBillProposal } from './bill-proposals.ts';
 import { BillReviewDraftStore } from './bill-review-drafts.ts';
 import { createBillReviewApi } from './bill-review-api.ts';
-import { portalJobIntentReply } from "./portal-job-intent.ts";
+import { browserTaskIntent, portalJobIntentReply } from "./portal-job-intent.ts";
+import {
+  askBrowserTaskSystemBlock,
+  BROWSER_TASK_OFFER,
+  BROWSER_TASK_SIGN_IN_NOTE,
+  BROWSER_TASK_UNAVAILABLE,
+  browserTaskCapabilities,
+  browserTaskCardView,
+  browserTaskEndNote,
+  browserTaskLimitReached,
+  browserTasks,
+  type BrowserTaskEnd,
+} from "./browser-grants.ts";
 import { scheduleIntentReply } from "./schedule-intent.ts";
 import {
   ATTEND_ERRORS,
@@ -141,7 +153,7 @@ import * as tts from "./tts/index.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { cuaAttendedReady, readCuaConnection } from "./local-computer.ts";
 import { browserRuntime } from "./browser-runtime.ts";
-import { onBrowserDecision, releaseBrowserBrokers } from "./browser-broker.ts";
+import { browserTaskUsage, onBrowserDecision, onBrowserSignIn, releaseBrowserBrokers, restoreBrowserTaskUsage } from "./browser-broker.ts";
 import { stopBrowserApprovalCards } from "./browser-approval-card.ts";
 import { applyPropertyPack, ensurePropertyPack, hermesHome, propertyProfileDir } from "./hermes-pack.ts";
 import { applyHandsReadiness, hermesStatus } from "./hermes-status.ts";
@@ -452,7 +464,56 @@ function signInHandoffs() {
       } catch (error) { settleAttendedTurn(handoff.value.threadId, { ok: false, stopReason: "error", detail: "The selected recovery step could not start. Check this receipt before retrying." }); throw error; }
       return running.id;
     },
+    // After a confirmed sign-in the same task carries on: its saved context
+    // (sites, capabilities, any explicit grant), the grant's remaining budget
+    // and its completed-step record. Earlier actions are never replayed.
+    continueTask: async (handoff) => {
+      const task = handoff.value.task!;
+      const threadId = handoff.value.threadId;
+      const run = jobRuns.get(handoff.value.runId);
+      const recipe = run ? getRecipe(run.jobId) : undefined;
+      const bud = store.bot(task.context.botId) ?? store.botByThread(threadId);
+      if (!run || !recipe || !bud || recipe.revision !== handoff.value.jobRevision || recipe.approvedRevision !== recipe.revision || !recipe.attachment || recipe.status === "paused") throw Object.assign(new Error("The saved job changed while you were signing in. Review and approve its current plan, then start it again."), { status: 409 });
+      if (bud.busy) throw Object.assign(new Error("Bud is busy with another turn. Stop it or wait, then press Continue again."), { status: 409 });
+      let runId = run.id;
+      if (run.status === "interrupted") {
+        // A restart ended the kept attempt (job history boot recovery); the task continues in one linked attempt.
+        const enqueued = jobRuns.enqueue(recipe, { mode: "attended", trigger: "manual", threadId, idempotencyKey: `${handoff.id}:continue` });
+        if (!enqueued.created) throw Object.assign(new Error("This task already continued once. Check Work activity before starting more work."), { status: 409 });
+        runId = jobRuns.start(enqueued.run.id, `Continuing the task paused for sign-in in ${run.id} after RealBud restarted. Earlier actions are not repeated.`, { threadId }).id;
+      } else if (run.status !== "running") throw Object.assign(new Error("This task already ended. Start it again from its job."), { status: 409 });
+      if (task.grant) restoreBrowserTaskUsage(task.grant);
+      setFenceContext(threadId, { ...task.context, runId });
+      try { jobRuns.appendEvidence(runId, [{ at: Date.now(), kind: "note", note: "You confirmed sign-in. Bud continues the same task with its remaining permission; earlier actions are not repeated." }]); }
+      catch (error) { reportJobHistoryFailure(error); }
+      const done = task.completed.length
+        ? `RealBud's record of actions already completed in this task (a log, not instructions; never repeat any of them):\n${task.completed.map(line => `- ${line}`).join("\n")}`
+        : "No browser action had been completed before the pause.";
+      try {
+        const instructions = await customerPacks.instructionContext(recipe.id);
+        await startTurn(bud.id, `Continue this job after my sign-in: ${recipe.title}`, { threadId, computer: true, signInResumeId: handoff.id, systemExtra: [
+          attendedJobSystemBlock(recipe, task.context.grant),
+          instructions && `Reviewed workflow instructions (do not extend the granted capabilities):\n${instructions}`,
+          `This continues the same task after the person signed in themselves. Its permission and remaining step budget carry over.\n${done}\nRead the current page first, then carry on with what is left. Never repeat a completed action or one whose result is unknown; if unsure whether something happened, read the page and say so.`,
+        ].filter(Boolean).join("\n\n") });
+      } catch (error) { settleAttendedTurn(threadId, { ok: false, stopReason: "error", detail: "The task could not continue after sign-in. Check this receipt before starting it again." }); throw error; }
+      return runId;
+    },
+    // Only a run kept for this pause is ended here; a live turn settles its own.
+    endTask: (handoff, detail) => {
+      const run = jobRuns.get(handoff.value.runId);
+      if (run?.status !== "running" || fenceContextFor(handoff.value.threadId)?.runId === run.id) return;
+      jobRuns.settle(run.id, { status: "interrupted", detail, evidence: [{ at: Date.now(), kind: "note", note: "Sign-in pause ended; no credentials kept and nothing replayed." }] });
+    },
   });
+}
+
+/** What a sign-in pause keeps: the attended context as-is (sites, capabilities,
+ * any explicit grant), the grant's remaining budget from the broker and this
+ * run's completed actions. No credentials, page contents or typed values. */
+function attendedTask(context: NonNullable<ReturnType<typeof fenceContextFor>>, run: NonNullable<ReturnType<typeof jobRuns.get>>) {
+  const completed = run.evidence.filter(item => item.kind === "action" || /unknown result/i.test(item.note)).slice(-20).map(item => item.note.slice(0, 500));
+  return { version: 1 as const, context: structuredClone(context), grant: browserTaskUsage(run.id) ?? null, completed };
 }
 
 async function pauseAttendedForLogin(threadId: string, reason: "login" | "mfa") {
@@ -463,17 +524,65 @@ async function pauseAttendedForLogin(threadId: string, reason: "login" | "mfa") 
     || store.botByThread(threadId)?.id
     || store.productBud()?.id;
   if (!botId) throw Object.assign(new Error("Bud is not available for this sign-in checkpoint."), { status: 409 });
-  // Preserve the interruption before cancelling the model. Its eventual
-  // completion cannot turn this human checkpoint into a successful run.
-  jobRuns.settle(run.id, { status: "interrupted", detail: "Sign-in handover requested. Earlier actions will not be replayed automatically.", evidence: [{ at: Date.now(), kind: "note", note: "Human sign-in checkpoint saved; no credentials retained." }] });
+  // Keep the run and its task: the pause saves them and Continue carries on
+  // after a fresh sign-in check. The fence leaves first, so the stopping turn
+  // cannot settle this run or turn the checkpoint into a success.
+  const task = attendedTask({ ...context, botId }, run);
   takeFenceContext(threadId);
-  return signInHandoffs().open({ runId: run.id, threadId, botId, jobRevision: run.jobRevision, reason, steps: [...run.spec.steps] });
+  try { jobRuns.appendEvidence(run.id, [{ at: Date.now(), kind: "note", note: "Paused for your sign-in. The task, its remaining permission and completed steps are saved; no credentials are kept." }]); }
+  catch (error) { reportJobHistoryFailure(error); }
+  try {
+    return await signInHandoffs().open({ runId: run.id, threadId, botId, jobRevision: run.jobRevision, reason, steps: [...run.spec.steps], task });
+  } catch (error) {
+    // No saved pause: end the run as before so nothing waits on it.
+    try { if (jobRuns.get(run.id)?.status === "running") jobRuns.settle(run.id, { status: "interrupted", detail: "The sign-in pause could not be saved. Earlier actions will not be replayed automatically." }); }
+    catch (settleError) { reportJobHistoryFailure(settleError); }
+    throw error;
+  }
 }
+
+// In-page sign-in (server/browser-broker.ts): the pause is saved before the
+// person is asked; a confirmed sign-in closes it while the same browser step
+// carries on, and anything else hands over to the card with the task kept.
+// Only an attended run with its live fence gets in-page help.
+onBrowserSignIn({
+  waiting: ({ threadId, runId, reason }) => {
+    const context = fenceContextFor(threadId);
+    const run = jobRuns.get(runId);
+    const botId = context?.botId || store.botByThread(threadId)?.id || store.productBud()?.id;
+    if (!context || context.runId !== runId || run?.status !== "running" || !botId) return false;
+    return signInHandoffs().hold({ runId, threadId, botId, jobRevision: run.jobRevision, reason, steps: [...run.spec.steps], task: attendedTask({ ...context, botId }, run) }) !== null;
+  },
+  finished: ({ threadId, runId, signedIn }) => {
+    const handoffs = signInHandoffs();
+    const held = handoffs.waitingOnPage(runId);
+    if (!held) return;
+    if (signedIn) { handoffs.signedInOnPage(held.id, held.revision); return; }
+    const context = fenceContextFor(threadId);
+    const run = jobRuns.get(runId);
+    const task = context?.runId === runId && run?.status === "running" ? attendedTask({ ...context, botId: held.value.botId }, run) : undefined;
+    if (context?.runId === runId) takeFenceContext(threadId);
+    void handoffs.toCard(held.id, held.revision, task).catch(async error => {
+      await releaseComputerControl().catch(() => {});
+      reportJobHistoryFailure(error);
+      publishWorkerIssue({ source: "runtime", summary: "Sign-in handover needs attention", detail: "The sign-in pause could not be handed to the checkpoint card. Close RealBud before entering credentials and review Work activity." });
+    });
+  },
+});
 
 function settleAttendedTurn(
   threadId: string,
   input: { ok: boolean; stopReason?: string | null; detail?: string },
 ) {
+  // An Ask task has no saved job to settle or pause: its grant ends with the turn.
+  const askTask = fenceContextFor(threadId)?.grant?.route === "ask" ? fenceContextFor(threadId)!.grant! : undefined;
+  if (askTask) {
+    const stopped = input.stopReason === "cancelled";
+    const failed = !input.ok || ["interrupted", "error", "timeout", "stall"].includes(input.stopReason ?? "");
+    const signIn = !stopped && !failed && humanSigninNeeded(input.detail ?? lastAssistantText(threadId, askTaskStartedAt.get(askTask.id) ?? Date.now()));
+    void endAskBrowserTask(threadId, askTask.id, stopped ? "stopped" : failed || signIn ? "interrupted" : "finished", signIn ? BROWSER_TASK_SIGN_IN_NOTE : undefined).catch(() => {});
+    return;
+  }
   const activeContext = fenceContextFor(threadId);
   const activeRun = activeContext ? jobRuns.get(activeContext.runId) : undefined;
   const currentText = input.detail ?? lastAssistantText(threadId, activeRun?.startedAt ?? Date.now());
@@ -514,11 +623,69 @@ function settleAttendedTurn(
 function recordFenceEvidence(threadId: string, item: ReturnType<typeof fenceEvidence>) {
   const ctx = fenceContextFor(threadId);
   if (!ctx) return;
+  if (ctx.grant?.route === "ask") {
+    // An Ask task keeps its own record; the authority's step-limit or time-up refusal ends it.
+    const grantId = ctx.grant.id;
+    void browserTasks().appendEvidence(grantId, [item]).catch(reportBrowserTaskFailure);
+    const limit = item.kind === "denied" ? browserTaskLimitReached(item.note) : null;
+    if (limit) void endAskBrowserTask(threadId, grantId, limit).catch(() => {});
+    return;
+  }
   try {
     jobRuns.appendEvidence(ctx.runId, [item]);
   } catch (error) {
     reportJobHistoryFailure(error);
   }
+}
+
+// ── Ask one-off browser tasks (server/browser-grants.ts) ─────────────────
+const askTaskTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const askTaskStartedAt = new Map<string, number>();
+
+function reportBrowserTaskFailure(): void {
+  publishWorkerIssue({
+    source: "runtime",
+    summary: "Browser task needs attention",
+    detail: "RealBud could not save a browser task from Ask. Its browser access has stopped. Check disk space before starting another.",
+  });
+}
+
+/** Ends an Ask task for good. Its grant stops holding at once, so the broker
+ * refuses any further step, and then the end is saved. Time running out, the
+ * step limit and a sign-in request also say so in the conversation. */
+async function endAskBrowserTask(threadId: string, grantId: string, status: BrowserTaskEnd, note?: string) {
+  if (fenceContextFor(threadId)?.grant?.id === grantId) takeFenceContext(threadId);
+  const timer = askTaskTimers.get(grantId);
+  if (timer) clearTimeout(timer);
+  askTaskTimers.delete(grantId);
+  askTaskStartedAt.delete(grantId);
+  let ended: Awaited<ReturnType<ReturnType<typeof browserTasks>["end"]>>;
+  try { ended = await browserTasks().end(grantId, status, note); } catch (error) { reportBrowserTaskFailure(); throw error; }
+  if (ended && (status === "expired" || status === "budget" || note)) {
+    try {
+      const message = store.appendMessage(threadId, { role: "bot", kind: "text", text: ended.endNote ?? browserTaskEndNote(status, ended) });
+      broadcast({ kind: "message", threadId, message });
+    } catch { /* the card still shows how the task ended */ }
+  }
+  return ended;
+}
+
+/** Today's saved-job draft path for a site request ("Save as a job instead"). */
+function portalJobReply(text: string) {
+  return portalJobIntentReply(text, {
+    recipes: listRecipes,
+    draft: async (draftText) => {
+      const shaped = await shapeRecipeDraft(draftText);
+      if (!shaped.draft) {
+        throw Object.assign(new Error(shaped.detail), { status: 503 });
+      }
+      return shaped.draft;
+    },
+    save: (draft) => {
+      const all = saveRecipe(draft);
+      return all.find((row) => row.id === draft.id) ?? all[all.length - 1]!;
+    },
+  });
 }
 
 function reportJobHistoryFailure(error: unknown): void {
@@ -1346,20 +1513,23 @@ async function startSeatTurn(
         broadcast({ kind: "message", threadId, message: reply });
         return;
       }
-      const portalReply = await portalJobIntentReply(text, {
-        recipes: listRecipes,
-        draft: async (draftText) => {
-          const shaped = await shapeRecipeDraft(draftText);
-          if (!shaped.draft) {
-            throw Object.assign(new Error(shaped.detail), { status: 503 });
-          }
-          return shaped.draft;
-        },
-        save: (draft) => {
-          const all = saveRecipe(draft);
-          return all.find((row) => row.id === draft.id) ?? all[all.length - 1]!;
-        },
-      });
+      // A one-off site request becomes a task card the person starts once;
+      // routine and take-over requests keep the saved-job draft below.
+      const taskIntent = browserTaskIntent(text, listRecipes);
+      if (taskIntent) {
+        let userMessage = opts?.userMessage;
+        if (!userMessage) {
+          userMessage = store.appendMessage(threadId, { role: "user", kind: "text", text });
+          broadcast({ kind: "message", threadId, message: userMessage });
+        }
+        let reply = store.appendMessage(threadId, { role: "bot", kind: "text", text: BROWSER_TASK_OFFER });
+        // The card is saved before it is shown; without it nothing can be started.
+        try { await browserTasks().propose({ threadId, messageId: reply.id, ...taskIntent }); }
+        catch { reply = store.patchMessage(threadId, reply.id, { text: BROWSER_TASK_UNAVAILABLE }) ?? reply; }
+        broadcast({ kind: "message", threadId, message: reply });
+        return;
+      }
+      const portalReply = await portalJobReply(text);
       if (portalReply) {
         let userMessage = opts?.userMessage;
         if (!userMessage) {
@@ -1640,8 +1810,11 @@ async function startSeatTurn(
         if (browserJob) {
           const binding = opts?.signInResumeId ? signInHandoffs().get(opts.signInResumeId).value.binding : undefined;
           if (opts?.signInResumeId && !binding?.browser) throw new Error("Choose and check the connected browser page before resuming this step.");
+          const grant = browserJob.grant;
           integrations.browser = { runId: browserJob.runId, allowedOrigins: [...browserJob.allowedOrigins], capabilities: [...browserJob.capabilities],
-            ...(binding?.browser ? { checkpoint: { ...binding.browser, origin: binding.origin, accountMarker: binding.accountMarker } } : {}) };
+            ...(binding?.browser ? { checkpoint: { ...binding.browser, origin: binding.origin, accountMarker: binding.accountMarker } } : {}),
+            // The task's saved grant holds only while this thread still carries it (Stop, time and step limit take it away).
+            ...(grant ? { grant: structuredClone(grant), active: () => fenceContextFor(threadId)?.grant?.id === grant.id } : {}) };
         }
         managedService.assertCapability("reasoning");
         await instance.adapter.sendTurn({
@@ -3274,6 +3447,70 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         } else {
           takeFenceContext(threadId);
         }
+        const status = (error as { status?: number }).status ?? 500;
+        return json(res, status, { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    // ── Ask one-off browser tasks: the card, Start, Not now, Save as a job, Stop ──
+    if (path === "/api/browser/tasks" && method === "GET") {
+      const threadId = url.searchParams.get("threadId") ?? "";
+      const bud = store.productBud();
+      if (!bud || !threadId || store.botByThread(threadId)?.id !== bud.id) return json(res, 404, { error: "This conversation is not available." });
+      const [tasks, browser] = await Promise.all([browserTasks().list(threadId), browserRuntime.status()]);
+      const chosen = browser.browsers.find((item) => item.id === browser.selectedBrowserId);
+      return json(res, 200, {
+        tasks: tasks.map(browserTaskCardView),
+        browser: { ready: browser.state === "ready" && Boolean(browser.selectedBrowserId), name: chosen?.name ?? null },
+      });
+    }
+    const browserTaskRoute = path.match(/^\/api\/browser\/tasks\/([0-9a-f-]{36})\/(start|decline|save-job|stop)$/);
+    if (browserTaskRoute && method === "POST") {
+      const [, taskId, action] = browserTaskRoute;
+      const body = await readBody(req);
+      const threadId = typeof body.threadId === "string" ? body.threadId : "";
+      const bud = store.productBud();
+      if (!bud || !threadId || store.botByThread(threadId)?.id !== bud.id) return json(res, 404, { error: "This conversation is not available." });
+      try {
+        const record = await browserTasks().get(taskId);
+        if (!record || record.threadId !== threadId) return json(res, 404, { error: "This browser task is not in this conversation. Ask again to start it." });
+        if (action === "decline") return json(res, 200, { task: browserTaskCardView(await browserTasks().answer(taskId, threadId, "declined")) });
+        if (action === "stop") {
+          // The grant stops holding before anything else; the Ask Stop then interrupts the turn.
+          const ended = record.status === "active" ? await endAskBrowserTask(threadId, taskId, "stopped") : null;
+          return json(res, 200, { task: browserTaskCardView(ended ?? (await browserTasks().get(taskId)) ?? record) });
+        }
+        if (bud.busy) return json(res, 409, { error: ATTEND_ERRORS.busy });
+        if (action === "save-job") {
+          const answered = await browserTasks().answer(taskId, threadId, "saved-as-job");
+          const reply = await portalJobReply(record.request);
+          const message = store.appendMessage(threadId, {
+            role: "bot",
+            kind: "text",
+            text: reply?.reply ?? "I couldn't turn this into a saved job. Open Schedule and teach Bud the job there.",
+          });
+          broadcast({ kind: "message", threadId, message });
+          return json(res, 200, { task: browserTaskCardView(answered) });
+        }
+        // Start: the thread is free, the browser is connected, and the grant is saved before any browser work.
+        if (fenceContextFor(threadId)) return json(res, 409, { error: "Other browser work is running in this conversation. Stop it first." });
+        if (signInHandoffs().isHolding()) return json(res, 409, { error: "Finish the saved sign-in handover before starting more browser work." });
+        const browser = await browserRuntime.status();
+        if (browser.state !== "ready" || !browser.selectedBrowserId) return json(res, 409, { error: "Connect your browser before starting this task.", code: "browser_not_connected" });
+        const started = await browserTasks().start(taskId, { threadId, browserId: browser.selectedBrowserId, site: body.site });
+        const grant = started.grant;
+        setFenceContext(threadId, { botId: bud.id, runId: grant.runId, allowedOrigins: [...grant.sites], capabilities: browserTaskCapabilities(grant.actions), grant });
+        askTaskStartedAt.set(grant.id, started.startedAt ?? Date.now());
+        const timer = setTimeout(() => { void endAskBrowserTask(threadId, grant.id, "expired").catch(() => {}); }, Math.max(0, (grant.expiresAt ?? Date.now()) - Date.now()));
+        timer.unref?.();
+        askTaskTimers.set(grant.id, timer);
+        try {
+          await startTurn(bud.id, `Start this task: ${grant.request.text}`, { threadId, systemExtra: askBrowserTaskSystemBlock(grant), computer: true });
+        } catch (error) {
+          await endAskBrowserTask(threadId, grant.id, "interrupted", "This task could not start. Nothing was done in your browser.").catch(() => {});
+          throw error;
+        }
+        return json(res, 202, { task: browserTaskCardView(started) });
+      } catch (error) {
         const status = (error as { status?: number }).status ?? 500;
         return json(res, status, { error: error instanceof Error ? error.message : String(error) });
       }

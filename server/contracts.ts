@@ -123,8 +123,11 @@ export interface SendTurnInput {
       scope: string;
       propose(input: MemoryProposalInput, signal: AbortSignal): Promise<MemoryProposalResult>;
     };
-    /** A server-bound saved job; never a model-supplied browser or account. */
-    browser?: { runId: string; allowedOrigins: string[]; capabilities: import("../shared/contracts.ts").JobCapability[]; checkpoint?: import("../shared/browser.ts").BrowserCheckpoint };
+    /** A server-bound saved job or Ask task; never a model-supplied browser or account.
+     * `grant` is the task's saved grant and `active` answers whether it still holds
+     * (false once Stop, expiry or the step limit ended it). */
+    browser?: { runId: string; allowedOrigins: string[]; capabilities: import("../shared/contracts.ts").JobCapability[]; checkpoint?: import("../shared/browser.ts").BrowserCheckpoint;
+      grant?: import("../shared/browser-task.ts").BrowserTaskGrant; active?: () => boolean };
     composio?: {
       allowedApps?: string[];
       url?: string;

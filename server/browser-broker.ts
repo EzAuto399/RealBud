@@ -95,6 +95,37 @@ const decisionListeners = new Set<(event: BrowserDecisionEvent) => void>();
 export function onBrowserDecision(listener: (event: BrowserDecisionEvent) => void): () => void {
   decisionListeners.add(listener); return () => { decisionListeners.delete(listener); };
 }
+/** A task's grant and the browser actions it has dispatched. A later broker
+ * for the same grant (the task continuing after sign-in) starts from this
+ * count, so a pause never refills the task's step budget. */
+export interface BrowserTaskUsage { grantId: string; runId: string; expiresAt: number | null; budget: number | null; used: number }
+const usage = new Map<string, BrowserTaskUsage>();
+const remember = (entry: BrowserTaskUsage) => {
+  usage.delete(entry.grantId); usage.set(entry.grantId, { ...entry });
+  while (usage.size > 200) usage.delete(usage.keys().next().value!);
+};
+/** The latest grant usage for a run, for saving with a sign-in pause. */
+export function browserTaskUsage(runId: string): BrowserTaskUsage | undefined {
+  const found = [...usage.values()].reverse().find(entry => entry.runId === runId);
+  return found ? { ...found } : undefined;
+}
+/** Restores a paused task's usage after a restart. Only ever raises the count. */
+export function restoreBrowserTaskUsage(saved: BrowserTaskUsage): void {
+  const current = usage.get(saved.grantId);
+  if (!Number.isSafeInteger(saved.used) || saved.used < 0 || current && current.used >= saved.used) return;
+  remember({ ...saved, ...(current ? { expiresAt: current.expiresAt, budget: current.budget } : {}) });
+}
+/** The person is asked to sign in on the page itself. `waiting` saves the
+ * pause before they are asked (false: no in-page help, use the handoff card);
+ * `finished` is told whether a fresh read confirmed they are signed in. The
+ * broker never awaits `finished`: the host may stop this very turn. */
+export interface BrowserSignInEvent { threadId: string; runId: string; reason: "login" | "mfa"; origin: string; task: BrowserTaskUsage }
+export interface BrowserSignInHost { waiting(event: BrowserSignInEvent): boolean; finished(event: BrowserSignInEvent & { signedIn: boolean }): void }
+let signInHost: BrowserSignInHost | null = null;
+export function onBrowserSignIn(host: BrowserSignInHost): () => void {
+  signInHost = host; return () => { if (signInHost === host) signInHost = null; };
+}
+const SIGN_IN_NEEDED = "This page contains sign-in or security fields. Stop browser work and let the person finish sign-in directly; keep passwords and codes out of chat.";
 const live = new Set<BrowserBroker>();
 export async function releaseBrowserBrokers(): Promise<void> {
   const brokers = [...live]; for (const b of brokers) b.close();
@@ -139,7 +170,11 @@ export async function startBrowserBroker(options: {
     .map(tool => tool.name !== "browser_upload" ? tool : { ...tool, inputSchema: { ...tool.inputSchema,
       properties: { ...tool.inputSchema.properties, file: { ...(tool.inputSchema.properties.file as object), enum: grant.uploads.map(file => file.name) } } } });
   const rules = options.rules ?? (() => context.rules ?? loadRules());
-  let closed = false; let session: string | null = null; let busy = false; let used = 0;
+  let closed = false; let session: string | null = null; let busy = false;
+  // A task continuing after sign-in keeps what it already spent.
+  let used = usage.get(grant.id)?.used ?? 0;
+  const spend = () => { used += 1; remember({ grantId: grant.id, runId: options.runId, expiresAt: grant.expiresAt, budget: grant.budget, used }); };
+  remember({ grantId: grant.id, runId: options.runId, expiresAt: grant.expiresAt, budget: grant.budget, used });
   let release: Promise<void> | null = null;
   const borrowed = new Set<number>();
   const deniedBorrows = new Set<number>();
@@ -181,15 +216,46 @@ export async function startBrowserBroker(options: {
     if (!await options.approve(presentAs, params, auth.summary, signal, { fence: auth.fence, ...(auth.once ? { approvalPolicy: "once" as const } : {}) })) throw problem(NOT_APPROVED);
     check(signal);
   };
-  const observe = async (tabId: number, signal: AbortSignal) => {
+  const observe = async (tabId: number, signal: AbortSignal, help = false): Promise<{ text: string; truncated: boolean; source: string }> => {
     const before = await currentTab(tabId, signal);
     const data = await runtime.command(["observe", "--session", session!, "--tab-id", String(tabId), "--max-tokens", "6000"], signal);
     const after = await currentTab(tabId, signal);
     if (data.tab_id !== tabId || typeof data.text !== "string" || before.url !== after.url) throw problem("The page changed during the read. Read it again before acting.");
-    if (browserLoginFields(data.text)) { snapshots.delete(tabId); throw problem("This page contains sign-in or security fields. Stop browser work and let the person finish sign-in directly; keep passwords and codes out of chat."); }
+    if (browserLoginFields(data.text)) {
+      snapshots.delete(tabId);
+      const resumed = help ? await signIn(tabId, String(after.url), data.text, signal) : null;
+      if (resumed) return resumed;
+      throw problem(SIGN_IN_NEEDED);
+    }
     if (checkpoint && !data.text.includes(checkpoint.accountMarker)) { broker.close(); throw problem("The verified account label is no longer visible. This step stopped. Check the account and page before continuing."); }
     snapshots.set(tabId, { refs: observationRefs(data.text), at: now(), url: String(after.url), text: data.text });
     return { text: data.text, truncated: data.truncated === true || Boolean(data.next_cursor), source: new URL(String(after.url)).origin };
+  };
+  /** Login hand-off on the page itself: the pause (grant, budget, completed
+   * steps) is saved before the person is asked, they sign in in their own
+   * browser, and a fresh read, not their word, confirms it. The same task then
+   * continues in this call. Nothing typed is seen, kept or replayed. */
+  const signIn = async (tabId: number, url: string, page: string, signal: AbortSignal) => {
+    const at = new URL(url);
+    const reason: "login" | "mfa" = /verification|one.time|\botp\b|two.factor|\b2fa\b|\bmfa\b|security code/i.test(page) ? "mfa" : "login";
+    const task = (): BrowserTaskUsage => ({ grantId: grant.id, runId: options.runId, expiresAt: grant.expiresAt, budget: grant.budget, used });
+    const event = { threadId: options.threadId, runId: options.runId, reason, origin: at.origin, task: task() };
+    let waiting = false;
+    try { waiting = signInHost?.waiting(event) === true; } catch { waiting = false; }
+    if (!waiting) return null;
+    const step = reason === "mfa" ? "verification step" : "sign-in page";
+    publish("asked", `Asked you to finish the ${step} on ${at.hostname} in your browser. Bud does not see or keep what you type.`);
+    let resumed: Awaited<ReturnType<typeof observe>> | null = null;
+    try {
+      const outcome = await runtime.requestHelp(owner, { tabId, title: reason === "mfa" ? "Finish verification to continue" : "Sign in to continue",
+        prompt: `Bud paused this task at a ${step} on ${at.hostname}. Finish it on this page yourself, then press Done. Bud does not see or keep what you type, and continues the same task afterwards.` }, signal);
+      check(signal);
+      if (outcome === "completed" || outcome === "continued") resumed = await observe(tabId, signal);
+    } catch { resumed = null; }
+    publish(resumed ? "action" : "note", resumed ? `You finished the ${step} on ${at.hostname}. Bud read the page again and continues the same task.`
+      : `The ${step} on ${at.hostname} was not confirmed on the page. The task is paused for the sign-in card; nothing was repeated.`);
+    try { signInHost?.finished({ ...event, task: task(), signedIn: resumed !== null }); } catch { /* the host keeps its saved pause */ }
+    return resumed;
   };
   /** A consequential step: facts from a fresh observation, a record persisted
    * before the card, a once-only approval with a short expiry, and the same
@@ -276,7 +342,7 @@ export async function startBrowserBroker(options: {
         if (deniedBorrows.has(tabId)) throw problem("This tab request already ended or has an unknown outcome. Do not repeat it.");
         await gate(name, authorize(name, url, args), { url }, signal, "browser_read");
         deniedBorrows.add(tabId); // Claim before dispatch; a timeout never creates an automatic retry.
-        receipt = operations.start({ threadId: options.threadId, toolName: name, toolSlugs: [] }).id; used += 1;
+        receipt = operations.start({ threadId: options.threadId, toolName: name, toolSlugs: [] }).id; spend();
         await runtime.command(["tab", "borrow", String(tabId), "--session", session!, "--timeout", "60s"], signal);
         check(signal); borrowed.add(tabId);
         await currentTab(tabId, signal); operations.finish(receipt, "succeeded"); receipt = undefined;
@@ -284,7 +350,7 @@ export async function startBrowserBroker(options: {
       }
       if (name === "browser_read") {
         await gate(name, authorize(name, url, args), { url }, signal);
-        return text(await observe(tabId, signal));
+        return text(await observe(tabId, signal, true));
       }
       let command: string[];
       if (name === "browser_navigate") {
@@ -335,7 +401,7 @@ export async function startBrowserBroker(options: {
       }
       await currentTab(tabId, signal); check(signal); snapshots.delete(tabId);
       if (approval) { await approvals.update(approval.id, { outcome: "dispatching" }); claim = approval.id; }
-      receipt = operations.start({ threadId: options.threadId, toolName: name, toolSlugs: [] }).id; used += 1;
+      receipt = operations.start({ threadId: options.threadId, toolName: name, toolSlugs: [] }).id; spend();
       const result = await runtime.command(command, signal); check(signal);
       let saved: BrowserDownloadReceipt | undefined;
       if (staged) {

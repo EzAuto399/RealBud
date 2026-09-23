@@ -18,6 +18,9 @@ export interface AttendedFenceContext extends FenceContext {
   /** Product Bud bot that owns this beside-you run (canonical `bud` or legacy UUID). */
   botId: string;
   runId: string;
+  /** An explicit task grant (an Ask one-off task). The broker enforces it;
+   * without one a saved job keeps its own capabilities. */
+  grant?: BrowserTaskGrant;
 }
 
 const fences = new Map<string, AttendedFenceContext>();

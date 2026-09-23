@@ -741,13 +741,17 @@ try {
     reply: "waiting at sign-in",
   });
   await api("POST", "/api/recipes/run-pass/attend", {});
-  const passRun = await waitForRunSettled("run-pass");
+  // The sign-in is handed to the person and the task pauses, still running, so it
+  // can continue afterwards; Stop from the handoff ends it.
+  await waitForSignInHandoff();
+  const pausedPass = ((await api("GET", "/api/job-runs?jobId=run-pass")).body?.runs ?? [])[0];
   check(
     "password fill auto-denied",
-    passRun.evidence.some((e) => e.kind === "denied" && /never types a password/i.test(e.note)),
+    (pausedPass?.evidence ?? []).some((e) => e.kind === "denied" && /never types a password/i.test(e.note)),
   );
-  await waitForSignInHandoff();
   await closeOpenSignInHandoffs();
+  const passRun = await waitForRunSettled("run-pass");
+  check("paused sign-in task ends interrupted after Stop", passRun.status === "interrupted", passRun.status);
   check(
     "sign-in handoff cleared after password deny",
     ((await api("GET", "/api/human-handoffs")).body?.handoffs ?? []).every((h) => h.value?.state === "closed"),

@@ -534,16 +534,16 @@ browserRuntime.resumeConnection = async () => {};
       reply: "waiting at sign-in",
     });
     expect((await api("POST", "/api/recipes/att-deny/attend", {})).status).toBe(202);
-    await waitFor(async () => {
-      const runs = await api("GET", "/api/job-runs?jobId=att-deny");
-      return runs.body.runs[0]?.status !== "running";
-    }, "the password fill to be denied and the turn to end");
-    const denied = (await api("GET", "/api/job-runs?jobId=att-deny")).body.runs[0];
-    expect(denied.evidence.some((item: { kind: string; note: string }) => item.kind === "denied" && item.note.includes("never types a password"))).toBe(true);
-    await waitFor(async () => (await api("GET", "/api/human-handoffs")).body.handoffs[0]?.value.state === "awaiting_login", "durable released sign-in checkpoint");
+    // The password fill is denied and the sign-in is handed to the person. The task
+    // pauses (still running, same grant) instead of ending, so it can continue after.
+    await waitFor(async () => (await api("GET", "/api/human-handoffs")).body.handoffs[0]?.value.state === "awaiting_login", "durable sign-in checkpoint");
+    const paused = (await api("GET", "/api/job-runs?jobId=att-deny")).body.runs[0];
+    expect(paused.evidence.some((item: { kind: string; note: string }) => item.kind === "denied" && item.note.includes("never types a password"))).toBe(true);
     const held = (await api("GET", "/api/human-handoffs")).body.handoffs[0];
     const stopped = await api("POST", `/api/human-handoffs/${held.id}/stop`, { revision: held.revision });
     expect(stopped.status).toBe(200);
+    await waitFor(async () => (await api("GET", "/api/job-runs?jobId=att-deny")).body.runs[0]?.status !== "running", "the paused task to end after Stop");
+    expect((await api("GET", "/api/job-runs?jobId=att-deny")).body.runs[0].status).toBe("interrupted");
     expect((await api("POST", `/api/human-handoffs/${held.id}/close`, { revision: stopped.body.revision })).status).toBe(200);
 
     await saveReadyJob("att-pay");

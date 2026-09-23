@@ -52,6 +52,7 @@ import { OptionCard } from "./OptionCard";
 import { ApprovalCard } from "./ApprovalCard";
 import { Composer } from "./Composer";
 import { pendingApprovals } from "./PendingApproval";
+import { BrowserTaskCard, useBrowserTasks, type BrowserTaskAction, type BrowserTaskBrowser, type BrowserTaskCardView } from "./BrowserTaskCard";
 import { ModelPicker } from "./ModelPicker";
 import { TaskPicker } from "./TaskPicker";
 import { ReactionBar, ReactionChips } from "./Reactions";
@@ -775,6 +776,12 @@ const MessagesList = memo(function MessagesList({
   onAskApprove,
   onAskSetSite,
   onAskConnectSetup,
+  browserTasks,
+  browserTaskBrowser,
+  browserTaskActing,
+  browserTaskError,
+  onBrowserTask,
+  onBrowserTaskConnect,
 }: {
   bot: Bot;
   messages: Message[];
@@ -808,6 +815,13 @@ const MessagesList = memo(function MessagesList({
   onAskApprove?: (recipeId: string, attach: boolean) => void;
   onAskSetSite?: (recipeId: string) => void;
   onAskConnectSetup?: (connectLabel?: string) => void;
+  /** Ask one-off browser task cards, keyed by the reply that offered each. */
+  browserTasks?: Record<string, BrowserTaskCardView>;
+  browserTaskBrowser?: BrowserTaskBrowser;
+  browserTaskActing?: string | null;
+  browserTaskError?: { id: string; text: string } | null;
+  onBrowserTask?: (id: string, action: BrowserTaskAction, site?: string) => void;
+  onBrowserTaskConnect?: () => void;
 }) {
   const askEmpty = productAsk && isProductAskEmptyThread(messages);
   const versionFocus = useRef<string | null>(null);
@@ -883,8 +897,8 @@ const MessagesList = memo(function MessagesList({
               );
             case "screen":
               return m.png ? <ScreenFrame png={m.png} mime={m.mime} /> : null;
-            default:
-              return (
+            default: {
+              const bubble = (
                 <Bubble
                   bot={bot}
                   message={m}
@@ -902,6 +916,25 @@ const MessagesList = memo(function MessagesList({
                   versionFocus={versionFocus}
                 />
               );
+              const task = m.role === "bot" ? browserTasks?.[m.id] : undefined;
+              if (!task || !onBrowserTask) return bubble;
+              return (
+                <>
+                  {bubble}
+                  <BrowserTaskCard
+                    task={task}
+                    browser={browserTaskBrowser ?? { ready: false, name: null }}
+                    busy={browserTaskActing === task.id}
+                    error={browserTaskError?.id === task.id ? browserTaskError.text : null}
+                    onStart={(site) => onBrowserTask(task.id, "start", site)}
+                    onDecline={() => onBrowserTask(task.id, "decline")}
+                    onSaveJob={() => onBrowserTask(task.id, "save-job")}
+                    onStop={() => onBrowserTask(task.id, "stop")}
+                    onConnect={() => onBrowserTaskConnect?.()}
+                  />
+                </>
+              );
+            }
           }
         })();
         if (!row) return null;
@@ -1059,6 +1092,9 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
   }, []);
   const goYouJobs = goRoutines;
   const stopTurn = useCallback(() => dispatch({ type: "interrupt", botId: bot.id }), [bot.id, dispatch]);
+  const browserTasks = useBrowserTasks({ threadId: bot.threadId, messages, busy: Boolean(bot.busy), enabled: productAsk, onInterrupt: stopTurn });
+  const runBrowserTask = useCallback((id: string, action: BrowserTaskAction, site?: string) => { void browserTasks.act(id, action, site); }, [browserTasks.act]);
+  const connectTaskBrowser = useCallback(() => { location.hash = "you-browser"; dispatch({ type: "showYou" }); }, [dispatch]);
   const goYouSetup = useCallback(() => {
     if (availability.target === "you-recovery") { location.hash = availability.target; dispatch({ type: "showYou" }); return; }
     setScheduleContinueOpen(false);
@@ -1437,6 +1473,12 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
             onAskApprove={(recipeId, attach) => void runAskApprove(recipeId, attach)}
             onAskSetSite={openAskSetSite}
             onAskConnectSetup={openAskConnectSetup}
+            browserTasks={browserTasks.byMessage}
+            browserTaskBrowser={browserTasks.browser}
+            browserTaskActing={browserTasks.acting}
+            browserTaskError={browserTasks.error}
+            onBrowserTask={runBrowserTask}
+            onBrowserTaskConnect={connectTaskBrowser}
           />
           {provisioning && !productAsk && (
             <div className="flex justify-start">

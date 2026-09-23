@@ -36,6 +36,7 @@ import { computerProxyEnv } from "../../container-computer.ts";
 import { augmentedPath } from "../../env-path.ts";
 import { readCuaConnection } from "../../local-computer.ts";
 import { startBrowserBroker, type BrowserBroker } from "../../browser-broker.ts";
+import { browserRuntime } from "../../browser-runtime.ts";
 import { browserApprovalCardFrom } from "../../browser-approval-card.ts";
 import type { BrowserApprovalCard } from "../../../shared/browser-approval-card.ts";
 import { startMemoryProposalBroker } from "../../hermes-memory-proposal-broker.ts";
@@ -698,11 +699,17 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
           if (firstTurn.integrations?.browser) {
             const browser = firstTurn.integrations.browser;
+            // A task grant is bound to the browser selected when the person started it.
+            if (browser.grant?.browser.id && (await browserRuntime.status()).selectedBrowserId !== browser.grant.browser.id) {
+              throw new Error("The selected browser changed after this task was started. Start the task again from Ask.");
+            }
             browserBroker = await startBrowserBroker({
               threadId, runId: browser.runId,
               checkpoint: browser.checkpoint,
               context: { allowedOrigins: browser.allowedOrigins, capabilities: browser.capabilities },
-              isActive: () => Boolean(current && !current.settled && !current.cancellationRequested && !closed),
+              // An explicit grant is the task's authority; a saved job's capabilities map onto one inside the broker.
+              ...(browser.grant ? { grant: browser.grant } : {}),
+              isActive: () => Boolean(current && !current.settled && !current.cancellationRequested && !closed && (browser.active?.() ?? true)),
               // The broker has already decided this step; the card carries its
               // projection (site, surface, once-only policy) and the host only shows it.
               approve: (tool, params, summary, signal, projection) => new Promise<boolean>(resolve => {

@@ -11,6 +11,10 @@ import { browserTaskUploadName, type BrowserTaskUpload } from "../shared/browser
 
 export const BROWSER_VERSION = "0.3.0";
 export const BROWSER_PORT = 52800;
+/** In-page sign-in help. Below Hermes' 300 s MCP tool-call default, so the
+ * worker's browser call is still waiting when the person finishes. */
+export const BROWSER_HELP_TIMEOUT_MS = 240_000;
+export type BrowserHelpOutcome = "completed" | "continued" | "cancelled" | "timed_out" | "disabled" | "unknown";
 export type BrowserJson = Record<string, unknown>;
 export type BrowserCommand = (args: string[], signal?: AbortSignal) => Promise<BrowserJson>;
 type Lease = { owner: string; sessionId: string | null; browserId: string; phase: "starting" | "active" | "stopping" | "unknown" };
@@ -83,8 +87,10 @@ export class BrowserRuntime {
   private async execute(args: string[], signal?: AbortSignal): Promise<BrowserJson> {
     const binary = await this.executable();
     if (!binary) throw fail("The browser helper is missing from this RealBud build.");
+    // A person signing in needs longer than a browser step; the helper enforces its own help timeout first.
+    const timeout = args[0] === "request-help" ? BROWSER_HELP_TIMEOUT_MS + 15_000 : 75_000;
     return new Promise((resolve, reject) => {
-      execFile(binary, [...args, "--json"], { env: this.env(), windowsHide: true, timeout: 75_000, maxBuffer: 600_000, signal }, (error, stdout) => {
+      execFile(binary, [...args, "--json"], { env: this.env(), windowsHide: true, timeout, maxBuffer: 600_000, signal }, (error, stdout) => {
         let value: unknown;
         try { value = JSON.parse(stdout); } catch { /* Never echo CLI stderr or page/account content into status errors. */ }
         if (error || !record(value) || value.ok === false || value.error) return reject(browserStepFailure(value));
@@ -174,6 +180,17 @@ export class BrowserRuntime {
     const session = (Array.isArray(status.sessions) ? status.sessions : []).find(s => record(s) && s.session_id === this.state?.lease?.sessionId);
     if (!record(session) || session.browser_instance_id !== this.state?.lease?.browserId || !record(session.interaction) ||
       session.interaction.borrow_confirmation !== "always" || session.interaction.request_help !== "enabled" || !this.isOwner(owner)) throw fail("The browser session or its confirmation settings changed. Stop and check the connection before continuing.");
+  }
+  /** Ask the person to finish an in-page step (sign-in, verification) in the
+   * borrowed tab. They act in their own browser; nothing they type comes back.
+   * `completed`/`continued` is their word only: the caller reads the page again. */
+  async requestHelp(owner: string, input: { tabId: number; title: string; prompt: string }, signal?: AbortSignal): Promise<BrowserHelpOutcome> {
+    const session = this.state?.lease?.sessionId;
+    if (!this.isOwner(owner) || !session || !Number.isSafeInteger(input.tabId) || input.tabId < 1) throw fail("This browser request has stopped.");
+    const result = await this.command(["request-help", "--session", session, "--tab-id", String(input.tabId), "--title", input.title.slice(0, 80),
+      "--prompt", input.prompt.slice(0, 400), "--timeout", `${Math.round(BROWSER_HELP_TIMEOUT_MS / 1000)}s`], signal);
+    const outcome = typeof result.outcome === "string" ? result.outcome : "";
+    return (["completed", "continued", "cancelled", "timed_out", "disabled"] as const).find(known => known === outcome) ?? "unknown";
   }
   async release(owner: string): Promise<void> {
     this.revoked.add(owner);

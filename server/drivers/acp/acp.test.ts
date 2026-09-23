@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ensureDirs, NATIVE_DIR } from "../../config.ts";
-import type { ProviderInstance } from "../../contracts.ts";
+import type { ProviderInstance, RuntimeEvent } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { removeFixture } from "../../testing/private-fixture.ts";
 import { GrokAgentDriver } from "./grok.ts";
@@ -28,6 +28,7 @@ import { revokeConnectedAppsBrokers } from "../../connected-apps-broker.ts";
 import * as gmail from "../../composio-gmail.ts";
 import { ServiceEntitlementError } from "../../service-entitlement.ts";
 import { HERMES_MEMORY_APPROVAL } from "./hermes-memory-approval.ts";
+import { browserRuntime, type BrowserJson } from "../../browser-runtime.ts";
 
 const { assertCapability } = vi.hoisted(() => ({ assertCapability: vi.fn() }));
 vi.mock("../../managed-service.ts", () => ({ managedService: { assertCapability } }));
@@ -229,6 +230,56 @@ describe("ACP turns (fake CLI)", () => {
     await instance.adapter.interruptTurn("t-browser-job");
     await expect(request()).rejects.toThrow();
     expect(instance.adapter.hasSession("t-browser-job")).toBe(false);
+  });
+
+  // Pinned Hermes gives a delegated child the parent's `mcp-browser` toolset
+  // (tools/delegate_tool_toolsets.py:89-98, inherit_mcp_toolsets default true at
+  // tools/delegate_tool_config.py:165-167) and dispatches its MCP calls on the
+  // parent's one connection, same URL and bearer (tools/mcp_tool_handlers.py:98,
+  // tools/mcp_tool.py:407). So the child's call below is exactly what reaches
+  // RealBud: the parent's broker, its grant, its approval card and its Stop.
+  it("a delegated child's browser call reaches the parent's broker under the same grant, approval and Stop", async () => {
+    const dump = join(scratch, "browser-child.json"); process.env.FAKE_ACP_DUMP = dump;
+    let scope = "user";
+    const spies = [
+      vi.spyOn(browserRuntime, "acquire").mockResolvedValue("owned"),
+      vi.spyOn(browserRuntime, "checkSession").mockResolvedValue(undefined),
+      vi.spyOn(browserRuntime, "isOwner").mockReturnValue(true),
+      vi.spyOn(browserRuntime, "release").mockResolvedValue(undefined),
+      vi.spyOn(browserRuntime, "command").mockImplementation(async (args: string[]): Promise<BrowserJson> => {
+        if (args[0] === "tab" && args[1] === "list") return { tabs: [{ tab_id: 1, url: "https://portal.example/levies", title: "Fictional levies", scope }] };
+        if (args[0] === "tab" && args[1] === "borrow") { scope = "agent"; return { ok: true }; }
+        return { ok: true };
+      }),
+    ];
+    try {
+      await create(HermesAgentDriver, "hang");
+      await instance.adapter.sendTurn({ threadId: "t-browser-child", text: "Delegate reading the fictional levies", computer: true,
+        integrations: { browser: { runId: "run-browser-child", allowedOrigins: ["portal.example"], capabilities: ["portal-read"] } } });
+      await vi.waitFor(() => expect(JSON.parse(readFileSync(dump, "utf8")).promptCount).toBe(1));
+      const descriptor = JSON.parse(readFileSync(dump, "utf8")).mcpServers[0] as { url: string; headers: Array<{ name: string; value: string }> };
+      let id = 100;
+      const child = async (method: string, params: Record<string, unknown> = {}) => (await (await fetch(descriptor.url, { method: "POST",
+        headers: { "content-type": "application/json", ...Object.fromEntries(descriptor.headers.map(row => [row.name, row.value])) },
+        body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method, params }) })).json() as { result: { tools?: Array<{ name: string }>; isError?: boolean; content?: Array<{ text: string }> } }).result;
+      // Same grant: the saved job's tools only; a tool it never granted stays unavailable to the child.
+      const tools = (await child("tools/list")).tools!.map(tool => tool.name);
+      expect(tools).toContain("browser_borrow"); expect(tools).not.toContain("browser_press");
+      const press = await child("tools/call", { name: "browser_press", arguments: { tab_id: 1, ref: "@e1", key: "Enter" } });
+      expect(press.isError).toBe(true); expect(press.content![0].text).toMatch(/not available/);
+      // Same approval: the child's borrow opens the parent's card, and a refusal is final.
+      const borrow = child("tools/call", { name: "browser_borrow", arguments: { tab_id: 1 } });
+      const opened = await recorder.until(event => event.type === "request.opened" && event.threadId === "t-browser-child") as Extract<RuntimeEvent, { type: "request.opened" }>;
+      expect(opened.fence).toMatchObject({ surface: "portal-read", origin: "portal.example" });
+      await instance.adapter.respondToRequest("t-browser-child", opened.requestId!, { behavior: "deny" });
+      const refused = await borrow;
+      expect(refused.isError).toBe(true); expect(refused.content![0].text).toMatch(/not approved/);
+      expect(spies[4].mock.calls.some(([args]) => args[0] === "tab" && args[1] === "borrow")).toBe(false);
+      // Same Stop: the parent's interrupt closes the broker, so the child's next call fails.
+      await instance.adapter.interruptTurn("t-browser-child");
+      await expect(child("tools/call", { name: "browser_tabs", arguments: {} })).rejects.toThrow();
+      expect(spies[3]).toHaveBeenCalled();
+    } finally { for (const spy of spies) spy.mockRestore(); }
   });
 
   it("drops a warm session when RealBud clears the cursor for a rewind or recovery", async () => {
