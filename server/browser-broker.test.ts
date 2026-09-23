@@ -4,23 +4,27 @@ import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { addBrowserTaskUpload, browserTaskWorkroom, BrowserRuntime, type BrowserJson } from "./browser-runtime.ts";
-import { startBrowserBroker, jobBrowserUrl, observationRefs, browserLoginFields, onBrowserDecision, type BrowserBroker, type BrowserDecisionEvent } from "./browser-broker.ts";
-import { BrowserApprovalStore } from "./browser-authority.ts";
+import { startBrowserBroker, jobBrowserUrl, observationRefs, browserLoginFields, onBrowserDecision, browserToolsFor, type BrowserBroker, type BrowserDecisionEvent } from "./browser-broker.ts";
+import { grantedBrowserTools } from "./attended-run.ts";
+import { BrowserApprovalStore, legacyBrowserGrant } from "./browser-authority.ts";
 import { ConnectedAppOperationStore } from "./connected-app-operations.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import type { BrowserCheckpoint } from "../shared/browser.ts";
-import { parseBrowserTaskGrant, type BrowserActionClass } from "../shared/browser-task.ts";
+import { legacyBrowserActions, parseBrowserTaskGrant, type BrowserActionClass, type BrowserTaskGrant } from "../shared/browser-task.ts";
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 const sha256 = (bytes: Buffer | string) => createHash("sha256").update(bytes).digest("hex");
-type Task = { actions: BrowserActionClass[]; files?: Array<{ name: string; bytes: Buffer }>; extraUploads?: Array<{ name: string; sha256: string }> };
+type Task = { actions: BrowserActionClass[]; files?: Array<{ name: string; bytes: Buffer }>; extraUploads?: Array<{ name: string; sha256: string }>; browserId?: string };
 async function fixture(checkpoint?: BrowserCheckpoint, job: { capabilities?: Array<"portal-read" | "portal-prefill" | "portal-submit">; rules?: Array<{ key: string; decision: "allow" | "deny" }>; task?: Task } = {}) {
   const root = privateTempRoot(join(tmpdir(), "rb-browser-broker-")); cleanup.push(() => removeFixture(root));
   const workroom = browserTaskWorkroom(root, "grant-fictional-1");
   const uploads = [...await Promise.all((job.task?.files ?? []).map(file => addBrowserTaskUpload(workroom, file.name, file.bytes))), ...(job.task?.extraUploads ?? [])];
+  const capabilities = job.capabilities ?? ["portal-read", "portal-prefill"];
+  // A saved job passes its own grant explicitly, built from its capabilities exactly as the host does.
   const grant = job.task ? parseBrowserTaskGrant({ version: 1, purpose: "browser-task-grant", id: "grant-fictional-1", runId: "run-1", route: "ask",
-    request: { text: "Fictional task", sha256: sha256("Fictional task") }, sites: ["portal.example"], browser: { id: null, accountMarker: null },
-    actions: job.task.actions, consequential: "ask-each", uploads, expiresAt: null, budget: null }) : undefined;
+    request: { text: "Fictional task", sha256: sha256("Fictional task") }, sites: ["portal.example"], browser: { id: job.task.browserId ?? null, accountMarker: null },
+    actions: job.task.actions, consequential: "ask-each", uploads, expiresAt: null, budget: null })
+    : legacyBrowserGrant({ runId: "run-1", allowedOrigins: ["portal.example"], capabilities, ...(checkpoint ? { checkpoint } : {}) });
   let downloadBytes: Buffer = Buffer.from("%PDF-1.7\nFictional statement\n"); const uploaded: Buffer[] = [];
   let session = false; let page = '@e1 button "Show details"\n@e2 textbox "Reference"\n@e3 button "Transfer money"';
   let url = "https://portal.example/work"; let unknown = false; let scope = "user";
@@ -46,8 +50,8 @@ async function fixture(checkpoint?: BrowserCheckpoint, job: { capabilities?: Arr
   let clock = 1_000_000;
   const approve = vi.fn(async (..._args: unknown[]) => true);
   const start = async () => {
-    const started = await startBrowserBroker({ runtime, operations, approvals, checkpoint, threadId: "thread-1", runId: "run-1", now: () => clock, ...(grant ? { grant } : {}),
-      context: { allowedOrigins: ["portal.example"], capabilities: job.capabilities ?? ["portal-read", "portal-prefill"], ...(job.rules ? { rules: job.rules } : {}) },
+    const started = await startBrowserBroker({ runtime, operations, approvals, checkpoint, threadId: "thread-1", runId: "run-1", now: () => clock, grant,
+      context: { allowedOrigins: ["portal.example"], capabilities, ...(job.rules ? { rules: job.rules } : {}) },
       isActive: () => true, approve, assertCapability: () => {} });
     cleanup.push(async () => { started.close(); await started.released(); });
     return started;
@@ -260,7 +264,8 @@ describe("keys, dropdowns, downloads and uploads", () => {
     expect((await saved.request("browser_select", { tab_id: 1, ref: "@e2", values: ["date"] })).content[0].text).toBe("This browser tool or its arguments are not available.");
     const task = await fixture(undefined, { task: { actions: ["read", "keys", "upload"], files: [{ name: "fictional-lease.pdf", bytes: Buffer.from("fictional lease") }] } });
     const tools = await task.listTools();
-    expect(tools.map(tool => tool.name)).toEqual(["browser_tabs", "browser_borrow", "browser_read", "browser_navigate", "browser_fill", "browser_click_semantic", "browser_press", "browser_upload", "browser_release"]);
+    // Exactly the grant's classes: reading, keys and the granted upload; no opening, typing or clicking.
+    expect(tools.map(tool => tool.name)).toEqual(["browser_tabs", "browser_borrow", "browser_read", "browser_press", "browser_upload", "browser_release"]);
     expect(tools.find(tool => tool.name === "browser_upload")!.inputSchema.properties.file.enum).toEqual(["fictional-lease.pdf"]);
   });
 
@@ -363,5 +368,88 @@ describe("keys, dropdowns, downloads and uploads", () => {
     const retry = await f.request("browser_click_semantic", { tab_id: 1, ref: "@e1" }, 103, next);
     expect(retry.content[0].text).toMatch(/unknown result\. Check the site yourself/);
     expect(f.approve.mock.calls.length).toBe(asked); expect(dispatched(f, "click")).toHaveLength(0);
+  });
+});
+
+// The grant is the only path: a saved job's own (`legacy-job`) or a task's,
+// and tools/list is exactly the grant's action classes.
+const NEEDS: ReadonlyArray<[string, BrowserActionClass]> = [
+  ["browser_tabs", "read"], ["browser_borrow", "read"], ["browser_read", "read"], ["browser_navigate", "navigate"], ["browser_fill", "fill"],
+  ["browser_click_semantic", "click"], ["browser_press", "keys"], ["browser_select", "fill"], ["browser_download", "download"], ["browser_upload", "upload"], ["browser_release", "read"],
+];
+const TASK_ONLY = ["browser_press", "browser_select", "browser_download", "browser_upload"];
+describe("explicit grants and exact tool lists", () => {
+  const combos = (items: readonly string[]): string[][] => items.reduce<string[][]>((all, item) => [...all, ...all.map(set => [...set, item])], [[]]);
+  const taskGrant = (actions: BrowserActionClass[], files: number): BrowserTaskGrant => parseBrowserTaskGrant({ version: 1, purpose: "browser-task-grant", id: "grant-fictional-table", runId: "run-1", route: "ask",
+    request: { text: "Fictional task", sha256: sha256("Fictional task") }, sites: ["portal.example"], browser: { id: null, accountMarker: null },
+    actions, consequential: "ask-each", uploads: files ? [{ name: "fictional-lease.pdf", sha256: "b".repeat(64) }] : [], expiresAt: null, budget: null });
+  async function listed(grant: BrowserTaskGrant, capabilities: string[] = ["portal-read"]) {
+    const root = privateTempRoot(join(tmpdir(), "rb-browser-tools-")); cleanup.push(() => removeFixture(root));
+    const runtime = new BrowserRuntime({ root, command: async () => ({}), executable: async () => "/synthetic/bsk", startDaemon: async () => {} });
+    const broker = await startBrowserBroker({ runtime, grant, threadId: "thread-1", runId: "run-1", context: { allowedOrigins: ["portal.example"], capabilities: capabilities as never },
+      approvals: new BrowserApprovalStore({ file: join(root, "approvals.json") }), isActive: () => true, approve: async () => false, assertCapability: () => {} });
+    let id = 0;
+    const rpc = async (method: string, params: BrowserJson) => (await (await fetch(broker.descriptor.url, { method: "POST", headers: { "content-type": "application/json", authorization: broker.descriptor.headers[0].value },
+      body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method, params }) })).json() as { result: { tools?: Array<{ name: string }>; isError?: boolean; content?: Array<{ text: string }> } }).result;
+    try {
+      const names = (await rpc("tools/list", {})).tools!.map(tool => tool.name);
+      // A tool it does not list is also unavailable to call.
+      const hidden = NEEDS.map(([tool]) => tool).find(tool => !names.includes(tool));
+      const refused = hidden ? await rpc("tools/call", { name: hidden, arguments: {} }) : null;
+      return { names, refused };
+    } finally { broker.close(); await broker.released(); }
+  }
+
+  it("refuses to open a browser without an explicit grant", async () => {
+    const root = privateTempRoot(join(tmpdir(), "rb-browser-nogrant-")); cleanup.push(() => removeFixture(root));
+    const runtime = new BrowserRuntime({ root, command: async () => ({}), executable: async () => "/synthetic/bsk", startDaemon: async () => {} });
+    await expect(startBrowserBroker({ runtime, threadId: "thread-1", runId: "run-1", context: { allowedOrigins: ["portal.example"], capabilities: ["portal-read"] },
+      isActive: () => true, approve: async () => false, assertCapability: () => {} } as unknown as Parameters<typeof startBrowserBroker>[0])).rejects.toThrow("This browser work has no saved permission, so nothing was opened. Start it again.");
+  });
+
+  it("lists exactly the grant's action classes for every combination, and the worker is told the same list", async () => {
+    let checked = 0;
+    for (const set of combos(ALL)) {
+      for (const files of set.includes("upload") ? [0, 1] : [0]) {
+        const grant = taskGrant(set as BrowserActionClass[], files);
+        const expected = NEEDS.filter(([tool, needs]) => set.includes(needs) && (tool !== "browser_upload" || files > 0)).map(([tool]) => tool);
+        const { names, refused } = await listed(grant);
+        expect(names, set.join("+") || "no classes").toEqual(expected);
+        expect(names).toEqual(browserToolsFor(grant));
+        expect(names).toEqual(grantedBrowserTools(grant, true));
+        if (refused) expect(refused.content![0].text).toBe("This browser tool or its arguments are not available.");
+        checked += 1;
+      }
+    }
+    expect(checked).toBe(256 + 128);
+    // The example that matters: a download-only task can download and nothing else.
+    expect((await listed(taskGrant(["download"], 0))).names).toEqual(["browser_download"]);
+    expect((await listed(taskGrant(["read", "download"], 0))).names).not.toContain("browser_fill");
+  }, 60_000);
+
+  it("gives a saved job its own grant: today's tools for its capabilities, never the newer ones", async () => {
+    for (const capabilities of combos(["portal-read", "portal-prefill", "portal-submit"])) {
+      const grant = legacyBrowserGrant({ runId: "run-1", allowedOrigins: ["portal.example"], capabilities });
+      expect(grant.origin).toBe("legacy-job");
+      const { names } = await listed(grant, capabilities.length ? capabilities : ["portal-read"]);
+      expect(names).toEqual(grantedBrowserTools({ actions: legacyBrowserActions(capabilities), uploads: [] }, false));
+      expect(names.filter(tool => TASK_ONLY.includes(tool))).toEqual([]);
+    }
+    // Even with every class, a saved job's own grant never lists the newer tools.
+    const every = parseBrowserTaskGrant({ ...legacyBrowserGrant({ runId: "run-1", allowedOrigins: ["portal.example"], capabilities: ["portal-read"] }), actions: ALL });
+    expect((await listed(every)).names).toEqual(["browser_tabs", "browser_borrow", "browser_read", "browser_navigate", "browser_fill", "browser_click_semantic", "browser_release"]);
+  });
+
+  it("borrows only from the browser the task was started with", async () => {
+    const other = await fixture(undefined, { task: { actions: ["read"], browserId: "fictional-other-browser" } });
+    const refused = await other.request("browser_borrow", { tab_id: 1 });
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0].text).toBe("This tab is in a different browser from the one this task was started with, so Bud did not borrow it. Start the task again with the browser you want Bud to use.");
+    expect(other.approve).not.toHaveBeenCalled();
+    expect(other.calls.some(args => args[0] === "tab" && args[1] === "borrow")).toBe(false);
+    // The browser selected when it started ("work" in this fixture) borrows as usual.
+    const same = await fixture(undefined, { task: { actions: ["read"], browserId: "work" } });
+    expect((await same.request("browser_borrow", { tab_id: 1 })).isError).not.toBe(true);
+    expect(same.calls.filter(args => args[0] === "tab" && args[1] === "borrow")).toHaveLength(1);
   });
 });

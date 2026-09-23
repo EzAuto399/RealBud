@@ -261,6 +261,59 @@ describe("sign-in pause keeps and continues the same task", () => {
   });
 });
 
+// An Ask task pauses exactly like an attended job: the same grant (in its
+// context), its remaining steps and time, and Continue only while it holds.
+const ASK_RUN = "ask-00000000-0000-4000-8000-0000000000c7";
+function askTask(expiresAt: number, used = 2) {
+  const text = "Download this month's invoices from portal.fictional-strata.example";
+  const grant = parseBrowserTaskGrant({ version: 1, purpose: "browser-task-grant", id: "00000000-0000-4000-8000-0000000000c7", runId: ASK_RUN, route: "ask",
+    request: { text, sha256: createHash("sha256").update(text).digest("hex") }, sites: ["portal.fictional-strata.example"], browser: { id: "fictional-browser", accountMarker: null },
+    actions: ["read", "navigate", "click", "download"], consequential: "ask-each", uploads: [], expiresAt, budget: 40 });
+  return { version: 1 as const, context: { runId: ASK_RUN, botId: "bud", allowedOrigins: ["portal.fictional-strata.example"], capabilities: ["portal-read" as const], grant },
+    grant: { grantId: grant.id, runId: ASK_RUN, expiresAt, budget: 40, used }, completed: ["Downloaded 'Fictional invoice.pdf' (12 bytes) from portal.fictional-strata.example."] };
+}
+const askInput = { ...input, runId: ASK_RUN, reason: "login" as const };
+describe("an Ask task's sign-in pause", () => {
+  it("continues the same grant, with its remaining steps, after a confirmed sign-in, also after a restart", async () => {
+    let clock = 1_000_000;
+    const { service, db, host, continueTask } = taskSetup(() => clock);
+    const opened = await service.open({ ...askInput, task: askTask(clock + 30 * 60_000) });
+    expect(opened.value).toMatchObject({ state: "awaiting_login", task: { context: { grant: { id: "00000000-0000-4000-8000-0000000000c7", route: "ask" } }, grant: { used: 2, budget: 40 } } });
+    expect(service.activeFor(ASK_RUN)?.id).toBe(opened.id);
+    const held = service.bind(opened.id, opened.revision, binding);
+    clock += 10 * 60_000;
+    const restarted = new HumanHandoffs(db, { ...host, continueTask }, () => clock); restarted.recover();
+    expect(restarted.get(held.id).value).toMatchObject({ state: "awaiting_login", task: askTask(1_000_000 + 30 * 60_000) });
+    const done = await restarted.continue(held.id, held.revision);
+    expect(done.value.state).toBe("closed");
+    expect((continueTask.mock.calls[0][0] as { value: { task: unknown } }).value.task).toEqual(askTask(1_000_000 + 30 * 60_000));
+  });
+  it("asks to start again once the grant's time ran out, or its steps are spent, without checking or continuing", async () => {
+    let clock = 1_000_000;
+    const { service, host, continueTask, endTask } = taskSetup(() => clock);
+    const opened = await service.open({ ...askInput, task: askTask(clock + 30 * 60_000) }), held = service.bind(opened.id, opened.revision, binding);
+    clock += 31 * 60_000;
+    const ended = await service.continue(held.id, held.revision);
+    expect(ended.value).toMatchObject({ state: "stopped", detail: "This task's permission ended while you were signing in, so Bud cannot continue it. Start the task again from your request." });
+    expect(endTask).toHaveBeenCalledWith(expect.objectContaining({ id: held.id }), ended.value.detail);
+    await service.close(ended.id, ended.revision);
+    const spent = await service.open({ ...askInput, task: askTask(clock + 30 * 60_000, 40) }), bound = service.bind(spent.id, spent.revision, binding);
+    expect((await service.continue(bound.id, bound.revision)).value.detail).toBe("This task used all its browser steps before you signed in, so Bud cannot continue it. Start the task again from your request.");
+    // With no step record, the grant's own expiry still decides.
+    await service.close(bound.id, (service.get(bound.id)).revision);
+    const unrecorded = await service.open({ ...askInput, task: { ...askTask(clock - 1), grant: null } }), check = service.bind(unrecorded.id, unrecorded.revision, binding);
+    expect((await service.continue(check.id, check.revision)).value.state).toBe("stopped");
+    expect(host.verify).not.toHaveBeenCalled(); expect(continueTask).not.toHaveBeenCalled();
+  });
+  it("rejects a saved grant for another run or whose step record belongs to another grant", async () => {
+    const { service } = taskSetup();
+    const task = askTask(Date.now() + 60_000);
+    await expect(service.open({ ...askInput, task: { ...task, context: { ...task.context, grant: { ...task.context.grant, runId: "ask-other" } } } })).rejects.toThrow(/saved task needs review/);
+    await expect(service.open({ ...askInput, task: { ...task, grant: { ...task.grant, grantId: "grant-other" } } })).rejects.toThrow(/saved task needs review/);
+    await expect(service.open({ ...askInput, task: { ...task, context: { ...task.context, grant: { ...task.context.grant, actions: ["pay"] } } } as never })).rejects.toThrow(/saved task needs review/);
+  });
+});
+
 // The broker's in-page hand-off with the pause store the host wires to it
 // (server/index.ts onBrowserSignIn): the person signs in on the page itself.
 async function pageFixture(grantId: string, outcome: string, budget: number | null = null) {

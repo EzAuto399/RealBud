@@ -13,6 +13,7 @@ import { redactSecretsInText } from "./redact.ts";
 import { portalRuleKey, portalRuleLabel, type PortalRuleSurface } from "./rules.ts";
 import {
   BROWSER_CONSEQUENTIAL_POLICY,
+  BROWSER_LEGACY_JOB_ORIGIN,
   BROWSER_TASK_GRANT_PURPOSE,
   BROWSER_TASK_GRANT_VERSION,
   browserTaskSite,
@@ -106,7 +107,9 @@ function siteFor(grant: BrowserTaskGrant, url: URL): string {
 }
 
 // ── grants ───────────────────────────────────────────────────────────────
-/** A saved job with no explicit grant: exactly its earlier capabilities. */
+/** A saved job's own grant, built by the host from its capabilities and
+ * passed to the broker explicitly: exactly its earlier capabilities, marked
+ * `legacy-job` so it never gains the newer tools. */
 export function legacyBrowserGrant(input: { runId: string; allowedOrigins: readonly string[]; capabilities: readonly string[]; checkpoint?: BrowserCheckpoint }): BrowserTaskGrant {
   const text = `Saved job browser capabilities: ${[...input.capabilities].filter(c => c.startsWith("portal-")).join(", ") || "none"}`;
   return parseBrowserTaskGrant({
@@ -123,6 +126,7 @@ export function legacyBrowserGrant(input: { runId: string; allowedOrigins: reado
     uploads: [],
     expiresAt: null,
     budget: null,
+    origin: BROWSER_LEGACY_JOB_ORIGIN,
   });
 }
 
@@ -660,6 +664,7 @@ function ruleAllows(rules: BrowserAuthorityOptions["rules"], surface: PortalRule
   const keys = new Set([portalRuleKey(surface, site), portalRuleKey(surface, hostOf(url))]);
   return (rules ?? []).some(rule => rule.decision === "allow" && keys.has(rule.key));
 }
+const LEGACY_JOB_TOOL = "This browser tool or its arguments are not available.";
 const missingAction = (action: BrowserActionClass) =>
   action === "fill" ? READ_ONLY : action === "submit" ? SUBMIT_JOB_DENY : "This task does not include that browser step. Ask again with the step you need.";
 
@@ -678,6 +683,8 @@ export function authorizeBrowserAction(grant: BrowserTaskGrant, observation: Bro
   // A newer tool needs its own class first: Enter is never a way round a missing keys grant.
   const toolAction = classification.step ? TOOL_ACTIONS[classification.step] : undefined;
   if (toolAction && !grant.actions.includes(toolAction)) return deny(missingAction(toolAction));
+  // A saved job's own grant never had keys, dropdowns, downloads or uploads, whatever its classes.
+  if (toolAction && grant.origin === BROWSER_LEGACY_JOB_ORIGIN) return deny(LEGACY_JOB_TOOL);
   if (classification.class === "consequential") {
     // Only an observed control (pressed, keyed or chosen) can be bound to the page's facts.
     if (!APPROVABLE.has(classification.step)) return deny(classification.reason);

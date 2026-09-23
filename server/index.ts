@@ -71,6 +71,8 @@ import { browserTaskIntent, portalJobIntentReply } from "./portal-job-intent.ts"
 import {
   askBrowserTaskSystemBlock,
   BROWSER_TASK_OFFER,
+  BROWSER_TASK_PAGE_SIGN_IN_NOTE,
+  BROWSER_TASK_PAUSED_NOTE,
   BROWSER_TASK_SIGN_IN_NOTE,
   BROWSER_TASK_UNAVAILABLE,
   browserTaskCapabilities,
@@ -154,6 +156,10 @@ import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { cuaAttendedReady, readCuaConnection } from "./local-computer.ts";
 import { browserRuntime } from "./browser-runtime.ts";
 import { browserTaskUsage, onBrowserDecision, onBrowserSignIn, releaseBrowserBrokers, restoreBrowserTaskUsage } from "./browser-broker.ts";
+import { legacyBrowserGrant } from "./browser-authority.ts";
+import type { HandoffTask, HumanHandoff } from "./human-handoffs.ts";
+import type { WorkflowRecord } from "./workflow-database.ts";
+import { BROWSER_LEGACY_JOB_ORIGIN, type BrowserTaskGrant } from "../shared/browser-task.ts";
 import { stopBrowserApprovalCards } from "./browser-approval-card.ts";
 import { applyPropertyPack, ensurePropertyPack, hermesHome, propertyProfileDir } from "./hermes-pack.ts";
 import { applyHandsReadiness, hermesStatus } from "./hermes-status.ts";
@@ -452,12 +458,8 @@ function signInHandoffs() {
       const enqueued = jobRuns.enqueue(oneStep, { mode: "attended", trigger: "manual", threadId: handoff.value.threadId, idempotencyKey: `${handoff.id}:step:${step}` });
       if (!enqueued.created) throw Object.assign(new Error("This recovery step already has an attempt. Review its receipt before starting more work."), { status: 409 });
       const running = jobRuns.start(enqueued.run.id, `Human reviewed recovery: step ${step + 1} only. Earlier attempt ${old.id} is retained.`, { threadId: handoff.value.threadId });
-      setFenceContext(handoff.value.threadId, {
-        botId: bud.id,
-        runId: running.id,
-        allowedOrigins: [...old.spec.allowedOrigins],
-        capabilities: fenceCapabilitiesFor(oneStep),
-      });
+      const recovery = { botId: bud.id, runId: running.id, allowedOrigins: [...old.spec.allowedOrigins], capabilities: fenceCapabilitiesFor(oneStep) };
+      setFenceContext(handoff.value.threadId, { ...recovery, grant: savedJobGrant(recovery) });
       try {
         const instructions = await customerPacks.instructionContext(recipe.id);
         await startTurn(bud.id, `Continue only reviewed step ${step + 1}: ${selected}`, { threadId: handoff.value.threadId, systemExtra: `${attendedJobSystemBlock(oneStep)}\n${instructions ? `Reviewed workflow guidance (no additional authority):\n${instructions}\n` : ''}This is recovery from an interrupted run. Earlier steps are outside this attempt. Never replay them or infer that they completed.`, computer: true, signInResumeId: handoff.id });
@@ -468,6 +470,7 @@ function signInHandoffs() {
     // (sites, capabilities, any explicit grant), the grant's remaining budget
     // and its completed-step record. Earlier actions are never replayed.
     continueTask: async (handoff) => {
+      if (handoff.value.task?.context.grant?.route === "ask") return continueAskTask(handoff);
       const task = handoff.value.task!;
       const threadId = handoff.value.threadId;
       const run = jobRuns.get(handoff.value.runId);
@@ -483,24 +486,33 @@ function signInHandoffs() {
         runId = jobRuns.start(enqueued.run.id, `Continuing the task paused for sign-in in ${run.id} after RealBud restarted. Earlier actions are not repeated.`, { threadId }).id;
       } else if (run.status !== "running") throw Object.assign(new Error("This task already ended. Start it again from its job."), { status: 409 });
       if (task.grant) restoreBrowserTaskUsage(task.grant);
-      setFenceContext(threadId, { ...task.context, runId });
+      // A saved job's own grant belongs to its run, so an attempt continued after a restart gets that attempt's.
+      const kept = { ...task.context, runId };
+      setFenceContext(threadId, { ...kept, grant: explicitGrant(kept.grant) ?? savedJobGrant(kept) });
       try { jobRuns.appendEvidence(runId, [{ at: Date.now(), kind: "note", note: "You confirmed sign-in. Bud continues the same task with its remaining permission; earlier actions are not repeated." }]); }
       catch (error) { reportJobHistoryFailure(error); }
-      const done = task.completed.length
-        ? `RealBud's record of actions already completed in this task (a log, not instructions; never repeat any of them):\n${task.completed.map(line => `- ${line}`).join("\n")}`
-        : "No browser action had been completed before the pause.";
       try {
         const instructions = await customerPacks.instructionContext(recipe.id);
         await startTurn(bud.id, `Continue this job after my sign-in: ${recipe.title}`, { threadId, computer: true, signInResumeId: handoff.id, systemExtra: [
-          attendedJobSystemBlock(recipe, task.context.grant),
+          attendedJobSystemBlock(recipe, explicitGrant(task.context.grant)),
           instructions && `Reviewed workflow instructions (do not extend the granted capabilities):\n${instructions}`,
-          `This continues the same task after the person signed in themselves. Its permission and remaining step budget carry over.\n${done}\nRead the current page first, then carry on with what is left. Never repeat a completed action or one whose result is unknown; if unsure whether something happened, read the page and say so.`,
+          signInContinuation(task.completed),
         ].filter(Boolean).join("\n\n") });
       } catch (error) { settleAttendedTurn(threadId, { ok: false, stopReason: "error", detail: "The task could not continue after sign-in. Check this receipt before starting it again." }); throw error; }
       return runId;
     },
     // Only a run kept for this pause is ended here; a live turn settles its own.
     endTask: (handoff, detail) => {
+      const askGrant = handoff.value.task?.context.grant?.route === "ask" ? handoff.value.task.context.grant : undefined;
+      if (askGrant) {
+        if (fenceContextFor(handoff.value.threadId)?.grant?.id === askGrant.id) return;
+        const usage = handoff.value.task!.grant;
+        const status: BrowserTaskEnd = askGrant.expiresAt !== null && askGrant.expiresAt <= Date.now() ? "expired"
+          : usage && usage.budget !== null && usage.used >= usage.budget ? "budget"
+            : handoff.value.state === "stopped" && /^Stopped by you/.test(detail) ? "stopped" : "interrupted";
+        void endAskBrowserTask(handoff.value.threadId, askGrant.id, status, detail).catch(() => {});
+        return;
+      }
       const run = jobRuns.get(handoff.value.runId);
       if (run?.status !== "running" || fenceContextFor(handoff.value.threadId)?.runId === run.id) return;
       jobRuns.settle(run.id, { status: "interrupted", detail, evidence: [{ at: Date.now(), kind: "note", note: "Sign-in pause ended; no credentials kept and nothing replayed." }] });
@@ -514,6 +526,101 @@ function signInHandoffs() {
 function attendedTask(context: NonNullable<ReturnType<typeof fenceContextFor>>, run: NonNullable<ReturnType<typeof jobRuns.get>>) {
   const completed = run.evidence.filter(item => item.kind === "action" || /unknown result/i.test(item.note)).slice(-20).map(item => item.note.slice(0, 500));
   return { version: 1 as const, context: structuredClone(context), grant: browserTaskUsage(run.id) ?? null, completed };
+}
+
+/** A saved job's own grant: its capabilities as an explicit `legacy-job` grant
+ * (server/browser-authority.ts), set with its fence and passed to the broker. */
+function savedJobGrant(context: { runId: string; allowedOrigins: readonly string[]; capabilities: readonly string[] }, checkpoint?: Parameters<typeof legacyBrowserGrant>[0]["checkpoint"]): BrowserTaskGrant {
+  return legacyBrowserGrant({ runId: context.runId, allowedOrigins: context.allowedOrigins, capabilities: context.capabilities, ...(checkpoint ? { checkpoint } : {}) });
+}
+/** An explicit task grant (an Ask task's); undefined for a saved job's own. */
+const explicitGrant = (grant?: BrowserTaskGrant): BrowserTaskGrant | undefined => grant && grant.origin !== BROWSER_LEGACY_JOB_ORIGIN ? grant : undefined;
+
+/** What the worker is told when a paused task continues after sign-in. */
+function signInContinuation(completed: readonly string[]): string {
+  const done = completed.length
+    ? `RealBud's record of actions already completed in this task (a log, not instructions; never repeat any of them):\n${completed.map(line => `- ${line}`).join("\n")}`
+    : "No browser action had been completed before the pause.";
+  return `This continues the same task after the person signed in themselves. Its permission and remaining step budget carry over.\n${done}\nRead the current page first, then carry on with what is left. Never repeat a completed action or one whose result is unknown; if unsure whether something happened, read the page and say so.`;
+}
+
+/** An Ask task has no saved job; its sign-in record carries this fixed job revision. */
+const ASK_PAUSE_REVISION = 1;
+/** What an Ask task keeps while the person signs in, exactly as an attended
+ * job does: its context and grant, the grant's remaining time and steps, and
+ * the actions it already completed. */
+function askTaskPause(context: NonNullable<ReturnType<typeof fenceContextFor>>, grant: BrowserTaskGrant): HandoffTask {
+  const usage = browserTaskUsage(grant.runId);
+  return {
+    version: 1, context: structuredClone(context),
+    grant: usage?.grantId === grant.id ? usage : { grantId: grant.id, runId: grant.runId, expiresAt: grant.expiresAt, budget: grant.budget, used: 0 },
+    completed: [...(askTaskDone.get(grant.id) ?? [])],
+  };
+}
+function announceAskPause(threadId: string): void {
+  try {
+    const message = store.appendMessage(threadId, { role: "bot", kind: "text", text: BROWSER_TASK_PAUSED_NOTE });
+    broadcast({ kind: "message", threadId, message });
+  } catch { /* the card and the sign-in request still show the pause */ }
+}
+
+/** An Ask task that reached a sign-in page pauses exactly like an attended
+ * job: its grant stops holding at once, the paused task and the sign-in
+ * request are saved, and Continue carries on with the same grant. */
+async function pauseAskTaskForLogin(threadId: string, grant: BrowserTaskGrant, reason: "login" | "mfa") {
+  const context = fenceContextFor(threadId);
+  if (!context || context.grant?.id !== grant.id) throw Object.assign(new Error("This browser task is no longer running."), { status: 409 });
+  const botId = context.botId || store.botByThread(threadId)?.id || store.productBud()?.id;
+  if (!botId) throw Object.assign(new Error("Bud is not available for this sign-in checkpoint."), { status: 409 });
+  const task = askTaskPause({ ...context, botId }, grant);
+  takeFenceContext(threadId);
+  let paused: Awaited<ReturnType<ReturnType<typeof browserTasks>["pause"]>>;
+  try { paused = await browserTasks().pause(grant.id); }
+  catch (error) { reportBrowserTaskFailure(); await endAskBrowserTask(threadId, grant.id, "interrupted", BROWSER_TASK_SIGN_IN_NOTE).catch(() => {}); throw error; }
+  // Stop or the time limit ended it first: nothing to pause.
+  if (!paused) return null;
+  try {
+    const handoff = await signInHandoffs().open({ runId: grant.runId, threadId, botId, jobRevision: ASK_PAUSE_REVISION, reason, task });
+    announceAskPause(threadId);
+    return handoff;
+  } catch (error) {
+    // No saved sign-in request: end the task as before so nothing waits on it.
+    await endAskBrowserTask(threadId, grant.id, "interrupted", BROWSER_TASK_SIGN_IN_NOTE).catch(() => {});
+    throw error;
+  }
+}
+
+/** Carries on with a paused Ask task after a confirmed sign-in: the same saved
+ * grant, with its remaining time and steps, in the same conversation and the
+ * browser it was started with. Earlier actions are never replayed. */
+async function continueAskTask(handoff: WorkflowRecord<HumanHandoff>): Promise<string> {
+  const task = handoff.value.task!;
+  const paused = task.context.grant!;
+  const threadId = handoff.value.threadId;
+  const bud = store.bot(task.context.botId) ?? store.botByThread(threadId);
+  if (!bud || store.botByThread(threadId)?.id !== bud.id) throw Object.assign(new Error("This conversation is not available. Start the task again from your request."), { status: 409 });
+  if (bud.busy) throw Object.assign(new Error("Bud is busy with another turn. Stop it or wait, then press Continue again."), { status: 409 });
+  if (fenceContextFor(threadId)) throw Object.assign(new Error("Other browser work is running in this conversation. Stop it first."), { status: 409 });
+  const browser = await browserRuntime.status();
+  const resumed = await browserTasks().resume(paused.id, { threadId, browserId: browser.selectedBrowserId });
+  const grant = resumed.grant;
+  if (grant.id !== paused.id || grant.runId !== paused.runId || handoff.value.runId !== grant.runId) {
+    await endAskBrowserTask(threadId, grant.id, "interrupted").catch(() => {});
+    throw Object.assign(new Error("This task's saved permission changed. Start the task again from your request."), { status: 409 });
+  }
+  if (task.grant) restoreBrowserTaskUsage(task.grant);
+  setFenceContext(threadId, { ...task.context, grant });
+  askTaskStartedAt.set(grant.id, Date.now());
+  askTaskDone.set(grant.id, [...task.completed]);
+  armAskTaskTimer(threadId, grant);
+  try {
+    await startTurn(bud.id, `Continue this task after my sign-in: ${grant.request.text}`, { threadId, computer: true, signInResumeId: handoff.id,
+      systemExtra: [askBrowserTaskSystemBlock(grant), signInContinuation(task.completed)].join("\n\n") });
+  } catch (error) {
+    await endAskBrowserTask(threadId, grant.id, "interrupted", "This task could not continue after sign-in. Nothing more was done in your browser; ask again to continue.").catch(() => {});
+    throw error;
+  }
+  return grant.runId;
 }
 
 async function pauseAttendedForLogin(threadId: string, reason: "login" | "mfa") {
@@ -544,12 +651,19 @@ async function pauseAttendedForLogin(threadId: string, reason: "login" | "mfa") 
 // In-page sign-in (server/browser-broker.ts): the pause is saved before the
 // person is asked; a confirmed sign-in closes it while the same browser step
 // carries on, and anything else hands over to the card with the task kept.
-// Only an attended run with its live fence gets in-page help.
+// Only an attended run or an Ask task with its live fence gets in-page help;
+// an Ask task's record shows the pause, which a restart keeps.
 onBrowserSignIn({
   waiting: ({ threadId, runId, reason }) => {
     const context = fenceContextFor(threadId);
-    const run = jobRuns.get(runId);
     const botId = context?.botId || store.botByThread(threadId)?.id || store.productBud()?.id;
+    const askGrant = context?.grant?.route === "ask" ? context.grant : undefined;
+    if (context && askGrant && context.runId === runId && botId) {
+      const held = signInHandoffs().hold({ runId, threadId, botId, jobRevision: ASK_PAUSE_REVISION, reason, task: askTaskPause({ ...context, botId }, askGrant) });
+      if (held) void browserTasks().pause(askGrant.id, BROWSER_TASK_PAGE_SIGN_IN_NOTE).catch(reportBrowserTaskFailure);
+      return held !== null;
+    }
+    const run = jobRuns.get(runId);
     if (!context || context.runId !== runId || run?.status !== "running" || !botId) return false;
     return signInHandoffs().hold({ runId, threadId, botId, jobRevision: run.jobRevision, reason, steps: [...run.spec.steps], task: attendedTask({ ...context, botId }, run) }) !== null;
   },
@@ -557,12 +671,23 @@ onBrowserSignIn({
     const handoffs = signInHandoffs();
     const held = handoffs.waitingOnPage(runId);
     if (!held) return;
-    if (signedIn) { handoffs.signedInOnPage(held.id, held.revision); return; }
+    const askGrant = held.value.task?.context.grant?.route === "ask" ? held.value.task.context.grant : undefined;
+    if (signedIn) {
+      handoffs.signedInOnPage(held.id, held.revision);
+      // The same step carries on, so the task is running again (unless its time ran out meanwhile).
+      if (askGrant) void browserTasks().resume(askGrant.id, { threadId }).catch(error => { if ((error as { status?: number }).status === 503) reportBrowserTaskFailure(); });
+      return;
+    }
     const context = fenceContextFor(threadId);
-    const run = jobRuns.get(runId);
-    const task = context?.runId === runId && run?.status === "running" ? attendedTask({ ...context, botId: held.value.botId }, run) : undefined;
+    const run = askGrant ? undefined : jobRuns.get(runId);
+    const task = askGrant ? (context?.runId === runId && context.grant?.id === askGrant.id ? askTaskPause({ ...context, botId: held.value.botId }, askGrant) : undefined)
+      : context?.runId === runId && run?.status === "running" ? attendedTask({ ...context, botId: held.value.botId }, run) : undefined;
     if (context?.runId === runId) takeFenceContext(threadId);
-    void handoffs.toCard(held.id, held.revision, task).catch(async error => {
+    void handoffs.toCard(held.id, held.revision, task).then(async () => {
+      if (!askGrant) return;
+      // The page wait became the sign-in request: the paused task says so, in the card and the conversation.
+      if (await browserTasks().pause(askGrant.id).catch(() => null)) announceAskPause(threadId);
+    }).catch(async error => {
       await releaseComputerControl().catch(() => {});
       reportJobHistoryFailure(error);
       publishWorkerIssue({ source: "runtime", summary: "Sign-in handover needs attention", detail: "The sign-in pause could not be handed to the checkpoint card. Close RealBud before entering credentials and review Work activity." });
@@ -574,13 +699,22 @@ function settleAttendedTurn(
   threadId: string,
   input: { ok: boolean; stopReason?: string | null; detail?: string },
 ) {
-  // An Ask task has no saved job to settle or pause: its grant ends with the turn.
+  // An Ask task has no saved job to settle: its grant ends with the turn,
+  // unless the site asked the person to sign in, which pauses it like a job.
   const askTask = fenceContextFor(threadId)?.grant?.route === "ask" ? fenceContextFor(threadId)!.grant! : undefined;
   if (askTask) {
     const stopped = input.stopReason === "cancelled";
     const failed = !input.ok || ["interrupted", "error", "timeout", "stall"].includes(input.stopReason ?? "");
-    const signIn = !stopped && !failed && humanSigninNeeded(input.detail ?? lastAssistantText(threadId, askTaskStartedAt.get(askTask.id) ?? Date.now()));
-    void endAskBrowserTask(threadId, askTask.id, stopped ? "stopped" : failed || signIn ? "interrupted" : "finished", signIn ? BROWSER_TASK_SIGN_IN_NOTE : undefined).catch(() => {});
+    const signIn = !stopped && !failed ? humanSigninNeeded(input.detail ?? lastAssistantText(threadId, askTaskStartedAt.get(askTask.id) ?? Date.now())) : null;
+    if (signIn) {
+      void pauseAskTaskForLogin(threadId, askTask, signIn).catch(async error => {
+        await releaseComputerControl().catch(() => {});
+        reportJobHistoryFailure(error);
+        publishWorkerIssue({ source: "runtime", summary: "Sign-in handover needs attention", detail: "The sign-in request could not be saved or released safely. Close RealBud before entering credentials and review Work activity." });
+      });
+      return;
+    }
+    void endAskBrowserTask(threadId, askTask.id, stopped ? "stopped" : failed ? "interrupted" : "finished").catch(() => {});
     return;
   }
   const activeContext = fenceContextFor(threadId);
@@ -627,6 +761,8 @@ function recordFenceEvidence(threadId: string, item: ReturnType<typeof fenceEvid
     // An Ask task keeps its own record; the authority's step-limit or time-up refusal ends it.
     const grantId = ctx.grant.id;
     void browserTasks().appendEvidence(grantId, [item]).catch(reportBrowserTaskFailure);
+    // Kept in memory as well, so a sign-in pause saves exactly what was done (never replayed).
+    if (item.kind === "action" || /unknown result/i.test(item.note)) askTaskDone.set(grantId, [...(askTaskDone.get(grantId) ?? []), item.note.slice(0, 500)].slice(-20));
     const limit = item.kind === "denied" ? browserTaskLimitReached(item.note) : null;
     if (limit) void endAskBrowserTask(threadId, grantId, limit).catch(() => {});
     return;
@@ -641,6 +777,17 @@ function recordFenceEvidence(threadId: string, item: ReturnType<typeof fenceEvid
 // ── Ask one-off browser tasks (server/browser-grants.ts) ─────────────────
 const askTaskTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const askTaskStartedAt = new Map<string, number>();
+/** Each running Ask task's completed browser actions, for a sign-in pause. */
+const askTaskDone = new Map<string, string[]>();
+
+/** The task ends when its time runs out, whether it is running or paused for sign-in. */
+function armAskTaskTimer(threadId: string, grant: BrowserTaskGrant): void {
+  const earlier = askTaskTimers.get(grant.id);
+  if (earlier) clearTimeout(earlier);
+  const timer = setTimeout(() => { void endAskBrowserTask(threadId, grant.id, "expired").catch(() => {}); }, Math.max(0, (grant.expiresAt ?? Date.now()) - Date.now()));
+  timer.unref?.();
+  askTaskTimers.set(grant.id, timer);
+}
 
 function reportBrowserTaskFailure(): void {
   publishWorkerIssue({
@@ -659,6 +806,7 @@ async function endAskBrowserTask(threadId: string, grantId: string, status: Brow
   if (timer) clearTimeout(timer);
   askTaskTimers.delete(grantId);
   askTaskStartedAt.delete(grantId);
+  askTaskDone.delete(grantId);
   let ended: Awaited<ReturnType<ReturnType<typeof browserTasks>["end"]>>;
   try { ended = await browserTasks().end(grantId, status, note); } catch (error) { reportBrowserTaskFailure(); throw error; }
   if (ended && (status === "expired" || status === "budget" || note)) {
@@ -1810,11 +1958,17 @@ async function startSeatTurn(
         if (browserJob) {
           const binding = opts?.signInResumeId ? signInHandoffs().get(opts.signInResumeId).value.binding : undefined;
           if (opts?.signInResumeId && !binding?.browser) throw new Error("Choose and check the connected browser page before resuming this step.");
+          // Every browser mount carries the run's explicit grant (a saved job's own, or an Ask task's); without one nothing opens.
           const grant = browserJob.grant;
+          if (!grant) throw new Error("This browser work has no saved permission, so nothing was opened. Start it again.");
+          const checkpoint = binding?.browser ? { ...binding.browser, origin: binding.origin, accountMarker: binding.accountMarker } : undefined;
+          const savedJob = grant.origin === BROWSER_LEGACY_JOB_ORIGIN;
           integrations.browser = { runId: browserJob.runId, allowedOrigins: [...browserJob.allowedOrigins], capabilities: [...browserJob.capabilities],
-            ...(binding?.browser ? { checkpoint: { ...binding.browser, origin: binding.origin, accountMarker: binding.accountMarker } } : {}),
-            // The task's saved grant holds only while this thread still carries it (Stop, time and step limit take it away).
-            ...(grant ? { grant: structuredClone(grant), active: () => fenceContextFor(threadId)?.grant?.id === grant.id } : {}) };
+            ...(checkpoint ? { checkpoint } : {}),
+            // A saved job's own grant takes the checked sign-in page as its binding, exactly as before.
+            grant: structuredClone(savedJob && checkpoint ? savedJobGrant(browserJob, checkpoint) : grant),
+            // An Ask task's grant holds only while this thread still carries it (Stop, time and step limit take it away).
+            ...(savedJob ? {} : { active: () => fenceContextFor(threadId)?.grant?.id === grant.id }) };
         }
         managedService.assertCapability("reasoning");
         await instance.adapter.sendTurn({
@@ -3138,16 +3292,20 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       if (action === "close") return json(res, 200, await handoffs.close(id, body.revision));
       if (action === "resume-step") return json(res, 200, await handoffs.resumeStep(id, body.revision, body.step));
       if (action === "retry-release") return json(res, 200, await handoffs.retryRelease(id, body.revision));
-      const sourceRun = jobRuns.get(handoffs.get(id).value.runId);
+      // A paused Ask task's sign-in check uses its grant's sites; a job's uses the job's.
+      const paused = handoffs.get(id).value;
+      const askSites = paused.task?.context.grant?.route === "ask" ? paused.task.context.grant.sites.map(site => site.replace(/^https:\/\//, "").replace(/\/$/, "")) : undefined;
+      const sourceRun = askSites ? undefined : jobRuns.get(paused.runId);
+      const sites = askSites ?? sourceRun?.spec.allowedOrigins;
       if (action === "tabs") {
         const handoff = handoffs.get(id);
-        if (!sourceRun || handoff.revision !== body.revision || handoff.value.state !== "awaiting_login") return json(res, 409, { error: "This sign-in checkpoint changed. Refresh it before choosing a page." });
-        return json(res, 200, { tabs: await browserRuntime.chooseLoginTabs(sourceRun.spec.allowedOrigins) });
+        if (!sites || handoff.revision !== body.revision || handoff.value.state !== "awaiting_login") return json(res, 409, { error: "This sign-in checkpoint changed. Refresh it before choosing a page." });
+        return json(res, 200, { tabs: await browserRuntime.chooseLoginTabs(sites) });
       }
       let bindingHost = "";
       if (PRODUCT_MODE && !body.binding?.browser) return json(res, 400, { error: "Choose the signed-in page from your connected browser and save its visible labels." });
       try { bindingHost = new URL(body.binding?.origin).hostname; } catch { /* rejected below */ }
-      if (!sourceRun || !bindingHost || !originMatches(bindingHost, sourceRun.spec.allowedOrigins)) return json(res, 403, { error: "The sign-in check must use a site in this saved job." });
+      if (!sites || !bindingHost || !originMatches(bindingHost, sites)) return json(res, 403, { error: askSites ? "The sign-in check must use a site in this task." : "The sign-in check must use a site in this saved job." });
       if (body.binding?.browser && body.binding.browser.browserId !== (await browserRuntime.status()).selectedBrowserId) return json(res, 409, { error: "Choose a page from the browser selected on this computer." });
       return json(res, 200, handoffs.bind(id, body.revision, body.binding));
     }
@@ -3423,12 +3581,9 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
               }
               return jobRuns.start(enqueued.run.id, "Bud is running this job beside you.", { threadId });
             })();
-        setFenceContext(threadId, {
-          botId: bud.id,
-          runId: running.id,
-          allowedOrigins: [...running.spec.allowedOrigins],
-          capabilities: fenceCapabilitiesFor(recipe),
-        });
+        const attended = { botId: bud.id, runId: running.id, allowedOrigins: [...running.spec.allowedOrigins], capabilities: fenceCapabilitiesFor(recipe) };
+        // The saved job's own grant is explicit from the start; the broker has no other path.
+        setFenceContext(threadId, { ...attended, grant: savedJobGrant(attended) });
         const instructions = await customerPacks.instructionContext(recipe.id);
         await startTurn(bud.id, attendedUserText(recipe), {
           threadId,
@@ -3476,7 +3631,10 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         if (action === "decline") return json(res, 200, { task: browserTaskCardView(await browserTasks().answer(taskId, threadId, "declined")) });
         if (action === "stop") {
           // The grant stops holding before anything else; the Ask Stop then interrupts the turn.
-          const ended = record.status === "active" ? await endAskBrowserTask(threadId, taskId, "stopped") : null;
+          const ended = record.status === "active" || record.status === "paused" ? await endAskBrowserTask(threadId, taskId, "stopped") : null;
+          // A task paused for sign-in also closes its sign-in request, which releases the browser.
+          const pause = record.status === "paused" && record.grant ? signInHandoffs().activeFor(record.grant.runId) : undefined;
+          if (pause && pause.value.state !== "stopped") await signInHandoffs().stop(pause.id, pause.revision).catch(() => {});
           return json(res, 200, { task: browserTaskCardView(ended ?? (await browserTasks().get(taskId)) ?? record) });
         }
         if (bud.busy) return json(res, 409, { error: ATTEND_ERRORS.busy });
@@ -3500,9 +3658,8 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         const grant = started.grant;
         setFenceContext(threadId, { botId: bud.id, runId: grant.runId, allowedOrigins: [...grant.sites], capabilities: browserTaskCapabilities(grant.actions), grant });
         askTaskStartedAt.set(grant.id, started.startedAt ?? Date.now());
-        const timer = setTimeout(() => { void endAskBrowserTask(threadId, grant.id, "expired").catch(() => {}); }, Math.max(0, (grant.expiresAt ?? Date.now()) - Date.now()));
-        timer.unref?.();
-        askTaskTimers.set(grant.id, timer);
+        askTaskDone.set(grant.id, []);
+        armAskTaskTimer(threadId, grant);
         try {
           await startTurn(bud.id, `Start this task: ${grant.request.text}`, { threadId, systemExtra: askBrowserTaskSystemBlock(grant), computer: true });
         } catch (error) {

@@ -64,6 +64,15 @@ describe("an Ask task grant in the ACP core", () => {
     await instance.adapter.interruptTurn("t-ask-grant");
   });
 
+  it("never mounts a browser without an explicit grant", async () => {
+    const dump = await send("t-no-grant", { runId: "run-fictional-no-grant", allowedOrigins: [SITE], capabilities: ["portal-read"] });
+    const error = await recorder.until(event => event.type === "runtime.error");
+    expect(error).toMatchObject({ message: "This browser work has no saved permission, so nothing was opened. Start it again." });
+    let prompted = 0;
+    try { prompted = JSON.parse(readFileSync(dump, "utf8")).promptCount ?? 0; } catch { /* never reached the worker */ }
+    expect(prompted).toBe(0);
+  });
+
   it("never mounts a grant for a browser other than the one selected now", async () => {
     const grant = grantFor("fictional-other-browser");
     const dump = await send("t-ask-grant-browser", { runId: grant.runId, allowedOrigins: [SITE], capabilities: ["portal-read"], grant, active: () => true });

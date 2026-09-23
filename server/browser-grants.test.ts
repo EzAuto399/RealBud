@@ -12,6 +12,7 @@ import {
   ASK_TASK_OFFER_MS,
   askBrowserTaskSystemBlock,
   BROWSER_TASK_OFFER,
+  BROWSER_TASK_PAUSED_NOTE,
   BROWSER_TASK_RESTART_NOTE,
   browserTaskCapabilities,
   browserTaskCardView,
@@ -159,6 +160,56 @@ describe("Ask browser task cards", () => {
     await expect(restarted.start(id, { threadId: "thread-ask", browserId: "fictional-browser" }, NOW)).rejects.toMatchObject({ status: 409 });
   });
 
+  it("pauses for sign-in with the same grant, keeps the pause over a restart, and continues only that grant", async () => {
+    const { store, file } = fixture();
+    const { id } = await store.propose(proposal("Download the invoices from portal.fictional-strata.example"), NOW);
+    const { grant } = await store.start(id, { threadId: "thread-ask", browserId: "fictional-browser" }, NOW);
+    const paused = await store.pause(id);
+    expect(paused).toMatchObject({ status: "paused", endNote: BROWSER_TASK_PAUSED_NOTE, grant, endedAt: null });
+    expect(browserTaskCardView(paused!)).toMatchObject({ status: "paused", expiresAt: grant.expiresAt });
+    // A second pause only changes what the card says (the page wait handed over to the sign-in request).
+    expect(await store.pause(id, "Fictional page wait.")).toMatchObject({ status: "paused", endNote: "Fictional page wait.", grant });
+    expect(await store.pause(id)).toMatchObject({ status: "paused", endNote: BROWSER_TASK_PAUSED_NOTE });
+    // Still this conversation's task: another cannot start, and what happens on the page is still recorded.
+    const other = await store.propose(proposal("Download the levy notice from portal.fictional-strata.example"), NOW);
+    await expect(store.start(other.id, { threadId: "thread-ask", browserId: "fictional-browser" }, NOW)).rejects.toThrow("Another browser task is running in this conversation. Stop it first.");
+    await store.appendEvidence(id, [{ at: NOW + 5, kind: "asked", note: "Asked you to finish the sign-in page on portal.fictional-strata.example in your browser." }]);
+    const restarted = new BrowserTaskStore({ file });
+    expect(await restarted.get(id)).toMatchObject({ status: "paused", grant });
+    expect(JSON.parse(readFileSync(file, "utf8")).tasks[0].status).toBe("paused");
+    await expect(restarted.resume(id, { threadId: "thread-other" }, NOW + 60_000)).rejects.toMatchObject({ status: 404 });
+    await expect(restarted.resume(id, { threadId: "thread-ask", browserId: "fictional-other-browser" }, NOW + 60_000))
+      .rejects.toThrow("The selected browser changed while this task was paused. Start the task again from your request.");
+    const resumed = await restarted.resume(id, { threadId: "thread-ask", browserId: "fictional-browser" }, NOW + 60_000);
+    expect(resumed).toMatchObject({ status: "active", endNote: null, startedAt: NOW });
+    expect(resumed.grant).toEqual(grant);
+    expect(resumed.evidence).toHaveLength(1);
+    await expect(restarted.resume(id, { threadId: "thread-ask" }, NOW + 60_000)).rejects.toThrow("This task is no longer waiting for sign-in. Start the task again from your request.");
+    // A pause can also be stopped for good, and an ended task never pauses again.
+    await restarted.pause(id);
+    expect(await restarted.end(id, "stopped", undefined, NOW + 70_000)).toMatchObject({ status: "stopped" });
+    expect(await restarted.pause(id)).toBeNull();
+    await expect(restarted.resume(id, { threadId: "thread-ask" }, NOW + 80_000)).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("never continues a paused task after its time ran out, and a restart marks it expired", async () => {
+    const { store, file } = fixture();
+    const { id } = await store.propose(proposal("Download the invoices from portal.fictional-strata.example"), NOW);
+    const { grant } = await store.start(id, { threadId: "thread-ask", browserId: "fictional-browser" }, NOW);
+    await store.pause(id);
+    await expect(store.resume(id, { threadId: "thread-ask", browserId: "fictional-browser" }, grant.expiresAt!))
+      .rejects.toThrow("This task's permission has ended. Start the task again from your request.");
+    expect((await store.get(id))?.status).toBe("paused");
+    // One started 40 minutes ago (by the real clock) has lapsed while paused: a restart ends it.
+    const started = Date.now() - 40 * 60_000;
+    const lapsed = await store.propose(proposal("Download the levy notice from portal.fictional-strata.example", { threadId: "thread-lapsed" }), started);
+    await store.start(lapsed.id, { threadId: "thread-lapsed", browserId: "fictional-browser" }, started);
+    await store.pause(lapsed.id);
+    const restarted = new BrowserTaskStore({ file });
+    expect(await restarted.get(lapsed.id)).toMatchObject({ status: "expired", endNote: "This task's time ran out while it waited for you to sign in. Nothing more will be done in your browser; start the task again from your request." });
+    expect((await restarted.get(id))?.status).toBe("paused");
+  });
+
   it("holds a damaged record file instead of clearing it", async () => {
     const { store, file } = fixture();
     await store.propose(proposal("Download the invoices from portal.fictional-strata.example"), NOW);
@@ -203,7 +254,9 @@ describe("the started task's browser", () => {
     const { id } = await store.propose(proposal("Download this month's invoices from portal.fictional-strata.example"), NOW);
     const { grant } = await store.start(id, { threadId: "thread-ask", browserId: "fictional-browser" }, NOW);
     const tools = await offered(root, grant);
-    expect(tools.filter(tool => !grantedBrowserTools(grant, true).includes(tool))).toEqual(["browser_fill"]);
+    // Exactly the grant's classes: no typing tool for a download-only request.
+    expect(tools).toEqual(grantedBrowserTools(grant, true));
+    expect(tools).not.toContain("browser_fill");
     expect(tools.some(tool => ["browser_press", "browser_select", "browser_upload"].includes(tool))).toBe(false);
     expect(tools).toContain("browser_download");
     const fill = authorizeBrowserAction(grant, { url: `https://${SITE}/invoices`, text: '@e1 textbox "Search invoices"' }, "browser_fill", { tab_id: 1, ref: "@e1", value: "September" }, { now: NOW + 1 });

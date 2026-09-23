@@ -29,6 +29,7 @@ import * as gmail from "../../composio-gmail.ts";
 import { ServiceEntitlementError } from "../../service-entitlement.ts";
 import { HERMES_MEMORY_APPROVAL } from "./hermes-memory-approval.ts";
 import { browserRuntime, type BrowserJson } from "../../browser-runtime.ts";
+import { legacyBrowserGrant } from "../../browser-authority.ts";
 
 const { assertCapability } = vi.hoisted(() => ({ assertCapability: vi.fn() }));
 vi.mock("../../managed-service.ts", () => ({ managedService: { assertCapability } }));
@@ -215,7 +216,8 @@ describe("ACP turns (fake CLI)", () => {
     const dump = join(scratch, "browser-job.json"); process.env.FAKE_ACP_DUMP = dump;
     await create(HermesAgentDriver, "hang");
     await instance.adapter.sendTurn({ threadId: "t-browser-job", text: "Read the saved job site", computer: true,
-      integrations: { browser: { runId: "run-browser", allowedOrigins: ["portal.example"], capabilities: ["portal-read"] },
+      integrations: { browser: { runId: "run-browser", allowedOrigins: ["portal.example"], capabilities: ["portal-read"],
+        grant: legacyBrowserGrant({ runId: "run-browser", allowedOrigins: ["portal.example"], capabilities: ["portal-read"] }) },
         localComputer: { command: "must-not-mount", args: [], env: {} } } });
     await vi.waitFor(() => expect(JSON.parse(readFileSync(dump, "utf8")).promptCount).toBe(1));
     const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -255,7 +257,8 @@ describe("ACP turns (fake CLI)", () => {
     try {
       await create(HermesAgentDriver, "hang");
       await instance.adapter.sendTurn({ threadId: "t-browser-child", text: "Delegate reading the fictional levies", computer: true,
-        integrations: { browser: { runId: "run-browser-child", allowedOrigins: ["portal.example"], capabilities: ["portal-read"] } } });
+        integrations: { browser: { runId: "run-browser-child", allowedOrigins: ["portal.example"], capabilities: ["portal-read"],
+          grant: legacyBrowserGrant({ runId: "run-browser-child", allowedOrigins: ["portal.example"], capabilities: ["portal-read"] }) } } });
       await vi.waitFor(() => expect(JSON.parse(readFileSync(dump, "utf8")).promptCount).toBe(1));
       const descriptor = JSON.parse(readFileSync(dump, "utf8")).mcpServers[0] as { url: string; headers: Array<{ name: string; value: string }> };
       let id = 100;

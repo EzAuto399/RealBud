@@ -39,6 +39,7 @@ import { startBrowserBroker, type BrowserBroker } from "../../browser-broker.ts"
 import { browserRuntime } from "../../browser-runtime.ts";
 import { browserApprovalCardFrom } from "../../browser-approval-card.ts";
 import type { BrowserApprovalCard } from "../../../shared/browser-approval-card.ts";
+import { BROWSER_LEGACY_JOB_ORIGIN } from "../../../shared/browser-task.ts";
 import { startMemoryProposalBroker } from "../../hermes-memory-proposal-broker.ts";
 import { CONNECTED_APP_APPROVAL, connectedAppsBrokerGeneration, startConnectedAppsBroker, type ConnectedAppsBroker } from "../../connected-apps-broker.ts";
 import { createGmailReadOnlyTransport } from "../../composio-gmail.ts";
@@ -699,16 +700,18 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
           if (firstTurn.integrations?.browser) {
             const browser = firstTurn.integrations.browser;
-            // A task grant is bound to the browser selected when the person started it.
-            if (browser.grant?.browser.id && (await browserRuntime.status()).selectedBrowserId !== browser.grant.browser.id) {
+            // Every mount carries its explicit grant (an Ask task's, or a saved job's own); there is no other path.
+            if (!browser.grant) throw new Error("This browser work has no saved permission, so nothing was opened. Start it again.");
+            // An Ask task's grant is bound to the browser selected when the person started it.
+            // (A saved job's checked sign-in page keeps its own browser check in the broker.)
+            if (browser.grant.origin !== BROWSER_LEGACY_JOB_ORIGIN && browser.grant.browser.id && (await browserRuntime.status()).selectedBrowserId !== browser.grant.browser.id) {
               throw new Error("The selected browser changed after this task was started. Start the task again from Ask.");
             }
             browserBroker = await startBrowserBroker({
               threadId, runId: browser.runId,
               checkpoint: browser.checkpoint,
               context: { allowedOrigins: browser.allowedOrigins, capabilities: browser.capabilities },
-              // An explicit grant is the task's authority; a saved job's capabilities map onto one inside the broker.
-              ...(browser.grant ? { grant: browser.grant } : {}),
+              grant: browser.grant,
               isActive: () => Boolean(current && !current.settled && !current.cancellationRequested && !closed && (browser.active?.() ?? true)),
               // The broker has already decided this step; the card carries its
               // projection (site, surface, once-only policy) and the host only shows it.

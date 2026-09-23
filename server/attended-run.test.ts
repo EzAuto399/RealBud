@@ -9,7 +9,7 @@ import type { JobCapability, Recipe } from "../shared/contracts.ts";
 import { ATTEND_ERRORS, ATTENDED_UNVERIFIED_RESULT, attendBlocked, attendedJobSystemBlock, attendedSettleStatus, browserActionEvidence, fenceEvidence, grantedBrowserTools, humanSigninNeeded, portalBrowserPolicy, portalSignInCompleteIntent, submitHoldLine } from "./attended-run.ts";
 import { JobRunStore } from "./job-runs.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
-import { BrowserApprovalStore } from "./browser-authority.ts";
+import { BrowserApprovalStore, legacyBrowserGrant } from "./browser-authority.ts";
 import { startBrowserBroker, type BrowserActionRecord } from "./browser-broker.ts";
 import { BrowserRuntime } from "./browser-runtime.ts";
 import { legacyBrowserActions, parseBrowserTaskGrant, type BrowserActionClass, type BrowserTaskGrant, type BrowserTaskUpload } from "../shared/browser-task.ts";
@@ -86,8 +86,10 @@ describe("portal browser policy (RealBud layer)", () => {
     const root = privateTempRoot(join(tmpdir(), "rb-attended-tools-"));
     const runtime = new BrowserRuntime({ root, command: async () => ({}), executable: async () => "/fixture/bsk", startDaemon: async () => {} });
     const offered = async (options: { capabilities: JobCapability[]; grant?: BrowserTaskGrant }) => {
+      // A saved job passes its own grant explicitly, built from its capabilities as the host does.
+      const grant = options.grant ?? legacyBrowserGrant({ runId: "run-1", allowedOrigins: ["portal.example"], capabilities: options.capabilities });
       const broker = await startBrowserBroker({ runtime, threadId: "thread-1", runId: "run-1", context: { allowedOrigins: ["portal.example"], capabilities: options.capabilities },
-        ...(options.grant ? { grant: options.grant } : {}), approvals: new BrowserApprovalStore({ file: join(root, "approvals.json") }),
+        grant, approvals: new BrowserApprovalStore({ file: join(root, "approvals.json") }),
         isActive: () => true, approve: async () => false, assertCapability: () => {} });
       try {
         const response = await fetch(broker.descriptor.url, { method: "POST", headers: { "content-type": "application/json", authorization: broker.descriptor.headers[0].value },
@@ -100,9 +102,10 @@ describe("portal browser policy (RealBud layer)", () => {
       expect(grantedBrowserTools(all, true)).toEqual(await offered({ capabilities: ["portal-read"], grant: all }));
       const prefill: JobCapability[] = ["portal-read", "portal-prefill", "portal-submit"];
       expect(grantedBrowserTools({ actions: legacyBrowserActions(prefill), uploads: [] }, false)).toEqual(await offered({ capabilities: prefill }));
-      // A read-only job is still offered browser_fill (the authority refuses it), so the policy does not name it.
+      // A read-only job is offered exactly what its policy names: no browser_fill.
       const readOnly = await offered({ capabilities: ["portal-read"] });
-      expect(readOnly.filter(tool => !grantedBrowserTools({ actions: legacyBrowserActions(["portal-read"]), uploads: [] }, false).includes(tool))).toEqual(["browser_fill"]);
+      expect(readOnly).toEqual(grantedBrowserTools({ actions: legacyBrowserActions(["portal-read"]), uploads: [] }, false));
+      expect(readOnly).not.toContain("browser_fill");
     } finally { await removeFixture(root); }
   });
 

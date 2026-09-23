@@ -3,8 +3,10 @@
 // an explicit grant (sites, the selected browser, action classes, expiry and
 // a step budget) before any browser work, and the turn mounts RealBud's
 // browser with exactly that grant. A grant belongs to one Ask thread and one
-// browser and ends with its turn. Stop, expiry, the step limit, sign-in or a
-// restart end it for good; a task is never restarted from a saved grant.
+// browser and ends with its turn. Stop, expiry, the step limit or a restart
+// end it for good; a task is never restarted from a saved grant. A sign-in
+// request pauses it instead: the same grant, with its remaining time and
+// steps, continues once the person has signed in, and never after it expired.
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { DATA_DIR } from "./config.ts";
@@ -37,8 +39,8 @@ export const BROWSER_TASK_OFFER =
 export const BROWSER_TASK_UNAVAILABLE =
   "I couldn't prepare this browser task, so nothing was done in your browser. Check this computer's disk space, then ask again.";
 
-export type BrowserTaskStatus = "proposed" | "declined" | "saved-as-job" | "active" | "finished" | "stopped" | "expired" | "budget" | "interrupted";
-const STATUSES: readonly BrowserTaskStatus[] = ["proposed", "declined", "saved-as-job", "active", "finished", "stopped", "expired", "budget", "interrupted"];
+export type BrowserTaskStatus = "proposed" | "declined" | "saved-as-job" | "active" | "paused" | "finished" | "stopped" | "expired" | "budget" | "interrupted";
+const STATUSES: readonly BrowserTaskStatus[] = ["proposed", "declined", "saved-as-job", "active", "paused", "finished", "stopped", "expired", "budget", "interrupted"];
 export type BrowserTaskEnd = "finished" | "stopped" | "expired" | "budget" | "interrupted";
 const SITE_SOURCES = ["request", "saved-job", "person", "none"] as const;
 type SiteSource = (typeof SITE_SOURCES)[number];
@@ -108,6 +110,14 @@ export const browserTaskEndNote = (status: BrowserTaskEnd, record: Pick<BrowserT
   interrupted: "This task ended before Bud finished. Nothing more will be done in your browser; ask again to continue.",
 })[status];
 export const BROWSER_TASK_SIGN_IN_NOTE = "The site asked you to sign in, so Bud stopped. Sign in in your browser yourself, then ask again. Nothing was typed for you.";
+/** A sign-in pause: the task keeps its grant, time and steps until the person continues or stops it. */
+export const BROWSER_TASK_PAUSED_NOTE = "The site asked you to sign in, so Bud paused this task. Sign in in your browser yourself, then press Continue on the sign-in request: Bud carries on with the same task. Nothing was typed for you.";
+/** A sign-in the person finishes on the page itself, while Bud waits in the same step. */
+export const BROWSER_TASK_PAGE_SIGN_IN_NOTE = "The site asked you to sign in. Finish signing in on the page in your browser and press Done there: Bud carries on with the same task. Nothing was typed for you.";
+/** A task that was still waiting for sign-in when its time ran out. */
+const PAUSED_EXPIRED_NOTE = "This task's time ran out while it waited for you to sign in. Nothing more will be done in your browser; start the task again from your request.";
+/** A task that holds its grant: running, or paused for sign-in. */
+const holding = (row: Pick<BrowserTaskRecord, "status">) => row.status === "active" || row.status === "paused";
 export const BROWSER_TASK_RESTART_NOTE = "RealBud restarted before this task finished. Nothing more will be done in your browser; ask again to continue.";
 
 /** Legacy fence capabilities for the same classes, for surfaces that still read them. */
@@ -153,7 +163,7 @@ function validRecord(value: unknown): value is BrowserTaskRecord {
     !STATUSES.includes(row.status as BrowserTaskStatus) || !time(row.createdAt) ||
     !(row.startedAt === null || time(row.startedAt)) || !(row.endedAt === null || time(row.endedAt)) ||
     !(row.endNote === null || text(row.endNote, 500)) || !Array.isArray(row.evidence) || row.evidence.length > MAX_EVIDENCE) return false;
-  if (row.status === "active" && row.grant === null) return false;
+  if ((row.status === "active" || row.status === "paused") && row.grant === null) return false;
   if (row.grant !== null) {
     try { if (parseBrowserTaskGrant(row.grant).id !== row.id) return false; } catch { return false; }
   }
@@ -211,9 +221,12 @@ export class BrowserTaskStore {
     try { saved = await readPrivateJson(this.file, MAX_BYTES); } catch { throw recovery(); }
     const rows = saved === undefined ? [] : parseStore(saved);
     // A task that was running when RealBud stopped never resumes from its saved grant.
-    if (rows.some(row => row.status === "active")) {
-      const now = Date.now();
-      await this.save(rows.map(row => row.status !== "active" ? row : { ...row, status: "interrupted" as const, endedAt: now, endNote: BROWSER_TASK_RESTART_NOTE }));
+    // One paused for sign-in stays paused, and resumable only while its grant holds.
+    const now = Date.now();
+    const lapsed = (row: BrowserTaskRecord) => row.status === "paused" && typeof row.grant?.expiresAt === "number" && row.grant.expiresAt <= now;
+    if (rows.some(row => row.status === "active" || lapsed(row))) {
+      await this.save(rows.map(row => row.status === "active" ? { ...row, status: "interrupted" as const, endedAt: now, endNote: BROWSER_TASK_RESTART_NOTE }
+        : lapsed(row) ? { ...row, status: "expired" as const, endedAt: now, endNote: PAUSED_EXPIRED_NOTE } : row));
       return this.rows!;
     }
     this.rows = rows;
@@ -249,9 +262,9 @@ export class BrowserTaskStore {
       };
       if (record.siteSource !== "none" && !record.sites.length) record.siteSource = "none";
       const rows = [...await this.load(), record];
-      // Oldest settled cards go first; a running task is never dropped.
+      // Oldest settled cards go first; a running or paused task is never dropped.
       while (rows.length > MAX_RECORDS) {
-        const index = rows.findIndex(row => row.status !== "active");
+        const index = rows.findIndex(row => !holding(row));
         rows.splice(index < 0 ? 0 : index, 1);
       }
       await this.save(rows);
@@ -278,10 +291,10 @@ export class BrowserTaskStore {
       const rows = await this.load();
       const row = rows.find(item => item.id === id);
       if (!row || row.threadId !== input.threadId) throw fail(404, "This browser task is not in this conversation. Ask again to start it.");
-      if (row.status === "active") throw fail(409, "This task is already running. Stop it before starting it again.");
+      if (holding(row)) throw fail(409, "This task is already running. Stop it before starting it again.");
       if (row.status !== "proposed") throw fail(409, "This request was already answered or has ended. Ask again to start a new task.");
       if (now - row.createdAt > ASK_TASK_OFFER_MS) throw fail(409, "This request is from more than an hour ago. Ask again to start it.");
-      if (rows.some(item => item.threadId === row.threadId && item.status === "active")) throw fail(409, "Another browser task is running in this conversation. Stop it first.");
+      if (rows.some(item => item.threadId === row.threadId && holding(item))) throw fail(409, "Another browser task is running in this conversation. Stop it first.");
       if (!text(input.browserId, 200)) throw fail(409, "Connect your browser before starting this task.");
       let sites = row.sites; let siteSource = row.siteSource;
       if (!sites.length) {
@@ -319,20 +332,49 @@ export class BrowserTaskStore {
     });
   }
 
-  /** Ends a running task for good. Returns null when it had already ended. */
+  /** The site asked the person to sign in: the task keeps its saved grant
+   * (time and steps included) and waits. A paused task only takes the new
+   * note (the page wait handed over to the sign-in request). Returns null
+   * when the task has ended. */
+  pause(id: string, note = BROWSER_TASK_PAUSED_NOTE): Promise<BrowserTaskRecord | null> {
+    return this.exclusive(async () => {
+      const row = (await this.load()).find(item => item.id === id);
+      if (!row || !holding(row)) return null;
+      return this.change(id, current => ({ ...current, status: "paused", endNote: plain(note, 500) }));
+    });
+  }
+
+  /** The person signed in: the same grant carries on, only in its own
+   * conversation, only while it has time left, and only in the browser it
+   * was started with (when the caller names the browser selected now). */
+  resume(id: string, input: { threadId: string; browserId?: string | null }, now = Date.now()): Promise<BrowserTaskRecord & { grant: BrowserTaskGrant }> {
+    return this.exclusive(async () => {
+      const row = (await this.load()).find(item => item.id === id);
+      if (!row || row.threadId !== input.threadId) throw fail(404, "This browser task is not in this conversation. Ask again to start it.");
+      if (row.status !== "paused" || !row.grant) throw fail(409, "This task is no longer waiting for sign-in. Start the task again from your request.");
+      if (row.grant.expiresAt !== null && row.grant.expiresAt <= now) throw fail(409, "This task's permission has ended. Start the task again from your request.");
+      if (input.browserId !== undefined && row.grant.browser.id && input.browserId !== row.grant.browser.id) {
+        throw fail(409, "The selected browser changed while this task was paused. Start the task again from your request.");
+      }
+      const resumed = await this.change(id, current => ({ ...current, status: "active", endNote: null }));
+      return { ...resumed, grant: resumed.grant! };
+    });
+  }
+
+  /** Ends a running or paused task for good. Returns null when it had already ended. */
   end(id: string, status: BrowserTaskEnd, note?: string, now = Date.now()): Promise<BrowserTaskRecord | null> {
     return this.exclusive(async () => {
       const row = (await this.load()).find(item => item.id === id);
-      if (!row || row.status !== "active") return null;
+      if (!row || !holding(row)) return null;
       return this.change(id, current => ({ ...current, status, endedAt: now, endNote: plain(note ?? browserTaskEndNote(status, current), 500) }));
     });
   }
 
-  /** The broker's decisions while the task runs. */
+  /** The broker's decisions while the task runs (including a wait on the sign-in page). */
   appendEvidence(id: string, items: readonly JobRunEvidence[]): Promise<void> {
     return this.exclusive(async () => {
       const row = (await this.load()).find(item => item.id === id);
-      if (!row || row.status !== "active") return;
+      if (!row || !holding(row)) return;
       const clean = items.filter(item => time(item.at) && EVIDENCE_KINDS.includes(item.kind))
         .map(item => ({ at: item.at, kind: item.kind, note: plain(item.note, 500) || "Browser step recorded." }));
       await this.change(id, current => ({ ...current, evidence: [...current.evidence, ...clean].slice(-MAX_EVIDENCE) }));

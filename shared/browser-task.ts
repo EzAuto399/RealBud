@@ -42,7 +42,13 @@ export interface BrowserTaskGrant {
   expiresAt: number | null;
   /** Maximum dispatched browser actions; null means the run's own limits apply. */
   budget: number | null;
+  /** Present only on a saved job's grant built from its capabilities: it
+   * never offers the newer tools (keys, dropdowns, downloads, uploads) a
+   * saved job never had. Absent means an explicit task grant. It can only
+   * narrow a grant, never widen one. */
+  origin?: typeof BROWSER_LEGACY_JOB_ORIGIN;
 }
+export const BROWSER_LEGACY_JOB_ORIGIN = "legacy-job" as const;
 
 /** Saved jobs without an explicit grant keep exactly their earlier behaviour:
  * any portal capability reads, opens and clicks on the job's site (every
@@ -98,13 +104,19 @@ function unique<T extends string>(values: unknown, allowed: readonly T[], max: n
   return [...(values as T[])];
 }
 
+const GRANT_KEYS = ["version", "purpose", "id", "runId", "route", "request", "sites", "browser", "actions", "consequential", "uploads", "expiresAt", "budget"] as const;
+
 /** Validates a stored or transmitted grant. Unknown keys, versions and a
- * consequential policy other than `ask-each` are rejected. */
+ * consequential policy other than `ask-each` are rejected. Grants saved
+ * before the `origin` marker existed are explicit task grants. */
 export function parseBrowserTaskGrant(value: unknown): BrowserTaskGrant {
-  const row = exact(value, ["version", "purpose", "id", "runId", "route", "request", "sites", "browser", "actions", "consequential", "uploads", "expiresAt", "budget"]);
+  const legacy = object(value) && Object.hasOwn(value, "origin");
+  const row = exact(value, legacy ? [...GRANT_KEYS, "origin"] : GRANT_KEYS);
   if (row.version !== BROWSER_TASK_GRANT_VERSION || row.purpose !== BROWSER_TASK_GRANT_PURPOSE) invalid();
   if (!identifier(row.id) || !identifier(row.runId)) invalid();
   if (typeof row.route !== "string" || !(BROWSER_TASK_ROUTES as readonly string[]).includes(row.route)) invalid();
+  // A saved job's own grant belongs to a job or its recovery, never to an Ask task.
+  if (legacy && (row.origin !== BROWSER_LEGACY_JOB_ORIGIN || (row.route !== "job" && row.route !== "recovery"))) invalid();
   const request = exact(row.request, ["text", "sha256"]);
   if (!requestText(request.text) || !sha256(request.sha256)) invalid();
   // An empty list is valid and reaches nothing; it never widens to "any site".
@@ -138,5 +150,6 @@ export function parseBrowserTaskGrant(value: unknown): BrowserTaskGrant {
     uploads,
     expiresAt: row.expiresAt as number | null,
     budget: row.budget as number | null,
+    ...(legacy ? { origin: BROWSER_LEGACY_JOB_ORIGIN } : {}),
   };
 }

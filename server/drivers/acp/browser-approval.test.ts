@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ensureDirs } from "../../config.ts";
 import type { ProviderInstance, RuntimeEvent } from "../../contracts.ts";
-import { browserApprovalDraft } from "../../browser-authority.ts";
+import { browserApprovalDraft, legacyBrowserGrant } from "../../browser-authority.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { removeFixture } from "../../testing/private-fixture.ts";
 import { HermesAgentDriver } from "./hermes.ts";
@@ -44,7 +44,8 @@ describe("browser approval card in the ACP core", () => {
     instance = await HermesAgentDriver.create({ instanceId: "acp-approval", displayName: "ACP", environment: {}, enabled: true, config: { cli: FAKE_CLI, fullAuto: false } });
     recorder = recordEvents(instance.adapter);
     await instance.adapter.sendTurn({ threadId: thread, text: "Pay the fictional levy", computer: true,
-      integrations: { browser: { runId: "run-approval", allowedOrigins: ["portal.fictional-strata.example"], capabilities: ["portal-read"] } } });
+      integrations: { browser: { runId: "run-approval", allowedOrigins: ["portal.fictional-strata.example"], capabilities: ["portal-read"],
+        grant: legacyBrowserGrant({ runId: "run-approval", allowedOrigins: ["portal.fictional-strata.example"], capabilities: ["portal-read"] }) } } });
     await vi.waitFor(() => expect(JSON.parse(readFileSync(dump, "utf8")).promptCount).toBe(1));
     return broker.approve!;
   };

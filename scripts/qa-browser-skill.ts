@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { addBrowserTaskUpload, BrowserRuntime, browserExecutable, browserTaskWorkroom } from "../server/browser-runtime.ts";
 import { startBrowserBroker } from "../server/browser-broker.ts";
-import { BrowserApprovalStore } from "../server/browser-authority.ts";
+import { BrowserApprovalStore, legacyBrowserGrant } from "../server/browser-authority.ts";
 import { ConnectedAppOperationStore } from "../server/connected-app-operations.ts";
 import { parseBrowserTaskGrant } from "../shared/browser-task.ts";
 
@@ -52,7 +52,7 @@ try {
   // The person selects the returned website tab before the explicit next step.
   await page.bringToFront();
   const operations = new ConnectedAppOperationStore({ file: join(temp, "receipts.json") });
-  broker = await startBrowserBroker({ runtime, operations, checkpoint, runId: "fictional-run", threadId: "fictional-thread", context: { allowedOrigins: ["practice-bank.example"], capabilities: ["portal-read", "portal-prefill"] }, isActive: () => true, approve: async () => true, assertCapability: () => {} });
+  broker = await startBrowserBroker({ runtime, operations, checkpoint, runId: "fictional-run", threadId: "fictional-thread", context: { allowedOrigins: ["practice-bank.example"], capabilities: ["portal-read", "portal-prefill"] }, grant: legacyBrowserGrant({ runId: "fictional-run", allowedOrigins: ["practice-bank.example"], capabilities: ["portal-read", "portal-prefill"] }), isActive: () => true, approve: async () => true, assertCapability: () => {} });
   let seq = 0;
   const call = async (name: string, args = {}) => {
     const res = await fetch(broker!.descriptor.url, { method: "POST", headers: { "content-type": "application/json", authorization: broker!.descriptor.headers[0].value }, body: JSON.stringify({ jsonrpc: "2.0", id: ++seq, method: "tools/call", params: { name, arguments: args } }) });

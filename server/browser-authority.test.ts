@@ -15,7 +15,7 @@ import {
   type BrowserObservation,
 } from "./browser-authority.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
-import { parseBrowserTaskGrant, type BrowserTaskGrant } from "../shared/browser-task.ts";
+import { parseBrowserTaskGrant, type BrowserActionClass, type BrowserTaskGrant } from "../shared/browser-task.ts";
 
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -23,6 +23,11 @@ afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await c
 const RUN = "3d7e8a52-0b8f-4c2a-9a55-2f4f0a3f1e01";
 const grant = (capabilities: string[] = ["portal-read", "portal-prefill", "portal-submit"]) =>
   legacyBrowserGrant({ runId: RUN, allowedOrigins: ["portal.example"], capabilities });
+/** An explicit task grant on the same site: the saved job's grant without its `legacy-job` marker. */
+const explicitTask = (overrides: Partial<BrowserTaskGrant>) => {
+  const { origin: _savedJob, ...base } = grant();
+  return parseBrowserTaskGrant({ ...base, ...overrides });
+};
 const page = (text: string, url = "https://portal.example/work"): BrowserObservation => ({ url, text });
 const PAY_PAGE = page('Pay a bill\nPayee: Fictional Plumbing Pty Ltd\nAmount: AUD 480.00\nReference: INV-FICTIONAL-7\n@e1 button "Pay now"\n@e2 button "Show details"');
 const BANK_PAGE = page('Fictional Bank\nTransaction history\n@e1 button "Confirm"\n@e2 button "Settings"\n@e3 button "View statement"\n@e4 textbox "Amount"');
@@ -184,7 +189,7 @@ describe("browser action authorisation", () => {
     const fillers = ["now", "all", "invoice FICT-1", "the lease", "", "securely", "today"];
     const pages = ["", "Payee: Fictional Plumbing\nAmount: AUD 10.00\n", "Fictional Bank\nTransaction history\n", "Are you sure you want to delete invoice FICT-2?\n", "Sign here\n"];
     const everyRule = ["portal:read:portal.example", "portal:prefill:portal.example", "portal:submit:portal.example", "browser_click_semantic", "*"].map(key => ({ key, decision: "allow" as const }));
-    const grants = [grant(), grant(["portal-read"]), parseBrowserTaskGrant({ ...grant(), actions: ["read", "navigate", "fill", "click", "download", "upload", "keys", "submit"] })];
+    const grants = [grant(), grant(["portal-read"]), explicitTask({ actions: ["read", "navigate", "fill", "click", "download", "upload", "keys", "submit"] })];
     let consequential = 0;
     for (let i = 0; i < 600; i++) {
       const label = `${words[next(words.length)]} ${fillers[next(fillers.length)]}`.trim();
@@ -203,7 +208,7 @@ describe("browser action authorisation", () => {
 
 describe("keys, dropdowns, downloads and uploads", () => {
   const ALL = ["read", "navigate", "fill", "click", "download", "upload", "keys", "submit"] as const;
-  const task = (actions: readonly string[] = ALL) => parseBrowserTaskGrant({ ...grant(), actions: [...actions], uploads: [{ name: "fictional-lease.pdf", sha256: "b".repeat(64) }] });
+  const task = (actions: readonly string[] = ALL) => explicitTask({ actions: [...actions] as BrowserActionClass[], uploads: [{ name: "fictional-lease.pdf", sha256: "b".repeat(64) }] });
   const PAY_FORM = page(`${PAY_PAGE.text}\n@e3 textbox "Amount"\n@e4 combobox "Frequency"`);
   const FORM = page('@e1 textbox "Property code"\n@e2 searchbox "Search tenants"\n@e3 button "Show details"\n@e4 combobox "Sort by"\n@e5 row "Invoice FICT-3"\n@e6 button "Choose file"\n@e7 link "Download report"\n@e8 button "Download payment receipt"\n@e9 textbox "Password"');
   const everyRule = ["portal:read:portal.example", "portal:prefill:portal.example", "portal:submit:portal.example"].map(key => ({ key, decision: "allow" as const }));
@@ -263,6 +268,11 @@ describe("keys, dropdowns, downloads and uploads", () => {
       .toMatchObject({ decision: "deny", reason: "This job is read-only. Add prefill on Schedule if Bud should fill forms." });
     // A saved job's legacy grant has none of the newer classes.
     expect(authorizeBrowserAction(grant(), FORM, "browser_press", { ref: "@e1", key: "Tab" })).toMatchObject({ decision: "deny", reason });
+    // Its fill class is for fields only: a saved job's own grant never chooses in a dropdown, while a task with fill may.
+    expect(grant().origin).toBe("legacy-job");
+    expect(authorizeBrowserAction(grant(), FORM, "browser_select", { ref: "@e4", values: ["date"] }))
+      .toMatchObject({ decision: "deny", reason: "This browser tool or its arguments are not available." });
+    expect(authorizeBrowserAction(task(["read", "fill"]), FORM, "browser_select", { ref: "@e4", values: ["date"] })).toMatchObject({ decision: "ask" });
   });
 
   it("asks once, with the verified facts, before Enter or a dropdown submits a payment form", () => {
@@ -386,7 +396,7 @@ describe("facts from the helper's observation (VOM)", () => {
   });
 
   it("downloads a statement as reading; the page's payment still needs its facts", () => {
-    const task = parseBrowserTaskGrant({ ...grant(), actions: ["read", "navigate", "click", "download"] });
+    const task = explicitTask({ actions: ["read", "navigate", "click", "download"] });
     expect(authorizeBrowserAction(task, vom("statement-download"), "browser_download", { ref: "@e7" })).toMatchObject({
       decision: "ask", once: false, classification: { class: "routine", action: "download" },
       summary: 'Download the file from link "Download Q3 2026 statement (PDF)" on portal.example into this task\'s private folder.',

@@ -11,7 +11,7 @@ import { cn } from "@/lib/cn";
 /** The Ask reply that carries a task card contains this button name. */
 export const BROWSER_TASK_OFFER_MARK = "**Start this task**";
 
-export type BrowserTaskStatus = "proposed" | "declined" | "saved-as-job" | "active" | "finished" | "stopped" | "expired" | "budget" | "interrupted";
+export type BrowserTaskStatus = "proposed" | "declined" | "saved-as-job" | "active" | "paused" | "finished" | "stopped" | "expired" | "budget" | "interrupted";
 export interface BrowserTaskCardView {
   id: string;
   messageId: string;
@@ -34,7 +34,7 @@ export interface BrowserTaskList { tasks: BrowserTaskCardView[]; browser: Browse
 export type BrowserTaskAction = "start" | "decline" | "save-job" | "stop";
 const NO_BROWSER: BrowserTaskBrowser = { ready: false, name: null };
 
-const STATUSES: readonly BrowserTaskStatus[] = ["proposed", "declined", "saved-as-job", "active", "finished", "stopped", "expired", "budget", "interrupted"];
+const STATUSES: readonly BrowserTaskStatus[] = ["proposed", "declined", "saved-as-job", "active", "paused", "finished", "stopped", "expired", "budget", "interrupted"];
 const ACTIONS: readonly BrowserActionClass[] = ["read", "navigate", "fill", "click", "download", "upload", "keys", "submit"];
 const KINDS: readonly BrowserConsequentialKind[] = ["pay", "sign", "send", "notice", "delete", "account-change"];
 const INVALID = "Bud sent task details this app cannot read. Nothing was started.";
@@ -101,6 +101,7 @@ const ENDED: Partial<Record<BrowserTaskStatus, string>> = {
 /** The status line under the card's title. */
 export function browserTaskStatusLine(task: BrowserTaskCardView, now: number): string {
   if (task.status === "proposed") return now > task.offerExpiresAt ? "This request is from more than an hour ago. Ask again to start it." : "Needs your go-ahead";
+  if (task.status === "paused") return "Paused for you to sign in · sign in on the page, then continue from the handover";
   if (task.status === "active") return task.expiresAt ? `Running in your browser · ends by ${clock(task.expiresAt)} or after ${task.budget} steps` : "Running in your browser";
   return ENDED[task.status] ?? task.endNote ?? "This task has ended.";
 }

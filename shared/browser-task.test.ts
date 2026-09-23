@@ -41,8 +41,18 @@ describe("browser task grant", () => {
     ["two uploads with one name", { ...grant(), uploads: [{ name: "Fictional.pdf", sha256: "b".repeat(64) }, { name: "fictional.pdf", sha256: "c".repeat(64) }] }],
     ["an unknown route", { ...grant(), route: "anywhere" }],
     ["a zero budget", { ...grant(), budget: 0 }],
+    ["an unknown origin marker", { ...grant(), route: "job", origin: "task" }],
+    ["a saved job's marker on an Ask task", { ...grant(), origin: "legacy-job" }],
+    ["an empty origin marker", { ...grant(), route: "job", origin: undefined }],
   ])("rejects %s with a user-facing sentence", (_name, value) => {
     expect(() => parseBrowserTaskGrant(value)).toThrow("This browser task permission is incomplete or damaged. Start the task again from your request.");
+  });
+
+  it("keeps a saved job's legacy-job marker, and reads a grant saved without one as an explicit task grant", () => {
+    const saved = { ...grant(), route: "job" as const, origin: "legacy-job" as const };
+    expect(parseBrowserTaskGrant(saved)).toEqual(saved);
+    expect(parseBrowserTaskGrant({ ...saved, route: "recovery" }).origin).toBe("legacy-job");
+    expect(Object.hasOwn(parseBrowserTaskGrant(grant()), "origin")).toBe(false);
   });
 
   it("accepts only exact HTTPS sites", () => {

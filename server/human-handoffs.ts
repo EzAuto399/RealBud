@@ -1,13 +1,15 @@
 import { WorkflowDatabase, workflowConflict, type WorkflowRecord } from "./workflow-database.ts";
 import type { AttendedFenceContext } from "./attended-run.ts";
+import { parseBrowserTaskGrant } from "../shared/browser-task.ts";
 
 export interface LoginBinding {
   version: 1; pid?: number; windowId?: number; origin: string; accountMarker: string; readyMarker: string;
   browser?: { browserId: string; tabId: number };
 }
 /** What a paused attended task keeps while the person signs in: the attended
- * context that authorised it (restored as-is), its grant's remaining budget and
- * the actions it already completed. Never credentials, page contents or typed values. */
+ * context that authorised it (restored as-is, with its grant: a saved job's own
+ * or an Ask task's), its grant's remaining budget and the actions it already
+ * completed. Never credentials, page contents or typed values. */
 export interface HandoffTask {
   version: 1;
   context: AttendedFenceContext;
@@ -37,9 +39,16 @@ export function validateHandoffTask(task: HandoffTask, runId: string): HandoffTa
     || !(grant === null || grant && typeof grant === "object" && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(grant.grantId) && grant.runId === runId
       && time(grant.expiresAt) && (grant.budget === null || Number.isSafeInteger(grant.budget) && grant.budget >= 0) && Number.isSafeInteger(grant.used) && grant.used >= 0)
     || !Array.isArray(task.completed) || task.completed.length > 20 || !task.completed.every(line => text(line, 500))) throw invalidTask();
+  // The grant that continues is exactly the one that paused: for this run, and the one whose budget is kept.
+  if (context.grant !== undefined) {
+    let saved;
+    try { saved = parseBrowserTaskGrant(context.grant); } catch { throw invalidTask(); }
+    if (saved.runId !== runId || grant && grant.grantId !== saved.id) throw invalidTask();
+  }
   return structuredClone(task);
 }
 const TASK_EXPIRED = "This task's permission ended while you were signing in, so Bud cannot continue it. Start the task again from your request.";
+const TASK_SPENT = "This task used all its browser steps before you signed in, so Bud cannot continue it. Start the task again from your request.";
 const CHECKPOINT_EXPIRED = "This sign-in checkpoint expired, so Bud cannot continue the task. Start it again from your request.";
 const WAITING_ON_PAGE = "Bud is waiting on the page in your browser. Finish signing in there and press Done, or press Stop.";
 export function validateLoginBinding(binding: LoginBinding): LoginBinding {
@@ -86,8 +95,8 @@ export class HumanHandoffs {
     if (input.steps && (!Array.isArray(input.steps) || input.steps.length > 100 || input.steps.some(step => typeof step !== "string" || step.length > 4000))) throw Object.assign(new Error("The saved job steps need review."), { status: 400 });
     return { ...input, ...(input.task ? { task: validateHandoffTask(input.task, input.runId) } : {}) };
   }
-  /** A kept run can pause for sign-in more than once; each pause is its own record. */
-  private activeFor(runId: string) { return this.list().find(record => record.value.runId === runId && active(record.value.state)); }
+  /** A kept run can pause for sign-in more than once; each pause is its own record. This is the one still open. */
+  activeFor(runId: string) { return this.list().find(record => record.value.runId === runId && active(record.value.state)); }
   private nextId(runId: string) {
     const first = `handover:${runId}`;
     if (!this.db.get("handoff", first)) return first;
@@ -153,7 +162,7 @@ export class HumanHandoffs {
     let record = this.get(id);
     if (record.revision !== revision || record.value.state !== "awaiting_login") throw workflowConflict();
     if (record.value.inPage) throw Object.assign(new Error(WAITING_ON_PAGE), { status: 409 });
-    if (record.value.task && this.taskExpired(record)) return this.endTask(record, TASK_EXPIRED);
+    if (record.value.task && this.taskEnded(record)) return this.endTask(record, this.taskEnded(record)!);
     if (record.value.expiresAt <= this.now()) return record.value.task ? this.endTask(record, CHECKPOINT_EXPIRED)
       : this.change(record, { state: "recovery_required", detail: "This checkpoint expired. Review the saved job and establish a fresh sign-in checkpoint." });
     if (!record.value.binding) throw Object.assign(new Error("Choose the signed-in page and save its visible labels before continuing."), { status: 409 });
@@ -174,9 +183,13 @@ export class HumanHandoffs {
         ? { state: "verified", detail: "The saved site, account and signed-in page were confirmed. The earlier run remains interrupted: review its last completed action before starting the next step. No earlier actions were replayed." }
         : { state: "awaiting_login", detail: "The expected account and signed-in page could not both be confirmed. Bud is stopped again. Finish signing in or change the page check, then try Continue." });
   }
-  private taskExpired(record: WorkflowRecord<HumanHandoff>) {
-    const until = record.value.task?.grant?.expiresAt;
-    return until !== null && until !== undefined && until <= this.now();
+  /** Why a paused task can no longer continue: its grant's time ran out or its steps are spent. */
+  private taskEnded(record: WorkflowRecord<HumanHandoff>): string | null {
+    const task = record.value.task;
+    const until = task?.grant?.expiresAt ?? task?.context.grant?.expiresAt;
+    if (until !== null && until !== undefined && until <= this.now()) return TASK_EXPIRED;
+    const budget = task?.grant?.budget;
+    return budget !== null && budget !== undefined && task!.grant!.used >= budget ? TASK_SPENT : null;
   }
   /** The task cannot continue: say so plainly, end its kept run, hold until closed. */
   private endTask(record: WorkflowRecord<HumanHandoff>, detail: string) {
@@ -189,7 +202,7 @@ export class HumanHandoffs {
    * an uncertain start is held for review, never retried automatically. */
   private async continueTask(record: WorkflowRecord<HumanHandoff>) {
     if (!this.host.continueTask || !this.host.restore) return this.change(record, { state: "verified", detail: "The saved site, account and signed-in page were confirmed. This host cannot continue the task itself: choose the next reviewed step. No earlier actions were replayed." });
-    if (this.taskExpired(record)) return this.endTask(record, TASK_EXPIRED);
+    if (this.taskEnded(record)) return this.endTask(record, this.taskEnded(record)!);
     if (this.list().some(other => other.id !== record.id && active(other.value.state))) return this.change(record, { state: "awaiting_login", detail: "Another sign-in checkpoint still holds this computer. Finish it, then press Continue again." });
     const claimed = this.change(record, { state: "resuming", detail: "You are signed in. Bud is continuing the same task with its remaining permission; earlier actions are not repeated." });
     try {

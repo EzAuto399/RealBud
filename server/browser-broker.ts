@@ -23,7 +23,6 @@ import {
   browserKey,
   browserLoginFields,
   jobBrowserUrl,
-  legacyBrowserGrant,
   observationRefs,
   type BrowserApprovalStore,
   type BrowserAuthorization,
@@ -36,7 +35,7 @@ import { connectedAppOperations, type ConnectedAppOperationStore } from "./conne
 import { managedService } from "./managed-service.ts";
 import type { BrowserCheckpoint } from "../shared/browser.ts";
 import type { JobRunEvidence } from "../shared/contracts.ts";
-import { parseBrowserTaskGrant, type BrowserActionClass, type BrowserTaskGrant } from "../shared/browser-task.ts";
+import { BROWSER_LEGACY_JOB_ORIGIN, parseBrowserTaskGrant, type BrowserActionClass, type BrowserTaskGrant } from "../shared/browser-task.ts";
 
 export { browserLoginFields, jobBrowserUrl, observationRefs } from "./browser-authority.ts";
 
@@ -58,6 +57,20 @@ export const BROWSER_TOOLS = [
 ];
 /** Tools a saved job never had: offered only by an explicit task grant with their action class. */
 const TASK_TOOLS: Record<string, BrowserActionClass> = { browser_press: "keys", browser_select: "fill", browser_download: "download", browser_upload: "upload" };
+/** The action class each tool needs; the same table the worker's instructions use (server/attended-run.ts). */
+const TOOL_CLASSES: Record<string, BrowserActionClass> = {
+  browser_tabs: "read", browser_borrow: "read", browser_read: "read", browser_navigate: "navigate", browser_fill: "fill",
+  browser_click_semantic: "click", ...TASK_TOOLS, browser_release: "read",
+};
+/** Exactly the tools a grant allows, in the broker's order: each tool whose
+ * class the grant holds; the newer tools never for a saved job's own grant;
+ * upload only when the grant lists files. tools/list and tools/call use this. */
+export function browserToolsFor(grant: Pick<BrowserTaskGrant, "actions" | "uploads" | "origin">): string[] {
+  return BROWSER_TOOLS.filter(tool => grant.actions.includes(TOOL_CLASSES[tool.name]) &&
+    !(grant.origin === BROWSER_LEGACY_JOB_ORIGIN && Object.hasOwn(TASK_TOOLS, tool.name)) &&
+    (tool.name !== "browser_upload" || grant.uploads.length > 0)).map(tool => tool.name);
+}
+const WRONG_BROWSER = "This tab is in a different browser from the one this task was started with, so Bud did not borrow it. Start the task again with the browser you want Bud to use.";
 /** One dispatched action for the run's log: identifiers and hashes, never page values or file contents. */
 export interface BrowserActionRecord {
   grantId: string;
@@ -136,8 +149,8 @@ export async function startBrowserBroker(options: {
   threadId: string;
   runId: string;
   context: FenceContext;
-  /** An explicit task grant. Without one, the saved job keeps exactly its capabilities. */
-  grant?: BrowserTaskGrant;
+  /** The run's explicit grant: an Ask task's, or a saved job's own (`legacy-job`, built by the host from its capabilities). Required. */
+  grant: BrowserTaskGrant;
   checkpoint?: BrowserCheckpoint;
   isActive(): boolean;
   approve(tool: string, params: BrowserJson, summary: string, signal: AbortSignal, projection?: BrowserApprovalProjection): Promise<boolean>;
@@ -160,13 +173,14 @@ export async function startBrowserBroker(options: {
   const token = randomBytes(32).toString("hex");
   const context = structuredClone(options.context);
   const checkpoint = options.checkpoint ? structuredClone(options.checkpoint) : undefined;
-  const grant = parseBrowserTaskGrant(options.grant ? structuredClone(options.grant)
-    : legacyBrowserGrant({ runId: options.runId, allowedOrigins: context.allowedOrigins, capabilities: context.capabilities, checkpoint }));
-  if (options.grant && grant.runId !== options.runId) throw problem("This browser task permission belongs to another run. Start the task again.");
+  // The grant is the only authority: there is no fallback to the job's capabilities here.
+  if (!options.grant) throw problem("This browser work has no saved permission, so nothing was opened. Start it again.");
+  const grant = parseBrowserTaskGrant(structuredClone(options.grant));
+  if (grant.runId !== options.runId) throw problem("This browser task permission belongs to another run. Start the task again.");
   const sites = grant.sites;
   const workroom = options.workroom ?? browserTaskWorkroom(runtime.root, grant.id);
-  const tools = BROWSER_TOOLS.filter(tool => !Object.hasOwn(TASK_TOOLS, tool.name) ||
-    options.grant && grant.actions.includes(TASK_TOOLS[tool.name]) && (tool.name !== "browser_upload" || grant.uploads.length > 0))
+  const allowed = new Set(browserToolsFor(grant));
+  const tools = BROWSER_TOOLS.filter(tool => allowed.has(tool.name))
     .map(tool => tool.name !== "browser_upload" ? tool : { ...tool, inputSchema: { ...tool.inputSchema,
       properties: { ...tool.inputSchema.properties, file: { ...(tool.inputSchema.properties.file as object), enum: grant.uploads.map(file => file.name) } } } });
   const rules = options.rules ?? (() => context.rules ?? loadRules());
@@ -340,6 +354,12 @@ export async function startBrowserBroker(options: {
       if (name === "browser_borrow") {
         if (borrowed.has(tabId)) return text("This tab is already available to this job.");
         if (deniedBorrows.has(tabId)) throw problem("This tab request already ended or has an unknown outcome. Do not repeat it.");
+        // A grant bound to a browser borrows only from that browser: the session's (the runtime's selected) browser, and the tab's own when the helper names it.
+        if (grant.browser.id && ((await runtime.status()).selectedBrowserId !== grant.browser.id ||
+          typeof row.browser_instance_id === "string" && row.browser_instance_id !== grant.browser.id)) {
+          publish("denied", fenceDenialNote(name, WRONG_BROWSER)); throw problem(WRONG_BROWSER);
+        }
+        check(signal);
         await gate(name, authorize(name, url, args), { url }, signal, "browser_read");
         deniedBorrows.add(tabId); // Claim before dispatch; a timeout never creates an automatic retry.
         receipt = operations.start({ threadId: options.threadId, toolName: name, toolSlugs: [] }).id; spend();
