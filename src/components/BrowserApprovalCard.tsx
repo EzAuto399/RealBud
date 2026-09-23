@@ -17,7 +17,7 @@ import type { BrowserConsequentialKind } from "@shared/browser-task";
 import { cn } from "@/lib/cn";
 
 const NOUNS: Record<BrowserConsequentialKind, string> = { pay: "payment", sign: "signature", send: "message", notice: "notice", delete: "deletion", "account-change": "account change" };
-const FACT_WORDS: Record<BrowserApprovalFactName, string> = { recipient: "payee", amount: "amount", currency: "currency", reference: "reference", document: "document title", documentHash: "document text", to: "recipient", subject: "subject", bodyHash: "message text", target: "item it changes" };
+const FACT_WORDS: Record<BrowserApprovalFactName, string> = { recipient: "payee", amount: "amount", currency: "currency", reference: "reference", document: "document title", documentHash: "document text", to: "recipient", subject: "subject", bodyHash: "message text", bodyExcerpt: "message excerpt", target: "item it changes" };
 const APPROVE: Record<BrowserConsequentialKind, string> = { pay: "Pay", sign: "Sign this document", send: "Send this message", notice: "Issue this notice", delete: "Delete this item", "account-change": "Change this account" };
 
 const confirmedValue = (card: BrowserApprovalCard, name: BrowserApprovalFactName): string | null => {
