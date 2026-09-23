@@ -3,13 +3,13 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const CLI = fileURLToPath(new URL("./fake-acp-cli.ts", import.meta.url));
 
-function fixture(home: string, dump: string) {
-  const child = spawn(process.execPath, [CLI], {
+function fixture(home: string, dump: string, preload?: string) {
+  const child = spawn(process.execPath, [...(preload ? ["--import", pathToFileURL(preload).href] : []), CLI], {
     env: {
       ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
       HOME: home, USERPROFILE: home,
@@ -116,4 +116,84 @@ describe("fake ACP dump publication", () => {
       try { await peer.stop(); } finally { rmSync(home, { recursive: true, force: true }); }
     }
   }, 15_000);
+});
+
+describe("fake ACP Windows rename retry controls", () => {
+  // These injected subprocess controls verify policy on every host. The
+  // unmodified concurrent-reader test above remains the native filesystem proof.
+  async function exercise(platform: NodeJS.Platform, code: string, failures: number | null) {
+    const home = mkdtempSync(join(tmpdir(), "realbud-fake-acp-retry-"));
+    const dump = join(home, "dump.json"), journal = join(home, "journal.json"), preload = join(home, "rename-fault.mjs");
+    const previous = JSON.stringify({ pid: 0, promptCount: 0, marker: "fictional-old-snapshot" });
+    writeFileSync(dump, previous);
+    writeFileSync(preload, `import fs from 'node:fs';
+import {createHash} from 'node:crypto';
+import {syncBuiltinESMExports} from 'node:module';
+const dump=${JSON.stringify(dump)},journal=${JSON.stringify(journal)},previous=${JSON.stringify(previous)};
+const rename=fs.renameSync,attempts=[],delays=[];
+const record=()=>fs.writeFileSync(journal,JSON.stringify({attempts,delays}));
+Object.defineProperty(process,'platform',{value:${JSON.stringify(platform)}});
+Atomics.wait=(_array,_index,_value,delay)=>{delays.push(delay);record();return 'timed-out';};
+fs.renameSync=(from,to)=>{
+ if(to!==dump)return rename(from,to);
+ attempts.push({from,to,temporarySha256:createHash('sha256').update(fs.readFileSync(from)).digest('hex'),previousIntact:fs.readFileSync(to,'utf8')===previous});record();
+ if(${failures === null ? "true" : `attempts.length<=${failures}`})throw Object.assign(new Error('fictional rename refusal '+attempts.length),{code:${JSON.stringify(code)}});
+ return rename(from,to);
+};
+syncBuiltinESMExports();
+`);
+    const peer = fixture(home, dump, preload); peer.child.stdin.end();
+    try {
+      const deadline = Date.now() + 5_000;
+      while (!peer.closed) {
+        if (Date.now() > deadline) throw new Error("injected ACP publication did not close");
+        await setImmediate();
+      }
+      expect(peer.spawnError).toBeUndefined();
+      const trace = JSON.parse(readFileSync(journal, "utf8")) as {
+        attempts: Array<{ from: string; to: string; temporarySha256: string; previousIntact: boolean }>;
+        delays: number[];
+      };
+      expect(trace.attempts.length).toBeGreaterThan(0);
+      expect(new Set(trace.attempts.map(attempt => attempt.from)).size).toBe(1);
+      expect(new Set(trace.attempts.map(attempt => attempt.temporarySha256)).size).toBe(1);
+      expect(trace.attempts.every(attempt => attempt.to === dump && attempt.previousIntact)).toBe(true);
+      expect(readdirSync(home).sort()).toEqual(["dump.json", "journal.json", "rename-fault.mjs"]);
+      return { ...trace, exitCode: peer.child.exitCode, stderr: peer.stderr, previous,
+        final: readFileSync(dump, "utf8"), pid: peer.child.pid };
+    } finally {
+      try { await peer.stop(); } finally { rmSync(home, { recursive: true, force: true }); }
+    }
+  }
+
+  it.each(["EPERM", "EBUSY", "EACCES"])("retries transient %s on Windows without touching either snapshot", async code => {
+    const result = await exercise("win32", code, 3);
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.attempts).toHaveLength(4);
+    expect(result.delays).toEqual([10, 20, 40]);
+    expect(JSON.parse(result.final)).toMatchObject({ pid: result.pid, promptCount: 0 });
+  });
+
+  it("exhausts one second of Windows retries, preserves the old target and cleans its temp", async () => {
+    const result = await exercise("win32", "EPERM", null);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("fictional rename refusal 8");
+    expect(result.stderr).toContain("EPERM");
+    expect(result.attempts).toHaveLength(8);
+    expect(result.delays).toEqual([10, 20, 40, 80, 160, 320, 370]);
+    expect(result.delays.reduce((sum, delay) => sum + delay, 0)).toBe(1_000);
+    expect(result.final).toBe(result.previous);
+  });
+
+  it.each([{ platform: "win32", code: "EIO" }, { platform: "darwin", code: "EPERM" }] as const)(
+    "does not retry $code on $platform", async ({ platform, code }) => {
+      const result = await exercise(platform, code, null);
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain("fictional rename refusal 1");
+      expect(result.stderr).toContain(code);
+      expect(result.attempts).toHaveLength(1);
+      expect(result.delays).toEqual([]);
+      expect(result.final).toBe(result.previous);
+    },
+  );
 });

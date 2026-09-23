@@ -1,7 +1,7 @@
 name: Windows probe
 
 # Manual, minutes-long diagnosis of the Windows-only pieces (private-storage
-# ACL admission and its dependent suites, or focused retention regressions)
+# ACL admission and its dependent suites, retention, or ACP fixture regressions)
 # without waiting for the full CI matrix. Evidence only; it gates nothing.
 on:
   workflow_dispatch:
@@ -15,6 +15,7 @@ on:
           - privacy
           - retention
           - team
+          - acp
       installer_run_id:
         description: Exact existing installer workflow run for the team proof
         type: string
@@ -120,7 +121,7 @@ permissions:
 jobs:
   acl:
     name: ACL admission probe (windows-latest)
-    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.suite != 'retention' && inputs.suite != 'team') }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.suite != 'retention' && inputs.suite != 'team' && inputs.suite != 'acp') }}
     runs-on: windows-latest
     # The fixture-dependent suites below took about 80 min in failing CI shards
     # (several slow tests are now skipped or bounded on Windows); allow for that.
@@ -258,6 +259,47 @@ jobs:
           server/private-backup-bank-retention.test.ts
         env:
           NODE_OPTIONS: --max-old-space-size=6144
+
+  acp:
+    name: Atomic ACP fixture and browser grant consumers (windows-latest)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.suite == 'acp' }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: ACP publication and browser grant regressions
+        shell: pwsh
+        # These consumers use spawnCli/execCli, not the native one-shot or CUA
+        # supervisors. The route suite retains its existing Windows skip.
+        run: |
+          New-Item -ItemType Directory -Force outputs/windows-acp | Out-Null
+          $source = (git rev-parse HEAD).Trim()
+          $startedAt = [DateTime]::UtcNow.ToString('o')
+          pnpm exec vitest run server/testing/fake-acp-cli.test.ts server/drivers/acp/browser-grant.test.ts server/browser-grants.route.test.ts --reporter=default --reporter=json --outputFile=outputs/windows-acp/vitest.json
+          $testExit = $LASTEXITCODE
+          $files = @('server/testing/fake-acp-cli.ts', 'server/testing/fake-acp-cli.test.ts', 'server/drivers/acp/browser-grant.test.ts', 'server/browser-grants.route.test.ts') | ForEach-Object { [ordered]@{ path = $_; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $_).Hash.ToLowerInvariant() } }
+          [ordered]@{
+            schema = 1; sourceRevision = $source; startedAt = $startedAt; finishedAt = [DateTime]::UtcNow.ToString('o'); exitCode = $testExit
+            suites = @('server/testing/fake-acp-cli.test.ts', 'server/drivers/acp/browser-grant.test.ts', 'server/browser-grants.route.test.ts')
+            files = @($files)
+            limits = @('The browser-grants route suite has an existing Windows skip; skipped cases are not native proof.', 'Injected retry controls verify policy; the unchanged concurrent-reader case exercises the native filesystem.')
+          } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 outputs/windows-acp/receipt.json
+          exit $testExit
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-acp-proof
+          path: outputs/windows-acp/
+          if-no-files-found: warn
+          retention-days: 14
 
   team:
     name: Installed two-service company proof (windows-latest)

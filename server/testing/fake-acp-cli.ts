@@ -25,6 +25,23 @@ if (argv.includes("--version")) {
   console.log("fake-acp 1.0.0");
   process.exit(0);
 }
+
+function renameDump(from: string, to: string) {
+  // Match atomic.ts without importing the product's private-storage runtime.
+  // Windows readers can briefly hold the target; retry the same atomic rename,
+  // never unlink it or rewrite the complete temporary snapshot between tries.
+  const delays = [10, 20, 40, 80, 160, 320, 370]; // 1 s total
+  for (let attempt = 0; ; attempt++) {
+    try { renameSync(from, to); return; }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException | null)?.code;
+      const delay = process.platform === "win32" && ["EPERM", "EBUSY", "EACCES"].includes(code ?? "") ? delays[attempt] : undefined;
+      if (delay === undefined) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
+    }
+  }
+}
+
 function publishDump(snapshot: unknown) {
   const dump = process.env.FAKE_ACP_DUMP;
   if (!dump) return;
@@ -35,7 +52,7 @@ function publishDump(snapshot: unknown) {
   const fd = openSync(temporary, "wx", 0o600);
   try {
     try { writeFileSync(fd, contents); } finally { closeSync(fd); }
-    renameSync(temporary, dump);
+    renameDump(temporary, dump);
   } finally {
     rmSync(temporary, { force: true });
   }
