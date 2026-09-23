@@ -5,12 +5,39 @@ preparation. It is prepared in an isolated checkout on
 `readiness/mac-windows-2026-09-23`; the existing working checkout is preserved.
 It is not a published release or an update-feed change.
 
+## Current handoff
+
+Both final installers contain application source
+`0f4edd5f7deff900651251e5889941f4d06e5fa9`. Later documentation changes do not
+change the compiled application. The corrected artifacts are the Mac DMG under
+`outputs/platform-candidate-2026-09-23/mac-0f4edd5f/` and the Windows EXE under
+`outputs/platform-candidate-2026-09-23/windows-eighth-installer/`.
+
+| Proof layer | Current result |
+| --- | --- |
+| Mac build and packaged execution | Developer ID signature, 69 native deployment-target checks, renderer lifecycle, 4 service, 9 backup UI and 7 backup-boundary checks pass. |
+| Windows build and disposable installation | Native x64 compilation, NSIS install, 12 runtime, 4 service, 6 backup and 15 memory-primitive checks, and uninstall pass. One POSIX-only backup check is skipped. |
+| Managed worker and held memory journal | Earlier unchanged production setup passed all 12 stages; its journal passed 26 checks, failed in one test fixture and left one unrun. The last two attempts were blocked at download by HTTP 429, including a final retry after a 19-minute cooldown. |
+| Full regression CI | Mac and Ubuntu jobs pass at `f6ccae58`; a complete final-candidate Windows result is not established. The standalone Windows privacy probe at `9ec09b6` passed 1,460 checks with 31 skips. These are revision-specific results; follow the draft PR for current checks. |
+| Distribution and device acceptance | Mac notarization is blocked by rejected saved credentials. Windows is unsigned. Windows 11 owner-device, another-Mac, live permissions, upgrade and two-computer acceptance are open. |
+
+Use the build guides to reproduce compilation and the manual acceptance
+checklists to record the remaining device results. A passing CI installation
+does not complete those device checks.
+
+The local handoff is `outputs/platform-candidate-2026-09-23/installer-test-kit/`
+and its adjacent `RealBud-0.1.19-installer-test-kit.zip`. It contains the two
+installers, both build guides, device checklists, blank acceptance results,
+source-bound receipts and SHA256 verification. Its manifest distinguishes the
+historical successful setup/journal attempt from all three later download
+failures. Neither installer nor update metadata has been publicly published.
+
 ## Supported build targets
 
 | Target | Build environment | Distribution status |
 | --- | --- | --- |
 | macOS 13+ Apple Silicon | Native arm64 Mac, Node 24, pnpm 10.33.0, Xcode tools, RealBud Developer ID | Signing identity available. The saved `realbud-notary` profile was rejected by Apple with HTTP 401 during this task. |
-| Windows x64 | Native Windows, Node 24 x64, pnpm 10.33.0, Git, Framework C# compiler and System.Speech | NSIS and ZIP workflow prepared. Authenticode signing is not configured. Windows 11 owner-device acceptance remains open. |
+| Windows x64 | Native Windows, Node 24 x64, pnpm 10.33.0, Git, Framework C# compiler and System.Speech | NSIS and ZIP built; installed NSIS checks and uninstall passed. Authenticode signing is not configured. Windows 11 owner-device acceptance remains open. |
 
 The new Windows launchers use Windows 10+ Job Object creation attributes; the
 intended desktop acceptance target is Windows 11 x64. Intel Mac and Windows ARM
@@ -45,19 +72,37 @@ profiles still require their own permissions and device evidence.
 - Source-renderer onboarding: all six restart/recovery scenarios passed, with
   zero renderer page errors and no horizontal overflow at 390 pixels.
 - Pinned Mac browser, CUA, PostgreSQL, speech and updater dependencies staged.
-  Native Windows compilation, installed acceptance and final artifacts are
-  recorded separately when they complete.
+  Completed native compilation, packaged checks and final artifacts are
+  recorded below with their source revisions.
 
 ### Packaged Mac proof
+
+The current signed package at `0f4edd5f7deff900651251e5889941f4d06e5fa9`
+passes all 69 checked native deployment targets against macOS 13.0, strict deep
+signature verification, packaged renderer/startup/shutdown, four compiled-service
+checks, nine backup UI checks and seven backup-boundary checks. The completed
+390-pixel restore view was inspected; there were no renderer errors. Artifacts
+and the adjacent source/check receipt are preserved under
+`outputs/platform-candidate-2026-09-23/mac-0f4edd5f/`:
+
+| Artifact | SHA256 |
+| --- | --- |
+| `RealBud-0.1.19.dmg` | `10b8868ba9eb512f577290b3d7be8ba55678732bd950224d7f9532d599b24776` |
+| `RealBud-0.1.19-arm64.zip` | `0c3021c6285ff49224f23f043fa6af53038e2b654db5fdd1ce00a7946855665b` |
+
+This corrects the deployment mismatch below. It remains unnotarized because the
+saved Apple credentials were rejected. Native deployment metadata and successful
+execution on the build Mac do not establish execution on a physical macOS 13
+computer or another Mac's Gatekeeper/permissions acceptance.
 
 A later deployment-target audit found a compatibility defect in the `f6ccae58`
 package: its app plist advertised macOS 12, the speech helper required macOS 26,
 and the pinned CUA driver/SDK required macOS 13. The speech compiler now targets
 arm64 macOS 13 explicitly, and both app and helper declare that minimum. The
 packaged smoke inspects native load commands before launching the app; its
-negative control rejects the unchanged old package. A fresh package is required
-before handing over this correction. Metadata checks still do not establish
-execution on a physical macOS 13 computer.
+negative control rejects the unchanged old package. The fresh package above
+passed this additional check; the earlier artifacts are retained as historical
+evidence, not handed over as the corrected candidate.
 
 The earlier package at `f6ccae588ba492ff9fe3c270c7b1d232609b1fc6` passes strict
 deep signature verification, packaged renderer/startup/shutdown, four compiled
@@ -106,6 +151,20 @@ acceptance remain unproven.
 
 ### Windows native findings
 
+[Run 35854230714, installer job](https://github.com/EzAuto399/RealBud/actions/runs/35854230714/job/107158811321)
+passed at the same final application revision as the Mac package,
+`0f4edd5f7deff900651251e5889941f4d06e5fa9`. Installation, all 12 installed-runtime
+checks, four compiled-service checks, six backup checks, 15 memory-primitive
+checks and verified uninstall passed. The one skipped backup check is POSIX-only.
+The installed factory exercised two real CUA generations; native process/control
+tests passed 87 cases with four platform skips, and all 31 packaging fixtures
+passed. The lifecycle receipt binds the exact source, installer and child probe
+hashes. The unsigned installer is 161,202,389 bytes, SHA256
+`602bcd3455199b8b39164d124f557b6cf0daece756d1fe190f93bdf36a8eb542`.
+Receipts are under `outputs/platform-candidate-2026-09-23/windows-eighth-installed/`.
+The workflow's separate managed-runtime job was blocked by HTTP 429, detailed
+below; the overall workflow is not reported as green.
+
 [Run 35851518494](https://github.com/EzAuto399/RealBud/actions/runs/35851518494)
 at `f6ccae588ba492ff9fe3c270c7b1d232609b1fc6` built the NSIS installer and passed
 installation, all installed probes and verified uninstall. The 12 runtime
@@ -144,7 +203,29 @@ failed after 456 ms at setup download, before the journal ran. The original
 response status was not retained, so no particular HTTP failure is asserted.
 The setup harness now observes the original request's status and body presence
 without consuming the response, replacing its error or adding retries. That
-observer passes 21 local controls; three native controls require the next run.
+observer passed 21 local controls, with three native controls deferred to the
+next run below.
+
+[Run 35854230714](https://github.com/EzAuto399/RealBud/actions/runs/35854230714)
+at `0f4edd5f7deff900651251e5889941f4d06e5fa9` passed all 24 native diagnostic
+controls and all 30 bootstrap controls, with zero skips. Its download observer
+then recorded HTTP 429 with a response body at step zero, after 2.637 seconds.
+No installer stage or journal test ran in that managed-runtime attempt. This
+confirms an upstream rate-limit response for this attempt only; the seventh
+attempt's unrecorded HTTP status remains unknown. The current admission file
+and all five production memory helpers still hash-match the sixth native
+journal receipt. The failed attempt is preserved under
+`outputs/platform-candidate-2026-09-23/windows-eighth-memory/`.
+
+[The final bounded retry, run 35856196491](https://github.com/EzAuto399/RealBud/actions/runs/35856196491),
+used the same application revision after a 19-minute cooldown. It again received
+HTTP 429 with a response body at setup download, after 517 ms; no setup stage or
+journal check ran. Its receipt is preserved under
+`outputs/platform-candidate-2026-09-23/windows-ninth-memory/`. Attempts stopped
+after three consecutive download failures. The assumption that another fresh
+runner could obtain the setup script did not hold. This is an external setup
+availability blocker, not a passing journal result or a reason to change the
+checksum, retry, cleanup or public memory-hold policies.
 
 [Run 35849470076, installer job](https://github.com/EzAuto399/RealBud/actions/runs/35849470076/job/107143448372)
 at `9ec70d19b990e07cc98c5d1cd3e417fdb968ba3a` passed native launcher compilation,
