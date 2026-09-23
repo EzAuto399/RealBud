@@ -289,9 +289,11 @@ async function prepareWelcomeRestore(exported, firstDigest) {
   await panel.getByLabel('Restore private backup passphrase', { exact: true }).fill('Incorrect fictional restore passphrase');
   await panel.getByRole('button', { name: 'Preview private backup contents', exact: true }).click();
   const progress = panel.getByRole('region', { name: 'Selected backup progress', exact: true });
-  await progress.getByText('The backup could not be opened with that passphrase. Check it and try again.', { exact: true }).waitFor();
+  // Authentication cannot distinguish a wrong phrase from damaged ciphertext;
+  // the coordinator maps this status-400 failure to its generic invalid-backup.
+  await progress.getByText('This file could not be verified as a complete supported backup. Keep the original file.', { exact: true }).waitFor();
   const failedUploads = (await api('/api/private-backup/v2/operations?limit=20')).items.filter(item => item.kind === 'upload');
-  assert.equal(failedUploads.length, 1); assert.equal(failedUploads[0].phase, 'failed'); assert.equal(failedUploads[0].error?.code, 'incorrect-passphrase');
+  assert.equal(failedUploads.length, 1); assert.equal(failedUploads[0].phase, 'failed'); assert.equal(failedUploads[0].error?.code, 'invalid-backup');
   assert.equal(failedUploads[0].canCancel, true);
   await welcomeFreshness('after-wrong-passphrase', firstDigest, wrappedDigest);
   await progress.screenshot({ path: join(output, 'welcome-restore-wrong-passphrase.png') });

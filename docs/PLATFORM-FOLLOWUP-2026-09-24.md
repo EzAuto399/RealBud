@@ -36,8 +36,22 @@ Exact input hashes and commands:
 The broader renderer regression passes **1002 / 0 / 0** across 107 files;
 `outputs/platform-followup-2026-09-24/renderer-regression.json`. Full app/server
 typechecking also passes.
-Fresh packaging and actual visible failed/cancelled/successful restore are
-separate pending checks, not established by those unit tests.
+The fresh `4c0c203f` Mac package now passes **12 / 0 / 0** native welcome/restore
+groups. Six checkpoints preserve revision 1, restore availability and target
+key custody through entry, reload, wrong passphrase, cancellation and preview.
+Actual preload/main restart restores the backup, imported office contact, exact
+bank bytes, bill/mail history, draft edits and interrupted-work holds. Three
+restarts retain target custody and an alternative recovery key. Root inspected
+desktop/390 px entry, cancellation and completed-restore screenshots and verified
+all owned PIDs exited. Evidence: `welcome-restore-4c0c203f-v2/` under the current
+output root. OS keychain/DPAPI is an in-memory AES test fixture, not device proof.
+
+The first new-package attempt is preserved in `welcome-restore-4c0c203f/`.
+Its QA assertion expected a specific incorrect-passphrase message; the existing
+coordinator deliberately maps status-400 authentication/integrity failures to
+`invalid-backup`. Only the assertion was corrected to the exact generic refusal;
+all freshness, failed-operation, cancellation and successful-restore checks remain.
+No production backup change or timeout increase was made.
 
 ## Packaged Mac two-service team proof
 
@@ -50,6 +64,11 @@ revocation. All owned processes and listeners were confirmed stopped.
 
 Evidence: `outputs/platform-followup-2026-09-24/mac-689dfc60-electron-team/`;
 receipt SHA256 `a1c1e4ea4a90088d3852d93d5037927628e9755e5ebe301f740e06551f0ee0ee`.
+The same 14 groups / 94 requests / five orderly generations also pass with the
+fresh `4c0c203f` package and its shipped PostgreSQL; root independently checked
+all PIDs/listeners again. Evidence: `mac-4c0c203f-electron-team/`. All 424 compiled
+server/shared/pack files match the new ZIP byte-for-byte.
+
 This is the packaged executable in Electron-as-Node mode on one Mac. It does
 not establish two rendered windows, installed application lifecycle or two
 physical devices. Nine runtime-admission/cleanup controls also pass.
@@ -69,16 +88,61 @@ restricted parents, plus a direct restricted managed child. Read-only default
 DACL and owned-child handle observations help distinguish hypotheses without
 changing ACLs, token defaults or product admission. All launches use the
 installed Worker's Job and bounded cleanup. **27 / 0 / 0** portable control
-groups pass; native compilation/API execution remains pending. An independent review found that reserved Worker exit 125 could mean failed
+groups pass. Native execution and installer cleanup now pass as a diagnostic. An independent review found that reserved Worker exit 125 could mean failed
 Job cleanup; the diagnostic now records and refuses it, with a regression
 control preserving the actual DLL-startup status separately. Diagnostic
 completion always keeps `officeAcceptance: false`.
 
 Design, limitations and exact source hashes:
 `outputs/platform-followup-2026-09-24/restricted-startup-probe/`.
-This is not another unchanged office attempt or a normal-user Windows test.
+Native [run 35926450799](https://github.com/EzAuto399/RealBud/actions/runs/35926450799)
+uses harness `4c0c203f` and the unchanged selected `689dfc60` installer. All three
+elevated starts and restricted native Node start pass. Managed version and
+inspection beneath restricted Node, plus a direct restricted managed version
+child, each fail with `0xC0000142` and no stdout. Thus the query body and extra
+Node-parent hop are unnecessary to reproduce failure. Both observed tokens
+already had the user as owner. Read-only self-handle opens allow query, VM read,
+synchronize and token access; process duplicate-handle access is denied with
+Win32 5. The specific DLL and causal relationship remain unproved.
+
+Three installed-worker containment controls pass, all 14 recorded PIDs are gone,
+scratch/helper removal and uninstall pass. Root verified four linked receipt
+hashes and five committed QA input hashes; `windows-startup-4c0c203f/`. This is
+not another unchanged office attempt or a normal-user Windows test.
+
+## Fresh compiled installers
+
+Both new artifacts contain application source
+`4c0c203fd5e951c4cd03422b97511546db8d345d`.
+
+| Artifact | Bytes | SHA256 |
+|---|---:|---|
+| Mac Apple Silicon DMG | 292,832,022 | `8d9a2b43c8e95ef1f65e17cb8b82f7bf138d34608b826628e5d073efc5df6acb` |
+| Mac Apple Silicon ZIP | 292,096,182 | `9bd44af8a9939b894b3f941632bf7d2d05a05cd6a54f7bbc34e85ddf74472e68` |
+| Windows x64 NSIS | 161,205,156 | `6e0b90c3f062fa0b52afd2dd7a5ef1d6d3ed16cf1cc36bb0d6a3141da6deeccb` |
+
+Mac Developer ID verification, 69 deployment-target checks, renderer, four
+service checks, nine backup checks and seven boundary checks pass. Root verified
+2,497 package inventory entries, 2,465 app entries and 9,388 tracked source inputs.
+Mac notarization was not retried. Evidence: `mac-4c0c203f/`.
+
+Native [Windows installer run 35926437885](https://github.com/EzAuto399/RealBud/actions/runs/35926437885)
+passes compilation, NSIS installation, **12 runtime, four service, six backup and
+15 memory-primitive checks**, and uninstall. One POSIX-only backup check is
+skipped. Root verified the EXE and all four linked receipt hashes. No PE
+certificate table is present: this installer is unsigned. The managed-runtime
+job was explicitly excluded; its earlier download failures remain open.
+Evidence: `windows-4c0c203f-installer/` and `windows-4c0c203f-installed/`.
+
+The fresh test-kit assembler requires both packages to match this exact compiled
+source and the successful visible-welcome receipt, with full copy/hash validation.
+It adds a focused restore checklist and blank device results. The sealed old
+`689dfc60` kit remains preserved with its known welcome limitation. Kit preparation
+or CI success does not establish ordinary-user Windows office acceptance.
 
 ## Existing proof and remaining gates
+
+The current regression status is available in [draft PR 6](https://github.com/EzAuto399/RealBud/pull/6). Fresh package results above are separately source-bound; do not substitute historical CI for changed-source checks.
 
 The prior full [CI run 35886041597](https://github.com/EzAuto399/RealBud/actions/runs/35886041597)
 passes for head `2590ad8160c167b465e5bd45d83b9c3e1a369783`'s tree (use the exact

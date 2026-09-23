@@ -32,7 +32,10 @@ do not establish acceptance on another Mac.
    Personal sessions, MFA and real sends require separate authorized checks.
 
 5. **Check backup and upgrade — allow 15 minutes.** Export an encrypted
-   fictional backup, restore into a fresh test workspace, reopen, and compare
+   fictional backup. In a fresh test workspace choose **Restore a private backup**
+   on welcome before completing setup. Check a wrong passphrase and **Remove
+   temporary copy** preserve the fresh workspace; then preview the correct
+   backup, acknowledge review and restart through the restore control. Reopen and compare
    records and original files. Confirm schedules remain disabled. If an
    identified supported older installer is supplied, test its upgrade with a
    retained backup; otherwise mark upgrade not run. Two-computer office joining
