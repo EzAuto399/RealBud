@@ -14,7 +14,8 @@ It is not a published release or an update-feed change.
 
 The new Windows launchers use Windows 10+ Job Object creation attributes; the
 intended desktop acceptance target is Windows 11 x64. Intel Mac and Windows ARM
-are not supported build targets. See [Windows build and test](WINDOWS-BUILD-AND-TEST.md).
+are not supported build targets. See [Windows build and test](WINDOWS-BUILD-AND-TEST.md)
+and [Mac build and test](MACOS-BUILD-AND-TEST.md).
 
 ## Changes being verified
 
@@ -49,6 +50,16 @@ profiles still require their own permissions and device evidence.
 
 ### Packaged Mac proof
 
+The refreshed build at `9ec70d19b990e07cc98c5d1cd3e417fdb968ba3a` passes strict
+deep signature verification, packaged renderer/startup/shutdown, four compiled
+service checks, nine backup UI checks and seven backup-boundary checks. The
+390-pixel completed-restore view was inspected; no renderer errors were
+recorded. The signed DMG and ZIP and their hashes are preserved under
+`outputs/platform-candidate-2026-09-23/mac-9ec70d19/`, with the adjacent package
+receipt. This package still requires notarization. An initial service probe
+used the wrong resources directory and failed before starting a child; the
+corrected invocation passed on the unchanged package, with both receipts kept.
+
 The native Apple Silicon build at `9ec09b6a3ad8fd76015fd3ee5dd10243ef67f0e6`
 produced a Developer ID signed DMG and ZIP. Strict deep signature verification,
 the packaged renderer/startup/shutdown smoke, and four compiled-service checks
@@ -65,6 +76,36 @@ repair, not a product exemption. Mac notarization and another-Mac Gatekeeper
 acceptance remain unproven.
 
 ### Windows native findings
+
+[Run 35849470076, installer job](https://github.com/EzAuto399/RealBud/actions/runs/35849470076/job/107143448372)
+at `9ec70d19b990e07cc98c5d1cd3e417fdb968ba3a` passed native launcher compilation,
+87 focused tests (four platform skips), packaging, installation, all installed
+probes and verified uninstall. All nine Windows CUA native cases passed. The
+installed GUI factory authenticated two real SDK generations and stopped each
+before the next. The installer SHA256 is
+`d88b558570b5606058b289ba195a3493c703c7957d4b78fe7184b4b7258914a5`.
+Its lifecycle receipt binds the source revision, installer and probe hashes.
+This is disposable Windows CI proof, not Windows 11 owner-device acceptance.
+
+The separate managed-runtime job passed all 19 diagnostic controls and 25
+bootstrap controls. The original repository attempt then failed when Git
+refused to overwrite apparent local changes while selecting the pinned commit.
+SSH fell back to a successful HTTPS clone; the final failure was at checkout.
+The pinned installer changes `core.autocrlf` only after cloning. A fictional Git
+regression reproduces the exact error when CRLF checkout is followed by that
+configuration change; an installer-only global config before clone preserves
+LF bytes and succeeds. The original offending filenames were not captured.
+The production runner now creates a private, temporary Git global config with
+`autocrlf=false` before each Windows stage, using Git's documented
+[`GIT_CONFIG_GLOBAL` boundary](https://git-scm.com/docs/git-config#Documentation/git-config.txt-GITCONFIGGLOBAL).
+The installer's global writes stay in that owned file, which is removed after
+completion or failure. User global configuration is neither copied nor changed;
+system transport settings remain available. Conflicting inherited command/global
+overrides are removed only from the stage environment. Twenty-six focused local
+tests pass, including the real Git regression; four native controls await the
+next run. Independent review found no remaining blocker, and server typechecking
+passes. The exact Windows installer and real journal still require verification
+of this correction.
 
 The first candidate run compiled both native launchers and passed the worker
 Job Object tests. A fictional C# stdin reader changed Unicode through the
@@ -115,8 +156,8 @@ runs; the driver cannot write to that control pipe. Normal shutdown succeeds
 only after the Job is empty. Forced or abnormal helper exit keeps a recovery
 hold instead of reporting successful release. The SDK's pipe authentication and
 RealBud's task/account approvals remain intact. Mac uses its existing SDK host
-and `exec` grant shim. Native compilation and installed SDK acceptance of this
-correction remain required.
+and `exec` grant shim. The fifth run above passed native compilation and
+installed SDK acceptance of this correction.
 
 Independent source inspection also found a later setup-order defect: the
 reviewed 0.21.2/0.21.3 installers place managed Python inside the repository

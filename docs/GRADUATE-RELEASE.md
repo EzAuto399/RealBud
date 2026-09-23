@@ -71,22 +71,30 @@ Stage-0 against the real strata origin is Wave 2.
 
 ## Wave 1 — Mac notarize (T17 Mac) — DONE for 0.1.17
 
-**Have:** `Developer ID Application: Yo-Da Lai (4F4SMS88P8)` + keychain
-profiles `realbud-notary` and `ClawConnect` (validated 2026-08-31).
+**Historical proof:** `Developer ID Application: Yo-Da Lai (4F4SMS88P8)` and
+notarization profiles were validated on 2026-08-31. The current candidate's
+`realbud-notary` credentials returned HTTP 401; the earlier validation is not
+current notarization proof. Follow the [Mac build and test guide](MACOS-BUILD-AND-TEST.md)
+for native arm64 Node 24, pnpm 10.33.0, Xcode/Swift and dependency prerequisites.
 
-**Ship artifacts (local `release/`, gitignored):** notarized + stapled
+**Historical artifacts (local `release/`, gitignored):** notarized + stapled
 `RealBud-0.1.17.dmg` and `RealBud-0.1.17-arm64.zip` with fresh
 `latest-mac.yml` + blockmaps. Gatekeeper: `source=Notarized Developer ID`.
 
 ```bash
-pnpm notary:store          # once, if keychain profile missing
-pnpm package:mac:release   # build → notarize → drop unpacked tree
-pnpm clean:release         # keep one version's dmg/zip only (~300MB)
-pnpm clean:release --all   # wipe release/ entirely
+pnpm install --frozen-lockfile
+pnpm package:mac
+pnpm smoke:mac
+# If missing or rejected by Apple, refresh locally with pnpm notary:store.
+pnpm package:mac:notarize
+pnpm smoke:mac
+# Preserve artifact hashes, receipts and required app tests before optional cleanup.
+pnpm clean:release
 ```
 
 Do **not** bump `package.json` version until the next real ship. Rebuilds
-overwrite the same `0.1.17` artifacts.
+use the version in `package.json` (currently `0.1.19`). The `0.1.17` artifacts
+above are historical evidence, not the current build output.
 
 ---
 
@@ -168,8 +176,11 @@ older compatibility pin as the current installer target or track upstream main.
 
 ```bash
 pnpm qa:full
-pnpm package:mac:release    # build + notarize + clean unpacked
-# release/ stays ~300MB (one version dmg+zip). Wipe with: pnpm clean:release --all
+pnpm package:mac
+pnpm smoke:mac
+pnpm package:mac:notarize
+pnpm smoke:mac
+# Preserve hashes, receipts and app test results before optional pnpm clean:release.
 ```
 
 Stay on one `package.json` version until a real public cut. Overwrite the same

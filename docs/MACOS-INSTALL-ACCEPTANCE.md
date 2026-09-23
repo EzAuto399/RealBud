@@ -38,4 +38,4 @@ do not establish acceptance on another Mac.
    retained backup; otherwise mark upgrade not run. Two-computer office joining
    and real customer workflows require their own acceptance records.
 
-Build/signing preparation is documented in [the release guide](GRADUATE-RELEASE.md).
+Build/signing preparation is documented in [Mac build and test](MACOS-BUILD-AND-TEST.md).

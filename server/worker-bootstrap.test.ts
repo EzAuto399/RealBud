@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +15,67 @@ const plan = { url: "https://example.invalid/setup", sha256: createHash("sha256"
 const controller = () => new AbortController();
 const fixture = (root = home()) => ({ home: root, platform: "darwin" as const, signal: controller().signal, progress: vi.fn(), download: async () => bytes, execute: vi.fn(async () => {}) });
 afterEach(() => { vi.unstubAllEnvs(); for (const path of homes.splice(0)) rmSync(path, { recursive: true, force: true }); });
+
+function gitRegressionFixture() {
+  const root = home(), source = join(root, "fictional-source"), userConfig = join(root, "fictional-user.gitconfig");
+  const systemConfig = join(root, "fictional-system.gitconfig"), script = join(root, "fictional-repository-stage.cjs");
+  const userBytes = "[core]\n\tautocrlf = true\n[user]\n\tname = Fictional Fixture\n\temail = fictional@example.invalid\n";
+  writeFileSync(userConfig, userBytes); writeFileSync(systemConfig, "[http]\n\tsslVerify = true\n");
+  const env: NodeJS.ProcessEnv = Object.fromEntries(Object.entries(process.env)
+    .filter(([key]) => /^(PATH|SYSTEMROOT|WINDIR|PATHEXT|COMSPEC|SYSTEMDRIVE|TEMP|TMP)$/i.test(key)));
+  Object.assign(env, { HOME: root, USERPROFILE: root, GIT_CONFIG_GLOBAL: userConfig, GIT_CONFIG_SYSTEM: systemConfig, GIT_CONFIG_NOSYSTEM: "0", GIT_ALLOW_PROTOCOL: "file" });
+  const git = (args: string[]) => {
+    const result = spawnSync("git", args, { env, encoding: "utf8", timeout: 10_000, windowsHide: true });
+    expect(result.error).toBeUndefined(); expect(result.status).toBe(0);
+    return result.stdout.trim();
+  };
+  git(["init", "-b", "main", source]); git(["-C", source, "config", "core.autocrlf", "false"]);
+  writeFileSync(join(source, "fictional.txt"), "fictional original\n");
+  git(["-C", source, "add", "fictional.txt"]); git(["-C", source, "commit", "-m", "fictional original"]);
+  const pin = git(["-C", source, "rev-parse", "HEAD"]);
+  writeFileSync(join(source, "fictional.txt"), "fictional next\n"); git(["-C", source, "commit", "-am", "fictional next"]);
+  // Reproduce the reviewed installer's actual Git ordering. File transport is
+  // the only permitted protocol, so neither the regression nor native control
+  // can contact a remote service or a credential helper.
+  writeFileSync(script, String.raw`
+const { spawnSync } = require('node:child_process');
+const { readFileSync, writeFileSync } = require('node:fs');
+const { join } = require('node:path');
+const { pathToFileURL } = require('node:url');
+const [source, pin, target, receipt] = process.argv.slice(2);
+const git = args => {
+  const result = spawnSync('git', args, { env: process.env, encoding: 'utf8', timeout: 10000, windowsHide: true });
+  if (result.error) throw new Error('Fictional Git command could not run');
+  return result;
+};
+const requireGit = args => { const result = git(args); if(result.status !== 0) throw new Error('Fictional Git prerequisite failed'); return result.stdout.trim(); };
+process.env.GIT_CONFIG_COUNT = '1'; process.env.GIT_CONFIG_KEY_0 = 'windows.appendAtomically'; process.env.GIT_CONFIG_VALUE_0 = 'false';
+requireGit(['config', '--global', 'windows.appendAtomically', 'false']);
+requireGit(['-c', 'windows.appendAtomically=false', 'clone', '--depth', '1', '--branch', 'main', pathToFileURL(source).href, target]);
+const initialCRLF = readFileSync(join(target, 'fictional.txt')).includes(Buffer.from([13, 10]));
+requireGit(['-C', target, 'config', 'core.autocrlf', 'false']);
+const dirty = requireGit(['-C', target, 'status', '--porcelain']);
+const onlyLineEndings = git(['-C', target, 'diff', '--ignore-cr-at-eol', '--exit-code']).status === 0;
+requireGit(['-C', target, 'fetch', 'origin', pin]);
+const checkout = git(['-C', target, 'checkout', '--detach', pin]);
+writeFileSync(receipt, JSON.stringify({ initialCRLF, dirty, onlyLineEndings, checkoutExit: checkout.status,
+  checkoutRefusedLocalChanges: checkout.stderr.includes('Your local changes to the following files would be overwritten by checkout'),
+  offendingFictionalFile: checkout.stderr.includes('fictional.txt'), gitConfigFile: process.env.GIT_CONFIG_GLOBAL,
+  systemTLS: requireGit(['-C', target, 'config', '--get', 'http.sslVerify']),
+  pinned: requireGit(['-C', target, 'rev-parse', 'HEAD']) === pin }));
+process.exit(checkout.status);
+`);
+  const invocation = (name: string) => ({ command: process.execPath, args: [script, source, pin, join(root, name), join(root, `${name}.json`)] });
+  const observed = (name: string) => JSON.parse(readFileSync(join(root, `${name}.json`), "utf8"));
+  const baseline = invocation("baseline");
+  const failed = spawnSync(baseline.command, baseline.args, { env, encoding: "utf8", timeout: 30_000, windowsHide: true });
+  expect(failed.error).toBeUndefined(); expect(failed.status).toBe(1);
+  expect(observed("baseline")).toMatchObject({ initialCRLF: true, dirty: "M fictional.txt", onlyLineEndings: true,
+    checkoutExit: 1, checkoutRefusedLocalChanges: true, offendingFictionalFile: true, systemTLS: "true" });
+  // Restore only our fictional file after demonstrating the upstream global write.
+  expect(readFileSync(userConfig, "utf8")).not.toBe(userBytes); writeFileSync(userConfig, userBytes);
+  return { root, env, userConfig, userBytes, invocation, observed };
+}
 
 describe("verified setup download", () => {
   it("accepts matching bytes and forbids redirects", async () => {
@@ -176,21 +237,96 @@ describe("setup subprocess boundary", () => {
       VIRTUAL_ENV: "fictional-venv", UV_NO_CONFIG: "0", HERMES_HOME: "fictional-old-home",
     };
     const original = { ...source };
-    const env = bootstrapStageEnv(root, source, "win32");
+    const env = bootstrapStageEnv(root, source, "win32", join(root, "fictional-owned.gitconfig"));
     expect(Object.keys(env).filter(key => key.toLowerCase() === "psmodulepath")).toEqual(["PSModulePath"]);
     expect(env.PSModulePath).toBe(join(source.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "Modules"));
     expect(env).toMatchObject({ SystemRoot: source.SystemRoot, PATH: source.Path, HERMES_HOME: root, UV_NO_CONFIG: "1", PYTHONUTF8: "1" });
     expect(env.Path).toBeUndefined();
     for (const key of ["OPENAI_API_KEY", "GH_TOKEN", "SERVICE_SECRET", "DB_PASSWORD", "PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"]) expect(env).not.toHaveProperty(key);
     expect(source).toEqual(original);
-    expect(bootstrapStageEnv(root, { SYSTEMROOT: "E:\\Windows" }, "win32").PSModulePath)
+    expect(bootstrapStageEnv(root, { SYSTEMROOT: "E:\\Windows" }, "win32", join(root, "fictional-owned.gitconfig")).PSModulePath)
       .toBe(join("E:\\Windows", "System32", "WindowsPowerShell", "v1.0", "Modules"));
   });
 
   it.each(["darwin", "linux"] as const)("preserves inherited module paths outside Windows (%s)", platform => {
-    const source = { PATH: "fictional-tools", PSModulePath: "fictional-module-path", psModulePath: "fictional-other-path" };
+    const source = { PATH: "fictional-tools", PSModulePath: "fictional-module-path", psModulePath: "fictional-other-path", GIT_CONFIG_GLOBAL: "fictional-user-config" };
     expect(bootstrapStageEnv(home(), source, platform)).toMatchObject(source);
   });
+
+  it("isolates Windows Git command/global settings while retaining system transport configuration", () => {
+    const root = home(), config = join(root, "fictional-owned.gitconfig");
+    const source = { GIT_CONFIG: "fictional-file", git_config_global: "fictional-global", GIT_CONFIG_GLOBAL: "fictional-other-global",
+      Git_Config_Parameters: "fictional-parameters", git_config_count: "1", GIT_CONFIG_KEY_0: "core.autocrlf", Git_Config_Value_0: "true",
+      GIT_CONFIG_SYSTEM: "fictional-system", GIT_CONFIG_NOSYSTEM: "0", PATH: "fictional-tools" };
+    const before = { ...source }, env = bootstrapStageEnv(root, source, "win32", config);
+    expect(Object.keys(env).filter(key => /^git_config/i.test(key)).sort()).toEqual(["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_SYSTEM"]);
+    expect(env).toMatchObject({ GIT_CONFIG_GLOBAL: config, GIT_CONFIG_SYSTEM: source.GIT_CONFIG_SYSTEM, GIT_CONFIG_NOSYSTEM: "0" });
+    expect(source).toEqual(before);
+    expect(() => bootstrapStageEnv(root, source, "win32")).toThrow(/private Git configuration/);
+  });
+
+  it("prevents the pinned installer's CRLF clone-to-pin failure without changing the user's Git file", () => {
+    const input = gitRegressionFixture(), config = join(input.root, "fictional-owned.gitconfig");
+    writeFileSync(config, "[core]\n\tautocrlf = false\n");
+    const env = bootstrapStageEnv(input.root, input.env, "win32", config);
+    const invocation = input.invocation("fixed");
+    const result = spawnSync(invocation.command, invocation.args, { env, encoding: "utf8", timeout: 30_000, windowsHide: true });
+    expect(result.error).toBeUndefined(); expect(result.status).toBe(0);
+    expect(input.observed("fixed")).toMatchObject({ initialCRLF: false, dirty: "", checkoutExit: 0, systemTLS: "true", pinned: true });
+    expect(readFileSync(input.userConfig, "utf8")).toBe(input.userBytes);
+  });
+
+  it.runIf(process.platform === "win32")("the native stage runner keeps the clone clean and removes its owned Git config after completion", async () => {
+    const input = gitRegressionFixture();
+    for (const [key, value] of Object.entries(input.env)) if (/^(GIT_|HOME$|USERPROFILE$)/.test(key)) vi.stubEnv(key, value);
+    vi.stubEnv("GIT_CONFIG_PARAMETERS", "'core.autocrlf=true'");
+    await runBootstrapStage(input.invocation("native-fixed"), input.root, AbortSignal.timeout(30_000));
+    const proof = input.observed("native-fixed");
+    expect(proof).toMatchObject({ initialCRLF: false, dirty: "", checkoutExit: 0, systemTLS: "true", pinned: true });
+    expect(readFileSync(input.userConfig, "utf8")).toBe(input.userBytes);
+    expect(proof.gitConfigFile).not.toBe(input.userConfig);
+    expect(existsSync(dirname(proof.gitConfigFile))).toBe(false);
+    expect(process.env.GIT_CONFIG_GLOBAL).toBe(input.userConfig);
+  }, 60_000);
+
+  it.runIf(process.platform === "win32")("keeps the owned Git file through execution and removes it after failure or cancellation", async () => {
+    const root = home(), userConfig = join(root, "fictional-user.gitconfig");
+    writeFileSync(userConfig, "fictional user bytes must remain untouched");
+    vi.stubEnv("GIT_CONFIG_GLOBAL", userConfig);
+    for (const mode of ["failure", "cancel"]) {
+      const probe = join(root, `${mode}.json`), release = join(root, `${mode}.release`), abort = controller();
+      const script = "const fs=require('node:fs'); const probe=process.argv[1]; fs.writeFileSync(probe+'.tmp',JSON.stringify({config:process.env.GIT_CONFIG_GLOBAL})); fs.renameSync(probe+'.tmp',probe); setInterval(()=>{if(fs.existsSync(process.argv[2]))process.exit(23)},10)";
+      const settled = runBootstrapStage({ command: process.execPath, args: ["-e", script, probe, release] }, root,
+        AbortSignal.any([abort.signal, AbortSignal.timeout(30_000)])).then(() => null, error => error);
+      try {
+        const deadline = Date.now() + 10_000;
+        while (!existsSync(probe) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
+        expect(existsSync(probe)).toBe(true);
+        const { config } = JSON.parse(readFileSync(probe, "utf8"));
+        expect(config).not.toBe(userConfig);
+        expect(readFileSync(config, "utf8")).toContain("autocrlf = false");
+        if (mode === "cancel") abort.abort();
+        else writeFileSync(release, "fictional release");
+        const error = await settled;
+        expect(error?.message).toMatch(mode === "cancel" ? /Setup stopped/ : /couldn’t finish this step/);
+        expect(existsSync(dirname(config))).toBe(false);
+        expect(readFileSync(userConfig, "utf8")).toBe("fictional user bytes must remain untouched");
+        expect(process.env.GIT_CONFIG_GLOBAL).toBe(userConfig);
+      } finally { abort.abort(); await settled; }
+    }
+  }, 80_000);
+
+  it.runIf(process.platform === "win32")("removes the owned Git directory after setup, synchronous spawn and process-start failures", async () => {
+    const root = home(); vi.stubEnv("TEMP", root); vi.stubEnv("TMP", root);
+    const recordFile = join(root, "fictional-not-a-directory"); writeFileSync(recordFile, "fictional existing bytes");
+    await expect(runBootstrapStage({ command: process.execPath, args: ["-e", "process.exit(0)"] }, root, controller().signal, recordFile)).rejects.toThrow();
+    expect(readdirSync(root).filter(name => name.startsWith("realbud-bootstrap-git-"))).toEqual([]);
+    await expect(runBootstrapStage({ command: process.execPath, args: ["\0"] }, root, controller().signal)).rejects.toThrow();
+    expect(readdirSync(root).filter(name => name.startsWith("realbud-bootstrap-git-"))).toEqual([]);
+    await expect(runBootstrapStage({ command: join(root, "fictional-missing.exe"), args: [] }, root, controller().signal)).rejects.toThrow(/could not start setup/);
+    expect(readdirSync(root).filter(name => name.startsWith("realbud-bootstrap-git-"))).toEqual([]);
+    expect(readFileSync(recordFile, "utf8")).toBe("fictional existing bytes");
+  }, 60_000);
 
   it.runIf(process.platform === "win32")("loads inbox security modules in setup and nested Windows PowerShell despite incompatible inherited modules", async () => {
     const root = home(), modules = join(root, "fictional incompatible modules");
