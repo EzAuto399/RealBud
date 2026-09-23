@@ -127,8 +127,9 @@ jobs:
         run: |
           $runtime = Get-Content -Raw outputs/windows-native-memory/runtime.json | ConvertFrom-Json
           if (-not $runtime.passed) { throw 'Managed runtime setup did not pass.' }
+          if ($runtime.sourceRevision -ne (git rev-parse HEAD).Trim()) { throw 'Managed runtime receipt identifies another source revision.' }
           $python = Join-Path $runtime.runtimeDirectory 'venv/Scripts/python.exe'
-          & $python -I -B scripts/testing/hermes-memory-windows-journal-native.py --runtime $runtime.runtimeDirectory --helpers server/helpers --admission server/hermes-memory-review.ts --receipt outputs/windows-native-memory/journal.json
+          & $python -I -B scripts/testing/hermes-memory-windows-journal-native.py --runtime $runtime.runtimeDirectory --helpers server/helpers --admission server/hermes-memory-review.ts --source-revision $runtime.sourceRevision --receipt outputs/windows-native-memory/journal.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
