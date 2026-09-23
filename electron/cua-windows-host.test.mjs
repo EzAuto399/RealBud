@@ -102,6 +102,48 @@ describe("Windows CUA supervised host", () => {
     await started; expect(attempts).toBe(3);
   });
 
+  it("allows one metadata call to take over 500 ms within the startup deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const answer = gate();
+      const f = fixture({ getMetadata: async child => { await answer.promise; return metadata(child); } });
+      const started = f.host.start(); started.catch(() => {});
+      await vi.advanceTimersByTimeAsync(600);
+      expect(f.clients[0].metadata).toHaveBeenCalledTimes(1);
+      expect(f.clients[0].metadata.mock.calls[0][0].signal.aborted).toBe(false);
+      expect(f.clients[0].uniffiDestroy).not.toHaveBeenCalled();
+      expect(f.host.connection()).toBeUndefined(); expect(f.host.state()).toBe(1);
+      answer.resolve();
+      expect((await started).pid).toBe(f.child.pid + 1);
+      expect(f.clients[0].metadata).toHaveBeenCalledTimes(1);
+      await f.host.stop();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("does not extend the startup deadline while backing off a settled metadata error", async () => {
+    vi.useFakeTimers();
+    try {
+      const answers = [gate(), gate()]; let attempts = 0;
+      const f = fixture({ getMetadata: async () => { await answers[attempts++].promise; throw new Error("fictional pipe not listening"); } });
+      const started = f.host.start(); started.catch(() => {});
+      await vi.advanceTimersByTimeAsync(450); answers[0].resolve();
+      await vi.advanceTimersByTimeAsync(50);
+      expect(attempts).toBe(2);
+      await vi.advanceTimersByTimeAsync(480); answers[1].resolve();
+      await vi.advanceTimersByTimeAsync(19);
+      expect(f.host.state()).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(f.host.state()).toBe(0);
+      await expect(started).rejects.toThrow(/readiness timed out/);
+      expect(attempts).toBe(2); expect(f.host.connection()).toBeUndefined();
+      expect(f.clients[0].metadata.mock.calls.every(([options]) => options.signal.aborted)).toBe(true);
+      expect(f.clients[0].uniffiDestroy).toHaveBeenCalledTimes(1);
+      expect(f.child.exitCode).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("stop cancels a pending metadata call and a late answer cannot publish control", async () => {
     const answer = gate();
     const f = fixture({ getMetadata: async child => { await answer.promise; return metadata(child); } });
@@ -109,6 +151,7 @@ describe("Windows CUA supervised host", () => {
     await vi.waitFor(() => expect(f.clients[0]?.metadata).toHaveBeenCalledTimes(1));
     const stop = f.host.stop(); expect(f.host.stop()).toBe(stop);
     expect(f.host.connection()).toBeUndefined();
+    expect(f.clients[0].metadata.mock.calls[0][0].signal.aborted).toBe(true);
     await stop; answer.resolve();
     await expect(started).rejects.toThrow(/stopped|exited/);
     expect(f.host.connection()).toBeUndefined(); expect(f.host.state()).toBe(0);
@@ -130,11 +173,26 @@ describe("Windows CUA supervised host", () => {
     await expect(f.host.start()).rejects.toThrow(/not been released/);
   });
 
-  it("bounds a stuck SDK handshake and destroys the client after cancellation", async () => {
-    const never = gate();
-    const f = fixture({ getMetadata: () => never.promise, handshakeTimeoutMs: 25 });
-    await expect(f.host.start()).rejects.toThrow(/metadata timed out/);
-    expect(f.clients[0].uniffiDestroy).toHaveBeenCalledTimes(1); expect(f.host.connection()).toBeUndefined();
+  it("counts identity wait in the deadline, cancels stuck metadata, and fences a late reply", async () => {
+    vi.useFakeTimers();
+    try {
+      const answer = gate();
+      const f = fixture({ record: () => null, getMetadata: async child => { await answer.promise; return metadata(child); } });
+      const started = f.host.start(); started.catch(() => {});
+      await vi.advanceTimersByTimeAsync(700);
+      f.child.stdout.write(JSON.stringify(identity(f.child)) + "\n");
+      await vi.advanceTimersByTimeAsync(299);
+      expect(f.clients[0].metadata).toHaveBeenCalledTimes(1);
+      expect(f.host.state()).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(started).rejects.toThrow(/metadata timed out/);
+      expect(f.clients[0].metadata.mock.calls[0][0].signal.aborted).toBe(true);
+      expect(f.clients[0].uniffiDestroy).toHaveBeenCalledTimes(1);
+      expect(f.child.exitCode).toBe(0); expect(f.host.state()).toBe(0);
+      answer.resolve(); await vi.advanceTimersByTimeAsync(0);
+      expect(f.host.connection()).toBeUndefined(); expect(f.host.state()).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
   });
   it("clears a confirmed spawn failure with no PID without inventing a cleanup receipt", async () => {
     const f = fixture({ record: () => null });

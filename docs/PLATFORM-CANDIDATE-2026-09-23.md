@@ -5,7 +5,11 @@ preparation. It is prepared in an isolated checkout on
 `readiness/mac-windows-2026-09-23`; the existing working checkout is preserved.
 It is not a published release or an update-feed change.
 
-## Current handoff
+The continuing setup, team, website and refreshed-package results are in
+[integration QA](INTEGRATION-QA-2026-09-23.md). The handoff below is retained as
+the original source-bound checkpoint; it does not establish newer-code acceptance.
+
+## Original handoff
 
 Both final installers contain application source
 `0f4edd5f7deff900651251e5889941f4d06e5fa9`. Later documentation changes do not

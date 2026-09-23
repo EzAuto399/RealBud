@@ -52,7 +52,7 @@ function verifyMetadata(metadata, pid, hostBundleId) {
 export function createWindowsCuaHost(sdk, launcher, binary, hostBundleId, {
   spawnProcess = spawn, environment = process.env, processId = process.pid,
   createId = randomUUID, startupTimeoutMs = 15000, shutdownTimeoutMs = 7000,
-  forceTimeoutMs = 5000, handshakeTimeoutMs = 500,
+  forceTimeoutMs = 5000,
 } = {}) {
   let current = null, lastExit = null, phase = stopped, disposed = false;
 
@@ -179,10 +179,17 @@ export function createWindowsCuaHost(sdk, launcher, binary, hostBundleId, {
         const remaining = deadline - Date.now();
         if (remaining <= 0) throw fail("daemon readiness timed out.");
         try {
-          metadata = await guard(run, client.metadata({ signal: run.abort.signal }), Math.min(remaining, handshakeTimeoutMs), "daemon metadata timed out.");
+          // Keep one SDK request in flight for the remaining startup budget.
+          // A slow reply must not start another request or shorten that budget.
+          metadata = await guard(run, client.metadata({ signal: run.abort.signal }), remaining, "daemon metadata timed out.");
         } catch (error) {
           if (run.cancelled || run.exited || /metadata timed out/.test(error.message)) throw error;
-          await guard(run, new Promise(resolve => setTimeout(resolve, 50)), Math.min(remaining, 100), "daemon readiness timed out.");
+          const retryRemaining = deadline - Date.now();
+          if (retryRemaining <= 0) throw fail("daemon readiness timed out.");
+          let retryTimer;
+          try {
+            await guard(run, new Promise(resolve => { retryTimer = setTimeout(resolve, 50); }), retryRemaining, "daemon readiness timed out.");
+          } finally { clearTimeout(retryTimer); }
         }
       }
       verifyMetadata(metadata, identity.driverPid, hostBundleId);
