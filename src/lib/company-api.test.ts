@@ -207,6 +207,45 @@ it("waits for bounded first storage initialization while ordinary checks stay sh
   expect(request.mock.calls[1][2].timeoutMs).toBe(15_000);
 });
 
+describe('Windows office hosting admission messages', () => {
+  it.each([
+    ['windows_postgres_privileged_token', 'Office hosting needs a standard Windows user session'],
+    ['windows_postgres_admission_unavailable', 'could not verify this Windows session'],
+  ])('preserves fixed %s guidance for setup and status without changing member sessions', async (code, explanation) => {
+    const storage = memoryStorage();
+    const request = vi.fn().mockResolvedValueOnce(session()).mockRejectedValue({ status: 503, code, message: 'fictional-private-native-diagnostic' });
+    const client = createCompanyApi(request, storage);
+    await client.signIn(initialCredential);
+    const version = client.sessionVersion();
+    for (const action of [() => client.setup(), () => client.status()]) {
+      const failure = await action().catch(error => error);
+      expect(failure).toMatchObject({ status: 503, code, memberSessionEnded: false });
+      if (!(failure instanceof Error)) throw new Error('Expected fixed admission guidance');
+      expect(failure.message).toContain(explanation);
+      expect(failure.message).toContain('Run as administrator');
+      expect(failure.message).not.toContain('fictional-private-native-diagnostic');
+      if (code === 'windows_postgres_admission_unavailable') expect(failure.message).not.toContain('Office hosting needs a standard');
+    }
+    expect(client.sessionVersion()).toBe(version);
+    expect([...storage.values.values()]).toEqual([ownerToken]);
+  });
+
+  it.each([
+    [503, 'fictional-unrecognized-admission-code', 'setup'],
+    [400, 'windows_postgres_privileged_token', 'setup'],
+    [503, 'windows_postgres_privileged_token', 'connect'],
+    [503, 'windows_postgres_admission_unavailable', 'connect'],
+  ])('leaves unrelated status/code/context (%s, %s, %s) on the existing safe path', async (status, code, operation) => {
+    const request = vi.fn().mockRejectedValue({ status, code, message: 'fictional-private-native-diagnostic' });
+    const client = createCompanyApi(request);
+    const failure = await (operation === 'setup' ? client.setup() : client.connectHost('fictional-host-code')).catch(error => error);
+    if (!(failure instanceof Error)) throw new Error('Expected safe company error');
+    expect(failure.message).not.toContain('Run as administrator');
+    expect(failure.message).not.toContain('fictional-private-native-diagnostic');
+    expect(failure.message).not.toContain('fictional-unrecognized-admission-code');
+  });
+});
+
 it("distinguishes a damaged host code from an unavailable host without exposing transport details", async () => {
   const request = vi.fn().mockRejectedValueOnce(Object.assign(new Error("private transport details"), { status: 400 }))
     .mockRejectedValueOnce(Object.assign(new Error("private transport details"), { status: 503 }));

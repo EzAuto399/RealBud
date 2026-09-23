@@ -60,7 +60,9 @@ function safeError(cause: unknown, operation: Operation): Error {
   const status = object(cause) && typeof cause.status === "number" ? cause.status : undefined;
   const code = object(cause) ? cause.code : undefined;
   let message = "Company status could not be checked. Try again when the local service is available.";
-  if (code === "service_admin_required") message = "Sign in as service administrator under Advanced, then retry. Your office membership is unchanged.";
+  if (status === 503 && ["setup", "check"].includes(operation) && code === "windows_postgres_privileged_token") message = 'Office hosting needs a standard Windows user session. Close RealBud and reopen it without "Run as administrator". If this continues, use a standard Windows user account. Existing data and settings have been preserved.';
+  else if (status === 503 && ["setup", "check"].includes(operation) && code === "windows_postgres_admission_unavailable") message = 'RealBud could not verify this Windows session\'s permissions. Close RealBud and reopen it normally, without "Run as administrator", then try again. Existing data and settings have been preserved.';
+  else if (code === "service_admin_required") message = "Sign in as service administrator under Advanced, then retry. Your office membership is unchanged.";
   else if (code === "host_held") message = "This host is held for recovery or retirement. Its owner must complete cutover before office work can continue.";
   else if (operation === "department-work" && (code === "recovery_required" || code === "department_execution_held")) message = "Preparation is held. Check the saved request and current company host, then review the result before starting new work.";
   else if (operation === "department-work" && status === 400) message = "Check the selected case and reviewed preparation plan. Refresh to use its current version.";

@@ -10,6 +10,7 @@ import { createCompanyKernel, CompanyError } from './company/index.ts';
 import { normalizeLoginName } from './company/member-credentials.ts';
 import { createCompanyRecovery } from './company-recovery.ts';
 import { openOwnedPostgres } from './company/host-runtime.ts';
+import { assertWindowsPostgresAdmission, WindowsPostgresAdmissionError } from './windows-postgres-admission.ts';
 import { resolvePostgresRuntime } from './company/postgres-runtime.ts';
 import { startCompanyTransport, requestCompanyHost, companyCertificateFingerprint } from './company/host-transport.ts';
 import { createCompanyPortalProofVerifier, createCompanyPortalCertificateGate } from './company/portal-proof.ts';
@@ -251,6 +252,7 @@ export function createCompanyInstallation(options: {
   async function startStorage() {
     if (kernel) return;
     if (!options.previewEnabled) throw new Error('The service installer has not admitted the host database runtime on this computer.');
+    await assertWindowsPostgresAdmission(abort.signal);
     const admitted = await admitBinaryDirectory();
     await privateDirectory();
     if (!settings) {
@@ -290,7 +292,7 @@ export function createCompanyInstallation(options: {
       storageRetryAvailable = true;
       await startStorage();
     }
-  })().catch(() => { failure = 'Company startup needs service attention. Existing data and settings have been preserved.'; });
+  })().catch(error => { failure = error instanceof WindowsPostgresAdmissionError ? error.message : 'Company startup needs service attention. Existing data and settings have been preserved.'; });
   async function exclusive(action: () => Promise<Reply>): Promise<Reply> {
     if (pending) return { status: 409, body: { error: 'Company setup is already running. Check status before retrying.' } };
     const operation = action(); pending = operation;
@@ -527,6 +529,7 @@ export function createCompanyInstallation(options: {
         }
         return response;
       } catch (error) {
+        if (error instanceof WindowsPostgresAdmissionError) return { status: 503, body: { code: error.code, error: error.message } };
         if (error instanceof CompanyError && error.code === 'invalid_input') return { status: 400, body: { code: error.code, error: 'Check the company fields and username before retrying.' } };
         if (error instanceof CompanyBindingError) return { status: 409, body: { code: error.code, error: error.message } };
         return { status: 503, body: { error: 'Company setup or connection could not be completed. Existing data and settings have been preserved.' } };

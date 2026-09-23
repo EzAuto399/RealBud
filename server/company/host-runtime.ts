@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { Pool } from 'pg';
 import { migrateCompanySchema } from './schema.ts';
 import { windowsFilePrivacy } from '../windows-file-privacy.ts';
+import { assertWindowsPostgresAdmission } from '../windows-postgres-admission.ts';
 
 const execFileAsync = promisify(execFile);
 const MANIFEST_KIND = 'realbud-owned-postgres';
@@ -370,6 +371,8 @@ export async function openOwnedPostgres(
   if (!Number.isInteger(options.port) || options.port < 1 || options.port > 65535) {
     throw new Error('Owned PostgreSQL port must be an integer from 1 to 65535');
   }
+  await assertWindowsPostgresAdmission(options.signal);
+  throwIfAborted(options.signal);
 
   const root = resolve(options.rootDirectory);
   const binaries = resolve(options.binaryDirectory);
