@@ -36,6 +36,8 @@ import { computerProxyEnv } from "../../container-computer.ts";
 import { augmentedPath } from "../../env-path.ts";
 import { readCuaConnection } from "../../local-computer.ts";
 import { startBrowserBroker, type BrowserBroker } from "../../browser-broker.ts";
+import { browserApprovalCardFrom } from "../../browser-approval-card.ts";
+import type { BrowserApprovalCard } from "../../../shared/browser-approval-card.ts";
 import { startMemoryProposalBroker } from "../../hermes-memory-proposal-broker.ts";
 import { CONNECTED_APP_APPROVAL, connectedAppsBrokerGeneration, startConnectedAppsBroker, type ConnectedAppsBroker } from "../../connected-apps-broker.ts";
 import { createGmailReadOnlyTransport } from "../../composio-gmail.ts";
@@ -706,6 +708,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               approve: (tool, params, summary, signal, projection) => new Promise<boolean>(resolve => {
                 const run = current;
                 if (!run || run.settled || run.cancellationRequested || !run.promptSent || closed || signal.aborted) { resolve(false); return; }
+                // A consequential step is shown with its verified facts and
+                // expiry, once only, or it is not shown at all.
+                let browserApproval: BrowserApprovalCard | undefined;
+                try { browserApproval = browserApprovalCardFrom(params); } catch { resolve(false); return; }
                 const requestId = newId();
                 const finish = (decision: { behavior: string; scope?: "once" | "session" }) => {
                   if (!run.asks.delete(requestId)) return;
@@ -717,7 +723,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 const timer = setTimeout(aborted, 5 * 60_000); timer.unref();
                 run.asks.set(requestId, finish); signal.addEventListener("abort", aborted, { once: true });
                 emit({ ...eventBase(run), type: "request.opened", requestId, requestType: "permission", tool, params, summary,
-                  ...(projection ? { fence: projection.fence, ...(projection.approvalPolicy ? { approvalPolicy: projection.approvalPolicy } : {}) } : {}) });
+                  ...(projection ? { fence: projection.fence, ...(projection.approvalPolicy ? { approvalPolicy: projection.approvalPolicy } : {}) } : {}),
+                  ...(browserApproval ? { browserApproval, approvalPolicy: "once" as const } : {}) });
               }),
             });
             if (closed) { browserBroker.close(); throw new Error("Browser work stopped."); }

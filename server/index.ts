@@ -141,6 +141,7 @@ import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { cuaAttendedReady, readCuaConnection } from "./local-computer.ts";
 import { browserRuntime } from "./browser-runtime.ts";
 import { onBrowserDecision, releaseBrowserBrokers } from "./browser-broker.ts";
+import { stopBrowserApprovalCards } from "./browser-approval-card.ts";
 import { applyPropertyPack, ensurePropertyPack, hermesHome, propertyProfileDir } from "./hermes-pack.ts";
 import { applyHandsReadiness, hermesStatus } from "./hermes-status.ts";
 import { bootstrapPlan, bootstrapPending } from "./worker-bootstrap.ts";
@@ -690,6 +691,22 @@ async function denyPendingRequests(threadId: string, instance: ProviderInstance 
   watchdog.setWaitingOnHuman(threadId, false);
 }
 
+/** Stop records each open browser approval as stopped on its card and forgets
+ * its request before the broker closes, so the broker sees a stop rather than
+ * a decline and a late click can never approve it. */
+function stopBrowserApprovals(threadId?: string): Array<{ threadId: string; requestId: string }> {
+  const stopped = stopBrowserApprovalCards(store, askMessageByRequest, threadId);
+  for (const row of stopped) {
+    askMessageByRequest.delete(row.key);
+    broadcast({ kind: "message.patch", threadId: row.threadId, message: row.message });
+  }
+  return stopped;
+}
+/** After the turn is interrupted: a provider that still holds a stopped ask is told no. */
+async function endStoppedApprovals(instance: ProviderInstance | null | undefined, stopped: Array<{ threadId: string; requestId: string }>): Promise<void> {
+  await Promise.allSettled(stopped.map(row => instance?.adapter.respondToRequest(row.threadId, row.requestId, { behavior: "deny", message: "The user stopped this task." })));
+}
+
 // Group threads: the fold needs to know WHO is talking — the turn engine
 // records the active member here before dispatching its turn.
 const groupSpeakers = new Map<string, { botId: string; name: string; color: string }>();
@@ -1069,6 +1086,7 @@ bus.subscribe((raw: RuntimeEvent) => {
           // in auto mode a card can only mean the guard stopped it — say so
           held: onceApproval ? 'This request needs your approval once. Saved rules do not apply.' : permission && asker?.autoApprove ? "This looked destructive, so auto mode stopped to ask." : undefined,
           ...(event.type === "request.opened" && event.fence ? { fence: event.fence } : {}),
+          ...(event.type === "request.opened" && event.browserApproval ? { browserApproval: event.browserApproval } : {}),
         },
       });
       if (event.requestId) askMessageByRequest.set(`${event.threadId}:${event.requestId}`, message.id);
@@ -3653,6 +3671,7 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       if (path === "/api/browser/select") return json(res, 200, await browserRuntime.select(String(body.browserId ?? "")));
       if (path === "/api/browser/stop" || path === "/api/browser/disconnect") {
         // Revoke tool access before releasing the browser, including an in-flight approval.
+        stopBrowserApprovals();
         await releaseBrowserBrokers();
         return json(res, 200, await browserRuntime.stop(path.endsWith("disconnect")));
       }
@@ -4047,8 +4066,10 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       if (!group) return json(res, 404, { error: "no such room" });
       const busy = group.busyBotId ? store.bot(group.busyBotId) : undefined;
       const instance = busy ? registry.get(busy.modelSelection.instanceId) : undefined;
+      const stoppedApprovals = stopBrowserApprovals(group.threadId);
       await denyPendingRequests(group.threadId, instance);
       await instance?.adapter.interruptTurn(group.threadId).catch(() => {});
+      await endStoppedApprovals(instance, stoppedApprovals);
       return json(res, 200, { ok: true });
     }
 
@@ -4393,8 +4414,10 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
       }
       const instance = registry.get(bot.modelSelection.instanceId);
       if (PRODUCT_MODE && wasBusy) expectedStoppedThreads.add(bot.threadId);
+      const stoppedApprovals = stopBrowserApprovals(bot.threadId);
       await denyPendingRequests(bot.threadId, instance);
       await instance?.adapter.interruptTurn(bot.threadId);
+      await endStoppedApprovals(instance, stoppedApprovals);
       // Match steer: wait for the ACP session to die before clearing busy so
       // a follow-up turn cannot remount computer while the old one is dying.
       if (wasBusy) await waitUntilTurnStopped(instance ?? null, bot.threadId);

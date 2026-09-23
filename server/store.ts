@@ -11,6 +11,8 @@ import { newId, type ModelSelection, type ThreadId } from "./contracts.ts";
 import { pickBotName } from "./names.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { HERMES_MEMORY_APPROVAL, validMemoryApprovalReview, type ApprovalPolicy, type MemoryApprovalReview } from '../shared/approval-policy.ts';
+import type { BrowserApprovalCard } from '../shared/browser-approval-card.ts';
+import { sanitizeBrowserApprovalCard } from './browser-approval-card.ts';
 
 export type MausColor =
   | "green"
@@ -48,6 +50,9 @@ export interface OptionCardData {
   held?: string;
   /** the narrow grant "always allow" remembers, e.g. "Bash:git" */
   allowKey?: string;
+  /** A consequential browser step's verified facts and expiry; null when the
+   * stored card was damaged, which the app holds instead of offering approval. */
+  browserApproval?: BrowserApprovalCard | null;
   /** Attended portal fence: surface, site, and an optional standing-rule offer. */
   fence?: {
     surface: "portal-read" | "portal-prefill" | "portal-submit";
@@ -540,6 +545,10 @@ export class Store {
           if (!validMemoryApprovalReview(review) || redactSecretsInText(review.description) !== review.description || redactSecretsInText(review.content) !== review.content) {
             delete full.card.memoryReview;
           }
+          full.card.approvalPolicy = 'once'; delete full.card.allowKey;
+        }
+        if (full.card.browserApproval !== undefined) {
+          full.card.browserApproval = sanitizeBrowserApprovalCard(full.card.browserApproval);
           full.card.approvalPolicy = 'once'; delete full.card.allowKey;
         }
       }

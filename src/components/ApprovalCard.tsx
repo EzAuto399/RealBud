@@ -10,6 +10,8 @@ import { useId, useState } from "react";
 import { useStore, type Bot, type Message } from "@/state/store";
 import { approvalHeadline } from "@/lib/tool-label";
 import { cn } from "@/lib/cn";
+import { readBrowserApprovalCard } from "@shared/browser-approval-card";
+import { BrowserApprovalRecord } from "./BrowserApprovalCard";
 
 const LONG_DETAIL_CHARS = 400;
 const LONG_DETAIL_LINES = 8;
@@ -46,6 +48,13 @@ export function ApprovalCard({
   const card = message.card;
   if (!card) return null;
   const settled = card.answered;
+  if (card.browserApproval !== undefined) {
+    return (
+      <div className={cn("w-full max-w-[840px] rounded-lg border bg-sheet p-4", settled ? "border-line" : "border-agency/40")}>
+        <BrowserApprovalRecord approval={readBrowserApprovalCard(card.browserApproval)} answered={settled} />
+      </div>
+    );
+  }
   const knownAddresses = productAsk ? (state.desk?.properties ?? []).map((row) => row.address) : [];
   const headline = productAsk
     ? approvalHeadline(card.tool ?? "", [card.subtitle, card.held, card.title].filter(Boolean).join("\n"), knownAddresses)

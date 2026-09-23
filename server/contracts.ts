@@ -7,6 +7,7 @@
 
 import type { ApprovalPolicy, MemoryApprovalReview } from '../shared/approval-policy.ts';
 import type { MemoryProposalInput, MemoryProposalResult } from '../shared/hermes-memory-proposal.ts';
+import type { BrowserApprovalCard } from '../shared/browser-approval-card.ts';
 
 export type DriverKind = string;
 export type InstanceId = string;
@@ -79,6 +80,8 @@ export type RuntimeEvent = RuntimeEventBase &
         params?: unknown;
         approvalPolicy?: ApprovalPolicy;
         memoryReview?: MemoryApprovalReview;
+        /** A consequential browser step: the broker's verified facts and expiry. */
+        browserApproval?: BrowserApprovalCard;
         fence?: {
           surface: "portal-read" | "portal-prefill" | "portal-submit";
           origin: string;

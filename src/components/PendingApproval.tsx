@@ -14,6 +14,8 @@ import { alwaysAllowOfferLabel } from "@/lib/portal-job";
 import { approvalHeadline } from "@/lib/tool-label";
 import { cn } from "@/lib/cn";
 import { HERMES_MEMORY_APPROVAL, requiresOnceApproval, validMemoryApprovalReview, type ApprovalPolicy, type MemoryApprovalReview } from "@shared/approval-policy";
+import { readBrowserApprovalCard, type BrowserApprovalCard } from "@shared/browser-approval-card";
+import { BrowserPendingActions, BrowserPendingPanel, browserApprovalBlocked } from "./BrowserApprovalCard";
 
 export interface Pending {
   message: Message;
@@ -26,6 +28,8 @@ export interface Pending {
   fence?: RequestFence;
   approvalPolicy?: ApprovalPolicy;
   memoryReview?: MemoryApprovalReview;
+  /** A consequential browser step; null when its details did not validate. */
+  browserApproval?: BrowserApprovalCard | null;
 }
 
 /** Open approvals on a thread, oldest first — answered/dismissed drop out. */
@@ -42,6 +46,7 @@ export function pendingApprovals(messages: Message[]): Pending[] {
       fence: m.card!.fence,
       approvalPolicy: m.card!.approvalPolicy,
       memoryReview: m.card!.memoryReview,
+      ...(m.card!.browserApproval !== undefined ? { browserApproval: readBrowserApprovalCard(m.card!.browserApproval) } : {}),
     }));
 }
 
@@ -66,13 +71,17 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
   count,
   index,
   productAsk = false,
+  now,
 }: {
   pending: Pending;
   count: number;
   index: number;
   productAsk?: boolean;
+  /** Fixed clock for tests; the live card ticks on its own. */
+  now?: number;
 }) {
   const { state } = useStore();
+  if (pending.browserApproval !== undefined) return <BrowserPendingPanel approval={pending.browserApproval} count={count} index={index} now={now} />;
   const isMemory = pending.tool === HERMES_MEMORY_APPROVAL;
   const memoryReview = isMemory && validMemoryApprovalReview(pending.memoryReview) ? pending.memoryReview : null;
   const knownAddresses = productAsk ? (state.desk?.properties ?? []).map((row) => row.address) : [];
@@ -126,6 +135,7 @@ export function PendingApprovalActions({
   onCancelTurn,
   alwaysAllowable = true,
   productAsk = false,
+  now,
 }: {
   pending: Pending;
   threadId: string;
@@ -135,6 +145,8 @@ export function PendingApprovalActions({
   /** Always allow writes a standing rule for this approval key. */
   alwaysAllowable?: boolean;
   productAsk?: boolean;
+  /** Fixed clock for tests; the live card ticks on its own. */
+  now?: number;
 }) {
   const { dispatch } = useStore();
   const isMemory = pending.tool === HERMES_MEMORY_APPROVAL;
@@ -159,6 +171,21 @@ export function PendingApprovalActions({
       alwaysAllow: !onceOnly && options?.always && bot && pending.allowKey ? { botId: bot.id, key: pending.allowKey } : undefined,
     });
   };
+
+  // A consequential browser step: approve exactly these facts once, decline,
+  // or stop the whole task. Nothing here can save a rule or a wider grant.
+  if (pending.browserApproval !== undefined) {
+    const approval = pending.browserApproval;
+    return (
+      <BrowserPendingActions
+        approval={approval}
+        now={now}
+        onApprove={() => { if (!browserApprovalBlocked(approval, Math.max(now ?? 0, Date.now()))) decide("allow", { scope: "once" }); }}
+        onDecline={() => decide("deny")}
+        onStop={onCancelTurn}
+      />
+    );
+  }
 
   const base = "pm-control rounded-full px-3.5 text-[13.5px] transition-colors disabled:cursor-not-allowed disabled:opacity-50";
   return (

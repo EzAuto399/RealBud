@@ -32,6 +32,7 @@ import { STREAM_COMMIT_INTERVAL_MS } from "@/lib/chat-scroll";
 import { readWorkerIssues, type WorkerIssue } from "@/lib/worker-issues";
 import type { AskWorkContext } from "@/lib/work-continuation";
 import type { ApprovalPolicy, MemoryApprovalReview } from "@shared/approval-policy";
+import type { BrowserApprovalCard } from "@shared/browser-approval-card";
 
 export type { MausColor } from "@/lib/mascot";
 
@@ -65,6 +66,9 @@ export interface OptionCardData {
   approvalPolicy?: ApprovalPolicy;
   /** Exact native memory change validated by the server; summary is not a substitute. */
   memoryReview?: MemoryApprovalReview;
+  /** A consequential browser step's verified facts and expiry. Re-validated
+   * before display; null or damaged is held, never approvable. */
+  browserApproval?: BrowserApprovalCard | null;
 }
 
 export interface Message {

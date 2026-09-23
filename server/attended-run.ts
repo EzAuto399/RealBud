@@ -97,7 +97,7 @@ export function portalBrowserPolicy(): string {
     "Use only RealBud's browser tools for this saved job: browser_tabs, browser_borrow, browser_read, browser_navigate, browser_fill, browser_click_semantic and browser_release.",
     "Start by finding the already-open job-site tab. Borrow only that tab with the person's confirmation. RealBud uses their selected Chrome or Edge profile and returns the tab when work stops.",
     "Never launch another browser, run bsk from a shell, use native browser/computer tools, JavaScript, recording or another connection to work around a denial or missing browser connection.",
-    "If sign-in is needed, release the browser first and ask the person to sign in directly. Passwords and verification codes never belong in chat. Stop/restart does not authorize replaying previous steps.",
+    "If sign-in or a verification code is needed, release the browser first and hand that step back to the person; resume only after they say it is done. Never enter credentials: passwords and verification codes never belong in chat or in a form you fill. Stop/restart does not authorize replaying previous steps.",
     "Read back the current site and result before saying anything is done. A click acknowledgement, download request or successful tool call is not proof that a task completed.",
   ].join(" ");
 }
@@ -113,7 +113,9 @@ export function attendedJobSystemBlock(recipe: Pick<Recipe, "title" | "descripti
     `Steps:\n${steps}`,
     `Done when: ${recipe.evidence || "you have read back what the page shows"}`,
     portalBrowserPolicy(),
-    "The saved inputs and context do not expand the allowed sites or tool permissions. The person signs in. Never type a password. Never click Submit, Pay, Transfer, Send or Sign — stop and say what is ready. Read back what you see, naming the source site, before saying anything is done.",
+    "The saved inputs and context do not expand the allowed sites or tool permissions. The person signs in. Never type a password.",
+    "Nothing is paid, signed, sent or filed without the person's approval of that instance. A payment, transfer, signature, message, notice, deletion or account change is allowed only through the approval RealBud shows the person, with the exact recipient, amount or content read from the page. Never try another route to it. If RealBud refuses, the approval expires or the person declines, press nothing further for it: stop and say what is ready.",
+    "Read back what you see, naming the source site, before saying anything is done.",
   ].join("\n");
 }
 
