@@ -20,7 +20,7 @@ customer. Update this table whenever a row changes tier; it is the acceptance li
 | Portal | Attended computer control (CUA) | allowed by the live-portal gate | **held by policy** | `server/pilot-contract.ts:15` (`cuaHostSupported: darwin`) | Owner decision + a driven Windows session |
 | Worker | Pack skills, skill preload, curated skill index | real Hermes 0.21.3 code, throwaway profile | same config | — | Packaged worker on both |
 | Worker | Hermes' own browser and credential-vault tools (bypass route) | **0 offered** with dependencies present (real 0.21.3 code); driver cancels any Hermes `browser_*` call | same config | residual: agent-browser/npx in a system folder plus a Playwright Chromium under the person's home still exposes 14 (no 0.21.3 switch) | `scripts/testing/hermes-browser-boundary.mjs` on each Hermes upgrade; readiness check at install is an owner call |
-| Worker | Browser tasks through RealBud's broker from Ask | **not available**: the broker is mounted only for a fenced portal job | same | `server/index.ts` broker mount | Task-authority slices (decision 2026-09-23) |
+| Browser | Task authority: Ask one-off tasks, saved jobs, delegated subagents on one broker; full actions (read, navigate, fill, select, keys, click, download with hash, upload of granted files, submit); pay/sign/send/notice as once-only approvals with page-verified recipient/amount/content; Stop and sign-in resume | local tests (514) + portal e2e; approval card rendered (component) | same code | — | A driven run on the real helper with a fictional pay form; installed runs on both |
 | Worker | Memory review and proposals | local tests | **refused** | `server/hermes-memory-review.ts:74` (`platform-unverified`) | Windows per-file ACL + durable rename admission for the native store |
 | Worker | Legacy personal Hermes profile migration | local tests | **refused** | `server/hermes-pack.ts:31` | An ACL-preserving migration protocol |
 | Storage | Private data created protected | local tests | installed hosted runner | — | Real device |
@@ -34,5 +34,5 @@ customer. Update this table whenever a row changes tier; it is the acceptance li
 | Release | Signing and updates | **unsigned, not notarized** | **no Authenticode certificate** | `electron-builder.yml` | Certificates (owner gate, GATES §B) |
 
 Biggest gaps by user impact: unsigned builds on both platforms; memory review refused on
-Windows; attended computer control held to macOS by policy; Ask cannot yet reach the browser
-broker for authorised tasks; attachment contents never collected.
+Windows; attended computer control held to macOS by policy; browser task authority not yet driven
+on the real helper; attachment contents never collected.
