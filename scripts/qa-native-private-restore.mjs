@@ -15,9 +15,10 @@ import { serviceIdentity, findRunningService, SERVICE_PORTS } from '../electron/
 import { availableServicePort, readServiceHandle, requestServiceStop } from '../electron/service-lifecycle.mjs';
 
 const args = process.argv.slice(2);
-assert.ok(args.length === 0 || args.length === 1 && ['--reproduce-welcome-restore-block', '--welcome-restore'].includes(args[0]), 'Use no arguments for native restore, --welcome-restore for the visible welcome journey, or --reproduce-welcome-restore-block for expected-defect evidence only.');
-const reproduceWelcomeBlock = args[0] === '--reproduce-welcome-restore-block', welcomeRestore = args[0] === '--welcome-restore';
-const mode = reproduceWelcomeBlock ? 'expected-welcome-restore-block' : welcomeRestore ? 'welcome-private-restore' : 'native-private-restore';
+assert.ok(args.length === 0 || args.length === 1 && ['--reproduce-welcome-restore-block', '--welcome-restore', '--welcome-cancel-setup'].includes(args[0]), 'Use no arguments for native restore, --welcome-restore, --welcome-cancel-setup, or --reproduce-welcome-restore-block for expected-defect evidence only.');
+const reproduceWelcomeBlock = args[0] === '--reproduce-welcome-restore-block', welcomeCancelSetup = args[0] === '--welcome-cancel-setup';
+const welcomeRestore = args[0] === '--welcome-restore' || welcomeCancelSetup;
+const mode = reproduceWelcomeBlock ? 'expected-welcome-restore-block' : welcomeCancelSetup ? 'welcome-cancel-normal-setup' : welcomeRestore ? 'welcome-private-restore' : 'native-private-restore';
 const welcomeSourceContact = 'Fictional Imported Office Contact';
 assert.ok(process.env.REALBUD_QA_RESOURCES && process.env.REALBUD_QA_EXECUTABLE && process.env.REALBUD_QA_PACKAGE_RECEIPT && process.env.PLAYWRIGHT_MODULE && process.env.QA_OUTPUT, 'Set REALBUD_QA_RESOURCES, REALBUD_QA_EXECUTABLE, REALBUD_QA_PACKAGE_RECEIPT, PLAYWRIGHT_MODULE and a new QA_OUTPUT.');
 const script = fileURLToPath(import.meta.url), root = resolve(dirname(script), '..');
@@ -59,7 +60,7 @@ const pass = label => { checks.push(label); console.log(`PASS ${label}`); };
 const servicePids = new Set();
 const exited = pid => { try { process.kill(pid, 0); return false; } catch (error) { return error.code === 'ESRCH'; } };
 let sourceChild, targetChild, nativeChild, seedChild, inspector, browser, page, failure, sourceLog = '', nativeLog = '', origin, token, sourceToken, sourceOrigin, runtime, keyProof, reproduction, welcomeJourney;
-let welcomeAgencyWrites = 0;
+let welcomeAgencyWrites = 0, welcomeProfileWrites = 0;
 async function until(fn, label, timeout = 30000) {
   const end = Date.now() + timeout;
   while (Date.now() < end) { const result = await fn(); if (result) return result; await delay(100); }
@@ -86,7 +87,7 @@ async function protocol(url) {
   };
 }
 async function api(path, method = 'GET', body, status = 200, sourceRequest = false) {
-  if (welcomeRestore && !sourceRequest && ['/api/onboarding', '/api/desk/agency'].includes(path)) assert.equal(method, 'GET', 'The visible welcome journey cannot use a target onboarding or agency API fixture.');
+  if (welcomeRestore && !sourceRequest && ['/api/onboarding', '/api/desk/agency', '/api/config'].includes(path)) assert.equal(method, 'GET', 'The visible welcome journey cannot use a target onboarding, profile or agency API fixture.');
   const response = await fetch((sourceRequest ? sourceOrigin : origin) + path, { method, signal: AbortSignal.timeout(30000), headers: { 'content-type': 'application/json', 'x-realbud-session': sourceRequest ? sourceToken : token }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const value = await response.json(); assert.equal(response.status, status, `${path}: ${JSON.stringify(value)}`); return value;
 }
@@ -250,6 +251,8 @@ async function welcomeFreshness(label, firstDigest, wrappedDigest) {
   assert.equal(status.canRestore, true, label); assert.equal(status.staged, false, label);
   assert.equal(await protectedDigest(), firstDigest, label); assert.equal(hashFile(join(data, 'desk.key.wrap')), wrappedDigest, label);
   assert.equal(existsSync(join(data, 'desk.key')), false, label); assert.equal(welcomeAgencyWrites, 0, label);
+  assert.equal(welcomeProfileWrites, 0, label);
+  assert.deepEqual((await api('/api/config')).profile, welcomeJourney.initialProfile, label);
   assert.deepEqual(onboardingFixture, [], label);
   welcomeJourney.freshness.push({ label, mode: snapshot.mode, revision: snapshot.revision, canRestore: status.canRestore, staged: status.staged, keyPreserved: true, agencyWrites: 0 });
 }
@@ -262,10 +265,39 @@ async function captureWelcomeEntry(width, height, name) {
   await page.screenshot({ path: join(output, name) });
   welcomeJourney.viewports.push({ width, height, entryVisible: true, horizontalOverflow: false });
 }
+async function returnToWelcome(panel, label, firstDigest, wrappedDigest) {
+  const before = await api('/api/onboarding'); assert.equal(before.stage, 'recovery');
+  const progress = (await api('/api/private-backup/v2/operations?limit=20')).items;
+  const back = panel.getByRole('button', { name: 'Back to welcome', exact: true });
+  await back.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(output, `${label}-return-action.png`) });
+  await back.click();
+  await page.getByRole('heading', { name: 'Make the desk yours', exact: true }).waitFor();
+  const after = await api('/api/onboarding');
+  assert.equal(after.scope, before.scope); assert.equal(after.revision, before.revision + 1); assert.equal(after.stage, 'profile');
+  await welcomeFreshness(`${label}-returned`, firstDigest, wrappedDigest);
+  await page.reload(); await page.getByRole('heading', { name: 'Make the desk yours', exact: true }).waitFor();
+  assert.deepEqual(await api('/api/onboarding'), after);
+  assert.deepEqual((await api('/api/private-backup/v2/operations?limit=20')).items, progress);
+  await welcomeFreshness(`${label}-return-reloaded`, firstDigest, wrappedDigest);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+  await page.screenshot({ path: join(output, `${label}-welcome-reloaded.png`) });
+  welcomeJourney.returnPaths.push({ label, stage: after.stage, revisionAdvancedOnce: true, progressPreserved: true, reloadPreserved: true });
+}
+async function reenterWelcomeBackup(panel) {
+  await page.getByRole('button', { name: 'Restore a private backup', exact: true }).click();
+  await page.waitForURL(url => url.hash === '#you-private-backup'); await panel.waitFor();
+  assert.equal((await api('/api/onboarding')).stage, 'recovery');
+}
 async function prepareWelcomeRestore(exported, firstDigest) {
   const wrappedDigest = hashFile(join(data, 'desk.key.wrap'));
-  welcomeJourney = { method: 'visible-welcome-and-backup-ui', targetOnboardingApiFixtureUsed: false, freshness: [], viewports: [] };
-  page.on('request', request => { if (new URL(request.url()).pathname === '/api/desk/agency' && request.method() !== 'GET') welcomeAgencyWrites++; });
+  welcomeJourney = { method: 'visible-welcome-and-backup-ui', targetOnboardingApiFixtureUsed: false, freshness: [], viewports: [], returnPaths: [], initialProfile: (await api('/api/config')).profile };
+  page.on('request', request => {
+    if (['GET', 'HEAD'].includes(request.method())) return;
+    const path = new URL(request.url()).pathname;
+    if (path === '/api/desk/agency') welcomeAgencyWrites++;
+    if (path === '/api/config') welcomeProfileWrites++;
+  });
   await page.goto(origin + '/');
   await page.getByRole('heading', { name: 'Make the desk yours', exact: true }).waitFor();
   assert.equal((await api('/api/onboarding')).stage, 'profile');
@@ -283,6 +315,10 @@ async function prepareWelcomeRestore(exported, firstDigest) {
   await welcomeFreshness('after-backup-route-reload', firstDigest, wrappedDigest);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'Backup entry has no 390px horizontal overflow.');
   await captureBackupContext(panel, 'welcome-restore-reloaded-390.png');
+  assert.equal((await api('/api/private-backup/v2/operations?limit=20')).items.length, 0);
+  await returnToWelcome(panel, 'no-file-390', firstDigest, wrappedDigest);
+  pass('Native no-file return saves only one scoped welcome transition, preserving profile, book, custody and empty transfer history across reload');
+  await reenterWelcomeBackup(panel);
   await page.setViewportSize({ width: 1440, height: 1050 });
   pass('Visible welcome restore entry is reachable at desktop and 390px; recovery and the backup deep link survive reload without changing fresh book or key custody');
   await panel.getByLabel('Encrypted private backup file', { exact: true }).setInputFiles({ name: exported.filename, mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(exported.backup)) });
@@ -295,6 +331,7 @@ async function prepareWelcomeRestore(exported, firstDigest) {
   const failedUploads = (await api('/api/private-backup/v2/operations?limit=20')).items.filter(item => item.kind === 'upload');
   assert.equal(failedUploads.length, 1); assert.equal(failedUploads[0].phase, 'failed'); assert.equal(failedUploads[0].error?.code, 'invalid-backup');
   assert.equal(failedUploads[0].canCancel, true);
+  assert.equal(await panel.getByRole('button', { name: 'Back to welcome', exact: true }).isDisabled(), true, 'Unresolved failed upload blocks return until removed.');
   await welcomeFreshness('after-wrong-passphrase', firstDigest, wrappedDigest);
   await progress.screenshot({ path: join(output, 'welcome-restore-wrong-passphrase.png') });
   pass('A wrong backup passphrase produces the visible refusal and preserves revision 1, restore availability and the same protected target key');
@@ -307,7 +344,48 @@ async function prepareWelcomeRestore(exported, firstDigest) {
   await progress.screenshot({ path: join(output, 'welcome-restore-cancelled.png') });
   welcomeJourney.cancelledUploadId = cancelled.id;
   pass('Remove temporary copy cancels the failed upload through the real UI while the original fresh workspace remains restorable');
+  await returnToWelcome(panel, 'removed-upload-1440', firstDigest, wrappedDigest);
+  pass('Native removed-upload return preserves its cancelled receipt, fresh book and custody across welcome reload');
+  if (!welcomeCancelSetup) await reenterWelcomeBackup(panel);
   return { panel, wrappedDigest };
+}
+async function finishNormalWelcomeAfterCancel(firstDigest) {
+  const name = 'Fictional Cancelled Restore Operator';
+  assert.equal((await api('/api/onboarding')).stage, 'profile');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByLabel('Your name', { exact: true }).fill(name);
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await page.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor();
+  const rules = await api('/api/onboarding'); assert.equal(rules.stage, 'office-rules');
+  assert.equal((await api('/api/config')).profile.name, name);
+  assert.equal((await api('/api/desk')).revision, 1); assert.equal(welcomeAgencyWrites, 0); assert.equal(welcomeProfileWrites, 1);
+  const restart = async () => {
+    const beforePid = (await api('/api/health')).pid;
+    assert.equal((await ipc('serviceStop')).ok, true); assert.equal((await ipc('serviceStart')).ok, true);
+    await sessionToken(); assert.notEqual((await api('/api/health')).pid, beforePid);
+    assert.equal(await protectedDigest(), firstDigest); assert.equal(existsSync(join(data, 'desk.key')), false);
+    await page.reload();
+  };
+  await restart(); await page.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor();
+  assert.deepEqual(await api('/api/onboarding'), rules);
+  await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
+  await page.getByRole('region', { name: 'This morning', exact: true }).waitFor();
+  const complete = await api('/api/onboarding'), book = await api('/api/desk');
+  assert.equal(complete.stage, 'complete'); assert.equal(book.book.office.pmUser, name); assert.equal(book.revision, 2);
+  assert.equal(welcomeAgencyWrites, 1); assert.equal(welcomeProfileWrites, 1);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+  await page.screenshot({ path: join(output, 'normal-setup-after-cancel-390.png') });
+  await restart(); await page.getByRole('region', { name: 'This morning', exact: true }).waitFor();
+  assert.deepEqual(await api('/api/onboarding'), complete); assert.deepEqual((await api('/api/desk')).book, book.book);
+  assert.equal((await api('/api/config')).profile.name, name);
+  const status = await api('/api/private-backup'); assert.equal(status.staged, false); assert.equal(status.completed, null); assert.equal(status.canRestore, false);
+  const progress = (await api('/api/private-backup/v2/operations?limit=20')).items;
+  assert.equal(progress.length, 1); assert.equal(progress[0].id, welcomeJourney.cancelledUploadId); assert.equal(progress[0].phase, 'cancelled');
+  await page.setViewportSize({ width: 1440, height: 1050 }); await page.screenshot({ path: join(output, 'normal-setup-after-cancel-restarted.png') });
+  welcomeJourney.normalSetup = { stage: complete.stage, profileName: name, officeContact: name, agencyWrites: welcomeAgencyWrites, profileWrites: welcomeProfileWrites, revision: book.revision, rulesRestartPreserved: true, completionRestartPreserved: true, cancelledTransferPreserved: true, restored: false };
+  keyProof = { sameTargetKeyAcrossThreeRestarts: true, afterMigrationPlaintextKeyAbsent: true, fixtureCalls: await inspector.evaluate('globalThis.__realbudCustodyFixture()') };
+  assert.deepEqual(onboardingFixture, []); assert.deepEqual(errors, []);
+  pass('After cancellation the real native welcome saves profile once, survives a rules restart, completes normal setup once and preserves contact, custody and cancelled transfer across another restart');
 }
 async function finishRestoredWelcome() {
   const before = await api('/api/desk'); assert.equal(before.book.office.pmUser, welcomeSourceContact);
@@ -390,6 +468,7 @@ async function runScenario() {
     await page.goto(origin + '/#/you'); await page.reload(); await page.locator('details#you-advanced > summary').click();
     panel = page.getByRole('region', { name: 'Private workspace backup', exact: true }); await panel.waitFor();
   }
+  if (welcomeCancelSetup) { await finishNormalWelcomeAfterCancel(firstDigest); return; }
   await panel.getByLabel('Encrypted private backup file', { exact: true }).setInputFiles({ name: exported.filename, mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(exported.backup)) });
   await panel.getByLabel('Restore private backup passphrase', { exact: true }).fill(passphrase); await panel.getByRole('button', { name: 'Preview private backup contents', exact: true }).click();
   const preview = panel.getByRole('region', { name: 'Private backup preview', exact: true }); await preview.waitFor();
@@ -397,6 +476,7 @@ async function runScenario() {
     const reviewed = (await api('/api/private-backup/v2/operations?limit=20')).items.filter(item => item.kind === 'upload' && item.phase === 'reviewed');
     assert.equal(reviewed.length, 1); assert.notEqual(reviewed[0].id, welcomeJourney.cancelledUploadId); welcomeJourney.reviewedUploadId = reviewed[0].id;
     assert.equal(await preview.getByRole('button', { name: 'Stage reviewed restore', exact: true }).isDisabled(), true);
+    assert.equal(await panel.getByRole('button', { name: 'Back to welcome', exact: true }).isDisabled(), true, 'Reviewed restore cannot return to ordinary setup.');
     await welcomeFreshness('after-correct-reupload-preview', firstDigest, welcomeWrappedDigest);
   }
   await preview.getByLabel('I checked this backup', { exact: false }).check(); await preview.getByRole('button', { name: 'Stage reviewed restore', exact: true }).click();
@@ -552,5 +632,5 @@ finally {
     cleanup.serviceProcessesExited = true;
     if (!failure) { rmSync(scratch, { recursive: true, force: true }); cleanup.scratchRemoved = true; }
   } catch { failure ||= 'Fixture service termination could not be verified; disposable directory retained for recovery.'; process.exitCode = 1; }
-  writeFileSync(join(output, 'receipt.json'), JSON.stringify({ at: new Date().toISOString(), mode, passed: !reproduceWelcomeBlock && !failure, ...(reproduceWelcomeBlock ? { reproductionMatched: !failure, productAcceptance: false, reproduction } : {}), executable, resources, artifact, provenance, runtime, checks, errors, keyProof, onboardingFixture, welcomeJourney, cleanup, limitations: ['Actual packaged Mac runtime, main, native preload IPC, detached service, bootstrap and UI', 'safeStorage is an in-memory AES fixture; OS Keychain/DPAPI protection and keychain prompts are not tested', reproduceWelcomeBlock ? 'Expected-defect reproduction only: visible sample onboarding is exercised without restoring a backup; a matched reproduction is not a product pass' : welcomeRestore ? 'Visible welcome, backup cancellation, passphrase refusal, reviewed restore and postrestore welcome use the real UI; source data is fictional and no target onboarding API fixture is used' : 'Scoped onboarding API calls prepare fictional backup fixtures; visible welcome acceptance is not tested here', 'Only fictional isolated data and allowlisted process environment without provider credentials; renderer and Electron requests are guarded after attachment, not process-wide network isolation', 'Signing and notarization are separate package evidence; this is not customer installation, an older-version upgrade, Windows or reboot survival'], failure, ...(failure ? { diagnostics: { sourceLog, nativeLog, retainedDirectory: cleanup.scratchRemoved ? null : scratch } } : {}) }, null, 2), { flag: 'wx', mode: 0o600 });
+  writeFileSync(join(output, 'receipt.json'), JSON.stringify({ at: new Date().toISOString(), mode, passed: !reproduceWelcomeBlock && !failure, ...(reproduceWelcomeBlock ? { reproductionMatched: !failure, productAcceptance: false, reproduction } : {}), executable, resources, artifact, provenance, runtime, checks, errors, keyProof, onboardingFixture, welcomeJourney, cleanup, limitations: ['Actual packaged Mac runtime, main, native preload IPC, detached service, bootstrap and UI', 'safeStorage is an in-memory AES fixture; OS Keychain/DPAPI protection and keychain prompts are not tested', reproduceWelcomeBlock ? 'Expected-defect reproduction only: visible sample onboarding is exercised without restoring a backup; a matched reproduction is not a product pass' : welcomeCancelSetup ? 'Visible welcome, no-file return, cancelled-upload return, normal setup and two service restarts use the real UI; no target onboarding/profile/agency API fixture or restore is used' : welcomeRestore ? 'Visible welcome, both return paths, passphrase refusal, reviewed restore and postrestore welcome use the real UI; source data is fictional and no target onboarding API fixture is used' : 'Scoped onboarding API calls prepare fictional backup fixtures; visible welcome acceptance is not tested here', 'Only fictional isolated data and allowlisted process environment without provider credentials; renderer and Electron requests are guarded after attachment, not process-wide network isolation', 'Signing and notarization are separate package evidence; this is not customer installation, an older-version upgrade, Windows or reboot survival'], failure, ...(failure ? { diagnostics: { sourceLog, nativeLog, retainedDirectory: cleanup.scratchRemoved ? null : scratch } } : {}) }, null, 2), { flag: 'wx', mode: 0o600 });
 }

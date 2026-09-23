@@ -62,6 +62,20 @@ preserved freshness, not return-to-welcome. The canonical owner is implementing
 a guarded return path and lifecycle tests; that follow-up is not yet verified or
 included in these packages. Keep the sealed artifacts unchanged.
 
+The canonical owner's five-file follow-up is now adopted into this isolated
+candidate after checking every source hash against its receipt. **Back to
+welcome** reads current scoped setup, validates all bounded pages of saved
+backup progress, refuses active/uncertain restore state, and confirms its single
+revision-bound preference write through exact authoritative readback. It does
+not delete backups or change server restore policy. An unavailable optional
+onboarding read leaves the existing backup feature available. Independent
+candidate checks pass **1054 / 0 / 0** renderer/onboarding tests and full
+typechecking. Evidence: `welcome-cancel-integration/` under the current output
+root. The native harness now requires no-file and removed-upload return/reload
+journeys and separately exercises normal setup through actual service restarts.
+Fresh package execution for this follow-up remains pending at this source
+checkpoint; the sealed `4c0c203f` kit does not contain it.
+
 ## Packaged Mac two-service team proof
 
 The selected `689dfc60` app's own Electron 43.4.0 / Node 24.18.1 executable now

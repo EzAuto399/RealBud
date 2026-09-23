@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,7 +15,9 @@ assert.ok(process.env.PLAYWRIGHT_MODULE, 'Set PLAYWRIGHT_MODULE.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const output = resolve(process.env.QA_OUTPUT || join(root, 'outputs/broad-qa-2026-09-23/onboarding'));
-const scratch = await mkdtemp(join(tmpdir(), 'fictional-onboarding-restart-'));
+await mkdir(dirname(output), { recursive: true });
+await mkdir(output); // Refuse previous evidence before allocating a scratch workspace.
+const scratch = await mkdtemp(join(await realpath(tmpdir()), 'fictional-onboarding-restart-'));
 const checks = [], pageErrors = [], origins = [];
 let service, closed, vite, browser, context, base, uiBase, token, failure, logs = '';
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -83,7 +85,6 @@ async function finish(page) {
   await page.getByRole('region', { name: 'This morning', exact: true }).waitFor();
 }
 try {
-  await mkdir(output, { recursive: true });
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   context = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
   await context.route('**/*', route => new URL(route.request().url()).origin === uiBase ? route.continue() : route.abort());
@@ -92,6 +93,65 @@ try {
   const data = join(scratch, 'main');
   await start(data);
   let page = await open();
+  let welcomeWrites = 0;
+  page.on('request', request => {
+    if (['/api/desk/agency', '/api/config'].includes(new URL(request.url()).pathname) && !['GET', 'HEAD'].includes(request.method())) welcomeWrites++;
+  });
+  const freshBook = await request('/api/desk'), freshProfile = (await request('/api/config')).profile;
+  assert.equal(freshBook.revision, 1);
+  const assertFreshWelcome = async () => {
+    const book = await request('/api/desk'), backup = await request('/api/private-backup');
+    assert.equal(book.revision, freshBook.revision); assert.deepEqual(book.book, freshBook.book);
+    assert.equal(backup.canRestore, true); assert.equal(backup.staged, false);
+    assert.deepEqual((await request('/api/config')).profile, freshProfile);
+    assert.equal(welcomeWrites, 0, 'Restore entry/cancel does not save a profile or agency');
+  };
+  const enterBackup = async () => {
+    await page.getByRole('button', { name: 'Restore a private backup', exact: true }).click();
+    await page.waitForURL(url => url.hash === '#you-private-backup');
+    const panel = page.getByRole('region', { name: 'Private workspace backup', exact: true });
+    await panel.waitFor(); assert.equal((await request('/api/onboarding')).stage, 'recovery');
+    await assertFreshWelcome(); return panel;
+  };
+  const returnToWelcome = async panel => {
+    const back = panel.getByRole('button', { name: 'Back to welcome', exact: true });
+    await back.click();
+    await page.getByRole('heading', { name: 'Make the desk yours', exact: true }).waitFor();
+    assert.equal((await request('/api/onboarding')).stage, 'profile');
+    await assertFreshWelcome(); await page.reload();
+    await page.getByRole('heading', { name: 'Make the desk yours', exact: true }).waitFor();
+    assert.equal((await request('/api/onboarding')).stage, 'profile');
+  };
+  let backupPanel = await enterBackup();
+  await page.reload(); await backupPanel.waitFor();
+  assert.equal(new URL(page.url()).hash, '#you-private-backup'); await assertFreshWelcome();
+  assert.equal((await request('/api/private-backup/v2/operations?limit=20')).items.length, 0);
+  await backupPanel.getByRole('button', { name: 'Back to welcome', exact: true }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(output, 'restore-return-390.png') });
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+  await returnToWelcome(backupPanel);
+  await page.screenshot({ path: join(output, 'welcome-returned-390.png') });
+  record('No-file restore entry and reload can return to welcome without profile, book or backup mutation');
+
+  await page.setViewportSize({ width: 1440, height: 1050 });
+  backupPanel = await enterBackup();
+  await backupPanel.getByLabel('Encrypted private backup file', { exact: true }).setInputFiles({ name: 'fictional-invalid.realbud-backup', mimeType: 'application/json', buffer: Buffer.from('{"fixture":"unsupported-backup"}') });
+  await backupPanel.getByLabel('Restore private backup passphrase', { exact: true }).fill('Fictional invalid backup passphrase');
+  await backupPanel.getByRole('button', { name: 'Preview private backup contents', exact: true }).click();
+  const progress = backupPanel.getByRole('region', { name: 'Selected backup progress', exact: true });
+  await progress.getByText('This file could not be verified as a complete supported backup. Keep the original file.', { exact: true }).waitFor();
+  const failed = (await request('/api/private-backup/v2/operations?limit=20')).items.find(item => item.kind === 'upload');
+  assert.equal(failed.phase, 'failed'); assert.equal(failed.canCancel, true);
+  await progress.getByRole('button', { name: 'Remove temporary copy', exact: true }).click();
+  await progress.getByRole('heading', { name: 'Removed', exact: true }).waitFor();
+  assert.equal((await request('/api/private-backup/v2/operations?limit=20')).items.find(item => item.id === failed.id).phase, 'cancelled');
+  await assertFreshWelcome();
+  await backupPanel.getByRole('button', { name: 'Back to welcome', exact: true }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(output, 'restore-return-1440.png') });
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+  await returnToWelcome(backupPanel);
+  record('Failed uploaded copy can be removed and return to welcome; cancellation receipt and fresh book survive reload');
+  await page.setViewportSize({ width: 390, height: 844 });
   await rules(page, 'Fictional QA Person');
   assert.equal((await request('/api/onboarding')).stage, 'office-rules');
   record('Fresh workspace ignores unscoped browser completion; profile submission only reaches rules');
@@ -143,7 +203,7 @@ try {
   await page.getByRole('button', { name: 'You', exact: true }).waitFor();
   assert.match(page.url(), /you-recovery/);
   record('Protected book remains unchanged; recovery is saved separately and resumes after restart');
-  assert.deepEqual(pageErrors, []); record('Zero renderer page errors throughout all six scenarios');
+  assert.deepEqual(pageErrors, []); record('Zero renderer page errors throughout welcome, restore-return and restart scenarios');
 } catch (cause) { failure = cause instanceof Error ? cause.stack : String(cause); console.error(failure); }
 finally {
   await context?.close(); await browser?.close(); await stop();
