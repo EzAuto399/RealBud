@@ -70,7 +70,7 @@ if (missingRuntimeInputs.length) {
 }
 
 
-const bundles = { pg: 'Pool', selfsigned: 'generate', yaml: 'parseDocument, isMap, YAMLMap' };
+const bundles = { pg: 'Pool', selfsigned: 'generate', yaml: 'parseDocument, isMap, isSeq, YAMLMap' };
 // These helpers are resolved dynamically rather than by JS imports. Verify the
 // exact shipped bytes as part of every server build; no checkout fallback.
 const helpers = {};
@@ -99,6 +99,14 @@ async function rewrite(directory) {
     if (entry.isDirectory()) await rewrite(file);
     else if (entry.name.endsWith('.js')) {
       const before = await readFile(file, 'utf8');
+      // Every named import of a bundled package must be exported by its bundle;
+      // otherwise the packaged service fails to start (seen with yaml `isSeq`).
+      for (const found of before.matchAll(/import\s*\{([^}]*)\}\s*from\s*(['"])(pg|selfsigned|yaml)\2/g)) {
+        const exported = new Set(bundles[found[3]].split(',').map(name => name.trim()));
+        for (const imported of found[1].split(',').map(part => part.trim().split(/\s+as\s+/)[0]).filter(Boolean)) {
+          if (!exported.has(imported)) throw new Error(`${relative(server, file)} imports ${imported} from ${found[3]}, which the packaged bundle does not export; add it to bundles.${found[3]}.`);
+        }
+      }
       const after = before.replace(/(\bfrom\s*|\bimport\s*\(\s*)(['"])(pg|selfsigned|yaml)\2/g, (_match, prefix, quote, name) => {
         let path = relative(dirname(file), join(vendor, `${name}.mjs`)).replaceAll('\\', '/');
         if (!path.startsWith('.')) path = './' + path;
