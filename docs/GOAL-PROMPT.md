@@ -1,6 +1,8 @@
 # RealBud — current working direction
 
-Latest continuation: [macOS and Windows candidate](PLATFORM-CANDIDATE-2026-09-23.md) tracks the isolated source candidate, native process and launcher fixes, current checks, installer artifacts and distribution gates. The [earlier Windows preparation](WINDOWS-READINESS-2026-09-23.md) retains the previous installer and rejected timeout approach as dated evidence.
+Latest continuation: [setup, team and website integration QA](INTEGRATION-QA-2026-09-23.md) records current source checks, two-instance testing, isolated website integration, hosted authentication boundaries and fixture repairs. Read its remaining proof gates before describing readiness.
+
+Previous continuation: [macOS and Windows candidate](PLATFORM-CANDIDATE-2026-09-23.md) tracks the isolated source candidate, native process and launcher fixes, current checks, installer artifacts and distribution gates. The [earlier Windows preparation](WINDOWS-READINESS-2026-09-23.md) retains the previous installer and rejected timeout approach as dated evidence.
 
 Previous continuation: [Readiness and Modelvia gap fixes](READINESS-GAPS-2026-09-23.md) records 41 settled live API checks, actual-worker local failure paths, the readiness and provisioning fixes, bounded PDF bill reading, browser verification and the remaining account/device/deployment gates. These evidence layers do not establish universal readiness.
 
