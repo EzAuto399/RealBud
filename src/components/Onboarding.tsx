@@ -12,13 +12,14 @@ import {
 import { identifyEmail, setEmailGateDone, track } from "@/lib/analytics";
 import { isRecoveryWriteError } from "@/lib/api-error";
 import { createFirstRunApi, officeContactNamed } from "@/lib/first-run";
+import type { YouRecoveryTarget } from "@/lib/you-navigation";
 import type { OnboardingState } from '@shared/onboarding';
 import { api, useStore } from "@/state/store";
 import { MausAvatar } from "./Avatar";
 
 const SAMPLE_PROFILE_NAME = "Sample PM";
 
-type BusyState = "profile" | "finish" | null;
+type BusyState = "profile" | "finish" | "recovery" | "restore" | null;
 
 // First run establishes the person and leads directly into the same Bud
 // setup used in settings. Sample-only exploration remains available.
@@ -34,6 +35,7 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
   const [error, setError] = useState("");
   const [recoveryBlocked, setRecoveryBlocked] = useState(false);
   const edited = useRef(false);
+  const pending = useRef(false);
   const emailOk = !email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
   const canContinue = name.trim().length > 0 && emailOk && busy === null;
 
@@ -48,7 +50,8 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
   }, [step]);
 
   const advanceProfile = async (normalizedName: string, normalizedEmail: string) => {
-    if (busy !== null) return;
+    if (busy !== null || pending.current) return;
+    pending.current = true;
     setBusy("profile");
     setError("");
     setRecoveryBlocked(false);
@@ -66,6 +69,7 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "RealBud could not save your profile.");
     } finally {
+      pending.current = false;
       setBusy(null);
     }
   };
@@ -89,7 +93,8 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
   };
 
   const finish = async (destination: "desk" | "bud") => {
-    if (!name.trim() || busy !== null) return;
+    if (!name.trim() || busy !== null || pending.current) return;
+    pending.current = true;
     setBusy("finish");
     setError("");
     setRecoveryBlocked(false);
@@ -118,29 +123,34 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
         setError(cause instanceof Error ? cause.message : "RealBud could not save your office setup.");
       }
     } finally {
+      pending.current = false;
       if (!enteredDesk) setBusy(null);
     }
   };
 
-  const openRecovery = async () => {
-    setBusy('finish');
+  const openRecovery = async (target: YouRecoveryTarget = 'you-recovery') => {
+    if (busy !== null || pending.current) return;
+    pending.current = true;
+    setBusy(target === 'you-private-backup' ? 'restore' : 'recovery');
     try {
       setSaved(await createFirstRunApi(api).save(saved, 'recovery'));
-      location.hash = "you-recovery";
+      location.hash = target;
       dispatch({ type: "showYou" });
       onDone();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Your recovery choice could not be saved.');
-    } finally { setBusy(null); }
+    } finally { pending.current = false; setBusy(null); }
   };
 
   const back = async () => {
+    if (busy !== null || pending.current) return;
+    pending.current = true;
     setBusy('profile');
     try {
       setSaved(await createFirstRunApi(api).save(saved, 'profile'));
       setError(''); setRecoveryBlocked(false); setStep(0);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Your setup could not be saved.'); }
-    finally { setBusy(null); }
+    finally { pending.current = false; setBusy(null); }
   };
 
   const fieldClass =
@@ -335,6 +345,18 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
                 </div>
               </div>
             )}
+            <div className="mt-3 border-t border-line pt-3">
+              <button
+                type="button"
+                onClick={() => void openRecovery('you-private-backup')}
+                disabled={busy !== null}
+                className="pm-control flex w-full items-center justify-center gap-2 rounded border border-line px-3 text-[13px] font-medium text-ink-secondary hover:bg-raised/60 hover:text-ink disabled:opacity-40"
+              >
+                {busy === 'restore' ? <Loader2 size={15} className="animate-spin motion-reduce:animate-none" /> : <ShieldCheck size={15} />}
+                Restore a private backup
+              </button>
+              <p className="mt-1.5 text-center text-[12px] leading-relaxed text-ink-muted">Choose an encrypted backup and review it before restoring.</p>
+            </div>
           </section>
         </div>
       </main>

@@ -4,6 +4,7 @@ export function youHashTarget(hash: string): string | null {
     case "you-worker":
     case "attach-model": return "you-worker";
     case "you-recovery": return "you-recovery";
+    case "you-private-backup": return "you-private-backup";
     case "you-packs": return "you-packs";
     case "you-jobs": return "you-jobs";
     case "connected-apps":
@@ -17,6 +18,13 @@ export function youHashTarget(hash: string): string | null {
     case "you-service-admin": return "you-service-admin";
     default: return null;
   }
+}
+
+export type YouRecoveryTarget = 'you-recovery' | 'you-private-backup';
+
+/** Saved recovery reopens keys unless the operator explicitly chose backup restore. */
+export function youRecoveryTarget(hash: string): YouRecoveryTarget {
+  return youHashTarget(hash) === 'you-private-backup' ? 'you-private-backup' : 'you-recovery';
 }
 
 export function revealSettingsTarget(target: HTMLElement): void {
@@ -41,5 +49,5 @@ export function scrollYouTarget(id: string): void {
     top: Math.max(0, top),
     behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
   });
-  if (id === "you-website") target.focus({ preventScroll: true });
+  if (id === "you-website" || id === "you-private-backup") target.focus({ preventScroll: true });
 }

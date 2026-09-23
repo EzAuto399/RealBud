@@ -2,7 +2,7 @@ import { openDeskTasks } from "@/lib/desk-view-state";
 import { HumanHandoffPanel } from "@/components/HumanHandoffPanel";
 import { hasPropertyEdits } from "@/lib/property-edits";
 import { hasUnpersistedBillDrafts } from "@/lib/bill-review-drafts";
-import { youHashTarget } from "@/lib/you-navigation";
+import { youHashTarget, youRecoveryTarget } from "@/lib/you-navigation";
 import { NAVIGATION_CANCELLED } from "@/lib/navigation-guard";
 import { lazy, useEffect, useRef, useState } from "react";
 import { WorkspaceScreen } from "@/components/WorkspaceScreen";
@@ -229,7 +229,7 @@ function FirstRunGate() {
     setError('');
     void createFirstRunApi(api).read().then(next => {
       if (!active) return;
-      if (next.stage === 'recovery') location.hash = 'you-recovery';
+      if (next.stage === 'recovery') location.hash = youRecoveryTarget(location.hash);
       setSaved(next);
     }).catch(cause => { if (active) setError(cause instanceof Error ? cause.message : 'Your saved setup could not be checked.'); });
     return () => { active = false; };

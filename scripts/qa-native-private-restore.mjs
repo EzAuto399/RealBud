@@ -14,23 +14,52 @@ import { serviceSmokeEnv } from './service-smoke-env.mjs';
 import { serviceIdentity, findRunningService, SERVICE_PORTS } from '../electron/service-instance.mjs';
 import { availableServicePort, readServiceHandle, requestServiceStop } from '../electron/service-lifecycle.mjs';
 
-assert.ok(process.env.REALBUD_QA_RESOURCES && process.env.REALBUD_QA_EXECUTABLE && process.env.PLAYWRIGHT_MODULE, 'Set REALBUD_QA_RESOURCES, REALBUD_QA_EXECUTABLE and PLAYWRIGHT_MODULE.');
+const args = process.argv.slice(2);
+assert.ok(args.length === 0 || args.length === 1 && ['--reproduce-welcome-restore-block', '--welcome-restore'].includes(args[0]), 'Use no arguments for native restore, --welcome-restore for the visible welcome journey, or --reproduce-welcome-restore-block for expected-defect evidence only.');
+const reproduceWelcomeBlock = args[0] === '--reproduce-welcome-restore-block', welcomeRestore = args[0] === '--welcome-restore';
+const mode = reproduceWelcomeBlock ? 'expected-welcome-restore-block' : welcomeRestore ? 'welcome-private-restore' : 'native-private-restore';
+const welcomeSourceContact = 'Fictional Imported Office Contact';
+assert.ok(process.env.REALBUD_QA_RESOURCES && process.env.REALBUD_QA_EXECUTABLE && process.env.REALBUD_QA_PACKAGE_RECEIPT && process.env.PLAYWRIGHT_MODULE && process.env.QA_OUTPUT, 'Set REALBUD_QA_RESOURCES, REALBUD_QA_EXECUTABLE, REALBUD_QA_PACKAGE_RECEIPT, PLAYWRIGHT_MODULE and a new QA_OUTPUT.');
+const script = fileURLToPath(import.meta.url), root = resolve(dirname(script), '..');
+const output = resolve(process.env.QA_OUTPUT);
+mkdirSync(dirname(output), { recursive: true, mode: 0o700 });
+mkdirSync(output, { mode: 0o700 }); // Refuse existing evidence before creating any fixture or process.
+const hashFile = file => createHash('sha256').update(readFileSync(file)).digest('hex');
 const resources = realpathSync(resolve(process.env.REALBUD_QA_RESOURCES)), executable = realpathSync(resolve(process.env.REALBUD_QA_EXECUTABLE));
 for (const file of [executable, join(resources, 'app.asar'), join(resources, 'server/bootstrap.js'), join(resources, 'ui/index.html')]) assert.ok(statSync(file).isFile(), `Missing packaged file: ${file}`);
-const artifact = Object.fromEntries(['app.asar', 'server/bootstrap.js', 'ui/index.html'].map(file => [file, createHash('sha256').update(readFileSync(join(resources, file))).digest('hex')]));
+assert.equal(executable, realpathSync(join(resources, '..', 'MacOS', 'RealBud')), 'Use the executable belonging to these packaged resources.');
+const artifact = Object.fromEntries(['app.asar', 'server/bootstrap.js', 'ui/index.html'].map(file => [file, hashFile(join(resources, file))]));
+const packageReceiptPath = realpathSync(resolve(process.env.REALBUD_QA_PACKAGE_RECEIPT));
+const packageDirectory = dirname(packageReceiptPath), packageManifestPath = join(packageDirectory, 'manifest.json'), appManifestPath = join(packageDirectory, 'app-manifest.json');
+const packageReceipt = JSON.parse(readFileSync(packageReceiptPath, 'utf8')), packageManifest = JSON.parse(readFileSync(packageManifestPath, 'utf8')), appManifest = JSON.parse(readFileSync(appManifestPath, 'utf8'));
+assert.ok(packageReceipt.passed === true && packageReceipt.sourceUnchanged === true && /^[a-f0-9]{40}$/.test(packageReceipt.sourceRevision), 'A successful source-bound package receipt is required.');
+assert.equal(packageManifest.sourceRevision, packageReceipt.sourceRevision); assert.equal(appManifest.sourceRevision, packageReceipt.sourceRevision);
+assert.equal(realpathSync(appManifest.app), realpathSync(join(resources, '..', '..')));
+for (const [name, file] of [['package-receipt.json', packageReceiptPath], ['app-manifest.json', appManifestPath]]) {
+  const entries = packageManifest.files.filter(item => item.path === name);
+  assert.equal(entries.length, 1); assert.equal(entries[0].kind, 'file');
+  assert.equal(entries[0].bytes, statSync(file).size); assert.equal(entries[0].sha256, hashFile(file));
+}
+for (const [name, file] of [['Contents/MacOS/RealBud', executable], ...Object.keys(artifact).map(name => [`Contents/Resources/${name}`, join(resources, name)])]) {
+  const entries = appManifest.files.filter(item => item.path === name);
+  assert.equal(entries.length, 1); assert.equal(entries[0].kind, 'file');
+  assert.equal(entries[0].bytes, statSync(file).size); assert.equal(entries[0].sha256, hashFile(file));
+}
+const provenance = { sourceRevision: packageReceipt.sourceRevision, packageReceipt: { path: packageReceiptPath, sha256: hashFile(packageReceiptPath) },
+  packageManifestSha256: hashFile(packageManifestPath), appManifestSha256: hashFile(appManifestPath), executableSha256: hashFile(executable),
+  harnessSha256: hashFile(script), sourceHelpers: Object.fromEntries(['scripts/service-smoke-env.mjs', 'electron/service-instance.mjs', 'electron/service-lifecycle.mjs', 'shared/service-identity.mjs'].map(file => [file, hashFile(join(root, file))])) };
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const output = resolve(process.env.QA_OUTPUT || join(root, 'outputs/native-private-restore-2026-09-21'));
 const scratch = mkdtempSync(join(realpathSync(tmpdir()), 'RealBud native restore '));
 const source = join(scratch, 'source'), data = join(scratch, 'target'), userData = join(scratch, 'electron');
-for (const dir of [source, data, userData, output]) mkdirSync(dir, { recursive: true, mode: 0o700 });
+for (const dir of [source, data, userData]) mkdirSync(dir, { recursive: true, mode: 0o700 });
 for (const dir of [source, data]) writeFileSync(join(dir, 'config.json'), JSON.stringify({ instances: { fixture: { driver: 'not-a-real-driver' } } }), { mode: 0o600 });
 writeFileSync(join(userData, 'cua-human-pause.json'), JSON.stringify({ version: 1, paused: true }), { mode: 0o600 });
-const delay = ms => new Promise(r => setTimeout(r, ms)), checks = [], errors = [], identity = serviceIdentity(data);
+const delay = ms => new Promise(r => setTimeout(r, ms)), checks = [], errors = [], onboardingFixture = [], identity = serviceIdentity(data);
 const pass = label => { checks.push(label); console.log(`PASS ${label}`); };
 const servicePids = new Set();
 const exited = pid => { try { process.kill(pid, 0); return false; } catch (error) { return error.code === 'ESRCH'; } };
-let sourceChild, targetChild, nativeChild, seedChild, inspector, browser, page, failure, sourceLog = '', nativeLog = '', origin, token, sourceToken, sourceOrigin, runtime, keyProof;
+let sourceChild, targetChild, nativeChild, seedChild, inspector, browser, page, failure, sourceLog = '', nativeLog = '', origin, token, sourceToken, sourceOrigin, runtime, keyProof, reproduction, welcomeJourney;
+let welcomeAgencyWrites = 0;
 async function until(fn, label, timeout = 30000) {
   const end = Date.now() + timeout;
   while (Date.now() < end) { const result = await fn(); if (result) return result; await delay(100); }
@@ -57,6 +86,7 @@ async function protocol(url) {
   };
 }
 async function api(path, method = 'GET', body, status = 200, sourceRequest = false) {
+  if (welcomeRestore && !sourceRequest && ['/api/onboarding', '/api/desk/agency'].includes(path)) assert.equal(method, 'GET', 'The visible welcome journey cannot use a target onboarding or agency API fixture.');
   const response = await fetch((sourceRequest ? sourceOrigin : origin) + path, { method, signal: AbortSignal.timeout(30000), headers: { 'content-type': 'application/json', 'x-realbud-session': sourceRequest ? sourceToken : token }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const value = await response.json(); assert.equal(response.status, status, `${path}: ${JSON.stringify(value)}`); return value;
 }
@@ -64,6 +94,21 @@ async function sessionToken() {
   token = (await (await fetch(origin + '/api/session')).json()).token;
   const handle = readServiceHandle(data, identity.instanceId);
   if (handle) servicePids.add(handle.pid);
+}
+async function prepareBackupOnboarding(label) {
+  // The visible welcome writes the office contact and makes the sample book
+  // nonfresh. Reuse the scoped backup-QA setup API without changing that book;
+  // this prepares the fixture and does not claim visible onboarding acceptance.
+  let setup = await api('/api/onboarding');
+  const initialStage = setup.stage;
+  assert.ok(['profile', 'office-rules', 'complete'].includes(initialStage));
+  for (const stage of ['office-rules', 'complete']) {
+    if (setup.stage === 'complete') break;
+    setup = await api('/api/onboarding', 'PUT', { expectedScope: setup.scope, expectedRevision: setup.revision, stage });
+    assert.equal(setup.stage, stage);
+  }
+  assert.equal((await api('/api/onboarding')).stage, 'complete');
+  onboardingFixture.push({ label, method: 'authoritative-scoped-api-fixture', initialStage, finalStage: 'complete', visibleWelcomeTested: false });
 }
 async function protectedDigest() {
   return inspector.evaluate(`(() => { const fs = process.getBuiltinModule('node:fs'), crypto = process.getBuiltinModule('node:crypto'); const key = require('electron').safeStorage.decryptString(fs.readFileSync(${JSON.stringify(join(data, 'desk.key.wrap'))})); return crypto.createHash('sha256').update(key).digest('hex'); })()`);
@@ -80,9 +125,7 @@ async function captureBackupContext(panel, name) {
   });
   await page.screenshot({ path: join(output, name) });
 }
-try {
-  const nativePort = await availableServicePort(SERVICE_PORTS);
-  assert.notEqual(nativePort, null, 'Native service needs one unused supported port; never stop another workspace.');
+async function prepareSourceBackup() {
   // Prepare a source backup with a distinct key using the same compiled app.
   const server = createServer(); server.listen(0, '127.0.0.1'); await once(server, 'listening'); const sourcePort = server.address().port; await new Promise(r => server.close(r));
   sourceOrigin = `http://127.0.0.1:${sourcePort}`;
@@ -160,9 +203,131 @@ try {
   }, 200, true)).draft;
   const original = Buffer.from('\uFEFFDate,Amount,Narrative,Reference\r\n2026-09-21,45.67,"Native café 🏡","KEEP"\r\n');
   const batch = await api('/api/bank-reference', 'POST', { source: { filename: 'fictional-native.csv', bytesBase64: original.toString('base64') }, columns: { date: 'Date', amount: 'Amount', narrative: 'Narrative', reference: 'Reference' }, dateFormat: 'YYYY-MM-DD', rules: [] }, 200, true);
+  if (welcomeRestore) assert.equal((await api('/api/desk/agency', 'PATCH', { office: { pmUser: welcomeSourceContact } }, 200, true)).book.office.pmUser, welcomeSourceContact);
   const passphrase = 'Fictional native restore phrase 2026';
   const exported = await api('/api/private-backup/export', 'POST', { passphrase }, 200, true);
   await stopChild(sourceChild);
+  return { sourceKey, propertyId, billFixture, draftRequest, retainedDraft, original, batch, passphrase, exported };
+}
+async function reproduceWelcomeRestoreBlock() {
+  let backupMutations = 0;
+  const countBackupMutation = request => { if (new URL(request.url()).pathname.startsWith('/api/private-backup') && request.method() !== 'GET') backupMutations++; };
+  page.on('request', countBackupMutation);
+  await page.goto(origin + '/#/you');
+  await page.getByRole('heading', { name: 'Make the desk yours', exact: true }).waitFor();
+  const before = await api('/api/private-backup'), beforeBook = await api('/api/desk');
+  assert.equal((await api('/api/onboarding')).stage, 'profile');
+  assert.equal(before.canRestore, true); assert.equal(beforeBook.mode, 'demo'); assert.equal(beforeBook.revision, 1);
+  assert.equal(await page.getByRole('region', { name: 'Private workspace backup', exact: true }).count(), 0, 'Fresh welcome blocks the direct backup route.');
+  assert.equal(await page.getByRole('button', { name: /restore.*backup|backup.*restore/i }).count(), 0, 'This selected package has no welcome restore entry.');
+  await page.screenshot({ path: join(output, 'welcome-before-completion.png') });
+  await page.getByRole('button', { name: 'Explore the sample desk', exact: true }).click();
+  await page.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor();
+  assert.equal((await api('/api/private-backup')).canRestore, true, 'Saving the sample profile alone must not be mistaken for the book mutation.');
+  await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
+  await page.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor({ state: 'hidden' });
+  await page.getByRole('heading', { name: 'You', exact: true }).waitFor();
+  assert.equal((await api('/api/onboarding')).stage, 'complete');
+  const after = await api('/api/private-backup'), afterBook = await api('/api/desk');
+  const refusal = 'Restore requires a fresh workspace with only its untouched sample book. Existing private work is kept.';
+  assert.equal(after.canRestore, false); assert.equal(after.reason, refusal);
+  assert.ok(afterBook.revision > beforeBook.revision); assert.equal(afterBook.book.office.pmUser, 'Sample PM');
+  await page.goto(origin + '/#/you');
+  await page.locator('details#you-advanced > summary').click();
+  const panel = page.getByRole('region', { name: 'Private workspace backup', exact: true }); await panel.waitFor();
+  await panel.getByText(refusal, { exact: true }).waitFor();
+  await captureBackupContext(panel, 'welcome-after-completion-restore-blocked.png');
+  assert.equal(backupMutations, 0); assert.deepEqual(onboardingFixture, []); assert.deepEqual(errors, []);
+  page.off('request', countBackupMutation);
+  reproduction = { expectedDefect: true, productAcceptance: false, before: { canRestore: before.canRestore, bookRevision: beforeBook.revision, welcomeVisible: true, backupRouteHidden: true },
+    after: { canRestore: after.canRestore, bookRevision: afterBook.revision, onboardingStage: 'complete', reason: after.reason, refusalVisible: true },
+    visibleActions: ['Explore the sample desk', 'Open the sample desk first'], restoreInvoked: false, backupMutationRequests: backupMutations, apiOnboardingFixtureUsed: false };
+  console.log('OBSERVED expected welcome-to-restore blockage; this is defect reproduction, not product acceptance.');
+}
+async function welcomeFreshness(label, firstDigest, wrappedDigest) {
+  const status = await api('/api/private-backup'), snapshot = await api('/api/desk');
+  assert.equal(snapshot.mode, 'demo', label); assert.equal(snapshot.revision, 1, label);
+  assert.equal(status.canRestore, true, label); assert.equal(status.staged, false, label);
+  assert.equal(await protectedDigest(), firstDigest, label); assert.equal(hashFile(join(data, 'desk.key.wrap')), wrappedDigest, label);
+  assert.equal(existsSync(join(data, 'desk.key')), false, label); assert.equal(welcomeAgencyWrites, 0, label);
+  assert.deepEqual(onboardingFixture, [], label);
+  welcomeJourney.freshness.push({ label, mode: snapshot.mode, revision: snapshot.revision, canRestore: status.canRestore, staged: status.staged, keyPreserved: true, agencyWrites: 0 });
+}
+async function captureWelcomeEntry(width, height, name) {
+  await page.setViewportSize({ width, height });
+  const entry = page.getByRole('button', { name: 'Restore a private backup', exact: true });
+  await entry.scrollIntoViewIfNeeded(); assert.equal(await entry.isEnabled(), true);
+  const bounds = await entry.boundingBox(); assert.ok(bounds && bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= width + 1 && bounds.y + bounds.height <= height + 1);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'Welcome has no horizontal overflow.');
+  await page.screenshot({ path: join(output, name) });
+  welcomeJourney.viewports.push({ width, height, entryVisible: true, horizontalOverflow: false });
+}
+async function prepareWelcomeRestore(exported, firstDigest) {
+  const wrappedDigest = hashFile(join(data, 'desk.key.wrap'));
+  welcomeJourney = { method: 'visible-welcome-and-backup-ui', targetOnboardingApiFixtureUsed: false, freshness: [], viewports: [] };
+  page.on('request', request => { if (new URL(request.url()).pathname === '/api/desk/agency' && request.method() !== 'GET') welcomeAgencyWrites++; });
+  await page.goto(origin + '/');
+  await page.getByRole('heading', { name: 'Make the desk yours', exact: true }).waitFor();
+  assert.equal((await api('/api/onboarding')).stage, 'profile');
+  await welcomeFreshness('before-welcome-entry', firstDigest, wrappedDigest);
+  await captureWelcomeEntry(1440, 1050, 'welcome-restore-entry-desktop.png');
+  await captureWelcomeEntry(390, 844, 'welcome-restore-entry-390.png');
+  await page.getByRole('button', { name: 'Restore a private backup', exact: true }).click();
+  await page.waitForURL(url => url.hash === '#you-private-backup');
+  const panel = page.getByRole('region', { name: 'Private workspace backup', exact: true }); await panel.waitFor();
+  assert.equal((await api('/api/onboarding')).stage, 'recovery');
+  await welcomeFreshness('after-visible-entry', firstDigest, wrappedDigest);
+  await page.reload(); await panel.waitFor();
+  assert.equal(new URL(page.url()).hash, '#you-private-backup'); assert.equal(await page.locator('details#you-advanced').evaluate(element => element.open), true);
+  assert.equal((await api('/api/onboarding')).stage, 'recovery');
+  await welcomeFreshness('after-backup-route-reload', firstDigest, wrappedDigest);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'Backup entry has no 390px horizontal overflow.');
+  await captureBackupContext(panel, 'welcome-restore-reloaded-390.png');
+  await page.setViewportSize({ width: 1440, height: 1050 });
+  pass('Visible welcome restore entry is reachable at desktop and 390px; recovery and the backup deep link survive reload without changing fresh book or key custody');
+  await panel.getByLabel('Encrypted private backup file', { exact: true }).setInputFiles({ name: exported.filename, mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(exported.backup)) });
+  await panel.getByLabel('Restore private backup passphrase', { exact: true }).fill('Incorrect fictional restore passphrase');
+  await panel.getByRole('button', { name: 'Preview private backup contents', exact: true }).click();
+  const progress = panel.getByRole('region', { name: 'Selected backup progress', exact: true });
+  await progress.getByText('The backup could not be opened with that passphrase. Check it and try again.', { exact: true }).waitFor();
+  const failedUploads = (await api('/api/private-backup/v2/operations?limit=20')).items.filter(item => item.kind === 'upload');
+  assert.equal(failedUploads.length, 1); assert.equal(failedUploads[0].phase, 'failed'); assert.equal(failedUploads[0].error?.code, 'incorrect-passphrase');
+  assert.equal(failedUploads[0].canCancel, true);
+  await welcomeFreshness('after-wrong-passphrase', firstDigest, wrappedDigest);
+  await progress.screenshot({ path: join(output, 'welcome-restore-wrong-passphrase.png') });
+  pass('A wrong backup passphrase produces the visible refusal and preserves revision 1, restore availability and the same protected target key');
+  await progress.getByRole('button', { name: 'Remove temporary copy', exact: true }).click();
+  await progress.getByRole('heading', { name: 'Removed', exact: true }).waitFor();
+  await panel.getByText('Temporary backup files removed. Your workspace records and original file are unchanged.', { exact: true }).waitFor();
+  const cancelled = (await api('/api/private-backup/v2/operations?limit=20')).items.find(item => item.id === failedUploads[0].id);
+  assert.equal(cancelled?.phase, 'cancelled'); assert.equal(cancelled.canCancel, false);
+  await welcomeFreshness('after-remove-temporary-copy', firstDigest, wrappedDigest);
+  await progress.screenshot({ path: join(output, 'welcome-restore-cancelled.png') });
+  welcomeJourney.cancelledUploadId = cancelled.id;
+  pass('Remove temporary copy cancels the failed upload through the real UI while the original fresh workspace remains restorable');
+  return { panel, wrappedDigest };
+}
+async function finishRestoredWelcome() {
+  const before = await api('/api/desk'); assert.equal(before.book.office.pmUser, welcomeSourceContact);
+  assert.equal((await api('/api/onboarding')).stage, 'profile', 'Restored workspace identity requires its own visible welcome.');
+  await page.getByRole('heading', { name: 'Make the desk yours', exact: true }).waitFor();
+  await page.getByLabel('Your name', { exact: true }).fill('Fictional Restore Operator');
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await page.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
+  await page.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor({ state: 'hidden' });
+  await page.getByRole('heading', { name: 'You', exact: true }).waitFor();
+  assert.equal((await api('/api/onboarding')).stage, 'complete');
+  const after = await api('/api/desk'); assert.equal(after.book.office.pmUser, welcomeSourceContact); assert.equal(after.revision, before.revision);
+  assert.equal(welcomeAgencyWrites, 0); assert.deepEqual(onboardingFixture, []);
+  const status = await api('/api/private-backup'); assert.equal(status.canRestore, false); assert.equal(status.staged, false);
+  welcomeJourney.postRestore = { visibleWelcomeCompleted: true, restoredOfficeContactPreserved: true, bookRevisionPreserved: true, agencyWrites: 0, canRestore: status.canRestore, staged: status.staged };
+  pass('After native restore, the actual visible welcome completes for the imported workspace without overwriting its named office contact or changing its book revision');
+}
+async function runScenario() {
+  const nativePort = await availableServicePort(SERVICE_PORTS);
+  assert.notEqual(nativePort, null, 'Native service needs one unused supported port; never stop another workspace.');
+  const { sourceKey, propertyId, billFixture, draftRequest, retainedDraft, original, batch, passphrase, exported } = reproduceWelcomeBlock ? {} : await prepareSourceBackup();
   // Adopt a deliberately prestarted child first. Native startup therefore does
   // not touch safeStorage before the inspector installs its test boundary.
   const targetKey = randomBytes(32), controlToken = randomBytes(32).toString('hex');
@@ -206,20 +371,32 @@ try {
   await page.waitForURL(origin + '/**'); await sessionToken();
   assert.ok((await ipc('serviceStatus')).manageable); assert.equal((await api('/api/private-backup')).canRestore, true);
   assert.equal(existsSync(join(data, 'desk.key.wrap')), false, 'Adoption must avoid calling the real OS keychain before the fixture is installed');
-  const firstDigest = createHash('sha256').update(targetKey.toString('hex')).digest('hex'); assert.notEqual(firstDigest, createHash('sha256').update(sourceKey.toString('hex')).digest('hex'));
   assert.equal((await ipc('serviceStatus')).adopted, true);
   pass('Actual packaged app and preload adopt the isolated target service before the safeStorage fixture is installed');
+  if (reproduceWelcomeBlock) { await reproduceWelcomeRestoreBlock(); return; }
+  const firstDigest = createHash('sha256').update(targetKey.toString('hex')).digest('hex'); assert.notEqual(firstDigest, createHash('sha256').update(sourceKey.toString('hex')).digest('hex'));
   const firstPid = (await api('/api/health')).pid;
   const stopped = await ipc('serviceStop'); assert.equal(stopped.ok, true); assert.equal(stopped.status.running, false);
   const started = await ipc('serviceStart'); assert.equal(started.ok, true); assert.equal(started.status.running, true); await sessionToken();
   assert.notEqual((await api('/api/health')).pid, firstPid); assert.equal(await protectedDigest(), firstDigest); assert.equal(existsSync(join(data, 'desk.key')), false);
   pass('Real preload stop/start migrates existing custody to the mocked protected store and preserves the same key without a plaintext key file');
-  await context.addInitScript(() => localStorage.setItem('realbud.first-run-done', '1'));
-  await page.goto(origin + '/#/you'); await page.reload(); await page.locator('details#you-advanced > summary').click();
-  const panel = page.getByRole('region', { name: 'Private workspace backup', exact: true }); await panel.waitFor();
+  let panel, welcomeWrappedDigest;
+  if (welcomeRestore) ({ panel, wrappedDigest: welcomeWrappedDigest } = await prepareWelcomeRestore(exported, firstDigest));
+  else {
+    await prepareBackupOnboarding('fresh-restore-target');
+    assert.equal((await api('/api/private-backup')).canRestore, true, 'Onboarding fixture setup must preserve the fresh restore target.');
+    await page.goto(origin + '/#/you'); await page.reload(); await page.locator('details#you-advanced > summary').click();
+    panel = page.getByRole('region', { name: 'Private workspace backup', exact: true }); await panel.waitFor();
+  }
   await panel.getByLabel('Encrypted private backup file', { exact: true }).setInputFiles({ name: exported.filename, mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(exported.backup)) });
   await panel.getByLabel('Restore private backup passphrase', { exact: true }).fill(passphrase); await panel.getByRole('button', { name: 'Preview private backup contents', exact: true }).click();
   const preview = panel.getByRole('region', { name: 'Private backup preview', exact: true }); await preview.waitFor();
+  if (welcomeRestore) {
+    const reviewed = (await api('/api/private-backup/v2/operations?limit=20')).items.filter(item => item.kind === 'upload' && item.phase === 'reviewed');
+    assert.equal(reviewed.length, 1); assert.notEqual(reviewed[0].id, welcomeJourney.cancelledUploadId); welcomeJourney.reviewedUploadId = reviewed[0].id;
+    assert.equal(await preview.getByRole('button', { name: 'Stage reviewed restore', exact: true }).isDisabled(), true);
+    await welcomeFreshness('after-correct-reupload-preview', firstDigest, welcomeWrappedDigest);
+  }
   await preview.getByLabel('I checked this backup', { exact: false }).check(); await preview.getByRole('button', { name: 'Stage reviewed restore', exact: true }).click();
   await panel.getByText('Restore staged — restart required', { exact: true }).waitFor(); const staged = await api('/api/private-backup');
   await panel.screenshot({ path: join(output, 'native-restore-staged.png') });
@@ -241,6 +418,8 @@ try {
   assert.deepEqual(completedStatus.completed, receipt, 'Completed API status must match the durable restore receipt');
   assert.equal((await api('/api/loops')).loops.some(loop => loop.enabled), false);
   pass('Native Restore restart button performs real preload/main IPC and cold bootstrap, preserving target custody and exact restored bank bytes');
+  if (welcomeRestore) await finishRestoredWelcome();
+  else { await prepareBackupOnboarding('restored-workspace'); await page.reload(); }
   const restoredBill = await api(`/api/bill-occurrences/${billFixture.occurrence.id}`);
   assert.deepEqual(restoredBill.occurrence, billFixture.occurrence); assert.deepEqual(restoredBill.originSeries, billFixture.series);
   assert.deepEqual((await api(`/api/bill-occurrences/by-source/${billFixture.oldIdentity}`)).occurrence, billFixture.occurrence);
@@ -272,7 +451,7 @@ try {
   assert.equal(calls,0); assert.deepEqual(database.get('bill-proposal',saved.id),saved);
 } finally {database.close();}
 `, { mode: 0o600 });
-  seedError = '';
+  let seedError = '';
   seedChild = spawn(executable, [proposalProbe], { cwd: resources, env: { ...serviceSmokeEnv({ executable, home: scratch, data, scratch, port: nativePort }), REALBUD_DESK_KEY: targetKey.toString('hex') }, stdio: ['ignore', 'ignore', 'pipe'] });
   seedChild.stderr.on('data', bytes => { seedError = (seedError + bytes).slice(-10000); });
   await until(() => seedChild.exitCode !== null || seedChild.signalCode, 'compiled restored proposal probe');
@@ -351,8 +530,11 @@ try {
   assert.deepEqual(readFileSync(quarantine), held); assert.deepEqual(readFileSync(join(data, 'desk.key')), staleKey);
   pass('Native restart prefers the current restored book over a stale quarantine and retains the alternative recovery key and bytes');
   keyProof = { sameTargetKeyAcrossThreeRestarts: true, sourceKeyDifferent: true, afterMigrationAndRestorePlaintextKeyAbsent: true, alternativeRecoveryKeyPreserved: true, fixtureCalls: await inspector.evaluate('globalThis.__realbudCustodyFixture()') };
+  if (welcomeRestore) { assert.equal(welcomeAgencyWrites, 0); assert.deepEqual(onboardingFixture, []); }
   assert.deepEqual(errors, []);
-} catch (error) { failure = error.stack || String(error); console.error(failure); process.exitCode = 1; await page?.screenshot({ path: join(output, 'failure.png'), fullPage: true }).catch(() => {}); }
+}
+try { await runScenario(); }
+catch (error) { failure = error.stack || String(error); console.error(failure); process.exitCode = 1; await page?.screenshot({ path: join(output, 'failure.png'), fullPage: true }).catch(() => {}); }
 finally {
   // Stop only the matching service recorded in this disposable directory.
   const handle = readServiceHandle(data, identity.instanceId);
@@ -366,7 +548,7 @@ finally {
     // checks existence; never send a termination signal to a recorded PID.
     await until(async () => [...servicePids].every(exited) && !(await findRunningService(identity)), 'all owned native service processes exited', 12000);
     cleanup.serviceProcessesExited = true;
-    rmSync(scratch, { recursive: true, force: true }); cleanup.scratchRemoved = true;
+    if (!failure) { rmSync(scratch, { recursive: true, force: true }); cleanup.scratchRemoved = true; }
   } catch { failure ||= 'Fixture service termination could not be verified; disposable directory retained for recovery.'; process.exitCode = 1; }
-  writeFileSync(join(output, 'receipt.json'), JSON.stringify({ at: new Date().toISOString(), passed: !failure, executable, resources, artifact, runtime, checks, errors, keyProof, cleanup, limitations: ['Actual packaged Mac runtime, main, native preload IPC, detached service, bootstrap and UI', 'safeStorage is an in-memory AES fixture; OS Keychain/DPAPI protection and keychain prompts are not tested', 'Only fictional isolated data and allowlisted process environment without provider credentials; renderer and Electron requests are guarded after attachment, not process-wide network isolation', 'Unsigned local package; not customer installation, Windows or reboot survival'], failure, ...(failure ? { diagnostics: { sourceLog, nativeLog, retainedDirectory: cleanup.scratchRemoved ? null : scratch } } : {}) }, null, 2));
+  writeFileSync(join(output, 'receipt.json'), JSON.stringify({ at: new Date().toISOString(), mode, passed: !reproduceWelcomeBlock && !failure, ...(reproduceWelcomeBlock ? { reproductionMatched: !failure, productAcceptance: false, reproduction } : {}), executable, resources, artifact, provenance, runtime, checks, errors, keyProof, onboardingFixture, welcomeJourney, cleanup, limitations: ['Actual packaged Mac runtime, main, native preload IPC, detached service, bootstrap and UI', 'safeStorage is an in-memory AES fixture; OS Keychain/DPAPI protection and keychain prompts are not tested', reproduceWelcomeBlock ? 'Expected-defect reproduction only: visible sample onboarding is exercised without restoring a backup; a matched reproduction is not a product pass' : welcomeRestore ? 'Visible welcome, backup cancellation, passphrase refusal, reviewed restore and postrestore welcome use the real UI; source data is fictional and no target onboarding API fixture is used' : 'Scoped onboarding API calls prepare fictional backup fixtures; visible welcome acceptance is not tested here', 'Only fictional isolated data and allowlisted process environment without provider credentials; renderer and Electron requests are guarded after attachment, not process-wide network isolation', 'Signing and notarization are separate package evidence; this is not customer installation, an older-version upgrade, Windows or reboot survival'], failure, ...(failure ? { diagnostics: { sourceLog, nativeLog, retainedDirectory: cleanup.scratchRemoved ? null : scratch } } : {}) }, null, 2), { flag: 'wx', mode: 0o600 });
 }

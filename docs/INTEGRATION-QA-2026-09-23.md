@@ -1,5 +1,7 @@
 # RealBud integration QA — 23 September 2026
 
+Latest continuation: [24 September platform follow-up](PLATFORM-FOLLOWUP-2026-09-24.md) records a native welcome/restore limitation in the sealed `689dfc60` kit, its source fix and additional packaged-runtime proof. This document retains the original source-bound results.
+
 Mac and Windows installer candidates and their build/test guides are prepared. The selected Mac two-instance rehearsal passes; installed Windows office-host setup remains unproved. This checkpoint extends the [platform candidate](PLATFORM-CANDIDATE-2026-09-23.md) with disposable setup, team and website checks. It does not establish Windows 11 physical-device acceptance, two-person/two-device office acceptance, authenticated hosted integration, paid workflow success, or public release readiness. An unrun row is not a pass.
 
 ## Selected refreshed packages

@@ -2,6 +2,8 @@
 // Two real compiled services, existing PostgreSQL 16, fictional users only.
 // Reuses the mature test-kit launcher; never builds, installs, or calls a model.
 // Usage (Node 24): --resources PATH --postgres-bin PATH --resource-proof FILE --output NEW_DIR
+// Opt in with --runtime packaged-electron when invoking the selected Mac app
+// executable with ELECTRON_RUN_AS_NODE=1. The default is standalone-node.
 // resource-proof is an independently prepared archive/resource SHA256 inventory;
 // its source attribution remains separate from this script's current Git HEAD.
 import { spawn, execFileSync } from 'node:child_process';
@@ -17,18 +19,32 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const options = {};
 for (let index = 2; index < process.argv.length; index += 2) {
   const key = process.argv[index]; const value = process.argv[index + 1];
-  if (!['--resources', '--postgres-bin', '--resource-proof', '--output'].includes(key) || !value || options[key]) {
-    throw new Error('Provide each required path once: --resources --postgres-bin --resource-proof --output.');
+  if (!['--resources', '--postgres-bin', '--resource-proof', '--output', '--runtime'].includes(key) || !value || value.startsWith('--') || options[key] !== undefined) {
+    throw new Error('Provide each required path once: --resources --postgres-bin --resource-proof --output; optional --runtime standalone-node|packaged-electron.');
   }
-  options[key] = resolve(value);
+  options[key] = key === '--runtime' ? value : resolve(value);
 }
 for (const key of ['--resources', '--postgres-bin', '--resource-proof', '--output']) {
   if (!options[key]) throw new Error(`Missing ${key}.`);
 }
-if (process.versions.node.split('.')[0] !== '24' || process.versions.electron) throw new Error('Run this compiled-service rehearsal with standalone Node 24.');
+const runtimeMode = options['--runtime'] ?? 'standalone-node';
+if (!['standalone-node', 'packaged-electron'].includes(runtimeMode)) throw new Error('Unknown rehearsal runtime.');
+const packagedElectron = runtimeMode === 'packaged-electron';
+if (process.versions.node.split('.')[0] !== '24') throw new Error('This compiled-service rehearsal requires Node 24.');
+if (packagedElectron) {
+  if (!process.versions.electron || process.platform !== 'darwin' || process.arch !== 'arm64' || process.env.ELECTRON_RUN_AS_NODE !== '1') {
+    throw new Error('Packaged mode requires the selected macOS arm64 Electron executable with ELECTRON_RUN_AS_NODE=1.');
+  }
+} else if (process.versions.electron || process.env.ELECTRON_RUN_AS_NODE !== undefined) {
+  throw new Error('Electron requires explicit --runtime packaged-electron; standalone mode must not set ELECTRON_RUN_AS_NODE.');
+}
 if (process.platform === 'win32') throw new Error('This launcher supervisor currently verifies POSIX process-group cleanup; native Windows two-instance proof is separate.');
 const resources = await realpath(options['--resources']);
 const pgBin = await realpath(options['--postgres-bin']);
+const executable = await realpath(process.execPath);
+if (packagedElectron && executable !== await realpath(join(resources, '..', 'MacOS', 'RealBud'))) {
+  throw new Error('The Electron executable must belong to the selected app Resources.');
+}
 const output = options['--output'];
 const launcher = join(root, 'scripts/start-test-lab.mjs');
 const script = fileURLToPath(import.meta.url);
@@ -75,6 +91,8 @@ for (const name of ['postgres', 'initdb', 'pg_ctl']) await access(join(pgBin, na
 const postgres = execFileSync(join(pgBin, 'postgres'), ['--version'], { encoding: 'utf8', timeout: 3000 }).trim();
 check(/PostgreSQL\) 16\./.test(postgres), 'Installed PostgreSQL 16 is required.');
 const sourceHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', timeout: 3000 }).trim();
+const runtime = { mode: runtimeMode, node: process.versions.node, electron: process.versions.electron ?? null,
+  executable, executableSha256: await hash(executable) };
 await mkdir(dirname(output), { recursive: true });
 await mkdir(output, { mode: 0o700 }); // Deliberately refuses an existing receipt directory.
 await writeFile(join(output, 'resource-proof.json'), proofBytes, { flag: 'wx', mode: 0o600 });
@@ -137,7 +155,8 @@ async function capturePostgres(context) {
 async function start(role) {
   stage = `start-${role}`;
   const env = { PATH: dirname(process.execPath), HOME: scratch, USERPROFILE: scratch, TMPDIR: scratch, TMP: scratch, TEMP: scratch,
-    REALBUD_TEST_RESOURCES: resources, REALBUD_TEST_POSTGRES_BIN: pgBin, REALBUD_TEST_LAB_ROOT: scratch, LANG: 'C', LC_ALL: 'C' };
+    REALBUD_TEST_RESOURCES: resources, REALBUD_TEST_POSTGRES_BIN: pgBin, REALBUD_TEST_LAB_ROOT: scratch, LANG: 'C', LC_ALL: 'C',
+    ...(packagedElectron ? { REALBUD_TEST_RUNTIME: 'packaged-electron', ELECTRON_RUN_AS_NODE: '1' } : {}) };
   const child = spawn(process.execPath, [launcher, role], { env, cwd: root, detached: true, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
   const context = { role, child, startedAt: Date.now(), ports: new Set(), appToken: '', memberToken: '', adminToken: '' };
   children.add(context); child.stderr.resume(); // Never copy service logs or credential-bearing responses into evidence.
@@ -357,16 +376,21 @@ try {
   }
   const passedRun = !failure && cleanupErrors.length === 0 && cleanupComplete && checks.length === 14;
   const receipt = { schema: 1, passed: passedRun, startedAt, completedAt: new Date().toISOString(),
-    platform: process.platform, arch: process.arch, osRelease: release(), node: process.version, postgres,
+    platform: process.platform, arch: process.arch, osRelease: release(), node: process.version, postgres, runtime,
     sources: { harnessHead: sourceHead, harnessSha256: await hash(script), launcherSha256: await hash(launcher),
       resources, resourcesSourceRevision: proof.sourceRevision, resourceFilesVerified: proof.files.length,
       resourceProof: 'resource-proof.json', resourceProofSha256: createHash('sha256').update(proofBytes).digest('hex'),
       sourceAttribution: proof.sourceAttribution },
-    proofLayer: 'Two independent compiled RealBud HTTP services under standalone Node 24, actual pinned TLS and native PostgreSQL on this host',
-    twoPhysicalDevices: false, installedElectronRuntime: false, renderedUI: false, liveAccounts: false, simulatedOS: false,
+    proofLayer: packagedElectron
+      ? 'Two independent compiled RealBud HTTP services under the selected packaged Electron-as-Node executable, actual pinned TLS and native PostgreSQL on this host'
+      : 'Two independent compiled RealBud HTTP services under standalone Node 24, actual pinned TLS and native PostgreSQL on this host',
+    twoPhysicalDevices: false, installedElectronRuntime: false, packagedElectronAsNode: packagedElectron,
+    installedApplicationLifecycle: false, renderedUI: false, liveAccounts: false, simulatedOS: false,
     limits: [
       'This is one machine with two isolated private profiles, not physical two-device or cross-platform acceptance.',
-      'The existing launcher uses standalone Node 24; this run does not verify the packaged Electron executable or rendered UI.',
+      packagedElectron
+        ? 'The packaged executable runs in Electron-as-Node mode; this does not verify app installation, GUI windows, or the normal Electron application lifecycle.'
+        : 'The existing launcher uses standalone Node 24; this run does not verify the packaged Electron executable or rendered UI.',
       'The company TLS listener binds 0.0.0.0 on an ephemeral port; every test request targets loopback and cleanup checks that listener closes.',
       'Owner invitation issuance authorizes local enrollment; ownership transfer separately requires recipient acceptance. No live website, identity provider, or customer account is used.',
       'Invitation expiry, multi-office isolation, crash/lost-response recovery, and concurrent database races remain separate integration and physical-device cases.',

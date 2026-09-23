@@ -30,6 +30,7 @@ internal static class RestrictedQaProcess {
     }
     [StructLayout(LayoutKind.Sequential)] struct StartupInfoEx { public StartupInfo Startup; public IntPtr Attributes; }
     [StructLayout(LayoutKind.Sequential)] struct ProcessInfo { public IntPtr Process, Thread; public uint ProcessId, ThreadId; }
+    [StructLayout(LayoutKind.Sequential)] struct AclSize { public uint Count, Used, Free; }
     sealed class NativeFailure : Exception {
         public readonly string Stage; public readonly uint Code;
         public NativeFailure(string stage) { Stage = stage; Code = unchecked((uint)Marshal.GetLastWin32Error()); }
@@ -64,6 +65,10 @@ internal static class RestrictedQaProcess {
     [DllImport("advapi32.dll", SetLastError=true)] static extern bool GetTokenInformation(IntPtr token, int kind, out uint value, uint size, out uint returned);
     [DllImport("advapi32.dll", EntryPoint="GetTokenInformation", SetLastError=true)] static extern bool GetTokenBuffer(IntPtr token, int kind, IntPtr value, uint size, out uint returned);
     [DllImport("advapi32.dll", SetLastError=true)] static extern bool SetTokenInformation(IntPtr token, int kind, IntPtr value, uint size);
+    [DllImport("advapi32.dll", SetLastError=true)] static extern bool GetAclInformation(IntPtr acl, out AclSize value, uint size, int kind);
+    [DllImport("advapi32.dll", SetLastError=true)] static extern bool GetAce(IntPtr acl, uint index, out IntPtr ace);
+    [DllImport("advapi32.dll", SetLastError=true)] static extern bool ImpersonateLoggedOnUser(IntPtr token);
+    [DllImport("advapi32.dll", SetLastError=true)] static extern bool RevertToSelf();
     [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool CreateProcessAsUserW(IntPtr token, string application, StringBuilder command, IntPtr processAttributes, IntPtr threadAttributes, bool inherit, uint flags, IntPtr environment, string cwd, ref StartupInfoEx startup, out ProcessInfo process);
 
     static string Bool(bool value) { return value ? "true" : "false"; }
@@ -152,7 +157,71 @@ internal static class RestrictedQaProcess {
         IntPtr source = GetStdHandle(kind), copy; Require(Valid(source), "standard-handle");
         Require(DuplicateHandle(GetCurrentProcess(), source, GetCurrentProcess(), out copy, 0, true, 2), "copy-handle"); return copy;
     }
-    static int Launch(string[] args) {
+    // Opt-in startup diagnostics only. These masks describe ACEs, not effective
+    // access. No SID, ACL bytes, account name or arbitrary path is printed.
+    static string DefaultDacl(IntPtr token) {
+        uint size; GetTokenBuffer(token, 6, IntPtr.Zero, 0, out size);
+        Require(size >= IntPtr.Size && size <= 65536, "default-dacl-size");
+        IntPtr buffer = Marshal.AllocHGlobal(checked((int)size));
+        try {
+            Require(GetTokenBuffer(token, 6, buffer, size, out size), "default-dacl-query");
+            IntPtr acl = Marshal.ReadIntPtr(buffer);
+            uint count = 0, userAllow = 0, userDeny = 0, adminAllow = 0, systemAllow = 0, other = 0;
+            if (acl != IntPtr.Zero) {
+                AclSize information;
+                Require(GetAclInformation(acl, out information, (uint)Marshal.SizeOf(typeof(AclSize)), 2), "default-dacl-information");
+                Require(information.Count <= 1024 && information.Used <= 65536, "default-dacl-bounds"); count = information.Count;
+                var user = User(token); var admin = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+                var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+                for (uint i = 0; i < count; i++) {
+                    IntPtr ace; Require(GetAce(acl, i, out ace), "default-dacl-ace");
+                    byte kind = Marshal.ReadByte(ace); ushort bytes = unchecked((ushort)Marshal.ReadInt16(ace, 2));
+                    if ((kind != 0 && kind != 1) || bytes < 16) { other++; continue; }
+                    uint mask = unchecked((uint)Marshal.ReadInt32(ace, 4));
+                    var sid = new SecurityIdentifier(new IntPtr(ace.ToInt64() + 8));
+                    if (sid.Equals(user)) { if (kind == 0) userAllow |= mask; else userDeny |= mask; }
+                    else if (kind == 0 && sid.Equals(admin)) adminAllow |= mask;
+                    else if (kind == 0 && sid.Equals(system)) systemAllow |= mask;
+                    else other++;
+                }
+            }
+            return "{\"present\":" + Bool(acl != IntPtr.Zero) + ",\"aceCount\":" + count + ",\"userAllowMask\":" + userAllow +
+                ",\"userDenyMask\":" + userDeny + ",\"administratorsAllowMask\":" + adminAllow + ",\"systemAllowMask\":" + systemAllow + ",\"otherAceCount\":" + other + "}";
+        } finally { Marshal.FreeHGlobal(buffer); }
+    }
+    static string OpenResult(bool opened, uint error) { return "{\"opened\":" + Bool(opened) + ",\"win32Error\":" + error + "}"; }
+    static string OwnedChildAccess(IntPtr childToken, uint childPid) {
+        IntPtr duplicate = IntPtr.Zero; bool impersonating = false;
+        try {
+            Require(DuplicateToken(childToken, 2, out duplicate), "diagnostic-duplicate-token");
+            Require(ImpersonateLoggedOnUser(duplicate), "diagnostic-impersonate"); impersonating = true;
+            var result = new StringBuilder("{");
+            string[] names = { "queryLimited", "queryInformation", "vmRead", "duplicateHandle", "synchronize" };
+            uint[] rights = { 0x1000, 0x400, 0x10, 0x40, 0x100000 };
+            for (int i = 0; i < names.Length; i++) {
+                IntPtr opened = OpenProcess(rights[i], false, checked((int)childPid));
+                uint error = Valid(opened) ? 0 : unchecked((uint)Marshal.GetLastWin32Error());
+                try { if (i > 0) result.Append(','); result.Append('"').Append(names[i]).Append("\":").Append(OpenResult(Valid(opened), error)); }
+                finally { if (Valid(opened)) CloseHandle(opened); }
+            }
+            IntPtr process = IntPtr.Zero, token = IntPtr.Zero; uint tokenError = 0; bool tokenOpened = false;
+            try {
+                process = OpenProcess(0x1000, false, checked((int)childPid));
+                if (Valid(process)) { tokenOpened = OpenProcessToken(process, Query | Duplicate, out token); if (!tokenOpened) tokenError = unchecked((uint)Marshal.GetLastWin32Error()); }
+                else tokenError = unchecked((uint)Marshal.GetLastWin32Error());
+                result.Append(",\"tokenQueryDuplicate\":").Append(OpenResult(tokenOpened, tokenError)).Append('}');
+            } finally { if (Valid(token)) CloseHandle(token); if (Valid(process)) CloseHandle(process); }
+            return result.ToString();
+        } finally {
+            // Failure must abort Launch; its finally terminates the still-
+            // suspended owned child. Never resume after an uncertain reversion.
+            bool reverted = !impersonating || RevertToSelf();
+            uint error = reverted ? 0 : unchecked((uint)Marshal.GetLastWin32Error());
+            if (Valid(duplicate)) CloseHandle(duplicate);
+            if (!reverted) throw new NativeFailure("diagnostic-revert", error);
+        }
+    }
+    static int Launch(string[] args, bool diagnostics = false) {
         bool included; ExtendedLimits limits;
         Require(IsProcessInJob(GetCurrentProcess(), IntPtr.Zero, out included) && included, "parent-job");
         Require(QueryInformationJobObject(IntPtr.Zero, 9, out limits, (uint)Marshal.SizeOf(typeof(ExtendedLimits)), IntPtr.Zero), "job-limits");
@@ -189,10 +258,17 @@ internal static class RestrictedQaProcess {
             Require(OpenProcessToken(process.Process, Query | Duplicate, out childToken), "child-token");
             var child = Inspect(childToken); bool same = User(original).Equals(User(childToken));
             Require(same && !child.Admin && !child.PowerUsers && child.OwnerIsUser, "child-authority");
+            string diagnostic = null;
+            if (diagnostics) {
+                diagnostic = "REALBUD_QA_STARTUP_SECURITY_V1 {\"schema\":1,\"launcherPid\":" + GetCurrentProcessId() + ",\"childPid\":" + process.ProcessId +
+                    ",\"parentDefaultDacl\":" + DefaultDacl(original) + ",\"restrictedDefaultDacl\":" + DefaultDacl(restricted) +
+                    ",\"childDefaultDacl\":" + DefaultDacl(childToken) + ",\"objectAccessAsChild\":" + OwnedChildAccess(childToken, process.ProcessId) + ",\"reverted\":true}";
+            }
             Console.WriteLine("REALBUD_QA_RESTRICTED_V1 {\"schema\":1,\"launcherPid\":" + GetCurrentProcessId() + ",\"childPid\":" + process.ProcessId +
                 ",\"sameUser\":true,\"jobInherited\":true,\"parentAdministratorEnabled\":" + Bool(parent.Admin) + ",\"parentPowerUsersEnabled\":" + Bool(parent.PowerUsers) +
                 ",\"parentDefaultOwnerIsUser\":" + Bool(parent.OwnerIsUser) + ",\"restrictedDefaultOwnerWasUser\":" + Bool(ownerBefore) +
                 ",\"restrictedDefaultOwnerIsUser\":" + Bool(reduced.OwnerIsUser) + "," + child.JsonFields() + "}");
+            if (diagnostic != null) Console.WriteLine(diagnostic);
             Console.Out.Flush();
             Require(ResumeThread(process.Thread) != 0xffffffff, "resume");
             Require(WaitForSingleObject(process.Process, 0xffffffff) == 0, "wait"); exited = true;
@@ -215,6 +291,9 @@ internal static class RestrictedQaProcess {
             if (args.Length == 1 && args[0] == "--version") { Console.WriteLine("realbud-qa-restricted-process 1"); return 0; }
             int pid;
             if ((args.Length == 2 || args.Length == 3) && args[0] == "--inspect" && Int32.TryParse(args[1], out pid) && pid > 0 && (args.Length == 2 || Absolute(args[2]))) { queryPid = pid; return QueryProcess(pid, args.Length == 3 ? args[2] : null); }
+            if (args.Length >= 3 && args[0] == "--diagnostic-launch" && args[1] == "--" && Absolute(args[2])) {
+                var launch = new string[args.Length - 1]; Array.Copy(args, 1, launch, 0, launch.Length); return Launch(launch, true);
+            }
             if (args.Length < 2 || args[0] != "--" || !Absolute(args[1])) return 125;
             return Launch(args);
         } catch (NativeFailure error) {

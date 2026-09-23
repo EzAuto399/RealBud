@@ -1,6 +1,8 @@
 # RealBud end state
 
-Latest continuation: [setup, team and website integration QA](INTEGRATION-QA-2026-09-23.md) records current source checks, two-instance testing, isolated website integration, hosted authentication boundaries and fixture repairs. Read its remaining proof gates before describing readiness.
+Latest continuation: [platform follow-up](PLATFORM-FOLLOWUP-2026-09-24.md) records the native welcome/restore defect, source correction, packaged Electron team proof and separate Windows startup diagnostic. Read its source and device limits before selecting an installer.
+
+Previous continuation: [setup, team and website integration QA](INTEGRATION-QA-2026-09-23.md) records current source checks, two-instance testing, isolated website integration, hosted authentication boundaries and fixture repairs. Read its remaining proof gates before describing readiness.
 
 Previous continuation: [macOS and Windows candidate](PLATFORM-CANDIDATE-2026-09-23.md) tracks the isolated source candidate, native process and launcher fixes, current checks, installer artifacts and distribution gates. The [earlier Windows preparation](WINDOWS-READINESS-2026-09-23.md) retains the previous installer and rejected timeout approach as dated evidence.
 
