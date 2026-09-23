@@ -94,10 +94,13 @@ describe('source-bound invoice preparation requests', () => {
     const f = fixture(), first = f.request(), firstResult = await f.prepare(first);
     const receipt = f.db.get('bill-proposal', `bill-proposal:${first.requestId}`)!;
     const retainedIds = [first.requestId];
-    for (let i = 1; i < 999; i++) {
-      const id = randomUUID(); retainedIds.push(id);
-      f.db.create('bill-proposal', `bill-proposal:${id}`, receipt.value, 1_000);
-    }
+    // Seed retained history together; the capacity-boundary requests below still commit independently.
+    f.db.transaction(() => {
+      for (let i = 1; i < 999; i++) {
+        const id = randomUUID(); retainedIds.push(id);
+        f.db.create('bill-proposal', `bill-proposal:${id}`, receipt.value, 1_000);
+      }
+    });
     const last = f.request(), lastResult = await f.prepare(last); retainedIds.push(last.requestId);
     expect(lastResult.proposal?.decision).toBe('hold'); expect(f.dispatch).toHaveBeenCalledTimes(2);
     const next = f.request(); await f.prepare(next); retainedIds.push(next.requestId);

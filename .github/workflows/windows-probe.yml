@@ -1,10 +1,19 @@
 name: Windows probe
 
 # Manual, minutes-long diagnosis of the Windows-only pieces (private-storage
-# ACL admission and the smallest suites that depend on it) without waiting
-# for the full CI matrix. Evidence only; it gates nothing.
+# ACL admission and its dependent suites, or focused retention regressions)
+# without waiting for the full CI matrix. Evidence only; it gates nothing.
 on:
   workflow_dispatch:
+    inputs:
+      suite:
+        description: Windows suite to exercise
+        type: choice
+        required: true
+        default: privacy
+        options:
+          - privacy
+          - retention
   # Dispatch only resolves on the default branch, so a pull request that touches
   # the Windows privacy pieces runs the probe on its own.
   pull_request:
@@ -95,6 +104,7 @@ permissions:
 jobs:
   acl:
     name: ACL admission probe (windows-latest)
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.suite != 'retention' }}
     runs-on: windows-latest
     # The fixture-dependent suites below took about 80 min in failing CI shards
     # (several slow tests are now skipped or bounded on Windows); allow for that.
@@ -206,3 +216,29 @@ jobs:
         run: node scripts/qa-private-backup-boundaries.mjs
         env:
           QA_OUTPUT: outputs/windows-probe-private-backup.json
+
+  retention:
+    name: Focused retention regressions (windows-latest)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.suite == 'retention' }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Compile Windows launchers for native process tests
+        run: |
+          pnpm build:worker:win
+          pnpm build:cua-launcher:win
+      - name: Retention regression suites
+        run: >-
+          pnpm exec vitest run
+          server/bank-reference-http.test.ts
+          server/bill-proposals.test.ts
+          server/private-backup-bank-retention.test.ts
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
