@@ -812,3 +812,7 @@ Log: `%APPDATA%\RealBud\logs\server.log`. Service pid and port: `http://127.0.0.
 
 Record: the log excerpt, `powercfg /requests` before and after, the Schedule receipts, and
 `/api/health` before and after each kill, under `outputs/unattended-supervision-<date>/`.
+
+## 2026-09-23 (late) — Windows unit suite green
+
+CI run 35797224166 @ f6a256e: all three Windows shards passed — 1,609 + 1,681 + 1,830 = 5,120 tests, 0 failed (skips are platform- or environment-gated and not counted as passes). The day started with about 1,268 ACL errors and 459 failing tests. Causes and fixes: cmdlet-free ACL scripts, product-created private data, test fixtures that create data the way the product does, path separators, OS-refused swap attacks, exit codes instead of signals, Windows-sized limits, LF line endings (.gitattributes). Tier: hosted runner unit tests; not an installed or customer machine.
