@@ -1,6 +1,6 @@
 # macOS installed-app acceptance
 
-Use the supplied **Apple Silicon** candidate with fictional data in a separate
+Use the supplied **macOS 13 or later, Apple Silicon** candidate with fictional data in a separate
 macOS test account. Record the artifact filename, SHA256, source revision from
 its receipt, macOS version, and pass / fail / blocked / not run for each step.
 The packaged-app checks in [the current candidate](PLATFORM-CANDIDATE-2026-09-23.md)

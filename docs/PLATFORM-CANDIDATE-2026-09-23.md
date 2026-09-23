@@ -9,7 +9,7 @@ It is not a published release or an update-feed change.
 
 | Target | Build environment | Distribution status |
 | --- | --- | --- |
-| macOS Apple Silicon | Native arm64 Mac, Node 24, pnpm 10.33.0, Xcode tools, Developer ID | Signing identity available. The saved `realbud-notary` profile was rejected by Apple with HTTP 401 during this task. |
+| macOS 13+ Apple Silicon | Native arm64 Mac, Node 24, pnpm 10.33.0, Xcode tools, RealBud Developer ID | Signing identity available. The saved `realbud-notary` profile was rejected by Apple with HTTP 401 during this task. |
 | Windows x64 | Native Windows, Node 24 x64, pnpm 10.33.0, Git, Framework C# compiler and System.Speech | NSIS and ZIP workflow prepared. Authenticode signing is not configured. Windows 11 owner-device acceptance remains open. |
 
 The new Windows launchers use Windows 10+ Job Object creation attributes; the
@@ -50,6 +50,35 @@ profiles still require their own permissions and device evidence.
 
 ### Packaged Mac proof
 
+A later deployment-target audit found a compatibility defect in the `f6ccae58`
+package: its app plist advertised macOS 12, the speech helper required macOS 26,
+and the pinned CUA driver/SDK required macOS 13. The speech compiler now targets
+arm64 macOS 13 explicitly, and both app and helper declare that minimum. The
+packaged smoke inspects native load commands before launching the app; its
+negative control rejects the unchanged old package. A fresh package is required
+before handing over this correction. Metadata checks still do not establish
+execution on a physical macOS 13 computer.
+
+The earlier package at `f6ccae588ba492ff9fe3c270c7b1d232609b1fc6` passes strict
+deep signature verification, packaged renderer/startup/shutdown, four compiled
+service checks, nine backup UI checks and seven backup-boundary checks. The
+390-pixel completed-restore view was inspected, with zero renderer errors.
+The same source also passed the full Mac CI job (5,799 tests passed, 281
+platform/environment skips) in
+[run 35851457484](https://github.com/EzAuto399/RealBud/actions/runs/35851457484).
+The Developer ID signed artifacts are preserved under
+`outputs/platform-candidate-2026-09-23/mac-f6ccae58/`. Their SHA256 values are:
+
+| Artifact | SHA256 |
+| --- | --- |
+| `RealBud-0.1.19.dmg` | `3ad75326c8494600e006304b54a77f90a750cf7726ad1c264da8ba747a677082` |
+| `RealBud-0.1.19-arm64.zip` | `3460d0758c389d9bc7837fb974bb724f6174a200252259c1b32ee3675b4b9fe5` |
+
+The adjacent package receipt records the input revision and checks. These
+artifacts are not notarized; the saved credential failure remains unresolved.
+The builds below are retained historical evidence. Their successful execution
+on the build Mac does not waive the deployment-target defect found afterward.
+
 The refreshed build at `9ec70d19b990e07cc98c5d1cd3e417fdb968ba3a` passes strict
 deep signature verification, packaged renderer/startup/shutdown, four compiled
 service checks, nine backup UI checks and seven backup-boundary checks. The
@@ -77,6 +106,46 @@ acceptance remain unproven.
 
 ### Windows native findings
 
+[Run 35851518494](https://github.com/EzAuto399/RealBud/actions/runs/35851518494)
+at `f6ccae588ba492ff9fe3c270c7b1d232609b1fc6` built the NSIS installer and passed
+installation, all installed probes and verified uninstall. The 12 runtime
+checks include two real CUA host generations through the installed GUI factory,
+worker cancellation and descendant cleanup, speech protocol, SQLite and pinned
+native resources. Four compiled-service checks, six backup-boundary checks and
+15 held memory-primitive checks passed; one POSIX-only backup check was skipped.
+The lifecycle receipt binds all child receipt hashes to the installer and source.
+The unsigned installer is 161,202,486 bytes, SHA256
+`b706e63b048e4616ab22682ac0df072413aea649436c514bfa72f0d52ac49901`.
+Native launcher controls passed 87 tests with four platform skips; packaging
+fixtures passed all 31 tests. This remains disposable Windows CI evidence.
+
+The same run passed all 19 native diagnostic
+controls and all 30 bootstrap controls, with zero skips. Production-managed
+setup completed all 12 private-runtime stages in 270 seconds, including the
+repository pin and dependency installation. Its receipt verifies runtime
+`345cd2b057a452236de401d3534b8502a7465e8d`, Python 3.11.16 and the reviewed file
+hashes. The original repository attempt exited zero with a successful protocol
+receipt and no surviving child; it was not replayed.
+
+The first real native journal run passed 26 checks, then failed in creation of
+the disposable junction fixture before exercising product refusal. One final
+check was not reached. Cleanup completed and reviewed sources remained
+unchanged. The original fixture discarded the exit code and stderr details,
+so this result does not establish the cause. Its receipt is preserved under
+`outputs/platform-candidate-2026-09-23/windows-sixth-memory/`. Public memory
+review, proposal and decision holds remain enforced.
+
+The diagnostic-only follow-up at `467a9442d2cf1fbca3a0e8204f3d799b733101e8`
+adds fixture progress suppression, bounded exit/stream diagnostics and a verified
+real-junction precondition, while continuing to reject nonzero exit or any
+remaining stderr. All 14 portable harness controls pass. Its first native retry,
+[run 35853206966](https://github.com/EzAuto399/RealBud/actions/runs/35853206966),
+failed after 456 ms at setup download, before the journal ran. The original
+response status was not retained, so no particular HTTP failure is asserted.
+The setup harness now observes the original request's status and body presence
+without consuming the response, replacing its error or adding retries. That
+observer passes 21 local controls; three native controls require the next run.
+
 [Run 35849470076, installer job](https://github.com/EzAuto399/RealBud/actions/runs/35849470076/job/107143448372)
 at `9ec70d19b990e07cc98c5d1cd3e417fdb968ba3a` passed native launcher compilation,
 87 focused tests (four platform skips), packaging, installation, all installed
@@ -102,10 +171,10 @@ The installer's global writes stay in that owned file, which is removed after
 completion or failure. User global configuration is neither copied nor changed;
 system transport settings remain available. Conflicting inherited command/global
 overrides are removed only from the stage environment. Twenty-six focused local
-tests pass, including the real Git regression; four native controls await the
-next run. Independent review found no remaining blocker, and server typechecking
-passes. The exact Windows installer and real journal still require verification
-of this correction.
+tests passed, including the real Git regression; the next native run passed all
+30 controls and actual managed setup, as recorded above. Independent review
+found no remaining blocker, and server typechecking passed. The real journal
+result is recorded separately from setup success.
 
 The first candidate run compiled both native launchers and passed the worker
 Job Object tests. A fictional C# stdin reader changed Unicode through the
@@ -139,12 +208,13 @@ loading; it runs before managed setup. Microsoft documents this
 [Run 35847717417](https://github.com/EzAuto399/RealBud/actions/runs/35847717417)
 at `0351f3f5f9acb17826423a2d4650ce0837691311` passed that native regression and
 the actual `uv`, Git, Node and system-package stages. It then failed in the
-repository stage; its error has not yet been diagnosed. This focused run did
-not build an installer. The next diagnostic observes that original repository
-attempt once, with bounded redaction before writing and again at the receipt
-boundary. It does not replay a repository mutation. Sixteen local diagnostic
-controls pass; three Windows controls still require the native run. The native
-memory journal has not run yet.
+repository stage; at that point its error was still undiagnosed. This focused
+historical run did not build an installer. The subsequent diagnostic observed
+the original repository attempt once, with bounded redaction before writing
+and again at the receipt boundary, without replaying a repository mutation.
+That led to the Git correction and passing setup recorded above. The initially
+pending native diagnostic controls and journal have since run; their current
+results are recorded above rather than inferred from this earlier attempt.
 
 The third package passed the speech cancellation tests and progressed past
 installed speech, then the SDK rejected the CUA wrapper's process ID because

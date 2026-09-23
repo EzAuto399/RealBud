@@ -7,7 +7,90 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { redactUvDiagnosticLine, repositoryDiagnosticScript, sanitizeRepositoryDiagnostic, sanitizeUvDiagnostic,
-  uvDiagnosticScript, withRepositoryDiagnostic, withUvFailureDiagnostic } from './prepare-windows-memory-runtime.mjs';
+  uvDiagnosticScript, withDownloadDiagnostic, withRepositoryDiagnostic, withUvFailureDiagnostic } from './prepare-windows-memory-runtime.mjs';
+
+test('download observation preserves exact request options and returns the same unread response without private data', async () => {
+  const privateValue = 'fictional-secret-8123';
+  const input = new URL(`https://fictional.invalid/setup?token=${privateValue}`);
+  const options = Object.freeze({ signal: new AbortController().signal, redirect: 'error',
+    headers: Object.freeze({ authorization: `Bearer ${privateValue}` }) });
+  const response = new Response(`fictional installer ${privateValue}`, { headers: { 'set-cookie': privateValue } });
+  const calls = [], reports = [];
+  const request = withDownloadDiagnostic({ request: async (...args) => { calls.push(args); return response; }, report: value => reports.push(value) });
+  const result = await request(input, options);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], input);
+  assert.equal(calls[0][1], options);
+  assert.equal(result, response);
+  assert.equal(response.bodyUsed, false);
+  assert.equal(response.body.locked, false);
+  assert.deepEqual(reports, [{ status: 200, ok: true, bodyPresent: true }]);
+  assert.ok(!JSON.stringify(reports).includes(privateValue));
+  assert.equal(await result.text(), `fictional installer ${privateValue}`);
+});
+
+test('non-success and bodyless download responses pass through once without consuming or replacing them', async () => {
+  for (const response of [new Response('fictional rejection', { status: 429 }), new Response(null, { status: 204 }), new Response(null)]) {
+    let calls = 0;
+    const reports = [];
+    const request = withDownloadDiagnostic({ request: async () => { calls++; return response; }, report: value => reports.push(value) });
+    assert.equal(await request('https://fictional.invalid/setup'), response);
+    assert.equal(calls, 1);
+    assert.equal(response.bodyUsed, false);
+    assert.deepEqual(reports, [{ status: response.status, ok: response.ok, bodyPresent: response.body !== null }]);
+  }
+});
+
+test('download throws retain their identity and record only a fixed classification without retry', async () => {
+  const privateValue = 'fictional-private C:\\Users\\fictional-person token=fictional-token-8123 https://fictional.invalid/?secret=fictional-query';
+  for (const [original, classification] of [
+    [new TypeError(privateValue, { cause: new Error(privateValue) }), 'fetch-failed'],
+    [new DOMException(privateValue, 'TimeoutError'), 'timeout'],
+    [new DOMException(privateValue, 'AbortError'), 'aborted'],
+    [Object.assign(new Error(privateValue), { name: privateValue }), 'request-failed'],
+    [privateValue, 'request-failed'],
+  ]) {
+    let calls = 0;
+    const reports = [];
+    const request = withDownloadDiagnostic({ request: () => { calls++; throw original; }, report: value => reports.push(value) });
+    await assert.rejects(request('https://fictional.invalid/setup'), error => error === original);
+    assert.equal(calls, 1);
+    assert.deepEqual(reports, [{ transportFailure: classification }]);
+    for (const value of ['fictional-private', 'fictional-person', 'fictional-token-8123', 'fictional.invalid', 'fictional-query']) {
+      assert.ok(!JSON.stringify(reports).includes(value));
+    }
+  }
+});
+
+test('an already aborted native fetch retains the original signal and rejection without contacting a service', async () => {
+  const abort = new AbortController(), original = new Error('fictional abort reason');
+  abort.abort(original);
+  const options = Object.freeze({ signal: abort.signal, redirect: 'error' }), reports = [];
+  let calls = 0;
+  const request = withDownloadDiagnostic({ request: (input, actualOptions) => {
+    calls++;
+    assert.equal(actualOptions, options);
+    return fetch(input, actualOptions);
+  }, report: value => reports.push(value) });
+  await assert.rejects(request('data:text/plain,fictional-local-only', options), error => error === original);
+  assert.equal(calls, 1);
+  assert.deepEqual(reports, [{ transportFailure: 'aborted' }]);
+});
+
+test('failed download diagnostic reporting cannot alter a response or replace the original rejection', async () => {
+  const response = new Response('fictional installer'), original = new Error('fictional request failure');
+  for (const fail of [false, true]) {
+    let calls = 0;
+    const request = withDownloadDiagnostic({ request: async () => { calls++; if (fail) throw original; return response; },
+      report() { throw new Error('fictional receipt failure'); } });
+    if (fail) await assert.rejects(request('fictional-input'), error => error === original);
+    else {
+      assert.equal(await request('fictional-input'), response);
+      assert.equal(response.bodyUsed, false);
+    }
+    assert.equal(calls, 1);
+  }
+});
 
 function fixture(t) {
   const scratch = mkdtempSync(join(tmpdir(), 'fictional-uv-controls-'));

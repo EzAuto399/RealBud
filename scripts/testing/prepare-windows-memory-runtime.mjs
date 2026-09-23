@@ -7,6 +7,27 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSy
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// Observe the original request once. Do not consume/clone its response or
+// replace its result if diagnostic persistence itself fails.
+export function withDownloadDiagnostic({ request = fetch, report }) {
+  return async (...args) => {
+    let response;
+    try { response = await request(...args); }
+    catch (error) {
+      try {
+        const failure = error?.name === 'TimeoutError' ? 'timeout'
+          : error?.name === 'AbortError' || args[1]?.signal?.aborted ? 'aborted'
+            : error?.name === 'TypeError' ? 'fetch-failed' : 'request-failed';
+        report({ transportFailure: failure });
+      } catch { /* Diagnostic failures must not replace the original rejection. */ }
+      throw error;
+    }
+    try { report({ status: response.status, ok: response.ok, bodyPresent: response.body !== null }); }
+    catch { /* The caller still receives its original, unread response. */ }
+    return response;
+  };
+}
+
 // These are observations, not automatic root-cause diagnoses. The optional
 // failure excerpt below is redacted before either diagnostic file is written.
 export const UV_DIAGNOSTIC_SIGNALS = Object.freeze({
@@ -306,6 +327,7 @@ export async function main() {
     runtimeCommit: release.commit, installerSha256: release.installers.windows,
     runtimeDirectory, stages,
     limits: ['Disposable CI runtime setup only; no GUI, account, model request or customer device proof.',
+      'The original setup download is observed without retry; only HTTP status, success, body presence or a fixed transport failure label is retained.',
       'A failed uv stage may be replayed once for fixed signals and at most 15 redacted failure lines of 240 characters; its original failure remains authoritative. No raw installer output is retained.',
       'The original repository attempt is observed once, without replay, through the production stage runner. Only fixed milestones, a redacted protocol reason and at most 15 redacted failure lines of 240 characters are retained.'],
   };
@@ -322,6 +344,7 @@ export async function main() {
   try {
     await runWorkerBootstrap({
       home: runtimeHome, privateRuntime: true, release, signal: controller.signal,
+      request: withDownloadDiagnostic({ report(diagnostic) { receipt.downloadDiagnostic = diagnostic; persist(); } }),
       execute: withUvFailureDiagnostic({ runStage: withRepositoryDiagnostic({
         runStage: runBootstrapStage, childRunning: bootstrapChildRunning, installerSha256: release.installers.windows, scratch,
         report(diagnostic) { receipt.repositoryDiagnostic = diagnostic; persist(); },

@@ -1,6 +1,7 @@
 # macOS build and test
 
-Build on an **Apple Silicon Mac with an arm64 Node process**. Intel Macs and
+The package targets **macOS 13 or later on Apple Silicon**. Build on an Apple
+Silicon Mac with an arm64 Node process. Intel Macs and
 Node running through Rosetta are not supported package targets. See the
 [current candidate evidence](PLATFORM-CANDIDATE-2026-09-23.md) and the separate
 [Windows build guide](WINDOWS-BUILD-AND-TEST.md).
@@ -12,8 +13,8 @@ Node running through Rosetta are not supported package targets. See the
 | Node.js 24 arm64 and pnpm 10.33.0 | Matches the supported toolchain and `packageManager` pin. |
 | Git | Source checkout and revision recording. |
 | Selected Xcode Command Line Tools, macOS SDK and Swift compiler | Builds speech support and supplies `lipo`, `otool` and signing tools. |
-| Developer ID Application identity in the local Keychain | Produces the signed distribution package. |
-| Valid Apple notarization credentials | Needed for the notarized distribution step, after packaging. |
+| RealBud Developer ID Application identity for team `4F4SMS88P8` in the local Keychain | Produces the signed distribution package; notarization verifies this exact team. |
+| Valid Apple notarization credentials with access to that team | Needed for the notarized distribution step, after packaging. |
 
 Use a writable native checkout and build/cache directory. Preparation downloads
 the pinned Electron, BrowserSkill, CUA and PostgreSQL artifacts or uses their
@@ -36,6 +37,11 @@ builds speech support, and produces the signed app, DMG and ZIP under `release/`
 with publishing disabled. Record `git rev-parse HEAD` and `git status --short`;
 record any source changes rather than attributing a dirty build only to HEAD.
 Artifact names use the version in `package.json`.
+
+Speech compilation explicitly targets macOS 13 arm64, matching the bundled
+CUA runtime's minimum. The app and speech bundle advertise the same minimum;
+the Mac smoke checks native deployment targets against it. A build on a newer
+Mac must not silently make its helper require that newer operating system.
 
 ## 3. Check the packaged app
 
