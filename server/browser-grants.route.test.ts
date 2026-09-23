@@ -8,7 +8,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, un
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { grantedBrowserTools } from "./attended-run.ts";
 import { BROWSER_TASK_OFFER } from "./browser-grants.ts";
@@ -109,6 +109,12 @@ browserRuntime.resumeConnection = async () => {};
     });
     if (home) rmSync(home, { recursive: true, force: true });
   });
+
+  afterEach(async () => {
+    // An assertion failure must not leave the deliberately hanging worker busy
+    // and turn the next test's first request into an unrelated HTTP 409.
+    if (session && child?.exitCode === null) await idle();
+  }, 20_000);
 
   it("never offers a task for a question", async () => {
     await ask("How do I download invoices from the strata portal?");

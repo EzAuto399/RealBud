@@ -16,7 +16,8 @@
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { spawn } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { closeSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 
 const mode = process.env.FAKE_ACP_MODE ?? "happy";
 const argv = process.argv.slice(2);
@@ -24,9 +25,22 @@ if (argv.includes("--version")) {
   console.log("fake-acp 1.0.0");
   process.exit(0);
 }
-if (process.env.FAKE_ACP_DUMP) {
-  writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify({ argv, env: process.env, pid: process.pid, promptCount: 0 }, null, 2));
+function publishDump(snapshot: unknown) {
+  const dump = process.env.FAKE_ACP_DUMP;
+  if (!dump) return;
+  const contents = JSON.stringify(snapshot, null, 2);
+  const temporary = `${dump}.${process.pid}.${randomUUID()}.tmp`;
+  // Readers in another process must see a complete old or new snapshot, even
+  // when a replacement worker publishes its initial state to the same path.
+  const fd = openSync(temporary, "wx", 0o600);
+  try {
+    try { writeFileSync(fd, contents); } finally { closeSync(fd); }
+    renameSync(temporary, dump);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
 }
+publishDump({ argv, env: process.env, pid: process.pid, promptCount: 0 });
 
 const out = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");
 const result = (id: unknown, res: unknown) => out({ jsonrpc: "2.0", id, result: res });
@@ -45,15 +59,7 @@ let promptCount = 0;
 let pendingPromptId: number | null = null;
 
 function dumpState() {
-  if (!process.env.FAKE_ACP_DUMP) return;
-  writeFileSync(
-    process.env.FAKE_ACP_DUMP,
-    JSON.stringify(
-      { argv, env: process.env, pid: process.pid, promptCount, mcpServers: seenMcpServers, selectedPermissionOption, sessionMode },
-      null,
-      2,
-    ),
-  );
+  publishDump({ argv, env: process.env, pid: process.pid, promptCount, mcpServers: seenMcpServers, selectedPermissionOption, sessionMode });
 }
 
 /** Minimal one-shot MCP stdio client: initialize, call each tool in
