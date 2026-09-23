@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { existsSync, readFileSync } from 'node:fs';
-import { lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { createConnection, createServer } from 'node:net';
 import { release, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -14,7 +14,8 @@ import { serviceSmokeEnv } from './service-smoke-env.mjs';
 import { smokeInstalledWorker } from './smoke-one-shot-worker.mjs';
 
 const script = fileURLToPath(import.meta.url);
-const scenarioMode = process.argv[2] === '--scenario';
+const elevatedMode = process.argv[2] === '--elevated-preflight';
+const scenarioMode = elevatedMode || process.argv[2] === '--scenario';
 const [resourcesArg, outputArg, scratchArg] = process.argv.slice(scenarioMode ? 3 : 2);
 assert.equal(process.platform, 'win32', 'Native Windows required');
 assert.equal(process.arch, 'x64', 'Native x64 required');
@@ -25,6 +26,12 @@ const executable = await realpath(process.execPath);
 assert.equal(resources.toLowerCase(), (await realpath(join(dirname(executable), 'resources'))).toLowerCase(), 'Resources must belong to this installed executable');
 process.env.REALBUD_RESOURCES_DIR = resources;
 const supervisor = join(resources, 'RealBud Worker.exe');
+const restrictedLauncher = await realpath(resolve(process.env.REALBUD_QA_RESTRICTED_LAUNCHER || ''));
+const restrictedLauncherSha256 = process.env.REALBUD_QA_RESTRICTED_LAUNCHER_SHA256;
+const restrictedSourceSha256 = process.env.REALBUD_QA_RESTRICTED_SOURCE_SHA256;
+assert.match(restrictedLauncherSha256 || '', /^[a-f0-9]{64}$/);
+assert.match(restrictedSourceSha256 || '', /^[a-f0-9]{64}$/);
+assert.equal(createHash('sha256').update(await readFile(restrictedLauncher)).digest('hex'), restrictedLauncherSha256, 'Exact compiled QA launcher required');
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const check = (condition, message) => { if (!condition) throw new Error(message); };
@@ -54,68 +61,6 @@ async function save(file, value) {
   await writeFile(temporary, JSON.stringify(value, null, 2) + '\n'); await rename(temporary, file);
 }
 const safeFailure = (error, stage) => ({ stage, reason: error?.code || error?.name || 'failure' });
-
-// Query the actual service's token, not the PowerShell observer's identity.
-// CheckTokenMembership requires an impersonation token; duplication preserves
-// enabled/deny-only group state. Never emit names, SIDs or token contents.
-const WINDOWS_TOKEN_CLASSIFIER = String.raw`
-$ErrorActionPreference = 'Stop'
-try {
-  Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-using System.Security.Principal;
-public static class RealBudTeamToken {
-  [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
-  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
-  [DllImport("advapi32.dll", SetLastError=true)] static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
-  [DllImport("advapi32.dll", SetLastError=true)] static extern bool DuplicateToken(IntPtr token, int level, out IntPtr duplicate);
-  [DllImport("advapi32.dll", SetLastError=true)] static extern bool CheckTokenMembership(IntPtr token, byte[] sid, out bool member);
-  [DllImport("advapi32.dll", SetLastError=true)] static extern bool GetTokenInformation(IntPtr token, int kind, out uint value, uint size, out uint returned);
-  static byte[] Sid(WellKnownSidType kind) {
-    var sid = new SecurityIdentifier(kind, null); var bytes = new byte[sid.BinaryLength]; sid.GetBinaryForm(bytes, 0); return bytes;
-  }
-  static string Failure(int pid, string stage, uint error) {
-    return "{\"schema\":1,\"pid\":" + pid + ",\"outcome\":\"query-failed\",\"stage\":\"" + stage + "\",\"win32Error\":" + error + "}";
-  }
-  public static string Inspect(int pid) {
-    IntPtr process = IntPtr.Zero, token = IntPtr.Zero, duplicate = IntPtr.Zero;
-    string stage = "open-process";
-    try {
-      process = OpenProcess(0x1000, false, pid); // PROCESS_QUERY_LIMITED_INFORMATION
-      if (process == IntPtr.Zero) return Failure(pid, stage, unchecked((uint)Marshal.GetLastWin32Error()));
-      stage = "open-token";
-      if (!OpenProcessToken(process, 0x000A, out token)) return Failure(pid, stage, unchecked((uint)Marshal.GetLastWin32Error())); // QUERY | DUPLICATE
-      stage = "duplicate-token";
-      if (!DuplicateToken(token, 2, out duplicate)) return Failure(pid, stage, unchecked((uint)Marshal.GetLastWin32Error())); // SecurityImpersonation
-      bool admin, powerUsers;
-      stage = "administrator-membership";
-      if (!CheckTokenMembership(duplicate, Sid(WellKnownSidType.BuiltinAdministratorsSid), out admin)) return Failure(pid, stage, unchecked((uint)Marshal.GetLastWin32Error()));
-      stage = "power-users-membership";
-      if (!CheckTokenMembership(duplicate, Sid(WellKnownSidType.BuiltinPowerUsersSid), out powerUsers)) return Failure(pid, stage, unchecked((uint)Marshal.GetLastWin32Error()));
-      uint elevated, elevationType, returned;
-      stage = "elevation";
-      if (!GetTokenInformation(token, 20, out elevated, 4, out returned)) return Failure(pid, stage, unchecked((uint)Marshal.GetLastWin32Error()));
-      if (returned != 4 || elevated > 1) return Failure(pid, stage, 13);
-      stage = "elevation-type";
-      if (!GetTokenInformation(token, 18, out elevationType, 4, out returned)) return Failure(pid, stage, unchecked((uint)Marshal.GetLastWin32Error()));
-      if (returned != 4 || elevationType < 1 || elevationType > 3) return Failure(pid, stage, 13);
-      return "{\"schema\":1,\"pid\":" + pid + ",\"outcome\":\"queried\",\"administratorEnabled\":" + (admin ? "true" : "false") +
-        ",\"powerUsersEnabled\":" + (powerUsers ? "true" : "false") + ",\"elevated\":" + (elevated == 1 ? "true" : "false") + ",\"elevationType\":" + elevationType + "}";
-    } catch { return Failure(pid, stage, 0); }
-    finally {
-      if (duplicate != IntPtr.Zero) CloseHandle(duplicate);
-      if (token != IntPtr.Zero) CloseHandle(token);
-      if (process != IntPtr.Zero) CloseHandle(process);
-    }
-  }
-}
-'@
-  $diagnosticPid = [int]$env:REALBUD_TEAM_DIAGNOSTIC_PID
-  if ($diagnosticPid -le 0) { throw 'Invalid diagnostic pid' }
-  [Console]::Out.WriteLine([RealBudTeamToken]::Inspect($diagnosticPid))
-} catch { exit 1 }
-`;
 
 // Fixture-only observation, installed before the compiled bootstrap imports
 // child_process. Exact owned-server stderr alone changes from ignore to a drained
@@ -227,24 +172,21 @@ function tokenResult(output, expectedPid) {
     const value = JSON.parse(output);
     if (!value || typeof value !== 'object' || Array.isArray(value) || value.schema !== 1 || value.pid !== expectedPid) return null;
     const exact = keys => Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
-    if (value.outcome === 'queried' && exact(['schema', 'pid', 'outcome', 'administratorEnabled', 'powerUsersEnabled', 'elevated', 'elevationType']) &&
+    if (value.outcome === 'queried' && exact(['schema', 'pid', 'outcome', 'sameUser', 'administratorEnabled', 'powerUsersEnabled', 'elevated', 'elevationType']) && typeof value.sameUser === 'boolean' &&
       ['administratorEnabled', 'powerUsersEnabled', 'elevated'].every(key => typeof value[key] === 'boolean') && [1, 2, 3].includes(value.elevationType)) return value;
     if (value.outcome === 'query-failed' && exact(['schema', 'pid', 'outcome', 'stage', 'win32Error']) &&
-      ['open-process', 'open-token', 'duplicate-token', 'administrator-membership', 'power-users-membership', 'elevation', 'elevation-type'].includes(value.stage) &&
+      ['open-process', 'open-token', 'current-token', 'duplicate-token', 'administrator-membership', 'power-users-membership', 'elevation', 'elevation-type', 'user-size', 'user-query', 'managed'].includes(value.stage) &&
       Number.isInteger(value.win32Error) && value.win32Error >= 0 && value.win32Error <= 0xffffffff) return value;
   } catch { /* No raw classifier output crosses IPC. */ }
   return null;
 }
 if (process.platform === 'win32') {
-  const started = performance.now(), base = { binary: 'powershell.exe', operation: 'service-token', event: 'inspection' };
+  const started = performance.now(), base = { binary: 'qa-restricted-process', operation: 'service-token', event: 'inspection' };
   try {
-    const systemRoot = process.env.SystemRoot || process.env.SYSTEMROOT;
-    if (!systemRoot || !isAbsolute(systemRoot) || !process.argv[4]) throw new Error('Classifier unavailable');
-    const output = cp.execFileSync(resolve(systemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
-      ['-NoProfile', '-NonInteractive', '-EncodedCommand', process.argv[4]], {
-        env: { ...process.env, REALBUD_TEAM_DIAGNOSTIC_PID: String(process.pid) }, windowsHide: true,
-        timeout: 15_000, maxBuffer: 2048, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
-      });
+    if (!process.argv[4] || !isAbsolute(process.argv[4])) throw new Error('Classifier unavailable');
+    const output = cp.execFileSync(process.argv[4], ['--inspect', String(process.pid)], {
+      env: process.env, windowsHide: true, timeout: 3000, maxBuffer: 2048, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    });
     emit({ ...base, ...(tokenResult(output, process.pid) || { outcome: 'classifier-output-invalid' }), elapsedMs: Math.round(performance.now() - started) });
   } catch (error) {
     emit({ ...base, outcome: 'classifier-unavailable', code: code(error.code), elapsedMs: Math.round(performance.now() - started) });
@@ -254,16 +196,30 @@ syncBuiltinESMExports();
 await import(pathToFileURL(process.argv[2]).href);
 `;
 
+function parseRestrictedOutput(text) {
+  const newline = text.indexOf('\n');
+  check(newline > 0 && newline < 2048 && text.startsWith('REALBUD_QA_RESTRICTED_V1 '), 'Restricted launcher identity is missing');
+  const value = JSON.parse(text.slice('REALBUD_QA_RESTRICTED_V1 '.length, newline));
+  const keys = ['schema', 'launcherPid', 'childPid', 'sameUser', 'jobInherited', 'parentAdministratorEnabled', 'parentPowerUsersEnabled', 'administratorEnabled', 'powerUsersEnabled', 'elevated', 'elevationType'];
+  check(value && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key)) && value.schema === 1 &&
+    ['launcherPid', 'childPid'].every(key => Number.isSafeInteger(value[key]) && value[key] > 0) && value.launcherPid !== value.childPid &&
+    value.sameUser === true && value.jobInherited === true && value.administratorEnabled === false && value.powerUsersEnabled === false &&
+    ['parentAdministratorEnabled', 'parentPowerUsersEnabled', 'elevated'].every(key => typeof value[key] === 'boolean') && [1, 2, 3].includes(value.elevationType),
+    'Restricted launcher authority was not proved');
+  return { identity: value, output: text.slice(newline + 1) };
+}
+
 if (scenarioMode) {
   // This entry is launched exclusively below through the installed supervisor.
   assert.ok(scratchArg, 'Owned scenario scratch required');
   const scratch = await realpath(scratchArg); const contexts = new Set();
-  const checks = [], requests = [], generations = [], observedPids = [], observedPorts = [], nativeDiagnostics = [], setupDiagnostics = [];
+  const checks = [], requests = [], generations = [], observedPids = [], observedPorts = [], nativeDiagnostics = [], setupDiagnostics = [], preflightObservations = [];
+  const expectedChecks = elevatedMode ? 2 : 7;
   const progress = () => save(join(output, 'scenario-state.json'), { stage, observedPids, observedPorts, nativeDiagnostics, setupDiagnostics });
   const { windowsFilePrivacySync: protect } = await import(pathToFileURL(join(resources, 'server/windows-file-privacy.js')).href);
   const { createServiceAdminPasswordVerifier } = await import(pathToFileURL(join(resources, 'server/service-admin.js')).href);
   let stage = 'startup', failure = null, tlsPort, cleanupComplete = false;
-  const abort = new AbortController(); const deadline = setTimeout(() => abort.abort(), 420_000);
+  const abort = new AbortController(); const deadline = setTimeout(() => abort.abort(), elevatedMode ? 90_000 : 420_000);
   const pass = name => { checks.push(name); console.log(`PASS ${name}`); };
   async function captureSetup(context, response) {
     const directory = join(context.data, 'company-installation/postgres');
@@ -303,11 +259,11 @@ if (scenarioMode) {
       result = await response.json();
     } catch (error) {
       requests.push({ role: context.role, method, path, status: response?.status ?? null, expected, elapsedMs: Math.round(performance.now() - started), outcome: 'transport-or-body-failure' });
-      if (context.role === 'host' && path === '/api/company/setup' && expected === 200) await captureSetup(context, null);
+      if (context.role === 'host' && path === '/api/company/setup' && (expected === 200 || (elevatedMode && expected === 503))) await captureSetup(context, null);
       await progress(); throw error;
     }
     requests.push({ role: context.role, method, path, status: response.status, expected, elapsedMs: Math.round(performance.now() - started) });
-    if (context.role === 'host' && path === '/api/company/setup' && expected === 200) await captureSetup(context, result);
+    if (context.role === 'host' && path === '/api/company/setup' && (expected === 200 || (elevatedMode && expected === 503))) await captureSetup(context, result);
     await progress();
     check((Array.isArray(expected) ? expected : [expected]).includes(response.status), 'Unexpected company HTTP status');
     return result;
@@ -347,12 +303,14 @@ if (scenarioMode) {
     await mkdir(env.APPDATA, { recursive: true }); await mkdir(env.LOCALAPPDATA, { recursive: true });
     const entry = join(home, 'team-native-diagnostics.mjs');
     await writeFile(entry, NATIVE_DIAGNOSTIC_ENTRY, { mode: 0o600 });
-    const child = spawn(executable, [entry, join(resources, 'server/bootstrap.js'), join(resources, 'postgres/bin'), Buffer.from(WINDOWS_TOKEN_CLASSIFIER, 'utf16le').toString('base64')], { cwd: resources, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+    const child = spawn(executable, [entry, join(resources, 'server/bootstrap.js'), join(resources, 'postgres/bin'), restrictedLauncher], { cwd: resources, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
     const context = { role, child, data, url: `http://127.0.0.1:${port}`, ports: new Set([port]), token: '', member: '', admin: '' };
     contexts.add(context); observedPids.push(child.pid); observedPorts.push(port);
+    let resolveToken; const tokenProof = new Promise(done => { resolveToken = done; });
     child.on('message', message => {
       if (message?.type !== 'realbud-team-native-diagnostic' || !message.value || nativeDiagnostics.length >= 128) return;
       nativeDiagnostics.push({ role, servicePid: child.pid, ...message.value });
+      if (message.value.operation === 'service-token') resolveToken(message.value);
       if (message.value.event === 'spawn' && Number.isSafeInteger(message.value.pid) && message.value.pid > 0 && !observedPids.includes(message.value.pid)) observedPids.push(message.value.pid);
     });
     if (role === 'host' && tlsPort) context.ports.add(tlsPort);
@@ -372,6 +330,10 @@ if (scenarioMode) {
       await sleep(200);
     }
     check(ready, 'Installed service readiness failed');
+    const token = await bounded(tokenProof, 5000, 'Actual service token was not observed');
+    const authorityMatches = elevatedMode ? token.administratorEnabled === true || token.powerUsersEnabled === true : token.administratorEnabled === false && token.powerUsersEnabled === false;
+    check(token.outcome === 'queried' && token.pid === child.pid && token.sameUser === true && authorityMatches,
+      'The actual service token must match the explicitly selected acceptance mode');
     context.startupMs = Math.round(performance.now() - started);
     context.token = (await call(context, '/api/session')).token; await captureDatabase(context);
     return context;
@@ -388,9 +350,47 @@ if (scenarioMode) {
     if (markerValid && pidsGone && portsClosed) contexts.delete(context);
     check(markerValid && orderly && pidsGone && portsClosed, 'Owned service cleanup unconfirmed');
   }
+  async function elevatedAcceptance() {
+    const host = await start('host');
+    const closed = new Promise(done => host.child.once('close', done));
+    const directory = join(host.data, 'company-installation'), settings = join(directory, 'host.json'), pgRoot = join(directory, 'postgres');
+    const guidance = 'Office hosting needs a standard Windows user session. Close RealBud and reopen it without "Run as administrator". If this continues, use a standard Windows user account. Existing data and settings have been preserved.';
+    const nativeCalls = () => nativeDiagnostics.filter(value => ['postgres.exe', 'initdb.exe', 'pg_ctl.exe'].includes(value.binary)).length;
+    check(!existsSync(settings) && !existsSync(pgRoot), 'Elevated fresh fixture must not have host or PostgreSQL state');
+    await call(host, '/api/company/setup', {}, 401);
+    host.admin = (await call(host, '/api/service-admin/login', { password: 'Fictional-Windows-Team-Admin-2026' })).token;
+    const fresh = await call(host, '/api/company/setup', {}, 503, 'POST', {}, 20_000);
+    const first = { case: 'fresh', typedCodeMatched: fresh.code === 'windows_postgres_privileged_token', guidanceMatched: fresh.error === guidance,
+      hostSettingsAbsent: !existsSync(settings), postgresAbsent: !existsSync(pgRoot), nativePostgresInvocations: nativeCalls() };
+    preflightObservations.push(first);
+    check(first.typedCodeMatched && first.guidanceMatched && first.hostSettingsAbsent && first.postgresAbsent && first.nativePostgresInvocations === 0,
+      'Elevated fresh setup must give the exact refusal before any host settings or native database work');
+    pass('Queried privileged service receives exact503 guidance before host settings or PostgreSQL writes');
+    // This pre-existing fictional marker belongs only to this disposable QA
+    // fixture. The second refused request must neither adopt nor alter it.
+    await mkdir(pgRoot, { recursive: true }); protect(pgRoot, 'directory', true);
+    const marker = join(pgRoot, 'fictional-preserved-state'), value = 'fictional-preexisting-database-state\n';
+    await writeFile(marker, '', { flag: 'wx' }); protect(marker, 'file', true); await writeFile(marker, value);
+    const before = hash(await readFile(marker));
+    const again = await call(host, '/api/company/setup', {}, 503, 'POST', {}, 20_000);
+    const second = { case: 'sentinel', typedCodeMatched: again.code === 'windows_postgres_privileged_token', guidanceMatched: again.error === guidance,
+      hostSettingsAbsent: !existsSync(settings), sentinelPreserved: hash(await readFile(marker)) === before,
+      postgresEntriesUnchanged: JSON.stringify((await readdir(pgRoot)).sort()) === JSON.stringify(['fictional-preserved-state']), nativePostgresInvocations: nativeCalls() };
+    preflightObservations.push(second);
+    check(second.typedCodeMatched && second.guidanceMatched && second.hostSettingsAbsent && second.sentinelPreserved && second.postgresEntriesUnchanged && second.nativePostgresInvocations === 0,
+      'Elevated refusal must preserve the existing sentinel without adding owned database state');
+    await stop(host);
+    await bounded(closed, 5000, 'Elevated service close and IPC drain were not confirmed');
+    const final = { case: 'after-service-close', ipcDisconnected: host.child.connected === false, nativePostgresInvocations: nativeCalls() };
+    preflightObservations.push(final);
+    check(final.ipcDisconnected && final.nativePostgresInvocations === 0, 'Elevated refusal must not start PostgreSQL before the service and diagnostic channel close');
+    pass('Repeated elevated refusal preserves the fictional existing state without lock, credentials or initdb');
+  }
   const ownerCredential = { loginName: 'fictional.owner', password: 'Fictional-Owner-Password-2026' };
   const memberCredential = { loginName: 'fictional.member', password: 'Fictional-Member-Password-2026' };
   try {
+    if (elevatedMode) await elevatedAcceptance();
+    else {
     let host = await start('host'), client = await start('client');
     check(host.token !== client.token && host.child.pid !== client.child.pid, 'Two independent services required');
     await call(client, '/api/config', undefined, 401, 'GET', { 'x-realbud-session': host.token });
@@ -445,25 +445,125 @@ if (scenarioMode) {
     await call(client, '/api/company/sign-in', memberCredential, 401);
     check((await call(host, '/api/company/membership/management', {})).members.some(value => value.id === member.member.id && value.active === false), 'Revocation must persist');
     pass('Both installed service restarts preserve revocation and office ownership');
+    }
   } catch (error) { failure = safeFailure(error, stage); }
   finally {
     clearTimeout(deadline); const cleanupErrors = [];
     for (const context of [...contexts].reverse()) { try { await stop(context); } catch { cleanupErrors.push(context.role); } }
     cleanupComplete = contexts.size === 0 && cleanupErrors.length === 0;
-    await save(join(output, 'scenario.json'), { schema: 1, passed: !failure && cleanupComplete && checks.length === 7,
+    await save(join(output, 'scenario.json'), { schema: 1, passed: !failure && cleanupComplete && checks.length === expectedChecks, mode: elevatedMode ? 'elevated-preflight' : 'restricted-office',
       runtime: { node: process.versions.node, electron: process.versions.electron }, checks, requests, generations, failure, cleanupErrors,
-      cleanupComplete, observedPids, observedPorts, nativeDiagnostics, setupDiagnostics, diagnosticEntrySha256: hash(NATIVE_DIAGNOSTIC_ENTRY), tokenClassifierSha256: hash(WINDOWS_TOKEN_CLASSIFIER), scratch });
-    process.exitCode = !failure && cleanupComplete && checks.length === 7 ? 0 : 1;
+      cleanupComplete, observedPids, observedPorts, nativeDiagnostics, setupDiagnostics, preflightObservations, diagnosticEntrySha256: hash(NATIVE_DIAGNOSTIC_ENTRY), tokenInspectorSha256: restrictedLauncherSha256, scratch });
+    process.exitCode = !failure && cleanupComplete && checks.length === expectedChecks ? 0 : 1;
     // A failed graceful shutdown must let the supervisor close the complete Job.
     if (!cleanupComplete) process.exit(1);
   }
 } else {
   await mkdir(output); // No overwrite of earlier evidence.
   const scratch = await realpath(await mkdtemp(join(tmpdir(), 'RealBud Windows team ')));
-  const env = { ...serviceSmokeEnv({ executable, home: scratch, data: join(scratch, 'outer-data'), scratch, port: 0 }), REALBUD_RESOURCES_DIR: resources };
+  const env = { ...serviceSmokeEnv({ executable, home: scratch, data: join(scratch, 'outer-data'), scratch, port: 0 }), REALBUD_RESOURCES_DIR: resources, REALBUD_QA_RESTRICTED_LAUNCHER: restrictedLauncher,
+    REALBUD_QA_RESTRICTED_LAUNCHER_SHA256: restrictedLauncherSha256, REALBUD_QA_RESTRICTED_SOURCE_SHA256: restrictedSourceSha256 };
   await mkdir(env.APPDATA, { recursive: true }); await mkdir(env.LOCALAPPDATA, { recursive: true });
-  const checks = []; let failure = null, scenario, stage = 'containment-controls', scenarioChild, scenarioClosed, controlsComplete = false;
+  const checks = [], restrictedChecks = [], restrictedLaunches = [], restrictedFailures = []; let failure = null, scenario, stage = 'containment-controls', scenarioChild, scenarioClosed, elevatedChild, elevatedClosed, elevated, controlsComplete = false;
   const pendingControls = new Set();
+  function recordRestrictedFailure(stderr, control) {
+    const stages = new Set(['duplicate-token', 'administrator-membership', 'power-users-membership', 'elevation', 'elevation-type', 'user-size', 'user-query',
+      'parent-job', 'job-limits', 'job-containment', 'launch-token', 'restrict-token', 'restricted-authority', 'standard-handle', 'copy-handle',
+      'attribute-size', 'attributes', 'handle-list', 'create-restricted', 'child-job', 'child-token', 'child-authority', 'resume', 'wait', 'exit-code', 'managed']);
+    for (const line of String(stderr || '').slice(0, 2048).split(/\r?\n/)) {
+      const found = /^Restricted QA process refused: stage=([a-z-]{1,32}) code=(\d{1,10})$/.exec(line);
+      if (found && stages.has(found[1]) && Number(found[2]) <= 0xffffffff) restrictedFailures.push({ control, expectedRefusal: ['invalid-target', 'missing-target'].includes(control), stage: found[1], win32Error: Number(found[2]) });
+    }
+  }
+  function rememberRestricted(stdout, control) {
+    const parsed = parseRestrictedOutput(stdout);
+    restrictedLaunches.push({ control, ...parsed.identity });
+    return parsed;
+  }
+  async function restrictedControls() {
+    const { runOneShot } = await import(pathToFileURL(join(resources, 'server/one-shot-process.js')).href);
+    const markerFiles = [];
+    async function capture(args, timeout = 7000, control = 'control') {
+      let calls = 0, complete, close;
+      const result = new Promise(done => { complete = done; });
+      const closed = new Promise(done => { close = done; });
+      const child = runOneShot(restrictedLauncher, args, { cwd: scratch, env, timeout, encoding: 'utf8', maxBuffer: 128 * 1024 },
+        (error, stdout, stderr) => { calls++; complete({ error, stdout, stderr }); });
+      if (child) { pendingControls.add(child); child.once('close', () => { pendingControls.delete(child); close(); }); }
+      else close();
+      try { const value = await bounded(result, timeout + 5000, 'Restricted control exceeded its deadline'); await bounded(closed, 5000, 'Restricted control did not close'); check(calls === 1, 'Restricted callback must settle once'); recordRestrictedFailure(value.stderr, control); return value; }
+      finally { if (child && alive(child.pid)) { child.kill('SIGKILL'); child.stdin?.destroy(); await bounded(closed, 5000, 'Restricted cleanup did not close'); } }
+    }
+    async function checkMarker(file) {
+      const value = JSON.parse(await readFile(file, 'utf8'));
+      check(Number.isSafeInteger(value.leader) && value.leader > 0 && Array.isArray(value.descendants) && value.descendants.length > 0 &&
+        value.descendants.every(pid => Number.isSafeInteger(pid) && pid > 0), 'Restricted control PID record is invalid');
+      for (const pid of [value.leader, ...value.descendants]) check(await gone(pid), 'A restricted control process survived its Job');
+    }
+    const tree = `const {spawn}=require('node:child_process'),fs=require('node:fs');
+const modes=process.argv[2]==='normal'?['inherit','ignore']:['inherit'];
+const children=modes.map(mode=>spawn(process.execPath,['-e','setInterval(()=>{},100);setTimeout(()=>process.exit(77),30000);'],{stdio:['ignore',mode,mode],windowsHide:true}));
+Promise.all(children.map(child=>new Promise((done,fail)=>{child.once('spawn',done);child.once('error',fail)}))).then(()=>{
+fs.writeFileSync(process.argv[1],JSON.stringify({leader:process.pid,descendants:children.map(child=>child.pid)}));
+if(process.argv[2]==='normal')process.exit(0);
+process.stdout.on('error',()=>process.exit(0));setInterval(()=>process.stdout.write('fictional-restricted-writer\\n'),20);setTimeout(()=>process.exit(77),30000);});`;
+    try {
+      const args = ['', 'space inside', 'quote"inside', 'tail\\', 'mixed\\\\"quote', 'line\nbreak', '文字😀', '&|<>^%!'];
+      const exact = await capture(['--', executable, '-e', "console.log(JSON.stringify(process.argv.slice(1)));console.error('fictional-restricted-stderr');process.exitCode=23;", '--', ...args]);
+      check(exact.error?.code === 23 && exact.error?.killed === false, 'Restricted nonzero exit changed');
+      const parsed = rememberRestricted(exact.stdout, 'argv-exit'); assert.deepEqual(JSON.parse(parsed.output), args);
+      check(exact.stderr === 'fictional-restricted-stderr\n', 'Restricted stderr changed');
+      restrictedChecks.push('Restricted same-user launch proves nonadmin token, exact argv, streams and exit');
+      for (const mode of ['timeout', 'normal']) {
+        const marker = join(scratch, `restricted-${mode}.json`); markerFiles.push(marker);
+        const result = await capture(['--', executable, '-e', tree, '--', marker, mode], 7000, mode);
+        const observed = rememberRestricted(result.stdout, mode);
+        if (mode === 'timeout') check(result.error?.code === 'ETIMEDOUT' && result.error.killed === true && observed.output.includes('fictional-restricted-writer'), 'Restricted active-writer timeout failed');
+        else check(!result.error, 'Restricted zero exit failed');
+        await checkMarker(marker);
+        restrictedChecks.push(mode === 'timeout' ? 'Restricted active-writer timeout removes its inherited-pipe descendant' : 'Restricted zero exit removes inherited-pipe and silent descendants');
+      }
+      const refused = await capture(['--', 'relative.exe'], 7000, 'invalid-target');
+      check(refused.error?.code === 125 && refused.stdout === '', 'Restricted invalid executable must fail closed without an identity or child');
+      const unavailable = await capture(['--', join(scratch, 'fictional-missing.exe')], 7000, 'missing-target');
+      check(unavailable.error?.code === 125 && unavailable.stdout === '', 'Restricted creation failure must not fall back to an ordinary token');
+      restrictedChecks.push('Restricted invalid target and failed creation refuse without fallback');
+      await restrictedParentDeathControl();
+      restrictedChecks.push('Restricted actual parent death removes launcher, leader and descendant through installed Job');
+    } finally {
+      for (const file of markerFiles) if (existsSync(file)) await checkMarker(file);
+    }
+  }
+  async function restrictedParentDeathControl() {
+    const tree = `const {spawn}=require('node:child_process');const child=spawn(process.execPath,['-e','setInterval(()=>{},100);setTimeout(()=>process.exit(77),30000);'],{stdio:'ignore'});child.once('spawn',()=>console.log(JSON.stringify({leader:process.pid,descendant:child.pid})));setInterval(()=>{},100);setTimeout(()=>process.exit(77),30000);`;
+    const ownerSource = `const {spawn}=require('node:child_process'),fs=require('node:fs');
+const helper=spawn(process.argv[1],['--',process.argv[2],'--',process.execPath,'-e',process.argv[3]],{stdio:['pipe','pipe','ignore'],windowsHide:true});
+fs.writeFileSync(process.argv[4],JSON.stringify({supervisor:helper.pid}));let text='',identity;
+helper.stdout.on('data',chunk=>{text+=chunk;if(text.length>4096)process.exit(77);let index;
+while((index=text.indexOf('\\n'))>=0){const line=text.slice(0,index);text=text.slice(index+1);
+if(line.startsWith('REALBUD_QA_RESTRICTED_V1 '))identity=JSON.parse(line.slice('REALBUD_QA_RESTRICTED_V1 '.length));
+else {const child=JSON.parse(line);const record={supervisor:helper.pid,identity,...child};fs.writeFileSync(process.argv[4],JSON.stringify(record));console.log(JSON.stringify(record));}}});setInterval(()=>{},100);setTimeout(()=>process.exit(77),30000);`;
+    const marker = join(scratch, 'restricted-parent.json');
+    const owner = spawn(executable, ['-e', ownerSource, supervisor, restrictedLauncher, tree, marker], { env, cwd: scratch, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    pendingControls.add(owner); owner.stderr.resume();
+    const ended = new Promise(done => owner.once('close', done));
+    let record;
+    try {
+      record = JSON.parse(await bounded(new Promise((done, fail) => {
+        let text = ''; owner.once('error', fail);
+        owner.stdout.on('data', chunk => { text += chunk; if (text.length > 4096) fail(new Error('Restricted parent record too large')); else if (text.includes('\n')) done(text.split('\n')[0]); });
+      }), 15000, 'Restricted parent-death fixture did not become ready'));
+      const parsed = rememberRestricted('REALBUD_QA_RESTRICTED_V1 ' + JSON.stringify(record.identity) + '\n', 'parent-death');
+      check(record.leader === parsed.identity.childPid && Number.isSafeInteger(record.supervisor) && record.supervisor > 0 && Number.isSafeInteger(record.descendant) && record.descendant > 0, 'Restricted parent tree identity mismatch');
+      owner.kill('SIGKILL'); await bounded(ended, 5000, 'Restricted parent did not exit');
+    } finally {
+      if (alive(owner.pid)) owner.kill('SIGKILL'); await bounded(ended, 5000, 'Restricted owner cleanup timed out'); pendingControls.delete(owner);
+      const saved = record || (existsSync(marker) ? JSON.parse(await readFile(marker, 'utf8')) : {});
+      for (const pid of [saved.supervisor, saved.identity?.launcherPid, saved.leader, saved.descendant].filter(value => value !== undefined)) {
+        check(Number.isSafeInteger(pid) && pid > 0 && await gone(pid), 'Restricted parent death left an owned process');
+      }
+    }
+  }
   async function parentDeathControl() {
     const tree = `const {spawn}=require('node:child_process');
 const child=spawn(process.execPath,['-e','setInterval(()=>{},100);setTimeout(()=>process.exit(77),60000);'],{stdio:'ignore'});
@@ -501,48 +601,79 @@ setInterval(()=>{},100);setTimeout(()=>process.exit(77),60000);`;
     for (const binary of pg.binaries) check(hash(await readFile(join(resources, 'postgres/bin', binary.name))) === binary.sha256, 'Installed PostgreSQL binary hash mismatch');
     checks.push(...await smokeInstalledWorker(resources, executable));
     await parentDeathControl();
+    await restrictedControls();
     controlsComplete = true;
     stage = 'two-service-scenario';
     const { runOneShot, windowsWorkerSupervisor } = await import(pathToFileURL(join(resources, 'server/one-shot-process.js')).href);
     check(windowsWorkerSupervisor() === supervisor, 'Exact installed supervisor required');
+    stage = 'elevated-preflight';
+    const elevatedOutput = join(output, 'elevated'), elevatedScratch = join(scratch, 'elevated');
+    await mkdir(elevatedOutput); await mkdir(elevatedScratch);
+    const elevatedResult = new Promise(done => {
+      elevatedChild = runOneShot(executable, [script, '--elevated-preflight', resources, elevatedOutput, elevatedScratch],
+        { cwd: elevatedScratch, env, timeout: 120_000, encoding: 'utf8', maxBuffer: 128 * 1024 }, (error, stdout) => done({ error, stdout }));
+    });
+    check(elevatedChild?.pid, 'Elevated negative supervisor did not start');
+    elevatedClosed = new Promise(done => elevatedChild.once('close', done));
+    await save(join(elevatedOutput, 'controller.json'), { supervisorPid: elevatedChild.pid, outerPid: process.pid });
+    const denied = await bounded(elevatedResult, 125_000, 'Elevated negative acceptance exceeded its deadline');
+    await bounded(elevatedClosed, 5000, 'Elevated negative supervisor did not close');
+    elevated = JSON.parse(await readFile(join(elevatedOutput, 'scenario.json'), 'utf8'));
+    check(!denied.error && elevated.passed && elevated.mode === 'elevated-preflight' && elevated.checks.length === 2 && elevated.cleanupComplete,
+      'Elevated negative acceptance did not prove exact refusal and no writes');
+    for (const pid of elevated.observedPids) check(await gone(pid), 'Elevated acceptance left an owned process');
+    for (const port of elevated.observedPorts) check(await closedPort(port), 'Elevated acceptance left a listener');
+    process.stdout.write(denied.stdout);
+    stage = 'two-service-scenario';
     const result = new Promise(resolveResult => {
-      scenarioChild = runOneShot(executable, [script, '--scenario', resources, output, scratch],
+      scenarioChild = runOneShot(restrictedLauncher, ['--', executable, script, '--scenario', resources, output, scratch],
         { cwd: scratch, env, timeout: 480_000, encoding: 'utf8', maxBuffer: 128 * 1024 },
-        (error, stdout) => resolveResult({ error, stdout }));
+        (error, stdout, stderr) => resolveResult({ error, stdout, stderr }));
     });
     check(scenarioChild?.pid, 'Native scenario supervisor did not start');
     scenarioClosed = new Promise(resolveClosed => scenarioChild.once('close', resolveClosed));
     await save(join(output, 'controller.json'), { supervisorPid: scenarioChild.pid, outerPid: process.pid });
     const completed = await bounded(result, 490_000, 'Native scenario exceeded its bounded deadline');
     await bounded(scenarioClosed, 5000, 'Native supervisor did not close');
+    recordRestrictedFailure(completed.stderr, 'office-scenario');
     check(!completed.error, 'Contained company scenario failed');
+    rememberRestricted(completed.stdout, 'office-scenario');
     scenario = JSON.parse(await readFile(join(output, 'scenario.json'), 'utf8'));
     check(scenario.passed && scenario.cleanupComplete && scenario.checks.length === 7, 'Company scenario receipt did not pass');
     for (const pid of scenario.observedPids) check(await gone(pid), 'Recorded service or database PID survived');
     for (const port of scenario.observedPorts) check(await closedPort(port), 'Recorded office listener remained open');
     checks.push('Contained installed scenario passed seven groups and every recorded service/database PID and listener is gone');
-    process.stdout.write(completed.stdout);
+    process.stdout.write(parseRestrictedOutput(completed.stdout).output);
   } catch (error) { failure = safeFailure(error, stage); }
   finally {
+    if (elevatedChild && alive(elevatedChild.pid)) { elevatedChild.kill('SIGKILL'); elevatedChild.stdin?.destroy(); }
+    if (elevatedClosed) await bounded(elevatedClosed, 5000, 'Elevated supervisor cleanup deadline').catch(() => { failure ||= { stage: 'cleanup', reason: 'elevated-supervisor-close-unconfirmed' }; });
     if (scenarioChild && alive(scenarioChild.pid)) { scenarioChild.kill('SIGKILL'); scenarioChild.stdin?.destroy(); }
     if (scenarioClosed) await bounded(scenarioClosed, 5000, 'Supervisor cleanup deadline').catch(() => { failure ||= { stage: 'cleanup', reason: 'supervisor-close-unconfirmed' }; });
     for (const child of pendingControls) if (alive(child.pid)) child.kill('SIGKILL');
-    let known; try { known = JSON.parse(await readFile(join(output, 'scenario-state.json'), 'utf8')); } catch { /* scenario may not have begun */ }
-    const pidsGone = (!scenarioChild || await gone(scenarioChild.pid)) && (await Promise.all((known?.observedPids || []).map(gone))).every(Boolean);
+    const knownStates = [];
+    for (const file of ['scenario-state.json', 'elevated/scenario-state.json']) {
+      try { knownStates.push(JSON.parse(await readFile(join(output, file), 'utf8'))); } catch { /* the scenario may not have begun */ }
+    }
+    const known = { observedPids: knownStates.flatMap(value => value.observedPids || []), observedPorts: knownStates.flatMap(value => value.observedPorts || []) };
+    const restrictedPids = restrictedLaunches.flatMap(value => [value.launcherPid, value.childPid]);
+    const pidsGone = (await Promise.all(restrictedPids.map(gone))).every(Boolean) && (!elevatedChild || await gone(elevatedChild.pid)) && (!scenarioChild || await gone(scenarioChild.pid)) && (await Promise.all((known?.observedPids || []).map(gone))).every(Boolean);
     const portsClosed = (await Promise.all((known?.observedPorts || []).map(closedPort))).every(Boolean);
     const cleanupComplete = controlsComplete && pidsGone && portsClosed && pendingControls.size === 0;
     if (!cleanupComplete) failure ||= { stage: 'cleanup', reason: 'owned-process-or-port-unconfirmed' };
     if (cleanupComplete) await rm(scratch, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
-    await save(join(output, 'receipt.json'), { schema: 1, passed: !failure && checks.length === 5 && scenario?.passed === true && cleanupComplete,
+    await save(join(output, 'receipt.json'), { schema: 1, passed: !failure && checks.length === 5 && restrictedChecks.length === 5 && elevated?.passed === true && scenario?.passed === true && cleanupComplete,
       generatedAt: new Date().toISOString(), platform: process.platform, arch: process.arch, osRelease: release(),
       runtime: { node: process.versions.node, electron: process.versions.electron }, resources, executable,
       harnessSha256: hash(readFileSync(script)), compiledSourceRevision: process.env.REALBUD_QA_COMPILED_SHA,
-      harnessSourceRevision: process.env.REALBUD_QA_HARNESS_SHA, checks, failure, cleanupComplete,
+      harnessSourceRevision: process.env.REALBUD_QA_HARNESS_SHA, checks, restrictedChecks, restrictedLaunches, restrictedFailures, failure, cleanupComplete,
+      elevatedPreflight: { passed: elevated?.passed === true, checks: elevated?.checks || [], cleanupComplete: elevated?.cleanupComplete === true },
+      qaLaunch: { mode: 'same-user-restricted-token', sourceSha256: restrictedSourceSha256, executableSha256: restrictedLauncherSha256 },
       proofLayer: 'Two installed Windows services, real packaged PostgreSQL and pinned TLS on one disposable Windows CI machine',
-      limits: ['No physical Windows11 customer PC or second physical device is proved.', 'No rendered UI, live account, Hermes provisioning, model call, firewall or sleep/resume acceptance.',
+      limits: ['Same-SID restricted-token fixture; it may retain high integrity and does not prove a standard-user Windows11/UAC launch.', 'No physical Windows11 customer PC or second physical device is proved.', 'No rendered UI, live account, Hermes provisioning, model call, firewall or sleep/resume acceptance.',
         'Company TLS binds 0.0.0.0 temporarily; every fixture request targets loopback and observed listeners must close.',
         'Owner-issued local invitation authorizes enrollment; external identity-provider or website approvals are not exercised.'],
       ...(!cleanupComplete ? { preservedFixture: scratch } : {}) });
-    process.exitCode = !failure && checks.length === 5 && scenario?.passed === true && cleanupComplete ? 0 : 1;
+    process.exitCode = !failure && checks.length === 5 && restrictedChecks.length === 5 && elevated?.passed === true && scenario?.passed === true && cleanupComplete ? 0 : 1;
   }
 }
