@@ -3,6 +3,7 @@
 // remains with RealBud's browser broker and human approval controls.
 import fs from "node:fs";
 import path from "node:path";
+import { createWindowsCuaHost } from "./cua-windows-host.mjs";
 
 export const CUA_HOST_BUNDLE_ID = "com.realbud.app";
 export const WINDOWS_CUA_LAUNCHER = "RealBud CUA.exe";
@@ -13,7 +14,7 @@ export function existingProfileGrantLauncher(binary, {
 } = {}) {
   if (typeof binary !== "string" || !binary || /[\0\r\n]/.test(binary)) throw new Error("The bundled desktop helper path is invalid.");
   if (platform === "win32") {
-    // EmbeddedCuaDriverHost delegates launching to native code. Give it a real
+    // Our Windows host starts this fixed Job Object supervisor as a real
     // executable, never a .cmd file or a command string. The launcher resolves
     // only its adjacent cua-driver.exe; it cannot select a target from env/argv.
     if (!/^(?:[a-z]:[\\/]|\\\\[^\\]+\\[^\\]+\\)/i.test(binary) || path.win32.basename(binary).toLowerCase() !== "cua-driver.exe") {
@@ -45,5 +46,7 @@ export function existingProfileGrantLauncher(binary, {
 }
 
 export function createGrantedCuaHost(sdk, binary, options) {
-  return new sdk.EmbeddedCuaDriverHost(existingProfileGrantLauncher(binary, options), CUA_HOST_BUNDLE_ID);
+  const launcher = existingProfileGrantLauncher(binary, options);
+  if ((options?.platform ?? process.platform) === "win32") return createWindowsCuaHost(sdk, launcher, binary, CUA_HOST_BUNDLE_ID);
+  return new sdk.EmbeddedCuaDriverHost(launcher, CUA_HOST_BUNDLE_ID);
 }

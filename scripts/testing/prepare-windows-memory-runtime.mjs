@@ -31,6 +31,16 @@ export const UV_DIAGNOSTIC_SIGNALS = Object.freeze({
 export const UV_DIAGNOSTIC_TIMEOUT_MS = 120_000;
 export const UV_EXCERPT_LINES = 15;
 export const UV_EXCERPT_CHARS = 240;
+export const REPOSITORY_DIAGNOSTIC_SIGNALS = Object.freeze({
+  'repository-update': 'Existing installation found, updating',
+  'repository-invalid-existing': 'is not a valid git repo',
+  'repository-ssh': 'Trying SSH clone',
+  'repository-https': 'SSH failed, trying HTTPS',
+  'repository-zip': 'Git clone failed -- downloading ZIP archive',
+  'repository-zip-extracted': 'Downloaded and extracted',
+  'repository-pin': 'Pinning to commit',
+  'repository-ready': 'Repository ready',
+});
 // Shared by the PowerShell observer and Node receipt boundary. Deliberately
 // more conservative than service-smoke diagnostics: complete URLs and paths,
 // credential-labelled tails, and long opaque values lose their contents.
@@ -57,14 +67,14 @@ export function redactUvDiagnosticLine(value) {
 }
 
 const psLiteral = value => `'${String(value).replaceAll("'", "''")}'`;
-export function uvDiagnosticScript(invocation, receiptPath) {
+function stageDiagnosticScript(invocation, receiptPath, stage) {
   assert.equal(invocation.command, 'powershell.exe');
-  assert.equal(invocation.args[invocation.args.indexOf('-Stage') + 1], 'uv');
-  const patterns = Object.entries(UV_DIAGNOSTIC_SIGNALS)
+  assert.equal(invocation.args[invocation.args.indexOf('-Stage') + 1], stage);
+  const patterns = Object.entries(stage === 'uv' ? UV_DIAGNOSTIC_SIGNALS : REPOSITORY_DIAGNOSTIC_SIGNALS)
     .map(([key, value]) => `  ${psLiteral(key)} = ${psLiteral(value)}`).join('\n');
   const redact = UV_EXCERPT_REDACTIONS.map(([pattern, replacement]) =>
     `  $line = [regex]::Replace($line, ${psLiteral(pattern)}, ${psLiteral(replacement)}, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)`).join('\n');
-  return `# Disposable uv diagnostic only. Raw child output is consumed, never written.
+  return `# Disposable ${stage} diagnostic only. Raw child output is consumed, never written.
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 $script:signals = [System.Collections.Generic.HashSet[string]]::new()
@@ -72,6 +82,7 @@ $script:installerLines = [System.Collections.Generic.HashSet[int]]::new()
 $script:protocolSeen = $false
 $script:protocolOk = $false
 $script:protocolSkipped = $false
+$script:protocolReason = $null
 $script:observedLines = 0
 $script:longLineSeen = $false
 $script:uvTailRemaining = 0
@@ -92,10 +103,10 @@ function Observe-UvOutput($item) {
   # The pinned installer emits its captured download failures here. Retain
   # this bounded tail and direct uv errors, not unrelated installer output.
   $capture = $false
-  if ($text -match '^->\\s+uv installer output \\(last 15 lines\\):') { $script:uvTailRemaining = 15 }
+  ${stage === 'repository' ? "$capture = $text -match '^\\s*(?:fatal:|error:|warning:|remote:\\s*(?:fatal:|error:)|ssh:|\\[X\\])'" : `if ($text -match '^->\\s+uv installer output \\(last 15 lines\\):') { $script:uvTailRemaining = 15 }
   elseif ($text -match '^(?:->\\s+Install manually:|\\s*\\{)') { $script:uvTailRemaining = 0 }
   elseif ($script:uvTailRemaining -gt 0) { $script:uvTailRemaining--; $capture = $true }
-  elseif ($text -match '^\\[X\\]\\s+(?:uv installed but not found|Failed to install uv:)') { $capture = $true }
+  elseif ($text -match '^\\[X\\]\\s+(?:uv installed but not found|Failed to install uv:)') { $capture = $true }`}
   if ($capture) {
     $safe = Protect-UvLine $text
     if ($safe) { $script:failureExcerpt.Add($safe) }
@@ -110,10 +121,11 @@ function Observe-UvOutput($item) {
   }
   try {
     $frame = ConvertFrom-Json -InputObject $text -ErrorAction Stop
-    if ($frame.stage -eq 'uv' -and $frame.ok -is [bool]) {
+    if ($frame.stage -is [string] -and $frame.stage -ceq '${stage}' -and $frame.ok -is [bool]) {
       $script:protocolSeen = $true
       $script:protocolOk = $frame.ok
-      $script:protocolSkipped = ($frame.skipped -eq $true)
+      $script:protocolSkipped = ($frame.skipped -is [bool] -and $frame.skipped -eq $true)
+      if ($frame.reason -is [string]) { $script:protocolReason = Protect-UvLine $frame.reason }
     }
   } catch { }
 }
@@ -125,13 +137,14 @@ try {
 } catch { Observe-UvOutput $_ }
 finally {
   $result = @{
-    schema = 1; stage = 'uv'; exitCode = $code
+    schema = 1; stage = '${stage}'; exitCode = $code
     signals = @($script:signals | Sort-Object)
     installerLines = @($script:installerLines | Sort-Object | Select-Object -First 20)
     protocolSeen = $script:protocolSeen; protocolOk = $script:protocolOk
     protocolSkipped = $script:protocolSkipped
     observedLines = $script:observedLines; longLineSeen = $script:longLineSeen
     failureExcerpt = @($script:failureExcerpt)
+    ${stage === 'repository' ? 'protocolReason = $script:protocolReason' : ''}
   }
   [System.IO.File]::WriteAllText(${psLiteral(receiptPath)}, ($result | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
 }
@@ -139,13 +152,16 @@ exit $code
 `;
 }
 
-export function sanitizeUvDiagnostic(value) {
-  assert.ok(value && value.schema === 1 && value.stage === 'uv', 'Invalid uv diagnostic protocol.');
-  assert.ok(Number.isInteger(value.exitCode), 'Missing uv diagnostic exit status.');
+export const uvDiagnosticScript = (invocation, receiptPath) => stageDiagnosticScript(invocation, receiptPath, 'uv');
+export const repositoryDiagnosticScript = (invocation, receiptPath) => stageDiagnosticScript(invocation, receiptPath, 'repository');
+
+function sanitizeStageDiagnostic(value, stage, allowedSignals) {
+  assert.ok(value && value.schema === 1 && value.stage === stage, 'Invalid installer diagnostic protocol.');
+  assert.ok(Number.isInteger(value.exitCode), 'Missing installer diagnostic exit status.');
   return {
     exitCode: value.exitCode,
     signals: [...new Set((Array.isArray(value.signals) ? value.signals : [])
-      .filter(signal => typeof signal === 'string' && Object.hasOwn(UV_DIAGNOSTIC_SIGNALS, signal)))].sort(),
+      .filter(signal => typeof signal === 'string' && Object.hasOwn(allowedSignals, signal)))].sort(),
     installerLines: [...new Set((Array.isArray(value.installerLines) ? value.installerLines : [])
       .filter(line => Number.isInteger(line) && line > 0 && line < 100_000))].sort((a, b) => a - b).slice(0, 20),
     protocolSeen: value.protocolSeen === true, protocolOk: value.protocolOk === true,
@@ -155,6 +171,13 @@ export function sanitizeUvDiagnostic(value) {
     failureExcerpt: (Array.isArray(value.failureExcerpt) ? value.failureExcerpt : [])
       .slice(-UV_EXCERPT_LINES).map(redactUvDiagnosticLine).filter(line => line !== null),
   };
+}
+
+export const sanitizeUvDiagnostic = value => sanitizeStageDiagnostic(value, 'uv', UV_DIAGNOSTIC_SIGNALS);
+export function sanitizeRepositoryDiagnostic(value) {
+  const safe = sanitizeStageDiagnostic(value, 'repository', REPOSITORY_DIAGNOSTIC_SIGNALS);
+  for (const field of ['protocolSeen', 'protocolOk', 'protocolSkipped']) assert.equal(typeof value[field], 'boolean', 'Invalid repository protocol flag.');
+  return { ...safe, protocolReason: redactUvDiagnosticLine(value.protocolReason) };
 }
 
 /** The first attempt is the untouched production runner. Only a failed uv
@@ -208,6 +231,49 @@ export function withUvFailureDiagnostic({ runStage, childRunning, installerSha25
   };
 }
 
+/** Observe the original repository attempt once. Replaying this stage could
+ * update or replace its partial checkout and hide the cause of the failure. */
+export function withRepositoryDiagnostic({ runStage, childRunning, installerSha256, scratch, report }) {
+  return async (invocation, home, signal, recordHome) => {
+    const stage = invocation.args[invocation.args.indexOf('-Stage') + 1];
+    if (invocation.command !== 'powershell.exe' || stage !== 'repository') return runStage(invocation, home, signal, recordHome);
+    signal.throwIfAborted();
+    assert.equal(childRunning(recordHome ?? home), false, 'An earlier managed setup process is still running.');
+    const source = invocation.args[invocation.args.indexOf('-File') + 1];
+    assert.equal(createHash('sha256').update(readFileSync(source)).digest('hex'), installerSha256);
+    const folder = mkdtempSync(join(scratch, 'repository-diagnostic-'));
+    const script = join(folder, 'observe-repository.ps1');
+    const resultPath = join(folder, 'fixed-signals.json');
+    writeFileSync(script, '\ufeff' + repositoryDiagnosticScript(invocation, resultPath), { flag: 'wx' });
+    const diagnostic = { stage: 'repository', observedOriginalAttempt: true, attemptCount: 1,
+      replayed: false, installerSha256 };
+    let result, failure, failed = false;
+    try {
+      result = await runStage({ command: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script] },
+        home, signal, recordHome);
+    } catch (error) {
+      failed = true; failure = error;
+    }
+    diagnostic.originalStageFailed = failed;
+    try {
+      assert.ok(statSync(resultPath).size <= 16_384, 'Diagnostic protocol exceeded its bound.');
+      Object.assign(diagnostic, sanitizeRepositoryDiagnostic(JSON.parse(readFileSync(resultPath, 'utf8'))));
+    } catch {
+      diagnostic.collectionFailed = true;
+    }
+    try { diagnostic.childStillRunning = childRunning(recordHome ?? home); }
+    catch { diagnostic.collectionFailed = true; }
+    try { report(diagnostic); }
+    catch { diagnostic.collectionFailed = true; }
+    // Collection/reporting failures must never replace the original failure.
+    if (failed) throw failure;
+    assert.ok(!diagnostic.collectionFailed && diagnostic.exitCode === 0 && diagnostic.protocolSeen === true
+      && diagnostic.protocolOk === true && diagnostic.protocolSkipped === false && diagnostic.childStillRunning === false,
+    'The repository observation could not confirm successful completion.');
+    return result;
+  };
+}
+
 export async function main() {
 
   assert.equal(process.platform, 'win32', 'Use a disposable native Windows runner.');
@@ -240,7 +306,8 @@ export async function main() {
     runtimeCommit: release.commit, installerSha256: release.installers.windows,
     runtimeDirectory, stages,
     limits: ['Disposable CI runtime setup only; no GUI, account, model request or customer device proof.',
-      'A failed uv stage may be replayed once for fixed signals and at most 15 redacted failure lines of 240 characters; its original failure remains authoritative. No raw installer output is retained.'],
+      'A failed uv stage may be replayed once for fixed signals and at most 15 redacted failure lines of 240 characters; its original failure remains authoritative. No raw installer output is retained.',
+      'The original repository attempt is observed once, without replay, through the production stage runner. Only fixed milestones, a redacted protocol reason and at most 15 redacted failure lines of 240 characters are retained.'],
   };
   const persist = () => {
     receipt.elapsedMs = Date.now() - started;
@@ -255,7 +322,10 @@ export async function main() {
   try {
     await runWorkerBootstrap({
       home: runtimeHome, privateRuntime: true, release, signal: controller.signal,
-      execute: withUvFailureDiagnostic({ runStage: runBootstrapStage, childRunning: bootstrapChildRunning,
+      execute: withUvFailureDiagnostic({ runStage: withRepositoryDiagnostic({
+        runStage: runBootstrapStage, childRunning: bootstrapChildRunning, installerSha256: release.installers.windows, scratch,
+        report(diagnostic) { receipt.repositoryDiagnostic = diagnostic; persist(); },
+      }), childRunning: bootstrapChildRunning,
         installerSha256: release.installers.windows, scratch,
         report(diagnostic) { receipt.uvDiagnostic = diagnostic; persist(); },
       }),
@@ -280,8 +350,8 @@ export async function main() {
     receipt.passed = true;
   } catch (error) {
     // No raw installer output is retained. These messages come from the owned
-    // bootstrap boundary or assertions; the optional replay contributes only
-    // fixed signals, protocol fields and the bounded redacted failure excerpt.
+    // bootstrap boundary or assertions; diagnostic observers contribute only
+    // fixed signals, protocol fields and bounded redacted failure details.
     receipt.error = error instanceof Error ? error.message : 'Managed setup failed.';
     process.exitCode = 1;
   } finally {

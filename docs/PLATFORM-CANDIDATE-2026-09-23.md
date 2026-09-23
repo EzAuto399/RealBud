@@ -21,8 +21,10 @@ are not supported build targets. See [Windows build and test](WINDOWS-BUILD-AND-
 1. One-shot worker calls own capture, timeout, cancellation and descendant
    cleanup. Windows uses a bundled native Job Object supervisor; POSIX uses an
    owned process group. Cleanup failure cannot become a successful answer.
-2. The Windows CUA grant path uses a real native launcher. The GUI and installed
-   smoke share the same launcher factory, preserving arguments and exit codes.
+2. The Windows CUA grant path uses a native Job supervisor and a host adapter
+   that authenticates the actual daemon through the pinned SDK. The GUI and
+   installed smoke share the same factory. Human release requires confirmed
+   cleanup of every process in the Job.
 3. Installer acceptance binds the source revision and installer hash to probe
    receipts, then verifies uninstall removes the disposable app and resources.
 4. A separate native job exercises the production-managed pinned worker setup
@@ -75,15 +77,14 @@ It passed 52 focused process/launcher tests (four platform skips), 31 packaging
 fixtures, and nine native diagnostic controls. Installation and verified
 uninstall passed. Installed helper acceptance then timed out in speech.
 The helper initialized speech and the microphone before checking an already
-present stop file; the candidate now checks cancellation first. Native
-verification of that correction remains required. The timeout does not identify
-which Windows initialization call stalled.
+present stop file; the candidate now checks cancellation first. The third run
+passed the native cancellation controls and installed speech check. The original
+timeout does not identify which Windows initialization call stalled.
 
-The independent managed-worker job currently fails in the actual pinned `uv`
-installer stage. A bounded diagnostic replay confirms that the stage runs and
-returns failure; it does not turn the original failure into a passing result.
-The real journal test has not run yet. The source revision and retained failure
-receipts identify each attempt under the local evidence directory.
+The first three independent managed-worker attempts failed in the actual pinned
+`uv` installer stage. A bounded diagnostic replay retained the failure evidence;
+it never turns the original failure into a passing result. The source revision
+and retained receipts identify each attempt under the local evidence directory.
 
 The third attempt retained the installer's bounded redacted failure tail:
 both `uv` download paths failed because nested Windows PowerShell could not
@@ -91,14 +92,31 @@ load `Microsoft.PowerShell.Security` for `Get-ExecutionPolicy`. The candidate
 now pins the inbox PowerShell 5.1 module directory at the production setup
 boundary, matching RealBud's existing privacy subprocess isolation. A native
 regression checks incompatible inherited modules and parent/nested module
-loading; it must pass before managed setup. Microsoft documents this
+loading; it runs before managed setup. Microsoft documents this
 [PowerShell 7 through Node inheritance behavior](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_psmodulepath?view=powershell-7.6#starting-windows-powershell-from-powershell-7).
+
+[Run 35847717417](https://github.com/EzAuto399/RealBud/actions/runs/35847717417)
+at `0351f3f5f9acb17826423a2d4650ce0837691311` passed that native regression and
+the actual `uv`, Git, Node and system-package stages. It then failed in the
+repository stage; its error has not yet been diagnosed. This focused run did
+not build an installer. The next diagnostic observes that original repository
+attempt once, with bounded redaction before writing and again at the receipt
+boundary. It does not replay a repository mutation. Sixteen local diagnostic
+controls pass; three Windows controls still require the native run. The native
+memory journal has not run yet.
 
 The third package passed the speech cancellation tests and progressed past
 installed speech, then the SDK rejected the CUA wrapper's process ID because
-it differs from the actual daemon. The identity check remains intact; launcher
-integration is still under correction. This is why focused launcher tests alone
-were not accepted as installed SDK proof.
+it differs from the actual daemon. The Windows adapter now connects through the
+SDK's supported transport and validates the real child PID from its owned
+supervisor, the host identity, and every pinned metadata version. The helper
+reports that identity only after atomic Job assignment and before the driver
+runs; the driver cannot write to that control pipe. Normal shutdown succeeds
+only after the Job is empty. Forced or abnormal helper exit keeps a recovery
+hold instead of reporting successful release. The SDK's pipe authentication and
+RealBud's task/account approvals remain intact. Mac uses its existing SDK host
+and `exec` grant shim. Native compilation and installed SDK acceptance of this
+correction remain required.
 
 Independent source inspection also found a later setup-order defect: the
 reviewed 0.21.2/0.21.3 installers place managed Python inside the repository

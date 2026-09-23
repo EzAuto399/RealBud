@@ -1,6 +1,7 @@
-// Native SDK launch adapter. No shell, environment-selected target or general
+// Native CUA supervisor. No shell, environment-selected target or general
 // supervisor CLI. The only target is the adjacent reviewed cua-driver.exe.
-// Preserve SDK stdin verbatim: it is the driver's parent-liveness pipe.
+// Host mode reserves stdout for one identity record and observes the empty
+// parent-liveness stdin itself. Legacy mode preserves all three stdhandles.
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -94,9 +95,9 @@ internal static class RealBudCuaLauncher
         return quoted.Append('"').ToString();
     }
 
-    static IntPtr InheritedStandardHandle(int kind)
+    static IntPtr InheritedStandardHandle(int kind, bool discard)
     {
-        IntPtr original = GetStdHandle(kind), temporary = IntPtr.Zero, inherited;
+        IntPtr original = discard ? IntPtr.Zero : GetStdHandle(kind), temporary = IntPtr.Zero, inherited;
         if (original == IntPtr.Zero || original == Invalid)
         {
             temporary = CreateFileW("NUL", kind == -10 ? GENERIC_READ : GENERIC_WRITE, 3, IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
@@ -129,26 +130,30 @@ internal static class RealBudCuaLauncher
     static int Main(string[] args)
     {
         IntPtr job = IntPtr.Zero, input = IntPtr.Zero, output = IntPtr.Zero, error = IntPtr.Zero;
+        object jobGate = new object();
         IntPtr attributes = IntPtr.Zero, jobAttribute = IntPtr.Zero, handleAttribute = IntPtr.Zero;
         PROCESS_INFORMATION child = new PROCESS_INFORMATION();
         bool started = false, attributesReady = false, drained = false;
         try
         {
+            bool hostMode = args.Length > 0 && args[0] == "--realbud-cua-host-v1";
+            int firstArgument = hostMode ? 1 : 0;
+            if (hostMode && (args.Length <= firstArgument || args[firstArgument] != "serve")) throw new InvalidOperationException();
             string directory = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
             string binary = Path.Combine(directory, "cua-driver.exe");
             if (!File.Exists(binary)) throw new InvalidOperationException();
             var command = new StringBuilder(QuoteArgument(binary));
-            for (int i = 0; i < args.Length; i++)
+            for (int i = firstArgument; i < args.Length; i++)
             {
                 command.Append(' ').Append(QuoteArgument(args[i]));
-                if (i == 0 && args[i] == "serve") command.Append(" --grant existing-profile");
+                if (i == firstArgument && args[i] == "serve") command.Append(" --grant existing-profile");
             }
             job = CreateJobObjectW(IntPtr.Zero, null); // The job handle is not inherited.
             if (job == IntPtr.Zero) throw new InvalidOperationException();
             var limits = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
             limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
             if (!SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION)))) throw new InvalidOperationException();
-            input = InheritedStandardHandle(-10); output = InheritedStandardHandle(-11); error = InheritedStandardHandle(-12);
+            input = InheritedStandardHandle(-10, false); output = InheritedStandardHandle(-11, hostMode); error = InheritedStandardHandle(-12, false);
             IntPtr attributeSize = IntPtr.Zero;
             InitializeProcThreadAttributeList(IntPtr.Zero, 2, 0, ref attributeSize);
             if (attributeSize == IntPtr.Zero) throw new InvalidOperationException();
@@ -170,12 +175,42 @@ internal static class RealBudCuaLauncher
             started = true;
             bool assigned;
             if (!IsProcessInJob(child.hProcess, job, out assigned) || !assigned) throw new InvalidOperationException();
+            Thread parentMonitor = null;
+            if (hostMode)
+            {
+                // Both readers see EOF on this empty liveness pipe. No bytes,
+                // credentials or commands are sent through host-mode stdin.
+                // The helper must contain parent death even if the driver
+                // hangs and never services its own stdin reader.
+                parentMonitor = new Thread(delegate()
+                {
+                    try { using (Stream parentInput = Console.OpenStandardInput()) { parentInput.ReadByte(); } }
+                    catch { /* A broken parent pipe also ends this generation. */ }
+                    lock (jobGate) { if (job != IntPtr.Zero) TerminateJobObject(job, 125); }
+                });
+                parentMonitor.IsBackground = true;
+                // Atomic Job assignment has completed; the driver is still
+                // suspended and can never write to this reserved stdout pipe.
+                string record = "{\"schema\":\"realbud-cua-host\",\"version\":1,\"supervisorPid\":" +
+                    System.Diagnostics.Process.GetCurrentProcess().Id.ToString(System.Globalization.CultureInfo.InvariantCulture) +
+                    ",\"driverPid\":" + child.dwProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}\n";
+                byte[] recordBytes = Encoding.ASCII.GetBytes(record);
+                Stream controlOutput = Console.OpenStandardOutput();
+                controlOutput.Write(recordBytes, 0, recordBytes.Length);
+                controlOutput.Flush();
+            }
             if (ResumeThread(child.hThread) == uint.MaxValue) throw new InvalidOperationException();
+            // Preclosed stdin is ordinary startup cancellation. Begin EOF
+            // termination only after ResumeThread succeeds, so cancellation
+            // cannot turn a safely drained suspended child into a false fault.
+            if (parentMonitor != null) parentMonitor.Start();
             if (WaitForSingleObject(child.hProcess, INFINITE) != WAIT_OBJECT_0) throw new InvalidOperationException();
             uint code;
             if (!GetExitCodeProcess(child.hProcess, out code) || !DrainJob(job)) throw new InvalidOperationException();
             drained = true;
-            return unchecked((int)code);
+            // Host mode reserves success for confirmed empty Job membership.
+            // Forced/abnormal helper exit is never proof of human release.
+            return hostMode ? 0 : unchecked((int)code);
         }
         catch
         {
@@ -199,7 +234,10 @@ internal static class RealBudCuaLauncher
             if (error != IntPtr.Zero) CloseHandle(error);
             if (child.hThread != IntPtr.Zero) CloseHandle(child.hThread);
             if (child.hProcess != IntPtr.Zero) CloseHandle(child.hProcess);
-            if (job != IntPtr.Zero) CloseHandle(job);
+            lock (jobGate)
+            {
+                if (job != IntPtr.Zero) { CloseHandle(job); job = IntPtr.Zero; }
+            }
         }
     }
 }

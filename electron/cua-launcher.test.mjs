@@ -31,11 +31,15 @@ describe("shared CUA grant launcher selection", () => {
     }
     expect(() => existingProfileGrantLauncher("/fictional/cua-driver", { platform: "linux" })).toThrow(/supported/);
   });
-  it("constructs the SDK host with the same selected grant launcher and fixed host identity", () => {
+  it("constructs a Windows supervisor host without handing its PID to the SDK embedded host", () => {
     const binary = "C:\\Fictional\\cua-driver.exe";
-    const sdk = { EmbeddedCuaDriverHost: class { constructor(...values) { this.values = values; } } };
+    const sdk = { EmbeddedCuaDriverHost: class { constructor() { throw new Error("The wrapper PID cannot be the driver PID."); } } };
     const host = createGrantedCuaHost(sdk, binary, { platform: "win32", fileSystem: { lstatSync: () => regular } });
-    expect(host.values).toEqual(["C:\\Fictional\\RealBud CUA.exe", "com.realbud.app"]);
+    expect(host.connection()).toBeUndefined();
+    expect(host.state()).toBe(0);
+    expect(typeof host.start).toBe("function");
+    expect(typeof host.stop).toBe("function");
+    host.uniffiDestroy();
   });
 });
 
@@ -59,13 +63,17 @@ class Fixture {
   static int Main(string[] args) {
     Console.OutputEncoding = new UTF8Encoding(false);
     if (Array.IndexOf(args, "--fictional-linger") >= 0) { Thread.Sleep(4500); return 0; }
+    int receiptIndex = Array.IndexOf(args, "--fictional-receipt");
+    string receipt = receiptIndex >= 0 ? args[receiptIndex + 1] : null;
     foreach (string value in args) Console.WriteLine("ARG:" + Convert.ToBase64String(Encoding.UTF8.GetBytes(value)));
     Console.WriteLine("PID:" + Process.GetCurrentProcess().Id);
     if (Array.IndexOf(args, "--fictional-child") >= 0) {
       var info = new ProcessStartInfo(System.Reflection.Assembly.GetExecutingAssembly().Location, "--fictional-linger");
       info.UseShellExecute = false; info.CreateNoWindow = true;
       var child = Process.Start(info); Console.WriteLine("CHILD:" + child.Id);
+      if (receipt != null) File.WriteAllText(receipt, Process.GetCurrentProcess().Id + "," + child.Id);
     }
+    else if (receipt != null) File.WriteAllText(receipt, Process.GetCurrentProcess().Id.ToString());
     Console.Out.Flush();
     if (Array.IndexOf(args, "--fictional-stdin") >= 0) {
       // The launcher owns a byte pipe; Console.In would decode it using the
@@ -143,4 +151,75 @@ describe.skipIf(process.platform !== "win32")("native Windows CUA launcher with 
       await closed;
     }
   }, 10000);
+  it("host mode reports the contained driver PID before any driver output and kills its Job on parent EOF", async () => {
+    const receipt = join(directory, "fictional-host-pids.txt");
+    const child = spawn(launcher, ["--realbud-cua-host-v1", "serve", "--fictional-child", "--fictional-wait", "--fictional-receipt", receipt], {
+      windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
+    });
+    let output = ""; child.stdout.on("data", bytes => { output += bytes; }); child.stderr.resume();
+    const closed = new Promise(resolve => child.once("close", resolve));
+    try {
+      let record, pids;
+      await waitUntil(() => {
+        try {
+          record = JSON.parse(output.trim());
+          pids = readFileSync(receipt, "utf8").split(",").map(Number);
+          return pids.length === 2 && pids.every(pid => Number.isInteger(pid) && pid > 0) && pids[0] === record.driverPid;
+        } catch { return false; }
+      });
+      expect(record).toEqual({ schema: "realbud-cua-host", version: 1, supervisorPid: child.pid, driverPid: pids[0] });
+      expect(record.driverPid).not.toBe(child.pid);
+      expect(output).not.toContain("ARG:"); expect(output).not.toContain("CHILD:");
+      child.stdin.end();
+      expect(await closed).toBe(0);
+      expect(pids.length).toBe(2);
+      expect(pids.every(pid => !processAlive(pid))).toBe(true);
+    } finally {
+      if (child.exitCode === null) child.kill();
+      await closed;
+    }
+  }, 10000);
+  it("host process death closes liveness and the supervisor drains its driver and descendants", async () => {
+    const receipt = join(directory, "fictional-parent-death-pids.txt");
+    const parent = spawn(process.execPath, ["-e", String.raw`
+      const { spawn } = require('node:child_process');
+      const child = spawn(process.argv[1], ['--realbud-cua-host-v1', 'serve', '--fictional-child', '--fictional-wait', '--fictional-receipt', process.argv[2]], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+      child.stdout.pipe(process.stdout);
+      child.on('error', () => process.exit(70));
+      setTimeout(() => { child.stdin.end(); }, 8000);
+    `, launcher, receipt], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } });
+    let output = ""; parent.stdout.on("data", bytes => { output += bytes; }); parent.stderr.resume();
+    const closed = new Promise(resolve => parent.once("close", resolve));
+    try {
+      let record, pids;
+      await waitUntil(() => {
+        try {
+          record = JSON.parse(output.trim()); pids = readFileSync(receipt, "utf8").split(",").map(Number);
+          return pids.length === 2 && pids.every(pid => Number.isInteger(pid) && pid > 0) && pids[0] === record.driverPid;
+        } catch { return false; }
+      });
+      expect(processAlive(record.supervisorPid)).toBe(true);
+      parent.kill(); await closed;
+      await waitUntil(() => [record.supervisorPid, ...pids].every(pid => !processAlive(pid)));
+    } finally {
+      if (parent.exitCode === null) parent.kill();
+      await closed;
+    }
+  }, 12000);
+  it("preclosed parent stdin cancels startup with a confirmed empty Job", () => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const receipt = join(directory, `fictional-preclosed-${attempt}.txt`);
+      const result = spawnSync(launcher, ["--realbud-cua-host-v1", "serve", "--fictional-child", "--fictional-wait", "--fictional-receipt", receipt], {
+        windowsHide: true, encoding: "utf8", input: "", timeout: 10000,
+      });
+      expect(result.error).toBeUndefined(); expect(result.status, result.stderr).toBe(0);
+      const record = JSON.parse(result.stdout.trim());
+      expect(record).toMatchObject({ schema: "realbud-cua-host", version: 1 });
+      expect(processAlive(record.driverPid)).toBe(false);
+      if (existsSync(receipt)) {
+        const pids = readFileSync(receipt, "utf8").split(",").map(Number).filter(pid => Number.isInteger(pid) && pid > 0);
+        expect(pids.every(pid => !processAlive(pid))).toBe(true);
+      }
+    }
+  }, 35000);
 });

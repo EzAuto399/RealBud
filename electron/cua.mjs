@@ -2,8 +2,8 @@
 //
 // Two modes, per cua-driver's EMBEDDING.md:
 //  - "embedded" (packaged app): spawn our own private daemon via
-//    EmbeddedCuaDriverHost so TCC grants attribute to RealBud and the
-//    driver inherits them. One prompt, named RealBud, out of the box.
+//    the SDK host on macOS (so TCC grants attribute to RealBud), or the
+//    Job-contained host adapter on Windows with the same SDK identity checks.
 //  - "standalone" (dev): attach to an already-installed CuaDriver.app daemon
 //    (its own TCC identity, typically already granted on a dev machine).
 //
@@ -33,7 +33,7 @@ const STANDALONE_SOCKET = path.join(
   "Library/Caches/cua-driver/cua-driver.sock",
 );
 
-let embeddedHost = null; // EmbeddedCuaDriverHost | null
+let embeddedHost = null; // Owned platform host from createGrantedCuaHost | null
 let embeddedStop = null; // One confirmed stop per host, including failed startup.
 const pauseFile = () => path.join(app.getPath("userData"), "cua-human-pause.json");
 const connectionStore = createCuaConnectionStore({

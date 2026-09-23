@@ -16,6 +16,13 @@ vi.mock("@trycua/cua-driver", () => ({
   CuaDriver: { connect: () => { const client = { destroyed: 0, uniffiDestroy() { this.destroyed++; } }; fixture.clients.push(client); return client; } },
 }));
 vi.mock("./cua-login-check.mjs", () => ({ checkCuaLogin: async () => fixture.login }));
+// This suite owns GUI pause/publication policy; the Windows host lifecycle and
+// its native supervisor have separate tests with their actual factory wiring.
+vi.mock("./cua-launcher.mjs", async importOriginal => {
+  const actual = await importOriginal();
+  return { ...actual, createGrantedCuaHost: (sdk, binary, options) =>
+    new sdk.EmbeddedCuaDriverHost(actual.existingProfileGrantLauncher(binary, options), actual.CUA_HOST_BUNDLE_ID) };
+});
 
 let cua, binary;
 beforeEach(async () => {

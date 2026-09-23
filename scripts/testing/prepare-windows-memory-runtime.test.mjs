@@ -6,7 +6,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { redactUvDiagnosticLine, sanitizeUvDiagnostic, uvDiagnosticScript, withUvFailureDiagnostic } from './prepare-windows-memory-runtime.mjs';
+import { redactUvDiagnosticLine, repositoryDiagnosticScript, sanitizeRepositoryDiagnostic, sanitizeUvDiagnostic,
+  uvDiagnosticScript, withRepositoryDiagnostic, withUvFailureDiagnostic } from './prepare-windows-memory-runtime.mjs';
 
 function fixture(t) {
   const scratch = mkdtempSync(join(tmpdir(), 'fictional-uv-controls-'));
@@ -19,6 +20,100 @@ function fixture(t) {
     '-HermesHome', scratch, '-InstallDir', join(scratch, 'hermes-agent')] };
   return { scratch, invocation, installerSha256: createHash('sha256').update(bytes).digest('hex') };
 }
+
+function repositoryFixture(t) {
+  const input = fixture(t);
+  input.invocation.args[input.invocation.args.indexOf('-Stage') + 1] = 'repository';
+  return input;
+}
+
+function saveRepositoryObservation(invocation, fields = {}) {
+  const observer = invocation.args[invocation.args.indexOf('-File') + 1];
+  writeFileSync(join(observer, '..', 'fixed-signals.json'), JSON.stringify({
+    schema: 1, stage: 'repository', exitCode: 0, protocolSeen: true, protocolOk: true, protocolSkipped: false, ...fields,
+  }));
+}
+
+test('the original repository attempt runs once with its exact argv, environment owner and signal', async t => {
+  const input = repositoryFixture(t), calls = [], reports = [], signal = new AbortController().signal;
+  const execute = withRepositoryDiagnostic({ ...input, childRunning: () => false, report: value => reports.push(value),
+    runStage: async (...args) => {
+      calls.push(args);
+      const observer = args[0].args[args[0].args.indexOf('-File') + 1];
+      const script = readFileSync(observer, 'utf8');
+      for (const arg of input.invocation.args) assert.ok(script.includes("'" + arg.replaceAll("'", "''") + "'"));
+      saveRepositoryObservation(args[0]);
+      return 'fictional original success';
+    } });
+  assert.equal(await execute(input.invocation, input.scratch, signal, 'fictional-record-home'), 'fictional original success');
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].slice(1), [input.scratch, signal, 'fictional-record-home']);
+  assert.equal(reports[0].observedOriginalAttempt, true);
+  assert.equal(reports[0].attemptCount, 1);
+  assert.equal(reports[0].replayed, false);
+  assert.equal(reports[0].originalStageFailed, false);
+});
+
+test('a repository failure remains the same failure and is never replayed by the uv decorator', async t => {
+  const input = repositoryFixture(t), reports = [], uvReports = [];
+  const original = new Error('fictional repository failure');
+  let calls = 0;
+  const repository = withRepositoryDiagnostic({ ...input, childRunning: () => false, report: value => reports.push(value),
+    runStage: async invocation => {
+      calls++;
+      saveRepositoryObservation(invocation, { exitCode: 23, protocolOk: false, protocolReason: 'fatal: fictional checkout failed' });
+      throw original;
+    } });
+  const execute = withUvFailureDiagnostic({ ...input, runStage: repository, childRunning: () => false, report: value => uvReports.push(value) });
+  await assert.rejects(execute(input.invocation, input.scratch, new AbortController().signal), error => error === original);
+  assert.equal(calls, 1);
+  assert.equal(reports[0].exitCode, 23);
+  assert.equal(reports[0].originalStageFailed, true);
+  assert.equal(reports[0].protocolReason, 'fatal: fictional checkout failed');
+  assert.deepEqual(uvReports, []);
+});
+
+test('missing diagnostics and a failed report cannot replace the original repository failure', async t => {
+  const input = repositoryFixture(t), original = new Error('fictional repository failure');
+  let calls = 0;
+  const execute = withRepositoryDiagnostic({ ...input, childRunning: () => false,
+    report() { throw new Error('fictional report failure'); }, runStage: async () => { calls++; throw original; } });
+  await assert.rejects(execute(input.invocation, input.scratch, new AbortController().signal), error => error === original);
+  assert.equal(calls, 1);
+});
+
+test('repository observation fails closed on missing, wrong-stage, unsuccessful or skipped protocol', async t => {
+  const input = repositoryFixture(t);
+  for (const fields of [null, { stage: 'uv' }, { protocolSeen: false }, { protocolOk: false }, { protocolOk: 'true' }, { protocolSkipped: true }, { protocolSkipped: 'true' }, { exitCode: 23 }]) {
+    const execute = withRepositoryDiagnostic({ ...input, childRunning: () => false, report() {}, runStage: async invocation => {
+      if (fields !== null) saveRepositoryObservation(invocation, fields);
+    } });
+    await assert.rejects(execute(input.invocation, input.scratch, new AbortController().signal), /could not confirm successful completion/);
+  }
+});
+
+test('cancellation, live children and changed installer bytes prevent repository execution', async t => {
+  const input = repositoryFixture(t);
+  for (const blocked of ['cancelled', 'live-child', 'changed-bytes']) {
+    const abort = new AbortController();
+    if (blocked === 'cancelled') abort.abort();
+    let calls = 0;
+    const execute = withRepositoryDiagnostic({ ...input,
+      installerSha256: blocked === 'changed-bytes' ? 'b'.repeat(64) : input.installerSha256,
+      childRunning: () => blocked === 'live-child', report() {}, runStage: async () => { calls++; } });
+    await assert.rejects(execute(input.invocation, input.scratch, abort.signal));
+    assert.equal(calls, 0);
+  }
+});
+
+test('non-repository stages delegate unchanged without observation', async t => {
+  const input = fixture(t), calls = [], reports = [], signal = new AbortController().signal;
+  const execute = withRepositoryDiagnostic({ ...input, childRunning: () => false, report: value => reports.push(value),
+    runStage: async (...args) => { calls.push(args); return 'fictional uv result'; } });
+  assert.equal(await execute(input.invocation, input.scratch, signal), 'fictional uv result');
+  assert.deepEqual(calls, [[input.invocation, input.scratch, signal, undefined]]);
+  assert.deepEqual(reports, []);
+});
 
 test('a successful attempt delegates the exact original invocation without replay', async t => {
   const input = fixture(t), calls = [], reports = [], signal = new AbortController().signal;
@@ -160,6 +255,20 @@ test('failure text is redacted before truncation and bounded at the Node receipt
   assert.deepEqual(sanitizeUvDiagnostic({ schema: 1, stage: 'uv', exitCode: 1, failureExcerpt: [null, {}, 123] }).failureExcerpt, []);
 });
 
+test('repository protocol reasons and failure excerpts are redacted again at the Node boundary', () => {
+  for (const line of failureLines) {
+    const value = sanitizeRepositoryDiagnostic({ schema: 1, stage: 'repository', exitCode: 23,
+      protocolSeen: true, protocolOk: false, protocolSkipped: false, protocolReason: line,
+      failureExcerpt: [line], signals: ['repository-pin', 'fictional-private-signal'] });
+    for (const forbidden of forbiddenExcerptBytes) assert.ok(!JSON.stringify(value).includes(forbidden), forbidden);
+    assert.ok(value.protocolReason.length <= 240);
+    assert.deepEqual(value.signals, ['repository-pin']);
+  }
+  const value = { schema: 1, stage: 'repository', exitCode: 1, protocolSeen: true, protocolOk: false, protocolSkipped: false };
+  for (const reason of [null, {}, 123, ['fictional-private-reason']]) assert.equal(sanitizeRepositoryDiagnostic({ ...value, protocolReason: reason }).protocolReason, null);
+  assert.throws(() => sanitizeRepositoryDiagnostic({ ...value, stage: ['repository'] }));
+});
+
 test('the observer uses literal argv and does not persist raw child text', t => {
   const { invocation, scratch } = fixture(t);
   const script = uvDiagnosticScript(invocation, join(scratch, "fictional receipt's.json"));
@@ -209,4 +318,48 @@ test('native observer writes only a redacted failure tail and preserves nonzero 
   assert.equal(value.failureExcerpt.length, 15);
   assert.ok(value.failureExcerpt.at(-1).includes('fictional final detail'));
   assert.deepEqual(value.failureExcerpt, sanitizeUvDiagnostic(value).failureExcerpt);
+});
+
+test('native repository observer runs the exact original argv once and masks the saved failure', { skip: process.platform !== 'win32' }, t => {
+  const { scratch, invocation } = repositoryFixture(t);
+  const installer = invocation.args[invocation.args.indexOf('-File') + 1];
+  const counter = join(scratch, 'fictional-attempt-count.txt'), observer = join(scratch, 'observer.ps1');
+  const resultPath = join(scratch, 'fixed-signals.json');
+  const psLiteral = value => "'" + value.replaceAll("'", "''") + "'";
+  const lines = [
+    'unrelated clone progress must not be retained', '-> Trying SSH clone...',
+    '-> SSH failed, trying HTTPS...', '-> Pinning to commit ' + 'a'.repeat(40),
+    ...failureLines.map(line => 'fatal: ' + line),
+    JSON.stringify({ stage: 'repository', ok: false, skipped: false, reason: 'git checkout failed: OPENAI_API_KEY=fictional-provider-value' }),
+    JSON.stringify({ stage: 'uv', ok: true, skipped: false, reason: 'foreign stage must not be retained' }),
+    JSON.stringify({ stage: ['repository'], ok: true, skipped: false, reason: 'array stage must not be retained' }),
+  ];
+  writeFileSync(installer, '\ufeff' + `param([string]$Stage,[switch]$NonInteractive,[switch]$SkipSetup,[switch]$SkipComputerUse,[string]$Commit,[switch]$ForceCommit,[string]$HermesHome,[string]$InstallDir)
+if($Stage -cne 'repository' -or $Commit -cne '${'a'.repeat(40)}' -or -not $NonInteractive -or -not $SkipSetup -or -not $SkipComputerUse -or -not $ForceCommit){exit 99}
+if($HermesHome -cne ${psLiteral(scratch)} -or $InstallDir -cne ${psLiteral(join(scratch, 'hermes-agent'))}){exit 99}
+[System.IO.File]::AppendAllText(${psLiteral(counter)}, '1')
+` + lines.map(line => 'Write-Output ' + psLiteral(line)).join('\n') + '\nexit 23\n');
+  writeFileSync(observer, '\ufeff' + repositoryDiagnosticScript(invocation, resultPath));
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) if (key.toLowerCase() === 'psmodulepath') delete env[key];
+  env.PSModulePath = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'Modules');
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', observer],
+    { env, timeout: 30_000, windowsHide: true, encoding: 'utf8' });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 23);
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr, '');
+  assert.equal(readFileSync(counter, 'utf8'), '1');
+  // Check on-disk bytes before the independent Node sanitizer runs.
+  const saved = readFileSync(resultPath, 'utf8');
+  for (const forbidden of [...forbiddenExcerptBytes, 'unrelated', 'foreign stage', 'array stage']) assert.ok(!saved.includes(forbidden), forbidden);
+  const value = JSON.parse(saved);
+  assert.equal(value.exitCode, 23);
+  assert.equal(value.protocolSeen, true);
+  assert.equal(value.protocolOk, false);
+  assert.equal(value.protocolReason, 'git checkout failed: [credential field redacted]');
+  assert.equal(value.failureExcerpt.length, 15);
+  assert.ok(value.failureExcerpt.at(-1).includes('fictional final detail'));
+  assert.deepEqual(value.signals, ['repository-https', 'repository-pin', 'repository-ssh']);
+  assert.deepEqual(value.failureExcerpt, sanitizeRepositoryDiagnostic(value).failureExcerpt);
 });
