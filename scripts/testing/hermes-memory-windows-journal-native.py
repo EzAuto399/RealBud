@@ -307,16 +307,59 @@ def child_main(args):
     return 0
 
 
+def fixture_diagnostic(code, stdout, stderr):
+    result = {"exit_code": code, "stdout_bytes": len(stdout), "stderr_bytes": len(stderr)}
+    signals = set()
+    patterns = {
+        "powershell-progress": r'\bS=["\']progress["\']',
+        "powershell-error": r'\bS=["\']error["\']|FullyQualifiedErrorId',
+        "access-denied": r'UnauthorizedAccessException|PermissionDenied|Access is denied',
+        "path-not-found": r'ItemNotFoundException|DirectoryNotFoundException|PathNotFound',
+        "command-not-found": r'CommandNotFoundException',
+        "module-load-failed": r'CouldNotAutoloadMatchingModule|Modules_ModuleNotFound',
+        "parser-error": r'ParserError|ParseException',
+    }
+    for name, data in (("stdout", stdout), ("stderr", stderr)):
+        try:
+            decoded = data.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            result[name + "_kind"] = "non-utf8"
+            continue
+        result[name + "_kind"] = "empty" if not data else "clixml" if decoded.lstrip().startswith("#< CLIXML") else "text"
+        signals.update(label for label, pattern in patterns.items() if re.search(pattern, decoded, re.I))
+    result["signals"] = sorted(signals)
+    return result
+
+
+class FixtureCommandError(AssertionError):
+    def __init__(self, code, stdout, stderr):
+        super().__init__("The disposable ACL/junction fixture command failed.")
+        # Only numeric sizes/status and fixed labels can enter the receipt.
+        self.diagnostic = fixture_diagnostic(code, stdout, stderr)
+
+
+def require_fixture_junction(path, target):
+    info = path.lstat()
+    require(stat.S_ISDIR(info.st_mode) and getattr(info, "st_file_attributes", 0) & 0x400 and
+            getattr(info, "st_reparse_tag", 0) == 0xA0000003,
+            "The disposable junction is not a directory mount-point reparse object.")
+    require(os.path.samefile(path, target), "The disposable junction does not resolve to its owned target.")
+
+
 def fixture_powershell(args, script, path, target=None):
     env = environment(args.suite_root)
     env["REALBUD_JOURNAL_PATH"] = str(path)
     if target is not None:
         env["REALBUD_JOURNAL_TARGET"] = str(target)
     command = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    # EncodedCommand may serialize module-preparation progress to stderr.
+    # Suppress only that progress stream; all remaining stderr is a failure.
+    script = "$ProgressPreference='SilentlyContinue'\n" + script
     code, stdout, stderr = run_process([str(command), "-NoProfile", "-NonInteractive", "-EncodedCommand",
                                       base64.b64encode(script.encode("utf-16le")).decode()], env=env,
                                      cwd=args.suite_root, timeout=FIXTURE_SECONDS)
-    require(code == 0 and not stderr, "The disposable ACL/junction fixture command failed.")
+    if code != 0 or stderr:
+        raise FixtureCommandError(code, stdout, stderr)
     return stdout.decode("utf-8-sig").strip()
 
 
@@ -475,6 +518,7 @@ $item.SetAccessControl($acl)
             os.rename(pending, moved)
             try:
                 fixture_powershell(args, "$ErrorActionPreference='Stop'; New-Item -ItemType Junction -Path $env:REALBUD_JOURNAL_PATH -Target $env:REALBUD_JOURNAL_TARGET | Out-Null", pending, moved)
+                require_fixture_junction(pending, moved)
                 before = (moved / (item + ".json")).read_bytes()
                 self.assertEqual(self.call(self.request("preview", id=item)), {"ok": False, "code": "unsafe-storage"})
                 self.assertEqual((moved / (item + ".json")).read_bytes(), before)
@@ -520,6 +564,8 @@ $item.SetAccessControl($acl)
                     row["failure_code"] = code
                 if isinstance(error[1], AssertionError):
                     row["failure"] = str(error[1])[:500]
+                if isinstance(error[1], FixtureCommandError):
+                    row["fixture_diagnostic"] = error[1].diagnostic
             state["checks"].append(row)
             self.persist()
 
