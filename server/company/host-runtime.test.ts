@@ -7,6 +7,16 @@ import { basename, join } from 'node:path';
 import { openOwnedPostgres, postgresBinary, stopOwnedPostgresProcess } from './host-runtime.ts';
 import { privateDir, removeFixture } from '../testing/private-fixture.ts';
 
+/** A port nothing is listening on right now: fixed ports collide on shared CI runners. */
+async function freePort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as { port: number };
+  await new Promise<void>(resolve => server.close(() => resolve()));
+  return port;
+}
+
+
 const temps: string[] = [];
 
 describe('Windows native PostgreSQL shutdown contract', () => {
@@ -162,7 +172,7 @@ describe('openOwnedPostgres', () => {
   it('preserves unrelated files and refuses to adopt their directory', async () => {
     const { binaryDirectory, rootDirectory } = await workspace();
     await writeFile(join(rootDirectory, 'keep.txt'), 'unrelated');
-    await expect(openOwnedPostgres({ rootDirectory, binaryDirectory, port: 46008 }, hooks([]))).rejects.toThrow('unowned nonempty');
+    await expect(openOwnedPostgres({ rootDirectory, binaryDirectory, port: await freePort() }, hooks([]))).rejects.toThrow('unowned nonempty');
     expect(await readFile(join(rootDirectory, 'keep.txt'), 'utf8')).toBe('unrelated');
     expect(await exists(join(rootDirectory, 'credentials'))).toBe(false);
   });
@@ -177,10 +187,10 @@ describe('openOwnedPostgres', () => {
       if (basename(file).startsWith('initdb')) controller.abort();
       return result;
     };
-    await expect(openOwnedPostgres({ rootDirectory, binaryDirectory, port: 46009, signal: controller.signal }, dependencies)).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(openOwnedPostgres({ rootDirectory, binaryDirectory, port: await freePort(), signal: controller.signal }, dependencies)).rejects.toMatchObject({ name: 'AbortError' });
     expect(await exists(join(rootDirectory, 'data', 'PG_VERSION'))).toBe(true);
     expect(await exists(join(rootDirectory, 'owner.lock'))).toBe(false);
-    await expect(openOwnedPostgres({ rootDirectory, binaryDirectory, port: 46009 }, hooks([]))).rejects.toThrow('setup is incomplete');
+    await expect(openOwnedPostgres({ rootDirectory, binaryDirectory, port: await freePort() }, hooks([]))).rejects.toThrow('setup is incomplete');
   });
   it('rejects an already aborted signal before touching binaries', async () => {
     const controller = new AbortController();
@@ -212,7 +222,7 @@ describe('openOwnedPostgres', () => {
     const { binaryDirectory, rootDirectory } = await workspace();
     await writeFile(join(rootDirectory, 'owner.lock'), JSON.stringify({ pid: 1 }));
     const calls: string[][] = [];
-    await expect(openOwnedPostgres({ rootDirectory, binaryDirectory, port: 46001 }, hooks(calls))).rejects.toThrow(
+    await expect(openOwnedPostgres({ rootDirectory, binaryDirectory, port: await freePort() }, hooks(calls))).rejects.toThrow(
       /Operator recovery.*never treated as safe by PID/s,
     );
   });
@@ -221,7 +231,7 @@ describe('openOwnedPostgres', () => {
     const { binaryDirectory, rootDirectory, temp } = await workspace();
     const linked = join(temp, 'linked-root');
     await symlink(rootDirectory, linked);
-    await expect(openOwnedPostgres({ rootDirectory: linked, binaryDirectory, port: 46002 }, hooks([]))).rejects.toThrow(
+    await expect(openOwnedPostgres({ rootDirectory: linked, binaryDirectory, port: await freePort() }, hooks([]))).rejects.toThrow(
       /symbolic link/,
     );
   });
@@ -231,7 +241,7 @@ describe('openOwnedPostgres', () => {
     await mkdir(join(rootDirectory, 'data'));
     await writeFile(join(rootDirectory, 'data', 'PG_VERSION'), '16\n');
     await writeFile(join(rootDirectory, 'setup-progress.json'), JSON.stringify({ schemaVersion: 1, phase: 'initdb' }));
-    await expect(openOwnedPostgres({ rootDirectory, binaryDirectory, port: 46003 }, hooks([]))).rejects.toThrow(
+    await expect(openOwnedPostgres({ rootDirectory, binaryDirectory, port: await freePort() }, hooks([]))).rejects.toThrow(
       /will not be wiped|[Nn]ot be adopted|Operator recovery/,
     );
   });
@@ -240,7 +250,7 @@ describe('openOwnedPostgres', () => {
     const { binaryDirectory, rootDirectory } = await workspace();
     await expect(
       openOwnedPostgres(
-        { rootDirectory, binaryDirectory, port: 46004 },
+        { rootDirectory, binaryDirectory, port: await freePort() },
         {
           execute: async () => ({ stdout: 'postgres (PostgreSQL) 15.10', stderr: '' }),
           spawnServer: () => fakeProcess(),
@@ -254,7 +264,7 @@ describe('openOwnedPostgres', () => {
     const { binaryDirectory, rootDirectory } = await workspace();
     await mkdir(join(rootDirectory, 'data'));
     await writeFile(join(rootDirectory, 'data', 'postmaster.pid'), '99\n');
-    await expect(openOwnedPostgres({ rootDirectory, binaryDirectory, port: 46005 }, hooks([]))).rejects.toThrow(
+    await expect(openOwnedPostgres({ rootDirectory, binaryDirectory, port: await freePort() }, hooks([]))).rejects.toThrow(
       /never adopts an unowned postmaster/,
     );
   });
@@ -271,7 +281,7 @@ describe('openOwnedPostgres', () => {
     const calls: string[][] = [];
     const spawnEnv: { current?: NodeJS.ProcessEnv } = {};
     process.env.PGPASSWORD = 'parent-should-not-leak';
-    const port = 46006;
+    const port = await freePort();
     try {
       const handle = await openOwnedPostgres({ rootDirectory, binaryDirectory, port }, hooks(calls, spawnEnv));
       expect(handle.version).toContain('16.4');
@@ -328,7 +338,7 @@ describe('openOwnedPostgres', () => {
       async end() {}
     }
     const error = await openOwnedPostgres(
-      { rootDirectory, binaryDirectory, port: 46007 },
+      { rootDirectory, binaryDirectory, port: await freePort() },
       { execute: createExecute([]), spawnServer: (_file, args) => startedServer(args[1]), Pool: BoomPool },
     ).catch((caught: unknown) => caught as Error);
     expect(error).toBeInstanceOf(Error);
