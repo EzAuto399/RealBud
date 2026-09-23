@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { bootstrapInvocation, bootstrapPending, bootstrapPlan, downloadBootstrap, finishWorkerBootstrap, runBootstrapStage, runWorkerBootstrap } from "./worker-bootstrap.ts";
+import { bootstrapInvocation, bootstrapPending, bootstrapPlan, bootstrapStageEnv, downloadBootstrap, finishWorkerBootstrap, runBootstrapStage, runWorkerBootstrap } from "./worker-bootstrap.ts";
 import { HERMES_PIN } from "./hermes-pin.ts";
 import { HERMES_RECOMMENDED, HERMES_RELEASES } from "./hermes-releases.ts";
 
@@ -13,7 +14,7 @@ const bytes = Buffer.from("reviewed fixture");
 const plan = { url: "https://example.invalid/setup", sha256: createHash("sha256").update(bytes).digest("hex") };
 const controller = () => new AbortController();
 const fixture = (root = home()) => ({ home: root, platform: "darwin" as const, signal: controller().signal, progress: vi.fn(), download: async () => bytes, execute: vi.fn(async () => {}) });
-afterEach(() => { for (const path of homes.splice(0)) rmSync(path, { recursive: true, force: true }); });
+afterEach(() => { vi.unstubAllEnvs(); for (const path of homes.splice(0)) rmSync(path, { recursive: true, force: true }); });
 
 describe("verified setup download", () => {
   it("accepts matching bytes and forbids redirects", async () => {
@@ -165,6 +166,62 @@ describe("runtime stage contract", () => {
 
 
 describe("setup subprocess boundary", () => {
+  it("isolates Windows PowerShell modules without changing the parent or existing stage controls", () => {
+    const root = home();
+    const source = {
+      SystemRoot: "D:\\Windows", Path: "fictional-tools", PSModulePath: "fictional-pwsh-modules",
+      PSMODULEPATH: "fictional-user-modules", psModulePath: "fictional-other-modules",
+      OPENAI_API_KEY: "fictional-provider-key", GH_TOKEN: "fictional-token", SERVICE_SECRET: "fictional-secret",
+      DB_PASSWORD: "fictional-password", PYTHONPATH: "fictional-python-path", PYTHONHOME: "fictional-python-home",
+      VIRTUAL_ENV: "fictional-venv", UV_NO_CONFIG: "0", HERMES_HOME: "fictional-old-home",
+    };
+    const original = { ...source };
+    const env = bootstrapStageEnv(root, source, "win32");
+    expect(Object.keys(env).filter(key => key.toLowerCase() === "psmodulepath")).toEqual(["PSModulePath"]);
+    expect(env.PSModulePath).toBe(join(source.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "Modules"));
+    expect(env).toMatchObject({ SystemRoot: source.SystemRoot, PATH: source.Path, HERMES_HOME: root, UV_NO_CONFIG: "1", PYTHONUTF8: "1" });
+    expect(env.Path).toBeUndefined();
+    for (const key of ["OPENAI_API_KEY", "GH_TOKEN", "SERVICE_SECRET", "DB_PASSWORD", "PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"]) expect(env).not.toHaveProperty(key);
+    expect(source).toEqual(original);
+    expect(bootstrapStageEnv(root, { SYSTEMROOT: "E:\\Windows" }, "win32").PSModulePath)
+      .toBe(join("E:\\Windows", "System32", "WindowsPowerShell", "v1.0", "Modules"));
+  });
+
+  it.each(["darwin", "linux"] as const)("preserves inherited module paths outside Windows (%s)", platform => {
+    const source = { PATH: "fictional-tools", PSModulePath: "fictional-module-path", psModulePath: "fictional-other-path" };
+    expect(bootstrapStageEnv(home(), source, platform)).toMatchObject(source);
+  });
+
+  it.runIf(process.platform === "win32")("loads inbox security modules in setup and nested Windows PowerShell despite incompatible inherited modules", async () => {
+    const root = home(), modules = join(root, "fictional incompatible modules");
+    const security = join(modules, "Microsoft.PowerShell.Security");
+    mkdirSync(security, { recursive: true });
+    writeFileSync(join(security, "Microsoft.PowerShell.Security.psd1"), "@{ ModuleVersion = '99.0.0'; PowerShellVersion = '99.0'; RootModule = 'fictional.psm1' }");
+    writeFileSync(join(security, "fictional.psm1"), "throw 'fictional incompatible module must never load'");
+    for (const key of Object.keys(process.env)) if (key.toLowerCase() === "psmodulepath") vi.stubEnv(key, undefined);
+    vi.stubEnv("PSModulePath", modules);
+    const probe = "$ErrorActionPreference='Stop'; if($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1){exit 18}; try { Import-Module Microsoft.PowerShell.Security -ErrorAction Stop; $null=Get-ExecutionPolicy } catch { exit 17 }";
+    const psArgs = ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass"];
+    const encoded = Buffer.from(probe, "utf16le").toString("base64");
+    // Prove the disposable module is incompatible before testing isolation.
+    // This is a local command only; there is no installer or network request.
+    const baseline = spawnSync("powershell.exe", [...psArgs, "-EncodedCommand", encoded], {
+      env: process.env, timeout: 30_000, windowsHide: true, stdio: "ignore",
+    });
+    expect(baseline.error).toBeUndefined();
+    expect(baseline.status).toBe(17);
+    const script = join(root, "fictional nested modules.ps1");
+    writeFileSync(script, `\ufeff${probe}
+$hostExe = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+& $hostExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand '${encoded}'
+if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+[System.IO.File]::WriteAllText([System.IO.Path]::Combine($env:HERMES_HOME, 'fictional-module-proof.txt'), 'parent-and-nested-inbox-modules-loaded')
+`);
+    await runBootstrapStage({ command: "powershell.exe", args: [...psArgs, "-File", script] }, root, AbortSignal.timeout(30_000));
+    expect(readFileSync(join(root, "fictional-module-proof.txt"), "utf8")).toBe("parent-and-nested-inbox-modules-loaded");
+    expect(process.env.PSModulePath).toBe(modules);
+  }, 70_000);
+
   it("kills a stalled owned process on cancellation", async () => {
     const root = home(); const abort = controller();
     const result = runBootstrapStage({ command: process.execPath, args: ["-e", "setInterval(() => {}, 1000)"] }, root, abort.signal);

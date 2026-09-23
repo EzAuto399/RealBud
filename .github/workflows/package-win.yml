@@ -28,15 +28,24 @@ on:
         description: "Commit/tag/branch to build (defaults to the branch this is run from)"
         required: false
         type: string
+      proof:
+        description: "Use all for candidate acceptance; select one job only for diagnosis"
+        type: choice
+        default: all
+        options:
+          - all
+          - installer
+          - managed-runtime
 
 # One Windows package per ref: a superseded push has nothing left to prove, and
 # a dispatched release build keeps its own group so a push cannot cancel it.
 concurrency:
-  group: package-win-${{ github.event_name }}-${{ inputs.ref || github.ref }}
+  group: package-win-${{ github.event_name }}-${{ inputs.ref || github.ref }}-${{ inputs.proof || 'all' }}
   cancel-in-progress: true
 
 jobs:
   package:
+    if: github.event_name != 'workflow_dispatch' || inputs.proof != 'managed-runtime'
     name: NSIS installer
     runs-on: windows-latest
     timeout-minutes: 30
@@ -100,6 +109,7 @@ jobs:
           retention-days: 14
 
   memory-journal:
+    if: github.event_name != 'workflow_dispatch' || inputs.proof != 'installer'
     name: Managed Windows runtime and native memory journal (held candidate)
     runs-on: windows-latest
     timeout-minutes: 60
@@ -117,6 +127,8 @@ jobs:
       - run: pnpm build:worker:win
       - name: Verify setup diagnostic controls on native PowerShell
         run: node --test scripts/testing/prepare-windows-memory-runtime.test.mjs
+      - name: Verify managed setup environment and cancellation
+        run: pnpm exec vitest run server/worker-bootstrap.test.ts
       - name: Prepare the exact runtime through managed setup
         timeout-minutes: 25
         shell: pwsh

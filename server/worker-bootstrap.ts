@@ -132,13 +132,26 @@ export async function downloadBootstrap(plan: { url: string; sha256: string }, s
   return bytes;
 }
 
+export function bootstrapStageEnv(home: string, source: NodeJS.ProcessEnv, platform: NodeJS.Platform): NodeJS.ProcessEnv {
+  let env: NodeJS.ProcessEnv = { ...source, HERMES_HOME: home, UV_NO_CONFIG: "1" };
+  if (platform === "win32") {
+    env = windowsHermesRuntimeEnv(home, env);
+    // Setup and its nested installers use Windows PowerShell 5.1. Inheriting
+    // PowerShell 7 module roots can make even Get-ExecutionPolicy fail to load.
+    // Remove every spelling before pinning the case-insensitive Windows name.
+    for (const key of Object.keys(env)) if (key.toLowerCase() === "psmodulepath") delete env[key];
+    const systemRoot = source.SystemRoot ?? Object.entries(source).find(([key]) => key.toLowerCase() === "systemroot")?.[1] ?? "C:\\Windows";
+    env.PSModulePath = join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "Modules");
+  }
+  // Install stages need no provider credentials or personal Python overrides.
+  for (const key of Object.keys(env)) if (/API_KEY$|_TOKEN$|_SECRET$|_PASSWORD$|^PYTHON(PATH|HOME)$|^VIRTUAL_ENV$/.test(key)) delete env[key];
+  return env;
+}
+
 type StageRun = (invocation: { command: string; args: string[] }, home: string, signal: AbortSignal, recordHome?: string) => Promise<void>;
 export const runBootstrapStage: StageRun = (invocation, home, signal, recordHome = home) => new Promise((resolve, reject) => {
   signal.throwIfAborted();
-  let env: NodeJS.ProcessEnv = { ...process.env, PATH: augmentedPath(), HERMES_HOME: home, UV_NO_CONFIG: "1" };
-  if (process.platform === "win32") env = windowsHermesRuntimeEnv(home, env);
-  // Install stages need no provider credentials or personal Python overrides.
-  for (const key of Object.keys(env)) if (/API_KEY$|_TOKEN$|_SECRET$|_PASSWORD$|^PYTHON(PATH|HOME)$|^VIRTUAL_ENV$/.test(key)) delete env[key];
+  const env = bootstrapStageEnv(home, { ...process.env, PATH: augmentedPath() }, process.platform);
   saveRecord(recordHome, { version: 1, pending: true, childPid: null, spawning: true });
   const child = spawnCli(invocation.command, invocation.args, { env, privateFiles: true, stdio: ["ignore", "pipe", "pipe"] });
   let recordFailed = false;

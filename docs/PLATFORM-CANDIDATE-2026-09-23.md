@@ -85,6 +85,21 @@ returns failure; it does not turn the original failure into a passing result.
 The real journal test has not run yet. The source revision and retained failure
 receipts identify each attempt under the local evidence directory.
 
+The third attempt retained the installer's bounded redacted failure tail:
+both `uv` download paths failed because nested Windows PowerShell could not
+load `Microsoft.PowerShell.Security` for `Get-ExecutionPolicy`. The candidate
+now pins the inbox PowerShell 5.1 module directory at the production setup
+boundary, matching RealBud's existing privacy subprocess isolation. A native
+regression checks incompatible inherited modules and parent/nested module
+loading; it must pass before managed setup. Microsoft documents this
+[PowerShell 7 through Node inheritance behavior](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_psmodulepath?view=powershell-7.6#starting-windows-powershell-from-powershell-7).
+
+The third package passed the speech cancellation tests and progressed past
+installed speech, then the SDK rejected the CUA wrapper's process ID because
+it differs from the actual daemon. The identity check remains intact; launcher
+integration is still under correction. This is why focused launcher tests alone
+were not accepted as installed SDK proof.
+
 Independent source inspection also found a later setup-order defect: the
 reviewed 0.21.2/0.21.3 installers place managed Python inside the repository
 directory, while the repository stage parks any existing non-repository
@@ -112,3 +127,6 @@ implementation is evaluated independently. Microsoft documents the native
 cleanup semantics in [Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)
 and the atomic creation attributes in
 [UpdateProcThreadAttribute](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute).
+
+Manual handoff checklists: [Windows 11](WINDOWS-INSTALL-ACCEPTANCE.md) and
+[macOS Apple Silicon](MACOS-INSTALL-ACCEPTANCE.md).
