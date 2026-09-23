@@ -18,7 +18,7 @@ change the compiled application. The corrected artifacts are the Mac DMG under
 | Mac build and packaged execution | Developer ID signature, 69 native deployment-target checks, renderer lifecycle, 4 service, 9 backup UI and 7 backup-boundary checks pass. |
 | Windows build and disposable installation | Native x64 compilation, NSIS install, 12 runtime, 4 service, 6 backup and 15 memory-primitive checks, and uninstall pass. One POSIX-only backup check is skipped. |
 | Managed worker and held memory journal | Earlier unchanged production setup passed all 12 stages; its journal passed 26 checks, failed in one test fixture and left one unrun. The last two attempts were blocked at download by HTTP 429, including a final retry after a 19-minute cooldown. |
-| Full regression CI | Mac and Ubuntu jobs pass at `f6ccae58`; a complete final-candidate Windows result is not established. The standalone Windows privacy probe at `9ec09b6` passed 1,460 checks with 31 skips. These are revision-specific results; follow the draft PR for current checks. |
+| Full regression CI | Mac, Ubuntu and Windows shards 1 and 3 pass at `f6ccae58`. Shard 2 failed three high-volume test fixtures on timeout; the fixture-only correction passed all 40 affected tests both locally and on native Windows. The earlier broad run remains a recorded failure; use the PR's current checks for the latest revision. |
 | Distribution and device acceptance | Mac notarization is blocked by rejected saved credentials. Windows is unsigned. Windows 11 owner-device, another-Mac, live permissions, upgrade and two-computer acceptance are open. |
 
 Use the build guides to reproduce compilation and the manual acceptance
@@ -74,6 +74,37 @@ profiles still require their own permissions and device evidence.
 - Pinned Mac browser, CUA, PostgreSQL, speech and updater dependencies staged.
   Completed native compilation, packaged checks and final artifacts are
   recorded below with their source revisions.
+
+### Broad Windows regression findings
+
+[Full CI at `f6ccae58`](https://github.com/EzAuto399/RealBud/actions/runs/35851457484)
+completed with a failure. Mac and Ubuntu passed. Windows shard 1 passed 2,004
+tests with 130 platform/environment skips; shard 3 passed 1,861 with 102 skips.
+Shard 2 passed 1,905 tests with 76 skips, but two cases and one setup hook timed
+out: the 1,001-request invoice-history case, the 501-record backup case and the
+501-record bank HTTP setup. No assertion mismatch was reported. The original
+logs do not identify the exact stalled phase and remain preserved.
+
+The correction at `9f9b69a27fe71b7ffc68bc22fd1948a13f1ad2ea` groups only the
+synthetic seed loops in the database's existing transaction API. Production
+durability, record counts, timeouts and assertions are unchanged. Real boundary
+requests, HTTP startup, retry checks and backup/restore still run outside the
+seed transaction. The three files passed all 40 local tests without skips on
+Node 24.21.0 in 2.89 seconds.
+
+[Native run 35857604683](https://github.com/EzAuto399/RealBud/actions/runs/35857604683)
+at that exact correction passed all 40 tests in 64.38 seconds, with zero skips.
+The 1,001-request case completed in 3.499 seconds, the 501-record backup in
+6.334 seconds and the complete three-case bank HTTP suite in 6.462 seconds.
+The original deadlines remain unchanged. Logs and run metadata are under
+`outputs/platform-candidate-2026-09-23/windows-retention-9f9b69a2/`. This focused
+native pass does not retroactively change the failed broad run's status. These
+changes affect tests and CI only; both installer artifacts remain at the
+verified application revision `0f4edd5f`.
+
+The earlier standalone Windows privacy probe at `9ec09b6` passed 1,460 checks
+with 31 skips. It remains historical evidence, not a substitute for the
+candidate's regression results.
 
 ### Packaged Mac proof
 
