@@ -1,7 +1,7 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { BROWSER_TASK_OFFER_MARK, BrowserTaskCard, browserTaskSteps, parseBrowserTaskList, type BrowserTaskBrowser, type BrowserTaskCardView } from './BrowserTaskCard';
+import { BROWSER_TASK_OFFER_MARK, BrowserTaskCard, browserTaskAsksFirst, browserTaskSteps, parseBrowserTaskList, type BrowserTaskBrowser, type BrowserTaskCardView } from './BrowserTaskCard';
 
 vi.mock('@/state/store', () => ({ api: vi.fn() }));
 
@@ -19,24 +19,26 @@ const render = (value: BrowserTaskCardView, browser = ready, extra: Record<strin
 const button = (html: string, name: string) => html.match(new RegExp(`<button[^>]*>(?:<[^>]+>)*${name}(?:<[^>]+>)*</button>`))?.[0] ?? '';
 
 describe('BrowserTaskCard', () => {
-  it('shows the site, browser, steps, fixed approvals and limits, with Start, Not now and Save as a job', () => {
-    const html = render(task());
+  it('shows the task as its title, then the site, browser, steps in words, what asks first and the limits, with Start, Not now and Save as a job', () => {
+    const html = render(task({ request: "download this month's invoices from the strata portal" }));
     expect(html).toContain('aria-label="Browser task"');
     expect(html).toContain('aria-label="What this task covers"');
     expect(html).toContain("Download this month&#x27;s invoices from the strata portal");
     expect(html).toContain('portal.fictional-strata.example');
     expect(html).toContain('From your saved job “Strata levy check”');
     expect(html).toContain('Chrome on this computer');
-    expect(html).toContain('Download files into this task&#x27;s private folder');
-    expect(html).not.toContain('Type into ordinary fields');
-    expect(html).not.toContain('Press Submit');
-    expect(html).toContain('Each payment, signature, message, notice, deletion or account change, separately, with the exact details from the page.');
-    expect(html).toContain('30 minutes after you start it, or after 40 browser steps. Stop ends it at any time.');
+    expect(html).toContain('<li>Open pages and read them</li><li>Click links and ordinary buttons</li><li>Download files</li>');
+    expect(html).not.toContain('Fill in forms');
+    expect(html).not.toContain('Submit this request');
+    expect(html).toContain('Asks you first');
+    expect(html).toContain('Payments, signatures, messages, notices, deletions and account changes each ask you separately, with the exact details from the page.');
+    expect(html).toContain('Time and step limit');
+    expect(html).toContain('30 minutes or 40 steps in your browser, whichever comes first. Stop ends it at any time.');
     expect(html).toContain('Needs your go-ahead');
     expect(button(html, 'Start this task')).not.toContain('disabled=""');
     expect(button(html, 'Not now')).toBeTruthy();
     expect(button(html, 'Save as a job instead')).toBeTruthy();
-    expect(html).not.toMatch(/broker|MCP|Hermes|You\s*→/i);
+    expect(html).not.toMatch(/broker|MCP|Hermes|You\s*→|grant|origin|action class/i);
   });
 
   it('offers Connect your browser instead of Start when no browser is connected', () => {
@@ -60,7 +62,7 @@ describe('BrowserTaskCard', () => {
   it('shows a running task with its end time and Stop, and no Start', () => {
     const html = render(task({ status: 'active', startedAt: NOW, expiresAt: NOW + 30 * 60_000 }));
     expect(html).toContain('Browser task · running');
-    expect(html).toMatch(/Running in your browser · ends by .+ or after 40 browser steps/);
+    expect(html).toMatch(/Running in your browser · ends by .+ or after 40 steps/);
     expect(button(html, 'Stop the task')).toBeTruthy();
     expect(button(html, 'Start this task')).toBe('');
     expect(button(html, 'Not now')).toBe('');
@@ -92,11 +94,19 @@ describe('BrowserTaskCard', () => {
     expect(button(html, 'Starting…')).toContain('aria-busy="true"');
   });
 
-  it('names upload, typing, keys and Submit only when the task has them', () => {
+  it('names forms, upload, keys and Submit only when the task has them', () => {
     expect(browserTaskSteps(['read', 'navigate', 'fill', 'click', 'submit'])).toEqual([
-      'Open and read pages on the site', 'Follow links and press ordinary buttons', 'Type into ordinary fields and choose options', 'Press Submit on the form you asked about',
+      'Open pages and read them', 'Click links and ordinary buttons', 'Fill in forms', 'Submit this request',
     ]);
-    expect(browserTaskSteps(['read', 'navigate', 'click', 'upload', 'keys'])).toContain('Upload files you give this task (none given yet)');
+    expect(browserTaskSteps(['read', 'navigate', 'click', 'upload', 'keys'])).toEqual([
+      'Open pages and read them', 'Click links and ordinary buttons', 'Upload files you give it (none given yet)', 'Press keys such as Enter to search',
+    ]);
+  });
+
+  it('builds the asks-first line from the task\'s own list and drops the row when it is empty', () => {
+    expect(browserTaskAsksFirst(['send', 'pay'])).toBe('Payments and messages each ask you separately, with the exact details from the page.');
+    expect(browserTaskAsksFirst([])).toBeNull();
+    expect(render(task({ consequential: [] }))).not.toContain('Asks you first');
   });
 
   it('never turns a malformed reply into a card', () => {

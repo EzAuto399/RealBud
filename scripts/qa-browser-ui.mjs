@@ -147,7 +147,7 @@ try {
   const stopCheck = handover.getByRole('button', { name: 'Stop this request', exact: true });
   assert.equal(await stopCheck.isDisabled(), false);
   await stopCheck.click();
-  await handover.getByRole('button', { name: 'Close handover · keep job interrupted' }).waitFor();
+  await handover.getByRole('button', { name: 'Close without continuing' }).waitFor();
   finishCheck();
   assert.deepEqual(stoppedActions, ['continue', 'stop']);
   assert.deepEqual(errors, []);

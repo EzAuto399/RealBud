@@ -186,7 +186,7 @@ try {
   await page.locator(`[data-handoff-revision="${hold.revision}"]`).waitFor();
   await page.getByRole("button", {name:"Continue — check sign-in",exact:true}).click();
   await until(async () => (await api("GET", "/api/human-handoffs")).body.handoffs[0]?.value.state === "verified", "fixture verification finishes");
-  await mobile.getByRole("button", {name:"Close handover · keep job interrupted",exact:true}).waitFor();
+  await mobile.getByRole("button", {name:"Close without continuing",exact:true}).waitFor();
   assert.equal((await api("POST", `/api/human-handoffs/${hold.id}/continue`, {revision:hold.revision})).status,409);
   assert.equal((await runs("password-handover"))[0].status,"interrupted");
   writeFileSync(scriptPath, JSON.stringify({permission:false, reply:"app.reimasterapps.com.au shows the fictional review ready for Kevin. No import performed."}));

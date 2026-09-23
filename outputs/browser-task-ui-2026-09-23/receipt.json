@@ -1,0 +1,227 @@
+{
+  "at": "2026-09-23T01:12:09.753Z",
+  "layer": "component render with stub store",
+  "passed": true,
+  "components": [
+    "src/components/BrowserTaskCard.tsx",
+    "src/components/HumanHandoffPanel.tsx"
+  ],
+  "harness": "throwaway Vite page in the session scratchpad (not in the repo): real components and src/styles.css, @/state/store aliased to a stub that serves fixture handovers and never settles POSTs; Chrome via Playwright, deviceScaleFactor 2, light, reduced motion",
+  "states": {
+    "task": [
+      "ready",
+      "no-browser",
+      "starting",
+      "running",
+      "stopped",
+      "expired"
+    ],
+    "handoff": [
+      "in-page (Bud waiting on the page)",
+      "continue (kept task, page check saved)",
+      "resuming"
+    ]
+  },
+  "widths": [
+    [
+      390,
+      844
+    ],
+    [
+      1280,
+      800
+    ]
+  ],
+  "checks": [
+    "No element wider than its box and nothing in the card or panel outside the viewport, at 390 and 1280 px, for all 9 states",
+    "Tab from the top reaches every enabled button in the card or panel, and nothing else, each with :focus-visible and a 2px solid outline",
+    "Enter and Space each activate every enabled button (at 1280 px, fresh page per press)",
+    "In-page wait shows no page form, no Change the page check and no Continue; Stop this request stays enabled",
+    "Zero renderer pageerror"
+  ],
+  "results": [
+    {
+      "id": "task-ready-390",
+      "screenshot": "task-ready-390.png",
+      "reachedByTab": [
+        "Start this task",
+        "Not now",
+        "Save as a job instead"
+      ],
+      "activation": {}
+    },
+    {
+      "id": "task-no-browser-390",
+      "screenshot": "task-no-browser-390.png",
+      "reachedByTab": [
+        "Connect your browser",
+        "Not now",
+        "Save as a job instead"
+      ],
+      "activation": {}
+    },
+    {
+      "id": "task-starting-390",
+      "screenshot": "task-starting-390.png",
+      "reachedByTab": [],
+      "activation": {}
+    },
+    {
+      "id": "task-running-390",
+      "screenshot": "task-running-390.png",
+      "reachedByTab": [
+        "Stop the task"
+      ],
+      "activation": {}
+    },
+    {
+      "id": "task-stopped-390",
+      "screenshot": "task-stopped-390.png",
+      "reachedByTab": [],
+      "activation": {}
+    },
+    {
+      "id": "task-expired-390",
+      "screenshot": "task-expired-390.png",
+      "reachedByTab": [],
+      "activation": {}
+    },
+    {
+      "id": "handoff-in-page-390",
+      "screenshot": "handoff-in-page-390.png",
+      "reachedByTab": [
+        "Stop this request"
+      ],
+      "activation": {}
+    },
+    {
+      "id": "handoff-continue-390",
+      "screenshot": "handoff-continue-390.png",
+      "reachedByTab": [
+        "Change the page check",
+        "Continue — check sign-in",
+        "Stop this request"
+      ],
+      "activation": {}
+    },
+    {
+      "id": "handoff-resuming-390",
+      "screenshot": "handoff-resuming-390.png",
+      "reachedByTab": [
+        "Stop this request"
+      ],
+      "activation": {}
+    },
+    {
+      "id": "task-ready-1280",
+      "screenshot": "task-ready-1280.png",
+      "reachedByTab": [
+        "Start this task",
+        "Not now",
+        "Save as a job instead"
+      ],
+      "activation": {
+        "Start this task / Enter": true,
+        "Start this task / Space": true,
+        "Not now / Enter": true,
+        "Not now / Space": true,
+        "Save as a job instead / Enter": true,
+        "Save as a job instead / Space": true
+      }
+    },
+    {
+      "id": "task-no-browser-1280",
+      "screenshot": "task-no-browser-1280.png",
+      "reachedByTab": [
+        "Connect your browser",
+        "Not now",
+        "Save as a job instead"
+      ],
+      "activation": {
+        "Connect your browser / Enter": true,
+        "Connect your browser / Space": true,
+        "Not now / Enter": true,
+        "Not now / Space": true,
+        "Save as a job instead / Enter": true,
+        "Save as a job instead / Space": true
+      }
+    },
+    {
+      "id": "task-starting-1280",
+      "screenshot": "task-starting-1280.png",
+      "reachedByTab": [],
+      "activation": {}
+    },
+    {
+      "id": "task-running-1280",
+      "screenshot": "task-running-1280.png",
+      "reachedByTab": [
+        "Stop the task"
+      ],
+      "activation": {
+        "Stop the task / Enter": true,
+        "Stop the task / Space": true
+      }
+    },
+    {
+      "id": "task-stopped-1280",
+      "screenshot": "task-stopped-1280.png",
+      "reachedByTab": [],
+      "activation": {}
+    },
+    {
+      "id": "task-expired-1280",
+      "screenshot": "task-expired-1280.png",
+      "reachedByTab": [],
+      "activation": {}
+    },
+    {
+      "id": "handoff-in-page-1280",
+      "screenshot": "handoff-in-page-1280.png",
+      "reachedByTab": [
+        "Stop this request"
+      ],
+      "activation": {
+        "Stop this request / Enter": true,
+        "Stop this request / Space": true
+      }
+    },
+    {
+      "id": "handoff-continue-1280",
+      "screenshot": "handoff-continue-1280.png",
+      "reachedByTab": [
+        "Change the page check",
+        "Continue — check sign-in",
+        "Stop this request"
+      ],
+      "activation": {
+        "Change the page check / Enter": true,
+        "Change the page check / Space": true,
+        "Continue — check sign-in / Enter": true,
+        "Continue — check sign-in / Space": true,
+        "Stop this request / Enter": true,
+        "Stop this request / Space": true
+      }
+    },
+    {
+      "id": "handoff-resuming-1280",
+      "screenshot": "handoff-resuming-1280.png",
+      "reachedByTab": [
+        "Stop this request"
+      ],
+      "activation": {
+        "Stop this request / Enter": true,
+        "Stop this request / Space": true
+      }
+    }
+  ],
+  "failures": [],
+  "rendererPageErrors": [],
+  "limits": [
+    "Fixture data only (fictional site, run and browser ids); no server, worker, browser helper or real sign-in",
+    "Stub store: no real polling transitions, errors, 409s or uncertain replies were exercised",
+    "The in-page helper overlay on the site (its Done button) was not rendered",
+    "Light theme only; no screen reader run",
+    "Not a packaged build, installed device, live integration or customer acceptance"
+  ]
+}

@@ -68,17 +68,30 @@ export function parseBrowserTaskList(value: unknown): BrowserTaskList {
 }
 
 const STEP_WORDS: Array<[BrowserActionClass, string]> = [
-  ["fill", "Type into ordinary fields and choose options"],
-  ["download", "Download files into this task's private folder"],
-  ["upload", "Upload files you give this task (none given yet)"],
-  ["keys", "Press keys such as Enter in a search box"],
-  ["submit", "Press Submit on the form you asked about"],
+  ["click", "Click links and ordinary buttons"],
+  ["fill", "Fill in forms"],
+  ["download", "Download files"],
+  ["upload", "Upload files you give it (none given yet)"],
+  ["keys", "Press keys such as Enter to search"],
+  ["submit", "Submit this request"],
 ];
 /** Plain phrases for what the task may do, in the order a person reads them. */
 export function browserTaskSteps(actions: readonly BrowserActionClass[]): string[] {
-  const steps = ["Open and read pages on the site", ...(actions.includes("click") ? ["Follow links and press ordinary buttons"] : [])];
-  return [...steps, ...STEP_WORDS.filter(([action]) => actions.includes(action)).map(([, words]) => words)];
+  return ["Open pages and read them", ...STEP_WORDS.filter(([action]) => actions.includes(action)).map(([, words]) => words)];
 }
+
+const ASK_WORDS: Record<BrowserConsequentialKind, string> = {
+  pay: "payments", sign: "signatures", send: "messages", notice: "notices", delete: "deletions", "account-change": "account changes",
+};
+/** The line saying which steps always ask first, from the task's own list. Null when it has none. */
+export function browserTaskAsksFirst(kinds: readonly BrowserConsequentialKind[]): string | null {
+  const words = KINDS.filter(kind => kinds.includes(kind)).map(kind => ASK_WORDS[kind]);
+  if (!words.length) return null;
+  const listed = words.length > 1 ? `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}` : words[0];
+  return `${listed.charAt(0).toUpperCase()}${listed.slice(1)} each ask you separately, with the exact details from the page.`;
+}
+
+const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 const ENDED: Partial<Record<BrowserTaskStatus, string>> = {
@@ -88,7 +101,7 @@ const ENDED: Partial<Record<BrowserTaskStatus, string>> = {
 /** The status line under the card's title. */
 export function browserTaskStatusLine(task: BrowserTaskCardView, now: number): string {
   if (task.status === "proposed") return now > task.offerExpiresAt ? "This request is from more than an hour ago. Ask again to start it." : "Needs your go-ahead";
-  if (task.status === "active") return task.expiresAt ? `Running in your browser · ends by ${clock(task.expiresAt)} or after ${task.budget} browser steps` : "Running in your browser";
+  if (task.status === "active") return task.expiresAt ? `Running in your browser · ends by ${clock(task.expiresAt)} or after ${task.budget} steps` : "Running in your browser";
   return ENDED[task.status] ?? task.endNote ?? "This task has ended.";
 }
 
@@ -112,6 +125,7 @@ export function BrowserTaskCard({ task, browser, now = Date.now(), busy = false,
   const blocked = !browser.ready ? "Connect your browser before starting. Bud works in the browser you choose on this computer, where you are already signed in."
     : needsSite && !site.trim() ? "Enter the site's web address to start." : null;
   const title = task.status === "active" ? "Browser task · running" : "Browser task";
+  const asksFirst = browserTaskAsksFirst(task.consequential);
   return (
     <section aria-label="Browser task" className={cn("w-full max-w-[48rem] rounded-lg border bg-sheet", task.status === "active" ? "border-portal/40" : "border-line")}>
       <div className="px-4 pt-3">
@@ -119,7 +133,7 @@ export function BrowserTaskCard({ task, browser, now = Date.now(), busy = false,
           <span className="inline-flex items-center gap-1.5 text-[12px] text-ink-muted"><Globe size={13} aria-hidden="true" />{title}</span>
           <span role="status" className={cn("text-[12px]", task.status === "active" ? "text-portal" : "text-ink-muted")}>{browserTaskStatusLine(task, now)}</span>
         </div>
-        <h3 className="mt-1 break-words text-[15px] font-semibold leading-snug text-ink">{task.request}</h3>
+        <h3 className="mt-1 break-words text-[15px] font-semibold leading-snug text-ink">{sentence(task.request)}</h3>
         <dl aria-label="What this task covers" className="mt-2 divide-y divide-line border-y border-line text-[14px]">
           <div className="grid grid-cols-1 gap-x-3 gap-y-0.5 py-2 min-[720px]:grid-cols-[9rem_minmax(0,1fr)]">
             <dt className="text-[12px] text-ink-muted">Site</dt>
@@ -139,16 +153,18 @@ export function BrowserTaskCard({ task, browser, now = Date.now(), busy = false,
             <dd className={cn("min-w-0", browser.ready ? "text-ink" : "text-hold")}>{browser.ready ? `${browser.name ?? "Your selected browser"} on this computer` : "Not connected"}</dd>
           </div>
           <div className="grid grid-cols-1 gap-x-3 gap-y-0.5 py-2 min-[720px]:grid-cols-[9rem_minmax(0,1fr)]">
-            <dt className="text-[12px] text-ink-muted">Bud may</dt>
+            <dt className="text-[12px] text-ink-muted">Bud can</dt>
             <dd className="min-w-0 text-ink"><ul className="list-disc pl-4">{browserTaskSteps(task.actions).map(step => <li key={step}>{step}</li>)}</ul></dd>
           </div>
+          {asksFirst ? (
+            <div className="grid grid-cols-1 gap-x-3 gap-y-0.5 py-2 min-[720px]:grid-cols-[9rem_minmax(0,1fr)]">
+              <dt className="text-[12px] text-ink-muted">Asks you first</dt>
+              <dd className="min-w-0 text-ink">{asksFirst}</dd>
+            </div>
+          ) : null}
           <div className="grid grid-cols-1 gap-x-3 gap-y-0.5 py-2 min-[720px]:grid-cols-[9rem_minmax(0,1fr)]">
-            <dt className="text-[12px] text-ink-muted">Always asks you</dt>
-            <dd className="min-w-0 text-ink">Each payment, signature, message, notice, deletion or account change, separately, with the exact details from the page.</dd>
-          </div>
-          <div className="grid grid-cols-1 gap-x-3 gap-y-0.5 py-2 min-[720px]:grid-cols-[9rem_minmax(0,1fr)]">
-            <dt className="text-[12px] text-ink-muted">Ends</dt>
-            <dd className="min-w-0 text-ink tabular-nums">{`${task.minutes} minutes after you start it, or after ${task.budget} browser steps. Stop ends it at any time.`}</dd>
+            <dt className="text-[12px] text-ink-muted">Time and step limit</dt>
+            <dd className="min-w-0 text-ink tabular-nums">{`${task.minutes} minutes or ${task.budget} steps in your browser, whichever comes first. Stop ends it at any time.`}</dd>
           </div>
         </dl>
       </div>
