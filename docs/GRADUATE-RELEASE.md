@@ -4,6 +4,13 @@ Date: 2026-08-31
 Canonical constraints: `docs/GOAL-PROMPT.md` wins.  
 Pilot fields: `docs/PILOT-CONTRACT.md`. Pickup: `docs/NEXT-WAVE.md`.
 
+**Windows continuation — 23 September 2026:** [Windows build and test](WINDOWS-BUILD-AND-TEST.md)
+supersedes this August plan's Windows prerequisites and CSV-only/no-worker
+assumptions. Windows now has managed worker setup and a compiled speech helper.
+The guide records current evidence and remaining feature/device gates; later
+working-tree changes still need a matching Windows build and acceptance run.
+The signing and public-release requirements below remain separate gates.
+
 Owner direction (2026-08-31): **strata portal** for a Dickson ACT property, plus
 **full graduate release** — notarized Mac DMG, signed Windows NSIS, double-click
 installer with pinned worker available without a terminal.
@@ -18,7 +25,7 @@ types the eight fields on You → This office.
 | Artifact | Trust gate | Worker |
 |---|---|---|
 | `RealBud-<ver>.dmg` + arm64 zip | Developer ID (have) + **notarytool + staple** | Mac: curl pin install in-app today; bundle later |
-| `RealBud-<ver>-setup.exe` | **Authenticode** (need cert) | Windows: `installCommand` is null → **bundle or CSV-only** |
+| `RealBud-<ver>-setup.exe` | **Authenticode** (need cert) | Windows: managed private runtime setup; fresh-device worker/model acceptance remains separate |
 | GitHub release on `EzAuto399/RealBud` | Upload DMG/zip/`latest-mac.yml` + setup.exe/`latest.yml` | Auto-update reads that public repo |
 
 ---
@@ -30,7 +37,7 @@ types the eight fields on You → This office.
 1. Mac notarize + staple + smoke stapled .app
 2. Strata Stage-0 on Dickson portal (human login, Bud prefill only, human Submit)
 3. Windows Authenticode + NSIS verify
-4. Bundle pinned Hermes into installer (unlocks win32 installCommand)
+4. Review bundled-worker distribution (Windows managed setup already exists)
 5. Cut public GitHub release + arm updater
 ```
 
@@ -107,11 +114,16 @@ BuildingLink / custom body corporate portal).
 1. Obtain Authenticode cert (or Azure Trusted Signing).
 2. Configure `win.signtoolOptions` in `electron-builder.yml`.
 3. Only then set `publisherName` in updater metadata.
-4. Build on Windows: `pnpm package:win` (see `.claude/skills/windows-release`).
+4. Build on native Windows x64: `pnpm package:win` (see [Windows build and test](WINDOWS-BUILD-AND-TEST.md)).
 5. Upload `RealBud-<ver>-setup.exe` + `latest.yml` to the same GitHub release tag.
 
-Until a worker is bundled, Windows UI must stay honest: CSV-only / no in-app
-Hermes install (`hermesInstallCommand` returns null on win32).
+The earlier CSV-only restriction inferred from `hermesInstallCommand` is
+superseded: that legacy terminal command is disabled on every platform, while
+`server/worker-bootstrap.ts` runs checksum-verified Windows setup stages in the
+private managed runtime. The package includes Windows speech, browser/CUA
+helpers and PostgreSQL. Installed worker/model setup, GUI behavior, attended CUA
+and memory review retain their explicit proof requirements and platform holds;
+packaging those components does not establish full Windows operation.
 
 ---
 
@@ -122,9 +134,11 @@ Goal: graduate double-clicks RealBud and never opens Terminal.
 | Platform | Today | Target |
 |---|---|---|
 | macOS | In-app curl pin install | Optional: ship pinned runtime under `extraResources` |
-| Windows | `installCommand: null` | Bundle pinned Hermes + pack, or ship a Windows installer path |
+| Windows | Managed, checksum-verified private runtime setup | Verify fresh-device setup; bundling the complete worker remains a separate distribution choice |
 
-Pin stays `server/hermes-pin.ts` (v0.20.3). Do not track upstream main.
+The compatibility floor stays in `server/hermes-pin.ts`; fresh installs use
+the reviewed recommendation in `server/hermes-releases.ts`. Do not treat the
+older compatibility pin as the current installer target or track upstream main.
 
 ---
 

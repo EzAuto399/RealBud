@@ -7,6 +7,7 @@ import type { BankDownloadArtifact, BankSourceArtifact, BankSourceUpload } from 
 import type { AgencySetupView } from "../../../shared/agency-setup";
 import { bankReviewVersion, type BankReviewAmendment as Amendment, type BankReviewSuccessor } from '../../../shared/bank-review';
 import { BankReviewAmendment } from './BankReviewAmendment';
+import { NAVIGATION_CANCELLED, registerNavigationGuard } from '@/lib/navigation-guard';
 
 const request = <T,>(method: string, path: string, body?: unknown): Promise<T> => api(path, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 
@@ -36,6 +37,34 @@ export function BankReferenceReview() {
   const mounted = useRef(true), historyGeneration = useRef(0), pending = useRef(false);
   const decisionDraft = Boolean(saved && !saved.value.result && hasUnsavedBankDecisions(decisions));
   const unsaved = decisionDraft || amending;
+  const preparation = { source, mapping, dateFormat, directory };
+  const savedPreparation = useRef<typeof preparation | null>(null);
+  const samePreparation = savedPreparation.current && source === savedPreparation.current.source &&
+    dateFormat === savedPreparation.current.dateFormat && directory === savedPreparation.current.directory &&
+    (Object.keys(mapping) as Array<keyof typeof mapping>).every(key => mapping[key] === savedPreparation.current!.mapping[key]);
+  const unfinished = useRef(false), reading = useRef(false);
+  unfinished.current = unsaved || Boolean((source || settingsDirty.current) && !samePreparation);
+  reading.current = readingFile;
+  // This lazy card may mount before App mirrors its door into the address bar.
+  const stayingUrl = useRef(typeof location === 'undefined' ? '' : `${location.pathname}${location.search}#/schedule`);
+  useEffect(() => {
+    const remove = registerNavigationGuard(() => {
+      if (!unfinished.current && !reading.current && !pending.current) return true;
+      if (reading.current || pending.current) {
+        setError('Wait for the bank file or current operation to finish before leaving. Your work is kept here.');
+      } else if (window.confirm('Leave Bank review and discard its unsaved file selection, column mapping, property references and transaction decisions? Original bank files and saved reviews are kept.')) return true;
+      // Hash/Back navigation has already changed the address before dispatch.
+      window.history.replaceState(window.history.state, '', stayingUrl.current);
+      window.dispatchEvent(new Event(NAVIGATION_CANCELLED));
+      return false;
+    });
+    const warn = (event: BeforeUnloadEvent) => {
+      if (!unfinished.current && !reading.current && !pending.current) return;
+      event.preventDefault(); event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => { remove(); window.removeEventListener('beforeunload', warn); };
+  }, []);
   const refresh = async (cursor?: string) => {
     const current = ++historyGeneration.current, previous = history;
     setHistoryLoading(true); setHistoryError("");
@@ -81,16 +110,17 @@ export function BankReferenceReview() {
   };
   return <section className="rounded-xl border border-line bg-sheet p-4 space-y-4" aria-labelledby="bank-review-title">
     <div><h2 id="bank-review-title" className="font-medium text-ink">Prepare bank references</h2>
-      <p className="mt-1 text-sm text-ink-secondary">Review the daily bank export, match incoming payments to property references, then download a checked copy for REI Cloud.</p>
+      <p className="mt-1 text-sm text-ink-secondary">Review the daily bank export, match incoming payments to property references, then download a checked CSV copy.</p>
       <p className="mt-1 text-xs text-ink-muted">The last bank mapping and property references are reused for the next file. Original dates, amounts and order stay intact. Bank download scheduling needs your bank connection calibrated first.</p></div>
     <details><summary className="cursor-pointer text-sm">Prepare a new export</summary><div className="mt-3 space-y-3">
       <label className="block text-sm">Bank CSV <input className={`block mt-1 ${control}`} type="file" accept=".csv,text/csv" disabled={busy || unsaved} onChange={e => {
         const currentRead = ++fileRead.current, file = e.target.files?.[0];
+        reading.current = Boolean(file);
         setSource(null); setError(""); setReadingFile(Boolean(file));
         if (!file) return;
         void readBankFile(file).then(value => { if (mounted.current && currentRead === fileRead.current) setSource(value); })
           .catch(cause => { if (mounted.current && currentRead === fileRead.current) setError(cause instanceof Error ? cause.message : "The file could not be read."); })
-          .finally(() => { if (mounted.current && currentRead === fileRead.current) setReadingFile(false); });
+          .finally(() => { if (mounted.current && currentRead === fileRead.current) { reading.current = false; setReadingFile(false); } });
       }} /></label>
       <p className="text-xs text-ink-muted">UTF-8 CSV files, including a UTF-8 byte-order mark, are supported. Your original file is kept unchanged; other encodings need a new export from the bank.</p>
       {readingFile && <p role="status" className="text-xs text-ink-muted">Reading original file…</p>}
@@ -113,6 +143,7 @@ export function BankReferenceReview() {
         const rules = directory.split(/\r?\n/).filter(line => line.trim()).map(line => { const [propertyId, reference, aliases, extra] = line.split("|").map(s => s.trim()); if (!propertyId || !reference || !aliases || extra !== undefined) throw new Error("Use property | reference | payer aliases for each directory line."); return { propertyId, reference, aliases: aliases.split(";").map(s => s.trim()).filter(Boolean) }; });
         const prepared = await request<Saved>("POST", "/api/bank-reference", { source, columns: mapping, dateFormat, rules });
         if (!mounted.current) return;
+        savedPreparation.current = preparation;
         setSaved(prepared); setDecisions({}); setDiscardConfirm(false); setPage(0); await refresh();
       })}>Prepare review</button>
     </div></details>

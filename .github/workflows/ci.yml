@@ -42,6 +42,11 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Compile Windows launchers for native process tests
+        if: matrix.os == 'windows-latest'
+        run: |
+          pnpm build:worker:win
+          pnpm build:cua-launcher:win
       - name: Portable Windows memory policy and recovery protocol
         run: |
           python --version
@@ -49,6 +54,7 @@ jobs:
           python scripts/testing/hermes-memory-windows-policy.py
           python scripts/testing/hermes-memory-windows-protocol.py
           python scripts/testing/hermes-memory-windows-journal-io.py
+          python scripts/testing/hermes-memory-windows-journal-native.test.py
       - name: Native Windows memory storage candidate (production hold stays)
         if: matrix.os == 'windows-latest' && matrix.shard == 1
         # A held candidate: its receipt is the evidence, and its failure must not
@@ -82,6 +88,9 @@ jobs:
         # promotion — portable, so every host runs them.
         if: ${{ !matrix.shard || matrix.shard == 1 }}
         run: pnpm test:release-guards
+      - name: Windows build prerequisite checker contracts
+        if: ${{ !matrix.shard || matrix.shard == 1 }}
+        run: pnpm test:windows-build
       - if: ${{ !matrix.shard || matrix.shard == 1 }}
         run: pnpm check:electron
       - name: coverage thresholds (ubuntu only — fastest, same numbers)

@@ -1,5 +1,7 @@
+import { fictionalPdf } from './testing/pdf-fixture.ts';
+import { attachmentHash } from './source-attachments.ts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { authorizeManagedConnection, managedConnectorAccess, managedConnectorSettings, scanManagedMail } from './managed-connectors.ts';
+import { readManagedMailAttachment, authorizeManagedConnection, managedConnectorAccess, managedConnectorSettings, scanManagedMail } from './managed-connectors.ts';
 import { join } from 'node:path';
 import { withWorkerProfile } from './hermes-profile.ts';
 import { connectedAppsConfigured } from './connected-app-access.ts';
@@ -132,5 +134,22 @@ describe('per-installation app allowlist', () => {
     reply({ ...access(), services: { ...access().services, outlook } });
     await expect(managedConnectorAccess(cfg)).rejects.toThrow('The managed connection response needs review.');
     await expect(authorizeManagedConnection(cfg, 'outlook')).rejects.toThrow(/not part of this computer/);
+  });
+});
+
+describe('managed saved PDF bytes',()=>{
+  const bytes=fictionalPdf(),selected={accountId:'account-one',messageId:'aa',threadId:'bb',attachment:{id:'pdf-one',name:'fictional.pdf',mimeType:'application/pdf' as const,size:bytes.length}};
+  const envelope={...selected,bytesBase64:bytes.toString('base64'),sha256:attachmentHash(bytes)};
+  it('binds the returned bytes to the requested source and sends only scoped device credentials',async()=>{
+    const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify(envelope)));vi.stubGlobal('fetch',fetcher);
+    expect(await readManagedMailAttachment(cfg,selected,new AbortController().signal)).toEqual(envelope);
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual(selected);expect(String(fetcher.mock.calls[0][0]).endsWith('/v1/connectors/mail-attachment')).toBe(true);
+  });
+  it.each([{accountId:'other'},{sha256:'0'.repeat(64)},{downloadUrl:'https://evil.invalid'}])('rejects unbound or tampered gateway bytes %j',async change=>{
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({...envelope,...change}))));
+    await expect(readManagedMailAttachment(cfg,selected,new AbortController().signal)).rejects.toThrow();
+  });
+  it('rejects oversized source locally before transport',async()=>{
+    const fetcher=vi.fn();vi.stubGlobal('fetch',fetcher);await expect(readManagedMailAttachment(cfg,{...selected,attachment:{...selected.attachment,size:2_000_001}},new AbortController().signal)).rejects.toThrow();expect(fetcher).not.toHaveBeenCalled();
   });
 });

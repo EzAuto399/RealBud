@@ -125,7 +125,8 @@ export function WebsiteLinkCardView(props: WebsiteLinkCardViewProps) {
   const failure = error || (status?.error !== problem ? status?.error : "");
   // Just linked in the browser: always name the office it joined, with a way out.
   const joined = phase.kind === "linked";
-  const access = joined ? modelAccessState(status) : null;
+  // Access is a saved service fact, not a transient browser-approval phase.
+  const access = modelAccessState(status);
   const message = browserLinkMessage(phase);
   const nameField = <label className="block">Computer name<input required maxLength={80} autoComplete="off" value={label} onChange={event => props.onLabel(event.target.value)} placeholder="Reception Mac" className={field} /></label>;
   return <Card title="Website account" subtitle="Link this computer with your RealBud account. Your account can then set up Bud’s model access and account connections here.">
@@ -140,8 +141,8 @@ export function WebsiteLinkCardView(props: WebsiteLinkCardViewProps) {
         <span className="block text-[12px] text-ink-muted">Code on this computer</span>
         <span className="block font-mono text-[22px] font-semibold tracking-[0.12em] text-ink">{request.displayCode}</span>
       </p> : null}
+      {access ? <p className="text-ink-secondary" aria-busy={access === "setting-up" || undefined}>{MODEL_ACCESS[access]}</p> : null}
       {joined ? <>
-        {access ? <p className="text-ink-secondary" aria-busy={access === "setting-up" || undefined}>{MODEL_ACCESS[access]}</p> : null}
         <button type="button" className={secondary} disabled={busy} onClick={props.onDisconnect}>Not your office? Disconnect</button>
       </> : null}
       {problem ? <p role="alert" className="text-danger">{problem}</p> : null}

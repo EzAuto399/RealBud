@@ -7,6 +7,8 @@ import { managedConnectorApps } from './worker-model-access.ts';
 export { managedConnectorApps };
 
 export interface ManagedConnectorConfig { endpoint: string; credential: string; profile: string }
+import { parseSourceAttachmentRequest, type SourceAttachmentRequest } from '../shared/source-attachments.ts';
+import { validateSourceAttachmentBytes } from './source-attachments.ts';
 type Status = { checkedAt: string; managed: true; serviceExpiresAt: number;
   services: Record<string, {connected: boolean; status: string; accounts: {id: string;label?:string;status:string}[];accountSelectionRequired:boolean}>;
   tools: {available:boolean;names:string[]} };
@@ -38,7 +40,7 @@ async function request(cfg: AppConfig, path: string, body?: unknown, inputSignal
   }
   if (!response.body) throw new Error('The managed connection response was incomplete.');
   const reader=response.body.getReader(); let size=0;const chunks:Uint8Array[]=[];
-  try { for (;;) { const {value,done}=await reader.read(); if(done)break;size+=value.length;if(size>1_000_000)throw new Error('The managed connection response was too large.');chunks.push(value); } }
+  try { for (;;) { const {value,done}=await reader.read(); if(done)break;size+=value.length;if(size>(path==='/v1/connectors/mail-attachment'?2_800_000:1_000_000))throw new Error('The managed connection response was too large.');chunks.push(value); } }
   finally { await reader.cancel().catch(()=>{});reader.releaseLock(); }
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new Error('The managed connection response was incomplete.'); }
 }
@@ -46,6 +48,10 @@ export async function scanManagedMail(cfg: AppConfig, accountId: string, scope: 
   if (typeof accountId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(accountId)) throw Object.assign(new Error('Review and select the Gmail account before scanning mail.'), { status: 400 });
   // This is a precondition on the gateway-owned source, never an account override.
   return parseMailScanResult(await request(cfg, '/v1/connectors/mail-scan', { expectedAccountId: accountId, scope }, signal), scope, accountId);
+}
+export async function readManagedMailAttachment(cfg: AppConfig, source: SourceAttachmentRequest, signal: AbortSignal) {
+  const selected = parseSourceAttachmentRequest(source);
+  return validateSourceAttachmentBytes(await request(cfg,'/v1/connectors/mail-attachment',selected,signal),selected);
 }
 export async function managedConnectorAccess(cfg: AppConfig): Promise<Status> {
   const value = await request(cfg, '/v1/connectors/status');

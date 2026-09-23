@@ -10,6 +10,7 @@ export function youHashTarget(hash: string): string | null {
     case "you-connected-apps": return "you-connected-apps";
     case "you-phone": return "you-phone";
     case "you-office": return "you-office";
+    case "you-website": return "you-website";
     case "you-browser": return "you-browser";
     case "you-profile": return "you-profile";
     case "you-advanced": return "you-advanced";
@@ -40,4 +41,5 @@ export function scrollYouTarget(id: string): void {
     top: Math.max(0, top),
     behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
   });
+  if (id === "you-website") target.focus({ preventScroll: true });
 }

@@ -1,5 +1,6 @@
 import { appVersion } from "./app-version.ts";
 import { createWorkspaceTabsHandler } from "./workspace-tabs.ts";
+import { createOnboardingHandler } from "./onboarding.ts";
 import { createCustomerPackService } from "./customer-packs.ts";
 import { managedConnectorAccess, managedConnectorConfigured, managedConnectorSettings } from "./managed-connectors.ts";
 import { createOfficeLink, installationWorkerVersion } from "./office-link.ts";
@@ -29,8 +30,8 @@ import { createAgencySetupService } from './agency-setup.ts';
 import { workflowRecipeId } from '../shared/agency-workflow-packs.ts';
 import { createMailIngestionService } from './mail-ingestion.ts';
 import { runMorningMailWorkflow } from './morning-mail-workflow.ts';
-import { scanGmailReadOnly } from './composio-gmail.ts';
-import { scanManagedMail } from './managed-connectors.ts';
+import { scanGmailReadOnly, readGmailPdfAttachment } from './composio-gmail.ts';
+import { scanManagedMail, readManagedMailAttachment } from './managed-connectors.ts';
 import { askControlReply, parseAskControlIntent } from "./ask-control-intent.ts";
 import { createPairingCode } from "./channel-pairing.ts";
 // RealBud server — the harness host. Clients hold no transports
@@ -2736,21 +2737,37 @@ const companyHost = createCompanyInstallation({ dataDirectory: DATA_DIR,
 // goes to config, the model key to the private vault, and the worker sees it
 // only through the launch-time snapshot below. Nothing here awaits a network.
 const workerModelAccess = createWorkerModelAccess({ directory: DATA_DIR, key: Buffer.from(desk.recoveryKeyHex(), 'hex') });
+let workerModelAccessRevision = 0;
 const refreshWorkerModelAccess = async () => {
-  try { setWorkerModelAccessSnapshot(await workerModelAccess.env()); }
-  catch (error) { setWorkerModelAccessSnapshot({}); oplog("boot", `model access needs recovery: ${error instanceof Error ? error.message : String(error)}`); }
+  const revision = ++workerModelAccessRevision;
+  try {
+    const access = await officeLink.modelAccessEnv(() => workerModelAccess.env());
+    if (revision === workerModelAccessRevision) setWorkerModelAccessSnapshot(access);
+  } catch (error) {
+    if (revision === workerModelAccessRevision) setWorkerModelAccessSnapshot({});
+    oplog("boot", `model access needs recovery: ${error instanceof Error ? error.message : String(error)}`);
+  }
 };
-void refreshWorkerModelAccess();
 const officeLink = createOfficeLink({
   directory: DATA_DIR,
   appVersion: appVersion(),
   provisioning: {
     apply: async (provisioning, installationId) => { await workerModelAccess.apply(provisioning, installationId); await refreshWorkerModelAccess(); },
-    withdraw: async () => { const changed = await workerModelAccess.withdraw(); await refreshWorkerModelAccess(); return changed; },
+    withdraw: async () => {
+      workerModelAccessRevision++;
+      setWorkerModelAccessSnapshot({});
+      try { return await workerModelAccess.withdraw(); } finally { await refreshWorkerModelAccess(); }
+    },
     withdrawn: () => workerModelAccess.withdrawn(),
     active: async () => (await workerModelAccess.state()).provisioned,
-    reconcile: async () => { const changed = await workerModelAccess.reconcile(); if (changed) await refreshWorkerModelAccess(); return changed; },
-    clear: async () => { await workerModelAccess.clear(); await refreshWorkerModelAccess(); },
+    reconcile: async () => {
+      try { return await workerModelAccess.reconcile(); } finally { await refreshWorkerModelAccess(); }
+    },
+    clear: async () => {
+      workerModelAccessRevision++;
+      setWorkerModelAccessSnapshot({});
+      try { await workerModelAccess.clear(); } finally { await refreshWorkerModelAccess(); }
+    },
   },
   report: () => withWorkerProfile(desk.memberKeyForWorker(), async () => {
     const status = applyHandsReadiness(await hermesStatus(), readHandsPing(DATA_DIR));
@@ -2758,6 +2775,7 @@ const officeLink = createOfficeLink({
       workerVersion: installationWorkerVersion(status.cli.versionText), workerReady: status.ready };
   }),
 });
+void refreshWorkerModelAccess();
 
 const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWorker(), async () => {
   const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
@@ -2804,6 +2822,11 @@ const server = createServer((req, res) => withWorkerProfile(desk.memberKeyForWor
         if (!adminGate.ok) return json(res, adminGate.status, { error: adminGate.error, code: "service_admin_required" });
         res.setHeader("x-realbud-service-admin-expires", String(adminGate.expiresAt));
       }
+    }
+    if (path === "/api/onboarding") {
+      res.setHeader("cache-control", "no-store");
+      const result = await onboarding.handle(path, method, method === "PUT" ? await readBody(req, 2048) : undefined);
+      return json(res, result!.status, result!.body);
     }
     // Fence in-flight source proposals before any local setup/plan mutation can
     // yield. A rejected edit may hold a proposal but can never broaden access.
@@ -5307,6 +5330,7 @@ bindSlackBridge({
 // Restore identity before accepting requests or resuming queued/background work.
 // An unreadable saved identity must not silently run under another profile.
 const workspaceIdentity = await companyHost.workspaceIdentity();
+const onboarding = createOnboardingHandler({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, memberKey: () => desk.memberKeyForWorker() });
 desk.setMemberKey(workspaceIdentity.workerMemberKey ?? '');
 const memoryReviews = createHermesMemoryReviewService({ context: () => memoryReviewContext(workspaceIdentity.id),
   key: () => Buffer.from(desk.recoveryKeyHex(), 'hex'), withActivity: workspaceActivity.run });
@@ -5431,6 +5455,15 @@ const sourceBillsApi = createSourceBillsApi({ register:sourceBills, actorId:()=>
   },
 });
 const billProposals = createBillProposals({database:workflowDatabase,workroom:join(DATA_DIR,'vault'),source:billMailSource,runs:()=>jobRuns.list(),findRunByKey:key=>jobRuns.getByIdempotencyKey(key),
+  attachment:async(source,signal)=>{
+    await checkWebsiteExecution();const revision=mailBindingRevision();
+    const assertAuthority=()=>{signal.throwIfAborted();if(mailBindingRevision()!==revision||cfg.composio?.excludedApps?.includes('gmail'))throw new Error('Mail authority changed.');};
+    assertAuthority();
+    if(managedConnectorConfigured(cfg)){const result=await readManagedMailAttachment(structuredClone(cfg),source,signal);assertAuthority();return result;}
+    const binding=gmailReadOnlyMode(cfg)?gmailReadOnlyBinding(cfg):null;
+    if(!binding||binding.accountId!==source.accountId)throw new Error('The reviewed Gmail binding is unavailable.');
+    return readGmailPdfAttachment({...binding,assertAuthority},source,signal);
+  },
   // Read the authoritative recipe registry synchronously as well: edits from
   // Ask, distillation and the clock bypass the HTTP recipe mutation door.
   epoch:()=>`${mailAuthorityEpoch}:${mailWorkspace.epoch}:${mailBindingRevision()}:${createHash('sha256').update(JSON.stringify(listRecipes())).digest('hex')}`,

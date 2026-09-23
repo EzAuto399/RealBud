@@ -2,6 +2,19 @@ import { describe, expect, it, vi } from "vitest";
 import { revealSettingsTarget, scrollYouTarget, youHashTarget } from "./you-navigation";
 
 describe("settings navigation", () => {
+  it("reveals and focuses the website account destination without another scroll", () => {
+    const outer = { tagName: "DETAILS", open: false, parentElement: null };
+    const target = { tagName: "SECTION", parentElement: outer, focus: vi.fn(), getBoundingClientRect: () => ({ top: 200 }) };
+    const scroller = { scrollTop: 0, getBoundingClientRect: () => ({ top: 0 }), querySelector: () => null, scrollTo: vi.fn() };
+    vi.stubGlobal("document", { getElementById: () => target, querySelector: () => scroller });
+    vi.stubGlobal("window", { matchMedia: () => ({ matches: true }) });
+    try {
+      scrollYouTarget("you-website");
+      expect(outer.open).toBe(true);
+      expect(target.focus).toHaveBeenCalledWith({ preventScroll: true });
+      expect(scroller.scrollTo).toHaveBeenCalledWith({ top: 192, behavior: "auto" });
+    } finally { vi.unstubAllGlobals(); }
+  });
   it("keeps a revealed target below the sticky jump navigation", () => {
     const target = { tagName: "DETAILS", open: false, parentElement: null, getBoundingClientRect: () => ({ top: 310 }) };
     const scroller = { scrollTop: 20, getBoundingClientRect: () => ({ top: 10 }),
@@ -19,6 +32,7 @@ describe("settings navigation", () => {
     ["#connected-apps", "you-connected-apps"], ["#you-connected-apps", "you-connected-apps"],
     ["#you-recovery", "you-recovery"], ["#you-packs", "you-packs"], ["#you-jobs", "you-jobs"],
     ["#you-phone", "you-phone"], ["#you-office", "you-office"], ["#you-profile", "you-profile"],
+    ["#you-website", "you-website"],
     ["#you-advanced", "you-advanced"],
     ["#you-service-admin", "you-service-admin"],
   ])("resolves %s to its settings section", (hash, id) => {

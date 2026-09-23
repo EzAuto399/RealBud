@@ -1,12 +1,14 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { AgencySetupSettings } from '../shared/agency-setup.ts';
-import type { BillSourceEvidence } from '../shared/source-bills.ts';
+import type { BillMailSource, BillSourceEvidence } from '../shared/source-bills.ts';
 import { previewBillSource } from './source-bill-rules.ts';
+import { validateSourcePdfEvidence, type SourcePdfEvidence } from './source-attachments.ts';
 
 export interface BillProposalReceipt {
   payloadDigest: string; sourceDigest: string; recipeId: string; recipeRevision: number;
   sourceReference: string; authorityDigest: string; input: Record<string, unknown>;
+  attachmentEvidence?: { source: BillSourceEvidence; pdfs: SourcePdfEvidence[] };
 }
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -24,13 +26,21 @@ const isoDate = (value: unknown): string => {
   return value;
 };
 
-/** The bounded metadata-only input is a projection of trusted source and setup. */
-export function billProposalInput(settings: Pick<AgencySetupSettings, 'timeZone' | 'agencyName' | 'propertyReferences'>, source: BillSourceEvidence, asOf: string): Record<string, unknown> {
+/** Bounded source input includes only text extracted by the host, never a worker-supplied file path. */
+export function billProposalInput(settings: Pick<AgencySetupSettings, 'timeZone' | 'agencyName' | 'propertyReferences'>, source: BillSourceEvidence, asOf: string, pdfs: SourcePdfEvidence[] = []): Record<string, unknown> {
+  for(const pdf of pdfs) {
+    const attachment=source.message.attachments.find(a=>a.id===pdf.attachment.id);
+    if(!attachment)return hold();
+    validateSourcePdfEvidence(pdf,{accountId:source.accountId,threadId:source.threadId,messageId:source.message.id,attachment:attachment as SourcePdfEvidence['attachment']});
+  }
   return { version: 1, sourceReference: `realbud-bill:${source.digest}`, asOf, timezone: settings.timeZone, agency: { name: settings.agencyName },
     coverage: { complete: false, agreedAccounts: [source.accountId], accounts: [{ accountId: source.accountId, expectedThreadCount: 1, returnedThreadCount: 1, paginationComplete: true, threadHistoryComplete: false }],
-      failedSources: ['Selected saved message only; this preparation does not establish whole-inbox or complete invoice coverage.'], missingAttachments: source.message.attachments.map(a => a.id) },
+      failedSources: ['Selected saved message only; this preparation does not establish whole-inbox or complete invoice coverage.'], missingAttachments: source.message.attachments.filter(a=>!pdfs.some(p=>p.attachment.id===a.id)).map(a => a.id) },
     documentCount: 1, documents: [{ documentId: `mail-${source.identity}`, sourceId: source.message.id, accountId: source.accountId, threadId: source.threadId, body: source.message.body, subject: source.message.subject, sender: source.message.from, receivedAt: new Date(source.message.at).toISOString(), bodyTruncated: source.message.bodyTruncated, attachmentIds: source.message.attachments.map(a => a.id) }],
-    attachments: source.message.attachments.map(a => ({ attachmentId: a.id, fileName: a.name, status: 'not-read' })), allowedAttachmentPaths: [],
+    attachments: source.message.attachments.map(a => {
+      const pdf=pdfs.find(p=>p.attachment.id===a.id);
+      return pdf?{attachmentId:a.id,fileName:a.name,status:'read',text:pdf.text,pages:pdf.pages,sha256:pdf.sha256,textSha256:pdf.textSha256,trust:'untrusted-source-content'}:{ attachmentId: a.id, fileName: a.name, status: 'not-read' };
+    }), allowedAttachmentPaths: [],
     propertyMap: settings.propertyReferences.map(p => ({ propertyId: p.propertyId, reference: p.reference, aliases: p.aliases })),
   };
 }
@@ -42,10 +52,23 @@ export function billProposalInput(settings: Pick<AgencySetupSettings, 'timeZone'
 export function validateSavedBillProposal(id: string, value: unknown): BillProposalReceipt {
   try {
     if (!/^bill-proposal:[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(id)) return hold();
-    const r = exact(value, ['payloadDigest', 'sourceDigest', 'recipeId', 'recipeRevision', 'sourceReference', 'authorityDigest', 'input']);
+    const r = exact(value, ['payloadDigest', 'sourceDigest', 'recipeId', 'recipeRevision', 'sourceReference', 'authorityDigest', 'input',...(object(value)&&Object.hasOwn(value,'attachmentEvidence')?['attachmentEvidence']:[])]);
     if (![r.payloadDigest, r.sourceDigest, r.authorityDigest].every(v => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v)) ||
         typeof r.recipeId !== 'string' || !/^[A-Za-z0-9:_-]{1,180}$/.test(r.recipeId) || !Number.isSafeInteger(r.recipeRevision) || Number(r.recipeRevision) < 1 || r.sourceReference !== `realbud-bill:${r.sourceDigest}` || !object(r.input)) return hold();
     const input = r.input;
+    if(r.attachmentEvidence!==undefined) {
+      const evidence=exact(r.attachmentEvidence,['source','pdfs']);
+      if(!object(evidence.source)||!Array.isArray(evidence.pdfs)||evidence.pdfs.length!==1)return hold();
+      const source=previewBillSource(evidence.source as unknown as BillMailSource);
+      if(source.digest!==r.sourceDigest||!isDeepStrictEqual(source,evidence.source))return hold();
+      const settings={agencyName:object(input.agency)?input.agency.name:'',timeZone:input.timezone,propertyReferences:input.propertyMap} as Pick<AgencySetupSettings,'agencyName'|'timeZone'|'propertyReferences'>;
+      const baseInput=billProposalInput(settings,source,String(input.asOf));
+      const {attachmentEvidence:_,...legacy}=r;
+      validateSavedBillProposal(id,{...legacy,input:baseInput});
+      const expected=billProposalInput(settings,source,String(input.asOf),evidence.pdfs as SourcePdfEvidence[]);
+      if(!isDeepStrictEqual(input,expected))return hold();
+      return r as unknown as BillProposalReceipt;
+    }
     if (!Array.isArray(input.documents) || input.documents.length !== 1 || !object(input.documents[0]) || !Array.isArray(input.attachments) || input.attachments.length > 100 || !Array.isArray(input.propertyMap) || input.propertyMap.length > 2000) return hold();
     const doc = input.documents[0], agency = exact(input.agency, ['name']);
     const attachments = input.attachments.map(raw => {

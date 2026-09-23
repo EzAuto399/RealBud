@@ -13,13 +13,22 @@ staple via `pnpm package:mac:release`) that must run on a Mac. This skill never
 touches mac artifacts — but see [Every release ships both](#every-release-ships-both)
 before you finish.
 
+Current Windows prerequisites, compilation, installer checks and feature holds
+are maintained in [Windows build and test](../../../docs/WINDOWS-BUILD-AND-TEST.md).
+That guide supersedes the older CSV-only and missing-Windows-speech assumptions.
+Packaging, installed GUI acceptance and public release remain separate gates.
+
 ## Preconditions
 
-- **Run on Windows.** NSIS packaging from macOS needs Wine; don't.
-- **Node 24+** (`package.json` `engines`).
-- **pnpm** via `corepack pnpm`.
-- Graduate path: `docs/GRADUATE-RELEASE.md`. Until Hermes is bundled, Windows
-  stays CSV-only for worker attach (`hermesInstallCommand` is null on win32).
+- **Run on native Windows x64.** The package must stage Windows binaries; do
+  not cross-compile through macOS, Wine or WSL.
+- **Node 24 x64** and **pnpm 10.33.0**, matching the checked-in CI/toolchain.
+- Windows PowerShell, `tar.exe`, and the .NET Framework C# compiler plus
+  `System.Speech.dll`. Run the prerequisite checker below before compiling.
+- The managed worker has a Windows setup path in `server/worker-bootstrap.ts`;
+  a null legacy `hermesInstallCommand` is not evidence that Windows is CSV-only.
+  Fresh-device worker/model setup, attended CUA and memory acceptance retain
+  their separate gates in the build guide.
 
 ## 1. Version
 
@@ -29,13 +38,17 @@ upload to, and it becomes the version electron-updater compares against.
 ## 2. Build
 
 ```powershell
-pnpm install
-pnpm typecheck
-pnpm package:win
+node scripts/check-windows-build.mjs
+pnpm.cmd install --frozen-lockfile
+pnpm.cmd typecheck
+pnpm.cmd package:win
 ```
 
-`package:win` deliberately omits `build:speech` — the dictation helper is a signed
-macOS Swift binary and has no Windows counterpart.
+Run each command only after the previous one succeeds. `package:win` compiles
+`RealBud Speech.exe` with `build:speech:win`; the Swift helper is macOS-only.
+It also stages the reviewed browser helper, Windows CUA runtime/SDK and
+PostgreSQL runtime. This inventory does not prove microphone quality, GUI
+actions, worker/model access or office provisioning.
 
 Output in `release/`:
 
@@ -61,6 +74,9 @@ Get-Content release\win-unpacked\resources\app-update.yml
 
 Then smoke-test the installer: per-user install, Desk renders, logs under
 `%APPDATA%\RealBud\logs\server.log`, no surprise update popup on first launch.
+Use the build guide's disposable CI and Windows 11 checks, preserving the exact
+installer digest, source candidate and receipts. Older hosted-runner success
+does not cover subsequent working-tree changes or an installed upgrade.
 
 ## 4. Publish
 
@@ -89,7 +105,8 @@ customer release — or say Windows is frozen in the release notes.
 ## Signing (T17 Win)
 
 No certificate is configured today, so SmartScreen shows "unknown publisher".
-Auto-update still works while unsigned (no `publisherName`).
+Unsigned update metadata intentionally omits `publisherName`; a successful
+installed upgrade is a separate acceptance check.
 
 When signing is added: `win.signtoolOptions` or `win.azureSignOptions` in
 `electron-builder.yml` (electron-builder 26 — no top-level `win.certificateFile`).

@@ -313,7 +313,9 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
           <Card title="This office" subtitle="Open Desk once to load the book." />
         )}
         <CompanySetupCard />
-        <WebsiteLinkCard />
+        <section id={section ? undefined : "you-website"} tabIndex={-1} aria-label="Website account">
+          <WebsiteLinkCard />
+        </section>
         <AiUsageCard />
         <WebsiteRequestsCard />
         <RemoteApproversCard />

@@ -11,39 +11,23 @@ import {
 
 import { identifyEmail, setEmailGateDone, track } from "@/lib/analytics";
 import { isRecoveryWriteError } from "@/lib/api-error";
-import { markFirstRunDone, officeContactNamed } from "@/lib/first-run";
+import { createFirstRunApi, officeContactNamed } from "@/lib/first-run";
+import type { OnboardingState } from '@shared/onboarding';
 import { api, useStore } from "@/state/store";
 import { MausAvatar } from "./Avatar";
 
-const RESUME_KEY = "realbud.onboarding-stage";
 const SAMPLE_PROFILE_NAME = "Sample PM";
-
-function resumedStep(): 0 | 1 {
-  try {
-    return localStorage.getItem(RESUME_KEY) === "office-rules" ? 1 : 0;
-  } catch {
-    return 0;
-  }
-}
-
-function rememberStep(step: 0 | 1 | null): void {
-  try {
-    if (step === null) localStorage.removeItem(RESUME_KEY);
-    else localStorage.setItem(RESUME_KEY, step === 1 ? "office-rules" : "profile");
-  } catch {
-    /* Private browsing can refuse local storage. The server-saved profile remains. */
-  }
-}
 
 type BusyState = "profile" | "finish" | null;
 
 // First run establishes the person and leads directly into the same Bud
 // setup used in settings. Sample-only exploration remains available.
-export function Onboarding({ onDone }: { onDone: (setup?: "bud") => void }) {
+export function Onboarding({ initialState, onDone }: { initialState: OnboardingState; onDone: (setup?: "bud") => void }) {
   const { state, dispatch } = useStore();
-  const [step, setStep] = useState<0 | 1>(resumedStep);
+  const [saved, setSaved] = useState(initialState);
+  const [step, setStep] = useState<0 | 1>(initialState.stage === 'office-rules' ? 1 : 0);
   const [name, setName] = useState(
-    state.config?.profile?.name || (step === 1 ? SAMPLE_PROFILE_NAME : ""),
+    state.config?.profile?.name || "",
   );
   const [email, setEmail] = useState(state.config?.profile?.email ?? "");
   const [busy, setBusy] = useState<BusyState>(null);
@@ -55,7 +39,7 @@ export function Onboarding({ onDone }: { onDone: (setup?: "bud") => void }) {
 
   useEffect(() => {
     if (edited.current) return;
-    setName(state.config?.profile?.name || (step === 1 ? SAMPLE_PROFILE_NAME : ""));
+    setName(state.config?.profile?.name || "");
     setEmail(state.config?.profile?.email ?? "");
   }, [state.config?.profile?.email, state.config?.profile?.name, step]);
 
@@ -63,13 +47,11 @@ export function Onboarding({ onDone }: { onDone: (setup?: "bud") => void }) {
     track("onboarding_step", { step });
   }, [step]);
 
-  const saveProfile = async () => {
-    if (!canContinue) return;
+  const advanceProfile = async (normalizedName: string, normalizedEmail: string) => {
+    if (busy !== null) return;
     setBusy("profile");
     setError("");
     setRecoveryBlocked(false);
-    const normalizedName = name.trim();
-    const normalizedEmail = email.trim().toLowerCase();
     try {
       const config = await api("/api/config", {
         method: "PUT",
@@ -77,7 +59,9 @@ export function Onboarding({ onDone }: { onDone: (setup?: "bud") => void }) {
       });
       dispatch({ type: "configStatus", config });
       if (normalizedEmail) identifyEmail(normalizedEmail);
-      rememberStep(1);
+      setSaved(await createFirstRunApi(api).save(saved, 'office-rules'));
+      setName(normalizedName);
+      setEmail(normalizedEmail);
       setStep(1);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "RealBud could not save your profile.");
@@ -86,10 +70,10 @@ export function Onboarding({ onDone }: { onDone: (setup?: "bud") => void }) {
     }
   };
 
+  const saveProfile = () => canContinue ? advanceProfile(name.trim(), email.trim().toLowerCase()) : undefined;
+
   const enterWorkspace = (emailStatus: "submitted" | "skipped", destination: "desk" | "bud") => {
     setEmailGateDone(emailStatus);
-    rememberStep(null);
-    markFirstRunDone();
     if (destination === "bud") {
       history.replaceState(null, "", location.pathname + location.search);
       dispatch({ type: "showAsk" });
@@ -99,11 +83,9 @@ export function Onboarding({ onDone }: { onDone: (setup?: "bud") => void }) {
     onDone(destination === "bud" ? "bud" : undefined);
   };
 
-  const exploreSampleDesk = () => {
+  const exploreSampleDesk = async () => {
     track("onboarding_sample_desk");
-    setName((current) => current.trim() || SAMPLE_PROFILE_NAME);
-    rememberStep(1);
-    setStep(1);
+    await advanceProfile(name.trim() || SAMPLE_PROFILE_NAME, emailOk ? email.trim().toLowerCase() : '');
   };
 
   const finish = async (destination: "desk" | "bud") => {
@@ -111,24 +93,20 @@ export function Onboarding({ onDone }: { onDone: (setup?: "bud") => void }) {
     setBusy("finish");
     setError("");
     setRecoveryBlocked(false);
-    // The book on this computer may already record its contact: the first-run
-    // flag lives in browser storage, which a cleared profile or a private window
-    // loses while the saved book survives. Replaying this screen must not write a
-    // fresh name over that saved one, so enter the workspace and leave the book
-    // as it is. An empty contact is still filled below — the check reads the same
-    // field the write touches, so it never trades an overwrite for a lost name.
-    if (officeContactNamed(state.desk)) {
-      track("onboarding_completed", { engines_available: -1, mic: "n/a" });
-      enterWorkspace(email.trim() ? "submitted" : "skipped", destination);
-      return;
-    }
     let enteredDesk = false;
     try {
-      const snapshot = await api("/api/desk/agency", {
-        method: "PATCH",
-        body: JSON.stringify({ office: { pmUser: name.trim() } }),
-      });
-      dispatch({ type: "deskSnapshot", snapshot });
+      // Read afresh before writing: store hydration may still be pending, and
+      // a restored book's existing contact must never be overwritten.
+      const currentDesk = await api('/api/desk');
+      if (typeof currentDesk?.book?.office?.pmUser !== 'string') throw new Error('Your saved office contact could not be checked. Try again before continuing.');
+      if (!officeContactNamed(currentDesk)) {
+        const snapshot = await api("/api/desk/agency", {
+          method: "PATCH",
+          body: JSON.stringify({ office: { pmUser: name.trim() } }),
+        });
+        dispatch({ type: "deskSnapshot", snapshot });
+      }
+      setSaved(await createFirstRunApi(api).save(saved, 'complete'));
       track("onboarding_completed", { engines_available: -1, mic: "n/a" });
       enteredDesk = true;
       enterWorkspace(email.trim() ? "submitted" : "skipped", destination);
@@ -144,12 +122,25 @@ export function Onboarding({ onDone }: { onDone: (setup?: "bud") => void }) {
     }
   };
 
-  const openRecovery = () => {
-    rememberStep(null);
-    markFirstRunDone();
-    location.hash = "you-recovery";
-    dispatch({ type: "showYou" });
-    onDone();
+  const openRecovery = async () => {
+    setBusy('finish');
+    try {
+      setSaved(await createFirstRunApi(api).save(saved, 'recovery'));
+      location.hash = "you-recovery";
+      dispatch({ type: "showYou" });
+      onDone();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Your recovery choice could not be saved.');
+    } finally { setBusy(null); }
+  };
+
+  const back = async () => {
+    setBusy('profile');
+    try {
+      setSaved(await createFirstRunApi(api).save(saved, 'profile'));
+      setError(''); setRecoveryBlocked(false); setStep(0);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Your setup could not be saved.'); }
+    finally { setBusy(null); }
   };
 
   const fieldClass =
@@ -266,7 +257,7 @@ export function Onboarding({ onDone }: { onDone: (setup?: "bud") => void }) {
                   </button>
                   <button
                     type="button"
-                    onClick={exploreSampleDesk}
+                    onClick={() => void exploreSampleDesk()}
                     disabled={busy !== null}
                     className="pm-control mt-2 w-full rounded text-[13px] text-ink-secondary hover:bg-raised/60 hover:text-ink disabled:opacity-40"
                   >
@@ -313,7 +304,7 @@ export function Onboarding({ onDone }: { onDone: (setup?: "bud") => void }) {
                   {recoveryBlocked ? (
                     <button
                       type="button"
-                      onClick={openRecovery}
+                      onClick={() => void openRecovery()}
                       disabled={busy !== null}
                       className="pm-decision flex w-full items-center justify-center gap-2 rounded bg-agency px-4 text-[14px] font-medium text-white transition-transform hover:bg-agency-hover active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
                     >
@@ -334,12 +325,7 @@ export function Onboarding({ onDone }: { onDone: (setup?: "bud") => void }) {
                   {!recoveryBlocked && <button type="button" onClick={() => void finish("desk")} disabled={busy !== null || !name.trim()} className="pm-control mt-2 w-full rounded text-[13px] text-ink-secondary hover:bg-raised/60 disabled:opacity-40">Open the sample desk first</button>}
                   <button
                     type="button"
-                    onClick={() => {
-                      rememberStep(0);
-                      setError("");
-                      setRecoveryBlocked(false);
-                      setStep(0);
-                    }}
+                    onClick={() => void back()}
                     disabled={busy !== null}
                     className="pm-control mt-2 flex w-full items-center justify-center gap-2 rounded text-[13px] text-ink-secondary hover:bg-raised/60 hover:text-ink disabled:opacity-40"
                   >

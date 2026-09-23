@@ -68,6 +68,10 @@ export function redactSecrets(input: unknown, depth = 0): unknown {
 
   if (Array.isArray(input)) {
     return input.map((item) => {
+      // Env-shaped rows still carry ordinary content and extra metadata. A
+      // harmless variable name must not exempt a recognizable key from the
+      // same content redaction applied everywhere else.
+      const redacted = redactSecrets(item, depth + 1);
       if (
         item !== null &&
         typeof item === "object" &&
@@ -76,9 +80,9 @@ export function redactSecrets(input: unknown, depth = 0): unknown {
         typeof (item as { value?: unknown }).value === "string"
       ) {
         const entry = item as { name: string; value: string };
-        return isSecretName(entry.name) ? { ...entry, value: mask(entry.value) } : entry;
+        return isSecretName(entry.name) ? { ...(redacted as Record<string, unknown>), value: mask(entry.value) } : redacted;
       }
-      return redactSecrets(item, depth + 1);
+      return redacted;
     });
   }
 

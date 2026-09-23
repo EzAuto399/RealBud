@@ -3,6 +3,7 @@ import type { HermesStatus } from "@/state/store";
 import { budAvailability } from "@/lib/bud-setup";
 import { useStore } from "@/state/store";
 import { scrollYouTarget } from "@/lib/you-navigation";
+import { budFacingCopy } from "@/lib/bud-setup";
 
 type ManagedBudStatusProps = {
   id: string;
@@ -15,8 +16,10 @@ type ManagedBudStatusProps = {
 export function ManagedBudStatus({ id, status, connected, onRefresh, onServiceAdministration }: ManagedBudStatusProps) {
   const { dispatch } = useStore();
   const availability = budAvailability(status, connected);
+  const needsAccountLink = availability.target === "attach-model" && !status?.modelAccess?.managed;
   const [pending, setPending] = useState(false);
   const [live, setLive] = useState("");
+  const lastCheck = status?.lastPing ?? (status?.lastTest?.kind === "ping" ? status.lastTest : null);
 
   async function checkAgain() {
     if (pending) return;
@@ -41,13 +44,24 @@ export function ManagedBudStatus({ id, status, connected, onRefresh, onServiceAd
       ) : (
         <>
           <p className="mt-2 text-sm text-ink-secondary">{availability.detail}</p>
-          <p className="mt-2 text-sm text-ink-secondary">
-            Ask your RealBud service administrator to finish setup on this computer. Keep preparing and
-            saving plans in Schedule.
-          </p>
+          <p className="mt-2 text-sm text-ink-secondary">{needsAccountLink
+            ? "Open Website account to link this computer or check its model access. Your account supplies access; the private readiness check still needs to pass before Bud can work."
+            : "Ask your RealBud service administrator to finish setup on this computer. Keep preparing and saving plans in Schedule."}</p>
         </>
       )}
+      {!availability.ready && lastCheck && !lastCheck.ok && (
+        <p className="mt-2 text-sm text-danger" role="status">
+          Last readiness check: {budFacingCopy(lastCheck.detail, "Bud could not finish the check. Ask your service administrator to check the connection.")}
+        </p>
+      )}
       <div className="mt-4 flex flex-wrap items-center gap-3">
+        {needsAccountLink && <button type="button" className="pm-decision rounded bg-agency px-4 text-sm font-medium text-white hover:bg-agency-hover"
+          onClick={() => {
+            onServiceAdministration?.();
+            dispatch({ type: "toggleAppSettings", open: false });
+            if (location.hash === "#you-website") scrollYouTarget("you-website");
+            else location.hash = "you-website";
+          }}>Open website account</button>}
         <button
           type="button"
           className="min-h-11 rounded-lg border border-line bg-sheet px-4 text-sm text-ink hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-agency disabled:opacity-50"
@@ -70,7 +84,6 @@ export function ManagedBudStatus({ id, status, connected, onRefresh, onServiceAd
         onClick={() => {
           onServiceAdministration?.();
           dispatch({ type: "toggleAppSettings", open: false });
-          dispatch({ type: "showYou" });
           if (location.hash === "#you-service-admin") scrollYouTarget("you-service-admin");
           else location.hash = "you-service-admin";
         }}>

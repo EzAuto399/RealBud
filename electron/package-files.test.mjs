@@ -41,7 +41,7 @@ function stagedSource(resourcePath, rules) {
 
 // Staged by a build step (Vite, tsc, prepare-cua, prepare-postgres, the Windows
 // speech helper), so no checked-in file corresponds one-to-one.
-const BUILD_STAGED = /^(dist|dist-browser|dist-native|dist-postgres|electron\/resources\/RealBud Speech\.exe)(\/|$)/;
+const BUILD_STAGED = /^(dist|dist-browser|dist-native|dist-postgres|electron\/resources\/RealBud (?:Speech|Worker)\.exe)(\/|$)/;
 
 /** dist-server is tsc output: map the shipped .js back to its checked-in .ts. */
 function checkedInSource(source) {

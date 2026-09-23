@@ -20,6 +20,8 @@ dist-postgres/
 # Generated helper binaries live here; the checked-in sources below are re-included.
 electron/resources/*
 !electron/resources/speech-helper-win.cs
+!electron/resources/worker-supervisor-win.cs
+!electron/resources/cua-launcher-win.cs
 !electron/resources/speech-helper.swift
 !electron/resources/speech-helper-Info.plist
 !electron/resources/app-icon.png

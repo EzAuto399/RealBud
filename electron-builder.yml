@@ -35,6 +35,9 @@ files:
   - "!electron/resources/speech-helper-Info.plist"
   - "!electron/resources/RealBud Speech.app/**"
   - "!electron/resources/RealBud Speech.exe"
+  - "!electron/resources/worker-supervisor-win.cs"
+  - "!electron/resources/cua-launcher-win.cs"
+  - "!electron/resources/RealBud Worker.exe"
   - "!**/node_modules/**"
   - package.json
 
@@ -108,10 +111,13 @@ win:
   extraResources:
     - from: electron/resources/RealBud Speech.exe
       to: RealBud Speech.exe
+    - from: electron/resources/RealBud Worker.exe
+      to: RealBud Worker.exe
     - from: dist-native
       to: .
       filter:
         - cua-driver.exe
+        - RealBud CUA.exe
         - cua-driver-uia.exe
         - cua-cursor-theme.exe
         - cua_driver_sdk.dll

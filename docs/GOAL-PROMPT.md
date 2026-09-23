@@ -1,8 +1,16 @@
 # RealBud — current working direction
 
+Latest continuation: [macOS and Windows candidate](PLATFORM-CANDIDATE-2026-09-23.md) tracks the isolated source candidate, native process and launcher fixes, current checks, installer artifacts and distribution gates. The [earlier Windows preparation](WINDOWS-READINESS-2026-09-23.md) retains the previous installer and rejected timeout approach as dated evidence.
+
+Previous continuation: [Readiness and Modelvia gap fixes](READINESS-GAPS-2026-09-23.md) records 41 settled live API checks, actual-worker local failure paths, the readiness and provisioning fixes, bounded PDF bill reading, browser verification and the remaining account/device/deployment gates. These evidence layers do not establish universal readiness.
+
 Updated 21 September 2026 from the owner's product clarification. Repo: `EzAuto399/RealBud`; local path: `/Users/yoda/projects/RealBud`.
 
 Use this as a concise starting point, then inspect current source and task-specific evidence. Current user instructions take precedence. The former PM-only goal prompt is preserved as a [historical snapshot](history/GOAL-PROMPT-2026-09-04.md); it does not override this direction.
+
+Current priority (owner clarification, 23 September): **complete and verify the reusable core first, then build and test customer workflow packs**. The three current outcomes are **bank → CSV**, **email → bills → calendar**, and **email → morning priorities**. REI upload/import/recognition and its simulator are deferred. Use the [core-first scope and acceptance decision](decisions/2026-09-23-core-first-and-workflow-scope.md) and [core readiness checkpoint](CORE-READINESS-2026-09-23.md); they supersede conflicting sequencing and REI gates below and in older receipts.
+
+Previous continuation: [Modelvia, security and workflow QA](MODELVIA-QA-2026-09-23.md) includes the later successful isolated live API qualification: four fictional workflows and clarified streaming, contract-2 receipts, six settled requests, and verified cleanup. It preserves the earlier expiry/release failures plus managed readiness, revocation, office-isolation and UIUX/CSV fixes. Ongoing desktop service commissioning and real workflow/device acceptance remain separate.
 
 Owner development preference: use the authenticated Grok CLI with `grok-4.7` and `--reasoning-effort xhigh` substantially for bounded specialist implementation and independent review through this goal. Earlier 22 September checks listed 4.7, but the latest fresh session exposes only 4.6 and 4.5; see `outputs/remote-enrollment-2026-09-22/grok-model-selection-run.json`. Preserve historical receipts and verify available choices before each new call; do not silently use 4.6 for a requested 4.7 review. Verify the actual model and terminal outcome of each new call. Prefer small focused packets; preserve timeout receipts and never treat incomplete reviews as approval. Codex owns scope, integration and verification; preserve concrete run receipts, explicit file ownership and other people's edits. Grok is development tooling, not another RealBud runtime agent. Current availability and completed reviews are recorded in [the core implementation receipt](REAL-ESTATE-CORE-2026-09-21.md).
 
@@ -18,8 +26,8 @@ Read the [business OS and Austin decision](decisions/2026-09-21-business-os-and-
 
 ## Austin outcomes
 
-- Acquire the daily bank CSV for an approved account and range, preserve the source bytes, correct only approved references, review uncertain rows and deliver an artifact REI Cloud actually recognizes. Keep upload, validation, import and financial posting as distinct outcomes with evidence and recovery. REI remains the financial source of truth.
-- Read approved Gmail history through Composio, propose property/bill patterns, accept reviewed facts and show expected arrivals and verified due dates in RealBud's calendar. Prediction, invoice receipt, payment arranged and payment confirmed are different states.
+- Acquire the bank export for an approved account and range, preserve the source bytes, apply reviewed CSV/reference mappings where configured, hold uncertain rows and deliver the reviewed CSV. This stage ends at the file; REI upload, recognition, import and posting are deferred.
+- Read approved email history, propose property/bill patterns, accept reviewed facts and show expected arrivals and verified due dates in RealBud's calendar. Gmail through Composio is an existing adapter, not universal email-provider support. Prediction, invoice receipt, payment arranged and payment confirmed are different states.
 - Run a customer-configured morning scan around 08:00 in the office timezone. Maintain a ranked list of urgent work, actions, waiting/follow-ups and updates, with source links and reasons. Preserve human changes across scans and show missed/incomplete work honestly.
 
 The existing supplied-file workflows and local CSV review are components, not proof that any of these outcomes is integrated end to end. Do not expose a schedule switch as working until its acquisition, persistence, review and recovery path works.
@@ -47,7 +55,7 @@ Do not enable arbitrary privileged extensions or resurrect legacy agent/model/pl
 
 Start with [attended enrollment](REMOTE-APPROVER-ENROLLMENT-2026-09-22.md), [reviewed instruction history](SKILL-HISTORY-ARCHIVAL-2026-09-22.md), [website requests and local review](WEBSITE-REQUESTS-IMPLEMENTATION-2026-09-22.md), [history archival](PACK-HISTORY-ARCHIVAL-2026-09-22.md) and the latest source. The website can now request two explicitly published preparations, with exact local approval, existing executor receipts and recovery. The reporting link alone grants no execution authority. Fully remote approval and shared-department execution still require the additional enrolled capabilities in the protocol. These receipts are local evidence, not a live Austin rollout.
 
-The next sequence is source/evidence and managed-credential boundaries; complete Austin bank, bill and morning-task workflows; bounded workspace customization; then installed-device and office acceptance. Use the detailed decision's acceptance gates. Keep source, local tests, packaged builds, installed devices, live integrations and customer acceptance separate in every report.
+The next sequence is reusable-core reliability, source/evidence and managed-credential boundaries, supported extension lifecycle, and measured packaged/installed acceptance; then bank-to-CSV, bill/calendar and morning-priority pack implementation and testing. Use the current core-first decision's acceptance gates. Keep source, local tests, packaged builds, installed devices, live integrations and customer acceptance separate in every report.
 
 Related implementation references: `docs/ROUTINES.md`, `docs/WORKER-LIFECYCLE.md`, `docs/OFFICE-LIFECYCLE.md`, `docs/OFFICE-RECOVERY-RUNBOOK.md`, `docs/CONNECTION-LAYER.md`, `docs/HOSTED-ARCHITECTURE.md`. Older plans describe their dated scope; use the current decision when product direction conflicts.
 

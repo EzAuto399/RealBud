@@ -403,9 +403,17 @@ globalThis.fetch=async(input,init)=>{
     const receipt = await call(MV_BASE, 'GET', `/v1/requests/${requestId}`, { token: modelKey });
     assert(receipt.status === 200 && receipt.body.state === 'settled', `receipt ${receipt.status} state ${receipt.body?.state}`);
     assert(receipt.body.projectId === MODEL_PROJECT_ID, 'receipt is not scoped to this installation project');
+    assert(receipt.body.pricingContract === 2, 'receipt does not identify price contract 2');
+    // This fixture is a direct customer. Resale and client-funded project keys
+    // can carry retail or withheld prices; a missing amount must never mean zero.
+    assert(receipt.body.priceBasis === 'direct', `unexpected price basis ${receipt.body.priceBasis}`);
+    assert(typeof receipt.body.chargedNanoAud === 'string' && /^\d+$/.test(receipt.body.chargedNanoAud), 'direct price is not an exact decimal amount');
     facts.completionOutcome = 'settled';
     facts.chargedNanoAud = receipt.body.chargedNanoAud;
-    entry.detail = `request ${requestId} settled, charged ${receipt.body.chargedNanoAud} nanoAUD`;
+    facts.pricingContract = receipt.body.pricingContract;
+    facts.priceBasis = receipt.body.priceBasis;
+    facts.priceAudience = receipt.body.priceAudience;
+    entry.detail = `request ${requestId} settled, ${receipt.body.priceBasis} price ${receipt.body.chargedNanoAud} nanoAUD (contract ${receipt.body.pricingContract})`;
   });
 
   const before = await step('analytics-counts-the-request', async entry => {
@@ -531,6 +539,9 @@ globalThis.fetch=async(input,init)=>{
       completionStatus: facts.completionStatus ?? null,
       completionOutcome: facts.completionOutcome ?? null,
       chargedNanoAud: facts.chargedNanoAud ?? null,
+      pricingContract: facts.pricingContract ?? null,
+      priceBasis: facts.priceBasis ?? null,
+      priceAudience: facts.priceAudience ?? null,
       idempotencyKeyHeaderSent: false,
       afterRevokeStatus: facts.refusedStatus ?? null,
       afterRevokeError: facts.refusedError ?? null,

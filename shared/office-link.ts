@@ -113,7 +113,12 @@ export function parseInstallationProvisioning(value: unknown): InstallationProvi
   if (root.version !== INSTALLATION_PROVISIONING_VERSION) invalid();
 
   const service = exact(root.service, ["companyId", "hostInstallationId"]);
-  const connector = exact(root.connector, ["endpoint", "credential", "profile", "apps"]);
+  // The gateway also gives the website its Composio project identifier for
+  // installation accounting. Admit that documented metadata explicitly; the
+  // local worker needs only the scoped connector credential, never the project.
+  const hasConnectorProject = object(root.connector) && Object.hasOwn(root.connector, "projectId");
+  const connector = exact(root.connector, ["endpoint", "credential", "profile", "apps", ...(hasConnectorProject ? ["projectId"] : [])]);
+  if (hasConnectorProject) text(connector.projectId, ID);
   const model = exact(root.model, ["provider", "baseUrl", "projectId", "key", "keyId", "spendCapLabel"]);
 
   const apps = connector.apps;

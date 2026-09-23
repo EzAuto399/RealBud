@@ -3,10 +3,11 @@ import { HumanHandoffPanel } from "@/components/HumanHandoffPanel";
 import { hasPropertyEdits } from "@/lib/property-edits";
 import { hasUnpersistedBillDrafts } from "@/lib/bill-review-drafts";
 import { youHashTarget } from "@/lib/you-navigation";
+import { NAVIGATION_CANCELLED } from "@/lib/navigation-guard";
 import { lazy, useEffect, useRef, useState } from "react";
 import { WorkspaceScreen } from "@/components/WorkspaceScreen";
 import { Loader2 } from "lucide-react";
-import { StoreProvider, useStore } from "@/state/store";
+import { api, StoreProvider, useStore } from "@/state/store";
 import { Sidebar } from "@/components/Sidebar";
 
 import { UpdateBanner } from "@/components/UpdateBanner";
@@ -16,7 +17,8 @@ import { DesktopCapabilitiesProvider } from "@/components/DesktopCapabilities";
 import type { CaseEdit } from "@/components/desk/DeskCase";
 
 
-import { firstRunDone } from "@/lib/first-run";
+import { createFirstRunApi, firstRunDone } from "@/lib/first-run";
+import type { OnboardingState } from '@shared/onboarding';
 import { doorHashToWrite, viewFromHash, workspaceViewFromHash, workspaceViewHash, type DeskView } from "@/lib/app-route";
 import { WorkspaceTabsProvider, useWorkspaceTabs } from '@/lib/workspace-tabs';
 
@@ -93,15 +95,21 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
       // Door routes (`#/desk`, `#/ask`, …). Checked after the You deep links so
       // their existing root-level scheme keeps working unchanged.
       const routed = viewFromHash(window.location.hash);
+      // Cancelling Back can restore this route before its queued hashchange.
+      // That second event must not suppress the next ordinary door change.
+      if (routed === previousView.current) { guidedByHash.current = false; return; }
       if (routed) { guidedByHash.current = true; dispatch(VIEW_ACTIONS[routed]); }
     };
     openSettings();
     // pushState (door mirror) does not fire hashchange; Back/Forward fire popstate.
     window.addEventListener("hashchange", openSettings);
     window.addEventListener("popstate", openSettings);
+    const cancelNavigation = () => { guidedByHash.current = false; };
+    window.addEventListener(NAVIGATION_CANCELLED, cancelNavigation);
     return () => {
       window.removeEventListener("hashchange", openSettings);
       window.removeEventListener("popstate", openSettings);
+      window.removeEventListener(NAVIGATION_CANCELLED, cancelNavigation);
     };
   }, [dispatch]);
 
@@ -210,13 +218,35 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
   );
 }
 
-export default function App() {
+function FirstRunGate() {
   const [initialSetup, setInitialSetup] = useState<WorkspaceSetupTarget | null>(null);
-  const [welcome, setWelcome] = useState(() => !firstRunDone());
+  const [saved, setSaved] = useState<OnboardingState | null>(null);
+  const [entered, setEntered] = useState(false);
+  const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setError('');
+    void createFirstRunApi(api).read().then(next => {
+      if (!active) return;
+      if (next.stage === 'recovery') location.hash = 'you-recovery';
+      setSaved(next);
+    }).catch(cause => { if (active) setError(cause instanceof Error ? cause.message : 'Your saved setup could not be checked.'); });
+    return () => { active = false; };
+  }, [attempt]);
+  if (entered || firstRunDone(saved) || saved?.stage === 'recovery') return <Shell initialSetup={initialSetup} />;
+  if (!saved) return <main className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 bg-paper p-6" role={error ? 'alert' : 'status'}>
+    <p>{error || 'Checking your saved setup…'}</p>
+    {error && <><button className="pm-control" onClick={() => setAttempt(value => value + 1)}>Try again</button><button className="pm-control" onClick={() => { location.hash = 'you-recovery'; setEntered(true); }}>Open recovery</button></>}
+  </main>;
+  return <WorkspaceScreen label="welcome"><Onboarding initialState={saved} onDone={(target) => { setInitialSetup(target ?? null); setEntered(true); }} /></WorkspaceScreen>;
+}
+
+export default function App() {
   return (
     <DesktopCapabilitiesProvider>
       <StoreProvider>
-        <WorkspaceTabsProvider>{welcome ? <WorkspaceScreen label="welcome"><Onboarding onDone={(target) => { setInitialSetup(target ?? null); setWelcome(false); }} /></WorkspaceScreen> : <Shell initialSetup={initialSetup} />}</WorkspaceTabsProvider>
+        <WorkspaceTabsProvider><FirstRunGate /></WorkspaceTabsProvider>
       </StoreProvider>
     </DesktopCapabilitiesProvider>
   );

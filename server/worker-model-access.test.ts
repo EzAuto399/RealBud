@@ -16,6 +16,7 @@ import { hardenHermesChildEnv } from './drivers/acp/hermes.ts';
 import { serviceSafeChildEnv } from './service-child-env.ts';
 import { redactSecretsInText } from './redact.ts';
 import { spawnSync } from 'node:child_process';
+import { ConfigRecoveryError } from './config.ts';
 
 const roots: string[] = [];
 const KEY = Buffer.alloc(32, 7);
@@ -198,6 +199,62 @@ describe('zero-touch provisioning on this computer', WINDOWS_PROFILE_TEST_OPTION
     // Withdrawal drops the extra apps back to the default, never widens them.
     expect(await managedConnectorApps(root)).toEqual(['gmail']);
     expect(await access.withdraw()).toBe(false);
+  });
+
+  it('keeps provisioning intact when disconnect needs config recovery, then clears on a repaired retry', async () => {
+    const { root, hermesRoot, provisioning } = fixture();
+    const recovery = new ConfigRecoveryError();
+    let configNeedsRecovery = false;
+    const access = createWorkerModelAccess({ directory: root, key: KEY, hermesRoot, saveConfig: () => {
+      if (configNeedsRecovery) throw recovery;
+    } });
+    await access.apply(provisioning, 'installation-a');
+    const paths = [
+      join(root, 'service-provisioning.json'),
+      join(root, 'service-installation.json'),
+      join(root, 'company-installation', 'private', 'worker-model-access.json'),
+    ];
+    const originalBytes = paths.map(path => readFileSync(path));
+
+    configNeedsRecovery = true;
+    const pendingEnv = access.env();
+    await expect(access.clear()).rejects.toBe(recovery);
+    expect(await pendingEnv).toEqual({});
+    expect(recovery).toMatchObject({ status: 503, code: 'config_recovery_required' });
+    expect(paths.map(path => readFileSync(path))).toEqual(originalBytes);
+    expect(workerModelGrant()).toEqual({ state: 'withdrawn' });
+    expect(await access.state()).toMatchObject({ provisioned: false, withdrawn: true, installationId: 'installation-a' });
+    expect(await access.env()).toEqual({});
+    expect(await access.withdrawn()).toBe(true);
+    expect(workerModelGrant()).toEqual({ state: 'withdrawn' });
+    await expect(access.apply(provisioning, 'installation-a')).rejects.toThrow(/withdrawal needs recovery/);
+
+    configNeedsRecovery = false;
+    await access.clear();
+    expect(paths.map(path => existsSync(path))).toEqual([false, false, false]);
+    expect(workerModelGrant()).toEqual({ state: 'none' });
+    expect(await access.state()).toEqual({ provisioned: false, withdrawn: false });
+    expect(await access.env()).toEqual({});
+  });
+
+  it('holds access and keeps recovery records when vault removal refuses damage, then retries after repair', async () => {
+    const { root, access, provisioning } = fixture();
+    await access.apply(provisioning, 'installation-a');
+    const vaultPath = join(root, 'company-installation', 'private', 'worker-model-access.json');
+    const original = readFileSync(vaultPath);
+    writePrivateFixtureFile(vaultPath, '{fictional damaged envelope');
+    await expect(access.clear()).rejects.toThrow();
+    expect(readFileSync(vaultPath, 'utf8')).toBe('{fictional damaged envelope');
+    expect(existsSync(join(root, 'service-provisioning.json'))).toBe(true);
+    expect(existsSync(join(root, 'service-installation.json'))).toBe(true);
+    expect(await access.env()).toEqual({});
+    expect(await access.state()).toMatchObject({ provisioned: false, withdrawn: true });
+    writePrivateFixtureFile(vaultPath, original);
+    await access.clear();
+    expect(existsSync(vaultPath)).toBe(false);
+    expect(existsSync(join(root, 'service-provisioning.json'))).toBe(false);
+    expect(existsSync(join(root, 'service-installation.json'))).toBe(false);
+    expect(await access.state()).toEqual({ provisioned: false, withdrawn: false });
   });
 
   it('withdraws when a service administrator removes the installation binding', async () => {

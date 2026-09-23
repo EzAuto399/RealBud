@@ -59,6 +59,9 @@ rewrites `receipt.json` in the dated output directory.
    "auto"`, **no** `Idempotency-Key` header. A settled receipt is read back from
    `GET /v1/requests/<id>`. A documented provider-unavailable outcome is also
    accepted, but the request must still appear in the ledger.
+   Successful receipts must identify price contract 2 and `priceBasis: direct`
+   for this direct-customer fixture. The evidence retains the price audience and
+   basis; withheld amounts are never interpreted as zero or as wholesale cost.
 8. **analytics-counts-the-request** — `GET
    /v1/client/customers/fictional-office/analytics` with the client key, then
    the same document through our own `website/lib/platform-analytics.ts`

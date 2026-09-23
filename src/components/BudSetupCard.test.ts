@@ -111,6 +111,28 @@ describe("provisioned installations never ask for a provider key", () => {
 });
 
 describe("budAvailability for managed access", () => {
+  it("shows the last failed readiness reason on the managed surface and clears it when ready", () => {
+    const status = managed(true, "fictional-model");
+    status.lastPing = { kind: "ping", at: 1, ok: false, detail: "Bud's model access has expired; open You and reconnect the model service." };
+    const render = () => renderToStaticMarkup(createElement(ManagedBudStatus, {
+      id: "you-worker", status, connected: true, onRefresh: async () => {},
+    }));
+    expect(render()).toContain("Last readiness check:");
+    expect(render()).toContain("access has expired");
+    status.ready = true;
+    expect(render()).not.toContain("Last readiness check:");
+  });
+  it("offers the website account path only when model access still needs connecting", () => {
+    const render = (status: HermesStatus) => renderToStaticMarkup(createElement(ManagedBudStatus, {
+      id: "you-worker", status, connected: true, onRefresh: async () => {},
+    }));
+    const missing = hermes({ managed: false, withdrawn: false, attached: false, detail: "" }, { attached: false, provider: null, model: null });
+    expect(render(missing)).toContain(">Open website account</button>");
+    expect(render(missing)).toContain("private readiness check still needs to pass");
+    expect(render(managed(false, null))).not.toContain(">Open website account</button>");
+    expect(render(withdrawn())).not.toContain(">Open website account</button>");
+    expect(render({ ...missing, ready: true, model: { attached: true, provider: "fictional", model: "fictional" } })).not.toContain(">Open website account</button>");
+  });
   it("holds on a withdrawn grant with no action that could fix it", () => {
     const view = budAvailability(withdrawn(), true);
     expect(view).toMatchObject({ ready: false, label: "Model access withdrawn", action: null });

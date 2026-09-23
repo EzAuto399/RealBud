@@ -137,10 +137,16 @@ export function createWorkerModelAccess(options: WorkerModelAccessOptions) {
   const vault = createPrivateVault(options.directory, options.key);
   const saveConfig = options.saveConfig ?? saveConfigToDisk;
   const path = provisioningPath(options.directory);
+  let withdrawalPending = false;
+  const publish = (record: ServiceProvisioningRecord | undefined) => {
+    if (withdrawalPending) grantSnapshot = { state: "withdrawn" };
+    else publishGrant(record);
+  };
 
   async function state(): Promise<WorkerModelAccessState> {
     const record = await readServiceProvisioning(options.directory);
-    publishGrant(record);
+    publish(record);
+    if (withdrawalPending) return { provisioned: false, withdrawn: true, installationId: record?.installationId };
     if (!record) return { provisioned: false, withdrawn: false };
     if (record.state === "withdrawn") return { provisioned: false, withdrawn: true, installationId: record.installationId };
     return { provisioned: true, withdrawn: false, installationId: record.installationId, projectId: record.projectId, keyId: record.keyId,
@@ -150,12 +156,14 @@ export function createWorkerModelAccess(options: WorkerModelAccessOptions) {
   /** Env for one worker launch. Returns `{}` when nothing is provisioned, so a
    * manually attached model keeps working exactly as it does today. */
   async function env(): Promise<Record<string, string>> {
+    if (withdrawalPending) return {};
     const record = await readServiceProvisioning(options.directory);
     // Published before the vault read, so a grant that needs recovery still
     // leaves the synchronous readers describing the state accurately.
-    publishGrant(record);
-    if (record?.state !== "active") return {};
+    publish(record);
+    if (withdrawalPending || record?.state !== "active") return {};
     const stored = await vault.read(WORKER_MODEL_VAULT_ENTRY) as { version?: number; keyId?: string; key?: string } | undefined;
+    if (withdrawalPending) return {};
     if (!stored || stored.version !== 1 || typeof stored.key !== "string" || !stored.key) {
       throw new Error("The model access for this computer needs recovery. Contact service support.");
     }
@@ -171,6 +179,7 @@ export function createWorkerModelAccess(options: WorkerModelAccessOptions) {
    * replacing the grant would orphan the previous office's revocable key.
    */
   async function apply(provisioning: InstallationProvisioning, installationId: string): Promise<void> {
+    if (withdrawalPending) throw Object.assign(new Error("Service withdrawal needs recovery before linking again."), { status: 409 });
     const existing = await readServiceProvisioning(options.directory);
     // A withdrawn record holds no grant, so a fresh enrolment may replace it.
     if (existing?.state === "active" && existing.installationId !== installationId) {
@@ -216,32 +225,42 @@ export function createWorkerModelAccess(options: WorkerModelAccessOptions) {
    * entitlement binding, and leave a state marker. Work records are untouched.
    */
   async function withdraw(): Promise<boolean> {
+    // Revocation is effective now, even when private-file cleanup must retry.
+    withdrawalPending = true;
+    grantSnapshot = { state: "withdrawn" };
     const record = await readServiceProvisioning(options.directory);
-    if (!record || record.state === "withdrawn") return false;
+    if (!record || record.state === "withdrawn") {
+      withdrawalPending = false;
+      publishGrant(record);
+      return false;
+    }
     saveConfig({ composio: { managed: undefined, selectedAccounts: {} } });
-    await vault.remove(WORKER_MODEL_VAULT_ENTRY).catch(() => {});
+    await vault.remove(WORKER_MODEL_VAULT_ENTRY);
     await removeServiceInstallation(options.directory);
     await writePrivateJson(path, { version: 1, state: "withdrawn", installationId: record.installationId, withdrawnAt: new Date().toISOString() });
     // The profile keeps naming the gateway: readiness reports the hold, and a
     // restored grant needs no repair. Nothing here can route a turn without the
     // key, which has just been destroyed.
     grantSnapshot = { state: "withdrawn" };
+    withdrawalPending = false;
     return true;
   }
 
   /** The person disconnected this computer. Release everything, including the
    * withdrawn marker, so a later enrolment starts from a clean installation. */
   async function clear(): Promise<void> {
-    await withdraw().catch(() => {});
+    // Keep the recovery records until withdrawal has actually completed.
+    await withdraw();
     await removePrivateJson(path);
     grantSnapshot = { state: "none" };
   }
 
   async function withdrawn(): Promise<boolean> {
+    if (withdrawalPending) return true;
     try {
       const record = await readServiceProvisioning(options.directory);
-      publishGrant(record);
-      return record?.state === "withdrawn";
+      publish(record);
+      return withdrawalPending || record?.state === "withdrawn";
     } catch { return false; }
   }
 

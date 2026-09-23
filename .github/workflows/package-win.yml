@@ -50,7 +50,15 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      - name: Windows compiler and acceptance prerequisites
+        run: node scripts/check-windows-build.mjs --proof
       - run: pnpm install --frozen-lockfile
+      - run: pnpm test:windows-build
+      - name: Compile Windows launchers and exercise process cleanup
+        run: |
+          pnpm build:worker:win
+          pnpm build:cua-launcher:win
+          pnpm exec vitest run server/one-shot-process.test.ts server/worker-supervisor.native.test.ts server/procs.test.ts electron/cua-launcher.test.mjs electron/cua-lifecycle.test.mjs
       - name: Windows packaging fixtures
         run: pnpm exec vitest run electron/package-files.test.mjs electron/perm-settings.test.mjs electron/service-smoke.test.mjs
       # the packaged app ships compiled JS, so a stale dist/ or dist-server/
@@ -86,6 +94,45 @@ jobs:
           path: |
             release/*.exe
             release/*.exe.blockmap
+            release/*.zip
             release/latest.yml
           if-no-files-found: error
+          retention-days: 14
+
+  memory-journal:
+    name: Managed Windows runtime and native memory journal (held candidate)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:worker:win
+      - name: Prepare the exact runtime through managed setup
+        timeout-minutes: 25
+        shell: pwsh
+        run: |
+          $env:REALBUD_BUILD_SHA = git rev-parse HEAD
+          node scripts/testing/prepare-windows-memory-runtime.mjs outputs/windows-native-memory/runtime.json
+      - name: Exercise the real Windows journal while preserving public holds
+        timeout-minutes: 30
+        shell: pwsh
+        run: |
+          $runtime = Get-Content -Raw outputs/windows-native-memory/runtime.json | ConvertFrom-Json
+          if (-not $runtime.passed) { throw 'Managed runtime setup did not pass.' }
+          $python = Join-Path $runtime.runtimeDirectory 'venv/Scripts/python.exe'
+          & $python -I -B scripts/testing/hermes-memory-windows-journal-native.py --runtime $runtime.runtimeDirectory --helpers server/helpers --admission server/hermes-memory-review.ts --receipt outputs/windows-native-memory/journal.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-native-memory-journal-proof
+          path: outputs/windows-native-memory/
+          if-no-files-found: warn
           retention-days: 14

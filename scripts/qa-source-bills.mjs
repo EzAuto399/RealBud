@@ -3,13 +3,15 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
+import { fictionalPdf } from '../server/testing/pdf-fixture.ts';
 import { createServer } from 'node:http';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
+import { completeFictionalOnboarding } from './qa-onboarding.mjs';
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE to an installed Playwright module.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..'), temp = mkdtempSync(join(realpathSync(tmpdir()), 'RealBud bill source QA '));
@@ -18,6 +20,8 @@ mkdirSync(data, { mode: 0o700 }); mkdirSync(output, { recursive: true });
 const checks = [], errors = [], wait = ms => new Promise(r => setTimeout(r, ms));
 const pass = text => { checks.push(text); console.log(`PASS ${text}`); };
 const sourceAt = Date.now() - 86400000, sourceDate = new Date(sourceAt).toISOString().slice(0, 10), dueDate = new Date(sourceAt + 20 * 86400000).toISOString().slice(0, 10), laterDate = new Date(sourceAt + 25 * 86400000).toISOString().slice(0, 10), rangeEnd = new Date(sourceAt + 180 * 86400000).toISOString().slice(0, 10);
+const pdfBytes = fictionalPdf('Fictional Water invoice FICTION-001 AUD 123.45. Check the original before accepting.');
+let attachmentCalls = 0;
 const credential = `rbc_${'c'.repeat(64)}`;
 let child, browser, page, logs = '', scanCalls = 0, failure;
 let extraThreads = [];
@@ -26,11 +30,16 @@ const connector = createServer(async (req, res) => {
   res.setHeader('content-type', 'application/json');
   if (req.headers.authorization !== `Bearer ${credential}` || req.headers['x-realbud-profile'] !== 'property') { res.writeHead(403); res.end('{"error":"fixture_denied"}'); return; }
   if (req.url === '/v1/connectors/status') { res.end(JSON.stringify({ managed: true, checkedAt: new Date().toISOString(), serviceExpiresAt: Date.now() + 3600000, services: { gmail: { connected: true, status: 'ACTIVE', accounts: [{ id: 'fictional-bills', label: 'Fictional bills inbox', status: 'ACTIVE' }], accountSelectionRequired: false } }, tools: { available: true, names: ['GMAIL_GET_PROFILE', 'GMAIL_LIST_THREADS', 'GMAIL_FETCH_MESSAGE_BY_THREAD_ID'] } })); return; }
+  if (req.url === '/v1/connectors/mail-attachment') {
+    let raw = ''; for await (const part of req) raw += part; const source = JSON.parse(raw);
+    assert.equal(source.accountId, 'fictional-bills'); assert.equal(source.threadId, 'abc'); assert.equal(source.messageId, 'def'); assert.equal(source.attachment.id, 'abc1');
+    attachmentCalls++; res.end(JSON.stringify({...source, bytesBase64:pdfBytes.toString('base64'), sha256:createHash('sha256').update(pdfBytes).digest('hex')})); return;
+  }
   if (req.url === '/v1/connectors/mail-scan') {
     let raw = ''; for await (const part of req) raw += part; const body = JSON.parse(raw);
     if (body.expectedAccountId !== 'fictional-bills' || !body.scope) { res.writeHead(409).end('{}'); return; }
     const request = body.scope; scanCalls++;
-    res.end(JSON.stringify({ accountId: 'fictional-bills', windowStartAt: request.windowStartAt, windowEndAt: request.windowEndAt, pages: 1, paginationComplete: true, gaps: ['Attachment contents were not read. Any decision needing an attachment must stay held.'], threads: [{ id: 'abc', historyComplete: true, messages: [{ id: 'def', threadId: 'abc', at: sourceAt, direction: 'incoming', from: 'utility@example.test', to: 'office@example.test', subject: 'Fictional water invoice · Oak Street', body: `Fictional Oak Street water bill. Invoice date ${sourceDate}. AUD 123.45. Due ${dueDate}. Supplier: Fictional Water. No payment is recorded.`, bodyTruncated: false, attachments: [{ id: 'abc1', name: 'fictional-invoice.pdf', mimeType: 'application/pdf', size: 100 }] }] }, ...extraThreads] })); return;
+    res.end(JSON.stringify({ accountId: 'fictional-bills', windowStartAt: request.windowStartAt, windowEndAt: request.windowEndAt, pages: 1, paginationComplete: true, gaps: ['Attachment contents were not read. Any decision needing an attachment must stay held.'], threads: [{ id: 'abc', historyComplete: true, messages: [{ id: 'def', threadId: 'abc', at: sourceAt, direction: 'incoming', from: 'utility@example.test', to: 'office@example.test', subject: 'Fictional water invoice · Oak Street', body: `Fictional Oak Street water bill. Invoice date ${sourceDate}. AUD 123.45. Due ${dueDate}. Supplier: Fictional Water. No payment is recorded.`, bodyTruncated: false, attachments: [{ id: 'abc1', name: 'fictional-invoice.pdf', mimeType: 'application/pdf', size: pdfBytes.length }] }] }, ...extraThreads] })); return;
   }
   res.writeHead(404); res.end('{}');
 });
@@ -42,7 +51,7 @@ try {
 if(process.argv.includes('--version')){console.log('Hermes Agent v0.21.3 (2026.9.14)');process.exit(0);}
 const path=${JSON.stringify(join(data, 'vault/workflow-inputs/accounts-invoices.json'))};if(!existsSync(path)){console.log('{}');process.exit(0);}
 const input=JSON.parse(readFileSync(path,'utf8')), doc=input.documents[0];
-const result={version:1,kind:'accounts-invoice-entry-review',sourceReference:input.sourceReference,status:'partial',coverageComplete:false,holds:[{itemId:'coverage',reason:'Only the selected fictional message is available; attachment contents were not read.'}],actionsPerformed:[],documents:[{documentId:doc.documentId,decision:'hold',duplicateOf:null,conflictGroup:null,proposedEntry:{supplierId:'Fictional Water',invoiceId:'FICTION-001',propertyId:input.propertyMap[0]?.propertyId??null,amount:'123.45',currency:'AUD',dueDate:${JSON.stringify(dueDate)},costType:'Water'},sourceIds:[doc.sourceId],reason:'Fictional source body supplies candidate facts; unread attachment remains a hold.'}]};
+const result={version:1,kind:'accounts-invoice-entry-review',sourceReference:input.sourceReference,status:'partial',coverageComplete:false,holds:[{itemId:'coverage',reason:'Only the selected fictional message is available; the text layer needs human review.'}],actionsPerformed:[],documents:[{documentId:doc.documentId,decision:'hold',duplicateOf:null,conflictGroup:null,proposedEntry:{supplierId:'Fictional Water',invoiceId:'FICTION-001',propertyId:input.propertyMap[0]?.propertyId??null,amount:'123.45',currency:'AUD',dueDate:${JSON.stringify(dueDate)},costType:'Water'},sourceIds:[doc.sourceId],reason:'Fictional source text supplies candidate facts; staff approval remains required.'}]};
 const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readFileSync(log,'utf8'));}catch{}calls.push(input.sourceReference);writeFileSync(log,JSON.stringify(calls));console.log(JSON.stringify({summary:'Fictional invoice preparation',evidence:[],outputs:[JSON.stringify(result)],needsApproval:[]}));\n`, { mode: 0o700 });
   writeFileSync(join(data, 'config.json'), JSON.stringify({ instances: { fixture: { driver: 'not-a-real-driver' } }, composio: { managed: { endpoint, credential, profile: 'property' } } }), { mode: 0o600 });
   child = spawn(process.execPath, [join(root, 'server/index.ts')], { cwd: root, env: { ...serviceSmokeEnv({ executable: process.execPath, home: temp, data, scratch: temp, port }), REALBUD_MANAGED_SERVICE: '0', REALBUD_HERMES_CLI: worker, REALBUD_TEST_LAB: '1', OMB_STATIC_DIR: resolve(process.env.REALBUD_UI_DIR || join(root, 'dist')) }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -51,6 +60,7 @@ const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readF
   assert.equal((await fetch(base + '/api/bill-register')).status, 401);
   const token = (await (await fetch(base + '/api/session')).json()).token;
   const request = async (path, method = 'GET', body, expected = 200) => { const res = await fetch(base + path, { method, signal: AbortSignal.timeout(60000), headers: { 'content-type': 'application/json', 'x-realbud-session': token }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); const value = await res.json(); assert.equal(res.status, expected, `${path}: ${JSON.stringify(value)}`); return value; };
+  await completeFictionalOnboarding(request);
   const snapshot = await request('/api/desk/properties', 'POST', { address: 'Fictional Oak Street', tenantName: 'Fictional Tenant', tenantPhone: '0400 000 000', weeklyRentCents: 50000 }, 201);
   const propertyId = snapshot.properties.find(p => p.address === 'Fictional Oak Street').id;
   const secondProperty = await request('/api/desk/properties', 'POST', { address: 'Fictional Pine Street', tenantName: 'Fictional Tenant Two', tenantPhone: '0400 000 001', weeklyRentCents: 51000 }, 201);
@@ -71,13 +81,13 @@ const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readF
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
   await context.route('**/*', route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
-  await context.addInitScript(() => localStorage.setItem('realbud.first-run-done', '1'));
   page = await context.newPage(); page.on('request', request => { if (request.method() === 'GET') readPaths.push(new URL(request.url()).pathname); }); page.on('pageerror', error => errors.push(error.message));
   await page.goto(base + '/#/desk'); await page.getByRole('button', { name: 'Open bills and calendar', exact: true }).click();
   const panel = page.getByRole('region', { name: 'Source-linked bills and calendar' }); await panel.waitFor();
+  const preManualScanCalls = scanCalls;
   await panel.getByRole('button', { name: 'Check inbox for bills', exact: true }).click();
   await panel.getByText('The reviewed bill mail scope was collected.', { exact: false }).waitFor();
-  assert.equal(scanCalls, 1); const mail = await request('/api/mail-workspace'); assert.equal(mail.counts.total, 1); assert.equal(Object.hasOwn(mail, 'items'), false); const itemId = (await request('/api/mail-workspace/items?group=all&limit=20')).items[0].id;
+  assert.equal(scanCalls, preManualScanCalls + 1); const mail = await request('/api/mail-workspace'); assert.equal(mail.counts.total, 1); assert.equal(Object.hasOwn(mail, 'items'), false); const itemId = (await request('/api/mail-workspace/items?group=all&limit=20')).items[0].id;
   pass('Full bills view collects only the real HTTP host-reviewed fictional Gmail scope without enabling a schedule');
   await panel.getByRole('button', { name: 'Review a bill from saved mail', exact: true }).click();
   let editor = panel.getByRole('form', { name: 'Review source bill' }); await editor.getByLabel('Saved conversation', { exact: true }).selectOption(itemId); await editor.getByLabel('Source message', { exact: false }).selectOption('def');
@@ -203,8 +213,15 @@ const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readF
   await editor.getByText('123.45', { exact: true }).waitFor();
   assert.equal((await request('/api/bill-register')).occurrences.items.length, 0);
   assert.equal(JSON.parse(readFileSync(workerCalls, 'utf8')).length, 1);
-  pass('Source-bound deterministic worker proposal renders held fields without accepting a bill or inventing attachment extraction');
-  await editor.getByLabel('Bill property', { exact: false }).selectOption(propertyId); await editor.getByLabel('Bill kind', { exact: false }).fill('Water'); await editor.getByLabel('Vendor', { exact: false }).fill('Fictional Water'); await editor.getByLabel('Amount (AUD)', { exact: false }).fill('123.45'); await editor.getByLabel('Invoice date, if confirmed', { exact: false }).fill(sourceDate); await editor.getByLabel('Actual due date, if confirmed', { exact: false }).fill(dueDate); await editor.getByLabel('Reason for this bill review', { exact: false }).fill('Fictional source body and property checked; attachment remains unread');
+  await editor.getByText('PDF text read · fictional-invoice.pdf · 1 page', { exact:true }).click();
+  await editor.getByText('Fictional Water invoice FICTION-001 AUD 123.45. Check the original before accepting.', { exact:true }).waitFor();
+  assert.equal(attachmentCalls,1);
+  const workerInput=JSON.parse(readFileSync(join(data,'vault/workflow-inputs/accounts-invoices.json'),'utf8'));
+  assert.equal(workerInput.attachments[0].status,'read');assert.equal(workerInput.coverage.missingAttachments.length,0);assert.equal(workerInput.allowedAttachmentPaths.length,0);
+  assert.ok(!JSON.stringify(workerInput).includes(pdfBytes.toString('base64')));
+  for(const width of [390,768,1280]) {await page.setViewportSize({width,height:1000});await editor.getByText('PDF text read · fictional-invoice.pdf · 1 page', {exact:true}).scrollIntoViewIfNeeded();assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await page.screenshot({path:join(output,`pdf-proposal-${width}.png`),fullPage:true});}
+  pass('One verified fictional PDF is parsed by the real restricted helper, shown as untrusted extracted text and reused on proposal reconciliation without downloading again');
+  await editor.getByLabel('Bill property', { exact: false }).selectOption(propertyId); await editor.getByLabel('Bill kind', { exact: false }).fill('Water'); await editor.getByLabel('Vendor', { exact: false }).fill('Fictional Water'); await editor.getByLabel('Amount (AUD)', { exact: false }).fill('123.45'); await editor.getByLabel('Invoice date, if confirmed', { exact: false }).fill(sourceDate); await editor.getByLabel('Actual due date, if confirmed', { exact: false }).fill(dueDate); await editor.getByLabel('Reason for this bill review', { exact: false }).fill('Fictional source body, PDF text and property checked against the synthetic original');
   await editor.getByLabel('I reviewed this source', { exact: false }).check(); assert.equal(await editor.getByRole('button', { name: 'Accept reviewed bill', exact: true }).isDisabled(), true); await editor.getByLabel('I understand attachment contents', { exact: false }).check();
   let acceptancePosts = 0;
   await page.route('**/api/bill-occurrences', async route => { if (route.request().method() !== 'POST') return route.continue(); acceptancePosts++; const actual = await route.fetch(); assert.equal(actual.status(), 200); await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Explicit fictional lost bill acceptance response' }) }); });
@@ -221,7 +238,7 @@ const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readF
   await panel.getByLabel('Include closed reviews', { exact: true }).uncheck();
   pass('Closed accepted review retains fields and request receipt read-only, with an available history close action');
   let saved = await request('/api/bill-register'); assert.equal(saved.occurrences.items.length, 1); let bill = saved.occurrences.items[0]; assert.equal(bill.facts.currency, 'AUD'); assert.equal(bill.facts.amountCents, 12345); assert.equal(bill.source.message.id, 'def'); assert.equal(bill.state, 'received');
-  pass('Actual UI acceptance requires source review plus unread-attachment acknowledgement and retains source evidence');
+  pass('Actual UI acceptance requires source review plus original-attachment acknowledgement and retains source evidence');
   const evidence = await request(`/api/bill-evidence/${itemId}?messageId=def`), accepted = { itemId, messageId: 'def', expectedSourceDigest: evidence.digest, sourceReviewed: true, limitedSourceAcknowledged: true, facts: bill.facts, reviewReason: 'Fictional reviewed bill' };
   await request('/api/bill-scan', 'POST', {}); assert.equal((await request(`/api/bill-evidence/${itemId}?messageId=def`)).digest, evidence.digest);
   assert.equal((await request('/api/bill-occurrences', 'POST', accepted)).id, bill.id);
@@ -388,6 +405,6 @@ const log=${JSON.stringify(workerCalls)};let calls=[];try{calls=JSON.parse(readF
 } catch (error) { failure = error instanceof Error ? error.stack : String(error); if (page) writeFileSync(join(output, 'failure.txt'), await page.locator('body').innerText().catch(() => 'No page')); await page?.screenshot({ path: join(output, 'failure.png'), fullPage: true }).catch(() => {}); }
 finally {
   await page?.unrouteAll({ behavior: 'ignoreErrors' }).catch(() => {}); await browser?.close(); if (child && child.exitCode === null && child.signalCode === null) { child.kill('SIGTERM'); await Promise.race([once(child, 'exit'), wait(4000)]); if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await Promise.race([once(child, 'exit'), wait(4000)]); } } await new Promise(r => connector.close(r)); const childExited = !child || child.exitCode !== null || child.signalCode !== null; if (childExited) rmSync(temp, { recursive: true, force: true }); else failure ??= 'Owned child did not exit; scratch preserved.';
-  writeFileSync(join(output, 'receipt.json'), JSON.stringify({ at: new Date().toISOString(), passed: !failure, layer: 'Actual local HTTP app + built UI; fictional connector + deterministic invoice worker; not live Gmail/Hermes/customer/Windows proof', checks, scanCalls, errors, failure, ...(failure ? { diagnostic: logs } : {}) }, null, 2));
+  writeFileSync(join(output, 'receipt.json'), JSON.stringify({ at: new Date().toISOString(), passed: !failure, layer: 'Actual local HTTP app + built UI; fictional connector + deterministic invoice worker; not live Gmail/Hermes/customer/Windows proof', checks, scanCalls, attachmentCalls, errors, limits: ['Fictional connector and deterministic worker; no live Gmail, payment or calendar provider call.', 'Text-layer PDF only; no OCR or complete image-content proof.', 'Mac browser rendering; no native Windows or two-computer acceptance.'], failure, ...(failure ? { diagnostic: logs } : {}) }, null, 2));
   if (failure) { console.error(failure); process.exitCode = 1; } else console.log(JSON.stringify({ output, checks }, null, 2));
 }

@@ -9,20 +9,50 @@ if ($env:CI -ne 'true' -or -not $IsWindows) {
 $existing = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
   Where-Object { $_.DisplayName -eq 'RealBud' }
 if ($existing) { throw 'RealBud is already installed; refusing to replace an existing installation.' }
+$sourceRevision = [string]$env:REALBUD_BUILD_SHA
+if ($sourceRevision -notmatch '^[0-9a-fA-F]{40}$') {
+  throw 'REALBUD_BUILD_SHA must identify the full source commit used to build this installer.'
+}
+$sourceRevision = $sourceRevision.ToLowerInvariant()
 $Installer = (Resolve-Path -LiteralPath $Installer).Path
 $ReceiptDirectory = [IO.Path]::GetFullPath($ReceiptDirectory)
+if (Test-Path -LiteralPath $ReceiptDirectory) {
+  if (-not (Test-Path -LiteralPath $ReceiptDirectory -PathType Container) -or
+      @(Get-ChildItem -Force -LiteralPath $ReceiptDirectory).Count -ne 0) {
+    throw 'ReceiptDirectory must be empty so this run cannot claim earlier probe receipts.'
+  }
+}
 New-Item -ItemType Directory -Force -Path $ReceiptDirectory | Out-Null
+$installerIdentity = [ordered]@{
+  file = [IO.Path]::GetFileName($Installer)
+  bytes = (Get-Item -LiteralPath $Installer).Length
+  sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $Installer).Hash.ToLowerInvariant()
+}
 $installRoot = Join-Path $env:RUNNER_TEMP ('RealBud installed probe ' + [guid]::NewGuid().ToString('N'))
 $app = Join-Path $installRoot 'RealBud.exe'
+$resources = Join-Path $installRoot 'resources'
+$installation = [ordered]@{ started = $false; exitCode = $null; appCreated = $false }
+$uninstall = [ordered]@{
+  attempted = $false; exitCode = $null; appRemoved = $false; resourcesRemoved = $false
+  passed = $false; failure = $null
+}
+$probeStage = 'install'
+$probePassed = $false
+$probeFailure = $null
+$cleanupFailure = $null
+$receiptFailure = $null
 try {
   # NSIS requires /D last and consumes the remainder, including spaces.
+  $installation.started = $true
   $setup = Start-Process -FilePath $Installer -ArgumentList ('/S /D=' + $installRoot) -PassThru
   if (-not $setup.WaitForExit(120000)) { $setup.Kill(); throw 'Installer exceeded two minutes.' }
-  if ($setup.ExitCode -ne 0) { throw "Installer failed: $($setup.ExitCode)" }
-  if (-not (Test-Path -LiteralPath $app)) { throw 'Installer did not create the selected isolated destination.' }
+  $installation.exitCode = $setup.ExitCode
+  $installation.appCreated = Test-Path -LiteralPath $app -PathType Leaf
+  if ($installation.exitCode -ne 0) { throw "Installer failed: $($installation.exitCode)" }
+  if (-not $installation.appCreated) { throw 'Installer did not create the selected isolated destination.' }
+  $probeStage = 'installed-helpers'
   $env:ELECTRON_RUN_AS_NODE = '1'
   $script = Join-Path $PSScriptRoot 'smoke-windows-package.mjs'
-  $resources = Join-Path $installRoot 'resources'
   $receipt = Join-Path $ReceiptDirectory 'installed-windows.json'
   $arguments = '"' + $script + '" "' + $resources + '" "' + $receipt + '"'
   $probe = Start-Process -FilePath $app -ArgumentList $arguments -PassThru -NoNewWindow `
@@ -38,6 +68,7 @@ try {
   # This proves packaged helper bytes/API only; it does not admit memory writes
   # or claim the Hermes-managed Python/runtime and journal integration passed.
   # Hosted runners expose several python applications on PATH (hostedtoolcache, the Store alias); take the first.
+  $probeStage = 'installed-memory-primitives'
   $python = @(Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1)[0].Source
   $memoryScript = Join-Path $PSScriptRoot 'testing/hermes-memory-windows-native.py'
   $memoryModule = Join-Path $resources 'server/helpers/hermes-memory-windows-native.py'
@@ -50,7 +81,7 @@ try {
   # The native acceptance script budgets 480 s for a cold PowerShell 5.1 runner; allow it to finish and write its receipt.
   if (-not $memoryProbe.WaitForExit(600000)) {
     & (Join-Path $env:SystemRoot 'System32\taskkill.exe') /PID $memoryProbe.Id /T /F | Out-Null
-    throw 'Installed memory primitives exceeded two minutes.'
+    throw 'Installed memory primitives exceeded ten minutes.'
   }
   # The native memory candidate is a documented production hold: its receipt is the evidence.
   # A refusal here is recorded and reported, and must not hide the service and backup probes that follow.
@@ -69,6 +100,7 @@ try {
   # while the same launch under node.exe on the same runner took 0.2 s. Time a
   # trivial launch with the installed binary as the parent, and record the
   # Defender posture, before the service probe so a slow launch has a suspect.
+  $probeStage = 'powershell-diagnostics'
   $launchProbe = Join-Path $PSScriptRoot 'testing' 'probe-windows-powershell-env.mjs'
   $launchProbeProcess = Start-Process -FilePath $app -ArgumentList ('"' + $launchProbe + '"') -PassThru -NoNewWindow `
     -RedirectStandardOutput (Join-Path $ReceiptDirectory 'installed-powershell-launch.stdout.log') `
@@ -83,6 +115,7 @@ try {
   } catch { Write-Warning ('Defender status unavailable: ' + $_.Exception.GetType().FullName) }
   # Load the installed compiled service using installed Electron/Node, with a
   # fresh home and no checkout node_modules or inherited provider credentials.
+  $probeStage = 'installed-service'
   $serviceScript = Join-Path $PSScriptRoot 'smoke-company-bundle.mjs'
   $serviceReceipt = Join-Path $ReceiptDirectory 'installed-service.json'
   $serviceArguments = '"' + $serviceScript + '" "' + $serviceReceipt + '" "' + $resources + '"'
@@ -109,6 +142,7 @@ try {
   $serviceResult.checks | Write-Output
   # Exercise the installed backup/restore API and cold-start guards without a
   # browser dependency. The script owns its disposable data and child services.
+  $probeStage = 'installed-private-backup'
   $backupScript = Join-Path $PSScriptRoot 'qa-private-backup-boundaries.mjs'
   $backupReceipt = Join-Path $ReceiptDirectory 'installed-private-backup.json'
   $env:REALBUD_QA_RESOURCES = $resources
@@ -132,15 +166,99 @@ try {
   if ([IO.Path]::GetFullPath($backupResult.resources) -ne [IO.Path]::GetFullPath($resources)) { throw 'Private-backup receipt names a different resources directory.' }
   if ([IO.Path]::GetFullPath($backupResult.executable) -ne [IO.Path]::GetFullPath($app)) { throw 'Private-backup receipt names a different application executable.' }
   $backupResult.checks | Write-Output
+  $probePassed = $true
+} catch {
+  # Save the original ErrorRecord: cleanup must never replace a probe failure.
+  $probeFailure = $_
 } finally {
   Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
   Remove-Item Env:REALBUD_QA_RESOURCES -ErrorAction SilentlyContinue
   Remove-Item Env:REALBUD_QA_EXECUTABLE -ErrorAction SilentlyContinue
   Remove-Item Env:QA_OUTPUT -ErrorAction SilentlyContinue
-  $uninstaller = Join-Path $installRoot 'Uninstall RealBud.exe'
-  if (Test-Path -LiteralPath $uninstaller) {
-    $remove = Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru
-    if (-not $remove.WaitForExit(60000)) { $remove.Kill(); Write-Warning 'Probe uninstaller timed out.' }
+  try {
+    $uninstaller = Join-Path $installRoot 'Uninstall RealBud.exe'
+    if (Test-Path -LiteralPath $uninstaller -PathType Leaf) {
+      $uninstall.attempted = $true
+      $remove = Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru
+      if (-not $remove.WaitForExit(60000)) {
+        $uninstall.failure = 'launcher-timeout'
+        $remove.Kill()
+        throw 'Probe uninstaller launcher exceeded one minute.'
+      }
+      $uninstall.exitCode = $remove.ExitCode
+      # NSIS may exit its launcher before its copied uninstaller finishes.
+      # Observe only the unique disposable install root, never a user data path.
+      $removalDeadline = [DateTime]::UtcNow.AddSeconds(60)
+      do {
+        $uninstall.appRemoved = -not (Test-Path -LiteralPath $app)
+        $uninstall.resourcesRemoved = -not (Test-Path -LiteralPath $resources)
+        if ($uninstall.appRemoved -and $uninstall.resourcesRemoved) { break }
+        Start-Sleep -Milliseconds 250
+      } while ([DateTime]::UtcNow -lt $removalDeadline)
+      if ($uninstall.exitCode -ne 0) {
+        $uninstall.failure = 'nonzero-exit'
+        throw "Probe uninstaller failed: $($uninstall.exitCode)"
+      }
+    } else {
+      $uninstall.appRemoved = -not (Test-Path -LiteralPath $app)
+      $uninstall.resourcesRemoved = -not (Test-Path -LiteralPath $resources)
+      if ($installation.appCreated -or -not ($uninstall.appRemoved -and $uninstall.resourcesRemoved)) {
+        $uninstall.failure = 'missing-uninstaller'
+        throw 'The disposable installation has no uninstaller to verify.'
+      }
+    }
+    if (-not ($uninstall.appRemoved -and $uninstall.resourcesRemoved)) {
+      $uninstall.failure = 'removal-timeout'
+      throw 'Probe uninstall did not remove the installed app and resources within one minute.'
+    }
+    $uninstall.passed = $true
+  } catch {
+    $cleanupFailure = $_
+    if (-not $uninstall.failure) { $uninstall.failure = 'unexpected-error' }
+  }
+  try {
+    $linkedReceipts = @()
+    foreach ($name in @('installed-windows.json', 'installed-memory-primitives.json', 'installed-service.json', 'installed-private-backup.json')) {
+      $childReceipt = Join-Path $ReceiptDirectory $name
+      if (Test-Path -LiteralPath $childReceipt -PathType Leaf) {
+        $linkedReceipts += [ordered]@{
+          file = $name
+          sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $childReceipt).Hash.ToLowerInvariant()
+        }
+      }
+    }
+    $lifecycle = [ordered]@{
+      schema = 1
+      kind = 'realbud-installed-windows-lifecycle'
+      generatedAt = [DateTime]::UtcNow.ToString('o')
+      passed = $probePassed -and $uninstall.passed
+      proofLayer = 'installed-runtime-on-disposable-windows-ci'
+      sourceRevision = $sourceRevision
+      installer = $installerIdentity
+      installation = $installation
+      probes = [ordered]@{ passed = $probePassed; receipts = $linkedReceipts }
+      uninstall = $uninstall
+      failureStage = $(if ($probeFailure) { $probeStage } elseif ($cleanupFailure) { 'uninstall' } else { $null })
+      limits = @(
+        'Fresh disposable installation only; no upgrade or customer Windows device acceptance.'
+        'Uninstall verifies app and resources removal only; no user-data preservation claim.'
+        'Source revision is supplied by the build workflow and bound here to the installer and probe receipt hashes.'
+        'Native memory admission remains held; inspect the linked primitive receipt separately.'
+      )
+    }
+    $lifecycle | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 -LiteralPath (Join-Path $ReceiptDirectory 'installed-lifecycle.json')
+  } catch {
+    $receiptFailure = $_
   }
   # The disposable runner also removes any native driver left by a failed probe.
 }
+if ($probeFailure) {
+  if ($cleanupFailure) { Write-Warning 'Uninstall verification also failed; see installed-lifecycle.json. Preserving the original probe failure.' }
+  if ($receiptFailure) { Write-Warning 'Lifecycle receipt could not be written. Preserving the original probe failure.' }
+  throw $probeFailure
+}
+if ($cleanupFailure) {
+  if ($receiptFailure) { Write-Warning 'Lifecycle receipt could not be written. Preserving the uninstall verification failure.' }
+  throw $cleanupFailure
+}
+if ($receiptFailure) { throw $receiptFailure }

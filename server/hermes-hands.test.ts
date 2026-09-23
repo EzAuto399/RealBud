@@ -3,7 +3,7 @@ import { applyPropertyPack, PACK_DIR } from "./hermes-pack.ts";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { HERMES_PIN } from "./hermes-pin.ts";
 import type { LedgerFacts } from "./desk.ts";
@@ -12,6 +12,8 @@ import { seedVault } from "./vault.ts";
 import { HermesAgentDriver } from "./drivers/acp/hermes.ts";
 import { fakeHermes } from "./testing/fake-hermes.ts";
 import { WINDOWS_PROFILE_TEST_OPTIONS } from "./testing/private-profile-fixture.ts";
+import { setWorkerModelAccessSnapshot } from "./hermes-runtime-env.ts";
+import { setWorkerModelGrant } from "./worker-model-access.ts";
 
 const fixture: LedgerFacts[] = [
   { propertyId: "prop-oak", daysSinceDue: 3, rentLanded: false, levyPaid: false, daysSinceCourtesy: null },
@@ -28,6 +30,9 @@ function stubHermes(...args: Parameters<typeof fakeHermes>) {
 }
 
 afterEach(() => {
+  setWorkerModelAccessSnapshot({});
+  setWorkerModelGrant({ state: "none" });
+  vi.unstubAllEnvs();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -187,6 +192,76 @@ describe("tryHermesPing (fake pinned CLI)", () => {
     expect(ping.ok).toBe(true);
     expect(ping.detail).toMatch(/answered OK/);
     expect(ping.elapsedMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it.each(["ok", "OK.", "OK!", "oK.", "\n\u001b[32mOK.\u001b[0m\nsession_id: fictional-session\n"])(
+    "accepts a clear confirmation with harmless formatting: %j",
+    async (answer) => {
+      const { dir, script } = stubHermes(answer);
+      expect(await tryHermesPing({ cli: script, root: dir })).toMatchObject({ ok: true });
+    },
+  );
+
+  it.each(["NOT OK", "OK but the connection failed", "OK\nHere is an explanation.", "Here is an explanation.\nOK", "", " \n", "OK?"])(
+    "rejects a negative, ambiguous, explanatory or empty answer: %j",
+    async (answer) => {
+      const { dir, script } = stubHermes(answer);
+      expect(await tryHermesPing({ cli: script, root: dir })).toMatchObject({
+        ok: false,
+        detail: expect.stringContaining("not with OK"),
+      });
+    },
+  );
+
+  it("does not accept a confirmation from a worker that failed", async () => {
+    const { dir, script } = stubHermes("OK.", 1, "Billing or credits exhausted: HTTP 402");
+    expect(await tryHermesPing({ cli: script, root: dir })).toMatchObject({
+      ok: false,
+      detail: expect.stringContaining("Billing or credits exhausted"),
+    });
+  });
+
+  it("explains a revoked key even when the supported CLI exits successfully", async () => {
+    const { dir, script } = stubHermes('HTTP 401: key_revoked', 0);
+    expect(await tryHermesPing({ cli: script, root: dir })).toMatchObject({
+      ok: false, detail: expect.stringContaining("access was withdrawn"),
+    });
+  });
+
+  it("accepts the supported worker's exact startup notice before its confirmation", async () => {
+    const notice = "  ⚠ tirith security scanner enabled but not available — command scanning will use pattern matching only\r\n";
+    const { dir, script } = stubHermes(`${notice}OK.\n`);
+    expect(await tryHermesPing({ cli: script, root: dir })).toMatchObject({ ok: true });
+  });
+
+  it("gives distinct explicit checks different identities without changing a worker retry's prompt", async () => {
+    const prompts: string[] = [];
+    for (let n = 0; n < 2; n++) {
+      const { dir, script, argsFile } = stubHermes("OK");
+      expect((await tryHermesPing({ cli: script, root: dir })).ok).toBe(true);
+      const args = readFileSync(argsFile, "utf8").split("\n");
+      const prompt = args[args.indexOf("-q") + 1]!;
+      expect(prompt).toMatch(/^Readiness check [a-f0-9-]{36}\. Reply with exactly OK/);
+      prompts.push(prompt);
+    }
+    expect(new Set(prompts).size).toBe(2);
+  });
+
+  it("refuses an overlapping readiness check before launching a second worker and releases the gate", async () => {
+    const { dir, script } = stubHermes("OK");
+    const first = tryHermesPing({ cli: script, root: dir });
+    expect(await tryHermesPing({ cli: script, root: dir })).toMatchObject({ ok: false, elapsedMs: 0, detail: expect.stringContaining("still running") });
+    expect((await first).ok).toBe(true);
+    expect((await tryHermesPing({ cli: script, root: dir })).ok).toBe(true);
+  });
+
+  it.each([
+    "⚠ tirith security scanner enabled but not available — command scanning will use pattern matching only",
+    "Warning: authentication failed\nOK",
+    "The security scanner says NOT OK\nOK",
+  ])("does not treat an arbitrary warning or a notice alone as an answer: %j", async (answer) => {
+    const { dir, script } = stubHermes(answer);
+    expect(await tryHermesPing({ cli: script, root: dir })).toMatchObject({ ok: false });
   });
 
   // Per-seat isolation: the whole point of the office host is that two seats never
@@ -388,4 +463,68 @@ it("does not borrow a configured base pack for an unconfigured member", async ()
   const result = await tryHermesPing({ cli: script, root: dir, memberKey: "new-member" });
   expect(result).toMatchObject({ ok: false, detail: expect.stringContaining("not set up") });
   expect(() => readFileSync(argsFile, "utf8")).toThrow();
+});
+
+
+describe("one-shot managed model access", () => {
+  const grantKey = "fictional-managed-model-key";
+  const baseUrl = "https://fictional-modelvia.invalid/v1";
+  function probe(answer: string) {
+    const fake = stubHermes(answer);
+    const script = join(fake.dir, "managed-env-probe.mjs");
+    const evidence = join(fake.dir, "env-evidence.json");
+    writeFileSync(script, [
+      "#!/usr/bin/env node",
+      'import { writeFileSync } from "node:fs";',
+      'if (process.argv.includes("--version")) { process.stdout.write("Hermes Agent v0.20.3 (2026.8.16.2)\\n"); process.exit(0); }',
+      `writeFileSync(${JSON.stringify(evidence)}, JSON.stringify({`,
+      `  keyMatchesGrant: process.env.OPENAI_API_KEY === ${JSON.stringify(grantKey)},`,
+      '  keyPresent: Boolean(process.env.OPENAI_API_KEY),',
+      '  baseUrl: process.env.OPENAI_BASE_URL ?? null,',
+      '  unrelatedCredentialPresent: Boolean(process.env.OPENROUTER_API_KEY || process.env.COMPOSIO_KEY),',
+      '  args: process.argv.slice(2),',
+      '}));',
+      `process.stdout.write(${JSON.stringify(answer)});`,
+    ].join("\n"));
+    chmodSync(script, 0o755);
+    return { ...fake, script, evidence };
+  }
+  const run = (kind: "ping" | "ledger", test: ReturnType<typeof probe>) => kind === "ping"
+    ? tryHermesPing({ cli: test.script, root: test.dir })
+    : tryHermesLedger(["prop-oak"], { cli: test.script, root: test.dir });
+
+  it.each(["ping", "ledger"] as const)("gives the %s child only its managed key after stripping ambient credentials", async kind => {
+    const test = probe(kind === "ping" ? "OK" : JSON.stringify(fixture));
+    vi.stubEnv("OPENAI_API_KEY", "fictional-ambient-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "fictional-unrelated-key");
+    vi.stubEnv("COMPOSIO_KEY", "fictional-unrelated-connector");
+    setWorkerModelGrant({ state: "active", baseUrl, keyId: "fictional-key-id", spendCapLabel: "fictional-cap" });
+    setWorkerModelAccessSnapshot({ OPENAI_API_KEY: grantKey, OPENAI_BASE_URL: baseUrl });
+    const result = await run(kind, test);
+    const evidence = JSON.parse(readFileSync(test.evidence, "utf8"));
+    expect(evidence).toMatchObject({ keyMatchesGrant: true, keyPresent: true, baseUrl, unrelatedCredentialPresent: false });
+    expect(JSON.stringify(evidence.args)).not.toContain(grantKey);
+    expect(JSON.stringify(result)).not.toContain(grantKey);
+    expect(process.env.OPENAI_API_KEY).toBe("fictional-ambient-key");
+    expect(kind === "ping" ? "ok" in result && result.ok : "rows" in result && result.rows).toBeTruthy();
+  });
+
+  it.each(["ping", "ledger"] as const)("does not retain the managed key for a %s child after disconnect", async kind => {
+    const test = probe(kind === "ping" ? "OK" : JSON.stringify(fixture));
+    vi.stubEnv("OPENAI_API_KEY", "fictional-ambient-key");
+    vi.stubEnv("OPENAI_BASE_URL", "");
+    setWorkerModelAccessSnapshot({ OPENAI_API_KEY: grantKey, OPENAI_BASE_URL: baseUrl });
+    setWorkerModelAccessSnapshot({});
+    await run(kind, test);
+    expect(JSON.parse(readFileSync(test.evidence, "utf8"))).toMatchObject({ keyMatchesGrant: false, keyPresent: false });
+    expect(process.env.OPENAI_API_KEY).toBe("fictional-ambient-key");
+  });
+
+  it.each(["ping", "ledger"] as const)("holds withdrawn model access before spawning the %s child", async kind => {
+    const test = probe(kind === "ping" ? "OK" : JSON.stringify(fixture));
+    setWorkerModelAccessSnapshot({});
+    setWorkerModelGrant({ state: "withdrawn" });
+    expect(await run(kind, test)).toMatchObject({ detail: expect.stringMatching(/withdrawn/i) });
+    expect(() => readFileSync(test.evidence, "utf8")).toThrow();
+  });
 });

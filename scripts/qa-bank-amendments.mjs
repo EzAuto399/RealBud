@@ -9,6 +9,7 @@ import {tmpdir} from 'node:os';
 import {dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {serviceSmokeEnv} from './service-smoke-env.mjs';
+import {completeFictionalOnboarding} from './qa-onboarding.mjs';
 
 assert.ok(process.env.PLAYWRIGHT_MODULE,'Set PLAYWRIGHT_MODULE.');
 const {chromium}=await import(process.env.PLAYWRIGHT_MODULE);
@@ -47,13 +48,13 @@ try{
   await writeFile(join(data,'config.json'),JSON.stringify({instances:{fixture:{driver:'not-a-real-driver'}}}),{mode:0o600});
   const listener=createServer();listener.listen(0,'127.0.0.1');await once(listener,'listening');port=listener.address().port;await new Promise(resolve=>listener.close(resolve));base=`http://127.0.0.1:${port}`;
   await start();
+  await completeFictionalOnboarding(request);
   const csv='\uFEFFDate,Amount,Narrative,Reference,Extra\r\n2026-09-21,500.00,"Fictional café 🏡","old",保留\n2026-09-21,-1.00,Fee,,保留\r\n';
   const mapping={columns:{date:'Date',amount:'Amount',narrative:'Narrative',reference:'Reference'},dateFormat:'YYYY-MM-DD',rules:[{propertyId:'Fictional Unit 1',reference:'00127',aliases:['Fictional','Alpha; Beta | literal punctuation',' padded payer ']}]};
   const row=await request('/api/bank-reference','POST',{...mapping,source:{filename:'Fictional original.csv',bytesBase64:Buffer.from(csv).toString('base64')}});
   assert.equal((await fetch(`${base}/api/bank-reference/${row.id}/amend`,{method:'POST',headers:{'content-type':'application/json'},body:'{}'})).status,401);
-  browser=await chromium.launch({headless:true});const context=await browser.newContext({viewport:{width:1440,height:1000},reducedMotion:'reduce'});
+  browser=await chromium.launch({headless:true,...(process.env.CHROME_EXECUTABLE?{executablePath:process.env.CHROME_EXECUTABLE}:{})});const context=await browser.newContext({viewport:{width:1440,height:1000},reducedMotion:'reduce'});
   await context.route('**/*',route=>{if(new URL(route.request().url()).origin===base)return route.continue();unexpectedNetwork.push(route.request().url());return route.abort();});
-  await context.addInitScript(()=>localStorage.setItem('realbud.first-run-done','1'));
   page=await context.newPage();page.setDefaultTimeout(20000);page.on('pageerror',error=>errors.push(error.message));
   await page.goto(base+'/#/schedule');await page.getByLabel('Saved reviews',{exact:true}).selectOption(row.id);
   const decide=async()=>{

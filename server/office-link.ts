@@ -149,16 +149,18 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
    * that still fails after its one retry is cached for the same interval, so a
    * portal outage cannot turn every status read into a wait.
    */
-  let usageCache: { period: string; at: number; value: InstallationUsageState } | undefined;
-  let usageBusy = false;
+  const usageOwner = (saved: Saved) => `${saved.id}:${saved.token}:${saved.companyId ?? ""}`;
+  let usageCache: { owner: string; period: string; at: number; value: InstallationUsageState } | undefined;
+  const usageBusy = new Set<string>();
   const USAGE_TTL = 3 * 60_000;
   async function usage(period = currentUsagePeriod()): Promise<InstallationUsageState> {
     if (!USAGE_PERIOD.test(period)) throw Object.assign(new Error("Ask for a month as YYYY-MM."), { status: 400 });
     const saved = await read().catch(() => null);
     if (!saved?.companyId || saved.revoked) { usageCache = undefined; return { state: "not-linked" }; }
-    if (usageCache && usageCache.period === period && Date.now() - usageCache.at < USAGE_TTL) return usageCache.value;
-    if (usageBusy) return usageCache?.period === period ? usageCache.value : { state: "checking" };
-    usageBusy = true;
+    const owner = usageOwner(saved);
+    if (usageCache?.owner === owner && usageCache.period === period && Date.now() - usageCache.at < USAGE_TTL) return usageCache.value;
+    if (usageBusy.has(owner)) return usageCache?.owner === owner && usageCache.period === period ? usageCache.value : { state: "checking" };
+    usageBusy.add(owner);
     let value: InstallationUsageState;
     try {
       const response = await readWithRetry(`usage?period=${period}`, { method: "GET", headers: { Authorization: `Bearer ${saved.token}` } });
@@ -167,8 +169,11 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       // authority for that, and a usage read must not tear down an install.
       value = { state: "ready", usage: parseInstallationUsage(await response.json(), period) };
     } catch { value = { state: "unavailable" }; }
-    finally { usageBusy = false; }
-    usageCache = { period, at: Date.now(), value };
+    finally { usageBusy.delete(owner); }
+    const current = await read().catch(() => null);
+    if (!current?.companyId || current.revoked) return { state: "not-linked" };
+    if (usageOwner(current) !== owner) return { state: "checking" };
+    usageCache = { owner, period, at: Date.now(), value };
     return value;
   }
 
@@ -183,8 +188,8 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
     const period = currentUsagePeriod();
     let usageState: InstallationUsageState;
     if (!saved?.companyId || saved.revoked) { usageState = { state: "not-linked" }; usageCache = undefined; }
-    else if (usageCache && usageCache.period === period && Date.now() - usageCache.at < USAGE_TTL) usageState = usageCache.value;
-    else { usageState = usageCache?.period === period ? usageCache.value : { state: "checking" }; void usage(period).catch(() => {}); }
+    else if (usageCache?.owner === usageOwner(saved) && usageCache.period === period && Date.now() - usageCache.at < USAGE_TTL) usageState = usageCache.value;
+    else { usageState = usageCache?.owner === usageOwner(saved) && usageCache.period === period ? usageCache.value : { state: "checking" }; void usage(period).catch(() => {}); }
     const browser = saved?.browser && !saved.revoked ? { browser: saved.browser } : {};
     // The grant's own authority when there is one: a grant already in force is
     // not re-applied, so the link's marker alone can read false.
@@ -397,15 +402,19 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
   async function report() {
     if (busy) return;
     await exclusive(async () => {
+      const saved = await read();
+      // A prior cleanup failure must retry before reconciliation can publish
+      // active access again, including after a service restart.
+      if (saved?.revoked) { await options.provisioning?.withdraw(); return; }
       await options.provisioning?.reconcile();
-      const saved = await read(); if (!saved?.companyId || saved.revoked) return;
+      if (!saved?.companyId) return;
       const report = await options.report();
       const response = await request("report", { method: "POST", headers: { Authorization: `Bearer ${saved.token}` }, body: JSON.stringify(report) });
       // 401/403 is the website saying this installation's access is gone. Stop
       // using the vendor grant immediately; every saved work record is kept.
       if (response.status === 401 || response.status === 403) {
-        await save({ ...saved, revoked: true });
-        await options.provisioning?.withdraw();
+        try { await save({ ...saved, revoked: true }); }
+        finally { await options.provisioning?.withdraw(); }
         return;
       }
       if (!response.ok) throw new Error("The website did not accept the latest status. Your local work can continue.");
@@ -440,6 +449,15 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
     });
   }
   return { status, link, report, disconnect, usage, beginBrowserLink, browserLinkStatus, cancelBrowserLink,
+    /** Internal launch gate, including a grant applied during pending linking.
+     * A stale async vault read cannot republish access after revoke/relink. */
+    async modelAccessEnv(resolve: () => Promise<Record<string, string>>): Promise<Record<string, string>> {
+      const saved = await read();
+      if (!saved || saved.revoked) return {};
+      const access = await resolve();
+      const current = await read();
+      return current && !current.revoked && current.id === saved.id && current.token === saved.token ? access : {};
+    },
     async credentials(): Promise<OfficeLinkCredentials | null> {
       const saved = await read();
       return saved?.companyId && !saved.revoked ? { installationId: saved.id, token: saved.token, companyId: saved.companyId, agencyLabel: saved.agencyLabel ?? "" } : null;

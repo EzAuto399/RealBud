@@ -1,5 +1,6 @@
 import { serviceAdminHeaders, clearServiceAdminSession, refreshServiceAdminExpiry } from "@/lib/service-admin-session";
 import { ensureSession } from "@/lib/local-session";
+import { allowWorkspaceNavigation } from "@/lib/navigation-guard";
 export { ensureSession } from "@/lib/local-session";
 import type { ServiceAdminStatus } from "../../shared/service-admin";
 import { officeSources, watchOfficeSources } from "@/lib/connected-apps-refresh";
@@ -1045,6 +1046,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
 
     const wrapped: React.Dispatch<Action> = (action) => {
+      if (!allowWorkspaceNavigation(action.type, stateRef.current.activeView)) return;
       if (action.type === "send") {
         if (sending.has(action.botId)) {
           action.onSettled?.(new Error("A request is already being submitted. Your draft is kept."));
