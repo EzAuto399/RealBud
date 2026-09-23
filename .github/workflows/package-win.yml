@@ -115,6 +115,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:worker:win
+      - name: Verify setup diagnostic controls on native PowerShell
+        run: node --test scripts/testing/prepare-windows-memory-runtime.test.mjs
       - name: Prepare the exact runtime through managed setup
         timeout-minutes: 25
         shell: pwsh

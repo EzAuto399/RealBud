@@ -2,7 +2,7 @@
 
 Use a native **Windows 11 x64** computer or a disposable x64 Windows CI runner. The supported package target is `win32-x64`; WSL, Wine, macOS cross-compilation and native Windows ARM64 are not accepted build hosts. A hosted Windows Server runner verifies Windows binaries, but does not establish Windows 11 GUI or office acceptance.
 
-Current evidence and the downloaded installer: [23 September Windows checkpoint](WINDOWS-READINESS-2026-09-23.md). That checkpoint identifies which revision each result covers. Do not assume that the downloadable installer contains newer uncommitted fixes.
+Current evidence: [macOS and Windows candidate](PLATFORM-CANDIDATE-2026-09-23.md). Match the supplied installer's source revision and hash to its build receipt; an earlier installer does not establish acceptance of newer changes.
 
 ## 1. Prepare the build computer
 
@@ -60,7 +60,7 @@ The installed CUA smoke imports the GUI's launcher factory from the installed `a
 
 ## 5. Test the installed app on Windows 11
 
-Use the [five-step manual checklist](../outputs/windows-readiness-2026-09-23/WINDOWS-TEST-STEPS.md) with fictional data and a separate Windows test account. Record the installer SHA256 and source revision alongside results.
+Use the [five-step installed-app acceptance checklist](WINDOWS-INSTALL-ACCEPTANCE.md) with fictional data and a separate Windows test account. Record the installer SHA256 and source revision alongside results.
 
 The installer is currently unsigned. Code signing, normal SmartScreen acceptance, upgrade/data preservation, actual signed-in worker/browser use, two-computer office joining and customer acceptance are separate gates. The existing uninstall probe only concerns its disposable installation; it does not prove retention of a real user's data.
 

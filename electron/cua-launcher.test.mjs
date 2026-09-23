@@ -54,7 +54,7 @@ describe.skipIf(process.platform !== "darwin")("actual macOS grant launcher with
 });
 
 const fixtureSource = String.raw`
-using System; using System.Diagnostics; using System.Text; using System.Threading;
+using System; using System.Diagnostics; using System.IO; using System.Text; using System.Threading;
 class Fixture {
   static int Main(string[] args) {
     Console.OutputEncoding = new UTF8Encoding(false);
@@ -67,7 +67,15 @@ class Fixture {
       var child = Process.Start(info); Console.WriteLine("CHILD:" + child.Id);
     }
     Console.Out.Flush();
-    if (Array.IndexOf(args, "--fictional-stdin") >= 0) Console.WriteLine("IN:" + Convert.ToBase64String(Encoding.UTF8.GetBytes(Console.In.ReadToEnd())));
+    if (Array.IndexOf(args, "--fictional-stdin") >= 0) {
+      // The launcher owns a byte pipe; Console.In would decode it using the
+      // Windows console code page and change the payload inside this fixture.
+      using (var input = Console.OpenStandardInput())
+      using (var bytes = new MemoryStream()) {
+        input.CopyTo(bytes);
+        Console.WriteLine("IN:" + Convert.ToBase64String(bytes.ToArray()));
+      }
+    }
     if (Array.IndexOf(args, "--fictional-wait") >= 0) Thread.Sleep(4500);
     return 37;
   }
@@ -98,15 +106,19 @@ describe.skipIf(process.platform !== "win32")("native Windows CUA launcher with 
     const received = result.stdout.split(/\r?\n/).filter(line => line.startsWith("ARG:")).map(line => Buffer.from(line.slice(4), "base64").toString("utf8"));
     expect(received).toEqual(command === "serve" ? ["serve", "--grant", "existing-profile", ...args] : [command, ...args]);
   });
-  it("preserves stdin contents and EOF for the SDK parent-liveness contract", async () => {
+  it.each([
+    ["Unicode", Buffer.from("fictional liveness payload 漢字", "utf8")],
+    ["binary including invalid UTF-8", Buffer.from(Array.from({ length: 256 }, (_, byte) => byte))],
+  ])("preserves %s stdin bytes and EOF for the SDK parent-liveness contract", async (_label, payload) => {
     const child = spawn(launcher, ["serve", "--fictional-stdin"], { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     let output = ""; child.stdout.on("data", bytes => { output += bytes; }); child.stderr.resume();
     const exit = new Promise(resolve => child.once("close", resolve));
-    child.stdin.end("fictional liveness payload 漢字");
+    child.stdin.end(payload);
     const timer = setTimeout(() => child.kill(), 5000);
     try {
       expect(await exit).toBe(37);
-      expect(output).toContain("IN:" + Buffer.from("fictional liveness payload 漢字").toString("base64"));
+      const received = output.split(/\r?\n/).filter(line => line.startsWith("IN:")).map(line => line.slice(3));
+      expect(received).toEqual([payload.toString("base64")]);
     } finally { clearTimeout(timer); if (child.exitCode === null) child.kill(); }
   }, 8000);
   it("drains owned descendants before reporting the driver's normal exit", () => {

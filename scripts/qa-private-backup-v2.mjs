@@ -41,6 +41,14 @@ const start = async directory => {
   let ready = false;
   for (let attempt = 0; attempt < 100; attempt++) { if (spawnError) throw spawnError; if (child.exitCode !== null || child.signalCode) break; try { const health = await (await fetch(base + '/api/health', { signal: AbortSignal.timeout(500) })).json(); if (health.app === 'realbud' && health.pid === child.pid) { ready = true; break; } } catch {} await wait(100); }
   assert.ok(ready, logs); token = (await (await fetch(base + '/api/session')).json()).token;
+  // These disposable fixtures exercise backup, not first-run setup. Use the
+  // real scoped API: browser flags no longer establish completed onboarding.
+  let setup = await request('/api/onboarding');
+  for (const stage of ['office-rules', 'complete']) {
+    if (setup.stage === 'complete') break;
+    setup = await request('/api/onboarding', 'PUT', { expectedScope: setup.scope, expectedRevision: setup.revision, stage });
+    assert.equal(setup.stage, stage);
+  }
 };
 const request = async (path, method = 'GET', body, expected = 200) => { const response = await fetch(base + path, { method, signal: AbortSignal.timeout(120000), headers: { 'content-type': 'application/json', 'x-realbud-session': token }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); const result = await response.json(); assert.equal(response.status, expected, `${path}: ${JSON.stringify(result)}`); return result; };
 try {
@@ -65,7 +73,6 @@ try {
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1050 }, reducedMotion: 'reduce' });
   await context.route('**/*', route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
-  await context.addInitScript(() => localStorage.setItem('realbud.first-run-done', '1'));
   page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
   await page.goto(base + '/#/you');
   await page.waitForFunction(() => {
