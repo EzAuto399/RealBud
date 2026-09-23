@@ -92,6 +92,25 @@ try {
       [IO.Path]::GetFullPath($receipt.executable) -ne [IO.Path]::GetFullPath($app)) { throw 'Installed team receipt binding failed.' }
   $scenario = Get-Content -Raw -LiteralPath (Join-Path $teamDirectory 'scenario.json') | ConvertFrom-Json
   if (-not $scenario.passed -or $scenario.checks.Count -ne 7 -or -not $scenario.cleanupComplete) { throw 'Seven scenario groups did not pass.' }
+  $launchProofs = @($receipt.restrictedLaunches)
+  $launchNames = @($launchProofs | ForEach-Object { $_.control } | Sort-Object)
+  if ($launchProofs.Count -ne 5 -or ($launchNames -join ',') -ne 'argv-exit,normal,office-scenario,parent-death,timeout' -or @($launchProofs | Where-Object {
+      $_.sameUser -ne $true -or $_.jobInherited -ne $true -or $_.administratorEnabled -ne $false -or $_.powerUsersEnabled -ne $false -or
+      $_.parentDefaultOwnerIsUser -isnot [bool] -or $_.restrictedDefaultOwnerWasUser -isnot [bool] -or
+      $_.restrictedDefaultOwnerIsUser -ne $true -or $_.tokenDefaultOwnerIsUser -ne $true
+    }).Count) { throw 'Restricted launcher owner/authority proof is incomplete.' }
+  $officeLaunch = @($launchProofs | Where-Object { $_.control -eq 'office-scenario' })[0]
+  $fixtureOwners = @($scenario.fixtureOwnership)
+  $ownerKeys = @($fixtureOwners | ForEach-Object { $_.role + '/' + $_.label } | Sort-Object)
+  if ($fixtureOwners.Count -ne 6 -or ($ownerKeys -join ',') -ne 'client/config,client/private-root,client/service-admin,host/config,host/private-root,host/service-admin' -or
+      @($fixtureOwners | Where-Object { $_.outcome -ne 'queried' -or $_.pid -ne $officeLaunch.childPid -or $_.sameUser -ne $true -or $_.administratorEnabled -ne $false -or $_.powerUsersEnabled -ne $false -or $_.tokenDefaultOwnerIsUser -ne $true -or $_.objectOwnerIsUser -ne $true }).Count) {
+    throw 'Actual fresh fixture object ownership was not proved.'
+  }
+  $serviceTokens = @($scenario.nativeDiagnostics | Where-Object { $_.operation -eq 'service-token' })
+  if ($serviceTokens.Count -ne 5 -or @($serviceTokens | Where-Object { $_.role -eq 'host' }).Count -ne 3 -or @($serviceTokens | Where-Object { $_.role -eq 'client' }).Count -ne 2 -or
+      @($serviceTokens | Where-Object { $_.outcome -ne 'queried' -or $_.pid -ne $_.servicePid -or $_.sameUser -ne $true -or $_.administratorEnabled -ne $false -or $_.powerUsersEnabled -ne $false -or $_.tokenDefaultOwnerIsUser -ne $true }).Count) {
+    throw 'Actual restarted service token ownership was not proved.'
+  }
   $elevated = Get-Content -Raw -LiteralPath (Join-Path $teamDirectory 'elevated/scenario.json') | ConvertFrom-Json
   if (-not $elevated.passed -or $elevated.mode -ne 'elevated-preflight' -or $elevated.checks.Count -ne 2 -or -not $elevated.cleanupComplete) { throw 'Elevated no-write acceptance did not pass.' }
   $probePassed = $true

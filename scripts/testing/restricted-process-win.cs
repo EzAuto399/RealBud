@@ -2,12 +2,14 @@
 // non-breakaway Job with the same user SID and denied administrator groups.
 // This is not a Windows11 standard-user/UAC simulation or a product launcher.
 using System;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
 
 internal static class RestrictedQaProcess {
-    const uint Query = 8, Duplicate = 2, AssignPrimary = 1;
+    const uint Query = 8, Duplicate = 2, AssignPrimary = 1, AdjustDefault = 0x80;
     const uint Suspended = 4, Extended = 0x80000, Unicode = 0x400, NoWindow = 0x08000000;
     const uint KillOnClose = 0x2000, Breakaway = 0x800, SilentBreakaway = 0x1000;
     [StructLayout(LayoutKind.Sequential)] struct SidAttributes { public IntPtr Sid; public uint Attributes; }
@@ -31,12 +33,13 @@ internal static class RestrictedQaProcess {
     sealed class NativeFailure : Exception {
         public readonly string Stage; public readonly uint Code;
         public NativeFailure(string stage) { Stage = stage; Code = unchecked((uint)Marshal.GetLastWin32Error()); }
+        public NativeFailure(string stage, uint code) { Stage = stage; Code = code; }
     }
     struct Snapshot {
-        public bool Admin, PowerUsers, Elevated; public uint ElevationType;
+        public bool Admin, PowerUsers, Elevated, OwnerIsUser; public uint ElevationType;
         public string JsonFields() {
             return "\"administratorEnabled\":" + Bool(Admin) + ",\"powerUsersEnabled\":" + Bool(PowerUsers) +
-                ",\"elevated\":" + Bool(Elevated) + ",\"elevationType\":" + ElevationType;
+                ",\"elevated\":" + Bool(Elevated) + ",\"elevationType\":" + ElevationType + ",\"tokenDefaultOwnerIsUser\":" + Bool(OwnerIsUser);
         }
     }
     [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
@@ -60,6 +63,7 @@ internal static class RestrictedQaProcess {
     [DllImport("advapi32.dll", SetLastError=true)] static extern bool CheckTokenMembership(IntPtr token, byte[] sid, out bool member);
     [DllImport("advapi32.dll", SetLastError=true)] static extern bool GetTokenInformation(IntPtr token, int kind, out uint value, uint size, out uint returned);
     [DllImport("advapi32.dll", EntryPoint="GetTokenInformation", SetLastError=true)] static extern bool GetTokenBuffer(IntPtr token, int kind, IntPtr value, uint size, out uint returned);
+    [DllImport("advapi32.dll", SetLastError=true)] static extern bool SetTokenInformation(IntPtr token, int kind, IntPtr value, uint size);
     [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool CreateProcessAsUserW(IntPtr token, string application, StringBuilder command, IntPtr processAttributes, IntPtr threadAttributes, bool inherit, uint flags, IntPtr environment, string cwd, ref StartupInfoEx startup, out ProcessInfo process);
 
     static string Bool(bool value) { return value ? "true" : "false"; }
@@ -79,19 +83,42 @@ internal static class RestrictedQaProcess {
             Require(GetTokenInformation(token, 20, out elevated, 4, out returned) && returned == 4 && elevated <= 1, "elevation");
             result.Elevated = elevated == 1;
             Require(GetTokenInformation(token, 18, out result.ElevationType, 4, out returned) && returned == 4 && result.ElevationType >= 1 && result.ElevationType <= 3, "elevation-type");
+            result.OwnerIsUser = TokenSid(token, 4, "owner").Equals(User(token));
             return result;
         } finally { if (Valid(duplicate)) CloseHandle(duplicate); }
     }
-    static SecurityIdentifier User(IntPtr token) {
-        uint bytes; GetTokenBuffer(token, 1, IntPtr.Zero, 0, out bytes);
-        Require(bytes > 0 && bytes <= 4096, "user-size");
+    static SecurityIdentifier User(IntPtr token) { return TokenSid(token, 1, "user"); }
+    static SecurityIdentifier TokenSid(IntPtr token, int kind, string stage) {
+        uint bytes; GetTokenBuffer(token, kind, IntPtr.Zero, 0, out bytes);
+        Require(bytes >= IntPtr.Size && bytes <= 4096, stage + "-size");
         IntPtr buffer = Marshal.AllocHGlobal(checked((int)bytes));
         try {
-            Require(GetTokenBuffer(token, 1, buffer, bytes, out bytes), "user-query");
+            Require(GetTokenBuffer(token, kind, buffer, bytes, out bytes), stage + "-query");
             return new SecurityIdentifier(Marshal.ReadIntPtr(buffer));
         } finally { Marshal.FreeHGlobal(buffer); }
     }
-    static int QueryProcess(int pid) {
+    static void NormalizeOwner(IntPtr token) {
+        // TOKEN_OWNER is one PSID pointer, not the SID bytes themselves. The SID
+        // already belongs to TokenUser; only this new restricted token changes.
+        var user = User(token); var bytes = new byte[user.BinaryLength]; user.GetBinaryForm(bytes, 0);
+        IntPtr sid = IntPtr.Zero, owner = IntPtr.Zero;
+        try {
+            sid = Marshal.AllocHGlobal(bytes.Length); Marshal.Copy(bytes, 0, sid, bytes.Length);
+            owner = Marshal.AllocHGlobal(IntPtr.Size); Marshal.WriteIntPtr(owner, sid);
+            Require(SetTokenInformation(token, 4, owner, (uint)IntPtr.Size), "set-default-owner");
+        } finally { if (owner != IntPtr.Zero) Marshal.FreeHGlobal(owner); if (sid != IntPtr.Zero) Marshal.FreeHGlobal(sid); }
+    }
+    static bool ObjectOwnerIsUser(string path, SecurityIdentifier user) {
+        try {
+            var attributes = File.GetAttributes(path);
+            if ((attributes & FileAttributes.ReparsePoint) != 0) throw new NativeFailure("object-owner-query", 0);
+            FileSystemSecurity security = (attributes & FileAttributes.Directory) != 0
+                ? (FileSystemSecurity)new DirectoryInfo(path).GetAccessControl(AccessControlSections.Owner)
+                : new FileInfo(path).GetAccessControl(AccessControlSections.Owner);
+            return security.GetOwner(typeof(SecurityIdentifier)).Equals(user);
+        } catch { throw new NativeFailure("object-owner-query", 0); }
+    }
+    static int QueryProcess(int pid, string objectPath) {
         IntPtr process = IntPtr.Zero, token = IntPtr.Zero, current = IntPtr.Zero;
         try {
             process = OpenProcess(0x1000, false, pid); Require(Valid(process), "open-process");
@@ -99,7 +126,8 @@ internal static class RestrictedQaProcess {
             Require(OpenProcessToken(GetCurrentProcess(), Query, out current), "current-token");
             var snapshot = Inspect(token);
             bool same = User(token).Equals(User(current));
-            Console.WriteLine("{\"schema\":1,\"pid\":" + pid + ",\"outcome\":\"queried\",\"sameUser\":" + Bool(same) + "," + snapshot.JsonFields() + "}");
+            string owner = objectPath == null ? "" : ",\"objectOwnerIsUser\":" + Bool(ObjectOwnerIsUser(objectPath, User(token)));
+            Console.WriteLine("{\"schema\":1,\"pid\":" + pid + ",\"outcome\":\"queried\",\"sameUser\":" + Bool(same) + "," + snapshot.JsonFields() + owner + "}");
             return 0;
         } finally {
             if (Valid(current)) CloseHandle(current); if (Valid(token)) CloseHandle(token); if (Valid(process)) CloseHandle(process);
@@ -134,13 +162,16 @@ internal static class RestrictedQaProcess {
         bool initialized = false, created = false, exited = false; var process = new ProcessInfo();
         var sids = new SidAttributes[2];
         try {
-            Require(OpenProcessToken(GetCurrentProcess(), Query | Duplicate | AssignPrimary, out original), "launch-token");
+            Require(OpenProcessToken(GetCurrentProcess(), Query | Duplicate | AssignPrimary | AdjustDefault, out original), "launch-token");
             var parent = Inspect(original);
             var kinds = new [] { WellKnownSidType.BuiltinAdministratorsSid, WellKnownSidType.BuiltinPowerUsersSid };
             for (int i = 0; i < kinds.Length; i++) { byte[] bytes = Sid(kinds[i]); sids[i].Sid = Marshal.AllocHGlobal(bytes.Length); Marshal.Copy(bytes, 0, sids[i].Sid, bytes.Length); }
             Require(CreateRestrictedToken(original, 1, 2, sids, 0, IntPtr.Zero, 0, IntPtr.Zero, out restricted), "restrict-token");
             var reduced = Inspect(restricted);
-            Require(!reduced.Admin && !reduced.PowerUsers && User(original).Equals(User(restricted)), "restricted-authority");
+            bool ownerBefore = reduced.OwnerIsUser;
+            if (!ownerBefore) NormalizeOwner(restricted);
+            reduced = Inspect(restricted);
+            Require(!reduced.Admin && !reduced.PowerUsers && reduced.OwnerIsUser && User(original).Equals(User(restricted)), "restricted-authority");
             input = CopyHandle(-10); output = CopyHandle(-11); error = CopyHandle(-12);
             UIntPtr size = UIntPtr.Zero; InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size);
             Require(size.ToUInt64() > 0 && size.ToUInt64() < 1024 * 1024, "attribute-size");
@@ -157,9 +188,11 @@ internal static class RestrictedQaProcess {
             Require(IsProcessInJob(process.Process, IntPtr.Zero, out included) && included, "child-job");
             Require(OpenProcessToken(process.Process, Query | Duplicate, out childToken), "child-token");
             var child = Inspect(childToken); bool same = User(original).Equals(User(childToken));
-            Require(same && !child.Admin && !child.PowerUsers, "child-authority");
+            Require(same && !child.Admin && !child.PowerUsers && child.OwnerIsUser, "child-authority");
             Console.WriteLine("REALBUD_QA_RESTRICTED_V1 {\"schema\":1,\"launcherPid\":" + GetCurrentProcessId() + ",\"childPid\":" + process.ProcessId +
-                ",\"sameUser\":true,\"jobInherited\":true,\"parentAdministratorEnabled\":" + Bool(parent.Admin) + ",\"parentPowerUsersEnabled\":" + Bool(parent.PowerUsers) + "," + child.JsonFields() + "}");
+                ",\"sameUser\":true,\"jobInherited\":true,\"parentAdministratorEnabled\":" + Bool(parent.Admin) + ",\"parentPowerUsersEnabled\":" + Bool(parent.PowerUsers) +
+                ",\"parentDefaultOwnerIsUser\":" + Bool(parent.OwnerIsUser) + ",\"restrictedDefaultOwnerWasUser\":" + Bool(ownerBefore) +
+                ",\"restrictedDefaultOwnerIsUser\":" + Bool(reduced.OwnerIsUser) + "," + child.JsonFields() + "}");
             Console.Out.Flush();
             Require(ResumeThread(process.Thread) != 0xffffffff, "resume");
             Require(WaitForSingleObject(process.Process, 0xffffffff) == 0, "wait"); exited = true;
@@ -181,7 +214,7 @@ internal static class RestrictedQaProcess {
         try {
             if (args.Length == 1 && args[0] == "--version") { Console.WriteLine("realbud-qa-restricted-process 1"); return 0; }
             int pid;
-            if (args.Length == 2 && args[0] == "--inspect" && Int32.TryParse(args[1], out pid) && pid > 0) { queryPid = pid; return QueryProcess(pid); }
+            if ((args.Length == 2 || args.Length == 3) && args[0] == "--inspect" && Int32.TryParse(args[1], out pid) && pid > 0 && (args.Length == 2 || Absolute(args[2]))) { queryPid = pid; return QueryProcess(pid, args.Length == 3 ? args[2] : null); }
             if (args.Length < 2 || args[0] != "--" || !Absolute(args[1])) return 125;
             return Launch(args);
         } catch (NativeFailure error) {

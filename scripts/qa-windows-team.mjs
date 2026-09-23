@@ -1,7 +1,7 @@
 // Installed Windows company proof. Fictional profiles only; no Hermes or model.
 // The outer process owns a native Job supervisor around the entire API scenario.
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { existsSync, readFileSync } from 'node:fs';
@@ -60,7 +60,47 @@ async function save(file, value) {
   const temporary = file + '.next';
   await writeFile(temporary, JSON.stringify(value, null, 2) + '\n'); await rename(temporary, file);
 }
-const safeFailure = (error, stage) => ({ stage, reason: error?.code || error?.name || 'failure' });
+function privacyFailure(error) {
+  if (error?.name !== 'WindowsFilePrivacyError') return null;
+  const categories = new Set(['owner-not-allowed', 'grant-not-allowed', 'target-full-control-missing', 'inheritance-not-protected',
+    'target-reparse-point', 'target-kind-mismatch', 'ancestor-reparse-point', 'invalid-invocation', 'deny-rule-present',
+    'identity-unavailable', 'target-inspection-failed', 'ancestor-inspection-failed', 'descriptor-construction-failed',
+    'acl-apply-failed', 'acl-read-failed', 'acl-inspection-failed', 'invalid-path-or-kind', 'system-root-unavailable',
+    'powershell-not-found', 'powershell-launch-denied', 'output-limit-exceeded', 'process-terminated', 'native-command-failed']);
+  const types = new Set(['System.UnauthorizedAccessException', 'System.Security.SecurityException', 'System.IO.IOException',
+    'System.ArgumentException', 'System.InvalidOperationException', 'System.ComponentModel.Win32Exception',
+    'System.Security.Principal.IdentityNotMappedException']);
+  const integer = (value, min, max) => Number.isInteger(value) && value >= min && value <= max;
+  const match = typeof error.detail === 'string' && /^stage=(\d{1,3}) index=(-?\d{1,3}) type=([A-Za-z0-9_.+]{1,120}) hresult=(-?\d{1,11}) win32=(-?\d{1,10}|-)(?: fqid=[A-Za-z0-9_.,:-]{1,120})?$/.exec(error.detail);
+  let detail = null;
+  if (match && integer(Number(match[1]), 20, 26) && integer(Number(match[2]), 0, 63) && integer(Number(match[4]), -2147483648, 2147483647) &&
+    (match[5] === '-' || integer(Number(match[5]), 0, 0xffffffff))) {
+    detail = { stage: Number(match[1]), index: Number(match[2]), exceptionType: types.has(match[3]) ? match[3] : 'other',
+      hresult: Number(match[4]), win32Error: match[5] === '-' ? null : Number(match[5]) };
+  }
+  return { category: categories.has(error.category) ? error.category : 'unclassified',
+    nativeExitCode: integer(error.nativeExitCode, 0, 255) ? error.nativeExitCode : null,
+    operationIndex: integer(error.operationIndex, 0, 63) ? error.operationIndex : null, detail };
+}
+function safeFailure(error, stage) {
+  const privacy = privacyFailure(error);
+  return { stage, reason: privacy ? 'WindowsFilePrivacyError' : error?.code || error?.name || 'failure', ...(privacy ? { privacy } : {}) };
+}
+function parseFixtureOwner(output, expectedPid) {
+  const value = JSON.parse(output);
+  const failureKeys = ['schema', 'pid', 'outcome', 'stage', 'win32Error'];
+  if (value && value.schema === 1 && value.pid === expectedPid && value.outcome === 'query-failed' &&
+    Object.keys(value).length === failureKeys.length && failureKeys.every(key => Object.hasOwn(value, key)) &&
+    ['open-process', 'open-token', 'current-token', 'duplicate-token', 'administrator-membership', 'power-users-membership',
+      'elevation', 'elevation-type', 'user-size', 'user-query', 'owner-size', 'owner-query', 'object-owner-query', 'managed'].includes(value.stage) &&
+    Number.isInteger(value.win32Error) && value.win32Error >= 0 && value.win32Error <= 0xffffffff) return value;
+  const keys = ['schema', 'pid', 'outcome', 'sameUser', 'administratorEnabled', 'powerUsersEnabled', 'elevated', 'elevationType', 'tokenDefaultOwnerIsUser', 'objectOwnerIsUser'];
+  check(value && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key)) &&
+    value.schema === 1 && value.pid === expectedPid && value.outcome === 'queried' &&
+    ['sameUser', 'administratorEnabled', 'powerUsersEnabled', 'elevated', 'tokenDefaultOwnerIsUser', 'objectOwnerIsUser'].every(key => typeof value[key] === 'boolean') &&
+    [1, 2, 3].includes(value.elevationType), 'Fixture ownership inspection did not return the exact fixed schema');
+  return value;
+}
 
 // Fixture-only observation, installed before the compiled bootstrap imports
 // child_process. Exact owned-server stderr alone changes from ignore to a drained
@@ -172,10 +212,10 @@ function tokenResult(output, expectedPid) {
     const value = JSON.parse(output);
     if (!value || typeof value !== 'object' || Array.isArray(value) || value.schema !== 1 || value.pid !== expectedPid) return null;
     const exact = keys => Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
-    if (value.outcome === 'queried' && exact(['schema', 'pid', 'outcome', 'sameUser', 'administratorEnabled', 'powerUsersEnabled', 'elevated', 'elevationType']) && typeof value.sameUser === 'boolean' &&
-      ['administratorEnabled', 'powerUsersEnabled', 'elevated'].every(key => typeof value[key] === 'boolean') && [1, 2, 3].includes(value.elevationType)) return value;
+    if (value.outcome === 'queried' && exact(['schema', 'pid', 'outcome', 'sameUser', 'administratorEnabled', 'powerUsersEnabled', 'elevated', 'elevationType', 'tokenDefaultOwnerIsUser']) && typeof value.sameUser === 'boolean' &&
+      ['administratorEnabled', 'powerUsersEnabled', 'elevated', 'tokenDefaultOwnerIsUser'].every(key => typeof value[key] === 'boolean') && [1, 2, 3].includes(value.elevationType)) return value;
     if (value.outcome === 'query-failed' && exact(['schema', 'pid', 'outcome', 'stage', 'win32Error']) &&
-      ['open-process', 'open-token', 'current-token', 'duplicate-token', 'administrator-membership', 'power-users-membership', 'elevation', 'elevation-type', 'user-size', 'user-query', 'managed'].includes(value.stage) &&
+      ['open-process', 'open-token', 'current-token', 'duplicate-token', 'administrator-membership', 'power-users-membership', 'elevation', 'elevation-type', 'user-size', 'user-query', 'owner-size', 'owner-query', 'managed'].includes(value.stage) &&
       Number.isInteger(value.win32Error) && value.win32Error >= 0 && value.win32Error <= 0xffffffff) return value;
   } catch { /* No raw classifier output crosses IPC. */ }
   return null;
@@ -200,11 +240,11 @@ function parseRestrictedOutput(text) {
   const newline = text.indexOf('\n');
   check(newline > 0 && newline < 2048 && text.startsWith('REALBUD_QA_RESTRICTED_V1 '), 'Restricted launcher identity is missing');
   const value = JSON.parse(text.slice('REALBUD_QA_RESTRICTED_V1 '.length, newline));
-  const keys = ['schema', 'launcherPid', 'childPid', 'sameUser', 'jobInherited', 'parentAdministratorEnabled', 'parentPowerUsersEnabled', 'administratorEnabled', 'powerUsersEnabled', 'elevated', 'elevationType'];
+  const keys = ['schema', 'launcherPid', 'childPid', 'sameUser', 'jobInherited', 'parentAdministratorEnabled', 'parentPowerUsersEnabled', 'administratorEnabled', 'powerUsersEnabled', 'elevated', 'elevationType', 'parentDefaultOwnerIsUser', 'restrictedDefaultOwnerWasUser', 'restrictedDefaultOwnerIsUser', 'tokenDefaultOwnerIsUser'];
   check(value && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key)) && value.schema === 1 &&
     ['launcherPid', 'childPid'].every(key => Number.isSafeInteger(value[key]) && value[key] > 0) && value.launcherPid !== value.childPid &&
-    value.sameUser === true && value.jobInherited === true && value.administratorEnabled === false && value.powerUsersEnabled === false &&
-    ['parentAdministratorEnabled', 'parentPowerUsersEnabled', 'elevated'].every(key => typeof value[key] === 'boolean') && [1, 2, 3].includes(value.elevationType),
+    value.sameUser === true && value.jobInherited === true && value.administratorEnabled === false && value.powerUsersEnabled === false && value.tokenDefaultOwnerIsUser === true && value.restrictedDefaultOwnerIsUser === true &&
+    ['parentAdministratorEnabled', 'parentPowerUsersEnabled', 'elevated', 'parentDefaultOwnerIsUser', 'restrictedDefaultOwnerWasUser'].every(key => typeof value[key] === 'boolean') && [1, 2, 3].includes(value.elevationType),
     'Restricted launcher authority was not proved');
   return { identity: value, output: text.slice(newline + 1) };
 }
@@ -213,9 +253,9 @@ if (scenarioMode) {
   // This entry is launched exclusively below through the installed supervisor.
   assert.ok(scratchArg, 'Owned scenario scratch required');
   const scratch = await realpath(scratchArg); const contexts = new Set();
-  const checks = [], requests = [], generations = [], observedPids = [], observedPorts = [], nativeDiagnostics = [], setupDiagnostics = [], preflightObservations = [];
+  const checks = [], requests = [], generations = [], observedPids = [], observedPorts = [], nativeDiagnostics = [], setupDiagnostics = [], preflightObservations = [], fixtureOwnership = [];
   const expectedChecks = elevatedMode ? 2 : 7;
-  const progress = () => save(join(output, 'scenario-state.json'), { stage, observedPids, observedPorts, nativeDiagnostics, setupDiagnostics });
+  const progress = () => save(join(output, 'scenario-state.json'), { stage, observedPids, observedPorts, nativeDiagnostics, setupDiagnostics, fixtureOwnership });
   const { windowsFilePrivacySync: protect } = await import(pathToFileURL(join(resources, 'server/windows-file-privacy.js')).href);
   const { createServiceAdminPasswordVerifier } = await import(pathToFileURL(join(resources, 'server/service-admin.js')).href);
   let stage = 'startup', failure = null, tlsPort, cleanupComplete = false;
@@ -287,14 +327,27 @@ if (scenarioMode) {
     const started = performance.now();
     const home = join(scratch, role), data = join(home, '.realbud');
     await mkdir(home, { recursive: true });
-    if (!existsSync(data)) { await mkdir(data); protect(data, 'directory', true); }
+    const inspectNewObject = async (file, kind, label) => {
+      if (elevatedMode) return;
+      stage = `fixture-${role}-${label}`;
+      const response = execFileSync(restrictedLauncher, ['--inspect', String(process.pid), file], {
+        env: process.env, windowsHide: true, timeout: 3000, maxBuffer: 2048, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      const value = parseFixtureOwner(response, process.pid);
+      fixtureOwnership.push({ role, kind, label, ...value }); await progress();
+      check(value.outcome === 'queried' && value.sameUser && !value.administratorEnabled && !value.powerUsersEnabled && value.tokenDefaultOwnerIsUser && value.objectOwnerIsUser,
+        'The restricted fixture must create its private objects with the same user owner before ACL restriction');
+    };
+    if (!existsSync(data)) { await mkdir(data); await inspectNewObject(data, 'directory', 'private-root'); protect(data, 'directory', true); }
     const seed = async (name, value) => {
       const file = join(data, name); if (existsSync(file)) return;
-      await writeFile(file, '', { flag: 'wx' }); protect(file, 'file', true); await writeFile(file, JSON.stringify(value));
+      await writeFile(file, '', { flag: 'wx' }); await inspectNewObject(file, 'file', name === 'config.json' ? 'config' : 'service-admin');
+      protect(file, 'file', true); await writeFile(file, JSON.stringify(value));
     };
     await seed('config.json', { profile: { name: `fictional-${role}-local` }, instances: { fixture: { driver: 'not-a-real-driver' } } });
     if (!existsSync(join(data, 'service-admin.json'))) await seed('service-admin.json', { version: 1,
       passwordVerifier: await createServiceAdminPasswordVerifier('Fictional-Windows-Team-Admin-2026') });
+    stage = `start-${role}`;
     const socket = createServer(); socket.listen(0, '127.0.0.1'); await once(socket, 'listening');
     const port = socket.address().port; await new Promise(r => socket.close(r));
     const env = { ...serviceSmokeEnv({ executable, home, data, scratch, port }), REALBUD_TEST_LAB: '1', REALBUD_COMPANY_HOST_PREVIEW: '1',
@@ -331,7 +384,7 @@ if (scenarioMode) {
     }
     check(ready, 'Installed service readiness failed');
     const token = await bounded(tokenProof, 5000, 'Actual service token was not observed');
-    const authorityMatches = elevatedMode ? token.administratorEnabled === true || token.powerUsersEnabled === true : token.administratorEnabled === false && token.powerUsersEnabled === false;
+    const authorityMatches = elevatedMode ? token.administratorEnabled === true || token.powerUsersEnabled === true : token.administratorEnabled === false && token.powerUsersEnabled === false && token.tokenDefaultOwnerIsUser === true;
     check(token.outcome === 'queried' && token.pid === child.pid && token.sameUser === true && authorityMatches,
       'The actual service token must match the explicitly selected acceptance mode');
     context.startupMs = Math.round(performance.now() - started);
@@ -453,7 +506,7 @@ if (scenarioMode) {
     cleanupComplete = contexts.size === 0 && cleanupErrors.length === 0;
     await save(join(output, 'scenario.json'), { schema: 1, passed: !failure && cleanupComplete && checks.length === expectedChecks, mode: elevatedMode ? 'elevated-preflight' : 'restricted-office',
       runtime: { node: process.versions.node, electron: process.versions.electron }, checks, requests, generations, failure, cleanupErrors,
-      cleanupComplete, observedPids, observedPorts, nativeDiagnostics, setupDiagnostics, preflightObservations, diagnosticEntrySha256: hash(NATIVE_DIAGNOSTIC_ENTRY), tokenInspectorSha256: restrictedLauncherSha256, scratch });
+      cleanupComplete, observedPids, observedPorts, nativeDiagnostics, setupDiagnostics, preflightObservations, fixtureOwnership, diagnosticEntrySha256: hash(NATIVE_DIAGNOSTIC_ENTRY), tokenInspectorSha256: restrictedLauncherSha256, scratch });
     process.exitCode = !failure && cleanupComplete && checks.length === expectedChecks ? 0 : 1;
     // A failed graceful shutdown must let the supervisor close the complete Job.
     if (!cleanupComplete) process.exit(1);
@@ -467,7 +520,7 @@ if (scenarioMode) {
   const checks = [], restrictedChecks = [], restrictedLaunches = [], restrictedFailures = []; let failure = null, scenario, stage = 'containment-controls', scenarioChild, scenarioClosed, elevatedChild, elevatedClosed, elevated, controlsComplete = false;
   const pendingControls = new Set();
   function recordRestrictedFailure(stderr, control) {
-    const stages = new Set(['duplicate-token', 'administrator-membership', 'power-users-membership', 'elevation', 'elevation-type', 'user-size', 'user-query',
+    const stages = new Set(['duplicate-token', 'administrator-membership', 'power-users-membership', 'elevation', 'elevation-type', 'user-size', 'user-query', 'owner-size', 'owner-query', 'set-default-owner',
       'parent-job', 'job-limits', 'job-containment', 'launch-token', 'restrict-token', 'restricted-authority', 'standard-handle', 'copy-handle',
       'attribute-size', 'attributes', 'handle-list', 'create-restricted', 'child-job', 'child-token', 'child-authority', 'resume', 'wait', 'exit-code', 'managed']);
     for (const line of String(stderr || '').slice(0, 2048).split(/\r?\n/)) {
@@ -636,8 +689,8 @@ setInterval(()=>{},100);setTimeout(()=>process.exit(77),60000);`;
     const completed = await bounded(result, 490_000, 'Native scenario exceeded its bounded deadline');
     await bounded(scenarioClosed, 5000, 'Native supervisor did not close');
     recordRestrictedFailure(completed.stderr, 'office-scenario');
-    check(!completed.error, 'Contained company scenario failed');
     rememberRestricted(completed.stdout, 'office-scenario');
+    check(!completed.error, 'Contained company scenario failed');
     scenario = JSON.parse(await readFile(join(output, 'scenario.json'), 'utf8'));
     check(scenario.passed && scenario.cleanupComplete && scenario.checks.length === 7, 'Company scenario receipt did not pass');
     for (const pid of scenario.observedPids) check(await gone(pid), 'Recorded service or database PID survived');
