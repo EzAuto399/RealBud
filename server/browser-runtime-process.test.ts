@@ -5,7 +5,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 
 const processCalls = vi.hoisted(() => ({ environments: [] as NodeJS.ProcessEnv[], running: false }));
-vi.mock("node:child_process", () => ({
+vi.mock("node:child_process", async importOriginal => ({
+  ...await importOriginal<typeof import("node:child_process")>(),
   execFile: vi.fn((_file, _args, options, callback) => {
     processCalls.environments.push(options.env);
     queueMicrotask(() => callback(processCalls.running ? null : new Error("Not started"), JSON.stringify({

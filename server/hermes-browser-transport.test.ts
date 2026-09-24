@@ -1,13 +1,14 @@
-import { mkdtemp, mkdir, writeFile, symlink, rm } from "node:fs/promises";
+import { mkdir, writeFile, symlink, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { admitHermesEngine, HermesBrowserTransport, ownedBrowserEndpoint, type HermesEngineExec, type HermesEngineStep } from "./hermes-browser-transport.ts";
+import { privateTempRoot } from "./testing/private-fixture.ts";
 
 const deferred = () => { let resolve!: (value: Record<string, unknown>) => void; let reject!: (error: Error) => void; const promise = new Promise<Record<string, unknown>>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const roots: string[] = [];
-const tempRoot = async (prefix: string) => { const root = await mkdtemp(join(tmpdir(), prefix)); roots.push(root); return root; };
+const tempRoot = async (prefix: string) => { const root = privateTempRoot(join(tmpdir(), prefix)); roots.push(root); return root; };
 const tabs = { tabs: [{ tabId: "t1", active: true }, { tabId: "t2", active: false }] };
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 async function fixture(run?: HermesEngineExec) {

@@ -99,7 +99,7 @@ describe('bounded cold private restore coordination', () => {
     const closed = new Promise<void>((resolve, reject) => { child.once('close', () => resolve()); child.once('error', reject); });
     child.stderr.on('data', chunk => { errors = (errors + chunk).slice(-2000); });
     const ready = new Promise<void>((resolve, reject) => {
-      timer = setTimeout(() => reject(new Error(`Fixture lock did not initialize: ${errors}`)), 5000);
+      timer = setTimeout(() => reject(new Error(`Fixture lock did not initialize: ${errors}`)), windowsAdmissionTimeout(60).timeout ?? 5000);
       child.stdout.on('data', chunk => { output = (output + chunk).slice(-100); if (output.includes('initializing\n')) resolve(); });
       void closed.then(() => reject(new Error(`Fixture lock exited: ${errors}`)), reject);
     });
