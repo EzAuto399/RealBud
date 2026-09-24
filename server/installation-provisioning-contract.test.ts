@@ -15,7 +15,7 @@ import { fixture } from '../managed-gateway/testing.ts';
 import { fileSecretStore, InstallationProvisioning, SPEND_CAP_LABEL_MAX, type ProvisioningDescriptor } from '../managed-gateway/provisioning.ts';
 import type { ComposioOrgClient } from '../managed-gateway/composio-org.ts';
 import type { ModelviaClient, ModelviaCustomer } from '../managed-gateway/modelvia-keys.ts';
-import { parseInstallationProvisioning } from '../shared/office-link.ts';
+import { isProvisioningSkipped, parseInstallationProvisioning } from '../shared/office-link.ts';
 import { createWorkerModelAccess, setWorkerModelGrant } from './worker-model-access.ts';
 import { HERMES_PIN } from './hermes-pin.ts';
 import { privateFixtureDirectory, privateFixtureRoot, writePrivateFixtureFile, WINDOWS_PROFILE_TEST_OPTIONS } from './testing/private-profile-fixture.ts';
@@ -80,7 +80,7 @@ describe('gateway descriptor → desktop grant', WINDOWS_PROFILE_TEST_OPTIONS, (
       expect(descriptor.model.projectId).toBe('rb-install-one');
 
       const parsed = parseInstallationProvisioning(wire(descriptor));
-      if (!parsed || 'skipped' in parsed) throw new Error('the desktop refused the gateway descriptor');
+      if (!parsed || isProvisioningSkipped(parsed)) throw new Error('the desktop refused the gateway descriptor');
       expect(parsed.service).toEqual({ companyId: g.f.tenant.companyId, hostInstallationId: 'install-one' });
       expect(parsed.connector).toEqual({ endpoint: 'https://managed.example.invalid', credential: descriptor.connector.credential, profile: HERMES_PIN.profile, apps: ['gmail'] });
       expect(parsed.model).toEqual({ provider: 'modelvia', baseUrl: 'https://api.modelvia.dev/v1', projectId: 'rb-install-one', key: descriptor.model.key, keyId: descriptor.model.keyId, spendCapLabel: label });

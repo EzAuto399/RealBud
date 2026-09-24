@@ -359,18 +359,80 @@ describe("provisioning retried on the report path", () => {
     expect(atRedeem.sink.apply).toHaveBeenCalledTimes(1);
   });
 
-  it("treats a stated skip as no provisioning and never blocks linking or reporting", async () => {
-    const { sink, app } = build({ provisioning: { skipped: "no_platform_customer" } }, () => ({ provisioning: { skipped: "no_platform_customer" } }));
+  it("treats a stated skip as no provisioning and never blocks linking or reporting, and keeps the reason for the card", async () => {
+    const { sink, app, create } = build({ provisioning: { skipped: "no_platform_customer" } }, () => ({ provisioning: { skipped: "service_not_entitled" } }));
     await app.link({ code, label: "Desk" });
-    expect((await app.status()).state).toBe("linked");
+    expect(await app.status()).toMatchObject({ state: "linked", provisioned: false, provisioningSkipped: "no_platform_customer" });
     await app.report();
     expect(sink.apply).not.toHaveBeenCalled();
-    expect((await app.status()).lastReportedAt).toBeTruthy();
+    // The latest stated reason replaces the earlier one and survives a restart.
+    expect(await app.status()).toMatchObject({ lastReportedAt: expect.any(String), provisioningSkipped: "service_not_entitled" });
+    expect((await create().status()).provisioningSkipped).toBe("service_not_entitled");
     // A report reply with no provisioning key at all is equally uneventful.
     const plain = build({}, () => ({ ok: true }));
     await plain.app.link({ code, label: "Desk" });
     await plain.app.report();
     expect(plain.sink.apply).not.toHaveBeenCalled();
+    expect((await plain.app.status()).provisioningSkipped).toBeUndefined();
+  });
+
+  it("keeps a reason the website has not withdrawn, never refuses a reason it does not know, and clears it once the grant arrives", async () => {
+    let reply: unknown = { provisioning: { skipped: "provisioning_gateway_not_ready" } };
+    const { sink, app, create } = build({ provisioning: { skipped: "modelvia_customer_not_ready" } }, () => reply);
+    await app.link({ code, label: "Desk" });
+    await app.report();
+    expect((await app.status()).provisioningSkipped).toBe("provisioning_gateway_not_ready");
+    // The website's gateway was unreachable this time: it says nothing, and the
+    // last stated reason stands rather than vanishing.
+    reply = { ok: true };
+    await app.report();
+    expect((await app.status()).provisioningSkipped).toBe("provisioning_gateway_not_ready");
+    // A reason a newer website adds is kept verbatim; one that is not a reason at all is refused.
+    reply = { provisioning: { skipped: "some_future_reason_2" } };
+    await app.report();
+    expect((await app.status()).provisioningSkipped).toBe("some_future_reason_2");
+    reply = { provisioning: { skipped: "Not A Reason" } };
+    await expect(app.report()).rejects.toThrow(/cannot accept/);
+    // Support finished setup: the next check-in carries the grant, which is
+    // applied once, and the reason is gone for good, including after a restart.
+    reply = { provisioning };
+    await app.report();
+    expect(sink.apply).toHaveBeenCalledTimes(1);
+    expect(await app.status()).toMatchObject({ provisioned: true });
+    expect((await app.status()).provisioningSkipped).toBeUndefined();
+    reply = { provisioning: { skipped: "provisioning_attempt_requires_review" } };
+    await create().report();
+    expect(sink.apply).toHaveBeenCalledTimes(1);
+    expect((await create().status()).provisioningSkipped).toBeUndefined();
+  });
+
+  it("holds a saved link whose stated reason is damaged, and reads an older link without one as before", async () => {
+    const { app, create } = build({ provisioning: { skipped: "no_platform_customer" } }, () => ({ ok: true }));
+    await app.link({ code, label: "Desk" });
+    const path = join(roots.at(-1)!, "office-link/link.json");
+    const saved = JSON.parse(readFileSync(path, "utf8"));
+    expect(saved.provisioningSkipped).toBe("no_platform_customer");
+    const { provisioningSkipped: _reason, ...older } = saved;
+    writeFileSync(path, JSON.stringify(older));
+    expect(await create().status()).toMatchObject({ state: "linked", provisioned: false });
+    expect((await create().status()).provisioningSkipped).toBeUndefined();
+    writeFileSync(path, JSON.stringify({ ...saved, provisioningSkipped: { injected: true } }));
+    await expect(create().status()).rejects.toThrow("The saved website link needs recovery.");
+  });
+
+  it("waits long enough for the website's provisioning chain on redeem and report, and no longer on plain reads", async () => {
+    const timeouts = vi.spyOn(AbortSignal, "timeout");
+    try {
+      const { app } = build({ provisioning }, () => ({ ok: true }));
+      await app.link({ code, label: "Desk" });
+      expect(timeouts.mock.calls.map(call => call[0])).toEqual([60_000]);
+      await app.report();
+      expect(timeouts.mock.calls.map(call => call[0])).toEqual([60_000, 60_000]);
+      await app.usage();
+      expect(timeouts.mock.calls.map(call => call[0])).toEqual([60_000, 60_000, 10_000]);
+      await app.disconnect();
+      expect(timeouts.mock.calls.map(call => call[0])).toEqual([60_000, 60_000, 10_000, 10_000]);
+    } finally { timeouts.mockRestore(); }
   });
 
   it("refuses a report grant for another office rather than applying it", async () => {

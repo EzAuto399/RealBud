@@ -4,17 +4,18 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/state/store", () => ({ useStore: () => ({ state: {}, dispatch: vi.fn() }), api: vi.fn() }));
 
-import { WebsiteLinkCard, WebsiteLinkCardView, modelAccessState, readBrowserLinkView, savedBrowserRequest, type BrowserLinkPhase } from "./WebsiteLinkCard";
+import { WebsiteLinkCard, WebsiteLinkCardView, modelAccessMessage, modelAccessState, readBrowserLinkView, savedBrowserRequest, type BrowserLinkPhase, type WebsiteLinkCardViewProps } from "./WebsiteLinkCard";
+import { PROVISIONING_SKIP_REASONS } from "@shared/office-link";
 import type { OfficeLinkStatus } from "../../../server/office-link";
 
 const approvalUrl = `https://realbud.app/link/${"A".repeat(43)}`;
 const request = { approvalUrl, displayCode: "ABCD-EFGH", expiresAt: "2026-09-23T10:00:00.000Z" };
 const unlinked: OfficeLinkStatus = { state: "unlinked" };
 const noop = () => {};
-const view = (phase: BrowserLinkPhase, status: OfficeLinkStatus | null = unlinked, label = "Reception Mac") => renderToStaticMarkup(createElement(WebsiteLinkCardView, {
+const view = (phase: BrowserLinkPhase, status: OfficeLinkStatus | null = unlinked, label = "Reception Mac", extra: Partial<WebsiteLinkCardViewProps> = {}) => renderToStaticMarkup(createElement(WebsiteLinkCardView, {
   status, phase, label, code: "", busy: false, error: "", confirm: false,
   onLabel: noop, onCode: noop, onStart: noop, onOpenAgain: noop, onCancel: noop, onRetry: noop,
-  onLinkCode: noop, onReport: noop, onDisconnect: noop, onConfirm: noop, onRefresh: noop,
+  onLinkCode: noop, onReport: noop, onDisconnect: noop, onConfirm: noop, onRefresh: noop, ...extra,
 }));
 const liveRegion = (html: string) => /<p role="status" aria-live="polite" class="sr-only">([^<]*)<\/p>/.exec(html)?.[1];
 
@@ -121,6 +122,61 @@ describe("website account card", () => {
       expect(html).not.toContain("Not your office?");
     }
     expect(view({ kind: "idle" }, { ...linked, serviceWithdrawn: true })).not.toContain("Setting up Bud’s model access");
+  });
+
+  it("says, per stated reason, why model access has not been issued and what happens next", () => {
+    const linked: OfficeLinkStatus = { state: "linked", agencyLabel: "Synthetic Office", provisioned: false, lastReportedAt: "2026-09-23T10:00:00.000Z" };
+    const expected: Record<string, RegExp> = {
+      no_platform_customer: /waiting on your office’s AI account, which RealBud support sets up/,
+      service_not_entitled: /AI isn’t turned on for your office yet\. RealBud support turns it on/,
+      service_not_active: /AI service isn’t active right now\. Check your subscription on realbud\.app/,
+      modelvia_customer_not_ready: /AI account isn’t ready yet\. RealBud support finishes it/,
+      provisioning_gateway_unconfigured: /RealBud’s AI service isn’t set up yet\. Contact RealBud support/,
+      provisioning_gateway_same_as_platform: /RealBud’s AI service isn’t set up yet/,
+      provisioning_gateway_wrong_service: /RealBud’s AI service isn’t set up yet/,
+      provisioning_gateway_not_ready: /RealBud’s AI service isn’t set up yet/,
+      provisioning_attempt_requires_review: /needs review by RealBud support before it can arrive here\. To start again, remove this computer under Account → Computers on realbud\.app, then link it again\./,
+    };
+    // Every reason the website can state has its own sentence; none reads as a failure to retry.
+    expect(Object.keys(expected).sort()).toEqual([...PROVISIONING_SKIP_REASONS].sort());
+    for (const reason of PROVISIONING_SKIP_REASONS) {
+      const status = { ...linked, provisioningSkipped: reason };
+      expect(modelAccessState(status)).toBe("skipped");
+      const message = modelAccessMessage(status)!;
+      expect(message).toMatch(expected[reason]!);
+      expect(message).not.toMatch(/Use Update status|has not arrived/);
+      if (reason !== "provisioning_attempt_requires_review") expect(message).toContain("RealBud checks again with each status update.");
+      const html = view({ kind: "idle" }, status);
+      expect(html).toContain(message.replace(/’/g, "’").replace(/→/g, "→"));
+      expect(liveRegion(html)).toContain("RealBud support");
+    }
+    // A reason from a newer website is shown generically, quoting it for support, rather than hidden.
+    const future = modelAccessMessage({ ...linked, provisioningSkipped: "some_future_reason" })!;
+    expect(future).toContain("it reported “some_future_reason”");
+    expect(future).toContain("Contact RealBud support");
+    // The stated reason outranks a later transient report failure, and never shows once access is set up.
+    expect(modelAccessState({ ...linked, provisioningSkipped: "service_not_entitled", error: "Fictional status check failed." })).toBe("skipped");
+    expect(modelAccessState({ ...linked, provisioningSkipped: "service_not_entitled", provisioned: true })).toBe("ready");
+  });
+
+  it("gives the way out when a delivered grant never arrived here", () => {
+    const stranded: OfficeLinkStatus = { state: "linked", agencyLabel: "Synthetic Office", provisioned: false, lastReportedAt: "2026-09-23T10:00:00.000Z" };
+    const html = view({ kind: "idle" }, stranded);
+    expect(html).toContain("Bud’s model access has not arrived from your account yet. RealBud checks again with each status update. If it still hasn’t arrived after the next update, remove this computer under Account → Computers on realbud.app, then link it again.");
+    // Not before the first report has settled.
+    expect(view({ kind: "idle" }, { ...stranded, lastReportedAt: undefined })).not.toContain("remove this computer");
+  });
+
+  it("says linking and updating can take a while instead of sitting still", () => {
+    const linking = view({ kind: "idle" }, unlinked, "Reception Mac", { busy: true, action: "link", code: "rb1_x" });
+    expect(linking).toContain('aria-busy="true">Linking… this can take up to a minute.</p>');
+    expect(liveRegion(linking)).toContain("Linking… this can take up to a minute.");
+    const updating = view({ kind: "idle" }, { state: "linked", agencyLabel: "Synthetic Office", label: "Reception Mac", provisioned: true }, "Reception Mac", { busy: true, action: "report" });
+    expect(updating).toContain('aria-busy="true">Updating… this can take up to a minute.</p>');
+    expect(updating).toContain(">Updating…</button>");
+    const disconnecting = view({ kind: "idle" }, { state: "linked", agencyLabel: "Synthetic Office", label: "Reception Mac" }, "Reception Mac", { busy: true, action: "disconnect" });
+    expect(disconnecting).not.toContain("can take up to a minute");
+    expect(view({ kind: "idle" })).not.toContain("can take up to a minute");
   });
 
   it("keeps an interrupted pasted-code link on its own safe retry path", () => {

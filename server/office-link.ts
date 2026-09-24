@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { writeFileAtomic } from "./atomic.ts";
 import { windowsFilePrivacy } from "./windows-file-privacy.ts";
-import { currentUsagePeriod, parseInstallationProvisioning, parseInstallationUsage, USAGE_PERIOD,
+import { currentUsagePeriod, isProvisioningSkipReasonText, isProvisioningSkipped, parseInstallationProvisioning, parseInstallationUsage, USAGE_PERIOD,
   type InstallationProvisioning, type InstallationUsageState } from "../shared/office-link.ts";
 import { isLinkRequestInput, isLinkRequestIssued, isLinkStatus, type LinkCancelInput, type LinkRequestInput, type LinkStatus, type LinkStatusInput } from "../shared/installation-link.ts";
 
@@ -75,6 +75,10 @@ type Saved = { version: 1; id: string; token: string; label: string; code?: stri
   /** A grant was applied for this link. Survives restart, so a repeated report
    * reply cannot re-apply provisioning that is already in force. */
   provisioned?: boolean;
+  /** The website's stated reason for issuing no grant, from the latest reply
+   * that said so. Cleared when a grant arrives. Absent in files written before
+   * 25 September 2026, which read exactly as before. */
+  provisioningSkipped?: string;
   /** Pending browser approval (no `code`, no `companyId`). One at a time. */
   browser?: BrowserLinkRequest };
 /** What the renderer sees of a browser approval. Never carries the token. */
@@ -88,6 +92,9 @@ export type OfficeLinkStatus = { state: "unlinked" | "pending" | "linked" | "rev
   browser?: BrowserLinkRequest;
   /** Linked only: a vendor grant (Bud's model access) is in force here. */
   provisioned?: boolean;
+  /** Linked, no grant in force: the website's stated reason for issuing none
+   * (`PROVISIONING_SKIP_REASONS` in shared/office-link.ts, or a newer one). */
+  provisioningSkipped?: string;
   /** Vendor service access was withdrawn. Saved work records are unaffected. */
   serviceWithdrawn?: boolean;
   /** AI usage for the current month. In memory only; never saved to disk. */
@@ -131,6 +138,7 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
     catch { throw new Error("The saved website link needs recovery."); }
     if (!saved || saved.version !== 1 || !/^[0-9a-f-]{36}$/i.test(saved.id) || !/^[a-f0-9]{64}$/.test(saved.token) || typeof saved.label !== "string" || saved.label.length > 80 || (saved.code !== undefined && !/^rb1_[a-f0-9]{64}$/.test(saved.code))) throw new Error("The saved website link needs recovery.");
     if (saved.browser !== undefined && (saved.code !== undefined || saved.companyId !== undefined || !savedBrowserRequest(saved.browser))) throw new Error("The saved website link needs recovery.");
+    if (saved.provisioningSkipped !== undefined && !isProvisioningSkipReasonText(saved.provisioningSkipped)) throw new Error("The saved website link needs recovery.");
     return saved;
   }
   async function save(value: Saved) {
@@ -195,10 +203,19 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
     // not re-applied, so the link's marker alone can read false.
     const provisioned = saved?.companyId && !saved.revoked
       ? { provisioned: saved.provisioned === true || ((await options.provisioning?.active?.().catch(() => false)) ?? false) } : {};
-    return saved ? { state: saved.revoked ? "revoked" : saved.companyId ? "linked" : "pending", id: saved.id, label: saved.label, agencyLabel: saved.agencyLabel, lastReportedAt: saved.lastReportedAt, usage: usageState, ...browser, ...provisioned, ...withdrawn, ...(error ? { error } : {}) } : { state: "unlinked", usage: usageState, ...withdrawn };
+    // A stated reason is only news while no grant is in force.
+    const skipped = provisioned.provisioned === false && saved?.provisioningSkipped ? { provisioningSkipped: saved.provisioningSkipped } : {};
+    return saved ? { state: saved.revoked ? "revoked" : saved.companyId ? "linked" : "pending", id: saved.id, label: saved.label, agencyLabel: saved.agencyLabel, lastReportedAt: saved.lastReportedAt, usage: usageState, ...browser, ...provisioned, ...skipped, ...withdrawn, ...(error ? { error } : {}) } : { state: "unlinked", usage: usageState, ...withdrawn };
   }
-  async function request(route: string, init: RequestInit): Promise<Response> {
-    try { return await fetcher(`${ORIGIN}/api/installations/${route}`, { ...init, redirect: "error", signal: AbortSignal.timeout(10_000), headers: { "Content-Type": "application/json", ...init.headers } }); }
+  /** Reads the website answers from its own records. */
+  const REQUEST_TIMEOUT_MS = 10_000;
+  /** Redeem and report may carry provisioning: behind them the website checks
+   * the gateway's health and readiness and then has it mint at Modelvia and
+   * Composio, each vendor call bounded at 30 s. A shorter wait here abandoned
+   * a reply the website had already recorded as delivered. */
+  const PROVISIONING_TIMEOUT_MS = 60_000;
+  async function request(route: string, init: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
+    try { return await fetcher(`${ORIGIN}/api/installations/${route}`, { ...init, redirect: "error", signal: AbortSignal.timeout(timeoutMs), headers: { "Content-Type": "application/json", ...init.headers } }); }
     catch { throw new Error("The website could not be reached. Your link is saved; try again when connected."); }
   }
   /**
@@ -248,17 +265,20 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
         saved = { version: 1, id: randomUUID(), token: randomBytes(32).toString("hex"), label, code };
         await save(saved);
       }
-      const response = await request("redeem", { method: "POST", body: JSON.stringify({ code, id: saved.id, token: saved.token, label: saved.label, platform: options.platform ?? process.platform, appVersion: options.appVersion }) });
+      const response = await request("redeem", { method: "POST", body: JSON.stringify({ code, id: saved.id, token: saved.token, label: saved.label, platform: options.platform ?? process.platform, appVersion: options.appVersion }) }, PROVISIONING_TIMEOUT_MS);
       if (!response.ok) throw new Error(response.status === 409 ? "This code is expired or already used. Get a new code from your account owner." : "The website could not finish linking this computer. Try again shortly.");
       const result = await response.json().catch(() => null) as { companyId?: unknown; agencyLabel?: unknown; installationId?: unknown; provisioning?: unknown } | null;
       if (!result || result.installationId !== saved.id || typeof result.companyId !== "string" || !result.companyId || result.companyId.length > 200 || typeof result.agencyLabel !== "string" || result.agencyLabel.length > 200) throw new Error("The website returned an incomplete link. Retry the same code.");
       // Vendor provisioning, when present, is applied before the link is
       // recorded: a computer must never read as linked while still missing the
       // service access that reply carried. Retrying the code repeats it safely.
-      const provisioning = parseInstallationProvisioning(result.provisioning);
+      // A stated skip is recorded with the link, so the card can say why.
+      const outcome = parseInstallationProvisioning(result.provisioning);
+      const provisioning = isProvisioningSkipped(outcome) ? undefined : outcome;
       if (provisioning) await applyProvisioning(provisioning, saved, result.companyId);
       delete saved.code;
-      await save({ ...saved, companyId: result.companyId, agencyLabel: result.agencyLabel, ...(provisioning ? { provisioned: true } : {}) });
+      await save({ ...saved, companyId: result.companyId, agencyLabel: result.agencyLabel, ...(provisioning ? { provisioned: true } : {}),
+        ...(isProvisioningSkipped(outcome) ? { provisioningSkipped: outcome.skipped } : {}) });
     });
   }
 
@@ -409,7 +429,7 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
       await options.provisioning?.reconcile();
       if (!saved?.companyId) return;
       const report = await options.report();
-      const response = await request("report", { method: "POST", headers: { Authorization: `Bearer ${saved.token}` }, body: JSON.stringify(report) });
+      const response = await request("report", { method: "POST", headers: { Authorization: `Bearer ${saved.token}` }, body: JSON.stringify(report) }, PROVISIONING_TIMEOUT_MS);
       // 401/403 is the website saying this installation's access is gone. Stop
       // using the vendor grant immediately; every saved work record is kept.
       if (response.status === 401 || response.status === 403) {
@@ -418,19 +438,26 @@ export function createOfficeLink(options: { directory: string; appVersion: strin
         return;
       }
       if (!response.ok) throw new Error("The website did not accept the latest status. Your local work can continue.");
-      // The portal retries a redeem-time provisioning failure here, once. A
-      // grant already in force is left alone: re-applying would replace a live
+      // The portal retries provisioning here on every check-in until it has
+      // minted once, so a computer skipped at redeem (setup unfinished on the
+      // account) picks its grant up as soon as support finishes setup. A grant
+      // already in force is left alone: re-applying would replace a live
       // revocable key with whatever this reply happened to carry.
       let provisioned = saved.provisioned === true;
+      const { provisioningSkipped: previous, ...rest } = saved;
+      let skipped = previous;
       if (!provisioned) {
         const body = await response.json().catch(() => null) as { provisioning?: unknown } | null;
-        const provisioning = parseInstallationProvisioning(body?.provisioning);
-        if (provisioning) {
+        const outcome = parseInstallationProvisioning(body?.provisioning);
+        if (isProvisioningSkipped(outcome)) skipped = outcome.skipped;
+        else if (outcome) {
+          // A grant has arrived: whatever the website said before no longer holds.
+          skipped = undefined;
           const already = (await options.provisioning?.active?.().catch(() => false)) ?? false;
-          if (!already) { await applyProvisioning(provisioning, saved, saved.companyId!); provisioned = true; }
+          if (!already) { await applyProvisioning(outcome, saved, saved.companyId!); provisioned = true; }
         }
       }
-      await save({ ...saved, lastReportedAt: new Date().toISOString(), ...(provisioned ? { provisioned: true } : {}) });
+      await save({ ...rest, lastReportedAt: new Date().toISOString(), ...(provisioned ? { provisioned: true } : {}), ...(skipped && !provisioned ? { provisioningSkipped: skipped } : {}) });
     });
   }
   async function disconnect() {
