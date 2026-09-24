@@ -225,7 +225,25 @@ export function projectCaps(customer: ModelviaCustomer, requestCapNanoAud: strin
   const monthly = BigInt(customer.monthlyCapNanoAud), request = BigInt(requestCapNanoAud);
   return { monthlyCapNanoAud: customer.monthlyCapNanoAud, requestCapNanoAud: (request < monthly ? request : monthly).toString(), maxConcurrent: customer.maxConcurrent };
 }
-const capLabel = (caps: ModelviaCaps) => `monthly-cap ${caps.monthlyCapNanoAud} nanoAUD, request-cap ${caps.requestCapNanoAud} nanoAUD, max-concurrent ${caps.maxConcurrent}`;
+/** Exact nanoAUD → "A$1,234.56", whole dollars without cents. BigInt
+ * throughout and plain ASCII: no float, no locale data. */
+function aud(nanoAud: string): string {
+  const cents = (BigInt(nanoAud) + 5_000_000n) / 10_000_000n;
+  const dollars = (cents / 100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ','), rest = cents % 100n;
+  return `A$${dollars}${rest === 0n ? '' : `.${rest.toString().padStart(2, '0')}`}`;
+}
+/**
+ * The human label the descriptor carries, shown on the desktop as is. Printable
+ * ASCII, and at most 80 characters for every cap Modelvia can hold (a 21-digit
+ * nanoAUD figure prints as 22 characters; concurrency is at most 100), because
+ * the desktop's contract (`shared/office-link.ts`) bounds the label it accepts.
+ * The raw nanoAUD figures stay in the caps themselves, never in this label.
+ */
+export const SPEND_CAP_LABEL_MAX = 80;
+export function spendCapLabel(caps: ModelviaCaps): string {
+  return `${aud(caps.monthlyCapNanoAud)}/month, ${aud(caps.requestCapNanoAud)}/request, ${caps.maxConcurrent} at once`;
+}
+const capLabel = spendCapLabel;
 /** Missing, inactive, another client's (reported as missing by the client) and
  * zero-cap customers are all one answer: the Modelvia side is not ready for this
  * office, which is Modelvia's operator's to fix, not a RealBud failure. */

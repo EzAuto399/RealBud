@@ -35,7 +35,11 @@ const MODEL_KEY = /^rbk_[A-Za-z0-9_-]{24,200}$/;
 const KEY_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const PROFILE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const APP = /^[a-z][a-z0-9_-]{0,63}$/;
-const SPEND_CAP = /^[\x20-\x7e]{1,80}$/;
+/** Printable ASCII. The gateway emits a short human label ("A$200/month,
+ * A$1/request, 2 at once", never above 80); gateways from before 25 September
+ * 2026 emitted the raw nanoAUD figures at about 82 characters, so the bound
+ * stays wide enough for both. Nothing parses the label; it is shown as is. */
+const SPEND_CAP = /^[\x20-\x7e]{1,160}$/;
 /** Anything shaped like a vendor organization/project key must never be handed
  * to a customer machine, whatever field it arrives in. */
 const ORGANIZATION_KEY = /(?:\b(?:ak|ck)_[A-Za-z0-9_-]{16,})|(?:\bsk-[A-Za-z0-9_-]{16,})/;
