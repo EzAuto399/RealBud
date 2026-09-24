@@ -80,7 +80,9 @@ export class BrowserRuntime {
   }
   private env(): NodeJS.ProcessEnv {
     // Page data stays out of diagnostic logs; keys from the model/service never reach bsk.
-    const env: NodeJS.ProcessEnv = { BSK_HOME: join(this.root, "bridge"), BSK_AUTO_START: "0", BSK_BROWSER_WAIT_MS: "0" };
+    // RealBud owns helper upgrades. Upstream defaults to replacing its running
+    // executable, which would invalidate our reviewed version and package signature.
+    const env: NodeJS.ProcessEnv = { BSK_HOME: join(this.root, "bridge"), BSK_AUTO_START: "0", BSK_AUTO_UPDATE: "off", BSK_BROWSER_WAIT_MS: "0" };
     for (const key of ["HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR", "PATH"]) if (process.env[key]) env[key] = process.env[key];
     return env;
   }
