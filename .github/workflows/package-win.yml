@@ -77,7 +77,7 @@ jobs:
         shell: bash
         run: rm -rf dist dist-server release
       - run: pnpm package:win
-      - name: Install and exercise packaged Windows runtime and GUI
+      - name: Install and exercise the packaged Windows runtime
         shell: pwsh
         run: |
           $env:REALBUD_BUILD_SHA = git rev-parse HEAD
