@@ -4,6 +4,8 @@ Latest continuation: [External test lab](EXTERNAL-TEST-LAB-2026-09-24.md) record
 
 Parallel work: [REI browser first and API access](REI-BROWSER-FIRST-2026-09-24.md) records the owner's browser-first sequencing, 240 passing candidate source checks and an unsent API request. Root verified retained report/source hashes; the browser owner observed signed-in Brave access and left the installed Mac 0.1.18/profile unchanged. RealBud live connection, workflow acceptance and API entitlement remain unverified.
 
+25 September browser-engine decision: [Bud browser engine candidate](BUD-BROWSER-ENGINE-2026-09-25.md) keeps the pinned native transport internal and dormant. RealBud owns the visible browser flow and broker controls; integration and installed-platform proof are still required before any runtime switch.
+
 Previous continuation: [platform follow-up](PLATFORM-FOLLOWUP-2026-09-24.md) records the native welcome/restore defect, source correction, packaged Electron team proof and separate Windows startup diagnostic. Read its source and device limits before selecting an installer.
 
 Previous continuation: [Welcome backup recovery](WELCOME-BACKUP-RECOVERY-2026-09-24.md) adopts the verified direct restore entry and adds a safe return to welcome after cancellation. Canonical verification passes 1,048 tests, full typechecking and nine actual source-rendered checks. The newer candidate compiles and passes signature verification, but its first full package QA stopped at backup export with HTTP 507. That failure and prior artifacts remain preserved. Native cancellation acceptance, OS custody, Windows device and customer acceptance remain open.
