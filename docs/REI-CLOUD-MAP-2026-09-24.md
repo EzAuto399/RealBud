@@ -1,4 +1,6 @@
 > Belongs to the Austin Realty add-on workflow pack (`austin-office`), not RealBud core. Operating skill: `pack/workflows/austin-accounts/support/rei-cloud-navigation/SKILL.md` (pack revision 2); machine-readable map beside it as `site-map.json`.
+>
+> Simulation: `scripts/qa-rei-map-sim.mjs` lints the task-first map `references/website-map.md` beside the skill and runs its tier-S recipes against a fictional local mock (safety revision receipt `outputs/rei-map-sim-2026-09-25-guard-final/receipt.json`); a pass proves the recipes execute and their guards hold, not that REI behaves this way. The simulated Export Only file is fictional: no live report download or register readback has been qualified.
 
 # REI Cloud: site map for browser work
 
@@ -9,6 +11,8 @@ This map records **structure only**. It holds no names, addresses, emails, amoun
 - `{business}`: the business code shown in the header.
 
 It does not establish that a RealBud browser task has run against REI, and it grants no authority to act.
+
+The task-first source reference now checks both URL `reicid` and the header business code independently after navigation. It treats report Preview as unverified. Receipt Register readback goes through the operating skill's **Export Only** rule and requires a separate file-download approval; if that approval or a scoped file is unavailable, the workflow holds without claiming that a receipt posted. This was a source and fictional-simulation safety correction, not a new live REI observation.
 
 Version observed: **REI Cloud v26.0922.0**. Queensland business; the footer shows the subscription countdown.
 
