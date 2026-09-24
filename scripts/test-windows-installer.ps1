@@ -41,6 +41,7 @@ $probePassed = $false
 $probeFailure = $null
 $cleanupFailure = $null
 $receiptFailure = $null
+$gui = [ordered]@{ started = $false; windowObserved = $false; rendererReady = $false; exitCode = $null; passed = $false }
 try {
   # NSIS requires /D last and consumes the remainder, including spaces.
   $installation.started = $true
@@ -166,6 +167,52 @@ try {
   if ([IO.Path]::GetFullPath($backupResult.resources) -ne [IO.Path]::GetFullPath($resources)) { throw 'Private-backup receipt names a different resources directory.' }
   if ([IO.Path]::GetFullPath($backupResult.executable) -ne [IO.Path]::GetFullPath($app)) { throw 'Private-backup receipt names a different application executable.' }
   $backupResult.checks | Write-Output
+  # The helpers above run RealBud.exe as Node. Prove the installed executable
+  # also starts Electron's desktop process, owns a visible Windows window, and
+  # loads its real packaged renderer/preload against the embedded office service.
+  # The existing smoke hook closes the window and stops its disposable service.
+  $probeStage = 'installed-gui'
+  Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+  $guiScratch = Join-Path $env:RUNNER_TEMP ('RealBud GUI probe ' + [guid]::NewGuid().ToString('N'))
+  $guiProfile = Join-Path $guiScratch 'profile'
+  $guiData = Join-Path $guiScratch 'data'
+  $guiLogs = Join-Path $guiScratch 'logs'
+  New-Item -ItemType Directory -Force -Path $guiProfile, $guiData, $guiLogs | Out-Null
+  $guiReceipt = Join-Path $ReceiptDirectory 'installed-gui.json'
+  $env:REALBUD_DATA_DIR = $guiData
+  $env:REALBUD_LOG_DIR = $guiLogs
+  $env:OMB_SMOKE_TEST = '1'
+  $env:OMB_SMOKE_RESULT_FILE = $guiReceipt
+  $guiProcess = Start-Process -FilePath $app -ArgumentList ('--user-data-dir="' + $guiProfile + '"') -PassThru
+  $gui.started = $true
+  $guiDeadline = [DateTime]::UtcNow.AddSeconds(240)
+  do {
+    $guiProcess.Refresh()
+    if (-not $guiProcess.HasExited -and $guiProcess.MainWindowHandle -ne [IntPtr]::Zero) {
+      $gui.windowObserved = $true
+    }
+    if ($guiProcess.HasExited) { break }
+    Start-Sleep -Milliseconds 100
+  } while ([DateTime]::UtcNow -lt $guiDeadline)
+  if (-not $guiProcess.HasExited) {
+    & (Join-Path $env:SystemRoot 'System32\taskkill.exe') /PID $guiProcess.Id /T /F | Out-Null
+    throw 'Installed GUI did not exit within four minutes; see installed-gui-observation.json.'
+  }
+  $gui.exitCode = $guiProcess.ExitCode
+  if (-not (Test-Path -LiteralPath $guiReceipt -PathType Leaf)) { throw 'Installed GUI did not write its renderer receipt.' }
+  $guiResult = Get-Content -Raw -LiteralPath $guiReceipt | ConvertFrom-Json
+  $gui.rendererReady = [bool]$guiResult.ok
+  if (-not $gui.windowObserved) { throw 'Installed GUI renderer ran without an observed Windows top-level window.' }
+  if (-not $gui.rendererReady) { throw 'Installed GUI renderer smoke failed; see installed-gui.json.' }
+  if ($gui.exitCode -ne 0) { throw "Installed GUI exited with code $($gui.exitCode)." }
+  if ($guiResult.result.title -ne 'RealBud' -or $guiResult.result.capabilities.host.platform -ne 'win32' -or
+      $guiResult.result.health.app -ne 'realbud' -or $guiResult.result.health.static -ne $true -or
+      $guiResult.result.company.remoteJoinAvailable -ne $true -or
+      $guiResult.result.location -notmatch '^http://127\.0\.0\.1:\d+/$') {
+    throw 'Installed GUI renderer receipt did not confirm the RealBud desktop, local service, and join surface.'
+  }
+  $gui.passed = $true
+  Write-Output 'Installed RealBud desktop opened a Windows window and loaded its renderer, preload bridge, local service, and join surface.'
   $probePassed = $true
 } catch {
   # Save the original ErrorRecord: cleanup must never replace a probe failure.
@@ -175,6 +222,32 @@ try {
   Remove-Item Env:REALBUD_QA_RESOURCES -ErrorAction SilentlyContinue
   Remove-Item Env:REALBUD_QA_EXECUTABLE -ErrorAction SilentlyContinue
   Remove-Item Env:QA_OUTPUT -ErrorAction SilentlyContinue
+  Remove-Item Env:REALBUD_DATA_DIR -ErrorAction SilentlyContinue
+  Remove-Item Env:REALBUD_LOG_DIR -ErrorAction SilentlyContinue
+  Remove-Item Env:OMB_SMOKE_TEST -ErrorAction SilentlyContinue
+  Remove-Item Env:OMB_SMOKE_RESULT_FILE -ErrorAction SilentlyContinue
+  try {
+    $guiLog = if ($guiLogs) { Join-Path $guiLogs 'server.log' } else { $null }
+    $guiLogInfo = if ($guiLog -and (Test-Path -LiteralPath $guiLog -PathType Leaf)) { Get-Item -LiteralPath $guiLog } else { $null }
+    $guiLogTail = if ($guiLogInfo) { (Get-Content -LiteralPath $guiLog -Tail 60) -join "`n" } else { '' }
+    $guiEvidence = [ordered]@{
+      schema = 1
+      kind = 'realbud-installed-windows-gui-observation'
+      sourceRevision = $sourceRevision
+      executableSha256 = $(if (Test-Path -LiteralPath $app -PathType Leaf) { (Get-FileHash -Algorithm SHA256 -LiteralPath $app).Hash.ToLowerInvariant() } else { $null })
+      process = $gui
+      log = [ordered]@{
+        created = $null -ne $guiLogInfo
+        bytes = $(if ($guiLogInfo) { $guiLogInfo.Length } else { $null })
+        sha256 = $(if ($guiLogInfo) { (Get-FileHash -Algorithm SHA256 -LiteralPath $guiLog).Hash.ToLowerInvariant() } else { $null })
+        serviceSpawned = $guiLogTail -match 'spawned pid='
+        officeAnswered = $guiLogTail -match 'office service answered'
+        deskLoadFailed = $guiLogTail -match 'desk failed to load'
+      }
+      limit = 'Packaged smoke mode on a disposable Windows CI runner; normal customer launch and Windows 11 remain unverified.'
+    }
+    $guiEvidence | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 -LiteralPath (Join-Path $ReceiptDirectory 'installed-gui-observation.json')
+  } catch { Write-Warning ('GUI observation receipt unavailable: ' + $_.Exception.GetType().FullName) }
   try {
     $uninstaller = Join-Path $installRoot 'Uninstall RealBud.exe'
     if (Test-Path -LiteralPath $uninstaller -PathType Leaf) {
@@ -218,7 +291,7 @@ try {
   }
   try {
     $linkedReceipts = @()
-    foreach ($name in @('installed-windows.json', 'installed-memory-primitives.json', 'installed-service.json', 'installed-private-backup.json')) {
+    foreach ($name in @('installed-windows.json', 'installed-memory-primitives.json', 'installed-service.json', 'installed-private-backup.json', 'installed-gui.json', 'installed-gui-observation.json')) {
       $childReceipt = Join-Path $ReceiptDirectory $name
       if (Test-Path -LiteralPath $childReceipt -PathType Leaf) {
         $linkedReceipts += [ordered]@{
@@ -236,7 +309,7 @@ try {
       sourceRevision = $sourceRevision
       installer = $installerIdentity
       installation = $installation
-      probes = [ordered]@{ passed = $probePassed; receipts = $linkedReceipts }
+      probes = [ordered]@{ passed = $probePassed; gui = $gui; receipts = $linkedReceipts }
       uninstall = $uninstall
       failureStage = $(if ($probeFailure) { $probeStage } elseif ($cleanupFailure) { 'uninstall' } else { $null })
       limits = @(
@@ -244,6 +317,7 @@ try {
         'Uninstall verifies app and resources removal only; no user-data preservation claim.'
         'Source revision is supplied by the build workflow and bound here to the installer and probe receipt hashes.'
         'Native memory admission remains held; inspect the linked primitive receipt separately.'
+        'GUI proof uses packaged smoke mode on Windows CI; normal customer launch and Windows 11 remain unverified.'
       )
     }
     $lifecycle | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 -LiteralPath (Join-Path $ReceiptDirectory 'installed-lifecycle.json')

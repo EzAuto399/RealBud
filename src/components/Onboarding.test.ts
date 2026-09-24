@@ -67,7 +67,71 @@ beforeEach(() => {
   let hash = '#welcome';
   vi.stubGlobal('location', { get hash() { return hash; }, set hash(value: string) { hash = '#' + value.replace(/^#/, ''); } });
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+describe('welcome finish recovery', () => {
+  const saved = { ...initial, stage: 'office-rules' as const };
+
+  it('re-enables both destinations when the desk read times out, then completes on retry', async () => {
+    vi.useFakeTimers(); fixture.config.profile.name = 'Fictional Draft';
+    fixture.api.mockImplementationOnce(() => new Promise(() => {}))
+      .mockResolvedValueOnce({ book: { office: { pmUser: 'Fictional Draft' } } })
+      .mockResolvedValueOnce({ ...saved, revision: 4, stage: 'complete' });
+
+    const first = button(render(saved), 'Continue to Bud setup');
+    first.props.onClick!(); first.props.onClick!();
+    expect(fixture.api).toHaveBeenCalledTimes(1);
+    expect(fixture.api.mock.calls[0]).toEqual(['/api/desk', { signal: expect.any(AbortSignal) }, { timeoutMs: 15_000 }]);
+    expect(button(render(saved), 'Open the sample desk first').props.disabled).toBe(true);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(text(render(saved))).toContain('local service did not respond within 15 seconds');
+    expect(fixture.api.mock.calls[0][1].signal.aborted).toBe(true);
+    expect(button(render(saved), 'Continue to Bud setup').props.disabled).toBe(false);
+    expect(button(render(saved), 'Open the sample desk first').props.disabled).toBe(false);
+    expect(fixture.onDone).not.toHaveBeenCalled();
+
+    button(render(saved), 'Open the sample desk first').props.onClick!();
+    await vi.waitFor(() => expect(fixture.onDone).toHaveBeenCalledTimes(1));
+    expect(fixture.api.mock.calls.map(([path]) => path)).toEqual(['/api/desk', '/api/desk', '/api/onboarding']);
+    expect(fixture.api.mock.calls[2][2]).toEqual({ timeoutMs: 15_000 });
+    expect(fixture.dispatch).toHaveBeenCalledExactlyOnceWith({ type: 'showDesk' });
+  });
+
+  it('retries a timed-out completion without writing the contact or stage twice', async () => {
+    vi.useFakeTimers(); fixture.config.profile.name = 'Fictional Draft';
+    let contact = '', stage: OnboardingState['stage'] = 'office-rules';
+    const completed = { ...saved, revision: 4, stage: 'complete' as const };
+    const lateResponse = deferred<OnboardingState>();
+    fixture.api.mockImplementation((path, init, opts) => {
+      expect(opts).toEqual({ timeoutMs: 15_000 });
+      if (path === '/api/desk') return Promise.resolve({ book: { office: { pmUser: contact } } });
+      if (path === '/api/desk/agency') {
+        contact = JSON.parse(init.body).office.pmUser;
+        return Promise.resolve({ book: { office: { pmUser: contact } } });
+      }
+      if (path === '/api/onboarding') {
+        expect(JSON.parse(init.body)).toEqual({ expectedScope: saved.scope, expectedRevision: saved.revision, stage: 'complete' });
+        if (stage === 'complete') return Promise.resolve(completed);
+        stage = 'complete';
+        return lateResponse.promise;
+      }
+      throw new Error('Unexpected fixture request');
+    });
+
+    button(render(saved), 'Open the sample desk first').props.onClick!();
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(fixture.onDone).not.toHaveBeenCalled();
+    expect(button(render(saved), 'Open the sample desk first').props.disabled).toBe(false);
+    button(render(saved), 'Open the sample desk first').props.onClick!();
+    await vi.waitFor(() => expect(fixture.onDone).toHaveBeenCalledTimes(1));
+    expect(fixture.api.mock.calls.map(([path]) => path)).toEqual(['/api/desk', '/api/desk/agency', '/api/onboarding', '/api/desk', '/api/onboarding']);
+    expect(contact).toBe('Fictional Draft');
+    expect(stage).toBe('complete');
+    lateResponse.resolve(completed);
+    await Promise.resolve();
+    expect(fixture.onDone).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('welcome backup restore', () => {
   it.each(['profile', 'office-rules'] as const)('offers restore at %s without requiring or saving a profile or book', async stage => {

@@ -18,6 +18,22 @@ import { api, useStore } from "@/state/store";
 import { MausAvatar } from "./Avatar";
 
 const SAMPLE_PROFILE_NAME = "Sample PM";
+const FINISH_TIMEOUT_MS = 15_000;
+
+function finishRequest(path: string, init?: RequestInit) {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout>;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error("RealBud's local service did not respond within 15 seconds."));
+      controller.abort();
+    }, FINISH_TIMEOUT_MS);
+  });
+  return Promise.race([
+    api(path, { ...init, signal: controller.signal }, { timeoutMs: FINISH_TIMEOUT_MS }),
+    deadline,
+  ]).finally(() => clearTimeout(timer));
+}
 
 type BusyState = "profile" | "finish" | "recovery" | "restore" | null;
 
@@ -102,16 +118,16 @@ export function Onboarding({ initialState, onDone }: { initialState: OnboardingS
     try {
       // Read afresh before writing: store hydration may still be pending, and
       // a restored book's existing contact must never be overwritten.
-      const currentDesk = await api('/api/desk');
+      const currentDesk = await finishRequest('/api/desk');
       if (typeof currentDesk?.book?.office?.pmUser !== 'string') throw new Error('Your saved office contact could not be checked. Try again before continuing.');
       if (!officeContactNamed(currentDesk)) {
-        const snapshot = await api("/api/desk/agency", {
+        const snapshot = await finishRequest("/api/desk/agency", {
           method: "PATCH",
           body: JSON.stringify({ office: { pmUser: name.trim() } }),
         });
         dispatch({ type: "deskSnapshot", snapshot });
       }
-      setSaved(await createFirstRunApi(api).save(saved, 'complete'));
+      setSaved(await createFirstRunApi(finishRequest).save(saved, 'complete'));
       track("onboarding_completed", { engines_available: -1, mic: "n/a" });
       enteredDesk = true;
       enterWorkspace(email.trim() ? "submitted" : "skipped", destination);

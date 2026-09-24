@@ -36,7 +36,7 @@
 // A managed OS unit that runs before any sign-in remains open, and would have to
 // solve key custody without an unlocked keychain first.
 import { spawn } from "node:child_process";
-import { readFileSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, unlinkSync, mkdirSync, openSync, closeSync, fchmodSync, fstatSync, renameSync, constants } from "node:fs";
 import { dirname, join } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:net";
@@ -69,6 +69,7 @@ export function servicePidPath(dataDirectory) {
  * @type {WeakMap<ServicePidFile, import("node:child_process").ChildProcess>}
  */
 const spawnedChildren = new WeakMap();
+const failedChildren = new WeakSet();
 
 /**
  * What became of a service this process spawned?
@@ -83,7 +84,7 @@ export function spawnedServiceState(handle) {
   if (!child) return "unknown";
   // A real ChildProcess reports null for both until it ends; ?? null keeps a
   // stub that omits them from reading as "exited".
-  const exited = (child.exitCode ?? null) !== null || (child.signalCode ?? null) !== null;
+  const exited = failedChildren.has(child) || (child.exitCode ?? null) !== null || (child.signalCode ?? null) !== null;
   return exited ? "exited" : "running";
 }
 
@@ -256,6 +257,8 @@ export async function availableServicePort(ports) {
  * @property {NodeJS.ProcessEnv} env Environment for the child, including the book key.
  * @property {string} dataDirectory
  * @property {string} instanceId
+ * @property {string} [logDirectory] Electron per-user logs directory.
+ * @property {(message: string) => void} [onDiagnostic] Lifecycle diagnostics; never receives child environment.
  * @property {typeof spawn} [spawnImpl]
  * @property {string} [executable]
  * @property {() => number} [now]
@@ -266,8 +269,9 @@ export async function availableServicePort(ports) {
  * Start the office service as a detached process.
  *
  * `detached` plus `unref` is what makes it survive this app quitting. stdio is
- * discarded because nothing would read it once the app is gone; the service
- * writes its own log.
+ * inherited as file descriptors when a log directory is provided: no parent
+ * pipe or logger process is required after the app quits. Logs rotate on start
+ * at 1 MiB, retaining one previous file; a running child can exceed that size.
  */
 /** @param {DetachedServiceOptions} options @returns {ServicePidFile} */
 export function startDetachedService(options) {
@@ -277,20 +281,62 @@ export function startDetachedService(options) {
   const now = options.now ?? Date.now;
   const controlToken = randomBytes(32).toString("hex");
 
+  const diagnostic = (message) => { try { options.onDiagnostic?.(message); } catch { /* diagnostics must not break startup */ } };
+  let logFd;
+  if (options.logDirectory) {
+    const logPath = join(options.logDirectory, "office-service", "stdout-stderr.log");
+    try {
+      mkdirSync(dirname(logPath), { recursive: true, mode: 0o700 });
+      // O_NOFOLLOW prevents following a substituted final symlink on platforms
+      // that support it. Windows permissions come from inherited directory ACLs;
+      // POSIX mode bits do not establish a private Windows ACL. A custom logs
+      // directory must therefore have appropriate access permissions already.
+      const flags = constants.O_CREAT | constants.O_APPEND | constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0);
+      logFd = openSync(logPath, flags, 0o600);
+      if (!fstatSync(logFd).isFile()) throw new Error("diagnostic destination is not a regular file");
+      // Windows chmod only controls the read-only attribute, not who can read
+      // the file. Do not let unsupported descriptor chmod discard diagnostics.
+      if (process.platform !== "win32") fchmodSync(logFd, 0o600);
+      if (fstatSync(logFd).size >= 1024 * 1024) {
+        closeSync(logFd);
+        logFd = undefined;
+        try { unlinkSync(`${logPath}.previous`); } catch (error) { if (error.code !== "ENOENT") throw error; }
+        renameSync(logPath, `${logPath}.previous`);
+        logFd = openSync(logPath, flags | constants.O_EXCL, 0o600);
+      }
+      writeFileSync(logFd, `\n[${new Date(now()).toISOString()}] office service starting port=${options.port}\n`);
+      diagnostic(`detached service stdout/stderr: ${logPath}`);
+    } catch (error) {
+      if (logFd !== undefined) closeSync(logFd);
+      logFd = undefined;
+      diagnostic(`detached service diagnostic log unavailable (${error.code ?? "I/O error"}); stdout/stderr will be discarded`);
+    }
+  }
   /** @type {import("node:child_process").ChildProcess} */
-  const child = spawnImpl(executable, [options.entry], {
-    env: {
-      ...options.env,
-      // Run Electron's bundled Node as a plain Node process.
-      ELECTRON_RUN_AS_NODE: "1",
-      OMB_PORT: String(options.port),
-      REALBUD_DATA_DIR: options.dataDirectory,
-      REALBUD_SERVICE_CONTROL_TOKEN: controlToken,
-    },
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true,
+  let child;
+  try {
+    child = spawnImpl(executable, [options.entry], {
+      env: {
+        ...options.env,
+        // Run Electron's bundled Node as a plain Node process.
+        ELECTRON_RUN_AS_NODE: "1",
+        OMB_PORT: String(options.port),
+        REALBUD_DATA_DIR: options.dataDirectory,
+        REALBUD_SERVICE_CONTROL_TOKEN: controlToken,
+      },
+      detached: true,
+      stdio: logFd === undefined ? "ignore" : ["ignore", logFd, logFd],
+      windowsHide: true,
+    });
+  } finally {
+    // The child owns inherited duplicates. Close our copy even if spawn throws.
+    if (logFd !== undefined) closeSync(logFd);
+  }
+  child.on?.("error", (error) => {
+    failedChildren.add(child);
+    diagnostic(`detached service process error (${error.code ?? "unknown"})`);
   });
+  child.on?.("exit", (code, signal) => diagnostic(`detached service exited code=${code} signal=${signal ?? "none"}`));
   // Detach from the app's event loop so quitting does not wait for it.
   child.unref();
 
