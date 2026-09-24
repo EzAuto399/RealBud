@@ -1,8 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { GatewayError, exact, object, requireThat, type GrantEnvelope, type PortalPrincipal } from './contracts.ts';
-import { ManagedGateway } from './gateway.ts';
-import { BillingService } from './billing.ts';
-import { invoiceHtml } from './invoice-html.ts';
+import { GatewayError, requireThat, type PortalPrincipal } from './contracts.ts';
 import type { ManagedConnectors } from './connectors.ts';
 import { provisioningError, type InstallationProvisioning } from './provisioning.ts';
 
@@ -23,21 +20,20 @@ function bearer(req:IncomingMessage):string {
 function reply(res:ServerResponse,status:number,data:unknown) {
   res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}); res.end(JSON.stringify(data));
 }
-async function streamWrite(res:ServerResponse,data:string,signal:AbortSignal) {
-  signal.throwIfAborted(); if(res.write(data)) return;
-  await new Promise<void>((resolve,reject)=>{
-    const clean=()=>{res.off('drain',drain);res.off('close',close);signal.removeEventListener('abort',close);};
-    const drain=()=>{clean();resolve();}, close=()=>{clean();reject(new GatewayError('client_disconnected',499));};
-    res.once('drain',drain);res.once('close',close);signal.addEventListener('abort',close,{once:true});
-    if(signal.aborted) close();
-  });
-}
 /** Dedicated service, never mount on the desktop's loopback/per-boot-token API.
  * TLS termination, request concurrency/rate limits and external identity admission are
- * explicit deployment gates. No cookie auth or permissive CORS is installed. */
-export function createGatewayServer(options:{gateway:ManagedGateway;billing:BillingService;portal:PortalIdentity;allowedOrigins:ReadonlySet<string>;connectors?:ManagedConnectors;provisioning?:InstallationProvisioning;
+ * explicit deployment gates. No cookie auth or permissive CORS is installed.
+ *
+ * Routes: GET /health, GET /ready, /v1/connectors/*, and POST
+ * /v1/portal/installations/{provision,revoke}. Nothing else. AI rates, caps,
+ * usage and invoices are Modelvia's; this service has no billing route. */
+export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigins:ReadonlySet<string>;connectors?:ManagedConnectors;provisioning?:InstallationProvisioning;
   /** Why provisioning is not composed, as a code naming the missing variable — never its value. */
-  provisioningUnavailable?:string;health?:{squareConfigured?:boolean;openaiCostsConfigured?:boolean;paymentMode?:'local'|'sandbox'|'live'}}) {
+  provisioningUnavailable?:string;
+  /** Whether the Modelvia operator variables are all present. Configuration state only;
+   * `/ready` never calls Modelvia. Defaults to `configured` exactly when provisioning is composed. */
+  modelviaOperator?:'configured'|'missing'}) {
+  const modelviaOperator=options.modelviaOperator??(options.provisioning?'configured':'missing');
   const server=createServer(async(req,res)=>{
     const abort=new AbortController(); res.once('close',()=>{if(!res.writableEnded) abort.abort();});
     res.setHeader('Cache-Control','no-store'); res.setHeader('X-Content-Type-Options','nosniff');
@@ -46,14 +42,14 @@ export function createGatewayServer(options:{gateway:ManagedGateway;billing:Bill
       const origin=req.headers.origin; requireThat(!origin || options.allowedOrigins.has(origin),'origin_denied',403);
       // Browsers use a same-origin portal BFF; explicit bearer auth blocks ambient-cookie CSRF.
       const url=new URL(req.url??'/','http://gateway.invalid');
-      if(req.method==='GET' && url.pathname==='/health') { reply(res,200,{service:'realbud-managed-ai',mode:'local',productionEnabled:false,squareConfigured:false,openaiCostsConfigured:false,...options.health}); return; }
+      if(req.method==='GET' && url.pathname==='/health') { reply(res,200,{service:'realbud-managed-ai'}); return; }
       // Readiness, for the platform health check. 200 only when installation
       // provisioning is actually composed; otherwise 503 with the code naming the
       // variable to set — never its value. Unauthenticated on purpose: it reveals
       // configuration state, never configuration.
       if(req.method==='GET' && url.pathname==='/ready') {
-        if(options.provisioning) { reply(res,200,{ready:true,provisioning:'composed'}); return; }
-        reply(res,503,{ready:false,error:options.provisioningUnavailable||'provisioning_unavailable'}); return;
+        if(options.provisioning) { reply(res,200,{ready:true,provisioning:'composed',modelviaOperator}); return; }
+        reply(res,503,{ready:false,error:options.provisioningUnavailable||'provisioning_unavailable',modelviaOperator}); return;
       }
       if(url.pathname.startsWith('/v1/connectors/')) {
         requireThat(options.connectors, 'connectors_unavailable', 503);
@@ -67,49 +63,15 @@ export function createGatewayServer(options:{gateway:ManagedGateway;billing:Bill
         if(result.body===undefined) { res.writeHead(result.status);res.end(); } else reply(res,result.status,result.body);
         return;
       }
-      if(req.method==='POST' && url.pathname==='/v1/model/stream') {
-        const token=bearer(req); let envelope:unknown;
-        try { envelope=JSON.parse(Buffer.from(token,'base64url').toString('utf8')); } catch { throw new GatewayError('invalid_grant',401); }
-        const request=json(await body(req,1_000_000));
-        await options.gateway.execute(envelope as GrantEnvelope,request as never,async event=>{
-          if(!res.headersSent) res.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-store','X-Accel-Buffering':'no'});
-          await streamWrite(res,`event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`,abort.signal);
-        },abort.signal); res.end(); return;
-      }
-      if(req.method==='POST' && url.pathname==='/v1/webhooks/payment') {
-        const signature=req.headers['x-realbud-payment-signature']; requireThat(typeof signature==='string','invalid_webhook_signature',401);
-        reply(res,200,await options.billing.webhook(await body(req,256_000),signature)); return;
-      }
-      if(req.method==='POST' && url.pathname==='/v1/webhooks/refund') {
-        const signature=req.headers['x-realbud-payment-signature']; requireThat(typeof signature==='string','invalid_webhook_signature',401);
-        reply(res,200,await options.billing.refundWebhook(await body(req,256_000),signature)); return;
-      }
       requireThat(url.pathname.startsWith('/v1/portal/'),'not_found',404);
       const actor=await options.portal.authenticate(bearer(req));
       requireThat(actor && ['billing_owner','billing_reader'].includes(actor.role),'forbidden',403);
-      const ledger=options.gateway.ledger; ledger.tenant(actor.companyId);
-      if(req.method==='GET' && url.pathname==='/v1/portal/usage') { reply(res,200,ledger.portalUsage(actor)); return; }
-      if(req.method==='GET' && url.pathname==='/v1/portal/rates') { reply(res,200,{rates:ledger.cards()}); return; }
-      if(req.method==='POST' && url.pathname==='/v1/portal/rates/accept') {
-        const value=json(await body(req,4096)); object(value); exact(value,['version','digest']);
-        requireThat(typeof value.version==='string' && typeof value.digest==='string','invalid_acceptance'); reply(res,200,ledger.acceptCard(actor,value.version,value.digest)); return;
-      }
-      if(req.method==='POST' && url.pathname==='/v1/portal/limits') {
-        const value=json(await body(req,4096)); object(value); exact(value,['monthlyCapNanoAud','requestCapNanoAud','maxConcurrent']);
-        ledger.setCaps(actor,value as never);
-        // The ledger change stands whatever happens next. Each provisioned
-        // installation's Modelvia project is then updated to match, and one the
-        // push did not reach is reported as out of sync, never as applied.
-        let modelviaCaps:unknown;
-        if(options.provisioning) {
-          try { modelviaCaps=await options.provisioning.syncCaps(actor); }
-          catch(error) { modelviaCaps={state:'unknown',error:provisioningError(error).code}; }
-        }
-        reply(res,200,{...ledger.portalUsage(actor),...(modelviaCaps?{modelviaCaps}:{})}); return;
-      }
-      // Vendor-side installation provisioning and revocation. Same portal bearer as
-      // every other /v1/portal route; the authenticated principal is the authority,
-      // so a body's companyId is only a confirmation, never an assertion.
+      // Vendor-side installation provisioning and revocation. The authenticated
+      // principal is the authority, so a body's companyId is only a confirmation,
+      // never an assertion. Service entitlement is checked where it matters:
+      // `provision` refuses a company without an active entitlement before any
+      // external effect; `revoke` deliberately does not, so an expired or
+      // suspended office can still be shut off.
       const installation=/^\/v1\/portal\/installations\/(provision|revoke)$/.exec(url.pathname);
       if(req.method==='POST' && installation) {
         requireThat(options.provisioning,options.provisioningUnavailable||'provisioning_unavailable',503);
@@ -120,17 +82,6 @@ export function createGatewayServer(options:{gateway:ManagedGateway;billing:Bill
             : await options.provisioning!.revoke(actor,value));
         } catch(error) { throw provisioningError(error); }
         return;
-      }
-      if(req.method==='GET' && url.pathname==='/v1/portal/invoices') { reply(res,200,{invoices:options.billing.portalInvoices(actor)}); return; }
-      const match=/^\/v1\/portal\/invoices\/([A-Za-z0-9-]+)(?:\/(checkout|receipt|document))?$/.exec(url.pathname);
-      if(match) {
-        const invoice=options.billing.invoice(actor,match[1]);
-        if(req.method==='POST' && match[2]==='checkout') { reply(res,200,await options.billing.checkout(actor,invoice.id)); return; }
-        if(req.method==='GET' && match[2]==='receipt') { reply(res,200,options.billing.receipt(actor,invoice.id)); return; }
-        if(req.method==='GET' && match[2]==='document') {
-          res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"}); res.end(invoiceHtml(invoice)); return;
-        }
-        if(req.method==='GET' && !match[2]) { reply(res,200,invoice); return; }
       }
       throw new GatewayError('not_found',404);
     } catch(error) {

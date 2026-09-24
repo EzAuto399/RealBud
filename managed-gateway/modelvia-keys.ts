@@ -31,6 +31,10 @@
  *     → { key, record, replaced }  revokes `id` and mints a replacement with the
  *     same project, environment and label; `key` is returned once.
  *
+ *   GET  {MODELVIA}/v1/operator/customers              → { accounts: CustomerAccount[] }
+ *     Every customer (`accounts.ts` CustomerAccount: id, clientId, active,
+ *     monthlyCapNanoAud, maxConcurrent, …); there is no read by id either.
+ *
  * Caps live on the PROJECT, not the key (`requestCapNanoAud`,
  * `monthlyCapNanoAud`, `maxConcurrent`). That is why one project is created per
  * installation, under the office's customer account: it is the only place this
@@ -93,6 +97,9 @@ export interface ModelviaProjectInput {
 }
 export interface ModelviaMintedKey { key: string; keyId: string; baseUrl: string }
 export interface ModelviaCaps { monthlyCapNanoAud: string; requestCapNanoAud: string; maxConcurrent: number }
+/** The office's customer account at Modelvia, read back only for what provisioning
+ * needs: whether it may serve, and the caps an installation project copies. */
+export interface ModelviaCustomer { active: boolean; monthlyCapNanoAud: string; maxConcurrent: number }
 /** A project as Modelvia stores it, read back for adoption and cap updates. */
 export interface ModelviaProjectRecord extends ModelviaCaps {
   projectId: string; clientId: string; customerId: string; environments: string[]; active: boolean; version: number;
@@ -106,6 +113,9 @@ export interface ModelviaClient {
   /** Creates the installation's project under the customer, with the ledger cap.
    * `created` is false when Modelvia already holds that project id. */
   createProject(input: ModelviaProjectInput): Promise<{ projectId: string; created: boolean }>;
+  /** The customer under this platform client, or null when Modelvia holds none
+   * with that id under it. A customer of another client is never returned. */
+  findCustomer(customerId: string): Promise<ModelviaCustomer | null>;
   /** The stored project, or undefined when Modelvia holds no project with that id. */
   findProject(projectId: string): Promise<ModelviaProjectRecord | undefined>;
   mint(input: { projectId: string; label: string }): Promise<ModelviaMintedKey>;
@@ -265,6 +275,20 @@ export function modelviaKeyClient(options: {
       const issued = issuedKey(body, input.projectId);
       // OpenAI-compatible serving base; Modelvia serves /v1/models and /v1/chat/completions.
       return { key: issued.key, keyId: issued.keyId, baseUrl: `${base}/v1` };
+    },
+    async findCustomer(customerId) {
+      requireThat(PATH_ID.test(customerId), 'invalid_modelvia_account');
+      const body = await read('/v1/operator/customers');
+      requireThat(record(body) && Array.isArray(body.accounts), 'modelvia_unreadable', 502);
+      const found = (body.accounts as unknown[]).filter(entry => record(entry) && entry.id === customerId);
+      requireThat(found.length <= 1, 'modelvia_unreadable', 502);
+      if (!found.length) return null;
+      const c = found[0] as Record<string, unknown>;
+      requireThat(typeof c.clientId === 'string' && typeof c.active === 'boolean' && typeof c.monthlyCapNanoAud === 'string' && NANO.test(c.monthlyCapNanoAud)
+        && typeof c.maxConcurrent === 'number' && Number.isSafeInteger(c.maxConcurrent) && c.maxConcurrent >= 0 && c.maxConcurrent <= 100, 'modelvia_unreadable', 502);
+      // A customer under another platform client is not this service's to provision into.
+      if (c.clientId !== options.clientId) return null;
+      return { active: c.active as boolean, monthlyCapNanoAud: c.monthlyCapNanoAud as string, maxConcurrent: c.maxConcurrent as number };
     },
     async findProject(projectId) {
       requireThat(PATH_ID.test(projectId), 'invalid_modelvia_account');

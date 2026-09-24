@@ -6,9 +6,9 @@ import { join } from 'node:path';
 import { fixture } from './testing.ts';
 import { createGatewayServer } from './http.ts';
 import { validateConnectorDevices } from './connectors.ts';
-import { composeProvisioning, fileSecretStore, InstallationProvisioning, PENDING_RESUME_AFTER_MS, PROVISIONING_ENV, type ProvisioningDescriptor } from './provisioning.ts';
+import { composeProvisioning, DEFAULT_REQUEST_CAP_NANO_AUD, fileSecretStore, InstallationProvisioning, PENDING_RESUME_AFTER_MS, projectCaps, PROVISIONING_ENV, type ProvisioningDescriptor } from './provisioning.ts';
 import type { ComposioOrgClient, HttpTransport } from './composio-org.ts';
-import type { ModelviaCaps, ModelviaClient, ModelviaProjectInput } from './modelvia-keys.ts';
+import type { ModelviaCaps, ModelviaClient, ModelviaCustomer, ModelviaProjectInput } from './modelvia-keys.ts';
 import { GatewayError } from './contracts.ts';
 
 const ORG_KEY = 'fictional-org-key-never-in-a-response';
@@ -18,6 +18,12 @@ const CUSTOMER = 'cus-fictional-office';
 /** Key ids the fake hands out in order; the first matches MODEL_KEY. */
 const KEY_IDS = ['0123456789abcdef', 'fedcba9876543210', '00000000000000a3', '00000000000000b4'];
 const synthetic = (keyId: string) => `rbk_${keyId}_${(keyId === KEY_IDS[0] ? 'A' : 'B').repeat(43)}`;
+/** The office's Modelvia customer as the fake holds it. Deliberately different
+ * from the fixture tenant's stored ledger caps, which must drive nothing. */
+const CUSTOMER_CAPS = { monthlyCapNanoAud: '70000000000', maxConcurrent: 3 };
+/** The request cap is the default A$1, below the customer's monthly cap. */
+const PROJECT_CAPS = { monthlyCapNanoAud: '70000000000', requestCapNanoAud: '1000000000', maxConcurrent: 3 };
+const SPEND_LABEL = 'monthly-cap 70000000000 nanoAUD, request-cap 1000000000 nanoAUD, max-concurrent 3';
 
 function harness() {
   const f = fixture();
@@ -30,7 +36,8 @@ function harness() {
   const modelvia = { projects: [] as unknown[], minted: [] as unknown[], revoked: [] as string[], rotated: [] as string[], capUpdates: [] as unknown[],
     held: new Map<string, ModelviaProjectInput & { active: boolean; environments: string[] }>(),
     keys: [] as { keyId: string; projectId: string; label: string; revokedAt?: number }[],
-    lose: undefined as undefined | 'createProject' | 'mint' | 'rotate', failCaps: false };
+    lose: undefined as undefined | 'createProject' | 'mint' | 'rotate',
+    customer: { active: true, ...CUSTOMER_CAPS } as ModelviaCustomer | null, customerReads: 0 };
   const lost = (effect: 'createProject' | 'mint' | 'rotate') => { if (modelvia.lose === effect) { modelvia.lose = undefined; throw new GatewayError('modelvia_unreachable', 502); } };
   const issue = (projectId: string, label: string) => {
     const keyId = KEY_IDS[modelvia.keys.length]!; modelvia.keys.push({ keyId, projectId, label });
@@ -43,6 +50,7 @@ function harness() {
   };
   const modelviaClient: ModelviaClient = {
     environment: 'production',
+    async findCustomer(customerId) { modelvia.customerReads++; return customerId === CUSTOMER && modelvia.customer ? { ...modelvia.customer } : null; },
     async createProject(input) {
       modelvia.projects.push(input);
       if (modelvia.held.has(input.projectId)) return { projectId: input.projectId, created: false };
@@ -70,7 +78,6 @@ function harness() {
     async revoke(keyId) { modelvia.revoked.push(keyId); },
     async updateProjectCaps(projectId, caps: ModelviaCaps) {
       modelvia.capUpdates.push({ projectId, ...caps });
-      if (modelvia.failCaps) throw new GatewayError('modelvia_unreachable', 502);
       const held = modelvia.held.get(projectId)!;
       const updated = held.monthlyCapNanoAud !== caps.monthlyCapNanoAud || held.requestCapNanoAud !== caps.requestCapNanoAud || held.maxConcurrent !== caps.maxConcurrent;
       Object.assign(held, caps);
@@ -104,13 +111,12 @@ test('provision returns secret material once and the same descriptor on repeat w
     assert.equal(provisioning.model.key, MODEL_KEY);
     assert.equal(provisioning.model.keyId, '0123456789abcdef');
     // One Modelvia project per installation, under the company's customer, capped
-    // from this gateway's ledger tenant. Request cap is clamped to the monthly cap.
+    // from that customer: its monthly cap and concurrency, with the default request cap.
     assert.equal(provisioning.model.projectId, 'rb-install-one');
-    assert.deepEqual(h.modelvia.projects, [{ projectId: 'rb-install-one', name: 'RealBud installation install-one', customerId: CUSTOMER,
-      monthlyCapNanoAud: h.f.tenant.monthlyCapNanoAud, requestCapNanoAud: h.f.tenant.requestCapNanoAud, maxConcurrent: h.f.tenant.maxConcurrent }]);
+    assert.deepEqual(h.modelvia.projects, [{ projectId: 'rb-install-one', name: 'RealBud installation install-one', customerId: CUSTOMER, ...PROJECT_CAPS }]);
     assert.deepEqual(h.modelvia.minted, [{ projectId: 'rb-install-one', label: `${h.f.tenant.companyId}:install-one` }]);
-    assert.equal(provisioning.model.spendCapLabel,
-      `monthly-cap ${h.f.tenant.monthlyCapNanoAud} nanoAUD, request-cap ${h.f.tenant.requestCapNanoAud} nanoAUD, max-concurrent ${h.f.tenant.maxConcurrent}`);
+    assert.equal(provisioning.model.spendCapLabel, SPEND_LABEL);
+    assert.equal(h.modelvia.customerReads, 1);
 
     const second = await h.make().provision(h.f.owner, h.request);
     assert.equal(second.provisioning.connector.credential, undefined);
@@ -120,6 +126,8 @@ test('provision returns secret material once and the same descriptor on repeat w
     assert.equal(second.provisioning.connector.projectId, 'pr_1');
     assert.equal(second.provisioning.model.projectId, 'rb-install-one');
     assert.equal(h.modelvia.projects.length, 1);
+    // A delivered installation's repeat asks Modelvia nothing, not even the customer.
+    assert.equal(h.modelvia.customerReads, 1);
     // No second project, no second device, no second minted key.
     assert.deepEqual(h.org.created, [`realbud-${h.f.tenant.companyId}`]);
     assert.equal(h.modelvia.minted.length, 1);
@@ -175,7 +183,7 @@ test('authority is the portal principal: role, company scope and service state g
     await assert.rejects(() => h.make().provision(h.f.owner, { ...h.request, installationId: 'install/one' }), /installation_id_not_modelvia_safe/);
     h.f.ledger.setService(h.f.tenant.companyId, false, h.f.tenant.serviceExpiresAt, 'fixture-suspension');
     await assert.rejects(() => h.make().provision(h.f.owner, h.request), /service_unavailable/);
-    assert.equal(h.org.orgKeyReads, 0); assert.equal(h.modelvia.minted.length, 0);
+    assert.equal(h.org.orgKeyReads, 0); assert.equal(h.modelvia.minted.length, 0); assert.equal(h.modelvia.customerReads, 0);
     assert.equal(existsSync(h.registry), false);
   } finally { h.close(); }
 });
@@ -242,10 +250,9 @@ test('a lost project reply is resumed into that project and mints when it holds 
     assert.equal(resumed.model.key, MODEL_KEY);
     assert.deepEqual(h.modelvia.minted, [{ projectId: 'rb-install-one', label: `${h.f.tenant.companyId}:install-one` }]);
     assert.deepEqual(h.modelvia.rotated, []);
-    // Adopted, not recreated; its caps are this tenant's.
+    // Adopted, not recreated; its caps are the customer's.
     assert.equal(h.modelvia.held.size, 1);
-    assert.deepEqual(h.modelvia.capUpdates, [{ projectId: 'rb-install-one', monthlyCapNanoAud: h.f.tenant.monthlyCapNanoAud,
-      requestCapNanoAud: h.f.tenant.requestCapNanoAud, maxConcurrent: h.f.tenant.maxConcurrent }]);
+    assert.deepEqual(h.modelvia.capUpdates, [{ projectId: 'rb-install-one', ...PROJECT_CAPS }]);
   } finally { h.close(); }
 });
 
@@ -341,43 +348,162 @@ test('of two concurrent resumes exactly one proceeds', async () => {
   } finally { h.close(); }
 });
 
-test('a cap change is pushed to every provisioned project, and a failed push is recorded and reported', async () => {
-  const h = harness(); try {
-    const provisioning = h.make();
-    assert.deepEqual(await provisioning.syncCaps(h.f.owner), { state: 'none', projects: [] });
-    await provisioning.provision(h.f.owner, h.request);
-    const caps = { monthlyCapNanoAud: '50000000000', requestCapNanoAud: '500000000', maxConcurrent: 2 };
-    h.f.ledger.setCaps(h.f.owner, caps);
-    assert.deepEqual(await provisioning.syncCaps(h.f.owner), { state: 'synced', projects: [{ installationId: 'install-one', projectId: 'rb-install-one', state: 'synced' }] });
-    assert.deepEqual(h.modelvia.capUpdates.at(-1), { projectId: 'rb-install-one', ...caps });
-    assert.equal(h.modelvia.held.get('rb-install-one')!.monthlyCapNanoAud, '50000000000');
+test('a Modelvia customer that is missing, inactive, another client\'s or zero-capped is refused before any effect', async () => {
+  for (const customer of [null, { active: false, ...CUSTOMER_CAPS }, { active: true, monthlyCapNanoAud: '0', maxConcurrent: 3 }, { active: true, monthlyCapNanoAud: '70000000000', maxConcurrent: 0 }]) {
+    const h = harness(); try {
+      // `null` is also what the client returns for a customer under another platform client.
+      h.modelvia.customer = customer;
+      const failure = await h.make().provision(h.f.owner, h.request).then(() => undefined, error => error as GatewayError);
+      assert.ok(failure instanceof GatewayError, JSON.stringify(customer));
+      assert.equal(failure.code, 'modelvia_customer_not_ready'); assert.equal(failure.status, 409);
+      // Nothing journalled, no Composio call, no device, no Modelvia effect.
+      assert.equal(h.f.ledger.db.get('SELECT tenant FROM installation_provisioning'), undefined);
+      assert.equal(h.org.orgKeyReads, 0); assert.equal(existsSync(h.registry), false);
+      assert.deepEqual(h.modelvia.projects, []); assert.deepEqual(h.modelvia.minted, []);
+      // Once Modelvia's operator fixes the customer, the same request succeeds.
+      h.modelvia.customer = { active: true, ...CUSTOMER_CAPS };
+      assert.equal((await h.make().provision(h.f.owner, h.request)).provisioning.model.spendCapLabel, SPEND_LABEL);
+    } finally { h.close(); }
+  }
+});
 
-    h.modelvia.failCaps = true;
-    h.f.ledger.setCaps(h.f.owner, { ...caps, monthlyCapNanoAud: '40000000000' });
-    const failed = await provisioning.syncCaps(h.f.owner);
-    assert.deepEqual(failed, { state: 'out_of_sync', projects: [{ installationId: 'install-one', projectId: 'rb-install-one', state: 'out_of_sync', error: 'modelvia_unreachable' }] });
-    // The local change stands; the record says the project did not get it.
-    assert.equal(h.f.ledger.tenant(h.f.tenant.companyId).monthlyCapNanoAud, '40000000000');
+test('project caps come from the Modelvia customer, never from the ledger tenant', async () => {
+  const h = harness(); try {
+    // Stored ledger caps are legacy and must not reach Modelvia.
+    h.f.ledger.setCaps(h.f.owner, { monthlyCapNanoAud: '1000000000', requestCapNanoAud: '1000000000', maxConcurrent: 2 });
+    await h.make().provision(h.f.owner, h.request);
+    const project = h.modelvia.projects[0] as ModelviaCaps;
+    assert.deepEqual({ monthlyCapNanoAud: project.monthlyCapNanoAud, requestCapNanoAud: project.requestCapNanoAud, maxConcurrent: project.maxConcurrent }, PROJECT_CAPS);
+    assert.ok(BigInt(project.requestCapNanoAud) <= BigInt(project.monthlyCapNanoAud));
+    // A ready record no longer carries cap sync state.
     const stored = JSON.parse(h.f.ledger.db.get<{ body: string }>('SELECT body FROM installation_provisioning')!.body);
-    assert.equal(stored.modelviaCaps.state, 'out_of_sync');
-    assert.equal(stored.modelviaCaps.monthlyCapNanoAud, '40000000000');
-    const kinds = h.f.ledger.db.all<{ kind: string }>('SELECT kind FROM events').map(row => row.kind);
-    assert.ok(kinds.includes('modelvia_caps_synced') && kinds.includes('modelvia_caps_out_of_sync'));
-    await assert.rejects(() => provisioning.syncCaps({ ...h.f.owner, role: 'billing_reader' }), /forbidden/);
+    assert.equal('modelviaCaps' in stored, false);
   } finally { h.close(); }
 });
 
-test('the project request cap is clamped to the monthly cap before it reaches Modelvia', async () => {
+test('the request cap defaults to A$1, takes an override, and never exceeds the monthly cap', async () => {
+  const customer = { active: true, monthlyCapNanoAud: '70000000000', maxConcurrent: 3 };
+  assert.equal(DEFAULT_REQUEST_CAP_NANO_AUD, '1000000000');
+  assert.deepEqual(projectCaps(customer), { monthlyCapNanoAud: '70000000000', requestCapNanoAud: '1000000000', maxConcurrent: 3 });
+  assert.equal(projectCaps(customer, '5000000000').requestCapNanoAud, '5000000000');
+  // Clamped to the monthly cap, which Modelvia requires.
+  assert.equal(projectCaps({ ...customer, monthlyCapNanoAud: '500000000' }).requestCapNanoAud, '500000000');
+  assert.equal(projectCaps(customer, '90000000000').requestCapNanoAud, '70000000000');
+
   const h = harness(); try {
-    // A tenant whose per-request cap equals its monthly cap must not propose a
-    // request cap above it: Modelvia rejects that with invalid_caps.
-    h.f.ledger.setCaps(h.f.owner, { monthlyCapNanoAud: '1000000000', requestCapNanoAud: '1000000000', maxConcurrent: 2 });
+    assert.throws(() => h.make({ requestCapNanoAud: '0' }), /modelvia_request_cap_invalid/);
+    const env: NodeJS.ProcessEnv = {
+      REALBUD_ENABLE_PROVIDER: '1', REALBUD_GATEWAY_SECRETS_DIR: h.secretsDir, REALBUD_GATEWAY_CONNECTOR_REGISTRY: h.registry,
+      REALBUD_GATEWAY_PUBLIC_ORIGIN: 'https://managed.example.invalid', REALBUD_COMPOSIO_ORG_KEY: 'fictional-org-key', REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL: 'ac-fictional-readonly',
+      REALBUD_MODELVIA_BASE_URL: 'https://api.modelvia.dev', REALBUD_MODELVIA_OPERATOR_SECRET: 'fictional-operator-secret-of-32-chars',
+      REALBUD_MODELVIA_OPERATOR_SUBJECT: 'realbud-provisioning', REALBUD_MODELVIA_CLIENT_ID: 'realbud', REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD: '2000000000',
+    };
+    const never: HttpTransport = async () => { throw new Error('the resolver must not call out'); };
+    for (const bad of ['0', '-1', '1.5', '1e9', 'one', '0100']) {
+      assert.deepEqual(composeProvisioning({ env: { ...env, REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD: bad }, ledger: h.f.ledger, fetch: never }),
+        { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD' }, bad);
+    }
+    const composed = composeProvisioning({ env, ledger: h.f.ledger, fetch: never, org: h.orgClient, modelvia: h.modelviaClient }) as { provisioning: InstallationProvisioning };
+    const provisioned = (await composed.provisioning.provision(h.f.owner, h.request)).provisioning;
+    assert.equal((h.modelvia.projects[0] as ModelviaCaps).requestCapNanoAud, '2000000000');
+    assert.match(provisioned.model.spendCapLabel, /request-cap 2000000000 nanoAUD/);
+  } finally { h.close(); }
+});
+
+/** Three delivered installations (one then revoked) and one still pending. */
+async function capsHarness() {
+  const h = harness();
+  for (const installationId of ['install-one', 'install-two', 'install-three']) await h.make().provision(h.f.owner, { ...h.request, installationId });
+  await h.make().revoke(h.f.owner, { companyId: h.f.tenant.companyId, installationId: 'install-three' });
+  h.f.ledger.db.run('INSERT INTO installation_provisioning(tenant,installation,state,body,created) VALUES(?,?,?,?,?)', h.f.tenant.companyId, 'install-pending', 'pending',
+    JSON.stringify({ state: 'pending', profile: 'property', apps: ['gmail'], customerId: CUSTOMER, modelProjectId: 'rb-install-pending', attempt: 'a', attemptAt: h.f.now() }), h.f.now());
+  h.modelvia.capUpdates.length = 0; h.modelvia.customerReads = 0;
+  // The office's Modelvia operator raises the customer's cap and concurrency.
+  h.modelvia.customer = { active: true, monthlyCapNanoAud: '90000000000', maxConcurrent: 5 };
+  return h;
+}
+const RAISED = { monthlyCapNanoAud: '90000000000', requestCapNanoAud: '1000000000', maxConcurrent: 5 };
+
+test('applyCustomerCaps re-applies the customer caps to every ready project and skips pending and revoked ones', async () => {
+  const h = await capsHarness(); try {
+    const results = await h.make().applyCustomerCaps(h.f.tenant.companyId);
+    assert.deepEqual(results, [{ installationId: 'install-one', state: 'applied' }, { installationId: 'install-two', state: 'applied' }]);
+    assert.deepEqual(h.modelvia.capUpdates, [{ projectId: 'rb-install-one', ...RAISED }, { projectId: 'rb-install-two', ...RAISED }]);
+    // One customer read for the one distinct customer.
+    assert.equal(h.modelvia.customerReads, 1);
+    // A repeat provision reports the caps now in force, still without secrets.
+    const repeat = (await h.make().provision(h.f.owner, h.request)).provisioning;
+    assert.equal(repeat.model.spendCapLabel, 'monthly-cap 90000000000 nanoAUD, request-cap 1000000000 nanoAUD, max-concurrent 5');
+    assert.equal(repeat.model.key, undefined);
+    // Audit lines carry installation ids and states, never the customer id.
+    const audit = h.f.ledger.db.all<{ kind: string; body: string }>("SELECT kind, body FROM events WHERE kind LIKE 'installation_caps_%'");
+    assert.deepEqual(audit.map(row => row.kind), ['installation_caps_apply_requested', 'installation_caps_applied']);
+    assert.ok(!audit.some(row => row.body.includes(CUSTOMER)));
+    h.f.ledger.db.verify();
+  } finally { h.close(); }
+});
+
+test('applyCustomerCaps reports a partial failure per installation and still applies the rest', async () => {
+  const h = await capsHarness(); try {
+    const modelvia: ModelviaClient = { ...h.modelviaClient, async updateProjectCaps(projectId, caps) {
+      if (projectId === 'rb-install-one') throw new GatewayError('modelvia_unreachable', 502);
+      return h.modelviaClient.updateProjectCaps(projectId, caps);
+    } };
+    const results = await h.make({ modelvia }).applyCustomerCaps(h.f.tenant.companyId);
+    assert.deepEqual(results, [{ installationId: 'install-one', state: 'failed', error: 'modelvia_unreachable' }, { installationId: 'install-two', state: 'applied' }]);
+    assert.deepEqual(h.modelvia.capUpdates, [{ projectId: 'rb-install-two', ...RAISED }]);
+    // The failed installation keeps its old label; nothing claims caps that were not applied.
+    assert.equal((await h.make().provision(h.f.owner, h.request)).provisioning.model.spendCapLabel, SPEND_LABEL);
+    // An unexpected error becomes a fixed code, never its message.
+    const broken: ModelviaClient = { ...h.modelviaClient, async updateProjectCaps() { throw new Error(`upstream said ${CUSTOMER}`); } };
+    const again = await h.make({ modelvia: broken }).applyCustomerCaps(h.f.tenant.companyId);
+    assert.deepEqual(again.map(entry => entry.error), ['modelvia_caps_failed', 'modelvia_caps_failed']);
+  } finally { h.close(); }
+});
+
+test('applyCustomerCaps reports a customer that is not ready as failed without updating any project', async () => {
+  for (const customer of [null, { active: false, monthlyCapNanoAud: '90000000000', maxConcurrent: 5 }, { active: true, monthlyCapNanoAud: '0', maxConcurrent: 5 }]) {
+    const h = await capsHarness(); try {
+      h.modelvia.customer = customer;
+      const results = await h.make().applyCustomerCaps(h.f.tenant.companyId);
+      assert.deepEqual(results, [{ installationId: 'install-one', state: 'failed', error: 'modelvia_customer_not_ready' }, { installationId: 'install-two', state: 'failed', error: 'modelvia_customer_not_ready' }]);
+      assert.deepEqual(h.modelvia.capUpdates, []);
+      assert.equal(h.modelvia.customerReads, 1);
+    } finally { h.close(); }
+  }
+});
+
+test('applyCustomerCaps runs one refresh per company at a time', async () => {
+  const h = await capsHarness(); try {
+    const order: string[] = []; let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let first = true;
+    const modelvia: ModelviaClient = { ...h.modelviaClient, async updateProjectCaps(projectId, caps) {
+      order.push(`start ${projectId}`);
+      if (first) { first = false; await gate; }
+      order.push(`end ${projectId}`);
+      return h.modelviaClient.updateProjectCaps(projectId, caps);
+    } };
+    const service = h.make({ modelvia });
+    const one = service.applyCustomerCaps(h.f.tenant.companyId), two = service.applyCustomerCaps(h.f.tenant.companyId);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(order, ['start rb-install-one']);
+    release();
+    await Promise.all([one, two]);
+    assert.deepEqual(order, ['start rb-install-one', 'end rb-install-one', 'start rb-install-two', 'end rb-install-two',
+      'start rb-install-one', 'end rb-install-one', 'start rb-install-two', 'end rb-install-two']);
+  } finally { h.close(); }
+});
+
+test('a ready record written with the old cap sync state still repeats and revokes', async () => {
+  const h = harness(); try {
     await h.make().provision(h.f.owner, h.request);
-    const project = h.modelvia.projects[0] as { monthlyCapNanoAud: string; requestCapNanoAud: string; maxConcurrent: number };
-    assert.equal(project.monthlyCapNanoAud, '1000000000');
-    assert.equal(project.requestCapNanoAud, '1000000000');
-    assert.equal(project.maxConcurrent, 2);
-    assert.ok(BigInt(project.requestCapNanoAud) <= BigInt(project.monthlyCapNanoAud));
+    const row = h.f.ledger.db.get<{ body: string }>('SELECT body FROM installation_provisioning')!;
+    const legacy = { ...JSON.parse(row.body), modelviaCaps: { state: 'out_of_sync', at: 1, error: 'modelvia_unreachable', monthlyCapNanoAud: '1', requestCapNanoAud: '1', maxConcurrent: 1 } };
+    h.f.ledger.db.run('UPDATE installation_provisioning SET body=?', JSON.stringify(legacy));
+    const repeat = (await h.make().provision(h.f.owner, h.request)).provisioning;
+    assert.equal(repeat.model.keyId, '0123456789abcdef'); assert.equal(repeat.model.key, undefined);
+    assert.equal((await h.make().revoke(h.f.owner, { companyId: h.f.tenant.companyId, installationId: 'install-one' })).revoked.modelKeyRevoked, true);
   } finally { h.close(); }
 });
 
@@ -465,7 +591,7 @@ test('the env resolver fails closed, names only the missing variable, and never 
     }
     // A malformed value is reported by code, and the value itself never appears.
     for (const broken of [{ REALBUD_GATEWAY_PUBLIC_ORIGIN: `http://${secret}.invalid` }, { REALBUD_MODELVIA_BASE_URL: `https://${secret}.invalid/v1` }, { REALBUD_MODELVIA_CLIENT_ID: `${secret} bad id` }, { REALBUD_MODELVIA_MODELS: ' , ' }, { REALBUD_MODELVIA_OPERATOR_SECRET: 'short' },
-      { REALBUD_GATEWAY_SECRETS_DIR: `relative/${secret}` }, { REALBUD_MODELVIA_ENVIRONMENT: secret }]) {
+      { REALBUD_GATEWAY_SECRETS_DIR: `relative/${secret}` }, { REALBUD_MODELVIA_ENVIRONMENT: secret }, { REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD: secret }]) {
       const result = resolve({ ...full, ...broken }) as { unavailable: string };
       assert.match(result.unavailable, /^provisioning_unconfigured:/);
       assert.ok(!result.unavailable.includes(secret), `reason leaked a value: ${result.unavailable}`);
@@ -473,9 +599,10 @@ test('the env resolver fails closed, names only the missing variable, and never 
     const composed = resolve(full);
     assert.ok('provisioning' in composed);
     // Composition alone makes no provider call; the transport above would throw.
+    // The first call a provision makes is the Modelvia customer read.
     const result = await (composed as { provisioning: InstallationProvisioning }).provisioning
       .provision(h.f.owner, h.request).then(() => 'called out', error => (error as Error).message);
-    assert.equal(result, 'composio_unreachable');
+    assert.equal(result, 'modelvia_unreachable');
   } finally { h.close(); }
 });
 
@@ -483,9 +610,9 @@ test('the HTTP portal route provisions once, is unavailable when unconfigured, a
   const h = harness();
   const provisioning = h.make();
   const portal = { async authenticate(token: string) { if (token !== 'fictional-portal-token') throw new Error('no'); return h.f.owner; } };
-  const server = createGatewayServer({ gateway: h.f.gateway(), billing: h.f.billing, allowedOrigins: new Set(), portal, provisioning });
-  const bare = createGatewayServer({ gateway: h.f.gateway(), billing: h.f.billing, allowedOrigins: new Set(), portal });
-  const misconfigured = createGatewayServer({ gateway: h.f.gateway(), billing: h.f.billing, allowedOrigins: new Set(), portal,
+  const server = createGatewayServer({ allowedOrigins: new Set(), portal, provisioning });
+  const bare = createGatewayServer({ allowedOrigins: new Set(), portal });
+  const misconfigured = createGatewayServer({ allowedOrigins: new Set(), portal, modelviaOperator: 'configured',
     provisioningUnavailable: 'provisioning_unconfigured:REALBUD_COMPOSIO_ORG_KEY' });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   await new Promise<void>(resolve => bare.listen(0, '127.0.0.1', resolve));
@@ -500,13 +627,13 @@ test('the HTTP portal route provisions once, is unavailable when unconfigured, a
     // /ready is the platform health check: 200 only when provisioning is composed.
     const readyOk = await fetch(`${base}/ready`);
     assert.equal(readyOk.status, 200);
-    assert.deepEqual(await readyOk.json(), { ready: true, provisioning: 'composed' });
+    assert.deepEqual(await readyOk.json(), { ready: true, provisioning: 'composed', modelviaOperator: 'configured' });
     const readyBare = await fetch(`${bareBase}/ready`);
     assert.equal(readyBare.status, 503);
-    assert.deepEqual(await readyBare.json(), { ready: false, error: 'provisioning_unavailable' });
+    assert.deepEqual(await readyBare.json(), { ready: false, error: 'provisioning_unavailable', modelviaOperator: 'missing' });
     const readyNamed = await fetch(`${misconfiguredBase}/ready`);
     assert.equal(readyNamed.status, 503);
-    assert.deepEqual(await readyNamed.json(), { ready: false, error: 'provisioning_unconfigured:REALBUD_COMPOSIO_ORG_KEY' });
+    assert.deepEqual(await readyNamed.json(), { ready: false, error: 'provisioning_unconfigured:REALBUD_COMPOSIO_ORG_KEY', modelviaOperator: 'configured' });
 
     const unconfigured = await post(bareBase, '/v1/portal/installations/provision', h.request);
     assert.equal(unconfigured.status, 503);

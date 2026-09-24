@@ -81,7 +81,10 @@ export class ManagedConnectors {
     requireThat(TOKEN.test(token), 'connector_unauthenticated', 401);
     const device = this.options.devices().find(item => item.tokenHash === hash(token));
     const now = this.options.ledger.now();
-    requireThat(device && device.active && device.expiresAt > now && device.profile === profile, 'connector_access_denied', 403);
+    // `expiresAt` is stored for registry compatibility but not enforced: it is a
+    // copy of the entitlement expiry at provisioning time, so renewing the
+    // entitlement would not renew it. The current entitlement below decides.
+    requireThat(device && device.active && device.profile === profile, 'connector_access_denied', 403);
     const tenant = this.options.ledger.tenant(device.companyId);
     requireThat(tenant.active && tenant.licenseId === device.licenseId && tenant.serviceExpiresAt > now && now >= tenant.goLiveAt, 'service_unavailable', 402);
     return device;
@@ -150,7 +153,7 @@ export class ManagedConnectors {
       if (input.path === '/v1/connectors/status' && input.method === 'GET') {
         this.admit(device, 'gmail');
         const result = await (this.options.access ?? getGmailReadOnlyAccess)({ ...this.binding(device), assertAuthority: current }); current();
-        return { status: 200, body: { ...result, managed: true, apps: appsOf(device), serviceExpiresAt: Math.min(device.expiresAt, this.options.ledger.tenant(device.companyId).serviceExpiresAt) } };
+        return { status: 200, body: { ...result, managed: true, apps: appsOf(device), serviceExpiresAt: this.options.ledger.tenant(device.companyId).serviceExpiresAt } };
       }
       if (input.path === '/v1/connectors/authorize' && input.method === 'POST') {
         object(input.body); exact(input.body, ['app']);

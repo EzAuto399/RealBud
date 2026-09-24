@@ -9,7 +9,6 @@ primary_region = 'syd'
   PORT = '8787'
   REALBUD_GATEWAY_DATA = '/data'
   REALBUD_ALLOWED_ORIGINS = 'https://realbud.app,https://www.realbud.app'
-  REALBUD_PAYMENT_MODE = 'local'
   # Installation provisioning, non-secret values only. Both paths are on the
   # mounted volume so an issued credential and a stored project key survive a
   # restart. The secrets and REALBUD_GATEWAY_PUBLIC_ORIGIN come from deploy.sh.

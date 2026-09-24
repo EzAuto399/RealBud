@@ -4,8 +4,9 @@
  * One call gives an office installation everything it needs and nothing more:
  * the company's Composio project (created once, its `ak_` key kept on this
  * protected service), a revocable `rbc_` connector credential for the bounded
- * read-only adapters, and a per-installation Modelvia model key labelled with the
- * tenant's ledger spend cap.
+ * read-only adapters, and a per-installation Modelvia project and model key whose
+ * caps are copied from the office's Modelvia customer account. Modelvia is the
+ * only source of AI rates, caps, usage and invoices; nothing here bills.
  *
  * Rules this file exists to keep:
  *   - Authority is the verified portal principal. The body may *confirm* a
@@ -29,7 +30,7 @@ import { canonical, GatewayError, id, object, requireThat, type PortalPrincipal 
 import { newConnectorCredential, validateConnectorDevices, type ConnectorDevice } from './connectors.ts';
 import type { UsageLedger } from './ledger.ts';
 import { composioOrgClient, type ComposioOrgClient, type HttpTransport } from './composio-org.ts';
-import { modelviaKeyClient, type ModelviaCaps, type ModelviaClient, type ModelviaMintedKey } from './modelvia-keys.ts';
+import { modelviaKeyClient, type ModelviaCaps, type ModelviaClient, type ModelviaCustomer, type ModelviaMintedKey } from './modelvia-keys.ts';
 
 // ---------------------------------------------------------------------------
 // Registry file (shared with the provision-connector CLI)
@@ -176,8 +177,8 @@ export interface ProvisioningDescriptor {
   /** `projectId` is the Composio project id (`pr_…`), an identifier the portal
    * records as `composio_project_id`. It is never the project key. */
   connector: { endpoint: string; credential?: string; profile: string; apps: string[]; projectId: string };
-  /** `projectId` is the installation's Modelvia project — where the ledger cap is
-   * actually applied. `key` appears on the first response only. */
+  /** `projectId` is the installation's Modelvia project, capped from the office's
+   * Modelvia customer. `key` appears on the first response only. */
   model: { provider: 'modelvia'; baseUrl: string; key?: string; keyId: string; projectId: string; spendCapLabel: string };
 }
 interface StoredRecord {
@@ -196,8 +197,9 @@ interface StoredRecord {
    * hash, never the credential; it is what lets a resumed attempt prove the
    * registry device is its own and was never delivered. */
   deviceTokenHash?: string;
-  /** Ready only: whether the tenant's current caps reached the Modelvia project. */
-  modelviaCaps?: { state: 'synced' | 'out_of_sync'; at: number; error?: string } & ModelviaCaps;
+  /** Legacy, written by the removed cap sync before 24 September 2026. Old ready
+   * records still carry it and still parse; nothing reads or writes it now. */
+  modelviaCaps?: unknown;
 }
 const MODELVIA_CUSTOMER = /^[A-Za-z0-9_.-]{1,128}$/;
 /** A pending attempt younger than this may still be running, so it is not
@@ -207,15 +209,29 @@ export const PENDING_RESUME_AFTER_MS = 10 * 60_000;
 /** An attempt that has not reached its model-key step by then stops before it,
  * leaving the key to a later resume rather than to two concurrent writers. */
 const ATTEMPT_EFFECT_DEADLINE_MS = 5 * 60_000;
-/** Modelvia refuses a request cap above the monthly cap, so it is clamped. */
-function projectCaps(tenant: { monthlyCapNanoAud: string; requestCapNanoAud: string; maxConcurrent: number }): ModelviaCaps {
-  const requestCapNanoAud = BigInt(tenant.requestCapNanoAud) < BigInt(tenant.monthlyCapNanoAud) ? tenant.requestCapNanoAud : tenant.monthlyCapNanoAud;
-  return { monthlyCapNanoAud: tenant.monthlyCapNanoAud, requestCapNanoAud, maxConcurrent: tenant.maxConcurrent };
+/** Default per-request cap: A$1 in nanoAUD. `REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD`
+ * overrides it. */
+export const DEFAULT_REQUEST_CAP_NANO_AUD = '1000000000';
+const NANO_AUD = /^[1-9][0-9]{0,20}$/;
+/**
+ * The installation project's caps, copied from the office's Modelvia customer.
+ * Modelvia holds a child project to its parent customer, so the project takes the
+ * customer's monthly cap and concurrency as they are. The customer has no request
+ * cap, so one request is held to the service's request cap, never above the
+ * monthly cap (Modelvia refuses that). The ledger tenant's stored cap fields
+ * drive nothing.
+ */
+export function projectCaps(customer: ModelviaCustomer, requestCapNanoAud: string = DEFAULT_REQUEST_CAP_NANO_AUD): ModelviaCaps {
+  const monthly = BigInt(customer.monthlyCapNanoAud), request = BigInt(requestCapNanoAud);
+  return { monthlyCapNanoAud: customer.monthlyCapNanoAud, requestCapNanoAud: (request < monthly ? request : monthly).toString(), maxConcurrent: customer.maxConcurrent };
 }
-export interface ModelviaCapsSync {
-  /** `none` when this company has no provisioned installation to update. */
-  state: 'synced' | 'out_of_sync' | 'none';
-  projects: { installationId: string; projectId: string; state: 'synced' | 'out_of_sync'; error?: string }[];
+const capLabel = (caps: ModelviaCaps) => `monthly-cap ${caps.monthlyCapNanoAud} nanoAUD, request-cap ${caps.requestCapNanoAud} nanoAUD, max-concurrent ${caps.maxConcurrent}`;
+/** Missing, inactive, another client's (reported as missing by the client) and
+ * zero-cap customers are all one answer: the Modelvia side is not ready for this
+ * office, which is Modelvia's operator's to fix, not a RealBud failure. */
+function readyCustomer(customer: ModelviaCustomer | null): ModelviaCustomer {
+  requireThat(customer && customer.active && BigInt(customer.monthlyCapNanoAud) > 0n && customer.maxConcurrent > 0, 'modelvia_customer_not_ready', 409);
+  return customer!;
 }
 export interface ProvisioningOptions {
   ledger: UsageLedger;
@@ -228,19 +244,26 @@ export interface ProvisioningOptions {
   modelvia: ModelviaClient;
   /** app → the reviewed read-only OAuth configuration id admitted for it. */
   authConfigs: Readonly<Record<string, string>>;
+  /** Per-request cap in nanoAUD, a positive integer string. Default A$1. */
+  requestCapNanoAud?: string;
 }
 
 export class InstallationProvisioning {
   private readonly options: ProvisioningOptions;
   private readonly endpoint: string;
-  /** One cap push at a time per company; see `syncCaps`. */
-  private readonly capsQueue = new Map<string, Promise<ModelviaCapsSync>>();
   constructor(options: ProvisioningOptions) {
     const url = new URL(options.endpoint);
     requireThat(url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash && url.pathname === '/', 'connector_endpoint_invalid', 503);
     requireThat(isAbsolute(options.registry), 'connector_registry_unavailable', 503);
+    requireThat(options.requestCapNanoAud === undefined || NANO_AUD.test(options.requestCapNanoAud), 'modelvia_request_cap_invalid', 503);
     this.options = options; this.endpoint = url.origin;
-    options.ledger.db.run('CREATE TABLE IF NOT EXISTS installation_provisioning (tenant TEXT NOT NULL, installation TEXT NOT NULL, state TEXT NOT NULL, body TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY(tenant,installation))');
+    ensureProvisioningTable(options.ledger);
+  }
+
+  /** Re-apply each ready installation's caps from its Modelvia customer. See
+   * `applyCustomerCaps`; exposed to operators only through `caps-cli.ts`. */
+  applyCustomerCaps(companyId: string): Promise<CapsApplied[]> {
+    return applyCustomerCaps({ ledger: this.options.ledger, modelvia: this.options.modelvia, requestCapNanoAud: this.options.requestCapNanoAud }, companyId);
   }
 
   private saved(companyId: string, installationId: string): StoredRecord | undefined {
@@ -314,18 +337,34 @@ export class InstallationProvisioning {
     requireThat((apps as string[]).length === 1, 'connector_app_not_admitted', 403);
     const app = (apps as string[])[0]!;
 
-    const now = this.options.ledger.now();
+    // Service entitlement, from the operator's entitlement record
+    // (entitlement-cli.ts). A company without one is `tenant_unavailable`.
     const tenant = this.options.ledger.tenant(companyId);
-    requireThat(tenant.active && tenant.serviceExpiresAt > now && now >= tenant.goLiveAt, 'service_unavailable', 402);
+    const entitled = this.options.ledger.now();
+    requireThat(tenant.active && tenant.serviceExpiresAt > entitled && entitled >= tenant.goLiveAt, 'service_unavailable', 402);
 
-    const existing = this.saved(companyId, installationId);
-    let pending: StoredRecord;
-    if (existing) {
+    const recorded = (): StoredRecord | undefined => {
+      const existing = this.saved(companyId, installationId);
+      if (!existing) return undefined;
       requireThat(existing.state !== 'revoked', 'installation_revoked', 409);
       requireThat(existing.state === 'ready' ? Boolean(existing.descriptor) : existing.state === 'pending', 'installation_provisioning_outcome_unknown', 409);
       requireThat(existing.profile === profile && canonical(existing.apps) === canonical(apps) && existing.customerId === customerId, 'installation_provisioning_conflict', 409);
-      // Delivered once already: never rotate or mint again for a repeat.
-      if (existing.state === 'ready') return { provisioning: existing.descriptor! };
+      return existing;
+    };
+    // Delivered once already: never rotate or mint again for a repeat, and never
+    // ask Modelvia anything.
+    const delivered = recorded();
+    if (delivered?.state === 'ready') return { provisioning: delivered.descriptor! };
+    // The office's Modelvia customer must be able to serve before anything is
+    // created or journalled: a read, never an effect. Its caps become the project's.
+    const caps = projectCaps(readyCustomer(await this.options.modelvia.findCustomer(customerId)), this.options.requestCapNanoAud);
+
+    // Read again: another call may have started or finished while Modelvia answered.
+    const existing = recorded();
+    if (existing?.state === 'ready') return { provisioning: existing.descriptor! };
+    const now = this.options.ledger.now();
+    let pending: StoredRecord;
+    if (existing) {
       pending = this.resume(companyId, installationId, existing, now);
     } else {
       // Journal the intent before the first external effect, so a lost outcome is
@@ -387,16 +426,14 @@ export class InstallationProvisioning {
     });
 
     // (c) One Modelvia project per installation, under the company's customer
-    // account. Caps live on the project, not on keys, so this is where the
-    // ledger tenant's cap is actually applied rather than merely described.
-    const caps = projectCaps(tenant);
-    const spendCapLabel = `monthly-cap ${caps.monthlyCapNanoAud} nanoAUD, request-cap ${caps.requestCapNanoAud} nanoAUD, max-concurrent ${caps.maxConcurrent}`;
+    // account, with that customer's caps (read above).
+    const spendCapLabel = capLabel(caps);
     const modelvia = this.options.modelvia, modelProjectId = `rb-${installationId}`, label = `${companyId}:${installationId}`;
     const modelProject = await modelvia.createProject({ projectId: modelProjectId, name: `RealBud installation ${installationId}`.slice(0, 200), customerId, ...caps });
     // (d) The installation's model key. A project Modelvia already holds is an
     // earlier attempt whose reply was lost, or one this ledger no longer records.
-    // It is adopted only when it sits under this office's customer, with this
-    // tenant's caps applied, and its keys are read before anything is minted.
+    // It is adopted only when it sits under this office's customer, with the
+    // customer's caps applied, and its keys are read before anything is minted.
     let live: { keyId: string; label?: string }[] = [];
     if (!modelProject.created) {
       const adopted = await modelvia.findProject(modelProjectId);
@@ -428,12 +465,7 @@ export class InstallationProvisioning {
       connector: { endpoint: this.endpoint, profile, apps: apps as string[], projectId },
       model: { provider: 'modelvia', baseUrl: minted.baseUrl, keyId: minted.keyId, projectId: modelProject.projectId, spendCapLabel },
     };
-    // A cap change accepted while this attempt was in flight did not reach the
-    // project (it was not yet `ready` to push to); say so rather than claim it.
-    const latest = projectCaps(this.options.ledger.tenant(companyId));
-    const capsState = canonical(latest) === canonical(caps) ? 'synced' as const : 'out_of_sync' as const;
-    const ready: StoredRecord = { state: 'ready', profile, apps: apps as string[], customerId, descriptor, deviceId: device.id, projectId, projectKeyEnv, keyId: minted.keyId, modelProjectId: modelProject.projectId,
-      modelviaCaps: { state: capsState, at: this.options.ledger.now(), ...caps } };
+    const ready: StoredRecord = { state: 'ready', profile, apps: apps as string[], customerId, descriptor, deviceId: device.id, projectId, projectKeyEnv, keyId: minted.keyId, modelProjectId: modelProject.projectId };
     this.options.ledger.db.transaction(() => {
       this.journal(companyId, installationId, attempt, ready);
       // Audit line carries identifiers only: no project key, no connector
@@ -450,47 +482,11 @@ export class InstallationProvisioning {
   }
 
   /**
-   * Push the tenant's current caps to every provisioned installation's Modelvia
-   * project. The local cap change has already been accepted; this never undoes
-   * it. A project the push does not reach is recorded as out of sync and
-   * reported as such, and is pushed again on the next change. Serialized per
-   * company, reading the caps inside, so the last push carries the latest caps.
-   */
-  async syncCaps(actor: PortalPrincipal): Promise<ModelviaCapsSync> {
-    requireThat(actor.role === 'billing_owner', 'forbidden', 403);
-    const companyId = actor.companyId;
-    const previous = this.capsQueue.get(companyId) ?? Promise.resolve();
-    const run = previous.catch(() => {}).then(() => this.pushCaps(companyId));
-    this.capsQueue.set(companyId, run);
-    try { return await run; } finally { if (this.capsQueue.get(companyId) === run) this.capsQueue.delete(companyId); }
-  }
-  private async pushCaps(companyId: string): Promise<ModelviaCapsSync> {
-    const caps = projectCaps(this.options.ledger.tenant(companyId));
-    const rows = this.options.ledger.db.all<{ installation: string; body: string }>("SELECT installation, body FROM installation_provisioning WHERE tenant=? AND state='ready' ORDER BY installation", companyId);
-    const projects: ModelviaCapsSync['projects'] = [];
-    for (const row of rows) {
-      const projectId = (JSON.parse(row.body) as StoredRecord).modelProjectId;
-      if (!projectId) continue;
-      let error: string | undefined;
-      try { await this.options.modelvia.updateProjectCaps(projectId, caps); }
-      catch (failure) { error = failure instanceof GatewayError ? failure.code : 'modelvia_caps_update_failed'; }
-      const state = error ? 'out_of_sync' as const : 'synced' as const, at = this.options.ledger.now();
-      this.options.ledger.db.transaction(() => {
-        // Re-read: a revocation may have landed while the push was in flight.
-        const current = this.saved(companyId, row.installation);
-        if (current?.state === 'ready') this.store(companyId, row.installation, { ...current, modelviaCaps: { state, at, ...caps, ...(error ? { error } : {}) } });
-        this.options.ledger.db.append(companyId, error ? 'modelvia_caps_out_of_sync' : 'modelvia_caps_synced', null, at, { installationId: row.installation, projectId, ...caps, ...(error ? { error } : {}) });
-      });
-      projects.push({ installationId: row.installation, projectId, state, ...(error ? { error } : {}) });
-    }
-    return { state: !projects.length ? 'none' : projects.every(project => project.state === 'synced') ? 'synced' : 'out_of_sync', projects };
-  }
-
-  /**
    * Deactivate the installation: the connector device stops serving first, then
    * the Modelvia key is marked for revocation. The Composio project is deleted
    * only on an explicit `deleteProject: true` — that call is irreversible and
-   * revokes the office's upstream OAuth credentials at the provider.
+   * revokes the office's upstream OAuth credentials at the provider. No service
+   * entitlement is required: an expired or suspended office can still be shut off.
    */
   async revoke(actor: PortalPrincipal, value: unknown): Promise<{ revoked: Record<string, unknown> }> {
     const body = this.scope(actor, value, ['companyId', 'installationId', 'deleteProject']);
@@ -533,6 +529,80 @@ export function provisioningError(error: unknown): GatewayError {
   return error instanceof GatewayError ? error : new GatewayError('installation_provisioning_failed', 502);
 }
 
+function ensureProvisioningTable(ledger: UsageLedger) {
+  ledger.db.run('CREATE TABLE IF NOT EXISTS installation_provisioning (tenant TEXT NOT NULL, installation TEXT NOT NULL, state TEXT NOT NULL, body TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY(tenant,installation))');
+}
+
+// ---------------------------------------------------------------------------
+// Cap refresh (trusted operator only, via caps-cli.ts)
+// ---------------------------------------------------------------------------
+
+/** One installation's outcome. `error` is a code, never an upstream body or a
+ * Modelvia customer id. */
+export interface CapsApplied { installationId: string; state: 'applied' | 'failed'; error?: string }
+
+/** One refresh per company at a time, within this process. */
+const capQueues = new Map<string, Promise<unknown>>();
+function serialized<T>(key: string, work: () => Promise<T>): Promise<T> {
+  const run = (capQueues.get(key) ?? Promise.resolve()).then(work, work);
+  const tail = run.then(() => undefined, () => undefined);
+  capQueues.set(key, tail);
+  void tail.then(() => { if (capQueues.get(key) === tail) capQueues.delete(key); });
+  return run;
+}
+
+/**
+ * Provisioning copies caps once. When an office's Modelvia customer changes its
+ * monthly cap or concurrency, this re-applies them to every `ready` installation
+ * project of that company: one customer read per distinct customer, the same
+ * readiness rule as provisioning, then one `updateProjectCaps` per project.
+ * Pending and revoked installations are not touched. A failure is reported per
+ * installation and never stops the others. An applied installation's stored cap
+ * label is updated, so a repeat provision reports the caps in force. Serialized
+ * per company.
+ */
+export function applyCustomerCaps(options: { ledger: UsageLedger; modelvia: ModelviaClient; requestCapNanoAud?: string }, companyId: string): Promise<CapsApplied[]> {
+  id(companyId);
+  requireThat(options.requestCapNanoAud === undefined || NANO_AUD.test(options.requestCapNanoAud), 'modelvia_request_cap_invalid', 503);
+  const { ledger, modelvia } = options;
+  const code = (error: unknown) => error instanceof GatewayError ? error.code : 'modelvia_caps_failed';
+  return serialized(companyId, async () => {
+    ensureProvisioningTable(ledger);
+    const rows = ledger.db.all<{ installation: string; body: string }>("SELECT installation, body FROM installation_provisioning WHERE tenant=? AND state='ready' ORDER BY installation", companyId)
+      .map(row => ({ installationId: row.installation, record: JSON.parse(row.body) as StoredRecord }))
+      .filter(row => typeof row.record.modelProjectId === 'string' && typeof row.record.customerId === 'string');
+    // Journalled before any Modelvia call; identifiers only, no customer id.
+    ledger.db.transaction(() => ledger.db.append(companyId, 'installation_caps_apply_requested', null, ledger.now(), { installationIds: rows.map(row => row.installationId) }));
+    const customers = new Map<string, Promise<ModelviaCaps>>();
+    const results: CapsApplied[] = [];
+    for (const { installationId, record } of rows) {
+      try {
+        let caps = customers.get(record.customerId);
+        if (!caps) {
+          caps = modelvia.findCustomer(record.customerId).then(customer => projectCaps(readyCustomer(customer), options.requestCapNanoAud));
+          customers.set(record.customerId, caps);
+        }
+        const applied = await caps;
+        await modelvia.updateProjectCaps(record.modelProjectId!, applied);
+        results.push({ installationId, state: 'applied' });
+        try {
+          ledger.db.transaction(() => {
+            const current = ledger.db.get<{ body: string }>("SELECT body FROM installation_provisioning WHERE tenant=? AND installation=? AND state='ready'", companyId, installationId);
+            const saved = current && JSON.parse(current.body) as StoredRecord;
+            if (!saved?.descriptor || saved.modelProjectId !== record.modelProjectId) return;
+            const next: StoredRecord = { ...saved, descriptor: { ...saved.descriptor, model: { ...saved.descriptor.model, spendCapLabel: capLabel(applied) } } };
+            ledger.db.run('UPDATE installation_provisioning SET body=? WHERE tenant=? AND installation=?', canonical(next), companyId, installationId);
+          });
+        } catch { /* Applied at Modelvia already; only the stored label is stale. */ }
+      } catch (error) {
+        results.push({ installationId, state: 'failed', error: code(error) });
+      }
+    }
+    try { ledger.db.transaction(() => ledger.db.append(companyId, 'installation_caps_applied', null, ledger.now(), { results })); } catch { /* never lose the result */ }
+    return results;
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Production composition
 // ---------------------------------------------------------------------------
@@ -546,7 +616,51 @@ export const PROVISIONING_ENV = [
   'REALBUD_MODELVIA_CLIENT_ID',
 ] as const;
 
+/** The variables the Modelvia operator client needs, for `/ready`. Presence only;
+ * nothing here reads a value into a response or calls Modelvia. */
+export const MODELVIA_OPERATOR_ENV = ['REALBUD_MODELVIA_BASE_URL', 'REALBUD_MODELVIA_OPERATOR_SECRET', 'REALBUD_MODELVIA_OPERATOR_SUBJECT', 'REALBUD_MODELVIA_CLIENT_ID'] as const;
+export function modelviaOperatorState(env: NodeJS.ProcessEnv): 'configured' | 'missing' {
+  const value = (name: string) => (env[name] ?? '').trim();
+  return MODELVIA_OPERATOR_ENV.every(name => value(name)) && value('REALBUD_MODELVIA_OPERATOR_SECRET').length >= 32 ? 'configured' : 'missing';
+}
+
 export type ProvisioningComposition = { provisioning: InstallationProvisioning } | { unavailable: string };
+
+/**
+ * The Modelvia operator client and request cap, from the environment alone.
+ * Shared by `composeProvisioning` and `caps-cli.ts`. Presence of the operator
+ * variables is the caller's check; this validates their shape and the optional
+ * ones, and reports a code naming the variable, never a value.
+ */
+export function composeModelvia(options: { env: NodeJS.ProcessEnv; fetch: HttpTransport }): { modelvia: ModelviaClient; requestCapNanoAud: string } | { unavailable: string } {
+  const env = options.env;
+  const value = (name: string) => (env[name] ?? '').trim();
+  const environment = value('REALBUD_MODELVIA_ENVIRONMENT') || 'production';
+  if (environment !== 'production' && environment !== 'development') return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_ENVIRONMENT' };
+  // Modelvia requires a non-empty allowedModels on a project. `auto` is its
+  // catalogue-routed default; a deployment may pin exact model ids instead.
+  const allowedModels = (value('REALBUD_MODELVIA_MODELS') || 'auto').split(',').map(entry => entry.trim()).filter(Boolean);
+  if (!allowedModels.length) return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_MODELS' };
+  // Modelvia's verifier refuses a secret under 32 characters; name it now rather
+  // than at the first request.
+  if (value('REALBUD_MODELVIA_OPERATOR_SECRET').length < 32) return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_OPERATOR_SECRET' };
+  const requestCapNanoAud = value('REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD') || DEFAULT_REQUEST_CAP_NANO_AUD;
+  if (!NANO_AUD.test(requestCapNanoAud)) return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD' };
+  try {
+    return { requestCapNanoAud, modelvia: modelviaKeyClient({
+      serviceOrigin: value('REALBUD_MODELVIA_BASE_URL'),
+      environment,
+      clientId: value('REALBUD_MODELVIA_CLIENT_ID'),
+      allowedModels,
+      // A fresh HMAC bearer is minted per request; a static token would 401.
+      operatorSecret: () => env.REALBUD_MODELVIA_OPERATOR_SECRET,
+      operatorSubject: value('REALBUD_MODELVIA_OPERATOR_SUBJECT'),
+      fetch: options.fetch,
+    }) };
+  } catch (error) {
+    return { unavailable: `provisioning_unconfigured:${error instanceof GatewayError ? error.code : 'invalid_configuration'}` };
+  }
+}
 
 /**
  * Resolve the provisioning composition from the environment alone. Secrets are
@@ -562,15 +676,8 @@ export function composeProvisioning(options: { env: NodeJS.ProcessEnv; ledger: U
   const value = (name: string) => (env[name] ?? '').trim();
   if (value('REALBUD_ENABLE_PROVIDER') !== '1') return { unavailable: 'provisioning_disabled' };
   for (const name of PROVISIONING_ENV) if (!value(name)) return { unavailable: `provisioning_unconfigured:${name}` };
-  const environment = value('REALBUD_MODELVIA_ENVIRONMENT') || 'production';
-  if (environment !== 'production' && environment !== 'development') return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_ENVIRONMENT' };
-  // Modelvia requires a non-empty allowedModels on a project. `auto` is its
-  // catalogue-routed default; a deployment may pin exact model ids instead.
-  const allowedModels = (value('REALBUD_MODELVIA_MODELS') || 'auto').split(',').map(entry => entry.trim()).filter(Boolean);
-  if (!allowedModels.length) return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_MODELS' };
-  // Modelvia's verifier refuses a secret under 32 characters; name it now rather
-  // than at the first request.
-  if (value('REALBUD_MODELVIA_OPERATOR_SECRET').length < 32) return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_OPERATOR_SECRET' };
+  const model = composeModelvia({ env, fetch: options.fetch });
+  if ('unavailable' in model) return model;
   try {
     return { provisioning: new InstallationProvisioning({
       ledger: options.ledger,
@@ -583,17 +690,9 @@ export function composeProvisioning(options: { env: NodeJS.ProcessEnv; ledger: U
         fetch: options.fetch,
         ...(value('REALBUD_COMPOSIO_API_BASE') ? { base: value('REALBUD_COMPOSIO_API_BASE') } : {}),
       }),
-      modelvia: options.modelvia ?? modelviaKeyClient({
-        serviceOrigin: value('REALBUD_MODELVIA_BASE_URL'),
-        environment,
-        clientId: value('REALBUD_MODELVIA_CLIENT_ID'),
-        allowedModels,
-        // A fresh HMAC bearer is minted per request; a static token would 401.
-        operatorSecret: () => env.REALBUD_MODELVIA_OPERATOR_SECRET,
-        operatorSubject: value('REALBUD_MODELVIA_OPERATOR_SUBJECT'),
-        fetch: options.fetch,
-      }),
+      modelvia: options.modelvia ?? model.modelvia,
       authConfigs: { gmail: value('REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL') },
+      requestCapNanoAud: model.requestCapNanoAud,
     }) };
   } catch (error) {
     // A malformed value (not a missing one) — report the code, never the value.

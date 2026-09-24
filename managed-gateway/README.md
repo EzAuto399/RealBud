@@ -1,40 +1,68 @@
-# RealBud managed AI backend
+# RealBud managed gateway
 
-Local implementation of authenticated fixed-provider forwarding, exact usage accounting, retail caps, versioned rates, private costing and Square billing fixtures. Automatic account-balance sync is a default-off seam; automatic per-client historical usage remains unconfigured. This service belongs off the office device in a future deployment. It does not load into the desktop or change Hermes.
+Off-device service with three jobs:
 
-**No production rate schedule, provider route, portal identity provider, host authority, payment processor or deployment is configured.** The payment composition rejects live and sandbox collection. All included test prices, entities, grants and receipts are synthetic.
+1. **Installation provisioning and revocation.** Each installation gets one Modelvia project and key, and one Composio connector device.
+2. **Connectors** (`/v1/connectors/*`), for the desktop's managed Gmail read.
+3. **Service entitlement.** Whether an office's RealBud service is active, which licence it holds, and its go-live and expiry dates.
 
-## Run locally
+**Modelvia is the only source of AI rates, caps, usage and invoices** (owner decision, [24 September 2026](../docs/decisions/2026-09-24-modelvia-sole-billing.md)). This service has no billing, rate, usage, invoice, payment or model-forwarding route. It never loads into the desktop and never changes Hermes.
 
-Node 24+ with `node:sqlite`; the repository's existing TypeScript dependency is sufficient. From this worktree:
+## Routes
+
+| Route | Auth | Purpose |
+| --- | --- | --- |
+| `GET /health` | none | liveness |
+| `GET /ready` | none | 200 only when provisioning is composed; always reports `modelviaOperator: configured\|missing`. Makes no network call |
+| `POST /v1/portal/installations/provision` | portal bearer, `billing_owner` | needs an active entitlement and a ready Modelvia customer |
+| `POST /v1/portal/installations/revoke` | portal bearer, `billing_owner` | no entitlement needed, so a lapsed office can still be shut off |
+| `/v1/connectors/*` | connector credential | needs an active entitlement |
+
+Every other path returns 404. The error codes that tell an operator what to fix:
+
+- `tenant_unavailable` (403): the company has no entitlement. Create one with the entitlement command.
+- `service_unavailable` (402): the entitlement is inactive, expired, or not yet live.
+- `modelvia_customer_not_ready` (409): the office's Modelvia customer is missing, inactive, under another client, or has a zero monthly cap. Fix it in Modelvia.
+
+The installation project copies the Modelvia customer's caps at provisioning. Its monthly cap and concurrency are the customer's; its request cap is `REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD` (default A$1), never above the monthly cap. After the customer's caps change, `caps-cli.ts apply --company <id>` (`pnpm run caps`) re-applies them to every ready installation. Cap fields stored in the ledger are legacy and drive nothing.
+
+## Service entitlement (operator)
+
+Run on the service machine only. The command opens the same database as the server (`$REALBUD_GATEWAY_DATA/ledger.sqlite`, default `./data`). The database must already exist: start the server once first.
+
+```sh
+cd managed-gateway
+node --experimental-strip-types entitlement-cli.ts set --company <companyId> --evidence <ticket> \
+  --license <licenseId> --name "<legal name>" --address "<address>" \
+  --go-live 2026-09-01 --go-live-evidence <signed-order-ref> --expires 2027-09-01
+node --experimental-strip-types entitlement-cli.ts set --company <companyId> --evidence <ticket> --active false
+node --experimental-strip-types entitlement-cli.ts get --company <companyId>
+```
+
+On an existing company, `set` changes only the fields you pass. The licence cannot change after creation. Output is one JSON line with no secrets. `pnpm entitlement …` runs the same command.
+
+## Run and test locally
+
+Node 24+ with `node:sqlite`.
 
 ```sh
 pnpm exec tsc -p managed-gateway/tsconfig.json
-node --experimental-strip-types --test managed-gateway/*.test.ts
-node --experimental-strip-types managed-gateway/demo.ts
-node --experimental-strip-types managed-gateway/benchmark.ts
+cd managed-gateway && node --experimental-strip-types --test ./*.test.ts
+node --experimental-strip-types sandbox-smoke.ts   # offline provisioning smoke against fakes
 ```
 
-The demo is finite and offline. It writes an explicitly labelled local invoice and a simulated payment receipt to `managed-gateway/evidence/demo/`. `checkout.invalid` is an inert test address. No network service or background process is left running.
+The root `pnpm test` does not include this service. Every fixture here is synthetic. A passing fake is never evidence that a real Composio or Modelvia account was used.
 
-## Entry points
+## Modules
 
 | Module | Responsibility |
 | --- | --- |
-| `contracts.ts`, `auth.ts` | Scoped canonical Ed25519 grant, strict request validation, required live execution authority |
-| `gateway.ts`, `abort.ts` | Admission, reservation, once-only dispatch, streaming, deadline/revocation/cancellation |
-| `direct-provider.ts`, `messages.ts` | Fixed DeepSeek/Kimi text/thinking/tool stream fixtures; full supported assistant continuation; default-off transport |
-| `attempts.ts` | Immutable v2 parent identity, deadline and budget, with signed child calls |
-| `square.ts` | Accepted usage statements, order then draft invoice, raw signed webhooks, retrieved partial/manual payments and refunds |
-| `report-import.ts`, `deepseek-balance.ts`, `openai-costs.ts` | Synthetic report fallback; operator-only DeepSeek balance and OpenAI org-costs polling; neither is a client invoice |
-| `openai-provider.ts` | Explicit pinned text model, hard context/output ceilings, strict usage parser; no retries |
-| `database.ts`, `ledger.ts`, `money.ts` | Durable atomic reservations, append-only events, exact arithmetic, credits and reconciliation |
-| `private-costs.ts` | Operator-only cost/FX/margin provenance; unpublished rate proposals; actual provider cost evidence |
-| `billing.ts`, `local-payment.ts` | Monthly local invoice close, local hosted-checkout simulation, signed settlement and refunds |
-| `http.ts`, `invoice-html.ts` | Dedicated HTTP service factory, tenant-scoped portal API, printable invoice |
+| `http.ts`, `server.ts` | Route set above; production composition from env |
+| `provisioning.ts`, `provision-connector.mjs` | Installation provisioning and revocation; connector registry CLI |
+| `modelvia-keys.ts` | Modelvia operator client: customer read, project, key, rotate, revoke |
+| `composio-org.ts`, `connectors.ts` | Composio org client; connector broker |
+| `entitlement-cli.ts`, `local-env.ts` | Operator entitlement command; shared `.env.local` and database path |
+| `database.ts`, `ledger.ts` | SQLite ledger: entitlements, audit chain. Older billing tables stay in the schema, readable and unused |
+| `gateway.ts`, `auth.ts`, `direct-provider.ts`, `messages.ts`, `attempts.ts` | Earlier model-forwarding core. Not composed by `server.ts`; kept with its tests ([PHASE2.md](PHASE2.md)) |
 
-Current phase 2 contracts and proof are in [PHASE2.md](PHASE2.md). The original demo/evidence remain the earlier local-simulator checkpoint.
-
-Detailed decisions, the core integration contract, proof and deployment gates are in [the handoff](../docs/REALBUD-MANAGED-AI-BILLING-2026-09-15.md).
-
-The root `pnpm test` discovery does not include this separate off-device service. Run the explicit managed-gateway command above. Production packaging must keep `testing.ts`, tests, `demo.ts`, `benchmark.ts` and `evidence/` out of its runtime bundle.
+Deployment is described in [DEPLOY.md](DEPLOY.md). It is a separate authority and never runs from a coding session.

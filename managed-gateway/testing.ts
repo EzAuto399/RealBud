@@ -1,12 +1,10 @@
 /** Synthetic fixtures only. Production composition must never import this module. */
-import { createHmac, generateKeyPairSync, randomBytes, sign } from 'node:crypto';
+import { generateKeyPairSync, randomBytes, sign } from 'node:crypto';
 import { canonical, type ExecutionAuthority, type ExecutionGrant, type ModelRequest, type ProviderAdapter, type ProviderEvent, type RateCard, type Tenant, type UsageEvidence } from './contracts.ts';
 import { LedgerDatabase } from './database.ts';
 import { digest, UsageLedger } from './ledger.ts';
 import { twoMonthsAfter } from './money.ts';
 import { ManagedGateway } from './gateway.ts';
-import { BillingService } from './billing.ts';
-import { LocalPaymentAdapter } from './local-payment.ts';
 
 export const FIXTURE_TIME=Date.parse('2026-09-15T00:00:00Z');
 export function fixture(path=':memory:') {
@@ -28,9 +26,7 @@ export function fixture(path=':memory:') {
   const authority:ExecutionAuthority={async acquire(){return {signal:revocation.signal,async assertCurrent(){revocation.signal.throwIfAborted();},async release(){}};}};
   const provider:ProviderAdapter={id:'synthetic-provider',usageNamespace:'synthetic-provider',terms:{reviewReference:'fixture-no-provider-call',approvedUntil:tenant.serviceExpiresAt},bound(){return {input_tokens:100,cache_read_tokens:100,output_tokens:20};},async *stream(){calls++;yield {type:'delta',text:'Synthetic reply'};yield {type:'usage',evidence:evidence()};}};
   const gateway=(p=provider,a=authority)=>new ManagedGateway({ledger,routes:new Map([[request.model,p]]),authority:a,fingerprintKey:randomBytes(32)});
-  const paymentKey=randomBytes(32); const payment=new LocalPaymentAdapter(paymentKey,now); const billing=new BillingService(ledger,payment);
-  const signedEvent=(data:unknown,time=clock)=>{const raw=Buffer.from(JSON.stringify(data));return {raw,signature:`t=${time},v1=${createHmac('sha256',paymentKey).update(`${time}.`).update(raw).digest('hex')}`};};
   const run=async(g=gateway(),req=request,claims=grant(req))=>{const output:unknown[]=[];await g.execute(envelope(claims),req,async event=>{output.push(event);},new AbortController().signal);return output;};
-  return {db,ledger,card,tenant,owner,request,grant,envelope,evidence,provider,authority,revocation,gateway,now,setTime:(time:number)=>{clock=time;},calls:()=>calls,billing,payment,paymentKey,signedEvent,run,close:()=>db.close()};
+  return {db,ledger,card,tenant,owner,request,grant,envelope,evidence,provider,authority,revocation,gateway,now,setTime:(time:number)=>{clock=time;},calls:()=>calls,run,close:()=>db.close()};
 }
 export async function* events(...items:ProviderEvent[]) { yield* items; }

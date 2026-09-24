@@ -113,7 +113,7 @@ test('successful sign-in link is reused, account pinned, changed binding held',a
   }finally{s.f.close();}
 });
 test('HTTP bearer is independent of portal auth and rejects browser origin and supplied upstream identity',async()=>{
-  const s=setup();const server=createGatewayServer({gateway:s.f.gateway(),billing:s.f.billing,allowedOrigins:new Set(),portal:{async authenticate(){throw new Error('No portal identity');}},connectors:s.make()});
+  const s=setup();const server=createGatewayServer({allowedOrigins:new Set(),portal:{async authenticate(){throw new Error('No portal identity');}},connectors:s.make()});
   await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
   const address=server.address() as {port:number},base=`http://127.0.0.1:${address.port}`;
   const headers={authorization:`Bearer ${s.credential.token}`,'x-realbud-profile':'property'};
@@ -161,13 +161,34 @@ test('mail scan enforces token, profile, current subscription and device authori
     await assert.rejects(() => broker.handle({ ...request, token: 'rbc_' + '0'.repeat(64) }));
     await assert.rejects(() => broker.handle({ ...request, profile: 'another-profile' }));
     const original = { ...s.device() };
-    for (const patch of [{ active: false }, { expiresAt: s.f.now() }, { licenseId: 'another-license' }]) {
+    for (const patch of [{ active: false }, { licenseId: 'another-license' }]) {
       s.set([{ ...original, ...patch }]); await assert.rejects(() => broker.handle(request));
     }
     s.set([original]);
     s.f.ledger.setService(s.f.tenant.companyId, true, s.f.now(), 'fixture-expired');
     await assert.rejects(() => broker.handle(request), /service_unavailable/);
     assert.equal(calls, 0);
+  } finally { s.f.close(); }
+});
+
+test('a renewed entitlement keeps an existing connector working past its stored device expiry; an expired one still refuses', async () => {
+  const s = setup(); let calls = 0;
+  try {
+    const broker = s.make({ scan: async (_binding, scope) => { calls++; return mailResult(scope); } });
+    const original = s.f.tenant.serviceExpiresAt;
+    // The device carries the entitlement expiry copied at provisioning time.
+    s.set([{ ...s.device(), expiresAt: original }]);
+    const entitlement = { companyId: s.f.tenant.companyId, licenseId: s.f.tenant.licenseId, active: true, customerName: s.f.tenant.customerName,
+      customerAddress: s.f.tenant.customerAddress, goLiveAt: s.f.tenant.goLiveAt, goLiveEvidence: s.f.tenant.goLiveEvidence };
+    s.f.ledger.putEntitlement({ ...entitlement, serviceExpiresAt: original + 365 * 86_400_000 }, 'fixture-renewal');
+    s.f.setTime(original + 86_400_000);
+    const request = { ...s.request, method: 'POST', path: '/v1/connectors/mail-scan', body: { expectedAccountId: 'account-a', scope: mailScope(s.f.now()) } };
+    assert.equal((await broker.handle(request)).status, 200);
+    assert.equal(calls, 1);
+    // The current entitlement, not the stored copy, decides: once it lapses the connector stops.
+    s.f.ledger.putEntitlement({ ...entitlement, serviceExpiresAt: s.f.now() }, 'fixture-lapsed');
+    await assert.rejects(() => broker.handle({ ...request, body: { expectedAccountId: 'account-a', scope: mailScope(s.f.now()) } }), /service_unavailable/);
+    assert.equal(calls, 1);
   } finally { s.f.close(); }
 });
 
@@ -206,7 +227,7 @@ test('mail scan admits one active operation per device and releases the guard af
 
 test('HTTP mail scan rejects malformed scope and returns bounded projected evidence with independent device authentication', async () => {
   const s = setup(); let calls = 0;
-  const server = createGatewayServer({ gateway: s.f.gateway(), billing: s.f.billing, allowedOrigins: new Set(),
+  const server = createGatewayServer({ allowedOrigins: new Set(),
     portal: { async authenticate() { throw new Error('No portal identity'); } },
     connectors: s.make({ scan: async (_binding, scope) => { calls++; return mailResult(scope); } }) });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));

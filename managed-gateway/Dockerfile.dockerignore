@@ -1,6 +1,9 @@
 **
 !managed-gateway/
 !managed-gateway/*.ts
+managed-gateway/*.test.ts
+managed-gateway/testing.ts
+managed-gateway/sandbox-smoke.ts
 !managed-gateway/package.json
 !managed-gateway/tsconfig.json
 !server/

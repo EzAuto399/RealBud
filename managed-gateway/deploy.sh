@@ -43,8 +43,6 @@ fi
 
 fly secrets set \
   REALBUD_GATEWAY_PORTAL_SECRET="$REALBUD_GATEWAY_PORTAL_SECRET" \
-  REALBUD_PAYMENT_WEBHOOK_KEY="${REALBUD_PAYMENT_WEBHOOK_KEY:-$(openssl rand -hex 32)}" \
-  REALBUD_FINGERPRINT_KEY="${REALBUD_FINGERPRINT_KEY:-$(openssl rand -hex 32)}" \
   REALBUD_ALLOWED_ORIGINS="https://realbud.app,https://www.realbud.app" \
   REALBUD_ENABLE_PROVIDER="1" \
   REALBUD_COMPOSIO_ORG_KEY="$REALBUD_COMPOSIO_ORG_KEY" \
@@ -62,3 +60,4 @@ fly config env set REALBUD_GATEWAY_PUBLIC_ORIGIN="$REALBUD_GATEWAY_PUBLIC_ORIGIN
 fly deploy "$ROOT" --config "$ROOT/managed-gateway/fly.toml" --dockerfile "$ROOT/managed-gateway/Dockerfile" -a realbud-managed-gateway
 echo "Set website REALBUD_GATEWAY_URL to the app URL from: fly status -a realbud-managed-gateway"
 echo "Check provisioning: curl -fsS \"\$REALBUD_GATEWAY_URL/ready\" — 200 means composed, 503 names the variable still to set."
+echo "Then create each office's service entitlement on the machine: see DEPLOY.md, 'Order of operations' step 3."

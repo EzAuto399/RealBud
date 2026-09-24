@@ -60,9 +60,13 @@ export interface Tenant {
   companyId: string; licenseId: string; active: boolean; serviceExpiresAt: number;
   customerName: string; customerAddress: string; customerAbn?: string;
   goLiveAt: number; goLiveEvidence: string; includedUntil: number;
-  /** Monthly retail exposure, including GST, also contains included-period provider use. */
+  /** Legacy ledger caps. Stored for persisted-data compatibility; AI caps are
+   * Modelvia's (24 September 2026) and these drive nothing in provisioning. */
   monthlyCapNanoAud: string; requestCapNanoAud: string; maxConcurrent: number;
 }
+/** What the operator sets for one company (`entitlement-cli.ts`): whether its
+ * RealBud service may run, never what its AI use costs. */
+export type ServiceEntitlement = Pick<Tenant,'companyId'|'licenseId'|'active'|'serviceExpiresAt'|'customerName'|'customerAddress'|'customerAbn'|'goLiveAt'|'goLiveEvidence'>;
 export interface PortalPrincipal { subject: string; companyId: string; role: 'billing_owner' | 'billing_reader' }
 export interface ModelRequest {
   model: string; rateVersion: string; idempotencyKey: string;

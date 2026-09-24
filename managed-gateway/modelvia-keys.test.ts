@@ -257,3 +257,35 @@ test('updateProjectCaps re-reads once after a version conflict, then gives up', 
   const missing = transport(() => ({ body: { accounts: [] } }));
   await assert.rejects(() => client(missing).updateProjectCaps('rb-install-one', caps), /modelvia_project_missing/);
 });
+
+test('findCustomer reads the operator customer list with a GET and returns only what provisioning needs', async () => {
+  const customer = { id: 'cus-office', clientId: 'realbud', name: 'Fictional office', active: true, monthlyCapNanoAud: '70000000000', maxConcurrent: 3, allowedModels: ['auto'], version: 2 };
+  const t = transport(() => ({ body: { accounts: [{ ...customer, id: 'cus-other' }, customer] } }));
+  assert.deepEqual(await client(t).findCustomer('cus-office'), { active: true, monthlyCapNanoAud: '70000000000', maxConcurrent: 3 });
+  assert.equal(t.seen[0]!.url, 'https://api.modelvia.dev/v1/operator/customers');
+  assert.equal(t.seen[0]!.method, 'GET'); assert.equal(t.seen[0]!.body, undefined);
+  assert.deepEqual(verifyOperatorToken(t.seen[0]!.authorization!.slice('Bearer '.length), OPERATOR_SECRET, clock), { subject: OPERATOR_SUBJECT });
+  // Inactive and zero-cap customers are returned as they are; provisioning decides.
+  const inactive = transport(() => ({ body: { accounts: [{ ...customer, active: false, monthlyCapNanoAud: '0' }] } }));
+  assert.deepEqual(await client(inactive).findCustomer('cus-office'), { active: false, monthlyCapNanoAud: '0', maxConcurrent: 3 });
+});
+
+test('findCustomer returns null for a missing customer or one under another platform client', async () => {
+  const absent = transport(() => ({ body: { accounts: [] } }));
+  assert.equal(await client(absent).findCustomer('cus-office'), null);
+  const foreign = transport(() => ({ body: { accounts: [{ id: 'cus-office', clientId: 'another-client', active: true, monthlyCapNanoAud: '70000000000', maxConcurrent: 3 }] } }));
+  assert.equal(await client(foreign).findCustomer('cus-office'), null);
+});
+
+test('findCustomer refuses an unsafe id before the network and a malformed or ambiguous list after it', async () => {
+  const t = transport(() => ({ body: { accounts: [] } }));
+  for (const id of ['', 'cus/../other', 'cus with space']) await assert.rejects(() => client(t).findCustomer(id), /invalid_modelvia_account/);
+  assert.equal(t.seen.length, 0);
+  const good = { id: 'cus-office', clientId: 'realbud', active: true, monthlyCapNanoAud: '70000000000', maxConcurrent: 3 };
+  for (const body of [{}, { accounts: {} }, { accounts: [good, good] }, { accounts: [{ ...good, monthlyCapNanoAud: 70 }] }, { accounts: [{ ...good, active: 'yes' }] }, { accounts: [{ ...good, maxConcurrent: 1.5 }] }]) {
+    await assert.rejects(() => client(transport(() => ({ body }))).findCustomer('cus-office'), /modelvia_unreadable/, JSON.stringify(body));
+  }
+  await assert.rejects(() => client(transport(() => ({ status: 403, text: `denied ${OPERATOR_SECRET}` }))).findCustomer('cus-office'), error => {
+    assert.match((error as Error).message, /modelvia_rejected/); assert.ok(!(error as Error).message.includes(OPERATOR_SECRET)); return true;
+  });
+});
