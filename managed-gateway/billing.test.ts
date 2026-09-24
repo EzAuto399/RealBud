@@ -78,7 +78,7 @@ test('refunds require settled payment and an unapplied credit, and signed succes
   assert.equal(f.billing.receipt(f.owner,invoice.id).refundedCents,'1');assert.equal(f.db.all('SELECT * FROM refunds').length,1);
   f.setTime(Date.parse('2026-11-01T00:00:00Z'));assert.equal(f.billing.finalizeLocalInvoice('company-a','2026-10').totalCents,'0');
 });
-test('payment adapter selection cannot enable production collection in this build',()=>{
+test('nonlocal payment adapter cannot enable collection without explicit authorization',()=>{
   const f=setup();assert.throws(()=>new BillingService(f.ledger,{...f.payment,mode:'live'} as never),/payment_collection_not_authorized/);
 });
 test('printable invoice escapes tenant content and does not expose payment/provider secrets',async()=>{

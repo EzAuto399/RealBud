@@ -225,18 +225,18 @@ SQUARE_WEBHOOK_SIGNATURE_KEY=…
 
 ### Collection adapter and activation
 
-`SquareHostedPaymentAdapter` now implements the checkout contract for a **closed
-local invoice**: it creates a Square-hosted payment link and an order in one
+`SquareHostedPaymentAdapter` implements the checkout contract for a **closed,
+customer-accepted commercial invoice**: it creates a Square-hosted payment link and an order in one
 idempotent request, verifies the returned order, and records money only after a
 URL/raw-body signed webhook triggers authenticated Square payment retrieval.
 Refund intents are one-shot, and only retrieved `COMPLETED` refunds change the
 receipt. An uncertain create or refund stays held for operator reconciliation.
 The browser return and a Square invoice status never prove settlement.
 
-The separate `SquareBilling` path still creates only an accepted-statement
+The separate legacy `SquareBilling` path still creates only an accepted-statement
 **draft** Square invoice; it does not publish or send one. A customer period
 cannot enter both the local-invoice and Square-statement paths. The new payment
-link pays the local invoice; it does not publish the draft Square invoice.
+link pays the accepted commercial invoice; it does not publish the draft Square invoice.
 
 Sandbox composition requires **all** of these explicitly:
 
@@ -262,21 +262,72 @@ evidence reference. The actual buyer may use another card or Square customer
 profile; settlement binds the **tenant's saved checkout attempt, order,
 merchant, location and exact AUD total**, not the cardholder's Square profile.
 `REALBUD_INTERNAL_COMPANY_ID` names the internal RealBud owner tenant and is
-always denied, even if accidentally mapped. No map or a mismatched map means no
-checkout. An authenticated reader or another business cannot select a payer
+always denied for invoice close, statement close, mapping and checkout, even if
+accidentally mapped. A tenant with `billingMode: 'internal_cost'` is likewise
+never invoiced. No map or a mismatched map means no checkout. An authenticated reader or another business cannot select a payer
 with a request header or body.
 
-**Production collection remains blocked at boot** with
-`live_collection_terms_gate_unavailable`, even if a production token and
-`REALBUD_AUTHORIZE_COLLECTION=1` are present. The current local invoice model
-uses a global `CARE_FEE_CENTS` and an arbitrary `careAgreementRef`; it does not
-verify a durable per-tenant accepted commercial agreement and price at the
-checkout boundary. Add that authoritative contract gate and migrate invoice
-compatibility before allowing `REALBUD_PAYMENT_MODE=live`. Do not infer consent
-from a rate-card acceptance, a configured Square token, or this adapter's unit
-tests. A production Square merchant's legal/tax configuration, customer mapping,
-and actual sandbox checkout, webhook, refund, and issued invoice must also be
-verified separately before a real customer payment.
+The commercial collection sequence is explicit and local until checkout:
+
+1. Provision the outside customer tenant with its own identity, enabled service,
+   nonzero limits and accepted retail rate card. Mark RealBud's owner tenant
+   `internal_cost`. Review the seller identity/ABN/address and GST treatment,
+   the customer's identity, that customer's exact monthly care amount (which may
+   be zero), the rate-card versions/digests and the actual signed terms. The
+   seller/tax evidence references are operator attestations, not automatic legal
+   verification. Create a JSON file shaped like the `CommercialTermsDraft`
+   interface in `commercial-terms.ts` with a unique version for the month.
+2. With `REALBUD_GATEWAY_DATA` set to the persistent gateway data directory and
+   `REALBUD_INTERNAL_COMPANY_ID` set, run
+   `node --experimental-strip-types commercial-cli.ts publish reviewed-terms.json`.
+   It stores immutable terms and prints the exact terms and seller-basis digests;
+   it sends nothing. The authenticated customer's **billing owner** retrieves
+   `GET /v1/portal/commercial-terms?period=YYYY-MM`, reviews the full terms,
+   then calls `POST /v1/portal/commercial-terms/accept` with exactly
+   `{ "period": "YYYY-MM", "version": "...", "digest": "..." }`.
+   A reader, another tenant or a stale version cannot accept. A later published
+   version requires a new acceptance.
+3. After the month closes and unknown usage is reconciled, run
+   `node --experimental-strip-types commercial-cli.ts close COMPANY_ID YYYY-MM VERSION`.
+   It uses the **accepted** care amount and rate-card digests, binds the invoice
+   and exact total to that acceptance, and does not send or charge it. A legacy
+   `finalizeLocalInvoice` with an arbitrary `careAgreementRef` remains readable
+   for old/local fixtures but cannot enter Square checkout. For the Square
+   customer mapping, run
+   `node --experimental-strip-types commercial-cli.ts map reviewed-square-mapping.json`;
+   that file requires `companyId`, `merchantId`, `locationId`, `customerId`, and
+   `evidence`. Mapping does not call Square.
+4. The customer's billing owner requests `POST /v1/portal/invoices/{id}/checkout`.
+   Before any Square write, the gateway rechecks tenant, merchant mapping,
+   accepted terms, seller basis, invoice digest and exact AUD amount. The
+   Square order reference binds the same invoice and terms digests. Payment
+   status changes only after signature and authoritative Square GET checks.
+
+To start in **production**, set `REALBUD_PAYMENT_MODE=live` and the same
+explicit collection/Square variables as sandbox, using the production Square
+merchant and webhook subscription. Also set `REALBUD_SELLER_BASIS_DIGEST` to
+the reviewed digest printed at publication, and nonempty
+`REALBUD_SELLER_BASIS_APPROVAL_REF`, `REALBUD_PRODUCTION_INVOICE_APPROVAL_REF`,
+and `REALBUD_MANAGED_PROJECT_VERIFIED_REF`. The latter references record the
+operator's real seller/tax, production invoice document, and enabled
+Modelvia-project/caps reviews. Missing values stop startup; a mismatch with
+the customer's accepted invoice stops checkout. Code cannot verify those
+external legal/commercial facts merely because a reference string is set.
+No real customer acceptance or those approvals are recorded by this change,
+and production collection has **not** been activated or tested live.
+
+Historical local invoices remain labelled `LOCAL TEST DOCUMENT — no payment
+requested`; only commercial invoices with an accepted contract and seller/tax
+snapshot render as tax invoices. The old `CARE_FEE_CENTS` applies solely to
+legacy local/statement paths and is not approval for a customer's payment.
+`verified_cost` report imports use a private price proposal rather than a
+customer-accepted rate card, so commercial invoice close refuses them until a
+separately accepted customer retail policy can bind that rate version. Supplier
+costs and margin stay private.
+Do not infer consent from a rate-card acceptance, a Square token, or local
+adapter tests. Verify the production merchant's identity and location,
+customer mapping, genuine Square sandbox checkout/webhook/refund, delivered
+invoice and payment reconciliation before a real customer payment.
 
 This is RealBud collecting from its own customer through its configured Square
 merchant. Modelvia's separate, provider-owned retail customer Square path is

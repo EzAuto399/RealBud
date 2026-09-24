@@ -7,12 +7,17 @@ import { BillingService } from './billing.ts';
 import { createGatewayServer } from './http.ts';
 import { SquareHostedPaymentAdapter } from './square-payment.ts';
 import { SquareBilling } from './square.ts';
+import { digest } from './ledger.ts';
+import { canonical } from './contracts.ts';
 import { fixture } from './testing.ts';
 
 const NOTIFY='https://gateway.realbud.example/v1/webhooks/square',KEY='synthetic-square-webhook-signature-key';
 async function setup() {
   const f=fixture();await f.run();f.setTime(Date.parse('2026-10-01T00:00:00Z'));
-  const invoice=f.billing.finalizeLocalInvoice(f.tenant.companyId,'2026-09','fixture-care-agreement');
+  const closer=new BillingService(f.ledger,undefined,{internalCompanyId:'realbud-internal'});
+  const published=closer.commercialTerms!.publish({companyId:f.tenant.companyId,period:'2026-09',version:'fixture-commercial-v1',customer:{name:f.tenant.customerName,address:f.tenant.customerAddress},seller:{legalName:'Fictional RealBud Seller',product:'RealBud',abn:'12345678901',address:'1 Example Seller Street, Brisbane QLD',gstRegistered:true},tax:{currency:'AUD',gstInclusive:true,gstBasisPoints:1000,treatmentRef:'synthetic-tax-review'},sellerVerificationRef:'synthetic-seller-review',customerTermsRef:'synthetic-customer-contract',careCents:'9900',careAgreementRef:'fixture-care-agreement',rateCards:[{version:f.card.version,digest:digest(f.card)}]});
+  closer.commercialTerms!.accept(f.owner,'2026-09',published.terms.version,published.digest);
+  const invoice=closer.finalizeCommercialInvoice(f.tenant.companyId,'2026-09',published.terms.version);
   const calls:{method:string;path:string;body:Record<string,unknown>}[]=[];
   const payments=new Map<string,Record<string,unknown>>(),refunds=new Map<string,Record<string,unknown>>();
   let order:Record<string,unknown>|undefined,failAfterCreate=false;
@@ -38,12 +43,12 @@ async function setup() {
   const map=new SquareBilling({ledger:f.ledger,secret:async()=>'unused',signatureKey:async()=>KEY,notificationUrl:NOTIFY});
   map.map({companyId:f.tenant.companyId,merchantId:'merchant-a',locationId:'location-a',customerId:'customer-a',evidence:'customer-mapping-reviewed'});
   const adapter=new SquareHostedPaymentAdapter({ledger:f.ledger,environment:'sandbox',fetchImpl:transport,accessToken:'synthetic-sandbox-token',signatureKey:KEY,notificationUrl:NOTIFY,merchantId:'merchant-a',locationId:'location-a',internalCompanyId:'realbud-internal'});
-  const billing=new BillingService(f.ledger,adapter,{authorizeCollection:true});
+  const billing=new BillingService(f.ledger,adapter,{authorizeCollection:true,internalCompanyId:'realbud-internal'});
   const signed=(type:string,remoteId:string,eventId:string,at=f.now(),merchant='merchant-a')=>{
     const raw=Buffer.from(JSON.stringify({merchant_id:merchant,type,event_id:eventId,created_at:new Date(at).toISOString(),data:{type:type.startsWith('refund.')?'refund':'payment',id:remoteId}}));
     return {raw,signature:createHmac('sha256',KEY).update(NOTIFY).update(raw).digest('base64')};
   };
-  return {f,invoice,adapter,billing,calls,payments,refunds,signed,order:()=>order,loseResponse:()=>{failAfterCreate=true;}};
+  return {f,invoice,adapter,billing,calls,payments,refunds,signed,transport,order:()=>order,loseResponse:()=>{failAfterCreate=true;}};
 }
 
 test('sandbox checkout binds company, immutable invoice, mapped Square seller and order with one idempotent payment link',async()=>{
@@ -82,6 +87,28 @@ test('signed notification alone is insufficient: only matching retrieved complet
     assert.equal(s.billing.portalInvoices(s.f.owner)[0].paid,true);
     assert.equal(s.f.db.all('SELECT * FROM payments').length,1);
     assert.equal(s.f.db.all("SELECT * FROM events WHERE kind='payment_settled'").length,1);
+    s.f.db.verify();
+  }finally{s.f.close();}
+});
+
+test('an issued Square link still reconciles after service suspension, cap reduction, identity correction or changed seller approval',async()=>{
+  const s=await setup();try {
+    await s.billing.checkout(s.f.owner,s.invoice.id);
+    s.f.ledger.setService(s.f.tenant.companyId,false,s.f.now()+86400000,'synthetic-suspension');
+    s.f.ledger.setCaps(s.f.owner,{monthlyCapNanoAud:'0',requestCapNanoAud:'0',maxConcurrent:4});
+    s.f.db.transaction(()=>{
+      const old=s.f.ledger.tenant(s.f.tenant.companyId);
+      s.f.db.run('UPDATE tenants SET body=? WHERE id=?',canonical({...old,customerName:'Corrected Fictional Agency'}),old.companyId);
+      s.f.db.append(old.companyId,'synthetic_customer_identity_corrected',null,s.f.now(),{});
+    });
+    const changedAdapter=new SquareHostedPaymentAdapter({ledger:s.f.ledger,environment:'sandbox',fetchImpl:s.transport,accessToken:'synthetic-sandbox-token',signatureKey:KEY,notificationUrl:NOTIFY,merchantId:'merchant-a',locationId:'location-a',internalCompanyId:'realbud-internal',expectedSellerBasisDigest:'0'.repeat(64)});
+    const resumed=new BillingService(s.f.ledger,changedAdapter,{authorizeCollection:true,internalCompanyId:'realbud-internal'});
+    await assert.rejects(resumed.checkout(s.f.owner,s.invoice.id),/commercial_tenant_inactive/);
+    const amount=Number(s.invoice.totalCents);
+    s.payments.set('late-payment',{id:'late-payment',status:'COMPLETED',source_type:'CARD',location_id:'location-a',order_id:'square-order-one',amount_money:{amount,currency:'AUD'},total_money:{amount,currency:'AUD'},updated_at:new Date(s.f.now()).toISOString()});
+    const event=s.signed('payment.updated','late-payment','late-payment-event');
+    assert.deepEqual(await resumed.webhook(event.raw,event.signature),{duplicate:false});
+    assert.equal(resumed.receipt(s.f.owner,s.invoice.id).amountCents,s.invoice.totalCents);
     s.f.db.verify();
   }finally{s.f.close();}
 });
@@ -138,6 +165,9 @@ test('self billing and missing per-tenant mapping cannot create a Square checkou
     s.f.ledger.provisionTenant({...s.f.tenant,companyId:'company-b',licenseId:'license-b',customerName:'Fictional Agency B'});
     const unmapped=s.f.billing.finalizeLocalInvoice('company-b','2026-09','another-fixture-agreement');
     await assert.rejects(s.billing.checkout({...s.f.owner,companyId:'company-b'},unmapped.id),/square_mapping_required/);
+    const map=new SquareBilling({ledger:s.f.ledger,secret:async()=>'unused',signatureKey:async()=>KEY,notificationUrl:NOTIFY});
+    map.map({companyId:'company-b',merchantId:'merchant-a',locationId:'location-a',customerId:'customer-b',evidence:'synthetic-customer-b-review'});
+    await assert.rejects(s.billing.checkout({...s.f.owner,companyId:'company-b'},unmapped.id),/commercial_invoice_not_collectible/);
     assert.equal(s.calls.length,0);
     assert.equal(s.f.db.get('SELECT * FROM checkouts WHERE invoice=?',unmapped.id),undefined);
     const local=s.f.db.get<{body:string}>('SELECT body FROM checkouts WHERE invoice=?',s.invoice.id);
@@ -147,6 +177,16 @@ test('self billing and missing per-tenant mapping cannot create a Square checkou
     await assert.rejects(billing.checkout(s.f.owner,s.invoice.id),/internal_usage_not_collectible/);
     assert.equal(s.calls.length,0);
     assert.equal(s.f.db.get('SELECT * FROM checkouts WHERE invoice=?',s.invoice.id),undefined);
+  }finally{s.f.close();}
+});
+
+test('production adapter requires an explicit approved seller basis and still refuses a mismatched invoice',async()=>{
+  const s=await setup();try {
+    const options={ledger:s.f.ledger,environment:'production' as const,fetchImpl:async()=>{throw Error('network must stay off');},accessToken:'synthetic-production-token',signatureKey:KEY,notificationUrl:NOTIFY,merchantId:'merchant-a',locationId:'location-a',internalCompanyId:'realbud-internal'};
+    assert.throws(()=>new SquareHostedPaymentAdapter(options),/seller_basis_approval_required/);
+    const adapter=new SquareHostedPaymentAdapter({...options,expectedSellerBasisDigest:'0'.repeat(64)});
+    assert.throws(()=>adapter.preflightCheckout({companyId:s.f.tenant.companyId,invoiceId:s.invoice.id,amountCents:s.invoice.totalCents}),/seller_basis_not_approved/);
+    assert.equal(s.calls.length,0);
   }finally{s.f.close();}
 });
 

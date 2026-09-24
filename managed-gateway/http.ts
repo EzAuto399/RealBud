@@ -105,6 +105,16 @@ export function createGatewayServer(options:{gateway:ManagedGateway;billing:Bill
         const value=json(await body(req,4096)); object(value); exact(value,['version','digest']);
         requireThat(typeof value.version==='string' && typeof value.digest==='string','invalid_acceptance'); reply(res,200,ledger.acceptCard(actor,value.version,value.digest)); return;
       }
+      if(req.method==='GET' && url.pathname==='/v1/portal/commercial-terms') {
+        requireThat(options.billing.commercialTerms,'commercial_terms_unavailable',503);
+        reply(res,200,options.billing.commercialTerms.current(actor,url.searchParams.get('period')||'')); return;
+      }
+      if(req.method==='POST' && url.pathname==='/v1/portal/commercial-terms/accept') {
+        requireThat(options.billing.commercialTerms,'commercial_terms_unavailable',503);
+        const value=json(await body(req,4096));object(value);exact(value,['period','version','digest']);
+        requireThat(typeof value.period==='string' && typeof value.version==='string' && typeof value.digest==='string','invalid_acceptance');
+        reply(res,200,options.billing.commercialTerms.accept(actor,value.period,value.version,value.digest));return;
+      }
       if(req.method==='POST' && url.pathname==='/v1/portal/limits') {
         const value=json(await body(req,4096)); object(value); exact(value,['monthlyCapNanoAud','requestCapNanoAud','maxConcurrent']);
         ledger.setCaps(actor,value as never);

@@ -1,7 +1,7 @@
 /** Additive LOCAL FIXTURE seam. No default transport, publishing, charging or refund-creation API.
  * Square owns any eventual tax invoice. This module owns an immutable usage statement. */
 import { createHmac, timingSafeEqual, randomUUID } from 'node:crypto';
-import { canonical, id, integer, object, requireThat, type PortalPrincipal } from './contracts.ts';
+import { canonical, exact, id, integer, object, requireThat, type PortalPrincipal } from './contracts.ts';
 import { digest, UsageLedger } from './ledger.ts';
 import { CARE_FEE_CENTS } from './billing.ts';
 import { cents, gstCents, periodAt } from './money.ts';
@@ -34,8 +34,10 @@ export class SquareBilling {
   private readonly secret:()=>Promise<string>;
   readonly notificationUrl:string;
   private readonly signatureKey:()=>Promise<string>;
-  constructor(options:{ledger:UsageLedger;fetch?:typeof fetch;secret:()=>Promise<string>;notificationUrl:string;signatureKey:()=>Promise<string>;environment?:SquareEnvironment}) {
+  private readonly internalCompanyId:string|undefined;
+  constructor(options:{ledger:UsageLedger;fetch?:typeof fetch;secret:()=>Promise<string>;notificationUrl:string;signatureKey:()=>Promise<string>;environment?:SquareEnvironment;internalCompanyId?:string}) {
     this.ledger=options.ledger;this.transport=options.fetch;this.secret=options.secret;this.notificationUrl=options.notificationUrl;this.signatureKey=options.signatureKey;
+    this.internalCompanyId=options.internalCompanyId;
     const environment=options.environment ?? 'production';
     requireThat(environment==='production'||environment==='sandbox','square_environment_invalid');
     this.environment=environment;this.host=SQUARE_HOSTS[environment];
@@ -43,7 +45,9 @@ export class SquareBilling {
   }
   /** Trusted operator seam; no portal route. Mapping changes need an explicit migration. */
   map(mapping:Mapping) {
-    Object.values(mapping).forEach(id);this.ledger.tenant(mapping.companyId);
+    object(mapping);exact(mapping as unknown as Record<string,unknown>,['companyId','merchantId','customerId','locationId','evidence']);
+    requireThat(!this.internalCompanyId || mapping.companyId!==this.internalCompanyId,'internal_usage_not_billable',403);
+    Object.values(mapping).forEach(id);requireThat(this.ledger.tenant(mapping.companyId).billingMode!=='internal_cost','internal_usage_not_billable',403);
     this.ledger.db.transaction(()=>{const prior=this.ledger.db.get<{body:string}>('SELECT body FROM square_mappings WHERE tenant=?',mapping.companyId);if(prior){requireThat(prior.body===canonical(mapping),'square_mapping_conflict',409);return;}
       this.ledger.db.run('INSERT INTO square_mappings(tenant,merchant,customer,body) VALUES(?,?,?,?)',mapping.companyId,mapping.merchantId,mapping.customerId,canonical(mapping));this.ledger.db.append(mapping.companyId,'square_mapping_recorded',null,this.ledger.now(),mapping);});
   }
@@ -51,11 +55,13 @@ export class SquareBilling {
   /** Close settled usage; unknown calls stay held and carry into a later statement after reconciliation.
    * Care is explicit per full agreed month. No inferred proration. No customer name/address copy. */
   closeStatement(companyId:string,period:string,careAgreementRef:string|null=null):Statement {
+    requireThat(!this.internalCompanyId || companyId!==this.internalCompanyId,'internal_usage_not_billable',403);
     requireThat(/^\d{4}-(0[1-9]|1[0-2])$/.test(period) && period<periodAt(this.ledger.now()),'month_not_closed',409);if(careAgreementRef)id(careAgreementRef);
     return this.ledger.db.transaction(()=>{
+      const tenant=this.ledger.tenant(companyId);requireThat(tenant.billingMode!=='internal_cost','internal_usage_not_billable',403);
       const existing=this.ledger.db.get<{body:string}>('SELECT body FROM statements WHERE tenant=? AND period=?',companyId,period);
       if(existing){const saved:Statement=JSON.parse(existing.body);requireThat(saved.careAgreementRef===careAgreementRef,'statement_close_conflict',409);return saved;}
-      const tenant=this.ledger.tenant(companyId);requireThat(period>=periodAt(tenant.goLiveAt),'period_before_go_live');
+      requireThat(period>=periodAt(tenant.goLiveAt),'period_before_go_live');
       requireThat(!this.ledger.db.get('SELECT id FROM invoices WHERE tenant=? AND period=?',companyId,period),'period_already_invoiced',409);
       requireThat(!this.ledger.db.get('SELECT id FROM statements WHERE tenant=? AND period>?',companyId,period),'statement_period_out_of_order',409);
       const events=this.ledger.db.all<{seq:number;kind:string;body:string}>(`SELECT e.seq,e.kind,e.body FROM events e WHERE e.tenant=? AND e.kind IN ('usage_settled','report_usage_accepted','credit') AND NOT EXISTS(SELECT 1 FROM invoice_events i WHERE i.event=e.seq) AND NOT EXISTS(SELECT 1 FROM statement_events s WHERE s.event=e.seq) AND NOT EXISTS(SELECT 1 FROM refund_intents f WHERE f.credit_event=e.seq) ORDER BY e.seq`,companyId).filter(e=>JSON.parse(e.body).period<=period);

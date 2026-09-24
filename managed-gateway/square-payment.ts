@@ -7,6 +7,7 @@ import { canonical, id, object, requireThat } from './contracts.ts';
 import type { CheckoutRequest, HostedCheckout, HostedPaymentAdapter, Invoice, RefundRequest, VerifiedPayment, VerifiedRefund } from './billing.ts';
 import type { UsageLedger } from './ledger.ts';
 import type { SquareEnvironment } from './square.ts';
+import { CommercialTermsStore } from './commercial-terms.ts';
 
 const HOSTS:Record<SquareEnvironment,string>={production:'https://connect.squareup.com',sandbox:'https://connect.squareupsandbox.com'};
 const VERSION='2026-08-19';
@@ -29,13 +30,18 @@ export class SquareHostedPaymentAdapter implements HostedPaymentAdapter {
   private readonly merchantId:string;
   private readonly locationId:string;
   private readonly internalCompanyId:string;
-  constructor(options:{ledger:UsageLedger;environment:SquareEnvironment;fetchImpl?:typeof fetch;accessToken:string;signatureKey:string;notificationUrl:string;merchantId:string;locationId:string;internalCompanyId:string}) {
+  private readonly terms:CommercialTermsStore;
+  private readonly expectedSellerBasisDigest:string|undefined;
+  constructor(options:{ledger:UsageLedger;environment:SquareEnvironment;fetchImpl?:typeof fetch;accessToken:string;signatureKey:string;notificationUrl:string;merchantId:string;locationId:string;internalCompanyId:string;expectedSellerBasisDigest?:string}) {
     requireThat(options.environment==='sandbox'||options.environment==='production','square_environment_invalid');
     this.ledger=options.ledger;this.host=HOSTS[options.environment];this.mode=options.environment==='sandbox'?'sandbox':'live';this.id=`square-${this.mode}`;
     this.transport=options.fetchImpl??fetch;this.accessToken=options.accessToken;this.signatureKey=options.signatureKey;
     this.notificationUrl=options.notificationUrl;this.merchantId=options.merchantId;this.locationId=options.locationId;this.internalCompanyId=options.internalCompanyId;
+    this.terms=new CommercialTermsStore(options.ledger,options.internalCompanyId);
+    this.expectedSellerBasisDigest=options.expectedSellerBasisDigest;
     [this.merchantId,this.locationId,this.internalCompanyId].forEach(id);
     requireThat(this.accessToken.length>0 && this.signatureKey.length>0,'square_credentials_required',503);
+    if(this.mode==='live') requireThat(typeof this.expectedSellerBasisDigest==='string' && /^[a-f0-9]{64}$/.test(this.expectedSellerBasisDigest),'seller_basis_approval_required',503);
     const notify=new URL(this.notificationUrl);
     requireThat(notify.protocol==='https:' && !notify.username && !notify.password && !notify.search && !notify.hash && notify.pathname==='/v1/webhooks/square','square_notification_url_invalid',503);
   }
@@ -64,13 +70,16 @@ export class SquareHostedPaymentAdapter implements HostedPaymentAdapter {
     const location=await this.request('GET',`/v2/locations/${encodeURIComponent(this.locationId)}`);object(location.location);
     requireThat(location.location.id===this.locationId && location.location.merchant_id===this.merchantId && location.location.status==='ACTIVE' && location.location.currency==='AUD','square_location_mismatch',403);
   }
-  private reference(companyId:string,invoiceId:string,attemptId:string):string {return `rb-${hash(companyId,invoiceId,attemptId).slice(0,37)}`;}
+  private reference(companyId:string,invoiceId:string,attemptId:string,invoiceDigest:string,termsDigest:string):string {return `rb-${hash(companyId,invoiceId,attemptId,invoiceDigest,termsDigest).slice(0,37)}`;}
   private checkoutForReference(reference:string) {
     const rows=this.ledger.db.all<{invoice:string;state:string;body:string;tenant:string;invoice_body:string}>(`SELECT c.invoice,c.state,c.body,i.tenant,i.body AS invoice_body FROM checkouts c JOIN invoices i ON i.id=c.invoice`);
-    const matches=rows.filter(row=>{const data=JSON.parse(row.body) as SavedCheckout;return data.provider===this.id && this.reference(row.tenant,row.invoice,data.attemptId)===reference;});
+    const matches=rows.filter(row=>{const data=JSON.parse(row.body) as SavedCheckout;if(data.provider!==this.id)return false;
+      const binding=this.ledger.db.get<{invoice_digest:string;terms_digest:string}>('SELECT invoice_digest,terms_digest FROM collection_invoice_bindings WHERE invoice=? AND tenant=?',row.invoice,row.tenant);
+      return !!binding && this.reference(row.tenant,row.invoice,data.attemptId,binding.invoice_digest,binding.terms_digest)===reference;});
     requireThat(matches.length===1,'square_checkout_reconciliation_required',409);
     const row=matches[0],saved=JSON.parse(row.body) as SavedCheckout,invoice=JSON.parse(row.invoice_body) as Invoice;
     this.mapping(row.tenant);
+    this.terms.assertCollectible(invoice,undefined,false);
     requireThat(invoice.companyId===row.tenant && invoice.id===row.invoice && saved.amountCents===invoice.totalCents,'square_checkout_binding_mismatch',409);
     return {row,saved,invoice};
   }
@@ -97,6 +106,7 @@ export class SquareHostedPaymentAdapter implements HostedPaymentAdapter {
     requireThat(row?.tenant===request.companyId,'square_checkout_binding_mismatch',409);
     const invoice=JSON.parse(row.body) as Invoice;
     requireThat(invoice.companyId===request.companyId && invoice.id===request.invoiceId && invoice.kind==='Tax Invoice' && invoice.currency==='AUD' && invoice.totalCents===request.amountCents,'square_checkout_binding_mismatch',409);
+    this.terms.assertCollectible(invoice,this.expectedSellerBasisDigest);
   }
   async createCheckout(request:CheckoutRequest):Promise<HostedCheckout> {
     [request.companyId,request.invoiceId,request.attemptId,request.idempotencyKey].forEach(id);
@@ -107,7 +117,8 @@ export class SquareHostedPaymentAdapter implements HostedPaymentAdapter {
     const invoice=JSON.parse(row.body) as Invoice,saved=JSON.parse(row.checkout_body) as SavedCheckout;
     requireThat(invoice.companyId===request.companyId && invoice.id===request.invoiceId && invoice.kind==='Tax Invoice' && invoice.currency==='AUD' && saved.provider===this.id && saved.attemptId===request.attemptId && saved.amountCents===request.amountCents && invoice.totalCents===request.amountCents,'square_checkout_binding_mismatch',409);
     await this.seller();
-    const reference=this.reference(request.companyId,request.invoiceId,request.attemptId);
+    const binding=this.terms.assertCollectible(invoice,this.expectedSellerBasisDigest);
+    const reference=this.reference(request.companyId,request.invoiceId,request.attemptId,binding.invoiceDigest,binding.termsDigest);
     const response=await this.request('POST','/v2/online-checkout/payment-links',{
       idempotency_key:request.idempotencyKey,
       description:`RealBud invoice ${request.invoiceId}`,
@@ -161,6 +172,9 @@ export class SquareHostedPaymentAdapter implements HostedPaymentAdapter {
     requireThat(paid,'payment_not_settled',409);
     const invoiceRow=this.ledger.db.get<{tenant:string}>('SELECT tenant FROM invoices WHERE id=?',paid.invoice);
     requireThat(invoiceRow?.tenant===intent.tenant,'square_refund_tenant_mismatch',409);
+    const originalInvoice=this.ledger.db.get<{body:string}>('SELECT body FROM invoices WHERE id=?',paid.invoice);
+    requireThat(originalInvoice,'square_refund_invoice_missing',409);
+    this.terms.assertCollectible(JSON.parse(originalInvoice.body) as Invoice,undefined,false);
     const original=JSON.parse(paid.body) as VerifiedPayment;
     requireThat(original.transactionId===request.transactionId && BigInt(request.amountCents)<=BigInt(original.amountCents),'square_refund_scope_mismatch',409);
     const response=await this.request('GET',`/v2/payments/${encodeURIComponent(request.transactionId)}`);object(response.payment);

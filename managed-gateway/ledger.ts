@@ -21,6 +21,7 @@ export class UsageLedger {
     requireThat(typeof tenant.active === 'boolean' && tenant.goLiveAt <= this.now() && tenant.includedUntil === twoMonthsAfter(tenant.goLiveAt), 'invalid_go_live');
     requireThat(typeof tenant.customerName === 'string' && tenant.customerName.trim().length > 0 && tenant.customerName.length <= 200 && typeof tenant.customerAddress === 'string' && tenant.customerAddress.trim().length > 0 && tenant.customerAddress.length <= 500, 'customer_identity_required');
     requireThat(tenant.customerAbn === undefined || /^\d{11}$/.test(tenant.customerAbn), 'invalid_customer_abn');
+    requireThat(tenant.billingMode===undefined || tenant.billingMode==='customer' || tenant.billingMode==='internal_cost','invalid_billing_mode');
     this.validateCaps(tenant);
     this.db.transaction(() => {
       requireThat(!this.db.get('SELECT id FROM tenants WHERE id=?',tenant.companyId), 'tenant_already_provisioned',409);

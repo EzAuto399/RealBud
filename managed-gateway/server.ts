@@ -94,6 +94,7 @@ export const square =
         notificationUrl: squareNotify,
         signatureKey: squareSig,
         environment: squareEnvironment,
+        internalCompanyId: internalCompanyId || undefined,
       })
     : null;
 
@@ -108,19 +109,22 @@ if (paymentMode !== "local") {
   );
   requireThat(squareToken && squareNotify && squareSig && squareMerchantId && squareLocationId && internalCompanyId,
     "Square checkout requires token, notification URL, signature key, merchant, location and internal company ID");
-  // The present invoice model still has a global care amount and no durable
-  // per-tenant accepted commercial agreement. A production checkout would take
-  // real money without authoritative proof of the agreed price. Sandbox proves
-  // the adapter without moving money; production remains closed at boot.
-  requireThat(paymentMode !== "live", "live_collection_terms_gate_unavailable");
+  if(paymentMode==='live') {
+    // These are explicit operator attestations, not facts inferred from a token.
+    // Every checkout also checks the customer's immutable accepted monthly
+    // terms, exact invoice amount and this seller-basis digest.
+    requireThat(/^[a-f0-9]{64}$/.test(process.env.REALBUD_SELLER_BASIS_DIGEST||''),'REALBUD_SELLER_BASIS_DIGEST required for live collection');
+    requireThat(!!process.env.REALBUD_SELLER_BASIS_APPROVAL_REF && !!process.env.REALBUD_PRODUCTION_INVOICE_APPROVAL_REF && !!process.env.REALBUD_MANAGED_PROJECT_VERIFIED_REF,'seller, invoice and project approval references required for live collection');
+  }
 }
 
 const payment = paymentMode === "local"
   ? new LocalPaymentAdapter(paymentKey, Date.now)
-  : new SquareHostedPaymentAdapter({ledger,environment:"sandbox",accessToken:squareToken,signatureKey:squareSig,
-      notificationUrl:squareNotify,merchantId:squareMerchantId,locationId:squareLocationId,internalCompanyId});
+  : new SquareHostedPaymentAdapter({ledger,environment:squareEnvironment,accessToken:squareToken,signatureKey:squareSig,
+      notificationUrl:squareNotify,merchantId:squareMerchantId,locationId:squareLocationId,internalCompanyId,
+      ...(paymentMode==='live'?{expectedSellerBasisDigest:process.env.REALBUD_SELLER_BASIS_DIGEST}:{})});
 
-const billing = new BillingService(ledger, payment, { authorizeCollection });
+const billing = new BillingService(ledger, payment, { authorizeCollection, internalCompanyId:internalCompanyId || undefined });
 
 const routes = new Map();
 const deepseekKey = process.env.DEEPSEEK_API_KEY;

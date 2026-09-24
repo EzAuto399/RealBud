@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { canonical, id, integer, nano, requireThat, type PortalPrincipal, type Units, type ModelRate } from './contracts.ts';
 import { digest, UsageLedger } from './ledger.ts';
 import { cents, gstCents, modelRate, periodAt } from './money.ts';
+import { CommercialTermsStore } from './commercial-terms.ts';
 
 export const SUPPLIER = { legalName:'Yo-Da Lai', product:'RealBud', abn:'84992526369', gstRegistered:true } as const;
 export const CARE_FEE_CENTS = 12_500;
@@ -10,10 +11,11 @@ export interface InvoiceLine {
   requestId?:string; rateVersion?:string; model?:string; units?:Units; rates?:ModelRate['units']; sourceInvoice?:string;
 }
 export interface Invoice {
-  id:string; kind:'Tax Invoice'|'Adjustment Note'; mode:'local'; companyId:string; period:string; issuedAt:number;
-  supplier:typeof SUPPLIER; customer:{name:string;address:string;abn?:string}; currency:'AUD'; gstInclusive:true;
+  id:string; kind:'Tax Invoice'|'Adjustment Note'; mode:'local'|'commercial'; companyId:string; period:string; issuedAt:number;
+  supplier:{legalName:string;product:'RealBud';abn:string;gstRegistered:true;address?:string}; customer:{name:string;address:string;abn?:string}; currency:'AUD'; gstInclusive:true;
   lines:InvoiceLine[]; totalCents:string; gstCents:string; careAgreementRef:string|null;
   sourceEventIds:number[];
+  commercialTerms?:{version:string;digest:string;acceptanceDigest:string;sellerBasisDigest:string};
 }
 export interface HostedCheckout { sessionId:string; url:string; expiresAt:number }
 export interface CheckoutRequest { companyId:string; invoiceId:string; attemptId:string; amountCents:string; currency:'AUD'; idempotencyKey:string }
@@ -40,11 +42,14 @@ type EventRow = {seq:number;kind:string;request:string|null;body:string};
 export class BillingService {
   readonly ledger:UsageLedger;
   private readonly payment:HostedPaymentAdapter|undefined;
+  readonly commercialTerms:CommercialTermsStore|undefined;
+  private readonly internalCompanyId:string|undefined;
   /** Local is always allowed. Sandbox/live require `authorizeCollection: true` from the
    * deployment entrypoint after secrets and Square account checks — never from a test import. */
-  constructor(ledger:UsageLedger, payment?:HostedPaymentAdapter, options:{authorizeCollection?:boolean}={}) {
+  constructor(ledger:UsageLedger, payment?:HostedPaymentAdapter, options:{authorizeCollection?:boolean;internalCompanyId?:string}={}) {
     requireThat(!payment || payment.mode==='local' || options.authorizeCollection===true,'payment_collection_not_authorized',403);
-    this.ledger=ledger; this.payment=payment;
+    this.ledger=ledger; this.payment=payment; this.internalCompanyId=options.internalCompanyId;
+    this.commercialTerms=options.internalCompanyId?new CommercialTermsStore(ledger,options.internalCompanyId):undefined;
   }
   private unbilled(companyId:string,period:string):EventRow[] {
     return this.ledger.db.all<EventRow>(`SELECT e.seq,e.kind,e.request,e.body FROM events e LEFT JOIN invoice_events i ON i.event=e.seq
@@ -57,13 +62,27 @@ export class BillingService {
    * Care is only included with a supplied agreement reference for this month.
    * No assumptions about partial-month care charges are made. */
   finalizeLocalInvoice(companyId:string,period:string,careAgreementRef:string|null=null):Invoice {
+    return this.closeInvoice(companyId,period,careAgreementRef);
+  }
+  /** Collected invoices use the latest exact monthly terms accepted by this
+   * customer's billing owner. No caller-supplied care amount or agreement ref. */
+  finalizeCommercialInvoice(companyId:string,period:string,termsVersion:string):Invoice {
+    requireThat(this.commercialTerms,'commercial_terms_unavailable',503);
+    id(termsVersion);
+    return this.closeInvoice(companyId,period,null,termsVersion);
+  }
+  private closeInvoice(companyId:string,period:string,careAgreementRef:string|null,termsVersion?:string):Invoice {
+    requireThat(!this.internalCompanyId || companyId!==this.internalCompanyId,'internal_usage_not_billable',403);
     requireThat(/^\d{4}-(0[1-9]|1[0-2])$/.test(period) && period<periodAt(this.ledger.now()),'month_not_closed',409);
     if(careAgreementRef!==null) id(careAgreementRef);
     return this.ledger.db.transaction(()=>{
-      const existing=this.ledger.db.get<{body:string}>('SELECT body FROM invoices WHERE tenant=? AND period=?',companyId,period);
-      if(existing) { const invoice:Invoice=JSON.parse(existing.body); requireThat(invoice.careAgreementRef===careAgreementRef,'invoice_close_conflict',409); return invoice; }
-      requireThat(!this.ledger.db.get('SELECT id FROM statements WHERE tenant=? AND period=?',companyId,period),'period_already_stated',409);
+      const accepted=termsVersion?this.commercialTerms!.accepted(companyId,period,termsVersion):undefined;
+      const terms=accepted?.terms;
       const tenant=this.ledger.tenant(companyId);
+      requireThat(tenant.billingMode!=='internal_cost','internal_usage_not_billable',403);
+      const existing=this.ledger.db.get<{body:string}>('SELECT body FROM invoices WHERE tenant=? AND period=?',companyId,period);
+      if(existing) { const invoice:Invoice=JSON.parse(existing.body); requireThat(terms?invoice.commercialTerms?.version===termsVersion:!invoice.commercialTerms && invoice.careAgreementRef===careAgreementRef,'invoice_close_conflict',409); return invoice; }
+      requireThat(!this.ledger.db.get('SELECT id FROM statements WHERE tenant=? AND period=?',companyId,period),'period_already_stated',409);
       requireThat(period>=periodAt(tenant.goLiveAt),'period_before_go_live',409);
       requireThat(!this.ledger.requests(companyId).some(r=>r.period<=period && ['unknown','reserved','dispatched'].includes(r.state)),'unreconciled_usage',409);
       // Closing must move forwards: late credits are carried to the next invoice.
@@ -74,6 +93,7 @@ export class BillingService {
       };
       for(const e of events) {
         const data=JSON.parse(e.body);
+        if(terms && e.kind!=='credit') requireThat(terms.rateCards.some(rate=>rate.version===data.rateVersion),'commercial_usage_rate_not_agreed',409);
         if(e.kind==='credit') {
           const source=this.ledger.db.get<{invoice:string}>(`SELECT i.invoice FROM invoice_events i JOIN events e ON e.seq=i.event WHERE e.request=? AND e.kind='usage_settled'`,e.request);
           add({description:'AI usage credit',amountNanoAud:(-nano(data.amountNanoAud)).toString(),requestId:e.request!,sourceInvoice:source?.invoice});
@@ -88,17 +108,19 @@ export class BillingService {
           add({description:data.included?'AI usage — included period':`AI usage — ${rate.label}`,amountNanoAud:amount.toString(),requestId:e.request!,model:data.model,rateVersion:data.rateVersion,units:data.units,rates:rate.units});
         }
       }
-      if(careAgreementRef) add({description:'RealBud software and routine maintenance — monthly care',amountNanoAud:(BigInt(CARE_FEE_CENTS)*10_000_000n).toString()});
+      const agreedCare=terms?BigInt(terms.careCents):careAgreementRef?BigInt(CARE_FEE_CENTS):0n;
+      if(agreedCare>0n) add({description:'RealBud software and routine maintenance — monthly care',amountNanoAud:(agreedCare*10_000_000n).toString()});
       const totalNano=lines.reduce((s,l)=>s+BigInt(l.amountNanoAud),0n); const total=cents(totalNano);
       const roundedLines=lines.reduce((s,l)=>s+BigInt(l.amountCents),0n);
       if(roundedLines!==total) lines.push({description:'Monthly rounding adjustment',amountNanoAud:'0',amountCents:(total-roundedLines).toString(),gstCents:'0'});
       const gst=gstCents(total), lineGst=lines.reduce((s,l)=>s+BigInt(l.gstCents),0n);
       if(lines.length) lines[lines.length-1].gstCents=(BigInt(lines.at(-1)!.gstCents)+gst-lineGst).toString();
       const next=Number(this.ledger.db.get<{value:string}>("SELECT value FROM settings WHERE key='local_invoice_sequence'")?.value??'0')+1;
-      const invoice:Invoice={id:`RB-LOCAL-${String(next).padStart(6,'0')}`,kind:total<0n?'Adjustment Note':'Tax Invoice',mode:'local',companyId,period,issuedAt:this.ledger.now(),supplier:SUPPLIER,customer:{name:tenant.customerName,address:tenant.customerAddress,...(tenant.customerAbn?{abn:tenant.customerAbn}:{})},currency:'AUD',gstInclusive:true,lines,totalCents:total.toString(),gstCents:gst.toString(),careAgreementRef,sourceEventIds:events.map(e=>e.seq)};
+      const invoice:Invoice={id:`${terms?'RB':'RB-LOCAL'}-${String(next).padStart(6,'0')}`,kind:total<0n?'Adjustment Note':'Tax Invoice',mode:terms?'commercial':'local',companyId,period,issuedAt:this.ledger.now(),supplier:terms?.seller??SUPPLIER,customer:terms?.customer??{name:tenant.customerName,address:tenant.customerAddress,...(tenant.customerAbn?{abn:tenant.customerAbn}:{})},currency:'AUD',gstInclusive:true,lines,totalCents:total.toString(),gstCents:gst.toString(),careAgreementRef:terms?.careAgreementRef??careAgreementRef,sourceEventIds:events.map(e=>e.seq),...(accepted?{commercialTerms:{version:accepted.terms.version,digest:accepted.digest,acceptanceDigest:digest(accepted.acceptance),sellerBasisDigest:this.commercialTerms!.sellerBasisDigest(accepted.terms)}}:{})};
       this.ledger.db.run("INSERT INTO settings(key,value) VALUES('local_invoice_sequence',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",String(next));
       this.ledger.db.run('INSERT INTO invoices(id,tenant,period,body) VALUES(?,?,?,?)',invoice.id,companyId,period,canonical(invoice));
       for(const e of events) this.ledger.db.run('INSERT INTO invoice_events(event,invoice) VALUES(?,?)',e.seq,invoice.id);
+      if(terms)this.commercialTerms!.bindInvoice(invoice);
       this.ledger.db.append(companyId,'local_invoice_closed',null,this.ledger.now(),{invoiceId:invoice.id,totalCents:invoice.totalCents,digest:digest(invoice)});
       return invoice;
     });

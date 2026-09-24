@@ -12,6 +12,7 @@ export function createSquareBilling(options: {
   /** Which Square host to talk to. Defaults to production; pass 'sandbox'
    * explicitly so a sandbox token can never be aimed at the real account. */
   environment?: SquareEnvironment;
+  internalCompanyId?: string;
 }): SquareBilling {
   return new SquareBilling({
     ledger: options.ledger,
@@ -20,6 +21,7 @@ export function createSquareBilling(options: {
     notificationUrl: options.notificationUrl,
     signatureKey: async () => options.signatureKey,
     environment: options.environment,
+    internalCompanyId: options.internalCompanyId,
   });
 }
 
