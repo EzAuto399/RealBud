@@ -1,4 +1,6 @@
 > Belongs to the Austin Realty add-on workflow pack (`austin-office`), not RealBud core. Operating skill: `pack/workflows/austin-accounts/support/rei-cloud-navigation/SKILL.md` (pack revision 2); machine-readable map beside it as `site-map.json`.
+>
+> Simulation: `scripts/qa-rei-map-sim.mjs` lints the task-first map `references/website-map.md` beside the skill and runs its tier-S recipes against a fictional local mock (receipt `outputs/rei-map-sim-2026-09-25/receipt.json`); a pass proves the recipes execute and their guards hold, not that REI behaves this way.
 
 # REI Cloud: site map for browser work
 
