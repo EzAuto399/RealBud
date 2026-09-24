@@ -517,7 +517,22 @@ export class InstallationProvisioning {
     requireThat(body.deleteProject === undefined || typeof body.deleteProject === 'boolean', 'invalid_fields');
     const deleteProject = body.deleteProject === true;
     const saved = this.saved(companyId, installationId);
-    requireThat(saved, 'installation_not_provisioned', 404);
+    if (!saved) {
+      // Nothing was ever journalled, so there is nothing to undo. Leave a
+      // tombstone so a provision already past its first read (waiting on
+      // Modelvia) meets `installation_revoked` on its re-read instead of minting
+      // for a computer the office has already removed.
+      const now = this.options.ledger.now();
+      const tombstone: StoredRecord = { state: 'revoked', profile: '', apps: [], customerId: '', revocation: { companyId, installationId, neverProvisioned: true } };
+      this.options.ledger.db.transaction(() => {
+        if (this.saved(companyId, installationId)) return;
+        this.options.ledger.db.run('INSERT INTO installation_provisioning(tenant,installation,state,body,created) VALUES(?,?,?,?,?)', companyId, installationId, 'revoked', canonical(tombstone), now);
+        this.options.ledger.db.append(companyId, 'installation_revoked_unprovisioned', null, now, { installationId });
+      });
+    }
+    // A tombstone answers exactly like the first removal, so the website clears
+    // its pending cleanup the same way every time.
+    requireThat(saved && saved.revocation?.neverProvisioned !== true, 'installation_not_provisioned', 404);
     // Already revoked: return the recorded outcome rather than repeating an
     // irreversible act nobody asked for twice.
     if (saved!.state === 'revoked') return { revoked: saved!.revocation ?? { companyId, installationId } };

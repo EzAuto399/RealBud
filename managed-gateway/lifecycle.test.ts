@@ -494,6 +494,24 @@ test('7. a Modelvia customer not ready, and a missing, lapsed or suspended entit
   }
 });
 
+test('6. a computer removed while its first provision waits on Modelvia is never provisioned', async () => {
+  const h = lifecycle(); try {
+    const original = h.v.modelvia.findCustomer.bind(h.v.modelvia);
+    let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+    h.v.modelvia.findCustomer = async (id: string) => { await gate; return original(id); };
+    const provisioning = h.provisioning();
+    const inFlight = failure(provisioning.provision(h.f.owner, h.request('install-one')));
+    const revoked = await failure(provisioning.revoke(h.f.owner, { companyId: h.f.tenant.companyId, installationId: 'install-one' }));
+    assert.equal(revoked?.code, 'installation_not_provisioned');
+    release();
+    assert.equal((await inFlight)?.code, 'installation_revoked');
+    assert.equal(h.v.mv.projects.size, 0); assert.equal(h.v.composio.lists, 0);
+    // A second removal and a later provision both see the tombstone.
+    assert.equal((await failure(provisioning.provision(h.f.owner, h.request('install-one'))))?.code, 'installation_revoked');
+    assert.equal((await failure(provisioning.revoke(h.f.owner, { companyId: h.f.tenant.companyId, installationId: 'install-one' })))?.code, 'installation_not_provisioned');
+  } finally { h.close(); }
+});
+
 test('8. AI access disabled after provisioning stops serving and new provisioning; re-enabled with a new cap, it is pushed to every project', async () => {
   const h = lifecycle(); try {
     const one = (await h.provision('install-one')).provisioning, two = (await h.provision('install-two')).provisioning;
