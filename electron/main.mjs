@@ -257,13 +257,18 @@ function writeSmokeResult(payload) {
 
 function createWindow() {
   const isMac = process.platform === "darwin";
-  const { width: workWidth, height: workHeight } = screen.getPrimaryDisplay().workAreaSize;
+  const workArea = screen.getPrimaryDisplay().workArea;
+  const width = Math.min(1440, workArea.width);
+  const height = Math.min(920, workArea.height);
   const win = new BrowserWindow({
-    // Keep the normal desktop size while opening fully inside smaller displays.
-    width: Math.min(1440, workWidth),
-    height: Math.min(920, workHeight),
-    minWidth: 720,
-    minHeight: 480,
+    // Keep the normal desktop size, centered inside the usable display area.
+    // The work-area origin matters when a taskbar or dock sits on the left/top.
+    x: workArea.x + Math.floor((workArea.width - width) / 2),
+    y: workArea.y + Math.floor((workArea.height - height) / 2),
+    width,
+    height,
+    minWidth: Math.min(720, workArea.width),
+    minHeight: Math.min(480, workArea.height),
     icon: APP_ICON,
     backgroundColor: "#070707",
     autoHideMenuBar: process.platform !== "darwin",
