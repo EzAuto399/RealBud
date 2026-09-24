@@ -89,7 +89,8 @@ describe('retained bank history through private backup', () => {
     try {
       const bank = new BankReferenceStore(database), oldest = bank.create(upload(0));
       const reviewed = bank.review(oldest.id, oldest.revision, [{ rowId: oldest.value.batch.rows[0].id, action: 'assign', propertyId: 'fictional-property', reason: 'Fictional original transaction and property confirmed' }]);
-      for (let index = 1; index < 501; index++) bank.create(upload(index));
+      // Commit the synthetic history before exercising the real backup and restore paths.
+      database.transaction(() => { for (let index = 1; index < 501; index++) bank.create(upload(index)); });
       expect(database.count('bank')).toBe(501);
       const original = bank.export(oldest.id, true), prepared = bank.export(oldest.id);
       expect(Buffer.from(prepared.bytesBase64, 'base64')).toEqual(Buffer.from(Buffer.from(upload(0).source.bytesBase64, 'base64').toString('utf8').replace('"old"', '"00012"')));

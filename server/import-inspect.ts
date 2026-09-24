@@ -1,13 +1,12 @@
 // Ask Bud to name ledger-export columns. The model proposes; the server
 // keeps only header names that are actually in the file.
 import { managedServiceFailure } from "./managed-service.ts";
-import { type ExecFileOptionsWithStringEncoding } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { hardenHermesChildEnv } from "./drivers/acp/hermes.ts";
 import { augmentedPath } from "./env-path.ts";
-import { execFileCli } from "./procs.ts";
+import { execFileCli, type OneShotOptions } from "./procs.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { parseCsvTable } from "./csv-ledger.ts";
 import { HERMES_PIN, hermesCli, hermesIsCompatible } from "./hermes-pin.ts";
@@ -154,27 +153,19 @@ export async function inspectLedgerColumns(
     const serviceFailure = managedServiceFailure("reasoning");
     if (serviceFailure) return resolve(miss(serviceFailure));
     hardenHermesChildEnv(env);
-    const execOpts: ExecFileOptionsWithStringEncoding & { detached?: boolean } = {
+    const execOpts: OneShotOptions = {
       timeout: opts?.timeoutMs ?? INSPECT_TIMEOUT_MS,
       cwd: seedVault(),
       env,
       encoding: "utf8",
-      detached: process.platform !== "win32",
     };
-    const child = execFileCli(
+    execFileCli(
       cli,
       ["--profile", profile, "chat", "-Q", "-q", prompt, "--max-turns", "6"],
       execOpts,
       (err, stdout, stderr) => {
         if (err) {
           const timedOut = (err as NodeJS.ErrnoException & { killed?: boolean }).killed;
-          if (timedOut && process.platform !== "win32") {
-            try {
-              process.kill(-child.pid!, "SIGTERM");
-            } catch {
-              /* already gone */
-            }
-          }
           if (timedOut) return resolve(miss("Bud took too long to read the columns."));
           const clean = (s: string) =>
             String(s)

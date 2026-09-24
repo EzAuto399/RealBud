@@ -11,9 +11,9 @@ const resourcesDir = path.join(electronDir, "resources");
 const source = path.join(resourcesDir, "speech-helper-win.cs");
 export const windowsSpeechHelperExe = path.join(resourcesDir, "RealBud Speech.exe");
 
-function findCsc() {
+export function findCsc(env = process.env, { exists = existsSync, paths = path } = {}) {
   const roots = [
-    process.env["WINDIR"] || "C:\\Windows",
+    env["WINDIR"] || "C:\\Windows",
     "C:\\Windows",
   ];
   const frameworks = ["Framework64", "Framework"];
@@ -21,8 +21,8 @@ function findCsc() {
   for (const root of roots) {
     for (const fw of frameworks) {
       for (const ver of versions) {
-        const candidate = path.join(root, "Microsoft.NET", fw, ver, "csc.exe");
-        if (existsSync(candidate)) return candidate;
+        const candidate = paths.join(root, "Microsoft.NET", fw, ver, "csc.exe");
+        if (exists(candidate)) return candidate;
       }
     }
   }
@@ -30,19 +30,19 @@ function findCsc() {
 }
 
 /** Locate System.Speech.dll: .NET Framework targeting packs first, then the GAC. */
-export function findSystemSpeech(env = process.env) {
+export function findSystemSpeech(env = process.env, { exists = existsSync, list = readdirSync, paths = path } = {}) {
   const programFilesX86 = env["ProgramFiles(x86)"] || env.PROGRAMFILES || "C:\\Program Files (x86)";
   const packs = ["v4.8.1", "v4.8", "v4.7.2", "v4.7.1", "v4.7", "v4.6.2", "v4.6.1", "v4.6", "v4.5.2", "v4.5.1", "v4.5", "v4.0"];
   for (const ver of packs) {
-    const candidate = path.join(programFilesX86, "Reference Assemblies", "Microsoft", "Framework", ".NETFramework", ver, "System.Speech.dll");
-    if (existsSync(candidate)) return candidate;
+    const candidate = paths.join(programFilesX86, "Reference Assemblies", "Microsoft", "Framework", ".NETFramework", ver, "System.Speech.dll");
+    if (exists(candidate)) return candidate;
   }
   const windir = env.WINDIR || env.SystemRoot || "C:\\Windows";
-  const gac = path.join(windir, "Microsoft.NET", "assembly", "GAC_MSIL", "System.Speech");
+  const gac = paths.join(windir, "Microsoft.NET", "assembly", "GAC_MSIL", "System.Speech");
   try {
-    for (const entry of readdirSync(gac)) {
-      const candidate = path.join(gac, entry, "System.Speech.dll");
-      if (existsSync(candidate)) return candidate;
+    for (const entry of list(gac)) {
+      const candidate = paths.join(gac, entry, "System.Speech.dll");
+      if (exists(candidate)) return candidate;
     }
   } catch {
     /* no GAC entry */

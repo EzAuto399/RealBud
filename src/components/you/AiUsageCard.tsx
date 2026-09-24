@@ -4,7 +4,7 @@ import { api } from "@/state/store";
 import { Card } from "../SettingsPrimitives";
 import { formatNanoAud, formatTokenCount, type InstallationUsageState } from "@shared/office-link";
 
-const SUBTITLE = "What this computer used through your RealBud account this month.";
+const SUBTITLE = "Recorded usage across your linked office’s RealBud account this month.";
 
 /** Month as people read it, from the YYYY-MM the account reported. */
 export function usagePeriodLabel(period: string): string {
@@ -42,12 +42,13 @@ export function AiUsageCardView({ usage, busy, onRefresh }: {
   </Card>;
 
   if (usage.state === "not-linked") return <Card title="AI usage this month" subtitle={SUBTITLE}>
-    <p className="text-sm text-ink-secondary">Not linked. Link this computer to your RealBud account above to see what it used.</p>
+    <p className="text-sm text-ink-secondary">Not linked. Link this computer to your RealBud account above to see its recorded usage.</p>
   </Card>;
 
   if (usage.state === "unavailable") return <Card title="AI usage this month" subtitle={SUBTITLE}>
     <p role="status" className="text-sm text-ink-secondary">Usage unavailable. Your account could not be reached just now — nothing is wrong with this computer, and no figures are shown rather than guessed.</p>
     {refresh}
+    <p className="mt-3 text-sm"><a className="text-agency underline" href="https://realbud.app/account/ai-billing" target="_blank" rel="noreferrer">View usage and billing on the website</a></p>
   </Card>;
 
   const { period, requests, tokens, money, remainingNanoAud, monthlyCapNanoAud, updatedAt } = usage.usage;
@@ -55,17 +56,18 @@ export function AiUsageCardView({ usage, busy, onRefresh }: {
     <dl aria-label={`AI usage for ${usagePeriodLabel(period)}`} className="divide-y divide-line">
       <Row label="Requests" value={requests.toLocaleString("en-AU")} />
       <Row label="Tokens in / out" value={`${formatTokenCount(tokens.input)} / ${formatTokenCount(tokens.output)}`} />
-      <Row label="Estimated cost" value={formatNanoAud(money.customerNetNanoAud)} />
+      <Row label="Customer usage estimate" value={formatNanoAud(money.customerNetNanoAud)} />
       {/* The account does not always report a spend cap. Absent is "not
           reported", never "no limit": claiming an uncapped account it never
           promised would be inventing a fact. */}
-      <Row label="Remaining this month" value={remainingNanoAud === null ? "Not reported by your account" : formatNanoAud(remainingNanoAud)} />
+      <Row label="Reported headroom" value={remainingNanoAud === null ? "Not reported by your account" : formatNanoAud(remainingNanoAud)} />
     </dl>
     <p className="mt-2 text-xs text-ink-muted">
       {monthlyCapNanoAud === null ? "" : `Monthly limit ${formatNanoAud(monthlyCapNanoAud)}. `}
-      Estimated from your account at {new Date(updatedAt).toLocaleString("en-AU")}. Your account is the final word on what you are charged.
+      Reported by your account at {new Date(updatedAt).toLocaleString("en-AU")}. Reported headroom does not authorize new work. Usage is not a request for payment. Issued invoices show any amount due.
     </p>
     {refresh}
+    <p className="mt-3 text-sm"><a className="text-agency underline" href="https://realbud.app/account/ai-billing" target="_blank" rel="noreferrer">View usage and billing on the website</a></p>
   </Card>;
 }
 

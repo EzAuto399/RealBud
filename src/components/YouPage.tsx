@@ -313,7 +313,9 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
           <Card title="This office" subtitle="Open Desk once to load the book." />
         )}
         <CompanySetupCard />
-        <WebsiteLinkCard />
+        <section id={section ? undefined : "you-website"} tabIndex={-1} aria-label="Website account">
+          <WebsiteLinkCard />
+        </section>
         <AiUsageCard />
         <WebsiteRequestsCard />
         <RemoteApproversCard />
@@ -484,7 +486,9 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
           <p className="mt-2 text-sm text-ink-secondary">Automatic deletion after a set number of days is not enabled. Use the private business backup below for the included records, and retain source documents separately.</p>
           <button type="button" className="mt-3 min-h-11 rounded border border-line px-3 py-2 text-sm hover:bg-selected" onClick={() => scrollYouTarget("you-packs")}>Open saved-job import and export</button>
         </Card>
-        <PrivateWorkspaceBackup />
+        <div id="you-private-backup" tabIndex={-1}>
+          <PrivateWorkspaceBackup />
+        </div>
         <AdvancedDiagnostics>
           {hermes ? (
             <>

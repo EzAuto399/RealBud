@@ -345,13 +345,13 @@ describe("Store", () => {
     expect(reloaded.activePath(bot.threadId).map((m) => m.id)).toEqual(["m1", "m2"]);
   });
 
-  it("tolerates a corrupt bots.json by starting empty", () => {
+  it("holds a corrupt bots.json for recovery without starting empty", () => {
     const store = new Store(selection);
     store.createBot();
     writeFileSync(join(DATA_DIR, "bots.json"), "{not json");
 
-    const reloaded = new Store(selection);
-    expect(reloaded.bots).toEqual([]);
+    expect(() => new Store(selection)).toThrow(/need recovery/);
+    expect(readFileSync(join(DATA_DIR, "bots.json"), "utf8")).toBe("{not json");
   });
 
   it("busy is wiped even when bots.json says otherwise", () => {

@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer as createHttpServer } from 'node:http';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +23,8 @@ if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const output = resolve(process.env.QA_OUTPUT ?? join(root, 'outputs/onboarding-setup-2026-09-22'));
+const output = resolve(process.env.QA_OUTPUT ?? join(root, 'outputs/onboarding-setup-2026-09-23'));
+assert.ok(!existsSync(output), 'Choose a fresh QA_OUTPUT directory; existing evidence is preserved.');
 const temp = mkdtempSync(join(realpathSync(tmpdir()), 'rb-onboarding-setup-'));
 const data = join(temp, 'data');
 mkdirSync(data, { mode: 0o700 });
@@ -35,8 +36,8 @@ mkdirSync(output, { recursive: true });
 const hostZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const IANA = /^(?:UTC|[A-Za-z][A-Za-z_-]*(?:\/[A-Za-z0-9_+-]+)+)$/;
 
-const RESTORED_PERSON = 'Fictional Restored Person';
-const REPLAY_PERSON = 'Replay Name';
+const FRESH_PERSON = 'Fictional Setup Person';
+const SAVED_PERSON = 'Fictional Saved Person';
 const FICTIONAL_AGENCY = 'Fictional Harbour Agency';
 const FICTIONAL_ZONE = 'Australia/Brisbane';
 const FICTIONAL_PACK = 'office-core';
@@ -46,11 +47,12 @@ const COMMANDS = [
   'node scripts/qa-onboarding-setup.mjs',
 ];
 const LIMITS = [
-  'Fictional data only: a throwaway workspace, a fictional office contact name and a fictional replay name. No customer book, no customer acceptance.',
+  'Fictional data only: a throwaway workspace, a fictional onboarding profile and a fictional saved office contact. No customer book, no customer acceptance.',
   'Source-level run: real server from server/bootstrap.ts plus the real renderer through a Vite dev server. Not a packaged desktop app, not an installed app, not Windows.',
   'No real accounts, no source-account access, no portal action and no model or worker call. Bud is deliberately absent, so the card reads "Bud: needs setup on You" and no step past 2 can finish.',
   'Headless Chrome at 1400x1050 and 390x844 only. Screenshots are fictional examples, never customer evidence.',
   'Proves onboarding/setup wiring and copy in the rendered app; it proves nothing about live workflow readiness or a real run.',
+  'Fresh-browser persistence is exercised here. Restored-book replay and changed-port service restarts are separate scenarios in qa-onboarding-restart.mjs.',
 ];
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -194,6 +196,22 @@ try {
   const desk = watch(await context.newPage());
   desk.setDefaultTimeout(30_000);
   await desk.goto(`${uiBase}/#/desk`);
+  // Completion belongs to the saved workspace, not the legacy origin flag.
+  await desk.getByRole('heading', { name: 'Make the desk yours', exact: true }).waitFor();
+  assert.equal((await request('/api/onboarding')).stage, 'profile');
+  await desk.getByLabel('Your name', { exact: true }).fill(FRESH_PERSON);
+  await desk.getByRole('button', { name: 'Continue', exact: true }).click();
+  await desk.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor();
+  assert.equal((await request('/api/onboarding')).stage, 'office-rules');
+  await desk.reload();
+  await desk.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor();
+  assert.equal((await request('/api/config')).profile.name, FRESH_PERSON);
+  await desk.screenshot({ path: join(output, 'onboarding-rules.png') });
+  await desk.getByRole('button', { name: 'Open the sample desk first', exact: true }).click();
+  await desk.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor({ state: 'hidden' });
+  assert.equal((await request('/api/onboarding')).stage, 'complete');
+  assert.equal((await request('/api/desk')).book.office.pmUser, FRESH_PERSON);
+  checks.push('Fresh workspace ignores the legacy browser flag; profile submission saves office-rules, reload resumes rules with the saved profile, and explicit sample-desk completion saves complete with the office contact');
   let card = await openSetupCard(desk);
   await card.getByText('Step 1 of 3: Your agency', { exact: true }).waitFor();
   let cardText = (await card.innerText()).replace(/\s+/g, ' ').trim();
@@ -299,24 +317,41 @@ try {
   assert.match(cardText, /Done: 1\. Your agency/);
   // No account is connected in this harness, so Gmail may never read as done.
   assert.doesNotMatch(cardText, /Done:.*2\. Connect your accounts/);
-  // Accounts are connected on You, so step 2's one action opens Connections.
-  const connections = card.getByRole('button', { name: 'Open Connections', exact: true });
-  await connections.waitFor();
-  assert.equal(await connections.count(), 1);
+  // A fresh computer must link its RealBud account before account connections
+  // can become step 2's current action. This harness never starts that link.
+  assert.equal((await request('/api/office-link')).state, 'unlinked');
+  const accountLink = card.getByRole('button', { name: 'Link with your RealBud account', exact: true });
+  await accountLink.waitFor();
+  assert.equal(await accountLink.count(), 1);
+  assert.equal(await card.getByRole('button', { name: 'Open Connections', exact: true }).count(), 0);
   await card.evaluate(el => el.scrollIntoView({ block: 'center' }));
   await desk.screenshot({ path: join(output, 'desk-workspace-setup-named.png') });
-  checks.push(`Saving the agency name, timezone (${FICTIONAL_ZONE}) and workflow pack (${FICTIONAL_PACK}) in one PUT /api/agency-setup collapses step 1 into Done and advances the single current step to "Step 2 of 3: Connect your accounts", whose single action is Open Connections and which stays not done with no account connected`);
+  checks.push(`Saving the agency name, timezone (${FICTIONAL_ZONE}) and workflow pack (${FICTIONAL_PACK}) in one PUT /api/agency-setup collapses step 1 into Done and advances the single current step to "Step 2 of 3: Connect your accounts", whose single action requires linking the RealBud account and which stays not done while unlinked`);
 
-  // ── 1d. Step 2's single action opens Connections on You ────────────────────
-  await connections.click();
+  // ── 1d. Step 2 opens its account-link gate; Connections remains navigable ──
+  await accountLink.click();
+  const accountOffice = desk.locator('#you-office');
+  await accountOffice.waitFor();
+  const websiteAccount = accountOffice.getByRole('region', { name: 'Website account', exact: true });
+  await websiteAccount.getByRole('button', { name: 'Link with your RealBud account', exact: true }).waitFor();
+  observations.hashAfterOpenAccountLink = await desk.evaluate(() => location.hash);
+  assert.equal((await request('/api/office-link')).state, 'unlinked');
+  await websiteAccount.evaluate(el => el.scrollIntoView({ block: 'center' }));
+  await desk.screenshot({ path: join(output, 'you-account-link.png') });
+  checks.push('Step 2 opens the Website account controls in You → Office without starting a link or marking the computer linked');
+
+  await desk.getByRole('navigation', { name: 'Jump to a settings group', exact: true }).getByRole('button', { name: 'Apps', exact: true }).click();
   const connectedApps = desk.locator('#you-connected-apps');
   await connectedApps.waitFor();
+  // The hashchange handler reveals the disclosure on the next animation frame.
+  await desk.locator('#you-connected-apps[open]').waitFor();
   observations.hashAfterOpenConnections = await desk.evaluate(() => location.hash);
   assert.equal(await connectedApps.count(), 1);
   assert.ok(await connectedApps.isVisible(), 'the Connections section on You is not visible');
+  assert.ok(await connectedApps.evaluate(el => el.open), 'the Connected apps section is not expanded');
   await connectedApps.evaluate(el => el.scrollIntoView({ block: 'center' }));
   await desk.screenshot({ path: join(output, 'you-connected-apps.png') });
-  checks.push('Step 2\'s single "Open Connections" action opens the You door with the #you-connected-apps Connections section present and visible');
+  checks.push('You → Apps opens the #you-connected-apps Connections section, expanded and visible, without connecting an account');
 
   // ── 2. Narrow layout keeps the setup card inside 390px ──────────────────────
   const narrow = watch(await context.newPage());
@@ -355,38 +390,32 @@ try {
   await you.close();
   checks.push(`You → This office shows the zone the fresh v3 book recorded (${hostZone}), matching the server process, with no "not recorded yet" fallback`);
 
-  // ── 4. First run replayed over a named office keeps the saved name ─────────
-  const named = await request('/api/desk/agency', 'PATCH', { office: { pmUser: RESTORED_PERSON } });
-  assert.equal(named.book.office.pmUser, RESTORED_PERSON);
-  const replayContext = await browser.newContext({ viewport: { width: 1400, height: 1050 } });
-  await onlyLocal(replayContext);
-  const replay = watch(await replayContext.newPage());
-  replay.setDefaultTimeout(30_000);
-  // The book read must land before the finish control is pressed: that is the
-  // fact first run consults instead of writing a fresh name over a restored one.
-  const bookRead = replay.waitForResponse(r =>
-    new URL(r.url()).pathname === '/api/desk' && r.request().method() === 'GET' && r.ok());
-  await replay.goto(uiBase);
-  await replay.getByRole('heading', { name: 'Make the desk yours', exact: true }).waitFor();
-  await bookRead;
-  await replay.getByLabel('Your name', { exact: true }).fill(REPLAY_PERSON);
-  await replay.getByRole('button', { name: 'Continue', exact: true }).click();
-  await replay.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor();
-  await replay.screenshot({ path: join(output, 'onboarding-replay.png') });
-  await replay.getByRole('button', { name: 'Continue to Bud setup', exact: true }).click();
-  await replay.getByRole('heading', { name: 'You stay in charge', exact: true }).waitFor({ state: 'hidden' });
-  assert.equal(await replay.evaluate(() => localStorage.getItem('realbud.first-run-done')), '1');
+  // ── 4. Completed setup persists in a fresh browser, preserving the contact ─
+  const named = await request('/api/desk/agency', 'PATCH', { office: { pmUser: SAVED_PERSON } });
+  assert.equal(named.book.office.pmUser, SAVED_PERSON);
+  const freshContext = await browser.newContext({ viewport: { width: 1400, height: 1050 } });
+  await onlyLocal(freshContext);
+  const fresh = watch(await freshContext.newPage());
+  fresh.setDefaultTimeout(30_000);
+  await fresh.goto(`${uiBase}/#/desk`);
+  await fresh.getByRole('region', { name: 'This morning', exact: true }).waitFor();
+  assert.equal(await fresh.getByRole('heading', { name: 'Make the desk yours', exact: true }).count(), 0);
+  assert.equal(await fresh.getByRole('heading', { name: 'You stay in charge', exact: true }).count(), 0);
+  assert.equal(await fresh.evaluate(() => localStorage.getItem('realbud.first-run-done')), null);
+  assert.equal((await request('/api/onboarding')).stage, 'complete');
+  assert.equal((await request('/api/config')).profile.name, FRESH_PERSON);
   const bookAfter = await request('/api/desk');
-  observations.officeAfterReplay = bookAfter.book.office.pmUser;
-  assert.equal(bookAfter.book.office.pmUser, RESTORED_PERSON);
-  assert.notEqual(bookAfter.book.office.pmUser, REPLAY_PERSON);
-  await replayContext.close();
-  checks.push(`Replaying first run without the browser flag over a named office (${RESTORED_PERSON}) enters the workspace and leaves the saved office name untouched`);
+  observations.officeAfterFreshBrowser = bookAfter.book.office.pmUser;
+  assert.equal(bookAfter.book.office.pmUser, SAVED_PERSON);
+  assert.notEqual(bookAfter.book.office.pmUser, FRESH_PERSON);
+  await fresh.screenshot({ path: join(output, 'completed-setup-fresh-browser.png') });
+  await freshContext.close();
+  checks.push(`A fresh browser without the legacy flag enters the completed workspace directly, preserves the saved profile and leaves the saved office contact (${SAVED_PERSON}) untouched`);
 
   await desk.close();
   await context.close();
   assert.deepEqual(errors, [], `renderer page errors: ${JSON.stringify(errors)}`);
-  checks.push('No renderer pageerror on Desk, Schedule, You or the replayed first run');
+  checks.push('No renderer pageerror during onboarding, Desk, Schedule, You or fresh-browser re-entry');
   writeReceipt();
   console.log(JSON.stringify({ output, checks, defects, observations }, null, 2));
 } catch (cause) {

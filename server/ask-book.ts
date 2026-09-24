@@ -2,6 +2,7 @@ import { PM_EVIDENCE_RULES } from "../shared/pm-evidence-rules.ts";
 import type { DeskSnapshot } from "../shared/contracts.ts";
 import { BUD_IDENTITY } from "../shared/bud-identity.ts";
 import { RENT_EVIDENCE_REVIEW_RULES } from "../shared/rent-workflow.ts";
+import { modelServiceFailure } from "./model-service-failure.ts";
 
 import { buildDeskQueue, recoveryPlanFor } from "../src/lib/desk-queue.ts";
 import { morningBrief, shortStreet } from "../src/lib/morning-brief.ts";
@@ -148,6 +149,11 @@ export function productWorkerDump(text: string): string | null {
 
 /** Worker 404s and retry dumps are not PM language. */
 export function productAskFailure(message: string): string {
+  const serviceFailure = modelServiceFailure(message);
+  if (serviceFailure) {
+    const sentence = serviceFailure[0]!.toUpperCase() + serviceFailure.slice(1);
+    return `${sentence}. Review this task's activity before trying again.`;
+  }
   if (/404|max_retries|kimi\.com|requested resource was not found/i.test(message)) {
     return "Bud could not answer that. Recheck facts are on Desk — try “What did Recheck find?”";
   }

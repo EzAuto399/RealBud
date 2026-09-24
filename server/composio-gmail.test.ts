@@ -1,5 +1,7 @@
+import * as attachmentIo from './source-attachments.ts';
+import { fictionalPdf } from './testing/pdf-fixture.ts';
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { authorizeGmailReadOnly, createGmailReadOnlyTransport, getGmailReadOnlyAccess, isGmailReadOnlyAuthorizationUrl, listGmailReadOnlyAccounts, verifyGmailReadOnlyConfig, type GmailReadOnlyBinding } from "./composio-gmail.ts";
+import { readGmailPdfAttachment, authorizeGmailReadOnly, createGmailReadOnlyTransport, getGmailReadOnlyAccess, isGmailReadOnlyAuthorizationUrl, listGmailReadOnlyAccounts, verifyGmailReadOnlyConfig, type GmailReadOnlyBinding } from "./composio-gmail.ts";
 
 const READONLY = "https://www.googleapis.com/auth/gmail.readonly";
 const binding: GmailReadOnlyBinding = { apiKey: "ak_fixture_project_key", authConfigId: "ac_readonly", userId: "review-user", accountId: "ca_work" };
@@ -324,5 +326,42 @@ describe("Gmail transport failure and privacy boundaries", () => {
     const pending = verifyGmailReadOnlyConfig(binding); await gate;
     expect(timeout).toHaveBeenCalledWith(30_000); controller.abort();
     await expect(pending).rejects.toThrow(/interrupted/);
+  });
+});
+
+describe('host-selected Gmail PDF acquisition',()=>{
+  const bytes=fictionalPdf();
+  const selected={accountId:binding.accountId!,messageId:'aa',threadId:'abc',attachment:{id:'pdf-one',name:'fictional.pdf',mimeType:'application/pdf' as const,size:bytes.length}};
+  function attachmentFixture(change:{metadataChange?:boolean;sourceChange?:boolean;broaderScope?:boolean;revoked?:()=>void}={}) {
+    const download=vi.spyOn(attachmentIo,'downloadSourcePdf').mockImplementation(async()=>{change.revoked?.();return bytes;});
+    const calls=fixture({auth:change.broaderScope?{...config(),credentials:{scopes:['https://mail.google.com/']}}:undefined,
+      metadata:slug=>slug==='GMAIL_GET_ATTACHMENT'?{...tool(slug),version:'20260915_00',input_parameters:{type:'object',properties:Object.fromEntries(['user_id','message_id','attachment_id','file_name'].map(k=>[k,{type:change.metadataChange?'integer':'string'}])),required:['message_id','attachment_id','file_name']}}:tool(slug),
+      execute:slug=>{
+        if(slug==='GMAIL_FETCH_MESSAGE_BY_THREAD_ID')return success({id:'abc',messages:[{...message(),payload:{mimeType:'multipart/mixed',parts:[{mimeType:'application/pdf',filename:change.sourceChange?'changed.pdf':'fictional.pdf',body:{attachmentId:'pdf-one',size:bytes.length}}]}}]});
+        if(slug==='GMAIL_GET_ATTACHMENT')return success({file:{name:'fictional.pdf',mimetype:'application/pdf',s3url:'https://fictional.s3.amazonaws.com/file?fictional-signature'}});
+        throw Error('Unexpected tool');
+      }});
+    return {calls,download};
+  }
+  it('verifies the exact saved message, pins the acquisition version and returns bytes without a signed URL',async()=>{
+    const {calls,download}=attachmentFixture();
+    const result=await readGmailPdfAttachment(binding,selected,new AbortController().signal);
+    expect(result).toEqual({...selected,bytesBase64:bytes.toString('base64'),sha256:attachmentIo.attachmentHash(bytes)});
+    const execute=calls.find(c=>c.url.pathname.endsWith('/execute/GMAIL_GET_ATTACHMENT'))!;
+    expect(execute.body).toEqual({connected_account_id:binding.accountId,user_id:binding.userId,version:'20260915_00',arguments:{user_id:'me',message_id:'aa',attachment_id:'pdf-one',file_name:'fictional.pdf'}});
+    expect(download).toHaveBeenCalledOnce();expect(JSON.stringify(result)).not.toContain('signature');
+  });
+  it('rejects another account before any provider request',async()=>{
+    const {calls,download}=attachmentFixture();await expect(readGmailPdfAttachment(binding,{...selected,accountId:'other'},new AbortController().signal)).rejects.toThrow(/another account/);
+    expect(calls).toEqual([]);expect(download).not.toHaveBeenCalled();
+  });
+  it.each(['sourceChange','metadataChange','broaderScope'])('holds %s before attachment download',async reason=>{
+    const {calls,download}=attachmentFixture({[reason]:true});
+    await expect(readGmailPdfAttachment(binding,selected,new AbortController().signal)).rejects.toThrow();expect(download).not.toHaveBeenCalled();
+    expect(calls.some(c=>c.url.pathname.endsWith('/execute/GMAIL_GET_ATTACHMENT'))).toBe(false);
+  });
+  it('withholds the acquired bytes if authority was revoked during download',async()=>{
+    let revoked=false;const {download}=attachmentFixture({revoked:()=>{revoked=true;}});
+    await expect(readGmailPdfAttachment({...binding,assertAuthority:()=>{if(revoked)throw Error('revoked');}},selected,new AbortController().signal)).rejects.toThrow(/revoked/);expect(download).toHaveBeenCalledOnce();
   });
 });

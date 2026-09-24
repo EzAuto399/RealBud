@@ -20,7 +20,8 @@ beforeAll(async()=>{
   mkdirSync(data,{mode:0o700});writeFileSync(join(data,'config.json'),JSON.stringify({instances:{fixture:{driver:'not-a-real-driver'}}}),{mode:0o600});
   const database=new WorkflowDatabase({dir:data,key});
   try{const bank=new BankReferenceStore(database),old=bank.create(upload(0));oldId=old.id;oldPrepared=bank.review(old.id,old.revision,old.value.batch.rows.map(row=>({rowId:row.id,action:'assign',propertyId:'fixture-property',reason:'Reviewed synthetic source.'}))).value.result!.bytesBase64!;
-    for(let n=1;n<501;n++)bank.create(upload(n));
+    // Commit synthetic retained history together before the real HTTP service opens it.
+    database.transaction(()=>{for(let n=1;n<501;n++)bank.create(upload(n));});
   }finally{database.close();}
   const listener=createServer();listener.listen(0,'127.0.0.1');await once(listener,'listening');const port=(listener.address() as {port:number}).port;await new Promise<void>(resolve=>listener.close(()=>resolve()));base=`http://127.0.0.1:${port}`;
   const {serviceSmokeEnv}=await import(new URL('../scripts/service-smoke-env.mjs',import.meta.url).href);

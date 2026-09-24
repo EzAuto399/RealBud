@@ -4,6 +4,8 @@ import { PRIVATE_BACKUP_MIN_PASSPHRASE, PRIVATE_BACKUP_MAX_PASSPHRASE } from '@s
 import { PRIVATE_BACKUP_TRANSFER_API, PRIVATE_BACKUP_TRANSFER_MAX_BYTES, PRIVATE_BACKUP_TRANSFER_ERRORS, parsePrivateBackupTransferPage, type PrivateBackupTransferOperation as Operation } from '@shared/private-backup-transfers';
 import { backupStatus, restartBackupService, validBackupPassphrase, type BackupReceipt, type BackupStatus } from '@/lib/private-backup';
 import { PrivateBackupTransferClient, privateBackupTransferHttp, requestPrivateBackupDownload } from '@/lib/private-backup-transfer';
+import { backupWelcomeBlocked, createBackupWelcomeApi } from '@/lib/backup-welcome';
+import type { OnboardingState } from '@shared/onboarding';
 import { Card } from './SettingsPrimitives';
 
 const button = 'min-h-11 rounded-lg border border-line px-3 py-2 text-sm disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-agency';
@@ -20,20 +22,29 @@ function Contents({ receipt }: { receipt: BackupReceipt }) {
   </div>;
 }
 
+export function BackupWelcomeAction({ onboarding, blocked, busy, onBack }: { onboarding: OnboardingState | null; blocked: string | null; busy: boolean; onBack: () => void }) {
+  if (onboarding?.stage !== 'recovery') return null;
+  return <div className="space-y-2 text-sm">
+    <button className={button} disabled={busy || !!blocked} onClick={onBack}>Back to welcome</button>
+    <p className="text-ink-secondary">{blocked || 'Continue setup without restoring a backup. Your original files and saved backup copies stay unchanged.'}</p>
+  </div>;
+}
 
 export function PrivateWorkspaceBackup() {
   const [status, setStatus] = useState<BackupStatus | null>(null), [items, setItems] = useState<Operation[]>([]), [selectedId, setSelectedId] = useState<string | null>(null), [cursor, setCursor] = useState<string | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [exportPhrase, setExportPhrase] = useState(''), [repeat, setRepeat] = useState(''), [importPhrase, setImportPhrase] = useState(''), [file, setFile] = useState<File | null>(null), [confirmed, setConfirmed] = useState(false);
   const client = useRef<PrivateBackupTransferClient | null>(null), pending = useRef(false), mounted = useRef(true), controller = useRef<AbortController | null>(null);
+  const welcome = useRef(createBackupWelcomeApi((path, init) => api(path, init, { timeoutMs: 15_000 })));
+  const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
   const selected = items.find(item => item.id === selectedId), staged = status?.staged === true;
   const update = (op: Operation) => { if (mounted.current) setItems(current => [op, ...current.filter(item => item.id !== op.id)]); };
   const refresh = async (more = false) => {
-    const [state, raw] = await Promise.all([api('/api/private-backup', undefined, { timeoutMs: 15_000 }), privateBackupTransferHttp.request(`${PRIVATE_BACKUP_TRANSFER_API}/operations?limit=20${more && cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { method: 'GET' })]);
+    const [state, raw, savedSetup] = await Promise.all([api('/api/private-backup', undefined, { timeoutMs: 15_000 }), privateBackupTransferHttp.request(`${PRIVATE_BACKUP_TRANSFER_API}/operations?limit=20${more && cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, { method: 'GET' }), welcome.current.read().catch(() => null)]);
     const page = parsePrivateBackupTransferPage(raw); if (!page) throw new Error('Saved backup progress could not be verified.');
     client.current = new PrivateBackupTransferClient(page.workspaceId);
     if (mounted.current) {
-      setStatus(backupStatus(state)); setCursor(page.nextCursor);
+      setStatus(backupStatus(state)); setCursor(page.nextCursor); setOnboarding(savedSetup);
       setItems(current => more ? [...current, ...page.items.filter(item => !current.some(saved => saved.id === item.id))] : page.items);
       if (!selectedId) setSelectedId(page.items.find(item => ['staged', 'staging', 'reviewed'].includes(item.phase))?.id ?? null);
     }
@@ -62,6 +73,11 @@ export function PrivateWorkspaceBackup() {
       <p className="text-sm text-ink-secondary">Includes your private business files and workflow history. Connected-account credentials, company membership, Bud conversations and worker sign-ins are excluded. Shared office records use the separate office-host backup.</p>
       <details className="text-sm text-ink-secondary"><summary className="min-h-11 cursor-pointer content-center">Backup size and support</summary><p>Encrypted backups can be up to 1 GB. Older RealBud backup files are supported. RealBud checks the complete backup and available space before restoring. If a limit is reached, your original records stay intact.</p></details>
       <button className={button} disabled={busy} onClick={() => void run(async () => { await refresh(); setNotice('Backup and restore status checked.'); })}>Check backup status</button>
+      <BackupWelcomeAction onboarding={onboarding} blocked={backupWelcomeBlocked(status, items)} busy={busy} onBack={() => void run(async (_client, signal) => {
+        if (!onboarding) throw new Error('Check your saved setup before continuing.');
+        await welcome.current.back(onboarding, signal);
+        if (mounted.current) { window.location.hash = ''; window.location.reload(); }
+      })} />
       {!status && !error && <p role="status" className="text-sm">Checking backup availability…</p>}
       {status && !staged && <p className="text-sm text-ink-secondary">{status.reason}</p>}
       {status?.completionWarning && <p role="alert" className="rounded-lg border border-hold p-3 text-sm text-hold">{status.completionWarning}</p>}

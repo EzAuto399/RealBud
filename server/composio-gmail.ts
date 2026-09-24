@@ -4,6 +4,8 @@
  * https://docs.composio.dev/reference/api-reference/connected-accounts/getConnectedAccounts
  */
 import type { ConnectionServiceStatus } from "./composio.ts";
+import { parseSourceAttachmentRequest, type SourceAttachmentRequest } from '../shared/source-attachments.ts';
+import { attachmentHash, downloadSourcePdf, validateSourceAttachmentBytes } from './source-attachments.ts';
 import { MAIL_CONVERSATION_GAPS, parseMailScanRequest, parseMailScanResult, type MailMessage, type MailScanRequest, type MailScanResult, type MailThread } from '../shared/mail-ingestion.ts';
 export interface GmailReadOnlyBinding {
   apiKey: string;
@@ -110,6 +112,39 @@ export async function verifyGmailReadOnlyConfig(input: GmailReadOnlyBinding) {
   return verifyConfig(bindingCopy(input), AbortSignal.timeout(30_000));
 }
 
+/** Host-only saved-attachment acquisition; deliberately absent from MCP tools.
+ * Re-read the exact message metadata before fetching its bytes. */
+export async function readGmailPdfAttachment(input: GmailReadOnlyBinding, selected: SourceAttachmentRequest, inputSignal: AbortSignal) {
+  const binding=bindingCopy(input), source=parseSourceAttachmentRequest(selected);
+  const signal=AbortSignal.any([inputSignal,AbortSignal.timeout(30_000)]);
+  if(binding.accountId!==source.accountId)fail('the selected PDF belongs to another account.',403);
+  await verifyConfig(binding,signal);const account=await verifyAccount(binding,signal);
+  const tools=await discoverTools(binding,signal),threadTool=tools.GMAIL_FETCH_MESSAGE_BY_THREAD_ID;
+  const result=await rest(binding,'/tools/execute/GMAIL_FETCH_MESSAGE_BY_THREAD_ID',signal,{connected_account_id:account.id,user_id:binding.userId,version:threadTool.version,arguments:executionArguments(threadTool,0,0,source.threadId)});
+  if(result.successful!==true || result.error || !record(result.data) || !Array.isArray(result.data.messages) || result.data.messages.length>100 || (result.data.id!==undefined&&result.data.id!==source.threadId))fail('the attachment message could not be verified.',502);
+  const matches=result.data.messages.filter((m:unknown)=>record(m)&&m.id===source.messageId&&m.threadId===source.threadId);
+  if(matches.length!==1)fail('the attachment message changed or is missing.',409);
+  let count=0,found=0;
+  const visit=(part:unknown,depth:number)=>{
+    if(!record(part)||++count>200||depth>8)fail('the attachment metadata is unsupported.',502);
+    if(part.body?.attachmentId===source.attachment.id){
+      if(part.filename!==source.attachment.name||part.mimeType!==source.attachment.mimeType||part.body.size!==source.attachment.size)fail('the saved PDF metadata changed; reopen the message.',409);
+      found++;
+    }
+    if(part.parts!==undefined){if(!Array.isArray(part.parts))fail('the attachment metadata is unsupported.',502);for(const child of part.parts)visit(child,depth+1);}
+  };
+  visit(matches[0].payload,0);if(found!==1)fail('the saved PDF is no longer in this message.',409);
+  const version='20260915_00',slug='GMAIL_GET_ATTACHMENT';
+  const tool=metadata(await rest(binding,`/tools/${slug}?version=${version}`,signal),slug,version);
+  const args={user_id:'me',message_id:source.messageId,attachment_id:source.attachment.id,file_name:source.attachment.name};
+  if(Object.keys(args).some(k=>tool.fields[k]?.type!=='string')||tool.required.some(k=>!Object.hasOwn(args,k)))fail('the PDF acquisition schema needs review.',502);
+  const response=await rest(binding,`/tools/execute/${slug}`,signal,{connected_account_id:account.id,user_id:binding.userId,version,arguments:args});
+  const file=response.data?.file;
+  if(response.successful!==true||response.error||!record(file)||file.name!==source.attachment.name||file.mimetype!=='application/pdf')fail('the PDF acquisition result was incomplete.',502);
+  binding.assertAuthority?.();const bytes=await downloadSourcePdf(file.s3url,signal);binding.assertAuthority?.();signal.throwIfAborted();
+  return validateSourceAttachmentBytes({...source,bytesBase64:bytes.toString('base64'),sha256:attachmentHash(bytes)},source);
+}
+
 function projectAccount(value: unknown, binding: GmailReadOnlyBinding): GmailReadOnlyAccount {
   if (!record(value) || !identifier(value.id) || value.id.includes(binding.apiKey) || value.toolkit?.slug !== "gmail" || value.auth_config?.id !== binding.authConfigId ||
     (value.user_id !== undefined && value.user_id !== binding.userId) ||
@@ -178,7 +213,7 @@ export async function authorizeGmailReadOnly(input: GmailReadOnlyBinding): Promi
   return { url: value.redirect_url, accountId: value.connected_account_id, expiresAt: value.expires_at };
 }
 
-type ToolMetadata = { slug: Slug; version: string; fields: ObjectValue; required: string[] };
+type ToolMetadata = { slug: Slug | 'GMAIL_GET_ATTACHMENT'; version: string; fields: ObjectValue; required: string[] };
 function supportedScopes(value: unknown, depth = 0): boolean {
   if (depth > 4) return false;
   if (typeof value === "string") return ALLOWED_SCOPES.has(value);
@@ -187,7 +222,7 @@ function supportedScopes(value: unknown, depth = 0): boolean {
   if (Array.isArray(value.any_of) && value.any_of.length > 0 && value.any_of.length <= 20 && Object.keys(value).length === 1) return value.any_of.some((item: unknown) => supportedScopes(item, depth + 1));
   return false;
 }
-function metadata(value: ObjectValue, slug: Slug, version?: string): ToolMetadata {
+function metadata(value: ObjectValue, slug: Slug | 'GMAIL_GET_ATTACHMENT', version?: string): ToolMetadata {
   if (value.slug !== slug || value.toolkit?.slug !== "gmail" || value.no_auth !== false || value.is_deprecated === true ||
     typeof value.version !== "string" || !/^20\d{6}_\d{2,4}$/.test(value.version) || (version && value.version !== version) || !record(value.input_parameters) ||
     !(value.scope_requirements ? supportedScopes(value.scope_requirements) : Array.isArray(value.scopes) && value.scopes.includes(READONLY))) fail("the provider's Gmail tool version, permissions, or schema could not be verified.", 502);

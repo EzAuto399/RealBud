@@ -71,9 +71,23 @@ try {
   assert.equal((await prepare('network', { hostname: '127.0.0.1' }, ownerToken)).status, 200);
   await setup.close(); setup = undefined; await start();
   assert.equal((await app('me')).member.id, ownerId);
+  // Finish only this fictional member's saved welcome flow through its real API.
+  const onboarding = async body => {
+    const response = await fetch(base + '/api/onboarding', { method: body === undefined ? 'GET' : 'PUT',
+      headers: { 'content-type': 'application/json', 'x-realbud-session': token, 'x-realbud-member-session': ownerToken },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    assert.equal(response.status, 200); return response.json();
+  };
+  let welcome = await onboarding(); assert.equal(welcome.stage, 'profile');
+  for (const stage of ['office-rules', 'complete']) {
+    const previous = welcome;
+    welcome = await onboarding({ expectedScope: previous.scope, expectedRevision: previous.revision, stage });
+    assert.equal(welcome.scope, previous.scope); assert.equal(welcome.revision, previous.revision + 1); assert.equal(welcome.stage, stage);
+  }
+  assert.deepEqual(await onboarding(), welcome);
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1100 } });
-  await context.addInitScript(value => { localStorage.setItem('realbud.first-run-done', '1'); sessionStorage.setItem('realbud.company-member-session', value); }, ownerToken);
+  await context.addInitScript(value => { sessionStorage.setItem('realbud.company-member-session', value); }, ownerToken);
   let page = await context.newPage();
   const observe = p => { p.on('pageerror', e => errors.push(e.message)); p.on('request', request => {
     if (request.url().includes('/api/company/portal-bindings/') && request.method() === 'POST') {

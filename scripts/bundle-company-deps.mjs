@@ -81,6 +81,10 @@ for (const name of ['hermes-memory-review.py', 'hermes-memory-proposals.py', 'he
   helpers[name] = { sha256: createHash('sha256').update(packaged).digest('hex') };
 }
 const receipt = { node: process.version, bundles: {}, helpers, rewritten: [] };
+const pdfWorker = join(server, 'helpers/pdf-text-worker.mjs');
+const pdfBundle = await build({ entryPoints: [join(root, 'server/helpers/pdf-text-worker.mjs')], outfile: pdfWorker,
+  bundle: true, platform: 'node', target: 'node24', format: 'esm', metafile: true, legalComments: 'inline' });
+receipt.helpers['pdf-text-worker.mjs'] = { sha256: createHash('sha256').update(await readFile(pdfWorker)).digest('hex'), inputs: Object.keys(pdfBundle.metafile.inputs).sort() };
 for (const [name, exports] of Object.entries(bundles)) {
   const file = join(vendor, `${name}.mjs`);
   const result = await build({

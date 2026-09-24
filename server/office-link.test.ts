@@ -3,6 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createOfficeLink, installationWorkerVersion, websiteOrigin } from "./office-link.ts";
+import { ConfigRecoveryError } from "./config.ts";
+import { createWorkerModelAccess, setWorkerModelGrant } from "./worker-model-access.ts";
+import { privateFixtureRoot, privateFixtureDirectory, writePrivateFixtureFile } from "./testing/private-profile-fixture.ts";
 const roots: string[] = [];
 const code = `rb1_${"a".repeat(64)}`;
 function fixture(fetcher: typeof fetch) {
@@ -11,7 +14,7 @@ function fixture(fetcher: typeof fetch) {
   const create = () => createOfficeLink({ directory: root, appVersion: "0.1.19", fetch: fetcher, report });
   return { root, create, app: create(), report, file: join(root, "office-link/link.json") };
 }
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { setWorkerModelGrant({ state: "none" }); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 describe("website installation link", () => {
   it("persists one private identity before redemption and safely retries a lost response after restart", async () => {
     const bodies: any[] = [];
@@ -146,6 +149,112 @@ describe("zero-touch provisioning through the website link", () => {
     await app.disconnect();
     expect(p.clear).toHaveBeenCalledTimes(1);
     expect(await app.status()).toEqual({ state: "unlinked", usage: { state: "not-linked" } });
+  });
+
+  it("preserves the link on config recovery refusal and completes a repaired disconnect after remote revocation", async () => {
+    const p = sink();
+    const root = mkdtempSync(join(tmpdir(), "realbud-link-")); roots.push(root);
+    let revocations = 0;
+    const app = createOfficeLink({ directory: root, appVersion: "0.1.19", provisioning: p,
+      report: async () => ({ appVersion: "0.1.19", workerVersion: null, workerReady: true }),
+      fetch: vi.fn(async (url: any, init: any) => {
+        if (String(url).endsWith("redeem")) return linked(JSON.parse(init.body), { provisioning });
+        expect(init.method).toBe("DELETE");
+        return Response.json({}, { status: ++revocations === 1 ? 200 : 401 });
+      }) as any });
+    await app.link({ code, label: "Desk" });
+    const file = join(root, "office-link/link.json");
+    const originalBytes = readFileSync(file);
+    const recovery = new ConfigRecoveryError();
+    p.clear.mockRejectedValueOnce(recovery);
+
+    await expect(app.disconnect()).rejects.toBe(recovery);
+    expect(readFileSync(file)).toEqual(originalBytes);
+    expect((await app.status()).state).toBe("linked");
+    expect(p.clear).toHaveBeenCalledTimes(1);
+
+    await app.disconnect();
+    expect(revocations).toBe(2);
+    expect(p.clear).toHaveBeenCalledTimes(2);
+    expect(await app.status()).toEqual({ state: "unlinked", usage: { state: "not-linked" } });
+  });
+
+  it("blocks a fresh access object on a saved revoked link and retries failed withdrawal before reconciliation", async () => {
+    const root = privateFixtureRoot(join(tmpdir(), "realbud-link-recovery-")); roots.push(root);
+    const hermesRoot = join(root, "hermes"), profile = join(hermesRoot, "profiles", "property");
+    privateFixtureDirectory(profile); writePrivateFixtureFile(join(profile, "SOUL.md"), "# Fictional profile\n");
+    let configBlocked = false, reportCalls = 0;
+    const make = () => {
+      const access = createWorkerModelAccess({ directory: root, key: Buffer.alloc(32, 7), hermesRoot,
+        saveConfig: () => { if (configBlocked) throw new ConfigRecoveryError(); } });
+      const reconcile = vi.fn(access.reconcile);
+      const app = createOfficeLink({ directory: root, appVersion: "fictional", report: async () => ({ appVersion: "fictional", workerVersion: null, workerReady: false }),
+        provisioning: { ...access, reconcile },
+        fetch: vi.fn(async (url: any, init: any) => {
+          if (String(url).endsWith("redeem")) return linked(JSON.parse(init.body), { provisioning });
+          reportCalls++; return Response.json({}, { status: 403 });
+        }) as any });
+      return { access, app, reconcile };
+    };
+    const first = make();
+    await first.app.link({ code, label: "Fictional desk" });
+    expect(Object.keys(await first.app.modelAccessEnv(first.access.env))).toContain("OPENAI_API_KEY");
+    configBlocked = true;
+    await expect(first.app.report()).rejects.toMatchObject({ code: "config_recovery_required" });
+    expect(await first.access.env()).toEqual({});
+    expect((await first.app.status()).state).toBe("revoked");
+
+    // A new access object has no in-memory hold. The durable link must block
+    // its boot-time vault read before any report or network request happens.
+    const restarted = make(); setWorkerModelGrant({ state: "none" });
+    const readEnv = vi.fn(restarted.access.env);
+    expect(await restarted.app.modelAccessEnv(readEnv)).toEqual({});
+    expect(readEnv).not.toHaveBeenCalled();
+    configBlocked = false; await restarted.app.report();
+    expect(restarted.reconcile).not.toHaveBeenCalled();
+    expect(reportCalls).toBe(1);
+    expect(await restarted.access.state()).toMatchObject({ provisioned: false, withdrawn: true });
+    expect(await restarted.access.env()).toEqual({});
+  });
+
+  it("does not publish a vault read that finishes after disconnect and relinking", async () => {
+    const { app } = fixture(vi.fn(async (url, init) => String(url).endsWith("redeem")
+      ? linked(JSON.parse(String(init?.body))) : Response.json({})));
+    const resolver = vi.fn(async () => ({ OPENAI_API_KEY: "fictional-model-access" }));
+    expect(await app.modelAccessEnv(resolver)).toEqual({});
+    expect(resolver).not.toHaveBeenCalled();
+    await app.link({ code, label: "Fictional desk" });
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const pending = app.modelAccessEnv(async () => { entered(); await gate; return { OPENAI_API_KEY: "fictional-old-access" }; });
+    await started;
+    await app.disconnect(); await app.link({ code, label: "Fictional new desk" });
+    release(); expect(await pending).toEqual({});
+    expect(await app.modelAccessEnv(resolver)).toEqual({ OPENAI_API_KEY: "fictional-model-access" });
+  });
+
+  it.skipIf(process.platform === "win32")("withdraws immediately even when the revoked-link write fails, and retries after repair", async () => {
+    const root = mkdtempSync(join(tmpdir(), "realbud-link-write-failure-")); roots.push(root);
+    const p = sink(), directory = join(root, "office-link");
+    let breakDirectory = true;
+    const app = createOfficeLink({ directory: root, appVersion: "fictional", provisioning: p,
+      report: async () => ({ appVersion: "fictional", workerVersion: null, workerReady: false }),
+      fetch: vi.fn(async (url: any, init: any) => {
+        if (String(url).endsWith("redeem")) return linked(JSON.parse(init.body), { provisioning });
+        if (breakDirectory) chmodSync(directory, 0o755);
+        return Response.json({}, { status: 403 });
+      }) as any });
+    await app.link({ code, label: "Fictional desk" });
+    const before = readFileSync(join(directory, "link.json"));
+    await expect(app.report()).rejects.toThrow(/private data directory/);
+    expect(p.withdraw).toHaveBeenCalledTimes(1);
+    expect(await p.withdrawn()).toBe(true);
+    expect(readFileSync(join(directory, "link.json"))).toEqual(before);
+    chmodSync(directory, 0o700); breakDirectory = false;
+    await app.report();
+    expect((await app.status()).state).toBe("revoked");
+    expect(p.withdraw).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -285,6 +394,38 @@ describe("AI usage for the current month", () => {
       fetch: vi.fn(async (url: any, init: any) => { calls.push(String(url)); return String(url).includes("redeem") ? linked(init) : usageReply(); }) as any });
     return { link, calls };
   };
+
+  it("does not expose or cache a prior office's delayed usage after the installation changes", async () => {
+    let office = "a", release!: () => void, entered!: () => void, currentCalls = 0;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const { app: link } = fixture(vi.fn(async (url, init) => {
+      if (String(url).endsWith("redeem")) return Response.json({ installationId: JSON.parse(String(init?.body)).id, companyId: `fictional-${office}`, agencyLabel: `Fictional ${office}` });
+      if (init?.method === "DELETE") return Response.json({});
+      const owner = office;
+      if (owner === "a") { entered(); await gate; } else currentCalls++;
+      return Response.json(body({ requests: owner === "a" ? 111 : 222 }));
+    }));
+    await link.link({ code, label: "Fictional A" });
+    const oldUsage = link.usage(); await started;
+    await link.disconnect(); await link.status();
+    office = "b"; await link.link({ code, label: "Fictional B" });
+    // The old request cannot suppress this new installation's own refresh.
+    expect(await link.usage()).toMatchObject({ state: "ready", usage: { requests: 222 } });
+    release(); expect(await oldUsage).toEqual({ state: "checking" });
+    expect(await link.status()).toMatchObject({ agencyLabel: "Fictional b", usage: { state: "ready", usage: { requests: 222 } } });
+    expect(currentCalls).toBe(1);
+  });
+
+  it("does not reuse completed cached usage after direct disconnect and relinking", async () => {
+    let requests = 0;
+    const { link } = app(() => Response.json(body({ requests: ++requests })));
+    await link.link({ code, label: "Fictional A" });
+    expect(await link.usage()).toMatchObject({ usage: { requests: 1 } });
+    await link.disconnect(); const beforeNewUsage = requests;
+    await link.link({ code, label: "Fictional B" });
+    expect(await link.usage()).toMatchObject({ usage: { requests: beforeNewUsage + 1 } });
+  });
 
   it("asks once per three minutes, sends the bearer token, and never persists the figures", async () => {
     const { link, calls } = app(() => Response.json(body()));

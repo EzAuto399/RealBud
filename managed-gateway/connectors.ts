@@ -5,8 +5,9 @@ import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 import { GatewayError, canonical, exact, id, integer, object, requireThat } from './contracts.ts';
 import type { UsageLedger } from './ledger.ts';
-import { authorizeGmailReadOnly, createGmailReadOnlyTransport, getGmailReadOnlyAccess, scanGmailReadOnly, type GmailReadOnlyBinding } from '../server/composio-gmail.ts';
+import { authorizeGmailReadOnly, createGmailReadOnlyTransport, getGmailReadOnlyAccess, scanGmailReadOnly, readGmailPdfAttachment, type GmailReadOnlyBinding } from '../server/composio-gmail.ts';
 import { parseMailScanRequest } from '../shared/mail-ingestion.ts';
+import { parseSourceAttachmentRequest } from '../shared/source-attachments.ts';
 
 export interface ConnectorDevice {
   id: string; companyId: string; licenseId: string; memberId: string; installationId: string;
@@ -67,6 +68,7 @@ export interface ConnectorOptions {
   ledger: UsageLedger; devices: () => ConnectorDevice[]; secret: (name: string) => string | undefined;
   access?: typeof getGmailReadOnlyAccess; authorize?: typeof authorizeGmailReadOnly; transport?: typeof createGmailReadOnlyTransport;
   scan?: typeof scanGmailReadOnly;
+  attachment?: typeof readGmailPdfAttachment;
 }
 export class ManagedConnectors {
   private readonly sessions = new Map<string, Session>();
@@ -127,6 +129,14 @@ export class ManagedConnectors {
     const fingerprint = hash(canonical(device));
     const current = () => { input.signal.throwIfAborted(); requireThat(hash(canonical(this.current(input.token, input.profile))) === fingerprint, 'connector_binding_changed', 409); };
     try {
+      if (input.path === '/v1/connectors/mail-attachment' && input.method === 'POST') {
+        const source=parseSourceAttachmentRequest(input.body);this.admit(device,'gmail');
+        const binding=this.binding(device);
+        const assertAuthority=()=>{current();requireThat(this.binding(this.current(input.token,input.profile)).accountId===source.accountId,'mail_attachment_account_binding_changed',409);};
+        requireThat(binding.accountId===source.accountId,'mail_attachment_account_binding_changed',409);assertAuthority();
+        const result=await(this.options.attachment??readGmailPdfAttachment)({...binding,assertAuthority},source,input.signal);
+        assertAuthority();return {status:200,body:result};
+      }
       if (input.path === '/v1/connectors/mail-scan' && input.method === 'POST') {
         object(input.body);
         // A status read and a scan are separate requests. Require the exact

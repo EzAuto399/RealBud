@@ -30,6 +30,9 @@ describe("AI usage card", () => {
     expect(html).toContain("A$38.77");
     expect(html).toContain("Monthly limit A$80.00");
     expect(html).toContain("Check again");
+    expect(html).toContain("across your linked office");
+    expect(html).not.toContain("What this computer used");
+    expect(html).toContain("https://realbud.app/account/ai-billing");
     expect(html).toContain("min-h-[44px]");
     for (const banned of ["Hermes", "MCP", "broker"]) expect(html).not.toContain(banned);
   });
@@ -43,7 +46,7 @@ describe("AI usage card", () => {
     const unavailable = render({ state: "unavailable" });
     expect(unavailable).toContain("Usage unavailable");
     expect(unavailable).toContain("rather than guessed");
-    for (const row of ["Requests", "Tokens in / out", "Estimated cost", "Remaining this month"]) expect(unavailable).not.toContain(row);
+    for (const row of ["Requests", "Tokens in / out", "Customer usage estimate", "Reported headroom"]) expect(unavailable).not.toContain(row);
     expect(render({ state: "unavailable" }, true)).toContain("Checking…");
   });
 

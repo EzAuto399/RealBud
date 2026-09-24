@@ -111,6 +111,7 @@ export function needsSession(path: string, method?: string): boolean {
     /^\/api\/(?:bots|threads|instances)(?:\/|$)/.test(path)) return true;
   return (
     path === "/api/config" ||
+    /^\/api\/onboarding(?:\/|$)/.test(path) ||
     path.startsWith("/api/hermes") ||
     path.startsWith("/api/care") ||
     path.startsWith("/api/service-admin") ||

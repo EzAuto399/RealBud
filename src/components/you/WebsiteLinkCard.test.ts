@@ -107,6 +107,22 @@ describe("website account card", () => {
     expect(modelAccessState(null)).toBeNull();
   });
 
+  it("keeps saved model-access progress and failure guidance when the linked card is reopened", () => {
+    const linked: OfficeLinkStatus = { state: "linked", agencyLabel: "Synthetic Office" };
+    for (const [status, text] of [
+      [linked, "Setting up Bud’s model access…"],
+      [{ ...linked, lastReportedAt: "2026-09-23T10:00:00.000Z" }, "Bud’s model access has not arrived from your account yet."],
+      [{ ...linked, error: "Fictional status check failed." }, "Use Update status to try again."],
+      [{ ...linked, provisioned: true }, "Bud’s model access is set up."],
+    ] as const) {
+      const html = view({ kind: "idle" }, status);
+      expect(html).toContain(text);
+      expect(liveRegion(html)).toContain(text);
+      expect(html).not.toContain("Not your office?");
+    }
+    expect(view({ kind: "idle" }, { ...linked, serviceWithdrawn: true })).not.toContain("Setting up Bud’s model access");
+  });
+
   it("keeps an interrupted pasted-code link on its own safe retry path", () => {
     const html = view({ kind: "idle" }, { state: "pending", label: "Reception Mac" });
     expect(html).toContain("Linking with a code was interrupted. Paste the same code to retry safely.");

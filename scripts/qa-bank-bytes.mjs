@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serviceSmokeEnv } from './service-smoke-env.mjs';
+import { completeFictionalOnboarding } from './qa-onboarding.mjs';
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error('Set PLAYWRIGHT_MODULE to an installed Playwright module.');
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -46,10 +47,10 @@ try {
     const response = await fetch(base + path, { method, headers: { 'x-realbud-session': token, 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
     const value = await response.json(); assert.ok(response.ok, `${path}: ${JSON.stringify(value)}`); return value;
   };
+  await completeFictionalOnboarding(request);
   browser = await chromium.launch({ headless: true, ...(process.env.CHROME_EXECUTABLE ? { executablePath: process.env.CHROME_EXECUTABLE } : {}) });
   const context = await browser.newContext({ viewport: { width: 1365, height: 1000 }, reducedMotion: 'reduce' });
   await context.route('**/*', route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
-  await context.addInitScript(() => localStorage.setItem('realbud.first-run-done', '1'));
   page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
   await page.goto(base + '/#/schedule');
   await page.getByText('Prepare a new export', { exact: true }).click();

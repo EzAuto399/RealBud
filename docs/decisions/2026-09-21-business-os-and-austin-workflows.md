@@ -2,6 +2,8 @@
 
 Status: product direction confirmed by the owner on 21 September 2026; architecture and implementation sequence recorded below. This is a target contract, not an end-to-end delivery receipt.
 
+Scope update, 23 September: [core first and current workflow scope](2026-09-23-core-first-and-workflow-scope.md) supersedes the delivery sequence and current REI acceptance requirement below. Complete/verify the reusable core first; current packs are bank → CSV, email → bills → calendar, and email → morning priorities. The REI contract below is retained for future scope, not an active gate.
+
 Implementation follow-up on the same day: [Reusable core implementation and evidence](../REAL-ESTATE-CORE-2026-09-21.md) supersedes the implementation-gap snapshots below. Those snapshots describe the decision-time baseline and remain here as history. The operating and acceptance contracts remain in force.
 
 ## Decision and prior art

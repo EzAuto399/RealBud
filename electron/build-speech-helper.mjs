@@ -15,12 +15,15 @@ export const speechHelperBundle = path.join(resourcesDir, "RealBud Speech.app");
 export const speechHelperBinary = path.join(speechHelperBundle, "Contents", "MacOS", "speech-helper");
 
 export function buildSpeechHelper() {
+  if (process.platform !== "darwin" || process.arch !== "arm64") {
+    throw new Error("Mac speech packaging requires a native arm64 Node process on macOS.");
+  }
   const contents = path.join(speechHelperBundle, "Contents");
   mkdirSync(path.join(contents, "MacOS"), { recursive: true });
   copyFileSync(path.join(resourcesDir, "speech-helper-Info.plist"), path.join(contents, "Info.plist"));
   execFileSync(
     "swiftc",
-    ["-O", path.join(resourcesDir, "speech-helper.swift"), "-o", speechHelperBinary],
+    ["-target", "arm64-apple-macosx13.0", "-O", path.join(resourcesDir, "speech-helper.swift"), "-o", speechHelperBinary],
     { stdio: "inherit", timeout: 120_000 },
   );
   // Give development builds a stable identity and the same audio entitlement

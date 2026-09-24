@@ -57,7 +57,7 @@ function facts(value: unknown): BillFacts {
 function reviewed(body: Record<string, unknown>, source: BillSourceEvidence) {
   if (body.expectedSourceDigest !== source.digest) return fail('This source changed. Reopen the saved message and review it again.', 409);
   if (body.sourceReviewed !== true) return fail('Confirm that you reviewed this message and the entered bill facts.');
-  if ((source.message.bodyTruncated || source.message.attachments.length > 0) && body.limitedSourceAcknowledged !== true) return fail('Acknowledge that attachments were not read and truncated message content may be missing.');
+  if ((source.message.bodyTruncated || source.message.attachments.length > 0) && body.limitedSourceAcknowledged !== true) return fail('Acknowledge that attachments and any truncated text need checking against the original.');
   return text(body.reviewReason, 1000).trim();
 }
 const versionOf = ({ id: _id, createdAt: _createdAt, history: _history, ...version }: SourceBillOccurrence): BillOccurrenceVersion => structuredClone(version);

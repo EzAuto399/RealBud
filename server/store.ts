@@ -301,6 +301,82 @@ interface ThreadState {
   activeLeafId: string | null;
 }
 
+/** A failed read is never an empty workspace or permission to replace it. */
+export class StoreRecoveryError extends Error {
+  readonly status = 503;
+  readonly code = "store_recovery_required";
+  constructor(writeUncertain = false) {
+    super(writeUncertain
+      ? "The assistant conversation save was not confirmed. Reload the saved conversation before continuing."
+      : "Saved assistant conversations need recovery. Existing files are preserved; changes are paused.");
+    this.name = "StoreRecoveryError";
+  }
+}
+
+function readSaved(path: string): unknown {
+  let text: string;
+  try { text = readFileSync(path, "utf8"); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw new StoreRecoveryError();
+  }
+  try { return JSON.parse(text); }
+  catch { throw new StoreRecoveryError(); }
+}
+
+const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
+const identifier = (value: unknown): value is string => typeof value === "string" && value.length > 0 && !/[\\/\0]/.test(value);
+const timestamp = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+
+// Check the structures this store traverses, retaining unknown metadata and
+// optional legacy fields for the existing migrations below.
+function savedBot(value: unknown): value is BotRecord {
+  if (!record(value) || !identifier(value.id) || !identifier(value.threadId) || typeof value.name !== "string" || !timestamp(value.createdAt) ||
+    !record(value.modelSelection) || typeof value.modelSelection.instanceId !== "string" || typeof value.modelSelection.model !== "string" ||
+    value.resumeCursors !== undefined && value.resumeCursors !== null && !record(value.resumeCursors)) return false;
+  if (value.tasks !== undefined && value.tasks !== null) {
+    if (!Array.isArray(value.tasks) || !value.tasks.every(task => record(task) && identifier(task.threadId) && typeof task.title === "string" &&
+      timestamp(task.createdAt) && record(task.resumeCursors))) return false;
+    if (new Set(value.tasks.map(task => task.threadId)).size !== value.tasks.length) return false;
+  }
+  return true;
+}
+
+function savedGroup(value: unknown): value is GroupRecord {
+  return record(value) && identifier(value.id) && identifier(value.threadId) && typeof value.name === "string" &&
+    timestamp(value.createdAt) && Array.isArray(value.memberIds) && value.memberIds.every(identifier);
+}
+
+function savedCatalog<T extends { id: string }>(path: string, valid: (value: unknown) => value is T): T[] {
+  const raw = readSaved(path);
+  if (!Array.isArray(raw) || !raw.every(valid) || new Set(raw.map(row => row.id)).size !== raw.length) throw new StoreRecoveryError();
+  return raw;
+}
+
+function savedMessage(value: unknown): value is Message {
+  return record(value) && identifier(value.id) && (value.role === "user" || value.role === "bot") && typeof value.kind === "string" &&
+    timestamp(value.at) && (value.text === undefined || typeof value.text === "string") &&
+    (value.parentId === undefined || value.parentId === null || identifier(value.parentId));
+}
+
+function checkThreadGraph(messages: Message[], activeLeafId: string | null): void {
+  const byId = new Map(messages.map(message => [message.id, message]));
+  if (byId.size !== messages.length || activeLeafId !== null && !byId.has(activeLeafId)) throw new StoreRecoveryError();
+  const checked = new Set<string>();
+  for (const message of messages) {
+    const visiting = new Set<string>();
+    let current: Message | undefined = message;
+    while (current && !checked.has(current.id)) {
+      if (visiting.has(current.id)) throw new StoreRecoveryError();
+      visiting.add(current.id);
+      const parent: string | null | undefined = current.parentId;
+      if (parent !== null && parent !== undefined && !byId.has(parent)) throw new StoreRecoveryError();
+      current = parent ? byId.get(parent) : undefined;
+    }
+    for (const id of visiting) checked.add(id);
+  }
+}
+
 export class Store {
   bots: BotRecord[] = [];
   groups: GroupRecord[] = [];
@@ -310,16 +386,8 @@ export class Store {
   constructor(defaultSelection: () => ModelSelection) {
     this.defaultSelection = defaultSelection;
     mkdirSync(DATA_DIR, { recursive: true });
-    try {
-      this.bots = JSON.parse(readFileSync(BOTS_FILE, "utf8"));
-    } catch {
-      this.bots = [];
-    }
-    try {
-      this.groups = JSON.parse(readFileSync(GROUPS_FILE, "utf8"));
-    } catch {
-      this.groups = [];
-    }
+    this.bots = savedCatalog(BOTS_FILE, savedBot);
+    this.groups = savedCatalog(GROUPS_FILE, savedGroup);
     // busy never survives a restart — no turn does either. Rooms saved
     // before default responders existed adopt their first member as lead.
     let botsMigrated = false;
@@ -475,16 +543,15 @@ export class Store {
     if (t) return t;
     let messages: Message[] = [];
     let activeLeafId: string | null = null;
-    try {
-      const raw = JSON.parse(readFileSync(messagesFile(threadId), "utf8"));
-      if (Array.isArray(raw)) messages = raw; // pre-branching flat file
-      else {
-        messages = raw.messages ?? [];
-        activeLeafId = raw.activeLeafId ?? null;
-      }
-    } catch {
-      /* fresh thread */
+    const raw = readSaved(messagesFile(threadId));
+    if (Array.isArray(raw)) messages = raw; // pre-branching flat file
+    else {
+      if (!record(raw) || !Array.isArray(raw.messages) ||
+        raw.activeLeafId !== undefined && raw.activeLeafId !== null && !identifier(raw.activeLeafId)) throw new StoreRecoveryError();
+      messages = raw.messages;
+      activeLeafId = raw.activeLeafId ?? null;
     }
+    if (!messages.every(savedMessage)) throw new StoreRecoveryError();
     // legacy rows carry no parentId — chain them in array order
     let prev: string | null = null;
     for (const m of messages) {
@@ -492,6 +559,7 @@ export class Store {
       prev = m.id;
     }
     if (!activeLeafId) activeLeafId = messages.at(-1)?.id ?? null;
+    checkThreadGraph(messages, activeLeafId);
     t = { messages, activeLeafId };
     this.threads.set(threadId, t);
     return t;
@@ -499,10 +567,18 @@ export class Store {
 
   private saveThread(threadId: string) {
     const t = this.thread(threadId);
-    writeFileAtomic(
-      messagesFile(threadId),
-      JSON.stringify({ activeLeafId: t.activeLeafId, messages: t.messages }, null, 2),
-    );
+    try {
+      writeFileAtomic(
+        messagesFile(threadId),
+        JSON.stringify({ activeLeafId: t.activeLeafId, messages: t.messages }, null, 2),
+      );
+    } catch {
+      // A caller may already have changed this cached object. Discard it so
+      // the next read observes disk, whether failure preceded publication or
+      // followed a successful rename. Never retry an uncertain append here.
+      this.threads.delete(threadId);
+      throw new StoreRecoveryError(true);
+    }
   }
 
   messagesFor(threadId: string): Message[] {

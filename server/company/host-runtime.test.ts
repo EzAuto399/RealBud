@@ -1,11 +1,19 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { rmSync, writeFileSync } from 'node:fs';
-import { access, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { openOwnedPostgres, postgresBinary, stopOwnedPostgresProcess } from './host-runtime.ts';
 import { privateDir, removeFixture } from '../testing/private-fixture.ts';
+import { assertWindowsPostgresAdmission, WindowsPostgresAdmissionError } from '../windows-postgres-admission.ts';
+
+vi.mock('../windows-postgres-admission.ts', async original => ({
+  ...await original<typeof import('../windows-postgres-admission.ts')>(), assertWindowsPostgresAdmission: vi.fn(),
+}));
+// PostgreSQL is already simulated in this suite. Token-query behavior belongs
+// to windows-postgres-admission.test.ts and the separate native launch proof.
+beforeEach(() => { vi.mocked(assertWindowsPostgresAdmission).mockReset().mockResolvedValue(); });
 
 /** A port nothing is listening on right now: fixed ports collide on shared CI runners. */
 async function freePort(): Promise<number> {
@@ -169,6 +177,41 @@ describe('postgresBinary', () => {
 });
 
 describe('openOwnedPostgres', () => {
+  it.each(['privileged-token', 'verification-unavailable'] as const)('refuses %s before creating a root, lock, credentials or invoking initdb', async reason => {
+    const temp = await mkdtemp(join(tmpdir(), 'rb-host-pg-admission-')); temps.push(temp);
+    const rootDirectory = join(temp, 'never-created');
+    const execute = vi.fn(), spawnServer = vi.fn();
+    const failure = new WindowsPostgresAdmissionError(reason);
+    vi.mocked(assertWindowsPostgresAdmission).mockRejectedValue(failure);
+    await expect(openOwnedPostgres({ rootDirectory, binaryDirectory: join(temp, 'never-inspected'), port: 5432 }, { execute, spawnServer }))
+      .rejects.toBe(failure);
+    expect(await readdir(temp)).toEqual([]);
+    expect(execute).not.toHaveBeenCalled(); expect(spawnServer).not.toHaveBeenCalled();
+  });
+
+  it('preserves every existing state file when launch admission is refused', async () => {
+    const temp = await mkdtemp(join(tmpdir(), 'rb-host-pg-preserved-')); temps.push(temp);
+    const state = { 'owner.lock': 'fictional-owned-lock', 'ownership.json': 'fictional-owned-manifest', 'setup-progress.json': 'fictional-progress' };
+    for (const [name, contents] of Object.entries(state)) await writeFile(join(temp, name), contents);
+    const execute = vi.fn(), spawnServer = vi.fn();
+    vi.mocked(assertWindowsPostgresAdmission).mockRejectedValue(new WindowsPostgresAdmissionError('privileged-token'));
+    await expect(openOwnedPostgres({ rootDirectory: temp, binaryDirectory: join(temp, 'absent-bin'), port: 5432 }, { execute, spawnServer }))
+      .rejects.toBeInstanceOf(WindowsPostgresAdmissionError);
+    expect((await readdir(temp)).sort()).toEqual(Object.keys(state).sort());
+    for (const [name, contents] of Object.entries(state)) expect(await readFile(join(temp, name), 'utf8')).toBe(contents);
+    expect(execute).not.toHaveBeenCalled(); expect(spawnServer).not.toHaveBeenCalled();
+  });
+
+  it('rechecks cancellation after admission before touching the filesystem', async () => {
+    const temp = await mkdtemp(join(tmpdir(), 'rb-host-pg-admission-abort-')); temps.push(temp);
+    const controller = new AbortController();
+    vi.mocked(assertWindowsPostgresAdmission).mockImplementation(async signal => { expect(signal).toBe(controller.signal); controller.abort(); });
+    const execute = vi.fn();
+    await expect(openOwnedPostgres({ rootDirectory: join(temp, 'absent'), binaryDirectory: 'absent-bin', port: 5432, signal: controller.signal }, { execute }))
+      .rejects.toMatchObject({ name: 'AbortError' });
+    expect(await readdir(temp)).toEqual([]); expect(execute).not.toHaveBeenCalled();
+  });
+
   it('preserves unrelated files and refuses to adopt their directory', async () => {
     const { binaryDirectory, rootDirectory } = await workspace();
     await writeFile(join(rootDirectory, 'keep.txt'), 'unrelated');

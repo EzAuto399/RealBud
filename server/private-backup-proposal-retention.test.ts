@@ -81,3 +81,30 @@ describe('retained invoice intents through private backup', () => {
     } finally { db.close(); }
   });
 });
+
+it('retains original PDF evidence through a different-key restore without another download or model call', async () => {
+  const { fictionalPdf } = await import('./testing/pdf-fixture.ts');
+  const { attachmentHash } = await import('./source-attachments.ts');
+  const { previewBillSource } = await import('./source-bills.ts');
+  const from=await fixture(),to=await fixture(),db=new WorkflowDatabase({dir:from.directory,key:from.key});
+  try {
+    const seed=await proposalBackupFixture(db,from.directory),source=await seed.options.source(),bytes=fictionalPdf();
+    source.message.attachments=[{id:'pdf-fictional',name:'fictional.pdf',mimeType:'application/pdf',size:bytes.length}];
+    const attachment=vi.fn(async(selected: import('../shared/source-attachments.ts').SourceAttachmentRequest)=>({...selected,bytesBase64:bytes.toString('base64'),sha256:attachmentHash(bytes)}));
+    const options={...seed.options,source:async()=>structuredClone(source),attachment};
+    const request={...seed.request,requestId:randomUUID(),expectedSourceDigest:previewBillSource(source).digest};
+    await expect(createBillProposals(options)(request)).rejects.toThrow(/Fictional stop/);
+    const id=`bill-proposal:${request.requestId}`,saved=db.get<any>('bill-proposal',id)!;
+    expect(saved.value.attachmentEvidence.pdfs[0].bytesBase64).toBe(bytes.toString('base64'));
+    const {backup,receipt}=await from.service.exportBackup(phrase);
+    await to.service.stageRestore({backup,passphrase:phrase,expectedDigest:receipt.digest});
+    await applyStagedPrivateRestore({directory:to.directory,key:to.key});
+    const restored=new WorkflowDatabase({dir:to.directory,key:to.key});
+    try {
+      expect(restored.get('bill-proposal',id)).toEqual(saved);
+      const execute=vi.fn(options.execute);
+      await expect(createBillProposals({...options,database:()=>restored,execute})(request)).rejects.toThrow(/earlier preparation stopped/);
+      expect(attachment).toHaveBeenCalledOnce();expect(execute).not.toHaveBeenCalled();
+    }finally{restored.close();}
+  }finally{db.close();}
+});

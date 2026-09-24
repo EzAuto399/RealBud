@@ -295,3 +295,24 @@ test('saved-account rebinding during scan fails its next authority checkpoint be
     assert.equal(reads, 1);
   } finally { s.f.close(); }
 });
+
+const pdfSource={accountId:'account-a',threadId:'abc',messageId:'ab',attachment:{id:'pdf-a',name:'fictional.pdf',mimeType:'application/pdf' as const,size:10}};
+test('PDF acquisition is bound to the device account and withholds data after revocation',async()=>{
+  const s=setup();let calls=0;const bytes={...pdfSource,bytesBase64:'JVBERi0xLjQKAA==',sha256:'a'.repeat(64)};
+  try {
+    const broker=s.make({attachment:async(binding,source)=>{calls++;binding.assertAuthority?.();assert.deepEqual(source,pdfSource);return bytes;}});
+    const request={...s.request,method:'POST',path:'/v1/connectors/mail-attachment',body:pdfSource};
+    assert.deepEqual((await broker.handle(request)).body,bytes);assert.equal(calls,1);
+    await assert.rejects(()=>broker.handle({...request,body:{...pdfSource,accountId:'other'}}),/mail_attachment_account_binding_changed/);assert.equal(calls,1);
+    const revoked=s.make({attachment:async()=>{s.set([{...s.device(),active:false}]);return bytes;}});
+    await assert.rejects(()=>revoked.handle(request),/connector_access_denied/);
+  }finally{s.f.close();}
+});
+test('PDF acquisition refuses unadmitted apps and caller-supplied upstream authority',async()=>{
+  const s=setup();let calls=0;try {
+    const broker=s.make({attachment:async()=>{calls++;throw Error('must not call');}});
+    const request={...s.request,method:'POST',path:'/v1/connectors/mail-attachment',body:pdfSource};
+    await assert.rejects(()=>broker.handle({...request,body:{...pdfSource,url:'https://evil.invalid'}}));assert.equal(calls,0);
+    s.set([{...s.device(),apps:['calendar']}]);await assert.rejects(()=>broker.handle(request));assert.equal(calls,0);
+  }finally{s.f.close();}
+});

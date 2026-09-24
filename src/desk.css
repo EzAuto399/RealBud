@@ -103,6 +103,17 @@
 }
 @media (max-width: 719px) {
   .desk-workspace .pm-desk-header { padding: 12px 12px 0; }
+  /* With no case to review, keep setup and the sample action in one scroll
+     flow instead of reserving half the window for the empty canvas. */
+  .desk-workspace[data-empty-canvas="true"] { min-height: 0; overflow-y: auto; }
+  .desk-workspace[data-empty-canvas="true"] .pm-desk-header { max-height: none; overflow: visible; }
+  .desk-workspace[data-empty-canvas="true"] .desk-task-split { flex: 0 0 auto; }
+  .desk-workspace[data-empty-canvas="true"] .pm-split-canvas { overflow: visible; }
+  .desk-workspace[data-empty-canvas="true"] .desk-empty-canvas { height: auto; padding-block: 24px; }
+  /* Queue controls must not consume all of the narrow case pane's height. */
+  .desk-task-split .desk-queue-pane { overflow-y: auto; }
+  .desk-task-split .desk-queue-pane > * { flex-shrink: 0; }
+  .desk-task-split .desk-queue-pane > [role="listbox"] { flex: 0 0 auto; overflow-y: visible; }
   .desk-workspace-tabs { gap: 16px; }
   .desk-case > header { padding: 14px 16px; }
   .desk-case .pm-case-title { font-size: 19px; }

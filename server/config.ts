@@ -74,19 +74,45 @@ export function ensureDirs() {
       }
     }
   }
-  // Folders this boot creates get their own protected Windows descriptor, in
-  // one process; existing (or migrated) folders are left to verify-only paths.
-  const created = [DATA_DIR, EVENTS_DIR, NATIVE_DIR].flatMap((dir) => mkdirNewSync(dir));
+  // New folders must also satisfy the private JSON stores on POSIX. They get
+  // their own protected Windows descriptor in one process; existing (or
+  // migrated) folders are left to verify-only paths.
+  const created = [DATA_DIR, EVENTS_DIR, NATIVE_DIR].flatMap((dir) => mkdirNewSync(dir, 0o700));
   restrictNewSync(created.map((path) => ({ path, kind: "directory" as const })));
 }
 
-export function loadConfig(): AppConfig {
-  let cfg: AppConfig = {};
-  try {
-    cfg = JSON.parse(readFileSync(join(DATA_DIR, "config.json"), "utf8"));
-  } catch {
-    /* first run — env fallbacks below */
+export class ConfigRecoveryError extends Error {
+  readonly status = 503;
+  readonly code = "config_recovery_required";
+  constructor() {
+    super("Saved settings need recovery. The original file has been kept; restore or repair it before saving changes.");
+    this.name = "ConfigRecoveryError";
   }
+}
+
+const configRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
+/** Only absence is a fresh installation. A failed read must never authorize
+ * replacing saved credentials or settings with environment fallbacks. */
+function readSavedConfig(): AppConfig & Record<string, unknown> {
+  let raw: string;
+  try { raw = readFileSync(join(DATA_DIR, "config.json"), "utf8"); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw new ConfigRecoveryError();
+  }
+  let value: unknown;
+  try { value = JSON.parse(raw); } catch { throw new ConfigRecoveryError(); }
+  if (!configRecord(value)) throw new ConfigRecoveryError();
+  for (const key of ["xai", "composio", "box", "tts", "profile", "instances"]) {
+    if (Object.hasOwn(value, key) && !configRecord(value[key])) throw new ConfigRecoveryError();
+  }
+  return value as AppConfig & Record<string, unknown>;
+}
+
+export function loadConfig(): AppConfig {
+  const cfg = readSavedConfig();
   cfg.xai = { key: process.env.XAI_API_KEY, ...cfg.xai };
   cfg.composio = { key: process.env.COMPOSIO_KEY, ...cfg.composio };
   cfg.box = { token: process.env.BOX_TOKEN, ...cfg.box };
@@ -98,12 +124,7 @@ export function loadConfig(): AppConfig {
  * echoed back — callers report configured-or-not booleans only). */
 export function saveConfig(patch: Partial<AppConfig>): void {
   const p = join(DATA_DIR, "config.json");
-  let disk: Record<string, unknown> = {};
-  try {
-    disk = JSON.parse(readFileSync(p, "utf8"));
-  } catch {
-    /* first write */
-  }
+  const disk = readSavedConfig();
   for (const key of ["xai", "composio", "box", "tts", "profile"] as const) {
     if (patch[key] && typeof patch[key] === "object") {
       disk[key] = { ...(disk[key] as object), ...patch[key] };

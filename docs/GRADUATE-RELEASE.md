@@ -4,6 +4,13 @@ Date: 2026-08-31
 Canonical constraints: `docs/GOAL-PROMPT.md` wins.  
 Pilot fields: `docs/PILOT-CONTRACT.md`. Pickup: `docs/NEXT-WAVE.md`.
 
+**Windows continuation — 23 September 2026:** [Windows build and test](WINDOWS-BUILD-AND-TEST.md)
+supersedes this August plan's Windows prerequisites and CSV-only/no-worker
+assumptions. Windows now has managed worker setup and a compiled speech helper.
+The guide records current evidence and remaining feature/device gates; later
+working-tree changes still need a matching Windows build and acceptance run.
+The signing and public-release requirements below remain separate gates.
+
 Owner direction (2026-08-31): **strata portal** for a Dickson ACT property, plus
 **full graduate release** — notarized Mac DMG, signed Windows NSIS, double-click
 installer with pinned worker available without a terminal.
@@ -18,7 +25,7 @@ types the eight fields on You → This office.
 | Artifact | Trust gate | Worker |
 |---|---|---|
 | `RealBud-<ver>.dmg` + arm64 zip | Developer ID (have) + **notarytool + staple** | Mac: curl pin install in-app today; bundle later |
-| `RealBud-<ver>-setup.exe` | **Authenticode** (need cert) | Windows: `installCommand` is null → **bundle or CSV-only** |
+| `RealBud-<ver>-setup.exe` | **Authenticode** (need cert) | Windows: managed private runtime setup; fresh-device worker/model acceptance remains separate |
 | GitHub release on `EzAuto399/RealBud` | Upload DMG/zip/`latest-mac.yml` + setup.exe/`latest.yml` | Auto-update reads that public repo |
 
 ---
@@ -30,7 +37,7 @@ types the eight fields on You → This office.
 1. Mac notarize + staple + smoke stapled .app
 2. Strata Stage-0 on Dickson portal (human login, Bud prefill only, human Submit)
 3. Windows Authenticode + NSIS verify
-4. Bundle pinned Hermes into installer (unlocks win32 installCommand)
+4. Review bundled-worker distribution (Windows managed setup already exists)
 5. Cut public GitHub release + arm updater
 ```
 
@@ -64,22 +71,30 @@ Stage-0 against the real strata origin is Wave 2.
 
 ## Wave 1 — Mac notarize (T17 Mac) — DONE for 0.1.17
 
-**Have:** `Developer ID Application: Yo-Da Lai (4F4SMS88P8)` + keychain
-profiles `realbud-notary` and `ClawConnect` (validated 2026-08-31).
+**Historical proof:** `Developer ID Application: Yo-Da Lai (4F4SMS88P8)` and
+notarization profiles were validated on 2026-08-31. The current candidate's
+`realbud-notary` credentials returned HTTP 401; the earlier validation is not
+current notarization proof. Follow the [Mac build and test guide](MACOS-BUILD-AND-TEST.md)
+for native arm64 Node 24, pnpm 10.33.0, Xcode/Swift and dependency prerequisites.
 
-**Ship artifacts (local `release/`, gitignored):** notarized + stapled
+**Historical artifacts (local `release/`, gitignored):** notarized + stapled
 `RealBud-0.1.17.dmg` and `RealBud-0.1.17-arm64.zip` with fresh
 `latest-mac.yml` + blockmaps. Gatekeeper: `source=Notarized Developer ID`.
 
 ```bash
-pnpm notary:store          # once, if keychain profile missing
-pnpm package:mac:release   # build → notarize → drop unpacked tree
-pnpm clean:release         # keep one version's dmg/zip only (~300MB)
-pnpm clean:release --all   # wipe release/ entirely
+pnpm install --frozen-lockfile
+pnpm package:mac
+pnpm smoke:mac
+# If missing or rejected by Apple, refresh locally with pnpm notary:store.
+pnpm package:mac:notarize
+pnpm smoke:mac
+# Preserve artifact hashes, receipts and required app tests before optional cleanup.
+pnpm clean:release
 ```
 
 Do **not** bump `package.json` version until the next real ship. Rebuilds
-overwrite the same `0.1.17` artifacts.
+use the version in `package.json` (currently `0.1.19`). The `0.1.17` artifacts
+above are historical evidence, not the current build output.
 
 ---
 
@@ -107,11 +122,16 @@ BuildingLink / custom body corporate portal).
 1. Obtain Authenticode cert (or Azure Trusted Signing).
 2. Configure `win.signtoolOptions` in `electron-builder.yml`.
 3. Only then set `publisherName` in updater metadata.
-4. Build on Windows: `pnpm package:win` (see `.claude/skills/windows-release`).
+4. Build on native Windows x64: `pnpm package:win` (see [Windows build and test](WINDOWS-BUILD-AND-TEST.md)).
 5. Upload `RealBud-<ver>-setup.exe` + `latest.yml` to the same GitHub release tag.
 
-Until a worker is bundled, Windows UI must stay honest: CSV-only / no in-app
-Hermes install (`hermesInstallCommand` returns null on win32).
+The earlier CSV-only restriction inferred from `hermesInstallCommand` is
+superseded: that legacy terminal command is disabled on every platform, while
+`server/worker-bootstrap.ts` runs checksum-verified Windows setup stages in the
+private managed runtime. The package includes Windows speech, browser/CUA
+helpers and PostgreSQL. Installed worker/model setup, GUI behavior, attended CUA
+and memory review retain their explicit proof requirements and platform holds;
+packaging those components does not establish full Windows operation.
 
 ---
 
@@ -122,9 +142,11 @@ Goal: graduate double-clicks RealBud and never opens Terminal.
 | Platform | Today | Target |
 |---|---|---|
 | macOS | In-app curl pin install | Optional: ship pinned runtime under `extraResources` |
-| Windows | `installCommand: null` | Bundle pinned Hermes + pack, or ship a Windows installer path |
+| Windows | Managed, checksum-verified private runtime setup | Verify fresh-device setup; bundling the complete worker remains a separate distribution choice |
 
-Pin stays `server/hermes-pin.ts` (v0.20.3). Do not track upstream main.
+The compatibility floor stays in `server/hermes-pin.ts`; fresh installs use
+the reviewed recommendation in `server/hermes-releases.ts`. Do not treat the
+older compatibility pin as the current installer target or track upstream main.
 
 ---
 
@@ -154,8 +176,11 @@ Pin stays `server/hermes-pin.ts` (v0.20.3). Do not track upstream main.
 
 ```bash
 pnpm qa:full
-pnpm package:mac:release    # build + notarize + clean unpacked
-# release/ stays ~300MB (one version dmg+zip). Wipe with: pnpm clean:release --all
+pnpm package:mac
+pnpm smoke:mac
+pnpm package:mac:notarize
+pnpm smoke:mac
+# Preserve hashes, receipts and app test results before optional pnpm clean:release.
 ```
 
 Stay on one `package.json` version until a real public cut. Overwrite the same

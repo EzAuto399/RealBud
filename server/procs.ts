@@ -21,6 +21,8 @@ import { delimiter } from "node:path";
 import { join } from "node:path";
 import { resolveCliSpawn, type ResolvedSpawn } from "./env-path.ts";
 import { stripServiceSecrets } from "./service-child-env.ts";
+import { runOneShot, type OneShotOptions } from "./one-shot-process.ts";
+export type { OneShotOptions } from "./one-shot-process.ts";
 
 type SpawnCliOptions = SpawnOptions & {
   /** POSIX child-created files default to owner-only. Used for private agent workrooms. */
@@ -99,21 +101,15 @@ export function execCli(
   );
 }
 
-/** Like execCli but keeps stderr and returns the child for timeout kills. */
+/** Bounded one-shot worker; callers delegate cancellation through opts.signal. */
 export function execFileCli(
   cli: string,
   args: string[],
-  opts: ExecFileOptions,
+  opts: OneShotOptions,
   cb: (err: Error | null, stdout: string, stderr: string) => void,
-): ChildProcess {
+): ChildProcess | null {
   const resolved = resolveCli(cli, args);
-  return execFile(
-    resolved.command,
-    resolved.args,
-    { ...opts, env: cliEnvironment(opts.env), windowsHide: true },
-    (err, stdout, stderr) =>
-      cb(err, typeof stdout === "string" ? stdout : String(stdout), typeof stderr === "string" ? stderr : String(stderr)),
-  );
+  return runOneShot(resolved.command, resolved.args, { ...opts, env: cliEnvironment(opts.env) }, cb);
 }
 
 /** Human wording for a failed CLI spawn.

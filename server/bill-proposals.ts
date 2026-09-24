@@ -12,6 +12,8 @@ import { privateDirectory, writePrivateJson } from './private-json.ts';
 import type { WorkflowDatabase } from './workflow-database.ts';
 import { validateAccountsReview } from './accounts-review.ts';
 import { billProposalInput, validateSavedBillProposal, type BillProposalReceipt } from './bill-proposal-validation.ts';
+import { parseSourceAttachmentRequest, type SourceAttachmentBytes, type SourceAttachmentRequest } from '../shared/source-attachments.ts';
+import { sourcePdfEvidence } from './source-attachments.ts';
 
 const fail = (message: string, status = 409): never => { throw Object.assign(new Error(message),{status}); };
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -23,6 +25,7 @@ interface Options {
   epoch: () => string;
   authorize: () => Promise<Authority>;
   source: (itemId: string,messageId: string) => Promise<BillMailSource>;
+  attachment?: (source: SourceAttachmentRequest, signal: AbortSignal) => Promise<SourceAttachmentBytes>;
   runs: () => JobRun[];
   findRunByKey?: (key: string) => JobRun | undefined;
   // The executor reserves the recipe's durable run before invoking this hook.
@@ -57,7 +60,7 @@ function projectBillProposal(id: string, run: JobRun, saved: BillProposalReceipt
     }
     proposal = results[0].documents.length === 1 ? results[0].documents[0] : null;
   }
-  return { run, proposal, sourceDigest: saved.sourceDigest };
+  return { run, proposal, sourceDigest: saved.sourceDigest, ...(saved.attachmentEvidence ? { attachmentReads: saved.attachmentEvidence.pdfs.map(pdf => ({ attachmentId: pdf.attachment.id, fileName: pdf.attachment.name, pages: pdf.pages, text: pdf.text, sha256: pdf.sha256 })) } : {}) };
 }
 
 export interface BillProposalReadOptions {
@@ -116,7 +119,7 @@ export function readBillProposal(options: BillProposalReadOptions, requestId: un
       return fail('The saved invoice worker receipt needs recovery.', 503);
     }
     const result = projectBillProposal(id, parsed, saved);
-    return structuredClone({ ...intent, state: 'run-recorded', run: result.run, proposal: result.proposal });
+    return structuredClone({ ...intent, state: 'run-recorded', run: result.run, proposal: result.proposal, ...(result.attachmentReads ? { attachmentReads: result.attachmentReads } : {}) });
   } catch {
     return fail('The saved invoice preparation needs recovery. Its evidence has been preserved.', 503);
   }
@@ -151,7 +154,7 @@ export function createBillProposals(options: Options) {
       const authority=await options.authorize(), source=previewBillSource(await options.source(b.itemId,b.messageId));
       unchanged();
       if (source.accountId!==authority.settings.gmailAccountId) return fail('The source or approved setup changed. The earlier job receipt is retained in Schedule; review current evidence before requesting another proposal.');
-      sameRequest(saved,{payloadDigest,sourceDigest:source.digest,recipeId:authority.recipe.id,recipeRevision:authority.recipe.revision,sourceReference:`realbud-bill:${source.digest}`,authorityDigest:hash(authority),input:billProposalInput(authority.settings,source,String(saved.input.asOf))});
+      sameRequest(saved,{payloadDigest,sourceDigest:source.digest,recipeId:authority.recipe.id,recipeRevision:authority.recipe.revision,sourceReference:`realbud-bill:${source.digest}`,authorityDigest:hash(authority),input:billProposalInput(authority.settings,source,String(saved.input.asOf),saved.attachmentEvidence?.pdfs)});
       return replay(id,saved);
     }
     if (active) return fail('An invoice preparation is already running. Wait for its saved result.');
@@ -160,7 +163,18 @@ export function createBillProposals(options: Options) {
       const authority = await options.authorize(), source = previewBillSource(await options.source(b.itemId,b.messageId));
       unchanged();
       if (source.digest !== b.expectedSourceDigest || source.accountId !== authority.settings.gmailAccountId) return fail('This message does not match the currently reviewed source. Reopen it and check agency setup.');
-      const sourceReference = `realbud-bill:${source.digest}`, input = billProposalInput(authority.settings,source,new Date().toISOString());
+      const pdfs = [];
+      if(options.attachment) {
+        const selected=source.message.attachments.filter(a=>a.mimeType==='application/pdf'||/\.pdf$/i.test(a.name));
+        if(selected.length>1)return fail('This preparation supports one PDF bill per message. Review the original attachments separately.',422);
+        for(const attachment of selected) {
+          const request=parseSourceAttachmentRequest({accountId:source.accountId,threadId:source.threadId,messageId:source.message.id,attachment});
+          const signal=AbortSignal.timeout(35_000);
+          const bytes=await options.attachment(request,signal);unchanged();
+          pdfs.push(await sourcePdfEvidence(bytes,request,signal));unchanged();
+        }
+      }
+      const sourceReference = `realbud-bill:${source.digest}`, input = billProposalInput(authority.settings,source,new Date().toISOString(),pdfs);
       const directory=join(options.workroom,'workflow-inputs'); await privateDirectory(directory);
       const refreshed = await options.authorize();
       unchanged();
@@ -172,7 +186,7 @@ export function createBillProposals(options: Options) {
         if(currentSource.digest!==source.digest || hash(current)!==hash(authority)) return fail('The invoice source or approved setup changed during preparation. Review current evidence.');
       };
       await checkCurrent();
-      const candidate: BillProposalReceipt = {payloadDigest,sourceDigest:source.digest,recipeId:authority.recipe.id,recipeRevision:authority.recipe.revision,sourceReference,authorityDigest:hash(authority),input};
+      const candidate: BillProposalReceipt = {payloadDigest,sourceDigest:source.digest,recipeId:authority.recipe.id,recipeRevision:authority.recipe.revision,sourceReference,authorityDigest:hash(authority),input,...(pdfs.length?{attachmentEvidence:{source,pdfs}}:{})};
       const database = options.database();
       const {saved,created} = database.transaction(()=>{
         // Admission and winner inspection share the SQLite write lock. A late

@@ -23,7 +23,7 @@ describe("app route", () => {
   it("does not treat the You deep links as door routes", () => {
     // These are the pre-existing root-level settings anchors and must keep
     // resolving through youHashTarget instead.
-    for (const hash of ["#you-recovery", "#you-worker", "#connected-apps", "#attach-model", ""]) {
+    for (const hash of ["#you-recovery", "#you-private-backup", "#you-worker", "#connected-apps", "#attach-model", ""]) {
       expect(viewFromHash(hash)).toBeNull();
     }
   });
@@ -35,6 +35,7 @@ describe("app route", () => {
 
   it("never overwrites a You deep link when mirroring the You door", () => {
     expect(doorHashToWrite("#you-recovery", "you")).toBeNull();
+    expect(doorHashToWrite("#you-private-backup", "you")).toBeNull();
     expect(doorHashToWrite("#connected-apps", "you")).toBeNull();
     expect(doorHashToWrite("#you-phone", "you")).toBeNull();
     expect(doorHashToWrite("#/you", "you")).toBeNull();
@@ -43,6 +44,7 @@ describe("app route", () => {
     // Leaving a You deep link for another door must update the address bar.
     expect(doorHashToWrite("#you-recovery", "ask")).toBe("#/ask");
     expect(doorHashToWrite("#you-recovery", "desk")).toBe("#/desk");
+    expect(doorHashToWrite("#you-private-backup", "desk")).toBe("#/desk");
   });
 
   it("leaves a Schedule deep link for the lazily mounted Schedule screen to consume", () => {

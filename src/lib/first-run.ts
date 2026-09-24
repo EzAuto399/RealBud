@@ -1,19 +1,24 @@
-const KEY = "realbud.first-run-done";
+import { parseOnboardingState, type OnboardingStage, type OnboardingState } from '@shared/onboarding';
 
-export function firstRunDone(): boolean {
-  try {
-    return localStorage.getItem(KEY) === "1";
-  } catch {
-    return false;
-  }
+export function firstRunDone(state: OnboardingState | null): boolean {
+  return state?.stage === 'complete';
 }
 
-export function markFirstRunDone(): void {
-  try {
-    localStorage.setItem(KEY, "1");
-  } catch {
-    /* private mode */
-  }
+/** Browser flags cannot identify an installation or member, and disappear when
+ * the loopback port changes. Only an explicit server receipt completes setup. */
+export function createFirstRunApi(request: (path: string, init?: RequestInit) => Promise<unknown>) {
+  return {
+    async read(): Promise<OnboardingState> { return parseOnboardingState(await request('/api/onboarding')); },
+    async save(current: OnboardingState, stage: OnboardingStage): Promise<OnboardingState> {
+      const next = parseOnboardingState(await request('/api/onboarding', {
+        method: 'PUT', body: JSON.stringify({ expectedScope: current.scope, expectedRevision: current.revision, stage }),
+      }));
+      if (next.scope !== current.scope || next.stage !== stage || next.revision < current.revision) {
+        throw new Error('Your workspace changed. Reopen setup before continuing.');
+      }
+      return next;
+    },
+  };
 }
 
 /**
@@ -36,9 +41,8 @@ export interface OfficeContactSnapshot {
 /**
  * True when the saved book already records a real person as the office contact.
  *
- * The flag above lives in browser storage, which a cleared profile, a private
- * window or a fresh renderer profile loses while the book on disk survives, so
- * first run can replay over a restored book. This reads exactly the field that
+ * A restored book may precede the saved setup receipt, so first run can still
+ * replay over it. This reads exactly the field that
  * replay would write — `office.pmUser`, and nothing else. A named agency with no
  * contact yet is a blank to fill, not a value to protect: skipping the write
  * there would drop the name the person just typed instead of saving it.

@@ -4,8 +4,8 @@
 //
 //   node scripts/smoke-mac-package.mjs
 //   OMB_SMOKE_EXECUTABLE=/path/to/RealBud.app/Contents/MacOS/RealBud node scripts/smoke-mac-package.mjs
-import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,6 +23,48 @@ const executable =
 if (!existsSync(executable)) {
   throw new Error(`[smoke-mac-package] missing executable: ${executable}\nRun pnpm package:mac first.`);
 }
+
+// A build on a newer Mac can run here while shipping a helper that cannot run
+// at the app's advertised minimum. Check the packaged load commands before
+// starting any smoke processes; signing and a launch on this host cannot prove it.
+const contents = path.dirname(path.dirname(realpathSync(executable)));
+const resources = path.join(contents, "Resources");
+const inspect = (command, args) => execFileSync(command, args, {
+  encoding: "utf8", timeout: 30_000, maxBuffer: 128 * 1024,
+}).trim();
+const versionParts = value => {
+  if (!/^\d+\.\d+(?:\.\d+)?$/.test(value)) throw new Error(`Invalid packaged macOS minimum: ${value}`);
+  return value.split(".").map(Number).concat([0]).slice(0, 3);
+};
+const minimum = inspect("/usr/libexec/PlistBuddy", ["-c", "Print :LSMinimumSystemVersion", path.join(contents, "Info.plist")]);
+const minimumParts = versionParts(minimum);
+function assertAtMostMinimum(value, name) {
+  const parts = versionParts(value);
+  for (let index = 0; index < minimumParts.length; index++) {
+    if (parts[index] < minimumParts[index]) return;
+    if (parts[index] > minimumParts[index]) throw new Error(`${name} requires macOS ${value}, but the packaged app advertises ${minimum}.`);
+  }
+}
+const postgresLib = path.join(resources, "postgres", "lib");
+const binaries = new Set([
+  executable,
+  path.join(contents, "Frameworks", "Electron Framework.framework", "Versions", "A", "Electron Framework"),
+  ...["RealBud Speech.app/Contents/MacOS/speech-helper", "cua-driver", "cua-sdk/native/libcua_driver_sdk.dylib",
+    "cua-sdk/native/cua_driver_node_runtime.node", "browser/bsk", "postgres/bin/postgres", "postgres/bin/initdb", "postgres/bin/pg_ctl"]
+    .map(name => path.join(resources, name)),
+  ...readdirSync(postgresLib).filter(name => name.endsWith(".dylib")).map(name => path.join(postgresLib, name)),
+].map(file => realpathSync(file)));
+for (const binary of binaries) {
+  const build = inspect("xcrun", ["vtool", "-arch", "arm64", "-show-build", binary]);
+  const version = /\bcmd LC_BUILD_VERSION\b/.test(build) && /\bplatform MACOS\b/.test(build)
+    ? build.match(/\bminos\s+(\d+(?:\.\d+){1,2})\b/)?.[1]
+    : build.match(/\bcmd LC_VERSION_MIN_MACOSX\b[\s\S]*?\bversion\s+(\d+(?:\.\d+){1,2})\b/)?.[1];
+  if (!version) throw new Error(`Missing arm64 macOS deployment target: ${binary}`);
+  assertAtMostMinimum(version, path.relative(contents, binary));
+}
+assertAtMostMinimum(inspect("/usr/libexec/PlistBuddy", ["-c", "Print :LSMinimumSystemVersion",
+  path.join(resources, "RealBud Speech.app", "Contents", "Info.plist")]), "Speech bundle");
+console.log(`[smoke-mac-package] Checked ${binaries.size} bundled binary deployment targets against macOS ${minimum}.`);
 
 const sandbox = mkdtempSync(path.join(realpathSync(tmpdir()), "realbud-mac-smoke-"));
 const home = path.join(sandbox, "home");

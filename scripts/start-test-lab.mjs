@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Synthetic-only, bounded preview using compiled resources. No installation,
 // provider credentials, personal Hermes profile or production RealBud data.
-import { mkdir, open, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { once } from 'node:events';
@@ -12,7 +12,20 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const kit = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const role = process.argv[2];
 if (!['host', 'client'].includes(role)) throw new Error('Choose host or client.');
+const runtimeMode = process.env.REALBUD_TEST_RUNTIME ?? 'standalone-node';
+if (!['standalone-node', 'packaged-electron'].includes(runtimeMode)) throw new Error('Unknown test-lab runtime.');
+const packagedElectron = runtimeMode === 'packaged-electron';
+if (packagedElectron) {
+  if (!process.versions.electron || process.versions.node.split('.')[0] !== '24' || process.platform !== 'darwin' || process.arch !== 'arm64' || process.env.ELECTRON_RUN_AS_NODE !== '1') {
+    throw new Error('Packaged test-lab mode requires macOS arm64 Electron with ELECTRON_RUN_AS_NODE=1.');
+  }
+} else if (process.versions.electron || process.env.ELECTRON_RUN_AS_NODE !== undefined) {
+  throw new Error('Electron test-lab execution requires explicit packaged-electron mode.');
+}
 const resources = resolve(process.env.REALBUD_TEST_RESOURCES || join(kit, 'resources'));
+if (packagedElectron && await realpath(process.execPath) !== await realpath(join(resources, '..', 'MacOS', 'RealBud'))) {
+  throw new Error('The Electron executable must belong to the selected app Resources.');
+}
 const base = resolve(process.env.REALBUD_TEST_LAB_ROOT || join(homedir(), '.realbud', 'test-lab', 'two-profiles-2026-09-14'));
 const profile = join(base, role); const home = join(profile, 'home'); const data = join(home, '.realbud');
 await mkdir(data, { recursive: true, mode: 0o700 });
@@ -64,7 +77,8 @@ try {
     REALBUD_DATA_DIR: data, REALBUD_HERMES_HOME: join(data, 'hermes'), HERMES_HOME: join(data, 'hermes'),
     REALBUD_MANAGED_SERVICE: '1', REALBUD_SERVICE_ENTITLEMENT_REQUIRED: '1', REALBUD_TEST_LAB: '1',
     REALBUD_COMPANY_HOST_PREVIEW: '1', OMB_PORT: String(port), OMB_STATIC_DIR: join(resources, 'ui'),
-    ...(role === 'host' ? { REALBUD_COMPANY_POSTGRES_BIN: resolve(process.env.REALBUD_TEST_POSTGRES_BIN || join(kit, 'postgres/bin')) } : {}) };
+    ...(role === 'host' ? { REALBUD_COMPANY_POSTGRES_BIN: resolve(process.env.REALBUD_TEST_POSTGRES_BIN || join(kit, 'postgres/bin')) } : {}),
+    ...(packagedElectron ? { ELECTRON_RUN_AS_NODE: '1' } : {}) };
   for (const key of ['SystemRoot', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT']) if (process.env[key]) env[key] = process.env[key];
   child = spawn(process.execPath, [join(resources, 'server/bootstrap.js')], { cwd: resources, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
   exited = new Promise((resolve, reject) => {
