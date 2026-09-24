@@ -65,6 +65,8 @@ POST /v1/portal/installations/revoke
 6. It creates `rb-<installationId>` under the customer, with the customer's monthly cap and concurrency. The request cap is `REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD` (default A$1), never above the monthly cap.
 7. It mints one key labelled `<companyId>:<installationId>`.
 
+Every installation of an office shares the office's one Composio project and its key; concurrent first provisions of one office create it once. If the new project's key cannot be written to the secret store, the new project is deleted and the call answers 503 `connector_project_key_unwritable`; a resume after `PENDING_RESUME_AFTER_MS` starts clean. If that delete is not confirmed either, provisioning answers 409 `connector_project_key_unavailable` until an operator removes the keyless project. Two projects with the office's name are 409 `connector_project_ambiguous`. The connector routes read each office's key from the same secret store (`REALBUD_GATEWAY_SECRETS_DIR`), falling back to a same-named environment variable only for devices registered by the operator CLI.
+
 The first successful call returns the connector credential and model key once. A repeat call returns the same descriptor without them and asks Modelvia nothing. An interrupted call can be resumed after `PENDING_RESUME_AFTER_MS`. The resume reuses the same project, rotates the one labelled key, and never mints a second key.
 
 Caps are copied at provisioning. After an office's Modelvia customer changes its monthly cap or concurrency, re-apply them on the machine:
@@ -75,7 +77,7 @@ node --experimental-strip-types caps-cli.ts apply --company <companyId>
 
 It needs the Modelvia operator variables. It reads the customer once and updates every `ready` installation project of that company; pending and revoked installations are skipped. It prints installation ids and `applied`/`failed` states only, with an error code per failure, and exits non-zero unless every installation applied. One failure never stops the others; rerun it to retry.
 
-`revoke` does not need an entitlement. It deactivates the device, then revokes the model key. The Modelvia project is left in place. The Composio project is deleted only on an explicit `deleteProject: true`, which is irreversible. Revoke writes one audit line, with no secret in it.
+`revoke` does not need an entitlement. It deactivates the device, then revokes the model key. The Modelvia project is left in place. The Composio project is deleted only on an explicit `deleteProject: true`, which is irreversible. The Composio project and its key belong to the whole office, so `deleteProject: true` is refused with 409 `connector_project_in_use`, before any effect, while another installation of the office is ready or pending; revoke those first. A retried delete that finds the project already gone records `projectAlreadyAbsent` and removes the stored key. Revoke writes one audit line, with no secret in it.
 
 ## Office AI access
 

@@ -23,6 +23,7 @@ import { join } from 'node:path';
 import { fixture } from './testing.ts';
 import { ManagedConnectors } from './connectors.ts';
 import { fileSecretStore, InstallationProvisioning, type ProvisioningDescriptor } from './provisioning.ts';
+import { connectorSecret } from './composition.ts';
 import type { ComposioOrgClient } from './composio-org.ts';
 import type { ModelviaClient } from './modelvia-keys.ts';
 
@@ -83,7 +84,7 @@ async function provisioningLeg(): Promise<void> {
 
     // The issued credential is what the desktop presents; the registry admits a hash.
     const connectors = new ManagedConnectors({ ledger: f.ledger, devices: () => JSON.parse(readFileSync(registry, 'utf8')).devices,
-      secret: name => secrets.read(name),
+      secret: connectorSecret(secrets, {}),
       access: async () => ({ checkedAt: new Date(f.now()).toISOString(), services: { gmail: { connected: true, status: 'ACTIVE', accounts: [], accountSelectionRequired: true } }, tools: { available: true, names: ['GMAIL_GET_PROFILE'] } }) });
     const status = await connectors.handle({ token: first.connector.credential!, profile: 'property', method: 'GET', path: '/v1/connectors/status', signal: new AbortController().signal });
     check('connector status accepts the issued credential', status.status === 200 && (status.body as { managed: boolean }).managed === true, `apps ${(status.body as { apps: string[] }).apps.join(',')}`);

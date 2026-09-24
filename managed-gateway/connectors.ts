@@ -63,7 +63,7 @@ export function connectorRegistry(path: string): ConnectorDevice[] {
 type Transport = ReturnType<typeof createGmailReadOnlyTransport>;
 interface Session { device: string; fingerprint: string; expiresAt: number; transport: Transport; busy: boolean; calls: number }
 export interface ConnectorResponse { status: number; body?: unknown; session?: string }
-interface ConnectorOptions {
+export interface ConnectorOptions {
   ledger: UsageLedger; devices: () => ConnectorDevice[]; secret: (name: string) => string | undefined;
   access?: typeof getGmailReadOnlyAccess; authorize?: typeof authorizeGmailReadOnly; transport?: typeof createGmailReadOnlyTransport;
   scan?: typeof scanGmailReadOnly;

@@ -12,10 +12,8 @@ import { UsageLedger } from "./ledger.ts";
 import { createGatewayServer } from "./http.ts";
 import { verifyPortalToken } from "./portal-token.ts";
 import { GatewayError, requireThat } from "./contracts.ts";
-import { connectorRegistry, ManagedConnectors } from "./connectors.ts";
-import { composeProvisioning, modelviaOperatorState } from "./provisioning.ts";
+import { composeGateway } from "./composition.ts";
 import { ledgerPath, loadLocalEnv } from "./local-env.ts";
-import { composeOperatorRoutes, operatorAccessState } from "./office-ai-access.ts";
 
 loadLocalEnv();
 
@@ -45,33 +43,16 @@ mkdirSync(dirname(dbPath), { recursive: true });
 const db = new LedgerDatabase(dbPath);
 const ledger = new UsageLedger(db, Date.now);
 
-// Vendor-side installation provisioning, from the environment alone. Disabled
-// unless REALBUD_ENABLE_PROVIDER=1. A deployment that enables it but misses a
-// variable answers 503 naming that variable, rather than booting with a
-// half-built Composio or Modelvia client. `fetch` is handed over only when the
-// gate is open, so nothing can call out while provisioning is disabled.
-const gatedFetch: typeof fetch = process.env.REALBUD_ENABLE_PROVIDER === "1" ? fetch : (async () => {
-  throw new GatewayError("provisioning_disabled", 503);
-});
-const provisioningComposition = composeProvisioning({ env: process.env, ledger, fetch: gatedFetch });
-const modelviaOperator = modelviaOperatorState(process.env);
-// Operator routes (office AI access) under their own secret. Missing, short or
-// equal to the portal secret composes nothing: the route answers 503.
-const operator = composeOperatorRoutes({ env: process.env, ledger, fetch: gatedFetch });
-const operatorAccess = operatorAccessState(process.env);
-
-const server = createGatewayServer({
+// Provisioning, operator routes and connectors, from the environment alone
+// (composition.ts). Provisioning is disabled unless REALBUD_ENABLE_PROVIDER=1; a
+// deployment that enables it but misses a variable answers 503 naming that
+// variable. Connectors read the office project keys from the same secret store
+// provisioning writes them into.
+const composition = composeGateway({
+  env: process.env,
+  ledger,
+  fetch,
   allowedOrigins: siteOrigins,
-  modelviaOperator,
-  operatorAccess,
-  ...(operator ? { operator } : {}),
-  ...("provisioning" in provisioningComposition
-    ? { provisioning: provisioningComposition.provisioning }
-    : { provisioningUnavailable: provisioningComposition.unavailable }),
-  ...(process.env.REALBUD_GATEWAY_CONNECTOR_REGISTRY ? { connectors: new ManagedConnectors({ ledger,
-    devices: () => connectorRegistry(process.env.REALBUD_GATEWAY_CONNECTOR_REGISTRY!),
-    secret: name => process.env[name],
-  }) } : {}),
   portal: {
     async authenticate(bearer) {
       try {
@@ -82,6 +63,8 @@ const server = createGatewayServer({
     },
   },
 });
+const { modelviaOperator, operatorAccess } = composition;
+const server = createGatewayServer(composition.server);
 
 server.listen(port, "0.0.0.0", () => {
   console.log(
@@ -90,7 +73,7 @@ server.listen(port, "0.0.0.0", () => {
       data: dbPath,
       origins: [...siteOrigins],
       // Codes, never values: say which variable a deployment still has to set.
-      provisioning: "provisioning" in provisioningComposition ? "composed" : provisioningComposition.unavailable,
+      provisioning: composition.provisioning,
       modelviaOperator,
       operatorAccess,
     }),

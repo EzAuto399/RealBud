@@ -381,22 +381,45 @@ export class InstallationProvisioning {
     const projectName = `realbud-${companyId}`;
     const projectKeyEnv = `REALBUD_COMPOSIO_PROJECT_${companyId.toUpperCase().replace(/[^A-Z0-9]/g, '_').slice(0, 80)}`;
     requireThat(SECRET_NAME.test(projectKeyEnv), 'invalid_connector_secret_reference');
-    const held = this.options.secrets.read(projectKeyEnv);
-    const found = (await this.options.org.listProjects()).find(project => project.name === projectName);
-    let projectId: string;
-    if (found) {
-      // The project exists but its key was never stored (or was lost). Do not
-      // regenerate: that invalidates the key any existing installation is using.
-      requireThat(held, 'connector_project_key_unavailable', 409);
-      projectId = found.id;
-    } else {
+    // One office project, shared by every installation of the company. Two first
+    // installations provisioning at once must not both find none and create two:
+    // the read-create-store step runs one at a time per company in this process.
+    // Across processes the store's exclusive write is the guard (below).
+    const projectId = await serialized(`composio-project:${companyId}`, async () => {
+      const held = this.options.secrets.read(projectKeyEnv);
+      const named = (await this.options.org.listProjects()).filter(project => project.name === projectName);
+      // Two projects with the office's name cannot be told apart by name alone,
+      // and the stored key belongs to only one of them: an operator decides.
+      requireThat(named.length <= 1, 'connector_project_ambiguous', 409);
+      const found = named[0];
+      if (found) {
+        // The project exists but its key was never stored (or was lost). Do not
+        // regenerate: that invalidates the key any existing installation is using.
+        requireThat(held, 'connector_project_key_unavailable', 409);
+        return found.id;
+      }
       // A stored key with no project is an unresolved earlier attempt, not a
       // reason to create a second project.
       requireThat(!held, 'connector_project_key_orphaned', 409);
       const created = await this.options.org.createProject(projectName);
-      this.options.secrets.write(projectKeyEnv, created.apiKey);
-      projectId = created.id;
-    }
+      try {
+        this.options.secrets.write(projectKeyEnv, created.apiKey);
+      } catch {
+        // The key exists only in this reply. A project whose key was never stored
+        // is unusable and would block every later attempt, so the project just
+        // created (no installation and no connection in it yet) is deleted, and a
+        // later resume starts clean. If that delete is not confirmed either, the
+        // next attempt finds the project without a key and stops for an operator.
+        let deleted = false;
+        try { await this.options.org.deleteProject(created.id); deleted = true; } catch { /* reported below */ }
+        try {
+          this.options.ledger.db.transaction(() => this.options.ledger.db.append(companyId, 'connector_project_key_unwritable', null, this.options.ledger.now(),
+            { installationId, projectId: created.id, projectDeleted: deleted }));
+        } catch { /* the error below still stops this attempt */ }
+        throw new GatewayError(deleted ? 'connector_project_key_unwritable' : 'connector_project_key_unavailable', deleted ? 503 : 409);
+      }
+      return created.id;
+    });
 
     // (b) The revocable `rbc_` connector credential, admitted by hash only. A
     // resumed attempt replaces the device its predecessor admitted: that
@@ -499,6 +522,14 @@ export class InstallationProvisioning {
     // irreversible act nobody asked for twice.
     if (saved!.state === 'revoked') return { revoked: saved!.revocation ?? { companyId, installationId } };
     requireThat(saved!.state === 'ready' && saved!.deviceId && saved!.keyId && saved!.projectId, 'installation_provisioning_outcome_unknown', 409);
+    // The Composio project and its key are the office's, shared by every
+    // installation of the company. Deleting them for one computer would cut off
+    // every other one, so it is refused, before any effect, while another
+    // installation is ready or still being provisioned. Revoke the others first.
+    if (deleteProject) {
+      const others = this.options.ledger.db.get<{ count: number }>("SELECT count(*) AS count FROM installation_provisioning WHERE tenant=? AND installation<>? AND state IN ('ready','pending')", companyId, installationId)!.count;
+      requireThat(others === 0, 'connector_project_in_use', 409);
+    }
 
     // 1. Stop new reads before anything irreversible.
     updateRegistry(this.options.registry, devices => ({ devices: devices.map(entry => entry.id === saved!.deviceId ? { ...entry, active: false } : entry) }));
@@ -508,13 +539,18 @@ export class InstallationProvisioning {
     // Removing a project is an operator action at Modelvia, not a side effect here.
     await this.options.modelvia.revoke(saved!.keyId!);
     // 3. Optional, irreversible, explicit.
-    let revokeJobId: string | undefined;
+    let revokeJobId: string | undefined, projectAlreadyAbsent = false;
     if (deleteProject) {
-      revokeJobId = (await this.options.org.deleteProject(saved!.projectId!)).revokeJobId;
+      // A retry after a delete whose reply (or the record write after it) was
+      // lost finds the project gone. Deleting it again would be refused upstream
+      // and leave this revocation stuck, so an absent project counts as deleted.
+      projectAlreadyAbsent = !(await this.options.org.listProjects()).some(project => project.id === saved!.projectId);
+      if (!projectAlreadyAbsent) revokeJobId = (await this.options.org.deleteProject(saved!.projectId!)).revokeJobId;
       if (saved!.projectKeyEnv) this.options.secrets.remove(saved!.projectKeyEnv);
     }
     const revocation = { companyId, installationId, connectorDeactivated: true, modelKeyRevoked: true, modelKeyId: saved!.keyId!,
-      modelProjectRetained: saved!.modelProjectId ?? null, projectDeleted: deleteProject, ...(revokeJobId ? { revokeJobId } : {}) };
+      modelProjectRetained: saved!.modelProjectId ?? null, projectDeleted: deleteProject, ...(revokeJobId ? { revokeJobId } : {}),
+      ...(projectAlreadyAbsent ? { projectAlreadyAbsent: true } : {}) };
     this.options.ledger.db.transaction(() => {
       this.store(companyId, installationId, { ...saved!, state: 'revoked', revocation });
       // One audit line for the whole revocation, with no secret in it.
@@ -625,7 +661,9 @@ export function modelviaOperatorState(env: NodeJS.ProcessEnv): 'configured' | 'm
   return MODELVIA_OPERATOR_ENV.every(name => value(name)) && value('REALBUD_MODELVIA_OPERATOR_SECRET').length >= 32 ? 'configured' : 'missing';
 }
 
-export type ProvisioningComposition = { provisioning: InstallationProvisioning } | { unavailable: string };
+/** `secrets` is the one store provisioning writes the office project keys into;
+ * the connector broker must read the same store (see `composition.ts`). */
+export type ProvisioningComposition = { provisioning: InstallationProvisioning; secrets: SecretStore } | { unavailable: string };
 
 /**
  * The Modelvia operator client and request cap, from the environment alone.
@@ -680,11 +718,12 @@ export function composeProvisioning(options: { env: NodeJS.ProcessEnv; ledger: U
   const model = composeModelvia({ env, fetch: options.fetch });
   if ('unavailable' in model) return model;
   try {
-    return { provisioning: new InstallationProvisioning({
+    const secrets = fileSecretStore(value('REALBUD_GATEWAY_SECRETS_DIR'));
+    return { secrets, provisioning: new InstallationProvisioning({
       ledger: options.ledger,
       registry: value('REALBUD_GATEWAY_CONNECTOR_REGISTRY'),
       endpoint: value('REALBUD_GATEWAY_PUBLIC_ORIGIN'),
-      secrets: fileSecretStore(value('REALBUD_GATEWAY_SECRETS_DIR')),
+      secrets,
       org: options.org ?? composioOrgClient({
         // Read per call: the value is never captured into a field.
         orgKey: () => env.REALBUD_COMPOSIO_ORG_KEY,

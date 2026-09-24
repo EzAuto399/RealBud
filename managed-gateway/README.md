@@ -60,7 +60,7 @@ The root `pnpm test` does not include this service. Every fixture here is synthe
 
 | Module | Responsibility |
 | --- | --- |
-| `http.ts`, `server.ts` | Route set above; production composition from env |
+| `http.ts`, `server.ts`, `composition.ts` | Route set above; production composition from env. Connectors read office project keys from the same secret store provisioning writes |
 | `provisioning.ts`, `provision-connector.mjs` | Installation provisioning and revocation; connector registry CLI |
 | `modelvia-keys.ts` | Modelvia operator client: customer read and write (own client only), project, key, rotate, revoke |
 | `office-ai-access.ts`, `operator-token.ts` | Operator office AI access route and its own operator bearer |
