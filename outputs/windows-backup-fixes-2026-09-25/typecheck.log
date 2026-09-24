@@ -1,0 +1,5 @@
+
+> realbud@0.1.19 typecheck <worktree>
+> tsc -b && tsc -p tsconfig.server.json
+
+typecheck exit 0

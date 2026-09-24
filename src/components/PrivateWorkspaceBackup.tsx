@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '@/state/store';
 import { PRIVATE_BACKUP_MIN_PASSPHRASE, PRIVATE_BACKUP_MAX_PASSPHRASE } from '@shared/private-workspace-backup';
-import { PRIVATE_BACKUP_TRANSFER_API, PRIVATE_BACKUP_TRANSFER_MAX_BYTES, PRIVATE_BACKUP_TRANSFER_ERRORS, parsePrivateBackupTransferPage, type PrivateBackupTransferOperation as Operation } from '@shared/private-backup-transfers';
+import { PRIVATE_BACKUP_TRANSFER_API, PRIVATE_BACKUP_TRANSFER_MAX_BYTES, parsePrivateBackupTransferPage, privateBackupTransferErrorText, type PrivateBackupTransferOperation as Operation } from '@shared/private-backup-transfers';
 import { backupStatus, restartBackupService, validBackupPassphrase, type BackupReceipt, type BackupStatus } from '@/lib/private-backup';
-import { PrivateBackupTransferClient, privateBackupTransferHttp, requestPrivateBackupDownload } from '@/lib/private-backup-transfer';
+import { PrivateBackupTransferClient, cancelPrivateBackup, privateBackupTransferHttp, requestPrivateBackupDownload } from '@/lib/private-backup-transfer';
 import { backupWelcomeBlocked, createBackupWelcomeApi } from '@/lib/backup-welcome';
 import type { OnboardingState } from '@shared/onboarding';
 import { Card } from './SettingsPrimitives';
@@ -58,13 +58,24 @@ export function PrivateWorkspaceBackup() {
   const run = async (work: (client: PrivateBackupTransferClient, signal: AbortSignal) => Promise<void>) => {
     if (pending.current) return; pending.current = true; const abort = new AbortController(); controller.current = abort; setBusy(true); setError(''); setNotice('');
     try { if (!client.current) await refresh(); if (!client.current) throw new Error('Backup storage is unavailable.'); await work(client.current, abort.signal); }
-    catch (cause) { if (mounted.current) { if (abort.signal.aborted) setNotice('Stopped waiting here. RealBud keeps the saved progress; select the same backup to continue.'); else setError(cause instanceof Error ? cause.message : 'The result was not confirmed. Check saved progress before continuing.'); } }
+    catch (cause) { if (mounted.current) { if (abort.signal.aborted) setNotice('Stopped waiting here. RealBud keeps the saved progress; select the same backup to continue, or choose Cancel this backup while it is still running.'); else setError(cause instanceof Error ? cause.message : 'The result was not confirmed. Check saved progress before continuing.'); } }
     finally { pending.current = false; if (controller.current === abort) controller.current = null; if (mounted.current) setBusy(false); }
   };
   const finish = async (c: PrivateBackupTransferClient, id: string, signal: AbortSignal) => {
     const result = await c.poll(id, { signal, onOperation: update }); update(result);
-    if (result.error) throw new Error(PRIVATE_BACKUP_TRANSFER_ERRORS[result.error.code]); return result;
+    if (result.error) throw new Error(privateBackupTransferErrorText(result.error)); return result;
   };
+  // Stopping the wait is screen-only; this is the explicit server cancel. The
+  // saved operation decides a refused or unanswered request, never the reply.
+  const cancel = (op: Operation) => void run(async (c, signal) => {
+    const running = active.has(op.phase), result = await cancelPrivateBackup(c, op.id, { signal, whileRunning: running });
+    if (result.operation) update(result.operation);
+    if (result.kind === 'changed') throw new Error('This backup already stopped running, so nothing was cancelled. Check its saved result.');
+    if (result.kind === 'closed') throw new Error('This saved operation had already finished or expired. Nothing was cancelled.');
+    if (result.kind === 'held') throw new Error('RealBud kept this backup because a restore or recovery still needs its files. Nothing was removed.');
+    if (result.kind === 'unconfirmed') throw new Error('Cancelling was not confirmed. Check backup status before trying again; your workspace records are unchanged.');
+    setNotice(running ? 'Backup cancelled. Your workspace records are unchanged.' : 'Temporary backup files removed. Your workspace records and original file are unchanged.');
+  });
   const download = async (c: PrivateBackupTransferClient, op: Operation, signal: AbortSignal) => { requestPrivateBackupDownload(await c.downloadTicket(op, signal)); setNotice('Download requested. Check that the encrypted file was saved, and keep its passphrase separately.'); };
   const readyUpload = selected?.kind === 'upload' && !!selected.artifact && ['uploaded', 'failed', 'interrupted'].includes(selected.phase);
   const canRestart = Boolean(window.ogb?.serviceStatus && window.ogb?.serviceStop && window.ogb?.serviceStart);
@@ -87,10 +98,10 @@ export function PrivateWorkspaceBackup() {
         await restartBackupService({ serviceStatus: () => window.ogb!.serviceStatus!(), serviceStop: () => window.ogb!.serviceStop!(), serviceStart: () => window.ogb!.serviceStart!() }); window.location.reload();
       })}>Restart service to finish restore</button> : <p>Use the desktop’s service controls to stop and start RealBud, then reload this window. Closing a window alone does not restart the service.</p>}</div>}
       {!!items.length && <section aria-label="Saved backup operations" className="rounded-lg border border-line p-3 space-y-3"><h4 className="font-medium">Saved backup progress</h4><p className="text-sm text-ink-secondary">Continue a transfer or download a completed backup after reopening this screen.</p><div className="space-y-2">{items.map(op => <button key={op.id} className={`${button} block w-full text-left ${selectedId === op.id ? 'border-agency bg-agency/5' : ''}`} disabled={busy} aria-pressed={selectedId === op.id} onClick={() => { setSelectedId(op.id); setConfirmed(false); setImportPhrase(''); setError(''); }}><span className="font-medium">{op.kind === 'export' ? 'Backup' : 'Restore file'} · {labels[op.phase]}</span><span className="block text-xs text-ink-secondary">{new Date(op.createdAt).toLocaleString()} · {op.id.slice(0, 8)}</span></button>)}</div>{cursor && <button className={button} disabled={busy} onClick={() => void run(async () => { await refresh(true); })}>Load more saved operations</button>}</section>}
-      {selected && <section aria-label="Selected backup progress" className="rounded-lg border border-line p-3 space-y-3 text-sm"><h4 className="font-medium">{labels[selected.phase]}</h4><p>{selected.progress.totalBytes ? `${size(selected.receivedBytes ?? selected.progress.completedBytes)} of ${size(selected.progress.totalBytes)}` : 'Preparing a consistent copy of your records.'}</p>{selected.progress.totalBytes !== null && <progress className="w-full" aria-label="Backup transfer progress" max={selected.progress.totalBytes} value={selected.receivedBytes ?? selected.progress.completedBytes} />}{selected.error && <p role="alert" className="text-hold">{PRIVATE_BACKUP_TRANSFER_ERRORS[selected.error.code]}</p>}
+      {selected && <section aria-label="Selected backup progress" className="rounded-lg border border-line p-3 space-y-3 text-sm"><h4 className="font-medium">{labels[selected.phase]}</h4><p>{selected.progress.totalBytes ? `${size(selected.receivedBytes ?? selected.progress.completedBytes)} of ${size(selected.progress.totalBytes)}` : 'Preparing a consistent copy of your records.'}</p>{selected.progress.totalBytes !== null && <progress className="w-full" aria-label="Backup transfer progress" max={selected.progress.totalBytes} value={selected.receivedBytes ?? selected.progress.completedBytes} />}{selected.error && <p role="alert" className="text-hold">{privateBackupTransferErrorText(selected.error)}</p>}
         {selected.phase === 'ready' && <button className={button} disabled={busy} onClick={() => void run((c, signal) => download(c, selected, signal))}>Download saved backup</button>}
         {selected.phase === 'staging' && !busy && <button className={button} onClick={() => void run(async (c, signal) => { update(await c.stage(selected, signal)); await refresh(); })}>Finish preparing restore</button>}
-        {selected.canCancel && <button className={button} disabled={busy} onClick={() => void run(async (c, signal) => { update(await c.cancel(selected.id, signal)); setNotice('Temporary backup files removed. Your workspace records and original file are unchanged.'); })}>Remove temporary copy</button>}
+        {selected.canCancel && <button className={button} disabled={busy} onClick={() => cancel(selected)}>{active.has(selected.phase) ? 'Cancel this backup' : 'Remove temporary copy'}</button>}
       </section>}
       {!staged && <>
         <form aria-label="Create private backup" className="rounded-lg border border-line p-3 space-y-3" onSubmit={event => { event.preventDefault(); void run(async (c, signal) => {

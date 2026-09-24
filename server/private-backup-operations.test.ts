@@ -116,6 +116,8 @@ describe('durable private backup operation records', () => {
       (r: BackupOperationRecord) => { r.operation.createdAt++; },
       (r: BackupOperationRecord) => { Object.assign(r.references, { path: '/private/never-serialize', passphrase: 'never-save-this' }); },
       (r: BackupOperationRecord) => { Object.assign(r.operation, { secret: 'do-not-save' }); },
+      // A busy reason is live status only; older services accept exactly {code}.
+      (r: BackupOperationRecord) => { r.operation.phase = 'failed'; r.operation.error = { code: 'workspace-busy', reason: 'bud-replying' }; },
     ]) { expect(() => change(store, first, mutation)).toThrow(); expect(store.get(first.operation.id)).toEqual(first); }
     expect(() => change(store, first, async r => { await Promise.resolve(); r.reservedBytes = 0; throw new Error('asynchronous edit'); })).toThrow(/synchronously/);
     await Promise.resolve(); expect(store.get(first.operation.id)).toEqual(first);

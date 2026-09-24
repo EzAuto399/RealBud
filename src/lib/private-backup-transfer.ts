@@ -231,6 +231,37 @@ export class PrivateBackupTransferClient {
   }
 }
 
+export type PrivateBackupCancelOutcome =
+  | { kind: 'cancelled'; operation: Operation }
+  /** The service refused: a restore or recovery still needs these files. */
+  | { kind: 'held'; operation: Operation }
+  /** Already completed or expired; there was nothing to cancel. */
+  | { kind: 'closed'; operation: Operation }
+  /** Asked to stop running work, but it had already stopped; nothing was sent. */
+  | { kind: 'changed'; operation: Operation }
+  /** Neither the reply nor the saved record confirms a cancellation. */
+  | { kind: 'unconfirmed'; operation: Operation | null };
+/** The existing server cancel, with its refusal and lost-reply endings made
+ * explicit. The saved operation, never the transport outcome, decides.
+ * `whileRunning` refuses to remove work that finished since it was shown. */
+export async function cancelPrivateBackup(client: PrivateBackupTransferClient, id: string, options: { signal?: AbortSignal; whileRunning?: boolean } = {}): Promise<PrivateBackupCancelOutcome> {
+  const { signal } = options;
+  if (options.whileRunning) {
+    const current = await client.get(id, signal);
+    if (!activePhases.has(current.phase) && current.phase !== 'cancelled') return { kind: 'changed', operation: current };
+  }
+  try { return { kind: 'cancelled', operation: await client.cancel(id, signal) }; }
+  catch (error) {
+    abort(signal);
+    let saved = error instanceof PrivateBackupTransferUncertainError ? error.operation : null;
+    if (!saved) { try { saved = await client.get(id, signal); } catch { abort(signal); } }
+    if (saved?.phase === 'cancelled') return { kind: 'cancelled', operation: saved };
+    if (saved && ['completed', 'expired'].includes(saved.phase)) return { kind: 'closed', operation: saved };
+    if (saved && !saved.canCancel) return { kind: 'held', operation: saved };
+    return { kind: 'unconfirmed', operation: saved };
+  }
+}
+
 /** Requests the native browser download. This is not proof the user saved it.
  * No target=_blank: Electron routes new windows to the external browser. */
 export function requestPrivateBackupDownload(value: PrivateBackupDownloadTicket, document: Document = globalThis.document) {

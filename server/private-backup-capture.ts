@@ -67,8 +67,9 @@ const PRIVATE_PREFIX = 'company-installation/private/';
 const uuid = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value);
 const hex = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const integer = (value: unknown, min = 0): value is number => Number.isSafeInteger(value) && Number(value) >= min && Number(value) < Number.MAX_SAFE_INTEGER;
-function fail(message: string, status = 409): never { throw Object.assign(new Error(message), { status }); }
-const changed = (): never => fail('Private business data changed during capture. No verified backup was published.');
+/** `code` is a fixed backup failure reason for diagnostics, never message text. */
+function fail(message: string, status = 409, code?: 'changed-during-copy' | 'database-journal'): never { throw Object.assign(new Error(message), { status, ...(code ? { code } : {}) }); }
+const changed = (): never => fail('Private business data changed during capture. No verified backup was published.', 409, 'changed-during-copy');
 function parseJson(data: Buffer): unknown {
   try { return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(data)); }
   catch { return fail('A private business JSON record needs recovery. No verified backup was published.', 503); }
@@ -241,7 +242,7 @@ class CaptureFilesystem {
   protected async noDatabaseSidecars(): Promise<void> {
     for (const suffix of ['-wal', '-shm', '-journal']) {
       if (await this.stat(join(this.root, `${DATABASE}${suffix}`))) {
-        fail('The workflow database has unfinished journal or WAL state. Recover it before private backup or restore.');
+        fail('The workflow database has unfinished journal or WAL state. Recover it before private backup or restore.', 409, 'database-journal');
       }
     }
   }

@@ -26,6 +26,7 @@ import { handlePrivateBackupV2Http } from './private-backup-http.ts';
 import { withDurablePrivateBackupRestore } from './private-backup-legacy-api.ts';
 import { WorkspaceActivityGate } from './workspace-activity.ts';
 import { PRIVATE_BACKUP_MAX_BYTES } from '../shared/private-workspace-backup.ts';
+import type { PrivateBackupBusyReason } from '../shared/private-backup-transfers.ts';
 import { createAgencySetupService } from './agency-setup.ts';
 import { workflowRecipeId } from '../shared/agency-workflow-packs.ts';
 import { createMailIngestionService } from './mail-ingestion.ts';
@@ -5535,19 +5536,20 @@ await websiteRequests.recover().catch(() => oplog('boot', 'Website request histo
 // installation's sample book, never merge onto an occupied workspace.
 function assertPrivateBackupIdle(ignoreRequests = false) {
   if (desk.recovery.active || loops?.recovery.active) throw Object.assign(new Error('Resolve the existing recovery hold before backing up or restoring private work.'),{status:503});
-  // Name what is still running, so the person knows what to wait for.
-  const busy =
-    !ignoreRequests && privateBackupRequests > 0 ? 'the other workspace change in progress' :
-    store.bots.some(bot=>bot.busy || bot.queuedMessage) ? 'Bud to finish its current reply' :
-    mailWorkspace.busy ? 'mail collection' :
-    deskCheckFlight.running() ? 'the Desk check' :
-    websiteRequests.busy ? 'the website request in progress' :
-    departmentWork.busy ? 'department work' :
-    jobRuns.list().some(run=>run.status==='running'||run.status==='queued') ? 'the running or queued job' :
-    batches.list().some(batch=>batch.status==='running') ? 'the running batch' :
-    loops?.busy ? 'the scheduled routine' :
-    installInFlight() ? 'Bud setup' : null;
-  if (busy) throw Object.assign(new Error(`Wait for current work and setup to finish (${busy}), then retry the private backup action.`),{status:409});
+  // Name what is still running, so the person knows what to wait for. The
+  // fixed code tells a failed backup which kind of work held it.
+  const busy: [string, PrivateBackupBusyReason] | null =
+    !ignoreRequests && privateBackupRequests > 0 ? ['the other workspace change in progress','workspace-change'] :
+    store.bots.some(bot=>bot.busy || bot.queuedMessage) ? ['Bud to finish its current reply','bud-replying'] :
+    mailWorkspace.busy ? ['mail collection','mail-collection'] :
+    deskCheckFlight.running() ? ['the Desk check','desk-check'] :
+    websiteRequests.busy ? ['the website request in progress','website-request'] :
+    departmentWork.busy ? ['department work','department-work'] :
+    jobRuns.list().some(run=>run.status==='running'||run.status==='queued') ? ['the running or queued job','job-running'] :
+    batches.list().some(batch=>batch.status==='running') ? ['the running batch','batch-running'] :
+    loops?.busy ? ['the scheduled routine','routine-running'] :
+    installInFlight() ? ['Bud setup','bud-setup'] : null;
+  if (busy) throw Object.assign(new Error(`Wait for current work and setup to finish (${busy[0]}), then retry the private backup action.`),{status:409,code:busy[1]});
 }
 function privateRestoreReadiness() {
   const bootstrap = process.env.REALBUD_RESTORE_BOOTSTRAP === '1';
@@ -5582,17 +5584,24 @@ function assertPrivateBackupFresh() {
   finally {privateRestoreLocked=locked;}
 }
 const privateBackupEpochValue = () => `${privateBackupEpoch}:${mailAuthorityEpoch}:${mailWorkspace.epoch}:${desk.revision}:${createHash('sha256').update(JSON.stringify(listRecipes())).digest('hex')}`;
+// The pause bounds drain plus both capture passes. Windows admits every source
+// file and folder with its own PowerShell ACL check, once per pass; under x64
+// emulation on Windows ARM that exceeded 60 s. 120 s is the gate's designed
+// maximum (WorkspaceActivityGate.pause rejects more); no check is skipped.
+const PRIVATE_BACKUP_PAUSE_MS = 120_000;
 async function privateBackupSnapshotLease() {
   assertPrivateBackupIdle(true);
-  if (privateRestoreLocked || shuttingDown) throw Object.assign(new Error('Finish the staged restore or service restart before creating a backup.'), { status: 409 });
+  if (privateRestoreLocked || shuttingDown) throw Object.assign(new Error('Finish the staged restore or service restart before creating a backup.'), { status: 409, code: 'restore-or-restart' });
   loops?.stop();
+  // Taken before the pause starts and checked first, so a request drain that
+  // used the whole budget is reported as such rather than as a slow copy.
+  const deadline = Date.now() + PRIVATE_BACKUP_PAUSE_MS;
   try {
-    const lease = await workspaceActivity.pause({ timeoutMs: 60_000, onReleased: () => { if (!privateRestoreLocked && !shuttingDown) loops?.start(); } });
+    const lease = await workspaceActivity.pause({ timeoutMs: PRIVATE_BACKUP_PAUSE_MS, onReleased: () => { if (!privateRestoreLocked && !shuttingDown) loops?.start(); } });
     try {
       // Existing read requests may still be finishing when the UI starts an
       // export. The pause rejects new reads; drain admitted ones before capture.
-      const deadline = Date.now() + 60_000;
-      while (privateBackupRequests > 0) { lease.assertCurrent(); if (Date.now() >= deadline) throw Object.assign(new Error('Current workspace requests did not finish.'), { status: 409 }); await new Promise(resolve => setTimeout(resolve, 20)); }
+      while (privateBackupRequests > 0) { if (Date.now() >= deadline) throw Object.assign(new Error('Current workspace requests did not finish.'), { status: 409, code: 'requests-draining' }); lease.assertCurrent(); await new Promise(resolve => setTimeout(resolve, 20)); }
       assertPrivateBackupIdle(); lease.assertCurrent(); return lease;
     }
     catch (error) { lease.release(); throw error; }
@@ -5610,7 +5619,9 @@ let privateBackupCoordinator: Awaited<ReturnType<typeof createPrivateBackupCoord
 try {
   privateBackupCoordinator = await createPrivateBackupCoordinator({directory:DATA_DIR,key:Buffer.from(desk.recoveryKeyHex(),'hex'),workspaceId:workspaceIdentity.id,
     epoch:privateBackupEpochValue,assertIdle:assertPrivateBackupIdle,assertFresh:assertPrivateBackupFresh,snapshotLease:privateBackupSnapshotLease,beginRestore:beginPrivateRestore,
-    ...(process.env.REALBUD_TEST_LAB === '1' ? { diagnostic: (event: unknown) => console.error('Backup test diagnostic', JSON.stringify(event)) } : {})});
+    // Always on: fixed phase/status/code/reason and source basename:line only,
+    // never message text, paths or business values. Lands in the service log.
+    diagnostic: event => console.error('Private backup failure', JSON.stringify(event))});
 } catch { oplog('boot','Backup transfer storage requires recovery. Existing files were preserved.'); }
 const privateBackup = privateBackupCoordinator ? withDurablePrivateBackupRestore(legacyPrivateBackup,privateBackupCoordinator) : legacyPrivateBackup;
 const privateBackupApi=createPrivateBackupApi({service:()=>privateBackup,restoreReadiness:privateRestoreReadiness,

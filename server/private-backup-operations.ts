@@ -128,6 +128,9 @@ function validate(v: unknown, workspaceId: string): BackupOperationRecord {
   if (!object(v) || !exact(v, ['version', 'revision', 'operation', 'reservedBytes', 'restoreHeld', 'references'], ['allocations', 'cleanupHold']) || v.version !== 1 || !integer(v.revision, 1) || !integer(v.reservedBytes) ||
       v.reservedBytes > PRIVATE_BACKUP_OPERATION_LIMITS.reservationBytes || typeof v.restoreHeld !== 'boolean' || !object(v.references) || !exact(v.references, [], ['capture', 'preview', 'prepared'])) return fail();
   const op = parsePrivateBackupTransferOperation(v.operation); if (!op || op.workspaceId !== workspaceId) return fail();
+  // A busy reason is live status only. Older services accept exactly {code}
+  // and would hold every saved operation if a reason were ever persisted.
+  if (op.error?.reason !== undefined) return fail();
   for (const [name, ref] of Object.entries(v.references)) if (!reference(ref, name === 'prepared')) return fail();
   if (op.kind === 'export' && (v.references.preview || v.references.prepared || v.restoreHeld) || op.kind === 'upload' && v.references.capture) return fail();
   if (op.phase === 'completed' && (op.kind !== 'upload' || !v.restoreHeld || !v.references.prepared)) return fail();

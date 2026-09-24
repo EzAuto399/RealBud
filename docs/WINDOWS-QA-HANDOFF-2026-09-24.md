@@ -33,3 +33,38 @@ The canonical `/Users/yoda/projects/RealBud` checkout is the dirty `wave/2026-09
 4. Keep VM app/service restart, successful encrypted backup plus restore on a fresh fictional workspace, office joining, normal performance under settled guest I/O, live integrations, and customer acceptance open until separately observed.
 
 Detailed local lab log: `/Users/yoda/projects/RealBud/docs/EXTERNAL-TEST-LAB-2026-09-24.md`. Structured local resume receipt: `/Users/yoda/projects/RealBud/outputs/external-test-lab-2026-09-24/windows-resume.json`. These are local working-tree evidence, not part of this QA commit.
+
+## Follow-up 25 September 2026: backup export diagnosis (branch `claude/windows-backup-fixes`)
+
+This is source and local-test evidence only. It does not show that a Windows VM export now succeeds.
+
+- The failed task now always writes one `Private backup failure {…}` line to the service log. The line includes the operation kind, phase, status, public code, a fixed `reason`, and up to eight `<basename>:<line>` source locations. It matches `.ts` and compiled `.js` files, with `/` or `\` separators, under `server/` or `shared/`. Message lines are skipped, including multi-line messages. The line never includes message text, paths, user file names or secrets; the only file names are RealBud source basenames. A pause that ends is reported from the step that noticed it (capture or drain), not from the timer. The old regex only matched `server/*.ts`, so compiled Windows stacks produced no locations.
+- These `workspace-busy` sources now carry fixed codes:
+  - named busy work (`bud-replying`, `mail-collection`, `desk-check`, `website-request`, `department-work`, `job-running`, `batch-running`, `routine-running`, `bud-setup`, `workspace-change`)
+  - restore or restart hold (`restore-or-restart`)
+  - request-drain timeout (`requests-draining`). The drain deadline now starts before the pause and is checked first, so a drain that uses the whole budget is not reported as a slow copy.
+  - pause end (`private_snapshot_interrupted`, detailed as `timeout`, `queue-full` or `stopped`)
+  - changed during copy (`changed-during-copy`)
+  - leftover SQLite sidecar (`database-journal`)
+- The saved journal still stores only `error: {code}`. Earlier services parse exactly that key, so persisting a reason would make them hold every saved operation for recovery. The reason stays in the running service's memory. Settings shows it as one sentence until the service restarts; after a restart, the generic message returns.
+- The export pause and request-drain budgets rose from 60 s to 120 s. That is the maximum `WorkspaceActivityGate.pause` accepts. The reason is that capture runs one PowerShell ACL check per source file and folder, and does it twice. No privacy check was removed, batched or skipped.
+- After **Stop waiting on this screen**, the selected running backup offers **Cancel this backup**. It uses the existing server cancel. It first re-reads the operation, and does not remove a backup that finished in the meantime. If the server refuses, a restore or recovery hold is kept. If the reply is lost, the saved operation is read again before anything is reported.
+
+Local tests ran on macOS arm64 with Node 24.19.0. `pnpm typecheck` passed. Every `server/private-backup*` suite, the workspace-activity suite, and the touched renderer suites gave **563 passed / 0 failed / 0 skipped** across 35 files. Logs: `outputs/windows-backup-fixes-2026-09-25/vitest.log` and `typecheck.log`. Windows-only ACL paths are not exercised on macOS.
+
+Still open (these need a Windows VM run):
+- Whether 120 s is enough on the ARM VM.
+- Which reason the VM actually reports.
+
+## Support: provisioning the service administrator on Windows
+
+The RealBud service administrator password is **not** the Windows sign-in password. RealBud support creates it for each installation. Customer settings, company membership and the Windows account do not grant it.
+
+1. The service reads `service-admin.json` from the RealBud data directory. `REALBUD_SERVICE_ADMIN_FILE` overrides that location. On Windows, the desktop's data directory is `%USERPROFILE%\.realbud` unless `REALBUD_DATA_DIR` is set.
+2. Run `scripts/provision-service-admin.mjs` from a trusted source checkout at the installed revision, using Node 24 or later. The installed app does not ship this script. Run it as the same Windows user that runs RealBud, not as a different administrator account. In PowerShell:
+   `node scripts\provision-service-admin.mjs --data-dir "$env:USERPROFILE\.realbud"`
+   Enter and confirm the password at the hidden prompt. Alternatively, add `--generate-password-file <absolute path outside .realbud>`, move the generated password into the support password manager, and delete the file. To replace an existing credential, add `--rotate`.
+3. The script applies and checks Windows ACLs through environment-passed PowerShell. New files are restricted to the current user and SYSTEM. It refuses a data directory or file whose owner or allow rules include anyone other than the current user, SYSTEM or the local Administrators group. It writes the verifier atomically. The script never prints a password or verifier, and never accepts one as an argument or environment variable.
+4. No restart is needed. The service re-reads the policy on every administrator status check, and **You → Service → Administrator access** refreshes every 30 s. Sign in there, then use **Service administration**.
+
+Never put the password in chat, tickets, PR text, screenshots or logs. This procedure has not yet been run on the ARM VM.

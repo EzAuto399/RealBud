@@ -99,7 +99,7 @@ describe('bounded immutable live-source capture', () => {
       const db = new DatabaseSync(join(f.directory, 'workflow-state.sqlite')); db.exec('UPDATE workflow_records SET revision=revision+1'); db.close();
     }
     if (change === 'database-created') seedDatabase(f.directory, f.key);
-    await expect(verifyPrivateWorkspaceCapture(f.options, receipt)).rejects.toThrow(/changed/);
+    await expect(verifyPrivateWorkspaceCapture(f.options, receipt)).rejects.toMatchObject({ message: expect.stringMatching(/changed/), status: 409, code: 'changed-during-copy' });
     expect(f.catalog.summary().sealed).toBe(false);
   });
   it('detects a source changed after its capture read, even when every individual read was valid', async () => {
@@ -175,7 +175,7 @@ describe('bounded immutable live-source capture', () => {
   it.each(['-wal', '-shm', '-journal'])('holds source and cold target when a database sidecar remains: %s', async suffix => {
     const f = await fixture(); seedDatabase(f.directory, f.key);
     await save(f.directory, `workflow-state.sqlite${suffix}`, Buffer.from('Retained unfinished state'));
-    await expect(capturePrivateWorkspace(f.options)).rejects.toThrow(/journal or WAL/);
+    await expect(capturePrivateWorkspace(f.options)).rejects.toMatchObject({ message: expect.stringMatching(/journal or WAL/), status: 409, code: 'database-journal' });
     await expect(privateBackupTargetPaths(f.directory)).rejects.toThrow(/journal or WAL/);
     await expect(privateBackupTargetGuard(f.directory)).rejects.toThrow(/journal or WAL/);
     expect((await readFile(join(f.directory, `workflow-state.sqlite${suffix}`))).toString()).toBe('Retained unfinished state');

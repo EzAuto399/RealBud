@@ -2,16 +2,16 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OnboardingState } from '@shared/onboarding';
-import { PRIVATE_BACKUP_TRANSFER_MAX_BYTES, PRIVATE_BACKUP_TRANSFER_CHUNK_BYTES } from '@shared/private-backup-transfers';
+import { PRIVATE_BACKUP_TRANSFER_MAX_BYTES, PRIVATE_BACKUP_TRANSFER_CHUNK_BYTES, type PrivateBackupTransferOperation as Operation } from '@shared/private-backup-transfers';
 import { api } from '@/state/store';
 import { privateBackupTransferHttp } from '@/lib/private-backup-transfer';
 import { BackupWelcomeAction, PrivateWorkspaceBackup } from './PrivateWorkspaceBackup';
 
-const observed = vi.hoisted(() => ({ effects: [] as (() => unknown)[], setters: [] as ReturnType<typeof vi.fn>[] }));
+const observed = vi.hoisted(() => ({ effects: [] as (() => unknown)[], setters: [] as ReturnType<typeof vi.fn>[], seed: new Map<number, unknown>() }));
 vi.mock('react', async importOriginal => {
   const actual = await importOriginal<typeof import('react')>();
   return { ...actual, useEffect: (effect: () => unknown) => { observed.effects.push(effect); },
-    useState: (value: unknown) => { const setter = vi.fn(); observed.setters.push(setter); return [value, setter]; } };
+    useState: (value: unknown) => { const index = observed.setters.length, setter = vi.fn(); observed.setters.push(setter); return [observed.seed.has(index) ? observed.seed.get(index) : value, setter]; } };
 });
 vi.mock('@/state/store', () => ({ api: vi.fn() }));
 vi.mock('@/lib/private-backup-transfer', async importOriginal => ({
@@ -55,5 +55,28 @@ describe('private backup welcome action', () => {
     expect(observed.setters.at(-1)).toHaveBeenCalledWith(null); // return action stays unavailable
     expect(observed.setters[5]).not.toHaveBeenCalled(); // onboarding cannot replace backup status with an error
     cleanup();
+  });
+});
+
+describe('private backup saved operation controls', () => {
+  const status = { canRestore: true, bootstrap: true, staged: false, reason: 'Fresh workspace.', completed: null };
+  const op = (change: Partial<Operation> = {}): Operation => ({ version: 2, id: '00000000-0000-4000-8000-000000000003', workspaceId: '00000000-0000-4000-8000-000000000001',
+    kind: 'export', phase: 'capturing', createdAt: 1, updatedAt: 1, expiresAt: null, progress: { completedBytes: 0, totalBytes: null }, canCancel: true, requiresPassphrase: false, ...change });
+  // Seeds status, saved items and the selection; every other state keeps its initial value.
+  const renderSelected = (selected: Operation) => {
+    observed.setters.length = 0; observed.seed.clear(); observed.seed.set(0, status); observed.seed.set(1, [selected]); observed.seed.set(2, selected.id);
+    return renderToStaticMarkup(createElement(PrivateWorkspaceBackup));
+  };
+  beforeEach(() => { vi.stubGlobal('window', {}); });
+  afterEach(() => { observed.seed.clear(); vi.unstubAllGlobals(); });
+  it('offers Cancel this backup while a saved backup still runs, and keeps Remove temporary copy for idle ones', () => {
+    expect(renderSelected(op())).toContain('>Cancel this backup</button>');
+    const failed = renderSelected(op({ phase: 'failed', requiresPassphrase: true, error: { code: 'workspace-busy' } }));
+    expect(failed).toContain('>Remove temporary copy</button>'); expect(failed).not.toContain('Cancel this backup</button>');
+  });
+  it('shows the specific busy reason when the service reports one, else the generic sentence', () => {
+    const reasoned = renderSelected(op({ phase: 'failed', requiresPassphrase: true, error: { code: 'workspace-busy', reason: 'bud-replying' } }));
+    expect(reasoned).toContain('Bud was still replying — try again when it finishes.'); expect(reasoned).not.toContain('Finish the current work');
+    expect(renderSelected(op({ phase: 'failed', requiresPassphrase: true, error: { code: 'workspace-busy' } }))).toContain('Finish the current work before continuing this backup operation.');
   });
 });
