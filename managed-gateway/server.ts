@@ -5,7 +5,6 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomBytes } from "node:crypto";
 import { LedgerDatabase } from "./database.ts";
 import { UsageLedger } from "./ledger.ts";
 import { ManagedGateway } from "./gateway.ts";
@@ -36,6 +35,10 @@ const port = Number(process.env.PORT || 8787);
 const dataDir = resolve(process.env.REALBUD_GATEWAY_DATA || "./data");
 const dbPath = resolve(dataDir, "ledger.sqlite");
 const portalSecret = process.env.REALBUD_GATEWAY_PORTAL_SECRET || "";
+const fingerprintSecret = process.env.REALBUD_FINGERPRINT_KEY || "";
+const paymentWebhookSecret = process.env.REALBUD_PAYMENT_WEBHOOK_KEY || "";
+requireThat(/^[a-fA-F0-9]{64,}$/.test(fingerprintSecret) && fingerprintSecret.length % 2 === 0, "REALBUD_FINGERPRINT_KEY required: persistent hex secret of at least 32 bytes");
+requireThat(/^[a-fA-F0-9]{64,}$/.test(paymentWebhookSecret) && paymentWebhookSecret.length % 2 === 0, "REALBUD_PAYMENT_WEBHOOK_KEY required: persistent hex secret of at least 32 bytes");
 const paymentMode = (process.env.REALBUD_PAYMENT_MODE || "local") as
   | "local"
   | "sandbox"
@@ -65,12 +68,7 @@ mkdirSync(dirname(dbPath), { recursive: true });
 
 const db = new LedgerDatabase(dbPath);
 const ledger = new UsageLedger(db, Date.now);
-const paymentKey = Buffer.from(
-  process.env.REALBUD_PAYMENT_WEBHOOK_KEY ||
-    randomBytes(32).toString("hex"),
-  "hex",
-);
-requireThat(paymentKey.byteLength >= 32, "REALBUD_PAYMENT_WEBHOOK_KEY invalid");
+const paymentKey = Buffer.from(paymentWebhookSecret, "hex");
 
 const squareToken = process.env.SQUARE_ACCESS_TOKEN || "";
 const squareNotify = process.env.SQUARE_NOTIFICATION_URL || "";
@@ -167,10 +165,7 @@ const gateway = new ManagedGateway({
   ledger,
   routes,
   authority,
-  fingerprintKey: Buffer.from(
-    process.env.REALBUD_FINGERPRINT_KEY || randomBytes(32).toString("hex"),
-    "hex",
-  ),
+  fingerprintKey: Buffer.from(fingerprintSecret, "hex"),
 });
 
 const openaiAdmin = process.env.OPENAI_ADMIN_KEY || "";

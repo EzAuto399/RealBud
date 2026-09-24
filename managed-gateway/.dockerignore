@@ -1,0 +1,32 @@
+# The runtime image needs only the root TypeScript modules and its build inputs.
+# Allowlisting keeps local credentials, SQLite data, and private pilot artifacts
+# out of the Docker build context, including files that COPY does not select.
+*
+!Dockerfile
+!package.json
+!tsconfig.json
+!*.ts
+
+*.test.ts
+benchmark.ts
+demo.ts
+local-pilot.ts
+platform-cli.ts
+platform-testing.ts
+customer-invoice-testing.ts
+
+.env
+.env.*
+data
+data/**
+.local-pilot
+.local-pilot/**
+node_modules
+node_modules/**
+.git
+.git/**
+*.sqlite
+*.sqlite-*
+*.pem
+*.key
+*.p12

@@ -7,6 +7,7 @@ primary_region = 'syd'
 
 [env]
   PORT = '8787'
+  PLATFORM_BIND_HOST = '0.0.0.0'
   REALBUD_GATEWAY_DATA = '/data'
   REALBUD_ALLOWED_ORIGINS = 'https://realbud.app,https://www.realbud.app'
   REALBUD_PAYMENT_MODE = 'local'
