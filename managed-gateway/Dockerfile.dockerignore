@@ -1,3 +1,7 @@
+# Build context is the repository root (deploy.sh). Allowlist: the runtime image
+# needs only the gateway's TypeScript modules, its package/tsconfig and the two
+# shared server files. Everything else, including local credentials, SQLite
+# data and keys, never enters the build context, whether or not COPY selects it.
 **
 !managed-gateway/
 !managed-gateway/*.ts
@@ -10,3 +14,13 @@ managed-gateway/sandbox-smoke.ts
 !server/composio-gmail.ts
 !shared/
 !shared/mail-ingestion.ts
+# Belt and braces on top of the allowlist: nothing below may ever be copied.
+managed-gateway/.env
+managed-gateway/.env.*
+managed-gateway/data/
+managed-gateway/data/**
+**/*.sqlite
+**/*.sqlite-*
+**/*.pem
+**/*.key
+**/*.p12
