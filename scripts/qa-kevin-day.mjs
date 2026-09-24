@@ -9,7 +9,7 @@ import { createServer } from "node:http";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.OMB_E2E_PORT ?? 19020 + Math.floor(Math.random() * 400));
@@ -23,6 +23,14 @@ const HOME = mkdtempSync(join(tmpdir(), "realbud-kevin-day-"));
 mkdirSync(join(HOME, ".realbud"), { recursive: true });
 const scriptPath = join(HOME, "fake-acp-script.json");
 const cuaPath = join(HOME, "cua-connection.json");
+// Product-mode attendance checks the managed browser, not the CUA descriptor.
+// Keep this offline simulation ready only while its synthetic descriptor exists.
+const browserFixture = join(HOME, "browser-fixture.mjs");
+writeFileSync(browserFixture, `import { existsSync } from "node:fs";
+import { browserRuntime } from ${JSON.stringify(pathToFileURL(join(ROOT, "server", "browser-runtime.ts")).href)};
+browserRuntime.status = async () => ({ state: existsSync(${JSON.stringify(cuaPath)}) ? "ready" : "disconnected", enabled: true, browsers: [], selectedBrowserId: "fixture", active: false, checkedAt: Date.now(), version: "0.3.0", port: 52800, detail: "Synthetic browser connection" });
+browserRuntime.resumeConnection = async () => {};
+`);
 const dumpPath = join(HOME, "fake-acp-dump.json");
 const receiptPath = join(HOME, "kevin-day-receipt.json");
 chmodSync(FAKE_CLI, 0o755);
@@ -190,6 +198,11 @@ const api = async (method, path, body) => {
   return { status: response.status, body: parsed };
 };
 
+const startAttendedRun = async (id) => {
+  const response = await api("POST", `/api/recipes/${id}/attend`, {});
+  if (response.status !== 202) throw new Error(`Could not start attended run ${id}: HTTP ${response.status} ${response.body?.error ?? JSON.stringify(response.body)}`);
+};
+
 const waitForHealth = async () => {
   const deadline = Date.now() + 45_000;
   while (Date.now() < deadline) {
@@ -228,7 +241,7 @@ const spawnServer = (extraEnv = {}) => {
       2,
     ),
   );
-  const proc = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "server", "index.ts")], {
+  const proc = spawn(process.execPath, ["--experimental-strip-types", "--import", pathToFileURL(browserFixture).href, join(ROOT, "server", "index.ts")], {
     cwd: ROOT,
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -499,7 +512,7 @@ try {
     rawInput: { url: `https://${BANK}/export` },
     reply: "Proposed 12 reference applications from office directory; 2 held as ambiguous. Waiting for Kevin to choose which to apply.",
   });
-  await api("POST", "/api/recipes/kevin-bank-refs/attend", {});
+  await startAttendedRun("kevin-bank-refs");
   const bankBud = await waitForOptionsCard();
   const bankCard = bankBud.messages.find((m) => m.kind === "options" && !m.card?.answered);
   check("bank navigate waits for Allow", Boolean(bankCard?.card?.requestId));
@@ -523,52 +536,39 @@ try {
     rawInput: { label: "Password", url: `https://${REI}/login` },
     reply: "Waiting at sign-in.",
   });
-  await api("POST", "/api/recipes/kevin-rei-password/attend", {});
+  await startAttendedRun("kevin-rei-password");
+  await waitForBot(async () =>
+    (await api("GET", "/api/human-handoffs")).body?.handoffs?.some((hold) => hold.value?.state === "awaiting_login"),
+  "password sign-in checkpoint");
+  const passwordHold = (await api("GET", "/api/human-handoffs")).body.handoffs.find((hold) => hold.value?.state === "awaiting_login");
+  const pausedPasswordRun = (await api("GET", "/api/job-runs?jobId=kevin-rei-password")).body.runs[0];
+  check("password never typed", pausedPasswordRun.evidence?.some((e) => e.kind === "denied" && /never types a password/i.test(e.note ?? "")));
+  const continueWithoutBinding = await api("POST", `/api/human-handoffs/${passwordHold.id}/continue`, { revision: passwordHold.revision });
+  check("Continue without a signed-in page blocked", continueWithoutBinding.status === 409, String(continueWithoutBinding.status));
+  const stoppedPassword = await api("POST", `/api/human-handoffs/${passwordHold.id}/stop`, { revision: passwordHold.revision });
+  if (stoppedPassword.status !== 200) throw new Error(`Could not stop held password task: HTTP ${stoppedPassword.status} ${stoppedPassword.body?.error ?? ""}`);
   const passRun = await waitForRunSettled("kevin-rei-password");
   check(
-    "password never typed",
-    passRun.evidence?.some((e) => e.kind === "denied" && /never types a password/i.test(e.note ?? "")),
-    JSON.stringify(passRun.evidence?.slice(0, 2)),
+    "password task ends only after Kevin stops it",
+    passRun.status === "interrupted",
+    passRun.status,
   );
+  const closedPassword = await api("POST", `/api/human-handoffs/${passwordHold.id}/close`, { revision: stoppedPassword.body.revision });
+  check("password checkpoint closed", closedPassword.status === 200, String(closedPassword.status));
 
   await preparePortalJob("kevin-rei-submit", REI, {
-    tool: "click",
+    tool: "click_semantic",
     title: "Submit",
     rawInput: { label: "Submit", url: `https://${REI}/receipts` },
     reply: "Stopped before Submit — Kevin must Allow on Desk or phone.",
   });
-  await api("POST", "/api/recipes/kevin-rei-submit/attend", {});
-  let submitBud = null;
-  try {
-    submitBud = await waitForOptionsCard();
-  } catch {
-    submitBud = null;
-  }
-  if (submitBud) {
-    const card = submitBud.messages.find((m) => m.kind === "options" && !m.card?.answered);
-    // Simulate mobile messaging channel approval path (same respond API)
-    await api("POST", `/api/threads/${submitBud.threadId}/respond`, {
-      requestId: card.card.requestId,
-      behavior: "deny",
-    });
-    check("Submit denied via channel-style respond", true);
-  }
+  await startAttendedRun("kevin-rei-submit");
   const submitRun = await waitForRunSettled("kevin-rei-submit");
   check(
-    "Submit does not complete unattended",
-    submitRun.status !== "running" &&
-      (submitRun.evidence?.some((e) => e.kind === "denied") || ["interrupted", "failed", "partial", "completed"].includes(submitRun.status)),
+    "Submit denied by the fence",
+    submitRun.status !== "running" && submitRun.evidence?.some((e) => e.kind === "denied"),
     submitRun.status,
   );
-
-  const holds = (await api("GET", "/api/human-handoffs")).body?.handoffs ?? [];
-  if (holds.length) {
-    const hold = holds[0];
-    const cont = await api("POST", `/api/human-handoffs/${hold.id}/continue`, { revision: hold.revision });
-    check("Continue without calibration blocked", cont.status === 409 || cont.status === 400, String(cont.status));
-  } else {
-    check("handoff path optional for this password script", true, "no open handoff");
-  }
 
   // ── 8. Afternoon desk recheck + company advance stays human ──
   chapter("14:00 · Desk recheck + advance stays with Kevin");

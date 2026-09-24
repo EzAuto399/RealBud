@@ -9,7 +9,7 @@ import { createServer } from "node:http";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.OMB_E2E_PORT ?? 18920 + Math.floor(Math.random() * 400));
@@ -22,6 +22,14 @@ const HOME = mkdtempSync(join(tmpdir(), "realbud-wf-packs-sim-"));
 mkdirSync(join(HOME, ".realbud"), { recursive: true });
 const scriptPath = join(HOME, "fake-acp-script.json");
 const cuaPath = join(HOME, "cua-connection.json");
+// Product-mode attendance checks the managed browser, not the CUA descriptor.
+// Keep this offline simulation ready only while its synthetic descriptor exists.
+const browserFixture = join(HOME, "browser-fixture.mjs");
+writeFileSync(browserFixture, `import { existsSync } from "node:fs";
+import { browserRuntime } from ${JSON.stringify(pathToFileURL(join(ROOT, "server", "browser-runtime.ts")).href)};
+browserRuntime.status = async () => ({ state: existsSync(${JSON.stringify(cuaPath)}) ? "ready" : "disconnected", enabled: true, browsers: [], selectedBrowserId: "fixture", active: false, checkedAt: Date.now(), version: "0.3.0", port: 52800, detail: "Synthetic browser connection" });
+browserRuntime.resumeConnection = async () => {};
+`);
 const dumpPath = join(HOME, "fake-acp-dump.json");
 chmodSync(FAKE_CLI, 0o755);
 writeFileSync(
@@ -183,6 +191,11 @@ const api = async (method, path, body) => {
   return { status: response.status, body: parsed };
 };
 
+const startAttendedRun = async (id) => {
+  const response = await api("POST", `/api/recipes/${id}/attend`, {});
+  if (response.status !== 202) throw new Error(`Could not start attended run ${id}: HTTP ${response.status} ${response.body?.error ?? JSON.stringify(response.body)}`);
+};
+
 const waitForHealth = async () => {
   const deadline = Date.now() + 45_000;
   while (Date.now() < deadline) {
@@ -222,7 +235,7 @@ const spawnServer = (extraEnv = {}) => {
       2,
     ),
   );
-  const proc = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "server", "index.ts")], {
+  const proc = spawn(process.execPath, ["--experimental-strip-types", "--import", pathToFileURL(browserFixture).href, join(ROOT, "server", "index.ts")], {
     cwd: ROOT,
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -484,7 +497,7 @@ try {
 
   // ── E. REI / bank computer-use wait patterns (fixture origins, fake ACP) ──
   await preparePortalJob("sim-rei-approval-wait", REI);
-  await api("POST", "/api/recipes/sim-rei-approval-wait/attend", {});
+  await startAttendedRun("sim-rei-approval-wait");
   const waitBud = await waitForOptionsCard();
   const waitCard = waitBud.messages.find((m) => m.kind === "options" && !m.card?.answered);
   check("REI navigate waits for Allow once", Boolean(waitCard?.card?.requestId));
@@ -505,56 +518,39 @@ try {
     rawInput: { label: "Password", url: `https://${REI}/login` },
     reply: "Waiting at sign-in (scripted).",
   });
-  await api("POST", "/api/recipes/sim-password-deny/attend", {});
+  await startAttendedRun("sim-password-deny");
+  await waitForBot(async () =>
+    (await api("GET", "/api/human-handoffs")).body?.handoffs?.some((hold) => hold.value?.state === "awaiting_login"),
+  "password sign-in checkpoint");
+  const held = (await api("GET", "/api/human-handoffs")).body.handoffs.find((hold) => hold.value?.state === "awaiting_login");
+  const pausedPasswordRun = (await api("GET", "/api/job-runs?jobId=sim-password-deny")).body.runs[0];
+  check("password fill auto-denied", pausedPasswordRun.evidence?.some((e) => e.kind === "denied" && /never types a password/i.test(e.note ?? "")));
+  const continueWithoutBinding = await api("POST", `/api/human-handoffs/${held.id}/continue`, { revision: held.revision });
+  check("Continue without a signed-in page is blocked", continueWithoutBinding.status === 409, String(continueWithoutBinding.status));
+  const stoppedPassword = await api("POST", `/api/human-handoffs/${held.id}/stop`, { revision: held.revision });
+  if (stoppedPassword.status !== 200) throw new Error(`Could not stop held password task: HTTP ${stoppedPassword.status} ${stoppedPassword.body?.error ?? ""}`);
   const passRun = await waitForRunSettled("sim-password-deny");
   check(
-    "password fill auto-denied",
-    passRun.evidence?.some((e) => e.kind === "denied" && /never types a password/i.test(e.note ?? "")),
-    JSON.stringify(passRun.evidence?.slice(0, 2)),
+    "password task ends only after human Stop",
+    passRun.status === "interrupted",
+    passRun.status,
   );
+  const closedPassword = await api("POST", `/api/human-handoffs/${held.id}/close`, { revision: stoppedPassword.body.revision });
+  check("password checkpoint closed", closedPassword.status === 200, String(closedPassword.status));
 
   await preparePortalJob("sim-pay-deny", BANK, {
-    tool: "click",
+    tool: "click_semantic",
     title: "Pay now",
     rawInput: { label: "Pay now", url: `https://${BANK}/pay` },
     reply: "Stopped before pay (scripted).",
   });
-  await api("POST", "/api/recipes/sim-pay-deny/attend", {});
-  // May surface approval or hard deny depending on fence — either must not complete a pay.
-  let payBud;
-  try {
-    payBud = await waitForOptionsCard();
-  } catch {
-    payBud = null;
-  }
-  if (payBud) {
-    const payCard = payBud.messages.find((m) => m.kind === "options" && !m.card?.answered);
-    await api("POST", `/api/threads/${payBud.threadId}/respond`, {
-      requestId: payCard.card.requestId,
-      behavior: "deny",
-    });
-  }
+  await startAttendedRun("sim-pay-deny");
   const payRun = await waitForRunSettled("sim-pay-deny");
   check(
-    "pay click denied or interrupted",
-    payRun.status !== "running" &&
-      (payRun.evidence?.some((e) => e.kind === "denied") || ["interrupted", "failed", "completed"].includes(payRun.status)),
-    `${payRun.status}`,
+    "pay click denied by the fence",
+    payRun.status !== "running" && payRun.evidence?.some((e) => e.kind === "denied"),
+    payRun.status,
   );
-
-  // Continue / handoff when password path opens a human hold.
-  const holds = (await api("GET", "/api/human-handoffs")).body?.handoffs ?? [];
-  if (holds.length) {
-    const hold = holds[0];
-    const cont = await api("POST", `/api/human-handoffs/${hold.id}/continue`, { revision: hold.revision });
-    check(
-      "Continue without calibration is blocked",
-      cont.status === 409 || cont.status === 400,
-      String(cont.status),
-    );
-  } else {
-    check("Continue path available when handover opened", true, "no durable handoff in this password path (ok)");
-  }
 
   console.log("\nSimulation complete. Export written to", join(HOME, "workflow-packs-export.json"));
   console.log("Fixture home:", HOME);
