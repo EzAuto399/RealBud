@@ -1,0 +1,17 @@
+
+> realbud@0.1.19 package:win /Users/yoda/projects/RealBud
+> pnpm check:windows-build && pnpm package:prepare && pnpm build:speech:win && pnpm build:cua && pnpm build:postgres && electron-builder --win --publish never
+
+
+> realbud@0.1.19 check:windows-build /Users/yoda/projects/RealBud
+> node scripts/check-windows-build.mjs
+
+Windows build prerequisites: BLOCKED
+[FAIL] host: Run this check on native Windows x64 with x64 Node.js. macOS, Linux, Windows ARM and emulated targets do not prove a Windows build.
+[PASS] node: Node.js matches the Windows CI major. (24.21.0)
+Limit: Host prerequisites only; RealBud has not been compiled or installed by this check.
+Limit: Dependency installation and pinned runtime downloads have not been exercised.
+Limit: Installed behaviour, Windows permissions, signing, live integrations and customer acceptance remain unverified.
+Limit: Use --proof to also check PowerShell 7 and Python 3.11+ for the installer proof harness.
+ ELIFECYCLE  Command failed with exit code 1.
+ ELIFECYCLE  Command failed with exit code 1.

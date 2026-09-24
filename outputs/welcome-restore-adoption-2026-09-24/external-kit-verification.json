@@ -1,0 +1,20 @@
+{
+  "verifiedAt": "2026-09-23T23:58:51.662235+00:00",
+  "archive": "/Volumes/RealBud-TestLab/qa/output/RealBud-0.1.19-mac-windows-test-kit-b8aa9f2f.zip",
+  "archiveBytes": 750367893,
+  "archiveSha256": "e828c8fb5a5a46b18c48cb26bd4a14cbebc33384c9a7e71b5d1f35026518c96f",
+  "verificationReceipt": "/Volumes/RealBud-TestLab/qa/output/RealBud-0.1.19-mac-windows-test-kit-b8aa9f2f.zip.verification.json",
+  "verificationReceiptSha256": "e462d9f33d4935dc63843325be11dae40abb157d02bad767f5bf04753d5138e0",
+  "entryCount": 49,
+  "manifestFiles": 47,
+  "completeManifest": true,
+  "exactInventory": true,
+  "manifestListedSizesMatched": true,
+  "duplicateEntries": false,
+  "symlinks": false,
+  "unsafeArchivePaths": false,
+  "manifestHashMatched": true,
+  "checksumFileHashMatched": true,
+  "macSourceRevision": "b8aa9f2fee9dcc634e8ff8f9153103701aa4e1ca",
+  "limit": "Root verified sealed archive hash, exact central inventory and file sizes, manifest/checksum hashes and Mac package source binding. Separate retained platform receipt verifies every decompressed file hash. No Windows guest acceptance inferred."
+}

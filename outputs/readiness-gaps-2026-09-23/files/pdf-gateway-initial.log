@@ -1,0 +1,27 @@
+✔ registry admits scoped hashed credentials and rejects duplicate or secret-bearing records (5.908917ms)
+✔ the per-device apps allowlist defaults to gmail and refuses an unknown or unadmitted app before any binding is read (4.066459ms)
+✔ service expiry, suspension, token revocation, wrong profile/license deny before provider access (2.557292ms)
+✔ successful account status uses server binding and never returns project credentials (1.7635ms)
+✔ revocation during a read withholds its data (2.26525ms)
+✔ MCP session is bound to device and configuration and does not survive expiry (2.119042ms)
+✔ unknown sign-in link outcome remains held after retry and service restart (1.88175ms)
+✔ successful sign-in link is reused, account pinned, changed binding held (1.893625ms)
+✔ HTTP bearer is independent of portal auth and rejects browser origin and supplied upstream identity (26.2235ms)
+✔ mail scan uses the server-owned account binding and refuses caller authority fields before upstream (3.011917ms)
+✔ mail scan enforces token, profile, current subscription and device authority before upstream (1.553583ms)
+✔ mail scan suppresses returned evidence when subscription or device changes while the provider is pending (3.867666ms)
+✔ mail scan admits one active operation per device and releases the guard after a cancelled operation (1.781834ms)
+✔ HTTP mail scan rejects malformed scope and returns bounded projected evidence with independent device authentication (15.258833ms)
+✔ mail scan account precondition rejects missing legacy input and stale reviewed identity before any provider call (2.058ms)
+✔ mail scan precondition resolves the saved connected account and holds an unbound or changed saved connection before provider (1.641416ms)
+✔ saved-account rebinding during scan fails its next authority checkpoint before another provider read (1.453875ms)
+✔ PDF acquisition is bound to the device account and withholds data after revocation (1.680333ms)
+✔ PDF acquisition refuses unadmitted apps and caller-supplied upstream authority (1.501291ms)
+ℹ tests 19
+ℹ suites 0
+ℹ pass 19
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 211.479875

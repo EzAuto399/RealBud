@@ -1,0 +1,877 @@
+! Corepack is about to download https://registry.npmjs.org/pnpm/-/pnpm-10.33.0.tgz
+
+> realbud@0.1.19 test /Users/yoda/projects/RealBud
+> vitest run --reporter=default --reporter=json --outputFile=/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/regression/vitest-report.json
+
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ✓ server/private-backup-capture.test.ts (34 tests) 18116ms
+     ✓ refuses oversized portfolio history instead of sealing an incomplete backup  8905ms
+     ✓ captures and rechecks more than 5,000 records and 3,000 files with bounded source reads  8509ms
+stdout | server/private-backup-codec.test.ts > private backup v2 authenticated transport > streams more than 96 MiB with a bounded retained working set in a separate native Node process
+backup v2 codec bounded-stream measurement {
+  bytes: 106954752,
+  archiveBytes: 107011010,
+  entryCount: 17,
+  matching: true,
+  peakArrayBufferDelta: 13044976,
+  retainedArrayBufferDelta: 65536,
+  peakRssDelta: 65732608
+}
+
+ ✓ server/private-backup-codec.test.ts (75 tests) 3833ms
+     ✓ streams more than 96 MiB with a bounded retained working set in a separate native Node process  543ms
+ ✓ server/private-backup-prepared.test.ts (23 tests) 7496ms
+       ✓ treats a crashed transaction’s journal as hot and restores the sealed bytes, then keeps an empty journal  3000ms
+       ✓ opens an older DELETE-mode store without a journal and moves it to a new empty journal without losing data  909ms
+       ✓ recovers an older build’s DELETE-mode hot journal, then keeps an empty journal  3090ms
+ ✓ server/private-backup-operations.test.ts (36 tests) 1320ms
+ ✓ server/private-backup-resources.test.ts (14 tests) 501ms
+ ✓ server/private-backup-catalog.test.ts (48 tests) 18718ms
+     ✓ retains more than 5,000 records and 96 MiB without full-history record reads  4212ms
+     ✓ admits more than the v1 3,000-file ceiling and enumerates names without dropping any file  1858ms
+     ✓ commits and reopens the full 8 MiB supported entry with cache spilling disabled  9769ms
+     ✓ recovers its own killed writer from the protected journal before applying the persisted cap, on every platform  743ms
+     ✓ recovers an older build’s DELETE-mode hot journal; Windows still refuses a journal the catalog did not create  706ms
+ ✓ server/batches.test.ts (41 tests) 24010ms
+     ✓ completes 20 independent properties and preserves progress on reload  406ms
+     ✓ completes 50 independent properties and preserves progress on reload  919ms
+     ✓ completes 100 independent properties and preserves progress on reload  2039ms
+     ✓ completes 150 independent properties and preserves progress on reload  2946ms
+     ✓ completes 200 independent properties and preserves progress on reload  3807ms
+     ✓ completes 500 independent properties and preserves progress on reload  11513ms
+ ✓ server/gmail-setup-api.test.ts (27 tests) 18856ms
+     ✓ requires a session for setup, mode, public config, status, and connection actions  454ms
+     ✓ rejects incomplete, malformed, and injected setup bodies before provider access  406ms
+     ✓ verifies before saving, preserves consumer access, and generates a private stable binding without switching mode  477ms
+     ✓ keeps the previous configuration after broad scopes, rejected keys, and interrupted verification  437ms
+     ✓ serializes setup against competing setup, mode changes, and generic credential saves  472ms
+     ✓ recovers a lost setup response through public status and an idempotent same-binding retry  504ms
+     ✓ validates mode changes, checks the selected access path, and preserves mode on failure  564ms
+     ✓ routes Ask connection checks through the selected mode and rejects other apps without OAuth  646ms
+     ✓ holds a queued follow-up across setting changes and restart while running check Gmail connection  1015ms
+     ✓ holds a queued follow-up across setting changes and restart while running what are we connected to?  1010ms
+     ✓ reuses a pending consent link and preserves it through same-binding setup retries  564ms
+     ✓ reuses verified INITIATED consent after server restart without creating another link  866ms
+     ✓ reuses verified INITIALIZING consent after server restart without creating another link  865ms
+     ✓ permits a new explicit Connect after confirmed FAILED consent  566ms
+     ✓ permits a new explicit Connect after confirmed EXPIRED consent  563ms
+     ✓ permits a new explicit Connect after confirmed INACTIVE consent  558ms
+     ✓ permits a new explicit Connect after confirmed REVOKED consent  551ms
+     ✓ holds unknown, disabled, missing, and unverifiable bound accounts without replacing their receipt  731ms
+     ✓ refuses persisted unsafe-url pending consent without starting another sign-in  879ms
+     ✓ refuses persisted expired pending consent without starting another sign-in  876ms
+     ✓ refuses persisted too-long-lived pending consent without starting another sign-in  880ms
+     ✓ refuses persisted missing-account pending consent without starting another sign-in  873ms
+     ✓ reconciles a lost consent response to one INITIATED account after restart without another provider POST  923ms
+     ✓ reconciles a lost consent response to one INITIALIZING account after restart without another provider POST  928ms
+     ✓ reconciles a lost consent response to one ACTIVE account after restart without another provider POST  934ms
+     ✓ retains uncertain consent when no account, multiple accounts, an unsupported status, or failed verification prevents reconciliation  774ms
+     ✓ checks the active readonly binding before generic project-key changes and rejects binding injection  535ms
+ ✓ server/private-backup-restore-catalog.test.ts (16 tests) 17110ms
+     ✓ rejects unrestorable batch expanded-size as a typed preparation failure without sealing output  8679ms
+     ✓ retains exact ordinary bytes and 5,101 rows in original order without collecting their bodies  6638ms
+     ✓ rejects a regenerated execution projection above 8 MiB before preparing any destination rows  383ms
+ ✓ server/private-backup-v2-integration.test.ts (1 test) 16315ms
+     ✓ captures, transfers, prepares and cold-restores over 5,000 records with exact bank bytes and a different destination key  16314ms
+ ✓ server/hermes-lifecycle.test.ts (5 tests) 12380ms
+     ✓ removes RealBud's profile and stamps while preserving the shared runtime  1765ms
+     ✓ repairs the property pack without replacing an independent 0.21 runtime or model  537ms
+     ✓ holds an unknown release without altering its profile  377ms
+     ✓ returns 409 while an install job is running  9696ms
+ ✓ server/private-backup-pack-upgrade.test.ts (14 tests) 10417ms
+     ✓ v1 retains history, retired plans and staff edits, repairs omitted native files, then safely rolls back  494ms
+     ✓ v2 retains history, retired plans and staff edits, repairs omitted native files, then safely rolls back  592ms
+     ✓ rejects corrupt prior digest in authenticated v1 restore and real v2 catalog admission  345ms
+     ✓ rejects corrupt prior generation in authenticated v1 restore and real v2 catalog admission  342ms
+     ✓ rejects corrupt prior recipe in authenticated v1 restore and real v2 catalog admission  352ms
+     ✓ rejects corrupt prior retired-path in authenticated v1 restore and real v2 catalog admission  362ms
+     ✓ v1 restores exact archive bytes and live/retired plans, repairs instructions, then rolls back to archived generation one  1217ms
+     ✓ v2 restores exact archive bytes and live/retired plans, repairs instructions, then rolls back to archived generation one  1587ms
+     ✓ rejects authenticated missing archive at v1 import and v2 capture/catalog seal without changing the destination  1071ms
+     ✓ rejects authenticated truncated archive at v1 import and v2 capture/catalog seal without changing the destination  887ms
+     ✓ rejects authenticated wrong-pack archive at v1 import and v2 capture/catalog seal without changing the destination  1269ms
+     ✓ rejects authenticated orphan archive at v1 import and v2 capture/catalog seal without changing the destination  1031ms
+     ✓ refuses an actual interrupted archive in both backup formats and admits it only after explicit recovery  763ms
+ ✓ server/hermes-hands.test.ts (34 tests) 8052ms
+     ✓ returns rows and a success detail when the worker answers JSON  354ms
+     ✓ preloads the shipped morning-arrears skill with -s; the readiness ping loads none  681ms
+     ✓ misses cleanly when the worker answers chatter  352ms
+     ✓ explains when the worker correctly observed no ledger facts  368ms
+     ✓ surfaces the provider's own error words (billing, auth) in the detail  356ms
+     ✓ finds the real error on stdout even when stderr is only warnings  355ms
+     ✓ is ok when the worker answers OK  361ms
+       ✓ runs the base profile when no seat is given, so single-seat installs are unchanged  415ms
+       ✓ runs the seat's own profile once a seat is given  404ms
+       ✓ never resolves two seats to one profile  813ms
+       ✓ resolves the same seat to the same profile every time  798ms
+       ✓ carries the seat through the ledger read too, not just the ping  422ms
+       ✓ normalises a hostile seat string instead of letting it name a profile  408ms
+       ✓ carries an office-host member uuid through to the spawned profile  417ms
+       ✓ a blank seat is no seat, so a desk that never resolved one keeps the base  418ms
+     ✓ fails with the provider's words when the model cannot answer  374ms
+     ✓ invokes the worker with the exact pinned profile and headless flags  372ms
+     ✓ runs the ledger spawn with cwd equal to the book  375ms
+ ✓ server/desk.test.ts (53 tests) 7944ms
+     ✓ accepts and evaluates a 600-property office in one intake commit  5500ms
+ ✓ server/private-backup-mail-retention.test.ts (10 tests) 6850ms
+     ✓ roundtrips over 2,000 tasks and 1,000 receipts, old source/manual decisions and overwritten prepared input under a different key  3575ms
+     ✓ preserves legacy running intent and restores effective interrupted work (already migrated: false)  328ms
+     ✓ preserves legacy running intent and restores effective interrupted work (already migrated: true)  336ms
+     ✓ rejects incomplete and forged normalized graphs before preview or target mutation  1422ms
+     ✓ keeps the explicit version-one 5,000-record refusal instead of exporting partial mail history  358ms
+ ✓ server/service-admin-provision.test.ts (29 tests) 3118ms
+     ✓ generates independent passwords in private operator files for two installations  371ms
+     ✓ never overwrites existing credentials without explicit rotation  376ms
+ ✓ server/office-link.test.ts (36 tests) 5665ms
+     ✓ maps an unreachable, refusing or malformed account to one honest state  876ms
+     ✓ retries a dropped connection or a 5xx once, and a refusal not at all  2371ms
+     ✓ retries a status poll once after a network error and keeps the request on a bad answer  1518ms
+ ✓ server/customer-pack-archive.test.ts (16 tests) 5381ms
+     ✓ keeps two recent rollback configurations, preserves every older byte, enables later upgrades and reconciles old retries after further archives  910ms
+     ✓ recovers a before-archive interruption after cold reopen without losing history or touching plan approvals  505ms
+     ✓ recovers a after-archive interruption after cold reopen without losing history or touching plan approvals  508ms
+     ✓ recovers a before-commit interruption after cold reopen without losing history or touching plan approvals  498ms
+     ✓ recovers a after-commit interruption after cold reopen without losing history or touching plan approvals  474ms
+ ✓ server/private-workspace-backup.test.ts (35 tests) 4956ms
+     ✓ retains portfolio sources and completed results across different-key restore without automatic dispatch  323ms
+     ✓ retains evicted execution identities across encrypted backup, different-key restore and both production readers  1086ms
+     ✓ rejects duplicate paths, forged content, foreign identity and the wrong source key  392ms
+ ✓ server/drivers/acp/acp.test.ts (70 tests) 4835ms
+     ✓ cancels the turn when Hermes starts one of its own browser tools  460ms
+ ❯ server/attended-run.test.ts (48 tests | 12 skipped) 546ms
+     ✓ recognizes a request without a password tool: Please sign in to continue. 1ms
+     ✓ recognizes a request without a password tool: Login is required before I can read the bank export. 0ms
+     ✓ recognizes a request without a password tool: Waiting for you to finish sign-in. 0ms
+     ✓ recognizes a verification-code request 0ms
+     ✓ treats an expired session as a sign-in hold, not a failure: Your session has expired. Sign in again to continue. 0ms
+     ✓ treats an expired session as a sign-in hold, not a failure: The portal session expired — please sign in. 0ms
+     ✓ treats an expired session as a sign-in hold, not a failure: Session timed out, log in again to view the arrears report. 0ms
+     ✓ treats an expired session as a sign-in hold, not a failure: Your login has expired. Please sign in to PropertyMe. 0ms
+     ✓ still calls an expired session with a code an mfa hold 0ms
+     ✓ does not invent a sign-in hold when the worker reports the session is fine 0ms
+     ✓ does not reinterpret a completed observation: Already signed in and the bank export is ready. 0ms
+     ✓ does not reinterpret a completed observation: No login is needed. 0ms
+     ✓ does not reinterpret a completed observation: References reviewed. 0ms
+     ✓ prefers the person's open browser and forbids a second isolated login window 0ms
+     ✓ embeds that policy in the attended job system block 0ms
+     ✓ lists the browser tools the run's grant allows 1ms
+     ✓ names exactly the tools the broker offers for that grant 21ms
+     ✓ treats sign-in complete chat as handoff Continue, not a new computer turn: done 0ms
+     ✓ treats sign-in complete chat as handoff Continue, not a new computer turn: Done. 0ms
+     ✓ treats sign-in complete chat as handoff Continue, not a new computer turn: signed in 0ms
+     ✓ treats sign-in complete chat as handoff Continue, not a new computer turn: I'm signed in 0ms
+     ✓ treats sign-in complete chat as handoff Continue, not a new computer turn: ok we are signed in 0ms
+     ✓ treats sign-in complete chat as handoff Continue, not a new computer turn: finished signing in 0ms
+     ✓ does not hijack ordinary Ask text: please check the dashboard 0ms
+     ✓ does not hijack ordinary Ask text: done with the levy export for unit 12 0ms
+     ✓ does not hijack ordinary Ask text: Already signed in and the bank export is ready. 0ms
+     ✓ names the denied browser action in the retained receipt 0ms
+     ✓ keeps the record's identifiers and hashes, never a field value or a file path 1ms
+     ✓ stays within the evidence note limit, redacted, and keeps the record whole 35ms
+     ✓ returns each blocked message exactly 0ms
+     ✓ does not certify completion from assistant prose: All done. 0ms
+     ✓ does not certify completion from assistant prose: vantagestrata.com.au shows outstanding balance 0ms
+     ✓ does not certify completion from assistant prose: Couldn't attach with the computer tools alone this run. Bring realbud-qa.localhost:60090 to the front. What the same page showed on the last read: invoice QA-B104, AUD 420.00. 0ms
+     ✓ retains unsuccessful outcomes and review boundaries 0ms
+     ✓ gives cancellation and interruption precedence over successful read-back 0ms
+     ✓ marks a queued attended run missed after a day 21ms
+     ↓ returns each 409 with its exact message
+     ↓ asks for navigate on the job's site and records asked evidence
+     ↓ persists a failed browser attachment with old source text as partial, never completed
+     ↓ auto-denies a password fill and a Pay click
+     ↓ keeps unverified claims partial whether or not they name the source
+     ↓ accepts a portal standing rule on POST /api/rules and rejects deny
+     ↓ writes a portal rule from Allow and auto-allows the next same request
+     ↓ never lets a fenced browser allow become a session grant
+     ↓ opens a submit ask with the exact card summary
+     ↓ enqueues a ready-beside-you run on the clock and starts it by runId
+     ↓ skips an unattached portal job on the clock with the beside-you detail
+     ↓ rejects a second attend while one is in flight or Bud is busy
+stdout | server/mail-retention.test.ts > normalized permanent mail retention and process fencing > retains more than 2000 multilingual tasks and 1000 failed scan receipts without aggregate refusal
+{"mailRetentionMeasurement":{"tasks":2100,"receipts":1022,"coldMetadataMs":516.494334,"warmMetadataMs":0.16775000000006912,"pageMs":70.32304199999999,"platform":"darwin","provider":"fictional"}}
+
+ ✓ server/mail-retention.test.ts (13 tests) 3801ms
+     ✓ retains more than 2000 multilingual tasks and 1000 failed scan receipts without aggregate refusal  3376ms
+ ✓ server/drivers/acp/memory-proposals.test.ts (11 tests) 3722ms
+     ✓ discovers only a private descriptor before prompting, then dispatches typed proposals  542ms
+     ✓ reuses a warm session but calls the current turn integration, and denies idle cached calls  377ms
+     ✓ replaces the warm runtime and revokes the old token when host scope changes  422ms
+     ✓ aborts an in-flight proposal on interruption and permits the next same-scope turn  372ms
+     ✓ aborts pending proposals when a provider finishes its turn  321ms
+     ✓ does not release a late old callback result during a new warm turn  369ms
+     ✓ revokes a previous warm capability when the next turn has no integration  318ms
+ ❯ server/index.test.ts (52 tests | 52 skipped) 473ms
+     ↓ keeps remote preparation off and validates its protected HTTP actions
+     ↓ refuses the session token to a cross-site browser request but still bootstraps this app
+     ↓ requires authenticated, current-revision rent settings and never updates payment facts
+     ↓ protects batch history and validates bounded, idempotent preparation through HTTP
+     ↓ identifies itself on /api/health
+     ↓ serves packaged UI assets and preserves API 404s
+     ↓ rejects malformed and oversized JSON bodies without hanging
+     ↓ seeds the canonical Bud thread and refuses extra bots
+     ↓ lists the built morning workflow disabled and holds it until agency review
+     ↓ retunes a loop's clock over the API and rejects malformed patches
+     ↓ refuses to run setup for an engine with no installer
+     ↓ describes the configured fleet, shadows included
+     ↓ protects agent installation and updates before dispatching work
+     ↓ reports the pinned Hermes worker status
+     ↓ applies the property pack on demand and rejects non-JSON calls
+     ↓ tests hands with the same content-type gate as other actions
+     ↓ gates worker repair and remove like the other hermes actions
+     ↓ persists the model connection hands check across a status reload
+     ↓ adds, patches, and removes a property with its facts
+     ↓ never sends a desk draft — the send route is always 403
+     ↓ refuses rooms, connectors, and raw computer screenshots in product mode
+     ↓ round-trips standing rules and rejects bad writes
+     ↓ round-trips law-watch schedule and stays honest when the worker is away
+     ↓ connects Telegram without echoing the token and disconnects
+     ↓ connects Discord and Slack without echoing tokens and 404s an unknown platform
+     ↓ round-trips recipes and keeps shadow runs honest when the worker is away
+     ↓ reuses manual job receipts after response loss and admits a deliberate new request
+     ↓ cancels a queued attended run whose approved plan changed before it could start
+     ↓ keeps the edited plan, approval and effective clock on one version
+     ↓ holds a scheduled job for one plan approval before admitting it onto the RealBud clock
+     ↓ keeps the one worker unsupervisable-by-API and undeletable
+     ↓ keeps Bud as the only visible thread
+     ↓ rejects an empty message and explains an unavailable provider
+     ↓ opens provider sign-in directly for an explicit connection instruction
+     ↓ does not re-open sign-in when the app is already connected
+     ↓ checks connection completion without starting a new OAuth flow
+     ↓ a failed connection check does not automatically create another sign-in
+     ↓ exposes authenticated product access checks without claiming an actual mailbox read
+     ↓ shares source state across Ask, settings and removal without a model or mailbox action
+     ↓ persists the account owner across credential replacement without exposing or accepting it in settings
+     ↓ keeps the working key when replacement validation fails, and invalidates access on removal
+     ↓ refuses to fork a message when the provider is unavailable, without mutating
+     ↓ switches the active branch and reports the new leaf
+     ↓ refuses a box token the provider rejects, at the point of pasting
+     ↓ saves config keys write-only and reports booleans
+     ↓ stores and echoes the user profile (not write-only, unlike keys)
+     ↓ 404s unknown routes with the route in the error
+     ↓ requires a session for Desk and refuses a foreign Origin
+     ↓ runs the Demo desk check and refuses to send
+     ↓ round-trips notes and puts an Ask courtesy on Desk without send
+     ↓ imports an address-keyed CSV onto Oak Street
+     ↓ refuses an import or a wording edit that was composed against a stale book
+ ✓ server/website-remote-approvers.test.ts (42 tests) 3233ms
+ ✓ server/browser-broker.test.ts (32 tests) 3394ms
+     ✓ lists exactly the grant's action classes for every combination, and the worker is told the same list  400ms
+ ✓ server/private-backup-legacy.test.ts (14 tests) 3299ms
+     ✓ binds legacy import to actual cold completion, then cleans the prior workspace allocations without exposing its history  436ms
+     ✓ enforces the actual catalog page ceiling, preserves the source and permits a fresh retry  1823ms
+ ✓ server/private-backup-coordinator.test.ts (12 tests) 3629ms
+     ✓ admits only one restore even with an unusually permissive host and retains both reviewed uploads  524ms
+     ✓ recovers a crash boundary between the durable stage hold and publishing the restart descriptor  348ms
+     ✓ clears a persisted recovery warning only after held staging successfully resumes  346ms
+     ✓ keeps the legacy API restore bound to the same operation journal  517ms
+     ✓ exports actual bank bytes, previews through the strict API and restores with bound cold completion  661ms
+     ✓ imports formatted v1 archives, preserves the upload after a wrong phrase, and retries with fresh provisional resources  388ms
+ ✓ server/recipe-draft.test.ts (16 tests) 3541ms
+     ✓ launches each selected member profile without reading the base or another member profile  484ms
+     ✓ launches the checked profile instead of an ambient personal Hermes home  417ms
+     ✓ kills the owned preparation process when cancelled  376ms
+     ✓ returns a shadow card when the worker names a job  380ms
+     ✓ returns 503-shaped miss when the worker answers junk  379ms
+     ✓ explains an invalid field without exposing the worker's content  366ms
+     ✓ keeps a named cadence on the card  371ms
+     ✓ drops a junk cadence instead of failing the draft  379ms
+     ✓ keeps only allowlisted prepare capabilities  382ms
+ ✓ server/private-backup-proposal-retention.test.ts (4 tests) 1551ms
+     ✓ preserves 1,001 encrypted request identities and holds an old unfinished intent after different-key restore  994ms
+ ❯ server/hermes-memory-approval-http.test.ts (18 tests | 18 skipped) 945ms
+     ↓ keeps complete memory prose manual and forces once through /bots/respond
+     ↓ keeps complete memory prose manual and forces once through /threads/respond
+     ↓ does not let driver fullAuto bypass native memory approval
+     ↓ rejects remembered memory permissions and portal rule expansion before releasing the live request
+     ↓ cancels 'incomplete envelope' rather than approving an incomplete review or a shell grant
+     ↓ cancels 'Save to memory: replace in memory' rather than approving an incomplete review or a shell grant
+     ↓ cancels 'Save to memory: remove from user prof…' rather than approving an incomplete review or a shell grant
+     ↓ cancels 'Save to memory: apply 1 op(s) to memo…' rather than approving an incomplete review or a shell grant
+     ↓ retains the identified terminal session flow separately from memory
+     ↓ keeps complete memory prose manual and forces once through /bots/respond
+     ↓ keeps complete memory prose manual and forces once through /threads/respond
+     ↓ does not let driver fullAuto bypass native memory approval
+     ↓ rejects remembered memory permissions and portal rule expansion before releasing the live request
+     ↓ cancels 'incomplete envelope' rather than approving an incomplete review or a shell grant
+     ↓ cancels 'Save to memory: replace in memory' rather than approving an incomplete review or a shell grant
+     ↓ cancels 'Save to memory: remove from user prof…' rather than approving an incomplete review or a shell grant
+     ↓ cancels 'Save to memory: apply 1 op(s) to memo…' rather than approving an incomplete review or a shell grant
+     ↓ retains the identified terminal session flow separately from memory
+ ✓ server/private-backup-website-requests.test.ts (11 tests) 3051ms
+     ✓ v1 retains real execution links and pre-enqueue intent evidence but never restores command authority  383ms
+     ✓ v2 retains real execution links and pre-enqueue intent evidence but never restores command authority  450ms
+     ✓ v1 restores full review evidence and real executor links without remote authority  406ms
+     ✓ v2 restores full review evidence and real executor links without remote authority  615ms
+ ✓ server/windows-created-privacy.test.ts (27 tests) 2982ms
+     ✓ writeFileAtomic gives up after about a second, keeps the original and removes its temp  1036ms
+     ✓ writePrivateJson rides out a hold with its protected temp, and gives up with the original intact  1078ms
+     ✓ staging and cold apply admit only objects protected at creation, before content  407ms
+stderr | server/channels-telegram.test.ts > remote decisions > does not report failed delivery as an actionable card
+offline
+
+stderr | server/channels-telegram.test.ts > remote decisions > does not report failed delivery as an actionable card
+[remote-decisions] telegram review card delivery was not confirmed.
+
+ ✓ server/channels-telegram.test.ts (22 tests) 3037ms
+     ✓ never leaks the token into logs or public status  2059ms
+ ✓ server/private-backup-cold-restore.test.ts (19 tests) 1969ms
+ ✓ server/private-backup-archive.test.ts (13 tests) 9948ms
+     ✓ enforces the host catalog storage reservation through actual archive decode without losing the source  1464ms
+     ✓ retains more than the v1 record cap, exact closed draft fields and insertion order  7001ms
+ ✓ server/private-backup-transfer.test.ts (18 tests) 2668ms
+     ✓ resumes an exact prefix after reopening, seals the full file and retains a staged upload  1922ms
+ ❯ server/branching.test.ts (3 tests | 3 skipped) 625ms
+     ↓ forks on edit, replies on the new branch, and switches versions cleanly
+     ↓ refuses to rewind a live thread, then edits cleanly once it is stopped
+     ↓ replaces and drains one durable follow-up, then steers a live turn atomically
+ ✓ server/computer-proxy.test.ts (11 tests) 2501ms
+     ✓ does not verify a different query or an invalid expected URL  2113ms
+ ✓ server/customer-pack-skill-history.test.ts (19 tests) 2826ms
+     ✓ admits only a compact validated intent over an otherwise admitted near-2MB legacy root, then completes using the actual private writer after restart  317ms
+     ✓ preserves shared archive roots in configuration snapshots, removal, reintroduction and rollback, and reconciles an older archive retry  525ms
+ ✓ server/private-backup-skill-history.test.ts (9 tests) 2139ms
+     ✓ v1 preserves shared and removed-skill archive roots, rekeys, repairs native instructions and performs reviewed archived revert  649ms
+     ✓ v2 preserves shared and removed-skill archive roots, rekeys, repairs native instructions and performs reviewed archived revert  816ms
+ ✓ server/mail-ingestion.test.ts (49 tests) 2577ms
+     ✓ retains multilingual tasks beyond the old aggregate encrypted vault read limit  642ms
+ ✓ server/source-bill-storage.test.ts (16 tests) 2416ms
+     ✓ retains the 501st bill and 101st pattern with truthful complete compatibility and stable pages  543ms
+     ✓ retains the 8 MB encrypted entity ceiling and the last saved history on an oversized correction  1289ms
+ ✓ server/private-backup-source-bills.test.ts (5 tests) 1950ms
+     ✓ refuses an otherwise valid imported bill head larger than the live encrypted record ceiling  309ms
+     ✓ roundtrips more than 500 bills and 100 patterns, old aliases, reviews and pages under a different key  1115ms
+     ✓ reports the remaining version-one backup record ceiling instead of exporting partial history  322ms
+ ✓ server/company-installation-provision.test.ts (3 tests) 11256ms
+     ✓ provisions owned storage from the admitted runtime and reports it available  712ms
+     ✓ provisions from the runtime the installer staged, not the build machine  9843ms
+     ✓ records which runtime source was admitted, without a terminal step  700ms
+ ✓ server/private-backup-bank-amendment.test.ts (10 tests) 1819ms
+ ✓ server/private-backup-department-work.test.ts (8 tests) 1792ms
+     ✓ v1 preserves factual and pre-enqueue history while holding every restored request  389ms
+     ✓ v2 preserves factual and pre-enqueue history while holding every restored request  495ms
+ ✓ server/company-installation-binding.test.ts (21 tests) 1387ms
+ ✓ server/browser-task-signin.route.test.ts (2 tests) 1670ms
+     ✓ pauses an Ask task at sign-in, keeps it paused over a restart, and continues the same grant after sign-in  897ms
+ ✓ server/import-inspect.test.ts (6 tests) 1575ms
+     ✓ returns a mapping when the worker names real headers  371ms
+     ✓ drops a header the worker invented  397ms
+     ✓ returns null with an honest detail when the worker answers junk  360ms
+       ✓ reads the upload with the seat's own profile, not the shared base  443ms
+ ✓ server/private-backup-bill-review.test.ts (8 tests) 1527ms
+ ✓ server/law-watch.test.ts (8 tests) 1794ms
+     ✓ parses a drift report and persists it  369ms
+     ✓ treats empty drift as current  669ms
+     ✓ returns null when the worker answers junk  337ms
+     ✓ returns null when a drift item is missing a field  346ms
+ ✓ server/private-backup-v2-bootstrap.test.ts (4 tests) 1278ms
+     ✓ applies before stores load and exposes the persisted completion receipt through actual HTTP  759ms
+ ✓ server/store.test.ts (28 tests) 1450ms
+ ✓ server/customer-pack-upgrades.test.ts (15 tests) 1478ms
+ ✓ server/hermes-pack.test.ts (28 tests) 1405ms
+ ✓ electron/service-smoke.test.mjs (10 tests) 1340ms
+ ✓ server/bill-review-drafts.test.ts (30 tests) 1409ms
+     ✓ retains over 1,000 encrypted drafts and returns bounded summaries across all pages  601ms
+ ✓ server/comms.test.ts (11 tests) 1323ms
+     ✓ carries a question from bot A through the agents proxy to bot B and back  823ms
+ ✓ server/bill-proposals-history.test.ts (35 tests) 1090ms
+ ✓ server/workflow-projected-page.test.ts (19 tests) 1685ms
+     ✓ summarizes 32 near-limit encrypted records in a child whose heap cannot hold their full page  1444ms
+ ✓ server/bill-proposals.test.ts (26 tests) 882ms
+     ✓ admits beyond 1000 requests and preserves retained retries without dispatching an intent that lost its run  603ms
+ ✓ server/service-admin-api.test.ts (7 tests) 1460ms
+ ✓ server/private-backup-bank-retention.test.ts (4 tests) 1103ms
+     ✓ restores 501 retained batch identities and exact old reviewed bytes under a different key  526ms
+ ✓ server/recipe-distill.test.ts (3 tests) 1170ms
+     ✓ rewrites steps from the last run and leaves origins and evidence alone  426ms
+     ✓ returns 503 and leaves the recipe unchanged when the worker answers junk  364ms
+     ✓ returns 503 when rewritten steps are not usable  377ms
+ ✓ server/routines.test.ts (36 tests) 1135ms
+ ✓ server/website-requests.test.ts (23 tests) 1050ms
+ ✓ server/customer-pack-archive.review.test.ts (2 tests) 1045ms
+     ✓ refuses a missing recent generation even when committed archive bytes and counters are intact  502ms
+     ✓ resumes an archive interrupted during its atomic temp write without permanently breaking backup discovery  542ms
+ ✓ server/mail-workspace-http.test.ts (5 tests) 994ms
+     ✓ opens retained groups, counts, history and an exact old source after a real restart  451ms
+ ✓ server/mail-follow-up.test.ts (25 tests) 735ms
+ ✓ server/private-backup-mail-validation.test.ts (21 tests) 889ms
+ ✓ server/browser-grants.route.test.ts (3 tests) 953ms
+ ✓ server/connected-apps-broker.test.ts (70 tests) 915ms
+ ✓ server/execution-history.test.ts (14 tests) 1085ms
+     ✓ retains loop manual identities and historical results beyond 2,000 runs and restart without dispatch  543ms
+ ✓ server/composio-projects-cli.test.ts (14 tests) 1034ms
+ ✓ server/website-remote-work.test.ts (25 tests) 1015ms
+ ✓ server/department-work.test.ts (13 tests) 753ms
+ ✓ server/customer-packs.test.ts (29 tests) 939ms
+ ✓ server/channels-discord.test.ts (13 tests) 842ms
+ ✓ server/routines-recovery.test.ts (24 tests) 482ms
+ ✓ src/components/MemoryRecoveryPanel.test.ts (19 tests) 856ms
+ ✓ server/hermes-status.test.ts (12 tests) 1282ms
+     ✓ flags a version mismatch against the pin  361ms
+     ✓ is not ready until the hands test passes  359ms
+     ✓ distinguishes a stalled version probe from a missing install and permits retry  376ms
+ ✓ server/bill-review-http.test.ts (4 tests) 842ms
+     ✓ saves raw incomplete wording, rejects stale writes, and reopens after an actual restart  334ms
+ ✓ server/hermes-oauth.test.ts (10 tests) 823ms
+     ✓ parses device-code output from a fake hermes CLI and approves on auth.json  813ms
+ ✓ server/bank-reference-history.test.ts (24 tests) 645ms
+ ✓ server/worker-model-access.test.ts (14 tests) 704ms
+ ✓ server/hermes-update.test.ts (28 tests) 629ms
+ ✓ server/job-executor.test.ts (22 tests) 756ms
+ ✓ server/browser-runtime.test.ts (17 tests) 697ms
+ ✓ server/private-backup-resource-runtime.test.ts (10 tests) 634ms
+ ✓ server/hermes-memory-proposal-broker.test.ts (52 tests) 640ms
+ ✓ server/bank-reference-http.test.ts (3 tests) 722ms
+ ✓ server/company-execution-client.test.ts (12 tests) 545ms
+ ✓ server/workflow-packs-recovery.test.ts (21 tests) 429ms
+ ✓ server/browser-grants.test.ts (14 tests) 476ms
+ ✓ server/hermes-bridge.test.ts (17 tests) 509ms
+     ✓ runs a fake installer, verifies the version, and lands done  304ms
+ ✓ src/components/MemoryReviewPanel.test.ts (19 tests) 497ms
+ ✓ server/source-bills-api.test.ts (52 tests) 540ms
+     ✓ keeps the 501st saved bill and 101st arrival pattern addressable without a full-register API projection  430ms
+ ✓ server/company-department-outbox.test.ts (23 tests) 541ms
+ ✓ server/drivers/claude.test.ts (16 tests | 1 skipped) 527ms
+ ✓ server/agency-setup.test.ts (20 tests) 469ms
+ ✓ server/container-mcp.test.ts (1 test) 398ms
+     ✓ passes MCP bytes unchanged to cua-driver mcp over the container runtime  397ms
+ ✓ server/human-handoffs.test.ts (29 tests) 348ms
+ ✓ server/recipes.test.ts (24 tests) 338ms
+ ✓ server/env-path.test.ts (14 tests | 7 skipped) 377ms
+     ✓ keeps the last login-shell PATH available during a rescan  361ms
+ ✓ server/support-bundle.test.ts (12 tests) 491ms
+ ✓ server/hermes-profile-storage.test.ts (29 tests) 362ms
+ ✓ server/service-control-api.test.ts (4 tests) 487ms
+ ✓ server/job-runs.test.ts (22 tests) 371ms
+ ✓ server/drivers/codex.test.ts (9 tests) 390ms
+ ✓ server/private-backup-prepare.test.ts (13 tests) 307ms
+ ✓ server/drivers/acp/browser-approval.test.ts (3 tests) 324ms
+ ✓ server/tasks.test.ts (7 tests) 328ms
+ ✓ server/customer-pack-upgrades.review.test.ts (5 tests) 333ms
+ ✓ server/gates.test.ts (9 tests) 321ms
+ ✓ server/desk-unlock.test.ts (4 tests) 348ms
+ ✓ server/rent-workflow.test.ts (18 tests) 276ms
+ ✓ server/channels-slack.test.ts (5 tests) 234ms
+ ✓ server/desk-store.test.ts (8 tests) 227ms
+ ✓ server/postgres-relocatable.test.ts (14 tests) 128ms
+ ✓ server/company/host-transport.test.ts (26 tests) 279ms
+ ✓ server/connected-app-operations.test.ts (12 tests) 199ms
+ ✓ electron/desk-key-custody.test.mjs (25 tests | 1 skipped) 217ms
+ ✓ server/portal-handoff.test.ts (3 tests) 207ms
+ ✓ server/bill-proposals-retention.test.ts (10 tests) 237ms
+ ✓ server/routines-service-restart.test.ts (2 tests) 257ms
+ ✓ server/service-admin.test.ts (48 tests) 239ms
+ ✓ server/company/host-certificate.test.ts (3 tests) 188ms
+ ✓ server/desk-v3-commit.test.ts (24 tests) 172ms
+ ✓ server/website-work-adapters.test.ts (15 tests) 160ms
+ ✓ server/company-outbox.test.ts (5 tests) 153ms
+ ✓ server/company/member-credentials.test.ts (5 tests) 177ms
+ ✓ server/morning-mail-scheduler.test.ts (6 tests) 131ms
+ ✓ server/worker-bootstrap.test.ts (15 tests) 135ms
+ ✓ server/accounts-review.test.ts (35 tests) 141ms
+ ✓ server/drivers/acp/browser-grant.test.ts (3 tests) 130ms
+ ✓ server/expected-bills-page.test.ts (8 tests) 160ms
+ ✓ src/lib/tts/index.test.ts (3 tests) 116ms
+ ✓ server/portal-sessions.test.ts (4 tests) 118ms
+ ✓ server/drivers/antigravity.test.ts (8 tests) 119ms
+ ✓ server/workspace-tabs.test.ts (19 tests) 92ms
+ ✓ server/store-recovery.test.ts (41 tests) 91ms
+ ✓ server/private-backup-http.test.ts (3 tests) 87ms
+ ✓ server/desk-v3-matrix.test.ts (13 tests) 93ms
+ ✓ server/composio.test.ts (94 tests) 86ms
+ ✓ server/browser-authority.test.ts (110 tests) 86ms
+stderr | server/remote-decisions.test.ts > review card identity and recovery > keeps a saved decision successful when notification fails
+[remote-decisions] Decision saved; its notification update failed.
+
+stderr | server/remote-decisions.test.ts > review card identity and recovery > recovers failed delivery using the same card identity
+[remote-decisions] telegram review card delivery was not confirmed.
+
+ ✓ server/remote-decisions.test.ts (34 tests) 77ms
+ ✓ server/company/initial-credential.test.ts (2 tests) 90ms
+ ✓ server/expected-bills.test.ts (25 tests) 76ms
+ ✓ server/drivers/agents-proxy.test.ts (7 tests) 89ms
+ ✓ server/source-bills.test.ts (21 tests) 101ms
+ ✓ server/company-installation.test.ts (6 tests) 70ms
+ ✓ server/composio-mail-scan.test.ts (39 tests) 71ms
+ ✓ server/rules.test.ts (9 tests) 62ms
+ ✓ server/bank-reference-amendment.test.ts (11 tests) 59ms
+ ✓ server/worker-issues.test.ts (4 tests) 70ms
+ ✓ server/ask-attach.test.ts (13 tests | 5 skipped) 53ms
+ ✓ server/atomic.test.ts (6 tests) 65ms
+ ✓ server/private-vault.test.ts (3 tests) 57ms
+ ✓ server/browser-approval-card.test.ts (6 tests) 65ms
+ ✓ server/private-json.test.ts (5 tests) 73ms
+ ✓ src/lib/workspace-copy.test.ts (1 test) 54ms
+ ✓ server/kill-tree.test.ts (1 test) 52ms
+ ✓ server/ask-attach-privacy.test.ts (9 tests) 39ms
+ ✓ server/company/host-runtime.test.ts (14 tests) 38ms
+ ✓ electron/service-lifecycle.test.mjs (38 tests) 24ms
+ ✓ server/composio-gmail.test.ts (92 tests) 54ms
+ ✓ server/computer-history.test.ts (4 tests) 52ms
+ ✓ server/composio-project.test.ts (33 tests) 47ms
+ ✓ server/manual-job-request.test.ts (16 tests) 39ms
+ ✓ server/hands-last.test.ts (3 tests) 37ms
+ ✓ src/lib/private-backup-transfer.test.ts (39 tests) 40ms
+ ✓ src/lib/company-department-preparation.test.ts (8 tests) 25ms
+ ✓ server/workflow-packs.test.ts (9 tests) 66ms
+ ✓ server/workspace-activity.test.ts (8 tests) 35ms
+ ✓ src/components/you/AiUsageCard.test.ts (4 tests) 18ms
+ ✓ server/managed-connectors.test.ts (33 tests) 50ms
+ ✓ server/bank-reference.test.ts (34 tests) 29ms
+ ✓ server/workspace-identity.test.ts (4 tests) 36ms
+ ✓ server/tts/tts.test.ts (10 tests) 34ms
+ ✓ server/company/portal-proof.test.ts (14 tests) 29ms
+ ✓ server/channel-pairing.test.ts (3 tests) 30ms
+ ✓ electron/package-files.test.mjs (7 tests) 24ms
+ ✓ server/hermes-runtime-env.test.ts (4 tests) 25ms
+ ✓ electron/service-watchdog.test.mjs (18 tests) 9ms
+ ✓ src/components/BrowserTaskCard.test.ts (14 tests) 26ms
+ ✓ server/service-child-env.test.ts (4 tests) 31ms
+ ✓ server/audit-artifacts.test.ts (1 test) 22ms
+ ✓ electron/service-instance.test.mjs (18 tests) 16ms
+ ✓ server/package-layout.test.ts (2 tests) 27ms
+ ✓ server/vault.test.ts (2 tests) 28ms
+ ✓ src/components/you/OfficeCard.test.ts (3 tests) 23ms
+ ✓ src/components/you/WebsiteLinkCard.test.ts (12 tests) 22ms
+ ✓ server/service-entitlement.test.ts (38 tests) 26ms
+ ✓ server/private-backup-pack-history.test.ts (6 tests) 16ms
+ ✓ server/hermes-memory-review.test.ts (87 tests) 18ms
+ ✓ src/components/AskMessage.test.ts (6 tests) 18ms
+ ✓ src/lib/local-session.test.ts (17 tests) 20ms
+ ✓ src/lib/company-api.test.ts (24 tests) 16ms
+ ✓ src/components/Composer.test.ts (6 tests) 19ms
+ ✓ server/customer-pack-skill-backup.test.ts (13 tests) 20ms
+ ✓ src/components/PendingApproval.test.ts (22 tests) 18ms
+ ✓ server/desk-context.test.ts (4 tests) 18ms
+ ✓ src/components/BudSetupCard.test.ts (7 tests) 17ms
+ ✓ server/company/postgres-runtime.test.ts (15 tests) 19ms
+ ✓ server/hermes-profile.test.ts (14 tests) 16ms
+ ✓ src/components/BrowserApprovalCard.test.ts (6 tests) 19ms
+ ✓ server/bootstrap-install.test.ts (7 tests) 16ms
+ ✓ server/private-file.test.ts (4 tests) 16ms
+ ✓ src/lib/schedule-week.test.ts (21 tests) 16ms
+ ✓ src/lib/company-department-lifecycle-api.test.ts (28 tests) 15ms
+ ✓ src/lib/book-groups.test.ts (17 tests) 14ms
+ ✓ server/website-requests-transport.test.ts (13 tests) 16ms
+ ✓ server/windows-file-privacy-diagnostics.test.ts (33 tests) 11ms
+ ✓ src/components/ChatView.test.ts (7 tests) 10ms
+ ✓ server/portal-job-intent.test.ts (113 tests) 13ms
+ ✓ src/lib/company-work-api.test.ts (6 tests) 12ms
+ ✓ src/lib/source-bill-form.test.ts (8 tests) 12ms
+ ✓ src/lib/company-department-api.test.ts (14 tests) 13ms
+ ✓ server/desk-v3.test.ts (9 tests) 15ms
+ ✓ src/components/GmailReadOnlySetup.test.ts (13 tests) 12ms
+ ✓ server/pulses.test.ts (4 tests) 13ms
+ ✓ src/lib/company-departments-api.test.ts (5 tests) 11ms
+ ✓ server/composio-owner-isolation.test.ts (8 tests) 13ms
+ ✓ server/private-backup-api.test.ts (27 tests) 9ms
+ ✓ server/composer-attachments.test.ts (8 tests) 4ms
+ ✓ server/owner-letter.test.ts (6 tests) 12ms
+ ✓ src/components/desk/GoLiveCard.test.ts (11 tests) 10ms
+ ✓ server/website-remote-disclosure.test.ts (3 tests) 12ms
+ ✓ server/procs.test.ts (3 tests) 16ms
+ ✓ server/hermes-memory-proposals.test.ts (17 tests) 8ms
+ ✓ server/website-remote-work-contract.test.ts (7 tests) 11ms
+ ✓ src/lib/company-portal-code.test.ts (5 tests) 10ms
+ ✓ src/components/you/UnattendedWorkCard.test.ts (16 tests) 9ms
+ ✓ src/lib/service-admin-session.test.ts (20 tests) 8ms
+ ✓ server/source-bill-retention-review.test.ts (2 tests) 11ms
+ ✓ server/session-auth.test.ts (78 tests) 10ms
+ ✓ server/windows-file-privacy-sync.test.ts (11 tests) 8ms
+ ✓ src/components/HumanHandoffPanel.test.ts (6 tests) 7ms
+ ✓ src/components/schedule/CustomerPackChangeReview.test.ts (2 tests) 7ms
+ ✓ src/lib/connected-apps.test.ts (10 tests) 7ms
+ ✓ src/components/schedule/PackSkillHistory.test.ts (2 tests) 7ms
+ ✓ src/components/you/SupportCard.test.ts (4 tests) 7ms
+ ✓ server/tool-fingerprint.test.ts (3 tests) 8ms
+stderr | server/harness/bus.test.ts > EventBus > drops events claiming a different driver kind (cross-driver invariant)
+bus: dropped cross-driver event from inst-1
+
+stderr | server/harness/bus.test.ts > EventBus > a throwing listener does not starve the others
+bus: listener threw Error: bad listener
+    at /Users/yoda/projects/RealBud/server/harness/bus.test.ts:91:13
+    at EventBus.publish (/Users/yoda/projects/RealBud/server/harness/bus.ts:41:9)
+    at /Users/yoda/projects/RealBud/server/harness/bus.test.ts:95:9
+    at file:///Users/yoda/projects/RealBud/node_modules/.pnpm/@vitest+runner@4.1.10/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+    at file:///Users/yoda/projects/RealBud/node_modules/.pnpm/@vitest+runner@4.1.10/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+    at file:///Users/yoda/projects/RealBud/node_modules/.pnpm/@vitest+runner@4.1.10/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+    at new Promise (<anonymous>)
+    at runWithCancel (file:///Users/yoda/projects/RealBud/node_modules/.pnpm/@vitest+runner@4.1.10/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)
+    at file:///Users/yoda/projects/RealBud/node_modules/.pnpm/@vitest+runner@4.1.10/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+    at new Promise (<anonymous>)
+
+ ✓ server/harness/bus.test.ts (6 tests) 8ms
+ ✓ server/batch-persistence.test.ts (14 tests) 6ms
+ ✓ src/lib/desk-ask-context.test.ts (11 tests) 7ms
+ ✓ server/permission-policy.test.ts (18 tests) 6ms
+ ✓ src/components/ServiceStatusCard.test.ts (5 tests) 6ms
+ ✓ src/lib/schedule-state.test.ts (21 tests) 5ms
+ ✓ src/components/WorkspaceExperience.test.ts (5 tests) 6ms
+ ✓ src/lib/office-source-store.test.ts (11 tests) 6ms
+ ✓ src/components/schedule/AgencyWorkflowSetup.test.ts (2 tests) 6ms
+ ✓ server/connected-app-access.test.ts (25 tests) 7ms
+ ✓ server/schedule-intent.test.ts (4 tests) 5ms
+ ✓ server/office-core-pack.test.ts (3 tests) 6ms
+ ✓ src/lib/work-continuation.test.ts (9 tests) 6ms
+{"at":"2026-09-23T02:30:36.346Z","event":"crash","detail":"worker failed with XAI_API_KEY=«redacted 24 chars» in env"}
+ ✓ server/oplog.test.ts (5 tests) 7ms
+ ✓ server/ask-control-intent.test.ts (10 tests) 7ms
+ ✓ src/lib/setup-sequence.test.ts (26 tests) 6ms
+ ✓ src/lib/private-backup.test.ts (9 tests) 6ms
+ ✓ server/tts/speech-text.test.ts (22 tests) 5ms
+ ✓ server/private-backup-v2-api.test.ts (9 tests) 4ms
+ ✓ server/hermes-memory-recovery.test.ts (6 tests) 5ms
+ ✓ src/lib/company-status-monitor.test.ts (4 tests) 5ms
+ ✓ electron/shutdown.test.mjs (4 tests) 4ms
+ ✓ server/portal-fence.test.ts (22 tests) 5ms
+ ✓ src/lib/drafts.test.ts (8 tests) 5ms
+ ✓ src/lib/desk-queue.test.ts (10 tests) 5ms
+ ✓ server/container-computer.test.ts (19 tests) 6ms
+ ✓ shared/company-execution.test.ts (8 tests) 4ms
+ ✓ electron/server-supervisor.test.mjs (15 tests) 4ms
+ ✓ electron/unattended-host.test.mjs (19 tests) 4ms
+ ✓ server/drivers/acp/hermes-memory-approval.test.ts (25 tests) 5ms
+ ✓ electron/service-persistence.test.mjs (22 tests) 5ms
+ ✓ src/lib/ask-next.test.ts (18 tests) 4ms
+ ✓ electron/updater-action.test.mjs (2 tests) 4ms
+ ✓ server/mail-workspace-query.test.ts (15 tests) 3ms
+ ✓ shared/browser-task.test.ts (31 tests) 4ms
+ ✓ server/ask-book.test.ts (15 tests) 5ms
+ ✓ shared/installation-link.test.ts (9 tests) 4ms
+ ✓ src/lib/bank-file.test.ts (3 tests) 5ms
+ ✓ src/lib/company-work-response.test.ts (7 tests) 4ms
+ ✓ src/lib/office-setup.test.ts (15 tests) 4ms
+ ✓ server/csv-ledger.test.ts (13 tests) 5ms
+ ✓ electron/cua-login-check.test.mjs (9 tests) 4ms
+ ✓ server/local-computer.test.ts (6 tests) 6ms
+ ✓ src/lib/job-run.test.ts (10 tests) 4ms
+ ✓ src/lib/bill-review-drafts.test.ts (8 tests) 4ms
+ ✓ electron/perm-settings.test.mjs (14 tests) 3ms
+ ✓ server/morning-mail-workflow.test.ts (8 tests) 4ms
+ ✓ server/hermes-release-admission.test.ts (11 tests) 3ms
+ ✓ src/lib/manual-loop-request.test.ts (10 tests) 4ms
+ ✓ src/lib/service-status.test.ts (25 tests) 4ms
+ ✓ electron/cua-connection.test.mjs (1 test) 3ms
+ ✓ src/lib/mail-pages.test.ts (17 tests) 4ms
+ ✓ src/lib/portal-job.test.ts (13 tests) 4ms
+ ✓ server/department-execution-context.test.ts (14 tests) 10ms
+ ✓ server/department-worker.test.ts (11 tests | 9 skipped) 4ms
+ ✓ src/lib/phone-connections.test.ts (8 tests) 3ms
+ ✓ electron/log-directory.test.mjs (13 tests) 3ms
+ ✓ src/lib/workday.test.ts (17 tests) 3ms
+ ✓ shared/browser-approval-card.test.ts (10 tests) 3ms
+ ✓ src/lib/job-plan.test.ts (13 tests) 4ms
+ ✓ server/hermes-pin.test.ts (10 tests) 3ms
+ ✓ server/turn-watchdog.test.ts (10 tests) 3ms
+ ✓ src/lib/company-join-code.test.ts (8 tests) 4ms
+ ✓ src/lib/morning-brief.test.ts (9 tests) 3ms
+ ✓ server/channel-handoff.test.ts (3 tests) 4ms
+ ✓ server/auto-approve.test.ts (40 tests) 4ms
+ ✓ electron/cua-bounded.test.mjs (1 test) 3ms
+ ✓ src/lib/manual-job-request.test.ts (10 tests) 3ms
+ ✓ src/lib/bud-availability.test.ts (13 tests) 3ms
+ ✓ src/lib/work-activity.test.ts (6 tests) 3ms
+ ✓ server/harness/registry.test.ts (7 tests) 3ms
+ ✓ server/connected-status-intent.test.ts (3 tests) 4ms
+ ✓ server/drafts.test.ts (2 tests) 4ms
+ ✓ server/redact.test.ts (9 tests) 4ms
+ ✓ src/lib/telegram-channel.test.ts (10 tests) 3ms
+ ✓ electron/terminal-launch.test.mjs (5 tests) 3ms
+ ✓ server/drivers/acp/hermes-env.test.ts (11 tests) 3ms
+ ✓ src/lib/bud-readiness.test.ts (2 tests) 3ms
+ ✓ src/lib/composer-office-toolkit.test.ts (4 tests) 3ms
+ ✓ server/website-remote-contract.test.ts (3 tests) 4ms
+ ✓ src/lib/bank-history.test.ts (10 tests) 3ms
+ ✓ server/managed-service.test.ts (2 tests) 4ms
+ ✓ src/lib/you-navigation.test.ts (17 tests) 3ms
+ ✓ src/lib/boot-heal.test.ts (3 tests) 3ms
+ ✓ src/lib/compose-job.test.ts (5 tests) 3ms
+ ✓ electron/capabilities.test.mjs (6 tests) 2ms
+ ✓ server/cua-bounded.test.ts (5 tests) 3ms
+ ✓ src/lib/batch-review.test.ts (5 tests) 3ms
+ ✓ server/product-mode.test.ts (8 tests) 3ms
+ ✓ server/computer-lease.test.ts (4 tests) 3ms
+ ✓ server/postgres-artifacts.test.ts (11 tests) 3ms
+ ✓ src/lib/first-run.test.ts (19 tests) 4ms
+ ✓ src/lib/office.test.ts (10 tests) 3ms
+ ✓ server/testing/private-profile-fixture.test.ts (3 tests) 3ms
+ ✓ src/lib/app-route.test.ts (7 tests) 3ms
+ ✓ src/lib/office-wind-down.test.ts (13 tests) 3ms
+ ✓ server/rent-source-dates.test.ts (4 tests) 3ms
+ ✓ server/hermes-paths.test.ts (4 tests) 2ms
+ ✓ src/lib/source-bill-pages.test.ts (5 tests) 3ms
+ ✓ src/lib/manual-job-request-resume.test.ts (3 tests) 3ms
+ ✓ src/lib/tool-label.test.ts (7 tests) 3ms
+ ✓ src/lib/call.test.ts (3 tests) 2ms
+ ✓ src/lib/chat-scroll.test.ts (3 tests) 3ms
+ ✓ server/computer-observation.test.ts (3 tests) 3ms
+ ✓ src/lib/property-edits.test.ts (4 tests) 3ms
+ ✓ src/lib/bud-setup.test.ts (6 tests) 3ms
+ ✓ server/website-execution-context.test.ts (4 tests) 3ms
+ ✓ server/engine-setup.test.ts (5 tests) 3ms
+ ✓ src/lib/phone-label.test.ts (7 tests) 3ms
+ ✓ src/lib/computer-activity.test.ts (2 tests) 3ms
+ ✓ src/lib/hands-label.test.ts (5 tests) 3ms
+ ✓ src/lib/workspace-preferences.test.ts (8 tests) 2ms
+ ✓ src/lib/channel-message.test.ts (13 tests) 2ms
+ ✓ server/service-control.test.ts (5 tests) 2ms
+ ✓ server/company/workflow-template.test.ts (6 tests) 3ms
+ ✓ server/office-source-turn.test.ts (5 tests) 3ms
+ ✓ server/desk-work.test.ts (4 tests) 3ms
+ ✓ server/single-flight.test.ts (2 tests) 3ms
+ ✓ src/lib/group-call.test.ts (3 tests) 3ms
+ ✓ server/property-portals.test.ts (7 tests) 3ms
+ ✓ server/request-decision.test.ts (8 tests) 3ms
+ ✓ src/lib/law-watch.test.ts (5 tests) 2ms
+ ✓ server/intake.test.ts (4 tests) 3ms
+ ✓ server/decode.test.ts (2 tests) 2ms
+ ✓ server/box-errors.test.ts (5 tests) 2ms
+ ✓ server/connection-intent.test.ts (2 tests) 2ms
+ ✓ src/lib/worker-issues.test.ts (3 tests) 2ms
+ ✓ src/lib/go-live.test.ts (3 tests) 2ms
+ ✓ server/channel-continuation.test.ts (4 tests) 2ms
+ ✓ src/lib/completeness.test.ts (4 tests) 2ms
+ ✓ src/lib/looks-like-secret.test.ts (1 test) 2ms
+ ✓ server/desk-v3-demo-breadth.test.ts (1 test) 2ms
+ ✓ server/config.test.ts (2 tests) 2ms
+ ✓ server/care-unlock.test.ts (2 tests) 2ms
+ ✓ src/lib/push-to-talk.test.ts (1 test) 2ms
+ ✓ src/lib/workspace-view-state.test.ts (3 tests) 2ms
+ ✓ src/lib/notify-desktop.test.ts (5 tests) 2ms
+ ✓ src/lib/api-error.test.ts (3 tests) 2ms
+ ✓ src/lib/ask-attach.test.ts (1 test) 2ms
+ ✓ src/lib/source-check.test.ts (3 tests) 2ms
+ ✓ server/chief-of-staff.test.ts (2 tests) 2ms
+ ✓ src/lib/task-progress.test.ts (2 tests) 2ms
+ ✓ server/desk-key.test.ts (1 test) 2ms
+ ✓ server/windows-file-privacy.test.ts (9 tests | 8 skipped) 2ms
+ ✓ src/lib/product-bud.test.ts (1 test) 2ms
+ ✓ server/proxy-paths.test.ts (2 tests) 2ms
+ ✓ src/lib/desk.test.ts (1 test) 2ms
+ ↓ server/company-departments.integration.test.ts (11 tests | 11 skipped)
+ ↓ server/company-execution-transport.integration.test.ts (4 tests | 4 skipped)
+ ↓ server/company-host.test.ts (8 tests | 8 skipped)
+ ↓ server/company-installation.integration.test.ts (6 tests | 6 skipped)
+ ↓ server/company-recovery.integration.test.ts (5 tests | 5 skipped)
+ ↓ server/company-work.integration.test.ts (9 tests | 9 skipped)
+ ↓ server/hermes-memory-proposals-http.test.ts (3 tests | 3 skipped)
+ ↓ server/hermes-memory-recovery.native.test.ts (3 tests | 3 skipped)
+ ↓ server/hermes-memory-review.native.test.ts (36 tests | 36 skipped)
+ ↓ server/hermes-profile-windows.test.ts (8 tests | 8 skipped)
+ ↓ server/company/backup.integration.test.ts (9 tests | 9 skipped)
+ ↓ server/company/department-execution.integration.test.ts (18 tests | 18 skipped)
+ ↓ server/company/department-lifecycle.integration.test.ts (13 tests | 13 skipped)
+ ↓ server/company/department-recovery.integration.test.ts (7 tests | 7 skipped)
+ ↓ server/company/departments-transport.integration.test.ts (3 tests | 3 skipped)
+ ↓ server/company/departments.integration.test.ts (7 tests | 7 skipped)
+ ↓ server/company/initial-enrollment.integration.test.ts (5 tests | 5 skipped)
+ ↓ server/company/member-auth.integration.test.ts (6 tests | 6 skipped)
+ ↓ server/company/membership.integration.test.ts (6 tests | 6 skipped)
+ ↓ server/company/multi-agency-transport.integration.test.ts (3 tests | 3 skipped)
+ ↓ server/company/portal-bindings.integration.test.ts (18 tests | 18 skipped)
+ ↓ server/company/postgres.integration.test.ts (17 tests | 17 skipped)
+ ↓ server/company/work-items.integration.test.ts (11 tests | 11 skipped)
+ ↓ server/company/workflow-template.integration.test.ts (5 tests | 5 skipped)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/attended-run.test.ts > attended run route (fake ACP)
+Error: server exited 1. stderr:
+file:///Users/yoda/projects/RealBud/server/index.ts:2740
+const onboarding = createOnboardingHandler({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, memberKey: () => desk.memberKeyForWorker() });
+                                                                               ^
+
+ReferenceError: Cannot access 'workspaceIdentity' before initialization
+    at file:///Users/yoda/projects/RealBud/server/index.ts:2740:80
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+
+Node.js v24.19.0
+
+ ❯ server/index.ts:2740:80
+ ❯ server/attended-run.test.ts:412:42
+    410|       }
+    411|       if (Date.now() > deadline) throw new Error(`server never came up…
+    412|       if (child.exitCode !== null) throw new Error(`server exited ${ch…
+       |                                          ^
+    413|       await new Promise((resolve) => setTimeout(resolve, 150));
+    414|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  server/branching.test.ts > conversation branching e2e (fake ACP fleet)
+Error: server exited 1. stderr:
+file:///Users/yoda/projects/RealBud/server/index.ts:2740
+const onboarding = createOnboardingHandler({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, memberKey: () => desk.memberKeyForWorker() });
+                                                                               ^
+
+ReferenceError: Cannot access 'workspaceIdentity' before initialization
+    at file:///Users/yoda/projects/RealBud/server/index.ts:2740:80
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+
+Node.js v24.19.0
+
+ ❯ server/index.ts:2740:80
+ ❯ server/branching.test.ts:117:42
+    115|       }
+    116|       if (Date.now() > deadline) throw new Error(`server never came up…
+    117|       if (child.exitCode !== null) throw new Error(`server exited ${ch…
+       |                                          ^
+    118|       await new Promise((r) => setTimeout(r, 150));
+    119|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  server/hermes-memory-approval-http.test.ts > Hermes memory approval HTTP (product)
+ FAIL  server/hermes-memory-approval-http.test.ts > Hermes memory approval HTTP (legacy)
+Error: Service exited: file:///Users/yoda/projects/RealBud/server/index.ts:2740
+const onboarding = createOnboardingHandler({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, memberKey: () => desk.memberKeyForWorker() });
+                                                                               ^
+
+ReferenceError: Cannot access 'workspaceIdentity' before initialization
+    at file:///Users/yoda/projects/RealBud/server/index.ts:2740:80
+
+Node.js v24.19.0
+
+ ❯ server/index.ts:2740:80
+ ❯ until server/hermes-memory-approval-http.test.ts:48:73
+     46|     const deadline = Date.now() + 10_000;
+     47|     while (Date.now() < deadline) {
+     48|       if (child && (child.exitCode !== null || child.signalCode)) thro…
+       |                                                                         ^
+     49|       const result = await read();
+     50|       if (result !== false) return result;
+ ❯ server/hermes-memory-approval-http.test.ts:125:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  server/index.test.ts [ server/index.test.ts ]
+Error: server exited 1. stderr:
+file:///Users/yoda/projects/RealBud/server/index.ts:2740
+const onboarding = createOnboardingHandler({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, memberKey: () => desk.memberKeyForWorker() });
+                                                                               ^
+
+ReferenceError: Cannot access 'workspaceIdentity' before initialization
+    at file:///Users/yoda/projects/RealBud/server/index.ts:2740:80
+
+Node.js v24.19.0
+
+ ❯ server/index.ts:2740:80
+ ❯ server/index.test.ts:247:40
+    245|     }
+    246|     if (Date.now() > deadline) throw new Error(`server never came up. …
+    247|     if (child.exitCode !== null) throw new Error(`server exited ${chil…
+       |                                        ^
+    248|     await new Promise((r) => setTimeout(r, 150));
+    249|   }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+
+ Test Files  4 failed | 387 passed | 24 skipped (415)
+      Tests  5451 passed | 337 skipped (5788)
+   Start at  12:24:24
+   Duration  385.00s (transform 4.15s, setup 1.63s, import 12.94s, tests 344.04s, environment 20ms)
+
+JSON report written to /Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/regression/vitest-report.json
+ ELIFECYCLE  Test failed. See above for more details.

@@ -1,0 +1,13 @@
+PASS Actual upload and original download preserve BOM, Unicode, quoted multiline values, newlines and filename
+PASS Actual reviewed binary download changes only the approved reference and retains its quoting
+PASS Reloaded saved review retains the original byte artifact
+PASS Unsupported encoding clears the pending upload and leaves saved reviews unchanged
+PASS Legacy text reviews remain available with an explicit original-byte limitation
+PASS Real HTTP and UI continuation retain the captured total and exclude an interleaved new import
+PASS An older exact review and both byte-verified downloads remain open after refreshing away its history page
+PASS History paging and refresh retain partial human decisions while switching, reloading and importing are disabled
+PASS Injected history-response failure retains loaded rows and unsaved decisions; mobile discard cancellation retains the draft
+PASS Explicit discard clears only the unsaved form; original saved review and all 27 imports remain unchanged
+PASS A failed exact-review open leaves the previously selected review intact
+PASS A delayed real saved-settings response cannot overwrite mapping, date format or directory already being edited
+PASS No browser JavaScript errors

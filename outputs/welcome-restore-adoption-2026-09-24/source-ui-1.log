@@ -1,0 +1,6 @@
+AssertionError [ERR_ASSERTION]: /api/private-backup: {"error":"Backup storage needs recovery. Existing business files are preserved.","code":"storage-unavailable"}
+    at request (file:///Users/yoda/projects/RealBud/scripts/qa-onboarding-restart.mjs:69:47)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async assertFreshWelcome (file:///Users/yoda/projects/RealBud/scripts/qa-onboarding-restart.mjs:103:55)
+    at async enterBackup (file:///Users/yoda/projects/RealBud/scripts/qa-onboarding-restart.mjs:114:5)
+    at async file:///Users/yoda/projects/RealBud/scripts/qa-onboarding-restart.mjs:125:21

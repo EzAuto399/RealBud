@@ -1,0 +1,48 @@
+{
+  "evidence_kind": "captured tool results from completed checks; not a new test run",
+  "recorded_at_utc": "2026-09-23T02:43:24.994523+00:00",
+  "runtime": "Node.js 24.19.0",
+  "source_sha256": {
+    "server/worker-model-access.ts": "a46c99a6f69eb26bf34504645d867d043f5e5e3bbcc56c85b1da51432e0fbbab",
+    "server/worker-model-access.test.ts": "341dc442666624463a0df0152beffd78569c2e7ca692ba40887b4642cd060837",
+    "server/office-link.test.ts": "c017276bd689e4aa6488e654bd3419a94eff9ed561158fb65ee819c9d82c3e9b"
+  },
+  "red_regression": {
+    "command": "PATH=/Users/yoda/.nvm/versions/node/v24.19.0/bin:$PATH COREPACK_HOME=/Users/yoda/.cache/node/corepack COREPACK_ENABLE_NETWORK=0 pnpm exec vitest run server/worker-model-access.test.ts server/office-link.test.ts -t 'config recovery'",
+    "exit_code": 1,
+    "passed": 1,
+    "failed": 1,
+    "skipped": 50,
+    "failure": "promise resolved undefined instead of rejecting in keeps provisioning intact when disconnect needs config recovery, then clears on a repaired retry"
+  },
+  "final_checks": [
+    {
+      "command": "PATH=/Users/yoda/.nvm/versions/node/v24.19.0/bin:$PATH COREPACK_HOME=/Users/yoda/.cache/node/corepack COREPACK_ENABLE_NETWORK=0 pnpm exec vitest run server/worker-model-access.test.ts server/office-link.test.ts",
+      "exit_code": 0,
+      "files_passed": 2,
+      "passed": 52,
+      "failed": 0,
+      "skipped": 0,
+      "duration_seconds": 12.4,
+      "started_local_time": "12:41:59",
+      "tool_output_chunk_id": "94fd56"
+    },
+    {
+      "command": "PATH=/Users/yoda/.nvm/versions/node/v24.19.0/bin:$PATH COREPACK_HOME=/Users/yoda/.cache/node/corepack COREPACK_ENABLE_NETWORK=0 pnpm exec tsc -p tsconfig.server.json",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "",
+      "tool_output_chunk_id": "9d1c92"
+    },
+    {
+      "command": "git diff --check -- server/worker-model-access.ts server/worker-model-access.test.ts server/office-link.test.ts",
+      "exit_code": 0,
+      "tool_output_chunk_id": "b4214c"
+    }
+  ],
+  "limits": [
+    "No native Windows execution",
+    "No live website/provider calls",
+    "Evidence saved after checks from tool outputs; source files unchanged since verification"
+  ]
+}

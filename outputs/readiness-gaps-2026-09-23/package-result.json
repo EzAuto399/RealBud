@@ -1,0 +1,21 @@
+{
+  "completedAt": "2026-09-23T05:44:49.713347+00:00",
+  "packageExitCode": 0,
+  "elapsedSeconds": 511.71,
+  "head": "e82ea2f067b7aa73d9bdc6e355a9bc4f1f1694c7",
+  "sourceSha256": "8125442d9256ecd30664349efa48920aca4dfc1aa5e95e4a6dae792cc0817a87",
+  "sourceSha256After": "1571af70eac7b53beb605f5ff09d9d7c49f74c6474ad393a2e9b353c3b7839eb",
+  "sourceUnchangedDuringBuild": false,
+  "sourceFileCount": 1300,
+  "notarized": false,
+  "installedAppReplaced": false,
+  "signatureVerifyExitCode": 0,
+  "packagedSmokeExitCode": 0,
+  "archives": [
+    {
+      "path": "outputs/readiness-gaps-2026-09-23/package/RealBud-0.1.19-arm64.zip",
+      "sha256": "f805bd8e0568316846c49df4b70eda247b63b4d00dffcb96f210db1068d043ec"
+    }
+  ],
+  "passed": false
+}

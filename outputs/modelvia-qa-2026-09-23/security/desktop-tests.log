@@ -1,0 +1,18 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/Users/yoda/projects/RealBud[39m
+
+ [32m✓[39m server/worker-model-access.test.ts [2m([22m[2m15 tests[22m[2m)[22m[33m 809[2mms[22m[39m
+ [32m✓[39m server/private-vault.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 64[2mms[22m[39m
+ [32m✓[39m server/office-link.test.ts [2m([22m[2m37 tests[22m[2m)[22m[33m 5602[2mms[22m[39m
+     [33m[2m✓[22m[39m maps an unreachable, refusing or malformed account to one honest state [33m 871[2mms[22m[39m
+     [33m[2m✓[22m[39m retries a dropped connection or a 5xx once, and a refusal not at all [33m 2334[2mms[22m[39m
+     [33m[2m✓[22m[39m retries a status poll once after a network error and keeps the request on a bad answer [33m 1517[2mms[22m[39m
+ [32m✓[39m server/session-auth.test.ts [2m([22m[2m78 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m server/redact.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m5 passed[39m[22m[90m (5)[39m
+[2m      Tests [22m [1m[32m142 passed[39m[22m[90m (142)[39m
+[2m   Start at [22m 13:23:43
+[2m   Duration [22m 7.39s[2m (transform 344ms, setup 46ms, import 455ms, tests 6.49s, environment 0ms)[22m
+
+JSON report written to /Users/yoda/projects/RealBud/outputs/modelvia-qa-2026-09-23/security/desktop-results.json

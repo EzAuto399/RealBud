@@ -1,0 +1,6 @@
+{
+  "script": "scripts/qa-second-office-contract.mjs",
+  "exitCode": 1,
+  "seconds": 1.52,
+  "port": 56508
+}

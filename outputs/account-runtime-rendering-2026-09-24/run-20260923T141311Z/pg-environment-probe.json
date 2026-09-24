@@ -1,0 +1,9 @@
+{
+  "scratch": "/tmp/rb-pg-probe-tzeti51m",
+  "profileAllowsOnlyLoopbackAndUnixSockets": true,
+  "exit": 0,
+  "stdout": "waiting for server to start.... done\nserver started\n",
+  "stderr": "",
+  "postgresLog": "2026-09-24 00:16:38.310 AEST [37606] LOG:  starting PostgreSQL 16.15 (Homebrew) on aarch64-apple-darwin25.6.0, compiled by Apple clang version 21.0.0 (clang-2100.1.1.101), 64-bit\n2026-09-24 00:16:38.310 AEST [37606] LOG:  listening on Unix socket \"/tmp/rb-pg-probe-tzeti51m/.s.PGSQL.5432\"\n2026-09-24 00:16:38.313 AEST [37609] LOG:  database system was shut down at 2026-09-24 00:16:38 AEST\n2026-09-24 00:16:38.315 AEST [37606] LOG:  database system is ready to accept connections\n",
+  "cleanup": true
+}

@@ -1,0 +1,15 @@
+PASS isolated-runtime-and-source (162ms)
+PASS local-modelvia-and-fictional-billing (542ms)
+PASS local-realbud-provisioning-gateway (117ms)
+PASS controlled-website-and-real-desktop (1878ms)
+PASS app-browser-link-consumes-real-provisioning (158ms)
+PASS wrong-bound-entitlement-refused-before-worker (23ms)
+PASS trusted-entitlement-and-real-worker-readiness (4622ms)
+FAIL second-readiness-is-held-while-first-is-running (12640ms)
+{
+  "passed": false,
+  "checks": 8,
+  "failure": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:",
+  "cleanup": true,
+  "receipt": "/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/app/2026-09-23T05-16-02.680Z/receipt.json"
+}

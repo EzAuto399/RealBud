@@ -1,0 +1,67 @@
+{
+  "createdAtUtc": "2026-09-24T06:03:32.243561+00:00",
+  "installerSha256Reference": "7c0d23b61259ddb65eeee4a94655e383b3d20bf7b18e78260eb39d0b45616967",
+  "iso": {
+    "format": "ISO9660/Joliet/UDF",
+    "path": "/Volumes/RealBud-TestLab/downloads/RealBud-fictional-acceptance-media.iso",
+    "sha256": "87c0cc8c78c41381af56d52d84793437475761f13c2b75afc8bcd400257c06f6",
+    "sizeBytes": 1112064
+  },
+  "payloads": [
+    {
+      "extractionMatchesSource": true,
+      "isoPath": "TEST-PLAN.md",
+      "sha256": "fad93bf45ceed4df081860b535c942396f2bad2211b9bfe41c101e58bfecffa1",
+      "sizeBytes": 5322,
+      "sourcePath": "/Users/yoda/projects/RealBud/outputs/external-test-lab-2026-09-24/fictional-test-media/payload/TEST-PLAN.md",
+      "stagedPath": "/Users/yoda/projects/RealBud/outputs/external-test-lab-2026-09-24/fictional-test-media/payload/TEST-PLAN.md",
+      "stagingMatchesSource": true
+    },
+    {
+      "extractionMatchesSource": true,
+      "isoPath": "bank-source.csv",
+      "sha256": "d8702bda7c52ca7f61475e76b36b25344c0fe4b56992ba5357268164bf12d69e",
+      "sizeBytes": 335,
+      "sourcePath": "/Users/yoda/projects/RealBud/pack/workflows/austin-phase-1/fixtures/bank-source.csv",
+      "stagedPath": "/Users/yoda/projects/RealBud/outputs/external-test-lab-2026-09-24/fictional-test-media/payload/bank-source.csv",
+      "stagingMatchesSource": true
+    },
+    {
+      "extractionMatchesSource": true,
+      "isoPath": "bank-settings.json",
+      "sha256": "067ad3eb092af4ecda8c24af1449e9ca0c7daaf73ee0a9d88d24112522fd3d08",
+      "sizeBytes": 466,
+      "sourcePath": "/Users/yoda/projects/RealBud/pack/workflows/austin-phase-1/fixtures/bank-settings.json",
+      "stagedPath": "/Users/yoda/projects/RealBud/outputs/external-test-lab-2026-09-24/fictional-test-media/payload/bank-settings.json",
+      "stagingMatchesSource": true
+    },
+    {
+      "extractionMatchesSource": true,
+      "isoPath": "expected-bills.json",
+      "sha256": "ff9ab61598f251cc1ea29d6b32b017a2bcc0b57066a463004e0a5f645885cb6f",
+      "sizeBytes": 1751,
+      "sourcePath": "/Users/yoda/projects/RealBud/pack/workflows/austin-phase-1/fixtures/expected-bills.json",
+      "stagedPath": "/Users/yoda/projects/RealBud/outputs/external-test-lab-2026-09-24/fictional-test-media/payload/expected-bills.json",
+      "stagingMatchesSource": true
+    }
+  ],
+  "schemaVersion": 1,
+  "sealedSourceRevision": "b8aa9f2fee9dcc634e8ff8f9153103701aa4e1ca",
+  "syntheticOnly": true,
+  "verification": {
+    "allPayloadBytesMatchSources": true,
+    "applicationTested": false,
+    "archiveReader": "bsdtar",
+    "hostMountedFilesMatchSources": true,
+    "hostReadOnlyMount": "/Volumes/REALBUD_QA_FICTION",
+    "listing": [
+      ".",
+      "expected-bills.json",
+      "bank-settings.json",
+      "bank-source.csv",
+      "TEST-PLAN.md"
+    ],
+    "listingExact": true,
+    "mountedInVm": false
+  }
+}

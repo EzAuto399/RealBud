@@ -1,0 +1,6 @@
+
+> realbud@0.1.19 test:windows-build /Users/yoda/projects/RealBud
+> node --test scripts/check-windows-build.test.mjs
+
+Could not find 'scripts/check-windows-build.test.mjs'
+ ELIFECYCLE  Command failed with exit code 1.

@@ -1,0 +1,40 @@
+{
+  "at": "2026-09-23T03:07:14.056Z",
+  "passed": false,
+  "changedPort": false,
+  "executable": "/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/package/mac-arm64/RealBud.app/Contents/MacOS/RealBud",
+  "resources": "/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/package/mac-arm64/RealBud.app/Contents/Resources",
+  "artifacts": {
+    "app.asar": "df14eb7fdba378b98e32286aedc277ad9cb6f5277fa71962172698c104148b63",
+    "server/bootstrap.js": "ac2b94c9884c920b8a56b50209603dd72e2c5bbfcd3309afbc51b6c65a7e3796",
+    "ui/index.html": "491fd2ebe8f0e3e055f92e798db5a65eb23479f6f419d07c0d358d405ed363e4"
+  },
+  "checks": [],
+  "errors": [],
+  "requests": [],
+  "blocked": [],
+  "runtimes": [],
+  "serviceStarts": [
+    {
+      "pid": 76828,
+      "port": 28799,
+      "instanceId": "28b587c7b04dcb033f6d3e63aacc5b48"
+    }
+  ],
+  "cleanup": {
+    "forcedOwnedAppQuit": true,
+    "appClosed": false,
+    "serviceStopped": true,
+    "proxyClosed": true,
+    "scratchRemoved": false
+  },
+  "limits": [
+    "Actual packaged Mac Electron main, preload and renderer with the packaged compiled HTTP service; fictional isolated data only",
+    "Generated fixture key and prestarted service bypass OS Keychain custody/startup; normal packaged startup smoke is separate",
+    "Computer use paused; capability reporting does not prove TCC, dictation, screen capture or automation",
+    "No provider/model, bank, Gmail, Modelvia, REI, customer, Windows, signed distribution or reboot proof",
+    "Loopback service guards, a refusing startup proxy and renderer/net guards prevent external requests; this is not OS-wide network isolation"
+  ],
+  "failure": "electronApplication.evaluate: Resulting promise was garbage collected.\n    at launch (/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/native/onboarding-restart.mjs:96:29)\n    at async file:///Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/native/onboarding-restart.mjs:162:3",
+  "retainedFixture": "/private/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/RealBud native onboarding QA 6bga60"
+}

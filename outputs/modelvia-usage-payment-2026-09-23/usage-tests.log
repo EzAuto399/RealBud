@@ -1,0 +1,18 @@
+✔ account usage handler refuses foreign origin and unauthenticated sessions before upstream access (8.88925ms)
+✔ account usage handler binds a reader to their current office and ignores no forged scope (2.148375ms)
+✔ installation usage handler authenticates the installation hash and returns the real desktop wire with reported limits (1.044416ms)
+✔ installation invalid credentials, revoked identity and scope injection cannot reach another usage account (0.538541ms)
+✔ recorded usage is mapped by authenticated office, projected exactly and accepted by the real desktop parser (13.287041ms)
+✔ unknown customer net and missing authoritative limits remain null, while recorded non-invoicing usage remains visible (0.412666ms)
+✔ authority and arbitrary or duplicate query fields cannot select another customer (1.453417ms)
+✔ period defaults to Brisbane accounting month and an explicit desktop month is never relabelled (0.390084ms)
+✔ malformed, partial, imprecise or different-month responses fail without fabricating figures (1.483833ms)
+✔ bounded responses and failures never leak supplier diagnostics or present oversized totals as zero (1.236958ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 10
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 94.607208

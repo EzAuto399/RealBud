@@ -1,0 +1,34 @@
+{
+  "baseCandidate": "4c0c203fd5e951c4cd03422b97511546db8d345d",
+  "patch": "/Users/yoda/projects/RealBud/outputs/welcome-restore-adoption-2026-09-24/welcome-cancel-followup.patch",
+  "patchSha256": "762a53753e5a626dd0f474ea11de142fa572bbfbc34983041f51b9077cd89a68",
+  "candidateApplyCheck": true,
+  "files": [
+    {
+      "path": "src/components/PrivateWorkspaceBackup.tsx",
+      "beforeSha256": "71a5fc738ae20e154d352ecf9131c268daf85ca6142ab24b79d8ef88e7731b7c",
+      "afterSha256": "37a08bb26008832ddc7151057040c3111daf5008faf21c85b98cfbcffc918228"
+    },
+    {
+      "path": "src/components/PrivateWorkspaceBackup.test.ts",
+      "beforeSha256": null,
+      "afterSha256": "399abd844306a775d35282fbeed2ae12a59f6fde10b5ff5bb8c175c08f82eee6"
+    },
+    {
+      "path": "src/lib/backup-welcome.ts",
+      "beforeSha256": null,
+      "afterSha256": "d9c1c0b05a266349cb782ccd6218e1ed2fe57b7a1a4272b8d4c8b8e75bd30a16"
+    },
+    {
+      "path": "src/lib/backup-welcome.test.ts",
+      "beforeSha256": null,
+      "afterSha256": "0e33d5b2c2de920bbde22ced1be6f37ee685a929ec9c9be087dc86b73c4bd0ea"
+    },
+    {
+      "path": "scripts/qa-onboarding-restart.mjs",
+      "beforeSha256": "af536e9e870b8338d3a2e5c123e59db10b53d4534dc8c5ac6672fedd54a6830f",
+      "afterSha256": "b30942810727b3594c082cd33db43e7e0bb413e2c154eb54505746f3f9829bfe"
+    }
+  ],
+  "candidateModified": false
+}

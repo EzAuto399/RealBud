@@ -1,0 +1,130 @@
+{
+  "startedAt": "2026-09-23T22:31:15.935528+00:00",
+  "canonicalHead": "e82ea2f067b7aa73d9bdc6e355a9bc4f1f1694c7",
+  "candidateSource": "4c0c203fd5e951c4cd03422b97511546db8d345d",
+  "patchSha256": "a904d897bc80ef21dd3dac21a9255824f745b18af04e63fd5d6b7fc172f4c86a",
+  "indexSha256Before": "c75ac0a82f834c79ab7d6116695137819e3f7a54e94f77c5be9953b1206ed927",
+  "statusBefore": " M .claude/skills/windows-release/SKILL.md\n M .github/workflows/ci.yml\n M .github/workflows/package-win.yml\n M docs/END-STATE.md\n M docs/GATES-2026-09-22.md\n M docs/GOAL-PROMPT.md\n M docs/GRADUATE-RELEASE.md\n M docs/decisions/2026-09-21-business-os-and-austin-workflows.md\n M electron/build-speech-helper-win.mjs\n M managed-gateway/connectors.test.ts\n M managed-gateway/connectors.ts\n M outputs/live-usage-2026-09-22/receipt.json\n M outputs/portal-ux-2026-09-22/slice3/ai-billing-loading.html\n M outputs/portal-ux-2026-09-22/slice3/identity-fault-injection.html\n M outputs/portal-ux-2026-09-22/slice3/notices.json\n M outputs/portal-ux-2026-09-22/slice3/overflow.json\n M outputs/portal-ux-2026-09-22/slice3/receipt.json\n M outputs/private-backup-2026-09-21/boundaries.json\n M package.json\n M pnpm-lock.yaml\n M scripts/bundle-company-deps.mjs\n M scripts/qa-bank-amendments.mjs\n M scripts/qa-bank-bytes.mjs\n M scripts/qa-live-usage.md\n M scripts/qa-live-usage.mjs\n M scripts/qa-morning-mail.mjs\n M scripts/qa-second-office-contract.mjs\n M scripts/qa-source-bills.mjs\n M scripts/test-windows-installer.ps1\n M server/ask-attach.test.ts\n M server/ask-attach.ts\n M server/ask-book.ts\n M server/bill-proposal-validation.ts\n M server/bill-proposals.test.ts\n M server/bill-proposals.ts\n M server/composio-gmail.test.ts\n M server/composio-gmail.ts\n M server/config.ts\n M server/hermes-hands.test.ts\n M server/hermes-hands.ts\n M server/index.ts\n M server/managed-connectors.test.ts\n M server/managed-connectors.ts\n M server/office-link.test.ts\n M server/office-link.ts\n M server/private-backup-proposal-retention.test.ts\n M server/redact.test.ts\n M server/redact.ts\n M server/session-auth.ts\n M server/source-bill-rules.ts\n M server/store.test.ts\n M server/store.ts\n M server/worker-model-access.test.ts\n M server/worker-model-access.ts\n M shared/bill-proposals.ts\n M shared/office-link.ts\n M src/App.tsx\n M src/components/BudSetupCard.test.ts\n M src/components/ChatView.tsx\n M src/components/ManagedBudStatus.tsx\n M src/components/Onboarding.tsx\n M src/components/YouPage.tsx\n M src/components/desk/SourceBillsPanel.tsx\n M src/components/schedule/BankReferenceReview.tsx\n M src/components/you/AiUsageCard.test.ts\n M src/components/you/AiUsageCard.tsx\n M src/components/you/WebsiteLinkCard.test.ts\n M src/components/you/WebsiteLinkCard.tsx\n M src/lib/first-run.test.ts\n M src/lib/first-run.ts\n M src/lib/you-navigation.test.ts\n M src/lib/you-navigation.ts\n M src/state/store.tsx\n?? docs/ACCOUNT-RUNTIME-RENDERING-2026-09-24.md\n?? docs/CORE-READINESS-2026-09-23.md\n?? docs/MODELVIA-QA-2026-09-23.md\n?? docs/MODELVIA-USAGE-PAYMENT-HANDOFF-2026-09-23.md\n?? docs/READINESS-GAPS-2026-09-23.md\n?? docs/WINDOWS-BUILD-AND-TEST.md\n?? docs/WINDOWS-READINESS-2026-09-23.md\n?? docs/decisions/2026-09-23-core-first-and-workflow-scope.md\n?? outputs/account-runtime-rendering-2026-09-24/\n?? outputs/broad-qa-2026-09-23/\n?? outputs/core-gap-qa-2026-09-23/\n?? outputs/core-readiness-2026-09-23/\n?? outputs/installation-link-2026-09-23/\n?? outputs/live-usage-2026-09-22/history/20260922T192919.json\n?? outputs/mac-smoke-2026-09-23/package.log\n?? outputs/mac-smoke-2026-09-23/rebuild/\n?? outputs/mac-smoke-2026-09-23/rebuild2/\n?? outputs/manual-qa-readiness-2026-09-23/\n?? outputs/modelvia-live-2026-09-23/\n?? outputs/modelvia-price-contract-2026-09-23/\n?? outputs/modelvia-qa-2026-09-23/\n?? outputs/modelvia-usage-payment-2026-09-23/\n?? outputs/own-bank-qa-2026-09-23/\n?? outputs/platform-candidate-2026-09-23/\n?? outputs/portal-ux-2026-09-22/download/\n?? outputs/portal-ux-2026-09-22/slice3/ai-billing-empty-1280-dark.png\n?? outputs/portal-ux-2026-09-22/slice3/ai-billing-empty-1280-light.png\n?? outputs/portal-ux-2026-09-22/slice3/ai-billing-empty-1280.png\n?? outputs/portal-ux-2026-09-22/slice3/ai-billing-empty-360-light.png\n?? outputs/portal-ux-2026-09-22/slice3/ai-billing-empty-768-light.png\n?? outputs/portal-ux-2026-09-22/slice3/ai-billing-gateway-lost-reply-1280.png\n?? outputs/portal-ux-2026-09-22/slice3/ai-billing-loaded-1280-dark.png\n?? outputs/portal-ux-2026-09-22/slice3/ai-billing-loaded-1280-light.png\n?? outputs/portal-ux-2026-09-22/slice3/ai-billing-loaded-360-light.png\n?? outputs/portal-ux-2026-09-22/slice3/ai-billing-loaded-768-light.png\n?? outputs/portal-ux-2026-09-22/slice3/ai-billing-loaded-payable-1280.png\n?? outputs/portal-ux-2026-09-22/slice3/ai-billing-unconfigured-1280-dark.png\n?? outputs/portal-ux-2026-09-22/slice3/ai-billing-unconfigured-1280-light.png\n?? outputs/portal-ux-2026-09-22/slice3/ai-billing-unconfigured-360-light.png\n?? outputs/portal-ux-2026-09-22/slice3/ai-billing-unconfigured-768-light.png\n?? outputs/portal-ux-2026-09-22/slice3/invoices-empty-1280-dark.png\n?? outputs/portal-ux-2026-09-22/slice3/invoices-empty-1280-light.png\n?? outputs/portal-ux-2026-09-22/slice3/invoices-empty-360-light.png\n?? outputs/portal-ux-2026-09-22/slice3/invoices-empty-768-light.png\n?? outputs/portal-ux-2026-09-22/slice3/invoices-loaded-1280-dark.png\n?? outputs/portal-ux-2026-09-22/slice3/invoices-loaded-1280-light.png\n?? outputs/portal-ux-2026-09-22/slice3/invoices-loaded-360-light.png\n?? outputs/portal-ux-2026-09-22/slice3/invoices-loaded-768-light.png\n?? outputs/portal-ux-2026-09-22/slice3/invoices-unconfigured-1280-dark.png\n?? outputs/portal-ux-2026-09-22/slice3/invoices-unconfigured-1280-light.png\n?? outputs/portal-ux-2026-09-22/slice3/invoices-unconfigured-360-light.png\n?? outputs/portal-ux-2026-09-22/slice3/invoices-unconfigured-768-light.png\n?? outputs/portal-ux-2026-09-22/slice3/limits-unconfigured-1280-dark.png\n?? outputs/portal-ux-2026-09-22/slice3/limits-unconfigured-1280-light.png\n?? outputs/portal-ux-2026-09-22/slice3/limits-unconfigured-360-light.png\n?? outputs/portal-ux-2026-09-22/slice3/limits-unconfigured-768-light.png\n?? outputs/portal-ux-2026-09-22/slice3/overview-empty-1280-dark.png\n?? outputs/portal-ux-2026-09-22/slice3/overview-empty-1280-light.png\n?? outputs/portal-ux-2026-09-22/slice3/overview-empty-360-light.png\n?? outputs/portal-ux-2026-09-22/slice3/overview-empty-768-light.png\n?? outputs/portal-ux-2026-09-22/slice3/overview-loaded-1280-dark.png\n?? outputs/portal-ux-2026-09-22/slice3/overview-loaded-1280-light.png\n?? outputs/portal-ux-2026-09-22/slice3/overview-loaded-360-light.png\n?? outputs/portal-ux-2026-09-22/slice3/overview-loaded-768-light.png\n?? outputs/portal-ux-2026-09-22/slice3/overview-unconfigured-1280-dark.png\n?? outputs/portal-ux-2026-09-22/slice3/overview-unconfigured-1280-light.png\n?? outputs/portal-ux-2026-09-22/slice3/overview-unconfigured-360-light.png\n?? outputs/portal-ux-2026-09-22/slice3/overview-unconfigured-768-light.png\n?? outputs/portal-ux-2026-09-22/slice3/rates-unconfigured-1280-dark.png\n?? outputs/portal-ux-2026-09-22/slice3/rates-unconfigured-1280-light.png\n?? outputs/portal-ux-2026-09-22/slice3/rates-unconfigured-360-light.png\n?? outputs/portal-ux-2026-09-22/slice3/rates-unconfigured-768-light.png\n?? outputs/portal-ux-2026-09-22/slice3/reduced-motion.json\n?? outputs/portal-ux-2026-09-23/\n?? outputs/readiness-gaps-2026-09-23/\n?? outputs/realbud-core-implementation-2026-09-14/http/postgres-fixture-MOlTvs/\n?? outputs/welcome-restore-adoption-2026-09-24/\n?? outputs/windows-readiness-2026-09-23/\n?? scripts/check-windows-build.mjs\n?? scripts/check-windows-build.test.mjs\n?? scripts/qa-modelvia-app.mjs\n?? scripts/qa-onboarding-restart.mjs\n?? scripts/qa-onboarding.mjs\n?? server/ask-attach-privacy.test.ts\n?? server/config-private-root.test.ts\n?? server/config-recovery.test.ts\n?? server/drivers/acp/browser-injection-boundary.test.ts\n?? server/helpers/pdf-text-worker.mjs\n?? server/model-service-failure.test.ts\n?? server/model-service-failure.ts\n?? server/onboarding.test.ts\n?? server/onboarding.ts\n?? server/pdf-text.test.ts\n?? server/pdf-text.ts\n?? server/source-attachments.test.ts\n?? server/source-attachments.ts\n?? server/store-recovery.test.ts\n?? server/testing/pdf-fixture.ts\n?? shared/bill-attachment-reads.test.ts\n?? shared/office-link.test.ts\n?? shared/onboarding.ts\n?? shared/source-attachments.ts\n?? src/lib/chat-history.test.ts\n?? src/lib/chat-history.ts\n?? src/lib/navigation-guard.test.ts\n?? src/lib/navigation-guard.ts\n?? website/\n",
+  "dirtyTrackedBeforeSha256": {
+    ".claude/skills/windows-release/SKILL.md": "4a79c710a5c6f80076d5945cd734c3bc7e47f9852c64662865a198dca1aff3b6",
+    ".github/workflows/ci.yml": "23aa96f2902daeda14e12d997d6e2d8e0ccaf7347b57823aff5559948c6f46bb",
+    ".github/workflows/package-win.yml": "19e0a604076182f60e711c9b6027b6f54b490d65fa649ba3a9d4c856316ded03",
+    "docs/END-STATE.md": "b5b784c6f76245eef6d034584e35a90602e62ad2bc12e41bdc7888fd29abb4c7",
+    "docs/GATES-2026-09-22.md": "7834f3f06896f770b4ae75e812158103e1adee46dc3db2055b459241fe77b41c",
+    "docs/GOAL-PROMPT.md": "6ad77fe4a40d64a4827a31c4b897c9c79dadd4807321253e0229ff9259856e0f",
+    "docs/GRADUATE-RELEASE.md": "400f73d3c5f1390bc15f9f7f1fbe05535beae6ca84c61ae0b4d603f55ced1307",
+    "docs/decisions/2026-09-21-business-os-and-austin-workflows.md": "4ec240a12c811c79e2bfffdbe031db3dfda156afa4a12c55f4cdb5921185385c",
+    "electron/build-speech-helper-win.mjs": "470ddf767f522e82cd5053bdfe56874156fea16620dca7bbb68f12d7cc52f123",
+    "managed-gateway/connectors.test.ts": "51aa8405b0eaae82c087466a7d0a6ceb3431c7da71ad8a8ca8f07a336fff46d8",
+    "managed-gateway/connectors.ts": "8b15504c138a3b62bdeeda59abb43f8addc59525f4e717f1c746f848e0cbba72",
+    "outputs/live-usage-2026-09-22/receipt.json": "e6f7d81c598e7ff1f6d5db0bb901b240472137307883b6e97d9d45d39ca4ae77",
+    "outputs/portal-ux-2026-09-22/slice3/ai-billing-loading.html": "13180dbcf9c5db7130559b7df9ec8dcabcef0ce24a34f305029fb4e0e6e2aab3",
+    "outputs/portal-ux-2026-09-22/slice3/identity-fault-injection.html": "813ae1b62a7b3fb46fc05303832aa7ee66ed5c459e137b072e40d71714cddcdf",
+    "outputs/portal-ux-2026-09-22/slice3/notices.json": "98886b3e8f6483f043c52950081eb55b079ddcbd9baf57a6f42d625f1af7ea64",
+    "outputs/portal-ux-2026-09-22/slice3/overflow.json": "e71fa38cafffdf487da90ccd3574d5c2c0ed56c67de14629eac22015532b129f",
+    "outputs/portal-ux-2026-09-22/slice3/receipt.json": "df841c8873ea1e627c9804cd36fafd3d119d9d56c91c5d3561c21b5586d5ec10",
+    "outputs/private-backup-2026-09-21/boundaries.json": "c51dcc67765de47823d4a2e4171c73b176f484ff7ffd690a45dd54c506b000cb",
+    "package.json": "a133887063b300eb977535e72cf30ae07d7867cd8c46f6c362d65f820aeee0b9",
+    "pnpm-lock.yaml": "32fcb4f516e1093422e3c21ce0f105e0964eec5d275d7c971c50363bf3f5dc6b",
+    "scripts/bundle-company-deps.mjs": "1562d792a1d15bb4a3f54554322025f020398394a6646f20974facb820785d54",
+    "scripts/qa-bank-amendments.mjs": "c28ab6a9efa970832a4358b6850d549a11f819aad9e0b397dd6bb677b0a4b392",
+    "scripts/qa-bank-bytes.mjs": "6fb969a3766e2e903c11d4d85e1836ff1965c0762ed8707f1399d8435fb55783",
+    "scripts/qa-live-usage.md": "230922b3805b2fce0b7136c4b7f76f2cb4f21f243723830bcf531f1a50631fe0",
+    "scripts/qa-live-usage.mjs": "43045d2871c6d28131de801f6bea7f5c2cf6ff234325af8be445568802f89321",
+    "scripts/qa-morning-mail.mjs": "e6bfe436857f778d83dfee51bc06cc1ec30a0608cb31d0bd4aec467cf0f681b0",
+    "scripts/qa-second-office-contract.mjs": "a880ee5925c4ba9a3c3c561efd40e2770de5c453d6a71bad0065c0b5d844cbcf",
+    "scripts/qa-source-bills.mjs": "da0479704fac3315ef1d336c4d9248604aed9ff25d4f9581826d0ef297f78281",
+    "scripts/test-windows-installer.ps1": "802b80e4d67e375aa2a0c21ddbd5650f98dc2764d3a957f52b88c266215ddec5",
+    "server/ask-attach.test.ts": "1605ae3df24374e350b7e9ccab05de82de45c856a314d668d5608bdc6c462079",
+    "server/ask-attach.ts": "bb7e36714217def17ee6eb4c76e4c5a16aee9a32d110eea4daad86198dcf4234",
+    "server/ask-book.ts": "717412d08cbe18d4d28c589b8e97201ed46880622ef77e8bfce7616180f7a936",
+    "server/bill-proposal-validation.ts": "bdbd71e441d185ba4f5f69d30369c2c9fe7f5912b0c74b05a6a1b40fd5b0b293",
+    "server/bill-proposals.test.ts": "78e6986c319afe95d9c4e0f9d185157809748654a18792101eae7033b0e974ee",
+    "server/bill-proposals.ts": "acbf1f5f55e01e639ab4f45d08c8ccfcd3a409a112eaf1f03bc68013d13256b6",
+    "server/composio-gmail.test.ts": "cc35956e53074fc365e4623499b8f1dab7bd7df90ba1383b95062775666e15bf",
+    "server/composio-gmail.ts": "8850489f0b94e3975a9e0ab1cf93880ed2b2a46c3e2b3998dcf2a89fa686e0e9",
+    "server/config.ts": "236dc37c86444aa61ab017b82f7b591cee872cad6fbd8f4107a6021d0652f247",
+    "server/hermes-hands.test.ts": "af0b9b2fa9c2f8fbda30b159b1268aee26d8ed2a6f1505abae0852a513577136",
+    "server/hermes-hands.ts": "307c96fed8ed1b80c16853b68ae2efc33c8e9de957bd81955f0a9d682d7c5fce",
+    "server/index.ts": "88d748edb0b3517ab1845cec0087789f856bd002237878aa690d639fd42b21db",
+    "server/managed-connectors.test.ts": "f784a727d06ac2ae3244ac96cdf75c3637610f75172344a848993afced7eaa8f",
+    "server/managed-connectors.ts": "0327db520167dc6bcb5ac7a68029251aa23ae31c045ab6408d9ace01b02cf9dd",
+    "server/office-link.test.ts": "f9fc5d6525ef0f907c089c726c41e73ad877f6ce2f173a2ed9e569ee624444eb",
+    "server/office-link.ts": "c71d230965ec7fc3680ccf3d59e88a06649ba1cb76f55f8e4dfd1a908a3ed2c5",
+    "server/private-backup-proposal-retention.test.ts": "d5a46df5b4216fa9d07003412425022ca07320456c438b1d878d72e5d6105936",
+    "server/redact.test.ts": "23182554f1c8b8af387e1ca0b8fcb896e4565e6b87c923d901a1b24e4166d704",
+    "server/redact.ts": "8baef313785fd08f217ef7d9be7e283ede88d3ecd4c6bfee9d684851289be5a2",
+    "server/session-auth.ts": "af73542169bc0a8edd319433eff93ec6ad5f8740673a5c442bbcfb38d0211fe7",
+    "server/source-bill-rules.ts": "6de68913f950dd22aa64530862bb5b540db463f0897f259017d30a1bf439563d",
+    "server/store.test.ts": "71acddf49281a1060220d861e9006404d79416d25ee7b909e80e51ddc9fd1bc9",
+    "server/store.ts": "53542786f02ab6e0782da3f2c3ab36be43391f8dad7541b1f4401e711fe5dd48",
+    "server/worker-model-access.test.ts": "9fbdcc881352557f76a530dfab1e072b705d6b40a88e84b7a7db970c1b450c24",
+    "server/worker-model-access.ts": "b53e855fb8d52dbe5fd66c64aee421a106190590a3da6dc0f3dca48fa51ed254",
+    "shared/bill-proposals.ts": "825e0ae2ddaf0ea156466d78977a2364dd40a837a60f8fa884df9d2365b43e22",
+    "shared/office-link.ts": "3a2c6afbbb22d3335f459769e754e8e1830852956f8d81f3cb77ced7f42febb9",
+    "src/App.tsx": "1871772003c3b3d454e03d223514fc5b6d1a401fc68fe7e112bf92278e34f34c",
+    "src/components/BudSetupCard.test.ts": "5c13368e8e31c570308107752fbba0226ebfb1aacd03ce527bf8981a22f79a1d",
+    "src/components/ChatView.tsx": "38f41d75b44ecf5b575a00b3c57ae66af9709bc1091bc4f4af81d5c4b15c3a33",
+    "src/components/ManagedBudStatus.tsx": "814490674f09a4b9dbfbd4ae60ed28980f0b56757ac29b8c13e2fd4a62242775",
+    "src/components/Onboarding.tsx": "f8e01f08b9398886319f83e523f9358a03198cfaf285261c05056d47a56baef7",
+    "src/components/YouPage.tsx": "ba97dac04595aaef4f5d5c1786ab02708741cdbc4a890c37f99836d8b1117ac0",
+    "src/components/desk/SourceBillsPanel.tsx": "d8704e532751259b2a6468b06ea9b381c88e29a6aa98a082eff2d3a89a50e677",
+    "src/components/schedule/BankReferenceReview.tsx": "664622af1e60e04f87a77e657c960b9475619e50982c29f9af50b4d4f12294ef",
+    "src/components/you/AiUsageCard.test.ts": "25ece19e2c3eac48c0c61206e9d2ac728d6d1e29ea12ed00e7069df9c1727074",
+    "src/components/you/AiUsageCard.tsx": "df9ea9d7cd99d6312468e74195a0763b5f7e1e01236dfd592567887344ed57c8",
+    "src/components/you/WebsiteLinkCard.test.ts": "6da6e5d33af269ef72db074be2e09c0731d3dc5359112c0d6972f09abccd0307",
+    "src/components/you/WebsiteLinkCard.tsx": "101d1584da0170d1b3095cf669bb01f7dbc1dc550e78860ce34d6560028e3e26",
+    "src/lib/first-run.test.ts": "8330b907e6aa01f62e169cfc34d702712db5fd50338d716234a70816b66075dc",
+    "src/lib/first-run.ts": "8ef02b3da007e7d2de108aa9c510cf79b86395fbf5315115c1a749077e0ba24a",
+    "src/lib/you-navigation.test.ts": "975d54d1e0eacd4758cff4ee68f065cb1817a219f7e3165d770c4d30814aebd8",
+    "src/lib/you-navigation.ts": "2829a98475209eb44072de752298d1b4963eab6ae1f01a5032b3982c54b8d99b",
+    "src/state/store.tsx": "615759a713382fbcc225a263d4caf1ef4fd15f5d3d5d9accaaf4b6919d800336"
+  },
+  "files": [
+    {
+      "path": "src/App.tsx",
+      "beforeBlob": "3f7629aea40a28db8d4c8a2ffd773b02e59a80c8",
+      "expectedAfterBlobPrefix": "e8ce91ae"
+    },
+    {
+      "path": "src/components/Onboarding.test.ts",
+      "beforeBlob": "0000000000000000000000000000000000000000",
+      "expectedAfterBlobPrefix": "aa409def"
+    },
+    {
+      "path": "src/components/Onboarding.tsx",
+      "beforeBlob": "111bfa71e4c51f5e0e1b0a8d9cf1b7b5f787d779",
+      "expectedAfterBlobPrefix": "de521f90"
+    },
+    {
+      "path": "src/components/YouPage.tsx",
+      "beforeBlob": "a7cf96127a40186ffd0552838949222a515e1063",
+      "expectedAfterBlobPrefix": "42a44a75"
+    },
+    {
+      "path": "src/lib/app-route.test.ts",
+      "beforeBlob": "e69a94a30480e7f40b1101887dbc3ceab148afc3",
+      "expectedAfterBlobPrefix": "0e6c81fb"
+    },
+    {
+      "path": "src/lib/you-navigation.test.ts",
+      "beforeBlob": "aab2f5d0e8ef4e0b375ceffba3ca10a6f09388a6",
+      "expectedAfterBlobPrefix": "b9fb68c0"
+    },
+    {
+      "path": "src/lib/you-navigation.ts",
+      "beforeBlob": "2d29997060fb75b62442a439cee1ef47ac333cf9",
+      "expectedAfterBlobPrefix": "848bea4a"
+    }
+  ],
+  "newFollowupScope": [
+    "src/components/PrivateWorkspaceBackup.tsx",
+    "src/components/PrivateWorkspaceBackup.test.ts",
+    "src/lib/backup-welcome.ts",
+    "src/lib/backup-welcome.test.ts"
+  ],
+  "notes": [
+    "Only exact seven-file base patch applied by root. Safe return-to-welcome follow-up delegated with disjoint ownership.",
+    "No canonical commit, package build, publish or hosted action authorized by this integration."
+  ]
+}

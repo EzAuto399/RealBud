@@ -1,0 +1,55 @@
+{
+  "patchSha256": "a904d897bc80ef21dd3dac21a9255824f745b18af04e63fd5d6b7fc172f4c86a",
+  "files": [
+    {
+      "path": "src/App.tsx",
+      "beforeBlob": "3f7629aea40a28db8d4c8a2ffd773b02e59a80c8",
+      "expectedAfterBlobPrefix": "e8ce91ae",
+      "afterBlob": "e8ce91ae304ce93ec9705cfcc4ac8453bef6492a",
+      "afterSha256": "751d6b571f21cffb3c06ca4573a74c5a3bc1efe0029b41cebf7c56205fdfc9fb"
+    },
+    {
+      "path": "src/components/Onboarding.test.ts",
+      "beforeBlob": "0000000000000000000000000000000000000000",
+      "expectedAfterBlobPrefix": "aa409def",
+      "afterBlob": "aa409def587e70c8b6170f35507251f068e90d07",
+      "afterSha256": "eeb486d1f5e65844580cd03165b350a93a223dbe2f864b7c59e651a0e918fd3f"
+    },
+    {
+      "path": "src/components/Onboarding.tsx",
+      "beforeBlob": "111bfa71e4c51f5e0e1b0a8d9cf1b7b5f787d779",
+      "expectedAfterBlobPrefix": "de521f90",
+      "afterBlob": "de521f90d44e846b94ddda6b4eef21ce55fd4b13",
+      "afterSha256": "5ebf54d07ec0bb03992161c7773bb33fb8b90eac8997421e95cb53bf06373aa0"
+    },
+    {
+      "path": "src/components/YouPage.tsx",
+      "beforeBlob": "a7cf96127a40186ffd0552838949222a515e1063",
+      "expectedAfterBlobPrefix": "42a44a75",
+      "afterBlob": "42a44a75e90c5adfa262acec2a769c62e088aade",
+      "afterSha256": "bbe455568058efef3b200f4c498b0dd802035805c6a672aac82aa74ac9b83ad3"
+    },
+    {
+      "path": "src/lib/app-route.test.ts",
+      "beforeBlob": "e69a94a30480e7f40b1101887dbc3ceab148afc3",
+      "expectedAfterBlobPrefix": "0e6c81fb",
+      "afterBlob": "0e6c81fb2302d0c763cd2a7f59b1da6fa27924d7",
+      "afterSha256": "7a448bdbe1845ae205472958cdefa92637b6f0f6c397d8cb7370779f2c2e92d3"
+    },
+    {
+      "path": "src/lib/you-navigation.test.ts",
+      "beforeBlob": "aab2f5d0e8ef4e0b375ceffba3ca10a6f09388a6",
+      "expectedAfterBlobPrefix": "b9fb68c0",
+      "afterBlob": "b9fb68c076b4a50b99c8f16558b07bcbe627e27a",
+      "afterSha256": "95d3564fa75ca9ae4db8eb4b77fe4423f8e4e64f0ea125a5395526030a9651d9"
+    },
+    {
+      "path": "src/lib/you-navigation.ts",
+      "beforeBlob": "2d29997060fb75b62442a439cee1ef47ac333cf9",
+      "expectedAfterBlobPrefix": "848bea4a",
+      "afterBlob": "848bea4a0f8721d8d08820ce896650d4baecbac0",
+      "afterSha256": "c20ea0bac7206d9297553fd85f01ecca17e0ad640cc79d9da931e8f43f3fa1d6"
+    }
+  ],
+  "exactCandidateFileMatches": 7
+}

@@ -1,0 +1,13 @@
+{
+  "layer": "isolated Mac source; synthetic history; no provider/UI/Windows",
+  "nodeVersion": "24.19.0",
+  "storeSourceSha256": "f20dd7782e84413fa32f4430a051b582866a67a72ced52de2ebbbfffa4a72229",
+  "messagePayloadBytes": 1024,
+  "samples": [
+    {"messages": 500, "serializedBytesAfterFiveAppends": 590143, "readMs": 0.56, "appendMs": [7.87, 8.92, 10.03, 8.87, 10.00]},
+    {"messages": 2000, "serializedBytesAfterFiveAppends": 2360894, "readMs": 2.32, "appendMs": [10.28, 10.09, 10.83, 12.08, 9.99]},
+    {"messages": 10000, "serializedBytesAfterFiveAppends": 11812895, "readMs": 13.63, "appendMs": [18.40, 17.97, 29.35, 27.67, 19.93]}
+  ],
+  "corruptTranscriptBeforeFix": {"error": null, "originalBytesPreserved": false},
+  "limits": ["Five append samples per seeded dataset only", "No rendered UI or service latency measurement", "No Windows or live model", "Scratch directory removed after probe"]
+}

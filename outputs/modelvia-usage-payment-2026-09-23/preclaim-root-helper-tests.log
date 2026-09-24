@@ -1,0 +1,16 @@
+✔ receipt exists synchronously before checkout and survives a fresh reader (4.251959ms)
+✔ same-turn repeated attempts refuse instead of dispatching or replacing original intent (0.225917ms)
+✔ company and invoice scopes remain independent (0.08525ms)
+✔ eligible stale GETs, missing invoices and cancellation strings never release a pre-claim hold (0.157916ms)
+✔ only authoritative paid true retires the matching invoice receipt (0.082333ms)
+✔ failed or silently discarded writes prevent dispatch (0.109792ms)
+✔ unreadable, malformed and cross-company receipts fail closed (0.109667ms)
+✔ failed terminal receipt update never silently clears the persisted hold (0.081708ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 78.424916

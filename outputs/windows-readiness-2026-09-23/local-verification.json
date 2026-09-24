@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "proofLayer": "local-macos-source-and-build-preparation",
+  "verifiedAt": "2026-09-23T08:51:59.363610+00:00",
+  "sourceRevision": "e82ea2f067b7aa73d9bdc6e355a9bc4f1f1694c7",
+  "workingTreeChanged": true,
+  "focusedTests": {
+    "passed": 201,
+    "failed": 0,
+    "skipped": 0
+  },
+  "prerequisiteTests": {
+    "passed": 15,
+    "failed": 0,
+    "skipped": 1
+  },
+  "buildChecks": [
+    {
+      "command": "pnpm build",
+      "exitCode": 0,
+      "seconds": 12.51,
+      "log": "final-source-build.log"
+    },
+    {
+      "command": "pnpm build:server",
+      "exitCode": 0,
+      "seconds": 3.44,
+      "log": "final-server-bundle.log"
+    },
+    {
+      "command": "pnpm check:electron",
+      "exitCode": 0,
+      "seconds": 0.72,
+      "log": "final-electron-check.log"
+    },
+    {
+      "command": "pnpm test:windows-build",
+      "exitCode": 0,
+      "seconds": 0.29,
+      "log": "preflight-tests.log"
+    }
+  ],
+  "nonWindowsGuard": {
+    "proofLayer": "local-macos-entrypoint-guard",
+    "passed": true,
+    "exitCode": 1,
+    "buildOutputsUnchanged": true,
+    "limits": [
+      "Rejects this Mac before compilation; does not prove Windows packaging."
+    ]
+  },
+  "timeoutCandidate": {
+    "status": "rejected-not-integrated",
+    "originalProcessFilesRestored": true
+  },
+  "files": {
+    "package.json": "a133887063b300eb977535e72cf30ae07d7867cd8c46f6c362d65f820aeee0b9",
+    ".github/workflows/ci.yml": "23aa96f2902daeda14e12d997d6e2d8e0ccaf7347b57823aff5559948c6f46bb",
+    ".github/workflows/package-win.yml": "19e0a604076182f60e711c9b6027b6f54b490d65fa649ba3a9d4c856316ded03",
+    "scripts/check-windows-build.mjs": "efa4d57ae8ea7576c109b798b7d72d78586a810123e011454eb7222020ef974d",
+    "scripts/check-windows-build.test.mjs": "0230d869f4b223e00398eb74de9cd157a1653df2a316496e5c7ab56845aec750",
+    "electron/build-speech-helper-win.mjs": "470ddf767f522e82cd5053bdfe56874156fea16620dca7bbb68f12d7cc52f123",
+    "scripts/test-windows-installer.ps1": "802b80e4d67e375aa2a0c21ddbd5650f98dc2764d3a957f52b88c266215ddec5",
+    "docs/WINDOWS-BUILD-AND-TEST.md": "7139d75ac368350e1433a0dcf61b3839947b6569f82411724b62d837fb6be094",
+    "docs/WINDOWS-READINESS-2026-09-23.md": "d010ac3337c22e92ac3adbc0fee515777019e6dd0c70f3f709cf7741ef8559bd",
+    ".claude/skills/windows-release/SKILL.md": "4a79c710a5c6f80076d5945cd734c3bc7e47f9852c64662865a198dca1aff3b6",
+    "docs/GRADUATE-RELEASE.md": "400f73d3c5f1390bc15f9f7f1fbe05535beae6ca84c61ae0b4d603f55ced1307"
+  },
+  "limits": [
+    "Local tests and macOS builds only; no new native Windows build was run.",
+    "Native cmd-path test skipped; PowerShell acceptance harness not parsed or executed here.",
+    "Timeout cleanup remains unresolved; intermediate rejected-candidate tests are not counted.",
+    "Attended desktop control, memory review and legacy profile migration remain held on Windows.",
+    "No commit, push, release, updater or external customer action performed."
+  ]
+}

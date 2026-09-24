@@ -1,0 +1,7 @@
+PASS Staff UI saves both changed and unchanged transaction decisions with exact original bytes
+PASS Lost amendment response reconciles the committed version on explicit retry without a duplicate
+PASS Correction form preserves structured payer aliases, punctuation and whitespace without text round-trip changes
+PASS Corrected mapping needs fresh row decisions; stale concurrent correction and premature download are refused
+PASS Both versions remain reachable with distinct byte-checked downloads and an earlier-version warning
+PASS Actual service restart retains linked review history, all decisions and both exact artifacts
+PASS No browser errors or off-origin browser requests

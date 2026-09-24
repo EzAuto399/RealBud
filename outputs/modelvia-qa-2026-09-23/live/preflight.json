@@ -1,0 +1,269 @@
+{
+  "checkedAt": "2026-09-23T03:22:39.429Z",
+  "layer": "deployed read-only preflight",
+  "checks": [
+    {
+      "path": "/health",
+      "status": 200,
+      "elapsedMs": 698,
+      "summary": {
+        "revision": "a8938b16f07c14d213db7e56fe14654c2dc197e5",
+        "mode": "local"
+      }
+    },
+    {
+      "path": "/ready",
+      "status": 200,
+      "elapsedMs": 214,
+      "summary": {
+        "ready": true
+      }
+    },
+    {
+      "path": "/v1/models",
+      "status": 401,
+      "elapsedMs": 225,
+      "summary": {
+        "error": {
+          "message": "unauthenticated",
+          "type": "authentication_error",
+          "code": "unauthenticated",
+          "param": null
+        }
+      }
+    },
+    {
+      "path": "/v1/operator/status",
+      "status": 200,
+      "elapsedMs": 336,
+      "summary": {
+        "revision": "a8938b16f07c14d213db7e56fe14654c2dc197e5",
+        "keyServingEnabled": true,
+        "routingMode": "jev-typesafe",
+        "customerPaymentMode": "disabled",
+        "catalogue": {
+          "checkedAt": "2026-09-23T03:21:53.629Z",
+          "expiringWithinMs": 86400000,
+          "state": "approved",
+          "counts": {
+            "approved": 2,
+            "expiring": 0,
+            "expired": 0
+          },
+          "routes": [
+            {
+              "model": "hosted-canary-fast",
+              "provider": "openrouter",
+              "configuration": "fictional-hosted-qualification-v1",
+              "approvedUntil": "2026-09-29T21:39:27.000Z",
+              "msUntilExpiry": 584253371,
+              "state": "approved",
+              "reviewReference": "owner-directed-renewal-2026-09-23",
+              "approvedBy": "ops-2026-09-23",
+              "approvedAt": 1790113236765,
+              "contextLength": 262144,
+              "contextLengthDefaulted": false,
+              "maxOutputTokens": 256,
+              "bootstrapped": false
+            },
+            {
+              "model": "hosted-canary-smart",
+              "provider": "openrouter",
+              "configuration": "fictional-hosted-qualification-v1",
+              "approvedUntil": "2026-09-29T21:39:27.000Z",
+              "msUntilExpiry": 584253371,
+              "state": "approved",
+              "reviewReference": "owner-directed-renewal-2026-09-23",
+              "approvedBy": "ops-2026-09-23",
+              "approvedAt": 1790113237378,
+              "contextLength": 163840,
+              "contextLengthDefaulted": false,
+              "maxOutputTokens": 256,
+              "bootstrapped": false
+            }
+          ],
+          "retired": [],
+          "version": 5,
+          "source": "ledger"
+        }
+      }
+    },
+    {
+      "path": "/v1/operator/projects",
+      "status": 200,
+      "elapsedMs": 353,
+      "summary": {
+        "projects": [
+          {
+            "id": "fictional-e2e-app-1790073478868",
+            "clientId": "fictional-hosted-client-20260922",
+            "customerId": "fictional-e2e-buyer-1790073478868",
+            "active": false,
+            "environments": [
+              "development"
+            ],
+            "allowedModels": [
+              "hosted-canary-fast",
+              "hosted-canary-smart"
+            ],
+            "monthlyCapNanoAud": "100000000",
+            "requestCapNanoAud": "20000000",
+            "version": 2
+          },
+          {
+            "id": "fictional-e2e-app-1790073515298",
+            "clientId": "fictional-hosted-client-20260922",
+            "customerId": "fictional-e2e-buyer-1790073515298",
+            "active": false,
+            "environments": [
+              "development"
+            ],
+            "allowedModels": [
+              "hosted-canary-fast",
+              "hosted-canary-smart"
+            ],
+            "monthlyCapNanoAud": "100000000",
+            "requestCapNanoAud": "20000000",
+            "version": 2
+          },
+          {
+            "id": "fictional-e2e-app-1790073543313",
+            "clientId": "fictional-hosted-client-20260922",
+            "customerId": "fictional-e2e-buyer-1790073543313",
+            "active": false,
+            "environments": [
+              "development"
+            ],
+            "allowedModels": [
+              "hosted-canary-fast",
+              "hosted-canary-smart"
+            ],
+            "monthlyCapNanoAud": "1200000000",
+            "requestCapNanoAud": "600000000",
+            "version": 2
+          },
+          {
+            "id": "fictional-e2e-app-1790113253023",
+            "clientId": "fictional-hosted-client-20260922",
+            "customerId": "fictional-e2e-buyer-1790113253023",
+            "active": false,
+            "environments": [
+              "development"
+            ],
+            "allowedModels": [
+              "hosted-canary-fast",
+              "hosted-canary-smart"
+            ],
+            "monthlyCapNanoAud": "1200000000",
+            "requestCapNanoAud": "600000000",
+            "version": 2
+          },
+          {
+            "id": "fictional-hosted-project-20260922",
+            "clientId": "fictional-hosted-client-20260922",
+            "customerId": "fictional-hosted-buyer-20260922",
+            "active": false,
+            "environments": [
+              "development"
+            ],
+            "allowedModels": [
+              "hosted-canary-fast",
+              "hosted-canary-smart"
+            ],
+            "monthlyCapNanoAud": "2000000000",
+            "requestCapNanoAud": "1200000000",
+            "version": 2
+          }
+        ]
+      }
+    },
+    {
+      "path": "/v1/operator/clients",
+      "status": 200,
+      "elapsedMs": 231,
+      "summary": {
+        "clients": [
+          {
+            "id": "fictional-hosted-client-20260922",
+            "active": true,
+            "billingMode": "client",
+            "allowedModels": [
+              "hosted-canary-fast",
+              "hosted-canary-smart"
+            ],
+            "monthlyCapNanoAud": "2000000000",
+            "version": 5
+          }
+        ]
+      }
+    },
+    {
+      "path": "/v1/operator/customers",
+      "status": 200,
+      "elapsedMs": 399,
+      "summary": {
+        "customers": [
+          {
+            "id": "fictional-e2e-buyer-1790073478868",
+            "clientId": "fictional-hosted-client-20260922",
+            "active": false,
+            "allowedModels": [
+              "hosted-canary-fast",
+              "hosted-canary-smart"
+            ],
+            "monthlyCapNanoAud": "200000000",
+            "version": 2
+          },
+          {
+            "id": "fictional-e2e-buyer-1790073515298",
+            "clientId": "fictional-hosted-client-20260922",
+            "active": false,
+            "allowedModels": [
+              "hosted-canary-fast",
+              "hosted-canary-smart"
+            ],
+            "monthlyCapNanoAud": "200000000",
+            "version": 2
+          },
+          {
+            "id": "fictional-e2e-buyer-1790073543313",
+            "clientId": "fictional-hosted-client-20260922",
+            "active": false,
+            "allowedModels": [
+              "hosted-canary-fast",
+              "hosted-canary-smart"
+            ],
+            "monthlyCapNanoAud": "1500000000",
+            "version": 2
+          },
+          {
+            "id": "fictional-e2e-buyer-1790113253023",
+            "clientId": "fictional-hosted-client-20260922",
+            "active": false,
+            "allowedModels": [
+              "hosted-canary-fast",
+              "hosted-canary-smart"
+            ],
+            "monthlyCapNanoAud": "1500000000",
+            "version": 2
+          },
+          {
+            "id": "fictional-hosted-buyer-20260922",
+            "clientId": "fictional-hosted-client-20260922",
+            "active": true,
+            "allowedModels": [
+              "hosted-canary-fast",
+              "hosted-canary-smart"
+            ],
+            "monthlyCapNanoAud": "2000000000",
+            "version": 1
+          }
+        ]
+      }
+    }
+  ],
+  "limits": [
+    "GET only; no inference or account/key/billing mutation"
+  ],
+  "harnessNote": "Initial collection projection was incorrect. These final projections use source-verified response.accounts and fail closed on unexpected response shapes. No mutations."
+}

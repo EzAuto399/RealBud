@@ -1,0 +1,176 @@
+{
+  "checkedAt": "2026-09-23T04:11:21.934Z",
+  "readOnly": true,
+  "checks": [
+    {
+      "path": "/health",
+      "status": 200,
+      "elapsedMs": 379,
+      "summary": {
+        "revision": "8ba0ba4daece55fd94249b35754e8d38d46de2f9",
+        "mode": "local"
+      }
+    },
+    {
+      "path": "/ready",
+      "status": 200,
+      "elapsedMs": 598,
+      "summary": {
+        "ready": true
+      }
+    },
+    {
+      "path": "/v1/operator/status",
+      "status": 200,
+      "elapsedMs": 288,
+      "summary": {
+        "revision": "8ba0ba4daece55fd94249b35754e8d38d46de2f9",
+        "keyServingEnabled": true,
+        "routingMode": "jev-typesafe",
+        "customerPaymentMode": "disabled",
+        "catalogue": {
+          "checkedAt": "2026-09-23T04:11:23.091Z",
+          "expiringWithinMs": 86400000,
+          "state": "approved",
+          "counts": {
+            "approved": 2,
+            "expiring": 0,
+            "expired": 0
+          },
+          "routes": [
+            {
+              "model": "hosted-canary-fast",
+              "provider": "openrouter",
+              "configuration": "fictional-hosted-qualification-v1",
+              "approvedUntil": "2026-09-29T21:39:27.000Z",
+              "msUntilExpiry": 581283909,
+              "state": "approved",
+              "reviewReference": "owner-directed-renewal-2026-09-23",
+              "approvedBy": "ops-2026-09-23",
+              "approvedAt": 1790113236765,
+              "contextLength": 262144,
+              "contextLengthDefaulted": false,
+              "maxOutputTokens": 256,
+              "bootstrapped": false
+            },
+            {
+              "model": "hosted-canary-smart",
+              "provider": "openrouter",
+              "configuration": "fictional-hosted-qualification-v1",
+              "approvedUntil": "2026-09-29T21:39:27.000Z",
+              "msUntilExpiry": 581283909,
+              "state": "approved",
+              "reviewReference": "owner-directed-renewal-2026-09-23",
+              "approvedBy": "ops-2026-09-23",
+              "approvedAt": 1790113237378,
+              "contextLength": 163840,
+              "contextLengthDefaulted": false,
+              "maxOutputTokens": 256,
+              "bootstrapped": false
+            }
+          ],
+          "retired": [],
+          "version": 5,
+          "source": "ledger"
+        },
+        "tenants": [
+          {
+            "companyId": "fictional-hosted-billing-20260922",
+            "name": "FICTIONAL HOSTED TEST - DO NOT INVOICE",
+            "active": false,
+            "serviceExpiresAt": 1790116585883,
+            "includedUntil": 1790030184883,
+            "monthlyCapNanoAud": "2000000000",
+            "committedRetailNanoAud": "1479450",
+            "activeKeys": 0
+          }
+        ]
+      }
+    },
+    {
+      "path": "/v1/operator/rates",
+      "status": 200,
+      "elapsedMs": 227,
+      "summary": {
+        "keys": [
+          "rates"
+        ],
+        "rates": [
+          {
+            "card": {
+              "currency": "AUD",
+              "effectiveAt": 1790030253211,
+              "gstBasisPoints": 1000,
+              "gstInclusive": true,
+              "models": [
+                {
+                  "label": "FICTIONAL qualification prices - no customer offer",
+                  "model": "hosted-canary-fast",
+                  "units": {
+                    "cache_read_tokens": {
+                      "nanoAud": "1000",
+                      "perUnits": 1
+                    },
+                    "input_tokens": {
+                      "nanoAud": "1000",
+                      "perUnits": 1
+                    },
+                    "output_tokens": {
+                      "nanoAud": "3000",
+                      "perUnits": 1
+                    }
+                  }
+                },
+                {
+                  "label": "FICTIONAL qualification prices - no customer offer",
+                  "model": "hosted-canary-smart",
+                  "units": {
+                    "cache_read_tokens": {
+                      "nanoAud": "2000",
+                      "perUnits": 1
+                    },
+                    "input_tokens": {
+                      "nanoAud": "2000",
+                      "perUnits": 1
+                    },
+                    "output_tokens": {
+                      "nanoAud": "3000",
+                      "perUnits": 1
+                    }
+                  }
+                }
+              ],
+              "publishedAt": 1790030253211,
+              "version": "fictional-hosted-rates-20260922"
+            },
+            "digest": "4bd2ef3c80f4298fb05269b052cb587a5c8e6c9b717596d20ff45c46ba268503"
+          }
+        ]
+      }
+    },
+    {
+      "path": "/v1/operator/clients",
+      "status": 200,
+      "elapsedMs": 589,
+      "summary": {
+        "accounts": [
+          {
+            "active": true,
+            "allowedModels": [
+              "hosted-canary-fast",
+              "hosted-canary-smart"
+            ],
+            "billingCompanyId": "fictional-hosted-billing-20260922",
+            "billingMode": "client",
+            "customerCheckout": "both",
+            "id": "fictional-hosted-client-20260922",
+            "maxConcurrent": 1,
+            "monthlyCapNanoAud": "2000000000",
+            "name": "FICTIONAL hosted reseller test",
+            "version": 5
+          }
+        ]
+      }
+    }
+  ]
+}

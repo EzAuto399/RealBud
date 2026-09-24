@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "checkedAt": "2026-09-23T13:13:29.630Z",
+  "fixture": "Fictional client-funded customer under external_receivable provider account",
+  "networkCalls": 0,
+  "expected": {
+    "customerNetNanoAud": "0",
+    "invoiceLines": 0,
+    "requests": 1,
+    "tokens": {
+      "input": "10",
+      "output": "4"
+    }
+  },
+  "actual": {
+    "accountingTreatment": "external_receivable",
+    "customerBilling": "client_funded",
+    "wholesaleChargedNanoAud": "20212500",
+    "summaryCustomerNetNanoAud": "0",
+    "draftLines": 0,
+    "requests": 1,
+    "tokens": {
+      "input": "10",
+      "output": "4"
+    }
+  },
+  "passed": true,
+  "sourceStable": true,
+  "sourceHashes": {
+    "managed-gateway/customer-usage-summary.ts": "6bb5872b61ed8216409db0e24fbc582a0fbd7b899226c5af4f025fef80fb777e",
+    "managed-gateway/usage-analytics.ts": "6fea33349630866ec0a911318a0fbc109a019ada64713e18f5018c2a5e46e553",
+    "managed-gateway/commercial.ts": "c558fc71860b6a373cf4d337e0f34fced9c256e91a4bda960245d86fce30ca94",
+    "managed-gateway/ledger.ts": "07f0ac1e44af2160f0e3fd2cf8536fa093bd08718e2b24152e47500c7f47dc54"
+  }
+}

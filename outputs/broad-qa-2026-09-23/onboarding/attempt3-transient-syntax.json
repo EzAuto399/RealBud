@@ -1,0 +1,20 @@
+{
+  "at": "2026-09-23T02:34:23.335Z",
+  "layer": "source-rendered-local",
+  "passed": false,
+  "node": "v24.19.0",
+  "checks": [],
+  "pageErrors": [],
+  "origins": [
+    {
+      "service": "http://127.0.0.1:59625",
+      "renderer": "http://127.0.0.1:59626"
+    }
+  ],
+  "failure": "AssertionError [ERR_ASSERTION]: Disposable service starts\n    at start (file:///Users/yoda/projects/RealBud/scripts/qa-onboarding-restart.mjs:57:10)\n    at async file:///Users/yoda/projects/RealBud/scripts/qa-onboarding-restart.mjs:93:3",
+  "limits": [
+    "Disposable fictional state only; no real account, worker, model, hosted, bank or payment calls.",
+    "Source Vite renderer and local Node service; not a packaged or installed-device acceptance run.",
+    "Member isolation and asynchronous scope changes are covered by server/onboarding.test.ts, not separate physical devices."
+  ]
+}

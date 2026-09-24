@@ -1,0 +1,68 @@
+{
+  "at": "2026-09-24T01:39:16.580640+00:00",
+  "layer": "Read-only native engine schema inspection of the user-signed-in Hermes browser",
+  "result": "passed",
+  "origin": "https://app.reimasterapps.com.au",
+  "path": "unclassified REI path omitted",
+  "uiVersions": [
+    "26.0922.0"
+  ],
+  "observedKnownLabels": [
+    "Dashboard",
+    "Business",
+    "Owners",
+    "Pool of Owners",
+    "Contacts",
+    "Rentals",
+    "Tenants",
+    "Suppliers",
+    "Communities",
+    "Sales",
+    "Listings",
+    "Agents",
+    "Booking Calendar",
+    "Tasks",
+    "Receipts",
+    "Process",
+    "Reports",
+    "Settings",
+    "Tools",
+    "My Profile"
+  ],
+  "roleCounts": {
+    "generic": 91,
+    "button": 17,
+    "StaticText": 190,
+    "link": 61,
+    "list": 3,
+    "listitem": 37,
+    "form": 1,
+    "heading": 1,
+    "tablist": 1,
+    "tab": 2,
+    "tabpanel": 1,
+    "LineBreak": 1,
+    "LabelText": 1,
+    "switch": 1,
+    "region": 4,
+    "SvgRoot": 3,
+    "image": 23
+  },
+  "snapshotSha256": "bdb40ea56b09bc37229f55778f5ea4eec14d362c420b495ae3ef4c43f9155975",
+  "commands": [
+    "get url",
+    "snapshot"
+  ],
+  "pageInteractionCommands": 0,
+  "rawSnapshotPersisted": false,
+  "customerRowsRetained": false,
+  "inputValuesRetained": false,
+  "queryRetained": false,
+  "cookieReadOrCopied": false,
+  "limits": [
+    "Current rendered page only; no navigation or workflow execution",
+    "User-selected signed-in session; production account binding not qualified",
+    "No form interaction, submissions, file transfers or record/settings changes",
+    "No model turn, packaged app connection or installed Windows proof"
+  ]
+}

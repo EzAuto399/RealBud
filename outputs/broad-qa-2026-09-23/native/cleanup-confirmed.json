@@ -1,0 +1,20 @@
+{
+  "at": "2026-09-23T03:12:02.565558+00:00",
+  "attempts": [
+    {
+      "attempt": "onboarding-restart",
+      "noProcessForExactFixturePath": true,
+      "authenticatedServiceStop": true,
+      "scratchRemoved": true,
+      "path": "/private/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/RealBud native onboarding QA 6bga60"
+    },
+    {
+      "attempt": "onboarding-restart-attempt-2",
+      "noProcessForExactFixturePath": true,
+      "authenticatedServiceStop": true,
+      "scratchRemoved": true,
+      "path": "/private/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/RealBud native onboarding QA xShrxV"
+    }
+  ],
+  "note": "Original failure receipts retained unchanged. appClosed false records graceful-close failure; runner awaited its owned child exit after signal, then this separate exact-fixture process check found none."
+}

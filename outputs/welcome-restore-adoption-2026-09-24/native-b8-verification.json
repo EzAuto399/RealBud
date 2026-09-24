@@ -1,0 +1,75 @@
+{
+  "verifiedAt": "2026-09-23T23:35:26.403116+00:00",
+  "journeys": [
+    {
+      "receipt": "/Volumes/RealBud-TestLab/qa/output/welcome-cancel-b8aa9f2f/receipt.json",
+      "sha256": "a9484742f386e2496bb22b122ddbc5bb2b223673119db0ad557f500a8b0c11b3",
+      "groupsPassed": 8,
+      "sourceRevision": "b8aa9f2fee9dcc634e8ff8f9153103701aa4e1ca",
+      "artifactHashesMatched": true,
+      "executableHashMatched": true,
+      "packageReceiptMatched": true,
+      "capturedPids": [
+        {
+          "pid": 9114,
+          "absent": true
+        },
+        {
+          "pid": 9490,
+          "absent": true
+        },
+        {
+          "pid": 10261,
+          "absent": true
+        },
+        {
+          "pid": 10425,
+          "absent": true
+        }
+      ],
+      "scratch": "/Volumes/RealBud-TestLab/qa/tmp/RealBud native restore 6NyEcU",
+      "scratchAbsent": true,
+      "actualOSKeychainTested": false
+    },
+    {
+      "receipt": "/Volumes/RealBud-TestLab/qa/output/welcome-restore-b8aa9f2f/receipt.json",
+      "sha256": "27e78118308245a117458168f1b880485e40c12ae2b8560a1b40f54e2fb4cf39",
+      "groupsPassed": 14,
+      "sourceRevision": "b8aa9f2fee9dcc634e8ff8f9153103701aa4e1ca",
+      "artifactHashesMatched": true,
+      "executableHashMatched": true,
+      "packageReceiptMatched": true,
+      "capturedPids": [
+        {
+          "pid": 12395,
+          "absent": true
+        },
+        {
+          "pid": 13255,
+          "absent": true
+        },
+        {
+          "pid": 14090,
+          "absent": true
+        },
+        {
+          "pid": 14676,
+          "absent": true
+        }
+      ],
+      "scratch": "/Volumes/RealBud-TestLab/qa/tmp/RealBud native restore 7tCnPZ",
+      "scratchAbsent": true,
+      "actualOSKeychainTested": false
+    }
+  ],
+  "visualInspection": {
+    "reviewedAt": "2026-09-23T23:40:59.572727+00:00",
+    "reviewer": "root",
+    "images": [
+      "/Volumes/RealBud-TestLab/qa/output/welcome-cancel-b8aa9f2f/no-file-390-return-action.png",
+      "/Volumes/RealBud-TestLab/qa/output/welcome-cancel-b8aa9f2f/removed-upload-1440-return-action.png",
+      "/Volumes/RealBud-TestLab/qa/output/welcome-restore-b8aa9f2f/native-restore-completed.png"
+    ],
+    "observed": "Back to welcome is readable and visible at390px and1440px; completed restore shows preserved-work summary and paused/review requirements."
+  }
+}

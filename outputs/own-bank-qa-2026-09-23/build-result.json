@@ -1,0 +1,10 @@
+{
+  "completedAt": "2026-09-23T12:09:17.764844+10:00",
+  "packageExitCode": 0,
+  "sourceSha256After": "116d2816faa474cdd233662cdbd6cf3073c0ad598e00e0f816ac6f596a1bd88e",
+  "sourceUnchangedDuringBuild": true,
+  "head": "fb6cebed63aaed9d81f9112005ac938644d2fa86",
+  "appVersion": "0.1.19",
+  "notarized": false,
+  "archiveSha256": "654285edd8333eb9c2e9074a29494c52e153feeba5a16348eff90d584b937e8e"
+}

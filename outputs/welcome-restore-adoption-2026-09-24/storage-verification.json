@@ -1,0 +1,62 @@
+{
+  "observedAt": "2026-09-23T23:07:25.541987+00:00",
+  "evidence": [
+    {
+      "path": "/Users/yoda/projects/RealBud-platform-candidate-2026-09-23/outputs/platform-followup-2026-09-24/mac-b8aa9f2f/backup/receipt.json",
+      "sha256": "c1484291a90d22db660207f54c316c99d613377aed7312688409efbfa1e9e746"
+    },
+    {
+      "path": "/Users/yoda/projects/RealBud-platform-candidate-2026-09-23/outputs/platform-followup-2026-09-24/mac-b8aa9f2f/package-receipt.json",
+      "sha256": "fcbb8260a2613795538d0ae7c9e38073bb149bdb1ee60ddd928c6991a5ed9e92"
+    },
+    {
+      "path": "/Users/yoda/projects/RealBud-platform-candidate-2026-09-23/outputs/platform-followup-2026-09-24/welcome-cancel-integration/storage-block.json",
+      "sha256": "1522db976094fe76fb7564fb35914775f48ded9bcb821de4ff665761379d4958"
+    }
+  ],
+  "package": {
+    "sourceRevision": "b8aa9f2fee9dcc634e8ff8f9153103701aa4e1ca",
+    "passed": false,
+    "packageExitCode": 0,
+    "codeSignatureVerified": true,
+    "nativeDeploymentTargetsChecked": 69,
+    "serviceChecks": null,
+    "backupChecks": null,
+    "boundaryChecks": null,
+    "notarized": false,
+    "failure": {
+      "stage": "backup",
+      "reason": "backup failed; inspect its preserved log",
+      "code": null
+    },
+    "cleanupConfirmed": false
+  },
+  "backup": {
+    "passed": false,
+    "checks": [
+      "Direct You navigation resolves the global sidebar book state without opening Desk"
+    ],
+    "failure": "page.waitForEvent: Timeout 30000ms exceeded while waiting for event \"download\"\n=========================== logs ===========================\nwaiting for event \"download\"\n============================================================\n    at /Users/yoda/projects/RealBud-platform-candidate-2026-09-23/scripts/qa-private-backup-v2.mjs:88:30",
+    "diagnostic": "realbud server on http://127.0.0.1:64603\nBackup test diagnostic {\"phase\":\"sealing\",\"status\":507,\"locations\":[]}\n"
+  },
+  "storageCalculation": {
+    "databaseBytes": 3786129408,
+    "rollbackBytes": 3793655264,
+    "captureBytes": 7579784672,
+    "archiveBytes": 1073741824,
+    "markerBytes": 16384,
+    "marginBytes": 134217728,
+    "minimumBytes": 8787760608,
+    "minimumGiB": 8.184239834547043,
+    "availableBytesNow": 7728209920,
+    "suggestedSequenceFreeGiB": 12
+  },
+  "mutations": {
+    "vmInstalled": false,
+    "vmDownloaded": false,
+    "artifactsDeleted": false,
+    "backupPolicyChanged": false,
+    "backupRetried": false
+  },
+  "proofLimit": "Full package acceptance remains false; native welcome cancellation follow-up is not yet exercised in this build."
+}

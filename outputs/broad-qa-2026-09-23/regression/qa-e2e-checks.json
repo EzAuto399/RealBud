@@ -1,0 +1,1022 @@
+[
+  {
+    "name": "desk",
+    "passed": 26,
+    "failed": 0,
+    "skipped": 0,
+    "checks": [
+      {
+        "status": "passed",
+        "label": "server identifies as realbud — realbud"
+      },
+      {
+        "status": "passed",
+        "label": "per-boot session token issued"
+      },
+      {
+        "status": "passed",
+        "label": "desk without a session is 401"
+      },
+      {
+        "status": "passed",
+        "label": "pure GET has the 6-property book and no implicit drafts — drafts=0"
+      },
+      {
+        "status": "passed",
+        "label": "desk has the 6-property Demo book — got 6"
+      },
+      {
+        "status": "passed",
+        "label": "ledger facts are exposed"
+      },
+      {
+        "status": "passed",
+        "label": "live Recheck on Demo does not draft fixture cards — demo drafts=0"
+      },
+      {
+        "status": "passed",
+        "label": "practice drafted courtesy + levy flags"
+      },
+      {
+        "status": "passed",
+        "label": "escalation raised with no draft"
+      },
+      {
+        "status": "passed",
+        "label": "Demo practice is labelled Demo, not a live success — demo Demo book — Recheck asks Bud or a CSV for live facts."
+      },
+      {
+        "status": "passed",
+        "label": "draft send is always 403 — RealBud never sends. Approve the draft and send it from the PMS."
+      },
+      {
+        "status": "passed",
+        "label": "allow marks wording approved without a sentAt — allowed"
+      },
+      {
+        "status": "passed",
+        "label": "work item is approved, not confirmed or sent — approved"
+      },
+      {
+        "status": "passed",
+        "label": "recheck completes and reports hands — demo"
+      },
+      {
+        "status": "passed",
+        "label": "live readiness is not claimed from Demo facts"
+      },
+      {
+        "status": "passed",
+        "label": "add property lands in the book with quiet day-0 facts"
+      },
+      {
+        "status": "passed",
+        "label": "new property is inside grace (no draft)"
+      },
+      {
+        "status": "passed",
+        "label": "options patch sticks and never-rules stay locked"
+      },
+      {
+        "status": "passed",
+        "label": "remove property drops it with its facts"
+      },
+      {
+        "status": "passed",
+        "label": "three named loops; inbound is available but disabled until agency setup enables it — inbound available=true enabled=false nextRunAt=null"
+      },
+      {
+        "status": "passed",
+        "label": "inbound Run now without a request identifier is refused — 400 · Morning review requires its request identifier and current schedule revision."
+      },
+      {
+        "status": "passed",
+        "label": "identified inbound run is accepted and settles held on plan approval — 201 · failed · Approve the current morning plan in Schedule before collecting and preparing mail."
+      },
+      {
+        "status": "passed",
+        "label": "a manual inbound run never turns the schedule on — enabled=false nextRunAt=null"
+      },
+      {
+        "status": "passed",
+        "label": "morning-arrears run accepted"
+      },
+      {
+        "status": "passed",
+        "label": "loop run settles with a hands detail — completed · Bud is not set up — open Bud on You. Facts stay held."
+      },
+      {
+        "status": "passed",
+        "label": "hands status reports the pin and readiness flags — ready=false"
+      }
+    ]
+  },
+  {
+    "name": "pm-day",
+    "passed": 34,
+    "failed": 0,
+    "skipped": 0,
+    "checks": [
+      {
+        "status": "passed",
+        "label": "session issued"
+      },
+      {
+        "status": "passed",
+        "label": "three named routines"
+      },
+      {
+        "status": "passed",
+        "label": "morning and Friday are built"
+      },
+      {
+        "status": "passed",
+        "label": "inbound is available but disabled until agency setup enables it — available=true enabled=false nextRunAt=null"
+      },
+      {
+        "status": "passed",
+        "label": "inbound names the agency inbox"
+      },
+      {
+        "status": "passed",
+        "label": "catalog copy hides Hermes"
+      },
+      {
+        "status": "passed",
+        "label": "inbound Run now without a request identifier is 400 — 400 · Morning review requires its request identifier and current schedule revision."
+      },
+      {
+        "status": "passed",
+        "label": "identified inbound Run now is accepted and held on plan approval — 201 · failed · Approve the current morning plan in Schedule before collecting and preparing mail."
+      },
+      {
+        "status": "passed",
+        "label": "the held inbound run left the schedule off — enabled=false nextRunAt=null"
+      },
+      {
+        "status": "passed",
+        "label": "morning Run now accepted — 201"
+      },
+      {
+        "status": "passed",
+        "label": "morning routine settled — completed"
+      },
+      {
+        "status": "passed",
+        "label": "morning live Recheck does not draft fixture cards — demo drafts=0"
+      },
+      {
+        "status": "passed",
+        "label": "demo cases include maintenance, lease, inspection"
+      },
+      {
+        "status": "passed",
+        "label": "clock wrote the shared worker stamp"
+      },
+      {
+        "status": "passed",
+        "label": "clock stamped the worker source"
+      },
+      {
+        "status": "passed",
+        "label": "Recheck miss leaves addresses unchecked — 0"
+      },
+      {
+        "status": "passed",
+        "label": "no mail source was invented"
+      },
+      {
+        "status": "passed",
+        "label": "status payload is for Advanced, not a Hermes window"
+      },
+      {
+        "status": "passed",
+        "label": "practice left courtesy or levy cards"
+      },
+      {
+        "status": "passed",
+        "label": "courtesy is waiting"
+      },
+      {
+        "status": "passed",
+        "label": "Allow records the decision"
+      },
+      {
+        "status": "passed",
+        "label": "send stays 403"
+      },
+      {
+        "status": "passed",
+        "label": "Ask courtesy lands on Desk"
+      },
+      {
+        "status": "passed",
+        "label": "pasted book stages a proposal"
+      },
+      {
+        "status": "passed",
+        "label": "Allow adds the pasted property"
+      },
+      {
+        "status": "passed",
+        "label": "Friday letter Run now accepted"
+      },
+      {
+        "status": "passed",
+        "label": "Friday letter settled — completed"
+      },
+      {
+        "status": "passed",
+        "label": "owner letter is Copy-only"
+      },
+      {
+        "status": "passed",
+        "label": "owner letter will not send"
+      },
+      {
+        "status": "passed",
+        "label": "CSV flips the book live"
+      },
+      {
+        "status": "passed",
+        "label": "PM retunes morning to 8:00"
+      },
+      {
+        "status": "passed",
+        "label": "agency name is Harbour PM"
+      },
+      {
+        "status": "passed",
+        "label": "office visit fields stick"
+      },
+      {
+        "status": "passed",
+        "label": "unknown PMS is refused"
+      }
+    ]
+  },
+  {
+    "name": "pm-exceptions",
+    "passed": 62,
+    "failed": 0,
+    "skipped": 0,
+    "checks": [
+      {
+        "status": "passed",
+        "label": "session issued"
+      },
+      {
+        "status": "passed",
+        "label": "demo holds maintenance, lease, inspection, inbound"
+      },
+      {
+        "status": "passed",
+        "label": "maintenance stay held — no dispatch — Classify and gather evidence only. No dispatch."
+      },
+      {
+        "status": "passed",
+        "label": "inbound case is not a clock run — Declared inbound triage. Not a clock run."
+      },
+      {
+        "status": "passed",
+        "label": "practice drafts courtesy work"
+      },
+      {
+        "status": "passed",
+        "label": "practice drafts the levy flag"
+      },
+      {
+        "status": "passed",
+        "label": "King escalates at statutory shop clock"
+      },
+      {
+        "status": "passed",
+        "label": "Pine stays already-reminded (skip)"
+      },
+      {
+        "status": "passed",
+        "label": "Flora stays inside grace (skip)"
+      },
+      {
+        "status": "passed",
+        "label": "Birch clears when rent landed"
+      },
+      {
+        "status": "passed",
+        "label": "Oak courtesy is waiting for Deny"
+      },
+      {
+        "status": "passed",
+        "label": "Deny records the decision"
+      },
+      {
+        "status": "passed",
+        "label": "Deny still cannot send"
+      },
+      {
+        "status": "passed",
+        "label": "Ask puts a second courtesy on Desk"
+      },
+      {
+        "status": "passed",
+        "label": "Ask courtesy is pending for Edit"
+      },
+      {
+        "status": "passed",
+        "label": "Edit keeps the courtesy disclaimer"
+      },
+      {
+        "status": "passed",
+        "label": "Edit refuses a statutory framing"
+      },
+      {
+        "status": "passed",
+        "label": "stale Allow is 409 — 409"
+      },
+      {
+        "status": "passed",
+        "label": "fresh Allow after Edit works"
+      },
+      {
+        "status": "passed",
+        "label": "hostile note writes"
+      },
+      {
+        "status": "passed",
+        "label": "notes do not clear the book into live hands"
+      },
+      {
+        "status": "passed",
+        "label": "King still escalates after a hostile note"
+      },
+      {
+        "status": "passed",
+        "label": "never-rules stay locked on the card"
+      },
+      {
+        "status": "passed",
+        "label": "CSV money import goes live — live/csv"
+      },
+      {
+        "status": "passed",
+        "label": "partial payment is held"
+      },
+      {
+        "status": "passed",
+        "label": "reversed payment is held"
+      },
+      {
+        "status": "passed",
+        "label": "unmatched address is held with its street"
+      },
+      {
+        "status": "passed",
+        "label": "duplicate address is refused — 409"
+      },
+      {
+        "status": "passed",
+        "label": "zero-match import does not invent live hands from ghosts"
+      },
+      {
+        "status": "passed",
+        "label": "ghost-only import keeps csv/demo honesty (no silent fixture draft) — csv"
+      },
+      {
+        "status": "passed",
+        "label": "ghost-only import still records the unmatched street"
+      },
+      {
+        "status": "passed",
+        "label": "broken schema preview fails closed — 400"
+      },
+      {
+        "status": "passed",
+        "label": "property-code export matches the book — 200"
+      },
+      {
+        "status": "passed",
+        "label": "pasted multi-line book stages proposals — 2"
+      },
+      {
+        "status": "passed",
+        "label": "Deny drops one staged address"
+      },
+      {
+        "status": "passed",
+        "label": "Allow-all commits the rest in one persist"
+      },
+      {
+        "status": "passed",
+        "label": "Maple landed on the book"
+      },
+      {
+        "status": "passed",
+        "label": "denied Elm did not land"
+      },
+      {
+        "status": "passed",
+        "label": "PM can pause the morning loop"
+      },
+      {
+        "status": "passed",
+        "label": "paused morning refuses or accepts honestly — 409"
+      },
+      {
+        "status": "passed",
+        "label": "inbound is available but its clock stays off until agency setup — available=true enabled=false nextRunAt=null"
+      },
+      {
+        "status": "passed",
+        "label": "inbound Run now without a request identifier is 400 — 400 · Morning review requires its request identifier and current schedule revision."
+      },
+      {
+        "status": "passed",
+        "label": "identified inbound Run now is accepted and held on plan approval — 201 · failed · Approve the current morning plan in Schedule before collecting and preparing mail."
+      },
+      {
+        "status": "passed",
+        "label": "the held inbound run left the schedule off — enabled=false nextRunAt=null"
+      },
+      {
+        "status": "passed",
+        "label": "teach-a-job saves a shadow recipe"
+      },
+      {
+        "status": "passed",
+        "label": "shadow recipe has no plan approval yet"
+      },
+      {
+        "status": "passed",
+        "label": "shadow is not clock-runnable without approval"
+      },
+      {
+        "status": "passed",
+        "label": "active without planApprovedAt still blocks the clock gate"
+      },
+      {
+        "status": "passed",
+        "label": "plan approval stamps the recipe"
+      },
+      {
+        "status": "passed",
+        "label": "standing rule writes"
+      },
+      {
+        "status": "passed",
+        "label": "standing rule revokes"
+      },
+      {
+        "status": "passed",
+        "label": "demo agency name can be set"
+      },
+      {
+        "status": "passed",
+        "label": "demo agency name stays on the book as training copy"
+      },
+      {
+        "status": "passed",
+        "label": "channels exist without inventing a paired inbox"
+      },
+      {
+        "status": "passed",
+        "label": "no invented Gmail/IMAP connection"
+      },
+      {
+        "status": "passed",
+        "label": "law watch view loads"
+      },
+      {
+        "status": "passed",
+        "label": "law watch does not mint Form 11 / notice drafts"
+      },
+      {
+        "status": "passed",
+        "label": "empty address is refused — 400"
+      },
+      {
+        "status": "passed",
+        "label": "book is within the 1,000-property cap (8) — 8"
+      },
+      {
+        "status": "passed",
+        "label": "Friday letter Run now accepted after exceptions — 201"
+      },
+      {
+        "status": "passed",
+        "label": "Friday letter settled — completed"
+      },
+      {
+        "status": "passed",
+        "label": "owner letter send stays 403"
+      }
+    ]
+  },
+  {
+    "name": "portal-jobs",
+    "passed": 87,
+    "failed": 0,
+    "skipped": 0,
+    "checks": [
+      {
+        "status": "passed",
+        "label": "session issued"
+      },
+      {
+        "status": "passed",
+        "label": "desk without session is 401"
+      },
+      {
+        "status": "passed",
+        "label": "draft send is 403 — RealBud never sends. Approve the draft and send it from the PMS."
+      },
+      {
+        "status": "passed",
+        "label": "cloud computer route is 403 — Cloud computers are not part of RealBud. Portal work uses a bounded Desk session."
+      },
+      {
+        "status": "passed",
+        "label": "autoApprove patch is 403 — RealBud never runs unattended. Approvals stay manual on Desk."
+      },
+      {
+        "status": "passed",
+        "label": "intake path: honest fallback when draft fails — I can take this over as a saved job, but Bud's model isn't answering right now. "
+      },
+      {
+        "status": "passed",
+        "label": "existing unscheduled job points to Schedule — **Existing levy** is already a saved job for existing.example.com. Open Schedule and press **Run bes"
+      },
+      {
+        "status": "passed",
+        "label": "existing scheduled job points to Schedule — **Existing levy** is already a saved job for existing.example.com. Open Schedule and press **Run bes"
+      },
+      {
+        "status": "passed",
+        "label": "weak target creates no job"
+      },
+      {
+        "status": "passed",
+        "label": "weak target uses model path — hello from fake acp"
+      },
+      {
+        "status": "passed",
+        "label": "weekly letter creates no job"
+      },
+      {
+        "status": "passed",
+        "label": "weekly letter uses model path — hello from fake acp"
+      },
+      {
+        "status": "passed",
+        "label": "owner update reaches the worker — hello from fake acp"
+      },
+      {
+        "status": "passed",
+        "label": "owner update does not create an implicit job"
+      },
+      {
+        "status": "passed",
+        "label": "owner update with restrictions reaches the worker — hello from fake acp"
+      },
+      {
+        "status": "passed",
+        "label": "owner update with restrictions does not create an implicit job"
+      },
+      {
+        "status": "passed",
+        "label": "inbox comparison reaches the worker — hello from fake acp"
+      },
+      {
+        "status": "passed",
+        "label": "inbox comparison does not create an implicit job"
+      },
+      {
+        "status": "passed",
+        "label": "quoted work context reaches the worker — hello from fake acp"
+      },
+      {
+        "status": "passed",
+        "label": "quoted work context does not create an implicit job"
+      },
+      {
+        "status": "passed",
+        "label": "question creates no job"
+      },
+      {
+        "status": "passed",
+        "label": "pasted password never echoed in reply — I can take this over as a saved job, but Bud's model isn't answering right now. "
+      },
+      {
+        "status": "passed",
+        "label": "portal capability without origin is 400 — Name the portal site this job may open."
+      },
+      {
+        "status": "passed",
+        "label": "portal-submit without prefill is 400 — Add prefill before Bud may press Submit."
+      },
+      {
+        "status": "passed",
+        "label": "origin path normalised"
+      },
+      {
+        "status": "passed",
+        "label": "bad origin is 400 — Use a portal hostname like propertyme.com.au — no path or port."
+      },
+      {
+        "status": "passed",
+        "label": "six origins is 400 — Name at most 5 portal sites."
+      },
+      {
+        "status": "passed",
+        "label": "13 steps is 400 — List between 1 and 12 steps."
+      },
+      {
+        "status": "passed",
+        "label": "send capability is 400 — That job asks for a capability Bud cannot be granted."
+      },
+      {
+        "status": "passed",
+        "label": "runtime outside 1–5 minutes is 400 — Job runtime must be between 1 and 5 minutes."
+      },
+      {
+        "status": "passed",
+        "label": "attend before approval is 409 — Approve the plan first."
+      },
+      {
+        "status": "passed",
+        "label": "attend before attach is 409 — Attach this site first: you sign in, Bud reads and prefills, Submit, Pay and Send stay with you."
+      },
+      {
+        "status": "passed",
+        "label": "attach without portal site is 409 — Add the portal site and a portal capability before attaching it."
+      },
+      {
+        "status": "passed",
+        "label": "submitAcknowledged without portal-submit is 409 — Add 'Bud may press Submit' only on a job with the portal-submit capability."
+      },
+      {
+        "status": "passed",
+        "label": "editing origins clears attachment"
+      },
+      {
+        "status": "passed",
+        "label": "editing origins clears submitAcknowledgedAt"
+      },
+      {
+        "status": "passed",
+        "label": "editing capabilities clears submitAcknowledgedAt only"
+      },
+      {
+        "status": "passed",
+        "label": "portal-read rule is 201 — 201 [\"portal:read:portal.vantagestrata.com.au\"]"
+      },
+      {
+        "status": "passed",
+        "label": "portal rule deny is 400 — Portal rules can only allow."
+      },
+      {
+        "status": "passed",
+        "label": "portal-submit surface is 400 — surface must be portal-read or portal-prefill"
+      },
+      {
+        "status": "passed",
+        "label": "duplicate portal rule is idempotent"
+      },
+      {
+        "status": "passed",
+        "label": "GET rules lists surface and origin"
+      },
+      {
+        "status": "passed",
+        "label": "DELETE rule removes it"
+      },
+      {
+        "status": "passed",
+        "label": "navigate attend accepted — 202 {\"run\":{\"id\":\"b97dad9c-f7ab-42c7-8a7c-cb91ff9d267b\",\"jobId\":\"run-nav\",\"jobTitle\":\"Levy check\",\"jobRevision\":1,\"mode\":\"attended\",\"status\":\"running\",\"trigger\":\"manual\",\"scheduledFor\":1790130676965,\"idempotencyKey\":\"run-nav:1:attended:4207195c10ccc220005ace681570bd53\",\"attempt\":1,\"spec\":{\"title\":\"Levy check\",\"description\":\"\",\"steps\":[\"Open the portal\",\"Read the levy\"],\"allowedOrigins\":[\"vantagestrata.com.au\"],\"evidence\":\"Levy balance\",\"capabilities\":[\"portal-read\",\"portal-prefill\"],\"limits\":{\"maxRuntimeMinutes\":2,\"maxTurns\":6}},\"evidence\":[],\"approvalRequests\":[],\"detail\":\"Bud is running this job beside you.\",\"createdAt\":1790130676965,\"startedAt\":1790130676977,\"threadId\":\"7e9ee208-9a90-4b90-b53b-2029c764c355\"}}"
+      },
+      {
+        "status": "passed",
+        "label": "navigate card fence is portal-read"
+      },
+      {
+        "status": "passed",
+        "label": "navigate card offers a rule"
+      },
+      {
+        "status": "passed",
+        "label": "navigate run settles"
+      },
+      {
+        "status": "passed",
+        "label": "session scope becomes allow-once"
+      },
+      {
+        "status": "passed",
+        "label": "password fill auto-denied"
+      },
+      {
+        "status": "passed",
+        "label": "paused sign-in task ends interrupted after Stop — interrupted"
+      },
+      {
+        "status": "passed",
+        "label": "sign-in handoff cleared after password deny"
+      },
+      {
+        "status": "passed",
+        "label": "Pay click denied"
+      },
+      {
+        "status": "passed",
+        "label": "off-origin navigate denied"
+      },
+      {
+        "status": "passed",
+        "label": "submit without capability denied"
+      },
+      {
+        "status": "passed",
+        "label": "submit card summary — Bud wants to press 'Save' on vantagestrata.com.au. Check the form in the browser first."
+      },
+      {
+        "status": "passed",
+        "label": "submit card ruleOffer is null"
+      },
+      {
+        "status": "passed",
+        "label": "rule saved from Allow"
+      },
+      {
+        "status": "passed",
+        "label": "ruled navigate auto-allows"
+      },
+      {
+        "status": "passed",
+        "label": "permission evidence does not certify a current read"
+      },
+      {
+        "status": "passed",
+        "label": "unverified read-back stays partial"
+      },
+      {
+        "status": "passed",
+        "label": "unverified receipt explains the review requirement"
+      },
+      {
+        "status": "passed",
+        "label": "no read-back stays partial"
+      },
+      {
+        "status": "passed",
+        "label": "interrupt run not running — cancelled"
+      },
+      {
+        "status": "passed",
+        "label": "second attend while running is 409 — This job already has work waiting or running."
+      },
+      {
+        "status": "passed",
+        "label": "adhoc computer without fence denied"
+      },
+      {
+        "status": "passed",
+        "label": "scheduled loop run accepted"
+      },
+      {
+        "status": "passed",
+        "label": "queued detail is ready beside you — Ready to run beside you — press Start when you are at the screen."
+      },
+      {
+        "status": "passed",
+        "label": "missing runId is 404 — That run is no longer waiting."
+      },
+      {
+        "status": "passed",
+        "label": "attend with runId starts running"
+      },
+      {
+        "status": "passed",
+        "label": "unattached scheduled job skips with attach detail — Attach the site and approve the plan to run this beside you."
+      },
+      {
+        "status": "passed",
+        "label": "unattached skip creates no job run"
+      },
+      {
+        "status": "passed",
+        "label": "queued run survives restart — queued"
+      },
+      {
+        "status": "passed",
+        "label": "job runs newest first"
+      },
+      {
+        "status": "passed",
+        "label": "evidence entries shaped { at, kind, note }"
+      },
+      {
+        "status": "passed",
+        "label": "approvalRequests mentions Submit/Pay/Send when summary does — Submit/Pay/Send stay with you"
+      },
+      {
+        "status": "passed",
+        "label": "connect Notion without key explains setup — Connected apps needs its private connection key once. Press **Save Connected apps key** here, then **Connect Notion**. N"
+      },
+      {
+        "status": "passed",
+        "label": "composio key saved for connect test — true"
+      },
+      {
+        "status": "passed",
+        "label": "connect Notion with key opens stub sign-in — I opened Notion sign-in. Finish it in your browser — when you come back I’ll refresh the connection and tools automatica"
+      },
+      {
+        "status": "passed",
+        "label": "connect Gmail when already linked does not mint OAuth — Gmail is already connected. 4 tools ready."
+      },
+      {
+        "status": "passed",
+        "label": "compound connect stays ordinary message"
+      },
+      {
+        "status": "passed",
+        "label": "compound connect is not connect intent only — ok"
+      },
+      {
+        "status": "passed",
+        "label": "portal login request is not refused — I can take this over as a saved job, but Bud's model isn't answering right now. Finish Bud on You, then say this again o"
+      },
+      {
+        "status": "passed",
+        "label": "hermes exposes model.attached boolean"
+      },
+      {
+        "status": "passed",
+        "label": "hermes response has no keyHint"
+      },
+      {
+        "status": "passed",
+        "label": "desk check miss is plain language — Bud is not set up — open Bud on You. Facts stay held."
+      },
+      {
+        "status": "passed",
+        "label": "practice raises statutory-clock escalation"
+      },
+      {
+        "status": "passed",
+        "label": "escalation detail survives restart as sentences — 91 King St, Narrabundah ACT is 10 days late on this sample book (courtesy window"
+      }
+    ]
+  },
+  {
+    "name": "walkthrough",
+    "passed": 36,
+    "failed": 0,
+    "skipped": 0,
+    "checks": [
+      {
+        "status": "passed",
+        "label": "session issued"
+      },
+      {
+        "status": "passed",
+        "label": "demo book on first paint — 6 properties"
+      },
+      {
+        "status": "passed",
+        "label": "live Recheck on Demo does not draft fixture cards — demo drafts=0"
+      },
+      {
+        "status": "passed",
+        "label": "recheck writes the shared worker clock"
+      },
+      {
+        "status": "passed",
+        "label": "recheck stamps the worker source"
+      },
+      {
+        "status": "passed",
+        "label": "practice drafts portal courtesy for Oak"
+      },
+      {
+        "status": "passed",
+        "label": "import flips the book live"
+      },
+      {
+        "status": "passed",
+        "label": "csv source has last-checked"
+      },
+      {
+        "status": "passed",
+        "label": "agency name sticks"
+      },
+      {
+        "status": "passed",
+        "label": "office visit fields stick"
+      },
+      {
+        "status": "passed",
+        "label": "unmatched row keeps its address — 99 Ghost St, Acton ACT"
+      },
+      {
+        "status": "passed",
+        "label": "re-import does not duplicate the issue"
+      },
+      {
+        "status": "passed",
+        "label": "import recheck drafts an sms courtesy"
+      },
+      {
+        "status": "passed",
+        "label": "allow records decision"
+      },
+      {
+        "status": "passed",
+        "label": "approved wording keeps the copy body"
+      },
+      {
+        "status": "passed",
+        "label": "send is still 403"
+      },
+      {
+        "status": "passed",
+        "label": "clock retune sticks with revision"
+      },
+      {
+        "status": "passed",
+        "label": "morning loop runs now"
+      },
+      {
+        "status": "passed",
+        "label": "owner letter runs now"
+      },
+      {
+        "status": "passed",
+        "label": "owner letter drafted a proposal"
+      },
+      {
+        "status": "passed",
+        "label": "portal draft belongs to the bound property"
+      },
+      {
+        "status": "passed",
+        "label": "portal-channel courtesy draft exists"
+      },
+      {
+        "status": "passed",
+        "label": "portal wording allowed"
+      },
+      {
+        "status": "passed",
+        "label": "minted handoff is case-scoped with expiry — {\"caseId\":\"work-15e8d13b-1f3c-4e5b-9ec6-e0c710dabd62\",\"origin\":\"http://127.0.0.1\",\"allowedActions\":["
+      },
+      {
+        "status": "passed",
+        "label": "prepare runs the bounded session"
+      },
+      {
+        "status": "passed",
+        "label": "bud prefilled exactly once and never submitted"
+      },
+      {
+        "status": "passed",
+        "label": "portal refuses bud submit"
+      },
+      {
+        "status": "passed",
+        "label": "portal accepts human submit"
+      },
+      {
+        "status": "passed",
+        "label": "handoff resolves after human submit"
+      },
+      {
+        "status": "passed",
+        "label": "corrupt book enters recovery, not demo"
+      },
+      {
+        "status": "passed",
+        "label": "recovery keeps the desk readable"
+      },
+      {
+        "status": "passed",
+        "label": "writes are refused in recovery"
+      },
+      {
+        "status": "passed",
+        "label": "saved jobs remain readable in recovery"
+      },
+      {
+        "status": "passed",
+        "label": "job saves are refused in recovery"
+      },
+      {
+        "status": "passed",
+        "label": "job approval is refused in recovery"
+      },
+      {
+        "status": "passed",
+        "label": "job rehearsal is refused in recovery"
+      }
+    ]
+  }
+]

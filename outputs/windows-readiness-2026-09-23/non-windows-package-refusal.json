@@ -1,0 +1,9 @@
+{
+  "proofLayer": "local-macos-entrypoint-guard",
+  "passed": true,
+  "exitCode": 1,
+  "buildOutputsUnchanged": true,
+  "limits": [
+    "Rejects this Mac before compilation; does not prove Windows packaging."
+  ]
+}

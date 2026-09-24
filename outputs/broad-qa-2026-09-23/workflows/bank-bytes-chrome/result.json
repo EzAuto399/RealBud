@@ -1,0 +1,36 @@
+{
+  "at": "2026-09-23T02:26:53.003Z",
+  "passed": true,
+  "checks": [
+    "Actual upload and original download preserve BOM, Unicode, quoted multiline values, newlines and filename",
+    "Actual reviewed binary download changes only the approved reference and retains its quoting",
+    "Reloaded saved review retains the original byte artifact",
+    "Unsupported encoding clears the pending upload and leaves saved reviews unchanged",
+    "Legacy text reviews remain available with an explicit original-byte limitation",
+    "Real HTTP and UI continuation retain the captured total and exclude an interleaved new import",
+    "An older exact review and both byte-verified downloads remain open after refreshing away its history page",
+    "History paging and refresh retain partial human decisions while switching, reloading and importing are disabled",
+    "Injected history-response failure retains loaded rows and unsaved decisions; mobile discard cancellation retains the draft",
+    "Explicit discard clears only the unsaved form; original saved review and all 27 imports remain unchanged",
+    "A failed exact-review open leaves the previously selected review intact",
+    "A delayed real saved-settings response cannot overwrite mapping, date format or directory already being edited",
+    "No browser JavaScript errors"
+  ],
+  "ui": "/Users/yoda/projects/RealBud/dist",
+  "actual": [
+    "built React UI",
+    "local HTTP API",
+    "encrypted saved review",
+    "browser binary downloads"
+  ],
+  "synthetic": [
+    "bank CSV and property mapping",
+    "browser-only 503 history and detail response injections",
+    "delayed real settings response"
+  ],
+  "notProven": [
+    "customer bank format",
+    "REI import acceptance",
+    "native installed Windows"
+  ]
+}

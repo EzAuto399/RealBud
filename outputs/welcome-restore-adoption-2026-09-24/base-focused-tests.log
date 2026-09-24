@@ -1,0 +1,14 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/Users/yoda/projects/RealBud[39m
+
+ [32m✓[39m src/components/Onboarding.test.ts [2m([22m[2m12 tests[22m[2m)[22m[33m 699[2mms[22m[39m
+ [32m✓[39m server/onboarding.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 101[2mms[22m[39m
+ [32m✓[39m src/lib/first-run.test.ts [2m([22m[2m19 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m src/lib/you-navigation.test.ts [2m([22m[2m29 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m src/lib/app-route.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 3[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m5 passed[39m[22m[90m (5)[39m
+[2m      Tests [22m [1m[32m76 passed[39m[22m[90m (76)[39m
+[2m   Start at [22m 08:31:45
+[2m   Duration [22m 1.44s[2m (transform 156ms, setup 43ms, import 238ms, tests 812ms, environment 0ms)[22m
+

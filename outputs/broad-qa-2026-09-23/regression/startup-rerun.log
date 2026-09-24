@@ -1,0 +1,27 @@
+
+> realbud@0.1.19 test /Users/yoda/projects/RealBud
+> vitest run server/attended-run.test.ts server/branching.test.ts server/hermes-memory-approval-http.test.ts server/index.test.ts --reporter=default --reporter=json --outputFile=/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/regression/startup-rerun-report.json
+
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ✓ server/hermes-memory-approval-http.test.ts (18 tests) 3222ms
+ ✓ server/branching.test.ts (3 tests) 2623ms
+     ✓ forks on edit, replies on the new branch, and switches versions cleanly  613ms
+     ✓ replaces and drains one durable follow-up, then steers a live turn atomically  1312ms
+ ✓ server/attended-run.test.ts (48 tests) 4495ms
+     ✓ asks for navigate on the job's site and records asked evidence  352ms
+     ✓ auto-denies a password fill and a Pay click  533ms
+     ✓ keeps unverified claims partial whether or not they name the source  498ms
+     ✓ writes a portal rule from Allow and auto-allows the next same request  586ms
+     ✓ opens a submit ask with the exact card summary  314ms
+     ✓ enqueues a ready-beside-you run on the clock and starts it by runId  448ms
+ ✓ server/index.test.ts (52 tests) 4211ms
+     ✓ lists the built morning workflow disabled and holds it until agency review  567ms
+
+ Test Files  4 passed (4)
+      Tests  121 passed (121)
+   Start at  12:32:32
+   Duration  15.10s (transform 187ms, setup 29ms, import 232ms, tests 14.55s, environment 0ms)
+
+JSON report written to /Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/regression/startup-rerun-report.json

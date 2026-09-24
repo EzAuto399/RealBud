@@ -1,0 +1,14 @@
+PASS isolated-runtime-and-source (157ms)
+PASS local-modelvia-and-fictional-billing (444ms)
+PASS local-realbud-provisioning-gateway (117ms)
+PASS controlled-website-and-real-desktop (1591ms)
+PASS app-browser-link-consumes-real-provisioning (160ms)
+PASS wrong-bound-entitlement-refused-before-worker (25ms)
+PASS trusted-entitlement-and-real-worker-readiness (4537ms)
+PASS revoked-model-key-refuses-real-worker-without-extra-charge (2556ms)
+{
+  "passed": true,
+  "checks": 8,
+  "cleanup": true,
+  "receipt": "/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/app/2026-09-23T05-12-44.362Z/receipt.json"
+}

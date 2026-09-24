@@ -1,0 +1,74 @@
+{
+  "startedAt": "2026-09-23T03:42:53.096Z",
+  "finishedAt": "2026-09-23T03:42:58.627Z",
+  "node": "v24.19.0",
+  "exitCode": 0,
+  "error": null,
+  "files": [
+    "server/bank-reference.test.ts",
+    "server/mail-ingestion.test.ts",
+    "server/mail-follow-up.test.ts",
+    "server/source-bills-api.test.ts",
+    "server/bill-proposals.test.ts",
+    "server/morning-mail-workflow.test.ts"
+  ],
+  "parallelFiles": false,
+  "providerEnvironment": "stripped",
+  "disposableHomeRemoved": true,
+  "passed": true,
+  "tests": {
+    "total": 194,
+    "passed": 194,
+    "failed": 0,
+    "pending": 0,
+    "todo": 0
+  },
+  "results": [
+    {
+      "file": "/Users/yoda/projects/RealBud/server/bank-reference.test.ts",
+      "status": "passed",
+      "counts": {
+        "passed": 34
+      }
+    },
+    {
+      "file": "/Users/yoda/projects/RealBud/server/bill-proposals.test.ts",
+      "status": "passed",
+      "counts": {
+        "passed": 26
+      }
+    },
+    {
+      "file": "/Users/yoda/projects/RealBud/server/mail-follow-up.test.ts",
+      "status": "passed",
+      "counts": {
+        "passed": 25
+      }
+    },
+    {
+      "file": "/Users/yoda/projects/RealBud/server/mail-ingestion.test.ts",
+      "status": "passed",
+      "counts": {
+        "passed": 49
+      }
+    },
+    {
+      "file": "/Users/yoda/projects/RealBud/server/morning-mail-workflow.test.ts",
+      "status": "passed",
+      "counts": {
+        "passed": 8
+      }
+    },
+    {
+      "file": "/Users/yoda/projects/RealBud/server/source-bills-api.test.ts",
+      "status": "passed",
+      "counts": {
+        "passed": 52
+      }
+    }
+  ],
+  "limitations": [
+    "Synthetic local tests only; no browser, package, bank login, real mailbox, PDF acquisition, provider inference, calendar write or REI upload.",
+    "No PostgreSQL, builds, customer data or product source edits."
+  ]
+}

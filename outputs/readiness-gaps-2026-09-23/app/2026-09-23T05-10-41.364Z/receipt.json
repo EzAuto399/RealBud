@@ -1,0 +1,108 @@
+{
+  "at": "2026-09-23T05:10:41.370Z",
+  "proofLayer": "Local real app/server + pinned Hermes integration with fictional website, connector and provider",
+  "passed": false,
+  "checks": [
+    {
+      "name": "isolated-runtime-and-source",
+      "passed": true,
+      "elapsedMs": 174,
+      "detail": {
+        "disposableHome": true,
+        "noUserCredentialReads": true,
+        "sourceFilesModified": false
+      }
+    },
+    {
+      "name": "local-modelvia-and-fictional-billing",
+      "passed": true,
+      "elapsedMs": 551,
+      "detail": {
+        "fixedModel": "deepseek-chat",
+        "contextLength": 65536,
+        "outputCeiling": 256,
+        "maxConcurrent": 1,
+        "provider": "in-process fictional SSE"
+      }
+    },
+    {
+      "name": "local-realbud-provisioning-gateway",
+      "passed": true,
+      "elapsedMs": 117,
+      "detail": {
+        "composio": "fictional loopback organisation",
+        "provisioning": "real gateway implementation"
+      }
+    },
+    {
+      "name": "controlled-website-and-real-desktop",
+      "passed": true,
+      "elapsedMs": 2008,
+      "detail": {
+        "managedPolicy": true,
+        "entitlementEnforced": true,
+        "actualPinnedCli": true,
+        "websiteAuthority": "fixture, no real sign-in",
+        "appOrigin": "http://127.0.0.1:54852"
+      }
+    },
+    {
+      "name": "app-browser-link-consumes-real-provisioning",
+      "passed": true,
+      "elapsedMs": 162,
+      "detail": {
+        "linked": true,
+        "provisioned": true,
+        "modelKeyId": "0f43c00c500c7f50",
+        "projectId": "rb-b81721a2-4ad3-4c82-b010-d1bf8add69ac",
+        "profileUsesGateway": true,
+        "plaintextKeyFiles": 0,
+        "serviceBeforeEntitlement": "unconfigured"
+      }
+    },
+    {
+      "name": "wrong-bound-entitlement-refused-before-worker",
+      "passed": true,
+      "elapsedMs": 25,
+      "detail": {
+        "state": "invalid",
+        "workerProviderCalls": 0,
+        "detail": "Managed service entitlement could not be verified. Contact service support."
+      }
+    },
+    {
+      "name": "trusted-entitlement-and-real-worker-readiness",
+      "passed": false,
+      "elapsedMs": 4381,
+      "error": "Bud could not answer — HTTP 409: request_already_processed.\n\nfalse !== true\n"
+    }
+  ],
+  "source": {
+    "realbudHead": "e82ea2f067b7aa73d9bdc6e355a9bc4f1f1694c7",
+    "modelviaRevision": "d5a355dab049aca8e51d9290d2c6b618bae3e720",
+    "modelviaSource": "git archive, exact revision",
+    "hermesCli": "/Users/yoda/.realbud/hermes/runtimes/345cd2b057a452236de401d3534b8502a7465e8d-cfb3f08a9ee7/hermes-agent/venv/bin/hermes",
+    "node": "v24.19.0"
+  },
+  "limits": [
+    "No hosted Modelvia, real website sign-in, customer account, Composio organisation or paid inference.",
+    "Website approval/report is a controlled HTTP fixture; it does not prove the real Next/Supabase identity flow.",
+    "Modelvia ledger/admission and RealBud provisioning/desktop routes are real local source; provider answers are synthetic.",
+    "Trusted entitlement is signed by a disposable QA issuer; it is not a production service grant.",
+    "No native Electron window, Windows machine, bank/email/calendar operation or same-LAN second-device acceptance."
+  ],
+  "cleanup": true,
+  "lastLinkStatus": {
+    "state": "linked",
+    "id": "b81721a2-4ad3-4c82-b010-d1bf8add69ac",
+    "label": "Fictional app QA Mac",
+    "agencyLabel": "Fictional app QA office",
+    "lastReportedAt": "2026-09-23T05:10:44.330Z",
+    "usage": {
+      "state": "checking"
+    },
+    "provisioned": true
+  },
+  "failure": "AssertionError [ERR_ASSERTION]: Bud could not answer — HTTP 409: request_already_processed.\n\nfalse !== true\n\n    at file:///Users/yoda/projects/RealBud/scripts/qa-modelvia-app.mjs:210:110\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async step (file:///Users/yoda/projects/RealBud/scripts/qa-modelvia-app.mjs:49:24)\n    at async file:///Users/yoda/projects/RealBud/scripts/qa-modelvia-app.mjs:205:3",
+  "completedAt": "2026-09-23T05:10:49.877Z"
+}

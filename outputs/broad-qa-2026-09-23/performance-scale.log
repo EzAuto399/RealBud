@@ -1,0 +1,6 @@
+size  seedMs  deskMs  snapKB  practiceMs  previewMs  importMs  loopsMs
+20    235     7       25      70          6          44        2
+100   1134    16      93      45          24         57        6
+500   5198    33      434     81          319        386       27
+990   9509    44      851     181         1121       1381      50
+scale: done

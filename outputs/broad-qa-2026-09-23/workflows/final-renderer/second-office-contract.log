@@ -1,0 +1,21 @@
+RealBud core contract (isolated home, training book)
+entry  server/index.ts
+
+ok    U1  health.app is realbud — realbud
+ok    U2  desk without session is 401
+ok    U3  training book is 6 properties — n=6
+ok    U3  GET does not invent drafts
+ok    U4  practice drafts courtesy or levy, not a send
+ok    U4  statutory stays an escalation
+ok    U5  send is 403 — RealBud never sends. Approve the draft and send it from the PMS.
+ok    E2  stale Allow is 409 — 409
+ok    U5  allow has no sentAt
+ok    U5  send stays 403 after Allow
+ok    U6  malformed morning-review request is refused without a new run
+ok    U7  worker is not ready without a ping on this home
+ok    U8  this home is not the operator ~/.realbud
+ok    U8  this home wrote desk.json under REALBUD_DATA_DIR
+ok    E1  empty never-rules do not stick — never=2
+ok    E3  second home still has the 6-property training book — n=6
+
+ALL GREEN — core contract

@@ -1,0 +1,6 @@
+PASS Actual sensitive backup routes reject missing session and foreign origin
+PASS Private notes, workflow inputs, instruction packs and edited personal instructions block replacement and remain intact
+PASS Existing company enrollment files block restoration
+PASS Stale preview and concurrent unfinished business requests refuse staging without stranding the workspace
+PASS A staged restore holds business reads, writes, exports and duplicate restore attempts
+PASS Cold bootstrap completes once with unchanged destination key, matching durable completion receipt and disabled schedules

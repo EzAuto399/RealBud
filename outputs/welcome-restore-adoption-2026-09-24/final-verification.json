@@ -1,0 +1,27 @@
+{
+  "sourceAndQaFiles": 12,
+  "documentationFiles": 3,
+  "allHashesMatch": true,
+  "priorEntryDocumentsPreserved": true,
+  "gitIndexUnchanged": true,
+  "canonicalHeadUnchanged": true,
+  "allowlist": [
+    "docs/END-STATE.md",
+    "docs/GOAL-PROMPT.md",
+    "docs/WELCOME-BACKUP-RECOVERY-2026-09-24.md",
+    "scripts/qa-onboarding-restart.mjs",
+    "src/App.tsx",
+    "src/components/Onboarding.test.ts",
+    "src/components/Onboarding.tsx",
+    "src/components/PrivateWorkspaceBackup.test.ts",
+    "src/components/PrivateWorkspaceBackup.tsx",
+    "src/components/YouPage.tsx",
+    "src/lib/app-route.test.ts",
+    "src/lib/backup-welcome.test.ts",
+    "src/lib/backup-welcome.ts",
+    "src/lib/you-navigation.test.ts",
+    "src/lib/you-navigation.ts"
+  ],
+  "diffCheck": true,
+  "newPackagedFollowupProof": false
+}

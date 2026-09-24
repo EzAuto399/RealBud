@@ -1,0 +1,10 @@
+{
+  "at": "2026-09-23T02:54:03.119291+00:00",
+  "scripts": 5,
+  "allPass": true,
+  "workflowGroups": 49,
+  "secondOfficeChecks": 16,
+  "scope": "Rebuilt renderer after chat performance fix; unrelated final long-chat spacing adjustment occurred afterwards and is separately verified by platform agent",
+  "limits": "Source local HTTP + built UI and synthetic worker/connector; no package/native/live proof; mail-history coverage group is in-process service seam proof",
+  "cleanup": "No owned workflow processes remain"
+}

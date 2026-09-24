@@ -1,0 +1,129 @@
+{
+  "proofLayer": "local regression suite",
+  "passed": 5724,
+  "failed": 1,
+  "environmentGatedSkipped": 252,
+  "failure": "source-bills test expected plural attachments in revised review guidance",
+  "skippedFiles": [
+    {
+      "file": "electron/desk-key-custody.test.mjs",
+      "count": 1
+    },
+    {
+      "file": "server/ask-attach.test.ts",
+      "count": 5
+    },
+    {
+      "file": "server/company-departments.integration.test.ts",
+      "count": 11
+    },
+    {
+      "file": "server/company-execution-transport.integration.test.ts",
+      "count": 4
+    },
+    {
+      "file": "server/company-host.test.ts",
+      "count": 8
+    },
+    {
+      "file": "server/company-installation.integration.test.ts",
+      "count": 6
+    },
+    {
+      "file": "server/company-recovery.integration.test.ts",
+      "count": 5
+    },
+    {
+      "file": "server/company-work.integration.test.ts",
+      "count": 9
+    },
+    {
+      "file": "server/department-worker.test.ts",
+      "count": 9
+    },
+    {
+      "file": "server/env-path.test.ts",
+      "count": 7
+    },
+    {
+      "file": "server/hermes-memory-proposals-http.test.ts",
+      "count": 3
+    },
+    {
+      "file": "server/hermes-memory-recovery.native.test.ts",
+      "count": 3
+    },
+    {
+      "file": "server/hermes-memory-review.native.test.ts",
+      "count": 36
+    },
+    {
+      "file": "server/hermes-profile-windows.test.ts",
+      "count": 8
+    },
+    {
+      "file": "server/windows-file-privacy.test.ts",
+      "count": 8
+    },
+    {
+      "file": "server/company/backup.integration.test.ts",
+      "count": 9
+    },
+    {
+      "file": "server/company/department-execution.integration.test.ts",
+      "count": 18
+    },
+    {
+      "file": "server/company/department-lifecycle.integration.test.ts",
+      "count": 13
+    },
+    {
+      "file": "server/company/department-recovery.integration.test.ts",
+      "count": 7
+    },
+    {
+      "file": "server/company/departments-transport.integration.test.ts",
+      "count": 3
+    },
+    {
+      "file": "server/company/departments.integration.test.ts",
+      "count": 7
+    },
+    {
+      "file": "server/company/initial-enrollment.integration.test.ts",
+      "count": 5
+    },
+    {
+      "file": "server/company/member-auth.integration.test.ts",
+      "count": 6
+    },
+    {
+      "file": "server/company/membership.integration.test.ts",
+      "count": 6
+    },
+    {
+      "file": "server/company/multi-agency-transport.integration.test.ts",
+      "count": 3
+    },
+    {
+      "file": "server/company/portal-bindings.integration.test.ts",
+      "count": 18
+    },
+    {
+      "file": "server/company/postgres.integration.test.ts",
+      "count": 17
+    },
+    {
+      "file": "server/company/work-items.integration.test.ts",
+      "count": 11
+    },
+    {
+      "file": "server/company/workflow-template.integration.test.ts",
+      "count": 5
+    },
+    {
+      "file": "server/drivers/claude.test.ts",
+      "count": 1
+    }
+  ]
+}

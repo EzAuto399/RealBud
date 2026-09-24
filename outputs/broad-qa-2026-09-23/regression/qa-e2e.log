@@ -1,0 +1,286 @@
+
+> realbud@0.1.19 qa:e2e /Users/yoda/projects/RealBud
+> node scripts/qa-e2e.mjs
+
+RealBud PM e2e battery (5 suites)
+
+── desk ──
+ok    server identifies as realbud — realbud
+ok    per-boot session token issued
+ok    desk without a session is 401
+ok    pure GET has the 6-property book and no implicit drafts — drafts=0
+ok    desk has the 6-property Demo book — got 6
+ok    ledger facts are exposed
+ok    live Recheck on Demo does not draft fixture cards — demo drafts=0
+ok    practice drafted courtesy + levy flags
+ok    escalation raised with no draft
+ok    Demo practice is labelled Demo, not a live success — demo Demo book — Recheck asks Bud or a CSV for live facts.
+ok    draft send is always 403 — RealBud never sends. Approve the draft and send it from the PMS.
+ok    allow marks wording approved without a sentAt — allowed
+ok    work item is approved, not confirmed or sent — approved
+ok    recheck completes and reports hands — demo
+ok    live readiness is not claimed from Demo facts
+ok    add property lands in the book with quiet day-0 facts
+ok    new property is inside grace (no draft)
+ok    options patch sticks and never-rules stay locked
+ok    remove property drops it with its facts
+ok    three named loops; inbound is available but disabled until agency setup enables it — inbound available=true enabled=false nextRunAt=null
+ok    inbound Run now without a request identifier is refused — 400 · Morning review requires its request identifier and current schedule revision.
+ok    identified inbound run is accepted and settles held on plan approval — 201 · failed · Approve the current morning plan in Schedule before collecting and preparing mail.
+ok    a manual inbound run never turns the schedule on — enabled=false nextRunAt=null
+ok    morning-arrears run accepted
+ok    loop run settles with a hands detail — completed · Bud is not set up — open Bud on You. Facts stay held.
+ok    hands status reports the pin and readiness flags — ready=false
+
+Desk walkthrough complete.
+
+ok    desk
+
+── pm-day ──
+ok    session issued
+ok    three named routines
+ok    morning and Friday are built
+ok    inbound is available but disabled until agency setup enables it — available=true enabled=false nextRunAt=null
+ok    inbound names the agency inbox
+ok    catalog copy hides Hermes
+ok    inbound Run now without a request identifier is 400 — 400 · Morning review requires its request identifier and current schedule revision.
+ok    identified inbound Run now is accepted and held on plan approval — 201 · failed · Approve the current morning plan in Schedule before collecting and preparing mail.
+ok    the held inbound run left the schedule off — enabled=false nextRunAt=null
+ok    morning Run now accepted — 201
+ok    morning routine settled — completed
+ok    morning live Recheck does not draft fixture cards — demo drafts=0
+ok    demo cases include maintenance, lease, inspection
+ok    clock wrote the shared worker stamp
+ok    clock stamped the worker source
+ok    Recheck miss leaves addresses unchecked — 0
+ok    no mail source was invented
+ok    status payload is for Advanced, not a Hermes window
+ok    practice left courtesy or levy cards
+ok    courtesy is waiting
+ok    Allow records the decision
+ok    send stays 403
+ok    Ask courtesy lands on Desk
+ok    pasted book stages a proposal
+ok    Allow adds the pasted property
+ok    Friday letter Run now accepted
+ok    Friday letter settled — completed
+ok    owner letter is Copy-only
+ok    owner letter will not send
+ok    CSV flips the book live
+ok    PM retunes morning to 8:00
+ok    agency name is Harbour PM
+ok    office visit fields stick
+ok    unknown PMS is refused
+
+pm-day: ALL GREEN
+
+ok    pm-day
+
+── pm-exceptions ──
+ok    session issued
+ok    demo holds maintenance, lease, inspection, inbound
+ok    maintenance stay held — no dispatch — Classify and gather evidence only. No dispatch.
+ok    inbound case is not a clock run — Declared inbound triage. Not a clock run.
+ok    practice drafts courtesy work
+ok    practice drafts the levy flag
+ok    King escalates at statutory shop clock
+ok    Pine stays already-reminded (skip)
+ok    Flora stays inside grace (skip)
+ok    Birch clears when rent landed
+ok    Oak courtesy is waiting for Deny
+ok    Deny records the decision
+ok    Deny still cannot send
+ok    Ask puts a second courtesy on Desk
+ok    Ask courtesy is pending for Edit
+ok    Edit keeps the courtesy disclaimer
+ok    Edit refuses a statutory framing
+ok    stale Allow is 409 — 409
+ok    fresh Allow after Edit works
+ok    hostile note writes
+ok    notes do not clear the book into live hands
+ok    King still escalates after a hostile note
+ok    never-rules stay locked on the card
+ok    CSV money import goes live — live/csv
+ok    partial payment is held
+ok    reversed payment is held
+ok    unmatched address is held with its street
+ok    duplicate address is refused — 409
+ok    zero-match import does not invent live hands from ghosts
+ok    ghost-only import keeps csv/demo honesty (no silent fixture draft) — csv
+ok    ghost-only import still records the unmatched street
+ok    broken schema preview fails closed — 400
+ok    property-code export matches the book — 200
+ok    pasted multi-line book stages proposals — 2
+ok    Deny drops one staged address
+ok    Allow-all commits the rest in one persist
+ok    Maple landed on the book
+ok    denied Elm did not land
+ok    PM can pause the morning loop
+ok    paused morning refuses or accepts honestly — 409
+ok    inbound is available but its clock stays off until agency setup — available=true enabled=false nextRunAt=null
+ok    inbound Run now without a request identifier is 400 — 400 · Morning review requires its request identifier and current schedule revision.
+ok    identified inbound Run now is accepted and held on plan approval — 201 · failed · Approve the current morning plan in Schedule before collecting and preparing mail.
+ok    the held inbound run left the schedule off — enabled=false nextRunAt=null
+ok    teach-a-job saves a shadow recipe
+ok    shadow recipe has no plan approval yet
+ok    shadow is not clock-runnable without approval
+ok    active without planApprovedAt still blocks the clock gate
+ok    plan approval stamps the recipe
+ok    standing rule writes
+ok    standing rule revokes
+ok    demo agency name can be set
+ok    demo agency name stays on the book as training copy
+ok    channels exist without inventing a paired inbox
+ok    no invented Gmail/IMAP connection
+ok    law watch view loads
+ok    law watch does not mint Form 11 / notice drafts
+ok    empty address is refused — 400
+ok    book is within the 1,000-property cap (8) — 8
+ok    Friday letter Run now accepted after exceptions — 201
+ok    Friday letter settled — completed
+ok    owner letter send stays 403
+
+pm-exceptions: ALL GREEN
+
+ok    pm-exceptions
+
+── portal-jobs ──
+ok    session issued
+ok    desk without session is 401
+ok    draft send is 403 — RealBud never sends. Approve the draft and send it from the PMS.
+ok    cloud computer route is 403 — Cloud computers are not part of RealBud. Portal work uses a bounded Desk session.
+ok    autoApprove patch is 403 — RealBud never runs unattended. Approvals stay manual on Desk.
+ok    intake path: honest fallback when draft fails — I can take this over as a saved job, but Bud's model isn't answering right now. 
+      (harness: model-down fallback — recipes unchanged)
+ok    existing unscheduled job points to Schedule — **Existing levy** is already a saved job for existing.example.com. Open Schedule and press **Run bes
+ok    existing scheduled job points to Schedule — **Existing levy** is already a saved job for existing.example.com. Open Schedule and press **Run bes
+ok    weak target creates no job
+ok    weak target uses model path — hello from fake acp
+ok    weekly letter creates no job
+ok    weekly letter uses model path — hello from fake acp
+ok    owner update reaches the worker — hello from fake acp
+ok    owner update does not create an implicit job
+ok    owner update with restrictions reaches the worker — hello from fake acp
+ok    owner update with restrictions does not create an implicit job
+ok    inbox comparison reaches the worker — hello from fake acp
+ok    inbox comparison does not create an implicit job
+ok    quoted work context reaches the worker — hello from fake acp
+ok    quoted work context does not create an implicit job
+ok    question creates no job
+ok    pasted password never echoed in reply — I can take this over as a saved job, but Bud's model isn't answering right now. 
+ok    portal capability without origin is 400 — Name the portal site this job may open.
+ok    portal-submit without prefill is 400 — Add prefill before Bud may press Submit.
+ok    origin path normalised
+ok    bad origin is 400 — Use a portal hostname like propertyme.com.au — no path or port.
+ok    six origins is 400 — Name at most 5 portal sites.
+ok    13 steps is 400 — List between 1 and 12 steps.
+ok    send capability is 400 — That job asks for a capability Bud cannot be granted.
+ok    runtime outside 1–5 minutes is 400 — Job runtime must be between 1 and 5 minutes.
+ok    attend before approval is 409 — Approve the plan first.
+ok    attend before attach is 409 — Attach this site first: you sign in, Bud reads and prefills, Submit, Pay and Send stay with you.
+ok    attach without portal site is 409 — Add the portal site and a portal capability before attaching it.
+ok    submitAcknowledged without portal-submit is 409 — Add 'Bud may press Submit' only on a job with the portal-submit capability.
+ok    editing origins clears attachment
+ok    editing origins clears submitAcknowledgedAt
+ok    editing capabilities clears submitAcknowledgedAt only
+ok    portal-read rule is 201 — 201 ["portal:read:portal.vantagestrata.com.au"]
+ok    portal rule deny is 400 — Portal rules can only allow.
+ok    portal-submit surface is 400 — surface must be portal-read or portal-prefill
+ok    duplicate portal rule is idempotent
+ok    GET rules lists surface and origin
+ok    DELETE rule removes it
+ok    navigate attend accepted — 202 {"run":{"id":"b97dad9c-f7ab-42c7-8a7c-cb91ff9d267b","jobId":"run-nav","jobTitle":"Levy check","jobRevision":1,"mode":"attended","status":"running","trigger":"manual","scheduledFor":1790130676965,"idempotencyKey":"run-nav:1:attended:4207195c10ccc220005ace681570bd53","attempt":1,"spec":{"title":"Levy check","description":"","steps":["Open the portal","Read the levy"],"allowedOrigins":["vantagestrata.com.au"],"evidence":"Levy balance","capabilities":["portal-read","portal-prefill"],"limits":{"maxRuntimeMinutes":2,"maxTurns":6}},"evidence":[],"approvalRequests":[],"detail":"Bud is running this job beside you.","createdAt":1790130676965,"startedAt":1790130676977,"threadId":"7e9ee208-9a90-4b90-b53b-2029c764c355"}}
+ok    navigate card fence is portal-read
+ok    navigate card offers a rule
+ok    navigate run settles
+ok    session scope becomes allow-once
+ok    password fill auto-denied
+ok    paused sign-in task ends interrupted after Stop — interrupted
+ok    sign-in handoff cleared after password deny
+ok    Pay click denied
+ok    off-origin navigate denied
+ok    submit without capability denied
+ok    submit card summary — Bud wants to press 'Save' on vantagestrata.com.au. Check the form in the browser first.
+ok    submit card ruleOffer is null
+ok    rule saved from Allow
+ok    ruled navigate auto-allows
+ok    permission evidence does not certify a current read
+ok    unverified read-back stays partial
+ok    unverified receipt explains the review requirement
+ok    no read-back stays partial
+ok    interrupt run not running — cancelled
+      (interrupt settled as cancelled)
+ok    second attend while running is 409 — This job already has work waiting or running.
+      (overlap message: This job already has work waiting or running.)
+ok    adhoc computer without fence denied
+ok    scheduled loop run accepted
+ok    queued detail is ready beside you — Ready to run beside you — press Start when you are at the screen.
+ok    missing runId is 404 — That run is no longer waiting.
+ok    attend with runId starts running
+ok    unattached scheduled job skips with attach detail — Attach the site and approve the plan to run this beside you.
+ok    unattached skip creates no job run
+ok    queued run survives restart — queued
+ok    job runs newest first
+ok    evidence entries shaped { at, kind, note }
+ok    approvalRequests mentions Submit/Pay/Send when summary does — Submit/Pay/Send stay with you
+ok    connect Notion without key explains setup — Connected apps needs its private connection key once. Press **Save Connected apps key** here, then **Connect Notion**. N
+ok    composio key saved for connect test — true
+ok    connect Notion with key opens stub sign-in — I opened Notion sign-in. Finish it in your browser — when you come back I’ll refresh the connection and tools automatica
+ok    connect Gmail when already linked does not mint OAuth — Gmail is already connected. 4 tools ready.
+ok    compound connect stays ordinary message
+ok    compound connect is not connect intent only — ok
+ok    portal login request is not refused — I can take this over as a saved job, but Bud's model isn't answering right now. Finish Bud on You, then say this again o
+ok    hermes exposes model.attached boolean
+ok    hermes response has no keyHint
+ok    desk check miss is plain language — Bud is not set up — open Bud on You. Facts stay held.
+ok    practice raises statutory-clock escalation
+ok    escalation detail survives restart as sentences — 91 King St, Narrabundah ACT is 10 days late on this sample book (courtesy window
+
+ALL GREEN — portal jobs e2e (0 skip(s))
+
+ok    portal-jobs
+
+── walkthrough ──
+ok    session issued
+ok    demo book on first paint — 6 properties
+ok    live Recheck on Demo does not draft fixture cards — demo drafts=0
+ok    recheck writes the shared worker clock
+ok    recheck stamps the worker source
+ok    practice drafts portal courtesy for Oak
+ok    import flips the book live
+ok    csv source has last-checked
+ok    agency name sticks
+ok    office visit fields stick
+ok    unmatched row keeps its address — 99 Ghost St, Acton ACT
+ok    re-import does not duplicate the issue
+ok    import recheck drafts an sms courtesy
+ok    allow records decision
+ok    approved wording keeps the copy body
+ok    send is still 403
+ok    clock retune sticks with revision
+ok    morning loop runs now
+ok    owner letter runs now
+ok    owner letter drafted a proposal
+ok    portal draft belongs to the bound property
+ok    portal-channel courtesy draft exists
+ok    portal wording allowed
+ok    minted handoff is case-scoped with expiry — {"caseId":"work-15e8d13b-1f3c-4e5b-9ec6-e0c710dabd62","origin":"http://127.0.0.1","allowedActions":[
+ok    prepare runs the bounded session
+ok    bud prefilled exactly once and never submitted
+ok    portal refuses bud submit
+ok    portal accepts human submit
+ok    handoff resolves after human submit
+     [debug] recovery GET 200: {"active":true,"reason":"Expected property name or '}' in JSON at position 1 (line 1 column 2)","quarantined":["/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/realbud-walkthrough-4ArTtb/.realbud/desk.json.quarantine-1790130687907"]} mode: live
+ok    corrupt book enters recovery, not demo
+ok    recovery keeps the desk readable
+ok    writes are refused in recovery
+ok    saved jobs remain readable in recovery
+ok    job saves are refused in recovery
+ok    job approval is refused in recovery
+ok    job rehearsal is refused in recovery
+
+walkthrough: ALL GREEN
+
+ok    walkthrough
+
+ALL GREEN — PM e2e battery

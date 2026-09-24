@@ -1,0 +1,42 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ❯ server/drivers/acp/browser-injection-boundary.test.ts (10 tests | 7 failed) 9302ms
+     × browser_click_semantic cannot turn email instructions or fullAuto into payment approval 1219ms
+     × browser_press cannot turn email instructions or fullAuto into payment approval 1217ms
+     × requires a new exact approval for the next invoice and does not repeat a transport retry 1248ms
+     × rechecks the amount after approval instead of trusting the old card 1249ms
+     × rechecks the recipient after approval instead of trusting the old card 1202ms
+     × Stop rejects a pending payment and a late approval without dispatch 1213ms
+     ✓ Stop during an in-flight read aborts the helper and withholds its late page result 221ms
+     × Stop after payment dispatch retains unknown outcome and a new broker cannot replay it via Enter 1241ms
+     ✓ refuses cross-run grants, foreign broker credentials, foreign sites and another browser's tab 233ms
+     ✓ a checked account change withholds the other office's page before any payment card 257ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 7 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > browser_click_semantic cannot turn email instructions or fullAuto into payment approval
+ FAIL  server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > browser_press cannot turn email instructions or fullAuto into payment approval
+ FAIL  server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > requires a new exact approval for the next invoice and does not repeat a transport retry
+ FAIL  server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > rechecks the amount after approval instead of trusting the old card
+ FAIL  server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > rechecks the recipient after approval instead of trusting the old card
+ FAIL  server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > Stop rejects a pending payment and a late approval without dispatch
+ FAIL  server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > Stop after payment dispatch retains unknown outcome and a new broker cannot replay it via Enter
+AssertionError: expected 0 to be greater than 0
+ ❯ server/drivers/acp/browser-injection-boundary.test.ts:135:51
+    133|   const cards = () => recorder.events.filter((event): event is Opened …
+    134|   const cardAfter = async (count = 0) => {
+    135|     await vi.waitFor(() => expect(cards().length).toBeGreaterThan(coun…
+       |                                                   ^
+    136|     return cards()[count];
+    137|   };
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/7]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  7 failed | 3 passed (10)
+   Start at  15:00:52
+   Duration  9.77s (transform 303ms, setup 17ms, import 376ms, tests 9.30s, environment 0ms)
+
+JSON report written to /Users/yoda/projects/RealBud/outputs/core-gap-qa-2026-09-23/security/injection-run.json

@@ -1,0 +1,8 @@
+{
+  "script": "scripts/qa-bank-bytes.mjs",
+  "code": 1,
+  "seconds": 1.09,
+  "log": "/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/workflows/bank-bytes.log",
+  "node": "/Users/yoda/.nvm/versions/node/v24.19.0/bin/node",
+  "tier": "source HTTP and prebuilt UI; isolated synthetic contexts"
+}

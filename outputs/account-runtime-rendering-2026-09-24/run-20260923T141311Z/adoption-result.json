@@ -1,0 +1,67 @@
+{
+  "startedAt": "2026-09-23T14:15:32.298058+00:00",
+  "environmentFiles": [
+    {
+      "name": ".env.local",
+      "heldFilename": ".env.local.runtime-auth-198e2debdb534ed88b88bc086927478d.held",
+      "restored": true
+    }
+  ],
+  "environmentNames": [
+    "PATH",
+    "HOME",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+    "NEXT_TELEMETRY_DISABLED"
+  ],
+  "externalNetwork": "Denied by sandbox; loopback only",
+  "restored": true,
+  "buildExit": 0,
+  "qaExit": 1,
+  "nextBuildId": "FGiQlgQpRthGz3xY2QJ-f",
+  "routes": {
+    "dynamicAccountPages": [
+      "/account",
+      "/account/invoices",
+      "/account/limits",
+      "/account/rates",
+      "/account/support"
+    ],
+    "staticUsageRedirect": {
+      "routeType": "page",
+      "response": "complete",
+      "compute": "static",
+      "htmlSize": 9862,
+      "experimentalBypassFor": [
+        {
+          "type": "header",
+          "key": "next-action"
+        },
+        {
+          "type": "header",
+          "key": "content-type",
+          "value": "multipart/form-data;.*"
+        }
+      ],
+      "initialRevalidateSeconds": false,
+      "srcRoute": "/account/usage",
+      "dataRoute": "/account/usage.rsc",
+      "allowHeader": [
+        "host",
+        "x-matched-path",
+        "x-prerender-revalidate",
+        "x-prerender-revalidate-if-generated",
+        "x-next-revalidated-tags",
+        "x-next-revalidate-tag-token"
+      ]
+    }
+  },
+  "failure": "Auth regression failed; see qa.log",
+  "finishedAt": "2026-09-23T14:15:37.167093+00:00",
+  "scratch": "/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/rb-runtime-auth-fh1bvfxt",
+  "scratchEntries": [
+    "node-compile-cache"
+  ],
+  "scratchRemoved": false
+}

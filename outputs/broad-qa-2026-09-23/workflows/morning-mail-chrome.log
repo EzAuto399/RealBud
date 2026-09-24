@@ -1,0 +1,9 @@
+{
+  "output": "/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/workflows/morning-mail-chrome",
+  "checks": [
+    "Actual HTTP agency setup, scoped connector acquisition and three deterministic worker batches produce45 persistent source-linked items; manual run leaves schedule disabled; same request is not repeated",
+    "Checking the selected Gmail account starts windowed history acquisition with no separate collect action: it holds before the plan review, then tiles a 90-day approved interval into three checkpointed 30-day windows read across six actual connector pages, reports complete coverage with nothing unchecked in both the workspace read model and the setup check, and a repeat check re-requests no completed window",
+    "Real API enforces stale edits, preserves staff decisions on rescan, reads back office timezone, pauses/requires re-review after settings change and denies revoked/unreviewed sources",
+    "Actual application renders45 fixture conversations at desktop and390px without page errors or horizontal overflow"
+  ]
+}

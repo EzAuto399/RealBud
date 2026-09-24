@@ -1,0 +1,6 @@
+
+> realbud@0.1.19 typecheck /Users/yoda/projects/RealBud
+> tsc -b && tsc -p tsconfig.server.json
+
+server/pdf-text.ts(3,19): error TS6133: 'join' is declared but its value is never read.
+ ELIFECYCLE  Command failed with exit code 2.

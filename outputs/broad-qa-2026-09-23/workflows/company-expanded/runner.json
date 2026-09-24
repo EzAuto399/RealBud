@@ -1,0 +1,105 @@
+{
+  "command": [
+    "/Users/yoda/.nvm/versions/node/v24.19.0/bin/node",
+    "node_modules/vitest/vitest.mjs",
+    "run",
+    "server/company-departments.integration.test.ts",
+    "server/company-execution-transport.integration.test.ts",
+    "server/company-host.test.ts",
+    "server/company-installation.integration.test.ts",
+    "server/company-recovery.integration.test.ts",
+    "server/company-work.integration.test.ts",
+    "server/company/backup.integration.test.ts",
+    "server/company/department-execution.integration.test.ts",
+    "server/company/department-lifecycle.integration.test.ts",
+    "server/company/department-recovery.integration.test.ts",
+    "server/company/departments-transport.integration.test.ts",
+    "server/company/portal-bindings.integration.test.ts",
+    "--no-file-parallelism",
+    "--reporter=default",
+    "--reporter=json",
+    "--outputFile=/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/workflows/company-expanded/vitest-results.json"
+  ],
+  "exitCode": 0,
+  "seconds": 42.16,
+  "started": "2026-09-23T02:41:54.711089+00:00",
+  "environmentKeys": [
+    "PATH",
+    "HOME",
+    "USERPROFILE",
+    "LC_ALL",
+    "LANG",
+    "REALBUD_TEST_POSTGRES",
+    "REALBUD_TEST_POSTGRES_BIN"
+  ],
+  "tier": "Current source integrations; disposable PostgreSQL16 and loopback TLS/HTTP; no provider/customer/installed-device/Windows calls",
+  "selection": {
+    "files": [
+      {
+        "file": "server/company-departments.integration.test.ts",
+        "previouslySkippedCases": 11
+      },
+      {
+        "file": "server/company-execution-transport.integration.test.ts",
+        "previouslySkippedCases": 4
+      },
+      {
+        "file": "server/company-host.test.ts",
+        "previouslySkippedCases": 8
+      },
+      {
+        "file": "server/company-installation.integration.test.ts",
+        "previouslySkippedCases": 6
+      },
+      {
+        "file": "server/company-recovery.integration.test.ts",
+        "previouslySkippedCases": 5
+      },
+      {
+        "file": "server/company-work.integration.test.ts",
+        "previouslySkippedCases": 9
+      },
+      {
+        "file": "server/company/backup.integration.test.ts",
+        "previouslySkippedCases": 9
+      },
+      {
+        "file": "server/company/department-execution.integration.test.ts",
+        "previouslySkippedCases": 18
+      },
+      {
+        "file": "server/company/department-lifecycle.integration.test.ts",
+        "previouslySkippedCases": 13
+      },
+      {
+        "file": "server/company/department-recovery.integration.test.ts",
+        "previouslySkippedCases": 7
+      },
+      {
+        "file": "server/company/departments-transport.integration.test.ts",
+        "previouslySkippedCases": 3
+      },
+      {
+        "file": "server/company/portal-bindings.integration.test.ts",
+        "previouslySkippedCases": 18
+      }
+    ],
+    "priorSeparateCases": 16,
+    "selectedPreviouslySkippedCases": 111,
+    "notSelected": "Windows/native Hermes/URL-only gates; already passed three runIf files"
+  },
+  "sourceHashes": {
+    "server/company-departments.integration.test.ts": "6576baa50f0ae888d287bd3d96ba40a80b66be2168a06bf70a14b8e2e88738f6",
+    "server/company-execution-transport.integration.test.ts": "efe91cca839a66e3433b99580134aac344fda4a83a373afa8a12f89a03ee8a9b",
+    "server/company-host.test.ts": "a40e399b3a59f65fb591c12c756479ccb1ac2635de0451850e02ca14b71de428",
+    "server/company-installation.integration.test.ts": "f7f3618216a2affce3da86139d8fb0493d47084ba5f0191bc6d0ae84248c1cbf",
+    "server/company-recovery.integration.test.ts": "2d02cd24efb2abb0f7b1ce868920e7c773cb0f10cbc6b3b4963e9848b0ebbeb7",
+    "server/company-work.integration.test.ts": "4d94fc7e09ded6404e6d2370ae31bd2698777794172d1778f872f5c308b4c098",
+    "server/company/backup.integration.test.ts": "96bc0fbc3d59363b67366a623c401a5eccc86e0444e416c008a516f7ca4c5b54",
+    "server/company/department-execution.integration.test.ts": "db1412d11a02416ac07e1ee8dd4d59f66bb008608a0f4f06d58c9edfe1d9b387",
+    "server/company/department-lifecycle.integration.test.ts": "d49090644cd14176ab09eb125dfffc380bcbafbbed2bf2d457e8daa3ba07aa21",
+    "server/company/department-recovery.integration.test.ts": "62099d61d8f6328c60be740c761da36114c590340f18662774bc0c52acd1dcbc",
+    "server/company/departments-transport.integration.test.ts": "59a3f2ca282ff0d624dd4f1cf3a7a5817cc46865032f9733a465cba2ccc84c52",
+    "server/company/portal-bindings.integration.test.ts": "baf56f99493fb25bd05b7509d5da138283a8656c4ba4d3ba43458828f10fe5cc"
+  }
+}

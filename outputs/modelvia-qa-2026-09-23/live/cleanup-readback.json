@@ -1,0 +1,14 @@
+{
+  "checkedAt": "2026-09-23T03:32:45.507Z",
+  "projectId": "realbud-qa-20260923-f422be86",
+  "active": false,
+  "monthlyCapNanoAud": "600000000",
+  "keys": [
+    {
+      "id": "832dd35dfbfd955b",
+      "revokedAt": 1790134268460
+    }
+  ],
+  "inferenceCallsAttempted": 0,
+  "passed": true
+}

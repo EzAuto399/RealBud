@@ -1,0 +1,15 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ✓ server/office-link.test.ts (42 tests) 5781ms
+     ✓ maps an unreachable, refusing or malformed account to one honest state  848ms
+     ✓ retries a dropped connection or a 5xx once, and a refusal not at all  2324ms
+     ✓ retries a status poll once after a network error and keeps the request on a bad answer  1520ms
+ ✓ server/worker-model-access.test.ts (16 tests) 798ms
+
+ Test Files  2 passed (2)
+      Tests  58 passed (58)
+   Start at  13:33:07
+   Duration  7.14s (transform 286ms, setup 48ms, import 352ms, tests 6.58s, environment 0ms)
+
+JSON report written to /Users/yoda/projects/RealBud/outputs/modelvia-qa-2026-09-23/security/lifecycle-fixed-tests.json

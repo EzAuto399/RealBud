@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-09-23T13:23:59.851934+00:00",
+  "scope": "RealBud usage/payment integration production source and focused tests",
+  "websiteBase": "b9c764c0b97d406b0c9ce3bfd6dddb06ac7bba2a",
+  "rootBase": "e82ea2f067b7aa73d9bdc6e355a9bc4f1f1694c7",
+  "files": [
+    {
+      "path": "website/app/account/page.tsx",
+      "sha256": "0007e765abe9100aa0c964fd87e4e1362a49f0b29d90eb9316ab9064e875ff11"
+    },
+    {
+      "path": "website/app/account/ai-billing/page.tsx",
+      "sha256": "14150d4d67c3f87ffbd003977e7dd4675a1f6422f49ac6e3d15352d06854359e"
+    },
+    {
+      "path": "website/app/account/ai-billing/platform-billing-panel.tsx",
+      "sha256": "4af47608168cd22a0a977436e24ff02dd8d051e922f3a255a13d6f098f33b47e"
+    },
+    {
+      "path": "website/app/account/ai-billing/usage-insights.tsx",
+      "sha256": "00c6db2dbdea2ba9848a00ece0b51ec7c7c1519cb8898e2ce717e2ac30229879"
+    },
+    {
+      "path": "website/app/account/ai-billing/usage-insights.module.css",
+      "sha256": "9f3f066c42c62fde931f547282993ddc0bdababbcdd0aa92ffec8078239d3c44"
+    },
+    {
+      "path": "website/app/api/account/ai-billing/route.ts",
+      "sha256": "378563ae97122c8428d97ab109f6232a7646f7e795fdb3a492206282f6e56c17"
+    },
+    {
+      "path": "website/app/api/account/ai-billing/checkout/route.ts",
+      "sha256": "783b750206e6b29e012b5c2f4cec8a1529481327e2208395489ffca6472e54a5"
+    },
+    {
+      "path": "website/app/api/account/ai-billing/usage-summary/route.ts",
+      "sha256": "7c30f8b90d48e7fa466d14462ed61e20fc3593b505c6bdb43fd38dbeeea7f24a"
+    },
+    {
+      "path": "website/app/api/installations/usage/route.ts",
+      "sha256": "550b24524072b12cacdf67c01db6e885ae2e75f9e34afa43cd0ca990001a0b6b"
+    },
+    {
+      "path": "website/lib/platform-billing.ts",
+      "sha256": "8e33e68f51ae8554e36c2d30aa0f81212e6cbe40a65aed86b01408439c0817f5"
+    },
+    {
+      "path": "website/lib/platform-billing-view.ts",
+      "sha256": "9871861282f8a7fab2b64319828b68d6bfff0942500020623c6d15fb91d2621f"
+    },
+    {
+      "path": "website/lib/platform-billing.test.mjs",
+      "sha256": "79646a5702e0ffcbdb2b57f6f14f56d247a509ef0840064406ebed80d722db93"
+    },
+    {
+      "path": "website/lib/platform-usage.ts",
+      "sha256": "9be536de72cf87ed27818ecd06d416e97b10acb98a23aeb0aa50214d65d556b4"
+    },
+    {
+      "path": "website/lib/platform-usage.test.mjs",
+      "sha256": "6735ed764d98d54048908c5d0a6835a4b8318c73bd8724d94080766e0aa04108"
+    },
+    {
+      "path": "website/lib/platform-usage-routes.test.mjs",
+      "sha256": "14ae0827e0c1028d4ebcdfa8253816a7e067434151d09ee6e1aa034ced6db016"
+    },
+    {
+      "path": "website/lib/usage-navigation.ts",
+      "sha256": "3bda75b9f0d404dea62d01c76e08f4e2b45ca52e5f8035fe8df1a554d603e7e0"
+    },
+    {
+      "path": "website/lib/usage-navigation.test.mjs",
+      "sha256": "3e191ca42c739d5b9ae5ac547f3064f5f986e939e7750a742c02083cd53a0f3e"
+    },
+    {
+      "path": "website/middleware.ts",
+      "sha256": "c5bd8f10a357b8db41340265d59156d9677cbdfecd2247f543d3b260acc17618"
+    },
+    {
+      "path": "website/lib/middleware.test.mjs",
+      "sha256": "3585521155bba23a698b05710572b5bd24f1962ce1ff798eacc93767d008c45f"
+    },
+    {
+      "path": "shared/office-link.ts",
+      "sha256": "3a2c6afbbb22d3335f459769e754e8e1830852956f8d81f3cb77ced7f42febb9"
+    },
+    {
+      "path": "shared/office-link.test.ts",
+      "sha256": "7281f270fab6ab66fdfd28056f85bf94aa830d77fe0760d80951c29b28c212e3"
+    },
+    {
+      "path": "src/components/you/AiUsageCard.tsx",
+      "sha256": "df9ea9d7cd99d6312468e74195a0763b5f7e1e01236dfd592567887344ed57c8"
+    },
+    {
+      "path": "src/components/you/AiUsageCard.test.ts",
+      "sha256": "25ece19e2c3eac48c0c61206e9d2ac728d6d1e29ea12ed00e7069df9c1727074"
+    }
+  ],
+  "preserveUnrelatedChanges": "shared/office-link.ts already contained connector projectId compatibility changes; this integration changes only currentUsagePeriod. shared/office-link.test.ts was already untracked; preserve its earlier parser coverage. No commit, deployment or native packaging performed."
+}

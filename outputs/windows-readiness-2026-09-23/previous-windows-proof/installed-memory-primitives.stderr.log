@@ -1,0 +1,15 @@
+check: Private empty creation precedes content; Unicode and spaced paths round-trip with stable identity
+check: Missing opens and existing create collisions cannot create, replace or truncate data
+check: An inherited child requires its containing protected root; absent and unrelated roots are refused without repair
+check: An explicit broad grant is refused with or without a private root, without repair or data changes
+check: Ordinary-file admission refuses multiple links and preserves the original identity after owned alias cleanup
+check: A target junction is refused without following or mutating its target
+check: Handle-bound same-volume no-clobber publication moves one complete file
+check: No-clobber publication collision preserves both identities and byte sequences
+check: Whole-file replacement preserves private ACL and uses the staged identity
+check: Real sharing denial preserves old and staged files without fallback; retry is flushed after release
+check: Exact-handle deletion invalidates that handle and preserves an unrelated sibling
+check: Delete-sharing reader proves deferred deletion until final close; no journal completion is inferred
+check: Pinned directory inventory is bounded, preserves Unicode and restarts after refusal
+check: Private byte-zero locks contend with another handle and an independent Hermes-compatible CRT process
+check: A nonempty pre-existing lock is refused and preserved

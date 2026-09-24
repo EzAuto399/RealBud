@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-23T14:15:23.249735+00:00",
+  "scope": "Five account pages evaluate authentication at runtime after a build without credentials",
+  "frozenManifest": {
+    "path": "/Users/yoda/projects/RealBud/outputs/modelvia-usage-payment-2026-09-23/source-manifest.json",
+    "sha256": "a72f3f0bd5dbd49716dc90c3e17874fbbc4d5b6141cf4b8bbcfbcc37336c78dd",
+    "preserved": true
+  },
+  "sourceDeltas": [
+    {
+      "path": "website/app/account/page.tsx",
+      "beforeSha256": "0007e765abe9100aa0c964fd87e4e1362a49f0b29d90eb9316ab9064e875ff11",
+      "afterSha256": "1318381c131d4fd73e9877df95b1d11d0ca6aae45ac5662884984d2ded0c22c7",
+      "base": "canonical frozen source"
+    },
+    {
+      "path": "website/app/account/invoices/page.tsx",
+      "beforeSha256": "c83b7189b91adbe30f6ea3795466d7145b75bea6c38d111964628fa5fd9b2b95",
+      "afterSha256": "6a37442b3ea42db978da64ad9bcb58c2af6c9ad5b40104888656f5dfdb45d0e7",
+      "base": "b9c764c0b97d406b0c9ce3bfd6dddb06ac7bba2a"
+    },
+    {
+      "path": "website/app/account/limits/page.tsx",
+      "beforeSha256": "183e3401c192dfb5703f9c8aed29a030d7419eb0838ddf66dd718be04b6c4b72",
+      "afterSha256": "4d58b60919f3c499b9b19c1f2b5867ad810941a18efd8688ca4ea563c33d163c",
+      "base": "b9c764c0b97d406b0c9ce3bfd6dddb06ac7bba2a"
+    },
+    {
+      "path": "website/app/account/rates/page.tsx",
+      "beforeSha256": "9ce3db75f7e6278139adf4f0ff73dc4a6ca9a8c4db9f3f9c40f1426f6ff6ff73",
+      "afterSha256": "e0524b3d8e9b2bbc06871adf6af1f3e2136399f5c9a0d4b38698de188baf2b62",
+      "base": "b9c764c0b97d406b0c9ce3bfd6dddb06ac7bba2a"
+    },
+    {
+      "path": "website/app/account/support/page.tsx",
+      "beforeSha256": "fea61711ef5f67b5207f0bffe059c6189690eee87234b2d2e4dbbe3bd4195207",
+      "afterSha256": "24f0b91197736789b3cb593216429d356c86d9c3e5083bbd2a3dd919dfcfed2e",
+      "base": "b9c764c0b97d406b0c9ce3bfd6dddb06ac7bba2a"
+    }
+  ],
+  "regression": {
+    "path": "website/scripts/qa-account-runtime-auth.mjs",
+    "sha256": "526fe1a8b2ffd5c79d404247ebbe8739fa7928bef29c5d78fbd53c89b66538e9",
+    "candidateCopyByteIdentical": true
+  },
+  "patchSha256": "12d1a75e4ba883dbdd6b0cc6a8e89e1ef54594dd4476bfced0a832b7641d267c",
+  "unchangedUsageRedirect": {
+    "path": "website/app/account/usage/page.tsx",
+    "sha256": "0e7e7679c1718a3f446979763c7a084cfaebf9ba123c6890cca7923aa332cdc4"
+  },
+  "inversePatchHashesMatch": true,
+  "other25FrozenFilesUnchanged": true,
+  "runtimeVerification": "verification.json"
+}

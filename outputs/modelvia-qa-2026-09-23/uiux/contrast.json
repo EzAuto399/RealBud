@@ -1,0 +1,11 @@
+{
+  "method": "UIUX skill contrast.py; current src/styles.css tokens",
+  "pairs": [
+    {"foreground":"#6f695e","background":"#fffbf2","ratio":5.27,"textAA":true},
+    {"foreground":"#6f695e","background":"#f3efe5","ratio":4.74,"textAA":true},
+    {"foreground":"#a64632","background":"#fffbf2","ratio":5.74,"textAA":true},
+    {"foreground":"#825a22","background":"#fffbf2","ratio":5.92,"textAA":true},
+    {"foreground":"#ffffff","background":"#3f5f45","ratio":7.16,"textAA":true}
+  ],
+  "limits":["Spot checks, not an exhaustive WCAG audit.","Disabled controls are excluded from normal-text contrast requirements.","Desktop light theme; no second shipped theme in this reviewed surface."]
+}

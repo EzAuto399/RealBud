@@ -1,0 +1,10 @@
+{"parent":"electron 43.4.0","execPath":true,"cwd":true}
+{"variant":"smoke-like","command":"exit","keys":14,"runs":[{"ms":208,"status":0,"error":null},{"ms":219,"status":0,"error":null}]}
+{"variant":"smoke-like","command":"dotnet","keys":14,"runs":[{"ms":22433,"status":0,"error":null},{"ms":22328,"status":0,"error":null}]}
+{"variant":"smoke-like","command":"dotnet-new","keys":14,"runs":[{"ms":192,"status":0,"error":null},{"ms":185,"status":0,"error":null}]}
+{"variant":"full","command":"exit","keys":148,"runs":[{"ms":173,"status":0,"error":null},{"ms":177,"status":0,"error":null}]}
+{"variant":"full","command":"dotnet","keys":148,"runs":[{"ms":301,"status":0,"error":null},{"ms":285,"status":0,"error":null}]}
+{"variant":"full","command":"dotnet-new","keys":148,"runs":[{"ms":177,"status":0,"error":null},{"ms":184,"status":0,"error":null}]}
+{"variant":"stripped","command":"exit","keys":9,"runs":[{"ms":1676,"status":0,"error":null},{"ms":176,"status":0,"error":null}]}
+{"variant":"stripped","command":"dotnet","keys":9,"runs":[{"ms":280,"status":0,"error":null},{"ms":277,"status":0,"error":null}]}
+{"variant":"stripped","command":"dotnet-new","keys":9,"runs":[{"ms":176,"status":0,"error":null},{"ms":178,"status":0,"error":null}]}

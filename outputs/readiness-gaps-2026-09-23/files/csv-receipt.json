@@ -1,0 +1,148 @@
+{
+  "generatedAt": "2026-09-23T05:04:04.701Z",
+  "node": "v24.19.0",
+  "kind": "synthetic-format-contract",
+  "notProven": [
+    "Genuine ANZ/CBA export layout",
+    "Actual bank login/download",
+    "REI acceptance",
+    "Native Windows"
+  ],
+  "matrix": {
+    "total": 18,
+    "passed": 18,
+    "cases": [
+      {
+        "name": "UTF-8 comma / Australian date",
+        "expectedAccepted": true,
+        "accepted": true,
+        "originalPreserved": true,
+        "passed": true
+      },
+      {
+        "name": "UTF-8 BOM / Unicode",
+        "expectedAccepted": true,
+        "accepted": true,
+        "originalPreserved": true,
+        "passed": true
+      },
+      {
+        "name": "ISO date",
+        "expectedAccepted": true,
+        "accepted": true,
+        "originalPreserved": true,
+        "passed": true
+      },
+      {
+        "name": "Quoted comma / multiline / escaped quote",
+        "expectedAccepted": true,
+        "accepted": true,
+        "originalPreserved": true,
+        "passed": true
+      },
+      {
+        "name": "LF newline",
+        "expectedAccepted": true,
+        "accepted": true,
+        "originalPreserved": true,
+        "passed": true
+      },
+      {
+        "name": "CR newline",
+        "expectedAccepted": true,
+        "accepted": true,
+        "originalPreserved": true,
+        "passed": true
+      },
+      {
+        "name": "UTF-16 LE BOM",
+        "expectedAccepted": false,
+        "accepted": false,
+        "error": "This bank file is not UTF-8. Export a UTF-8 CSV from the bank; the source file has not been changed.",
+        "passed": true
+      },
+      {
+        "name": "Windows-1252 accented character",
+        "expectedAccepted": false,
+        "accepted": false,
+        "error": "This bank file is not UTF-8. Export a UTF-8 CSV from the bank; the source file has not been changed.",
+        "passed": true
+      },
+      {
+        "name": "Semicolon delimiter",
+        "expectedAccepted": false,
+        "accepted": false,
+        "error": "Map four different existing columns: date, signed amount, description and reference.",
+        "passed": true
+      },
+      {
+        "name": "Tab delimiter",
+        "expectedAccepted": false,
+        "accepted": false,
+        "error": "Map four different existing columns: date, signed amount, description and reference.",
+        "passed": true
+      },
+      {
+        "name": "Unpadded Australian date",
+        "expectedAccepted": false,
+        "accepted": false,
+        "error": "Transaction 1 has an invalid date for the selected format.",
+        "passed": true
+      },
+      {
+        "name": "US date explicitly unsupported",
+        "expectedAccepted": false,
+        "accepted": false,
+        "error": "Choose the date format used in this bank export.",
+        "passed": true
+      },
+      {
+        "name": "Quoted thousands separator",
+        "expectedAccepted": false,
+        "accepted": false,
+        "error": "Transaction 1 needs a signed decimal amount with two cents digits; debit/credit layouts need a separate mapping.",
+        "passed": true
+      },
+      {
+        "name": "Comma decimal",
+        "expectedAccepted": false,
+        "accepted": false,
+        "error": "Transaction 1 needs a signed decimal amount with two cents digits; debit/credit layouts need a separate mapping.",
+        "passed": true
+      },
+      {
+        "name": "Integer amount",
+        "expectedAccepted": false,
+        "accepted": false,
+        "error": "Transaction 1 needs a signed decimal amount with two cents digits; debit/credit layouts need a separate mapping.",
+        "passed": true
+      },
+      {
+        "name": "Explicit positive sign",
+        "expectedAccepted": false,
+        "accepted": false,
+        "error": "Transaction 1 needs a signed decimal amount with two cents digits; debit/credit layouts need a separate mapping.",
+        "passed": true
+      },
+      {
+        "name": "Accounting parentheses",
+        "expectedAccepted": false,
+        "accepted": false,
+        "error": "Transaction 1 needs a signed decimal amount with two cents digits; debit/credit layouts need a separate mapping.",
+        "passed": true
+      },
+      {
+        "name": "Formula narrative",
+        "expectedAccepted": false,
+        "accepted": false,
+        "error": "The CSV has an unexpected quote.",
+        "passed": true
+      }
+    ]
+  },
+  "tests": {
+    "exitCode": 0,
+    "signal": null,
+    "error": null
+  }
+}

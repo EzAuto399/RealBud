@@ -1,0 +1,16 @@
+{
+  "at": "2026-09-23T03:03:15.626573+00:00",
+  "status": "prepared; waiting root package-ready; never launched",
+  "syntaxChecks": "Node24.19 --check passed for runner and loopback guard",
+  "playwrightElectronLaunch": "installed module exports function",
+  "ownedFiles": {
+    "onboarding-restart.mjs": "f2cabb80b21990090726a2f32005c903bcbc13732d8930c5b8a9b00966731456",
+    "loopback-only.mjs": "2081820cd47e3247891b532ea119f7cb11913af88ed193739f62e2e0ed36fb7e",
+    "README.md": "62d35c7d01059cada02ee9ed5187f4ceb8154f7e242562cc77e48844c7e53a2a"
+  },
+  "limits": "Not a native run receipt; packaged runtime result pending",
+  "loopbackGuardCheck": "Local fixture fetch passes; off-origin fetch/HTTPS synchronously rejected before dispatch",
+  "earlyElectronIsolation": "Neutral Electron43.4.0 probe proves --user-data-dir before and after app ready; app.getPath(home) ignores HOME on macOS, so explicit data/log/user-data/Hermes overrides are required",
+  "probeReceipt": "electron-path-probe.json",
+  "dependencySideEffect": "Initial require(electron) invoked automatic install helper; all later commands use explicit existing executable. No further downloads authorized."
+}

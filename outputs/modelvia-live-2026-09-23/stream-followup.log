@@ -1,0 +1,110 @@
+{
+  "startedAt": "2026-09-23T04:25:55.348Z",
+  "ids": {
+    "billing": "fictional-qa-20260923-5edc8a07-billing",
+    "license": "fictional-qa-20260923-5edc8a07-license",
+    "client": "fictional-qa-20260923-5edc8a07-client",
+    "customer": "fictional-qa-20260923-5edc8a07-buyer",
+    "project": "fictional-qa-20260923-5edc8a07-project",
+    "policy": "fictional-qa-20260923-5edc8a07-policy"
+  },
+  "layer": "one live SSE request after clarifying no-punctuation instruction",
+  "maxProviderDispatches": 1,
+  "unchangedBudgetNanoAud": "600000000",
+  "previousChargedNanoAud": "877000",
+  "originalStrictFailurePreserved": true,
+  "steps": [
+    {
+      "name": "activate clients",
+      "status": 200
+    },
+    {
+      "name": "activate customers",
+      "status": 200
+    },
+    {
+      "name": "activate projects",
+      "status": 200
+    }
+  ],
+  "cleanup": {
+    "allKeysRevoked": true,
+    "keyCount": 2,
+    "revokedKeyStatus": 401,
+    "projects": {
+      "active": false,
+      "version": 4
+    },
+    "customers": {
+      "active": false,
+      "version": 4
+    },
+    "clients": {
+      "active": false,
+      "version": 4
+    },
+    "billing": {
+      "chargedNanoAud": "908000",
+      "pending": 0,
+      "unknown": 0,
+      "invoices": 0
+    }
+  },
+  "pending": null,
+  "keyId": "7dd821ba7152fb70",
+  "idempotencyKey": "fictional-qa-20260923-5edc8a07-project:stream-clarified-once",
+  "requestBody": {
+    "model": "hosted-canary-fast",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Fictional service check. Reply with exactly OK, with no punctuation or explanation."
+      }
+    ],
+    "max_tokens": 8,
+    "stream": true,
+    "stream_options": {
+      "include_usage": true
+    }
+  },
+  "response": {
+    "status": 200,
+    "requestId": "cc60bdd5-987b-441a-93e3-afda4c56fb69",
+    "elapsedMs": 1757,
+    "firstContentMs": 1709,
+    "text": "OK",
+    "finishReason": "stop",
+    "chunkCount": 4,
+    "done": true
+  },
+  "receipt": {
+    "requestId": "cc60bdd5-987b-441a-93e3-afda4c56fb69",
+    "state": "settled",
+    "clientId": "fictional-qa-20260923-5edc8a07-client",
+    "customerId": "fictional-qa-20260923-5edc8a07-buyer",
+    "projectId": "fictional-qa-20260923-5edc8a07-project",
+    "environment": "development",
+    "model": "hosted-canary-fast",
+    "requestedModel": "hosted-canary-fast",
+    "configuration": "fictional-hosted-qualification-v1",
+    "routingSource": "fast-path:pinned-model",
+    "rateVersion": "fictional-hosted-rates-20260922",
+    "units": {
+      "cache_read_tokens": 0,
+      "input_tokens": 25,
+      "output_tokens": 2
+    },
+    "pricingContract": 2,
+    "priceAudience": "direct_customer",
+    "priceBasis": "direct",
+    "reservedNanoAud": "524312000",
+    "chargedNanoAud": "31000",
+    "currency": "AUD",
+    "replayAvailable": false,
+    "idempotencySource": "supplied"
+  },
+  "transportPassed": true,
+  "contentPassed": true,
+  "passed": true,
+  "completedAt": "2026-09-23T04:26:04.723Z"
+}

@@ -1,0 +1,38 @@
+{
+  "startedAt": "2026-09-23T14:18:09.391810+00:00",
+  "environmentFiles": [
+    {
+      "name": ".env.local",
+      "heldFilename": ".env.local.runtime-auth-0a33366850bd4647870971dcaf68f936.held",
+      "restored": true
+    }
+  ],
+  "environmentNames": [
+    "PATH",
+    "HOME",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+    "NEXT_TELEMETRY_DISABLED",
+    "PLAYWRIGHT_MODULE",
+    "CHROME_EXECUTABLE",
+    "REALBUD_TEST_POSTGRES_BIN",
+    "REALBUD_QA_OUTPUT"
+  ],
+  "network": "External network denied; loopback and Unix sockets allowed",
+  "reusedBuildId": "FGiQlgQpRthGz3xY2QJ-f",
+  "scratch": "/tmp/rb-runtime-auth-mcerhyu3",
+  "restored": true,
+  "exit": 0,
+  "qa": {
+    "ok": true,
+    "controlPass": true,
+    "cleanup": true,
+    "errors": [],
+    "external": [],
+    "browserMutations": []
+  },
+  "finishedAt": "2026-09-23T14:18:18.569404+00:00",
+  "scratchEntries": [],
+  "scratchRemoved": true
+}

@@ -1,0 +1,10 @@
+{
+  "path": "scripts/qa-onboarding-restart.mjs",
+  "beforeSha256": "af536e9e870b8338d3a2e5c123e59db10b53d4534dc8c5ac6672fedd54a6830f",
+  "afterSha256": "1dea9d73cb1ad943f447c5e9b9454b591c5ba286b0a792ff3c32472adece9691",
+  "newCases": [
+    "No-file restore entry, reload, return, reload, normal completion",
+    "Failed upload, explicit temporary-copy removal, return, reload, normal completion"
+  ],
+  "existingRestartCasesPreserved": true
+}

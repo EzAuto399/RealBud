@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "verifiedAt": "2026-09-23T13:45:06.300813+00:00",
+  "status": "local-integration-verified",
+  "scope": "RealBud authenticated customer usage and provider-controlled direct/Square payment UI and API integration",
+  "website": {
+    "tests": {
+      "passed": 152,
+      "failed": 0,
+      "skipped": 0
+    },
+    "testLog": "preclaim-tests.log",
+    "productionBuild": {
+      "passed": true,
+      "id": "A3s2ZYJdsmi4nAtcRLG1f",
+      "log": "preclaim-build.log"
+    },
+    "focusedLint": "passed"
+  },
+  "desktop": {
+    "passed": 62,
+    "failed": 0,
+    "skipped": 0,
+    "receipt": "desktop-tests-final.json",
+    "newNativePackage": false
+  },
+  "rootIndependentFocusedTests": {
+    "paymentAttempt": {
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "log": "preclaim-root-helper-tests.log"
+    },
+    "accountBoundRoutes": {
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "log": "preclaim-root-route-tests.log"
+    }
+  },
+  "browser": {
+    "receipt": "gui/run-5/receipt.json",
+    "checks": 29,
+    "renders": 71,
+    "errors": [],
+    "widths": [
+      360,
+      768,
+      1280
+    ],
+    "authCache": {
+      "api": {
+        "status": 401,
+        "cacheControl": "private, no-store"
+      },
+      "page": {
+        "status": 307,
+        "cacheControl": "private, no-store"
+      }
+    },
+    "accountBinding": {
+      "refresh": {
+        "status": 409,
+        "cacheControl": "private, no-store",
+        "upstreamDispatches": 0
+      },
+      "checkout": {
+        "status": 409,
+        "cacheControl": "private, no-store",
+        "upstreamDispatches": 0
+      }
+    },
+    "databaseRpcCount": 165,
+    "cleanup": true,
+    "fictionalCheckoutPosts": 3,
+    "squareNetworkCalls": 0
+  },
+  "sourceVerification": {
+    "productionAndFocusedTestFiles": 26,
+    "qaHarnessFiles": 2,
+    "browserReceiptHashes": 16,
+    "allMatchCurrentDisk": true,
+    "websiteSourcePatchReverseCheck": "passed",
+    "websiteQaPatchReverseCheck": "passed",
+    "manifests": [
+      "source-manifest.json",
+      "qa-source-manifest.json"
+    ]
+  },
+  "coordinatedGatewayEvidence": {
+    "contractReceipt": "/Users/yoda/projects/modelvia-candidate/docs/evidence/customer-usage-payments-2026-09-23/cross-repo-contract.json",
+    "passed": 14,
+    "failed": 0,
+    "customerPricePrivacyReproduction": "client-funded-privacy-after.json",
+    "sourceSpecific": true,
+    "latestGatewayReleaseOwnedBy": "Modelvia task 01a0ce52-b6e0-74e3-91db-2656d47370c1"
+  },
+  "manualVisualReview": [
+    "gui/run-5/both-1280.png",
+    "gui/run-5/preclaim-reload-stale-read-held-768.png"
+  ],
+  "limits": [
+    "No deployment, paid inference, Square network, or real collection performed.",
+    "No authenticated live customer/merchant acceptance.",
+    "No new native package or installed Windows/macOS proof for this change.",
+    "Browser payment receipts are same-tab recovery aids; gateway authorization, invoice/merchant binding, idempotency and provider reconciliation remain authoritative.",
+    "Unknown checkout holds are retained until verified paid; no customer reset or automatic retry.",
+    "Keyboard, rendering and contrast spot checks are not a complete assistive-technology audit."
+  ],
+  "requiredLiveGates": [
+    "Compatible deployed RealBud and Modelvia revisions, including customer-price privacy fix and current provider-settings account assertion.",
+    "Scoped integration credential, verified company/customer mapping, approved commercial terms/payment policy and correct Square merchant where used.",
+    "Authorized authenticated real-account readback, separate payment acceptance, and native installed-device qualification."
+  ],
+  "artifactHashes": {
+    "source-manifest.json": "a72f3f0bd5dbd49716dc90c3e17874fbbc4d5b6141cf4b8bbcfbcc37336c78dd",
+    "qa-source-manifest.json": "32ea6578d1118c69f8142a3d1c2ca6b389d6f3c563d231a2d12a73a71ce02bb4",
+    "website-source.patch": "12a41a24a1f275566c8444823187e2ca9d96780d47c08e4a54526760ae8f6105",
+    "website-qa.patch": "b0fd6b394f6bd31cd304dee72d23250fd5204f4534cd8622ad2aa875d11e2f15",
+    "desktop-source.patch": "a130f60b202987a5d0e770c114053463fea9bbe3c2033d864a48a44952430b59",
+    "gui/run-5/receipt.json": "c9f5dbf689333dfd295ea6f13f94306f9b9d9ac6f5efcb6c2dcd41bbd85c1360"
+  }
+}

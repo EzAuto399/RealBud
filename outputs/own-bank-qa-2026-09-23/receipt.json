@@ -1,0 +1,43 @@
+{
+  "checkedAt": "2026-09-23T12:17:46.614967+10:00",
+  "layer": "fresh packaged macOS smoke and isolated normal launch",
+  "appVersion": "0.1.19",
+  "codeSignatureStrictDeepVerified": true,
+  "notarized": false,
+  "smoke": {
+    "renderer": true,
+    "capabilities": true,
+    "embeddedServer": true,
+    "shutdown": true
+  },
+  "normalLaunch": {
+    "port": 8799,
+    "app": "realbud",
+    "static": true,
+    "instanceId": "b53960ba84729ff27e262a0f83e1d8c8",
+    "dataMode": "0o700",
+    "firstRunCompleted": true,
+    "currentScreen": "Office / Website account",
+    "computerName": "Own-bank Mac QA",
+    "accountLinked": false
+  },
+  "ownerSelectedBank": "Commonwealth Bank Australia",
+  "limits": [
+    "Installed /Applications app unchanged",
+    "Modelvia has no active project at the authenticated preflight",
+    "No real inference, bank export, ANZ, email or department workflow acceptance",
+    "Local storage fixes are not part of the committed Windows CI candidate",
+    "Fresh-machine worker/admin provisioning remains unresolved; the QA launcher uses an existing supported runtime and disables in-app runtime updates",
+    "Onboarding reappeared when QA service port changed on restart; completed again, not a persistence pass"
+  ],
+  "worker": {
+    "compatible": true,
+    "version": "0.21.3",
+    "commit": "345cd2b057a452236de401d3534b8502a7465e8d",
+    "checkoutClean": true,
+    "selection": "explicit existing supported runtime for QA only",
+    "ownQAProfile": true,
+    "ready": false,
+    "visibleStatus": "Model needed"
+  }
+}

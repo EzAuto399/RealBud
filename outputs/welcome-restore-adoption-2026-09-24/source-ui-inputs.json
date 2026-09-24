@@ -1,0 +1,10 @@
+{
+  "src/App.tsx": "751d6b571f21cffb3c06ca4573a74c5a3bc1efe0029b41cebf7c56205fdfc9fb",
+  "src/components/Onboarding.tsx": "5ebf54d07ec0bb03992161c7773bb33fb8b90eac8997421e95cb53bf06373aa0",
+  "src/components/PrivateWorkspaceBackup.tsx": "37a08bb26008832ddc7151057040c3111daf5008faf21c85b98cfbcffc918228",
+  "src/components/YouPage.tsx": "bbe455568058efef3b200f4c498b0dd802035805c6a672aac82aa74ac9b83ad3",
+  "src/lib/you-navigation.ts": "c20ea0bac7206d9297553fd85f01ecca17e0ad640cc79d9da931e8f43f3fa1d6",
+  "src/lib/backup-welcome.ts": "d9c1c0b05a266349cb782ccd6218e1ed2fe57b7a1a4272b8d4c8b8e75bd30a16",
+  "src/lib/first-run.ts": "8ef02b3da007e7d2de108aa9c510cf79b86395fbf5315115c1a749077e0ba24a",
+  "scripts/qa-onboarding-restart.mjs": "6219789a48bc2259265acb1e05054144d3818c23b073864fabfb463176322b23"
+}

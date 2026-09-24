@@ -1,0 +1,127 @@
+{
+  "at": "2026-09-23T02:52:05.954Z",
+  "layer": "built-renderer-with-synthetic-history",
+  "node": "v24.19.0",
+  "completed": true,
+  "measurements": [
+    {
+      "messages": 100,
+      "textBytesEach": 1024,
+      "syntheticResponseBytes": 114980,
+      "renderedMs": 742.94,
+      "draftInputMs": 70,
+      "navigationMs": 152.13,
+      "scroll": {
+        "topMs": 20.399999976158142,
+        "endMs": 31.5,
+        "top": 0,
+        "finalTop": 34592,
+        "height": 35173
+      },
+      "domNodes": 3175,
+      "renderedMessages": 100,
+      "heapMiB": 9.436989784240723,
+      "longTasks": [],
+      "maxTimerGapMs": 74.20000004768372,
+      "paints": [
+        {
+          "name": "first-paint",
+          "atMs": 76
+        },
+        {
+          "name": "first-contentful-paint",
+          "atMs": 100
+        }
+      ]
+    },
+    {
+      "messages": 1000,
+      "textBytesEach": 1024,
+      "syntheticResponseBytes": 1146830,
+      "renderedMs": 954.4,
+      "draftInputMs": 32.65,
+      "navigationMs": 143.09,
+      "scroll": {
+        "topMs": 26.799999952316284,
+        "endMs": 30.899999976158142,
+        "top": 0,
+        "finalTop": 69796,
+        "height": 70377
+      },
+      "domNodes": 6128,
+      "renderedMessages": 200,
+      "heapMiB": 18.827049255371094,
+      "longTasks": [],
+      "maxTimerGapMs": 64.89999997615814,
+      "paints": [
+        {
+          "name": "first-paint",
+          "atMs": 56
+        },
+        {
+          "name": "first-contentful-paint",
+          "atMs": 56
+        }
+      ]
+    },
+    {
+      "messages": 10000,
+      "textBytesEach": 1024,
+      "syntheticResponseBytes": 11483330,
+      "renderedMs": 1110.74,
+      "draftInputMs": 37.11,
+      "navigationMs": 132.36,
+      "scroll": {
+        "topMs": 28.399999976158142,
+        "endMs": 30.200000047683716,
+        "top": 0,
+        "finalTop": 69796,
+        "height": 70377
+      },
+      "domNodes": 6128,
+      "renderedMessages": 200,
+      "heapMiB": 33.31977844238281,
+      "longTasks": [],
+      "maxTimerGapMs": 83.5,
+      "paints": [
+        {
+          "name": "first-paint",
+          "atMs": 52
+        },
+        {
+          "name": "first-contentful-paint",
+          "atMs": 68
+        }
+      ]
+    }
+  ],
+  "behaviorChecks": [
+    {
+      "check": "Load earlier exposes all 1,000 unique original messages without data loss and preserves same-day content anchor",
+      "anchorDeltaPx": 0.25
+    },
+    {
+      "check": "Old approvals and errors stay rendered; full pending approval still disables composer; switching an old root version resets paging and retains focused target and full history",
+      "storedMessages": 800,
+      "branchRenderedRows": 203
+    }
+  ],
+  "errors": [],
+  "deniedRequests": [
+    "POST /api/connected-apps/check",
+    "POST /api/connected-apps/check",
+    "POST /api/connected-apps/check"
+  ],
+  "failure": null,
+  "limits": [
+    "Disposable loopback source service and production-built renderer in headless macOS Chrome; not installed Electron or Windows.",
+    "Only /api/bots history response is synthetic; 50/50 user/assistant text in one valid active branch. Existing HTTP benchmark measures actual server history download separately.",
+    "One run per size on this laptop; measurements are observations, not a performance SLA.",
+    "No model/provider/connector dispatch or customer data. Browser non-GET API requests are denied except the synthetic local branch-selection response in the behavior probe; draft typing is never sent.",
+    "Heap is a browser JS sample, not total/peak renderer RSS. The fixture itself makes no product code changes. This after-fix build includes bounded ChatView history rendering and indexed request versions."
+  ],
+  "sourceDigests": {
+    "src/components/ChatView.tsx": "072e11c45eb249b692c586dec649965e817bc329e6d5a7ace0791192d35b7e30",
+    "src/lib/chat-history.ts": "5d1476760e009632cbfd39636b12626018be7c9548d3165c916e178d2fc7030c"
+  }
+}

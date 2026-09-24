@@ -1,0 +1,28 @@
+✔ platform customer comes from server mapping, never a browser-supplied ID (1.247875ms)
+✔ billing and checkout preserve trusted customer scope and read-only roles (12.679625ms)
+✔ billing checks the returned customer and projects exact money without supplier fields or headers (0.997ms)
+✔ billing and document errors redact upstream diagnostics and invalid roles never call the gateway (1.107625ms)
+✔ oversized or invalid upstream billing bodies fail closed without being forwarded (3.291708ms)
+✔ checkout exposes only admitted Square sandbox destinations without forwarding upstream fields (0.938667ms)
+✔ missing mapping and insecure remote endpoints refuse without making a request (0.237209ms)
+✔ invoice documents use the authenticated account mapping and remain available to billing readers (0.371209ms)
+✔ documents reject traversal, external invoice URLs and missing mappings before fetch (0.252417ms)
+✔ upstream cross-customer rejection remains a private error and JSON cannot masquerade as an invoice (0.228791ms)
+✔ live billing and checkout admit only production Square destinations, preserving customer scope (1.211125ms)
+✔ a sandbox payment mode never reaches a production build as a notice or a checkout (0.078458ms)
+✔ provider direct instructions stay on eligible issued retail invoices and name their seller (0.226917ms)
+✔ direct offer fails closed for disabled, stale, paid, nonpositive, nonretail or incomplete invoice state (1.424875ms)
+✔ legacy billing defaults to Square on the client app without inventing seller or payment permission (0.643375ms)
+✔ customer payment projection strips supplier, merchant credentials and provider-only settings (0.211667ms)
+✔ production checkout refuses sandbox and unavailable invoice policy before a link is created (1.198875ms)
+✔ billing period is exact, forwarded and checked without allowing customer scope selectors (0.671875ms)
+✔ checkout body rejects scope, seller, amount, invalid JSON and chunked oversized data before transport (1.563125ms)
+✔ actual billing routes enforce origin, session, reader role, exact body and production payment policy (4.363875ms)
+ℹ tests 20
+ℹ suites 0
+ℹ pass 20
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 115.471791

@@ -1,0 +1,24 @@
+{
+  "at": "2026-09-23T05:00:00.025Z",
+  "proofLayer": "Local real app/server + pinned Hermes integration with fictional website, connector and provider",
+  "passed": false,
+  "checks": [
+    {
+      "name": "isolated-runtime-and-source",
+      "passed": false,
+      "elapsedMs": 28,
+      "error": "spawnSync git ENOBUFS"
+    }
+  ],
+  "source": {},
+  "limits": [
+    "No hosted Modelvia, real website sign-in, customer account, Composio organisation or paid inference.",
+    "Website approval/report is a controlled HTTP fixture; it does not prove the real Next/Supabase identity flow.",
+    "Modelvia ledger/admission and RealBud provisioning/desktop routes are real local source; provider answers are synthetic.",
+    "Trusted entitlement is signed by a disposable QA issuer; it is not a production service grant.",
+    "No native Electron window, Windows machine, bank/email/calendar operation or same-LAN second-device acceptance."
+  ],
+  "cleanup": true,
+  "failure": "Error: spawnSync git ENOBUFS\n    at Object.spawnSync (node:internal/child_process:1160:20)\n    at spawnSync (node:child_process:928:24)\n    at execFileSync (node:child_process:971:15)\n    at file:///Users/yoda/projects/RealBud/scripts/qa-modelvia-app.mjs:89:21\n    at step (file:///Users/yoda/projects/RealBud/scripts/qa-modelvia-app.mjs:49:30)\n    at file:///Users/yoda/projects/RealBud/scripts/qa-modelvia-app.mjs:86:9\n    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)\n    at async node:internal/modules/esm/loader:643:26\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)",
+  "completedAt": "2026-09-23T05:00:00.056Z"
+}

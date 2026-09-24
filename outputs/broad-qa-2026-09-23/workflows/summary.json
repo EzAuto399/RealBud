@@ -1,0 +1,64 @@
+{
+  "at": "2026-09-23T02:31:26.254464+00:00",
+  "head": "fb6cebed63aaed9d81f9112005ac938644d2fa86",
+  "scope": "Synthetic local browser workflows + disposable PostgreSQL independent-office authority; no product source edits",
+  "node": "24.19.0",
+  "browser": "Installed Google Chrome launched by Playwright in disposable headless contexts",
+  "locale": "LC_ALL=C; LANG=C for successful PostgreSQL run",
+  "results": {
+    "bankBytes": {
+      "passedGroups": 13,
+      "receipt": "bank-bytes-chrome/result.json"
+    },
+    "bankAmendments": {
+      "passedGroups": 7,
+      "receipt": "bank-amendments-chrome/receipt.json"
+    },
+    "sourceBillsCurrentHistoryProbe": {
+      "passedGroups": 25,
+      "receipt": "source-bills-current-history-probe/receipt.json",
+      "adaptation": "Output-only copy: absolute root/import, record pre-manual scan count, assert precisely one additional manual scan; original assertion failure retained"
+    },
+    "morningMail": {
+      "passedGroups": 4,
+      "receipt": "morning-mail-chrome/receipt.json",
+      "historyLayer": "History coverage group composes production service seams in-process; other app/API/UI groups use real localhost service"
+    },
+    "companyPostgres": {
+      "files": 3,
+      "passedTests": 16,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "receipt": "company-postgres-locale-results.json"
+    },
+    "secondOfficeContract": {
+      "passedChecks": 15,
+      "failedChecks": 1,
+      "log": "second-office-contract.log",
+      "failure": "Old script expects409 for inbound-triage with empty body. Current source returns400 for missing requestId/current revision; source inspection identifies stale expectation, original failure retained."
+    }
+  },
+  "limits": [
+    "Current source service + prior built dist UI, not fresh final renderer/package/installed-device proof",
+    "No real bank, Gmail, Modelvia, provider, REI, customer data, payment or external call",
+    "No arbitrary bank browser navigation/download performed",
+    "No native macOS shell close confirmation, cross-device LAN, Windows, backup/restore or customer acceptance proof",
+    "New member-scoped onboarding renderer changed by root during this pass and needs final rebuilt renderer check"
+  ],
+  "cleanup": "No owned services, PostgreSQL fixtures or browser jobs remained after checks",
+  "skippedScripts": {
+    "qa-austin-accounts.mjs": "Touches hashes of real operator credential files even in default mode; excluded from this synthetic task",
+    "qa-seat-isolation.mjs": "Older fake worker contract; independent PostgreSQL office authority suite selected instead",
+    "qa-workflow-packs-sim.mjs": "Old pack/REI scope; current scope excludes REI and equivalent bill/mail groups exercised"
+  },
+  "scriptSha256": {
+    "scripts/qa-bank-bytes.mjs": "8ebfe2ba825bc47e5a8eb55b5defa4bc7f8b9911c0088358e07338776af5d687",
+    "scripts/qa-bank-amendments.mjs": "0b629e8bc26a88a4b46845b43c721a4ae1391e1331aa835da0e55e05bda19f99",
+    "scripts/qa-source-bills.mjs": "79a57c9b2b30892464048124ab0c39d584e90c1b79408ab37280a983bfcd613a",
+    "scripts/qa-morning-mail.mjs": "d8d2f6e296ed1c3b13c44d53dbf237c83b4177c30908152147d7924403ee36e5",
+    "scripts/qa-second-office-contract.mjs": "0e76e619903b63070f0d6592afadeae44b58600abc6cb69750dc39b96114b2c3",
+    "server/company/multi-agency-transport.integration.test.ts": "560dfcbe44825a285bf810b193d0b572f165020894fa26262acbc066384e5249",
+    "server/company/membership.integration.test.ts": "547133fe6f4f269a0c461cd95796afd0dc373bd981e2bcd1f5387e97c80c7eff",
+    "server/company/departments.integration.test.ts": "2677fc7da9d58a33ca331eea98ce274b13e830f77f1c38f4ff0ad99111a3422e"
+  }
+}

@@ -1,0 +1,100 @@
+{
+  "check": "realbud-live-usage",
+  "layer": "local-modelvia-branch",
+  "checkedAt": "2026-09-23T03:23:41.692Z",
+  "node": "v24.19.0",
+  "modelvia": {
+    "repository": "/Users/yoda/projects/modelvia",
+    "branch": "a8938b16f07c14d213db7e56fe14654c2dc197e5",
+    "commit": "a8938b16f07c14d213db7e56fe14654c2dc197e5",
+    "origin": "http://127.0.0.1:18971"
+  },
+  "realbudGateway": {
+    "origin": "http://127.0.0.1:18972",
+    "source": "/Users/yoda/projects/RealBud/managed-gateway/server.ts"
+  },
+  "tenant": {
+    "companyId": "fictional-office-co",
+    "clientId": "realbud-qa",
+    "customerId": "fictional-office",
+    "environment": "development",
+    "model": "deepseek-chat",
+    "fictional": true
+  },
+  "installation": {
+    "installationId": "qa-9a8fcb3a-9cf6-430d-b6a8-bae57c2b416d",
+    "modelProjectId": "rb-qa-9a8fcb3a-9cf6-430d-b6a8-bae57c2b416d",
+    "modelKeyId": "ea98d561021d318d",
+    "spendCapLabel": "monthly-cap 10000000000 nanoAUD, request-cap 1000000000 nanoAUD, max-concurrent 10"
+  },
+  "usage": {
+    "period": "2026-09",
+    "completionStatus": 200,
+    "completionOutcome": null,
+    "chargedNanoAud": null,
+    "pricingContract": null,
+    "priceBasis": null,
+    "priceAudience": null,
+    "idempotencyKeyHeaderSent": false,
+    "afterRevokeStatus": null,
+    "afterRevokeError": null,
+    "installationUsageSummary": null
+  },
+  "steps": [
+    {
+      "name": "modelvia-worktree",
+      "status": "passed",
+      "elapsedMs": 93,
+      "detail": "a8938b16f07c14d213db7e56fe14654c2dc197e5 @ a8938b16f07c"
+    },
+    {
+      "name": "modelvia-boot",
+      "status": "passed",
+      "elapsedMs": 623,
+      "detail": "listening on http://127.0.0.1:18971"
+    },
+    {
+      "name": "modelvia-seed",
+      "status": "passed",
+      "elapsedMs": 26,
+      "detail": "client realbud-qa, customer fictional-office, rates qa-live-usage-1 accepted"
+    },
+    {
+      "name": "fake-composio",
+      "status": "passed",
+      "elapsedMs": 3,
+      "detail": "fictional Composio org endpoint on 127.0.0.1:18973"
+    },
+    {
+      "name": "realbud-gateway-boot",
+      "status": "passed",
+      "elapsedMs": 246,
+      "detail": "listening on http://127.0.0.1:18972, provisioning composed"
+    },
+    {
+      "name": "provision-installation",
+      "status": "passed",
+      "elapsedMs": 28,
+      "detail": "project rb-qa-9a8fcb3a-9cf6-430d-b6a8-bae57c2b416d, one rbk_ key (id ea98d561021d318d) issued once"
+    },
+    {
+      "name": "completion-no-idempotency-key",
+      "status": "failed",
+      "elapsedMs": 12,
+      "detail": "receipt does not identify price contract 2"
+    }
+  ],
+  "totalElapsedMs": 1031,
+  "passed": false,
+  "failedStep": "completion-no-idempotency-key",
+  "failure": "receipt does not identify price contract 2",
+  "limits": [
+    "Local only: Modelvia ran from a detached git worktree of its own branch on loopback. No hosted Modelvia, no api.modelvia.dev, no deployment.",
+    "No real model provider. The pinned DeepSeek endpoint was answered in-process by a fictional upstream supplied on Modelvia's command line; no third-party provider was contacted and no model ran.",
+    "The Composio organisation surface was a local fake (list + create only). No Composio project, no OAuth credential and no real ak_ key exist.",
+    "Every identity is fictional: company, client, customer, licence, rate card, operator and portal principals. None of it is customer evidence.",
+    "No Hermes worker, no desktop app, no browser and no customer session took part. The desktop card shape was checked by running the reducer, not by rendering a screen.",
+    "No money moved and no payment surface was exercised; the rate card and caps are invented for this run.",
+    "Modelvia gateway dependencies were reused from the sibling checkout's node_modules rather than a fresh npm ci."
+  ]
+}

@@ -1,0 +1,91 @@
+{
+  "at": "2026-09-23T03:23:42.908Z",
+  "proofLayer": "local existing synthetic tests",
+  "sourceHashesBefore": {
+    "server/worker-model-access.ts": "a46c99a6f69eb26bf34504645d867d043f5e5e3bbcc56c85b1da51432e0fbbab",
+    "server/office-link.ts": "549722a2038ee11f6ef0da7ffbb730d0fe7643640dd02a513504f1ec6e8196f8",
+    "server/session-auth.ts": "af73542169bc0a8edd319433eff93ec6ad5f8740673a5c442bbcfb38d0211fe7",
+    "server/redact.ts": "e1edb1113ba86c3accaa26a3d3fe98da36431a7fdac115b59f55d708c01ac609",
+    "server/private-vault.ts": "0d4b538bb4a232f55ad948309284922b72b974f4cc3a941a150e7a80baf83527",
+    "server/index.ts": "e647df3a22abb45009f9482ed197906c57460e81f9d9e8103e78554a918be2a3",
+    "managed-gateway/modelvia-keys.ts": "d042ae6b21f7bc04d16ae8d66b8b786ffccb16a4b42d07352683ab8cbfa76756",
+    "managed-gateway/provisioning.ts": "93472b9888ca249b3511e523023035c32550e6738b555f81708ac65408f4f608",
+    "managed-gateway/gateway.ts": "6dd4f543b774ef18fdee6cc9e16d93b45e6b466a3667d63278df82a9816cedc3",
+    "managed-gateway/http.ts": "3bf4c1f1982f6dfcd8db2a2b52815e231fef1dcbe16e25b2a615a009f8711c90",
+    "managed-gateway/ledger.ts": "7f3722e239faed8e0b12754ab5cc8a0bbb6362d3c24a3b6f5313472051a543f0"
+  },
+  "tests": [
+    {
+      "name": "desktop",
+      "command": [
+        "/Users/yoda/.nvm/versions/node/v24.19.0/bin/node",
+        "/Users/yoda/projects/RealBud/node_modules/vitest/vitest.mjs",
+        "run",
+        "server/worker-model-access.test.ts",
+        "server/office-link.test.ts",
+        "server/session-auth.test.ts",
+        "server/redact.test.ts",
+        "server/private-vault.test.ts",
+        "--reporter=default",
+        "--reporter=json",
+        "--outputFile=/Users/yoda/projects/RealBud/outputs/modelvia-qa-2026-09-23/security/desktop-results.json"
+      ],
+      "cwd": "/Users/yoda/projects/RealBud",
+      "code": 0,
+      "signal": null,
+      "seconds": 7.851,
+      "log": "desktop-tests.log"
+    },
+    {
+      "name": "gateway",
+      "command": [
+        "/Users/yoda/.nvm/versions/node/v24.19.0/bin/node",
+        "--experimental-strip-types",
+        "--test",
+        "modelvia-keys.test.ts",
+        "provisioning.test.ts",
+        "gateway.test.ts",
+        "ledger.test.ts",
+        "http.test.ts",
+        "concurrency.test.ts",
+        "portal-token.test.ts"
+      ],
+      "cwd": "/Users/yoda/projects/RealBud/managed-gateway",
+      "code": 0,
+      "signal": null,
+      "seconds": 0.425,
+      "log": "gateway-tests.log"
+    }
+  ],
+  "limits": [
+    "No live hosted, paid, provider or customer calls",
+    "No PostgreSQL, build, installed desktop or native Windows proof"
+  ],
+  "sourceHashesAfter": {
+    "server/worker-model-access.ts": "a46c99a6f69eb26bf34504645d867d043f5e5e3bbcc56c85b1da51432e0fbbab",
+    "server/office-link.ts": "549722a2038ee11f6ef0da7ffbb730d0fe7643640dd02a513504f1ec6e8196f8",
+    "server/session-auth.ts": "af73542169bc0a8edd319433eff93ec6ad5f8740673a5c442bbcfb38d0211fe7",
+    "server/redact.ts": "e1edb1113ba86c3accaa26a3d3fe98da36431a7fdac115b59f55d708c01ac609",
+    "server/private-vault.ts": "0d4b538bb4a232f55ad948309284922b72b974f4cc3a941a150e7a80baf83527",
+    "server/index.ts": "e647df3a22abb45009f9482ed197906c57460e81f9d9e8103e78554a918be2a3",
+    "managed-gateway/modelvia-keys.ts": "d042ae6b21f7bc04d16ae8d66b8b786ffccb16a4b42d07352683ab8cbfa76756",
+    "managed-gateway/provisioning.ts": "93472b9888ca249b3511e523023035c32550e6738b555f81708ac65408f4f608",
+    "managed-gateway/gateway.ts": "6dd4f543b774ef18fdee6cc9e16d93b45e6b466a3667d63278df82a9816cedc3",
+    "managed-gateway/http.ts": "3bf4c1f1982f6dfcd8db2a2b52815e231fef1dcbe16e25b2a615a009f8711c90",
+    "managed-gateway/ledger.ts": "7f3722e239faed8e0b12754ab5cc8a0bbb6362d3c24a3b6f5313472051a543f0"
+  },
+  "counts": {
+    "desktop": {
+      "passed": 142,
+      "failed": 0,
+      "skipped": 0,
+      "files": 5
+    },
+    "gateway": {
+      "passed": 79,
+      "failed": 0,
+      "skipped": 0,
+      "files": 7
+    }
+  }
+}

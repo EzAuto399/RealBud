@@ -1,0 +1,30 @@
+{
+  "passed": true,
+  "generatedAt": "2026-09-23T01:38:10.347Z",
+  "platform": "win32",
+  "arch": "x64",
+  "electron": "43.4.0",
+  "node": "24.18.1",
+  "sourceRevision": "fb6cebed63aaed9d81f9112005ac938644d2fa86",
+  "checks": [
+    "Installed resources include native helpers, speech helper, SDK, server and UI",
+    "Installed resources include private-profile provisioning code and shipped property safeguards",
+    "Installed BrowserSkill executable matches its manifest and runs at the pinned version",
+    "Installed PostgreSQL tools retain their hashes and load their Windows dependencies",
+    "Installed Windows Cua executable runs and reports the pinned version",
+    "Installed RealBud Speech.exe launches and speaks the NDJSON protocol (or exits cleanly)",
+    "Installed Electron runtime supports durable SQLite",
+    "Installed Windows SDK starts a private host and exposes browser/native control tools",
+    "Private Windows desktop host stops cleanly"
+  ],
+  "notProven": [
+    "Windows 11",
+    "customer x64 PC",
+    "login and MFA",
+    "browser or native UI actions",
+    "Hermes install or model login",
+    "PostgreSQL office provisioning or backup/restore",
+    "GUI or update and human takeover",
+    "live microphone dictation quality"
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "at": "2026-09-23T03:34:37.204709+00:00",
+  "proofLayer": "local synthetic regression; source composition reviewed",
+  "node": "v24.19.0",
+  "counts": {
+    "passed": 58,
+    "failed": 0,
+    "skipped": 0,
+    "files": 2
+  },
+  "serverTypecheck": {
+    "exitCode": 0,
+    "log": "lifecycle-server-types.log"
+  },
+  "sourceHashes": {
+    "server/office-link.ts": "c71d230965ec7fc3680ccf3d59e88a06649ba1cb76f55f8e4dfd1a908a3ed2c5",
+    "server/office-link.test.ts": "f9fc5d6525ef0f907c089c726c41e73ad877f6ce2f173a2ed9e569ee624444eb",
+    "server/worker-model-access.ts": "b53e855fb8d52dbe5fd66c64aee421a106190590a3da6dc0f3dca48fa51ed254",
+    "server/worker-model-access.test.ts": "9fbdcc881352557f76a530dfab1e072b705d6b40a88e84b7a7db970c1b450c24",
+    "server/index.ts": "8281a9b5b3616bbad859f1058d532b3b6d84ba84819e76e1a9a70068df082709"
+  },
+  "limits": [
+    "No live Modelvia/website/provider calls",
+    "No native Windows or packaged/installed-device run",
+    "Private-directory mode-refusal test is POSIX-only; it will skip on Windows",
+    "If revocation cannot be recorded and cleanup also cannot persist, only this process remembers the hold; simultaneous durable-storage failure across restart remains a recovery limit"
+  ],
+  "tests": [
+    {
+      "file": "server/office-link.test.ts",
+      "passed": 42,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "server/worker-model-access.test.ts",
+      "passed": 16,
+      "failed": 0,
+      "skipped": 0
+    }
+  ]
+}

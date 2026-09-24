@@ -1,0 +1,137 @@
+{
+  "capturedAt": "2026-09-23T05:04:00.509Z",
+  "url": "https://docs.composio.dev/api/tools/GMAIL_GET_ATTACHMENT?version=20260915_00",
+  "toolVersion": "20260915_00",
+  "sha256": "43044a1eee259bf59e82cbec48ddf69385b86bb814ab925501b3491ae81233c4",
+  "input_parameters": {
+    "type": "object",
+    "title": "GetAttachmentRequest",
+    "required": [
+      "message_id",
+      "attachment_id",
+      "file_name"
+    ],
+    "properties": {
+      "user_id": {
+        "type": "string",
+        "title": "User Id",
+        "default": "me",
+        "examples": [
+          "me",
+          "user@example.com"
+        ],
+        "description": "User's email address ('me' for authenticated user).",
+        "human_parameter_name": "User ID",
+        "human_parameter_description": "The email address or identifier of the user whose mailbox you want to access. Use 'me' to access your own mailbox."
+      },
+      "file_name": {
+        "type": "string",
+        "title": "File Name",
+        "examples": [
+          "invoice.pdf",
+          "report.docx"
+        ],
+        "minLength": 1,
+        "description": "Desired filename for the downloaded attachment. This is a required string field - do not pass null.",
+        "human_parameter_name": "File Name",
+        "human_parameter_description": "The name you want to give the file once it's downloaded. This helps you easily identify the attachment later."
+      },
+      "message_id": {
+        "type": "string",
+        "title": "Message Id",
+        "examples": [
+          "18exampleMessageId7f9"
+        ],
+        "minLength": 1,
+        "description": "Immutable ID of the message containing the attachment. This is a required string field - do not pass null. Obtain the message_id from Gmail API responses (e.g., fetchEmails, listThreads).",
+        "human_parameter_name": "Message ID",
+        "human_parameter_description": "The unique identifier of the email message that contains the attachment you want to retrieve."
+      },
+      "attachment_id": {
+        "type": "string",
+        "title": "Attachment Id",
+        "examples": [
+          "ANGjdJ8sZ7example1234",
+          "A_PART0.1_18exampleAttachmentId7f9"
+        ],
+        "minLength": 1,
+        "description": "The internal Gmail attachment ID (NOT the filename). This is a system-generated token string like 'ANGjdJ8s...'. Obtain this ID from the 'attachmentId' field in the 'attachmentList' array returned by fetchEmails or fetchMessageByMessageId actions. Do NOT pass the filename (e.g., 'report.pdf'). Requires a fully hydrated message payload: call GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID with format='full' to obtain valid attachment IDs — lightweight fetch modes may omit attachmentList entirely.",
+        "human_parameter_name": "Attachment ID",
+        "human_parameter_description": "The unique Gmail attachment ID token (NOT the filename). This is a system-generated ID string obtained from the 'attachmentId' field in message attachment lists. First fetch the email using fetchEmails or fetchMessageByMessageId to get the attachmentId, then use it here."
+      }
+    }
+  },
+  "output_parameters": {
+    "type": "object",
+    "$defs": {
+      "FileDownloadable": {
+        "type": "object",
+        "title": "FileDownloadable",
+        "required": [
+          "name",
+          "mimetype",
+          "s3url"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Name of the file"
+          },
+          "s3url": {
+            "type": "string",
+            "title": "S3Url",
+            "description": "S3 URL of the downloaded file."
+          },
+          "mimetype": {
+            "type": "string",
+            "title": "Mimetype",
+            "description": "Mime type of the file."
+          }
+        },
+        "file_downloadable": true
+      },
+      "GetAttachmentResponse": {
+        "type": "object",
+        "title": "GetAttachmentResponse",
+        "required": [
+          "file"
+        ],
+        "properties": {
+          "file": {
+            "$ref": "#/$defs/FileDownloadable",
+            "title": "File",
+            "description": "Object containing metadata and URL for the retrieved attachment."
+          },
+          "display_url": {
+            "type": "string",
+            "title": "Display Url",
+            "description": "Web UI link to the parent message containing this attachment."
+          }
+        }
+      }
+    },
+    "title": "GetAttachmentResponseWrapper",
+    "required": [
+      "data",
+      "successful"
+    ],
+    "properties": {
+      "data": {
+        "$ref": "#/$defs/GetAttachmentResponse",
+        "title": "Data",
+        "description": "Data from the action execution"
+      },
+      "error": {
+        "type": "string",
+        "title": "Error",
+        "description": "Error if any occurred during the execution of the action"
+      },
+      "successful": {
+        "type": "boolean",
+        "title": "Successful",
+        "description": "Whether or not the action execution was successful or not"
+      }
+    }
+  }
+}

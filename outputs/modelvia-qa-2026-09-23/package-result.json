@@ -1,0 +1,21 @@
+{
+  "completedAt": "2026-09-23T03:53:35.705558+00:00",
+  "packageExitCode": 0,
+  "elapsedSeconds": 562.52,
+  "head": "e82ea2f067b7aa73d9bdc6e355a9bc4f1f1694c7",
+  "sourceSha256": "6784e6864be8ea1bb32dd1fb5e25e7aac9df99a153b77a94a0eecd4ae113ffd9",
+  "sourceSha256After": "6784e6864be8ea1bb32dd1fb5e25e7aac9df99a153b77a94a0eecd4ae113ffd9",
+  "sourceUnchangedDuringBuild": true,
+  "sourceFileCount": 1286,
+  "notarized": false,
+  "installedAppReplaced": false,
+  "signatureVerifyExitCode": 0,
+  "packagedSmokeExitCode": 0,
+  "archives": [
+    {
+      "path": "outputs/modelvia-qa-2026-09-23/package/RealBud-0.1.19-arm64.zip",
+      "sha256": "8ca57407e781f427cb9b7fe539fe13d82987aa671370240d3bc37cbf1ca6dcc5"
+    }
+  ],
+  "passed": true
+}

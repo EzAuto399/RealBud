@@ -1,0 +1,130 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ❯ server/drivers/acp/browser-injection-boundary.test.ts (10 tests | 10 failed) 200171ms
+     × browser_click_semantic cannot turn email instructions or fullAuto into payment approval 20015ms
+     × browser_press cannot turn email instructions or fullAuto into payment approval 20010ms
+     × requires a new exact approval for the next invoice and does not repeat a transport retry 20012ms
+     × rechecks the amount after approval instead of trusting the old card 20007ms
+     × rechecks the recipient after approval instead of trusting the old card 20012ms
+     × Stop rejects a pending payment and a late approval without dispatch 20063ms
+     × Stop during an in-flight read aborts the helper and withholds its late page result 20003ms
+     × Stop after payment dispatch retains unknown outcome and a new broker cannot replay it via Enter 20013ms
+     × refuses cross-run grants, foreign broker credentials, foreign sites and another browser's tab 20023ms
+     × a checked account change withholds the other office's page before any payment card 20009ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 10 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > browser_click_semantic cannot turn email instructions or fullAuto into payment approval
+ FAIL  server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > browser_press cannot turn email instructions or fullAuto into payment approval
+Error: Test timed out in 20000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ server/drivers/acp/browser-injection-boundary.test.ts:161:4
+    159|     expect((await call("browser_navigate", { tab_id: 1, url: `https://…
+    160|     expect((await call("browser_read", { tab_id: 1 })).isError).not.to…
+    161|   };
+       |    ^
+    162|   const effects = () => calls.filter(call => ["click", "press", "fill"…
+    163|   const approvals = async () => (await browserApprovals().list()).filt…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/10]⎯
+
+ FAIL  server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > requires a new exact approval for the next invoice and does not repeat a transport retry
+Error: Test timed out in 20000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ server/drivers/acp/browser-injection-boundary.test.ts:183:3
+    181|         { name: "recipient", value: "Fictional Plumbing Pty Ltd", conf…
+    182|         { name: "amount", value: "480.00", confirmed: true },
+    183|         { name: "currency", value: "AUD", confirmed: true },
+       |   ^
+    184|         { name: "reference", value: f.reference, confirmed: true },
+    185|       ],
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/10]⎯
+
+ FAIL  server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > rechecks the amount after approval instead of trusting the old card
+ FAIL  server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > rechecks the recipient after approval instead of trusting the old card
+Error: Test timed out in 20000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ server/drivers/acp/browser-injection-boundary.test.ts:206:34
+    204|     expect(await f.call("browser_click_semantic", args, 100)).toEqual(…
+    205|     expect(f.effects()).toHaveLength(1);
+    206|     expect(await f.approvals()).toMatchObject([{ decision: "approved",…
+       |                                  ^
+    207|     f.page(f.paymentPage("Fictional Electrician Pty Ltd", "915.25"));
+    208|     await f.call("browser_read", { tab_id: 1 });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/10]⎯
+
+ FAIL  server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > Stop rejects a pending payment and a late approval without dispatch
+Error: Test timed out in 20000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ server/drivers/acp/browser-injection-boundary.test.ts:217:3
+    215|     expect((await next).isError).toBe(true);
+    216|     expect(f.effects()).toHaveLength(1);
+    217|   });
+       |   ^
+    218|
+    219|   it.each(["amount", "recipient"])("rechecks the %s after approval ins…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/10]⎯
+
+ FAIL  server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > Stop during an in-flight read aborts the helper and withholds its late page result
+Error: Test timed out in 20000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ server/drivers/acp/browser-injection-boundary.test.ts:228:3
+    226|     expect(f.effects()).toHaveLength(0);
+    227|     expect(await f.approvals()).toMatchObject([{ decision: "changed", …
+    228|   });
+       |   ^
+    229|
+    230|   it("Stop rejects a pending payment and a late approval without dispa…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/10]⎯
+
+ FAIL  server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > Stop after payment dispatch retains unknown outcome and a new broker cannot replay it via Enter
+Error: Test timed out in 20000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ server/drivers/acp/browser-injection-boundary.test.ts:242:3
+    240|
+    241|   it("Stop during an in-flight read aborts the helper and withholds it…
+    242|     const f = await fixture(); await f.readEmail();
+       |   ^
+    243|     f.page("Fictional late result from a stopped task");
+    244|     const held = f.pause("observe");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/10]⎯
+
+ FAIL  server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > refuses cross-run grants, foreign broker credentials, foreign sites and another browser's tab
+Error: Test timed out in 20000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ server/drivers/acp/browser-injection-boundary.test.ts:264:3
+    262|     expect(held.signal()?.aborted).toBe(true);
+    263|     held.finish();
+    264|     expect((await pending).isError).toBe(true);
+       |   ^
+    265|     expect(await f.approvals()).toMatchObject([{ decision: "approved",…
+    266|     expect(connectedAppOperations.list(f.threadId)).toContainEqual(exp…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/10]⎯
+
+ FAIL  server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > a checked account change withholds the other office's page before any payment card
+Error: Test timed out in 20000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ server/drivers/acp/browser-injection-boundary.test.ts:281:3
+    279|     await expect(startBrowserBroker({ threadId: f.threadId, runId: "wr…
+    280|       context: { allowedOrigins: [SITE], capabilities: ["portal-read"]…
+    281|     })).rejects.toThrow(/belongs to another run/);
+       |   ^
+    282|     expect(await f.rpc("tools/list", {}, undefined, "Bearer fictional-…
+    283|     const tabs = await f.call("browser_tabs");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/10]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  10 failed (10)
+   Start at  14:58:36
+   Duration  200.64s (transform 289ms, setup 24ms, import 360ms, tests 200.17s, environment 0ms)
+
+JSON report written to /Users/yoda/projects/RealBud/outputs/core-gap-qa-2026-09-23/security/injection-initial.json

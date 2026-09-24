@@ -1,0 +1,17 @@
+{
+  "at": "2026-09-24T01:03:27.267Z",
+  "layer": "RealBud source pack installer and installed Hermes skill_view; disposable profile",
+  "skillVisible": true,
+  "referenceReadable": true,
+  "name": "rei-cloud-study",
+  "linkedFiles": {
+    "references": [
+      "references/website-map.md"
+    ]
+  },
+  "limits": [
+    "No model turn",
+    "No live profile changed",
+    "Not packaged or installed in the customer app"
+  ]
+}

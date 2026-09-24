@@ -1,0 +1,32 @@
+✔ /api/account/usage with a missing session returns a private uncached 401 (3.395667ms)
+✔ /api/admin/offices with a missing session returns a private uncached 401 (0.391292ms)
+✔ /account/ai-billing?period=2026-09 with a missing session redirects privately to sign-in (0.263ms)
+✔ /admin?tab=offices with a missing session redirects privately to sign-in (0.196625ms)
+✔ /api/account/usage with a malformed session returns a private uncached 401 (0.330791ms)
+✔ /api/admin/offices with a malformed session returns a private uncached 401 (0.298583ms)
+✔ /account/ai-billing?period=2026-09 with a malformed session redirects privately to sign-in (0.196083ms)
+✔ /admin?tab=offices with a malformed session redirects privately to sign-in (0.154042ms)
+✔ /api/account/usage with a expired session returns a private uncached 401 (3.87375ms)
+✔ /api/admin/offices with a expired session returns a private uncached 401 (0.724333ms)
+✔ /account/ai-billing?period=2026-09 with a expired session redirects privately to sign-in (0.506417ms)
+✔ /admin?tab=offices with a expired session redirects privately to sign-in (0.426375ms)
+✔ /api/account/usage with a tampered session returns a private uncached 401 (0.436417ms)
+✔ /api/admin/offices with a tampered session returns a private uncached 401 (0.338708ms)
+✔ /account/ai-billing?period=2026-09 with a tampered session redirects privately to sign-in (0.278ms)
+✔ /admin?tab=offices with a tampered session redirects privately to sign-in (0.267291ms)
+✔ valid legacy sessions pass through to existing route authorization (0.798959ms)
+✔ valid person sessions pass through to existing route authorization (1.731709ms)
+✔ unconfigured authentication keeps both hidden admin 404s private and uncached (0.241166ms)
+✔ unconfigured authentication preserves account route pass-through (0.096958ms)
+✔ public paths retain their cache behavior with authentication unset (0.120625ms)
+✔ canonical public redirect retains its cache behavior with authentication unset (0.118167ms)
+✔ public paths retain their cache behavior with authentication configured (0.109ms)
+✔ canonical public redirect retains its cache behavior with authentication configured (0.065791ms)
+ℹ tests 24
+ℹ suites 0
+ℹ pass 24
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 119.917667

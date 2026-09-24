@@ -1,0 +1,24 @@
+{
+  "startedAt": "2026-09-23T05:45:17.494299+00:00",
+  "proofLayer": "Signed local Mac candidate with one verified compiled-module correction; no notarization or installed-user acceptance",
+  "passed": true,
+  "sourceChangesSinceInitialPackage": [
+    "server/source-attachments.test.ts",
+    "server/source-attachments.ts"
+  ],
+  "compiledChanges": [
+    {
+      "path": "source-attachments.js",
+      "before": "56c7410a836a06024344fd2e25d95e4cf33317891b7124ce42815b309ac8896c",
+      "after": "cf02fa5d87a784319fedca8a6a216b07e4d737181948e57e51162c07e290516c"
+    }
+  ],
+  "sourceUnchangedDuringFinalVerification": true,
+  "signatureVerified": true,
+  "packagedSmokePassed": true,
+  "packagedPdfPassed": true,
+  "notarized": false,
+  "installedAppReplaced": false,
+  "path": "/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/final-candidate/RealBud.app",
+  "completedAt": "2026-09-23T05:45:35.992478+00:00"
+}

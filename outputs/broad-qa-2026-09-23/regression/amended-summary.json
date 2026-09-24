@@ -1,0 +1,36 @@
+{
+  "proofLayer": "local-tests-and-fixture-HTTP",
+  "node": "v24.19.0",
+  "basis": "Original working-tree full regression with only the four reviewed startup-failure files replaced by their targeted post-fix rerun. Not a fresh full run of an immutable revision.",
+  "initial": {
+    "passed": 5451,
+    "failedAssertions": 0,
+    "skipped": 337,
+    "failedFiles": 4,
+    "failedHookSuites": 5
+  },
+  "rerun": {
+    "passed": 121,
+    "failed": 0,
+    "skipped": 0,
+    "files": 4,
+    "exitCode": 0
+  },
+  "amended": {
+    "total": 5788,
+    "passed": 5536,
+    "failed": 0,
+    "skipped": 252,
+    "todo": 0,
+    "files": 415,
+    "failedFiles": []
+  },
+  "remainingFailedTests": [],
+  "limits": [
+    "No native Windows execution",
+    "No PostgreSQL suites",
+    "No package build or installed-device proof",
+    "No customer/provider acceptance",
+    "Concurrent configuration/onboarding edits need separate post-freeze checks"
+  ]
+}

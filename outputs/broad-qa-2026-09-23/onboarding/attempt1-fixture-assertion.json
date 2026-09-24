@@ -1,0 +1,50 @@
+{
+  "at": "2026-09-23T02:32:21.326Z",
+  "layer": "source-rendered-local",
+  "passed": false,
+  "node": "v24.19.0",
+  "checks": [
+    "Fresh workspace ignores unscoped browser completion; profile submission only reaches rules",
+    "Interrupted setup resumes rules after service restart at different service and renderer ports",
+    "Completed welcome survives a second changed-port restart with the saved contact intact",
+    "Replayed welcome preserves a restored book contact instead of overwriting it",
+    "Sample exploration retains its profile and can finish after a changed-port restart"
+  ],
+  "pageErrors": [],
+  "origins": [
+    {
+      "service": "http://127.0.0.1:58055",
+      "renderer": "http://127.0.0.1:58056"
+    },
+    {
+      "service": "http://127.0.0.1:58128",
+      "renderer": "http://127.0.0.1:58129"
+    },
+    {
+      "service": "http://127.0.0.1:58202",
+      "renderer": "http://127.0.0.1:58203"
+    },
+    {
+      "service": "http://127.0.0.1:58273",
+      "renderer": "http://127.0.0.1:58274"
+    },
+    {
+      "service": "http://127.0.0.1:58341",
+      "renderer": "http://127.0.0.1:58342"
+    },
+    {
+      "service": "http://127.0.0.1:58400",
+      "renderer": "http://127.0.0.1:58401"
+    },
+    {
+      "service": "http://127.0.0.1:58480",
+      "renderer": "http://127.0.0.1:58481"
+    }
+  ],
+  "failure": "Error: ENOENT: no such file or directory, open '/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/fictional-onboarding-restart-YZbVNE/recovery/desk.json'\n    at async open (node:internal/fs/promises:697:25)\n    at async readFile (node:internal/fs/promises:1348:14)\n    at async file:///Users/yoda/projects/RealBud/scripts/qa-onboarding-restart.mjs:138:16",
+  "limits": [
+    "Disposable fictional state only; no real account, worker, model, hosted, bank or payment calls.",
+    "Source Vite renderer and local Node service; not a packaged or installed-device acceptance run.",
+    "Member isolation and asynchronous scope changes are covered by server/onboarding.test.ts, not separate physical devices."
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "proofLayer": "local-test-kit-assembly",
+  "file": "RealBud-Windows-0.1.19-baseline-fb6cebed.zip",
+  "bytes": 160900755,
+  "sha256": "2a3568f3fe5a61ea7680527de8e106c126e500f6aedd30aba45d605c8b2bad5a",
+  "members": [
+    "READ-ME-FIRST.md",
+    "baseline-installer-receipt.json",
+    "installer-fb6cebed/RealBud-0.1.19-setup.exe",
+    "installer-fb6cebed/RealBud-0.1.19-setup.exe.blockmap",
+    "installer-fb6cebed/latest.yml"
+  ],
+  "limits": [
+    "Contains the previously Windows-tested fb6cebed baseline only.",
+    "No new Windows compilation, installed-device or current working-tree acceptance occurred.",
+    "Timeout candidate was rejected; the checklist records cleanup as unresolved."
+  ]
+}

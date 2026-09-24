@@ -1,0 +1,15 @@
+PASS isolated-runtime-and-source (153ms)
+PASS local-modelvia-and-fictional-billing (444ms)
+PASS local-realbud-provisioning-gateway (120ms)
+PASS controlled-website-and-real-desktop (1687ms)
+PASS app-browser-link-consumes-real-provisioning (157ms)
+PASS wrong-bound-entitlement-refused-before-worker (25ms)
+PASS trusted-entitlement-and-real-worker-readiness (4018ms)
+FAIL revoked-model-key-refuses-real-worker-without-extra-charge (1855ms)
+{
+  "passed": false,
+  "checks": 8,
+  "failure": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /key|connection|refus|auth/i. Input:",
+  "cleanup": true,
+  "receipt": "/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/app/2026-09-23T05-11-51.602Z/receipt.json"
+}

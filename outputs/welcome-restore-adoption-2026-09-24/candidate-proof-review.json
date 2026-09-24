@@ -1,0 +1,49 @@
+{
+  "candidateSource": "4c0c203fd5e951c4cd03422b97511546db8d345d",
+  "proofLayer": "reviewed retained packaged Mac evidence; not a new canonical build",
+  "welcomeReceipt": {
+    "path": "/Users/yoda/projects/RealBud-platform-candidate-2026-09-23/outputs/platform-followup-2026-09-24/welcome-restore-4c0c203f-v2/receipt.json",
+    "sha256": "233f264c5ab6b081802ede03c6225e937d8eb701a000e71818b8cbe6eedd5f39",
+    "passed": true,
+    "groups": 12,
+    "freshnessCheckpoints": 6,
+    "cleanup": true
+  },
+  "packagedTwoServiceReceipt": {
+    "path": "/Users/yoda/projects/RealBud-platform-candidate-2026-09-23/outputs/platform-followup-2026-09-24/mac-4c0c203f-electron-team/receipt.json",
+    "sha256": "8ee16daa14af81390902a85a00acef16b99fa4baf55a079b4a2735ef111be923",
+    "passed": true,
+    "groups": 14,
+    "httpRequests": 94,
+    "serviceGenerations": 5,
+    "cleanup": true,
+    "physicalTwoDevices": false
+  },
+  "packageReceipt": {
+    "path": "/Users/yoda/projects/RealBud-platform-candidate-2026-09-23/outputs/platform-followup-2026-09-24/mac-4c0c203f/package-receipt.json",
+    "sha256": "66ea0ec6aa571c196e4f6192fabc29ef2481dbca8ac05d5964d06ed606cae4e8",
+    "signed": true,
+    "notarized": false
+  },
+  "artifactHashesRechecked": [
+    "app.asar",
+    "server/bootstrap.js",
+    "ui/index.html",
+    "executable"
+  ],
+  "visuallyInspected": [
+    {
+      "path": "/Users/yoda/projects/RealBud-platform-candidate-2026-09-23/outputs/platform-followup-2026-09-24/welcome-restore-4c0c203f-v2/welcome-restore-entry-390.png",
+      "sha256": "d303b9086d9871c2216db8529249b84b78eb83347ce0b9ab6c4bee9facee3e3a"
+    },
+    {
+      "path": "/Users/yoda/projects/RealBud-platform-candidate-2026-09-23/outputs/platform-followup-2026-09-24/welcome-restore-4c0c203f-v2/welcome-restore-entry-desktop.png",
+      "sha256": "e77d76428ee28fe1ff22b068e87e37ab75c1735b6b9b216b151f583705030e49"
+    }
+  ],
+  "limits": [
+    "Mac custody uses AES fixture; no OS Keychain/DPAPI proof",
+    "No claim of installed customer, Windows, older-version upgrade, reboot or physical two-device acceptance",
+    "Cancellation-to-welcome follow-up is newer than this sealed package and requires its own proof"
+  ]
+}

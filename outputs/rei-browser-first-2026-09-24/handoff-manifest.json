@@ -1,0 +1,14 @@
+{
+  "baseRevision": "d7906bf480f6926520a0e663f50a5acd3022ca7d",
+  "files": {
+    "docs/GOAL-PROMPT.md": "e40824c530e9db32451b335c0adb8a8bcd6e445ff290dae083681469dd4f4a3b",
+    "docs/END-STATE.md": "af07fa17a9c0665c903ad8d5e8701adbe02537ccbea5052bacce76d14c90edb9",
+    "docs/REI-LOGIN-TEST.md": "6a46e3bc675eae87550ee864a3f2a23c3ee2b1ae8fb6faace551d0358fae01ad",
+    "docs/BROWSER-TASK-AUTHORITY-DESIGN-2026-09-23.md": "328279b843176404388d5b62a4da4e618cba9d6315133b15cf058192a9af1674",
+    "docs/REI-BROWSER-FIRST-2026-09-24.md": "8fbe249339159e413813a49141a1f05090e886e22d089a36e70c245a68dea15d",
+    "docs/decisions/2026-09-24-rei-browser-first-api-when-approved.md": "2377aea1de8c62236ab526f8a3c2dcef2efaa88de6cb095648d484101f84900e"
+  },
+  "patchSha256": "3dcc0b19619638f8b457b9b120cf91e3e4189f7ac7ae5d5c62a2de930f2ee941",
+  "requestSha256": "37e51f867e15849806608e041929115d6a6ef3c9a845bd5925efc0f631997f6f",
+  "scope": "Documentation and unsent API request only; no application changes, installer changes or live account mutation."
+}

@@ -1,0 +1,65 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ❯ server/hermes-hands.test.ts (40 tests | 4 failed) 7892ms
+     × gives the ping child only its managed key after stripping ambient credentials 5ms
+     × gives the ledger child only its managed key after stripping ambient credentials 2ms
+     × does not retain the managed key for a ping child after disconnect 2ms
+     × does not retain the managed key for a ledger child after disconnect 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/hermes-hands.test.ts > one-shot managed model access > gives the ping child only its managed key after stripping ambient credentials
+Error: ENOENT: no such file or directory, open '/private/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/omb-fake-hermes-1BGydZ/env-evidence.json'
+ ❯ server/hermes-hands.test.ts:432:33
+    430|     setWorkerModelAccessSnapshot({ OPENAI_API_KEY: grantKey, OPENAI_BA…
+    431|     const result = await run(kind, test);
+    432|     const evidence = JSON.parse(readFileSync(test.evidence, "utf8"));
+       |                                 ^
+    433|     expect(evidence).toMatchObject({ keyMatchesGrant: true, keyPresent…
+    434|     expect(JSON.stringify(evidence.args)).not.toContain(grantKey);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  server/hermes-hands.test.ts > one-shot managed model access > gives the ledger child only its managed key after stripping ambient credentials
+Error: ENOENT: no such file or directory, open '/private/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/omb-fake-hermes-IQjRRi/env-evidence.json'
+ ❯ server/hermes-hands.test.ts:432:33
+    430|     setWorkerModelAccessSnapshot({ OPENAI_API_KEY: grantKey, OPENAI_BA…
+    431|     const result = await run(kind, test);
+    432|     const evidence = JSON.parse(readFileSync(test.evidence, "utf8"));
+       |                                 ^
+    433|     expect(evidence).toMatchObject({ keyMatchesGrant: true, keyPresent…
+    434|     expect(JSON.stringify(evidence.args)).not.toContain(grantKey);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  server/hermes-hands.test.ts > one-shot managed model access > does not retain the managed key for a ping child after disconnect
+Error: ENOENT: no such file or directory, open '/private/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/omb-fake-hermes-ihRG6V/env-evidence.json'
+ ❯ server/hermes-hands.test.ts:447:23
+    445|     setWorkerModelAccessSnapshot({});
+    446|     await run(kind, test);
+    447|     expect(JSON.parse(readFileSync(test.evidence, "utf8"))).toMatchObj…
+       |                       ^
+    448|     expect(process.env.OPENAI_API_KEY).toBe("fictional-ambient-key");
+    449|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  server/hermes-hands.test.ts > one-shot managed model access > does not retain the managed key for a ledger child after disconnect
+Error: ENOENT: no such file or directory, open '/private/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/omb-fake-hermes-ZZ0sZQ/env-evidence.json'
+ ❯ server/hermes-hands.test.ts:447:23
+    445|     setWorkerModelAccessSnapshot({});
+    446|     await run(kind, test);
+    447|     expect(JSON.parse(readFileSync(test.evidence, "utf8"))).toMatchObj…
+       |                       ^
+    448|     expect(process.env.OPENAI_API_KEY).toBe("fictional-ambient-key");
+    449|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 36 passed (40)
+   Start at  13:26:18
+   Duration  8.35s (transform 284ms, setup 23ms, import 352ms, tests 7.89s, environment 0ms)
+

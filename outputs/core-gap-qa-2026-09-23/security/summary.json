@@ -1,0 +1,173 @@
+{
+  "recordedAt": "2026-09-23T05:06:24.114548+00:00",
+  "scope": "Local deterministic adversarial integration, no hosted/provider/browser/payment calls",
+  "node": "24.19.0",
+  "tests": {
+    "passed": 26,
+    "failed": 0,
+    "skipped": 0,
+    "files": 3
+  },
+  "assertions": [
+    {
+      "file": "server/config-private-root.test.ts",
+      "name": "fresh ensureDirs permits a real persisted payment approval without fixture pre-creation",
+      "status": "passed"
+    },
+    {
+      "file": "server/config-private-root.test.ts",
+      "name": "keeps an existing unsafe POSIX root unchanged and refuses approval writes",
+      "status": "passed"
+    },
+    {
+      "file": "server/config-recovery.test.ts",
+      "name": "permits the first save only when the file is absent",
+      "status": "passed"
+    },
+    {
+      "file": "server/config-recovery.test.ts",
+      "name": "preserves invalid settings on read and attempted ordinary save: {interrupted",
+      "status": "passed"
+    },
+    {
+      "file": "server/config-recovery.test.ts",
+      "name": "preserves invalid settings on read and attempted ordinary save: null",
+      "status": "passed"
+    },
+    {
+      "file": "server/config-recovery.test.ts",
+      "name": "preserves invalid settings on read and attempted ordinary save: []",
+      "status": "passed"
+    },
+    {
+      "file": "server/config-recovery.test.ts",
+      "name": "preserves invalid settings on read and attempted ordinary save: \"settings\"",
+      "status": "passed"
+    },
+    {
+      "file": "server/config-recovery.test.ts",
+      "name": "preserves invalid settings on read and attempted ordinary save: 42",
+      "status": "passed"
+    },
+    {
+      "file": "server/config-recovery.test.ts",
+      "name": "preserves invalid settings on read and attempted ordinary save: {\"profile\":[]}",
+      "status": "passed"
+    },
+    {
+      "file": "server/config-recovery.test.ts",
+      "name": "preserves invalid settings on read and attempted ordinary save: {\"composio\":null}",
+      "status": "passed"
+    },
+    {
+      "file": "server/config-recovery.test.ts",
+      "name": "preserves invalid settings on read and attempted ordinary save: {\"instances\":\"wrong\"}",
+      "status": "passed"
+    },
+    {
+      "file": "server/config-recovery.test.ts",
+      "name": "refuses EACCES without overwriting or exposing its details",
+      "status": "passed"
+    },
+    {
+      "file": "server/config-recovery.test.ts",
+      "name": "refuses EIO without overwriting or exposing its details",
+      "status": "passed"
+    },
+    {
+      "file": "server/config-recovery.test.ts",
+      "name": "refuses EISDIR without overwriting or exposing its details",
+      "status": "passed"
+    },
+    {
+      "file": "server/config-recovery.test.ts",
+      "name": "refuses ENOTDIR without overwriting or exposing its details",
+      "status": "passed"
+    },
+    {
+      "file": "server/config-recovery.test.ts",
+      "name": "accepts a deliberate repair and preserves credentials, unrelated sections and future metadata",
+      "status": "passed"
+    },
+    {
+      "file": "server/drivers/acp/browser-injection-boundary.test.ts",
+      "name": "hostile email with actual browser tools and authoritative approval browser_click_semantic cannot turn email instructions or fullAuto into payment approval",
+      "status": "passed"
+    },
+    {
+      "file": "server/drivers/acp/browser-injection-boundary.test.ts",
+      "name": "hostile email with actual browser tools and authoritative approval browser_press cannot turn email instructions or fullAuto into payment approval",
+      "status": "passed"
+    },
+    {
+      "file": "server/drivers/acp/browser-injection-boundary.test.ts",
+      "name": "hostile email with actual browser tools and authoritative approval requires a new exact approval for the next invoice and does not repeat a transport retry",
+      "status": "passed"
+    },
+    {
+      "file": "server/drivers/acp/browser-injection-boundary.test.ts",
+      "name": "hostile email with actual browser tools and authoritative approval rechecks the amount after approval instead of trusting the old card",
+      "status": "passed"
+    },
+    {
+      "file": "server/drivers/acp/browser-injection-boundary.test.ts",
+      "name": "hostile email with actual browser tools and authoritative approval rechecks the recipient after approval instead of trusting the old card",
+      "status": "passed"
+    },
+    {
+      "file": "server/drivers/acp/browser-injection-boundary.test.ts",
+      "name": "hostile email with actual browser tools and authoritative approval Stop rejects a pending payment and a late approval without dispatch",
+      "status": "passed"
+    },
+    {
+      "file": "server/drivers/acp/browser-injection-boundary.test.ts",
+      "name": "hostile email with actual browser tools and authoritative approval Stop during an in-flight read aborts the helper and withholds its late page result",
+      "status": "passed"
+    },
+    {
+      "file": "server/drivers/acp/browser-injection-boundary.test.ts",
+      "name": "hostile email with actual browser tools and authoritative approval Stop after payment dispatch retains unknown outcome and a new broker cannot replay it via Enter",
+      "status": "passed"
+    },
+    {
+      "file": "server/drivers/acp/browser-injection-boundary.test.ts",
+      "name": "hostile email with actual browser tools and authoritative approval refuses cross-run grants, foreign broker credentials, foreign sites and another browser's tab",
+      "status": "passed"
+    },
+    {
+      "file": "server/drivers/acp/browser-injection-boundary.test.ts",
+      "name": "hostile email with actual browser tools and authoritative approval a checked account change withholds the other office's page before any payment card",
+      "status": "passed"
+    }
+  ],
+  "sourceSha256": {
+    "server/config.ts": "236dc37c86444aa61ab017b82f7b591cee872cad6fbd8f4107a6021d0652f247",
+    "server/config-private-root.test.ts": "392bcfa205b2770bc5448dfcbfbf91df85e88f9cb15d9424b7cfa7bc29739ec6",
+    "server/config-recovery.test.ts": "3545d6ab47a550b84f096fec2cbf67503a9c098e6ea2bf493529a31da11aafbf",
+    "server/drivers/acp/browser-injection-boundary.test.ts": "374a9d0a41cb473d20423a49a6d7cdef121d8c286d83de4ace9e15f73209483a",
+    "server/drivers/acp/core.ts": "453ebf5e3e456ea45ea7a61444d7c3e523c2c4dc02bb983e73dcccc4af35cd34",
+    "server/browser-broker.ts": "71dc00b525f5ea6b78e7cb1a9467d931e084889bac0de68158f0fe51994e4276",
+    "server/browser-authority.ts": "d27a2fdb59a7e0e56ecd9a1f449f7e3282c78298cf48ca6a5530c07d599167ab",
+    "server/browser-runtime.ts": "b2d50695c1af189751cf673f63e83986bbd8a66934262252b95c72651f73fcce",
+    "server/portal-fence.ts": "bc6cfa0d3d47424bd7ce4e660047193e7410833ffbe20aa5f3973ff1bf28776d"
+  },
+  "serverTypes": {
+    "status": "blocked-by-unrelated-test-import",
+    "error": "shared/office-link.test.ts:2 TS2835 extensionless ./office-link import",
+    "receipt": "server-types-final.log"
+  },
+  "productionChange": "ensureDirs creates only new directories mode0700; preserves existing and migrated modes. Real approval persistence succeeds from missing DATA_DIR. Existing unsafe POSIX root remains unchanged and rejects writes.",
+  "limits": [
+    "No actual model prompt-injection susceptibility measurement; a deterministic hostile client follows the fictional email through tools actually exposed by real ACP.",
+    "No installed-browser, live payment, Windows-native or customer proof.",
+    "Scope proof covers token/run/thread/site/browser and checked account marker, not PostgreSQL company authorization.",
+    "Explicit Ask grants still ask routine borrow/read/navigate unless a persisted site read rule exists (browser-authority.ts:709-730); task-wide routine permission remains a source/decision mismatch.",
+    "Stop after dispatch cannot undo an external effect; test proves unknown receipt and no replay instead."
+  ],
+  "historicalRuns": {
+    "injection-initial.json": "10 timeouts: fixture did not answer current routine read permissions.",
+    "injection-run.json": "3 passed,7 failed: actual fresh DATA_DIR privacy bug blocked card persistence.",
+    "injection-fixture-diagnostic.log": "Same fresh-root error isolated.",
+    "injection-private-root.json": "10 passed with admitted fixture root before production fix; not final proof."
+  }
+}

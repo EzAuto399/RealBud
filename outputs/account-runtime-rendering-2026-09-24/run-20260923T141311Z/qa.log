@@ -1,0 +1,25 @@
+node:internal/errors:985
+  const err = new Error(message);
+              ^
+
+Error: Command failed: /opt/homebrew/opt/postgresql@16/bin/pg_ctl -D /var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/rb-runtime-auth-fh1bvfxt/rb-command-site-UNTLw9/data -l /var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/rb-runtime-auth-fh1bvfxt/rb-command-site-UNTLw9/log -o -k /var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/rb-runtime-auth-fh1bvfxt/rb-command-site-UNTLw9 -c listen_addresses='' -w start
+pg_ctl: could not start server
+Examine the log output.
+
+    at genericNodeError (node:internal/errors:985:15)
+    at wrappedFn (node:internal/errors:539:14)
+    at ChildProcess.exithandler (node:child_process:417:12)
+    at ChildProcess.emit (node:events:509:28)
+    at maybeClose (node:internal/child_process:1141:16)
+    at Socket.<anonymous> (node:internal/child_process:498:11)
+    at Socket.emit (node:events:509:28)
+    at Pipe.<anonymous> (node:net:355:12) {
+  code: 1,
+  killed: false,
+  signal: null,
+  cmd: "/opt/homebrew/opt/postgresql@16/bin/pg_ctl -D /var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/rb-runtime-auth-fh1bvfxt/rb-command-site-UNTLw9/data -l /var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/rb-runtime-auth-fh1bvfxt/rb-command-site-UNTLw9/log -o -k /var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/rb-runtime-auth-fh1bvfxt/rb-command-site-UNTLw9 -c listen_addresses='' -w start",
+  stdout: 'waiting for server to start.... stopped waiting\n',
+  stderr: 'pg_ctl: could not start server\nExamine the log output.\n'
+}
+
+Node.js v24.19.0

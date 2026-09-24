@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "proofLayer": "downloaded-previous-windows-ci-artifact",
+  "verifiedAt": "2026-09-23T08:40:02.985916+00:00",
+  "sourceRevision": "fb6cebed63aaed9d81f9112005ac938644d2fa86",
+  "workflowRun": "https://github.com/EzAuto399/RealBud/actions/runs/35806671985",
+  "installer": {
+    "filename": "RealBud-0.1.19-setup.exe",
+    "bytes": 160730532,
+    "sha256": "0ba39f09bb5a0caf935a8acf92081c7ceee57f89d998baf127c4e83b307f8f63",
+    "sha512MatchesBuildMetadata": true
+  },
+  "windowsProofs": {
+    "installed-windows": {
+      "passed": true,
+      "checks": 9,
+      "skipped": [],
+      "limits": [
+        "Windows 11",
+        "customer x64 PC",
+        "login and MFA",
+        "browser or native UI actions",
+        "Hermes install or model login",
+        "PostgreSQL office provisioning or backup/restore",
+        "GUI or update and human takeover",
+        "live microphone dictation quality"
+      ]
+    },
+    "installed-service": {
+      "passed": true,
+      "checks": 4,
+      "skipped": [],
+      "limits": []
+    },
+    "installed-private-backup": {
+      "passed": true,
+      "checks": 6,
+      "skipped": [
+        "POSIX chmod refusal is not a Windows ACL test; native Windows bootstrap still enforces its ACL helper."
+      ],
+      "limits": []
+    },
+    "installed-memory-primitives": {
+      "passed": true,
+      "checks": 15,
+      "skipped": [],
+      "limits": [
+        "Primitive acceptance only; production platform holds remain unchanged.",
+        "No Hermes runtime, model/provider, customer profile or credential is used.",
+        "No full application, installed GUI, Windows 11 device or power-loss guarantee is implied.",
+        "Ancestor pinning and ancestor-junction refusal belong to the separate portable protocol and are not established by this leaf-primitive script.",
+        "Successful deletion requests are not journal completion; namespace/journal reconciliation requires the separate protocol."
+      ]
+    }
+  },
+  "limits": [
+    "Existing baseline installer only; newer working-tree fixes are not included.",
+    "Hosted Windows runner; no Windows11 GUI or customer-device acceptance.",
+    "Previous harness attempted uninstall but did not verify removal; current harness adds that gate.",
+    "Attended desktop control, legacy profile migration and memory review remain held.",
+    "No code signature, upgrade preservation, live worker/account or two-computer acceptance is implied."
+  ]
+}
