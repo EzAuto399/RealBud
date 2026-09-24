@@ -4,11 +4,12 @@ Owner decision, 24 September 2026. This record does not establish deployment, ap
 
 ## Decision
 
-Modelvia is the only source of AI rates, caps, usage and invoices that a RealBud office sees. RealBud's own gateway (`managed-gateway/`) stops doing billing. It keeps three jobs:
+Modelvia is the only source of AI rates, caps, usage and AI invoices that a RealBud office sees. RealBud's own gateway (`managed-gateway/`) stops billing AI usage. It keeps four jobs:
 
 1. Provisioning and revoking installations. Each installation gets one Modelvia project and key, plus one Composio connector device.
 2. Connectors (`/v1/connectors/*`).
 3. Service entitlement: whether the office's RealBud service is active, which licence it holds, when it went live and when it expires.
+4. The monthly RealBud care fee, collected automatically through Square against the office's accepted monthly commercial terms (see Consequences).
 
 The website shows billing in one place, `/account/ai-billing`. The old Rates, Limits and Service invoices pages redirect to sections of that page.
 
@@ -31,7 +32,7 @@ On 24 September, realbud.app showed a Modelvia QA rate card (`fictional-hosted-r
 - **Pricing:** agreed retail terms are recorded in Modelvia as a commercial policy. The website shows the resulting customer price and has no acceptance control.
 - **Service entitlement:** entitlement records are created by a trusted operator command (`managed-gateway/entitlement-cli.ts`), not by test fixtures.
 - **Stored data:** existing ledger tables and records remain readable. Nothing is dropped.
-- **Care fee** (owner decision, 24 September): billed each month as a manual Square invoice outside RealBud and Modelvia. Modelvia cannot issue a non-AI line, and the gateway never closed a care invoice in production.
+- **Care fee** (owner decision, 24 September): collected automatically via Square by the RealBud gateway against the office's accepted monthly commercial terms; care invoices never carry AI usage. The office's billing owner accepts the month's terms (seller, customer, GST basis, exact care amount) through the portal; after the month the operator closes the invoice from those terms and the owner pays through a Square-hosted checkout. Modelvia cannot issue a non-AI line, so the care line is the gateway's only billing; the gateway reads no usage, rate card or request history for it. Runbook: `managed-gateway/DEPLOY.md`, "Care fee collection (Square)".
 - **Office AI access** (owner decision, 24 September): each office gets a A$200 monthly cap by default. A RealBud operator can set a custom cap or turn AI off from `/admin/offices`. The gateway applies the change in Modelvia with its operator credential, only for customers under RealBud's client.
 
 ## Still required outside the code (owner authority)

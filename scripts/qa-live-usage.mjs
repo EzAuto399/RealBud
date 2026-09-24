@@ -62,6 +62,8 @@ const MONTHLY_CAP = '10000000000';
 const REQUEST_CAP = '1000000000';
 
 const PORTAL_SECRET = 'fictional-realbud-portal-secret-live-usage-qa';
+/** Our gateway's own operator bearer secret (office AI access); distinct from the portal secret by design. */
+const RB_OPERATOR_SECRET = 'fictional-realbud-operator-secret-live-usage-qa';
 const MV_PORTAL_SECRET = 'fictional-modelvia-portal-secret-live-usage';
 const MV_OPERATOR_SECRET = 'fictional-modelvia-operator-secret-live-usage';
 
@@ -120,6 +122,12 @@ function operatorToken(subject = 'fictional-live-usage-operator') {
   const now = Date.now();
   const payload = Buffer.from(JSON.stringify({ aud: 'managed-ai-operator', subject, iat: now, exp: now + 290_000 })).toString('base64url');
   return `${payload}.${createHmac('sha256', MV_OPERATOR_SECRET).update(payload).digest('base64url')}`;
+}
+/** RealBud operator bearer (managed-gateway/operator-token.ts): exactly subject, role, iat, exp; five minutes at most. */
+function realbudOperatorToken(email = 'fictional-operator@example.invalid') {
+  const now = Date.now();
+  const payload = Buffer.from(JSON.stringify({ subject: `operator:${email}`, role: 'realbud_operator', iat: now, exp: now + 290_000 })).toString('base64url');
+  return `${payload}.${createHmac('sha256', RB_OPERATOR_SECRET).update(payload).digest('base64url')}`;
 }
 function portalToken(secret, companyId = COMPANY_ID) {
   const now = Date.now();
@@ -324,6 +332,8 @@ globalThis.fetch=async(input,init)=>{
         PORT: String(RB_PORT),
         REALBUD_GATEWAY_DATA: dataDir,
         REALBUD_GATEWAY_PORTAL_SECRET: PORTAL_SECRET,
+        REALBUD_GATEWAY_OPERATOR_SECRET: RB_OPERATOR_SECRET,
+        // Care-fee collection stays off: this QA proves AI usage at Modelvia, not Square.
         REALBUD_PAYMENT_MODE: 'local',
         REALBUD_ALLOWED_ORIGINS: RB_BASE,
         REALBUD_ENABLE_PROVIDER: '1',
@@ -492,22 +502,25 @@ globalThis.fetch=async(input,init)=>{
     return `project ${LOST_PROJECT} reused, orphan refused ${old.status}, new key answered 200, 1 live key`;
   });
 
-  // A cap change made on the website reaches every provisioned Modelvia project.
+  // A cap change made by a RealBud operator (the Offices page) reaches every
+  // provisioned Modelvia project. Caps are Modelvia's: the portal has no limits
+  // route, so the operator route is the one write path.
   await step('cap-change-reaches-modelvia', async () => {
-    const token = portalToken(PORTAL_SECRET);
     const monthly = String(BigInt(MONTHLY_CAP) * 2n);
-    const changed = await call(RB_BASE, 'POST', '/v1/portal/limits', { token, body: { monthlyCapNanoAud: monthly, requestCapNanoAud: REQUEST_CAP, maxConcurrent: 3 } });
-    assert(changed.status === 200, `limits → ${changed.status} ${changed.text.slice(0, 300)}`);
+    const changed = await call(RB_BASE, 'POST', '/v1/operator/offices/ai-access', { token: realbudOperatorToken(), body: {
+      companyId: COMPANY_ID, customerId: CUSTOMER_ID, name: 'Fictional Office (QA only)', access: { mode: 'custom', monthlyCapNanoAud: monthly } } });
+    assert(changed.status === 200, `office ai-access → ${changed.status} ${changed.text.slice(0, 300)}`);
+    assert((await call(RB_BASE, 'POST', '/v1/portal/limits', { token: portalToken(PORTAL_SECRET), body: {} })).status === 404, 'the portal limits route still exists');
     const projects = await call(MV_BASE, 'GET', '/v1/operator/projects', { token: operatorToken() });
     const accounts = projects.body?.accounts ?? [];
     // Only installations still in service are synced; the revoked first one keeps
     // its project for billing but has no live key, so its caps are left alone.
     const live = accounts.find(account => account.id === LOST_PROJECT);
     const revoked = accounts.find(account => account.id === MODEL_PROJECT_ID);
-    assert(live && live.monthlyCapNanoAud === monthly && live.maxConcurrent === 3, `${LOST_PROJECT} kept its old caps`);
+    assert(live && live.monthlyCapNanoAud === monthly, `${LOST_PROJECT} kept its old caps`);
     assert(revoked && revoked.monthlyCapNanoAud === MONTHLY_CAP, 'the revoked installation project was changed');
-    facts.capSync = { monthlyCapNanoAud: monthly, maxConcurrent: 3, synced: LOST_PROJECT, leftAlone: MODEL_PROJECT_ID, reply: changed.body?.modelviaCaps ?? null };
-    return `monthly cap ${monthly} nanoAUD and concurrency 3 on the live installation's Modelvia project; the revoked one left as it was`;
+    facts.capSync = { monthlyCapNanoAud: monthly, synced: LOST_PROJECT, leftAlone: MODEL_PROJECT_ID, reply: changed.body?.projects ?? null };
+    return `monthly cap ${monthly} nanoAUD on the live installation's Modelvia project through the operator route; the revoked one left as it was`;
   });
 } catch {
   /* the failing step is already recorded; the receipt is written below */

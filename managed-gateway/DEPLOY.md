@@ -1,13 +1,13 @@
 # RealBud managed gateway: deployment
 
-The gateway runs on Fly (Sydney) from `deploy.sh` and `fly.toml`. The website runs on Vercel. Deployment is a separate authority: `deploy.sh` needs a human `fly auth login` and exported secrets, and never runs from a coding session.
+The gateway runs on Fly (Sydney) from `deploy.sh` and `fly.toml`. The website runs on Vercel. Deployment is a separate authority: `deploy.sh` needs a human `fly auth login` and exported secrets, and never runs from a coding session. `deploy.sh --check` runs only the validation and changes nothing at Fly.
 
-**Modelvia is the only source of AI rates, caps, usage and invoices** ([decision, 24 September 2026](../docs/decisions/2026-09-24-modelvia-sole-billing.md)). The gateway keeps installation provisioning and revocation, connectors, service entitlement, `/health` and `/ready`. It has no billing, payment, rate, usage, invoice or model route, and needs no Square, OpenAI, DeepSeek or Kimi credential.
+**Modelvia is the only source of AI rates, caps, usage and AI invoices** ([decision, 24 September 2026](../docs/decisions/2026-09-24-modelvia-sole-billing.md)). The gateway keeps installation provisioning and revocation, connectors, service entitlement, `/health` and `/ready`, and collects **the monthly RealBud care fee** through Square against the office's accepted monthly commercial terms ([Care fee collection](#care-fee-collection-square)). It has no AI rate, usage, limit or model route, a care invoice never carries AI usage, and it needs no OpenAI, DeepSeek or Kimi credential.
 
 ## Order of operations
 
-1. **Deploy.** Export the variables below, then run `managed-gateway/deploy.sh`. It refuses to run while any required variable is unset, and names each missing one without echoing a value.
-2. **Check readiness.** `curl -fsS "$REALBUD_GATEWAY_URL/ready"`. A 200 response means provisioning is composed. A 503 response names the variable still to set, never its value. Both responses report `modelviaOperator` and `operatorAccess` (`configured|missing`). `/ready` makes no network call.
+1. **Deploy.** Export the variables below, then run `managed-gateway/deploy.sh`. It validates every variable before touching Fly, names each missing one without echoing a value, stages the secrets over stdin and deploys once. It generates no secret: every value is a stable one recovered from protected storage, so a redeploy rotates nothing.
+2. **Check readiness.** `curl -fsS "$REALBUD_GATEWAY_URL/ready"`. A 200 response means provisioning is composed. A 503 response names the variable still to set, never its value. Both responses report `modelviaOperator` and `operatorAccess` (`configured|missing`). `/ready` makes no network call. The startup log line also reports `careCollection` (`off|sandbox|live`).
 3. **Create each office's service entitlement** on the machine (`fly ssh console -a realbud-managed-gateway`, then `cd /app/managed-gateway`):
 
    ```sh
@@ -19,13 +19,15 @@ The gateway runs on Fly (Sydney) from `deploy.sh` and `fly.toml`. The website ru
    `--go-live` must be today or earlier, and `--expires` must be after `--go-live` (otherwise `invalid_go_live` or `invalid_service_expiry`). The command opens `/data/ledger.sqlite`, the database the server uses. It refuses to create a database, so a wrong path fails loudly. Without an entitlement, provisioning answers 403 `tenant_unavailable`. Suspend an office with `--active false`. Renew by setting a later `--expires`; existing connectors follow the current entitlement, so they keep working without reprovisioning.
 4. **Set the office's AI access** with `POST /v1/operator/offices/ai-access` (see [Office AI access](#office-ai-access)). `default` creates the office's Modelvia customer under `REALBUD_MODELVIA_CLIENT_ID` with the A$200 cap. Without an active customer with a non-zero cap, provisioning answers 409 `modelvia_customer_not_ready` and creates nothing.
 5. Set the website's `REALBUD_GATEWAY_URL` to the app origin (`fly status -a realbud-managed-gateway`) and `REALBUD_GATEWAY_PORTAL_SECRET` to the same value as the gateway. Secrets never go in a `NEXT_PUBLIC_` variable.
+6. **Publish each office's monthly care terms and its Square mapping** on the machine, then let the office's billing owner accept and pay ([Care fee collection](#care-fee-collection-square)).
 
 ## Environment
 
 | Variable | Required | What it is |
 | --- | --- | --- |
 | `REALBUD_GATEWAY_PORTAL_SECRET` | yes | portal bearer secret, >=32 chars, shared with the website BFF |
-| `REALBUD_GATEWAY_OPERATOR_SECRET` | for operator routes | RealBud operator bearer secret, >=32 chars, different from the portal secret. Missing, short or equal leaves operator routes off (503 `operator_unconfigured`, `/ready` `operatorAccess: missing`). Held only by the operator console that mints operator tokens |
+| `REALBUD_GATEWAY_OPERATOR_SECRET` | yes | RealBud operator bearer secret, >=32 chars, different from the portal secret. `deploy.sh` refuses a missing, short or equal value; at runtime the same leaves operator routes off (503 `operator_unconfigured`, `/ready` `operatorAccess: missing`). Held only by the operator console that mints operator tokens |
+| `PLATFORM_BIND_HOST` | fly.toml | listen address, `0.0.0.0` on Fly |
 | `REALBUD_GATEWAY_DATA` | fly.toml | `/data`, the mounted volume; the ledger is `ledger.sqlite` inside it |
 | `REALBUD_ALLOWED_ORIGINS` | fly.toml | browser origins admitted; default `https://realbud.app,https://www.realbud.app` |
 | `REALBUD_ENABLE_PROVIDER` | gate | `1` composes provisioning; anything else leaves it off (`provisioning_disabled`) and hands no transport to any client |
@@ -41,8 +43,17 @@ The gateway runs on Fly (Sydney) from `deploy.sh` and `fly.toml`. The website ru
 | `REALBUD_MODELVIA_MODELS` | no | comma-separated `allowedModels` per project; default `auto` |
 | `REALBUD_MODELVIA_ENVIRONMENT` | no | `production` (default) or `development` |
 | `REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD` | no | per-request cap on each installation project, a positive integer in nanoAUD; default `1000000000` (A$1). Clamped to the customer's monthly cap. A malformed value answers `provisioning_unconfigured:REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD` |
+| `REALBUD_PAYMENT_MODE` | fly.toml | care-fee collection: `local` (default; invoices close and read, checkout answers 503 `payment_provider_unselected`), `sandbox` or `live` |
+| `REALBUD_INTERNAL_COMPANY_ID` | for care routes | RealBud's own company id. Never invoiced, mapped or checked out. Unset, every care route answers 503 `commercial_terms_unavailable` |
+| `REALBUD_AUTHORIZE_COLLECTION` | sandbox, live | must be `1`; the explicit statement that this deployment collects money |
+| `SQUARE_ACCESS_TOKEN` | sandbox, live | Square token for the matching host (sandbox and production are separate hosts with separate tokens; the host follows the mode, never the token). Needs `MERCHANT_PROFILE_READ`, `ORDERS_READ`, `ORDERS_WRITE`, `PAYMENTS_READ`, `PAYMENTS_WRITE` |
+| `SQUARE_MERCHANT_ID`, `SQUARE_LOCATION_ID` | sandbox, live | RealBud's Square merchant and its active AUD location; every checkout re-reads both from Square first |
+| `SQUARE_NOTIFICATION_URL` | sandbox, live | exactly `https://<this gateway>/v1/webhooks/square`, the URL registered in the Square webhook subscription; the signature is bound to it |
+| `SQUARE_WEBHOOK_SIGNATURE_KEY` | sandbox, live | the subscription's signature key |
+| `REALBUD_SELLER_BASIS_DIGEST` | live | the reviewed seller-basis digest printed by `commercial-cli.ts publish`; a checkout whose accepted terms carry another seller basis is refused (403 `seller_basis_not_approved`) |
+| `REALBUD_SELLER_BASIS_APPROVAL_REF`, `REALBUD_PRODUCTION_INVOICE_APPROVAL_REF`, `REALBUD_MANAGED_PROJECT_VERIFIED_REF` | live | operator attestations that the seller/tax basis, the production invoice document and the Modelvia project set-up were reviewed. References only: code cannot verify the facts behind them |
 
-A missing or malformed provisioning variable leaves the server running, answering 503 `provisioning_unconfigured:<NAME>` on `/ready` and on both provisioning routes. The startup log line carries the same code. The file-backed secret store inherits the trust of whoever owns the filesystem. It is not managed custody until it is swapped for a KMS-backed secret manager.
+A missing or malformed provisioning variable leaves the server running, answering 503 `provisioning_unconfigured:<NAME>` on `/ready` and on both provisioning routes. A `sandbox` or `live` payment mode with a Square variable missing refuses to start with `care_collection_unconfigured:<NAME>`, so a deployment that asked to collect can never silently run with collection off; `deploy.sh` applies the same rule before any Fly change. The startup log line carries these codes and never a value. The file-backed secret store inherits the trust of whoever owns the filesystem. It is not managed custody until it is swapped for a KMS-backed secret manager.
 
 ## Installation provisioning
 
@@ -100,10 +111,48 @@ POST /v1/operator/offices/ai-access          Authorization: Bearer <operator tok
 
 Minting operator tokens (the operator console) is not part of this service.
 
+## Care fee collection (Square)
+
+RealBud collects its own monthly care fee from each office through RealBud's configured Square merchant. This is the gateway's only billing. Modelvia bills AI usage separately; nothing in the care path reads usage, a rate card or request history, so an office's AI activity can neither appear on nor hold up its care invoice. Card entry stays on Square; the gateway never sees a card.
+
+The sequence is explicit and local until checkout:
+
+1. **Review and publish the month's terms** on the machine. Review the seller identity, ABN, address and GST treatment, the office's identity (it must match its entitlement exactly), that office's exact monthly care amount (which may be zero) and the signed customer terms. Create a JSON file shaped like `CommercialTermsDraft` in `commercial-terms.ts` with a unique `version` for the month and `"rateCards": []` (AI pricing is Modelvia's; any entry there is a reference only and never gates anything). With `REALBUD_INTERNAL_COMPANY_ID` set, run
+
+   ```sh
+   node --experimental-strip-types commercial-cli.ts publish reviewed-terms.json
+   ```
+
+   It stores the immutable terms and prints the terms digest and the seller-basis digest. It sends nothing. The seller and tax references are operator attestations, not automatic legal verification.
+2. **The office's billing owner accepts.** The website reads `GET /v1/portal/commercial-terms?period=YYYY-MM`, shows the full terms, then posts `POST /v1/portal/commercial-terms/accept` with exactly `{ "period": "YYYY-MM", "version": "…", "digest": "…" }`. A reader, another office or a stale version cannot accept; a later published version needs a new acceptance. A suspended office (`--active false`) cannot be published to, closed or checked out; an already issued checkout still reconciles.
+3. **Record the office's Square customer mapping** once, from a reviewed file with `companyId`, `merchantId`, `locationId`, `customerId` and `evidence`:
+
+   ```sh
+   node --experimental-strip-types commercial-cli.ts map reviewed-square-mapping.json
+   ```
+
+   The merchant and location must be the deployment's own; the mapping is immutable and calls nothing. The actual payer may use any card; settlement binds the office's saved checkout attempt, order, merchant, location and exact AUD total, never a cardholder profile.
+4. **Close the invoice** after the month ends:
+
+   ```sh
+   node --experimental-strip-types commercial-cli.ts close <companyId> <YYYY-MM> <termsVersion>
+   ```
+
+   The invoice (`RB-000001`, …) carries the accepted care line, any unapplied care credits and a rounding line only. It is bound to the acceptance, seller basis and exact total, is immutable, and is neither sent nor charged by this step. The website lists it at `GET /v1/portal/invoices` and renders it at `…/{id}/document`.
+5. **The billing owner pays** through `POST /v1/portal/invoices/{id}/checkout`. Before any Square write the gateway re-reads the merchant and location from Square and rechecks the office, its mapping, the accepted terms, the seller basis, the invoice digest and the exact amount. One idempotent payment link and order are created; the order's reference binds the invoice and terms digests, and its inclusive GST must equal the invoice's. The link is reused until it expires. The browser return proves nothing.
+6. **Settlement** arrives on `POST /v1/webhooks/square`. The signature is checked over the exact raw bytes and the registered notification URL, the event's merchant and age are checked, then the payment is re-read from Square and must be `COMPLETED`, at RealBud's location, on the checkout's order, for the exact amount. Only then is the invoice marked paid, exactly once; `…/{id}/receipt` then answers. Payments for other orders in the same Square account are ignored.
+7. **Credits and refunds.** `commercial-cli.ts credit <companyId> <invoiceId> <creditId> <cents> <reason>` records an audited care credit against a closed invoice; it is applied as a line on the office's next invoice. Refunding a credit through Square instead (`BillingService.refundCareCredit`) reserves it so it cannot also be applied; the receipt changes only after an authenticated `COMPLETED` refund is re-read from Square. An uncertain create or refund is held for operator reconciliation and never replayed. Minting a refund from the command line is not wired yet; see "Proof so far".
+
+Failure codes on the way: 503 `commercial_terms_unavailable` (no internal company id), 404 `commercial_terms_missing`, 409 `commercial_terms_not_accepted` / `commercial_terms_stale` / `commercial_tenant_inactive` / `square_mapping_required` / `commercial_invoice_not_collectible` (nothing to pay) / `checkout_reconciliation_required` (an uncertain Square create; an operator reads the order before anything is retried), 403 `internal_usage_not_billable` / `internal_usage_not_collectible` (RealBud's own account, by id or by `billingMode: internal_cost`), 403 `seller_basis_not_approved` (live only).
+
+**Modes.** `REALBUD_PAYMENT_MODE=local` runs everything above except checkout and the webhook. `sandbox` needs `REALBUD_AUTHORIZE_COLLECTION=1`, the six Square variables and the Square **sandbox** webhook subscription for `payment.created`, `payment.updated`, `refund.created` and `refund.updated` at the exact `SQUARE_NOTIFICATION_URL`. `live` additionally needs `REALBUD_SELLER_BASIS_DIGEST` (the digest printed at publication) and the three approval references, and uses the production merchant and subscription. A wallet, Cash App or buy-now-pay-later method is disabled pending sandbox qualification. This is RealBud collecting from its own customer; Modelvia's provider-owned retail Square path is not configured here.
+
+Do not infer consent from a Square token or from local adapter tests. Before a real customer payment, verify the production merchant identity and location, the office's mapping, a genuine sandbox checkout, webhook and refund, and the delivered invoice.
+
 ## Managed Gmail compatibility (22 September 2026)
 
 `POST /v1/connectors/mail-scan` requires the exact `{ expectedAccountId, scope }` envelope. The account is a precondition on the server-owned device binding. A mismatch is refused before any provider read. A legacy flat request fails with 400. A changed binding returns 409. Release the desktop and gateway together. See [website request and connector verification](../docs/WEBSITE-REQUESTS-IMPLEMENTATION-2026-09-22.md).
 
 ## Proof so far
 
-Local tests only (`node --experimental-strip-types --test ./*.test.ts`) and the offline `sandbox-smoke.ts`, all against injected fakes. No real Composio project, Modelvia customer read or Modelvia key has been exercised from this service.
+Local tests only (`node --experimental-strip-types --test ./*.test.ts`, 188 passing on 24 September 2026) and the offline `sandbox-smoke.ts`, all against injected fakes. No real Composio project, Modelvia customer read or Modelvia key has been exercised from this service. The Square adapter is proven against an injected fake only: local tenant, money, signature, retry and webhook behaviour, not Square's hosted response shape. A supervised sandbox payment-link checkout, webhook and refund, and any real customer acceptance, remain to be done. Refunding a care credit exists as a service method with tests but has no operator command yet.
