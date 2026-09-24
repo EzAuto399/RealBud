@@ -841,7 +841,7 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
           <div className="flex flex-wrap items-center gap-2 text-[13px] text-ink" role="status">
             <Loader2 size={15} className="animate-spin text-agency motion-reduce:animate-none" />
             <div className="min-w-0 flex-1">
-              <span>{install.state === "verifying" ? installProgressCopy(install.state) : install.progress?.detail ?? installProgressCopy(install.state)}</span>
+              <span>{install.state === "verifying" ? installProgressCopy(install.state) : budFacingCopy(install.progress?.detail, installProgressCopy(install.state))}</span>
               <p className="mt-1 text-[12px] text-ink-muted">This can take several minutes. Keep RealBud open; accept any system installation prompt.</p>
             </div>
             <button type="button" className={cn(secondaryButton, "w-full sm:w-auto")} disabled={busy === "cancel-install" || install.state === "verifying"} onClick={() => void stopInstall()}>{busy === "cancel-install" ? "Stopping…" : "Stop setup"}</button>
@@ -1163,7 +1163,7 @@ function BudSetupDetails({ id = "you-worker", onShowAsk, onSchedule }: BudSetupC
                 <span className="mt-1.5 block text-[11.5px] font-normal text-ink-muted">
                   {modelOptionsState === "error"
                     ? "The model list could not load. Enter the provider model ID yourself."
-                    : "Models come from Bud's installed Hermes catalogue."}
+                    : "Models come from Bud's installed model catalogue."}
                 </span>
               </div>
               )}

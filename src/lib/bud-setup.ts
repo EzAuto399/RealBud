@@ -31,7 +31,8 @@ export function budFacingCopy(value: unknown, fallback: string): string {
   const raw = value instanceof Error ? value.message : typeof value === "string" ? value : "";
   if (!raw.trim()) return fallback;
   return raw
-    .replace(/~\/\.hermes\b/gi, "Bud's private setup")
+    .replace(/(?:~[\\/]|[A-Za-z]:[\\/]|[\\/])(?:[^\n\\/"'<>()[\]{};,:!?]+[\\/])*\.hermes(?:[\\/][^\s"'<>()[\]{};,:!?]*)?/gi, "Bud's private setup")
+    .replace(/\.hermes\b/gi, "Bud's private setup")
     .replace(/Hermes Agent/gi, "Bud")
     .replace(/Hermes CLI/gi, "Bud")
     .replace(/\bHermes\b/gi, "Bud")

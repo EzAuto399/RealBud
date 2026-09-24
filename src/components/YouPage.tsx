@@ -31,6 +31,7 @@ import {
 } from "@/lib/portal-job";
 import { sourceCheckCopy } from "@/lib/source-check";
 import { attendedRunLabel, jobRunStatusChip, jobRunSummaryLine, safeJobRunDetail } from "@/lib/job-run";
+import { budFacingCopy } from "@/lib/bud-setup";
 import { PortalJobActions } from "./schedule/PortalJobActions";
 import { WorkflowPacksCard } from "./schedule/WorkflowPacksCard";
 import {
@@ -133,17 +134,17 @@ function workerDiagnosticsText(hermes: HermesStatus | null | undefined, version?
     return lines.join("\n");
   }
   lines.push(
-    `worker ${hermes.cli.installed ? "installed" : "not installed"} · ${(hermes.cli.compatible ?? hermes.cli.matchesPin) ? "matches supported build" : "does not match supported build"}`,
+    `Bud ${hermes.cli.installed ? "installed" : "not installed"} · ${(hermes.cli.compatible ?? hermes.cli.matchesPin) ? "matches supported build" : "does not match supported build"}`,
   );
   lines.push(
-    `pack ${hermes.pack.installed ? "installed" : "missing"} · approvals ${hermes.pack.approvalsManual ? "manual" : "not manual"} · workroom ${hermes.pack.workroomReady ? "ready" : "needs repair"}`,
+    `safeguards ${hermes.pack.installed ? "installed" : "missing"} · approvals ${hermes.pack.approvalsManual ? "manual" : "not manual"} · workroom ${hermes.pack.workroomReady ? "ready" : "needs repair"}`,
   );
   lines.push(`ready ${hermes.ready ? "yes" : "no"}`);
-  if (hermes.detail) lines.push(hermes.detail);
+  if (hermes.detail) lines.push(budFacingCopy(hermes.detail, "Bud status unavailable"));
   if (hermes.lastPing) lines.push(`lastPing ${fmtDateTime(hermes.lastPing.at)} · ${hermes.lastPing.ok ? "ok" : "miss"}`);
   if (hermes.lastTest) lines.push(`lastTest ${fmtDateTime(hermes.lastTest.at)} · ${hermes.lastTest.ok ? "ok" : "miss"}`);
-  if (hermes.homeDir) lines.push(`data dir ${hermes.homeDir}`);
-  if (hermes.profileDir) lines.push(`${hermes.handsLabel ?? "Bud's hands"} · ${hermes.profileDir}`);
+  if (hermes.homeDir) lines.push("Bud data directory configured");
+  if (hermes.profileDir) lines.push(`${budFacingCopy(hermes.handsLabel, "Bud's hands")} · private directory configured`);
   return lines.join("\n");
 }
 
@@ -492,11 +493,11 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
         <AdvancedDiagnostics>
           {hermes ? (
             <>
-              <div>pin {hermes.pin.product} / {hermes.pin.tag}</div>
-              <div>profile {hermes.pin.profile}</div>
-              <div>pack {hermes.pack.installed ? "installed" : "missing"} · workroom {hermes.pack.workroomReady ? "ready" : "needs repair"} · approvals {hermes.pack.approvalsManual ? "manual" : "not manual"}</div>
+              <div>Bud build {hermes.pin.tag}</div>
+              <div>Bud workroom {budFacingCopy(hermes.pin.profile, "unknown")}</div>
+              <div>safeguards {hermes.pack.installed ? "installed" : "missing"} · workroom {hermes.pack.workroomReady ? "ready" : "needs repair"} · approvals {hermes.pack.approvalsManual ? "manual" : "not manual"}</div>
               <div>private-workroom edits run automatically · sensitive and consequential steps still ask · scheduling stays on RealBud's clock</div>
-              <div>{hermes.detail}</div>
+              <div>{budFacingCopy(hermes.detail, "Bud status unavailable")}</div>
             </>
           ) : (
             <div>Engine status is not available yet.</div>
