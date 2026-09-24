@@ -58,6 +58,8 @@ export interface IssuerEnrollment {
 }
 export interface Tenant {
   companyId: string; licenseId: string; active: boolean; serviceExpiresAt: number;
+  /** The owner's internal cost account is never a billable customer. */
+  billingMode?: 'customer'|'internal_cost';
   customerName: string; customerAddress: string; customerAbn?: string;
   goLiveAt: number; goLiveEvidence: string; includedUntil: number;
   /** Legacy ledger caps. Stored for persisted-data compatibility; AI caps are

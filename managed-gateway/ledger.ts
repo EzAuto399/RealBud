@@ -31,6 +31,7 @@ export class UsageLedger {
     requireThat(tenant.serviceExpiresAt > tenant.goLiveAt, 'invalid_service_expiry');
     requireThat(typeof tenant.customerName === 'string' && tenant.customerName.trim().length > 0 && tenant.customerName.length <= 200 && typeof tenant.customerAddress === 'string' && tenant.customerAddress.trim().length > 0 && tenant.customerAddress.length <= 500, 'customer_identity_required');
     requireThat(tenant.customerAbn === undefined || /^\d{11}$/.test(tenant.customerAbn), 'invalid_customer_abn');
+    requireThat(tenant.billingMode === undefined || tenant.billingMode === 'customer' || tenant.billingMode === 'internal_cost', 'invalid_billing_mode');
   }
   /**
    * Trusted operator only (`entitlement-cli.ts`); never an HTTP route. Creates or

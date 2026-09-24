@@ -5,6 +5,7 @@ import { LedgerDatabase } from './database.ts';
 import { digest, UsageLedger } from './ledger.ts';
 import { twoMonthsAfter } from './money.ts';
 import { ManagedGateway } from './gateway.ts';
+import type { CommercialTermsDraft } from './commercial-terms.ts';
 
 export const FIXTURE_TIME=Date.parse('2026-09-15T00:00:00Z');
 export function fixture(path=':memory:') {
@@ -30,3 +31,11 @@ export function fixture(path=':memory:') {
   return {db,ledger,card,tenant,owner,request,grant,envelope,evidence,provider,authority,revocation,gateway,now,setTime:(time:number)=>{clock=time;},calls:()=>calls,run,close:()=>db.close()};
 }
 export async function* events(...items:ProviderEvent[]) { yield* items; }
+/** A reviewed monthly commercial terms draft for the fixture tenant. Every value
+ * is fictional; `rateCards` stays empty because AI pricing is Modelvia's. */
+export function careTermsDraft(f:{tenant:Tenant},version:string,careCents:string,override:Partial<CommercialTermsDraft>={}):CommercialTermsDraft {
+  return {companyId:f.tenant.companyId,period:'2026-09',version,customer:{name:f.tenant.customerName,address:f.tenant.customerAddress,...(f.tenant.customerAbn?{abn:f.tenant.customerAbn}:{})},
+    seller:{legalName:'Fictional RealBud Seller',product:'RealBud',abn:'12345678901',address:'1 Example Seller Street, Brisbane QLD',gstRegistered:true},
+    tax:{currency:'AUD',gstInclusive:true,gstBasisPoints:1000,treatmentRef:'synthetic-tax-review'},sellerVerificationRef:'synthetic-seller-review',
+    customerTermsRef:'synthetic-customer-contract',careCents,careAgreementRef:careCents==='0'?null:'synthetic-care-agreement',rateCards:[],...override};
+}

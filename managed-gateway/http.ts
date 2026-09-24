@@ -1,8 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { GatewayError, requireThat, type PortalPrincipal } from './contracts.ts';
+import { GatewayError, object, requireThat, type PortalPrincipal } from './contracts.ts';
 import type { ManagedConnectors } from './connectors.ts';
 import { provisioningError, type InstallationProvisioning } from './provisioning.ts';
 import type { OperatorRoutes } from './office-ai-access.ts';
+import type { BillingService } from './billing.ts';
+import { invoiceHtml } from './invoice-html.ts';
 
 export interface PortalIdentity {
   /** Verify audience, expiry, revocation and tenant binding server-side. Never derive
@@ -15,6 +17,7 @@ async function body(req:IncomingMessage,max:number):Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 function json(raw:Buffer):unknown { try { return JSON.parse(raw.toString('utf8')); } catch { throw new GatewayError('invalid_json'); } }
+function exact(value:Record<string,unknown>,fields:string[]) { requireThat(Object.keys(value).sort().join(',')===[...fields].sort().join(','),'invalid_fields'); }
 function bearer(req:IncomingMessage):string {
   const auth=req.headers.authorization; requireThat(typeof auth==='string' && /^Bearer [A-Za-z0-9_.-]{20,16000}$/.test(auth),'unauthenticated',401); return auth.slice(7);
 }
@@ -26,9 +29,13 @@ function reply(res:ServerResponse,status:number,data:unknown) {
  * explicit deployment gates. No cookie auth or permissive CORS is installed.
  *
  * Routes: GET /health, GET /ready, /v1/connectors/*, POST
- * /v1/portal/installations/{provision,revoke}, and the operator-only POST
- * /v1/operator/offices/ai-access. Nothing else. AI rates, caps,
- * usage and invoices are Modelvia's; this service has no billing route. */
+ * /v1/portal/installations/{provision,revoke}, the operator-only POST
+ * /v1/operator/offices/ai-access, the care-fee routes GET
+ * /v1/portal/commercial-terms, POST /v1/portal/commercial-terms/accept, GET
+ * /v1/portal/invoices[/{id}[/document|/receipt]], POST
+ * /v1/portal/invoices/{id}/checkout, and the signed POST /v1/webhooks/square.
+ * Nothing else. AI rates, caps, usage and invoices are Modelvia's; a care
+ * invoice never carries AI usage. */
 export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigins:ReadonlySet<string>;connectors?:ManagedConnectors;provisioning?:InstallationProvisioning;
   /** Why provisioning is not composed, as a code naming the missing variable — never its value. */
   provisioningUnavailable?:string;
@@ -39,9 +46,14 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
    * when `REALBUD_GATEWAY_OPERATOR_SECRET` is missing, short or equal to the portal secret. */
   operator?:OperatorRoutes;
   /** Presence of the operator secret, for `/ready`. Defaults to whether `operator` is composed. */
-  operatorAccess?:'configured'|'missing'}) {
+  operatorAccess?:'configured'|'missing';
+  /** Care-fee invoices and their Square collection. Absent, every care route answers 503. */
+  billing?:BillingService;
+  /** True only when a Square adapter is composed; the webhook route is 503 otherwise. */
+  squareWebhooks?:boolean}) {
   const modelviaOperator=options.modelviaOperator??(options.provisioning?'configured':'missing');
   const operatorAccess=options.operatorAccess??(options.operator?'configured':'missing');
+  const billing=()=>{ requireThat(options.billing,'billing_unavailable',503); return options.billing; };
   const server=createServer(async(req,res)=>{
     const abort=new AbortController(); res.once('close',()=>{if(!res.writableEnded) abort.abort();});
     res.setHeader('Cache-Control','no-store'); res.setHeader('X-Content-Type-Options','nosniff');
@@ -58,6 +70,16 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
       if(req.method==='GET' && url.pathname==='/ready') {
         if(options.provisioning) { reply(res,200,{ready:true,provisioning:'composed',modelviaOperator,operatorAccess}); return; }
         reply(res,503,{ready:false,error:options.provisioningUnavailable||'provisioning_unavailable',modelviaOperator,operatorAccess}); return;
+      }
+      // Square's signed notification. The event type only chooses the verifier;
+      // neither path trusts the body until the adapter has checked the URL-bound
+      // HMAC over these exact raw bytes and re-read the payment from Square.
+      if(req.method==='POST' && url.pathname==='/v1/webhooks/square') {
+        requireThat(options.squareWebhooks,'square_webhook_unavailable',503);
+        const signature=req.headers['x-square-hmacsha256-signature']; requireThat(typeof signature==='string','invalid_square_signature',401);
+        const raw=await body(req,256_000);
+        const event=json(raw); object(event);
+        reply(res,200,await (String(event.type).startsWith('refund.')?billing().refundWebhook(raw,signature):billing().webhook(raw,signature))); return;
       }
       if(url.pathname.startsWith('/v1/connectors/')) {
         requireThat(options.connectors, 'connectors_unavailable', 503);
@@ -102,6 +124,30 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
             : await options.provisioning!.revoke(actor,value));
         } catch(error) { throw provisioningError(error); }
         return;
+      }
+      // Care fee: the month's commercial terms, their acceptance by the billing
+      // owner, the closed care invoices and their Square checkout. The principal
+      // is the tenant; a body never names one.
+      if(req.method==='GET' && url.pathname==='/v1/portal/commercial-terms') {
+        const terms=billing().commercialTerms; requireThat(terms,'commercial_terms_unavailable',503);
+        reply(res,200,terms.current(actor,url.searchParams.get('period')||'')); return;
+      }
+      if(req.method==='POST' && url.pathname==='/v1/portal/commercial-terms/accept') {
+        const terms=billing().commercialTerms; requireThat(terms,'commercial_terms_unavailable',503);
+        const value=json(await body(req,4096)); object(value); exact(value,['period','version','digest']);
+        requireThat(typeof value.period==='string' && typeof value.version==='string' && typeof value.digest==='string','invalid_acceptance');
+        reply(res,200,terms.accept(actor,value.period,value.version,value.digest)); return;
+      }
+      if(req.method==='GET' && url.pathname==='/v1/portal/invoices') { reply(res,200,{invoices:billing().portalInvoices(actor)}); return; }
+      const match=/^\/v1\/portal\/invoices\/([A-Za-z0-9-]+)(?:\/(checkout|receipt|document))?$/.exec(url.pathname);
+      if(match) {
+        const invoice=billing().invoice(actor,match[1]);
+        if(req.method==='POST' && match[2]==='checkout') { reply(res,200,await billing().checkout(actor,invoice.id)); return; }
+        if(req.method==='GET' && match[2]==='receipt') { reply(res,200,billing().receipt(actor,invoice.id)); return; }
+        if(req.method==='GET' && match[2]==='document') {
+          res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"}); res.end(invoiceHtml(invoice)); return;
+        }
+        if(req.method==='GET' && !match[2]) { reply(res,200,invoice); return; }
       }
       throw new GatewayError('not_found',404);
     } catch(error) {

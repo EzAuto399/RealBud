@@ -5,8 +5,9 @@ import type { AddressInfo } from 'node:net';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fixture } from './testing.ts';
+import { careTermsDraft, fixture } from './testing.ts';
 import { createGatewayServer } from './http.ts';
+import { BillingService } from './billing.ts';
 import { GatewayError } from './contracts.ts';
 import { fileSecretStore, InstallationProvisioning, modelviaOperatorState } from './provisioning.ts';
 import { modelviaKeyClient } from './modelvia-keys.ts';
@@ -51,10 +52,9 @@ async function serverFixture(options:{provisioning?:boolean;customer?:Record<str
   return {...f,base,request,provisionBody,modelviaCalls,projects};
 }
 
-test('billing, rate, usage, invoice, webhook and model routes are gone', async()=>{
+test('AI rate, usage, limit and model routes are gone; care routes answer 503 without billing composed', async()=>{
   const f=await serverFixture();
-  for(const [method,path] of [['GET','/v1/portal/usage'],['GET','/v1/portal/rates'],['POST','/v1/portal/rates/accept'],['POST','/v1/portal/limits'],
-    ['GET','/v1/portal/invoices'],['GET','/v1/portal/invoices/inv-1'],['GET','/v1/portal/invoices/inv-1/document'],['GET','/v1/portal/invoices/inv-1/receipt'],['POST','/v1/portal/invoices/inv-1/checkout']] as const) {
+  for(const [method,path] of [['GET','/v1/portal/usage'],['GET','/v1/portal/rates'],['POST','/v1/portal/rates/accept'],['POST','/v1/portal/limits']] as const) {
     const response=await f.request(method,path,OWNER,method==='POST'?{}:undefined);
     assert.equal(response.status,404,`${method} ${path}`);assert.deepEqual(await response.json(),{error:'not_found'});
   }
@@ -62,7 +62,42 @@ test('billing, rate, usage, invoice, webhook and model routes are gone', async()
   for(const path of ['/v1/webhooks/payment','/v1/webhooks/refund','/v1/model/stream']) {
     assert.equal((await f.request('POST',path,null,{})).status,404,path);
   }
+  for(const [method,path] of [['GET','/v1/portal/commercial-terms?period=2026-09'],['POST','/v1/portal/commercial-terms/accept'],
+    ['GET','/v1/portal/invoices'],['GET','/v1/portal/invoices/inv-1'],['GET','/v1/portal/invoices/inv-1/document'],['GET','/v1/portal/invoices/inv-1/receipt'],['POST','/v1/portal/invoices/inv-1/checkout']] as const) {
+    const response=await f.request(method,path,OWNER,method==='POST'?{}:undefined);
+    assert.equal(response.status,503,`${method} ${path}`);assert.deepEqual(await response.json(),{error:'billing_unavailable'});
+  }
+  assert.equal((await f.request('POST','/v1/webhooks/square',null,{})).status,503);
   assert.deepEqual(f.modelviaCalls,[]);
+});
+
+test('care invoice routes are tenant-scoped, render the document and refuse checkout without a payment adapter', async()=>{
+  const f=await serverFixture();
+  f.setTime(Date.parse('2026-10-01T00:00:00Z'));
+  const billing=new BillingService(f.ledger,undefined,{internalCompanyId:'realbud-internal'});
+  const published=billing.commercialTerms!.publish(careTermsDraft(f,'care-v1','12500'));
+  billing.commercialTerms!.accept(f.owner,'2026-09','care-v1',published.digest);
+  const invoice=billing.finalizeCommercialInvoice(f.tenant.companyId,'2026-09','care-v1');
+  const server=createGatewayServer({allowedOrigins:new Set(),billing,portal:{async authenticate(bearer){
+    if(bearer===OWNER)return f.owner;if(bearer===READER)return {...f.owner,role:'billing_reader'};if(bearer===UNKNOWN)return {...f.owner,companyId:'company-unentitled'};
+    throw new GatewayError('unauthenticated',401);}}});
+  server.listen(0,'127.0.0.1');await once(server,'listening');
+  cleanups.push(async()=>{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));});
+  const base=`http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const request=(method:string,path:string,bearer:string=OWNER)=>fetch(base+path,{method,headers:{Authorization:`Bearer ${bearer}`,...(method==='POST'?{'Content-Type':'application/json'}:{})},...(method==='POST'?{body:'{}'}:{})});
+  const list=await request('GET','/v1/portal/invoices');assert.equal(list.status,200);
+  assert.deepEqual(await list.json(),{invoices:[{id:invoice.id,kind:'Tax Invoice',period:'2026-09',currency:'AUD',gstInclusive:true,totalCents:'12500',gstCents:'1136',paid:false}]});
+  assert.deepEqual(await (await request('GET',`/v1/portal/invoices/${invoice.id}`)).json(),invoice);
+  const document=await request('GET',`/v1/portal/invoices/${invoice.id}/document`,READER);
+  assert.equal(document.status,200);assert.match(document.headers.get('content-type')??'',/text\/html/);
+  const html=await document.text();assert.match(html,/monthly care/);assert.doesNotMatch(html,/AI usage —/);
+  assert.equal((await request('GET',`/v1/portal/invoices/${invoice.id}/receipt`)).status,409);
+  assert.equal((await request('GET',`/v1/portal/invoices/${invoice.id}`,UNKNOWN)).status,404);
+  assert.deepEqual(await (await request('GET','/v1/portal/invoices',UNKNOWN)).json(),{invoices:[]});
+  assert.equal((await request('POST',`/v1/portal/invoices/${invoice.id}/checkout`,READER)).status,403);
+  const checkout=await request('POST',`/v1/portal/invoices/${invoice.id}/checkout`);
+  assert.equal(checkout.status,503);assert.deepEqual(await checkout.json(),{error:'payment_provider_unselected'});
+  assert.equal(f.ledger.db.get('SELECT * FROM checkouts'),undefined);
 });
 
 test('an unentitled company is refused on provision before any Modelvia call; revoke needs no entitlement', async()=>{

@@ -1,8 +1,9 @@
 /**
  * Production/local entry for the RealBud managed gateway: installation
- * provisioning and revocation, connectors, health and readiness. Modelvia is the
- * only source of AI rates, caps, usage and invoices; nothing here bills, polls
- * provider costs or forwards model traffic.
+ * provisioning and revocation, connectors, service entitlement, the monthly
+ * care-fee invoice and its Square collection, health and readiness. Modelvia is
+ * the only source of AI rates, caps, usage and AI invoices; nothing here bills
+ * AI usage, polls provider costs or forwards model traffic.
  * Secrets via env; SQLite on a durable volume. Never import testing.ts here.
  */
 import { mkdirSync } from "node:fs";
@@ -18,7 +19,8 @@ import { ledgerPath, loadLocalEnv } from "./local-env.ts";
 loadLocalEnv();
 
 const port = Number(process.env.PORT || 8787);
-// The same path the entitlement command writes (local-env.ts).
+const host = process.env.PLATFORM_BIND_HOST || "0.0.0.0";
+// The same path the entitlement and commercial commands write (local-env.ts).
 const dbPath = ledgerPath(process.env);
 const portalSecret = process.env.REALBUD_GATEWAY_PORTAL_SECRET || "";
 const siteOrigins = new Set(
@@ -38,16 +40,18 @@ requireThat(
 mkdirSync(dirname(dbPath), { recursive: true });
 
 // The ledger database holds service entitlements (tenants), provisioning
-// records, the connector link journal and the audit chain. Its older billing
-// tables stay in the schema, readable and untouched.
+// records, the connector link journal, the care-fee terms, invoices and
+// payments, and the audit chain. Its older AI-usage tables stay in the schema,
+// readable and untouched.
 const db = new LedgerDatabase(dbPath);
 const ledger = new UsageLedger(db, Date.now);
 
-// Provisioning, operator routes and connectors, from the environment alone
-// (composition.ts). Provisioning is disabled unless REALBUD_ENABLE_PROVIDER=1; a
-// deployment that enables it but misses a variable answers 503 naming that
-// variable. Connectors read the office project keys from the same secret store
-// provisioning writes them into.
+// Provisioning, operator routes, connectors and care-fee collection, from the
+// environment alone (composition.ts). Provisioning is disabled unless
+// REALBUD_ENABLE_PROVIDER=1; a deployment that enables it but misses a variable
+// answers 503 naming that variable. A sandbox or live REALBUD_PAYMENT_MODE with a
+// Square variable missing refuses to start, naming the variable. Connectors read
+// the office project keys from the same secret store provisioning writes them into.
 const composition = composeGateway({
   env: process.env,
   ledger,
@@ -63,10 +67,10 @@ const composition = composeGateway({
     },
   },
 });
-const { modelviaOperator, operatorAccess } = composition;
+const { modelviaOperator, operatorAccess, careCollection } = composition;
 const server = createGatewayServer(composition.server);
 
-server.listen(port, "0.0.0.0", () => {
+server.listen(port, host, () => {
   console.log(
     JSON.stringify({
       listening: port,
@@ -76,6 +80,7 @@ server.listen(port, "0.0.0.0", () => {
       provisioning: composition.provisioning,
       modelviaOperator,
       operatorAccess,
+      careCollection,
     }),
   );
 });
