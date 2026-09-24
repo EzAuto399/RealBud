@@ -1,6 +1,9 @@
 {
   "schema": "realbud.portal-map.v1",
   "portal": "rei-cloud",
+  "pack": "austin-office",
+  "skill": "rei-cloud-navigation",
+  "scopeNote": "Austin Realty add-on workflow pack content, not RealBud core. Grants no authority; the RealBud portal fence decides every action.",
   "observed": "2026-09-24",
   "version": "26.0922.0",
   "evidence": "Read-only structural map from the owner's signed-in session. No record data. Not a completed RealBud task.",

@@ -162,7 +162,7 @@ describe('portable customer pack lifecycle', () => {
     expect(() => validateCustomerPack(pack)).toThrow();
   });
   it('matches the pinned Hermes native skill name limit at 64 characters', () => {
-    const pack = austinCustomerPack(); pack.id = 'a'.repeat(36); pack.skills[0].id = 'b'.repeat(19);
+    const pack = austinCustomerPack(); pack.skills = pack.skills.slice(0, 1); pack.id = 'a'.repeat(36); pack.skills[0].id = 'b'.repeat(19);
     expect(`realbud-${pack.id}-${pack.skills[0].id}`).toHaveLength(64);
     expect(() => validateCustomerPack(pack)).not.toThrow();
     pack.skills[0].id += 'b'; expect(() => validateCustomerPack(pack)).toThrow(/at most 64/);
@@ -202,12 +202,13 @@ describe('portable customer pack lifecycle', () => {
     expect(await readFile(nativePath(f.root), 'utf8')).toBe(improved);
     expect(f.recipes().every(recipe => recipe.status === 'shadow' && recipe.planApprovedAt === null && recipe.approvedRevision === null && recipe.schedule === null && recipe.revision === 2)).toBe(true);
     expect(await f.service.instructionContext(f.pack.recipes[0].id)).toContain(improved);
-    let history = await f.service.proposals(); expect(history.proposals).toHaveLength(0); expect(history.revisions.map(item => item.revision)).toEqual([1, 2]);
+    let history = await f.service.proposals(); expect(history.proposals).toHaveLength(0); const triage = () => history.revisions.filter(item => item.skillId === f.pack.skills[0].id);
+    expect(triage().map(item => item.revision)).toEqual([1, 2]);
     expect(history.revisions[0]).not.toHaveProperty('content');
     const restarted = createCustomerPackService(f.options); await restarted.install(f.pack, f.preview.digest);
     expect(await readFile(nativePath(f.root), 'utf8')).toBe(improved);
     await restarted.revertSkill(await revertRequest(restarted,f.pack.id,f.pack.skills[0].id));
-    history = await restarted.proposals(); expect(history.revisions.at(-1)?.revision).toBe(3); expect(history.revisions.at(-1)?.active).toBe(true);
+    history = await restarted.proposals(); expect(triage().at(-1)?.revision).toBe(3); expect(triage().at(-1)?.active).toBe(true);
     expect(await readFile(nativePath(f.root), 'utf8')).toBe(f.baseline); expect(f.recipes().every(recipe => recipe.revision === 3 && recipe.approvedRevision === null && recipe.schedule === null)).toBe(true);
     const journal = JSON.parse(await readFile(join(f.root, 'customer-packs.json'), 'utf8')); expect(journal.installs[f.pack.id].pack.skills[0].instructions).toBe(f.pack.skills[0].instructions);
   });

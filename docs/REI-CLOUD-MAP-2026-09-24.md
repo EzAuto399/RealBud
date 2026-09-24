@@ -1,3 +1,5 @@
+> Belongs to the Austin Realty add-on workflow pack (`austin-office`), not RealBud core. Operating skill: `pack/workflows/austin-accounts/support/rei-cloud-navigation/SKILL.md` (pack revision 2); machine-readable map beside it as `site-map.json`.
+
 # REI Cloud: site map for browser work
 
 Read-only map made on 24 September 2026 in the owner's signed-in REI Cloud session (Claude built-in browser). Only page loads and DOM reads were used. Nothing was saved, submitted, sent, processed, exported or changed. No dialog was confirmed and no toggle was touched.
@@ -160,4 +162,4 @@ Each report opens a parameter dialog. The options include **Output: Export Only 
 4. Export a Rent Roll or Tenant Ledger with **Export Only**. This needs file-download approval.
 5. Rehearse Bulk Receipting format selection only. Stop before Load File until a reviewed CSV and approval exist.
 
-Machine-readable version: `outputs/rei-cloud-map-2026-09-24/site-map.json`.
+Machine-readable version: `pack/workflows/austin-accounts/support/rei-cloud-navigation/site-map.json`.
