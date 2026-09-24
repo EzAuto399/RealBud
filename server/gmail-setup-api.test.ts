@@ -75,12 +75,16 @@ async function readonlyMode() {
   await setup();
   expect((await api("POST", MODE, { mode: "gmail-readonly" })).status).toBe(200);
 }
+// busy=false is the turn's own completion signal (set when the turn starts, cleared
+// when the answer is stored). A hosted Windows runner runs these turns roughly
+// 15x slower than Linux, so one turn can exceed a developer-sized budget.
+const BUD_TURN_MS = process.platform === "win32" ? 30_000 : 5_000;
 async function settledBud() {
   let bot: any;
   await vi.waitFor(async () => {
     bot = (await api("GET", "/api/bots")).body.bots.find((row: any) => row.id === "bud");
     expect(bot?.busy).toBe(false);
-  }, { timeout: 5_000, interval: 25 });
+  }, { timeout: BUD_TURN_MS, interval: 25 });
   return bot;
 }
 async function authorizeGmail() {

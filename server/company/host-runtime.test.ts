@@ -355,7 +355,11 @@ describe('openOwnedPostgres', () => {
       const reopened = await openOwnedPostgres({ rootDirectory, binaryDirectory, port }, hooks(calls, spawnEnv));
       expect(calls.filter((call) => basename(call[0]).startsWith('initdb')).length).toBe(before);
       await reopened.stop();
-      await expect(openOwnedPostgres({ rootDirectory, binaryDirectory, port: port + 1 }, hooks([]))).rejects.toThrow(
+      // A different port that is actually free: the runtime refuses an occupied
+      // port before it reads the manifest, and port + 1 can be in use on a runner.
+      let movedPort = await freePort();
+      while (movedPort === port) movedPort = await freePort();
+      await expect(openOwnedPostgres({ rootDirectory, binaryDirectory, port: movedPort }, hooks([]))).rejects.toThrow(
         /port must remain matching/,
       );
       await expect(
