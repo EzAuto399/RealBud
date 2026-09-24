@@ -2,7 +2,7 @@ import { registerDesktopShutdown } from "./shutdown.mjs";
 import { createServerSupervisor } from "./server-supervisor.mjs";
 import { findRunningService, isOurService, probeService, serviceIdentity } from "./service-instance.mjs";
 import { abandonSpawnedService, availableServicePort, clearServiceHandle, ownsRunningService, processAlive, requestServiceStop, readServiceHandle, SERVICE_WAIT_INTERVAL_MS, serviceWaitTicks, shouldRestartServiceWait, shouldStartService, spawnedServiceState, startDetachedService, systemBootedAt } from "./service-lifecycle.mjs";
-import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, powerMonitor, powerSaveBlocker, safeStorage, session, shell, systemPreferences, Tray, utilityProcess } from "electron";
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, Tray, utilityProcess } from "electron";
 import { createServiceWindowRecovery } from "./service-window-recovery.mjs";
 import { createServiceWatchdog, WATCHDOG_DEFAULTS } from "./service-watchdog.mjs";
 import { SERVICE_MODE_FLAG, keepAwakeDecision, parseServiceModeArgs, planStartupRegistration, startupRegistrationSupport } from "./service-persistence.mjs";
@@ -257,11 +257,13 @@ function writeSmokeResult(payload) {
 
 function createWindow() {
   const isMac = process.platform === "darwin";
+  const { width: workWidth, height: workHeight } = screen.getPrimaryDisplay().workAreaSize;
   const win = new BrowserWindow({
-    width: 1440,
-    height: 920,
-    minWidth: 900,
-    minHeight: 600,
+    // Keep the normal desktop size while opening fully inside smaller displays.
+    width: Math.min(1440, workWidth),
+    height: Math.min(920, workHeight),
+    minWidth: 720,
+    minHeight: 480,
     icon: APP_ICON,
     backgroundColor: "#070707",
     autoHideMenuBar: process.platform !== "darwin",
