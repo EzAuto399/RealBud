@@ -5,10 +5,13 @@
   "author": "RealBud (first-party)",
   "license": "MIT",
   "firstParty": true,
-  "derivedFrom": "docs/REI-CLOUD-MAP-2026-09-24.md and site-map.json: read-only structural map of REI Cloud v26.0922.0 observed 2026-09-24. Structure only; account values are placeholders.",
+  "derivedFrom": "docs/REI-CLOUD-MAP-2026-09-24.md and site-map.json: read-only structural map of REI Cloud v26.0922.0 observed 2026-09-24. Structure only; account values are placeholders. references/task-recipes.md folds task recipes, traps and coverage gaps from the 25 September study notes (placeholders only; no simulation tier claimed).",
   "sha256": "9143bd7737be4b5dfcb022e97cc1801ecad0c03e66f4845e4250c9d469579c4f",
   "siteMapSha256": "68ec0a08b283dda515e49e812c3641dacd861069a0097074c62912286a68ba03",
+  "referencesSha256": {
+    "references/task-recipes.md": "66f45aaa9007ba3f46723c7a28638da43c3f17d6b17107c92ce4e322afc1ef6e"
+  },
   "bindingPath": "workflow-support/rei-cloud-navigation/SKILL.md",
   "allowedReuse": "Navigation guidance for browser tasks in the person's selected signed-in REI Cloud session. Grants no authority: the RealBud portal fence (server/portal-fence.ts, server/browser-runtime.ts) decides account scope, task permission, per-instance approval and Stop.",
-  "importLimitation": "The customer pack carries SKILL.md and LICENSE only. site-map.json is the source reference and is not part of the published pack."
+  "importLimitation": "The customer pack carries SKILL.md and LICENSE only. site-map.json and references/ are source references and are not part of the published pack."
 }

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -47,5 +47,14 @@ describe('Austin office pack definition', () => {
     const map = JSON.parse(readFileSync(join(support, 'site-map.json'), 'utf8'));
     expect(map).toMatchObject({ portal: 'rei-cloud', pack: 'austin-office', skill: 'rei-cloud-navigation' });
     expect(JSON.stringify(map)).not.toMatch(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|reicid=(?!\{reicid\})/);
+    // Source references beside the skill: every file is hashed, none is published, and they hold placeholders only.
+    const references = readdirSync(join(support, 'references')).map(file => `references/${file}`).sort();
+    expect(Object.keys(provenance.referencesSha256).sort()).toEqual(references);
+    for (const file of references) {
+      expect(provenance.referencesSha256[file]).toBe(digest(file));
+      const text = readFileSync(join(support, file), 'utf8');
+      expect(text).not.toMatch(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|reicid=(?!\{reicid\})|\/Users\/|\b\d{5,}\b/);
+    }
+    expect(JSON.stringify(austinCustomerPack())).not.toContain('task-recipes');
   });
 });
