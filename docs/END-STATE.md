@@ -1,6 +1,16 @@
 # RealBud end state
 
-Latest continuation: [platform follow-up](PLATFORM-FOLLOWUP-2026-09-24.md) records the native welcome/restore defect, source correction, packaged Electron team proof and separate Windows startup diagnostic. Read its source and device limits before selecting an installer.
+Latest continuation: [External test lab](EXTERNAL-TEST-LAB-2026-09-24.md) records package qualification plus 8 native cancellation/setup and 14 restore groups on the same signed Mac candidate, with root-verified hashes, cleanup and screenshots. The sealed Mac/Windows test kit and installer transfer ISO have also passed artifact-integrity verification. Earlier failures remain preserved; OS custody remains fixture-only. VirtualBox is installed and the external Windows Arm VM has started successfully without an OS; the official Windows media has passed its checksum and the VM has reached Windows 11 Setup. Installation is still pending. No Windows guest/device acceptance is claimed.
+
+Parallel work: [REI browser first and API access](REI-BROWSER-FIRST-2026-09-24.md) records the owner's browser-first sequencing, 240 passing candidate source checks and an unsent API request. Root verified retained report/source hashes; the browser owner observed signed-in Brave access and left the installed Mac 0.1.18/profile unchanged. RealBud live connection, workflow acceptance and API entitlement remain unverified.
+
+Previous continuation: [platform follow-up](PLATFORM-FOLLOWUP-2026-09-24.md) records the native welcome/restore defect, source correction, packaged Electron team proof and separate Windows startup diagnostic. Read its source and device limits before selecting an installer.
+
+Previous continuation: [Welcome backup recovery](WELCOME-BACKUP-RECOVERY-2026-09-24.md) adopts the verified direct restore entry and adds a safe return to welcome after cancellation. Canonical verification passes 1,048 tests, full typechecking and nine actual source-rendered checks. The newer candidate compiles and passes signature verification, but its first full package QA stopped at backup export with HTTP 507. That failure and prior artifacts remain preserved. Native cancellation acceptance, OS custody, Windows device and customer acceptance remain open.
+
+Previous continuation: [Runtime account rendering](ACCOUNT-RUNTIME-RENDERING-2026-09-24.md) adopts the verified five-page dynamic-rendering fix without replacing the frozen usage/payment manifest. A canonical build made without credentials now passes all five authenticated page checks and ten missing/malformed-session redirects at runtime. Deployment and live acceptance remain separate.
+
+Previous continuation: [Customer usage and provider-controlled payments](MODELVIA-USAGE-PAYMENT-HANDOFF-2026-09-23.md) records actual office usage, direct/Square invoice options, persistent payment-attempt recovery and stale-tab account guards. The final local build passes 152 website tests, 62 desktop/shared tests and 29 browser groups across 71 renders. Deployment, real-account/payment acceptance and new native-device qualification remain separate gates. It predates [Modelvia sole billing](decisions/2026-09-24-modelvia-sole-billing.md): AI invoices come only from Modelvia; Square collects only the RealBud care fee.
 
 Previous continuation: [setup, team and website integration QA](INTEGRATION-QA-2026-09-23.md) records current source checks, two-instance testing, isolated website integration, hosted authentication boundaries and fixture repairs. Read its remaining proof gates before describing readiness.
 
@@ -9,6 +19,8 @@ Previous continuation: [macOS and Windows candidate](PLATFORM-CANDIDATE-2026-09-
 Previous continuation: [Readiness and Modelvia gap fixes](READINESS-GAPS-2026-09-23.md) records 41 settled live API checks, actual-worker local failure paths, the readiness and provisioning fixes, bounded PDF bill reading, browser verification and the remaining account/device/deployment gates. These evidence layers do not establish universal readiness.
 
 Updated 21 September 2026 from the owner's clarification. The [architecture decision](decisions/2026-09-21-business-os-and-austin-workflows.md) defines the detailed workflow and security contracts. The [17 September snapshot](history/END-STATE-2026-09-17.md) remains historical evidence.
+
+Current owner clarification, updated 24 September: [core first, then workflow packs](decisions/2026-09-23-core-first-and-workflow-scope.md) remains the core readiness basis, while [REI browser qualification and API access preparation](decisions/2026-09-24-rei-browser-first-api-when-approved.md) now proceed in parallel. The bank workflow's proven handoff remains CSV until separate REI workflow acceptance; browser access is not financial posting proof. The [core readiness checkpoint](CORE-READINESS-2026-09-23.md) records present gaps without claiming universal readiness.
 
 Current owner clarification, 23 September: [core first, then workflow packs](decisions/2026-09-23-core-first-and-workflow-scope.md). The bank workflow ends at CSV for now; REI acceptance is deferred. The [core readiness checkpoint](CORE-READINESS-2026-09-23.md) records present gaps and verification without claiming universal readiness.
 
@@ -70,3 +82,7 @@ Complete the reusable core's authoritative records, UI, execution, extension lif
 
 
 September 22 continuation: [department execution authority](DEPARTMENT-EXECUTION-AUTHORITY-2026-09-22.md) now supplies scoped background grants, recoverable case admission, renewable ownership, current selected-case source checks and inert restore. Its real database/TLS and compiled-module evidence is separate from actual worker/website/UI integration, which remains next. This checkpoint does not change the full end-state or native/live acceptance gates.
+
+24 September 2026 read-only knowledge adoption: [REI Hermes read-only checkpoint](REI-HERMES-READONLY-2026-09-24.md) records the owner's bounded-read evidence and linked skill reference. Canonical Node 24.21.0 pack tests pass 28 / 0 / 0. The mutable candidate handoff was not copied; its closure is not proven by the frozen receipt. Existing live profiles, production account binding and packaging remain unchanged.
+
+24 September 2026 closure: the [Hermes read-only handoff receipt](../outputs/rei-browser-first-2026-09-24/hermes-live-readback-v2/closure-receipt.json) records owner-reported local cleanup at 01:53:59.772 UTC: nine owned processes absent, no native control endpoints remaining and the temporary profile removed. Cleanup made no page-interaction commands; this adds no production connection or workflow proof.
