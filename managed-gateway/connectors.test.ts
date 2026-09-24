@@ -112,6 +112,50 @@ test('successful sign-in link is reused, account pinned, changed binding held',a
     s.set([{...s.device(),userId:'user-b'}]);await assert.rejects(()=>s.make().handle(request),/connector_binding_changed_needs_recovery/);
   }finally{s.f.close();}
 });
+test('a lapsed sign-in link is replaced by a fresh one only once the provider says its account never connected',async()=>{
+  const s=setup();try {
+    const device={...s.device()};delete device.accountId;s.set([device]);
+    let links=0,checks=0,lapsedStatus:'INITIATED'|'ACTIVE'|'unsure'='unsure',loseNext=false,seen:string|undefined;
+    const broker=s.make({
+      authorize:async()=>{links++;if(loseNext){loseNext=false;throw new Error('Synthetic response loss with confidential provider detail');}
+        return {url:`https://connect.composio.dev/fictional-${links}`,accountId:`account-linked-${links}`,expiresAt:new Date(s.f.now()+60_000).toISOString()};},
+      access:async binding=>{checks++;seen=binding.accountId;if(lapsedStatus==='unsure')throw new Error('Synthetic provider outage with confidential detail');
+        return {checkedAt:new Date(s.f.now()).toISOString(),services:{gmail:{connected:lapsedStatus==='ACTIVE',status:lapsedStatus,accounts:[{id:binding.accountId!,status:lapsedStatus}],accountSelectionRequired:false}},tools:{available:false,names:[]}};},
+    });
+    const request={...s.request,method:'POST',path:'/v1/connectors/authorize',body:{app:'gmail'}};
+    const row=()=>s.f.ledger.db.get<{state:string;result:string|null}>('SELECT state,result FROM connector_links WHERE device=?',device.id)!;
+    const events=()=>s.f.ledger.db.all<{kind:string;body:string}>("SELECT kind,body FROM events WHERE kind LIKE 'connector_link_%'").map(e=>e.kind);
+    assert.deepEqual((await broker.handle(request)).body,{url:'https://connect.composio.dev/fictional-1'});
+    // Live: reused as before, and the provider is not asked about it.
+    assert.deepEqual((await broker.handle(request)).body,{url:'https://connect.composio.dev/fictional-1'});
+    assert.equal(links,1);assert.equal(checks,0);
+    s.f.setTime(s.f.now()+60_001);
+    // Lapsed, provider unsure: the hold stays, nothing is replaced.
+    await assert.rejects(()=>broker.handle(request),/connector_link_expired_needs_recovery/);
+    assert.equal(links,1);assert.equal(checks,1);assert.equal(row().state,'ready');
+    // Lapsed, but the account it initiated did connect: it is this device's
+    // account, so no fresh link may adopt another one.
+    lapsedStatus='ACTIVE';
+    await assert.rejects(()=>broker.handle(request),/connector_account_already_bound/);
+    assert.equal(links,1);assert.equal(JSON.parse(row().result!).accountId,'account-linked-1');
+    // Lapsed and never connected: one fresh link replaces it, on the same row.
+    lapsedStatus='INITIATED';
+    assert.deepEqual((await broker.handle(request)).body,{url:'https://connect.composio.dev/fictional-2'});
+    assert.equal(links,2);
+    assert.equal(s.f.ledger.db.all('SELECT device FROM connector_links').length,1);
+    assert.deepEqual({...row()},{state:'ready',result:JSON.stringify({url:'https://connect.composio.dev/fictional-2',accountId:'account-linked-2',expiresAt:new Date(s.f.now()+60_000).toISOString()})});
+    assert.deepEqual(events(),['connector_link_requested','connector_link_replaced']);
+    // The new link is the one reused, and its account is the one status pins.
+    assert.deepEqual((await broker.handle(request)).body,{url:'https://connect.composio.dev/fictional-2'});
+    assert.equal(links,2);
+    await broker.handle(s.request);assert.equal(seen,'account-linked-2');
+    // A replacement whose reply is lost is held exactly as a first attempt's would be.
+    s.f.setTime(s.f.now()+60_001);loseNext=true;
+    await assert.rejects(()=>broker.handle(request),/connector_check_failed/);
+    await assert.rejects(()=>broker.handle(request),/connector_link_outcome_unknown/);
+    assert.equal(links,3);assert.equal(row().state,'unknown');
+  }finally{s.f.close();}
+});
 test('HTTP bearer is independent of portal auth and rejects browser origin and supplied upstream identity',async()=>{
   const s=setup();const server=createGatewayServer({allowedOrigins:new Set(),portal:{async authenticate(){throw new Error('No portal identity');}},connectors:s.make()});
   await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
