@@ -16,6 +16,7 @@ import { verifyPortalToken } from "./portal-token.ts";
 import { GatewayError, requireThat } from "./contracts.ts";
 import { directProvider } from "./direct-provider.ts";
 import { createSquareBilling } from "./square-live.ts";
+import { SquareHostedPaymentAdapter } from "./square-payment.ts";
 import { OpenAICostsPoller } from "./openai-costs.ts";
 import { connectorRegistry, ManagedConnectors } from "./connectors.ts";
 import { composeProvisioning } from "./provisioning.ts";
@@ -77,6 +78,9 @@ requireThat(paymentKey.byteLength >= 32, "REALBUD_PAYMENT_WEBHOOK_KEY invalid");
 const squareToken = process.env.SQUARE_ACCESS_TOKEN || "";
 const squareNotify = process.env.SQUARE_NOTIFICATION_URL || "";
 const squareSig = process.env.SQUARE_WEBHOOK_SIGNATURE_KEY || "";
+const squareMerchantId = process.env.SQUARE_MERCHANT_ID || "";
+const squareLocationId = process.env.SQUARE_LOCATION_ID || "";
+const internalCompanyId = process.env.REALBUD_INTERNAL_COMPANY_ID || "";
 // Square's sandbox and production are separate hosts with separate tokens. Aim
 // the client at the host that matches the configured mode, so a sandbox token
 // is never sent to the production host (and vice versa). `live` is the only mode
@@ -102,19 +106,19 @@ if (paymentMode !== "local") {
     authorizeCollection,
     "Set REALBUD_AUTHORIZE_COLLECTION=1 to enable sandbox/live payment collection",
   );
-  // NOTE: SquareBilling above is a statement/draft-invoice manager. It does NOT
-  // implement HostedPaymentAdapter (no id/mode/createCheckout/verifyWebhook), so it
-  // cannot serve /v1/portal/.../checkout. BillingService is therefore still handed
-  // the local simulator, and a checkout URL from it is https://checkout.invalid/...
-  // Do not set REALBUD_AUTHORIZE_COLLECTION=1 unless a real HostedPaymentAdapter is
-  // wired here first: sandbox/live collection fails closed on this flag below.
-  requireThat(
-    !authorizeCollection,
-    "sandbox/live payment collection is not wired: BillingService has no Square HostedPaymentAdapter, so checkout would return a simulator URL (https://checkout.invalid/...). Keep REALBUD_AUTHORIZE_COLLECTION unset until Square checkout is implemented.",
-  );
+  requireThat(squareToken && squareNotify && squareSig && squareMerchantId && squareLocationId && internalCompanyId,
+    "Square checkout requires token, notification URL, signature key, merchant, location and internal company ID");
+  // The present invoice model still has a global care amount and no durable
+  // per-tenant accepted commercial agreement. A production checkout would take
+  // real money without authoritative proof of the agreed price. Sandbox proves
+  // the adapter without moving money; production remains closed at boot.
+  requireThat(paymentMode !== "live", "live_collection_terms_gate_unavailable");
 }
 
-const payment = new LocalPaymentAdapter(paymentKey, Date.now);
+const payment = paymentMode === "local"
+  ? new LocalPaymentAdapter(paymentKey, Date.now)
+  : new SquareHostedPaymentAdapter({ledger,environment:"sandbox",accessToken:squareToken,signatureKey:squareSig,
+      notificationUrl:squareNotify,merchantId:squareMerchantId,locationId:squareLocationId,internalCompanyId});
 
 const billing = new BillingService(ledger, payment, { authorizeCollection });
 
@@ -211,6 +215,7 @@ const provisioningComposition = composeProvisioning({
 const server = createGatewayServer({
   gateway,
   billing,
+  squareWebhooks: paymentMode !== "local",
   allowedOrigins: siteOrigins,
   ...("provisioning" in provisioningComposition
     ? { provisioning: provisioningComposition.provisioning }

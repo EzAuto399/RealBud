@@ -1,6 +1,8 @@
 # RealBud hosting
 
-Website on **Vercel**. OpenAI admin spend on the **server only**. No Fly.
+Website on **Vercel**. The separate managed gateway has a Fly deployment
+recipe, but source configuration and local tests do not prove a live gateway.
+Provider and payment credentials stay on the server.
 
 Supabase is optional later (new `realbud` project in org EzAuto399). Do not reuse `veylet` or `wondertrail-development`.
 
@@ -212,7 +214,8 @@ vs `connect.squareup.com`) with separate tokens. The client picks the host from
 production. The host is never inferred from the token, so a sandbox token cannot
 reach the real account and a production token cannot silently draft into nowhere.
 
-Required together, or `square` stays `null`:
+The existing `SquareBilling` statement and draft-invoice helper uses these
+three values. It does not collect money:
 
 ```
 SQUARE_ACCESS_TOKEN=…            # sandbox or production, matching the mode
@@ -220,24 +223,74 @@ SQUARE_NOTIFICATION_URL=…        # https, and the exact URL registered in Squa
 SQUARE_WEBHOOK_SIGNATURE_KEY=…
 ```
 
-### What works today
+### Collection adapter and activation
 
-A **draft** tax invoice, plus reconciliation and signature-verified payment and
-refund webhooks. `SquareBilling` deliberately has **no publish, send, charge or
-refund-creation method** — so nothing here can take money.
+`SquareHostedPaymentAdapter` now implements the checkout contract for a **closed
+local invoice**: it creates a Square-hosted payment link and an order in one
+idempotent request, verifies the returned order, and records money only after a
+URL/raw-body signed webhook triggers authenticated Square payment retrieval.
+Refund intents are one-shot, and only retrieved `COMPLETED` refunds change the
+receipt. An uncertain create or refund stays held for operator reconciliation.
+The browser return and a Square invoice status never prove settlement.
 
-**Collection is not wired.** `BillingService` is still handed the local checkout
-simulator because `SquareBilling` does not implement `HostedPaymentAdapter`
-(`createCheckout` / `verifyWebhook` / `requestRefund` / `verifyRefundWebhook`).
-`server.ts` refuses to boot if you set `REALBUD_AUTHORIZE_COLLECTION=1` without a
-real adapter, because checkout would otherwise return `https://checkout.invalid/…`.
-Keep that flag **unset** until the adapter exists.
+The separate `SquareBilling` path still creates only an accepted-statement
+**draft** Square invoice; it does not publish or send one. A customer period
+cannot enter both the local-invoice and Square-statement paths. The new payment
+link pays the local invoice; it does not publish the draft Square invoice.
+
+Sandbox composition requires **all** of these explicitly:
+
+```
+REALBUD_PAYMENT_MODE=sandbox
+REALBUD_AUTHORIZE_COLLECTION=1
+SQUARE_ACCESS_TOKEN=…
+SQUARE_MERCHANT_ID=…
+SQUARE_LOCATION_ID=…
+SQUARE_NOTIFICATION_URL=https://<gateway-host>/v1/webhooks/square
+SQUARE_WEBHOOK_SIGNATURE_KEY=…
+REALBUD_INTERNAL_COMPANY_ID=…
+```
+
+Register that exact notification URL in the Square **sandbox** webhook
+subscription for `payment.created`, `payment.updated`, `refund.created`, and
+`refund.updated`. The matching sandbox token must have `MERCHANT_PROFILE_READ`,
+`ORDERS_READ`, `ORDERS_WRITE`, `PAYMENTS_READ`, and `PAYMENTS_WRITE`. Only the
+owner role can request checkout. Each outside
+customer tenant needs a reviewed immutable `SquareBilling.map` record naming
+the same merchant and AUD location, a distinct Square customer ID and an
+evidence reference. The actual buyer may use another card or Square customer
+profile; settlement binds the **tenant's saved checkout attempt, order,
+merchant, location and exact AUD total**, not the cardholder's Square profile.
+`REALBUD_INTERNAL_COMPANY_ID` names the internal RealBud owner tenant and is
+always denied, even if accidentally mapped. No map or a mismatched map means no
+checkout. An authenticated reader or another business cannot select a payer
+with a request header or body.
+
+**Production collection remains blocked at boot** with
+`live_collection_terms_gate_unavailable`, even if a production token and
+`REALBUD_AUTHORIZE_COLLECTION=1` are present. The current local invoice model
+uses a global `CARE_FEE_CENTS` and an arbitrary `careAgreementRef`; it does not
+verify a durable per-tenant accepted commercial agreement and price at the
+checkout boundary. Add that authoritative contract gate and migrate invoice
+compatibility before allowing `REALBUD_PAYMENT_MODE=live`. Do not infer consent
+from a rate-card acceptance, a configured Square token, or this adapter's unit
+tests. A production Square merchant's legal/tax configuration, customer mapping,
+and actual sandbox checkout, webhook, refund, and issued invoice must also be
+verified separately before a real customer payment.
+
+This is RealBud collecting from its own customer through its configured Square
+merchant. Modelvia's separate, provider-owned retail customer Square path is
+not configured by this adapter. Optional wallet, Cash App and buy-now-pay-later
+methods are disabled pending sandbox qualification. The order's inclusive GST
+must exactly equal the closed invoice GST or checkout is held for reconciliation.
 
 ### Sandbox smoke test
 
-Proves our code against the **real** Square API. The unit suite in `square.test.ts`
-runs against a hand-written fake, so it only validates our assumption of Square's
-request and response shapes; this catches a wrong field name, API version or host.
+The existing smoke command can prove the **draft invoice** shape against the real
+Square sandbox API. It does not exercise the new payment-link adapter. The
+`square-payment.test.ts` suite uses an injected fake and proves local tenant,
+money, signature, retry and webhook behavior, not Square's hosted response
+shape. A supervised sandbox payment-link checkout and refund remain required.
 
 ```bash
 cd managed-gateway
@@ -245,7 +298,8 @@ pnpm smoke:sandbox          # reads SQUARE_ACCESS_TOKEN from .env.local
 ```
 
 It pins the host to sandbox, uses a throwaway in-memory ledger, creates a draft
-invoice only, and prints no secret. Exit 0 means the flow works end to end.
+invoice only, and prints no secret. Exit 0 with leg 2 completed proves that
+draft path, not hosted collection.
 
 The script now has two legs. Leg 1 runs the provisioning flow (provision →
 connector status → revoke) **offline against fakes** and always runs. Leg 2 is the
@@ -263,6 +317,11 @@ unset T
 `loadLocalEnv` does not strip quotes, so write the raw value.
 
 Card entry stays on Square.
+
+Square reference: [create payment link](https://developer.squareup.com/reference/square/checkout/create-payment-link),
+[order checkout](https://developer.squareup.com/docs/checkout-api/square-order-checkout),
+[webhook signature](https://developer.squareup.com/docs/webhooks/step3validate),
+[refund states](https://developer.squareup.com/docs/payments-api/refund-payments).
 
 ## Clerk invites
 

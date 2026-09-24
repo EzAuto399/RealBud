@@ -37,7 +37,7 @@ async function streamWrite(res:ServerResponse,data:string,signal:AbortSignal) {
  * explicit deployment gates. No cookie auth or permissive CORS is installed. */
 export function createGatewayServer(options:{gateway:ManagedGateway;billing:BillingService;portal:PortalIdentity;allowedOrigins:ReadonlySet<string>;connectors?:ManagedConnectors;provisioning?:InstallationProvisioning;
   /** Why provisioning is not composed, as a code naming the missing variable — never its value. */
-  provisioningUnavailable?:string;health?:{squareConfigured?:boolean;openaiCostsConfigured?:boolean;paymentMode?:'local'|'sandbox'|'live'}}) {
+  provisioningUnavailable?:string;squareWebhooks?:boolean;health?:{squareConfigured?:boolean;openaiCostsConfigured?:boolean;paymentMode?:'local'|'sandbox'|'live'}}) {
   const server=createServer(async(req,res)=>{
     const abort=new AbortController(); res.once('close',()=>{if(!res.writableEnded) abort.abort();});
     res.setHeader('Cache-Control','no-store'); res.setHeader('X-Content-Type-Options','nosniff');
@@ -76,11 +76,22 @@ export function createGatewayServer(options:{gateway:ManagedGateway;billing:Bill
           await streamWrite(res,`event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`,abort.signal);
         },abort.signal); res.end(); return;
       }
+      if(req.method==='POST' && url.pathname==='/v1/webhooks/square') {
+        requireThat(options.squareWebhooks,'square_webhook_unavailable',503);
+        const signature=req.headers['x-square-hmacsha256-signature'];requireThat(typeof signature==='string','invalid_square_signature',401);
+        const raw=await body(req,256_000);
+        const event=json(raw);object(event);
+        // Type is used only to choose the verifier. Neither path trusts it until
+        // the adapter checks the URL-bound HMAC over these exact raw bytes.
+        reply(res,200,await (String(event.type).startsWith('refund.')?options.billing.refundWebhook(raw,signature):options.billing.webhook(raw,signature)));return;
+      }
       if(req.method==='POST' && url.pathname==='/v1/webhooks/payment') {
+        requireThat(!options.squareWebhooks,'local_webhook_unavailable',503);
         const signature=req.headers['x-realbud-payment-signature']; requireThat(typeof signature==='string','invalid_webhook_signature',401);
         reply(res,200,await options.billing.webhook(await body(req,256_000),signature)); return;
       }
       if(req.method==='POST' && url.pathname==='/v1/webhooks/refund') {
+        requireThat(!options.squareWebhooks,'local_webhook_unavailable',503);
         const signature=req.headers['x-realbud-payment-signature']; requireThat(typeof signature==='string','invalid_webhook_signature',401);
         reply(res,200,await options.billing.refundWebhook(await body(req,256_000),signature)); return;
       }

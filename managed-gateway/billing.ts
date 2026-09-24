@@ -16,7 +16,7 @@ export interface Invoice {
   sourceEventIds:number[];
 }
 export interface HostedCheckout { sessionId:string; url:string; expiresAt:number }
-export interface CheckoutRequest { invoiceId:string; attemptId:string; amountCents:string; currency:'AUD'; idempotencyKey:string }
+export interface CheckoutRequest { companyId:string; invoiceId:string; attemptId:string; amountCents:string; currency:'AUD'; idempotencyKey:string }
 export interface VerifiedPayment {
   eventId:string; transactionId:string; invoiceId:string; attemptId:string; sessionId:string;
   amountCents:string; currency:'AUD'; settledAt:number;
@@ -25,6 +25,8 @@ export interface RefundRequest { refundId:string; transactionId:string; amountCe
 export interface VerifiedRefund { eventId:string; refundId:string; providerRefundId:string; transactionId:string; amountCents:string; currency:'AUD'; settledAt:number }
 export interface HostedPaymentAdapter {
   readonly id:string; readonly mode:'local'|'sandbox'|'live';
+  /** Pure local policy check before persisting an uncertain checkout intent. */
+  preflightCheckout?(request:Pick<CheckoutRequest,'companyId'|'invoiceId'|'amountCents'>):void;
   createCheckout(request:CheckoutRequest):Promise<HostedCheckout>;
   /** Must authenticate exact raw bytes, enforce signature age/account/environment,
    * and return only verified successful settlement. Failed/pending events return null. */
@@ -113,6 +115,7 @@ export class BillingService {
   async checkout(actor:PortalPrincipal,invoiceId:string):Promise<HostedCheckout> {
     requireThat(actor.role==='billing_owner','forbidden',403); requireThat(this.payment,'payment_provider_unselected',503);
     const invoice=this.invoice(actor,invoiceId); requireThat(BigInt(invoice.totalCents)>0n,'nothing_to_pay',409);
+    this.payment.preflightCheckout?.({companyId:actor.companyId,invoiceId,amountCents:invoice.totalCents});
     const admission=this.ledger.db.transaction(()=>{
       requireThat(!this.ledger.db.get('SELECT id FROM payments WHERE invoice=?',invoiceId),'invoice_already_paid',409);
       const prior=this.ledger.db.get<{state:string;body:string}>('SELECT state,body FROM checkouts WHERE invoice=?',invoiceId);
@@ -126,7 +129,7 @@ export class BillingService {
     });
     if(admission.duplicate) return admission.data.session!;
     try {
-      const session=await this.payment.createCheckout({invoiceId,attemptId:admission.data.attemptId,amountCents:invoice.totalCents,currency:'AUD',idempotencyKey:`checkout:${invoiceId}`});
+      const session=await this.payment.createCheckout({companyId:actor.companyId,invoiceId,attemptId:admission.data.attemptId,amountCents:invoice.totalCents,currency:'AUD',idempotencyKey:`checkout:${invoiceId}`});
       id(session.sessionId); requireThat(new URL(session.url).protocol==='https:' && session.expiresAt>this.ledger.now(),'invalid_checkout_response',502);
       this.ledger.db.transaction(()=>{
         const state=this.ledger.db.get<{state:string}>('SELECT state FROM checkouts WHERE invoice=?',invoiceId);
@@ -158,7 +161,7 @@ export class BillingService {
       else {
         this.ledger.db.run('INSERT INTO payments(id,invoice,body) VALUES(?,?,?)',transactionKey,event.invoiceId,canonical(event));
         const tenant=this.ledger.db.get<{tenant:string}>('SELECT tenant FROM invoices WHERE id=?',event.invoiceId)!.tenant;
-        this.ledger.db.append(tenant,'payment_settled',null,this.ledger.now(),{invoiceId:event.invoiceId,receiptId:transactionKey,amountCents:event.amountCents,settledAt:event.settledAt,mode:'local'});
+        this.ledger.db.append(tenant,'payment_settled',null,this.ledger.now(),{invoiceId:event.invoiceId,receiptId:transactionKey,amountCents:event.amountCents,settledAt:event.settledAt,mode:provider});
       }
       this.ledger.db.run('INSERT INTO payment_events(id,digest) VALUES(?,?)',key,hash);
       this.ledger.db.run("UPDATE checkouts SET state='settled' WHERE invoice=?",event.invoiceId); return {duplicate:!!payment};
@@ -168,7 +171,9 @@ export class BillingService {
     this.invoice(actor,invoiceId); const row=this.ledger.db.get<{id:string;body:string}>('SELECT id,body FROM payments WHERE invoice=?',invoiceId); requireThat(row,'payment_not_settled',409);
     const p:VerifiedPayment=JSON.parse(row.body);
     const refunded=this.ledger.db.all<{body:string}>('SELECT body FROM refunds WHERE payment=?',row.id).reduce((sum,r)=>sum+BigInt(JSON.parse(r.body).amountCents),0n);
-    return {mode:'local',invoiceId,receiptId:`receipt-${invoiceId}`,currency:'AUD',amountCents:p.amountCents,refundedCents:refunded.toString(),settledAt:p.settledAt};
+    const provider=row.id.slice(0,row.id.indexOf(':'));
+    const mode=provider==='local-simulation'?'local':provider==='square-sandbox'?'sandbox':provider==='square-live'?'live':'unknown';
+    return {mode,invoiceId,receiptId:`receipt-${invoiceId}`,currency:'AUD',amountCents:p.amountCents,refundedCents:refunded.toString(),settledAt:p.settledAt};
   }
   /** Operator-only, explicit local refund of an existing unapplied, whole-cent credit.
    * Reserving its disposition prevents both an invoice credit and a cash refund. An
