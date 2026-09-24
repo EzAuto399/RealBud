@@ -5,6 +5,7 @@
 //
 //   node --experimental-strip-types scripts/e2e-pm-day.mjs
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -94,12 +95,41 @@ try {
   const letter = catalog.loops.find((l) => l.id === "owner-letter");
   const inbound = catalog.loops.find((l) => l.id === "inbound-triage");
   check("morning and Friday are built", morning?.available === true && letter?.available === true);
-  check("inbound stays Planned", inbound?.available === false);
+  // Morning priorities is built too; agency setup owns its clock, so a fresh
+  // book shows it available and disabled with no next run.
+  check(
+    "inbound is available but disabled until agency setup enables it",
+    inbound?.available === true && inbound?.enabled === false && inbound?.nextRunAt === null,
+    `available=${inbound?.available} enabled=${inbound?.enabled} nextRunAt=${inbound?.nextRunAt}`,
+  );
   check("inbound names the agency inbox", /Microsoft 365|Gmail/.test(inbound?.description ?? ""));
   check("catalog copy hides Hermes", !JSON.stringify(catalog.loops.map((l) => l.description)).match(/Hermes/i));
 
-  const inboundRun = await api("POST", "/api/loops/inbound-triage/run", {});
-  check("inbound Run now is 409", inboundRun.status === 409);
+  // A manual inbound run must be identified work, and without a reviewed
+  // morning plan it settles as a refusal — nothing is collected or sent.
+  const inboundUnidentified = await api("POST", "/api/loops/inbound-triage/run", {});
+  check(
+    "inbound Run now without a request identifier is 400",
+    inboundUnidentified.status === 400 && /request identifier/i.test(String(inboundUnidentified.body?.error ?? "")),
+    `${inboundUnidentified.status} · ${inboundUnidentified.body?.error}`,
+  );
+  const inboundRun = await api("POST", "/api/loops/inbound-triage/run", {
+    requestId: randomUUID(),
+    expectedRevision: inbound?.revision,
+  });
+  const inboundSettled = inboundRun.status === 201 ? await waitForRun(inboundRun.body?.run?.id) : null;
+  check(
+    "identified inbound Run now is accepted and held on plan approval",
+    inboundRun.status === 201 && inboundSettled?.status === "failed" &&
+      /approve the current morning plan/i.test(String(inboundSettled?.detail ?? "")),
+    `${inboundRun.status} · ${inboundSettled?.status} · ${inboundSettled?.detail}`,
+  );
+  const inboundAfter = (await api("GET", "/api/loops")).body?.loops?.find((l) => l.id === "inbound-triage");
+  check(
+    "the held inbound run left the schedule off",
+    inboundAfter?.enabled === false && inboundAfter?.nextRunAt === null,
+    `enabled=${inboundAfter?.enabled} nextRunAt=${inboundAfter?.nextRunAt}`,
+  );
 
   // ── 7:30 money: clock presses the same Recheck door ──
   const morningPost = await api("POST", "/api/loops/morning-arrears/run", {});

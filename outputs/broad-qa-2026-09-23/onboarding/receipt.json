@@ -1,0 +1,56 @@
+{
+  "at": "2026-09-23T02:35:06.969Z",
+  "layer": "source-rendered-local",
+  "passed": true,
+  "node": "v24.19.0",
+  "checks": [
+    "Fresh workspace ignores unscoped browser completion; profile submission only reaches rules",
+    "Interrupted setup resumes rules after service restart at different service and renderer ports",
+    "Completed welcome survives a second changed-port restart with the saved contact intact",
+    "Replayed welcome preserves a restored book contact instead of overwriting it",
+    "Sample exploration retains its profile and can finish after a changed-port restart",
+    "Protected book remains unchanged; recovery is saved separately and resumes after restart",
+    "Zero renderer page errors throughout all six scenarios"
+  ],
+  "pageErrors": [],
+  "origins": [
+    {
+      "service": "http://127.0.0.1:59777",
+      "renderer": "http://127.0.0.1:59778"
+    },
+    {
+      "service": "http://127.0.0.1:59856",
+      "renderer": "http://127.0.0.1:59857"
+    },
+    {
+      "service": "http://127.0.0.1:59947",
+      "renderer": "http://127.0.0.1:59948"
+    },
+    {
+      "service": "http://127.0.0.1:60003",
+      "renderer": "http://127.0.0.1:60004"
+    },
+    {
+      "service": "http://127.0.0.1:60100",
+      "renderer": "http://127.0.0.1:60101"
+    },
+    {
+      "service": "http://127.0.0.1:60161",
+      "renderer": "http://127.0.0.1:60162"
+    },
+    {
+      "service": "http://127.0.0.1:60250",
+      "renderer": "http://127.0.0.1:60251"
+    },
+    {
+      "service": "http://127.0.0.1:60324",
+      "renderer": "http://127.0.0.1:60325"
+    }
+  ],
+  "failure": null,
+  "limits": [
+    "Disposable fictional state only; no real account, worker, model, hosted, bank or payment calls.",
+    "Source Vite renderer and local Node service; not a packaged or installed-device acceptance run.",
+    "Member isolation and asynchronous scope changes are covered by server/onboarding.test.ts, not separate physical devices."
+  ]
+}

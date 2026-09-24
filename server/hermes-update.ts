@@ -9,6 +9,7 @@ import { adoptFirstRuntime, readRuntimeSelection, releaseHome, runtimeCommit, sa
 import { installInFlight, startBootstrapInstall, type InstallJob } from "./hermes-bridge.ts";
 import { acquireWorkerSetupLock, bootstrapChildRunning, finishWorkerBootstrap, runWorkerBootstrap, BootstrapError } from "./worker-bootstrap.ts";
 import { verifyRuntime } from "./hermes-runtime-check.ts";
+import { ensureProfileDirectory } from "./hermes-profile-storage.ts";
 
 export function runtimeUpdateStatus(home = hermesHome()) {
   const selection = readRuntimeSelection(home);
@@ -57,6 +58,9 @@ export function startRuntimeUpdate(options: {
     throw new BootstrapError(`Hermes ${release.product} is not in the install catalog. Admit it there before staging it.`);
   }
   if (runtimeCommit(before.selected) === release.commit && !options.repair) throw Object.assign(new Error("The recommended agent is already selected. Restart RealBud if the update is waiting."), { status: 409 });
+  // Establish the new owned home before bootstrap can recursively create it
+  // with inherited Windows ACLs. Existing homes remain verify-only.
+  ensureProfileDirectory(home);
   // Retry in a new directory. Upstream's repository stage updates existing
   // checkouts via main; it must never run over a selected or failed candidate.
   const candidateId = `${release.commit}-${randomUUID().replaceAll("-", "").slice(0, 12)}`;

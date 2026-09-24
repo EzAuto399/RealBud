@@ -1,0 +1,25 @@
+{
+  "passed": false,
+  "checks": [
+    "Actual upload and original download preserve BOM, Unicode, quoted multiline values, newlines and filename",
+    "Actual reviewed binary download changes only the approved reference and retains its quoting"
+  ],
+  "failure": "AssertionError [ERR_ASSERTION]: /api/bank-reference: {\"error\":\"Saved workflow data needs recovery. No work was dispatched. Check storage and restore the existing data and key together.\"}\n    at request (file:///Users/yoda/projects/RealBud/scripts/qa-bank-bytes.mjs:47:49)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async file:///Users/yoda/projects/RealBud/scripts/qa-bank-bytes.mjs:81:15",
+  "actual": [
+    "built React UI",
+    "local HTTP API",
+    "encrypted saved review",
+    "browser binary downloads"
+  ],
+  "synthetic": [
+    "bank CSV and property mapping",
+    "browser-only 503 history and detail response injections",
+    "delayed real settings response"
+  ],
+  "notProven": [
+    "customer bank format",
+    "REI import acceptance",
+    "native installed Windows"
+  ],
+  "diagnostic": "realbud server on http://127.0.0.1:59928\n"
+}

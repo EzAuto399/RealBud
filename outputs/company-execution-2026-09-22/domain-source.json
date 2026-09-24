@@ -1,0 +1,19 @@
+{
+  "timestamp": "2026-09-22T00:38:09.137334+00:00",
+  "checks": {
+    "actualPostgresTests": {
+      "passed": 23,
+      "failed": 0,
+      "report": "domain-backup-final.json"
+    },
+    "serverTypeScript": "passed"
+  },
+  "files": {
+    "server/company/department-execution.ts": "fafabcc95a7014f743d2ec4bb5fd21f32b670c242d2be35f0f948cea403b7049",
+    "server/company/department-execution.integration.test.ts": "bc6dd62f9315b1776bedd25ee44c2db6fef631ee8a730dae2942ba66f36d2696",
+    "server/company/schema.ts": "0829557037b0a22fe913465a2ca95983ec751fb1bfb0d2a322babaafac157bb6",
+    "server/company/index.ts": "970ea7d0846c0267167638ccafa1e8ca8570f8b3b90d55af4b2a0acca2344f33",
+    "server/company/backup.ts": "fb1a54d504c96475127e87b368e53a953f01feb71ae31d2c457008ff765ce6af",
+    "server/company/backup.integration.test.ts": "96bc0fbc3d59363b67366a623c401a5eccc86e0444e416c008a516f7ca4c5b54"
+  }
+}

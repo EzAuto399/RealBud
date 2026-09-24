@@ -9,7 +9,7 @@
 
 /** Key names whose value is a credential. Matched case-insensitively as a
  * substring, so KEY catches ANTHROPIC_API_KEY and x-api-key. */
-const SECRET_KEY_PARTS = ["token", "secret", "password", "passwd", "apikey", "api_key", "authorization", "auth_token"];
+const SECRET_KEY_PARTS = ["token", "secret", "password", "passwd", "apikey", "api_key", "authorization", "auth_token", "credential"];
 
 /** `key` alone is too broad — it matches `keyboard`, `keys`, `hotkey`. Only
  * treat it as a credential when it stands alone or is a suffix. */
@@ -22,6 +22,10 @@ function isSecretName(name: string): boolean {
 const mask = (value: string) => `«redacted ${value.length} chars»`;
 
 const KEY_PREFIXES: RegExp[] = [
+  /\brbc_[a-f0-9]{64}\b/g,
+  /\brbk_[A-Za-z0-9_-]{24,}/g,
+  /\bmgt_[A-Za-z0-9_-]{24,}/g,
+  /\b(?:ak|ck)_[A-Za-z0-9_-]{16,}\b/g,
   /\bsk-(?:ant-|proj-|live-|test-)?[A-Za-z0-9_-]{16,}/g,
   /\bxai-[A-Za-z0-9_-]{16,}/g,
   /\bntn_[A-Za-z0-9_-]{16,}/g,
@@ -64,6 +68,10 @@ export function redactSecrets(input: unknown, depth = 0): unknown {
 
   if (Array.isArray(input)) {
     return input.map((item) => {
+      // Env-shaped rows still carry ordinary content and extra metadata. A
+      // harmless variable name must not exempt a recognizable key from the
+      // same content redaction applied everywhere else.
+      const redacted = redactSecrets(item, depth + 1);
       if (
         item !== null &&
         typeof item === "object" &&
@@ -72,9 +80,9 @@ export function redactSecrets(input: unknown, depth = 0): unknown {
         typeof (item as { value?: unknown }).value === "string"
       ) {
         const entry = item as { name: string; value: string };
-        return isSecretName(entry.name) ? { ...entry, value: mask(entry.value) } : entry;
+        return isSecretName(entry.name) ? { ...(redacted as Record<string, unknown>), value: mask(entry.value) } : redacted;
       }
-      return redactSecrets(item, depth + 1);
+      return redacted;
     });
   }
 

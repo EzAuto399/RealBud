@@ -8,7 +8,7 @@
 //   U3  Six-property training book; Recheck does not invent live drafts
 //   U4  Practice drafts courtesy/levy; statutory stays an escalation
 //   U5  Send is always 403, including after Allow
-//   U6  Planned inbound loop refuses; morning loop may run
+//   U6  Malformed morning-review request is refused without creating a run
 //   U7  Worker is not ready without a hands ping
 //   U8  This home does not write the operator's ~/.realbud
 //
@@ -153,8 +153,16 @@ await withHome("a", async ({ api, dataDir }) => {
   const sendAfter = await api("POST", `/api/desk/drafts/${pending?.id}/send`, {});
   check("U5  send stays 403 after Allow", sendAfter.status === 403);
 
+  const beforeInbound = await api("GET", "/api/loops");
   const inbound = await api("POST", "/api/loops/inbound-triage/run", {});
-  check("U6  planned inbound loop refuses", inbound.status === 409);
+  const afterInbound = await api("GET", "/api/loops");
+  check(
+    "U6  malformed morning-review request is refused without a new run",
+    beforeInbound.status === 200 && afterInbound.status === 200 &&
+      inbound.status === 400 && inbound.body?.error === "Morning review requires its request identifier and current schedule revision." &&
+      Array.isArray(beforeInbound.body?.runs) && Array.isArray(afterInbound.body?.runs) &&
+      JSON.stringify(afterInbound.body.runs) === JSON.stringify(beforeInbound.body.runs),
+  );
 
   const hermes = await api("GET", "/api/hermes");
   check("U7  worker is not ready without a ping on this home", hermes.status === 200 && hermes.body?.ready === false);

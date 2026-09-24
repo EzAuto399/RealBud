@@ -1,0 +1,58 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ❯ server/index.test.ts (51 tests | 2 failed) 3884ms
+     × lists the named loops and refuses to run a planned one 8ms
+     × retunes a loop's clock over the API and rejects malformed patches 14ms
+{"at":"2026-09-21T04:04:43.981Z","event":"crash","detail":"worker failed with XAI_API_KEY=«redacted 24 chars» in env"}
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/index.test.ts > harness HTTP API > lists the named loops and refuses to run a planned one
+AssertionError: expected { id: 'inbound-triage', …(10) } to match object { available: false, enabled: false }
+(12 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "available": false,
++   "available": true,
+    "enabled": false,
+  }
+
+ ❯ server/index.test.ts:409:21
+    407|     expect(ownerLetter).toMatchObject({ available: true, enabled: true…
+    408|     const planned = body.loops.find((loop: { id: string }) => loop.id …
+    409|     expect(planned).toMatchObject({ available: false, enabled: false }…
+       |                     ^
+    410|     expect(planned).not.toHaveProperty("prompt");
+    411|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  server/index.test.ts > harness HTTP API > retunes a loop's clock over the API and rejects malformed patches
+AssertionError: expected 409 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 409
+
+ ❯ server/index.test.ts:440:28
+    438|
+    439|     const planned = await api("PATCH", "/api/loops/inbound-triage", { …
+    440|     expect(planned.status).toBe(200);
+       |                            ^
+    441|     const enablePlanned = await api("PATCH", "/api/loops/inbound-triag…
+    442|     // 409, not 400: a declared-but-not-built loop is a state conflict…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed | 255 passed | 15 skipped (271)
+      Tests  2 failed | 3064 passed | 115 skipped (3181)
+   Start at  14:02:23
+   Duration  152.38s (transform 2.33s, setup 1.23s, import 6.18s, tests 125.85s, environment 13ms)
+

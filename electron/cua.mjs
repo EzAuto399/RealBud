@@ -2,8 +2,8 @@
 //
 // Two modes, per cua-driver's EMBEDDING.md:
 //  - "embedded" (packaged app): spawn our own private daemon via
-//    EmbeddedCuaDriverHost so TCC grants attribute to RealBud and the
-//    driver inherits them. One prompt, named RealBud, out of the box.
+//    the SDK host on macOS (so TCC grants attribute to RealBud), or the
+//    Job-contained host adapter on Windows with the same SDK identity checks.
 //  - "standalone" (dev): attach to an already-installed CuaDriver.app daemon
 //    (its own TCC identity, typically already granted on a dev machine).
 //
@@ -22,6 +22,7 @@ import net from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { checkCuaLogin } from "./cua-login-check.mjs";
+import { createGrantedCuaHost, CUA_HOST_BUNDLE_ID } from "./cua-launcher.mjs";
 
 const require = createRequire(import.meta.url);
 const { createCuaConnectionStore } = require("./cua-connection.cjs");
@@ -31,56 +32,29 @@ const STANDALONE_SOCKET = path.join(
   app.getPath("home"),
   "Library/Caches/cua-driver/cua-driver.sock",
 );
-const HOST_BUNDLE_ID = "com.realbud.app";
 
-let embeddedHost = null; // EmbeddedCuaDriverHost | null
+let embeddedHost = null; // Owned platform host from createGrantedCuaHost | null
+let embeddedStop = null; // One confirmed stop per host, including failed startup.
 const pauseFile = () => path.join(app.getPath("userData"), "cua-human-pause.json");
 const connectionStore = createCuaConnectionStore({
   getUserData: () => app.getPath("userData"),
 });
 
-/** EmbeddedCuaDriverHost has no --grant API. Wrap cua-driver so `serve`
- * always pre-authorizes existing Chrome/Brave attach for portal jobs. */
-function ensureExistingProfileGrantShim(realBinary) {
-  const dir = path.join(app.getPath("userData"), "cua");
-  fs.mkdirSync(dir, { recursive: true });
-  if (process.platform === "win32") {
-    const shim = path.join(dir, "cua-driver-grant.cmd");
-    const fixed = [
-      "@echo off",
-      `set "REAL=${realBinary.replace(/%/g, "%%")}"`,
-      'if /I "%~1"=="serve" (',
-      '  "%REAL%" serve --grant existing-profile %2 %3 %4 %5 %6 %7 %8 %9',
-      "  exit /b %ERRORLEVEL%",
-      ")",
-      '"%REAL%" %*',
-      "",
-    ].join("\r\n");
-    if (!fs.existsSync(shim) || fs.readFileSync(shim, "utf8") !== fixed) {
-      fs.writeFileSync(shim, fixed, { encoding: "utf8" });
-    }
-    return shim;
-  }
-  const shim = path.join(dir, "cua-driver-grant");
-  const body = [
-    "#!/bin/bash",
-    "set -euo pipefail",
-    `REAL=${JSON.stringify(realBinary)}`,
-    'if [[ "${1:-}" == "serve" ]]; then',
-    '  shift',
-    '  exec "$REAL" serve --grant existing-profile "$@"',
-    "fi",
-    'exec "$REAL" "$@"',
-    "",
-  ].join("\n");
-  if (!fs.existsSync(shim) || fs.readFileSync(shim, "utf8") !== body) {
-    fs.writeFileSync(shim, body, { mode: 0o755 });
-  } else {
-    fs.chmodSync(shim, 0o755);
-  }
-  return shim;
-}
 export const currentCuaConnection = () => connectionStore.get();
+
+async function stopEmbeddedHost() {
+  const host = embeddedHost;
+  if (!host) return;
+  if (embeddedStop) return embeddedStop;
+  const stopping = (async () => {
+    await host.stop();
+    host.uniffiDestroy?.();
+    if (embeddedHost === host) embeddedHost = null;
+  })();
+  embeddedStop = stopping;
+  try { await stopping; }
+  finally { if (embeddedStop === stopping) embeddedStop = null; }
+}
 
 export function resolveDriverBinary() {
   if (process.env.CUA_DRIVER_PATH) return process.env.CUA_DRIVER_PATH;
@@ -123,7 +97,7 @@ async function loadEmbeddedSdk() {
   return import(pathToFileURL(path.join(process.resourcesPath, "cua-sdk", "cua-sdk.mjs")).href);
 }
 
-async function startEmbedded(binary) {
+async function startEmbedded(binary, { checkingHumanSignIn = false } = {}) {
   // Import from the staged Resources tree in production. The app intentionally
   // excludes general node_modules, so a bare package import only works in dev.
   const sdk = await loadEmbeddedSdk();
@@ -138,16 +112,30 @@ async function startEmbedded(binary) {
     ].filter(Boolean).join(" and ");
     throw new Error(`${missing || "macOS permissions"} required; grant access in System Settings and restart RealBud`);
   }
-  const grantBinary = ensureExistingProfileGrantShim(binary);
-  embeddedHost = new sdk.EmbeddedCuaDriverHost(grantBinary, HOST_BUNDLE_ID);
-  const conn = await embeddedHost.start();
+  // Loading the SDK crosses an async boundary: human release may have arrived
+  // while it loaded. Never start behind the saved sign-in pause.
+  if (fs.existsSync(pauseFile()) && !checkingHumanSignIn) throw new Error("Desktop control is paused for human sign-in.");
+  if (embeddedHost) throw new Error("The previous desktop host has not been released.");
+  const host = createGrantedCuaHost(sdk, binary, { userData: app.getPath("userData") });
+  embeddedHost = host;
+  let conn;
+  try {
+    conn = await host.start();
+    if (embeddedHost !== host || (!checkingHumanSignIn && fs.existsSync(pauseFile()))) throw new Error("Desktop startup was stopped.");
+  } catch (error) {
+    if (embeddedHost === host) {
+      try { await stopEmbeddedHost(); }
+      catch { /* Keep the handle for explicit recovery; never publish it. */ }
+    }
+    throw error;
+  }
   return {
     mode: "embedded",
     socketPath: conn.socketPath,
     // MCP proxy talks to the already-granted daemon; keep the real binary.
     mcpCommand: binary,
     mcpArgs: ["mcp", "--embedded", "--socket", conn.socketPath],
-    mcpEnv: { CUA_DRIVER_EMBEDDED: "1", CUA_DRIVER_HOST_BUNDLE_ID: HOST_BUNDLE_ID },
+    mcpEnv: { CUA_DRIVER_EMBEDDED: "1", CUA_DRIVER_HOST_BUNDLE_ID: CUA_HOST_BUNDLE_ID },
   };
 }
 
@@ -191,6 +179,9 @@ export async function startCua() {
     };
   }
 
+  // Release can run between the async startup result and this publication.
+  // The persisted human pause is authoritative at the final boundary too.
+  if (fs.existsSync(pauseFile())) nextConnection = { mode: "unavailable", reason: "human-signin-paused" };
   return connectionStore.persist(nextConnection);
 }
 
@@ -254,12 +245,10 @@ export function cuaPermissionsStatus() {
 export async function stopCua() {
   if (embeddedHost) {
     try {
-      await embeddedHost.stop();
-      embeddedHost.uniffiDestroy?.();
+      await stopEmbeddedHost();
     } catch {
       // daemon holds a parent-liveness pipe; host death closes it anyway
     }
-    embeddedHost = null;
   }
   if (connectionStore.get()) {
     connectionStore.persist({ mode: "unavailable", reason: "desktop-host-stopped" });
@@ -273,11 +262,7 @@ export async function releaseCuaForHuman() {
   fs.mkdirSync(app.getPath("userData"), { recursive: true });
   fs.writeFileSync(pauseFile(), JSON.stringify({ version: 1, paused: true }), { mode: 0o600 });
   connectionStore.persist({ mode: "unavailable", reason: "human-signin-paused" });
-  if (embeddedHost) {
-    await embeddedHost.stop();
-    embeddedHost.uniffiDestroy?.();
-    embeddedHost = null;
-  }
+  await stopEmbeddedHost();
 }
 
 export async function verifyCuaAfterHuman(binding, requestId) {
@@ -287,7 +272,7 @@ export async function verifyCuaAfterHuman(binding, requestId) {
   let driver, timer;
   try {
     // Keep the public descriptor unavailable throughout this isolated read.
-    const conn = await startEmbedded(binary);
+    const conn = await startEmbedded(binary, { checkingHumanSignIn: true });
     const sdk = await loadEmbeddedSdk();
     driver = await sdk.CuaDriver.connect(conn.socketPath);
     return await Promise.race([

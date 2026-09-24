@@ -73,4 +73,16 @@ describe("budFacingCopy", () => {
   it("uses a safe fallback for missing detail", () => {
     expect(budFacingCopy(null, "Check Bud again.")).toBe("Check Bud again.");
   });
+
+  it("hides private engine paths while keeping the failure reason", () => {
+    for (const path of [
+      "/Users/Office Manager/.hermes/profiles/property/config.yaml",
+      "C:\\Users\\Office Manager\\.hermes\\profiles\\property\\config.yaml",
+      "~/.hermes/profiles/property/config.yaml",
+    ]) {
+      const copy = budFacingCopy(`Could not read ${path}; check permissions.`, "Bud setup failed.");
+      expect(copy).toBe("Could not read Bud's private setup; check permissions.");
+      expect(copy).not.toMatch(/Hermes|\.hermes|Office Manager|config\.yaml/i);
+    }
+  });
 });

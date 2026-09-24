@@ -1,87 +1,180 @@
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fixture } from './testing.ts';
-import { BillingService, type HostedPaymentAdapter, type VerifiedPayment } from './billing.ts';
+import { careTermsDraft, fixture } from './testing.ts';
+import { BillingService, type HostedPaymentAdapter, type VerifiedPayment, type VerifiedRefund } from './billing.ts';
+import { composeCareCollection } from './composition.ts';
 import { invoiceHtml } from './invoice-html.ts';
 
 const cleanups:(()=>void)[]=[];const setup=()=>{const f=fixture();cleanups.push(f.close);return f;};afterEach(()=>{while(cleanups.length)cleanups.pop()!();});
-async function paidFixture() {
-  const f=setup();await f.run(); f.setTime(Date.parse('2026-10-01T00:00:00Z'));
-  const invoice=f.billing.finalizeLocalInvoice('company-a','2026-09','fixture-care-agreement');
-  const session=await f.billing.checkout(f.owner,invoice.id);
-  const stored=JSON.parse(f.db.get<{body:string}>('SELECT body FROM checkouts WHERE invoice=?',invoice.id)!.body);
-  const payment:VerifiedPayment={eventId:'event-paid',transactionId:'transaction-one',invoiceId:invoice.id,attemptId:stored.attemptId,sessionId:session.sessionId,amountCents:invoice.totalCents,currency:'AUD',settledAt:f.now()};
-  const signed=f.signedEvent({mode:'local',status:'settled',payment});await f.billing.webhook(signed.raw,signed.signature);
-  return {f,invoice,session,payment};
+const INTERNAL='realbud-internal';
+/** A month of AI activity in the ledger that a care invoice must never see: one
+ * settled request, one AI credit against it and one request left unknown. */
+async function aiActivity(f:ReturnType<typeof fixture>) {
+  await f.run();
+  f.ledger.credit(f.ledger.requests(f.tenant.companyId)[0].id,'ai-credit','10000000','synthetic-ai-correction');
+  const r=f.ledger.reserve(f.grant(f.request,{jti:'grant-two',jobId:'job-two',attemptId:'attempt-two'}),'fixture-host-key','fp','idem-two',f.provider.bound(f.request)).record;
+  f.ledger.dispatch(r.id,f.grant(f.request,{jti:'grant-two',jobId:'job-two',attemptId:'attempt-two'}),f.provider.id);f.ledger.unknown(r.id,'interrupted');
 }
-test('monthly invoice is sequential, itemised, GST-inclusive and care never adds a usage surcharge',async()=>{
-  const f=setup();await f.run();f.setTime(Date.parse('2026-10-01T00:00:00Z'));const i=f.billing.finalizeLocalInvoice('company-a','2026-09','fixture-care-agreement');
-  assert.equal(i.id,'RB-LOCAL-000001');assert.equal(i.supplier.legalName,'Yo-Da Lai');assert.equal(i.supplier.abn,'84992526369');
-  assert.equal(i.totalCents,'12502');assert.equal(i.gstCents,'1137');assert.equal(i.lines.filter(l=>l.description.includes('maintenance')).length,1);assert.equal(i.lines[0].rateVersion,'fixture-r1');
-  assert.equal(f.billing.finalizeLocalInvoice('company-a','2026-09','fixture-care-agreement').id,i.id);
-  assert.throws(()=>f.billing.finalizeLocalInvoice('company-a','2026-09'),/invoice_close_conflict/);
+function accepted(f:ReturnType<typeof fixture>,billing:BillingService,version='care-v1',careCents='12500') {
+  const published=billing.commercialTerms!.publish(careTermsDraft(f,version,careCents));
+  billing.commercialTerms!.accept(f.owner,'2026-09',version,published.digest);
+  return published;
+}
+/** A minimal adapter standing in for Square: records what it was asked, settles nothing by itself. */
+function stubAdapter(f:ReturnType<typeof fixture>) {
+  const refunds:string[]=[];
+  let settle:VerifiedPayment|null=null, refund:VerifiedRefund|null=null;
+  const adapter:HostedPaymentAdapter={id:'square-sandbox',mode:'sandbox',
+    async createCheckout(request){return {sessionId:`order-${request.attemptId}`,url:'https://connect.squareupsandbox.com/checkout/one',expiresAt:f.now()+60_000};},
+    async verifyWebhook(){return settle;},async requestRefund(request){refunds.push(request.refundId);},async verifyRefundWebhook(){return refund;}};
+  return {adapter,refunds,settle:(p:VerifiedPayment)=>{settle=p;},refund:(r:VerifiedRefund)=>{refund=r;}};
+}
+
+test('a care invoice carries only the accepted care line: AI usage, AI credits and unreconciled requests in the ledger neither appear nor block it',async()=>{
+  const f=setup();await aiActivity(f);f.setTime(Date.parse('2026-10-01T00:00:00Z'));
+  assert.equal(f.db.all("SELECT seq FROM events WHERE kind IN ('usage_settled','credit','usage_unknown')").length,3);
+  const billing=new BillingService(f.ledger,undefined,{internalCompanyId:INTERNAL});
+  const published=accepted(f,billing);
+  const invoice=billing.finalizeCommercialInvoice(f.tenant.companyId,'2026-09','care-v1');
+  assert.equal(invoice.id,'RB-000001');assert.equal(invoice.mode,'commercial');assert.equal(invoice.kind,'Tax Invoice');
+  assert.deepEqual(invoice.lines.map(l=>[l.description,l.amountCents]),[['RealBud software and routine maintenance — monthly care','12500']]);
+  assert.equal(invoice.totalCents,'12500');assert.equal(invoice.gstCents,'1136');
+  assert.deepEqual(invoice.sourceEventIds,[]);
+  assert.equal(invoice.supplier.legalName,'Fictional RealBud Seller');assert.equal(invoice.customer.name,f.tenant.customerName);
+  assert.equal(invoice.careAgreementRef,'synthetic-care-agreement');assert.equal(invoice.commercialTerms?.digest,published.digest);
+  const html=invoiceHtml(invoice);
+  for(const forbidden of ['AI usage —','AI usage credit','Rate version','fixture-text','fixture-r1','Usage reference','LOCAL TEST DOCUMENT']) assert.doesNotMatch(html,new RegExp(forbidden),forbidden);
+  assert.match(html,/Modelvia/);assert.match(html,/12 345 678 901/);
+  // Usage events stay unbilled here for ever: they are Modelvia's, not this invoice's.
+  assert.equal(f.db.all('SELECT * FROM invoice_events').length,0);
+  assert.equal(billing.finalizeCommercialInvoice(f.tenant.companyId,'2026-09','care-v1').id,invoice.id);
   assert.throws(()=>f.db.run("UPDATE invoices SET body='{}'"),/immutable_record/);
+  f.db.verify();
 });
-test('no usage produces no AI usage fee, and care requires its own explicit agreement reference',()=>{
-  const f=setup();f.setTime(Date.parse('2026-10-01T00:00:00Z'));const i=f.billing.finalizeLocalInvoice('company-a','2026-09');assert.equal(i.totalCents,'0');assert.equal(i.lines.length,0);
+
+test('terms with no rate card are accepted and closed; a zero-cap entitlement created by the operator command is a billable customer',()=>{
+  const f=setup();f.setTime(Date.parse('2026-10-01T00:00:00Z'));
+  const goLiveAt=Date.parse('2026-06-01T00:00:00Z');
+  const created=f.ledger.putEntitlement({companyId:'company-care',licenseId:'license-care',active:true,serviceExpiresAt:f.now()+86_400_000,customerName:'Fictional Agency Care',customerAddress:'2 Example Street, Brisbane QLD',customerAbn:'98765432109',goLiveAt,goLiveEvidence:'fixture-order'},'fixture-ticket');
+  assert.equal(created.tenant.monthlyCapNanoAud,'0');
+  const billing=new BillingService(f.ledger,undefined,{internalCompanyId:INTERNAL});
+  const draft=careTermsDraft({tenant:created.tenant},'care-v1','9900');
+  assert.deepEqual(draft.rateCards,[]);
+  const published=billing.commercialTerms!.publish(draft);
+  const owner={...f.owner,companyId:'company-care'};
+  billing.commercialTerms!.accept(owner,'2026-09','care-v1',published.digest);
+  const invoice=billing.finalizeCommercialInvoice('company-care','2026-09','care-v1');
+  assert.equal(invoice.totalCents,'9900');assert.equal(invoice.customer.abn,'98765432109');
+  // A rate-card reference is shape-checked only and never looked up in the ledger.
+  const referenced=billing.commercialTerms!.publish(careTermsDraft({tenant:created.tenant},'care-v2','9900',{period:'2026-08',rateCards:[{version:'modelvia-reference-only',digest:'a'.repeat(64)}]}));
+  assert.equal(referenced.terms.rateCards.length,1);
+  assert.throws(()=>billing.commercialTerms!.publish(careTermsDraft({tenant:created.tenant},'care-v3','9900',{period:'2026-07',rateCards:[{version:'x',digest:'not-hex'}]})),/commercial_rate_card_invalid/);
+  f.db.verify();
 });
-test('open month and unreconciled provider usage block invoice close',()=>{
-  const f=setup();assert.throws(()=>f.billing.finalizeLocalInvoice('company-a','2026-09'),/month_not_closed/);
-  const r=f.ledger.reserve(f.grant(),'fixture-host-key','fp','idem',f.provider.bound(f.request)).record;f.ledger.dispatch(r.id,f.grant(),f.provider.id);f.ledger.unknown(r.id,'interrupted');
-  f.setTime(Date.parse('2026-10-01T00:00:00Z'));assert.throws(()=>f.billing.finalizeLocalInvoice('company-a','2026-09'),/unreconciled_usage/);
+
+test('close needs the month closed, the terms accepted, an outside billable company and a forward-moving sequence',()=>{
+  const f=setup();
+  const billing=new BillingService(f.ledger,undefined,{internalCompanyId:INTERNAL});
+  const published=billing.commercialTerms!.publish(careTermsDraft(f,'care-v1','12500'));
+  assert.throws(()=>billing.finalizeCommercialInvoice(f.tenant.companyId,'2026-09','care-v1'),/month_not_closed/);
+  f.setTime(Date.parse('2026-10-01T00:00:00Z'));
+  assert.throws(()=>billing.finalizeCommercialInvoice(f.tenant.companyId,'2026-09','care-v1'),/commercial_terms_not_accepted/);
+  billing.commercialTerms!.accept(f.owner,'2026-09','care-v1',published.digest);
+  assert.throws(()=>billing.finalizeCommercialInvoice(INTERNAL,'2026-09','care-v1'),/internal_usage_not_billable/);
+  const withoutStore=new BillingService(f.ledger);
+  assert.throws(()=>withoutStore.finalizeCommercialInvoice(f.tenant.companyId,'2026-09','care-v1'),/commercial_terms_unavailable/);
+  f.ledger.provisionTenant({...f.tenant,companyId:'internal-flagged',licenseId:'internal-license',billingMode:'internal_cost'});
+  assert.throws(()=>billing.commercialTerms!.publish(careTermsDraft({tenant:{...f.tenant,companyId:'internal-flagged'}},'care-v1','12500')),/internal_usage_not_billable/);
+  const invoice=billing.finalizeCommercialInvoice(f.tenant.companyId,'2026-09','care-v1');
+  // Only the version the owner accepted for the month can name the closed invoice.
+  assert.throws(()=>billing.finalizeCommercialInvoice(f.tenant.companyId,'2026-09','care-v0'),/commercial_terms_stale/);
+  assert.throws(()=>billing.commercialTerms!.publish(careTermsDraft(f,'care-v2','6000')),/commercial_period_already_closed/);
+  f.setTime(Date.parse('2026-12-01T00:00:00Z'));
+  const later=billing.commercialTerms!.publish(careTermsDraft(f,'care-nov','12500',{period:'2026-11'}));billing.commercialTerms!.accept(f.owner,'2026-11','care-nov',later.digest);
+  billing.finalizeCommercialInvoice(f.tenant.companyId,'2026-11','care-nov');
+  const october=billing.commercialTerms!.publish(careTermsDraft(f,'care-oct','12500',{period:'2026-10'}));billing.commercialTerms!.accept(f.owner,'2026-10','care-oct',october.digest);
+  assert.throws(()=>billing.finalizeCommercialInvoice(f.tenant.companyId,'2026-10','care-oct'),/invoice_period_out_of_order/);
+  assert.equal(f.db.all('SELECT id FROM invoices').length,2);assert.equal(invoice.id,'RB-000001');
+  f.db.verify();
 });
-test('receipt exists only after signed matching verified settlement, never from a browser return',async()=>{
-  const f=setup();await f.run();f.setTime(Date.parse('2026-10-01T00:00:00Z'));const i=f.billing.finalizeLocalInvoice('company-a','2026-09');
-  await f.billing.checkout(f.owner,i.id);assert.throws(()=>f.billing.receipt(f.owner,i.id),/payment_not_settled/);
-  const signed=f.signedEvent({mode:'local',status:'pending',payment:{}});await f.billing.webhook(signed.raw,signed.signature);assert.throws(()=>f.billing.receipt(f.owner,i.id),/payment_not_settled/);
+
+test('a care credit against a paid invoice is carried to the next invoice or refunded through the adapter, never both, and the paid invoice stays as issued',async()=>{
+  const f=setup();f.setTime(Date.parse('2026-10-01T00:00:00Z'));
+  const stub=stubAdapter(f);
+  const billing=new BillingService(f.ledger,stub.adapter,{authorizeCollection:true,internalCompanyId:INTERNAL});
+  accepted(f,billing);
+  const invoice=billing.finalizeCommercialInvoice(f.tenant.companyId,'2026-09','care-v1');
+  assert.throws(()=>billing.creditCare(f.tenant.companyId,invoice.id,'credit-one','20000','synthetic-goodwill'),/credit_exceeds_charge/);
+  assert.deepEqual(billing.creditCare(f.tenant.companyId,invoice.id,'credit-one','500','synthetic-goodwill'),{duplicate:false});
+  assert.deepEqual(billing.creditCare(f.tenant.companyId,invoice.id,'credit-one','500','synthetic-goodwill'),{duplicate:true});
+  assert.throws(()=>billing.creditCare(f.tenant.companyId,invoice.id,'credit-one','600','synthetic-goodwill'),/credit_conflict/);
+  assert.throws(()=>billing.creditCare('company-b',invoice.id,'credit-b','500','synthetic-goodwill'),/invoice_not_found/);
+  const credit=f.db.get<{seq:number}>("SELECT seq FROM events WHERE kind='care_credit'")!.seq;
+  // Unpaid: a refund has nothing to refund from; the credit waits.
+  await assert.rejects(billing.refundCareCredit(f.tenant.companyId,credit,'refund-one'),/payment_not_settled/);
+  const session=await billing.checkout(f.owner,invoice.id);
+  const stored=JSON.parse(f.db.get<{body:string}>('SELECT body FROM checkouts WHERE invoice=?',invoice.id)!.body);
+  stub.settle({eventId:'event-paid',transactionId:'transaction-one',invoiceId:invoice.id,attemptId:stored.attemptId,sessionId:session.sessionId,amountCents:invoice.totalCents,currency:'AUD',settledAt:f.now()});
+  assert.deepEqual(await billing.webhook(Buffer.from('{}'),'sig'),{duplicate:false});
+  assert.equal(billing.receipt(f.owner,invoice.id).mode,'sandbox');
+  // Second credit: carried to October as a line; the first is refunded instead.
+  billing.creditCare(f.tenant.companyId,invoice.id,'credit-two','700','synthetic-correction');
+  assert.deepEqual(await billing.refundCareCredit(f.tenant.companyId,credit,'refund-one'),{refundId:'refund-one',state:'pending_verified_settlement'});
+  assert.deepEqual(stub.refunds,['refund-one']);
+  await assert.rejects(billing.refundCareCredit(f.tenant.companyId,credit,'refund-two'),/refund_reconciliation_required/);
+  stub.refund({eventId:'refund-event',refundId:'refund-one',providerRefundId:'square-refund-one',transactionId:'transaction-one',amountCents:'500',currency:'AUD',settledAt:f.now()});
+  await billing.refundWebhook(Buffer.from('{}'),'sig');await billing.refundWebhook(Buffer.from('{}'),'sig');
+  assert.equal(billing.receipt(f.owner,invoice.id).refundedCents,'500');assert.equal(f.db.all('SELECT * FROM refunds').length,1);
+  f.setTime(Date.parse('2026-11-01T00:00:00Z'));
+  const october=billing.commercialTerms!.publish(careTermsDraft(f,'care-oct','12500',{period:'2026-10'}));billing.commercialTerms!.accept(f.owner,'2026-10','care-oct',october.digest);
+  const next=billing.finalizeCommercialInvoice(f.tenant.companyId,'2026-10','care-oct');
+  assert.deepEqual(next.lines.map(l=>[l.description,l.amountCents,l.sourceInvoice??null]),[['RealBud software and routine maintenance — monthly care','12500',null],['Care credit','-700',invoice.id]]);
+  assert.equal(next.totalCents,'11800');
+  const second=f.db.get<{seq:number}>("SELECT seq FROM events WHERE kind='care_credit' ORDER BY seq DESC")!.seq;
+  await assert.rejects(billing.refundCareCredit(f.tenant.companyId,second,'refund-three'),/credit_already_applied/);
+  assert.equal(billing.invoice(f.owner,invoice.id).totalCents,'12500');
+  assert.match(invoiceHtml(next),/Credit against RB-000001/);
+  f.db.verify();
 });
-test('webhook raw bytes, environment, timestamp and amount are authenticated',async()=>{
-  const {f,payment}=await paidFixture();
-  const valid=f.signedEvent({mode:'local',status:'settled',payment});
-  await assert.rejects(f.billing.webhook(Buffer.from('changed'),valid.signature),/invalid_webhook_signature/);
-  const old=f.signedEvent({mode:'local',status:'settled',payment},f.now()-300001);await assert.rejects(f.billing.webhook(old.raw,old.signature),/stale_webhook/);
-  const live=f.signedEvent({mode:'live',status:'settled',payment});await assert.rejects(f.billing.webhook(live.raw,live.signature),/wrong_payment_environment/);
-  const wrong=f.signedEvent({mode:'local',status:'settled',payment:{...payment,eventId:'bad-event',amountCents:'999'}});await assert.rejects(f.billing.webhook(wrong.raw,wrong.signature),/settlement_mismatch/);
+
+test('checkout needs a composed payment adapter, and an adapter needs explicit authorization',async()=>{
+  const f=setup();f.setTime(Date.parse('2026-10-01T00:00:00Z'));
+  const billing=new BillingService(f.ledger,undefined,{internalCompanyId:INTERNAL});
+  accepted(f,billing);
+  const invoice=billing.finalizeCommercialInvoice(f.tenant.companyId,'2026-09','care-v1');
+  await assert.rejects(billing.checkout(f.owner,invoice.id),/payment_provider_unselected/);
+  assert.throws(()=>new BillingService(f.ledger,stubAdapter(f).adapter,{internalCompanyId:INTERNAL}),/payment_collection_not_authorized/);
+  assert.equal(f.db.get('SELECT * FROM checkouts'),undefined);
 });
-test('duplicate event IDs and distinct events for one settlement do not duplicate receipts',async()=>{
-  const {f,payment,invoice}=await paidFixture();
-  for(const eventId of ['event-paid','event-second']) { const signed=f.signedEvent({mode:'local',status:'settled',payment:{...payment,eventId}});await f.billing.webhook(signed.raw,signed.signature); }
-  assert.equal(f.db.all('SELECT * FROM payments').length,1);assert.equal(f.db.all("SELECT * FROM events WHERE kind='payment_settled'").length,1);
-  assert.equal(f.billing.receipt(f.owner,invoice.id).amountCents,invoice.totalCents);
-  assert.throws(()=>f.billing.invoice({...f.owner,companyId:'company-b'},invoice.id),/invoice_not_found/);
-  assert.throws(()=>f.billing.receipt({...f.owner,companyId:'company-b'},invoice.id),/invoice_not_found/);
+
+test('printable invoice escapes tenant content and carries no secret',()=>{
+  const f=setup();f.setTime(Date.parse('2026-10-01T00:00:00Z'));
+  const billing=new BillingService(f.ledger,undefined,{internalCompanyId:INTERNAL});
+  accepted(f,billing);
+  const invoice=billing.finalizeCommercialInvoice(f.tenant.companyId,'2026-09','care-v1');
+  const html=invoiceHtml({...invoice,customer:{...invoice.customer,name:'<script>evil</script>'}});
+  assert(!html.includes('<script>'));assert(html.includes('&lt;script&gt;'));assert(!html.includes('nano'));
+  assert(html.includes(invoice.commercialTerms!.digest));
 });
-test('uncertain checkout creation is durable and never automatically retried',async()=>{
-  const f=setup();await f.run();f.setTime(Date.parse('2026-10-01T00:00:00Z'));const invoice=f.billing.finalizeLocalInvoice('company-a','2026-09');let calls=0;
-  const adapter:HostedPaymentAdapter={id:'uncertain-local',mode:'local',async createCheckout(){calls++;throw new Error('lost response');},verifyWebhook:f.payment.verifyWebhook.bind(f.payment),requestRefund:f.payment.requestRefund.bind(f.payment),verifyRefundWebhook:f.payment.verifyRefundWebhook.bind(f.payment)};
-  const billing=new BillingService(f.ledger,adapter);await assert.rejects(billing.checkout(f.owner,invoice.id),/checkout_reconciliation_required/);await assert.rejects(billing.checkout(f.owner,invoice.id),/checkout_reconciliation_required/);assert.equal(calls,1);
-});
-test('late settlement can reconcile a lost checkout response using the persisted exact attempt',async()=>{
-  const f=setup();await f.run();f.setTime(Date.parse('2026-10-01T00:00:00Z'));const i=f.billing.finalizeLocalInvoice('company-a','2026-09');
-  const adapter:HostedPaymentAdapter={id:f.payment.id,mode:'local',async createCheckout(){throw new Error('lost');},verifyWebhook:f.payment.verifyWebhook.bind(f.payment),requestRefund:f.payment.requestRefund.bind(f.payment),verifyRefundWebhook:f.payment.verifyRefundWebhook.bind(f.payment)};
-  const billing=new BillingService(f.ledger,adapter);await assert.rejects(billing.checkout(f.owner,i.id));const saved=JSON.parse(f.db.get<{body:string}>('SELECT body FROM checkouts')!.body);
-  const payment:VerifiedPayment={eventId:'late',transactionId:'late-payment',invoiceId:i.id,attemptId:saved.attemptId,sessionId:'late-session',amountCents:i.totalCents,currency:'AUD',settledAt:f.now()};
-  const signed=f.signedEvent({mode:'local',status:'settled',payment});await billing.webhook(signed.raw,signed.signature);assert.equal(billing.receipt(f.owner,i.id).amountCents,i.totalCents);
-});
-test('credits after month close become an adjustment and never rewrite the paid invoice',async()=>{
-  const {f,invoice}=await paidFixture();const r=f.ledger.requests('company-a')[0];f.ledger.credit(r.id,'late-credit','10000000','verified-correction');
-  f.setTime(Date.parse('2026-11-01T00:00:00Z'));const next=f.billing.finalizeLocalInvoice('company-a','2026-10');assert.equal(next.kind,'Adjustment Note');assert.equal(next.totalCents,'-1');assert.equal(next.lines[0].sourceInvoice,invoice.id);
-  assert.equal(f.billing.invoice(f.owner,invoice.id).totalCents,'12502');
-});
-test('refunds require settled payment and an unapplied credit, and signed success is idempotent',async()=>{
-  const {f,payment,invoice}=await paidFixture();const r=f.ledger.requests('company-a')[0];f.ledger.credit(r.id,'refund-credit','10000000','customer-refund');
-  const credit=f.db.get<{seq:number}>("SELECT seq FROM events WHERE kind='credit'")!.seq;
-  await f.billing.refundLocalCredit('company-a',credit,'refund-one');assert.equal(f.billing.receipt(f.owner,invoice.id).refundedCents,'0');
-  await assert.rejects(f.billing.refundLocalCredit('company-a',credit,'refund-two'),/refund_reconciliation_required/);
-  const refund={eventId:'refund-event',refundId:'refund-one',providerRefundId:'provider-refund-one',transactionId:payment.transactionId,amountCents:'1',currency:'AUD',settledAt:f.now()};
-  const signed=f.signedEvent({mode:'local',status:'settled',refund});await f.billing.refundWebhook(signed.raw,signed.signature);await f.billing.refundWebhook(signed.raw,signed.signature);
-  assert.equal(f.billing.receipt(f.owner,invoice.id).refundedCents,'1');assert.equal(f.db.all('SELECT * FROM refunds').length,1);
-  f.setTime(Date.parse('2026-11-01T00:00:00Z'));assert.equal(f.billing.finalizeLocalInvoice('company-a','2026-10').totalCents,'0');
-});
-test('payment adapter selection cannot enable production collection in this build',()=>{
-  const f=setup();assert.throws(()=>new BillingService(f.ledger,{...f.payment,mode:'live'} as never),/payment_collection_not_authorized/);
-});
-test('printable invoice escapes tenant content and does not expose payment/provider secrets',async()=>{
-  const {f,invoice}=await paidFixture();const html=invoiceHtml({...invoice,customer:{...invoice.customer,name:'<script>evil</script>'}});
-  assert(!html.includes('<script>'));assert(html.includes('&lt;script&gt;'));assert(html.includes('LOCAL TEST DOCUMENT'));assert(html.includes('84 992 526 369'));assert(!html.includes('nano-AUD'));assert(!html.includes(f.paymentKey.toString()));
+
+test('care collection composes from the environment: off by default, refuses a half-configured sandbox or live mode by name',()=>{
+  const f=setup();
+  const never=async()=>{throw new Error('network must stay off');};
+  const off=composeCareCollection({env:{},ledger:f.ledger,fetch:never});
+  assert.equal(off.careCollection,'off');assert.equal(off.squareWebhooks,false);assert.equal(off.billing.commercialTerms,undefined);
+  const local=composeCareCollection({env:{REALBUD_PAYMENT_MODE:'local',REALBUD_INTERNAL_COMPANY_ID:INTERNAL},ledger:f.ledger,fetch:never});
+  assert.equal(local.billing.commercialTerms?.internalCompanyId,INTERNAL);
+  assert.throws(()=>composeCareCollection({env:{REALBUD_PAYMENT_MODE:'production'},ledger:f.ledger,fetch:never}),/care_collection_unconfigured:REALBUD_PAYMENT_MODE/);
+  const sandbox:NodeJS.ProcessEnv={REALBUD_PAYMENT_MODE:'sandbox',REALBUD_AUTHORIZE_COLLECTION:'1',SQUARE_ACCESS_TOKEN:'synthetic-sandbox-token',SQUARE_MERCHANT_ID:'merchant-a',SQUARE_LOCATION_ID:'location-a',
+    SQUARE_NOTIFICATION_URL:'https://gateway.realbud.example/v1/webhooks/square',SQUARE_WEBHOOK_SIGNATURE_KEY:'synthetic-square-webhook-signature-key',REALBUD_INTERNAL_COMPANY_ID:INTERNAL};
+  assert.throws(()=>composeCareCollection({env:{...sandbox,REALBUD_AUTHORIZE_COLLECTION:''},ledger:f.ledger,fetch:never}),/care_collection_unconfigured:REALBUD_AUTHORIZE_COLLECTION/);
+  for(const name of ['SQUARE_ACCESS_TOKEN','SQUARE_MERCHANT_ID','SQUARE_LOCATION_ID','SQUARE_NOTIFICATION_URL','SQUARE_WEBHOOK_SIGNATURE_KEY','REALBUD_INTERNAL_COMPANY_ID']) {
+    assert.throws(()=>composeCareCollection({env:{...sandbox,[name]:' '},ledger:f.ledger,fetch:never}),new RegExp(`care_collection_unconfigured:${name}$`),name);
+  }
+  const composed=composeCareCollection({env:sandbox,ledger:f.ledger,fetch:never});
+  assert.equal(composed.careCollection,'sandbox');assert.equal(composed.squareWebhooks,true);
+  assert.throws(()=>composeCareCollection({env:{...sandbox,REALBUD_PAYMENT_MODE:'live'},ledger:f.ledger,fetch:never}),/care_collection_unconfigured:REALBUD_SELLER_BASIS_DIGEST/);
+  const live={...sandbox,REALBUD_PAYMENT_MODE:'live',REALBUD_SELLER_BASIS_DIGEST:'0'.repeat(64),REALBUD_SELLER_BASIS_APPROVAL_REF:'ref-1',REALBUD_PRODUCTION_INVOICE_APPROVAL_REF:'ref-2',REALBUD_MANAGED_PROJECT_VERIFIED_REF:'ref-3'};
+  assert.throws(()=>composeCareCollection({env:{...live,REALBUD_MANAGED_PROJECT_VERIFIED_REF:''},ledger:f.ledger,fetch:never}),/care_collection_unconfigured:REALBUD_MANAGED_PROJECT_VERIFIED_REF/);
+  assert.equal(composeCareCollection({env:live,ledger:f.ledger,fetch:never}).careCollection,'live');
 });

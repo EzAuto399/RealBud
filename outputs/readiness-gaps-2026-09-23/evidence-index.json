@@ -1,0 +1,81 @@
+{
+  "proofLayersAreSeparate": true,
+  "receipts": [
+    {
+      "path": "outputs/readiness-gaps-2026-09-23/app/2026-09-23T05-18-33.061Z/receipt.json",
+      "sha256": "06c38e49e56e14a25dacfd9f211e9492b8da4747af675e937e895ad2dce37462"
+    },
+    {
+      "path": "outputs/readiness-gaps-2026-09-23/live/receipt.json",
+      "sha256": "4c1a87cc2e391e6b87b7c5355e8a9619d3f85dadebfe4629fe2fecf6f2b8a043"
+    },
+    {
+      "path": "outputs/readiness-gaps-2026-09-23/live/summary.json",
+      "sha256": "b142e1812d5ee084031ea02a1acbf52d336d0b38552246228e5acb9351b4424f"
+    },
+    {
+      "path": "outputs/readiness-gaps-2026-09-23/live/independent-readback.json",
+      "sha256": "c490441754ed952caf15ce5cd2bcb5268ed7d040a5de329e119f64010a78da36"
+    },
+    {
+      "path": "outputs/readiness-gaps-2026-09-23/files/csv-receipt.json",
+      "sha256": "e81d605f2a8f2882c98da7c80f588ae4259a6a29e5619ee9e0e9f2aa5d5612a3"
+    },
+    {
+      "path": "outputs/readiness-gaps-2026-09-23/pdf-ui-final/receipt.json",
+      "sha256": "ecd98c7652f53173c6b871e31cd61374c2a78edf75b674426d747ecea02f1f22"
+    },
+    {
+      "path": "outputs/readiness-gaps-2026-09-23/full-regressions.json",
+      "sha256": "8d766f4d4ec8b1d17d0c3bb50547d797a59f1313a96821a9b014b2a7a5d7488e"
+    },
+    {
+      "path": "outputs/readiness-gaps-2026-09-23/final-bill-regressions.json",
+      "sha256": "95065230b0ee99d245ea585534605cc57d510e92eb9ddda1ff05fc2095d2c24c"
+    },
+    {
+      "path": "outputs/readiness-gaps-2026-09-23/pdf-backup-regressions.json",
+      "sha256": "3f12c5cc9bf6e15648e0239df6d0a29a24914aa857a31f79f47ccaf30c0cc58d"
+    },
+    {
+      "path": "outputs/readiness-gaps-2026-09-23/gateway-regressions.log",
+      "sha256": "e4ea21041db31bda53d8d4e0adf23f8a03a9946d1c9d1270a8f402fa9f31cff9"
+    },
+    {
+      "path": "outputs/readiness-gaps-2026-09-23/release-guards.log",
+      "sha256": "6280285245f3a0d2adf4cd3246a8b3aab9c3d7fabcba7feb0d68c0b140733d48"
+    },
+    {
+      "path": "outputs/readiness-gaps-2026-09-23/files/packaged-pdf-check.json",
+      "sha256": "fa4ef2486aedb0726ebb88fc01b07d71f43cac54f917e644ecc05a9193d8e377"
+    },
+    {
+      "path": "outputs/readiness-gaps-2026-09-23/final-candidate-result.json",
+      "sha256": "2e3e2344e04cd7c7202efb4ceb8605f17c53987665e46d0b30dfa93e7f18bf38"
+    },
+    {
+      "path": "outputs/readiness-gaps-2026-09-23/packaged-pdf-runtime.json",
+      "sha256": "a4706df8f164a80893834a3e75bd463d72285d38de2034cebbf7268736e9172b"
+    },
+    {
+      "path": "outputs/readiness-gaps-2026-09-23/files/pdf-pinned-dns.json",
+      "sha256": "230028279c4e5da4f65cb01243b923621b6d8d5af79e74172318a1c6e3b7f80a"
+    },
+    {
+      "path": "outputs/readiness-gaps-2026-09-23/files/node-dns-contract.json",
+      "sha256": "a04755f0c9a5334f71761c90456be08e8fae3da3d57442a735c8e1193c63e3c7"
+    },
+    {
+      "path": "outputs/readiness-gaps-2026-09-23/dependency-audit.json",
+      "sha256": "851c90bd6f559dab03c00a48f5596244849899861a6e1fe9d8772d9c7d03a18b"
+    }
+  ],
+  "macQaLauncher": "/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/launch-qa.command",
+  "remainingLiveGates": [
+    "Real signed-in website account linking and app workflows through live Modelvia",
+    "Managed Gmail attachment endpoint release and real mail acceptance",
+    "Native Windows",
+    "Notarization and fresh-machine setup",
+    "Two-computer office and department joining"
+  ]
+}

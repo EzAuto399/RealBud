@@ -1,0 +1,59 @@
+{
+  "kind": "accounts-bill-exception-review",
+  "status": "complete",
+  "coverageComplete": true,
+  "itemArray": "findings",
+  "itemIdKey": "occurrenceId",
+  "itemCount": 6,
+  "items": {
+    "SYN-B01": {
+      "arrival": "received",
+      "payment": "arranged-unconfirmed",
+      "funding": "sufficient",
+      "advance": "none"
+    },
+    "SYN-B02": {
+      "arrival": "received",
+      "payment": "confirmed",
+      "advance": "outstanding"
+    },
+    "SYN-B03": {
+      "payment": "confirmed",
+      "advance": "recovered"
+    },
+    "SYN-B04": {
+      "arrival": "missing",
+      "dueDate": null
+    },
+    "SYN-B05": {
+      "arrival": "not-due"
+    },
+    "SYN-B06": {
+      "arrival": "received",
+      "funding": "insufficient",
+      "payment": "unknown"
+    }
+  },
+  "requiredFlags": {
+    "SYN-B01": [
+      "due-without-confirmed-payment"
+    ],
+    "SYN-B02": [
+      "advance-unrecovered"
+    ],
+    "SYN-B04": [
+      "missing-arrival"
+    ],
+    "SYN-B06": [
+      "insufficient-funds",
+      "owner-to-pay"
+    ]
+  },
+  "requiredHolds": [
+    "SYN-B01",
+    "SYN-B02",
+    "SYN-B04",
+    "SYN-B06"
+  ],
+  "actionsPerformed": []
+}

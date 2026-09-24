@@ -1,6 +1,9 @@
 # Locked RealBud worker. Do not flip approvals to off/smart/yolo.
 # Attach Bud's own model login from RealBud (You → Bud). Do not inherit a
 # Hermes Desktop profile login. Change with: hermes -p property model
+# A provisioned installation gets its model from the RealBud service instead:
+# the grant writes model.provider/base_url/api_mode here and keeps the key out
+# of this profile entirely. Never paste a provider key into .env on one.
 # Bud gets a private working home and starts in RealBud's property vault.
 # Safe reads, research, calculations, code, and working-file edits may run;
 # dangerous commands still route through the manual approval callback below.
@@ -11,7 +14,15 @@ approvals:
   mcp_reload_confirm: true
 agent:
   max_turns: 60
+  # One model-visible wrap-up notice at 75% of the turn cap, so a long job
+  # returns a partial answer instead of being cut off at the cap.
+  budget_warning_ratio: 0.75
   verbose: false
+# Per-turn hard ceilings on web searches and subagent spawns (upstream 50 each).
+tool_loop_guardrails:
+  loop_caps:
+    max_web_searches: 10
+    max_subagents: 4
 # Keep a long CSV/JSON line intact within the overall read budget. Upstream's
 # smaller per-line default can hide the tail without a resumable line offset.
 # Larger reads must still report partial coverage; this is not unlimited input.
@@ -33,6 +44,28 @@ toolsets:
   - delegation
 security:
   redact_secrets: true
+  # Never install Python packages at run time; the worker runs its reviewed release.
+  allow_lazy_installs: false
+# Install and Repair also own browser.backend/cloud_provider/cdp_url/engine/
+# use_real_profile (server/hermes-pack.ts WORKER_BROWSER_POLICY): Ask and its
+# subagents get no Hermes browser or credential vault; portal work uses
+# RealBud's fenced browser. Other browser settings stay the office's.
+# Native foreground and background learning proposes durable changes for review.
+# RealBud enables the learner only for its exact admitted runtime during Repair.
+# Install and Repair also add skills.disabled: Hermes' bundled skills outside
+# office work (server/hermes-pack.ts OFF_SCOPE_BUNDLED_SKILLS). pdf, xlsx, docx
+# and hermes-agent stay; RealBud and office skills are never listed there.
+skills:
+  write_approval: true
+memory:
+  write_approval: true
+auxiliary:
+  background_review:
+    enabled: false
+    extra_tools: []
+  # No extra model call per session just to name it.
+  title_generation:
+    enabled: false
 delegation:
   max_concurrent_children: 2
   max_iterations: 24

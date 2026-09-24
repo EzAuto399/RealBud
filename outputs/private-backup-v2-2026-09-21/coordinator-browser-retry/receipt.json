@@ -1,0 +1,20 @@
+{
+  "at": "2026-09-21T13:54:08.574Z",
+  "passed": false,
+  "mode": "source",
+  "executable": "/Users/yoda/.nvm/versions/node/v24.19.0/bin/node",
+  "resources": null,
+  "bootstrap": "/Users/yoda/projects/RealBud/server/bootstrap.ts",
+  "staticDirectory": "/Users/yoda/projects/RealBud/dist",
+  "runtime": {
+    "node": "24.19.0",
+    "electron": null
+  },
+  "layer": "Actual local source bootstrap, Node and built UI; fictional records; restart exercised by owned child stop/start, not native restart IPC, physical Windows or managed-service proof",
+  "checks": [
+    "Direct You navigation resolves the global sidebar book state without opening Desk"
+  ],
+  "errors": [],
+  "failure": "page.waitForEvent: Timeout 30000ms exceeded while waiting for event \"download\"\n=========================== logs ===========================\nwaiting for event \"download\"\n============================================================\n    at /Users/yoda/projects/RealBud/scripts/qa-private-backup-v2.mjs:81:30",
+  "diagnostic": "realbud server on http://127.0.0.1:49843\n"
+}

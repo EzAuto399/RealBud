@@ -10,6 +10,7 @@ const MAX_BYTES = 32 * 1024;
 const MAX_RESPONSE_BYTES = 512 * 1024;
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MEMBER_HEADER = 'x-realbud-member-session';
+const EXECUTION_HEADER = 'x-realbud-execution-grant';
 
 const ALLOWED = new Map<string, ReadonlySet<string>>([
   ['/api/company/status', new Set(['GET'])],
@@ -17,10 +18,23 @@ const ALLOWED = new Map<string, ReadonlySet<string>>([
   ['/api/company/sign-in', new Set(['POST'])],
   ['/api/company/recover-member', new Set(['POST'])],
   ['/api/company/me', new Set(['GET'])],
+  ...['begin','confirm','revoke','list'].map(action => [`/api/company/execution-grants/${action}`, new Set(['POST'])] as [string, ReadonlySet<string>]),
+  ...['status','admit','check','renew','settle'].map(action => [`/api/company/execution/${action}`, new Set(['POST'])] as [string, ReadonlySet<string>]),
+  ['/api/company/portal-bindings/begin', new Set(['POST'])],
+  ['/api/company/portal-bindings/accept', new Set(['POST'])],
+  ['/api/company/portal-bindings/confirm', new Set(['POST'])],
+  ['/api/company/portal-bindings/revoke', new Set(['POST'])],
+  ['/api/company/portal-bindings/list', new Set(['POST'])],
   ['/api/company/logout', new Set(['POST'])],
   ['/api/company/invitations', new Set(['POST'])],
   ['/api/company/invitations/revoke', new Set(['POST'])],
   ['/api/company/members/revoke', new Set(['POST'])],
+  ['/api/company/membership/management', new Set(['POST'])],
+  ['/api/company/membership/leave', new Set(['POST'])],
+  ['/api/company/membership/departure-status', new Set(['POST'])],
+  ['/api/company/ownership/offer', new Set(['POST'])],
+  ['/api/company/ownership/accept', new Set(['POST'])],
+  ['/api/company/ownership/cancel', new Set(['POST'])],
   ['/api/company/credentials', new Set(['POST'])],
   ['/api/company/workflow-template', new Set(['GET', 'PUT'])],
   ['/api/company/work-members', new Set(['GET'])],
@@ -32,6 +46,16 @@ const ALLOWED = new Map<string, ReadonlySet<string>>([
   ['/api/company/work/reassign', new Set(['POST'])],
   ['/api/company/work/history', new Set(['POST'])],
   ['/api/company/scopes', new Set(['GET', 'POST'])],
+  ['/api/company/departments/list', new Set(['POST'])],
+  ['/api/company/departments', new Set(['POST'])],
+  ['/api/company/departments/access', new Set(['POST', 'PUT'])],
+  ['/api/company/departments/cases', new Set(['POST'])],
+  ['/api/company/departments/cases/recover', new Set(['POST'])],
+  ['/api/company/departments/cases/create', new Set(['POST'])],
+  ['/api/company/departments/cases/assign', new Set(['POST'])],
+  ['/api/company/departments/cases/close', new Set(['POST'])],
+  ['/api/company/departments/assignees', new Set(['POST'])],
+  ['/api/company/departments/lifecycle', new Set(['POST'])],
   ['/api/company/knowledge/read', new Set(['POST'])],
   ['/api/company/knowledge/history', new Set(['POST'])],
   ['/api/company/knowledge', new Set(['PUT'])],
@@ -111,11 +135,13 @@ function isBrowserAttempt(headers: IncomingHttpHeaders): boolean {
   return String(headers.upgrade ?? '').toLowerCase() === 'websocket';
 }
 
-function memberHeadersOnly(headers: IncomingHttpHeaders): IncomingHttpHeaders {
+function companyAuthorityHeaders(headers: IncomingHttpHeaders): IncomingHttpHeaders {
   const value = headers[MEMBER_HEADER];
-  if (typeof value !== 'string' || value.length === 0 || value.length > 4096) return {};
-  if (value.includes('\0') || value.includes('\r') || value.includes('\n')) return {};
-  return { [MEMBER_HEADER]: value };
+  const execution = headers[EXECUTION_HEADER];
+  const result: IncomingHttpHeaders = {};
+  if (typeof value === 'string' && value.length > 0 && value.length <= 4096 && !/[\0\r\n]/.test(value)) result[MEMBER_HEADER] = value;
+  if (typeof execution === 'string' && /^[a-f0-9]{64}$/.test(execution)) result[EXECUTION_HEADER] = execution;
+  return result;
 }
 
 function parseRequestPath(url: string | undefined): string | null {
@@ -218,7 +244,7 @@ async function serve(req: IncomingMessage, res: ServerResponse, handle: CompanyH
         return;
       }
     }
-    const result = await handle(path, method, { headers: memberHeadersOnly(req.headers) }, body);
+    const result = await handle(path, method, { headers: companyAuthorityHeaders(req.headers) }, body);
     const status =
       Number.isInteger(result.status) && result.status >= 100 && result.status <= 599 ? result.status : 500;
     sendJson(res, status, result.body);
@@ -302,11 +328,12 @@ export async function requestCompanyHost(options: {
   path: string;
   method: string;
   memberToken?: string;
+  executionToken?: string;
   body?: unknown;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<{ status: number; body: unknown }> {
-  const { origin, certificatePem, path, method, memberToken, body, signal } = options;
+  const { origin, certificatePem, path, method, memberToken, executionToken, body, signal } = options;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   if (signal?.aborted) {
     const err = new Error('aborted');
@@ -316,6 +343,7 @@ export async function requestCompanyHost(options: {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 60_000) throw new Error('company host timeout');
   if (!/^[A-Z]+$/.test(method) || method.length > 16) throw new Error('invalid company path');
   if (!isCanonicalPath(path) || !ALLOWED.get(path)?.has(method)) throw new Error('invalid company path');
+  if (executionToken !== undefined && (!/^\/api\/company\/execution\/(status|admit|check|renew|settle)$/.test(path) || !/^[a-f0-9]{64}$/.test(executionToken) || memberToken)) throw new Error('invalid execution credential');
   const { hostname, port } = parseCompanyOrigin(origin);
   let expectedFp: string;
   try {
@@ -451,6 +479,7 @@ export async function requestCompanyHost(options: {
             }
             req.setHeader(MEMBER_HEADER, memberToken);
           }
+          if (executionToken) req.setHeader(EXECUTION_HEADER, executionToken);
           req.end(payload);
         } catch {
           fail(failedRequest());

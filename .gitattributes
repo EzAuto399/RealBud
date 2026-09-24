@@ -1,0 +1,6 @@
+# Text is stored with LF so a Windows checkout reads the same bytes as macOS.
+* text=auto eol=lf
+# Source data is preserved byte for byte (bank exports keep their CRLF).
+*.csv -text
+# Dated evidence is kept exactly as recorded.
+outputs/** -text

@@ -157,7 +157,7 @@ function normalizeEvidence(value: unknown): SharedWorkEvidence | null {
     sourceVersion: bounded(item.sourceVersion, 1, 120), text: bounded(item.text, 1, 8000) };
 }
 
-function normalizeShare(input: ShareWorkInput, actorId: string): Share {
+export function normalizeShare(input: ShareWorkInput, actorId: string): Share {
   if (!input || typeof input !== 'object') throw new CompanyError('invalid_input');
   if (!PURPOSES.has(input.purpose)) throw new CompanyError('invalid_input');
   if (!Array.isArray(input.recipientMemberIds) || input.recipientMemberIds.length < 1 || input.recipientMemberIds.length > 10) {

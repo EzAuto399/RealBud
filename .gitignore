@@ -17,7 +17,14 @@ argv-*.txt
 dist-server/
 dist-postgres/
 .postgres-cache/
-electron/resources/
+# Generated helper binaries live here; the checked-in sources below are re-included.
+electron/resources/*
+!electron/resources/speech-helper-win.cs
+!electron/resources/worker-supervisor-win.cs
+!electron/resources/cua-launcher-win.cs
+!electron/resources/speech-helper.swift
+!electron/resources/speech-helper-Info.plist
+!electron/resources/app-icon.png
 
 # scratch: generated documents, PDFs and salvage copies — not product code
 output/
@@ -28,3 +35,17 @@ tmp/
 # phase2/ and coordination-*.json; a fresh demo run should not be swept in by
 # `git add -A`.
 managed-gateway/evidence/demo/
+
+# Reviewed bundled browser helper
+dist-browser/
+.browser-cache/
+
+# Packaged app copies inside dated evidence folders are regenerable and multi-GB;
+# receipts (json/png/md/log) beside them stay committable.
+outputs/**/package/
+outputs/**/package-final/
+outputs/**/*.app/
+outputs/**/*.dmg
+outputs/**/*.zip
+__pycache__/
+*.pyc

@@ -1,17 +1,29 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, constants, fsyncSync, lstatSync, mkdirSync, openSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { closeSync, constants, fsyncSync, lstatSync, mkdirSync, openSync, realpathSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { ASK_ATTACH_MAX_BYTES, isAskAttachName, safeAskAttachName } from "../shared/ask-attachments.ts";
+import { windowsFilePrivacySync } from "./windows-file-privacy.ts";
 export { ASK_ATTACH_MAX_BYTES, isAskAttachName, safeAskAttachName } from "../shared/ask-attachments.ts";
 
 const fail = (message: string, status = 400): never => { throw Object.assign(new Error(message), { status }); };
 
 function privateDirectory(path: string, requirePrivate = true): void {
-  try { mkdirSync(path, { mode: 0o700 }); }
+  let created = false;
+  try { mkdirSync(path, { mode: 0o700 }); created = true; }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
   const info = lstatSync(path);
   if (!info.isDirectory() || info.isSymbolicLink() || (process.platform !== "win32" &&
     ((requirePrivate && (info.mode & 0o077) !== 0) || info.uid !== process.getuid?.()))) {
+    fail("The private attachment folder needs service attention. The original file is unchanged.", 409);
+  }
+  try {
+    // Mode bits do not protect Windows files. Restrict only a directory we
+    // created, while still empty; legacy objects must pass verify-only.
+    windowsFilePrivacySync(resolve(path), "directory", created);
+  } catch {
+    if (created) {
+      try { rmdirSync(path); } catch { /* never remove a nonempty directory */ }
+    }
     fail("The private attachment folder needs service attention. The original file is unchanged.", 409);
   }
 }
@@ -52,6 +64,9 @@ export function saveAskAttachment(dataDir: string, input: unknown): { path: stri
   const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW || 0), 0o600);
   let saved = false;
   try {
+    // The exclusive file is still empty. A refused Windows descriptor must
+    // stop the copy before any selected bytes reach disk.
+    windowsFilePrivacySync(path, "file", true);
     writeFileSync(fd, bytes);
     fsyncSync(fd);
     saved = true;
@@ -60,9 +75,9 @@ export function saveAskAttachment(dataDir: string, input: unknown): { path: stri
   } finally {
     closeSync(fd);
     if (!saved) {
-    // This is a new unique upload owned by this call, never an original file.
-    // Close first so Windows can remove an incomplete copy too.
-    try { unlinkSync(path); } catch { /* preserve original failure */ }
+      // This is a new unique upload owned by this call, never an original file.
+      // Close first so Windows can remove an incomplete copy too.
+      try { unlinkSync(path); } catch { /* preserve original failure */ }
     }
   }
   if (!saved) return fail("The file copy could not be saved. The original file is unchanged.", 503);

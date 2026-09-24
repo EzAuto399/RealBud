@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://realbud.invalid/contracts/accounts-invoice-entry-review.schema.json",
+  "title": "accounts-invoice-entry-review",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "kind": {
+      "const": "accounts-invoice-entry-review"
+    },
+    "sourceReference": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "complete",
+        "partial",
+        "blocked"
+      ]
+    },
+    "coverageComplete": {
+      "type": "boolean"
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "documentId": {
+            "type": "string"
+          },
+          "decision": {
+            "enum": [
+              "queue",
+              "duplicate",
+              "hold"
+            ]
+          },
+          "duplicateOf": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "conflictGroup": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "proposedEntry": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "supplierId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "invoiceId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "propertyId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "amount": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "currency": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "dueDate": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "costType": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "supplierId",
+              "invoiceId",
+              "propertyId",
+              "amount",
+              "currency",
+              "dueDate",
+              "costType"
+            ]
+          },
+          "sourceIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "documentId",
+          "decision",
+          "duplicateOf",
+          "conflictGroup",
+          "proposedEntry",
+          "sourceIds",
+          "reason"
+        ]
+      }
+    },
+    "holds": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "itemId": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "itemId",
+          "reason"
+        ]
+      }
+    },
+    "actionsPerformed": {
+      "type": "array",
+      "maxItems": 0
+    }
+  },
+  "required": [
+    "version",
+    "kind",
+    "sourceReference",
+    "status",
+    "coverageComplete",
+    "documents",
+    "holds",
+    "actionsPerformed"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "at": "2026-09-21T17:22:20.052051+00:00",
+  "sourceSha256": "13f9c35ccb5d6d6c1f20743592348f306b1ba4b18beb2e608a19915ffe3213df",
+  "syntax": "passed",
+  "isolatedWindowsTransitions": {
+    "passed": 10,
+    "failed": 0,
+    "receipt": "proposals-state-checks.json",
+    "WindowsNativeExecuted": false
+  },
+  "existingPosixFaultSuite": {
+    "passed": 15,
+    "failed": 0,
+    "seconds": 2.775,
+    "exitCode": 0,
+    "log": "proposals-posix-faults.log",
+    "realAdmittedNativeSource": true,
+    "profiles": "disposable-fictional-only"
+  },
+  "productionWindowsHoldChanged": false,
+  "grokReview": "timed-out-no-qualified-result",
+  "otherSourceEdits": false
+}

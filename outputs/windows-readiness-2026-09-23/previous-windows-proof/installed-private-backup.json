@@ -1,0 +1,30 @@
+{
+  "at": "2026-09-23T01:43:43.560Z",
+  "passed": true,
+  "slowestCall": {
+    "path": "POST /api/private-backup/restore",
+    "ms": 45199
+  },
+  "mode": "packaged",
+  "platform": "win32",
+  "arch": "x64",
+  "executable": "D:\\a\\_temp\\RealBud installed probe c1ea768c5e9047cf945ea820f26123f9\\RealBud.exe",
+  "resources": "D:\\a\\_temp\\RealBud installed probe c1ea768c5e9047cf945ea820f26123f9\\resources",
+  "bootstrap": "D:\\a\\_temp\\RealBud installed probe c1ea768c5e9047cf945ea820f26123f9\\resources\\server\\bootstrap.js",
+  "runtime": {
+    "node": "24.18.1",
+    "electron": "43.4.0"
+  },
+  "layer": "Actual packaged Electron/Node and compiled bootstrap HTTP and isolated filesystem; fictional fixtures; not physical customer device, GUI, managed-service or live integration proof",
+  "checks": [
+    "Actual sensitive backup routes reject missing session and foreign origin",
+    "Private notes, workflow inputs, instruction packs and edited personal instructions block replacement and remain intact",
+    "Existing company enrollment files block restoration",
+    "Stale preview and concurrent unfinished business requests refuse staging without stranding the workspace",
+    "A staged restore holds business reads, writes, exports and duplicate restore attempts",
+    "Cold bootstrap completes once with unchanged destination key, matching durable completion receipt and disabled schedules"
+  ],
+  "skipped": [
+    "POSIX chmod refusal is not a Windows ACL test; native Windows bootstrap still enforces its ACL helper."
+  ]
+}

@@ -1,0 +1,9 @@
+PASS No-file restore entry and reload can return to welcome without profile, book or backup mutation
+PASS Failed uploaded copy can be removed and return to welcome; cancellation receipt and fresh book survive reload
+PASS Fresh workspace ignores unscoped browser completion; profile submission only reaches rules
+PASS Interrupted setup resumes rules after service restart at different service and renderer ports
+PASS Completed welcome survives a second changed-port restart with the saved contact intact
+PASS Replayed welcome preserves a restored book contact instead of overwriting it
+PASS Sample exploration retains its profile and can finish after a changed-port restart
+PASS Protected book remains unchanged; recovery is saved separately and resumes after restart
+PASS Zero renderer page errors throughout welcome, restore-return and restart scenarios

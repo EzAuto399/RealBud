@@ -1,0 +1,23 @@
+{
+  "recordedAt": "2026-09-21T21:55:51.910020+00:00",
+  "scope": "Independent final source review; not a build or deployment receipt",
+  "files": {
+    "website/lib/session.ts": "c603085ea9bfc807ca3bba41d0236125e5e0f31a634ca5bf70fc46144d073bd7",
+    "website/lib/portal-person.ts": "ba998dc331c8a42ba3d60a0f277f04469de459ef8ab8a93566c2804745512d52",
+    "website/lib/portal-auth.ts": "7c787bec2be4df23f16428a19f00c6e64fe5c5a056557df4d3342899724ac5fe",
+    "website/app/auth/callback/route.ts": "a00b76dee81d00edb45f6e17448979cd085b26e0bd12052715972828fe0e58e6",
+    "website/supabase/migrations/202609220002_portal_people.sql": "17d9df75b244cb13e356ccfff3c27591aaf7a38aec0f0c4ce003d671cb79904d",
+    "website/scripts/test-portal-people-postgres.mjs": "9b2ffe0e9c867938f86a0fffea1caf422ba8033baa3ac1e1f7fc488c7c143cb0",
+    "website/app/api/account/person/route.ts": "85deff89e530801523115936d5ea46a0a0b9a2631dba9838c68dbf8b7ecc601b",
+    "website/app/admin/layout.tsx": "208d0a6bf03ad073d9fc5b1ac05966d566317f1af577ccdbfce9611019c95dbb",
+    "website/app/account/access-notice.tsx": "62f3930f4c049ef8341375fd9ee3f8b3d6273ddefbb0b39b7a1073a0c83d95bb",
+    "website/app/sign-in/[[...sign-in]]/page.tsx": "38a2297c508f3dc22212b9f6f231cd1456b7c65a75a27cff2986c8233912451d",
+    "website/app/account/page.tsx": "74b2cc0134819f16918c59cebbf4eae7e5290db7705d95571509c70cab53ffd7",
+    "website/app/account/rates/page.tsx": "a3252d9d71d3fcb3f4c1c8ab8c17a5ec0b058756c175ad3a609906076ce2602e",
+    "website/app/account/usage/page.tsx": "95daaf89bdab4ebaeebb5559634a4b46c991201d5f886f81ebf437e3fc951481",
+    "website/app/account/invoices/page.tsx": "57b8fea3ad0d7410f0d95aa7e5346a74d2585af0ffd8f5d41e28415401921c44",
+    "website/app/account/limits/page.tsx": "e4f3f413ff7278a54cbca5457b4c34e6185a4e3c4db3c8e22d5a4a57231e58be",
+    "website/app/account/support/page.tsx": "dc61c290278b0f561f2062b38c9b0ac265a62c2e542a4062b2aeb991ce76b17b",
+    "website/app/account/installations/page.tsx": "688635e147e7cf54a3ba22973e3f2665c41871a239e83af937914d8483c673fd"
+  }
+}

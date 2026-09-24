@@ -1,0 +1,24 @@
+{
+  "at": "2026-09-21T04:38:22.331Z",
+  "passed": true,
+  "mode": "packaged",
+  "executable": "/Users/yoda/projects/RealBud/outputs/real-estate-core-2026-09-21/package/mac-arm64/RealBud.app/Contents/MacOS/RealBud",
+  "resources": "/Users/yoda/projects/RealBud/outputs/real-estate-core-2026-09-21/package/mac-arm64/RealBud.app/Contents/Resources",
+  "bootstrap": "/Users/yoda/projects/RealBud/outputs/real-estate-core-2026-09-21/package/mac-arm64/RealBud.app/Contents/Resources/server/bootstrap.js",
+  "staticDirectory": "/Users/yoda/projects/RealBud/outputs/real-estate-core-2026-09-21/package/mac-arm64/RealBud.app/Contents/Resources/ui",
+  "runtime": {
+    "node": "24.18.1",
+    "electron": "43.4.0"
+  },
+  "layer": "Actual packaged Electron/Node, compiled bootstrap and bundled UI; fictional records; restart exercised by owned child stop/start, not native restart IPC, physical Windows or managed-service proof",
+  "checks": [
+    "Direct You navigation resolves the global sidebar book state without opening Desk",
+    "Actual UI exports an encrypted business backup, confirms matching passphrases and clears them after download",
+    "Real API preview shows included/excluded contents while the nonfresh source workspace cannot stage a restore",
+    "Changed passphrase or file invalidates the preview; incorrect passphrase and malformed file leave records untouched",
+    "Fresh-workspace restore requires reviewed preview and explicit confirmation, stages once, and shows a truthful restart requirement",
+    "Actual cold bootstrap restores the property and exact bank bytes under a different local key; reloaded UI is no longer staged",
+    "Desktop and390px previews render without page errors or horizontal overflow"
+  ],
+  "errors": []
+}

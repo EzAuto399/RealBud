@@ -1,0 +1,9 @@
+Installed resources include native helpers, speech helper, SDK, server and UI
+Installed resources include private-profile provisioning code and shipped property safeguards
+Installed BrowserSkill executable matches its manifest and runs at the pinned version
+Installed PostgreSQL tools retain their hashes and load their Windows dependencies
+Installed Windows Cua executable runs and reports the pinned version
+Installed RealBud Speech.exe launches and speaks the NDJSON protocol (or exits cleanly)
+Installed Electron runtime supports durable SQLite
+Installed Windows SDK starts a private host and exposes browser/native control tools
+Private Windows desktop host stops cleanly

@@ -1,0 +1,818 @@
+# Windows profile setup acceptance
+
+The profile fixture follow-up on 22 September 2026 changes tests only. It keeps
+the production ACL policy, existing-data admission rules, and Windows memory
+hold intact.
+
+`server/testing/private-profile-fixture.ts` prepares disposable fixtures with
+protected Windows ACLs before writing their content. New directories are
+protected before creating descendants; existing objects are never ACL-repaired.
+The affected pack, model attachment, runtime update, gate, lifecycle and shared
+fake-Hermes fixtures now satisfy the same admission contract as fresh profiles.
+Windows setup tests have a bounded two-minute per-test allowance; the ordinary
+cross-platform timeout remains unchanged.
+
+`server/hermes-profile-windows.test.ts` is discovered by the existing Windows CI
+job. Its six native cases cover fresh profile creation, fictional credential
+attachment/replacement, startup in a new Node process, inherited home/config
+refusal, an explicit Users-read grant, and hardlink/junction refusal. An
+independent PowerShell witness records owner/protected/grant booleans and SDDL
+hashes. It checks unchanged file bytes and parent/file descriptors across restart
+and rejection, without recording paths, SIDs, descriptors or credential content.
+The production privacy verifier is not the sole policy witness.
+
+Local macOS checks passed 137 tests; all six native Windows cases were skipped.
+The cold-process source-import/preservation check also passed on macOS. These
+results do not demonstrate Windows ACL behavior, NTFS publication semantics,
+Hermes runtime installation, provider access, packaged-device acceptance, or
+power-loss recovery. The runtime-update fixtures use a fictional installer and
+version probe. The native Windows CI run remains required.
+
+The service smoke now also verifies a newly absent disposable Hermes home. It
+copies the selected artifact's property pack, checks the authenticated profile
+status, compares shipped safeguard and skill bytes, and independently checks
+file types, ownership and privacy. Windows uses a read-only protected-DACL
+witness; POSIX uses the owner and mode. An explicit installed resources path
+cannot fall back to the checkout's pack. The profile stays unconfigured, without
+provider credentials or a ready worker.
+
+The actual compiled macOS service passed this proof with seven private files and
+six directories: startup took 451 ms and inspection took 8 ms. The focused harness
+also rejects healthy services with missing, unsafe or incorrectly copied profiles.
+This does not demonstrate Windows setup or a running Hermes model.
+
+One performance gate remains:
+
+- Installed-profile startup calls eight or nine synchronous PowerShell privacy
+  checks before service readiness, and a fresh install performs additional
+  creation checks; native Windows latency is unmeasured. The smoke retains its
+  25-second child watchdog and the installer's 45-second outer bound. The profile
+  API request is bounded at 10 seconds and its separate Windows ACL witness at
+  15 seconds. None of these limits has been justified by a native Windows timing
+  result yet.
+
+Evidence and final file hashes are in
+`outputs/hermes-windows-acceptance-2026-09-22/profile-fixture-verification.json`.
+The compiled smoke result and its narrower test receipt are
+`outputs/hermes-windows-acceptance-2026-09-22/compiled-private-profile-smoke.json`
+and `outputs/hermes-windows-acceptance-2026-09-22/service-profile-verification.json`.
+
+## 22 September 2026 — desk key custody, inventory cross-check, CI trigger
+
+`electron/desk-key-custody.mjs` previously admitted key files with POSIX mode
+and uid rules only, which are skipped on win32, and never applied the ACL policy
+`server/private-json.ts` applies through `windowsFilePrivacySync`. The wrapped
+desk key therefore landed on Windows with whatever its parent directory
+inherited. It now applies the same policy: restrict on a key directory this
+start creates and on `desk.key.wrap` (and any preserved recovery copy) before
+key material is written, verify on both existing key files before they are read.
+A directory this policy did not create is deliberately left alone, matching the
+mode-755 accommodation in `server/ask-attach.ts` and this module's own POSIX
+rules, so an install predating the change can still open its key; the key files
+carry protected descriptors that do not depend on the parent's. Path, kind and
+action are passed as environment variables,
+never interpolated into PowerShell. Electron main loads plain `.mjs` from the
+ASAR and cannot import the compiled server module, so the ACL script is
+duplicated; `electron/desk-key-custody.test.mjs` fails if the two copies drift
+apart by a single byte.
+
+The helper is injectable, so the call sites, paths and restrict/verify actions
+are proven on every OS. A win32-only case uses `profileAclWitness` to observe
+the native descriptor of the key directory and the wrapped key. The ACL suite's
+own fixture root in `server/windows-file-privacy.test.ts` is now canonicalized
+with `realpath`, matching `server/testing/private-profile-fixture.ts`, because
+the ancestor walk and reparse-point rejection read the literal path.
+
+`electron/package-files.test.mjs` now reads the installed-resource inventory out
+of `scripts/smoke-windows-package.mjs` and checks it against the
+`extraResources` rules in `electron-builder.yml`: every asserted resource is
+staged by exactly one rule, and every entry that is not build output still has a
+checked-in source, including `server/windows-file-privacy.ts` and
+`server/hermes-profile-storage.ts`. A renamed server module now fails on macOS
+CI instead of only in a manual Windows run. `.github/workflows/package-win.yml`
+also builds on every push to `main`, with a concurrency group that cancels
+superseded runs and keeps dispatched release builds in their own group.
+
+What is proven: the selector logic, the injected-helper wiring, the script
+parity guard and the inventory cross-check all pass on macOS. What is not:
+nothing here observes a real Windows ACL. The native descriptor on the key
+directory and the wrapped key, and the packaged inventory actually existing in
+an installed app, still require the Windows CI runner or a physical device. An
+independent design review of this custody policy, the checks it asked for and
+the runtime behaviour only NTFS can show is summarized in
+`outputs/windows-key-custody-2026-09-22/review-summary.md`.
+
+## 22 September 2026 — two Windows setup-path corrections (source-level only)
+
+Two Windows-only defects in the worker setup path were fixed at source. (1)
+`bootstrapInvocation` in `server/worker-bootstrap.ts` spawned the verified
+upstream `install.ps1` with `powershell.exe -NoProfile -NonInteractive -File`
+and no execution-policy argument; a default Windows 11 client policy is
+`Restricted`, which refuses any `.ps1` passed to `-File`, so setup would have
+failed before its first stage. The invocation now passes `-ExecutionPolicy
+Bypass` as well. Bypass is process-scoped and changes no machine or user
+policy, and it cannot widen what runs, because `downloadBootstrap` rejects the
+installer on a sha256 mismatch before any spawn happens — that ordering is
+unchanged and is asserted by the existing download test. (2) `preflight()` in
+`server/hermes-bridge.ts` probed `curl`/`git`/`python3` and so reported a
+missing dependency on every Windows machine, which does not ship a `python3`
+executable; it had no caller outside its own test and has been removed rather
+than made platform-correct. Both changes are proven only by macOS source tests
+(`server/worker-bootstrap.test.ts`, `server/hermes-bridge.test.ts`) and the
+server typecheck. Neither has been observed on a Windows runner or device, so
+the Windows setup path remains unaccepted.
+
+## 22 September 2026 — making the fresh-profile smoke fixture explain itself on Windows
+
+Package Windows run 35712320927 (windows-latest) failed the fixture case
+`installed Windows service acceptance > checks explicit fresh-profile smoke
+boundaries: complete`, and the `public profile` case reported "Compiled service
+exited before readiness" instead of its privacy refusal. The receipt could not
+say why: it carried no exit status, and its `diagnostic` was empty.
+
+One reported hypothesis was checked and is wrong. The fixture does not need
+`dist-server`: `electron/service-smoke.test.mjs` writes its own miniature
+`server/`, `shared/`, `src/` and `pack/property` tree into a scratch directory
+and passes it to `scripts/smoke-company-bundle.mjs` as an explicit source, so
+running the fixture step before `pnpm package:win` is correct and the workflow
+step order is unchanged.
+
+Two real defects were found by reading the child's failure path.
+(1) On Windows, `exit` can be emitted before the stderr pipe has been read, and
+the smoke wrote its receipt as soon as it saw the child gone — so exactly the
+runs that most needed a diagnostic produced an empty one. The smoke now waits
+(bounded, 2 s) for `stderr` to close, and records `child.exitCode`,
+`child.signal` and `child.killedByWatchdog` on every run, pass or fail. The
+`diagnostic` is now the last 20 non-empty stderr lines with credential-shaped
+values masked; the script runs from an installed package, where the compiled
+server's `redactSecretsInText` is not importable, so it uses a conservative
+prefix/Bearer/key-value matcher and no generic hex or base64 heuristic.
+(2) The fixture's own ACL preparation shells out to `powershell.exe`, and the
+first PowerShell of a CI job is cold. Its 15 s bound and the smoke's 25 s
+readiness watchdog are plausible causes of a silent early exit. On win32 the
+fixture's PowerShell bound is now 60 s and the smoke's readiness window is
+120 s, passed as `REALBUD_SMOKE_READY_MS` and clamped to [5 s, 180 s] by the
+script. The default stays 25 s, so the installed probe in
+`scripts/test-windows-installer.ps1` keeps its existing 45 s budget.
+`scripts/service-smoke-env.mjs` now also pins `PSModulePath` to
+`%SystemRoot%\System32\WindowsPowerShell\v1.0\Modules` (and forwards
+`SystemDrive`), so the deliberately stripped child environment cannot lose
+`Get-Acl`/`Set-Acl` and cannot borrow a developer's module path either.
+
+No privacy assertion was weakened: the independent read-only ACL witness, the
+`public profile` refusal and the POSIX owner/mode checks are unchanged. What is
+proven: all 10 cases pass on macOS (`pnpm exec vitest run
+electron/service-smoke.test.mjs`) and `pnpm check:electron` is clean. What is
+not proven: nothing here has run on win32. If the cold-PowerShell theory is
+wrong, the next Windows run is now able to say so, because the receipt carries
+the child's exit status and its redacted stderr.
+
+## 22 September 2026 — one PowerShell process for an ordered list of admissions
+
+Follow-on to the cold-PowerShell finding above. The cost is per process, not per
+path, and every admission was its own `powershell.exe`: provisioning one Hermes
+profile runs well over a dozen. `server/windows-file-privacy.ts` now exports
+`windowsFilePrivacyBatchSync(operations)`, which applies an ordered list in a
+single process. Each operation still arrives by environment variable and is read
+by name inside the script — `REALBUD_WINDOWS_FILE_PRIVACY_{PATH,KIND,ACTION}`
+for the first, the same names suffixed `_1`, `_2`, … after it, with
+`REALBUD_WINDOWS_FILE_PRIVACY_COUNT` giving the length. Nothing is interpolated.
+The list stops at the first refusal, so nothing after a failure is applied, and
+the failure keeps today's numeric exit code; the script echoes the integer index
+it attempted (and nothing else) so the error can name the operation.
+`windowsFilePrivacySync` is now a one-operation batch, and a one-operation batch
+is the same invocation and the same environment as before — which is why
+`electron/desk-key-custody.mjs` needed only the byte-identical script copy, not
+a change to its call.
+
+How far this actually goes. Batching is only safe where one admission does not
+gate the next. In `server/hermes-profile-storage.ts` that is the pair at the top
+of `writeProfileFile`: the destination directory and the file already published
+there are both verify-only, so they now share one process — five admissions in
+four launches when replacing a file. Two sequences were deliberately left alone.
+`ensureProfileDirectory` still protects each newly created directory before
+creating anything inside it, so its restricts cannot be collected. In
+`writeProfileFile`, the stage's restrict must return before any byte is written
+and the published verify can only run after the rename. A first publication
+therefore still costs three launches, so this does **not** on its own bring a
+cold first run inside the installed probe's 25 s or the installer smoke's 45 s.
+
+The remaining lever is a profile-scoped batch across the call sites in
+`server/hermes-pack.ts` — in particular `prepareProfile`'s three consecutive
+`ensureProfileDirectory` calls and its five consecutive `readProfileFile` calls,
+which are independent of each other and would collapse to two processes. That
+file was out of scope here.
+
+Proven: `pnpm exec vitest run server/windows-file-privacy.test.ts
+server/windows-file-privacy-sync.test.ts
+server/windows-file-privacy-diagnostics.test.ts
+server/hermes-profile-storage.test.ts server/hermes-profile-windows.test.ts
+electron/desk-key-custody.test.mjs` passes on macOS, `pnpm exec tsc -p
+tsconfig.server.json` and `pnpm check:electron` are clean, and the parity test
+still holds the two script copies byte-identical. Not proven: no PowerShell runs
+on the macOS host, so the batch script has never been parsed or executed. The
+loop, the `_i` lookup and the echoed index are unverified until a win32 run; the
+native suites in `server/windows-file-privacy.test.ts` and
+`server/hermes-profile-windows.test.ts` are the ones that will say so.
+
+Follow-up, same day: run 35713565138 carried the fixes above and reduced the
+failure to the single `complete` case (9/10 pass, 60.5 s), but vitest printed
+only `expect(receipt.passed).toBe(true)` — the receipt was honest and the
+assertion was not. Every assertion in that case now carries the receipt's
+`failure`, `child`, `timings`, `powershell` and redacted `diagnostic` as its
+message, and the receipt additionally records `timings.readinessMs` (wall time
+from spawn to readiness, recorded even when readiness never arrives) and
+`powershell` — the compiled service's own launch count and elapsed time,
+reported on stderr after every launch including failed ones, alongside this
+script's ACL witness count. The launch counts are reported, not asserted, so a
+truncated stderr cannot invent a second failure. macOS: 10/10 pass.
+
+## 22 September 2026 — the profile-scoped batch: 8 launches to 3 at startup
+
+Takes the lever the section above left open. `server/hermes-profile-storage.ts`
+adds two batch-capable entry points and `server/hermes-pack.ts` calls them.
+
+`ensureProfileDirectories(paths)` admits every directory in the list that
+already exists first, together, in one process — before anything is created
+inside any of them, so a foreign or unprotected root still refuses with no
+descendant on disk. Only the root of a chain whose parent this call has not
+admitted keeps its own protect-before-create process. A directory created
+inside a directory the same call has already admitted is private from birth:
+on Windows it inherits the admitted root's protected DACL, on POSIX it is
+created 0700. Those restricts therefore no longer gate each other and share one
+process. This is the one place the per-level "protect before create" rule is
+relaxed, and only underneath a root this call has just proven protected.
+Inheritance is not protection — an inherited descriptor has
+`AreAccessRulesProtected` false and our own verifier refuses it (exit 5) — so
+every created directory is still restricted before the call returns.
+`ensureProfileDirectory(path)` is unchanged: one path, one level at a time.
+
+`readProfileFiles(paths)` admits the files in the list that exist in one
+process, then opens and reads each one only after its own admission has
+returned. A missing file is still a missing leaf under verified ancestry, never
+an empty one. Both entry points split a list longer than the script's 64-
+operation cap across processes rather than being refused.
+
+`prepareProfile` now uses both (three `ensureProfileDirectory` calls and five
+`readProfileFile` calls become two processes), `prepareSkillCopies` plans the
+source tree first and then admits its destination directories and reads its
+destination files in two processes, and `applyPropertyPack` takes `config.yaml`
+from `prepareProfile` instead of admitting and reading it a second time.
+
+Launch counts, measured with the injected runner in
+`server/hermes-profile-storage.test.ts` (`launches` = cold `powershell.exe`
+processes, `admissions` = admitted paths), at HEAD `d66c669c` and after:
+
+| path | before | after |
+| --- | --- | --- |
+| fresh `applyPropertyPack` | 27 launches / 27 admissions | 25 / 27 |
+| re-apply (Repair) | 30 / 34 | 21 / 33 |
+| installed-profile startup (`ensurePropertyPack`) | 8 / 8 | 3 / 8 |
+
+The startup path the installed probe's 25-second readiness budget actually
+waits on drops from eight cold launches to three. A fresh install barely moves,
+and this says so: 18 of its 25 launches are the six first publications in
+`writeProfileFile`, where the stage's restrict must return before any byte is
+written and the published verify can only run after the rename. No admitted
+path, kind or action changed; the single admission that went away is the
+duplicate `config.yaml` read. Startup admissions are eight here because the
+fixture profile has no `.env`; with stored credentials it is the nine the
+earlier section quoted.
+
+Proven: `pnpm exec vitest run server/hermes-pack.test.ts
+server/hermes-profile-storage.test.ts server/hermes-profile-windows.test.ts
+server/windows-file-privacy.test.ts` passes on macOS (43 passed, 14 skipped),
+all 22 `server/hermes-*.test.ts` suites pass (369 passed, 49 skipped), and
+`pnpm exec tsc -p tsconfig.server.json` is clean. The before column was
+measured by running the same counting test against a disposable worktree at
+`d66c669c`. Not proven: no PowerShell ran on this macOS host. The inheritance
+claim the directory batch rests on is asserted natively in
+`server/hermes-profile-windows.test.ts` — a directory created under a protected
+root is witnessed as owner-only and deny-free but unprotected, is refused by
+the production verifier until it is restricted, and ends protected after
+`ensureProfileDirectories` — and that case, like the existing inherited-home
+refusal that now exercises the new existing-root admission, only runs on win32.
+
+## 22 September 2026 — the batched publication: a fresh apply from 25 launches to 7
+
+Takes the last lever the section above named: the six first publications that
+were eighteen of a fresh apply's twenty-five launches, three each.
+
+`writeProfileFiles(entries)` in `server/hermes-profile-storage.ts` publishes a
+whole set of files in three PowerShell processes instead of three per file, by
+running each step of `writeProfileFile` across the whole list before the next
+step starts:
+
+1. every destination directory, and every file already published in one of
+   them, is admitted in **one** process — none gates another, all gate what
+   follows — and each is settled against its own before/after stat bracket;
+2. every stage is created empty (0-byte, `O_EXCL`) in its admitted directory,
+   and all of them are restricted in **one** process;
+3. only then is any byte written, each into its own already-restricted stage
+   and fsynced;
+4. every destination is re-read once more for drift, then each temp is
+   published — `linkSync`+`unlinkSync` for a first publication, `renameSync`
+   for a replacement, exactly as before;
+5. every published path is verified in **one** process, and only then is
+   anything reported published.
+
+A list longer than the script's 64-operation cap splits into chunks within its
+phase, so the phase ordering holds at any length. `writeProfileFile` is now a
+one-entry call of this and is byte-for-byte the same sequence of admissions,
+in the same processes, as it was before — which is why the existing per-write
+cases did not change.
+
+Per-file honesty. The call returns a `ProfileWriteOutcome` per entry, and a
+thrown error carries the same list as `profileWriteOutcomes`, so a refusal is
+never read as "nothing happened". The states are `published` (renamed **and**
+verified), `renamed-unverified`, `staged` and `absent`. `renamed-unverified` is
+the one new state and it is deliberate: because step 5 is a single batch,
+a refusal there leaves the whole set at its destinations with none of them
+verified, and the call reports exactly that rather than claiming any of them.
+`writeProfileFile` has always had this window for its single file; batching
+widens it to the set. The drift re-check in step 4 is likewise now taken for
+the whole set before the first rename, so the window between one entry's drift
+read and its own rename includes the earlier entries' renames. A competing
+*first* creation is still refused by `linkSync`, and every publication is still
+followed by `same(created, published)` and a size check.
+
+`server/hermes-pack.ts` uses it for the pack's file set: `applyPropertyPack`
+collects `auth.json` (from `pendingRootAuth`, which replaces the write inside
+`ensurePrivateRootAuth`), the four profile files and every skill copy into one
+`writeProfileFiles` call. Their directories are already admitted by
+`prepareProfile`/`prepareSkillCopies` and their existing bytes already read, so
+the ordering holds. Single writes — `applyManagedModelProfile`,
+`removeManagedEnvKey`, the bridge's attach — keep `writeProfileFile`.
+
+Launch counts, measured with the same injected runner in
+`server/hermes-profile-storage.test.ts`, at HEAD `a77cb4a1` and after:
+
+| path | before | after |
+| --- | --- | --- |
+| fresh `applyPropertyPack` | 25 launches / 27 admissions | 7 / 24 |
+| re-apply (Repair) | 21 / 33 | 9 / 30 |
+| installed-profile startup (`ensurePropertyPack`) | 3 / 8 | 3 / 8 |
+
+A fresh apply's seven launches are: two for the profile directory chain, two
+for the skills chain, then the three this change is about — one admitting the
+four distinct destination directories, one restricting all seven stages, one
+verifying all seven published files. The three admissions that went away are
+duplicate destination-directory verifies: the same directory was verified once
+per file and is now verified once per set. No other path, kind or action
+changed, and startup — the path the installed probe's 25-second readiness
+budget waits on — is untouched at three.
+
+Proven: `pnpm exec vitest run server/hermes-pack.test.ts
+server/hermes-profile-storage.test.ts server/hermes-profile-windows.test.ts
+server/windows-file-privacy.test.ts` passes on macOS (47 passed, 14 skipped),
+all 22 `server/hermes-*.test.ts` suites pass (373 passed, 50 skipped), and
+`pnpm exec tsc -p tsconfig.server.json` is clean. Four new cases cover the
+three-process shape with a "no destination exists while any stage is empty"
+witness on every restrict, a verification batch that refuses (both files at
+their destinations, neither reported published), a stage restrict that refuses
+(no destination and no stage left behind, every entry `absent`), and a
+no-clobber entry that refuses before any stage in the set is created.
+
+Not proven: no PowerShell ran on this macOS host, so the seven-operation
+restrict and verify batches have never been parsed or executed. The win32-only
+case added to `server/hermes-profile-windows.test.ts` — three files published
+by one `writeProfileFiles` call, each witnessed protected, owner-only and
+deny-free, then the same set refused on one users-readable destination with no
+stage left behind and the other two files and their descriptors unchanged — is
+the one that will say so, alongside the existing fresh-install case that now
+drives a seven-operation batch natively.
+
+## 22 September 2026 — the ACL witness names the rule it refused on
+
+The Package Windows run for `661534f5` reached readiness in 35.5 s with one
+service PowerShell launch, then spent 22.7 s in the smoke's own ACL witness and
+reported `Fresh profile Windows privacy verification failed` with nothing else.
+Two defects, both in `scripts/smoke-company-bundle.mjs`: the witness used a
+single `exit 1` for every rule, and the `catch` around `execute(...)` discarded
+the child's outcome entirely. A run could not say whether a profile was
+actually public or the runner's `D:\a\...` layout had tripped a rule that is
+not about the profile at all.
+
+The witness now exits with a code per rule, mirroring
+`server/windows-file-privacy.ts` where the rule is the same — 2 owner, 3 ACE
+principal, 4 no usable grant, 5 not protected, 6 reparse point, 7 kind
+mismatch, 9 bad input, 10 deny — and adds 8 missing, 11 reparse point in an
+ancestor above the disposable root, 12 unprotected ancestor above it. (8 is the
+one deliberate divergence: the verifier spends 8 on `ancestor-reparse-point`,
+which the witness reports as 6 inside the bound and 11 above it.) 20-26 remain
+the verifier's inspection stages. On a refusal the witness writes one compact
+JSON line — `{ code, rule, index, depth }`, integers and a fixed rule name, no
+path, SID or descriptor, and never the native exception text — and on success
+still writes exactly `private`.
+
+The ancestor walk is now bounded to the disposable root that contains the
+profile tree, inclusive; it no longer climbs to `D:\` or `C:\Users`. The
+product verifier has its own ancestor policy and refuses junctions on its own
+paths, so the witness checking the host's layout proved nothing and could only
+produce false refusals. `REALBUD_SMOKE_WITNESS_FULL_ANCESTRY=1` keeps the
+stricter walk available; above the disposable root it applies rules 11 and 12,
+and on a hosted runner it is expected to refuse, which is why it is off by
+default.
+
+Every run's receipt now carries `witness: { exitCode, signal, code, rule,
+index, depth, stderrTail }` — `stderrTail` redacted through the existing
+secret masking and bounded to 10 lines — or `witness: null` when no witness ran
+(not win32, or the probe failed earlier). The thrown message carries the code
+and rule, and a non-`private` stdout still fails the scenario as before.
+
+Proven: `pnpm exec vitest run electron/service-smoke.test.mjs` passes on macOS
+(10 passed), `node --check scripts/smoke-company-bundle.mjs` is clean. The test
+now asserts `witness` is present on every receipt and `null` off win32, and its
+`why` message carries `witness`, so a Windows failure explains itself without a
+debugger. Two win32-only assertions are added and have not run: the `complete`
+scenario must report `exitCode 0, code null`, and `public profile` — whose
+fixture adds a Users (`S-1-5-32-545`) read ACE — must report code 3
+`grant-not-allowed` at depth 0.
+
+Not proven: no PowerShell exists on this macOS host, so the rewritten witness
+script has never been parsed or executed. Its refusal codes, the JSON line, the
+bounded walk and the `REALBUD_SMOKE_WITNESS_FULL_ANCESTRY` path are all
+source-level only until a win32 Package run exercises them. A green macOS suite
+is not Windows privacy evidence.
+
+## 22 September 2026 — the witness's "missing" is now separable from unreadable
+
+Package Windows run 35718088869 (`6ca6bf22`) reached readiness in 51 s with one
+service PowerShell launch, then the ACL witness refused
+`{ code: 8, rule: "missing", index: 0, depth: 0 }` in both scenarios that reach
+it and assert on it — `complete` and `public profile`. Index 0 is the private
+Hermes home itself (`REALBUD_HERMES_HOME`, i.e. `<data>\hermes`).
+
+That refusal cannot be taken at face value, and the source says why. These two
+scenarios are `electron/service-smoke.test.mjs` fixtures: the fake server
+creates the very objects the smoke then lists (`home`, `profiles`,
+`profiles\property`, the two skills directories, `auth.json` and the five
+profile files), and `inspectProfile` **already `lstat`s every one of them
+successfully** before the win32 branch runs. No product code is involved, so
+the win32 layout is not in question here: `hermesHome` prefers
+`REALBUD_HERMES_HOME` on every platform, `hermesProfileFor` returns the plain
+base profile with no member key, and `applyPropertyPack` publishes the same set
+on win32 as on POSIX. The mismatch is inside the witness, not in the profile.
+
+The witness's own `[IO.Directory]::Exists($path) -or [IO.File]::Exists($path)`
+pre-check was the defect: both answer `false` for *every* failure — a genuine
+absence, a path past `MAX_PATH`, a denied attribute query, an argument the
+legacy .NET Framework normalizer rejects — so one code, 8, covered all of them
+and a path this host had just stat'd was reported as absent. It now reads
+`[IO.File]::GetAttributes($path)` (which the next line needed anyway), unwraps
+the thrown exception and gives the reason its own code: 8 `missing` for
+directory/file-not-found only, 13 `path-too-long`, 14
+`attributes-access-denied`, 15 `target-attributes-unreadable`. The refusal line
+gains `chars`, the length of the path under inspection — an integer, never the
+path — so a truncated or mangled `REALBUD_SMOKE_PRIVATE_PATHS` delivery is
+separable from a path PowerShell received intact but could not read.
+
+Every receipt now also carries, from this host and before any witness runs,
+`objects: [{ name, kind, exists, chars }]` for the whole list and `layout:
+{ home, profile }` — relative names inside the private home only, never an
+absolute path, since an absolute path carries the runner's account and
+workspace. An object this host cannot stat fails the scenario immediately,
+naming the relative object and the layout actually found, instead of failing
+later inside PowerShell. The thrown Windows message now names the refused
+object relatively and prints both character counts.
+
+Proven on macOS: `pnpm exec vitest run electron/service-smoke.test.mjs` passes
+(10 passed) and `node --check scripts/smoke-company-bundle.mjs` is clean. The
+new diagnostic is genuinely exercised here, not just compiled: `health without
+profile` now fails with `Fresh profile is missing directory "." (11 of 11
+objects absent)` and a layout of `«unreadable: ENOENT»`, and the four scenarios
+that do reach inspection assert the exact eleven relative names, kinds and
+`exists: true`.
+
+Not proven: no PowerShell exists on this host, so codes 13, 14 and 15, the
+`chars` field and the `GetAttributes` unwrap have never been parsed or
+executed. The next Package Windows run settles which of the remaining
+hypotheses holds — `exists: true` here with code 8 there would mean PowerShell
+received a different string (compare `chars`), 13/14/15 would name the real
+inspection failure, and `exists: false` here with the printed layout would mean
+the fixture never created the object at all.
+
+## 22 September 2026 — the witness gets its paths one variable per field
+
+The Package Windows run answered the previous entry's question, and none of the
+three hypotheses was right. Every object was `exists: true` on the runner, the
+first one 89 characters — yet the witness refused item 0 with code 15,
+`target-attributes-unreadable`, and `chars: 11`. Eleven is the number of
+objects, not the length of any path.
+
+That identifies the fault exactly. Windows PowerShell 5.1 unwraps the array
+`ConvertFrom-Json` returns when it is piped through `@()`, so `$items[0]` was
+the whole eleven-object collection rather than the first object. `.path` on a
+collection is member enumeration, so `$path` became an array of eleven strings:
+`$path.Length` reported the array's length (11, the `chars` seen), and
+`[IO.File]::GetAttributes($path)` could not cast an array to a string and threw
+an exception the `switch` did not name — code 15. The profile was private the
+whole time; the delivery was the defect, as the new `chars` field was added to
+detect.
+
+The JSON delivery is gone. The witness now reads `REALBUD_SMOKE_PRIVATE_COUNT`
+and, per object `i`, `REALBUD_SMOKE_PRIVATE_PATH_<i>` and
+`REALBUD_SMOKE_PRIVATE_KIND_<i>`, by name through
+`[System.Environment]::GetEnvironmentVariable` — the same one-variable-per-
+field-per-operation pattern `server/windows-file-privacy.ts` has already proven
+on this host, and which has no collection for PowerShell to reshape. The count
+is validated against `^([1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-6])$`
+(1–256, the smoke's existing inventory bound), the kind must be exactly
+`directory` or `file`, and an empty path still refuses 9 `invalid-invocation`.
+Nothing is interpolated into the script. The disposable root stays in
+`REALBUD_SMOKE_PRIVATE_ROOT`.
+
+`$size` is now unambiguously a string length, so the receipt's comparison means
+what it says: `profileObjects[i].chars` is what this host sent for object `i`
+and the refusal line's `chars` is what PowerShell read. The Node side also
+asserts the count is within 1–256 and each path is a non-empty NUL-free string
+before launching, so a malformed inventory fails here with a relative name
+rather than as an opaque PowerShell refusal. All rule codes, the refusal JSON
+line and every receipt field are unchanged.
+
+Proven on macOS: `pnpm exec vitest run electron/service-smoke.test.mjs` passes
+(10 passed), `node --check scripts/smoke-company-bundle.mjs` is clean, and
+`pnpm check:electron` reports 21 of 21 modules ok. The rendered witness source
+was extracted from the template literal and confirmed to contain no
+`ConvertFrom-Json` and no `REALBUD_SMOKE_PRIVATE_PATHS` outside a comment.
+
+Not proven: there is still no PowerShell on this macOS host, so the new
+`GetEnvironmentVariable` reads, the count regex and codes 13, 14 and 15 remain
+unexecuted. Only a Package Windows run settles whether the witness now reaches
+the ACL checks. The same `@(... | ConvertFrom-Json)` shape survives in
+`PRIVATE_FIXTURE_SCRIPT` in `electron/service-smoke.test.mjs`; it was not
+touched here because no run has shown it failing, but it carries the same
+PowerShell 5.1 hazard and should be converted before it is trusted.
+
+## 22 September 2026 — Windows CI ACL failures: named exceptions and `\\?\` paths
+
+Windows CI run 35728411698 (windows-latest, the first complete unit-test run)
+failed 1,042 tests across 96 files. The dominant refusals were
+`[windows-acl:acl-apply-failed; exit=24]` (616) and `acl-read-failed; exit=25`
+(134): stage 24 is `Set-Acl -LiteralPath` and stage 25 is `Get-Acl
+-LiteralPath`, and both sit after an ancestor walk that had already read the
+same path through `[System.IO.File]::GetAttributes` without complaint.
+
+A line-by-line diff of the batched `WINDOWS_ACL` in
+`server/windows-file-privacy.ts` against the pre-batching script
+(`git show d66c669c^:server/windows-file-privacy.ts`) does **not** support the
+working theory that batching caused this. For a one-operation batch — which is
+every `windowsFilePrivacy`/`windowsFilePrivacySync` call, and therefore almost
+all of the failing tests — the two scripts are semantically identical: `$acl`
+was already rebuilt per item, `$path`, `$stage` and `$directory` were already
+assigned before use, `$ErrorActionPreference` is untouched by the `for`, and
+`exit` inside `try` is a flow-control exception PowerShell's `catch` does not
+intercept (the reported 24/25 codes prove the `exit` path works). The
+`[Console]::Out.WriteLine($index)` echo is the batch's documented index channel
+and is parsed only by `attemptedIndex`; it cannot make `Set-Acl` refuse. The
+18 September comparison is also weak: that run was not a complete unit-test run,
+so those 96 files have no green Windows baseline.
+
+What the failure shape does match is the path form. The .NET FileSystem provider
+behind `-LiteralPath` does not accept the Win32 namespaced form on PowerShell
+5.1, while `[System.IO.File]::GetAttributes` does — exactly the split between
+the stages that pass and the stages that fail. `literalPath` on the Node side
+now strips a leading `\\?\` (and rewrites `\\?\UNC\` to `\\`) before the value
+reaches the environment, leaves every other byte alone, and still refuses a
+value that is not absolute once stripped. `electron/desk-key-custody.mjs`
+applies the same rewrite.
+
+The script no longer swallows the exception. Each `catch` writes exactly one
+stderr line — `[windows-acl] stage=<n> index=<i> type=<innermost exception
+FullName> hresult=<int> win32=<NativeErrorCode, or the low word of an
+0x8007 HResult, else `-`>` — with no path, identity or native message. The Node
+side rebuilds that line field by field from a fixed character set into
+`WindowsFilePrivacyError.detail` and appends it to the thrown message; anything
+else on stderr is dropped rather than copied. A deliberate policy refusal
+(exits 2–10) still carries only its numeric code, because it has no exception.
+Each iteration now also re-reads its own identity and clears `$acl`, `$actual`,
+`$cursor`, `$target` and `$usable`, so no operation can observe the previous
+one's state even though no such leak was found.
+
+Proven on macOS: `pnpm exec vitest run server/windows-file-privacy.test.ts
+server/windows-file-privacy-sync.test.ts
+server/windows-file-privacy-diagnostics.test.ts
+electron/desk-key-custody.test.mjs server/hermes-profile-storage.test.ts`
+passes (96 passed, 9 skipped — the skips are the win32-only native cases),
+`pnpm exec tsc -p tsconfig.server.json` is clean, `pnpm check:electron` reports
+21 of 21 ok, and the byte-parity guard still passes.
+
+Not proven: there is no PowerShell on this host, so neither the `Report`
+function nor the `\\?\` rewrite has been executed against a real descriptor.
+Whether the rewrite actually clears exits 24 and 25 is settled only by the next
+windows-latest run; if it does not, the new stderr line now names the exception
+type and Win32 code that the old script discarded, which is what the next
+diagnosis needs. A native case in `server/windows-file-privacy.test.ts` admits a
+fixture through its `\\?\` form and will run there.
+
+## 2026-09-23: exits 24/25 named — `CouldNotAutoloadMatchingModule`
+
+The manual `Windows probe` workflow (`.github/workflows/windows-probe.yml`,
+`scripts/testing/probe-windows-acl.mjs`) ran the admission under plain node in
+every runner storage root, with the inherited and a relocated home: 30 of 30
+admissions succeeded in 0.4–0.9 s each. The same script under vitest still
+refused with the fully qualified error id the parser now keeps:
+`stage=24 … type=System.Management.Automation.RuntimeException fqid=CouldNotAutoloadMatchingModule`.
+Windows PowerShell 5.1 could not auto-load the Security module that carries
+`Set-Acl`/`Get-Acl` inside the vitest worker's environment, and the earlier
+"cold 35–51 s launches" were that failed module search, not process start-up.
+
+Change: every RealBud ACL script (server helper, Electron key custody copy, the
+installed smoke, `provision-service-admin`, and the test fixtures) now calls the
+.NET access-control API directly (`DirectoryInfo`/`FileInfo`
+`GetAccessControl`/`SetAccessControl`) and no longer depends on a cmdlet or a
+module load. The module-path pin stays, applied case-insensitively over the
+environment copy. Whether this clears the vitest and installed-service refusals
+is settled by the next windows-latest run of the probe and of CI.
+
+## 2026-09-23 — what the installed service was doing while nobody could see it
+
+Package Windows run 35740638732 killed the installed compiled service at its
+120-second watchdog with an empty stderr tail. The receipt could say only that
+readiness never arrived. Two things were missing: a count of what startup
+actually spends its time on, and any account from the child itself.
+
+**Traced startup cost.** Running `server/bootstrap.ts` against a fresh home
+under a module hook that counts every call into `windowsFilePrivacy` /
+`windowsFilePrivacyBatchSync` shows **13 sequential `powershell.exe`
+admissions before `server.listen`**, covering 30 operations: seven for the
+private Hermes profile, three for the workspace identity
+(`privateDirectory` → `writePrivateJson`'s own directory → the temp file), and
+three for the backup operation store. `applyPropertyPack` now plans the skill
+tree from the read-only shipped pack *before* it admits anything, so the skill
+directories join the profile's own two directory processes and the skill files
+join its one read: **13 launches becomes 11**, and the pack apply itself goes
+from 7 to 5 (24 admissions) with reapply 9 to 7 (30 admissions). The admission
+counts are unchanged — the same paths, kinds and actions, in the same order,
+in fewer processes — and the provisioned profile tree is byte-identical.
+`server/hermes-profile-storage.test.ts` holds those counts with an injected
+runner. The remaining six launches are in files this packet does not own
+(`private-json.ts` has no asynchronous batch entry point, and batching it
+through the synchronous one would block the event loop on every request-time
+write).
+
+**Evidence the next run will carry.** `scripts/smoke-company-bundle.mjs` now
+records, on every run, a per-second `healthTimeline` of what each `/api/health`
+attempt answered (`refused` / `timeout` / `http-NNN` / `other-responder` /
+`ready`, fixed tokens only), and `powershell.service.launches` counted by a
+wrapper the probe's own entry module installs around `child_process` — passing
+every call through untouched, labelled `counter: "probe entry
+child_process wrapper"` so it is never read as a product metric. On a failure
+it also carries `stdoutTail` and `bootLog`, the latter copied from the data
+directory's `realbud.log` before the disposable fixture is removed and masked
+through the same conservative matcher as `diagnostic`.
+
+Proven on macOS: `pnpm exec vitest run electron/service-smoke.test.mjs
+server/hermes-pack.test.ts server/hermes-profile-storage.test.ts
+server/windows-file-privacy.test.ts server/windows-file-privacy-sync.test.ts
+server/windows-file-privacy-diagnostics.test.ts` passes (100 passed, 8 skipped
+— the skips are the win32-only native cases), `pnpm exec tsc -p
+tsconfig.server.json` is clean, and `pnpm check:electron` reports 21 of 21 ok.
+The launch counter was exercised against a fixture that imports
+`child_process` the same way the compiled service does, and both the
+synchronous and the promisified call sites were counted.
+
+Not proven: there is no PowerShell and no Windows host here, so neither the
+launch count on a real runner nor the timeline's shape under a genuine ACL
+failure has been observed. The next windows-latest run settles it: a receipt
+whose `powershell.service.launches` reaches 11 and whose timeline is all
+`refused` means startup is still inside the admissions; one that stops at a
+lower count names the launch that hung; a timeline that turns to `timeout`
+means the service listened and then stalled after it.
+
+## 2026-09-23 — probe green, installed memory candidate passed, service launch cost isolated
+
+Evidence (all on hosted `windows-latest`, PR #5, branch `wave/2026-09-22`):
+
+- `Windows probe` run 35748611551 @ 98f792b: the ACL admission probe passed 30 of 30 and the six
+  ACL-dependent suites (`private-file`, `private-vault`, `hermes-profile-storage`,
+  `windows-file-privacy` ×3) passed 6 of 6 in 25 s. Earlier probes named the last three
+  refusals and each got a fix: `UnauthorizedAccessException` at stage 24 (writing an owner the
+  caller already holds needs WRITE_OWNER; the script now keeps an already-owned object's owner),
+  `inheritance-not-protected` on concurrent first use (one admission per directory per process;
+  the vault protects its key file before writing it and a concurrent loser waits that window out),
+  and a planted test file that inherited its descriptor.
+- `Package Windows` run 35748277547 @ 9fa802e: seven installed checks passed and the native memory
+  storage candidate **passed** (`installed-memory-primitives.json`, `passed: true`), so the check 7
+  rename fix holds at the installed-device tier. The compiled service still never listened: the
+  receipt now shows five successful PowerShell launches (`refusals: 0`) at ~23 s each
+  (`[smoke-powershell] launches=5 ms=115761`), every `/api/health` attempt refused, empty stderr.
+- `Windows probe` run 35750286892 @ beb6280: a trivial `powershell.exe -EncodedCommand` launch under
+  node.exe costs 0.17–0.22 s in every environment variant, including the smoke's stripped one
+  (fake home, one-directory PATH). The 23 s is therefore not the environment; the remaining
+  difference is the parent process (the installed Electron binary in Node mode) or the
+  installed location. Run 35750672323 @ 24469e6 times the same launches with the installed binary
+  as parent and records the Defender posture before the service probe.
+
+Still open: why a PowerShell launch costs ~23 s inside the installed service, and the full CI
+matrix result on the .NET access-control scripts (run 35750286883 @ beb6280).
+
+## 2026-09-23 — installed service starts: the 23 s was cmdlet module auto-load
+
+Package Windows run 35750672323 timed the same PowerShell launches with the installed Electron
+binary as parent: `exit 0` took 0.2 s everywhere, while a script using `New-Object` took 23 s in
+every stripped environment (the installed service's shape) and 0.3 s only with the runner's full
+environment. `New-Object` is a cmdlet, so each launch auto-loaded its module; with a stripped
+environment Windows PowerShell 5.1 pays a cold module search every time. Defender real-time,
+behaviour and script scanning were off on the runner (`installed-defender.json`), so it was not
+antivirus.
+
+Change (7b0e299): every RealBud ACL script now uses `[Type]::new()` and no cmdlet at all, with a
+unit test that decodes the shipped script and fails on any `Verb-Noun` token.
+
+Package Windows run 35757744606 @ 3433495 (probe branch `probe/windows-no-cmdlets`):
+- the same script shape with `::new()` took 0.19 s in the stripped environment;
+- the installed compiled service reached `/api/health` in **4.1 s** (was killed at 120 s), with
+  11 PowerShell launches totalling 3.0 s and zero refusals, and passed all four service checks
+  (compiled server outside the checkout, packaged PostgreSQL driver, TLS certificate generator,
+  fresh private Hermes profile with shipped safeguards and no model credentials).
+
+The next installed step, `qa-private-backup-boundaries.mjs`, then failed at its restore call with
+`inheritance-not-protected`: the script plants vault notes in folders it creates itself, with POSIX
+mode 0700 but no Windows descriptor. The script now protects what it plants with the product's own
+helper, and reads the v2 restore stage file the product writes today (the POSIX-only section had
+been failing on macOS source runs for the same stale file name). All seven backup boundary checks
+pass from source on macOS; the Windows installed result is run 35759211257.
+
+Tier: hosted `windows-latest` runner with the unsigned NSIS installer. Not a customer machine, not
+signed, no restart or uninstall-with-data claim.
+
+## 2026-09-23 (evening) — private backup restore works on Windows
+
+What this does not establish: a signed build, a customer machine, restart or uninstall with data,
+or any data folder created by an older build (those keep inherited descriptors and still refuse).
+
+Chain of causes, each found from Windows CI evidence and fixed in source:
+1. The product created most data-folder files with inherited descriptors (desk, config, bots,
+   messages, vault seed, desk key, workflow database, log, backup storage, workflow packs,
+   multi-level private folders). It now restricts each object it creates before content;
+   existing objects stay verify-only. Fresh boot: 22 PowerShell admissions (was 11); installed
+   service ready in 6.9–7.9 s.
+2. SQLite created the backup preparation store's rollback journal itself. The store now uses a
+   TRUNCATE journal created empty and protected before SQLite opens it; hot-journal recovery and
+   older stores are covered by tests.
+3. Two vaults on one folder raced on the development key; they now share the in-flight creation.
+4. The department scan entered the worker context even when idle and could wait behind a
+   workspace pause, holding restore readiness as "busy". An idle scan is now a database read.
+   The readiness hold also names what is still running.
+5. The backup QA planted its own folders without protection and read a stale restore file name;
+   both fixed, and it now lists unprotected entries on a Windows refusal.
+
+Evidence: `Windows probe` run 35776835477 @ f5433db — ACL admission 30/30, six ACL suites 6/6,
+private backup boundaries from source 6 PASS (the POSIX key-permission check is skipped on
+Windows by design). Installed package: `Package Windows` run 35776819019 @ f5433db passed end to end
+for the first time: installed resources 9/9, compiled office service 4/4 (ready in 14.2 s on that
+runner), private backup boundaries 6/6 with one documented Windows skip (slowest call: restore,
+39 s), native memory storage 15/15, then uninstall. Tier: hosted runner, unsigned NSIS installer.
+
+Cost to watch: every atomic private write on Windows pays one PowerShell admission (about
+0.2–0.4 s), and one restore attempt took 27 s on a runner because restore verifies files one
+launch at a time. Batching those verifications is the next Windows performance item.
+
+## 2026-09-23 — to run: supervision survives closing the window
+
+Status: **not run**. Source and local tests only (`electron/unattended-host.mjs` and its tests,
+`server/routines-service-restart.test.ts`). What only an installed Windows run proves: the
+notification-area icon and its menu, that the process really stays after the last window closes,
+that the keep-awake hold is still held, that the watchdog restarts a killed detached service once,
+and that the morning run is not repeated.
+
+Change under test: on Windows, when unattended work is wanted ("Start the office service when I sign
+in", "Keep this computer awake for scheduled work", or any enabled schedule) and the office service was not deliberately stopped, closing
+the last window keeps RealBud running in the background with an icon ("Open RealBud", "Quit
+RealBud") instead of quitting. The `--service` sign-in host now supervises with the same watchdog
+instead of exiting when the service dies. Both exit only when nothing of ours is recorded.
+
+Setup: installed unsigned NSIS build from the change, a disposable Windows user, no customer data.
+Log: `%APPDATA%\RealBud\logs\server.log`. Service pid and port: `http://127.0.0.1:8799/api/health`
+(or 18799 / 28799).
+
+1. Open RealBud, finish setup, enable the morning money check on Schedule and set its time about
+   10 minutes ahead. On You turn on "Keep this computer awake for scheduled work". Plug in.
+2. Close the window. Expect: the process stays (Task Manager), a RealBud icon in the notification
+   area, a one-time notice, and `the last window closed; RealBud keeps running in the background`
+   in the log. `powercfg /requests` lists RealBud under SYSTEM (prevent-app-suspension).
+3. Kill the office service: read `pid` from `/api/health`, then `taskkill /PID <pid> /F`.
+   Expect within about 20 s: `restarting it automatically (attempt 1 of 5 this hour)` then
+   `the office service was restarted automatically`, exactly once, and `/api/health` answers with
+   the same `instanceId` on the same port. Only one RealBud service process exists afterwards.
+4. Let the scheduled time pass with the window closed. Then kill the service again during the run
+   (step 3 again while the run is in progress). Reopen RealBud from the icon. Expect on Schedule:
+   one receipt for that time, marked interrupted ("not resumed") or completed — never two, and
+   no second run of the same time after the restart.
+5. Deliberate Stop: open RealBud, You → "Stop the office service", close the window. Expect:
+   RealBud quits (no icon, no process), `powercfg /requests` no longer lists it, and the service
+   is not started again.
+6. Not opted in: turn off both settings and disable every schedule, close the window. Expect:
+   RealBud quits as before.
+7. Sign-in host: turn on "Start the office service when I sign in", sign out and in. Expect the icon, no window. Kill
+   the service as in step 3: it returns once and the host stays. Choose "Open RealBud": a window
+   opens on the same service. Choose "Quit RealBud" from the icon: the process exits, the service
+   keeps running unsupervised (by design).
+
+Record: the log excerpt, `powercfg /requests` before and after, the Schedule receipts, and
+`/api/health` before and after each kill, under `outputs/unattended-supervision-<date>/`.
+
+## 2026-09-23 (late) — Windows unit suite green
+
+CI run 35797224166 @ f6a256e: all three Windows shards passed — 1,609 + 1,681 + 1,830 = 5,120 tests, 0 failed (skips are platform- or environment-gated and not counted as passes). The day started with about 1,268 ACL errors and 459 failing tests. Causes and fixes: cmdlet-free ACL scripts, product-created private data, test fixtures that create data the way the product does, path separators, OS-refused swap attacks, exit codes instead of signals, Windows-sized limits, LF line endings (.gitattributes). Tier: hosted runner unit tests; not an installed or customer machine.

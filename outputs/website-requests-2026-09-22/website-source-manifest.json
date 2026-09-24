@@ -1,0 +1,102 @@
+[
+  {
+    "path": "shared/website-commands.ts",
+    "sha256": "e36d472d86d77bce166e5fac4ec982eaca49399efcc59edf9aaba0b7e5b6d6f3",
+    "bytes": 10558
+  },
+  {
+    "path": "website/app/account/installations/commands-panel.tsx",
+    "sha256": "387670050a0d1b8bf7c0769527a92c56278ff937ee2ee82fd5f46eb6d6cf2000",
+    "bytes": 12977
+  },
+  {
+    "path": "website/app/account/installations/installations-panel.tsx",
+    "sha256": "b3b87a30b7f8ff903bc980c68085a96ab3abc7e2bcd79f3536123d440ca8b1ae",
+    "bytes": 6619
+  },
+  {
+    "path": "website/app/account/installations/page.tsx",
+    "sha256": "09c75af113200e20f555272df756ba529ddb8704f6b4121b572285e0b14be899",
+    "bytes": 1275
+  },
+  {
+    "path": "website/app/api/account/installation-commands/[id]/cancel/route.ts",
+    "sha256": "a0a7d841b51dc541e068857f01cecabc3d3e162ab3bac6ad4dfaac15e43882f5",
+    "bytes": 1255
+  },
+  {
+    "path": "website/app/api/account/installation-commands/grants/[id]/revoke/route.ts",
+    "sha256": "1bf3b667279685dd0879f49c65a09ba984ed4f1f6df24b44960064c69e070117",
+    "bytes": 1153
+  },
+  {
+    "path": "website/app/api/account/installation-commands/route.ts",
+    "sha256": "bb281239692ac89e6f603113e93730db495f560ec94216e0a075bc9edc4073c8",
+    "bytes": 1772
+  },
+  {
+    "path": "website/app/api/installations/command-grants/route.ts",
+    "sha256": "67a56cbe68f700279a2a451b613be49a0b07b0b7a10a0dc07e1104c64ff3b5b9",
+    "bytes": 1603
+  },
+  {
+    "path": "website/app/api/installations/commands/ack/route.ts",
+    "sha256": "46ade88a61db5b8b190c0b0b709e6b3b5b2c44814353856347f870d6097d10f1",
+    "bytes": 766
+  },
+  {
+    "path": "website/app/api/installations/commands/claim/route.ts",
+    "sha256": "9a7b132aa35d333e2eab9bf36d9e34ac1c73966738ad0b3532e68f6f11924e80",
+    "bytes": 768
+  },
+  {
+    "path": "website/app/api/installations/commands/poll/route.ts",
+    "sha256": "37d0673dbfc24b80f2e348bc1197637423c0889aea589bea9dbe6c8b048600dd",
+    "bytes": 829
+  },
+  {
+    "path": "website/app/globals.css",
+    "sha256": "324139865b428a82f431a18afab025a37ed4d545dd8a17bbd250ae8885bcf415",
+    "bytes": 29592
+  },
+  {
+    "path": "website/lib/installation-api.ts",
+    "sha256": "500e067261fecc23ef42479e1e7ba810b812284b9ee844275808e5cdf613f96c",
+    "bytes": 1010
+  },
+  {
+    "path": "website/lib/website-commands.test.mjs",
+    "sha256": "32c847f7381b298a56119e520e393cdcc285a1b0f35ccbfa907e4b8ca8490183",
+    "bytes": 6551
+  },
+  {
+    "path": "website/lib/website-commands.ts",
+    "sha256": "540831bd56195f85b97c87edff84cf4b4f1c49b9d6bcf095cf7260350c1f88d5",
+    "bytes": 2460
+  },
+  {
+    "path": "website/next.config.ts",
+    "sha256": "556489e0f89674ebaa8c94075b15f2c26e6f2dbe56272f40757573401151638b",
+    "bytes": 414
+  },
+  {
+    "path": "website/scripts/qa-commands-ui.mjs",
+    "sha256": "ae922e1d1f120aceba761105fa464ce8fffb044f7d6ddfddb198bdaa7ae9fde3",
+    "bytes": 10782
+  },
+  {
+    "path": "website/scripts/test-commands-postgres.mjs",
+    "sha256": "5724aea38c9b15b883bed4b712bae8189fcbe8c70d0109d7b1e4b1511e736f1d",
+    "bytes": 13573
+  },
+  {
+    "path": "website/scripts/testing/command-site.mjs",
+    "sha256": "2cc512a67ef4f0c4d5f6608a6a8de8b440669af1f519f933473a55da6207b4c9",
+    "bytes": 8486
+  },
+  {
+    "path": "website/supabase/migrations/202609220001_installation_commands.sql",
+    "sha256": "ea8170986a7ca57bd7abbc75e450e71a0ce42ce34bab40964659d311a9da6ee3",
+    "bytes": 26585
+  }
+]

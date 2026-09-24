@@ -1,0 +1,39 @@
+{
+  "date": "2026-09-23",
+  "timezone": "Australia/Brisbane",
+  "layer": "local working-tree source and fictional-provider integration",
+  "baseRevision": "93277901",
+  "fixedReleaseCandidate": false,
+  "nodeVersion": "24.19.0",
+  "runs": [
+    {
+      "command": "pnpm exec vitest run electron/service-lifecycle.test.mjs electron/service-instance.test.mjs electron/service-watchdog.test.mjs electron/service-persistence.test.mjs electron/unattended-host.test.mjs server/routines-recovery.test.ts server/routines-service-restart.test.ts server/workflow-packs.test.ts server/workflow-packs-recovery.test.ts server/company-installation-binding.test.ts server/private-workspace-backup.test.ts server/service-control.test.ts",
+      "passed": 232, "failed": 0, "skipped": 0, "filesPassed": 12, "seconds": 11.41
+    },
+    {
+      "command": "pnpm exec vitest run server/ask-attach.test.ts server/ask-attach-privacy.test.ts server/composer-attachments.test.ts",
+      "passed": 25, "failed": 0, "skipped": 5, "filesPassed": 3, "seconds": 0.791,
+      "skipReason": "native Windows attachment privacy tests on macOS"
+    },
+    {
+      "command": "pnpm exec vitest run server/store.test.ts server/store-recovery.test.ts server/tasks.test.ts server/branching.test.ts server/index.test.ts server/browser-approval-card.test.ts server/hermes-memory-approval-http.test.ts server/channel-continuation.test.ts server/channel-handoff.test.ts server/comms.test.ts server/channels-discord.test.ts server/channels-telegram.test.ts server/channels-slack.test.ts",
+      "passed": 213, "failed": 0, "skipped": 0, "filesPassed": 13, "seconds": 18.68
+    }
+  ],
+  "finalTypecheck": {"command": "pnpm typecheck", "exitCode": 0},
+  "storeIndependentReproduction": {
+    "fixedSourceSha256": "53542786f02ab6e0782da3f2c3ab36be43391f8dad7541b1f4401e711fe5dd48",
+    "error": {"code": "store_recovery_required", "status": 503},
+    "originalBytesPreserved": true,
+    "sameStoreReadsAfterDeliberateCorrection": 10000,
+    "readMs": 16.09,
+    "appendMs": [22.55, 21.02, 17.89, 17.93, 18.06]
+  },
+  "limits": [
+    "Shared checkout has concurrent browser changes; no frozen release candidate",
+    "No full-suite, package, installed-device or native Windows acceptance run",
+    "Damaged Store data can safely stop service startup; no guided repair UI added",
+    "No live customer data, model, bank, email, REI, send or deployment",
+    "No commits or app replacement"
+  ]
+}

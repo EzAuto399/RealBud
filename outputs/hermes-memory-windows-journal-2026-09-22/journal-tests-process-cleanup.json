@@ -1,0 +1,11 @@
+{
+  "at": "2026-09-21T17:26:17Z",
+  "owned_process_patterns": [
+    "journal-tests-run-review.py",
+    "journal-tests-grok-review.prompt.md",
+    "hermes-memory-windows-journal.py --child"
+  ],
+  "matching_processes": [],
+  "drained": true,
+  "scope": "Bounded journal Grok wrapper/CLI and journal fixture child processes only; unrelated processes untouched."
+}

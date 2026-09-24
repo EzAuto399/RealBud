@@ -1,0 +1,36 @@
+{
+  "ok": true,
+  "wire": {
+    "requiredExactEnvelope": [
+      "expectedAccountId",
+      "scope"
+    ],
+    "precondition": "Must equal server-derived effective account binding before any provider read; never an account override.",
+    "legacyClients": "Missing precondition rejected with 400; changed reviewed account rejected with 409. Client presents update/review guidance."
+  },
+  "clientTests": 31,
+  "gatewayFullTests": 103,
+  "gatewayFocusedTests": 16,
+  "gatewayTypecheck": true,
+  "serverTypecheck": true,
+  "independentRebindProof": "grok-observation-account-green.json: zero provider calls for expected A/current B",
+  "files": [
+    {
+      "path": "server/managed-connectors.ts",
+      "sha256": "bf8b5ee79414b33435ef7cf95c7fb32a65ea3fcac1d213ebde1e9bd62947d61b"
+    },
+    {
+      "path": "server/managed-connectors.test.ts",
+      "sha256": "0f5aac2d7057f2980e2b787a748a0b3afa5d14e3570b2fffa248bcbc86949bca"
+    },
+    {
+      "path": "managed-gateway/connectors.ts",
+      "sha256": "e0043a20f7ffbb1d6a89f5c4428ec034746556339525a36fa15e5f7a5bcee535"
+    },
+    {
+      "path": "managed-gateway/connectors.test.ts",
+      "sha256": "4ccf5da205bf61ce41fd82b6d7dd54de2545152571422275882a3e14bfa8c811"
+    }
+  ],
+  "deployment": false
+}

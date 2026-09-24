@@ -1,0 +1,22 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > hits an actual SQLite page cap without staging partial database bytes, then retries into a fresh prepared store 78ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > preserves a pre-existing build allocation when exclusive creation fails 22ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > holds unexpected files in its own build allocation instead of recursively deleting them 27ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid build allocation ../other before preparation 14ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid build allocation /tmp/other before preparation 14ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid build allocation unknown before preparation 16ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid internal byte capacity 0 before writing 15ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid internal byte capacity 65537 before writing 16ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid internal byte capacity 1099511627776 before writing 18ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid internal byte capacity NaN before writing 18ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > does not accept an asynchronous lease assertion as successful admission 15ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > awaits progress persistence and rechecks admission before publishing a seal 22ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > propagates failed progress persistence without sealing or publishing a restore 22ms
+
+ Test Files  1 passed (1)
+      Tests  13 passed (13)
+   Start at  21:57:13
+   Duration  629ms (transform 206ms, setup 18ms, import 247ms, tests 298ms, environment 0ms)
+

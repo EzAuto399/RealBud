@@ -1,0 +1,8 @@
+export function InstructionComparison({ current, proposed }: { current: string; proposed: string }) {
+  const before = current.split('\n'), after = proposed.split('\n');
+  let first = 0, lastBefore = before.length, lastAfter = after.length;
+  while (first < lastBefore && first < lastAfter && before[first] === after[first]) first++;
+  while (lastBefore > first && lastAfter > first && before[lastBefore - 1] === after[lastAfter - 1]) { lastBefore--; lastAfter--; }
+  const removed = before.slice(first, lastBefore), added = after.slice(first, lastAfter);
+  return <div className="space-y-3"><div aria-label="Instruction text changes" className="rounded border border-line p-3 text-sm"><h5 className="font-medium">What changes</h5>{!removed.length && !added.length ? <p className="mt-2">The proposed text is identical to the active instructions.</p> : <div className="mt-2 max-h-64 overflow-auto space-y-2">{!!removed.length && <div><p className="text-danger">Removed text</p><pre className="whitespace-pre-wrap break-words font-sans text-xs">{removed.join('\n')}</pre></div>}{!!added.length && <div><p className="text-agency">Added text</p><pre className="whitespace-pre-wrap break-words font-sans text-xs">{added.join('\n')}</pre></div>}</div>}</div><div className="grid gap-3 lg:grid-cols-2"><div><h5 className="text-sm font-medium">Currently active</h5><pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded border border-line p-3 text-xs font-sans">{current}</pre></div><div><h5 className="text-sm font-medium">Proposed instructions</h5><pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded border border-line p-3 text-xs font-sans">{proposed}</pre></div></div></div>;
+}

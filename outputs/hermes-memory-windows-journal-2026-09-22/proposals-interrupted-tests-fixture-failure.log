@@ -1,0 +1,280 @@
+test_artifact_appearing_during_close_is_preserved_and_holds_replay (__main__.InterruptedRecovery.test_artifact_appearing_during_close_is_preserved_and_holds_replay) ... FAIL
+test_bounded_pagination_by_full_key (__main__.InterruptedRecovery.test_bounded_pagination_by_full_key) ... FAIL
+test_close_and_restart_replay_retains_identity_without_effects (__main__.InterruptedRecovery.test_close_and_restart_replay_retains_identity_without_effects) ... FAIL
+test_closed_replay_refuses_new_artifacts (__main__.InterruptedRecovery.test_closed_replay_refuses_new_artifacts) ... FAIL
+test_closed_signature_and_original_digest_are_both_validated (__main__.InterruptedRecovery.test_closed_signature_and_original_digest_are_both_validated) ... FAIL
+test_denied_record_returns_fixed_row_and_denied_inventory_fails (__main__.InterruptedRecovery.test_denied_record_returns_fixed_row_and_denied_inventory_fails) ... FAIL
+test_each_existing_artifact_prevents_closure_and_preserves_bytes (__main__.InterruptedRecovery.test_each_existing_artifact_prevents_closure_and_preserves_bytes) ... FAIL
+test_eight_character_id_collision_holds_both_full_keys (__main__.InterruptedRecovery.test_eight_character_id_collision_holds_both_full_keys) ... FAIL
+test_fresh_profile_bootstraps_private_parents_without_config (__main__.InterruptedRecovery.test_fresh_profile_bootstraps_private_parents_without_config) ... ok
+test_inventory_capacity_is_not_reported_as_empty (__main__.InterruptedRecovery.test_inventory_capacity_is_not_reported_as_empty) ... FAIL
+test_lost_close_response_reconciles_exact_saved_result (__main__.InterruptedRecovery.test_lost_close_response_reconciles_exact_saved_result) ... FAIL
+test_malformed_tampered_foreign_identity_records_are_held (__main__.InterruptedRecovery.test_malformed_tampered_foreign_identity_records_are_held) ... FAIL
+test_missing_record_and_unsafe_parent_never_create_closed_record (__main__.InterruptedRecovery.test_missing_record_and_unsafe_parent_never_create_closed_record) ... ok
+test_no_config_or_disabled_memory_blocks_metadata_close (__main__.InterruptedRecovery.test_no_config_or_disabled_memory_blocks_metadata_close) ... FAIL
+test_nonprivate_and_symlink_records_preserved (__main__.InterruptedRecovery.test_nonprivate_and_symlink_records_preserved) ... FAIL
+test_published_collision_still_blocks_prepared_closure (__main__.InterruptedRecovery.test_published_collision_still_blocks_prepared_closure) ... FAIL
+test_published_v1_records_are_unchanged_and_omitted (__main__.InterruptedRecovery.test_published_v1_records_are_unchanged_and_omitted) ... FAIL
+test_request_schema_refuses_authority_aliases_and_noncanonical_keys (__main__.InterruptedRecovery.test_request_schema_refuses_authority_aliases_and_noncanonical_keys) ... FAIL
+test_selected_windows_io_close_and_lost_response (__main__.InterruptedRecovery.test_selected_windows_io_close_and_lost_response) ... ok
+test_wrong_digest_and_changed_request_cannot_use_closed_receipt (__main__.InterruptedRecovery.test_wrong_digest_and_changed_request_cannot_use_closed_receipt) ... FAIL
+
+======================================================================
+FAIL: test_artifact_appearing_during_close_is_preserved_and_holds_replay (__main__.InterruptedRecovery.test_artifact_appearing_during_close_is_preserved_and_holds_replay)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 251, in test_artifact_appearing_during_close_is_preserved_and_holds_replay
+    path, _ = self.prepared(); row, = self.listed(); request = self.close_request(row)
+              ~~~~~~~~~~~~~^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 158, in prepared
+    self.call(self.request('propose'), mode='prepare', selected=selected, crash=EXIT_PREPARED)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 146, in call
+    self.assertEqual(completed.returncode, crash if crash is not None else 0, completed.stderr.decode(errors='replace'))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 81 : 
+
+======================================================================
+FAIL: test_bounded_pagination_by_full_key (__main__.InterruptedRecovery.test_bounded_pagination_by_full_key)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 329, in test_bounded_pagination_by_full_key
+    path, original = self.prepared(); path.unlink()
+                     ~~~~~~~~~~~~~^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 158, in prepared
+    self.call(self.request('propose'), mode='prepare', selected=selected, crash=EXIT_PREPARED)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 146, in call
+    self.assertEqual(completed.returncode, crash if crash is not None else 0, completed.stderr.decode(errors='replace'))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 81 : 
+
+======================================================================
+FAIL: test_close_and_restart_replay_retains_identity_without_effects (__main__.InterruptedRecovery.test_close_and_restart_replay_retains_identity_without_effects)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 189, in test_close_and_restart_replay_retains_identity_without_effects
+    path, original = self.prepared()
+                     ~~~~~~~~~~~~~^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 158, in prepared
+    self.call(self.request('propose'), mode='prepare', selected=selected, crash=EXIT_PREPARED)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 146, in call
+    self.assertEqual(completed.returncode, crash if crash is not None else 0, completed.stderr.decode(errors='replace'))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 81 : 
+
+======================================================================
+FAIL: test_closed_replay_refuses_new_artifacts (__main__.InterruptedRecovery.test_closed_replay_refuses_new_artifacts)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 259, in test_closed_replay_refuses_new_artifacts
+    path, record = self.prepared(); row, = self.listed(); request = self.close_request(row)
+                   ~~~~~~~~~~~~~^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 158, in prepared
+    self.call(self.request('propose'), mode='prepare', selected=selected, crash=EXIT_PREPARED)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 146, in call
+    self.assertEqual(completed.returncode, crash if crash is not None else 0, completed.stderr.decode(errors='replace'))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 81 : 
+
+======================================================================
+FAIL: test_closed_signature_and_original_digest_are_both_validated (__main__.InterruptedRecovery.test_closed_signature_and_original_digest_are_both_validated)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 315, in test_closed_signature_and_original_digest_are_both_validated
+    path, _ = self.prepared(); row, = self.listed(); request = self.close_request(row)
+              ~~~~~~~~~~~~~^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 158, in prepared
+    self.call(self.request('propose'), mode='prepare', selected=selected, crash=EXIT_PREPARED)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 146, in call
+    self.assertEqual(completed.returncode, crash if crash is not None else 0, completed.stderr.decode(errors='replace'))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 81 : 
+
+======================================================================
+FAIL: test_denied_record_returns_fixed_row_and_denied_inventory_fails (__main__.InterruptedRecovery.test_denied_record_returns_fixed_row_and_denied_inventory_fails)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 297, in test_denied_record_returns_fixed_row_and_denied_inventory_fails
+    self.prepared()
+    ~~~~~~~~~~~~~^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 158, in prepared
+    self.call(self.request('propose'), mode='prepare', selected=selected, crash=EXIT_PREPARED)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 146, in call
+    self.assertEqual(completed.returncode, crash if crash is not None else 0, completed.stderr.decode(errors='replace'))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 81 : 
+
+======================================================================
+FAIL: test_each_existing_artifact_prevents_closure_and_preserves_bytes (__main__.InterruptedRecovery.test_each_existing_artifact_prevents_closure_and_preserves_bytes)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 237, in test_each_existing_artifact_prevents_closure_and_preserves_bytes
+    path, record = self.prepared(); row, = self.listed()
+                   ~~~~~~~~~~~~~^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 158, in prepared
+    self.call(self.request('propose'), mode='prepare', selected=selected, crash=EXIT_PREPARED)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 146, in call
+    self.assertEqual(completed.returncode, crash if crash is not None else 0, completed.stderr.decode(errors='replace'))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 81 : 
+
+======================================================================
+FAIL: test_eight_character_id_collision_holds_both_full_keys (__main__.InterruptedRecovery.test_eight_character_id_collision_holds_both_full_keys)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 268, in test_eight_character_id_collision_holds_both_full_keys
+    path, record = self.prepared(); row, = self.listed()
+                   ~~~~~~~~~~~~~^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 158, in prepared
+    self.call(self.request('propose'), mode='prepare', selected=selected, crash=EXIT_PREPARED)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 146, in call
+    self.assertEqual(completed.returncode, crash if crash is not None else 0, completed.stderr.decode(errors='replace'))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 81 : 
+
+======================================================================
+FAIL: test_inventory_capacity_is_not_reported_as_empty (__main__.InterruptedRecovery.test_inventory_capacity_is_not_reported_as_empty)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 343, in test_inventory_capacity_is_not_reported_as_empty
+    self.prepared()
+    ~~~~~~~~~~~~~^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 158, in prepared
+    self.call(self.request('propose'), mode='prepare', selected=selected, crash=EXIT_PREPARED)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 146, in call
+    self.assertEqual(completed.returncode, crash if crash is not None else 0, completed.stderr.decode(errors='replace'))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 81 : 
+
+======================================================================
+FAIL: test_lost_close_response_reconciles_exact_saved_result (__main__.InterruptedRecovery.test_lost_close_response_reconciles_exact_saved_result)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 204, in test_lost_close_response_reconciles_exact_saved_result
+    self.prepared(); row, = self.listed(); request = self.close_request(row)
+    ~~~~~~~~~~~~~^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 158, in prepared
+    self.call(self.request('propose'), mode='prepare', selected=selected, crash=EXIT_PREPARED)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 146, in call
+    self.assertEqual(completed.returncode, crash if crash is not None else 0, completed.stderr.decode(errors='replace'))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 81 : 
+
+======================================================================
+FAIL: test_malformed_tampered_foreign_identity_records_are_held (__main__.InterruptedRecovery.test_malformed_tampered_foreign_identity_records_are_held)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 286, in test_malformed_tampered_foreign_identity_records_are_held
+    path, record = self.prepared(); row, = self.listed()
+                   ~~~~~~~~~~~~~^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 158, in prepared
+    self.call(self.request('propose'), mode='prepare', selected=selected, crash=EXIT_PREPARED)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 146, in call
+    self.assertEqual(completed.returncode, crash if crash is not None else 0, completed.stderr.decode(errors='replace'))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 81 : 
+
+======================================================================
+FAIL: test_no_config_or_disabled_memory_blocks_metadata_close (__main__.InterruptedRecovery.test_no_config_or_disabled_memory_blocks_metadata_close)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 221, in test_no_config_or_disabled_memory_blocks_metadata_close
+    self.prepared(); row, = self.listed()
+    ~~~~~~~~~~~~~^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 158, in prepared
+    self.call(self.request('propose'), mode='prepare', selected=selected, crash=EXIT_PREPARED)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 146, in call
+    self.assertEqual(completed.returncode, crash if crash is not None else 0, completed.stderr.decode(errors='replace'))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 81 : 
+
+======================================================================
+FAIL: test_nonprivate_and_symlink_records_preserved (__main__.InterruptedRecovery.test_nonprivate_and_symlink_records_preserved)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 305, in test_nonprivate_and_symlink_records_preserved
+    path, _ = self.prepared(); row, = self.listed(); data = path.read_bytes()
+              ~~~~~~~~~~~~~^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 158, in prepared
+    self.call(self.request('propose'), mode='prepare', selected=selected, crash=EXIT_PREPARED)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 146, in call
+    self.assertEqual(completed.returncode, crash if crash is not None else 0, completed.stderr.decode(errors='replace'))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 81 : 
+
+======================================================================
+FAIL: test_published_collision_still_blocks_prepared_closure (__main__.InterruptedRecovery.test_published_collision_still_blocks_prepared_closure)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 278, in test_published_collision_still_blocks_prepared_closure
+    _, record = self.prepared(); row, = self.listed()
+                ~~~~~~~~~~~~~^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 158, in prepared
+    self.call(self.request('propose'), mode='prepare', selected=selected, crash=EXIT_PREPARED)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 146, in call
+    self.assertEqual(completed.returncode, crash if crash is not None else 0, completed.stderr.decode(errors='replace'))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 81 : 
+
+======================================================================
+FAIL: test_published_v1_records_are_unchanged_and_omitted (__main__.InterruptedRecovery.test_published_v1_records_are_unchanged_and_omitted)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 323, in test_published_v1_records_are_unchanged_and_omitted
+    path, original = self.prepared()
+                     ~~~~~~~~~~~~~^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 158, in prepared
+    self.call(self.request('propose'), mode='prepare', selected=selected, crash=EXIT_PREPARED)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 146, in call
+    self.assertEqual(completed.returncode, crash if crash is not None else 0, completed.stderr.decode(errors='replace'))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 81 : 
+
+======================================================================
+FAIL: test_request_schema_refuses_authority_aliases_and_noncanonical_keys (__main__.InterruptedRecovery.test_request_schema_refuses_authority_aliases_and_noncanonical_keys)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 349, in test_request_schema_refuses_authority_aliases_and_noncanonical_keys
+    self.prepared(); row, = self.listed(); valid = self.close_request(row)
+    ~~~~~~~~~~~~~^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 158, in prepared
+    self.call(self.request('propose'), mode='prepare', selected=selected, crash=EXIT_PREPARED)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 146, in call
+    self.assertEqual(completed.returncode, crash if crash is not None else 0, completed.stderr.decode(errors='replace'))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 81 : 
+
+======================================================================
+FAIL: test_wrong_digest_and_changed_request_cannot_use_closed_receipt (__main__.InterruptedRecovery.test_wrong_digest_and_changed_request_cannot_use_closed_receipt)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 228, in test_wrong_digest_and_changed_request_cannot_use_closed_receipt
+    path, original = self.prepared(); row, = self.listed()
+                     ~~~~~~~~~~~~~^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 158, in prepared
+    self.call(self.request('propose'), mode='prepare', selected=selected, crash=EXIT_PREPARED)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-interrupted-recovery.py", line 146, in call
+    self.assertEqual(completed.returncode, crash if crash is not None else 0, completed.stderr.decode(errors='replace'))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 81 : 
+
+----------------------------------------------------------------------
+Ran 20 tests in 1.564s
+
+FAILED (failures=17)

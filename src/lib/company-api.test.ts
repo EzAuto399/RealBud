@@ -13,6 +13,17 @@ function memoryStorage() {
 }
 
 describe("company member session transport", () => {
+  it.each([
+    ["host_identity_mismatch", "different office"],
+    ["seat_identity_conflict", "another member"],
+  ])("explains %s without suggesting a username change or exposing backend details", async (code, message) => {
+    const storage = memoryStorage();
+    const request = vi.fn().mockRejectedValue({ status: 409, code, message: "private backend detail" });
+    const client = createCompanyApi(request, storage);
+    await expect(client.join("fixture_invitation", initialCredential)).rejects.toMatchObject({ message: expect.stringContaining(message), memberSessionEnded: false });
+    expect(storage.values.size).toBe(0);
+  });
+
   it("retains the same member after a host outage without replaying an uncertain write", async () => {
     const storage = memoryStorage();
     let available = true;
@@ -196,10 +207,84 @@ it("waits for bounded first storage initialization while ordinary checks stay sh
   expect(request.mock.calls[1][2].timeoutMs).toBe(15_000);
 });
 
+describe('Windows office hosting admission messages', () => {
+  it.each([
+    ['windows_postgres_privileged_token', 'Office hosting needs a standard Windows user session'],
+    ['windows_postgres_admission_unavailable', 'could not verify this Windows session'],
+  ])('preserves fixed %s guidance for setup and status without changing member sessions', async (code, explanation) => {
+    const storage = memoryStorage();
+    const request = vi.fn().mockResolvedValueOnce(session()).mockRejectedValue({ status: 503, code, message: 'fictional-private-native-diagnostic' });
+    const client = createCompanyApi(request, storage);
+    await client.signIn(initialCredential);
+    const version = client.sessionVersion();
+    for (const action of [() => client.setup(), () => client.status()]) {
+      const failure = await action().catch(error => error);
+      expect(failure).toMatchObject({ status: 503, code, memberSessionEnded: false });
+      if (!(failure instanceof Error)) throw new Error('Expected fixed admission guidance');
+      expect(failure.message).toContain(explanation);
+      expect(failure.message).toContain('Run as administrator');
+      expect(failure.message).not.toContain('fictional-private-native-diagnostic');
+      if (code === 'windows_postgres_admission_unavailable') expect(failure.message).not.toContain('Office hosting needs a standard');
+    }
+    expect(client.sessionVersion()).toBe(version);
+    expect([...storage.values.values()]).toEqual([ownerToken]);
+  });
+
+  it.each([
+    [503, 'fictional-unrecognized-admission-code', 'setup'],
+    [400, 'windows_postgres_privileged_token', 'setup'],
+    [503, 'windows_postgres_privileged_token', 'connect'],
+    [503, 'windows_postgres_admission_unavailable', 'connect'],
+  ])('leaves unrelated status/code/context (%s, %s, %s) on the existing safe path', async (status, code, operation) => {
+    const request = vi.fn().mockRejectedValue({ status, code, message: 'fictional-private-native-diagnostic' });
+    const client = createCompanyApi(request);
+    const failure = await (operation === 'setup' ? client.setup() : client.connectHost('fictional-host-code')).catch(error => error);
+    if (!(failure instanceof Error)) throw new Error('Expected safe company error');
+    expect(failure.message).not.toContain('Run as administrator');
+    expect(failure.message).not.toContain('fictional-private-native-diagnostic');
+    expect(failure.message).not.toContain('fictional-unrecognized-admission-code');
+  });
+});
+
 it("distinguishes a damaged host code from an unavailable host without exposing transport details", async () => {
   const request = vi.fn().mockRejectedValueOnce(Object.assign(new Error("private transport details"), { status: 400 }))
     .mockRejectedValueOnce(Object.assign(new Error("private transport details"), { status: 503 }));
   const client = createCompanyApi(request);
   await expect(client.connectHost("bad code")).rejects.toThrow("Copy the whole current code");
   await expect(client.connectHost("valid but offline")).rejects.toThrow("Keep RealBud open on the host computer");
+});
+
+describe('lifecycle client authority and restart contracts', () => {
+  it('keeps membership when a host backup requires service administration', async () => {
+    const storage = memoryStorage();
+    const request = vi.fn().mockResolvedValueOnce(session()).mockRejectedValueOnce(Object.assign(new Error('Admin needed'), { status: 401, code: 'service_admin_required' }));
+    const client = createCompanyApi(request, storage); await client.signIn(initialCredential);
+    await expect(client.hostRecovery('backup', { passphrase: 'Synthetic passphrase', retireSource: false })).rejects.toMatchObject({ memberSessionEnded: false, code: 'service_admin_required' });
+    expect([...storage.values.values()]).toEqual([ownerToken]);
+    expect(request.mock.calls[1][2]).toMatchObject({ timeoutMs: 120_000 });
+  });
+  it('holds an uncertain departure session, and clears it only after success', async () => {
+    const storage = memoryStorage();
+    const request = vi.fn().mockResolvedValueOnce(session()).mockRejectedValueOnce({ status: 503 }).mockResolvedValueOnce({ ok: true });
+    const client = createCompanyApi(request, storage); await client.signIn(initialCredential);
+    await expect(client.leaveOffice()).rejects.toThrow(); expect([...storage.values.values()]).toEqual([ownerToken]);
+    await client.leaveOffice(); expect(storage.values.size).toBe(0);
+    expect(request.mock.calls.filter(([path]) => path === '/api/company/leave-office')).toHaveLength(2);
+  });
+  it('preserves complete saved share audiences and rejects malformed recovery responses', async () => {
+    const saved = { requestId: '11111111-1111-4111-8111-111111111111', title: 'Synthetic review', summary: 'Draft', purpose: 'request-review', recipientMemberIds: ['one', 'two'], assigneeMemberId: 'two', evidence: null };
+    const request = vi.fn().mockResolvedValueOnce({ pending: { phase: 'pending', input: saved }, otherOfficePending: false }).mockResolvedValueOnce({ pending: { phase: 'pending', input: { ...saved, assigneeMemberId: {} } }, otherOfficePending: false });
+    const client = createCompanyApi(request);
+    expect((await client.pendingShare()).pending?.input).toEqual(saved);
+    await expect(client.pendingShare()).rejects.toThrow(/incomplete/);
+  });
+  it('marks host replacement and offline detach explicitly and never carries a token into the next office', async () => {
+    const storage = memoryStorage(); const request = vi.fn().mockResolvedValueOnce(session()).mockResolvedValue({ ok: true });
+    const client = createCompanyApi(request, storage); await client.signIn(initialCredential);
+    await client.connectHost('synthetic-code', true);
+    expect(JSON.parse(request.mock.calls[1][1].body)).toEqual({ hostCode: 'synthetic-code', replaceExisting: true });
+    expect(storage.values.size).toBe(0);
+    await client.detachOffline();
+    expect(JSON.parse(request.mock.calls[2][1].body)).toEqual({ acknowledgeActiveSessions: true });
+  });
 });

@@ -1,0 +1,42 @@
+{
+  "width": 390,
+  "scroll": 542,
+  "elements": [
+    {
+      "tag": "DIV",
+      "class": "ops-field",
+      "width": 522,
+      "right": 542
+    },
+    {
+      "tag": "LABEL",
+      "class": "",
+      "width": 522,
+      "right": 542
+    },
+    {
+      "tag": "SELECT",
+      "class": "",
+      "width": 522,
+      "right": 542
+    },
+    {
+      "tag": "P",
+      "class": "ops-hint",
+      "width": 522,
+      "right": 542
+    },
+    {
+      "tag": "BUTTON",
+      "class": "button",
+      "width": 522,
+      "right": 542
+    },
+    {
+      "tag": "A",
+      "class": "",
+      "width": 522,
+      "right": 542
+    }
+  ]
+}

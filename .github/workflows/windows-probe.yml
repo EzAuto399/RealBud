@@ -1,0 +1,493 @@
+name: Windows probe
+
+# Manual, minutes-long diagnosis of the Windows-only pieces (private-storage
+# ACL admission and its dependent suites, retention, or ACP fixture regressions)
+# without waiting for the full CI matrix. Evidence only; it gates nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Windows suite to exercise
+        type: choice
+        required: true
+        default: privacy
+        options:
+          - privacy
+          - retention
+          - team
+          - acp
+          - restricted-startup
+      installer_run_id:
+        description: Exact existing installer workflow run for the team proof
+        type: string
+        required: true
+        default: '35854230714'
+      installer_sha256:
+        description: Expected installer SHA256 for the team proof
+        type: string
+        required: true
+        default: '602bcd3455199b8b39164d124f557b6cf0daece756d1fe190f93bdf36a8eb542'
+      compiled_source_sha:
+        description: Full compiled application source SHA for the team proof
+        type: string
+        required: true
+        default: '0f4edd5f7deff900651251e5889941f4d06e5fa9'
+  # Dispatch only resolves on the default branch, so a pull request that touches
+  # the Windows privacy pieces runs the probe on its own.
+  pull_request:
+    paths:
+      - .github/workflows/windows-probe.yml
+      - scripts/testing/probe-windows-acl.mjs
+      - scripts/testing/probe-windows-powershell-env.mjs
+      - scripts/qa-private-backup-boundaries.mjs
+      - server/windows-file-privacy*.ts
+      - server/private-file.ts
+      - server/private-vault.ts
+      - server/hermes-profile-storage.ts
+      - server/testing/private-fixture.ts
+      - server/testing/private-profile-fixture.ts
+      - electron/desk-key-custody.test.mjs
+      - server/accounts-review.test.ts
+      - server/agency-setup.test.ts
+      - server/attended-run.test.ts
+      - server/batches.test.ts
+      - server/bill-proposals.test.ts
+      - server/bill-review-drafts.test.ts
+      - server/bill-review-http.test.ts
+      - server/browser-broker.test.ts
+      - server/browser-runtime.test.ts
+      - server/channel-pairing.test.ts
+      - server/company-installation.test.ts
+      - server/company-installation-binding.test.ts
+      - server/company/host-runtime.test.ts
+      - server/company/postgres-runtime.test.ts
+      - server/customer-pack-archive.review.test.ts
+      - server/customer-pack-archive.test.ts
+      - server/customer-pack-skill-history.test.ts
+      - server/customer-pack-upgrades.test.ts
+      - server/customer-packs.test.ts
+      - server/desk.test.ts
+      - server/drivers/acp/acp.test.ts
+      - server/drivers/acp/memory-proposals.test.ts
+      - server/hermes-profile-windows.test.ts
+      - server/job-executor.test.ts
+      - server/job-runs.test.ts
+      - server/mail-ingestion.test.ts
+      - server/mail-retention.test.ts
+      - server/mail-workspace-http.test.ts
+      - server/manual-job-request.test.ts
+      - server/morning-mail-scheduler.test.ts
+      - server/office-link.test.ts
+      - server/private-backup-archive.test.ts
+      - server/private-backup-bank-amendment.test.ts
+      - server/private-backup-bank-retention.test.ts
+      - server/private-backup-bill-review.test.ts
+      - server/private-backup-capture.test.ts
+      - server/private-backup-catalog.test.ts
+      - server/private-backup-cold-restore.test.ts
+      - server/private-backup-coordinator.test.ts
+      - server/private-backup-department-work.test.ts
+      - server/private-backup-legacy.test.ts
+      - server/private-backup-mail-retention.test.ts
+      - server/private-backup-mail-validation.test.ts
+      - server/private-backup-operations.test.ts
+      - server/private-backup-pack-upgrade.test.ts
+      - server/private-backup-prepare.test.ts
+      - server/private-backup-prepared.test.ts
+      - server/private-backup-proposal-retention.test.ts
+      - server/private-backup-resource-runtime.test.ts
+      - server/private-backup-resources.test.ts
+      - server/private-backup-restore-catalog.test.ts
+      - server/private-backup-skill-history.test.ts
+      - server/private-backup-source-bills.test.ts
+      - server/private-backup-v2-bootstrap.test.ts
+      - server/private-backup-v2-integration.test.ts
+      - server/private-backup-website-requests.test.ts
+      - server/private-workspace-backup.test.ts
+      - server/routines-recovery.test.ts
+      - server/routines.test.ts
+      - server/service-admin-provision.test.ts
+      - server/source-bills-api.test.ts
+      - server/testing/private-profile-fixture.test.ts
+      - server/vault.test.ts
+      - server/website-remote-approvers.test.ts
+      - server/website-remote-work.test.ts
+      - server/windows-created-privacy.test.ts
+      - server/workspace-identity.test.ts
+      - server/workspace-tabs.test.ts
+
+permissions:
+  contents: read
+
+jobs:
+  acl:
+    name: ACL admission probe (windows-latest)
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.suite != 'retention' && inputs.suite != 'team' && inputs.suite != 'acp' && inputs.suite != 'restricted-startup') }}
+    runs-on: windows-latest
+    # The fixture-dependent suites below took about 80 min in failing CI shards
+    # (several slow tests are now skipped or bounded on Windows); allow for that.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Runner facts
+        shell: pwsh
+        run: |
+          "PSModulePath=$env:PSModulePath"
+          "TEMP=$env:TEMP RUNNER_TEMP=$env:RUNNER_TEMP"
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString(); (Get-Command Set-Acl).Module.Path; [System.Security.Principal.WindowsIdentity]::GetCurrent().Name'
+      - name: PowerShell launch cost under the installed service's stripped environment
+        continue-on-error: true
+        run: node scripts/testing/probe-windows-powershell-env.mjs --all
+      - name: ACL admission in every storage root, inherited and relocated home
+        continue-on-error: true
+        run: node --experimental-strip-types scripts/testing/probe-windows-acl.mjs
+      - name: Smallest ACL-dependent suites
+        # Plus every suite whose fixtures stand in for private objects the product
+        # admits (server/testing/private-fixture.ts); one line for pwsh.
+        run: >-
+          pnpm exec vitest run
+          server/private-file.test.ts
+          server/private-vault.test.ts
+          server/hermes-profile-storage.test.ts
+          server/windows-file-privacy.test.ts
+          server/windows-file-privacy-sync.test.ts
+          server/windows-file-privacy-diagnostics.test.ts
+          server/testing/private-profile-fixture.test.ts
+          electron/desk-key-custody.test.mjs
+          server/accounts-review.test.ts
+          server/agency-setup.test.ts
+          server/attended-run.test.ts
+          server/batches.test.ts
+          server/bill-proposals.test.ts
+          server/bill-review-drafts.test.ts
+          server/bill-review-http.test.ts
+          server/browser-broker.test.ts
+          server/browser-runtime.test.ts
+          server/channel-pairing.test.ts
+          server/company-installation.test.ts
+          server/company-installation-binding.test.ts
+          server/company/host-runtime.test.ts
+          server/company/postgres-runtime.test.ts
+          server/customer-pack-archive.review.test.ts
+          server/customer-pack-archive.test.ts
+          server/customer-pack-skill-history.test.ts
+          server/customer-pack-upgrades.test.ts
+          server/customer-packs.test.ts
+          server/desk.test.ts
+          server/drivers/acp/acp.test.ts
+          server/drivers/acp/memory-proposals.test.ts
+          server/hermes-profile-windows.test.ts
+          server/job-executor.test.ts
+          server/job-runs.test.ts
+          server/mail-ingestion.test.ts
+          server/mail-retention.test.ts
+          server/mail-workspace-http.test.ts
+          server/manual-job-request.test.ts
+          server/morning-mail-scheduler.test.ts
+          server/office-link.test.ts
+          server/private-backup-archive.test.ts
+          server/private-backup-bank-amendment.test.ts
+          server/private-backup-bank-retention.test.ts
+          server/private-backup-bill-review.test.ts
+          server/private-backup-capture.test.ts
+          server/private-backup-catalog.test.ts
+          server/private-backup-cold-restore.test.ts
+          server/private-backup-coordinator.test.ts
+          server/private-backup-department-work.test.ts
+          server/private-backup-legacy.test.ts
+          server/private-backup-mail-retention.test.ts
+          server/private-backup-mail-validation.test.ts
+          server/private-backup-operations.test.ts
+          server/private-backup-pack-upgrade.test.ts
+          server/private-backup-prepare.test.ts
+          server/private-backup-prepared.test.ts
+          server/private-backup-proposal-retention.test.ts
+          server/private-backup-resource-runtime.test.ts
+          server/private-backup-resources.test.ts
+          server/private-backup-restore-catalog.test.ts
+          server/private-backup-skill-history.test.ts
+          server/private-backup-source-bills.test.ts
+          server/private-backup-v2-bootstrap.test.ts
+          server/private-backup-v2-integration.test.ts
+          server/private-backup-website-requests.test.ts
+          server/private-workspace-backup.test.ts
+          server/routines-recovery.test.ts
+          server/routines.test.ts
+          server/service-admin-provision.test.ts
+          server/source-bills-api.test.ts
+          server/vault.test.ts
+          server/website-remote-approvers.test.ts
+          server/website-remote-work.test.ts
+          server/windows-created-privacy.test.ts
+          server/workspace-identity.test.ts
+          server/workspace-tabs.test.ts
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+      - name: Private backup restore boundaries from source
+        if: always()
+        run: node scripts/qa-private-backup-boundaries.mjs
+        env:
+          QA_OUTPUT: outputs/windows-probe-private-backup.json
+
+  retention:
+    name: Focused retention regressions (windows-latest)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.suite == 'retention' }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Compile Windows launchers for native process tests
+        run: |
+          pnpm build:worker:win
+          pnpm build:cua-launcher:win
+      - name: Retention regression suites
+        run: >-
+          pnpm exec vitest run
+          server/bank-reference-http.test.ts
+          server/bill-proposals.test.ts
+          server/private-backup-bank-retention.test.ts
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+
+  acp:
+    name: Atomic ACP fixture and browser grant consumers (windows-latest)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.suite == 'acp' }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: ACP publication and browser grant regressions
+        shell: pwsh
+        # These consumers use spawnCli/execCli, not the native one-shot or CUA
+        # supervisors. The route suite retains its existing Windows skip.
+        run: |
+          New-Item -ItemType Directory -Force outputs/windows-acp | Out-Null
+          $source = (git rev-parse HEAD).Trim()
+          $startedAt = [DateTime]::UtcNow.ToString('o')
+          pnpm exec vitest run server/testing/fake-acp-cli.test.ts server/drivers/acp/browser-grant.test.ts server/browser-grants.route.test.ts --reporter=default --reporter=json --outputFile=outputs/windows-acp/vitest.json
+          $testExit = $LASTEXITCODE
+          $files = @('server/testing/fake-acp-cli.ts', 'server/testing/fake-acp-cli.test.ts', 'server/drivers/acp/browser-grant.test.ts', 'server/browser-grants.route.test.ts') | ForEach-Object { [ordered]@{ path = $_; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $_).Hash.ToLowerInvariant() } }
+          [ordered]@{
+            schema = 1; sourceRevision = $source; startedAt = $startedAt; finishedAt = [DateTime]::UtcNow.ToString('o'); exitCode = $testExit
+            suites = @('server/testing/fake-acp-cli.test.ts', 'server/drivers/acp/browser-grant.test.ts', 'server/browser-grants.route.test.ts')
+            files = @($files)
+            limits = @('The browser-grants route suite has an existing Windows skip; skipped cases are not native proof.', 'Injected retry controls verify policy; the unchanged concurrent-reader case exercises the native filesystem.')
+          } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 outputs/windows-acp/receipt.json
+          exit $testExit
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-acp-proof
+          path: outputs/windows-acp/
+          if-no-files-found: warn
+          retention-days: 14
+
+  team:
+    name: Installed two-service company proof (windows-latest)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.suite == 'team' }}
+    runs-on: windows-latest
+    # Leave time for bounded failure cleanup and receipt upload after the probe.
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - name: Validate the native team harness syntax
+        shell: pwsh
+        run: |
+          node --check scripts/qa-windows-team.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'JavaScript syntax check failed.' }
+          $tokens = $null
+          $parseErrors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path scripts/testing/test-windows-team.ps1), [ref]$tokens, [ref]$parseErrors)
+          if ($parseErrors.Count) { $parseErrors | ForEach-Object { Write-Error $_.Message }; throw 'PowerShell syntax check failed.' }
+      - name: Verify and download the explicitly selected installer artifact
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TEAM_INSTALLER_RUN_ID: ${{ inputs.installer_run_id }}
+          TEAM_INSTALLER_SHA256: ${{ inputs.installer_sha256 }}
+          TEAM_COMPILED_SOURCE_SHA: ${{ inputs.compiled_source_sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $runId = $env:TEAM_INSTALLER_RUN_ID
+          $expected = $env:TEAM_INSTALLER_SHA256
+          $source = $env:TEAM_COMPILED_SOURCE_SHA
+          if ($runId -notmatch '^\d+$' -or $expected -notmatch '^[0-9a-f]{64}$' -or $source -notmatch '^[0-9a-f]{40}$') { throw 'Exact run and digest inputs required.' }
+          $metadata = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$runId/artifacts" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Artifact metadata lookup failed.' }
+          $selected = @($metadata.artifacts | Where-Object { $_.name -eq 'windows-installer' })
+          if ($selected.Count -ne 1 -or $selected[0].expired -or $selected[0].workflow_run.head_sha -ne $source) { throw 'Requested installer artifact/source is unavailable or mismatched.' }
+          $destination = Join-Path $env:RUNNER_TEMP 'realbud-team-installer'
+          if (Test-Path -LiteralPath $destination) { throw 'Artifact directory already exists.' }
+          gh run download $runId --repo $env:GITHUB_REPOSITORY --name windows-installer --dir $destination
+          if ($LASTEXITCODE -ne 0) { throw 'Exact artifact download failed.' }
+          $installers = @(Get-ChildItem -LiteralPath $destination -Filter 'RealBud-*-setup.exe' -File)
+          if ($installers.Count -ne 1) { throw 'Expected exactly one installer executable.' }
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $installers[0].FullName).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw 'Installer digest mismatch; nothing will be installed.' }
+          [ordered]@{ schema = 1; runId = $runId; artifactId = [string]$selected[0].id; artifactName = 'windows-installer'; expired = $false
+            compiledSourceRevision = $source; installerSha256 = $actual; installerBytes = $installers[0].Length; expiresAt = $selected[0].expires_at
+          } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $destination 'artifact.json')
+      - name: Install, prove native office lifecycle, and uninstall
+        shell: pwsh
+        env:
+          TEAM_INSTALLER_SHA256: ${{ inputs.installer_sha256 }}
+          TEAM_COMPILED_SOURCE_SHA: ${{ inputs.compiled_source_sha }}
+        run: |
+          $destination = Join-Path $env:RUNNER_TEMP 'realbud-team-installer'
+          $installer = @(Get-ChildItem -LiteralPath $destination -Filter 'RealBud-*-setup.exe' -File)
+          if ($installer.Count -ne 1) { throw 'Expected exactly one verified installer.' }
+          $harnessSource = git rev-parse HEAD
+          ./scripts/testing/test-windows-team.ps1 -Installer $installer[0].FullName `
+            -ArtifactReceipt (Join-Path $destination 'artifact.json') `
+            -ReceiptDirectory (Join-Path $env:GITHUB_WORKSPACE 'outputs/windows-team') `
+            -ExpectedInstallerSha256 $env:TEAM_INSTALLER_SHA256 -CompiledSourceSha $env:TEAM_COMPILED_SOURCE_SHA -HarnessSourceSha $harnessSource
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-two-service-proof
+          path: outputs/windows-team/
+          if-no-files-found: warn
+          retention-days: 14
+
+  restricted-startup:
+    name: Installed restricted process startup diagnostic (windows-latest)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.suite == 'restricted-startup' }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - name: Validate diagnostic syntax and portable protocols before installation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory outputs/windows-restricted-startup | Out-Null
+          node --check scripts/qa-windows-restricted-startup.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'JavaScript syntax check failed.' }
+          $tokens = $null
+          $parseErrors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path scripts/testing/test-windows-restricted-startup.ps1), [ref]$tokens, [ref]$parseErrors)
+          if ($parseErrors.Count) { throw 'PowerShell syntax check failed.' }
+          node --test scripts/testing/restricted-startup-contract.test.mjs > outputs/windows-restricted-startup/startup-controls.log 2>&1
+          $testExit = $LASTEXITCODE
+          Get-Content outputs/windows-restricted-startup/startup-controls.log
+          if ($testExit -ne 0) { throw 'Startup protocol controls failed.' }
+          @'
+          import assert from 'node:assert/strict';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          import { createHash } from 'node:crypto';
+          import vm from 'node:vm';
+          const source = readFileSync('scripts/qa-windows-team.mjs', 'utf8');
+          const cut = (start, end) => { const a = source.indexOf(start), b = source.indexOf(end, a); assert.ok(a >= 0 && b > a); return source.slice(a, b); };
+          const check = (value, message) => assert.ok(value, message);
+          const { safeFailure, inspectFixtureOwner } = vm.runInNewContext(cut('function privacyFailure(', '// Fixture-only observation') + '\n({safeFailure,inspectFixtureOwner})', { check, Buffer });
+          const gateSource = cut('    const inspectNewObject = async', '    if (!existsSync(data))');
+          const fixed = { schema: 1, pid: 123, outcome: 'queried', sameUser: true, administratorEnabled: false, powerUsersEnabled: false, elevated: true, elevationType: 1, tokenDefaultOwnerIsUser: true, objectOwnerIsUser: true };
+          let refused = 0;
+          async function gate(run, expectedPass) {
+            const observations = [], events = [];
+            const gate = vm.runInNewContext(gateSource + '\ninspectNewObject', { elevatedMode: false, role: 'host', stage: '', restrictedLauncher: 'fictional-helper', process: { pid: 123, env: {} },
+              execFileSync: (_file, _args, options) => { assert.equal(options.timeout, 3000); assert.equal(options.maxBuffer, 2048); return run(); },
+              inspectFixtureOwner, fixtureOwnership: observations, progress: async () => events.push('persisted'), check });
+            let failed = false; try { await gate('fictional-owned-directory', 'directory', 'private-root'); } catch { failed = true; }
+            assert.equal(failed, !expectedPass); assert.equal(observations.length, 1); assert.deepEqual(events, ['persisted']);
+            assert.equal(JSON.stringify(observations).includes('fictional-private'), false); if (failed) refused++;
+          }
+          await gate(() => JSON.stringify(fixed), true);
+          for (const change of [{ pid: 999 }, { sameUser: false }, { administratorEnabled: true }, { powerUsersEnabled: true }, { tokenDefaultOwnerIsUser: false }, { objectOwnerIsUser: false }, { private: 'fictional-private' }]) await gate(() => JSON.stringify({ ...fixed, ...change }), false);
+          await gate(() => { throw { stdout: JSON.stringify(fixed), status: 23, message: 'fictional-private' }; }, false);
+          await gate(() => { throw { stdout: '', status: 3221225794 }; }, false);
+          await gate(() => 'fictional-private', false);
+          const privacy = safeFailure({ name: 'WindowsFilePrivacyError', category: 'fictional-private', message: 'fictional-private', detail: 'fictional-private' }, 'fixture');
+          assert.equal(JSON.stringify(privacy).includes('fictional-private'), false);
+          writeFileSync('outputs/windows-restricted-startup/existing-protocol-controls.json', JSON.stringify({ schema: 1, passed: true, refused, receiptBeforeRefusal: true, harnessSha256: createHash('sha256').update(source).digest('hex'), nativeExecuted: false }) + '\n', { flag: 'wx' });
+          console.log('Existing inspector/owner protocol controls passed; native execution is separate.');
+          '@ | node --input-type=module
+          if ($LASTEXITCODE -ne 0) { throw 'Existing inspector protocol controls failed.' }
+      - name: Verify and download the explicitly selected installer artifact
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TEAM_INSTALLER_RUN_ID: ${{ inputs.installer_run_id }}
+          TEAM_INSTALLER_SHA256: ${{ inputs.installer_sha256 }}
+          TEAM_COMPILED_SOURCE_SHA: ${{ inputs.compiled_source_sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $runId = $env:TEAM_INSTALLER_RUN_ID
+          $expected = $env:TEAM_INSTALLER_SHA256
+          $source = $env:TEAM_COMPILED_SOURCE_SHA
+          if ($runId -notmatch '^\d+$' -or $expected -notmatch '^[0-9a-f]{64}$' -or $source -notmatch '^[0-9a-f]{40}$') { throw 'Exact run and digest inputs required.' }
+          # Old team defaults must not silently select a different binary.
+          if ($runId -ne '35878606133' -or $source -ne '689dfc609c7f7fdfa57e756362b00e1b753ef53c' -or $expected -ne '1f0a9e1df075588ea8b430b584126bd3343f37b8d222119d8b94ce66101a3297') { throw 'Pass the selected 689 installer run, source and hash explicitly for this diagnostic.' }
+          $metadataText = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$runId/artifacts" 2>$null
+          if ($LASTEXITCODE -ne 0) { throw 'Artifact metadata lookup failed.' }
+          $metadata = $metadataText | ConvertFrom-Json
+          $selected = @($metadata.artifacts | Where-Object { $_.name -eq 'windows-installer' })
+          if ($selected.Count -ne 1 -or $selected[0].expired -or $selected[0].workflow_run.head_sha -ne $source) { throw 'Requested installer artifact/source is unavailable or mismatched.' }
+          $destination = Join-Path $env:RUNNER_TEMP 'realbud-restricted-startup-installer'
+          if (Test-Path -LiteralPath $destination) { throw 'Artifact directory already exists.' }
+          gh run download $runId --repo $env:GITHUB_REPOSITORY --name windows-installer --dir $destination 2>$null
+          if ($LASTEXITCODE -ne 0) { throw 'Exact artifact download failed.' }
+          $installers = @(Get-ChildItem -LiteralPath $destination -Filter 'RealBud-*-setup.exe' -File)
+          if ($installers.Count -ne 1) { throw 'Expected exactly one installer executable.' }
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $installers[0].FullName).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw 'Installer digest mismatch; nothing will be installed.' }
+          [ordered]@{ schema = 1; runId = $runId; artifactId = [string]$selected[0].id; artifactName = 'windows-installer'; expired = $false
+            compiledSourceRevision = $source; installerSha256 = $actual; installerBytes = $installers[0].Length; expiresAt = $selected[0].expires_at
+          } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $destination 'artifact.json')
+      - name: Install, record startup diagnostics, and uninstall
+        shell: pwsh
+        env:
+          TEAM_INSTALLER_SHA256: ${{ inputs.installer_sha256 }}
+          TEAM_COMPILED_SOURCE_SHA: ${{ inputs.compiled_source_sha }}
+        run: |
+          $destination = Join-Path $env:RUNNER_TEMP 'realbud-restricted-startup-installer'
+          $installer = @(Get-ChildItem -LiteralPath $destination -Filter 'RealBud-*-setup.exe' -File)
+          if ($installer.Count -ne 1) { throw 'Expected exactly one verified installer.' }
+          $harnessSource = (git rev-parse HEAD).Trim()
+          ./scripts/testing/test-windows-restricted-startup.ps1 -Installer $installer[0].FullName `
+            -ArtifactReceipt (Join-Path $destination 'artifact.json') `
+            -ReceiptDirectory (Join-Path $env:GITHUB_WORKSPACE 'outputs/windows-restricted-startup/native') `
+            -ExpectedInstallerSha256 $env:TEAM_INSTALLER_SHA256 -CompiledSourceSha $env:TEAM_COMPILED_SOURCE_SHA -HarnessSourceSha $harnessSource
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-restricted-startup-diagnostic
+          path: outputs/windows-restricted-startup/
+          if-no-files-found: warn
+          retention-days: 14

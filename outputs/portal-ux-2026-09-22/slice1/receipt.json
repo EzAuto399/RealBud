@@ -1,0 +1,29 @@
+{
+  "ok": true,
+  "notes": [
+    "screenshots: /account/installations at 360, 768, 1280 in light and dark; component check at 1280",
+    {
+      "tabOrder": [
+        "a: RealBudAccount (outline 3px)",
+        "a: Support (outline 3px)",
+        "button: Sign out (outline 3px)",
+        "a: Overview (outline 3px)",
+        "a[current]: Computers (outline 3px)",
+        "a: Work requests (outline 3px)",
+        "a: Workspace access (outline 3px)",
+        "a: AI usage & billing (outline 3px)",
+        "a: Usage (outline 3px)",
+        "a: Rates (outline 3px)",
+        "a: Limits (outline 3px)",
+        "a: Invoices (outline 3px)"
+      ]
+    }
+  ],
+  "browserErrors": [],
+  "offOriginRequests": [],
+  "layers": {
+    "portal": "actual built Next and rendered React",
+    "database": "actual disposable PostgreSQL",
+    "execution": "none needed"
+  }
+}

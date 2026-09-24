@@ -1,0 +1,12 @@
+{
+  "verifiedAt": "2026-09-21T20:45:27.025274+00:00",
+  "ownedPid": 30598,
+  "remainingOwnedProcessRows": [],
+  "processReaped": true,
+  "isolatedHomeRemoved": true,
+  "globalConfigSha256": "ada54f57ec570d8e70cba35400ea2b557914ede90ffa893b5da122a7f69d6736",
+  "globalConfigUnchanged": true,
+  "credentialsRead": false,
+  "credentialsCopied": false,
+  "modelRetries": 0
+}

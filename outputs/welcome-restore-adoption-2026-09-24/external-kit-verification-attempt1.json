@@ -1,0 +1,12 @@
+{
+  "at": "2026-09-23T23:56:38.937224+00:00",
+  "passed": false,
+  "stage": "root archive verification",
+  "cause": "Root verifier matched both top-level kit manifest.json and nested receipts/mac/manifest.json, then incorrectly compared both with the top-level manifest hash.",
+  "archiveSha256Matched": true,
+  "entryCountMatched": 49,
+  "duplicateUnsafeOrSymlinkEntries": false,
+  "topLevelManifestHashMatched": true,
+  "productOrKitFailureEstablished": false,
+  "fix": "Select the observed exact top-level manifest and checksum paths; keep the nested package manifest as a normal manifest-listed member."
+}

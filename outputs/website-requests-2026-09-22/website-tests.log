@@ -1,0 +1,49 @@
+
+> realbud-site@0.1.0 test /Users/yoda/projects/RealBud/website
+> node --experimental-strip-types --test lib/*.test.mjs
+
+✔ persists an enquiry with a receipt, never contact data in the response (13.58175ms)
+✔ simultaneous and lost-response retries save one record and return the same receipt (2.530375ms)
+✔ invalid, cross-origin, bot and oversized requests never reach storage (0.8355ms)
+✔ database outages do not acknowledge receipt or leak errors (1.248333ms)
+✔ bounds abuse atomically while permitting an existing receipt to be retried (1.530917ms)
+✔ SQL-shaped text remains data, with no public record retrieval (0.5945ms)
+✔ www origin may post to the apex API (0.588292ms)
+✔ pairing credentials are random, bounded and validated (0.922959ms)
+✔ reports require explicit readiness and bounded version text (0.125833ms)
+✔ old, missing and future check-ins never establish current readiness (0.755333ms)
+✔ billing readers use the server mapping and only approved filters are forwarded (12.423167ms)
+✔ forged customer, role, client and duplicate filters cannot change account authority (1.558125ms)
+✔ unlinked customers, missing configuration and insecure remote URLs refuse before transport (0.762042ms)
+✔ wrong upstream customer, role and period cannot masquerade as scoped analytics (0.805042ms)
+✔ empty query defaults to Brisbane month and upstream errors never forward private diagnostics (1.2705ms)
+✔ decimal formatting keeps exact large amounts and token counts without floating point (9.313ms)
+✔ missing agreed resale price stays unknown instead of exposing a wholesale amount (0.476042ms)
+✔ platform customer comes from server mapping, never a browser-supplied ID (0.629333ms)
+✔ billing and checkout preserve trusted customer scope and read-only roles (11.676875ms)
+✔ billing checks the returned customer and projects exact money without supplier fields or headers (1.316417ms)
+✔ billing and document errors redact upstream diagnostics and invalid roles never call the gateway (0.76875ms)
+✔ oversized or invalid upstream billing bodies fail closed without being forwarded (3.020375ms)
+✔ checkout exposes only admitted Square sandbox destinations without forwarding upstream fields (0.365709ms)
+✔ missing mapping and insecure remote endpoints refuse without making a request (0.128458ms)
+✔ invoice documents use the authenticated account mapping and remain available to billing readers (0.338ms)
+✔ documents reject traversal, external invoice URLs and missing mappings before fetch (0.241542ms)
+✔ upstream cross-customer rejection remains a private error and JSON cannot masquerade as an invoice (0.229ms)
+✔ session round-trip and rejects tampering (3.912125ms)
+✔ only two typed operations and reviewed bounded metadata are publishable (0.605875ms)
+✔ immutable envelopes have exact identity, explicit expiry and no source content (0.139125ms)
+✔ claim and event schemas reject actor, credential and execution argument substitution (0.106ms)
+✔ safe integer cursors and exact submit schemas (0.077708ms)
+✔ canonical serialization is key-order independent and preserves meaningful content (0.117416ms)
+✔ request bodies are bounded independently of Content-Length including chunked input (10.992959ms)
+✔ bearer parsing hashes only exact private tokens and public errors never reflect database text (0.90675ms)
+✔ status parser disallows freeform result payloads (0.084208ms)
+✔ account history target labels remain bounded metadata with exact opaque identities (0.176125ms)
+ℹ tests 37
+ℹ suites 0
+ℹ pass 37
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 104.914084

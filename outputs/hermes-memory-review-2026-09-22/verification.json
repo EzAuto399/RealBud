@@ -1,0 +1,61 @@
+{
+  "scope": "Native pending Hermes memory review, final unsigned macOS package; not whole-product production acceptance",
+  "fullSourceRegression": {
+    "receipt": "full-suite.json",
+    "passed": 4247,
+    "failed": 0,
+    "skipped": 143,
+    "files": 335,
+    "sourceManifest": "source-before-suite.json",
+    "sourceDigest": "d417c1df45caff57af7a927d88d66bcea895b7d3a9a1ac508f70ca5f07850584"
+  },
+  "postSuiteChanges": [
+    "scripts/qa-hermes-memory-review.mjs",
+    "src/components/MemoryReviewPanel.test.ts",
+    "src/components/MemoryReviewPanel.tsx"
+  ],
+  "postSuiteVerification": {
+    "uiTestsReceipt": "ui-identity-tests.json",
+    "uiTestsPassed": 19,
+    "failed": 0,
+    "frontendTypecheckAndBuild": "passed; worker receipt",
+    "qaSyntax": "passed",
+    "sourceManifest": "source-final.json",
+    "sourceInputCount": 1047,
+    "sourceDigest": "55056fe71c1b6d51b8afd9d8c564169f4040f188ab5b9311e57ec7f5d683e3a5",
+    "sourceDriftAfterPackageQA": []
+  },
+  "additionalOverlappingChecks": {
+    "nativeStorePassed": 23,
+    "faultProcessesPassed": 13,
+    "sourceBrowserChecksPassed": 10
+  },
+  "package": {
+    "path": "/Users/yoda/projects/RealBud/outputs/hermes-memory-review-2026-09-22/package-final/mac-arm64/RealBud.app",
+    "signed": false,
+    "manifest": "package-final-manifest.json",
+    "digest": "32c607b3c887fd5dbc7ebfc717714cde8bf0c5bc9897743ad0892b5ae5a88be9",
+    "files": 2411,
+    "symlinks": 14,
+    "changedAfterQA": [],
+    "macSmoke": "mac-smoke-final.log",
+    "macSmokePassed": true,
+    "memoryBrowserReceipt": "packaged-browser-final/receipt.json",
+    "memoryBrowserChecksPassed": 10,
+    "pageErrors": [],
+    "offOriginRequests": [],
+    "adminHeadersSeen": 0,
+    "cleanup": true,
+    "electron": "43.4.0",
+    "node": "24.18.1"
+  },
+  "grokDisposition": "grok-disposition.json",
+  "installedAppChanged": false,
+  "limits": [
+    "Fictional native profiles; no provider or customer account actions",
+    "New Windows memory inbox held pending per-file ACL/durable-rename/device proof",
+    "Physical power-loss durability not proven by subprocess exits",
+    "Native Keychain/DPAPI, signed install/update/reboot, office soak and live customer acceptance remain separate",
+    "Foreground typed replacement/removal/batch proposal path is planned, not implemented"
+  ]
+}

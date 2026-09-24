@@ -1,0 +1,22 @@
+server/private-backup-transfer.ts(110,28): error TS18046: 'owner' is of type 'unknown'.
+server/private-backup-transfer.ts(130,26): error TS18048: 'row' is possibly 'undefined'.
+server/private-backup-transfer.ts(130,144): error TS2322: Type 'unknown' is not assignable to type 'Upload'.
+server/private-backup-transfer.ts(141,22): error TS18047: 'chunk' is possibly 'null'.
+server/private-backup-transfer.ts(141,36): error TS18047: 'chunk' is possibly 'null'.
+server/private-backup-transfer.ts(141,48): error TS18047: 'chunk' is possibly 'null'.
+server/private-backup-transfer.ts(150,12): error TS18046: 'value' is of type 'unknown'.
+server/private-backup-transfer.ts(165,32): error TS18047: 'stat' is possibly 'null'.
+server/private-backup-transfer.ts(167,9): error TS18047: 'stat' is possibly 'null'.
+server/private-backup-transfer.ts(168,9): error TS18047: 'stat' is possibly 'null'.
+server/private-backup-transfer.ts(217,57): error TS18047: 'chunk' is possibly 'null'.
+server/private-backup-transfer.ts(218,60): error TS18047: 'chunk' is possibly 'null'.
+server/source-bill-graph.ts(175,9): error TS18048: 'marker' is possibly 'undefined'.
+server/source-bill-graph.ts(176,9): error TS18048: 'marker' is possibly 'undefined'.
+server/source-bill-graph.ts(176,16): error TS2339: Property 'counts' does not exist on type 'BillMarker | { version: 1; }'.
+  Property 'counts' does not exist on type '{ version: 1; }'.
+server/source-bill-graph.ts(176,72): error TS18048: 'marker' is possibly 'undefined'.
+server/source-bill-graph.ts(176,79): error TS2339: Property 'counts' does not exist on type 'BillMarker | { version: 1; }'.
+  Property 'counts' does not exist on type '{ version: 1; }'.
+server/source-bill-graph.ts(176,126): error TS18048: 'marker' is possibly 'undefined'.
+server/source-bill-graph.ts(176,133): error TS2339: Property 'counts' does not exist on type 'BillMarker | { version: 1; }'.
+  Property 'counts' does not exist on type '{ version: 1; }'.

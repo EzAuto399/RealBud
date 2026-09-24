@@ -1,0 +1,56 @@
+// en-AU formatting for all user-visible dates and times. The product is
+// Australian property management; the host locale must never leak through.
+const AU = "en-AU";
+export function fmtDate(ms) {
+    return new Date(ms).toLocaleDateString(AU, { day: "numeric", month: "short", year: "numeric" });
+}
+export function fmtDateTime(ms, timeZone) {
+    const opts = { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" };
+    try {
+        return new Date(ms).toLocaleString(AU, timeZone ? { ...opts, timeZone } : opts);
+    }
+    catch {
+        return new Date(ms).toLocaleString(AU, opts);
+    }
+}
+export function fmtTimeOfDay(ms) {
+    return new Date(ms).toLocaleTimeString(AU, { hour: "numeric", minute: "2-digit" });
+}
+const DAY_MS = 86_400_000;
+export function startOfDay(ms) {
+    const d = new Date(ms);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+}
+/** "today at 3:04 pm" / "tomorrow at 7:30 am" / "yesterday at …" / "Fri 28 Aug at 4:00 pm". */
+export function whenLabel(ms) {
+    const date = new Date(ms);
+    const today = startOfDay(Date.now());
+    const day = startOfDay(ms);
+    const time = fmtTimeOfDay(ms);
+    if (day === today)
+        return `today at ${time}`;
+    if (day === today + DAY_MS)
+        return `tomorrow at ${time}`;
+    if (day === today - DAY_MS)
+        return `yesterday at ${time}`;
+    const label = date.toLocaleDateString(AU, { weekday: "short", day: "numeric", month: "short" });
+    return `${label} at ${time}`;
+}
+/** Short relative stamp for session lines: "2 min ago", then hours, then the date. */
+export function relativeAgo(ms, now = Date.now()) {
+    const delta = Math.max(0, now - ms);
+    const minutes = Math.round(delta / 60_000);
+    if (minutes < 1)
+        return "just now";
+    if (minutes === 1)
+        return "1 min ago";
+    if (minutes < 60)
+        return `${minutes} min ago`;
+    const hours = Math.round(minutes / 60);
+    if (hours === 1)
+        return "1 h ago";
+    if (hours < 24)
+        return `${hours} h ago`;
+    return fmtDateTime(ms);
+}

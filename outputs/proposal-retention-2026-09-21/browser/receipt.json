@@ -1,0 +1,21 @@
+{
+  "at": "2026-09-21T07:11:06.036Z",
+  "passed": true,
+  "layer": "Actual local HTTP app + built UI; fictional connector + deterministic invoice worker; not live Gmail/Hermes/customer/Windows proof",
+  "checks": [
+    "Full bills view collects only the real HTTP host-reviewed fictional Gmail scope without enabling a schedule",
+    "Source-bound deterministic worker proposal renders held fields without accepting a bill or inventing attachment extraction",
+    "Actual UI acceptance requires source review plus unread-attachment acknowledgement and retains source evidence",
+    "Real host API deduplicates a rescan while rejecting stale source digest and unknown workspace property",
+    "Separate explicit recurring approval produces arrival predictions while preserving the single reviewed invoice due date",
+    "UI correction and reload retain earlier evidence; real API rejects stale corrections and payment-state mutation",
+    "Built full-page UI, source form and saved history render at desktop and390px with no page errors or horizontal overflow",
+    "Bounded received pages load25 unique records; property changes reset cursors; separate earlier-register query retains its legacy row",
+    "Direct source identity finds an accepted bill outside the firstpage; direct current-mail source opens it and refresh preserves its unsaved draft",
+    "Paged calendar opens off-page bill and arrival-pattern origin directly; independent pattern pages retain all25 reviewed series",
+    "Filtered saved bill shortcut queries all matching retained records and opens the selected off-page source bill directly",
+    "An unsaved selected-bill draft survives search changes; switching bills requires explicit discard"
+  ],
+  "scanCalls": 3,
+  "errors": []
+}

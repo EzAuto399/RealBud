@@ -1,0 +1,60 @@
+{
+  "ok": true,
+  "checks": [
+    "Legacy account/v1 access remains compatible, but legacy session cannot enter person gate.",
+    "Verified provider callback binds stable subject once under concurrent first login; two agencies and reader remain separate, and identity grants no owner action.",
+    "Only explicitly allowlisted unprovisioned operator gets legacy login; it cannot enter person gate. Bound operator uses v2, and unprovisioned staff get no fallback.",
+    "Actual portal renders verified and legacy identity states at desktop and 390px widths, with keyboard-accessible fresh sign-in.",
+    "Reused email with another provider subject, unsupported OTP type, invalid token and unconfirmed email deny sign-in and clear prior cookie.",
+    "Direct service-role disable/re-enable and company A→B→A invalidate prior cookie epochs; fresh same-person sign-in observes new epoch.",
+    "Email reuse cannot retarget v2 API or any of seven account pages; old cookie gets recovery UI and same provider can freshly authenticate renamed account.",
+    "Committed login reply loss does not mint fallback authority; fresh OTP reconciles the same immutable binding.",
+    "Deletion/recreation creates a new account incarnation while tombstones prevent old provider binding or cookie revival.",
+    "Unavailable identity RPC holds both API and rendered account without email fallback, with bounded recovery messages."
+  ],
+  "cleanup": true,
+  "browserErrors": [],
+  "offOriginRequests": [],
+  "stats": {
+    "rpcCount": 22,
+    "violations": [],
+    "databaseErrors": [
+      "portal_identity_not_provisioned",
+      "portal_identity_not_provisioned",
+      "portal_identity_conflict",
+      "portal_identity_stale",
+      "portal_identity_stale",
+      "portal_identity_stale",
+      "portal_identity_stale",
+      "portal_identity_stale",
+      "portal_identity_stale",
+      "portal_identity_stale",
+      "portal_identity_stale",
+      "portal_identity_stale",
+      "portal_identity_stale",
+      "portal_identity_stale",
+      "portal_identity_stale",
+      "portal_identity_stale",
+      "portal_identity_stale",
+      "portal_identity_stale",
+      "portal_identity_stale",
+      "portal_identity_stale",
+      "portal_identity_stale",
+      "portal_identity_stale",
+      "portal_identity_stale",
+      "portal_identity_conflict",
+      "permission",
+      "permission"
+    ],
+    "authRejections": [],
+    "migrationHashes": {
+      "portalPeople": "17d9df75b244cb13e356ccfff3c27591aaf7a38aec0f0c4ce003d671cb79904d"
+    }
+  },
+  "layers": {
+    "portal": "actual built Next callback, cookies, APIs and rendered pages",
+    "database": "actual disposable PostgreSQL RPCs/triggers",
+    "provider": "fictional local Supabase verification response",
+    "execution": "none; remote approvals not enabled"
+  }
+}

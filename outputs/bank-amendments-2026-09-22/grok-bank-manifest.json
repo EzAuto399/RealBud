@@ -1,0 +1,12 @@
+{
+  "artifacts": {
+    "grok-bank-source-snapshot.json": "fd0c145995ab861b96e536029c5625122e750ef1308d96df90032d2bec3a435e",
+    "grok-bank-acp-profile.md": "fba2225ab350ed7784108685ea16ab8823efef109b19059de55e8afe3aa0a226",
+    "grok-bank-cleanup.json": "7cd5dfe7ee927929e3cdc5946b56e7127bdaf9e6a463dbc83c2b5db4a99a93e9",
+    "grok-bank-acp-run.json": "e0fd998fb1beebf2f0b96fadea8f0725b37e3fb30b5295d90f8bda7b6a9b4f42",
+    "grok-bank-acp-prompt.txt": "bf59cdaf8d77c269f7cc929d323d970c8447ddf69e9310f4d62fbde2104c8816",
+    "grok-bank-acp-review.py": "7e9562b576f0bfbdcae37c6e62a4cde402ce2b3153a1a9434ac52fba383cbbc7",
+    "grok-bank-disposition.json": "5d86b89ff98368b508cde1af3a2fcf1cc924fe5f8a74adf5e5cc4f2d35e255c2",
+    "grok-bank-review.md": "5c1d0a7dd6cb327d753fed8ec9a1c1bdbf49e918fe2b0cc8b769ca6573aa5344"
+  }
+}

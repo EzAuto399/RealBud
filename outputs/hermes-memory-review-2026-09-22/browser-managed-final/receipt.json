@@ -1,0 +1,66 @@
+{
+  "at": "2026-09-21T15:07:26.831Z",
+  "passed": true,
+  "node": "v24.19.0",
+  "platform": "darwin",
+  "runtimePin": "345cd2b057a452236de401d3534b8502a7465e8d",
+  "nativeModules": {
+    "tools/memory_tool.py": "ed9c5db6b3144b88425f7039280239b29a047143aa8ffdfd3b7f47bf7e707143",
+    "tools/memory_tool_store.py": "811ef2eb98a8b3f0448294b2c23d422ff7ebd4dc45835475b12df0557d7e5366",
+    "tools/write_approval.py": "9404792bc8c6637e5bd78a87f5a6dfabda6cd6a1a61083b450647ddb2951c470",
+    "tools/threat_patterns.py": "6ad8947a5a62db44f66b1cd33086e2b51c4a66019ef5301856e5efae59797341",
+    "tools/__init__.py": "7bca460f476ac9ace706c8cfd07e98f8aae34d839862f0f68abafc3a8397cf35",
+    "tools/registry.py": "310a57a5dc5d41c935eacbe707e8a258dc21fd72fd44fccbc33d1a78b7143922",
+    "utils.py": "1414f177e14940750ad80d6dd5020685219ca26b0b7d500299ab2f170118ed07",
+    "hermes_constants.py": "e5f72a309b3689f5fa2e85065e8051f8e6f7686d1ec1741e7543cc5e56bea162"
+  },
+  "sourceHashes": {
+    "server/hermes-memory-review.ts": "ebf20f9959ec118a5304fb2b34b18abc3efe89068decd0d9d142978981477cd1",
+    "server/helpers/hermes-memory-review.py": "92b8076686373501425195ba773b89ef0a640ad44605ac37adb4fecbe8bdc98e",
+    "shared/hermes-memory-review.ts": "58168f17f6776a86e12947db3b3cf6620bb14e178b177c476b53d29d69612de0",
+    "src/components/MemoryReviewPanel.tsx": "eff79846fc992981e7fdfea2dca7cbb4c654b84172cd90409d3a245067ea4268",
+    "src/components/YouPage.tsx": "6fa7c49a2cae1c7914c17f77dbc792f7d7acb49d263db5cc88465f1deea8b501",
+    "dist/index.html": "8fd52a3594a5ed2b160fe1236e345632e960d4cffca82853b9c3542631a2d112",
+    "scripts/qa-hermes-memory-review.mjs": "5b75e66036b6d10940fb4f8c12d423a727260eda6721e0e772ba7502371122e9"
+  },
+  "checks": [
+    "Both memory reads and decisions reject a missing renderer session before exposing or changing preference data",
+    "Managed administrator protection is configured; ordinary staff cannot mutate provider settings or read provider login codes",
+    "Actual source bootstrap and authenticated HTTP produce a complete native replacement preview in a disposable profile",
+    "Built settings UI shows all literal before/after text and keeps Apply disabled until the exact-version checkbox is checked",
+    "At 390px the complete text remains keyboard focusable and scrolls within its region without overflowing the document",
+    "The UI dispatches one exact reviewed digest, the native file changes to the complete preview, and the persisted receipt confirms application",
+    "Reload rediscovers the persisted decision and offers no second Apply action for a completed review",
+    "Changing saved memory after preview rejects the stale approval, preserves the newer bytes and proposal, and clears the old confirmation",
+    "A newly reviewed rejection uses its new digest, preserves memory and records the rejected result",
+    "No page errors, off-origin browser requests or admitted source changes occurred"
+  ],
+  "errors": [],
+  "blockedNetwork": [],
+  "decisions": [
+    {
+      "path": "/api/hermes/memory-reviews/00000010/decision",
+      "body": {
+        "expectedDigest": "d56708537ad7fd06c96d79f27736b115bc394d4fe5ee1f69a61fc09ce89fee68",
+        "decision": "approve"
+      }
+    },
+    {
+      "path": "/api/hermes/memory-reviews/00000020/decision",
+      "body": {
+        "expectedDigest": "6e54ef0ee0ea6f4c68978764a7b6cffcfd0ef5a1043b6fa8153470943b097873",
+        "decision": "approve"
+      }
+    },
+    {
+      "path": "/api/hermes/memory-reviews/00000020/decision",
+      "body": {
+        "expectedDigest": "5c0cdfcdc84658fa34be008705f58a95efce0ff3c0e95ca5b8ebf6f366e11c58",
+        "decision": "reject"
+      }
+    }
+  ],
+  "adminHeadersSeen": 0,
+  "cleanup": true,
+  "layer": "Actual source bootstrap and authenticated HTTP, built React UI, admitted native memory modules, fictional disposable profile. No Hermes CLI, model/provider calls, customer accounts, installed Electron, OS keychain or Windows device acceptance."
+}

@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "kind": "accounts-bill-exception-review",
+  "sourceReference": "QA-SYN-BILL-EXCEPTIONS-COMPLETE-0fc657b8-80cc-4b2d-9cfb-cfd5ba5f0a13",
+  "status": "complete",
+  "coverageComplete": true,
+  "findings": [
+    {
+      "occurrenceId": "SYN-B01",
+      "propertyId": "SYN-P01",
+      "arrival": "received",
+      "dueDate": "2026-09-13",
+      "payment": "arranged-unconfirmed",
+      "funding": "sufficient",
+      "advance": "none",
+      "flags": [
+        "due-without-confirmed-payment"
+      ],
+      "sourceIds": [
+        "SYN-ACCEPTED-I01"
+      ],
+      "reason": "Accepted invoice SYN-BILLINV01 received; dueDate 2026-09-13 is on/before asOf 2026-09-14 and payment is only arranged-unconfirmed (paymentConfirmed=false, no paymentReceiptId). Payment not confirmed."
+    },
+    {
+      "occurrenceId": "SYN-B02",
+      "propertyId": "SYN-P02",
+      "arrival": "received",
+      "dueDate": "2026-09-13",
+      "payment": "confirmed",
+      "funding": "sufficient",
+      "advance": "outstanding",
+      "flags": [
+        "advance-unrecovered"
+      ],
+      "sourceIds": [
+        "SYN-ACCEPTED-I02"
+      ],
+      "reason": "Accepted invoice SYN-BILLINV02 received and payment confirmed (SYN-PAYREC02). Company advance SYN-ADV02 has no recovery proof (recoveryConfirmed=false, no recoveryReceiptId); owner funds arriving does not prove advance recovery."
+    },
+    {
+      "occurrenceId": "SYN-B03",
+      "propertyId": "SYN-P03",
+      "arrival": "received",
+      "dueDate": "2026-09-13",
+      "payment": "confirmed",
+      "funding": "sufficient",
+      "advance": "recovered",
+      "flags": [],
+      "sourceIds": [
+        "SYN-ACCEPTED-I03"
+      ],
+      "reason": "Accepted invoice SYN-BILLINV03 received; payment confirmed (SYN-PAYREC03); advance SYN-ADV03 recovery confirmed with receipt SYN-RECOVER03. Nothing outstanding."
+    },
+    {
+      "occurrenceId": "SYN-B04",
+      "propertyId": "SYN-P04",
+      "arrival": "missing",
+      "dueDate": null,
+      "payment": "unknown",
+      "funding": "unknown",
+      "advance": "none",
+      "flags": [
+        "missing-arrival"
+      ],
+      "sourceIds": [],
+      "reason": "No accepted invoice for this occurrence; coverage complete and expectedBy 2026-09-12 is before asOf 2026-09-14, so the expected arrival window has passed with complete coverage (not a confirmed missing bill). No invoice evidence means no verified due date. Payment and funding unknown; no advance recorded."
+    },
+    {
+      "occurrenceId": "SYN-B05",
+      "propertyId": "SYN-P05",
+      "arrival": "not-due",
+      "dueDate": null,
+      "payment": "unknown",
+      "funding": "unknown",
+      "advance": "none",
+      "flags": [],
+      "sourceIds": [],
+      "reason": "No accepted invoice; coverage complete and expectedBy 2026-09-20 is on/after asOf 2026-09-14, so the expected arrival window has not closed. No invoice evidence means no verified due date. Nothing due."
+    },
+    {
+      "occurrenceId": "SYN-B06",
+      "propertyId": "SYN-P06",
+      "arrival": "received",
+      "dueDate": "2026-09-18",
+      "payment": "unknown",
+      "funding": "insufficient",
+      "advance": "none",
+      "flags": [
+        "insufficient-funds",
+        "owner-to-pay"
+      ],
+      "sourceIds": [
+        "SYN-ACCEPTED-I06"
+      ],
+      "reason": "Accepted invoice SYN-BILLINV06 received with dueDate 2026-09-18, after asOf 2026-09-14, so payment is not late. Funding explicitly insufficient and ownerToPay=true: owner-to-pay handoff unresolved until payment proof. Payment unknown; no advance."
+    }
+  ],
+  "holds": [
+    {
+      "itemId": "SYN-B01",
+      "reason": "Payment arranged but not confirmed (no paymentReceiptId) while dueDate 2026-09-13 has passed. Human review of payment evidence needed; no acknowledgement or reminder to be issued."
+    },
+    {
+      "itemId": "SYN-B02",
+      "reason": "Company advance SYN-ADV02 outstanding: recoveryConfirmed=false and no recoveryReceiptId, despite confirmed payment and owner funds arrived."
+    },
+    {
+      "itemId": "SYN-B04",
+      "reason": "Expected bill not received; expectedBy 2026-09-12 has passed with complete coverage. Supplier follow-up is not authorized for this run."
+    },
+    {
+      "itemId": "SYN-B06",
+      "reason": "Funding insufficient and owner-to-pay handoff unresolved pending payment proof; owner/supplier contact and payment are not authorized."
+    }
+  ],
+  "actionsPerformed": []
+}

@@ -35,6 +35,23 @@ describe("Hermes child stream watchdog", () => {
     expect(env.HERMES_CODEX_EVENT_STALE_TIMEOUT_SECONDS).toBe(value);
   });
 
+  it("drops the settings that would give Hermes its own browser", () => {
+    const env: Record<string, string | undefined> = {
+      AGENT_BROWSER_EXECUTABLE_PATH: "/synthetic/chromium",
+      AGENT_BROWSER_ENGINE: "lightpanda",
+      agent_browser_session: "fictional",
+      BROWSER_CDP_URL: "http://127.0.0.1:9222",
+      CAMOFOX_URL: "http://127.0.0.1:9377",
+      PLAYWRIGHT_BROWSERS_PATH: "/synthetic/ms-playwright",
+      BROWSER_TIMEOUT: "kept",
+    };
+    hardenHermesChildEnv(env);
+    for (const key of ["AGENT_BROWSER_EXECUTABLE_PATH", "AGENT_BROWSER_ENGINE", "agent_browser_session", "BROWSER_CDP_URL", "CAMOFOX_URL", "PLAYWRIGHT_BROWSERS_PATH"]) {
+      expect(env, key).not.toHaveProperty(key);
+    }
+    expect(env.BROWSER_TIMEOUT).toBe("kept");
+  });
+
   it("keeps provider and capability hardening in place", () => {
     const env: Record<string, string | undefined> = {
       OPENAI_API_KEY: "fictional-key",

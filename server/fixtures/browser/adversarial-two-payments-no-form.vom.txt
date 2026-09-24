@@ -1,0 +1,14 @@
+@vom 1
+@view 1280x900
+@layers 1 focus=L1
+L1 page
+  RootWebArea "Fictional Strata Portal — Levies"
+    main
+      heading "Levies due"
+        StaticText "Levies due"
+      paragraph "Payee: Fictional Owners Corporation SP 12345"
+        StaticText "Payee: Fictional Owners Corporation SP 12345"
+      @e5 button "Pay now"
+      paragraph "Amount: A$2,480.00"
+        StaticText "Amount: A$2,480.00"
+      @e9 button "Pay later"

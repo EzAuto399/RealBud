@@ -1,0 +1,6 @@
+PASS Actual packaged app and preload adopt the isolated target service before the safeStorage fixture is installed
+PASS Real preload stop/start migrates existing custody to the mocked protected store and preserves the same key without a plaintext key file
+PASS Native Restore restart button performs real preload/main IPC and cold bootstrap, preserving target custody and exact restored bank bytes
+PASS Compiled normalized bill history, paused pattern and old source alias survive the native different-key restore and resolve through real HTTP
+PASS Compiled proposal intent survives native different-key restore exactly and its unfinished retry cannot admit another worker
+PASS Native restart prefers the current restored book over a stale quarantine and retains the alternative recovery key and bytes

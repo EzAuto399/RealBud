@@ -1,0 +1,76 @@
+{
+  "at": "2026-09-23T02:37:08.191Z",
+  "passed": true,
+  "runtime": {
+    "node": "24.19.0",
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "layer": "Isolated actual source HTTP/bootstrap with fictional properties and no provider credentials. Includes response body and parse time; single-machine observations, not customer UI latency, concurrency SLA or Windows proof.",
+  "measurements": [
+    {
+      "n": 20,
+      "seedMs": 235,
+      "deskMs": 7,
+      "snapshotKB": 25,
+      "practiceMs": 70,
+      "previewMs": 6,
+      "importMs": 44,
+      "loopsMs": 2,
+      "deskReadMedianMs": 3.47,
+      "deskReadP95Ms": 3.73,
+      "propertyCount": 26,
+      "startupMs": 653,
+      "restartMs": 328,
+      "restartPreserved": true
+    },
+    {
+      "n": 100,
+      "seedMs": 1134,
+      "deskMs": 16,
+      "snapshotKB": 93,
+      "practiceMs": 45,
+      "previewMs": 24,
+      "importMs": 57,
+      "loopsMs": 6,
+      "deskReadMedianMs": 7.84,
+      "deskReadP95Ms": 8.74,
+      "propertyCount": 106,
+      "startupMs": 517,
+      "restartMs": 414,
+      "restartPreserved": true
+    },
+    {
+      "n": 500,
+      "seedMs": 5198,
+      "deskMs": 33,
+      "snapshotKB": 434,
+      "practiceMs": 81,
+      "previewMs": 319,
+      "importMs": 386,
+      "loopsMs": 27,
+      "deskReadMedianMs": 24.15,
+      "deskReadP95Ms": 32.56,
+      "propertyCount": 506,
+      "startupMs": 516,
+      "restartMs": 414,
+      "restartPreserved": true
+    },
+    {
+      "n": 990,
+      "seedMs": 9509,
+      "deskMs": 44,
+      "snapshotKB": 851,
+      "practiceMs": 181,
+      "previewMs": 1121,
+      "importMs": 1381,
+      "loopsMs": 50,
+      "deskReadMedianMs": 47.81,
+      "deskReadP95Ms": 56.26,
+      "propertyCount": 996,
+      "startupMs": 516,
+      "restartMs": 499,
+      "restartPreserved": true
+    }
+  ]
+}

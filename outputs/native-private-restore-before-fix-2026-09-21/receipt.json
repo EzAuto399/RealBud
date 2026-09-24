@@ -1,0 +1,30 @@
+{
+  "at": "2026-09-21T04:55:49.176Z",
+  "passed": false,
+  "executable": "/Users/yoda/projects/RealBud/outputs/real-estate-core-2026-09-21/package/mac-arm64/RealBud.app/Contents/MacOS/RealBud",
+  "resources": "/Users/yoda/projects/RealBud/outputs/real-estate-core-2026-09-21/package/mac-arm64/RealBud.app/Contents/Resources",
+  "runtime": {
+    "node": "24.18.1",
+    "electron": "43.4.0",
+    "packaged": true,
+    "resources": "/Users/yoda/projects/RealBud/outputs/real-estate-core-2026-09-21/package/mac-arm64/RealBud.app/Contents/Resources",
+    "logs": "/private/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/RealBud native restore ZDoOjg/electron/logs"
+  },
+  "checks": [
+    "Actual packaged app and preload adopt the isolated target service before the safeStorage fixture is installed",
+    "Real preload stop/start migrates existing custody to the mocked protected store and preserves the same key without a plaintext key file",
+    "Native Restore restart button performs real preload/main IPC and cold bootstrap, preserving target custody and exact restored bank bytes"
+  ],
+  "errors": [],
+  "limitations": [
+    "Actual packaged Mac runtime, main, native preload IPC, detached service, bootstrap and UI",
+    "safeStorage is an in-memory AES fixture; OS Keychain/DPAPI protection and keychain prompts are not tested",
+    "External requests blocked; only fictional isolated data",
+    "Unsigned local package; not customer installation, Windows or reboot survival"
+  ],
+  "failure": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n+ actual - expected\n\n+ 'f4b20f64fd526e38d16a33e4aaf6a7121d4c7518858bc754b606f622f42d7063'\n- '2e83612764a0b0ee300b3ac4b4e1c1a4614338d3440d74319890eadf42839b07'\n\n    at file:///Users/yoda/projects/RealBud/scripts/qa-native-private-restore.mjs:155:84\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)",
+  "diagnostics": {
+    "sourceLog": "realbud server on http://127.0.0.1:55485\nrealbud server on http://127.0.0.1:18799\n",
+    "nativeLog": "Debugger listening on ws://127.0.0.1:55508/efe74c1f-cbec-43d5-be03-fcd562231f61\nFor help, see: https://nodejs.org/learn/getting-started/debugging\n\nDevTools listening on ws://127.0.0.1:55509/devtools/browser/9b24426f-025b-4483-9b51-5a81762f4e69\nDebugger attached.\nDebugger ending on ws://127.0.0.1:55508/efe74c1f-cbec-43d5-be03-fcd562231f61\nFor help, see: https://nodejs.org/learn/getting-started/debugging\n"
+  }
+}

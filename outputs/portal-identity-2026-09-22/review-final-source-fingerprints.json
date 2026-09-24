@@ -1,0 +1,18 @@
+{
+  "recordedAt": "2026-09-21T22:04:19.155084+00:00",
+  "reason": "Final bounded review of admin child-page guards and observed current HTTP/SQL receipts; no full test rerun",
+  "files": {
+    "website/app/admin/page.tsx": "c72d2f17c7d8fdb00a375044e720ee1b30c0c8252dfe52763f33d4834fcaf2b6",
+    "website/app/admin/offices/page.tsx": "ece753cda592a1fb7fb6c860d218a2528030329be266d2dcd3eae40bf6fedcf8",
+    "website/app/admin/margin/page.tsx": "1a6452c23de8ed4c658722e74a48e2592b8cf7dca45cb349507bd20bc424f72d",
+    "website/app/admin/layout.tsx": "208d0a6bf03ad073d9fc5b1ac05966d566317f1af577ccdbfce9611019c95dbb",
+    "website/lib/portal-auth.ts": "7c787bec2be4df23f16428a19f00c6e64fe5c5a056557df4d3342899724ac5fe",
+    "website/app/auth/callback/route.ts": "476c0a2830b987e08671ab993537b9d3e4b52c461fc372f3c7755b98c1dac051",
+    "website/scripts/qa-portal-identity.mjs": "0c9860e4fa3c60e4a0f225ba81e1ac173a473f1d45f0b41838355ad624b78602",
+    "website/scripts/testing/command-site.mjs": "a14db8bf3c5bbbea2b1ff700d922b31182758d5d1a4953ce1610925b8d2c88b4",
+    "outputs/portal-identity-2026-09-22/http-ui/receipt.json": "828a49d353d2a73c7d5d099078fd60ca1fefdfdc29bfdcb1898737467f75eeff",
+    "outputs/portal-identity-2026-09-22/sql-verification.json": "f8e8ddb5a2b96c3aa8cbc1c2c339314cd968b09c3db9def007410af2a42bfb22"
+  },
+  "observedHttpChecks": 10,
+  "observedSqlAssertions": 110
+}

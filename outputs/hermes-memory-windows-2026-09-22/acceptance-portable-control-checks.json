@@ -1,0 +1,15 @@
+{
+  "layer": "Portable harness control flow with explicit fake kernel functions; no Windows or backend calls",
+  "script_sha256": "27934423fd6ed25c4700807d6dc044a054848f55e9914de3f35cac90bc92b0aa",
+  "passed": true,
+  "checks": [
+    "Only exact Win32 ERROR_FILE_NOT_FOUND is accepted as terminal absence",
+    "Missing parent, inaccessible category and unspecified FileNotFoundError are refused",
+    "Actual permission exceptions remain failures",
+    "An existing name is refused as terminal absence",
+    "CloseHandle failure preserves the identical body exception and adds fixed supplemental cleanup marker",
+    "Standalone CloseHandle failure is a marked acceptance failure",
+    "Successful independent handle closure returns normally"
+  ],
+  "native_validation": false
+}

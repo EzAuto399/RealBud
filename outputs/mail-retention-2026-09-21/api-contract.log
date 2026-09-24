@@ -1,0 +1,10 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+··························································································
+
+ Test Files  3 passed (3)
+      Tests  90 passed (90)
+   Start at  17:26:04
+   Duration  278ms (transform 35ms, setup 25ms, import 35ms, tests 14ms, environment 0ms)
+

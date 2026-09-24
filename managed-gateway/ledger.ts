@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { LedgerDatabase } from './database.ts';
-import { canonical, id, integer, nano, requireThat, type Tenant, type IssuerEnrollment, type RateCard, type PortalPrincipal, type ExecutionGrant, type RequestRecord, type UsageEvidence, type Units } from './contracts.ts';
+import { canonical, id, integer, nano, requireThat, type ServiceEntitlement, type Tenant, type IssuerEnrollment, type RateCard, type PortalPrincipal, type ExecutionGrant, type RequestRecord, type UsageEvidence, type Units } from './contracts.ts';
 import { callId, callAuthorization, parentEnvelope } from './attempts.ts';
 import { modelRate, periodAt, price, twoMonthsAfter, validateRateCard, validateUnits, withinBound } from './money.ts';
 
@@ -16,16 +16,53 @@ export class UsageLedger {
   }
   /** Trusted operator provisioning only. Never exposed as a portal or host HTTP route. */
   provisionTenant(tenant: Tenant) {
-    [tenant.companyId,tenant.licenseId,tenant.goLiveEvidence].forEach(id);
-    integer(tenant.goLiveAt, Number.MAX_SAFE_INTEGER); integer(tenant.serviceExpiresAt, Number.MAX_SAFE_INTEGER);
-    requireThat(typeof tenant.active === 'boolean' && tenant.goLiveAt <= this.now() && tenant.includedUntil === twoMonthsAfter(tenant.goLiveAt), 'invalid_go_live');
-    requireThat(typeof tenant.customerName === 'string' && tenant.customerName.trim().length > 0 && tenant.customerName.length <= 200 && typeof tenant.customerAddress === 'string' && tenant.customerAddress.trim().length > 0 && tenant.customerAddress.length <= 500, 'customer_identity_required');
-    requireThat(tenant.customerAbn === undefined || /^\d{11}$/.test(tenant.customerAbn), 'invalid_customer_abn');
+    this.validateEntitlement(tenant);
     this.validateCaps(tenant);
     this.db.transaction(() => {
       requireThat(!this.db.get('SELECT id FROM tenants WHERE id=?',tenant.companyId), 'tenant_already_provisioned',409);
       this.db.run('INSERT INTO tenants(id,body) VALUES(?,?)',tenant.companyId,canonical(tenant));
       this.db.append(tenant.companyId,'tenant_provisioned',null,this.now(),tenant);
+    });
+  }
+  private validateEntitlement(tenant: Tenant) {
+    [tenant.companyId,tenant.licenseId,tenant.goLiveEvidence].forEach(id);
+    integer(tenant.goLiveAt, Number.MAX_SAFE_INTEGER); integer(tenant.serviceExpiresAt, Number.MAX_SAFE_INTEGER);
+    requireThat(typeof tenant.active === 'boolean' && tenant.goLiveAt <= this.now() && tenant.includedUntil === twoMonthsAfter(tenant.goLiveAt), 'invalid_go_live');
+    requireThat(tenant.serviceExpiresAt > tenant.goLiveAt, 'invalid_service_expiry');
+    requireThat(typeof tenant.customerName === 'string' && tenant.customerName.trim().length > 0 && tenant.customerName.length <= 200 && typeof tenant.customerAddress === 'string' && tenant.customerAddress.trim().length > 0 && tenant.customerAddress.length <= 500, 'customer_identity_required');
+    requireThat(tenant.customerAbn === undefined || /^\d{11}$/.test(tenant.customerAbn), 'invalid_customer_abn');
+    requireThat(tenant.billingMode === undefined || tenant.billingMode === 'customer' || tenant.billingMode === 'internal_cost', 'invalid_billing_mode');
+  }
+  /**
+   * Trusted operator only (`entitlement-cli.ts`); never an HTTP route. Creates or
+   * updates one company's service entitlement: whether its RealBud service is
+   * active, its licence, go-live and expiry. Validated exactly like
+   * `provisionTenant`. AI caps are Modelvia's: a new record stores inert zero
+   * caps and an existing record keeps whatever it stored; neither drives
+   * anything. The licence is fixed once created, because every issued connector
+   * device carries it.
+   */
+  putEntitlement(entitlement: ServiceEntitlement, evidence: string): { created: boolean; tenant: Tenant } {
+    id(evidence);
+    const fields = { companyId: entitlement.companyId, licenseId: entitlement.licenseId, active: entitlement.active, serviceExpiresAt: entitlement.serviceExpiresAt,
+      customerName: entitlement.customerName, customerAddress: entitlement.customerAddress, ...(entitlement.customerAbn === undefined ? {} : { customerAbn: entitlement.customerAbn }),
+      goLiveAt: entitlement.goLiveAt, goLiveEvidence: entitlement.goLiveEvidence };
+    return this.db.transaction(() => {
+      const current = parse<Tenant>(this.db.get<Body>('SELECT body FROM tenants WHERE id=?',fields.companyId));
+      if (!current) {
+        const tenant: Tenant = { ...fields, includedUntil: typeof fields.goLiveAt === 'number' ? twoMonthsAfter(fields.goLiveAt) : NaN, monthlyCapNanoAud: '0', requestCapNanoAud: '0', maxConcurrent: 1 };
+        this.validateEntitlement(tenant); this.validateCaps(tenant);
+        this.db.run('INSERT INTO tenants(id,body) VALUES(?,?)',tenant.companyId,canonical(tenant));
+        this.db.append(tenant.companyId,'tenant_provisioned',null,this.now(),{...tenant,evidence});
+        return { created: true, tenant };
+      }
+      requireThat(current.licenseId === fields.licenseId, 'license_id_immutable', 409);
+      const { customerAbn: _previousAbn, ...kept } = current;
+      const tenant: Tenant = { ...kept, ...fields, includedUntil: typeof fields.goLiveAt === 'number' ? twoMonthsAfter(fields.goLiveAt) : NaN };
+      this.validateEntitlement(tenant);
+      this.db.run('UPDATE tenants SET body=? WHERE id=?',canonical(tenant),tenant.companyId);
+      this.db.append(tenant.companyId,'service_entitlement_updated',null,this.now(),{...fields,evidence});
+      return { created: false, tenant };
     });
   }
   private validateCaps(caps: Pick<Tenant,'monthlyCapNanoAud'|'requestCapNanoAud'|'maxConcurrent'>) {

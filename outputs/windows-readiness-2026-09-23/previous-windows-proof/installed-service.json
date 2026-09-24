@@ -1,0 +1,187 @@
+{
+  "passed": true,
+  "platform": "win32",
+  "arch": "x64",
+  "node": "v24.18.1",
+  "source": "D:\\a\\_temp\\RealBud installed probe c1ea768c5e9047cf945ea820f26123f9\\resources",
+  "packSource": "D:\\a\\_temp\\RealBud installed probe c1ea768c5e9047cf945ea820f26123f9\\resources\\pack\\property",
+  "runtime": "installed Electron/Node",
+  "proofLayer": "Compiled service and fresh private profile from the selected inputs; not Hermes runtime installation, model access, GUI or two-device acceptance",
+  "timings": {
+    "startupMs": 7040,
+    "readinessMs": 7040,
+    "profileCheckMs": 306,
+    "watchdogMs": 120000,
+    "readinessAttempts": 723,
+    "perHealthRequestMs": 500
+  },
+  "profileProof": {
+    "freshHome": true,
+    "installed": true,
+    "approvalsManual": true,
+    "workroomReady": true,
+    "modelAttached": false,
+    "workerReady": false,
+    "privacy": "independent protected Windows DACL witness",
+    "files": 7,
+    "directories": 6
+  },
+  "child": {
+    "exitCode": null,
+    "signal": "SIGTERM",
+    "killedByWatchdog": false
+  },
+  "powershell": {
+    "service": {
+      "launches": 21,
+      "ms": 5677,
+      "refusals": 0,
+      "counter": "probe entry child_process wrapper"
+    },
+    "witnessLaunches": 1,
+    "witnessMs": 269
+  },
+  "witness": {
+    "exitCode": 0,
+    "signal": null,
+    "code": null,
+    "rule": null,
+    "index": null,
+    "depth": null,
+    "chars": null,
+    "stderrTail": ""
+  },
+  "objects": [
+    {
+      "name": ".",
+      "kind": "directory",
+      "exists": true,
+      "chars": 89
+    },
+    {
+      "name": "profiles",
+      "kind": "directory",
+      "exists": true,
+      "chars": 98
+    },
+    {
+      "name": "profiles/property",
+      "kind": "directory",
+      "exists": true,
+      "chars": 107
+    },
+    {
+      "name": "profiles/property/skills",
+      "kind": "directory",
+      "exists": true,
+      "chars": 114
+    },
+    {
+      "name": "profiles/property/skills/intake-properties",
+      "kind": "directory",
+      "exists": true,
+      "chars": 132
+    },
+    {
+      "name": "profiles/property/skills/morning-arrears",
+      "kind": "directory",
+      "exists": true,
+      "chars": 130
+    },
+    {
+      "name": "auth.json",
+      "kind": "file",
+      "exists": true,
+      "chars": 99
+    },
+    {
+      "name": "profiles/property/SOUL.md",
+      "kind": "file",
+      "exists": true,
+      "chars": 115
+    },
+    {
+      "name": "profiles/property/config.yaml",
+      "kind": "file",
+      "exists": true,
+      "chars": 119
+    },
+    {
+      "name": "profiles/property/distribution.yaml",
+      "kind": "file",
+      "exists": true,
+      "chars": 125
+    },
+    {
+      "name": "profiles/property/profile.yaml",
+      "kind": "file",
+      "exists": true,
+      "chars": 120
+    },
+    {
+      "name": "profiles/property/skills/intake-properties/SKILL.md",
+      "kind": "file",
+      "exists": true,
+      "chars": 141
+    },
+    {
+      "name": "profiles/property/skills/morning-arrears/SKILL.md",
+      "kind": "file",
+      "exists": true,
+      "chars": 139
+    }
+  ],
+  "layout": null,
+  "healthTimeline": [
+    {
+      "second": 0,
+      "outcomes": {
+        "refused": 9
+      }
+    },
+    {
+      "second": 1,
+      "outcomes": {
+        "refused": 10
+      }
+    },
+    {
+      "second": 2,
+      "outcomes": {
+        "refused": 9
+      }
+    },
+    {
+      "second": 3,
+      "outcomes": {
+        "refused": 10
+      }
+    },
+    {
+      "second": 4,
+      "outcomes": {
+        "refused": 9
+      }
+    },
+    {
+      "second": 5,
+      "outcomes": {
+        "refused": 9
+      }
+    },
+    {
+      "second": 6,
+      "outcomes": {
+        "refused": 7,
+        "ready": 1
+      }
+    }
+  ],
+  "checks": [
+    "Compiled server starts outside checkout without node_modules",
+    "Packaged PostgreSQL driver loads; unprovisioned company status is usable",
+    "Packaged TLS certificate generator executes successfully",
+    "Fresh private Hermes profile has shipped safeguards and skills, private storage, and no model credentials"
+  ],
+  "cleanupComplete": true
+}

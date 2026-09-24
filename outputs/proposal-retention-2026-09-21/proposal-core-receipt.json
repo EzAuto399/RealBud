@@ -1,0 +1,57 @@
+{
+  "capturedAt": "2026-09-21T07:13:26.530Z",
+  "result": "passed",
+  "sourceFrozen": true,
+  "files": [
+    {
+      "path": "server/bill-proposals.ts",
+      "sha256": "bb9e33d55e4a21ea3570116821f5cf1bf3f665e4499c7f5ffa1a140aa5fa53a9"
+    },
+    {
+      "path": "server/bill-proposal-validation.ts",
+      "sha256": "8f953603f91db87f4cc77509340eb13df72879d4869d42a58646641d700819b5"
+    },
+    {
+      "path": "server/bill-proposals.test.ts",
+      "sha256": "6b652d6a51c2aa1cd67367ebf70b45a3f8a5acd8f5986156615f659b4cbccac0"
+    },
+    {
+      "path": "server/bill-proposals-retention.test.ts",
+      "sha256": "43620175d83e2b4e2834a6fd0d7353065546bb46edab18dcc1d4387c44197909"
+    }
+  ],
+  "validation": {
+    "focusedTests": {
+      "files": 2,
+      "passed": 36,
+      "skipped": 0,
+      "failed": 0,
+      "log": "focused.log"
+    },
+    "originalRegression": {
+      "tests": 7,
+      "failedAsExpected": 7,
+      "log": "retention-red.log"
+    },
+    "serverTypecheck": {
+      "exitCode": 0,
+      "log": "server-typecheck.log"
+    },
+    "whitespace": "all four owned files checked, including untracked source"
+  },
+  "exercised": [
+    "1001 individually encrypted permanent proposal records; every old identity retained and oldest run replayed through a second SQLite handle",
+    "Forced cross-handle admission interleaving: identical late winner with different asOf reuses canonical saved run and input",
+    "Competing payload, source and authority conflict before any losing executor/input write",
+    "Same winner with durable queued run can be replayed while its executor is live",
+    "Competing saved intent with no run remains an explicit recovery hold; no automatic retry",
+    "Attachment-free and attachment-bearing modified saved inputs are held without mutation",
+    "Historical run lookup is bound to exact idempotencyKey and recipe revision"
+  ],
+  "limits": [
+    "Local Node 24/macOS fictional fixtures; executor callback doubles, no provider or customer dispatch",
+    "No aggregate proposal count cap; disk, per-record encrypted size and backup-v1 limits still apply",
+    "Historical input lacks attachment MIME/size and full authority; pure backup validation checks complete shape/relationships but cannot reconstruct those omitted digests; live replay additionally checks trusted current source/authority",
+    "No packaging or broad suite run by this agent; root owns integration/package checks"
+  ]
+}

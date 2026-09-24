@@ -1,0 +1,49 @@
+{
+  "recordedAt": "2026-09-21T19:10:30.079068+00:00",
+  "kind": "independent-local-workflow-review",
+  "outcome": "demonstrated-ownership-defect-fixed-and-regression-verified",
+  "reviewerProductionChanges": false,
+  "reviewerEditedFiles": [
+    "server/customer-pack-upgrades.review.test.ts"
+  ],
+  "checks": [
+    {
+      "command": "pnpm exec vitest run server/customer-pack-upgrades.review.test.ts",
+      "exitCode": 0,
+      "passed": 5,
+      "failed": 0,
+      "durationMs": 565
+    },
+    {
+      "command": "git diff --check -- server/customer-pack-upgrades.review.test.ts",
+      "exitCode": 0
+    }
+  ],
+  "coverage": [
+    "Fresh imports cannot claim foreign retired plans; rejected preview/direct install retain exact journal/recipe bytes; original reviewed rollback succeeds.",
+    "Fresh imports cannot claim foreign current plans with identical recipe bytes.",
+    "Pending upgrade targets reserve new recipe IDs before recipe creation; refusal retains original exact resume.",
+    "Legacy duplicate current owners remain readable but held in status, instruction admission and repair without byte changes.",
+    "Identical unowned manual plans can still be adopted with approvals cleared; own repair preserves later staff choices."
+  ],
+  "additionalSourceReview": [
+    "index POST activation gate normalizes draft ID like saveRecipe; PATCH approval/activation uses pack admission.",
+    "Completed pack history backup admission and both restore test flows were inspected; no additional demonstrated compatibility defect found."
+  ],
+  "limits": [
+    "Local service methods and real recipe persistence in fictional disposable profiles; not native Windows, HTTP or GUI execution.",
+    "Parent owns actual API/browser regression for spaced retired IDs and broad suite/typecheck/build.",
+    "No new Grok call or model approval in this local review.",
+    "Backup/restore suites inspected, not rerun by this reviewer."
+  ],
+  "priorFailureReceipt": "outputs/customer-pack-upgrades-2026-09-22/local-review-retired-ownership-red.json",
+  "sourceSha256": {
+    "server/customer-pack-upgrades.review.test.ts": "73805e073010b677325572532fb91561dcde0f26a3926d19fe6570d974b00a14",
+    "server/customer-pack-upgrades.ts": "e60e13bb0184495d61077f6d5b006b030ed78d0800b717c3f4ed14009ce60218",
+    "server/customer-packs.ts": "0a7309a3e21366710e8123720e17ad4760ea487371e9c7f4b3276c1624ca1cf7",
+    "server/index.ts": "2d2c62e9b1b6ced797a88b109b8a3c7c41885e3ca75d44d2f1ce67593f5dd559",
+    "server/customer-pack-upgrades.test.ts": "b2b7916165145c601555361b0c218a67a20be817794ba5baca73f810c8a1af73",
+    "server/private-backup-pack-history.test.ts": "db936067fb73f442cd6d35dea33217ef7371d17471506952f91565f86b789f11",
+    "server/private-backup-pack-upgrade.test.ts": "9f224b48596c6c6700e13394f44e9a55d5c1fcde9e8de83fb3b749e572c10fd3"
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "topic": "portal-ux-2026-09-22 slice 2 — account Computers page",
+  "date": "2026-09-22T05:24:05.982Z",
+  "proofLayer": "local source + built Next + disposable PostgreSQL in a headless browser",
+  "states": {
+    "Reception Mac": "Provisioned · Bud ready",
+    "Property team laptop": "Provisioned · Bud needs setup",
+    "Back office PC": "Last report is stale",
+    "Front desk Mac": "Provisioning pending",
+    "New arrival": "Waiting for first report",
+    "Retired Mac": "Revocation pending",
+    "Old laptop": "Revoked"
+  },
+  "checks": [
+    "six provisioning states render one badge each from the real columns, with connected app types",
+    "pairing code shows a live mm:ss countdown, announces minutes only, confirms Copied for two seconds",
+    "the ten live code limit is named in a notice with what to do, and no status code is shown",
+    "the confirm dialog names the computer and the consequence, Escape returns focus to the row, confirming revokes through the real route",
+    "seven states render together at 360, 768 and 1280, light and dark, with no horizontal overflow",
+    "loading shows three skeleton cards, a failed load shows an alert notice with Retry, an empty office and a reader each get their own notice",
+    "origin, session, owner-only and office isolation gates unchanged",
+    "the desktop half of the pairing sentence (You → This office → Website account) is present"
+  ],
+  "desktop": "rendered (no link performed)",
+  "limits": [
+    "Fixture office and fictional accounts only; no deployed gateway, Modelvia key or customer data.",
+    "The managed gateway is deliberately unconfigured, so \"Revocation pending\" is the real unreachable-gateway path, not a simulated reply.",
+    "The loading screenshot delays the real response by 2.5 s; no response body is replaced.",
+    "Renders and keyboard behaviour are Chromium only; no screen reader was run."
+  ],
+  "screenshots": [
+    "computers-1280.png",
+    "computers-768.png",
+    "computers-360.png",
+    "computers-1280-dark.png",
+    "pairing-code-1280.png",
+    "computers-loading-1280.png",
+    "computers-error-1280.png",
+    "computers-empty-1280.png",
+    "computers-reader-1280.png"
+  ]
+}

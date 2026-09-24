@@ -1,0 +1,47 @@
+{
+  "at": "2026-09-21T14:56:50.631Z",
+  "passed": false,
+  "node": "v24.19.0",
+  "platform": "darwin",
+  "runtimePin": "345cd2b057a452236de401d3534b8502a7465e8d",
+  "nativeModules": {
+    "tools/memory_tool.py": "ed9c5db6b3144b88425f7039280239b29a047143aa8ffdfd3b7f47bf7e707143",
+    "tools/memory_tool_store.py": "811ef2eb98a8b3f0448294b2c23d422ff7ebd4dc45835475b12df0557d7e5366",
+    "tools/write_approval.py": "9404792bc8c6637e5bd78a87f5a6dfabda6cd6a1a61083b450647ddb2951c470",
+    "tools/threat_patterns.py": "6ad8947a5a62db44f66b1cd33086e2b51c4a66019ef5301856e5efae59797341",
+    "utils.py": "1414f177e14940750ad80d6dd5020685219ca26b0b7d500299ab2f170118ed07",
+    "hermes_constants.py": "e5f72a309b3689f5fa2e85065e8051f8e6f7686d1ec1741e7543cc5e56bea162",
+    "tools/__init__.py": "7bca460f476ac9ace706c8cfd07e98f8aae34d839862f0f68abafc3a8397cf35",
+    "tools/registry.py": "310a57a5dc5d41c935eacbe707e8a258dc21fd72fd44fccbc33d1a78b7143922"
+  },
+  "sourceHashes": {
+    "server/hermes-memory-review.ts": "7ae43296901f653a6ae59b96e80b6032801a72a1278d3ed76697df7eb83a42b2",
+    "server/helpers/hermes-memory-review.py": "8230b280ff8eec4cb1c715a8b20f218deaddec1a8109eecc11812cc7c9421f2d",
+    "shared/hermes-memory-review.ts": "90623a7578eb468e7f6fc1932a898d91c86eae58480da24356955d4462759ce9",
+    "src/components/MemoryReviewPanel.tsx": "8244caef3f75dd734e8d1baa62c4283d9efdb66a6e2daccc28238d23d57a4606",
+    "src/components/YouPage.tsx": "6fa7c49a2cae1c7914c17f77dbc792f7d7acb49d263db5cc88465f1deea8b501",
+    "dist/index.html": "da6d6f4aee3831640597cee9677874b1f907107ce2b7d003adf5d27282c4a6bd",
+    "scripts/qa-hermes-memory-review.mjs": "0e3164825d219c10d20c34332ce8da183c28c257084eba1e6a3302efb160435e"
+  },
+  "checks": [
+    "Actual source bootstrap and authenticated HTTP produce a complete native replacement preview in a disposable profile",
+    "Built settings UI shows all literal before/after text and keeps Apply disabled until the exact-version checkbox is checked",
+    "At 390px the complete text remains keyboard focusable and scrolls within its region without overflowing the document",
+    "The UI dispatches one exact reviewed digest, the native file changes to the complete preview, and the persisted receipt confirms application"
+  ],
+  "errors": [],
+  "blockedNetwork": [],
+  "decisions": [
+    {
+      "path": "/api/hermes/memory-reviews/00000010/decision",
+      "body": {
+        "expectedDigest": "6075b2ba056aa0157d0dff35a1064bfff876b6aadc7b6bb819ed77413de741b9",
+        "decision": "approve"
+      }
+    }
+  ],
+  "cleanup": true,
+  "layer": "Actual source bootstrap and authenticated HTTP, built React UI, admitted native memory modules, fictional disposable profile. No Hermes CLI, model/provider calls, customer accounts, installed Electron, OS keychain or Windows device acceptance.",
+  "failure": "locator.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('region', { name: 'Bud memory reviews', exact: true }).locator('[aria-label=\"Saved memory reviews\"]').getByRole('button').filter({ hasText: /\\bSaved\\b/ })\u001b[22m\n\n    at /Users/yoda/projects/RealBud/scripts/qa-hermes-memory-review.mjs:145:115",
+  "diagnostic": "realbud server on http://127.0.0.1:61670\n"
+}

@@ -1,0 +1,46 @@
+{
+  "observedAt": "2026-09-23T23:09:37.128857+00:00",
+  "availableBytes": 7721975808,
+  "entries": [
+    {
+      "path": "/Users/yoda/projects/RealBud-platform-candidate-2026-09-23/outputs/integration-qa-2026-09-23",
+      "directoryKiB": 6231408,
+      "directoryGiB": 5.9427337646484375,
+      "classification": "Retained packages, test kits and evidence; preserve"
+    },
+    {
+      "path": "/Users/yoda/projects/RealBud-platform-candidate-2026-09-23/outputs/platform-candidate-2026-09-23",
+      "directoryKiB": 5196780,
+      "directoryGiB": 4.956035614013672,
+      "classification": "Retained packages, test kits and evidence; preserve"
+    },
+    {
+      "path": "/Users/yoda/projects/RealBud-platform-candidate-2026-09-23/outputs/platform-followup-2026-09-24",
+      "directoryKiB": 4885796,
+      "directoryGiB": 4.659458160400391,
+      "classification": "Current and earlier package attempts and evidence; preserve"
+    },
+    {
+      "path": "/Users/yoda/.npm/_cacache",
+      "directoryKiB": 854152,
+      "directoryGiB": 0.8145828247070312,
+      "classification": "Regenerable npm cache; no cleanup authorized"
+    },
+    {
+      "path": "/Users/yoda/Library/Caches/pip",
+      "directoryKiB": 761964,
+      "directoryGiB": 0.7266654968261719,
+      "classification": "Regenerable pip cache; no cleanup authorized"
+    }
+  ],
+  "caveats": [
+    "Read-only size inventory, not a deletion plan.",
+    "Directory accounting does not prove recoverable disk bytes; APFS clones and hard links can share blocks.",
+    "Cache use can change; check active jobs again before any approved cleanup.",
+    "Active uv cache and running RealBud package applications are excluded."
+  ],
+  "minimumExportFreeBytes": 8787760608,
+  "suggestedPackageSequenceFreeGiB": 12,
+  "suggestedVmWorkspaceGiB": 100,
+  "storageChoice": "Pending user response; no installation, allocation, move, download or deletion authorized by this inventory."
+}

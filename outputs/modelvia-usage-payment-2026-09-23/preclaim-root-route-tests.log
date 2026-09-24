@@ -1,0 +1,14 @@
+✔ billing GET preserves optional legacy reads and matched expectations without changing account authority (26.817167ms)
+✔ a cross-tab cookie change refuses stale page billing before exposing the new company invoice (0.541875ms)
+✔ checkout requires a single exact expected company before body consumption, preflight or dispatch (0.564417ms)
+✔ cookie change between a valid GET and checkout cannot use old page authority (0.72125ms)
+✔ expectation does not bypass origin, sign-in, reader role or exact request body gates (0.57025ms)
+✔ matched GET expectations preserve period and scope filter rejection before upstream access (0.197083ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 134.762417

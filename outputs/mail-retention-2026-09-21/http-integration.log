@@ -1,0 +1,51 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+-----·······················
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/mail-workspace-http.test.ts [ server/mail-workspace-http.test.ts ]
+Error: Fictional mail fixture stopped: node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+file:///Users/yoda/projects/RealBud/server/mail-storage.ts:17
+  private ownsDatabase:boolean;
+  constructor(private options:{directory:string;workspaceId:string;key:Buffer;workroomDirectory:string;database?:WorkflowDatabase}){
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    this.ownsDatabase=!options.database;this.db=options.database??new WorkflowDatabase({dir:options.directory,key:options.key});
+
+SyntaxError [ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX]: TypeScript parameter property is not supported in strip-only mode
+    at parseTypeScript (node:internal/modules/typescript:68:40)
+    at processTypeScriptCode (node:internal/modules/typescript:146:42)
+    at stripTypeScriptModuleTypes (node:internal/modules/typescript:215:22)
+    at ModuleLoader.<anonymous> (node:internal/modules/esm/translators:680:29)
+    at #translate (node:internal/modules/esm/loader:434:20)
+    at afterLoad (node:internal/modules/esm/loader:502:29)
+    at ModuleLoader.loadAndTranslate (node:internal/modules/esm/loader:507:12)
+    at #getOrCreateModuleJobAfterResolve (node:internal/modules/esm/loader:560:36)
+    at afterResolve (node:internal/modules/esm/loader:607:52)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:613:12) {
+  code: 'ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX'
+}
+
+Node.js v24.19.0
+
+ ❯ start server/mail-workspace-http.test.ts:43:60
+     41|   let ready = false;
+     42|   for (let i = 0; i < 150; i++) {
+     43|     if (child.exitCode !== null || child.signalCode) throw new Error(`…
+       |                                                            ^
+     44|     const health = await fetch(base + '/api/health', { signal: AbortSi…
+     45|     if (health?.pid === child.pid) { ready = true; break; }
+ ❯ server/mail-workspace-http.test.ts:55:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  23 passed | 5 skipped (28)
+   Start at  17:29:57
+   Duration  626ms (transform 145ms, setup 30ms, import 160ms, tests 231ms, environment 0ms)
+

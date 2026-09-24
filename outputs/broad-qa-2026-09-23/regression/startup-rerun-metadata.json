@@ -1,0 +1,21 @@
+{
+  "startedAt": "2026-09-23T02:32:32.145Z",
+  "node": "v24.19.0",
+  "reason": "Root fixed onboarding creation before workspaceIdentity initialization. Initial hook failure evidence is retained; only its four affected files are rerun.",
+  "files": [
+    "server/attended-run.test.ts",
+    "server/branching.test.ts",
+    "server/hermes-memory-approval-http.test.ts",
+    "server/index.test.ts"
+  ],
+  "sourceHashes": {
+    "server/index.ts": "e647df3a22abb45009f9482ed197906c57460e81f9d9e8103e78554a918be2a3",
+    "server/config.ts": "8d365fabaae04122ca86c05599e9a67aa765c19193cc5115b55c5882644ec2bf",
+    "server/attended-run.test.ts": "5e1eb98a0a4c1a462dea8bb073e209bb7c58b6289cbddcef6e9eea09bc318c39",
+    "server/branching.test.ts": "e6b7c744789c06737f1870ca0550f77d6152f84ad86f3a7ab1cc6c5cb69c63e7",
+    "server/hermes-memory-approval-http.test.ts": "8c9d21b3a4f62dd82aad26def74df21ad8c5a8b0a1cbe5f7f938140aab1aeb33",
+    "server/index.test.ts": "28748e7ccaeeaa777c9f7be8a5a6e81b4aeddfded9007a0d8665e11d1a41de5c"
+  },
+  "finishedAt": "2026-09-23T02:32:47.675Z",
+  "exitCode": 0
+}

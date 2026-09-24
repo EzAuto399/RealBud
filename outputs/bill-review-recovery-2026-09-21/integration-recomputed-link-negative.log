@@ -1,0 +1,60 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ❯ server/private-backup-bill-review.test.ts (8 tests | 1 failed) 1556ms
+     × rejects recomputed request binding in a forged encrypted draft before preview or staging 146ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/private-backup-bill-review.test.ts > encrypted bill review recovery through private backup > rejects recomputed request binding in a forged encrypted draft before preview or staging
+AssertionError: promise resolved "{ …(9) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "createdAt": "2026-09-21T08:12:26.891Z",
++   "digest": "6e217da9c0f82ee662632b47eb7d64f4858f3514521fe85ededa45bdf09cf44b",
++   "excluded": [
++     "Provider keys, connected-account credentials and sign-in sessions",
++     "Shared office database and company membership",
++     "Worker installation, authentication, conversations and memory",
++     "Files outside the listed business folders and external attachments",
++   ],
++   "fileCount": 3,
++   "included": [
++     "Private Desk book and property notes",
++     "Saved mail work and collected source evidence",
++     "Bank originals, reviewed copies, bills, review drafts and preparation receipts",
++     "Agency settings, saved views, plans and instruction revision history",
++   ],
++   "plainBytes": 4511,
++   "recordCount": 2,
++   "restoreChanges": [
++     "Use this installation’s protected encryption key",
++     "Clear connected-account selection and setup approvals",
++     "Pause all schedules and require plan review",
++     "Retain job history; interrupt unfinished work and close sign-in handoffs",
++     "Repair the installed instruction pack before running its plans",
++   ],
++   "workspaceId": "9e9b4370-6dc4-43ef-8ac0-2b1955b0b588",
+  }
+
+ ❯ server/private-backup-bill-review.test.ts:93:60
+     91|       } finally { passKey.fill(0); }
+     92|       const before = await readFile(join(to.directory, 'desk.json'));
+     93|       await expect(to.service.previewBackup(forged, phrase)).rejects.t…
+       |                                                            ^
+     94|       const digest = createHash('sha256').update(JSON.stringify(forged…
+     95|       await expect(to.service.stageRestore({ backup: forged, passphras…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 4 passed (5)
+      Tests  1 failed | 115 passed (116)
+   Start at  18:12:19
+   Duration  9.09s (transform 306ms, setup 36ms, import 481ms, tests 8.23s, environment 0ms)
+

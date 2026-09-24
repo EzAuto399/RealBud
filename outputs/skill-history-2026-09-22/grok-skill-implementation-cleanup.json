@@ -1,0 +1,12 @@
+{
+  "verifiedAt": "2026-09-21T21:11:34.174833+00:00",
+  "ownedAgentPid": 39421,
+  "matchingOwnedProcessRows": [],
+  "processReaped": true,
+  "isolatedHomeRemoved": true,
+  "globalConfigSha256": "ada54f57ec570d8e70cba35400ea2b557914ede90ffa893b5da122a7f69d6736",
+  "globalConfigUnchanged": true,
+  "authContentsRead": false,
+  "authContentsCopied": false,
+  "modelRetryCount": 0
+}

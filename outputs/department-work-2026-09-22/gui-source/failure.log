@@ -1,0 +1,5 @@
+realbud server on http://127.0.0.1:55935
+
+AssertionError [ERR_ASSERTION]: {"department":{"id":"466da30c-31db-4709-86fa-d0cb5ff7c4ba","name":"Fictional Operations","revision":"0","access":"write","retiredAt":null,"retiredBy":null,"retirementNote":"","unresolvedCases":0}}
+
+201 !== 200

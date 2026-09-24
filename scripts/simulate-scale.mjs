@@ -7,34 +7,40 @@
 //   node --experimental-strip-types scripts/simulate-scale.mjs [sizes...]
 //   default sizes: 150 300 600
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import assert from "node:assert/strict";
+import { once } from "node:events";
+import { createServer } from "node:net";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { serviceSmokeEnv } from "./service-smoke-env.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const PORT = Number(process.env.OMB_SIM_PORT ?? 18890);
-const BASE = `http://127.0.0.1:${PORT}`;
-const SIZES = process.argv.slice(2).map(Number).filter(Boolean).length
-  ? process.argv.slice(2).map(Number)
-  : [150, 300, 600];
+let baseUrl;
+const SIZES = process.argv.length > 2 ? process.argv.slice(2).map(Number) : [150, 300, 600];
+assert.ok(SIZES.length <= 10 && SIZES.every(n => Number.isSafeInteger(n) && n > 0 && n <= 990), 'Supply one to ten sizes between 1 and 990 (the sample book also uses capacity).');
+const output = resolve(process.env.QA_OUTPUT || join(ROOT, 'outputs/core-scale-2026-09-21'));
+mkdirSync(output, { recursive: true });
+const measurements = [];
+let failure;
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 let session = "";
 const api = async (method, path, body) => {
-  const headers = { origin: BASE };
+  const headers = { origin: baseUrl };
   if (body !== undefined) headers["content-type"] = "application/json";
   if (session) headers["x-realbud-session"] = session;
   const started = performance.now();
-  const res = await fetch(BASE + path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
-  const ms = performance.now() - started;
+  const res = await fetch(baseUrl + path, { method, headers, signal: AbortSignal.timeout(60_000), body: body !== undefined ? JSON.stringify(body) : undefined });
   let json = null;
   let bytes = 0;
   try {
     const text = await res.text();
-    bytes = text.length;
+    bytes = Buffer.byteLength(text);
     json = JSON.parse(text);
   } catch { /* empty */ }
-  return { status: res.status, body: json, ms, bytes };
+  return { status: res.status, body: json, ms: performance.now() - started, bytes };
 };
 
 const SUBURBS = ["Kingston ACT", "Dickson ACT", "Braddon ACT", "Watson ACT", "Ainslie ACT", "Narrabundah ACT"];
@@ -55,27 +61,45 @@ function csvFor(n, props) {
   return `address,daysLate,rentLanded,levyPaid\n${rows.join("\n")}\n`;
 }
 
-async function boot() {
-  const home = mkdtempSync(join(tmpdir(), "realbud-scale-"));
-  mkdirSync(join(home, ".realbud"), { recursive: true });
-  const child = spawn(process.execPath, ["--experimental-strip-types", "server/index.ts"], {
+async function stop(child) {
+  if (child.exitCode !== null || child.signalCode) return;
+  child.kill('SIGTERM'); await Promise.race([once(child, 'exit'), delay(5000)]);
+  if (child.exitCode === null && !child.signalCode) { child.kill('SIGKILL'); await once(child, 'exit'); }
+}
+async function boot(home) {
+  const data = join(home, '.realbud');
+  mkdirSync(data, { recursive: true, mode: 0o700 });
+  writeFileSync(join(data, 'config.json'), JSON.stringify({ instances: { fixture: { driver: 'not-a-real-driver' } } }), { mode: 0o600 });
+  const listener = createServer(); listener.listen(0, '127.0.0.1'); await once(listener, 'listening');
+  const port = listener.address().port; await new Promise(resolve => listener.close(resolve)); baseUrl = `http://127.0.0.1:${port}`;
+  const started = performance.now();
+  const child = spawn(process.execPath, [join(ROOT, 'server/bootstrap.ts')], {
     cwd: ROOT,
-    env: { ...process.env, REALBUD_DATA_DIR: join(home, ".realbud"), OMB_PORT: String(PORT), NODE_ENV: "production" },
+    env: { ...serviceSmokeEnv({ executable: process.execPath, home, data, scratch: home, port }), REALBUD_MANAGED_SERVICE: '0', REALBUD_TEST_LAB: '1' },
     stdio: ["ignore", "pipe", "pipe"],
   });
-  child.stderr.on("data", () => {});
-  for (let i = 0; i < 60; i++) {
-    try {
-      const res = await fetch(`${BASE}/api/health`);
-      if (res.ok) {
-        const sess = await fetch(`${BASE}/api/session`).then((r) => r.json()).catch(() => null);
-        session = String(sess?.token ?? "");
-        return { child, home };
-      }
-    } catch { /* not up yet */ }
-    await new Promise((r) => setTimeout(r, 250));
+  let logs = '', spawnError;
+  child.once('error', error => { spawnError = error; });
+  for (const stream of [child.stdout, child.stderr]) stream.on('data', bytes => { logs = (logs + bytes).slice(-20000); });
+  try {
+    for (let i = 0; i < 100; i++) {
+      if (spawnError) throw spawnError;
+      if (child.exitCode !== null || child.signalCode) break;
+      try {
+        const health = await (await fetch(`${baseUrl}/api/health`, { signal: AbortSignal.timeout(500) })).json();
+        if (health.app === 'realbud' && health.pid === child.pid) {
+          const sess = await (await fetch(`${baseUrl}/api/session`, { signal: AbortSignal.timeout(1000) })).json(); session = String(sess?.token ?? '');
+          assert.ok(session, 'No fixture session');
+          return { child, startupMs: Math.round(performance.now() - started) };
+        }
+      } catch { /* not up yet */ }
+      await delay(100);
+    }
+    throw new Error(`Isolated fixture did not boot. ${logs}`);
+  } catch (error) {
+    if (child.pid) await stop(child);
+    throw error;
   }
-  throw new Error("server did not boot");
 }
 
 async function seedBook(n) {
@@ -99,6 +123,7 @@ async function measure(n, baseCount) {
   if (total !== baseCount + n) throw new Error(`expected ${baseCount + n} properties, got ${total}`);
 
   const practice = await api("POST", "/api/desk/practice", {});
+  assert.equal(practice.status, 200, 'Fictional practice must succeed');
   out.practiceMs = Math.round(practice.ms);
 
   const csv = csvFor(n, desk.body.properties);
@@ -115,7 +140,14 @@ async function measure(n, baseCount) {
   if (imp.status !== 200) throw new Error(`import ${imp.status}`);
 
   const loops = await api("GET", "/api/loops");
+  assert.equal(loops.status, 200);
   out.loopsMs = Math.round(loops.ms);
+  const reads = [];
+  for (let i = 0; i < 20; i++) { const snapshot = await api('GET', '/api/desk'); assert.equal(snapshot.status, 200); assert.equal(snapshot.body.properties.length, total); reads.push(snapshot.ms); }
+  reads.sort((a, b) => a - b);
+  out.deskReadMedianMs = Math.round(reads[10] * 100) / 100;
+  out.deskReadP95Ms = Math.round(reads[18] * 100) / 100;
+  out.propertyCount = total;
   return out;
 }
 
@@ -126,17 +158,29 @@ async function baseCount() {
 
 console.log("size  seedMs  deskMs  snapKB  practiceMs  previewMs  importMs  loopsMs");
 // one boot per size keeps each measurement honest
-for (const n of SIZES) {
-  const { child, home } = await boot();
+try {
+ for (const n of SIZES) {
+  const home = mkdtempSync(join(realpathSync(tmpdir()), 'RealBud scale QA '));
+  let running;
   try {
+    running = await boot(home);
     const base = await baseCount();
     const res = await measure(n, base);
+    res.startupMs = running.startupMs;
+    await stop(running.child); running = await boot(home);
+    assert.equal(await baseCount(), res.propertyCount, 'Saved book must survive an actual service restart');
+    res.restartMs = running.startupMs; res.restartPreserved = true;
+    measurements.push(res);
     console.log(
       `${String(res.n).padEnd(5)} ${String(res.seedMs).padEnd(7)} ${String(res.deskMs).padEnd(7)} ${String(res.snapshotKB).padEnd(7)} ${String(res.practiceMs).padEnd(11)} ${String(res.previewMs).padEnd(10)} ${String(res.importMs).padEnd(9)} ${res.loopsMs}`,
     );
   } finally {
-    child.kill("SIGTERM");
+    if (running) await stop(running.child);
     rmSync(home, { recursive: true, force: true });
   }
+ }
+} catch (error) { failure = error.stack || String(error); process.exitCode = 1; }
+finally {
+  writeFileSync(join(output, 'receipt.json'), JSON.stringify({ at: new Date().toISOString(), passed: !failure, runtime: { node: process.versions.node, platform: process.platform, arch: process.arch }, layer: 'Isolated actual source HTTP/bootstrap with fictional properties and no provider credentials. Includes response body and parse time; single-machine observations, not customer UI latency, concurrency SLA or Windows proof.', measurements, failure }, null, 2));
 }
-console.log("scale: done");
+if (failure) console.error(failure); else console.log('scale: done');

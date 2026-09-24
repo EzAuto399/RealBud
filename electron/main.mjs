@@ -1,9 +1,14 @@
 import { registerDesktopShutdown } from "./shutdown.mjs";
 import { createServerSupervisor } from "./server-supervisor.mjs";
-import { findRunningService, probeService, serviceIdentity } from "./service-instance.mjs";
-import { clearServiceHandle, processAlive, readServiceHandle, shouldStartService, startDetachedService } from "./service-lifecycle.mjs";
-import { app, BrowserWindow, clipboard, desktopCapturer, ipcMain, safeStorage, session, shell, systemPreferences, utilityProcess } from "electron";
-import { createDecipheriv, randomBytes } from "node:crypto";
+import { findRunningService, isOurService, probeService, serviceIdentity } from "./service-instance.mjs";
+import { abandonSpawnedService, availableServicePort, clearServiceHandle, ownsRunningService, processAlive, requestServiceStop, readServiceHandle, SERVICE_WAIT_INTERVAL_MS, serviceWaitTicks, shouldRestartServiceWait, shouldStartService, spawnedServiceState, startDetachedService, systemBootedAt } from "./service-lifecycle.mjs";
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, powerMonitor, powerSaveBlocker, safeStorage, session, shell, systemPreferences, Tray, utilityProcess } from "electron";
+import { createServiceWindowRecovery } from "./service-window-recovery.mjs";
+import { createServiceWatchdog, WATCHDOG_DEFAULTS } from "./service-watchdog.mjs";
+import { SERVICE_MODE_FLAG, keepAwakeDecision, parseServiceModeArgs, planStartupRegistration, startupRegistrationSupport } from "./service-persistence.mjs";
+import { headlessHostShouldExit, secondInstanceAction, unattendedWorkWanted, windowsClosedAction } from "./unattended-host.mjs";
+import { resolveDeskKey } from "./desk-key-custody.mjs";
+import { configureLogDirectory } from "./log-directory.mjs";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -16,7 +21,14 @@ import { startUpdater, registerUpdaterIpc } from "./updater.mjs";
 import capabilitiesModule from "./capabilities.cjs";
 
 const require = createRequire(import.meta.url);
-const { privacySettingsUrls } = require("./perm-settings.cjs");
+const {
+  mergeDesktopSettings,
+  privacySettingsUrls,
+  readDesktopSettings,
+  readScheduleFact,
+  serializeDesktopSettings,
+  serializeScheduleFact,
+} = require("./perm-settings.cjs");
 const { desktopCapabilities } = capabilitiesModule;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -38,14 +50,35 @@ if (process.platform === "linux") app.setDesktopName("com.realbud.app.desktop");
 // the same ~/.realbud — silent last-writer-wins on the book. Focus the
 // existing window instead.
 const smokeMode = process.env.OMB_SMOKE_TEST === "1";
+// The login item (when the customer turns it on) launches this same binary with
+// --service: no window, just a host that starts or adopts the office service and
+// keeps it company. See electron/service-persistence.mjs for what that does and
+// does not promise.
+const serviceMode = parseServiceModeArgs(process.argv);
 if (!smokeMode && !app.requestSingleInstanceLock()) {
   app.quit();
 } else if (!smokeMode) {
-  app.on("second-instance", () => {
+  app.on("second-instance", (_event, argv) => {
     const win = BrowserWindow.getAllWindows()[0];
-    if (win) {
+    // The decision is pure and tested in unattended-host.mjs. A sign-in launch
+    // arriving while RealBud already runs is ignored: this process is already
+    // supervising, and a login item must never pop a window over someone's work.
+    const action = secondInstanceAction({ serviceMode, incomingServiceMode: parseServiceModeArgs(argv), hasWindow: Boolean(win) });
+    if (action === "focus" && win) {
       if (win.isMinimized()) win.restore();
       win.focus();
+    } else if (action === "hand-over") {
+      // No window to focus: this process is the headless service host the login
+      // item started, and someone has just opened RealBud. Holding the lock must
+      // not make their double-click do nothing — and both processes deciding to
+      // start a service would put two of them on one company database. So hand
+      // the lock over: relaunch as an ordinary window and quit. The office
+      // service is detached, so it keeps serving across the swap.
+      handOverToWindowProcess("a window launch arrived while running as the sign-in service host");
+    } else if (action === "open-window") {
+      // This process is running in the background for scheduled work; open the
+      // window here rather than let a second process decide about the service.
+      openWindowFromBackground();
     }
   });
 }
@@ -66,21 +99,28 @@ let serverEverStarted = false;
 let serviceAdopted = false;
 /** Handle for a service this app started, when it started one. */
 let serviceHandle = null;
+// A port an abandoned child of ours may still hold. Remembered across start
+// attempts so a later retry cannot scan past it while it is still dying.
+let abandonedServicePort = null;
+// The person asked to stop the office service in this session. Set before the
+// stop request goes out, so the watchdog cannot race it; cleared only by their
+// Start. It records intent, not outcome: an unconfirmed stop is still a stop the
+// watchdog must not undo.
+let serviceStopRequested = false;
 
 // The packaged app has no terminal: everything about the server child's life
 // goes to server.log in the OS log dir (~/Library/Logs/RealBud on macOS,
 // Console.app-visible; %APPDATA%\RealBud\logs on Windows), which is also
-// why stdio is piped, not inherited — under a Finder/Explorer launch the
-// parent's stdio leads nowhere and a failed boot is otherwise undiagnosable.
-const LOG_DIR = app.getPath("logs");
-let logStream = null;
+// why utility-process output is piped. Detached service output uses its own
+// inherited private file descriptors and survives the desktop process.
+const LOG_DIR = configureLogDirectory(app);
+const officeWindowRecoveries = new Map();
 function slog(line) {
   try {
-    if (!logStream) {
-      fs.mkdirSync(LOG_DIR, { recursive: true });
-      logStream = fs.createWriteStream(path.join(LOG_DIR, "server.log"), { flags: "a" });
-    }
-    logStream.write(`[${new Date().toISOString()}] ${line}\n`);
+    fs.mkdirSync(LOG_DIR, { recursive: true, mode: 0o700 });
+    // Small lifecycle records must survive an early exit. A WriteStream can
+    // leave an opened but empty file and reports I/O errors asynchronously.
+    fs.appendFileSync(path.join(LOG_DIR, "server.log"), `[${new Date().toISOString()}] ${line}\n`, { mode: 0o600 });
   } catch {
     /* logging must never break startup */
   }
@@ -90,92 +130,13 @@ function realbudDataDir() {
   return process.env.REALBUD_DATA_DIR || process.env.OMB_DATA_DIR || path.join(app.getPath("home"), ".realbud");
 }
 
-/** Unwrap or create the book key. When safeStorage works, the plaintext
- * desk.key file is removed and the hex is passed to the server child. */
-function deskEnvelopeOpens(hex, filePath) {
-  try {
-    const envelope = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    if (!envelope || envelope.v !== 1 || envelope.alg !== "aes-256-gcm") return false;
-    if (typeof envelope.iv !== "string" || typeof envelope.tag !== "string" || typeof envelope.ct !== "string") return false;
-    const key = Buffer.from(hex, "hex");
-    if (key.length !== 32) return false;
-    const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(envelope.iv, "base64"));
-    decipher.setAuthTag(Buffer.from(envelope.tag, "base64"));
-    Buffer.concat([decipher.update(Buffer.from(envelope.ct, "base64")), decipher.final()]);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function preferDeskKeyHex(dir, wrapHex, rawHex) {
-  const quarantines = [];
-  try {
-    for (const name of fs.readdirSync(dir).filter((entry) => entry.startsWith("desk.json.quarantine-")).sort().reverse()) {
-      quarantines.push(path.join(dir, name));
-    }
-  } catch {
-    /* empty data dir */
-  }
-  const deskFile = path.join(dir, "desk.json");
-  const keys = [rawHex, wrapHex].filter(Boolean);
-  // Newest quarantine first, then each candidate key. A drifted wrap can still
-  // decrypt older demo quarantines; the latest recoverable office book wins.
-  for (const file of quarantines) {
-    for (const hex of keys) {
-      if (deskEnvelopeOpens(hex, file)) return hex;
-    }
-  }
-  if (fs.existsSync(deskFile)) {
-    for (const hex of keys) {
-      if (deskEnvelopeOpens(hex, deskFile)) return hex;
-    }
-  }
-  return wrapHex || rawHex;
-}
-
+/** The key selector preserves recovery evidence and refuses missing custody. */
 function deskKeyForChild() {
-  const dir = realbudDataDir();
-  fs.mkdirSync(dir, { recursive: true });
-  const rawPath = path.join(dir, "desk.key");
-  const wrapPath = path.join(dir, "desk.key.wrap");
-  const asHex = (raw) => {
-    if (raw.length === 32) return Buffer.from(raw).toString("hex");
-    const text = raw.toString("utf8").trim();
-    return /^[0-9a-fA-F]{64}$/.test(text) ? text.toLowerCase() : null;
-  };
-  // A fresh macOS Keychain can synchronously request authorization on the
-  // first safeStorage write. Package smoke has no user to answer that prompt,
-  // and its disposable data directory does not need a durable wrapped key.
-  if (smokeMode) return { hex: randomBytes(32).toString("hex"), production: false };
-  if (safeStorage.isEncryptionAvailable()) {
-    try {
-      let wrapHex = null;
-      if (fs.existsSync(wrapPath)) {
-        const hex = safeStorage.decryptString(fs.readFileSync(wrapPath));
-        if (/^[0-9a-fA-F]{64}$/.test(hex)) wrapHex = hex.toLowerCase();
-      }
-      const rawHex = fs.existsSync(rawPath) ? asHex(fs.readFileSync(rawPath)) : null;
-      let hex = preferDeskKeyHex(dir, wrapHex, rawHex);
-      if (!hex) hex = randomBytes(32).toString("hex");
-      // Re-wrap the key that actually opens the book so wrap/file drift cannot
-      // put the office into recovery on every launch.
-      fs.writeFileSync(wrapPath, safeStorage.encryptString(hex), { mode: 0o600 });
-      try {
-        fs.unlinkSync(rawPath);
-      } catch {
-        /* leftover plaintext is best-effort */
-      }
-      return { hex, production: true };
-    } catch (err) {
-      slog(`desk key wrap failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-  return { hex: process.env.REALBUD_DESK_KEY || null, production: false };
+  return resolveDeskKey({ directory: realbudDataDir(), safeStorage, environmentKey: process.env.REALBUD_DESK_KEY, smoke: smokeMode });
 }
 
 async function startServerOn(port) {
-  const entry = path.join(process.resourcesPath, "server", "index.js");
+  const entry = path.join(process.resourcesPath, "server", "bootstrap.js");
   const deskKey = deskKeyForChild();
   slog(`fork ${entry} port=${port} key=${deskKey.production ? "wrapped" : "source"}`);
   const proc = utilityProcess.fork(entry, [], {
@@ -254,11 +215,34 @@ async function startServerPackaged({ onlyPort = null } = {}) {
 const ERROR_PAGE =
   "data:text/html;charset=utf-8," +
   encodeURIComponent(
-    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:360px"><div style="font-size:40px">🏠</div><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the desk service</h2><p style="color:#fcfcfc99;line-height:1.5">Something else is using its ports. Quit and reopen RealBud — if it keeps happening, restart your computer.</p></div></body>`,
+    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:380px"><div style="font-size:40px">🏠</div><h2 style="font-weight:600;margin:12px 0 6px">Waiting for the office service</h2><p style="color:#fcfcfc99;line-height:1.5">RealBud keeps checking for the office service for the next few minutes and opens the desk as soon as it answers. A first start can be slow while the company database opens.</p><p style="color:#fcfcfc99;line-height:1.5">If this page stays, reopen RealBud, or ask your administrator to check server.log and office-service/stdout-stderr.log in RealBud’s logs folder, and its saved workspace key. Keep the existing workspace files for recovery — they are what the office is restored from.</p></div></body>`,
+  );
+
+// Shown when the dedicated bounded wait runs out. The ordinary background
+// watchdog can still recover this window if the service eventually answers.
+const WAIT_ENDED_PAGE =
+  "data:text/html;charset=utf-8," +
+  encodeURIComponent(
+    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:380px"><div style="font-size:40px">🏠</div><h2 style="font-weight:600;margin:12px 0 6px">The office service did not start</h2><p style="color:#fcfcfc99;line-height:1.5">The initial wait has ended. RealBud will open the desk if its background check finds the service. Reopen RealBud to try again, or ask your administrator to check server.log and office-service/stdout-stderr.log in RealBud’s logs folder, and its saved workspace key.</p><p style="color:#fcfcfc99;line-height:1.5">Keep the existing workspace files for recovery — they are what the office is restored from. Nothing has been lost by this.</p></div></body>`,
   );
 
 let cuaReady = Promise.resolve({ mode: "unavailable", reason: "not-started" });
 let cuaControl;
+
+/** Wait for a promise to settle, but never longer than `ms`. Returns whether it
+ * settled in time; a rejection counts as settled, because the point is only that
+ * the work is no longer in flight. */
+async function settledWithin(promise, ms, what) {
+  let timer;
+  const expiry = new Promise((resolve) => { timer = setTimeout(() => resolve(false), ms); });
+  try {
+    const settled = await Promise.race([Promise.resolve(promise).then(() => true, () => true), expiry]);
+    if (!settled) slog(`${what} did not finish within ${ms}ms; continuing without it`);
+    return settled;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function writeSmokeResult(payload) {
   const file = process.env.OMB_SMOKE_RESULT_FILE;
@@ -347,6 +331,21 @@ function createWindow() {
         writeSmokeResult({ ok: false, error: message });
         console.error(`[smoke] renderer-failed ${message}`);
       } finally {
+        // Let computer use finish starting before asking the app to quit.
+        //
+        // `startCua()` is deliberately not awaited at startup so a slow or broken
+        // driver cannot delay the window. The shutdown hook's `stopCua()` only
+        // sees a host once that start has ASSIGNED one, so a start still in
+        // flight is invisible to it: the host then finishes after cleanup, and
+        // nothing ever stops it or the daemon it spawns. The window opens before
+        // the driver is ready often enough — a cold first launch of a freshly
+        // signed bundle — that the clean-exit proof cannot be left to that race.
+        // Smoke mode owns its own shutdown ordering, so it waits here. Bounded,
+        // because a driver that never settles must still not hang the smoke.
+        await settledWithin(cuaReady, 10_000, "computer use start");
+        if (smokeMode && serviceHandle) {
+          await requestServiceStop(serviceHandle, serviceIdentity(realbudDataDir()));
+        }
         win.close();
         if (smokeMode) app.quit();
       }
@@ -354,7 +353,98 @@ function createWindow() {
   }
 
   if (app.isPackaged) {
-    win.loadURL(serverReady ? `http://127.0.0.1:${SERVER_PORT}` : ERROR_PAGE);
+    // A slow-but-successful start used to leave staff on a dead page until they
+    // quit: the service answered a few seconds after the window gave up, and
+    // nothing ever looked again. So the recovery page is a WAIT, not a verdict —
+    // bounded, because a wait that never ends hides a service that is not coming
+    // back. The decision logic lives in service-lifecycle.mjs, where it can be
+    // tested; the window only carries it out.
+    let waitTimer = null;
+    let lastRestartAt = null;
+    let waitGeneration = 0;
+    const stopWait = () => {
+      waitGeneration++;
+      if (waitTimer) clearTimeout(waitTimer);
+      waitTimer = null;
+    };
+    const waitForOfficeService = () => {
+      if (waitTimer || win.isDestroyed()) return;
+      const generation = waitGeneration;
+      let remaining = serviceWaitTicks();
+      const look = async () => {
+        waitTimer = null;
+        if (win.isDestroyed() || generation !== waitGeneration || serviceStopRequested || appQuitting()) return;
+        let found = null;
+        try {
+          found = await findRunningService(serviceIdentity(realbudDataDir()));
+        } catch {
+          found = null;
+        }
+        if (win.isDestroyed() || generation !== waitGeneration || serviceStopRequested || appQuitting()) return;
+        if (found) {
+          SERVER_PORT = found.port;
+          serverReady = true;
+          serverEverStarted = true;
+          slog(`the office service answered on port ${found.port}; opening the desk`);
+          win.loadURL(`http://127.0.0.1:${found.port}`);
+          return;
+        }
+        if (--remaining <= 0) {
+          slog("stopped waiting for the office service; showing the give-up page");
+          win.loadURL(WAIT_ENDED_PAGE);
+          return;
+        }
+        waitTimer = setTimeout(look, SERVICE_WAIT_INTERVAL_MS);
+      };
+      waitTimer = setTimeout(look, SERVICE_WAIT_INTERVAL_MS);
+    };
+    const recoverWindow = createServiceWindowRecovery({
+      window: win,
+      fallbackUrls: [ERROR_PAGE, WAIT_ENDED_PAGE],
+      blocked: () => serviceStopRequested || appQuitting(),
+      beforeLoad: (port) => {
+        stopWait();
+        SERVER_PORT = port;
+        serverReady = true;
+        serverEverStarted = true;
+        slog(`the office service answered on port ${port}; recovering the waiting desk`);
+      },
+      loadFailed: () => slog("the recovered desk failed to load; awaiting the next service check"),
+    });
+    officeWindowRecoveries.set(win, recoverWindow);
+    win.on("closed", () => officeWindowRecoveries.delete(win));
+    // Closing the window must not leave a timer polling a service nobody is
+    // watching. The office service itself deliberately keeps running.
+    win.on("closed", stopWait);
+    // A service that dies while the desk is open drops the renderer to a browser
+    // error page with no way back. Treat that as the same wait.
+    win.webContents.on("did-fail-load", (_event, errorCode, _description, failedUrl, isMainFrame) => {
+      // A load can fail as the window is going away (the smoke stops the service
+      // before closing). `loadURL` on a destroyed window throws, and an uncaught
+      // throw here would land in the middle of the quit sequence.
+      if (win.isDestroyed()) return;
+      const restart = shouldRestartServiceWait({
+        mainFrame: isMainFrame,
+        errorCode,
+        url: typeof failedUrl === "string" ? failedUrl : "",
+        appOrigin: `http://127.0.0.1:${SERVER_PORT}`,
+        waiting: waitTimer !== null,
+        lastRestartAt,
+        now: Date.now(),
+      });
+      if (!restart) return;
+      lastRestartAt = Date.now();
+      serverReady = false;
+      slog(`the desk failed to load (${errorCode} ${failedUrl}); waiting for the office service`);
+      win.loadURL(ERROR_PAGE);
+      waitForOfficeService();
+    });
+    if (serverReady) {
+      win.loadURL(`http://127.0.0.1:${SERVER_PORT}`);
+    } else {
+      win.loadURL(ERROR_PAGE);
+      waitForOfficeService();
+    }
   } else {
     win.loadURL(DEV_URL);
   }
@@ -507,7 +597,7 @@ async function officeServiceStatus() {
   const identity = serviceIdentity(dataDirectory);
   const running = await findRunningService(identity);
   const handle = serviceHandle ?? readServiceHandle(dataDirectory, identity.instanceId);
-  const manageable = Boolean(handle && running && handle.port === running.port && processAlive(handle.pid));
+  const manageable = ownsRunningService(handle, running, identity);
   return {
     ...(serverSupervisor?.getStatus() ?? unmanagedStatus()),
     // The office service is answering.
@@ -519,36 +609,43 @@ async function officeServiceStatus() {
     manageable,
     // Running but not started by this installation's app: report it, do not own it.
     external: Boolean(running) && !manageable,
+    // Automatic restarts of the detached service while this window is open.
+    autoRestart: serviceWatchdog?.status() ?? null,
   };
 }
 
 ipcMain.handle("service:status", officeServiceStatus);
 ipcMain.handle("service:retry", async () => {
   if (!app.isPackaged) return { ok: false, status: await officeServiceStatus() };
+  serviceStopRequested = false;
   const before = await findRunningService(serviceIdentity(realbudDataDir()));
-  if (before) return { ok: true, status: await officeServiceStatus() };
+  if (before) {
+    // Already answering. Record the port, so a window created after this (macOS
+    // re-activate) loads the app rather than the recovery page.
+    SERVER_PORT = before.port;
+    serverEverStarted = true;
+    serverReady = true;
+    return { ok: true, status: await officeServiceStatus() };
+  }
   const ok = await startOrAdoptOfficeService();
+  if (ok) serverReady = true;
   return { ok, status: await officeServiceStatus() };
 });
 // Explicitly stop the office service. Closing the window never does this.
 ipcMain.handle("service:stop", async () => {
+  serviceStopRequested = true;
   const dataDirectory = realbudDataDir();
   const identity = serviceIdentity(dataDirectory);
   const handle = serviceHandle ?? readServiceHandle(dataDirectory, identity.instanceId);
-  if (!handle || !processAlive(handle.pid)) {
-    clearServiceHandle(dataDirectory);
+  if (!await requestServiceStop(handle, identity)) {
     return { ok: false, status: await officeServiceStatus() };
-  }
-  try {
-    process.kill(handle.pid, "SIGTERM");
-  } catch {
-    /* already gone */
   }
   // Wait for the port to be released so the next start is not racing a dying service.
   for (let attempt = 0; attempt < 40; attempt++) {
     await new Promise((resolve) => setTimeout(resolve, 250));
     if (!(await findRunningService(identity))) {
       clearServiceHandle(dataDirectory);
+      serviceHandle = null;
       serverReady = false;
       return { ok: true, status: await officeServiceStatus() };
     }
@@ -557,9 +654,452 @@ ipcMain.handle("service:stop", async () => {
 });
 ipcMain.handle("service:start", async () => {
   if (!app.isPackaged) return { ok: false, status: await officeServiceStatus() };
+  serviceStopRequested = false;
   const ok = await startOrAdoptOfficeService();
   return { ok, status: await officeServiceStatus() };
 });
+
+// ---------------------------------------------------------------------------
+// Help and support: one plain-text file the person saves where they choose.
+//
+// The renderer gets neither a path nor the contents, only the outcome. Only the
+// office service runs RealBud's redactor, so the tail of server.log is posted
+// to it with a session this process fetches itself, from the service whose
+// identity matches this data directory, and the masked report it returns is
+// what gets saved. When the office service does not answer, nothing can mask
+// its [out]/[err] output, so the file keeps only lines this process wrote
+// itself, and drops any of those that carry a key-like word or a long
+// token-shaped run; everything left out is counted, never silently lost.
+const SUPPORT_DESKTOP_LOG_BYTES = 192 * 1024;
+const SUPPORT_REPORT_MAX_BYTES = 512 * 1024;
+const SUPPORT_OWN_LINE = /^\[\d{4}-\d{2}-\d{2}T[0-9:.]+Z\] (?!\[out\]|\[err\])/;
+const SUPPORT_UNSAFE_LINE = /[A-Za-z0-9_+=-]{20,}|token|secret|passw|bearer|authori[sz]|api[_-]?key|private key|cookie|credential/i;
+let supportSaveInFlight = false;
+
+function desktopLogTail() {
+  let fd = null;
+  try {
+    const file = path.join(LOG_DIR, "server.log");
+    if (!fs.lstatSync(file).isFile()) return "";
+    fd = fs.openSync(file, "r");
+    const size = fs.fstatSync(fd).size;
+    const length = Math.min(size, SUPPORT_DESKTOP_LOG_BYTES);
+    const buffer = Buffer.alloc(length);
+    const text = buffer.subarray(0, fs.readSync(fd, buffer, 0, length, size - length)).toString("utf8");
+    if (length === size) return text;
+    // A tail that starts mid-line can start mid-secret; drop that partial line.
+    const cut = text.indexOf("\n");
+    return cut === -1 ? "" : text.slice(cut + 1);
+  } catch {
+    return "";
+  } finally {
+    if (fd !== null) try { fs.closeSync(fd); } catch { /* already closed */ }
+  }
+}
+
+async function officeSupportReport(desktopLog) {
+  const running = await findRunningService(serviceIdentity(realbudDataDir())).catch(() => null);
+  if (!running) return null;
+  const base = `http://127.0.0.1:${running.port}`;
+  try {
+    const sessionResponse = await fetch(`${base}/api/session`, { signal: AbortSignal.timeout(5_000) });
+    const token = sessionResponse.ok ? (await sessionResponse.json().catch(() => null))?.token : null;
+    if (typeof token !== "string" || !token) return null;
+    const response = await fetch(`${base}/api/support/bundle`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-realbud-session": token },
+      body: JSON.stringify({ desktopLog }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) return null;
+    const report = await response.text();
+    return report.startsWith("RealBud support file\n") && Buffer.byteLength(report, "utf8") <= SUPPORT_REPORT_MAX_BYTES ? report : null;
+  } catch {
+    return null;
+  }
+}
+
+function desktopOnlySupportReport(desktopLog) {
+  const kept = [];
+  let omitted = 0;
+  for (const line of desktopLog.split(/\r?\n/)) {
+    if (!line) continue;
+    if (SUPPORT_OWN_LINE.test(line) && !SUPPORT_UNSAFE_LINE.test(line) && line.length <= 2_000) kept.push(line);
+    else omitted++;
+  }
+  return [
+    "RealBud support file",
+    `Created: ${new Date().toISOString()}`,
+    `RealBud version: ${app.getVersion()}`,
+    `System: ${process.platform} ${process.arch} ${process.getSystemVersion?.() ?? ""}`.trimEnd(),
+    "Office service: did not answer, so its log is not included.",
+    "",
+    "Contains: RealBud's version, this computer's system type and the desktop app's own recent log lines. Documents, mail, saved credentials and business records are never read for this file.",
+    "",
+    "== Desktop app log (server.log) ==",
+    ...(omitted ? [`[${omitted} lines were left out because only the office service can check them for keys and passwords.]`] : []),
+    ...kept,
+    "",
+  ].join("\n");
+}
+
+ipcMain.handle("support:save", async (event) => {
+  if (supportSaveInFlight) return { ok: false, error: "A support file is already being saved." };
+  supportSaveInFlight = true;
+  try {
+    const now = new Date();
+    const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const options = {
+      title: "Save support file",
+      defaultPath: path.join(app.getPath("downloads"), `realbud-support-${day}.txt`),
+      filters: [{ name: "Text", extensions: ["txt"] }],
+      properties: ["createDirectory", "showOverwriteConfirmation"],
+    };
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const choice = owner ? await dialog.showSaveDialog(owner, options) : await dialog.showSaveDialog(options);
+    if (choice.canceled || !choice.filePath) return { ok: false, canceled: true };
+    const desktopLog = desktopLogTail();
+    const office = await officeSupportReport(desktopLog);
+    const report = office ?? desktopOnlySupportReport(desktopLog);
+    // Only a file this call opened is removed after a failed write, so a
+    // partial report is never left looking complete and nothing else is touched.
+    const handle = await fs.promises.open(choice.filePath, "w", 0o600);
+    try {
+      await handle.writeFile(report, "utf8");
+      await handle.close();
+    } catch (error) {
+      await handle.close().catch(() => {});
+      await fs.promises.unlink(choice.filePath).catch(() => {});
+      throw error;
+    }
+    slog(`saved a support file (${office ? "with" : "without"} the office service report)`);
+    return { ok: true, officeReport: office !== null };
+  } catch (error) {
+    const code = error?.code;
+    slog(`the support file could not be saved: ${typeof code === "string" ? code : "error"}`);
+    return {
+      ok: false,
+      error: code === "ENOSPC" || code === "EDQUOT"
+        ? "This computer is out of disk space. Free some space, then try again."
+        : "The support file could not be saved. Try again, or choose another folder.",
+    };
+  } finally {
+    supportSaveInFlight = false;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Being there for scheduled work.
+//
+// A detached office service outlives the window but not a sign-out, and nothing
+// kept this computer awake to reach a scheduled time. Two settings, both off
+// until the customer asks: start the service after they sign in, and hold this
+// computer awake while there is scheduled work. The DECISIONS are pure and
+// tested in service-persistence.mjs; this is the only place that touches the
+// login item store and the power manager.
+//
+// What it still does not do, and what the interface says: a sign-in is not a
+// power-on, and nothing here survives a closed lid or a shutdown. A missed
+// occurrence must stay visible on the schedule instead.
+const desktopSettingsPath = () => path.join(app.getPath("userData"), "desktop-settings.json");
+const scheduleFactPath = () => path.join(app.getPath("userData"), "schedule-fact.json");
+
+let desktopSettings = null;
+// A file we could not read is not a customer who never asked for anything. The
+// defaults still apply in memory (nothing is held, nothing is claimed), but the
+// login item already registered on this computer is left alone rather than
+// removed to match a value we failed to read.
+let desktopSettingsUnreadable = false;
+function loadDesktopSettings() {
+  if (desktopSettings) return desktopSettings;
+  let raw = null;
+  try { raw = fs.readFileSync(desktopSettingsPath(), "utf8"); }
+  catch (error) {
+    if (error?.code !== "ENOENT") {
+      desktopSettingsUnreadable = true;
+      slog(`desktop settings could not be read: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  desktopSettings = readDesktopSettings(raw);
+  return desktopSettings;
+}
+
+/** Persist a settings patch. Reports whether it reached disk: a setting that
+ * could not be saved must not be shown as saved, because the next launch will
+ * read the old value and undo the OS registration to match it. */
+function saveDesktopSettings(patch) {
+  const current = loadDesktopSettings();
+  const next = mergeDesktopSettings(current, patch);
+  desktopSettings = next;
+  if (next.startOfficeServiceAtLogin === current.startOfficeServiceAtLogin
+    && next.keepAwakeForSchedules === current.keepAwakeForSchedules) {
+    // Nothing to write — unless the stored file could not be read in the first
+    // place, in which case "unchanged" is not the same as "on disk".
+    return { settings: next, saved: !desktopSettingsUnreadable };
+  }
+  try {
+    const file = desktopSettingsPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, serializeDesktopSettings(next));
+    // The file is now what the customer just chose, so it is safe to act on again.
+    desktopSettingsUnreadable = false;
+    slog(`desktop settings saved: login=${next.startOfficeServiceAtLogin} keepAwake=${next.keepAwakeForSchedules}`);
+    return { settings: next, saved: true };
+  } catch (error) {
+    slog(`desktop settings could not be saved: ${error instanceof Error ? error.message : String(error)}`);
+    return { settings: next, saved: false };
+  }
+}
+
+// The office's schedule belongs to the office: a window reads it from the same
+// API the Schedule screen uses and reports it here, rather than main opening a
+// second, differently-authenticated reader of the same fact. The last report is
+// cached so a sign-in launch with no window can still tell whether there is
+// anything to stay awake for.
+let scheduleFact = null;
+function loadScheduleFact() {
+  if (scheduleFact) return scheduleFact;
+  let raw = null;
+  try { raw = fs.readFileSync(scheduleFactPath(), "utf8"); }
+  catch { /* never reported yet: nothing to stay awake for */ }
+  scheduleFact = readScheduleFact(raw);
+  return scheduleFact;
+}
+function recordScheduleFact(scheduleEnabled) {
+  // Same answer as last time: keep the stored report rather than rewriting the
+  // file on every refresh a window makes.
+  if (loadScheduleFact().scheduleEnabled === scheduleEnabled) return scheduleFact;
+  scheduleFact = { scheduleEnabled, reportedAt: Date.now() };
+  try {
+    const file = scheduleFactPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, serializeScheduleFact(scheduleFact));
+  } catch (error) {
+    slog(`the reported schedule state could not be saved: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return scheduleFact;
+}
+
+/** Register or remove the login item, only from a packaged build and only when
+ * the plan says something actually changes. Never throws: a login item that
+ * cannot be written must not stop RealBud from opening. */
+function applyStartupRegistration() {
+  const support = startupRegistrationSupport({ platform: process.platform, packaged: app.isPackaged });
+  if (!support.supported) return support;
+  const settings = loadDesktopSettings();
+  if (desktopSettingsUnreadable) {
+    slog("leaving the sign-in start registration untouched: this computer's settings could not be read");
+    return support;
+  }
+  try {
+    const current = app.getLoginItemSettings({ args: [SERVICE_MODE_FLAG] })?.openAtLogin;
+    const plan = planStartupRegistration({
+      desired: settings.startOfficeServiceAtLogin,
+      current,
+      platform: process.platform,
+      packaged: app.isPackaged,
+    });
+    if (plan) {
+      app.setLoginItemSettings(plan);
+      slog(`sign-in start ${plan.openAtLogin ? "registered" : "removed"}`);
+    }
+  } catch (error) {
+    slog(`sign-in start could not be updated: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return support;
+}
+
+let keepAwakeBlockerId = null;
+function onBatteryPower() {
+  try { return powerMonitor.isOnBatteryPower() === true; }
+  catch { return false; }
+}
+
+/** Hold or release the power blocker to match the current decision. Only
+ * prevent-app-suspension: the screen is never kept alight. */
+function applyKeepAwake() {
+  const decision = keepAwakeDecision({
+    optedIn: loadDesktopSettings().keepAwakeForSchedules,
+    scheduleEnabled: loadScheduleFact().scheduleEnabled,
+    onBattery: onBatteryPower(),
+  });
+  try {
+    if (decision.hold && keepAwakeBlockerId === null) {
+      keepAwakeBlockerId = powerSaveBlocker.start(decision.type);
+      slog(`holding this computer awake for scheduled work (${decision.type})`);
+    } else if (!decision.hold && keepAwakeBlockerId !== null) {
+      powerSaveBlocker.stop(keepAwakeBlockerId);
+      keepAwakeBlockerId = null;
+      slog(`released the keep-awake hold (${decision.state})`);
+    }
+  } catch (error) {
+    keepAwakeBlockerId = null;
+    slog(`keep-awake could not be changed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return decision;
+}
+
+function releaseKeepAwake() {
+  if (keepAwakeBlockerId === null) return;
+  try { powerSaveBlocker.stop(keepAwakeBlockerId); }
+  catch { /* the process is going away anyway */ }
+  keepAwakeBlockerId = null;
+}
+
+function servicePersistenceState() {
+  const settings = loadDesktopSettings();
+  const startup = startupRegistrationSupport({ platform: process.platform, packaged: app.isPackaged });
+  const fact = loadScheduleFact();
+  const keepAwake = keepAwakeDecision({
+    optedIn: settings.keepAwakeForSchedules,
+    scheduleEnabled: fact.scheduleEnabled,
+    onBattery: onBatteryPower(),
+  });
+  return {
+    settings,
+    startup: { supported: startup.supported, reason: startup.reason, explanation: startup.explanation },
+    // `holding` is what is actually held right now, not what was decided: the
+    // power manager can refuse, and the card must not claim a hold that failed.
+    keepAwake: { holding: keepAwakeBlockerId !== null, state: keepAwake.state, explanation: keepAwake.explanation },
+    scheduleEnabled: fact.scheduleEnabled,
+  };
+}
+
+/** Both settings, what they can do on this build, and what is held right now. */
+ipcMain.handle("service:persistence:get", () => servicePersistenceState());
+ipcMain.handle("service:persistence:set", (_event, patch) => {
+  const request = patch && typeof patch === "object" && !Array.isArray(patch) ? patch : {};
+  // scheduleEnabled is a report, not a setting: it never becomes consent.
+  if (typeof request.scheduleEnabled === "boolean") recordScheduleFact(request.scheduleEnabled);
+  const { saved } = saveDesktopSettings(request);
+  applyStartupRegistration();
+  applyKeepAwake();
+  return { ...servicePersistenceState(), saved };
+});
+
+/** Read the settings once the app is ready, apply them, and follow the power
+ * source: unplugging is exactly when an unattended hold should be let go. */
+function startServicePersistence() {
+  loadDesktopSettings();
+  loadScheduleFact();
+  applyStartupRegistration();
+  try {
+    powerMonitor.on("on-ac", () => { applyKeepAwake(); });
+    powerMonitor.on("on-battery", () => { applyKeepAwake(); });
+  } catch { /* power-source events are a refinement; the setting still applies */ }
+  applyKeepAwake();
+}
+
+/**
+ * The headless sign-in launch: no window, no computer use, no updater — start or
+ * adopt the office service through the same single-authority path a window uses,
+ * then supervise it with the same watchdog a window runs, for as long as there is
+ * a service of ours to supervise.
+ */
+async function runServiceHost() {
+  if (process.platform === "darwin") { try { app.dock?.hide(); } catch { /* no dock */ } }
+  if (!app.isPackaged) {
+    // A development build has no server in resourcesPath to start, and its login
+    // item is never registered in the first place.
+    slog("service mode is only meaningful in an installed build; exiting");
+    app.quit();
+    return;
+  }
+  startServicePersistence();
+  let ok = false;
+  try { ok = await startOrAdoptOfficeService(); }
+  catch (error) { slog(`service mode could not start the office service: ${error instanceof Error ? error.message : String(error)}`); }
+  if (!ok) {
+    slog("service mode: no office service is running and one could not be started; exiting");
+    app.quit();
+    return;
+  }
+  // Supervise rather than exit when the office stops. This host exists for
+  // scheduled work, and a crash at 3 a.m. used to end it along with its
+  // keep-awake hold, leaving the morning run to nobody. The watchdog brings a
+  // crashed service back on its bounded schedule; the host still exits once
+  // there is provably nothing of ours to supervise (headlessHostShouldExit),
+  // because an invisible process hosting nothing only holds the lock and the
+  // power manager's hold.
+  startServiceWatchdog();
+  showBackgroundTray({
+    onOpen: () => handOverToWindowProcess("RealBud was opened from the notification area"),
+  });
+}
+
+/** Give the single-instance lock to an ordinary window process. */
+function handOverToWindowProcess(why) {
+  slog(`${why}; handing over to a window`);
+  app.relaunch({ args: [] });
+  app.quit();
+}
+
+// ---------------------------------------------------------------------------
+// Running in the background after the last window closes (Windows).
+//
+// The decision lives in unattended-host.mjs. When the person has asked for
+// unattended work, closing the window keeps this process — its watchdog and its
+// keep-awake hold — and shows a notification-area icon to reopen RealBud or quit
+// it. Quitting from there, or from the window, still ends supervision; the office
+// service itself keeps running either way, as it always has.
+let runningInBackground = false;
+let backgroundTray = null;
+let backgroundNoticeShown = false;
+
+function showBackgroundTray({ onOpen }) {
+  if (process.platform !== "win32" || backgroundTray) return;
+  try {
+    const icon = nativeImage.createFromPath(APP_ICON).resize({ width: 16, height: 16 });
+    backgroundTray = new Tray(icon);
+    backgroundTray.setToolTip("RealBud is running so scheduled work can happen");
+    backgroundTray.setContextMenu(Menu.buildFromTemplate([
+      { label: "Open RealBud", click: () => onOpen() },
+      { type: "separator" },
+      { label: "Quit RealBud", click: () => app.quit() },
+    ]));
+    backgroundTray.on("click", () => onOpen());
+  } catch (error) {
+    // The process still supervises without an icon; reopening RealBud reaches it.
+    backgroundTray = null;
+    slog(`the notification-area icon could not be shown: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function hideBackgroundTray() {
+  if (!backgroundTray) return;
+  try { backgroundTray.destroy(); } catch { /* already gone */ }
+  backgroundTray = null;
+}
+
+function enterBackground() {
+  if (runningInBackground) return;
+  runningInBackground = true;
+  slog("the last window closed; RealBud keeps running in the background for scheduled work");
+  showBackgroundTray({ onOpen: openWindowFromBackground });
+  if (backgroundTray && !backgroundNoticeShown) {
+    backgroundNoticeShown = true;
+    try {
+      backgroundTray.displayBalloon({
+        title: "RealBud is still running",
+        content: "Scheduled work keeps running while this computer is on. Quit RealBud from this icon.",
+        iconType: "info",
+      });
+    } catch { /* a notice is a courtesy; the icon is the control */ }
+  }
+}
+
+function openWindowFromBackground() {
+  if (serviceMode) return;
+  const existing = BrowserWindow.getAllWindows()[0];
+  if (existing) {
+    if (existing.isMinimized()) existing.restore();
+    existing.focus();
+  } else {
+    createWindow();
+  }
+  runningInBackground = false;
+  hideBackgroundTray();
+}
 
 /**
  * Adopt this installation's running office service, or start one detached.
@@ -568,7 +1108,13 @@ ipcMain.handle("service:start", async () => {
  * service that outlives the app is still serving when RealBud relaunches, and
  * starting a second one would put two services on one company database.
  */
-async function startOrAdoptOfficeService() {
+let serviceStart = null;
+function startOrAdoptOfficeService() {
+  if (serviceStart) return serviceStart;
+  serviceStart = startOrAdoptOfficeServiceOnce().finally(() => { serviceStart = null; });
+  return serviceStart;
+}
+async function startOrAdoptOfficeServiceOnce() {
   const dataDirectory = realbudDataDir();
   const identity = serviceIdentity(dataDirectory);
 
@@ -581,9 +1127,91 @@ async function startOrAdoptOfficeService() {
     return true;
   }
 
+  // Nothing of ours ANSWERED. That is not the same as nothing of ours EXISTING,
+  // and the difference is the whole guard: a service still opening the company
+  // database holds its port without publishing health, so choosing a port now
+  // would skip it and put a SECOND service on the same database.
+  //
+  // First settle a child THIS session spawned and never heard from.
+  if (serviceHandle) {
+    const state = spawnedServiceState(serviceHandle);
+    if (state === "running") {
+      // One more look at its own port: it may have finished opening the book
+      // between the timeout and now.
+      const late = await probeService(serviceHandle.port);
+      if (ownsRunningService(serviceHandle, late, identity)) {
+        SERVER_PORT = serviceHandle.port;
+        serverEverStarted = true;
+        slog(`the office service this session started answered late on port ${serviceHandle.port}`);
+        return true;
+      }
+      const abandonedPort = serviceHandle.port;
+      const abandonedPid = serviceHandle.pid;
+      const killed = abandonSpawnedService(serviceHandle, dataDirectory);
+      slog(
+        `abandoned the silent office service this session started (port ${abandonedPort} pid=${abandonedPid}, stop ${killed ? "sent" : "not possible"}) rather than start a second one beside it`,
+      );
+      serviceHandle = null;
+      // Wait for the abandoned child to release its port, for the same reason
+      // "Stop the office service" waits: until it does, it may still be holding
+      // the company database open. Closing Postgres can take longer than a
+      // couple of seconds, so this is bounded at ten.
+      let released = false;
+      for (let settle = 0; settle < 40; settle++) {
+        if ((await availableServicePort([abandonedPort])) !== null) { released = true; break; }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      // Still held: STOP. Scanning on would skip this port and start a second
+      // service over the same data directory — the exact outcome this whole path
+      // exists to prevent. The window's bounded wait, or a later retry, picks it
+      // up once the port is actually free.
+      if (!released) {
+        slog(`the abandoned office service (port ${abandonedPort} pid=${abandonedPid}) still holds its port; refusing to scan past it`);
+        abandonedServicePort = abandonedPort;
+        return false;
+      }
+    } else if (state === "exited") {
+      clearServiceHandle(dataDirectory);
+      slog(`the office service this session started (pid=${serviceHandle.pid}) has exited; starting a fresh one`);
+      serviceHandle = null;
+    }
+  }
+
+  // Then a handle recorded by an earlier session. A live pid still holding its
+  // recorded port is a silent service of this installation; a live pid with a
+  // free port is an unrelated process that reused the number, and a stale record
+  // after a reboot must never brick the launch.
+  if (!serviceHandle) {
+    const recorded = readServiceHandle(dataDirectory, identity.instanceId);
+    const recordedPortFree = recorded ? (await availableServicePort([recorded.port])) !== null : true;
+    const decision = shouldStartService({ adopted: false, recorded, recordedPortFree, bootedAt: systemBootedAt() });
+    if (!decision.start) {
+      slog(`not starting an office service (${decision.reason}): pid=${recorded?.pid} still holds port ${recorded?.port}`);
+      return false;
+    }
+    if (decision.reason === "recorded-before-boot") {
+      // Written before this boot, so it cannot be a live service of ours: the
+      // pid and the port belong to something else now. Forget it, or the next
+      // launch reads the same record and hesitates again.
+      clearServiceHandle(dataDirectory);
+      slog(`discarded a pre-boot office service record (pid=${recorded?.pid} port=${recorded?.port}); it cannot be ours`);
+    }
+  }
+
+  // A port abandoned on an earlier attempt stays off limits until it is free:
+  // the child that held it may still be closing the company database.
+  if (abandonedServicePort !== null) {
+    if ((await availableServicePort([abandonedServicePort])) === null) {
+      slog(`the abandoned office service still holds port ${abandonedServicePort}; not starting another beside it`);
+      return false;
+    }
+    abandonedServicePort = null;
+  }
+  const port = await availableServicePort(serverEverStarted ? [SERVER_PORT] : identity.ports);
+  if (port === null) { slog("no office service port is available"); return false; }
+  SERVER_PORT = port;
   const deskKey = deskKeyForChild();
-  const entry = path.join(process.resourcesPath, "server", "index.js");
-  const port = SERVER_PORT;
+  const entry = path.join(process.resourcesPath, "server", "bootstrap.js");
   let handle;
   try {
     handle = startDetachedService({
@@ -591,6 +1219,8 @@ async function startOrAdoptOfficeService() {
       port,
       dataDirectory,
       instanceId: identity.instanceId,
+      logDirectory: LOG_DIR,
+      onDiagnostic: slog,
       env: {
         ...process.env,
         OMB_STATIC_DIR: path.join(process.resourcesPath, "ui"),
@@ -609,23 +1239,125 @@ async function startOrAdoptOfficeService() {
   }
   serviceHandle = handle;
 
-  // Wait for the service we just started to answer. Identity is the pid we
-  // spawned, so a stranger holding the port is not mistaken for our service.
+  // Match this installation and process capability before adopting the child.
   for (let attempt = 0; attempt < 40; attempt++) {
     const probe = await probeService(port);
-    const health = probe?.body ?? null;
-    if (health && health.app === "realbud" && health.static === true && health.pid === handle.pid) {
+    if (ownsRunningService(handle, probe, identity)) {
       serverEverStarted = true;
       slog(`started the office service detached on port ${port} pid=${handle.pid}`);
       return true;
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  slog(`the detached office service did not answer on port ${port}`);
+  // Out of patience, not out of options. Keep the handle unless the child is
+  // already gone: it is the ONLY thing that lets a later retry (or the window's
+  // bounded wait) adopt this child or stop it, instead of forking a second
+  // service over the same company database.
+  if (spawnedServiceState(handle) === "exited") {
+    clearServiceHandle(dataDirectory);
+    serviceHandle = null;
+    slog(`the detached office service on port ${port} exited during startup`);
+  } else {
+    slog(`the detached office service did not answer on port ${port} yet; keeping pid=${handle.pid} for retry`);
+  }
   return false;
 }
 
+/**
+ * Bring the detached office service back when it crashes while the window is
+ * open. The rules live in service-watchdog.mjs; this only gathers the facts and
+ * routes every restart through `startOrAdoptOfficeService()`, so an adopted or
+ * already-running service is never duplicated.
+ *
+ * The window process runs it, and so does a windowless RealBud: the sign-in host
+ * (`--service`) and a window process running in the background after its last
+ * window closed. A windowless process has no banner or Start button, so it ends
+ * once there is provably nothing of ours to supervise (a deliberate Stop cleared
+ * the record, or a start died while booting); the next window launch or sign-in
+ * starts the office again. Smoke runs stop the service themselves and must exit
+ * cleanly, so they are left out.
+ */
+// `before-quit` can be cancelled (a window with unsaved work refuses to close)
+// and Electron reports no cancellation, so "quitting" holds for a bounded time
+// rather than for the rest of the session. `will-quit` stops the watchdog for good.
+const QUIT_HOLD_MS = 60_000;
+let quitRequestedAt = null;
+app.on("before-quit", () => { quitRequestedAt = Date.now(); });
+const appQuitting = () => quitRequestedAt !== null && Date.now() - quitRequestedAt < QUIT_HOLD_MS;
+let serviceWatchdog = null;
+let serviceWatchdogTimer = null;
+function startServiceWatchdog() {
+  if (serviceWatchdog) return;
+  serviceWatchdog = createServiceWatchdog({
+    observe: async () => {
+      const dataDirectory = realbudDataDir();
+      const identity = serviceIdentity(dataDirectory);
+      const running = await findRunningService(identity);
+      // The watchdog can observe healthy on the SAME port, which is not an
+      // adoption or restart. Recover exhausted fallback windows in that case too.
+      if (running && !serviceStopRequested && !appQuitting()) {
+        for (const recover of officeWindowRecoveries.values()) recover(running.port);
+      }
+      const recorded = serviceHandle ?? readServiceHandle(dataDirectory, identity.instanceId);
+      let recordedAlive = false;
+      let recordedPortAnswers = false;
+      if (recorded && !running) {
+        // Our own child reports its exit directly; a service another session
+        // started can only be tested for existence. Neither authorises a signal.
+        const own = spawnedServiceState(recorded);
+        recordedAlive = own === "running" || (own === "unknown" && processAlive(recorded.pid));
+        // findRunningService already asked every port of this installation.
+        if (!identity.ports.includes(recorded.port)) {
+          recordedPortAnswers = isOurService((await probeService(recorded.port))?.body, identity);
+        }
+      }
+      return {
+        quitting: appQuitting(),
+        stopRequested: serviceStopRequested,
+        startInFlight: serviceStart !== null,
+        answeringPort: running?.port ?? null,
+        currentPort: SERVER_PORT,
+        recorded: Boolean(recorded),
+        recordedAlive,
+        recordedPortAnswers,
+      };
+    },
+    // A Stop or a quit can land between the check and the start: look again.
+    startOrAdopt: async () => {
+      if (serviceStopRequested || appQuitting()) return false;
+      // A fresh start is this app's own, not "already running"; the adopt branch
+      // sets it again if a service of ours turns out to be answering after all.
+      serviceAdopted = false;
+      const ok = await startOrAdoptOfficeService();
+      if (ok) serverReady = true;
+      return ok;
+    },
+    // The same bookkeeping as the adopt branch of startOrAdoptOfficeServiceOnce.
+    adopt: (port) => {
+      SERVER_PORT = port;
+      serverEverStarted = true;
+      serviceAdopted = true;
+      serverReady = true;
+    },
+    log: slog,
+  });
+  serviceWatchdogTimer = setInterval(() => {
+    void serviceWatchdog?.tick().then((decision) => {
+      if (!(serviceMode || runningInBackground) || !headlessHostShouldExit(decision)) return;
+      slog(`nothing of ours is left to supervise (${decision.reason}); the windowless RealBud is exiting`);
+      stopServiceWatchdog();
+      app.quit();
+    });
+  }, WATCHDOG_DEFAULTS.tickMs);
+}
+function stopServiceWatchdog() {
+  serviceWatchdog?.stop();
+  if (serviceWatchdogTimer) { clearInterval(serviceWatchdogTimer); serviceWatchdogTimer = null; }
+}
+
 app.whenReady().then(async () => {
+  // Started by the login item: host the office service, never a window.
+  if (serviceMode) return runServiceHost();
   if (process.platform === "darwin") app.dock.setIcon(APP_ICON);
   // getDisplayMedia in the renderer → this handler → ScreenCaptureKit, all
   // inside the app's own processes — the one capture path macOS reliably
@@ -684,8 +1416,13 @@ app.whenReady().then(async () => {
     onStatus: (status) => slog(`service ${status.state} restarts=${status.restarts}${status.lastExitCode === null ? "" : ` exit=${status.lastExitCode}`}`),
   });
   if (app.isPackaged) {
-    serverReady = await startOrAdoptOfficeService();
+    try { serverReady = await startOrAdoptOfficeService(); }
+    catch (error) { serverReady = false; slog(`office service requires recovery: ${error instanceof Error ? error.message : String(error)}`); }
+    if (!smokeMode) startServiceWatchdog();
   }
+  // After the service decision, because applying the settings reads the office's
+  // last reported schedule state and must not delay the window.
+  startServicePersistence();
   const win = createWindow();
   // in-app auto-update (packaged only) — checks GitHub releases, downloads on
   // the user's click, installs on "Restart to update"
@@ -696,7 +1433,25 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
+  // Decided in unattended-host.mjs. The sign-in service host never opened a
+  // window, so this cannot fire for it — but if it ever did, closing a window
+  // must not end the host. macOS keeps the app in the dock, as it always has.
+  const settings = loadDesktopSettings();
+  const decision = windowsClosedAction({
+    platform: process.platform,
+    serviceMode,
+    packaged: app.isPackaged,
+    smoke: smokeMode,
+    quitting: appQuitting(),
+    unattended: unattendedWorkWanted({
+      startOfficeServiceAtLogin: settings.startOfficeServiceAtLogin,
+      keepAwakeForSchedules: settings.keepAwakeForSchedules,
+      scheduleEnabled: loadScheduleFact().scheduleEnabled,
+      stopRequested: serviceStopRequested,
+    }),
+  });
+  if (decision.action === "quit") app.quit();
+  else if (decision.action === "background") enterBackground();
 });
 
 // Defer final quit for bounded helper cleanup, after every window accepts close.
@@ -705,8 +1460,25 @@ registerDesktopShutdown(app, {
   // service deliberately keeps running: quitting the window must not take the
   // company database, the clock and every peer's connection with it. Stopping it
   // is an explicit action on You ("Stop the office service").
-  stopServer: async () => { await serverSupervisor?.stop(); serverProc = null; },
+  stopServer: async () => {
+    await serverSupervisor?.stop();
+    serverProc = null;
+    // Give this computer its sleep settings back. The office service keeps
+    // running, but nothing in this process should still be holding the machine
+    // awake once the process is gone.
+    releaseKeepAwake();
+    stopServiceWatchdog();
+    hideBackgroundTray();
+  },
   stopSpeech,
   closeControl: () => cuaControl?.close(),
-  stopComputer: stopCua,
+  // Wait for an in-flight computer-use start before stopping it. `stopCua()`
+  // can only stop a host that has already been assigned, so quitting while the
+  // driver is still starting used to leave the finished host and its daemon
+  // running with nobody to stop them. The outer will-quit race still bounds
+  // this, so a driver that never settles cannot hold the quit open.
+  stopComputer: async () => {
+    await settledWithin(cuaReady, 2_000, "computer use start");
+    await stopCua();
+  },
 });

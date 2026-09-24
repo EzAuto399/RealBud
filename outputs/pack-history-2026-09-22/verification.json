@@ -1,0 +1,132 @@
+{
+  "at": "2026-09-21T19:45:24.947982+00:00",
+  "passed": true,
+  "source": {
+    "head": "5856140c6ba49f53e79a7edbf01800e099b53e10",
+    "files": 1106,
+    "digest": "884bc4bd98bacb785a860e99bebe0f6f06b2e2da71f86c1616412eaea4723a3f",
+    "unchanged": true
+  },
+  "fullSuite": {
+    "passed": 4521,
+    "failed": 0,
+    "skipped": 149,
+    "files": 355,
+    "reportedSeconds": 343.1066064453125,
+    "hermesRuntimeFixture": "admitted 345cd2b057a452236de401d3534b8502a7465e8d-cfb3f08a9ee7"
+  },
+  "artifact": {
+    "path": "/Users/yoda/projects/RealBud/outputs/pack-history-2026-09-22/package/mac-arm64/RealBud.app",
+    "entries": 2435,
+    "symlinks": 14,
+    "digest": "ae457f7ef8923974a349fa8d64aa7c3115462ddc552078078c3d645a0730cb9b",
+    "unchanged": true,
+    "signed": false,
+    "installedReplacement": false
+  },
+  "sourceGui": {
+    "at": "2026-09-21T19:36:44.015Z",
+    "passed": true,
+    "layer": "Source local service and built renderer",
+    "limits": "Disposable fictional pack and POSIX file-permission failure; no live worker/provider or native Windows proof",
+    "checks": [
+      "Rendered upload preview is read-only and requires confirmation; real upgrade merges publisher change with staff title, adds optional plan, pauses approvals/schedules, and reconciles lost response without another generation.",
+      "A competing edit to the same plan field produces a visible conflict and cannot be applied.",
+      "A real protected-directory write failure leaves durable intent and paused plans; after cold service restart, Resume completes the exact saved change.",
+      "Reviewed rollback restores prior instructions and staff configuration as a new generation; optional plan history stays saved and reactivation and execution are both refused; prior published definition exports exactly.",
+      "At eight retained configurations the UI previews six for archival and keeps two recent; a real EACCES write failure preserves every configuration and all approval/schedule bytes. Cold restart and lost-response resume commit one archive without another generation.",
+      "A new update succeeds after archival; retrying the original archive after that update makes no changes. The rendered archived configuration rolls back through normal review and retired-plan ownership remains enforced.",
+      "Actual service SIGKILL after a partial archive write leaves durable intent and original history; mobile cold-resume repairs that staging file and removes it. A second archive retains the first batch; bounded older-page browsing still reaches configuration one. Desktop and mobile archival screens remain usable.",
+      "Desktop and390px screens render without horizontal overflow, browser errors or off-origin requests; private business book bytes remain unchanged."
+    ],
+    "errors": [],
+    "denied": [],
+    "cleaned": true
+  },
+  "packagedGui": {
+    "at": "2026-09-21T19:40:04.665Z",
+    "passed": true,
+    "layer": "Compiled local service and built renderer",
+    "limits": "Disposable fictional pack and POSIX file-permission failure; no live worker/provider or native Windows proof",
+    "checks": [
+      "Rendered upload preview is read-only and requires confirmation; real upgrade merges publisher change with staff title, adds optional plan, pauses approvals/schedules, and reconciles lost response without another generation.",
+      "A competing edit to the same plan field produces a visible conflict and cannot be applied.",
+      "A real protected-directory write failure leaves durable intent and paused plans; after cold service restart, Resume completes the exact saved change.",
+      "Reviewed rollback restores prior instructions and staff configuration as a new generation; optional plan history stays saved and reactivation and execution are both refused; prior published definition exports exactly.",
+      "At eight retained configurations the UI previews six for archival and keeps two recent; a real EACCES write failure preserves every configuration and all approval/schedule bytes. Cold restart and lost-response resume commit one archive without another generation.",
+      "A new update succeeds after archival; retrying the original archive after that update makes no changes. The rendered archived configuration rolls back through normal review and retired-plan ownership remains enforced.",
+      "Actual service SIGKILL after a partial archive write leaves durable intent and original history; mobile cold-resume repairs that staging file and removes it. A second archive retains the first batch; bounded older-page browsing still reaches configuration one. Desktop and mobile archival screens remain usable.",
+      "Desktop and390px screens render without horizontal overflow, browser errors or off-origin requests; private business book bytes remain unchanged."
+    ],
+    "errors": [],
+    "denied": [],
+    "cleaned": true
+  },
+  "profile": {
+    "passed": true,
+    "platform": "darwin",
+    "arch": "arm64",
+    "node": "v24.18.1",
+    "source": "/Users/yoda/projects/RealBud/outputs/pack-history-2026-09-22/package/mac-arm64/RealBud.app/Contents/Resources",
+    "packSource": "/Users/yoda/projects/RealBud/outputs/pack-history-2026-09-22/package/mac-arm64/RealBud.app/Contents/Resources/pack/property",
+    "runtime": "installed Electron/Node",
+    "proofLayer": "Compiled service and fresh private profile from the selected inputs; not Hermes runtime installation, model access, GUI or two-device acceptance",
+    "timings": {
+      "startupMs": 435,
+      "profileCheckMs": 10,
+      "watchdogMs": 25000,
+      "readinessAttempts": 150,
+      "perHealthRequestMs": 500
+    },
+    "profileProof": {
+      "freshHome": true,
+      "installed": true,
+      "approvalsManual": true,
+      "workroomReady": true,
+      "modelAttached": false,
+      "workerReady": false,
+      "privacy": "POSIX owner and private mode",
+      "files": 7,
+      "directories": 6
+    },
+    "checks": [
+      "Compiled server starts outside checkout without node_modules",
+      "Packaged PostgreSQL driver loads; unprovisioned company status is usable",
+      "Packaged TLS certificate generator executes successfully",
+      "Fresh private Hermes profile has shipped safeguards and skills, private storage, and no model credentials"
+    ],
+    "cleanupComplete": true
+  },
+  "buildComparison": {
+    "server": {
+      "checked": 334,
+      "mismatches": []
+    },
+    "shared": {
+      "checked": 48,
+      "mismatches": []
+    },
+    "supporting": {
+      "checked": 3,
+      "mismatches": []
+    },
+    "renderer": {
+      "checked": 342,
+      "mismatches": []
+    }
+  },
+  "nativeMacSmoke": {
+    "passed": true,
+    "log": "mac-smoke.log"
+  },
+  "remaining": [
+    "Reviewed skill history archive after100versions",
+    "Website command/approval protocol implementation",
+    "Native Windows installation/privacy/update/uninstall/Hermes-memory admission",
+    "Physical two-device office operation",
+    "Protected hosted connector commissioning",
+    "Real Gmail consent/source acceptance",
+    "Exact bank and REI Cloud acceptance",
+    "Observed customer daily operation and signed release"
+  ]
+}

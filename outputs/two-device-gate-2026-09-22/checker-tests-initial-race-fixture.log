@@ -1,0 +1,57 @@
+✔ blank templates fail closed and neither mutate nor accept the operational catalogue (3.535542ms)
+✔ a complete synthetic record proves only checker structure and integrity, not office readiness (9.241ms)
+✔ the second independent bills workflow cannot be replaced by the handoff case (5.602875ms)
+✔ simulation cannot substitute for native observations (5.425209ms)
+✔ local-integration cannot substitute for native observations (4.798875ms)
+✔ ci cannot substitute for native observations (4.381959ms)
+✔ null cannot substitute for native observations (4.664292ms)
+✔ same identity, source account or private worker context fails isolation coverage (18.675791ms)
+✔ wrong executing device, reused job, missing result and unmanaged worker fail (15.853625ms)
+✔ Stop requested, a missing recovery case or only one observed device cannot pass (11.625041ms)
+✔ Mac evidence cannot silently weaken the default full-platform target (3.722167ms)
+✔ full-platform structure requires all four interactive pairings and Windows 11 x64 (55.429208ms)
+✔ physical Mac rehearsal refuses two simulated or virtual desktops (5.02075ms)
+✔ changed or missing evidence files fail even when every observation says pass (4.984584ms)
+✔ evidence paths cannot escape through traversal or a symbolic link (7.918459ms)
+✔ duplicate pairing/case records cannot hide missing observations (7.748375ms)
+✔ CLI returns failure for a missing receipt or an unrun template (90.77925ms)
+✔ contract retains all 71 exact historical cases, four pairings and independent bills runs (0.25025ms)
+✔ missing, damaged and reduced contracts fail admission with an actionable error (4.428833ms)
+✔ exported helpers cannot accept a caller-reduced contract or mutate an admitted policy (0.4885ms)
+✔ every case has the explicit reviewed participant policy, including host and peer Windows roles (0.121583ms)
+✔ missing required participants, duplicate and unknown slots cannot pass any case (16797.606167ms)
+✔ malformed receipt entries fail without crashing the exported checker (78.740542ms)
+✔ receipts cannot reuse an old schema or another contract digest (13.441334ms)
+✖ evidence pathname replacement after open is held before reading outside content (5.348125ms)
+✔ CLI emits bound unrun templates for both targets without changing the catalogue (54.706042ms)
+ℹ tests 26
+ℹ suites 0
+ℹ pass 25
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 17272.096
+
+✖ failing tests:
+
+test at scripts/check-two-device-acceptance.test.mjs:299:1
+✖ evidence pathname replacement after open is held before reading outside content (5.348125ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  true !== false
+  
+      at TestContext.<anonymous> (file:///Users/yoda/projects/RealBud/scripts/check-two-device-acceptance.test.mjs:318:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)
+      at Test.postRun (node:internal/test_runner/test:1522:19)
+      at Test.run (node:internal/test_runner/test:1447:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

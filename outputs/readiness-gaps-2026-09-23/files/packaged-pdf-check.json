@@ -1,0 +1,28 @@
+{
+  "proofLayer": "compiled server and self-contained PDF helper in a separate directory without node_modules",
+  "passed": true,
+  "triple": {
+    "passed": 10,
+    "failed": 0,
+    "skipped": 0
+  },
+  "medianMs": 65.88364599999998,
+  "maxMs": 70.23795800000005,
+  "timingsMs": [
+    70.073958,
+    66.05324999999999,
+    65.71404199999998,
+    65.472125,
+    70.23795800000005,
+    68.41020800000001,
+    65.34175000000005,
+    67.38675,
+    64.00479099999995,
+    64.61649999999997
+  ],
+  "helperSha256": "66fed14154cda5349f4cee00460509ad2cf9a11e986e870fb6ef2942fde71759",
+  "limits": [
+    "Fictional single-page PDF only.",
+    "Node runtime on this Mac, not installed Electron or Windows."
+  ]
+}

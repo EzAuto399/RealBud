@@ -1,0 +1,29 @@
+{
+  "at": "2026-09-23T02:39:49.304763+00:00",
+  "allFiveScriptsPass": true,
+  "workflowAssertionGroups": 49,
+  "secondOfficeChecks": 16,
+  "groupCounts": {
+    "bankBytes": 13,
+    "bankAmendments": 7,
+    "sourceBills": 25,
+    "morningMail": 4
+  },
+  "initialSeparatePostgresResults": {
+    "files": 3,
+    "tests": 16,
+    "skipped": 0,
+    "receipt": "../company-postgres-locale-results.json"
+  },
+  "helper": "scripts/qa-onboarding.mjs",
+  "helperSha256": "2ec2bdd9a4361f7c9e3fb3e37664ccefd482080cd9d514777af221909a4decac",
+  "scope": "Final rebuilt renderer and current source HTTP service; all fictional local fixtures; no installed/live/Windows proof",
+  "limits": [
+    "Onboarding was seeded through scoped CAS API, not the visible welcome interaction",
+    "Mail-history coverage assertion composes production service seams in-process",
+    "No bank browser navigation/download, Modelvia, live Gmail or REI",
+    "No native installed-device, Windows, cross-device LAN or backup/restore acceptance"
+  ],
+  "cleanup": "No owned workflow services, PostgreSQL fixture processes or browser jobs found after completion",
+  "visualReview": "Final bank correction after restart desktop and morning-mail 390px screenshots inspected: content readable and no unintended horizontal overflow observed"
+}

@@ -1,0 +1,165 @@
+{
+  "version": 1,
+  "kind": "accounts-bill-exception-review",
+  "sourceReference": "QA-SYN-BILL-EXCEPTIONS-COVERAGE-AND-STATE-GAPS-9ed59781-d73d-489e-8c55-635e2aa7c416",
+  "status": "partial",
+  "coverageComplete": false,
+  "findings": [
+    {
+      "occurrenceId": "SYN-B01",
+      "propertyId": "SYN-P01",
+      "arrival": "received",
+      "dueDate": "2026-09-13",
+      "payment": "arranged-unconfirmed",
+      "funding": "sufficient",
+      "advance": "none",
+      "flags": [
+        "due-without-confirmed-payment"
+      ],
+      "sourceIds": [
+        "SYN-ACCEPTED-I01"
+      ],
+      "reason": "Accepted invoice SYN-BILLINV01 (420.00) received; dueDate 2026-09-13 is on/before asOf 2026-09-14 and payment is arranged but not confirmed."
+    },
+    {
+      "occurrenceId": "SYN-B02",
+      "propertyId": "SYN-P02",
+      "arrival": "received",
+      "dueDate": "2026-09-13",
+      "payment": "unknown",
+      "funding": "sufficient",
+      "advance": "outstanding",
+      "flags": [
+        "due-without-confirmed-payment",
+        "advance-unrecovered"
+      ],
+      "sourceIds": [
+        "SYN-ACCEPTED-I02"
+      ],
+      "reason": "Accepted invoice SYN-BILLINV02 (420.00) received; dueDate 2026-09-13 is on/before asOf. paymentConfirmed=true has no paymentReceiptId and no paymentArranged is stated, so payment is unconfirmed; advance SYN-ADV02 has recoveryConfirmed=false and owner funds arrived do not prove recovery."
+    },
+    {
+      "occurrenceId": "SYN-B03",
+      "propertyId": "SYN-P03",
+      "arrival": "received",
+      "dueDate": "2026-09-13",
+      "payment": "confirmed",
+      "funding": "sufficient",
+      "advance": "outstanding",
+      "flags": [
+        "advance-unrecovered"
+      ],
+      "sourceIds": [
+        "SYN-ACCEPTED-I03"
+      ],
+      "reason": "Accepted invoice SYN-BILLINV03 (420.00) received; dueDate 2026-09-13 is on/before asOf; payment confirmed with receipt SYN-PAYREC03. Advance SYN-ADV03 recovery unproven: recoveryConfirmed=true without recoveryReceiptId."
+    },
+    {
+      "occurrenceId": "SYN-B04",
+      "propertyId": "SYN-P04",
+      "arrival": "unknown",
+      "dueDate": null,
+      "payment": "unknown",
+      "funding": "unknown",
+      "advance": "none",
+      "flags": [
+        "coverage-gap"
+      ],
+      "sourceIds": [
+        "SYN-ACCOUNT-ADMIN:authentication"
+      ],
+      "reason": "No accepted invoice and coverage incomplete (SYN-ACCOUNT-ADMIN authentication failure, pagination incomplete); expected arrival 2026-09-12 is past asOf 2026-09-14, so this is past the expected arrival window with incomplete coverage, not a confirmed missing bill."
+    },
+    {
+      "occurrenceId": "SYN-B05",
+      "propertyId": "SYN-P05",
+      "arrival": "unknown",
+      "dueDate": null,
+      "payment": "unknown",
+      "funding": "unknown",
+      "advance": "none",
+      "flags": [
+        "coverage-gap"
+      ],
+      "sourceIds": [
+        "SYN-ACCOUNT-ADMIN:authentication"
+      ],
+      "reason": "No accepted invoice and coverage incomplete; expected arrival 2026-09-20 has not yet passed, so not-due cannot be confirmed."
+    },
+    {
+      "occurrenceId": "SYN-B06",
+      "propertyId": "SYN-P06",
+      "arrival": "unknown",
+      "dueDate": null,
+      "payment": "unknown",
+      "funding": "insufficient",
+      "advance": "none",
+      "flags": [
+        "coverage-gap",
+        "insufficient-funds",
+        "owner-to-pay"
+      ],
+      "sourceIds": [
+        "SYN-ACCEPTED-I06",
+        "SYN-ACCOUNT-ADMIN:authentication"
+      ],
+      "reason": "Invoice proposal SYN-BILLINV06 is accepted=false so there is no accepted invoice evidence and no verified due date; coverage incomplete; funding insufficient; ownerToPay=true with no payment proof - unresolved handoff."
+    },
+    {
+      "occurrenceId": "SYN-B07",
+      "propertyId": "SYN-P07",
+      "arrival": "received",
+      "dueDate": null,
+      "payment": "unknown",
+      "funding": "unknown",
+      "advance": "unknown",
+      "flags": [
+        "conflicting-invoice"
+      ],
+      "sourceIds": [
+        "SYN-CONFLICT-V1",
+        "SYN-CONFLICT-V2"
+      ],
+      "reason": "Two accepted versions of SYN-BILLINV07 conflict (100.00 due 2026-09-18; 120.00 due 2026-09-21); occurrence held, arrival received, dueDate withheld, and no payment, funding or advance state supplied."
+    }
+  ],
+  "holds": [
+    {
+      "itemId": "SYN-B01",
+      "reason": "Payment arranged but unconfirmed; dueDate 2026-09-13 is on/before asOf."
+    },
+    {
+      "itemId": "SYN-B02",
+      "reason": "Payment unconfirmed (paymentConfirmed without paymentReceiptId) and advance SYN-ADV02 unrecovered; owner funds arrived are not recovery proof."
+    },
+    {
+      "itemId": "SYN-B03",
+      "reason": "Advance SYN-ADV03 recovery unproven: recoveryConfirmed=true but no recoveryReceiptId."
+    },
+    {
+      "itemId": "SYN-B04",
+      "reason": "Arrival unknown: no accepted invoice, expectedBy 2026-09-12 past, coverage incomplete."
+    },
+    {
+      "itemId": "SYN-B05",
+      "reason": "Arrival unknown: no accepted invoice and coverage incomplete; expectedBy 2026-09-20 not yet reached."
+    },
+    {
+      "itemId": "SYN-B06",
+      "reason": "No accepted invoice (proposal only); funding insufficient; owner-to-pay handoff with no payment proof."
+    },
+    {
+      "itemId": "SYN-B07",
+      "reason": "Conflicting accepted invoice versions; due date withheld."
+    },
+    {
+      "itemId": "SYN-UNMAPPED-INVOICE",
+      "reason": "Source invoice SYN-UNKNOWN-INV (50.00) has no occurrenceId or propertyId; unallocated, needs manual mapping."
+    },
+    {
+      "itemId": "SYN-ACCOUNT-ADMIN",
+      "reason": "Coverage incomplete: authentication failure and pagination incomplete, so absence of invoices cannot be established."
+    }
+  ],
+  "actionsPerformed": []
+}

@@ -1,11 +1,15 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdtempSync, readFileSync, copyFileSync, writeFileSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as atomic from "./atomic.ts";
 import { LoopManager, settleLoopRunStatus, type LoopManagerOptions, type LoopRun } from "./routines.ts";
+import { removeFixture } from "./testing/private-fixture.ts";
 
 const folders: string[] = [];
+// Managers hold their execution-history database open; close them before removal (Windows).
+const managers: LoopManager[] = [];
+const track = (manager: LoopManager) => { managers.push(manager); return manager; };
 const at = Date.parse("2026-08-18T07:30:00Z");
 const requestId = "11111111-1111-4111-8111-111111111111";
 const secondId = "22222222-2222-4222-8222-222222222222";
@@ -21,13 +25,13 @@ function saved(run?: Partial<LoopRun>) {
     runs: run ? [{ id: "prior-run", loopId: "morning-arrears", loopName: "Morning money check", manual: false, scheduledFor: at, createdAt: at, status: "running", ...run }] : [],
   };
 }
-afterEach(() => { vi.restoreAllMocks(); for (const folder of folders.splice(0)) rmSync(folder, { recursive: true, force: true }); });
+afterEach(async () => { vi.restoreAllMocks(); for (const manager of managers.splice(0)) manager.close(); for (const folder of folders.splice(0)) await removeFixture(folder); });
 
 describe("schedule storage recovery", () => {
   it.each(["null", "not-json", JSON.stringify({ ...saved(), timezone: "not-a-zone" }), JSON.stringify({ ...saved(), runs: [null] }), JSON.stringify({ ...saved(), state: { "morning-arrears": { enabled: "yes", handledThrough: at } } })])("holds invalid existing history without overwriting it: %s", async (contents) => {
     const path = file(); writeFileSync(path, contents);
     const execute = vi.fn(async () => ({ ok: true, detail: "must not run" }));
-    const manager = new LoopManager(options(path, { execute }));
+    const manager = track(new LoopManager(options(path, { execute })));
     expect(manager.recovery.active).toBe(true);
     expect(manager.listLoops().every((loop) => loop.nextRunAt === null)).toBe(true);
     for (const mutate of [() => manager.runNow("morning-arrears"), () => manager.patchClock("morning-arrears", { enabled: false }), () => manager.markSeen("prior-run"), () => manager.adoptRecipePlan("job")]) {
@@ -40,8 +44,8 @@ describe("schedule storage recovery", () => {
   });
 
   it("treats only a missing file as first run and rejects an invalid configured timezone safely", () => {
-    expect(new LoopManager(options(file())).recovery.active).toBe(false);
-    const manager = new LoopManager(options(file(), { timezone: "broken-zone" }));
+    expect(track(new LoopManager(options(file()))).recovery.active).toBe(false);
+    const manager = track(new LoopManager(options(file(), { timezone: "broken-zone" })));
     expect(manager.recovery.active).toBe(true);
     expect(manager.listLoops()[0].nextRunAt).toBeNull();
   });
@@ -50,7 +54,7 @@ describe("schedule storage recovery", () => {
     const path = file();
     const events: unknown[] = [];
     const execute = vi.fn(async () => ({ ok: true, detail: "must not run" }));
-    const manager = new LoopManager(options(path, { execute, emit: (event) => events.push(event) }));
+    const manager = track(new LoopManager(options(path, { execute, emit: (event) => events.push(event) })));
     manager.patchClock("owner-letter", { enabled: false });
     const original = readFileSync(path, "utf8");
     events.length = 0;
@@ -68,10 +72,10 @@ describe("schedule storage recovery", () => {
   it("does not update the recipe when the clock pause could not be saved", () => {
     const path = file();
     const update = vi.fn();
-    const manager = new LoopManager(options(path, {
+    const manager = track(new LoopManager(options(path, {
       listRecipes: () => [{ id: "job", title: "Task", schedule: { time: "08:00", weekdays: [2] }, status: "active", revision: 1, planApprovedAt: 1, approvedRevision: 1 }],
       setRecipeEnabled: update,
-    }));
+    })));
     vi.spyOn(atomic, "writeFileAtomic").mockImplementationOnce(failure);
     expect(() => manager.setEnabled("recipe-job", false)).toThrow(/could not safely save/);
     expect(update).not.toHaveBeenCalled();
@@ -82,24 +86,24 @@ describe("schedule storage recovery", () => {
   it("keeps a committed pause authoritative across restart when the recipe update failed", () => {
     const path = file();
     const recipe = { id: "job", title: "Task", schedule: { time: "08:00", weekdays: [2] }, status: "active" as const, revision: 1, planApprovedAt: 1, approvedRevision: 1 };
-    const manager = new LoopManager(options(path, { listRecipes: () => [recipe], setRecipeEnabled: failure }));
+    const manager = track(new LoopManager(options(path, { listRecipes: () => [recipe], setRecipeEnabled: failure })));
     expect(() => manager.setEnabled("recipe-job", false)).toThrow(/saved job could not be read or updated/);
     expect(manager.recovery.active).toBe(true);
-    const restarted = new LoopManager(options(path, { listRecipes: () => [recipe] }));
+    const restarted = track(new LoopManager(options(path, { listRecipes: () => [recipe] })));
     expect(restarted.listLoops().find((loop) => loop.id === "recipe-job")?.enabled).toBe(false);
   });
 
   it("preserves a post-rename queued receipt under an uncertain write and never executes it", async () => {
     const path = file();
     const execute = vi.fn(async () => ({ ok: true, detail: "must not run" }));
-    const manager = new LoopManager(options(path, { execute }));
+    const manager = track(new LoopManager(options(path, { execute })));
     const write = atomic.writeFileAtomic;
     vi.spyOn(atomic, "writeFileAtomic").mockImplementationOnce((...args) => { write(...args); failure(); });
     expect(() => manager.runNow("morning-arrears", { requestId, expectedRevision: 1 })).toThrow(/could not safely save/);
     expect(manager.listRuns()[0]?.status).toBe("queued");
     await manager.tick();
     expect(execute).not.toHaveBeenCalled();
-    const restarted = new LoopManager(options(path, { execute }));
+    const restarted = track(new LoopManager(options(path, { execute })));
     const prior = restarted.runNow("morning-arrears", { requestId, expectedRevision: 1 });
     expect(prior?.status).toBe("interrupted");
     await restarted.tick();
@@ -109,7 +113,7 @@ describe("schedule storage recovery", () => {
   it("holds startup when interrupted history cannot be committed and preserves the original bytes", () => {
     const path = file(); const contents = JSON.stringify(saved({})); writeFileSync(path, contents);
     vi.spyOn(atomic, "writeFileAtomic").mockImplementationOnce(failure);
-    const manager = new LoopManager(options(path));
+    const manager = track(new LoopManager(options(path)));
     expect(manager.recovery.active).toBe(true);
     expect(manager.listRuns()[0].status).toBe("running");
     expect(readFileSync(path, "utf8")).toBe(contents);
@@ -122,7 +126,7 @@ describe("schedule storage recovery", () => {
         if (stage === "settle") vi.spyOn(atomic, "writeFileAtomic").mockImplementationOnce(failure);
         return { ok: true, detail: "Prepared" };
       });
-      const manager = new LoopManager(options(path, { execute }));
+      const manager = track(new LoopManager(options(path, { execute })));
       const run = manager.runNow("morning-arrears")!;
       if (stage === "start") vi.spyOn(atomic, "writeFileAtomic").mockImplementationOnce(failure);
       await manager.tick();
@@ -139,7 +143,7 @@ describe("occurrence claims and manual recovery", () => {
     const path = file(); const crashCopy = file();
     let now = at - 60_000;
     const observed: string[] = [];
-    const manager = new LoopManager(options(path, {
+    const manager = track(new LoopManager(options(path, {
       now: () => now,
       emit: (event) => {
         const value = event as { kind: string; run?: LoopRun };
@@ -151,13 +155,17 @@ describe("occurrence claims and manual recovery", () => {
       },
       execute: async () => {
         writeFileSync(crashCopy, readFileSync(path));
+        // A crash snapshot now includes the authoritative encrypted ledger and
+        // its key; copying only the rolling JSON must fail closed.
+        copyFileSync(join(dirname(path), 'workflow-state.sqlite'), join(dirname(crashCopy), 'workflow-state.sqlite'));
+        copyFileSync(join(dirname(path), 'desk.key'), join(dirname(crashCopy), 'desk.key'));
         return { ok: true, detail: "Prepared" };
       },
-    }));
+    })));
     now = at + 60_000; await manager.tick();
     expect(observed).toEqual(["queued", "running", "completed"]);
     const execute = vi.fn(async () => ({ ok: true, detail: "must not replay" }));
-    const restarted = new LoopManager(options(crashCopy, { execute }));
+    const restarted = track(new LoopManager(options(crashCopy, { execute })));
     await restarted.tick();
     expect(restarted.listRuns()[0].status).toBe("interrupted");
     expect(execute).not.toHaveBeenCalled();
@@ -166,7 +174,7 @@ describe("occurrence claims and manual recovery", () => {
   it.each(["completed", "failed", "partial", "awaiting-approval", "missed", "interrupted"])("repairs the old %s-receipt/bookmark crash gap without replaying", async (status) => {
     const path = file(); writeFileSync(path, JSON.stringify(saved({ status: status as LoopRun["status"], finishedAt: at + 1000 })));
     const execute = vi.fn(async () => ({ ok: true, detail: "must not replay" }));
-    const manager = new LoopManager(options(path, { execute })); await manager.tick();
+    const manager = track(new LoopManager(options(path, { execute }))); await manager.tick();
     expect(execute).not.toHaveBeenCalled();
     expect(manager.listRuns()).toHaveLength(1);
     expect(JSON.parse(readFileSync(path, "utf8")).state["morning-arrears"].handledThrough).toBe(at);
@@ -176,7 +184,7 @@ describe("occurrence claims and manual recovery", () => {
     const path = file(); const data = saved(); data.state["morning-arrears"].handledThrough = Date.UTC(1970, 0, 1);
     writeFileSync(path, JSON.stringify(data));
     const execute = vi.fn(async () => ({ ok: true, detail: "Prepared" }));
-    const manager = new LoopManager(options(path, { execute })); await manager.tick();
+    const manager = track(new LoopManager(options(path, { execute }))); await manager.tick();
     expect(execute).toHaveBeenCalledTimes(1);
     expect(manager.listRuns()).toHaveLength(2);
     expect(manager.listRuns().some((run) => run.status === "missed" && run.detail?.includes("Older work was not replayed"))).toBe(true);
@@ -184,14 +192,14 @@ describe("occurrence claims and manual recovery", () => {
 
   it("reuses exact manual IDs across pause, retune and restart while rejecting changed identities", async () => {
     const path = file(); const execute = vi.fn(async () => ({ ok: true, detail: "Prepared" }));
-    const manager = new LoopManager(options(path, { execute }));
+    const manager = track(new LoopManager(options(path, { execute })));
     const request = { requestId, expectedRevision: 1 };
     const first = manager.runNow("morning-arrears", request)!;
     expect(manager.runNow("morning-arrears", request)?.id).toBe(first.id);
     await manager.tick();
     manager.patchClock("morning-arrears", { enabled: false, time: "08:00" });
     expect(manager.runNow("morning-arrears", request)?.id).toBe(first.id);
-    const restarted = new LoopManager(options(path, { execute }));
+    const restarted = track(new LoopManager(options(path, { execute })));
     expect(restarted.runNow("morning-arrears", request)?.id).toBe(first.id);
     expect(() => restarted.runNow("morning-arrears", { requestId, expectedRevision: 2 })).toThrow(/another schedule or version/);
     expect(() => restarted.runNow("owner-letter", request)).toThrow(/another schedule or version/);
@@ -210,7 +218,7 @@ describe("occurrence claims and manual recovery", () => {
     writeFileSync(path, JSON.stringify(data));
     let now = at - 30 * 60_000;
     const execute = vi.fn(async () => ({ ok: true, detail: "must not replay" }));
-    const manager = new LoopManager(options(path, { now: () => now, execute }));
+    const manager = track(new LoopManager(options(path, { now: () => now, execute })));
     await manager.tick(); now = at + 60_000; await manager.tick();
     expect(execute).not.toHaveBeenCalled();
     expect(manager.listRuns()).toHaveLength(1);
@@ -221,7 +229,7 @@ describe("occurrence claims and manual recovery", () => {
     let now = at - 60_000;
     let reject!: (error: Error) => void;
     const execute = vi.fn(() => new Promise<{ ok: boolean; detail: string }>((_resolve, fail) => { reject = fail; }));
-    const manager = new LoopManager(options(path, { now: () => now, execute, runDeadlineMs: 10 }));
+    const manager = track(new LoopManager(options(path, { now: () => now, execute, runDeadlineMs: 10 })));
     manager.setEnabled("owner-letter", false);
     now = at + 60_000; await manager.tick();
     const original = manager.listRuns()[0];
@@ -235,7 +243,7 @@ describe("occurrence claims and manual recovery", () => {
     manager.patchClock("morning-arrears", { enabled: false, time: "08:00" });
     reject(new Error("The original worker failed late"));
     await vi.waitFor(() => expect(manager.listRuns().find((run) => run.id === original.id)?.status).toBe("failed"));
-    const restarted = new LoopManager(options(path, { now: () => now }));
+    const restarted = track(new LoopManager(options(path, { now: () => now })));
     expect(restarted.listLoops().find((loop) => loop.id === "morning-arrears")).toMatchObject({ enabled: false, schedule: { time: "08:00" } });
     expect(restarted.listRuns().find((run) => run.id === original.id)?.detail).toBe("The original worker failed late");
   });

@@ -1,0 +1,27 @@
+{
+  "server": {
+    "checked": 340,
+    "mismatches": [],
+    "extraPackagedFiles": []
+  },
+  "shared": {
+    "checked": 49,
+    "mismatches": [],
+    "extraPackagedFiles": []
+  },
+  "support": {
+    "checked": 3,
+    "mismatches": [],
+    "extraPackagedFiles": []
+  },
+  "renderer": {
+    "checked": 342,
+    "mismatches": [],
+    "extraPackagedFiles": []
+  },
+  "hermesPack": {
+    "checked": 6,
+    "mismatches": [],
+    "extraPackagedFiles": []
+  }
+}

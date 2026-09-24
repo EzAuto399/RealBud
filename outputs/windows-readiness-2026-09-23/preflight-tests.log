@@ -1,0 +1,28 @@
+
+> realbud@0.1.19 test:windows-build /Users/yoda/projects/RealBud
+> node --test scripts/check-windows-build.test.mjs
+
+✔ complete injected build host passes only the prerequisite layer (1.554042ms)
+✔ all non-native targets fail before any Windows filesystem or subprocess probe (0.250834ms)
+✔ old and prerelease Node versions block; newer stable versions warn about CI alignment (1.112458ms)
+✔ package.json remains the minimum Node and exact pnpm authority (0.1895ms)
+✔ each missing required build tool blocks (0.585959ms)
+✔ wrong pnpm, broken executables, invalid versions and unreadable assembly do not pass (0.593833ms)
+✔ pnpm .cmd path is environment-passed with no interpolation or auto-download (0.774458ms)
+✔ PATH resolution handles quoted directories and spaces, and rejects relative and PowerShell shims (0.139ms)
+﹣ native cmd can run a version shim from a path with spaces and metacharacters (0.047708ms) # SKIP
+✔ System.Speech path travels only in an environment value (0.224125ms)
+✔ proof tools are optional for builds and mandatory with --proof; no CI flag is required (0.8075ms)
+✔ old Python, Store aliases and PowerShell 5 cannot satisfy installer proof (0.273375ms)
+✔ receipts and human output contain no environment values, paths or raw errors (0.201084ms)
+✔ shared Framework locators preserve targeting-pack and fallback order with injected files (0.135917ms)
+✔ CLI rejects unsupported flags without echoing their content (26.345375ms)
+✔ CLI on this non-Windows host returns an explicit failure receipt (28.444166ms)
+ℹ tests 16
+ℹ suites 0
+ℹ pass 15
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 1
+ℹ todo 0
+ℹ duration_ms 105.30425

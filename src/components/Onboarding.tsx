@@ -11,51 +11,53 @@ import {
 
 import { identifyEmail, setEmailGateDone, track } from "@/lib/analytics";
 import { isRecoveryWriteError } from "@/lib/api-error";
-import { markFirstRunDone } from "@/lib/first-run";
+import { createFirstRunApi, officeContactNamed } from "@/lib/first-run";
+import type { YouRecoveryTarget } from "@/lib/you-navigation";
+import type { OnboardingState } from '@shared/onboarding';
 import { api, useStore } from "@/state/store";
 import { MausAvatar } from "./Avatar";
 
-const RESUME_KEY = "realbud.onboarding-stage";
 const SAMPLE_PROFILE_NAME = "Sample PM";
+const FINISH_TIMEOUT_MS = 15_000;
 
-function resumedStep(): 0 | 1 {
-  try {
-    return localStorage.getItem(RESUME_KEY) === "office-rules" ? 1 : 0;
-  } catch {
-    return 0;
-  }
+function finishRequest(path: string, init?: RequestInit) {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout>;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error("RealBud's local service did not respond within 15 seconds."));
+      controller.abort();
+    }, FINISH_TIMEOUT_MS);
+  });
+  return Promise.race([
+    api(path, { ...init, signal: controller.signal }, { timeoutMs: FINISH_TIMEOUT_MS }),
+    deadline,
+  ]).finally(() => clearTimeout(timer));
 }
 
-function rememberStep(step: 0 | 1 | null): void {
-  try {
-    if (step === null) localStorage.removeItem(RESUME_KEY);
-    else localStorage.setItem(RESUME_KEY, step === 1 ? "office-rules" : "profile");
-  } catch {
-    /* Private browsing can refuse local storage. The server-saved profile remains. */
-  }
-}
-
-type BusyState = "profile" | "finish" | null;
+type BusyState = "profile" | "finish" | "recovery" | "restore" | null;
 
 // First run establishes the person and leads directly into the same Bud
 // setup used in settings. Sample-only exploration remains available.
-export function Onboarding({ onDone }: { onDone: (setup?: "bud") => void }) {
+export function Onboarding({ initialState, onDone }: { initialState: OnboardingState; onDone: (setup?: "bud") => void }) {
   const { state, dispatch } = useStore();
-  const [step, setStep] = useState<0 | 1>(resumedStep);
+  const [saved, setSaved] = useState(initialState);
+  const [step, setStep] = useState<0 | 1>(initialState.stage === 'office-rules' ? 1 : 0);
   const [name, setName] = useState(
-    state.config?.profile?.name || (step === 1 ? SAMPLE_PROFILE_NAME : ""),
+    state.config?.profile?.name || "",
   );
   const [email, setEmail] = useState(state.config?.profile?.email ?? "");
   const [busy, setBusy] = useState<BusyState>(null);
   const [error, setError] = useState("");
   const [recoveryBlocked, setRecoveryBlocked] = useState(false);
   const edited = useRef(false);
+  const pending = useRef(false);
   const emailOk = !email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
   const canContinue = name.trim().length > 0 && emailOk && busy === null;
 
   useEffect(() => {
     if (edited.current) return;
-    setName(state.config?.profile?.name || (step === 1 ? SAMPLE_PROFILE_NAME : ""));
+    setName(state.config?.profile?.name || "");
     setEmail(state.config?.profile?.email ?? "");
   }, [state.config?.profile?.email, state.config?.profile?.name, step]);
 
@@ -63,13 +65,12 @@ export function Onboarding({ onDone }: { onDone: (setup?: "bud") => void }) {
     track("onboarding_step", { step });
   }, [step]);
 
-  const saveProfile = async () => {
-    if (!canContinue) return;
+  const advanceProfile = async (normalizedName: string, normalizedEmail: string) => {
+    if (busy !== null || pending.current) return;
+    pending.current = true;
     setBusy("profile");
     setError("");
     setRecoveryBlocked(false);
-    const normalizedName = name.trim();
-    const normalizedEmail = email.trim().toLowerCase();
     try {
       const config = await api("/api/config", {
         method: "PUT",
@@ -77,19 +78,22 @@ export function Onboarding({ onDone }: { onDone: (setup?: "bud") => void }) {
       });
       dispatch({ type: "configStatus", config });
       if (normalizedEmail) identifyEmail(normalizedEmail);
-      rememberStep(1);
+      setSaved(await createFirstRunApi(api).save(saved, 'office-rules'));
+      setName(normalizedName);
+      setEmail(normalizedEmail);
       setStep(1);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "RealBud could not save your profile.");
     } finally {
+      pending.current = false;
       setBusy(null);
     }
   };
 
+  const saveProfile = () => canContinue ? advanceProfile(name.trim(), email.trim().toLowerCase()) : undefined;
+
   const enterWorkspace = (emailStatus: "submitted" | "skipped", destination: "desk" | "bud") => {
     setEmailGateDone(emailStatus);
-    rememberStep(null);
-    markFirstRunDone();
     if (destination === "bud") {
       history.replaceState(null, "", location.pathname + location.search);
       dispatch({ type: "showAsk" });
@@ -99,25 +103,31 @@ export function Onboarding({ onDone }: { onDone: (setup?: "bud") => void }) {
     onDone(destination === "bud" ? "bud" : undefined);
   };
 
-  const exploreSampleDesk = () => {
+  const exploreSampleDesk = async () => {
     track("onboarding_sample_desk");
-    setName((current) => current.trim() || SAMPLE_PROFILE_NAME);
-    rememberStep(1);
-    setStep(1);
+    await advanceProfile(name.trim() || SAMPLE_PROFILE_NAME, emailOk ? email.trim().toLowerCase() : '');
   };
 
   const finish = async (destination: "desk" | "bud") => {
-    if (!name.trim() || busy !== null) return;
+    if (!name.trim() || busy !== null || pending.current) return;
+    pending.current = true;
     setBusy("finish");
     setError("");
     setRecoveryBlocked(false);
     let enteredDesk = false;
     try {
-      const snapshot = await api("/api/desk/agency", {
-        method: "PATCH",
-        body: JSON.stringify({ office: { pmUser: name.trim() } }),
-      });
-      dispatch({ type: "deskSnapshot", snapshot });
+      // Read afresh before writing: store hydration may still be pending, and
+      // a restored book's existing contact must never be overwritten.
+      const currentDesk = await finishRequest('/api/desk');
+      if (typeof currentDesk?.book?.office?.pmUser !== 'string') throw new Error('Your saved office contact could not be checked. Try again before continuing.');
+      if (!officeContactNamed(currentDesk)) {
+        const snapshot = await finishRequest("/api/desk/agency", {
+          method: "PATCH",
+          body: JSON.stringify({ office: { pmUser: name.trim() } }),
+        });
+        dispatch({ type: "deskSnapshot", snapshot });
+      }
+      setSaved(await createFirstRunApi(finishRequest).save(saved, 'complete'));
       track("onboarding_completed", { engines_available: -1, mic: "n/a" });
       enteredDesk = true;
       enterWorkspace(email.trim() ? "submitted" : "skipped", destination);
@@ -129,16 +139,34 @@ export function Onboarding({ onDone }: { onDone: (setup?: "bud") => void }) {
         setError(cause instanceof Error ? cause.message : "RealBud could not save your office setup.");
       }
     } finally {
+      pending.current = false;
       if (!enteredDesk) setBusy(null);
     }
   };
 
-  const openRecovery = () => {
-    rememberStep(null);
-    markFirstRunDone();
-    location.hash = "you-recovery";
-    dispatch({ type: "showYou" });
-    onDone();
+  const openRecovery = async (target: YouRecoveryTarget = 'you-recovery') => {
+    if (busy !== null || pending.current) return;
+    pending.current = true;
+    setBusy(target === 'you-private-backup' ? 'restore' : 'recovery');
+    try {
+      setSaved(await createFirstRunApi(api).save(saved, 'recovery'));
+      location.hash = target;
+      dispatch({ type: "showYou" });
+      onDone();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Your recovery choice could not be saved.');
+    } finally { pending.current = false; setBusy(null); }
+  };
+
+  const back = async () => {
+    if (busy !== null || pending.current) return;
+    pending.current = true;
+    setBusy('profile');
+    try {
+      setSaved(await createFirstRunApi(api).save(saved, 'profile'));
+      setError(''); setRecoveryBlocked(false); setStep(0);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Your setup could not be saved.'); }
+    finally { pending.current = false; setBusy(null); }
   };
 
   const fieldClass =
@@ -238,7 +266,7 @@ export function Onboarding({ onDone }: { onDone: (setup?: "bud") => void }) {
                     {!emailOk ? (
                       <span className="mt-1.5 block font-normal text-danger">Enter a complete email address, or leave it blank.</span>
                     ) : (
-                      <span className="mt-1.5 block font-normal text-ink-muted">Stored on this Mac with your RealBud settings.</span>
+                      <span className="mt-1.5 block font-normal text-ink-muted">Stored with your private RealBud settings.</span>
                     )}
                   </label>
                 </div>
@@ -255,7 +283,7 @@ export function Onboarding({ onDone }: { onDone: (setup?: "bud") => void }) {
                   </button>
                   <button
                     type="button"
-                    onClick={exploreSampleDesk}
+                    onClick={() => void exploreSampleDesk()}
                     disabled={busy !== null}
                     className="pm-control mt-2 w-full rounded text-[13px] text-ink-secondary hover:bg-raised/60 hover:text-ink disabled:opacity-40"
                   >
@@ -302,7 +330,7 @@ export function Onboarding({ onDone }: { onDone: (setup?: "bud") => void }) {
                   {recoveryBlocked ? (
                     <button
                       type="button"
-                      onClick={openRecovery}
+                      onClick={() => void openRecovery()}
                       disabled={busy !== null}
                       className="pm-decision flex w-full items-center justify-center gap-2 rounded bg-agency px-4 text-[14px] font-medium text-white transition-transform hover:bg-agency-hover active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
                     >
@@ -323,12 +351,7 @@ export function Onboarding({ onDone }: { onDone: (setup?: "bud") => void }) {
                   {!recoveryBlocked && <button type="button" onClick={() => void finish("desk")} disabled={busy !== null || !name.trim()} className="pm-control mt-2 w-full rounded text-[13px] text-ink-secondary hover:bg-raised/60 disabled:opacity-40">Open the sample desk first</button>}
                   <button
                     type="button"
-                    onClick={() => {
-                      rememberStep(0);
-                      setError("");
-                      setRecoveryBlocked(false);
-                      setStep(0);
-                    }}
+                    onClick={() => void back()}
                     disabled={busy !== null}
                     className="pm-control mt-2 flex w-full items-center justify-center gap-2 rounded text-[13px] text-ink-secondary hover:bg-raised/60 hover:text-ink disabled:opacity-40"
                   >
@@ -338,6 +361,18 @@ export function Onboarding({ onDone }: { onDone: (setup?: "bud") => void }) {
                 </div>
               </div>
             )}
+            <div className="mt-3 border-t border-line pt-3">
+              <button
+                type="button"
+                onClick={() => void openRecovery('you-private-backup')}
+                disabled={busy !== null}
+                className="pm-control flex w-full items-center justify-center gap-2 rounded border border-line px-3 text-[13px] font-medium text-ink-secondary hover:bg-raised/60 hover:text-ink disabled:opacity-40"
+              >
+                {busy === 'restore' ? <Loader2 size={15} className="animate-spin motion-reduce:animate-none" /> : <ShieldCheck size={15} />}
+                Restore a private backup
+              </button>
+              <p className="mt-1.5 text-center text-[12px] leading-relaxed text-ink-muted">Choose an encrypted backup and review it before restoring.</p>
+            </div>
           </section>
         </div>
       </main>

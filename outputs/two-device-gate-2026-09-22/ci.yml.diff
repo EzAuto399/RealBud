@@ -1,0 +1,13 @@
+diff --git a/outputs/two-device-gate-2026-09-22/before/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 996a11c9..bf808027 100644
+--- a/outputs/two-device-gate-2026-09-22/before/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -52,6 +52,8 @@ jobs:
+           retention-days: 14
+       - run: pnpm typecheck
+       - run: pnpm test
++      - name: Two-device evidence contract tests
++        run: pnpm test:two-device-evidence
+       - run: pnpm check:electron
+       - name: coverage thresholds (ubuntu only — fastest, same numbers)
+         if: matrix.os == 'ubuntu-latest'

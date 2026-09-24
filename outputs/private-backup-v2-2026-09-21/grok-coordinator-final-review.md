@@ -1,0 +1,52 @@
+{
+  "verdict": "changes-required",
+  "findings": [
+    {
+      "severity": "critical",
+      "file": "server/private-backup-coordinator.ts",
+      "trigger": "stage() calls writable() never; phase/held checks and runtime.discard(['prepared','build']) run outside runtime.run. A second stage of the same id can discard in-use prepared/build while the first run is still preparing. A second reviewed id can snapshotLease/prepare/beginRestore/stagePrivateRestoreV2 in parallel because run() is per-operation only and restoreHeld is not set until after prepare.",
+      "consequence": "Two restores can apply at once, or one restore\u2019s prepared store can be deleted mid-hold. Sticky barrier and journal hold no longer mean a single restored workspace.",
+      "fix": "Unless this id is already restoreHeld and resuming staging/failed, call writable() first. Re-check phase, restoreHeld, and preview inside runtime.run before discard/prepare. Take a process-wide restore mutex (or fail assertIdle only after an exclusive lease) before allocation so a second id cannot prepare while the first is still unheld."
+    },
+    {
+      "severity": "high",
+      "file": "server/private-backup-coordinator.ts",
+      "trigger": "failed() no-ops only for cancelled/expired/completed or restoreHeld. startExport does lease.release() and also work.own(() => lease.release()). After phase is set to ready, run cleanup still runs; a second release or any later close throw is caught by launch() and failed() rewrites ready \u2192 failed and deletes preview. Retry then discard(['capture','archive']).",
+      "consequence": "A finished export can be marked failed and its archive deleted. Download tickets then 404; the user cannot fetch the backup they already created.",
+      "fix": "Treat ready/reviewed/uploaded/staged/applying as terminal in failed(). Release the snapshot lease once (own or explicit, not both). Make lease.release/catalog.close idempotent so cleanup cannot clobber a committed phase."
+    },
+    {
+      "severity": "high",
+      "file": "server/private-backup-coordinator.ts",
+      "trigger": "input().stream() yields buffer.subarray() from one reused Buffer. download() hashes one generator then pipeline(Readable.from(file.stream()), res). previewWork passes the same aliased stream into decode*Catalog.",
+      "consequence": "The next read overwrites bytes still queued to HTTP or held by the decoder. Clients can receive torn/zeroed archives with HTTP 200, or review/restore can parse corrupted catalog pages. Hash-then-send is also two reads: the body sent is not the bytes just hashed.",
+      "fix": "Yield a copy (Buffer.from(view)) or a fresh alloc per read. Stream the archive once: update the hash in the same pass as the sink, then fail/destroy if the digest mismatches before completing the response."
+    },
+    {
+      "severity": "high",
+      "file": "server/private-backup-coordinator.ts",
+      "trigger": "On create, if heldOperation() then host.beginRestore() and, when phase==='staging', publishStage(). publishStage() itself does work.access('prepared'); host.assertFresh(); host.assertIdle(); host.beginRestore(); stagePrivateRestoreV2(). Boot therefore beginRestore()s before assertIdle(). HTTP resume does not.",
+      "consequence": "If beginRestore() is the sticky non-idle barrier, automatic publication resume always throws, is swallowed, and the hold stays in staging until a manual stage(). Fresh host and idle checks also see a workspace already in restore, not the pre-apply idle they were written for.",
+      "fix": "Call beginRestore() at startup only for held staged/applying/completed-hold. For staging/failed+held, only publishStage() (it already beginRestore()s after assertIdle/assertFresh). Do not catch-all swallow without recording the error on the operation."
+    },
+    {
+      "severity": "medium",
+      "file": "server/private-backup-coordinator.ts",
+      "trigger": "preview() durably sets checking then launch(); startExport() durably sets sealing (with capture ref) then encodes. Retry gates only accept capturing/failed/interrupted (export) or uploaded/interrupted/failed (preview). checking/sealing are not in closed and are not mapped to interrupted here. Process crash skips failed().",
+      "consequence": "After a crash mid-check or mid-seal, GET/retry returns a hard error. Cancel closes the id, so the sealed capture/archive cannot be resumed; the user must start a new operation. Disk stays reserved until they notice.",
+      "fix": "On recover(), rewrite checking/sealing (and any non-held in-flight phase) to interrupted. Allow startExport/preview to retry those phases: discard scratch, then recapture/recheck. Keep ready/reviewed/held staging untouched."
+    },
+    {
+      "severity": "high",
+      "file": "server/private-backup-legacy-api.ts",
+      "trigger": "stageRestore() JSON.stringify(input.backup), startUpload(randomUUID()), seals that JSON, then preview(id, passphrase, receipt.digest) and requires artifact.archiveDigest === receipt.digest. Coordinator preview then reads 8-byte magic and decodeBackupCatalog / decodeLegacyBackupCatalog.",
+      "consequence": "Unless the legacy payload is exactly the v2/legacy archive bytes and receipt.digest is sha256 of JSON.stringify(backup), preview always fails ('The selected backup changed' / invalid archive). randomUUID() also fails if privateBackupTransferId is branded. The JSON API then cannot enter the held v2 restore path it claims to share.",
+      "fix": "Upload the same octet archive previewBackup hashed (raw bytes, not JSON.stringify of a document). Pass that file digest to preview/stage. Allocate ids with the public transfer-id helper. On any step failure, cancel(id) so reservations do not leak."
+    }
+  ],
+  "limits": [
+    "resource-runtime recover/cancel/close, journal CAS, transfer-store immutability, and host assertIdle/beginRestore/snapshotLease were taken as specified, not re-read.",
+    "createPrivateBackupV2Api routing, index session/Host/Origin checks, and the public chunk client were not in the packet.",
+    "Did not execute tests or a live HTTP download; stream aliasing is from Node Readable.from/pipeline retaining Buffer views."
+  ]
+}

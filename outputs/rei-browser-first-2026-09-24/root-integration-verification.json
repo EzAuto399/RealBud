@@ -1,0 +1,26 @@
+{
+  "verifiedAt": "2026-09-24T00:14:37.837209+00:00",
+  "sourceRevision": "d7906bf480f6926520a0e663f50a5acd3022ca7d",
+  "reportSha256": "d23424a3382d6d524b70f8ac005799332d8cf8ff74bf4ffe3282a90bdb504521",
+  "sourceHashesMatched": {
+    "shared/browser-task.ts": true,
+    "server/browser-authority.ts": true,
+    "server/browser-broker.ts": true,
+    "server/browser-runtime.ts": true,
+    "server/attended-run.ts": true,
+    "src/components/you/BrowserCard.tsx": true
+  },
+  "retainedTests": {
+    "success": true,
+    "numPassedTests": 240,
+    "numFailedTests": 0,
+    "numPendingTests": 0,
+    "numTotalTests": 240
+  },
+  "liveObservationProvenance": "Other task owner via Codex UI; root did not repeat browser inspection",
+  "limits": [
+    "Local contract tests and browser UI inspection; not RealBud live execution or customer acceptance.",
+    "Brave access via Codex does not prove BrowserSkill compatibility or RealBud profile connection.",
+    "No import, posting, payment, sending, extension installation or API call was performed."
+  ]
+}

@@ -1,0 +1,13 @@
+realbud server on http://127.0.0.1:65385
+
+▲ Next.js 16.3.3
+- Local:         http://127.0.0.1:65378
+- Network:       http://127.0.0.1:65378
+✓ Ready in 55ms
+✓ Running next.config.ts took 13ms
+
+AssertionError [ERR_ASSERTION]: {"phase":"failed","run":{"id":"f3dba018-fefb-433f-8598-d5485c11b70e","phase":"failed","outcome":"execution-failed"}}
++ actual - expected
+
++ 'failed'
+- 'needs-review'

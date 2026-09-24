@@ -1,0 +1,32 @@
+{
+  "at": "2026-09-21T07:52:20.012092+00:00",
+  "status": "verified-local-mac-checkpoint",
+  "app": "/Users/yoda/projects/RealBud/outputs/mail-retention-2026-09-21/package/mac-arm64/RealBud.app",
+  "fullSource": {
+    "passed": 3494,
+    "skipped": 143,
+    "failed": 0,
+    "files": 302,
+    "durationSeconds": 187.79,
+    "log": "full-tests-final.log"
+  },
+  "domainDistinct": 54,
+  "httpAndClock": 34,
+  "clientTests": 30,
+  "mailBrowserChecks": 8,
+  "billBrowserChecks": 15,
+  "morningScenarioGroups": 3,
+  "backupIntegration": 71,
+  "nativeRestoreChecks": 7,
+  "macSmoke": "passed",
+  "proofSetsOverlap": true,
+  "sourceDigest": "5e7f2198502f9e7b8bf7a60ff2b33f348f98e0522ebf1bc19245438ccdff451c",
+  "nativeReceipt": "native-private-restore/receipt.json",
+  "limits": [
+    "Unsigned local macOS arm64 package; installed app unchanged",
+    "Fictional connector/model data; no live Gmail or customer REI acceptance",
+    "Native safeStorage uses in-memory AES fixture; no OS Keychain/DPAPI proof",
+    "Current Windows execution, managed deployment and office soak remain open",
+    "Backup v1 remains bounded; durable bill drafts/proposal receipt recovery and streaming v2 remain follow-ups"
+  ]
+}

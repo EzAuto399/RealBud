@@ -1,0 +1,172 @@
+{
+  "checkedAt": "2026-09-23T04:26:56.757Z",
+  "readOnly": true,
+  "ids": {
+    "billing": "fictional-qa-20260923-5edc8a07-billing",
+    "license": "fictional-qa-20260923-5edc8a07-license",
+    "client": "fictional-qa-20260923-5edc8a07-client",
+    "customer": "fictional-qa-20260923-5edc8a07-buyer",
+    "project": "fictional-qa-20260923-5edc8a07-project",
+    "policy": "fictional-qa-20260923-5edc8a07-policy"
+  },
+  "clients": {
+    "id": "fictional-qa-20260923-5edc8a07-client",
+    "active": false,
+    "version": 4,
+    "monthlyCapNanoAud": "600000000",
+    "maxConcurrent": 1
+  },
+  "customers": {
+    "id": "fictional-qa-20260923-5edc8a07-buyer",
+    "active": false,
+    "version": 4,
+    "monthlyCapNanoAud": "600000000",
+    "maxConcurrent": 1
+  },
+  "projects": {
+    "id": "fictional-qa-20260923-5edc8a07-project",
+    "active": false,
+    "version": 4,
+    "monthlyCapNanoAud": "600000000",
+    "maxConcurrent": 1
+  },
+  "keys": {
+    "status": 200,
+    "records": [
+      {
+        "id": "cc960dc7e57ec5bd",
+        "revokedAt": 1790137332502,
+        "expiresAt": 1790139105887
+      },
+      {
+        "id": "7dd821ba7152fb70",
+        "revokedAt": 1790137561499,
+        "expiresAt": 1790137858416
+      }
+    ],
+    "allRevoked": true
+  },
+  "billing": {
+    "status": 200,
+    "payer": "customer",
+    "pendingRequests": 0,
+    "unreconciledRequests": 0,
+    "invoiceCount": 0,
+    "customerPriceNanoAud": "908000",
+    "collectionEnabled": false,
+    "paymentMode": "disabled",
+    "requests": [
+      {
+        "requestId": "cc60bdd5-987b-441a-93e3-afda4c56fb69",
+        "projectId": "fictional-qa-20260923-5edc8a07-project",
+        "environment": "development",
+        "model": "hosted-canary-fast",
+        "state": "settled",
+        "units": {
+          "input_tokens": 25,
+          "output_tokens": 2,
+          "cache_read_tokens": 0
+        },
+        "amountNanoAud": "31000",
+        "grossAmountNanoAud": "31000",
+        "creditAmountNanoAud": "0",
+        "createdAt": 1790137558862
+      },
+      {
+        "requestId": "45e88f11-86d8-49a2-8ed8-06b797a39ed7",
+        "projectId": "fictional-qa-20260923-5edc8a07-project",
+        "environment": "development",
+        "model": "hosted-canary-fast",
+        "state": "settled",
+        "units": {
+          "input_tokens": 12,
+          "output_tokens": 3,
+          "cache_read_tokens": 0
+        },
+        "amountNanoAud": "21000",
+        "grossAmountNanoAud": "21000",
+        "creditAmountNanoAud": "0",
+        "createdAt": 1790137330033
+      },
+      {
+        "requestId": "edf2d5de-4cc1-4f68-a5c7-25f7580984c4",
+        "projectId": "fictional-qa-20260923-5edc8a07-project",
+        "environment": "development",
+        "model": "hosted-canary-fast",
+        "state": "settled",
+        "units": {
+          "input_tokens": 127,
+          "output_tokens": 22,
+          "cache_read_tokens": 0
+        },
+        "amountNanoAud": "193000",
+        "grossAmountNanoAud": "193000",
+        "creditAmountNanoAud": "0",
+        "createdAt": 1790137327347
+      },
+      {
+        "requestId": "492366fc-7907-4905-852c-95ac627d0278",
+        "projectId": "fictional-qa-20260923-5edc8a07-project",
+        "environment": "development",
+        "model": "hosted-canary-fast",
+        "state": "settled",
+        "units": {
+          "input_tokens": 102,
+          "output_tokens": 55,
+          "cache_read_tokens": 0
+        },
+        "amountNanoAud": "267000",
+        "grossAmountNanoAud": "267000",
+        "creditAmountNanoAud": "0",
+        "createdAt": 1790137322631
+      },
+      {
+        "requestId": "b61714ae-9579-4fc5-8504-e32df378d5ef",
+        "projectId": "fictional-qa-20260923-5edc8a07-project",
+        "environment": "development",
+        "model": "hosted-canary-fast",
+        "state": "settled",
+        "units": {
+          "input_tokens": 149,
+          "output_tokens": 72,
+          "cache_read_tokens": 0
+        },
+        "amountNanoAud": "365000",
+        "grossAmountNanoAud": "365000",
+        "creditAmountNanoAud": "0",
+        "createdAt": 1790137317402
+      },
+      {
+        "requestId": "935e94c5-f9e9-4ac7-816b-18d9ddb00762",
+        "projectId": "fictional-qa-20260923-5edc8a07-project",
+        "environment": "development",
+        "model": "hosted-canary-fast",
+        "state": "settled",
+        "units": {
+          "input_tokens": 25,
+          "output_tokens": 2,
+          "cache_read_tokens": 0
+        },
+        "amountNanoAud": "31000",
+        "grossAmountNanoAud": "31000",
+        "creditAmountNanoAud": "0",
+        "createdAt": 1790137313102
+      }
+    ]
+  },
+  "service": {
+    "status": 200,
+    "revision": "8ba0ba4daece55fd94249b35754e8d38d46de2f9",
+    "tenant": {
+      "companyId": "fictional-qa-20260923-5edc8a07-billing",
+      "name": "FICTIONAL QA - DO NOT INVOICE",
+      "active": true,
+      "serviceExpiresAt": 1790139105887,
+      "includedUntil": 1790137305887,
+      "monthlyCapNanoAud": "600000000",
+      "committedRetailNanoAud": "908000",
+      "activeKeys": 0
+    }
+  },
+  "passed": true
+}

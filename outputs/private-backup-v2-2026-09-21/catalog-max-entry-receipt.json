@@ -1,0 +1,34 @@
+{
+  "success": true,
+  "node": "v24.19.0",
+  "platform": "darwin",
+  "arch": "arm64",
+  "payloadBytes": 8388608,
+  "physicalBytes": 11227136,
+  "limits": {
+    "maxEntries": 20,
+    "maxBytes": 16777216,
+    "maxStorageBytes": 33554432
+  },
+  "budget": {
+    "databaseBytes": 33554432,
+    "rollbackBytes": 33751040,
+    "totalBytes": 67305472
+  },
+  "elapsedMs": 76.99825,
+  "sampledRss": [
+    {
+      "phase": "start",
+      "bytes": 109789184
+    },
+    {
+      "phase": "afterInsert",
+      "bytes": 196689920
+    },
+    {
+      "phase": "afterReopenAndValidate",
+      "bytes": 230014976
+    }
+  ],
+  "layer": "Source fixture with real8MiB random bytes, actual catalog write, seal and reopen. RSS samples are not a peak memory measurement or SLA."
+}

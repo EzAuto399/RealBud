@@ -1,0 +1,9 @@
+
+> realbud@0.1.19 typecheck /Users/yoda/projects/RealBud
+> tsc -b && tsc -p tsconfig.server.json
+
+server/customer-packs.test.ts(178,33): error TS2339: Property 'content' does not exist on type 'PackSkillRevisionMetadata'.
+server/customer-packs.ts(593,18): error TS6133: 'archiveSkill' is declared but its value is never read.
+server/customer-packs.ts(618,18): error TS6133: 'skillHistory' is declared but its value is never read.
+server/customer-packs.ts(630,18): error TS6133: 'skillRevertPreview' is declared but its value is never read.
+ ELIFECYCLE  Command failed with exit code 2.

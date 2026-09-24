@@ -1,17 +1,20 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { HERMES_PIN } from "./hermes-pin.ts";
-import { attachModel, installStatus, listModelOptions, listModels, modelStatus, preflight, PROVIDER_OPTIONS, startInstall } from "./hermes-bridge.ts";
+import { attachModel, installStatus, listModelOptions, listModels, modelStatus, PROVIDER_OPTIONS, startInstall } from "./hermes-bridge.ts";
+
+import { privateFixtureDirectory, privateFixtureRoot, writePrivateFixtureFile as writeFileSync, WINDOWS_PROFILE_TEST_OPTIONS } from "./testing/private-profile-fixture.ts";
 
 const dirs: string[] = [];
+const mkdtempSync = privateFixtureRoot;
 const tempHome = () => {
   const dir = mkdtempSync(join(tmpdir(), "realbud-bridge-"));
   dirs.push(dir);
   const profile = join(dir, "profiles", HERMES_PIN.profile);
-  mkdirSync(profile, { recursive: true });
+  privateFixtureDirectory(profile);
   return { dir, profile };
 };
 
@@ -19,7 +22,7 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-describe("attachModel", () => {
+describe("attachModel", WINDOWS_PROFILE_TEST_OPTIONS, () => {
   it("writes the .env key and the config model block, preserving other env lines", () => {
     const { dir, profile } = tempHome();
     writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
@@ -31,6 +34,7 @@ describe("attachModel", () => {
     expect(env).toContain("XAI_API_KEY=sk-test-123");
     if (process.platform !== "win32") {
       expect(statSync(join(profile, ".env")).mode & 0o777).toBe(0o600);
+      expect(statSync(join(profile, "config.yaml")).mode & 0o777).toBe(0o600);
     }
     const config = readFileSync(join(profile, "config.yaml"), "utf8");
     expect(config).toMatch(/model:\n  default: grok-4\n  provider: xai/);
@@ -222,8 +226,19 @@ describe("listModels", () => {
     );
     expect(listModels("openai-codex", dir)).toEqual(["gpt-5.5", "gpt-5.6-terra"]);
     const options = listModelOptions("openai-codex", dir);
-    expect(options.map((option) => option.id)).toEqual(["gpt-5.6-terra", "gpt-5.5"]);
-    expect(options.every((option) => option.recommended === false)).toBe(true);
+    expect(options.map((option) => option.id).slice(0, 4)).toEqual([
+      "gpt-5.6-terra",
+      "gpt-5.6-sol",
+      "gpt-5.6-luna",
+      "gpt-5.5",
+    ]);
+    expect(options.filter((option) => option.recommended).map((option) => option.id)).toEqual([
+      "gpt-5.6-terra",
+      "gpt-5.6-sol",
+      "gpt-5.6-luna",
+      "gpt-5.5",
+    ]);
+    expect(options.some((option) => option.id.includes("imagine"))).toBe(false);
   });
 
   it("offers recommended fallbacks plus the newest Hermes text/tool models", () => {
@@ -249,6 +264,27 @@ describe("listModels", () => {
     expect(listModelOptions("xai-oauth", dir)).toEqual(options);
     expect(listModelOptions("unknown-provider", dir)).toEqual([]);
   });
+
+  it("surfaces DeepSeek V4.1 Flash even when the live cache is stale", () => {
+    const { dir, profile } = tempHome();
+    writeFileSync(
+      join(profile, "provider_models_cache.json"),
+      JSON.stringify({
+        deepseek: { models: ["deepseek-v4-pro", "deepseek-v4-flash"] },
+      }),
+    );
+    const options = listModelOptions("deepseek", dir);
+    expect(options[0]).toMatchObject({
+      id: "deepseek-flash",
+      name: "DeepSeek V4.1 Flash",
+      recommended: true,
+    });
+    expect(options.map((option) => option.id)).toEqual([
+      "deepseek-flash",
+      "deepseek-v4-pro",
+      "deepseek-v4-flash",
+    ]);
+  });
 });
 
 describe("install job", () => {
@@ -269,10 +305,4 @@ describe("install job", () => {
     expect(["done", "failed", "verifying", "running"]).toContain(status.state);
     expect(status.lines.join("\n")).toContain("downloading");
   }, 20_000);
-
-  it("preflight reports the dependency list", async () => {
-    const result = await preflight();
-    expect(result.deps.map((d) => d.name)).toEqual(["curl", "git", "python3"]);
-    expect(result.deps.every((d) => typeof d.ok === "boolean")).toBe(true);
-  });
 });

@@ -1,0 +1,21 @@
+PASS Direct You navigation resolves the global sidebar book state without opening Desk
+PASS Actual UI exports an encrypted business backup, confirms matching passphrases and clears them after download
+PASS Real API preview shows included/excluded contents while the nonfresh source workspace cannot stage a restore
+PASS Changed passphrase or file invalidates the preview; incorrect passphrase and malformed file leave records untouched
+PASS Fresh-workspace restore requires reviewed preview and explicit confirmation, stages once, and shows a truthful restart requirement
+PASS Actual cold bootstrap restores the property and exact bank bytes under a different local key; reloaded UI is no longer staged
+PASS Damaged historical completion metadata shows a warning and preserves its bytes while valid business records can still be backed up
+PASS Desktop and390px previews render without page errors or horizontal overflow
+{
+  "output": "/Users/yoda/projects/RealBud/outputs/private-backup-v2-2026-09-21/batch-journal-browser",
+  "checks": [
+    "Direct You navigation resolves the global sidebar book state without opening Desk",
+    "Actual UI exports an encrypted business backup, confirms matching passphrases and clears them after download",
+    "Real API preview shows included/excluded contents while the nonfresh source workspace cannot stage a restore",
+    "Changed passphrase or file invalidates the preview; incorrect passphrase and malformed file leave records untouched",
+    "Fresh-workspace restore requires reviewed preview and explicit confirmation, stages once, and shows a truthful restart requirement",
+    "Actual cold bootstrap restores the property and exact bank bytes under a different local key; reloaded UI is no longer staged",
+    "Damaged historical completion metadata shows a warning and preserves its bytes while valid business records can still be backed up",
+    "Desktop and390px previews render without page errors or horizontal overflow"
+  ]
+}

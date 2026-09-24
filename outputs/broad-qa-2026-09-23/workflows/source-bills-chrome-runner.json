@@ -1,0 +1,8 @@
+{
+  "script": "scripts/qa-source-bills.mjs",
+  "exitCode": 1,
+  "seconds": 7.22,
+  "log": "/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/workflows/source-bills-chrome.log",
+  "node": "/Users/yoda/.nvm/versions/node/v24.19.0/bin/node",
+  "tier": "source server and built UI, synthetic data, disposable Chrome context"
+}

@@ -1,0 +1,10 @@
+{
+  "tasks": 2100,
+  "receipts": 1022,
+  "coldMetadataMs": 4354.3532079999995,
+  "warmMetadataMs": 152.8981249999997,
+  "pageMs": 231.22770800000035,
+  "platform": "darwin",
+  "node": "v24.19.0",
+  "provider": "fictional"
+}

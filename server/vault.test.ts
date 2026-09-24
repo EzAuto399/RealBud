@@ -21,7 +21,9 @@ describe("private workroom", () => {
     dirs.push(root);
     const book = seedVault(join(root, "vault"));
     const path = join(book, LAW_REFERENCE_FILE);
-    const legacy = readFileSync(new URL("./testing/legacy-law-reference.md", import.meta.url), "utf8");
+    // An older build wrote this text from a string with LF endings; a Windows
+    // checkout may give the fixture file CRLF, which no installed vault ever had.
+    const legacy = readFileSync(new URL("./testing/legacy-law-reference.md", import.meta.url), "utf8").replace(/\r\n/g, "\n");
     const note = "\n## Office note\nAsk the licensee before proceeding.\n";
     writeFileSync(path, legacy + note);
     seedVault(book);

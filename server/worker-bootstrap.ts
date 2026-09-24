@@ -3,10 +3,11 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { writeFileAtomic } from "./atomic.ts";
+import { restrictNewSync, writeFileAtomic } from "./atomic.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HERMES_RECOMMENDED, type HermesRelease } from "./hermes-releases.ts";
+import { windowsHermesRuntimeEnv } from "./hermes-runtime-env.ts";
 import { augmentedPath } from "./env-path.ts";
 import { killCliTree, spawnCli } from "./procs.ts";
 
@@ -71,7 +72,9 @@ function acquireSetup(home: string) {
 
 export const BOOTSTRAP_STAGES = {
   unix: ["prerequisites", "repository", "venv", "python-deps", "node-deps", "path", "config", "complete"],
-  windows: ["uv", "python", "git", "node", "system-packages", "repository", "venv", "dependencies", "node-deps", "path", "config-templates", "platform-sdks", "bootstrap-marker"],
+  // Managed Python lives inside the checkout. Clone first so the repository
+  // stage cannot park a runtime-only directory and strand the interpreter.
+  windows: ["uv", "git", "node", "system-packages", "repository", "python", "venv", "dependencies", "node-deps", "path", "config-templates", "platform-sdks", "bootstrap-marker"],
 } as const;
 export function bootstrapPlan(platform: NodeJS.Platform, release: HermesRelease = HERMES_RECOMMENDED, privateRuntime = false) {
   if (!["darwin", "linux", "win32"].includes(platform)) return null;
@@ -84,8 +87,14 @@ export function bootstrapPlan(platform: NodeJS.Platform, release: HermesRelease 
 export function bootstrapInvocation(platform: NodeJS.Platform, file: string, stage: string, home: string, release: HermesRelease = HERMES_RECOMMENDED, privateRuntime = false) {
   const plan = bootstrapPlan(platform, release, privateRuntime);
   if (!plan || !(plan.stages as readonly string[]).includes(stage)) throw new BootstrapError("Unsupported setup stage");
+  // `-ExecutionPolicy Bypass` applies to this PowerShell process only and
+  // changes no machine or user policy. It is safe here because the script is
+  // already the sha256-verified bytes from `downloadBootstrap` — verification
+  // happens before the spawn, so Bypass never widens what may run. Without it
+  // a default Windows 11 client policy (`Restricted`) refuses any `.ps1`
+  // passed to `-File`, and setup fails before the first stage.
   return platform === "win32"
-    ? { command: "powershell.exe", args: ["-NoProfile", "-NonInteractive", "-File", file, "-Stage", stage, "-NonInteractive", "-SkipSetup", "-SkipComputerUse", "-Commit", release.commit, "-ForceCommit", "-HermesHome", home, "-InstallDir", join(home, "hermes-agent")] }
+    ? { command: "powershell.exe", args: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", file, "-Stage", stage, "-NonInteractive", "-SkipSetup", "-SkipComputerUse", "-Commit", release.commit, "-ForceCommit", "-HermesHome", home, "-InstallDir", join(home, "hermes-agent")] }
     : { command: "/bin/bash", args: [file, "--stage", stage, "--non-interactive", "--skip-setup", "--skip-computer-use", "--commit", release.commit, "--force-commit", "--hermes-home", home, "--dir", join(home, "hermes-agent")] };
 }
 
@@ -123,12 +132,32 @@ export async function downloadBootstrap(plan: { url: string; sha256: string }, s
   return bytes;
 }
 
-type StageRun = (invocation: { command: string; args: string[] }, home: string, signal: AbortSignal, recordHome?: string) => Promise<void>;
-export const runBootstrapStage: StageRun = (invocation, home, signal, recordHome = home) => new Promise((resolve, reject) => {
-  signal.throwIfAborted();
-  const env: NodeJS.ProcessEnv = { ...process.env, PATH: augmentedPath(), HERMES_HOME: home, UV_NO_CONFIG: "1" };
+export function bootstrapStageEnv(home: string, source: NodeJS.ProcessEnv, platform: NodeJS.Platform, gitConfigFile?: string): NodeJS.ProcessEnv {
+  let env: NodeJS.ProcessEnv = { ...source, HERMES_HOME: home, UV_NO_CONFIG: "1" };
+  if (platform === "win32") {
+    env = windowsHermesRuntimeEnv(home, env);
+    // Setup and its nested installers use Windows PowerShell 5.1. Inheriting
+    // PowerShell 7 module roots can make even Get-ExecutionPolicy fail to load.
+    // Remove every spelling before pinning the case-insensitive Windows name.
+    for (const key of Object.keys(env)) if (key.toLowerCase() === "psmodulepath") delete env[key];
+    const systemRoot = source.SystemRoot ?? Object.entries(source).find(([key]) => key.toLowerCase() === "systemroot")?.[1] ?? "C:\\Windows";
+    env.PSModulePath = join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "Modules");
+    if (!gitConfigFile) throw new BootstrapError("Windows setup requires its private Git configuration.");
+    // The pinned installer sets autocrlf only after cloning, when CRLF files
+    // already appear modified. Apply it before every Git call, and direct the
+    // installer's --global writes to our owned file rather than the user's.
+    // Keep system configuration (including TLS/proxy settings) unchanged.
+    for (const key of Object.keys(env)) if (/^GIT_CONFIG(?:$|_(?:GLOBAL|PARAMETERS|COUNT)$|_(?:KEY|VALUE)_\d+$)/i.test(key)) delete env[key];
+    env.GIT_CONFIG_GLOBAL = gitConfigFile;
+  }
   // Install stages need no provider credentials or personal Python overrides.
   for (const key of Object.keys(env)) if (/API_KEY$|_TOKEN$|_SECRET$|_PASSWORD$|^PYTHON(PATH|HOME)$|^VIRTUAL_ENV$/.test(key)) delete env[key];
+  return env;
+}
+
+type StageRun = (invocation: { command: string; args: string[] }, home: string, signal: AbortSignal, recordHome?: string) => Promise<void>;
+const startBootstrapStage = (invocation: Parameters<StageRun>[0], recordHome: string, signal: AbortSignal, env: NodeJS.ProcessEnv) => new Promise<void>((resolve, reject) => {
+  signal.throwIfAborted();
   saveRecord(recordHome, { version: 1, pending: true, childPid: null, spawning: true });
   const child = spawnCli(invocation.command, invocation.args, { env, privateFiles: true, stdio: ["ignore", "pipe", "pipe"] });
   let recordFailed = false;
@@ -161,6 +190,31 @@ export const runBootstrapStage: StageRun = (invocation, home, signal, recordHome
   });
   if (signal.aborted || recordFailed) abort();
 });
+
+export const runBootstrapStage: StageRun = async (invocation, home, signal, recordHome = home) => {
+  signal.throwIfAborted();
+  let gitConfigDirectory: string | undefined;
+  let failed = false;
+  try {
+    let gitConfigFile: string | undefined;
+    if (process.platform === "win32") {
+      gitConfigDirectory = mkdtempSync(join(tmpdir(), "realbud-bootstrap-git-"));
+      restrictNewSync([{ path: gitConfigDirectory, kind: "directory" }]);
+      gitConfigFile = join(gitConfigDirectory, "config");
+      writeFileAtomic(gitConfigFile, "[core]\n\tautocrlf = false\n", 0o600);
+    }
+    const env = bootstrapStageEnv(home, { ...process.env, PATH: augmentedPath() }, process.platform, gitConfigFile);
+    await startBootstrapStage(invocation, recordHome, signal, env);
+  } catch (error) {
+    failed = true;
+    throw error;
+  } finally {
+    if (gitConfigDirectory) {
+      try { rmSync(gitConfigDirectory, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+      catch { if (!failed) throw new BootstrapError("Bud could not remove its temporary setup files. Check folder permissions before retrying."); }
+    }
+  }
+};
 
 export async function runWorkerBootstrap(options: {
   home: string; signal: AbortSignal; platform?: NodeJS.Platform;

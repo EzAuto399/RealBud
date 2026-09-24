@@ -25,6 +25,9 @@ directories:
 # ELECTRON_RUN_AS_NODE (the agentcal-hq pattern).
 files:
   - electron/**
+  # Electron main imports the same installation identity as the server. The
+  # server's extraResources copy is outside ASAR and cannot satisfy this import.
+  - shared/service-identity.mjs
   - "!electron/**/*.test.*"
   - "!electron/resources/speech-helper"
   - "!electron/resources/speech-helper.swift"
@@ -32,12 +35,17 @@ files:
   - "!electron/resources/speech-helper-Info.plist"
   - "!electron/resources/RealBud Speech.app/**"
   - "!electron/resources/RealBud Speech.exe"
+  - "!electron/resources/worker-supervisor-win.cs"
+  - "!electron/resources/cua-launcher-win.cs"
+  - "!electron/resources/RealBud Worker.exe"
   - "!**/node_modules/**"
   - package.json
 
 asar: true
 
 extraResources:
+  - from: dist-browser
+    to: browser
   - from: dist
     to: ui
   - from: dist-server/server
@@ -48,6 +56,14 @@ extraResources:
     to: src
   - from: pack/property
     to: pack/property
+  # Portable customer packs are loaded relative to the compiled server.
+  # Include only the reviewed public pack text, never workspace/customer data.
+  - from: pack/workflows/austin-accounts
+    to: pack/workflows/austin-accounts
+  - from: pack/workflows/austin-office
+    to: pack/workflows/austin-office
+  - from: pack/workflows/office-core
+    to: pack/workflows/office-core
   # Admitted PostgreSQL 16 runtime for "Set up this office". Staged by
   # `pnpm build:postgres`, which fails the build rather than shipping an
   # installer whose Set up button cannot provision storage. Resolved at setup
@@ -56,6 +72,8 @@ extraResources:
     to: postgres
 
 mac:
+  # The pinned CUA driver and SDK require macOS 13; speech uses the same floor.
+  minimumSystemVersion: "13.0"
   target:
     - target: dmg
       arch: arm64
@@ -95,10 +113,13 @@ win:
   extraResources:
     - from: electron/resources/RealBud Speech.exe
       to: RealBud Speech.exe
+    - from: electron/resources/RealBud Worker.exe
+      to: RealBud Worker.exe
     - from: dist-native
       to: .
       filter:
         - cua-driver.exe
+        - RealBud CUA.exe
         - cua-driver-uia.exe
         - cua-cursor-theme.exe
         - cua_driver_sdk.dll

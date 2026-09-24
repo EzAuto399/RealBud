@@ -1,0 +1,14 @@
+[
+  "scripts/qa-pack-upgrades.mjs",
+  "server/customer-pack-archive.review.test.ts",
+  "server/customer-pack-archive.test.ts",
+  "server/customer-pack-upgrades.ts",
+  "server/customer-packs.ts",
+  "server/private-backup-capture.ts",
+  "server/private-backup-catalog.ts",
+  "server/private-backup-pack-upgrade.test.ts",
+  "server/private-workspace-backup.ts",
+  "shared/customer-packs.ts",
+  "src/components/schedule/CustomerPackHistory.tsx",
+  "src/components/schedule/CustomerPackSetupCard.tsx"
+]

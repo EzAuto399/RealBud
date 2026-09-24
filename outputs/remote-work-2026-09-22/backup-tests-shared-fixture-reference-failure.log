@@ -1,0 +1,28 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ❯ server/private-backup-website-requests.test.ts (11 tests | 1 failed) 3338ms
+     × rejects foreign-person in remote evidence before archive admission 164ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/private-backup-website-requests.test.ts > remote work evidence through encrypted backup and cold restore > rejects foreign-person in remote evidence before archive admission
+Error: Remote work history needs recovery. No work was started.
+ ❯ fail server/website-remote-work.ts:17:23
+     15| const hash = (v: unknown) => createHash('sha256').update(canonicalWebs…
+     16| const fail = (message = 'Remote work history needs recovery. No work w…
+     17|   throw Object.assign(new Error(message), { status });
+       |                       ^
+     18| };
+     19| const uuid = (v: unknown): v is string => typeof v === 'string' && com…
+ ❯ Module.validateSavedWebsiteRemoteWork server/website-remote-work.ts:73:12
+ ❯ server/private-backup-website-requests.test.ts:189:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 10 passed (11)
+   Start at  09:19:14
+   Duration  3.86s (transform 358ms, setup 20ms, import 433ms, tests 3.34s, environment 0ms)
+

@@ -1,0 +1,16 @@
+{
+  "at": "2026-09-21T16:30:05.810698+00:00",
+  "files": {
+    "server/helpers/hermes-memory-windows.py": {
+      "sha256": "46ae82871600ce6a0003092b05dad3557ebbad7c4e601ef77b57fac21021d695",
+      "bytes": 10673
+    },
+    "server/helpers/hermes-memory-windows-native.py": {
+      "sha256": "61ffd50da933fe09021b04616dc5c7d8161bc0edbd2c5e225d397c25c9e0a71a",
+      "bytes": 32311
+    }
+  },
+  "promptBytes": 46350,
+  "promptSha256": "3de0f8fd563bf1865229b00fe253694676dcbfb769668d00e5612b4e135d1467",
+  "productionEdits": false
+}

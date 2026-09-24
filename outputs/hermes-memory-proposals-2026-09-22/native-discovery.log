@@ -1,0 +1,6 @@
+PASS installed Hermes ACP initialize + session/new with isolated synthetic home
+PASS configured memory-proposals calls: 0; explicit same-name initialize/tools-list: initialize, tools/list
+PASS unmodified Hermes discovers the actual proposal-only broker; no storage operation or approval tool exposed
+PASS 5 inert local metadata GETs; zero inference requests, prompts, or tool executions
+PASS isolated dummy provider and allowlisted environment; no external provider or inherited credentials configured
+qa-hermes-mcp-isolation: PASSED; temporary files and child process removed

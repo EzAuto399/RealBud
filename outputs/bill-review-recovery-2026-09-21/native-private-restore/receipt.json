@@ -1,0 +1,56 @@
+{
+  "at": "2026-09-21T08:17:25.769Z",
+  "passed": true,
+  "executable": "/Users/yoda/projects/RealBud/outputs/bill-review-recovery-2026-09-21/package/mac-arm64/RealBud.app/Contents/MacOS/RealBud",
+  "resources": "/Users/yoda/projects/RealBud/outputs/bill-review-recovery-2026-09-21/package/mac-arm64/RealBud.app/Contents/Resources",
+  "artifact": {
+    "app.asar": "fa6579cbfd68b1836cb037da509970140c43dd6f8ca7e7e3f76530677c388a13",
+    "server/bootstrap.js": "2567a50b4638d2789c135bfa708df7d5d9250bc826fd4267281e2e1641bee9d8",
+    "ui/index.html": "e9cded929c3e55b1143ff9c010f7687fca1b35c09bf74b967c55619ea33f91ff"
+  },
+  "runtime": {
+    "node": "24.18.1",
+    "electron": "43.4.0",
+    "packaged": true,
+    "resources": "/Users/yoda/projects/RealBud/outputs/bill-review-recovery-2026-09-21/package/mac-arm64/RealBud.app/Contents/Resources",
+    "initialLogs": "/private/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/RealBud native restore UQM2Q4/electron/logs",
+    "logs": "/private/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/RealBud native restore UQM2Q4/electron/logs"
+  },
+  "checks": [
+    "Actual packaged app and preload adopt the isolated target service before the safeStorage fixture is installed",
+    "Real preload stop/start migrates existing custody to the mocked protected store and preserves the same key without a plaintext key file",
+    "Native Restore restart button performs real preload/main IPC and cold bootstrap, preserving target custody and exact restored bank bytes",
+    "Compiled normalized bill history, paused pattern and old source alias survive the native different-key restore and resolve through real HTTP",
+    "Compiled proposal intent survives native different-key restore exactly and its unfinished retry cannot admit another worker",
+    "Compiled normalized mail, completed staff decision, old source and scan history survive different-key native restore and open in the real GUI",
+    "Encrypted bill draft reopens after native different-key restore while source is unavailable; historical Check makes no proposal POST and manual notes save with the original request ID",
+    "Native restart prefers the current restored book over a stale quarantine and retains the alternative recovery key and bytes"
+  ],
+  "errors": [],
+  "keyProof": {
+    "sameTargetKeyAcrossThreeRestarts": true,
+    "sourceKeyDifferent": true,
+    "afterMigrationAndRestorePlaintextKeyAbsent": true,
+    "alternativeRecoveryKeyPreserved": true,
+    "fixtureCalls": {
+      "encrypted": 3,
+      "decrypted": 8
+    }
+  },
+  "cleanup": {
+    "capturedServicePids": [
+      72931,
+      72988,
+      73142,
+      73267
+    ],
+    "serviceProcessesExited": true,
+    "scratchRemoved": true
+  },
+  "limitations": [
+    "Actual packaged Mac runtime, main, native preload IPC, detached service, bootstrap and UI",
+    "safeStorage is an in-memory AES fixture; OS Keychain/DPAPI protection and keychain prompts are not tested",
+    "Only fictional isolated data and allowlisted process environment without provider credentials; renderer and Electron requests are guarded after attachment, not process-wide network isolation",
+    "Unsigned local package; not customer installation, Windows or reboot survival"
+  ]
+}

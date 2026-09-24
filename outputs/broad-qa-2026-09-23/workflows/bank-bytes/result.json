@@ -1,0 +1,24 @@
+{
+  "at": "2026-09-23T02:24:00.551Z",
+  "passed": false,
+  "checks": [],
+  "failure": "browserType.launch: Executable doesn't exist at /Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/workflows/runner-home/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell\n╔════════════════════════════════════════════════════════════╗\n║ Looks like Playwright was just installed or updated.       ║\n║ Please run the following command to download new browsers: ║\n║                                                            ║\n║     npx playwright install                                 ║\n║                                                            ║\n║ <3 Playwright Team                                         ║\n╚════════════════════════════════════════════════════════════╝\n    at /Users/yoda/projects/RealBud/scripts/qa-bank-bytes.mjs:49:28",
+  "ui": "/Users/yoda/projects/RealBud/dist",
+  "actual": [
+    "built React UI",
+    "local HTTP API",
+    "encrypted saved review",
+    "browser binary downloads"
+  ],
+  "synthetic": [
+    "bank CSV and property mapping",
+    "browser-only 503 history and detail response injections",
+    "delayed real settings response"
+  ],
+  "notProven": [
+    "customer bank format",
+    "REI import acceptance",
+    "native installed Windows"
+  ],
+  "diagnostic": "realbud server on http://127.0.0.1:52701\n"
+}

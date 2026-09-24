@@ -1,0 +1,29 @@
+{
+  "deployedRevision": "8ba0ba4daece55fd94249b35754e8d38d46de2f9",
+  "settledProviderRequests": 6,
+  "successfulCases": [
+    "readiness",
+    "bank-csv-preservation",
+    "email-bill-due-date",
+    "morning-priorities-untrusted-email",
+    "clarified-streaming-readiness"
+  ],
+  "preservedFailures": [
+    "initial streaming exact text OK. versus OK",
+    "initial direct-payer invoice readback used reseller-only endpoint"
+  ],
+  "totalQaRateChargeNanoAud": "908000",
+  "unchangedCapNanoAud": "600000000",
+  "finalReadbackPassed": true,
+  "sources": {
+    "api.mjs": "1f948058c4eb14b2eddbc722112e429b896969b19cc1d9e9b4cd5e488357cd61",
+    "run.initial.mjs": "cf8a1e1120460b06bf48b99c5893d0de4e7774bf320bc0a4d87d4f30df413832",
+    "run.mjs": "29784c081966f306de9188b864e539f29094e23182160d9a8d84eba716b74352",
+    "run.test.mjs": "a34f3f6636a2cd2735a7d79beebbcd97cb1fedab698289b846ba02b41a2a9a31",
+    "cases.json": "4e2467984023dafc2a511c63f25cfee92983f0da99a56a0522b895b2a6df3f3b",
+    "stream-followup.mjs": "7acd1f17b8c257ecaa602353050d6f65e0e27293563dd5afd5fd2f0a6f23a540",
+    "receipt.json": "a8b1388f39b00cfd456e9692a9aeb144f1e59d443e48484465202e47bfb6e434",
+    "stream-followup.json": "4e851c068f25ed1170e79dba731a74ce3ed4863cae34cab871514337d425ecad",
+    "final-readback.json": "9b35b0cd6de999a4585a122f585e6b420dfd745a95d4b94ea299ee2b2146c8a7"
+  }
+}

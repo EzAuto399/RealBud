@@ -3,18 +3,20 @@
 // it never copies Demo values into a live check.
 // Never passes --yolo. Never opens Desktop.
 import { managedServiceFailure } from "./managed-service.ts";
-import { type ExecFileOptionsWithStringEncoding } from "node:child_process";
+import { modelServiceFailure } from "./model-service-failure.ts";
+import { randomUUID } from "node:crypto";
 
 import { hardenHermesChildEnv } from "./drivers/acp/hermes.ts";
+import { applyWorkerModelAccessEnv, workerModelAccessSnapshot } from "./hermes-runtime-env.ts";
 import { augmentedPath } from "./env-path.ts";
-import { execFileCli } from "./procs.ts";
+import { execFileCli, type OneShotOptions } from "./procs.ts";
 
 import type { LedgerFacts } from "../shared/contracts.ts";
 import { asBoolean, asFiniteNumber, asNonEmptyString, asNullableNumber } from "./decode.ts";
 import { hermesCli, hermesIsCompatible } from "./hermes-pin.ts";
-import { baseWorkerProfile, hermesProfileFor } from "./hermes-profile.ts";
+import { currentWorkerProfile, withWorkerProfile } from "./hermes-profile.ts";
 import { approvalsAreManual, packInstalled } from "./hermes-pack.ts";
-import { probeHermesVersion, hermesReadinessFingerprint, workerSetupPending } from "./hermes-status.ts";
+import { probeHermesVersion, hermesReadinessFingerprint, modelAccessStatus, workerSetupPending } from "./hermes-status.ts";
 import { seedVault } from "./vault.ts";
 
 export type HandsSource = "demo" | "hermes" | "held" | "csv" | "fixture";
@@ -35,10 +37,19 @@ export interface HermesPing {
 const TIMEOUT_MS = 60_000;
 const LEDGER_TIMEOUT_MS = 60_000;
 
+/** Shipped in pack/property/skills. Preloaded with `chat -s`: naming a skill in
+ * the prompt alone does not load it in a one-shot `chat -q` run. */
+export const LEDGER_SKILL = "morning-arrears";
+
 /** Worker chatter that explains nothing about the miss to a PM. */
 const WORKER_NOISE = [/^session_id:/i, /security scanner/i, /pattern matching only/i, /^warning:/i];
+// This exact supported-worker startup diagnostic is emitted on stdout before
+// the model answer. Other warnings/prose must not turn a failed check into OK.
+const PING_STARTUP_NOTICE = /^(?:⚠\s*)?tirith security scanner enabled but not available — command scanning will use pattern matching only$/;
 
 const WORKER_MISS_REASONS: Array<[RegExp, string]> = [
+  // Hermes refuses to start when no preloaded skill resolves in the profile.
+  [/Unknown skill\(s\)/i, "Bud's pack skill is missing; re-apply Bud's safeguards on You"],
   [/UnrecognizedClient|invalid.?api.?key|incorrect api key|authentication|unauthori[sz]ed|\b401\b|\b403\b/i, "the model provider refused Bud's key; check the model connection on You"],
   [/insufficient|credit|billing|quota|\b402\b/i, "Billing or credits exhausted at the model provider"],
   [/rate.?limit|\b429\b|too many requests/i, "the model provider is rate-limiting; try again shortly"],
@@ -57,12 +68,14 @@ export function workerMissReason(stdout: string, stderr: string): string {
       .filter((line) => line && !WORKER_NOISE.some((noise) => noise.test(line)));
   const all = [...lines(stdout), ...lines(stderr)];
   const text = all.join(" ");
+  const serviceFailure = modelServiceFailure(text);
+  if (serviceFailure) return serviceFailure;
   for (const [pattern, reason] of WORKER_MISS_REASONS) if (pattern.test(text)) return reason;
   const last = all.at(-1) ?? "";
   return last.length > 120 ? `${last.slice(0, 117)}…` : last;
 }
 
-export async function tryHermesPing(opts?: {
+async function scopedHermesPing(opts?: {
   cli?: string;
   timeoutMs?: number;
   root?: string;
@@ -80,6 +93,10 @@ export async function tryHermesPing(opts?: {
   const serviceFailure = managedServiceFailure("reasoning");
   if (serviceFailure) return done(false, serviceFailure);
   if (process.env.VITEST && !opts?.cli) return done(false, "tests do not ping the live worker");
+  // A withdrawn grant holds with its own reason. Running the check would spend
+  // a minute to produce an auth failure the office cannot act on.
+  const access = modelAccessStatus(opts?.root);
+  if (access.withdrawn) return done(false, access.detail);
   if (workerSetupPending(opts?.root)) return done(false, "Bud setup did not finish. Finish setup before checking the connection.");
   if (!packInstalled(opts?.root)) return done(false, "Bud is not set up — open Bud on You.");
   if (!approvalsAreManual(opts?.root)) {
@@ -98,16 +115,19 @@ export async function tryHermesPing(opts?: {
     const serviceFailure = managedServiceFailure("reasoning");
     if (serviceFailure) return resolve(done(false, serviceFailure));
     hardenHermesChildEnv(env);
-    const execOpts: ExecFileOptionsWithStringEncoding & { detached?: boolean } = {
+    // Strip ambient credentials first, then use the same installation grant as Ask.
+    applyWorkerModelAccessEnv(env, workerModelAccessSnapshot());
+    const execOpts: OneShotOptions = {
       timeout: opts?.timeoutMs ?? TIMEOUT_MS,
       cwd: opts?.cwd ?? seedVault(),
       env,
       encoding: "utf8",
-      detached: process.platform !== "win32",
     };
-    const child = execFileCli(
+    execFileCli(
       cli,
-      ["--profile", hermesProfileFor(baseWorkerProfile(), opts?.memberKey).profile, "chat", "-Q", "--toolsets", "todo", "-q", "Reply with exactly one word: OK. Do not use tools.", "--max-turns", "1"],
+      // New explicit checks have distinct request bodies. A worker's transport
+      // retry keeps this same marker, preserving the gateway's replay fence.
+      ["--profile", currentWorkerProfile().profile, "chat", "-Q", "--toolsets", "todo", "-q", `Readiness check ${randomUUID()}. Reply with exactly OK, without punctuation or explanation. Do not use tools.`, "--max-turns", "1"],
       execOpts,
       (err, stdout, stderr) => {
         const clean = (s: string) =>
@@ -115,20 +135,20 @@ export async function tryHermesPing(opts?: {
             .replace(/\x1b\[[0-9;]*m/g, "")
             .split("\n")
             .map((line) => line.trim())
-            .filter((line) => line && !/^session_id:/.test(line));
+            .filter((line) => line && !/^session_id:/.test(line) && !PING_STARTUP_NOTICE.test(line));
         if (err) {
           const timedOut = (err as NodeJS.ErrnoException & { killed?: boolean }).killed;
-          if (timedOut && process.platform !== "win32") {
-            try {
-              process.kill(-child.pid!, "SIGTERM");
-            } catch {}
-          }
-          if (timedOut) return resolve(done(false, "Bud took too long to answer."));
+          if (timedOut) return resolve(done(false, "Bud took too long to answer. Review AI usage on your linked website before checking again."));
           const reason = workerMissReason(stdout, stderr);
           return resolve(done(false, reason ? `Bud could not answer — ${reason}.` : "Bud could not answer."));
         }
-        const answer = clean(stdout).find((line) => line.trim().toUpperCase() === "OK");
-        if (!answer) return resolve(done(false, "Bud answered, but not with OK — open the model connection on You."));
+        const answer = clean(stdout).join("\n");
+        if (!/^OK[.!]?$/i.test(answer)) {
+          // The supported CLI can print a provider failure and still exit 0.
+          const refusal = modelServiceFailure(answer);
+          if (refusal) return resolve(done(false, `Bud could not answer — ${refusal}.`));
+          return resolve(done(false, "Bud answered, but not with OK — open the model connection on You."));
+        }
         resolve(done(true, "Bud answered OK — Recheck can ask for the morning ledger."));
       },
     );
@@ -191,7 +211,7 @@ function parseLedgerRows(raw: string): LedgerFacts[] | null {
   }
 }
 
-export async function tryHermesLedger(
+async function scopedHermesLedger(
   propertyIds: string[],
   opts?: {
     cli?: string;
@@ -206,6 +226,8 @@ export async function tryHermesLedger(
   const serviceFailure = managedServiceFailure("reasoning");
   if (serviceFailure) return miss(serviceFailure);
   if (process.env.VITEST && !opts?.cli) return miss("tests do not use the live worker — unknown facts stay held");
+  const access = modelAccessStatus(opts?.root);
+  if (access.withdrawn) return miss(`${access.detail} Facts stay held.`);
   if (workerSetupPending(opts?.root)) return miss("Bud setup did not finish. Finish setup before checking property facts.");
   if (!packInstalled(opts?.root)) {
     return miss("Bud is not set up — open Bud on You. Facts stay held.");
@@ -228,7 +250,7 @@ export async function tryHermesLedger(
   // result was a one-of-six answer with the rest held — a missing input, not a weak
   // model, and not something a better provider would have fixed.
   const prompt =
-    `Morning arrears check. Use skill morning-arrears.\n` +
+    `Morning arrears check. Use skill ${LEDGER_SKILL}.\n` +
     `The office book for this run is the working directory. Read DESK-CONTEXT.md there for the\n` +
     `book facts, and the property notes under properties/ (or owners/) for preferences. Notes are\n` +
     `preferences only — they never change balances, day counts, or create a notice. If the book\n` +
@@ -243,25 +265,21 @@ export async function tryHermesLedger(
     const serviceFailure = managedServiceFailure("reasoning");
     if (serviceFailure) return resolve(miss(serviceFailure));
     hardenHermesChildEnv(env);
-    const execOpts: ExecFileOptionsWithStringEncoding & { detached?: boolean } = {
+    // Strip ambient credentials first, then use the same installation grant as Ask.
+    applyWorkerModelAccessEnv(env, workerModelAccessSnapshot());
+    const execOpts: OneShotOptions = {
       timeout: opts?.timeoutMs ?? LEDGER_TIMEOUT_MS,
       cwd: opts?.cwd ?? seedVault(),
       env,
       encoding: "utf8",
-      detached: process.platform !== "win32",
     };
-    const child = execFileCli(
+    execFileCli(
       cli,
-      ["--profile", hermesProfileFor(baseWorkerProfile(), opts?.memberKey).profile, "chat", "-Q", "-q", prompt, "--max-turns", "6"],
+      ["--profile", currentWorkerProfile().profile, "chat", "-Q", "-s", LEDGER_SKILL, "-q", prompt, "--max-turns", "6"],
       execOpts,
       (err, stdout, stderr) => {
         if (err) {
           const timedOut = (err as NodeJS.ErrnoException & { killed?: boolean }).killed;
-          if (timedOut && process.platform !== "win32") {
-            try {
-              process.kill(-child.pid!, "SIGTERM");
-            } catch {}
-          }
           if (timedOut) return resolve(miss("Bud took too long — facts stay held."));
           const reason = workerMissReason(stdout, stderr);
           return resolve(
@@ -279,4 +297,18 @@ export async function tryHermesLedger(
       },
     );
   });
+}
+
+const activePings = new Set<string>();
+export function tryHermesPing(opts?: Parameters<typeof scopedHermesPing>[0]): Promise<HermesPing> {
+  return withWorkerProfile(opts?.memberKey ?? currentWorkerProfile().memberKey, async () => {
+    const scope = JSON.stringify([opts?.root ?? "", currentWorkerProfile().profile]);
+    if (activePings.has(scope)) return { ok: false, elapsedMs: 0, detail: "Another model request is still running for this readiness check. Wait for it to finish before checking again." };
+    activePings.add(scope);
+    try { return await scopedHermesPing(opts); }
+    finally { activePings.delete(scope); }
+  });
+}
+export function tryHermesLedger(propertyIds: string[], opts?: Parameters<typeof scopedHermesLedger>[1]): Promise<HermesLedgerAttempt> {
+  return withWorkerProfile(opts?.memberKey ?? currentWorkerProfile().memberKey, () => scopedHermesLedger(propertyIds, opts));
 }

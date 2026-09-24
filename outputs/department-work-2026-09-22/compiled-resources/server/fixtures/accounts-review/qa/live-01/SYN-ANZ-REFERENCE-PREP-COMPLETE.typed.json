@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "kind": "accounts-anz-reference-candidates",
+  "sourceReference": "QA-SYN-ANZ-REFERENCE-PREP-COMPLETE-6dba07cb-adf0-41b3-9685-85c4cc085eb2",
+  "status": "complete",
+  "coverageComplete": true,
+  "originalDigest": "70ce96f3060d9a5559954fe3438cca012d34a1540a0cfb5e35a6b38997376336",
+  "rows": [
+    {
+      "sourceRow": 1,
+      "rowId": "70ce96f3060d9a5559954fe3438cca012d34a1540a0cfb5e35a6b38997376336:1",
+      "decision": "assign",
+      "propertyId": "SYN-P01",
+      "proposedReference": "000127",
+      "reason": "Positive incoming 650.00 on 12/09/2026 with an empty source reference; single supplied candidate SYN-P01, no issues, and exactly one matching approved rule (narrative alias matches SYN-P01 reference 000127). Reference candidate only - host validation required."
+    },
+    {
+      "sourceRow": 2,
+      "rowId": "70ce96f3060d9a5559954fe3438cca012d34a1540a0cfb5e35a6b38997376336:2",
+      "decision": "keep",
+      "propertyId": null,
+      "proposedReference": null,
+      "reason": "Incoming 700.00 already carries source reference 000456; an approved rule for SYN-P02 exists but existing-reference rows are kept unchanged with no proposed reference, pending human review if a correction is needed."
+    },
+    {
+      "sourceRow": 3,
+      "rowId": "70ce96f3060d9a5559954fe3438cca012d34a1540a0cfb5e35a6b38997376336:3",
+      "decision": "keep",
+      "propertyId": null,
+      "proposedReference": null,
+      "reason": "Debit -25.00 bank charge, not an incoming payment; no candidates, no property match and no matching approved rule, so it is retained unchanged with nulls for separate human review."
+    }
+  ],
+  "hostValidation": {
+    "required": true,
+    "batchId": "bank:70ce96f3060d9a5559954fe3438cca012d34a1540a0cfb5e35a6b38997376336",
+    "batchRevision": 1,
+    "originalDigest": "70ce96f3060d9a5559954fe3438cca012d34a1540a0cfb5e35a6b38997376336",
+    "applied": false
+  },
+  "holds": [
+    {
+      "itemId": "batch:70ce96f3060d9a5559954fe3438cca012d34a1540a0cfb5e35a6b38997376336",
+      "reason": "formatConfirmationSource is synthetic-test-layout-only: the real ANZ customer CSV layout, exact banking service and login/export route remain unverified until the office fit check."
+    },
+    {
+      "itemId": "70ce96f3060d9a5559954fe3438cca012d34a1540a0cfb5e35a6b38997376336:2",
+      "reason": "Source reference 000456 is present but the tenancy/period allocation behind it is not re-derived here (no reviewed correction supplied)."
+    },
+    {
+      "itemId": "70ce96f3060d9a5559954fe3438cca012d34a1540a0cfb5e35a6b38997376336:3",
+      "reason": "Unresolved: -25.00 bank charge has no property match and is not an incoming payment; retained for separate review."
+    },
+    {
+      "itemId": "batch.input.rules",
+      "reason": "Approved alias 'Synthetic Shared Payer' appears under both SYN-P01 and SYN-P02, so alias matching alone cannot decide identity; no alias-based allocation was made."
+    }
+  ],
+  "actionsPerformed": []
+}

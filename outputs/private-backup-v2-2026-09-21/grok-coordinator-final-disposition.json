@@ -1,0 +1,34 @@
+{
+  "sessionId": "01a0c43d-3292-71e1-a210-7962ddda2748",
+  "requestedModel": "grok-4.6",
+  "requestedEffort": "xhigh",
+  "recordedModel": "grok-4.6-build",
+  "originalVerdict": "changes-required",
+  "findings": [
+    {
+      "finding": 1,
+      "disposition": "Added explicit coordinator-wide restore mutex and in-run revalidation, plus concurrency test. Original same-operation deletion claim is prevented by runtime.discard active guard; actual host snapshot lease also excludes concurrent capture. No simultaneous cold apply was reproduced."
+    },
+    {
+      "finding": 2,
+      "disposition": "Added once-only lease release and recovery-required error for already ready/reviewed operations. Journal already refused ready-to-failed transition and resource runtime retains failed-close files; do not claim a reproduced deletion."
+    },
+    {
+      "finding": 3,
+      "disposition": "Accepted. Copy each yielded chunk so HTTP buffering cannot observe reuse or zeroing. Verify digest on actual send pass before stream completion, while retaining initial full validation. Regression retains all 4+ buffers after stream EOF and checks exact digest."
+    },
+    {
+      "finding": 4,
+      "disposition": "Actual host beginRestore is idempotent; assertFresh ignores its own hold, assertIdle checks work rather than held flag. Startup retry test passes. Added durable recovery-required error if publication remains unavailable; preserved sticky barrier."
+    },
+    {
+      "finding": 5,
+      "disposition": "Not a current defect: createBackupOperationStore maps capturing/sealing/checking to interrupted before exposing records. Existing journal recovery tests verify this; do not duplicate recovery in coordinator."
+    },
+    {
+      "finding": 6,
+      "disposition": "Not a current defect: v1 digest equals sha256(JSON.stringify(backup)), randomUUID returns the expected string. Actual legacy API bridge test stages, cold-applies and reopens the new workspace. Preserve uploaded data on failure rather than automatically cancelling."
+    }
+  ],
+  "verification": "102 focused tests passed after fixes; nine actual source-bootstrap/UI/restart checks passed again. Full frozen-source verification and narrow final review recorded separately."
+}

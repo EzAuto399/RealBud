@@ -1,6 +1,8 @@
 import { openWorkspaceSetup } from "@/lib/workspace-setup";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ArrowDownToLine, Building2, CalendarDays, Check, Loader2, MessageSquare, RefreshCw, User } from "lucide-react";
+import { ArrowDownToLine, Building2, CalendarDays, Check, Loader2, MessageSquare, RefreshCw, User, Bookmark, SlidersHorizontal } from "lucide-react";
+import { useWorkspaceTabs, WORKSPACE_VIEW_LABELS } from '@/lib/workspace-tabs';
+import '@/workspace-tabs.css';
 import { useStore } from "@/state/store";
 import { InitialsAvatar, MausAvatar } from "./Avatar";
 import { cn } from "@/lib/cn";
@@ -83,6 +85,7 @@ function UpdateButton() {
 
 export function Sidebar() {
   const { state, dispatch } = useStore();
+  const workspaceTabs = useWorkspaceTabs();
   const { capabilities } = useDesktopCapabilities();
   const macInset = capabilities.windowChrome === "mac-inset";
   const browser = capabilities.host.label === "Browser";
@@ -116,7 +119,7 @@ export function Sidebar() {
       )}
     >
       {icon}
-      <span className="rb-sidebar-label flex-1"><span className="block text-[14px] font-medium">{label}</span><span className="mt-0.5 block text-[12px] text-ink-muted">{{ desk: "Tasks & properties", ask: "Work with Bud", schedule: "Jobs & routines", you: "Office & settings", chat: "Conversation" }[view]}</span></span>
+      <span className="rb-sidebar-label flex-1"><span className="block text-[14px] font-medium">{label}</span><span className="mt-0.5 block text-[12px] text-ink-muted">{{ desk: "Tasks & properties", ask: "Work with Bud", schedule: "Jobs & routines", you: "Office & settings", chat: "Conversation", workspace: 'Saved views' }[view]}</span></span>
       {extra ? <span className="rb-sidebar-extra">{extra}</span> : null}
     </button>
   );
@@ -155,7 +158,7 @@ export function Sidebar() {
         </div>
       </div>
 
-      <nav className="rb-sidebar-navigation flex flex-1 flex-col gap-0.5 px-3 pt-2" aria-label="Main navigation">
+      <nav className="rb-sidebar-navigation flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-3 pt-2" aria-label="Main navigation">
         <p className="rb-sidebar-label rb-sidebar-section-label">Workspace</p>
         {item(
           "desk",
@@ -197,6 +200,10 @@ export function Sidebar() {
           undefined,
           `${doorMod}4`,
         )}
+        <div className="rb-workspace-saved-navigation mt-3 border-t border-line pt-2">
+          {workspaceTabs.data?.state?.tabs.filter(tab => tab.visible).map(tab => <button key={tab.id} aria-label={tab.label} title={tab.label} aria-current={state.activeView === 'workspace' && state.workspaceTabId === tab.id ? 'page' : undefined} className={cn('rb-sidebar-item rb-workspace-custom-tab flex min-h-11 w-full items-center gap-3 rounded px-3 py-2.5 text-left focus-visible:outline-2 focus-visible:outline-agency', state.activeView === 'workspace' && state.workspaceTabId === tab.id ? 'bg-selected text-ink' : 'text-ink hover:bg-raised/70')} onClick={() => dispatch({ type: 'showWorkspaceTab', id: tab.id })}><Bookmark size={20} className="shrink-0 text-ink-muted" aria-hidden /><span className="rb-sidebar-label min-w-0 flex-1"><span className="block break-words text-[14px] font-medium">{tab.label}</span><span className="block text-[12px] text-ink-muted">{WORKSPACE_VIEW_LABELS[tab.view.kind]}</span></span></button>)}
+          <button aria-label="Manage saved views" title="Manage saved views" aria-current={state.activeView === 'workspace' && !state.workspaceTabId ? 'page' : undefined} className="rb-sidebar-item rb-workspace-manage-view flex min-h-11 w-full items-center gap-3 rounded px-3 py-2.5 text-left text-ink hover:bg-raised/70 focus-visible:outline-2 focus-visible:outline-agency" onClick={() => dispatch({ type: 'showWorkspaceTab' })}><SlidersHorizontal size={20} className="shrink-0 text-ink-muted" aria-hidden /><span className="rb-sidebar-label text-[14px]"><span>Manage views</span>{workspaceTabs.error || workspaceTabs.data?.recovery ? <span className="block text-[12px] text-hold">Needs attention</span> : null}</span></button>
+        </div>
       </nav>
       <div className="rb-sidebar-pulse">
         <div className="px-3 pb-2"><button type="button" className="pm-control w-full border border-line" onClick={() => openWorkspaceSetup("apps")}>Connections</button></div>

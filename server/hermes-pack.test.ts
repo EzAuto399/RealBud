@@ -1,18 +1,50 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { applyPropertyPack, ensurePropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, migratePropertyProfileFromLegacyHermes, packInstalled, propertyProfileDir, propertyWorkroomReady, yamlBlock } from "./hermes-pack.ts";
+import { applyPropertyPack, mergePropertyPolicy, ensurePropertyPack, approvalsAreManual, hermesAgentDir, isInsideHermesHome, learningPolicyReady, migratePropertyProfileFromLegacyHermes, OFF_SCOPE_BUNDLED_SKILLS, PACK_DIR, packInstalled, propertyProfileDir, propertyWorkroomReady, skillScopeReady, stagedLearningSupported, workerLimitsReady, WORKER_BROWSER_POLICY, yamlBlock } from "./hermes-pack.ts";
+import { HERMES_RECOMMENDED } from "./hermes-releases.ts";
+import { releaseHome, resetRuntimeSelectionForTests, saveRuntimeSelection, selectedHermesCli } from "./hermes-runtime-selection.ts";
+import { runtimeCli } from "./hermes-paths.ts";
+import { dirname } from "node:path";
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
+import { parse, parseDocument } from "yaml";
+
+import { privateFixtureDirectory, privateFixtureRoot, writePrivateFixtureFile as writeFileSync, WINDOWS_PROFILE_TEST_OPTIONS } from "./testing/private-profile-fixture.ts";
 
 const dirs: string[] = [];
+const mkdtempSync = privateFixtureRoot;
 
 afterEach(() => {
+  resetRuntimeSelectionForTests();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-describe("applyPropertyPack", () => {
+describe("applyPropertyPack", WINDOWS_PROFILE_TEST_OPTIONS, () => {
+  it.runIf(process.platform !== "win32")("keeps newly installed and repaired policy files private", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-profile-private-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home);
+    expect(statSync(dir).mode & 0o077).toBe(0);
+    const paths = [join(home, "auth.json"), ...["SOUL.md", "config.yaml", "distribution.yaml", "profile.yaml"].map(name => join(dir, name))];
+    for (const path of paths) expect(statSync(path).mode & 0o077, path).toBe(0);
+    applyPropertyPack(home);
+    for (const path of paths) expect(statSync(path).mode & 0o077, path).toBe(0);
+  });
+  it("repairs missing learning sections as plain mappings understood by Hermes", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-profile-mapping-")); dirs.push(home);
+    const dir = propertyProfileDir(home); privateFixtureDirectory(dir);
+    const path = join(dir, "config.yaml");
+    writeFileSync(path, "model:\n  provider: retained\n");
+    applyPropertyPack(home);
+    const saved = readFileSync(path, "utf8");
+    expect(saved).not.toContain("!!omap");
+    expect(parse(saved, { version: "1.1" })).toMatchObject({
+      model: { provider: "retained" }, skills: { write_approval: true }, memory: { write_approval: true },
+      auxiliary: { background_review: { enabled: false, extra_tools: [] } },
+    });
+    expect(learningPolicyReady(home)).toBe(true);
+  });
   it("initializes a new profile once and preserves every existing profile setting on restart", () => {
     const home = mkdtempSync(join(tmpdir(), "realbud-profile-startup-")); dirs.push(home);
     const { dir, wrote } = ensurePropertyPack(home);
@@ -25,7 +57,7 @@ describe("applyPropertyPack", () => {
   });
   it("preserves an incomplete existing profile for explicit repair and establishes private root auth", () => {
     const home = mkdtempSync(join(tmpdir(), "realbud-profile-incomplete-")); dirs.push(home);
-    const dir = propertyProfileDir(home); mkdirSync(dir, { recursive: true });
+    const dir = propertyProfileDir(home); privateFixtureDirectory(dir);
     writeFileSync(join(dir, "SOUL.md"), "Existing profile");
     writeFileSync(join(dir, "config.yaml"), "{broken");
     expect(ensurePropertyPack(home).wrote).toEqual([]);
@@ -37,7 +69,7 @@ describe("applyPropertyPack", () => {
     const home = mkdtempSync(join(tmpdir(), "realbud-profile-preserve-")); dirs.push(home);
     const { dir } = applyPropertyPack(home);
     const path = join(dir, "config.yaml");
-    writeFileSync(path, readFileSync(path, "utf8") + "\nupdates:\n  check: false\nmemory:\n  user_profile: retained\nmcp_servers:\n  office:\n    enabled: false\n");
+    writeFileSync(path, readFileSync(path, "utf8").replace("memory:\n", "memory:\n  user_profile: retained\n") + "\nupdates:\n  check: false\nmcp_servers:\n  office:\n    enabled: false\n");
     const skill = join(dir, "skills", "local-skill.md"); writeFileSync(skill, "My learned procedure");
     writeFileSync(join(dir, "MEMORY.md"), "Operator preferences");
     writeFileSync(join(dir, ".env"), "TEST_KEY=retained");
@@ -57,6 +89,55 @@ describe("applyPropertyPack", () => {
     for (const text of ["{broken", "approvals:\n  mode: manual\napprovals:\n  mode: off\n"]) {
       writeFileSync(path, text); expect(() => applyPropertyPack(home)).toThrow(/kept/); expect(readFileSync(path, "utf8")).toBe(text);
     }
+  });
+  it("requires explicit repair for absent, duplicate or malformed learning gates", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-learning-policy-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home); const path = join(dir, "config.yaml");
+    const baseline = readFileSync(path, "utf8");
+    expect(learningPolicyReady(home)).toBe(true);
+    for (const text of [baseline.replace(/write_approval: true/g, "write_approval: false"), baseline + "skills:\n  write_approval: false\n", baseline + "broken: [\n"]) {
+      writeFileSync(path, text);
+      expect(learningPolicyReady(home)).toBe(false);
+      expect(propertyWorkroomReady(home)).toBe(false);
+      expect(ensurePropertyPack(home).wrote).toEqual([]);
+      expect(readFileSync(path, "utf8")).toBe(text);
+    }
+    writeFileSync(path, baseline.replace(/write_approval: true/g, "write_approval: false"));
+    applyPropertyPack(home);
+    expect(learningPolicyReady(home)).toBe(true);
+  });
+  it("enables staged background learning only for the admitted executable in this process", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-learning-release-")); dirs.push(home);
+    const commit = "345cd2b057a452236de401d3534b8502a7465e8d";
+    const cli = runtimeCli(releaseHome(home, commit));
+    mkdirSync(dirname(cli), { recursive: true }); writeFileSync(cli, "fictional executable marker");
+    saveRuntimeSelection(home, { version: 1, selected: commit, previous: null });
+    expect(stagedLearningSupported(home)).toBe(true);
+    const { dir } = applyPropertyPack(home);
+    expect(readFileSync(join(dir, "config.yaml"), "utf8")).toMatch(/background_review:\n\s+enabled: true/);
+    expect(learningPolicyReady(home)).toBe(true);
+
+    resetRuntimeSelectionForTests();
+    saveRuntimeSelection(home, { version: 1, selected: null, previous: null });
+    selectedHermesCli(home); // Cache the old worker before a staged update.
+    saveRuntimeSelection(home, { version: 1, selected: commit, previous: null });
+    expect(stagedLearningSupported(home)).toBe(false);
+    expect(learningPolicyReady(home)).toBe(false);
+    applyPropertyPack(home);
+    expect(readFileSync(join(dir, "config.yaml"), "utf8")).toMatch(/background_review:\n\s+enabled: false/);
+    expect(propertyWorkroomReady(home)).toBe(true);
+  });
+  it("keeps custom skill and memory settings while removing background tool/provider escapes", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-learning-preserve-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home); const path = join(dir, "config.yaml");
+    writeFileSync(path, "skills:\n  disabled: [sample]\n  write_approval: false\nmemory:\n  memory_enabled: false\n  write_approval: false\nauxiliary:\n  title:\n    model: retained\n  background_review:\n    enabled: true\n    provider: unreviewed\n    extra_tools: [terminal]\n");
+    applyPropertyPack(home);
+    const saved = readFileSync(path, "utf8");
+    expect(parse(saved, { version: "1.1" }).skills.disabled).toEqual(expect.arrayContaining(["sample", ...OFF_SCOPE_BUNDLED_SKILLS]));
+    expect(saved).toContain("memory_enabled: false");
+    expect(saved).toContain("model: retained");
+    expect(saved).not.toContain("unreviewed");
+    expect(learningPolicyReady(home)).toBe(true);
   });
   it("repairs bounded source-read limits without changing the model or repairing on startup", () => {
     const home = mkdtempSync(join(tmpdir(), "realbud-read-budget-")); dirs.push(home);
@@ -102,7 +183,7 @@ describe("applyPropertyPack", () => {
     const home = mkdtempSync(join(tmpdir(), "realbud-hermes-legacy-"));
     dirs.push(home);
     const profile = join(home, "profiles", "property");
-    mkdirSync(profile, { recursive: true });
+    privateFixtureDirectory(profile);
     writeFileSync(join(profile, "config.yaml"), "approvals:\n  mode: manual\nterminal:\n  backend: none\n");
     expect(approvalsAreManual(home)).toBe(true);
     expect(propertyWorkroomReady(home)).toBe(false);
@@ -116,6 +197,122 @@ describe("applyPropertyPack", () => {
     writeFileSync(configPath, readFileSync(configPath, "utf8").replace(/\n/g, "\r\n"));
     expect(propertyWorkroomReady(home)).toBe(true);
     expect(yamlBlock(readFileSync(configPath, "utf8"), "terminal")).toMatch(/backend: local/);
+  });
+
+  it("writes cheaper worker limits on install and repairs a profile from before they existed", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-worker-limits-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home); const path = join(dir, "config.yaml");
+    const fresh = readFileSync(path, "utf8");
+    expect(parse(fresh, { version: "1.1" })).toMatchObject({
+      agent: { max_turns: 60, budget_warning_ratio: 0.75 },
+      security: { redact_secrets: true, allow_lazy_installs: false },
+      tool_loop_guardrails: { loop_caps: { max_web_searches: 10, max_subagents: 4 } },
+      auxiliary: { background_review: { enabled: false, extra_tools: [] }, title_generation: { enabled: false } },
+    });
+    expect(fresh).not.toContain("!!omap");
+    expect(workerLimitsReady(home)).toBe(true);
+    expect(propertyWorkroomReady(home)).toBe(true);
+
+    // The policy shipped before these limits, plus an office's own title model.
+    const old = parseDocument(fresh, { version: "1.1" });
+    for (const at of [["agent", "budget_warning_ratio"], ["security", "allow_lazy_installs"], ["tool_loop_guardrails"], ["auxiliary", "title_generation"]]) old.deleteIn(at);
+    old.setIn(["auxiliary", "title_generation"], old.createNode({ enabled: true, model: "fictional-title-model" }));
+    const before = old.toString();
+    writeFileSync(path, before);
+    // Needs Repair, not unsafe: hands still run and startup does not rewrite it.
+    expect(approvalsAreManual(home)).toBe(true);
+    expect(learningPolicyReady(home)).toBe(true);
+    expect(workerLimitsReady(home)).toBe(false);
+    expect(propertyWorkroomReady(home)).toBe(false);
+    expect(ensurePropertyPack(home).wrote).toEqual([]);
+    expect(readFileSync(path, "utf8")).toBe(before);
+
+    applyPropertyPack(home);
+    const repaired = parse(readFileSync(path, "utf8"), { version: "1.1" });
+    expect(repaired.auxiliary.title_generation).toEqual({ enabled: false });
+    expect(workerLimitsReady(home)).toBe(true);
+    expect(propertyWorkroomReady(home)).toBe(true);
+  });
+
+  it("does not accept looser worker limits than the pack's", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-worker-limits-loose-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home); const path = join(dir, "config.yaml");
+    const baseline = readFileSync(path, "utf8");
+    const edits: Array<[string[], unknown]> = [
+      [["tool_loop_guardrails", "loop_caps", "max_web_searches"], 0], // upstream reads 0 as unlimited
+      [["tool_loop_guardrails", "loop_caps", "max_web_searches"], 50],
+      [["tool_loop_guardrails", "loop_caps", "max_subagents"], 5],
+      [["security", "allow_lazy_installs"], true],
+      [["auxiliary", "title_generation", "enabled"], true],
+      [["agent", "budget_warning_ratio"], 1],
+    ];
+    for (const [at, value] of edits) {
+      const doc = parseDocument(baseline, { version: "1.1" }); doc.setIn(at, value);
+      writeFileSync(path, doc.toString());
+      expect(workerLimitsReady(home), at.join(".")).toBe(false);
+      expect(propertyWorkroomReady(home), at.join(".")).toBe(false);
+    }
+    const tighter = parseDocument(baseline, { version: "1.1" });
+    tighter.setIn(["tool_loop_guardrails", "loop_caps", "max_web_searches"], 3);
+    writeFileSync(path, tighter.toString());
+    expect(workerLimitsReady(home)).toBe(true);
+  });
+
+  it("hides off-scope upstream skills on install and keeps document, RealBud and office skills listed", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-skill-scope-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home);
+    const disabled: string[] = parse(readFileSync(join(dir, "config.yaml"), "utf8"), { version: "1.1" }).skills.disabled;
+    expect(disabled).toEqual([...OFF_SCOPE_BUNDLED_SKILLS].sort());
+    // Mail, messaging, social posting, coding agents and desktop control stay out of Ask's index.
+    for (const name of ["himalaya", "email-inbox-triage", "google-workspace", "imessage", "xurl", "computer-use", "claude-code", "codex"]) expect(disabled).toContain(name);
+    for (const name of ["hermes-agent", "pdf", "xlsx", "docx", ...readdirSync(join(PACK_DIR, "skills"))]) expect(disabled).not.toContain(name);
+    expect(disabled.some(name => name.startsWith("realbud-"))).toBe(false);
+    // The seeding opt-out marker would also withhold pdf/xlsx/docx from a new profile.
+    expect(existsSync(join(dir, ".no-bundled-skills"))).toBe(false);
+    expect(skillScopeReady(home)).toBe(true);
+    expect(propertyWorkroomReady(home)).toBe(true);
+  });
+
+  it("asks an older profile for Repair once, then hides skills without deleting them or the office's own choices", () => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-skill-scope-old-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home); const path = join(dir, "config.yaml");
+    const old = parseDocument(readFileSync(path, "utf8"), { version: "1.1" });
+    old.setIn(["skills", "disabled"], "['sample-office-hidden']"); // `hermes config set` list literal
+    const before = old.toString();
+    writeFileSync(path, before);
+    const seeded = join(dir, "skills", "email", "himalaya");
+    privateFixtureDirectory(seeded); writeFileSync(join(seeded, "SKILL.md"), "---\nname: himalaya\ndescription: fictional seeded copy\n---\n");
+    expect(skillScopeReady(home)).toBe(false);
+    expect(propertyWorkroomReady(home)).toBe(false);
+    expect(ensurePropertyPack(home).wrote).toEqual([]);
+    expect(readFileSync(path, "utf8")).toBe(before);
+
+    applyPropertyPack(home);
+    const disabled = parse(readFileSync(path, "utf8"), { version: "1.1" }).skills.disabled;
+    expect(disabled).toEqual(expect.arrayContaining(["sample-office-hidden", ...OFF_SCOPE_BUNDLED_SKILLS]));
+    expect(readFileSync(join(seeded, "SKILL.md"), "utf8")).toContain("fictional seeded copy");
+    expect(skillScopeReady(home)).toBe(true);
+    expect(propertyWorkroomReady(home)).toBe(true);
+
+    // Re-listing one upstream skill, or a string that upstream matches by substring, needs Repair again.
+    const repaired = readFileSync(path, "utf8");
+    for (const value of [disabled.filter((name: string) => name !== "himalaya"), JSON.stringify(disabled)]) {
+      const doc = parseDocument(repaired, { version: "1.1" }); doc.setIn(["skills", "disabled"], value);
+      writeFileSync(path, doc.toString());
+      expect(skillScopeReady(home)).toBe(false);
+    }
+    const unreadable = parseDocument(repaired, { version: "1.1" });
+    unreadable.setIn(["skills", "disabled"], unreadable.createNode({ nested: "map" }));
+    writeFileSync(path, unreadable.toString());
+    expect(() => applyPropertyPack(home)).toThrow(/kept/);
+    expect(readFileSync(path, "utf8")).toBe(unreadable.toString());
+  });
+
+  it("was reviewed against the bundled skills of the release RealBud recommends", () => {
+    // 0.21.0, 0.21.2 and 0.21.3 bundle the same 58 skills. A new recommended
+    // release needs OFF_SCOPE_BUNDLED_SKILLS checked against its skills/ tree.
+    expect(["29112bef099274229cadff79cdff7bf7b99c4b77", "939e45c91d751fadd94dcd1b873ac3cb44846213", "345cd2b057a452236de401d3534b8502a7465e8d"]).toContain(HERMES_RECOMMENDED.commit);
+    expect(OFF_SCOPE_BUNDLED_SKILLS).toHaveLength(54);
   });
 
   it("does not inherit a Hermes Desktop home model into Bud's hands", () => {
@@ -160,7 +357,7 @@ describe("migratePropertyProfileFromLegacyHermes", () => {
     const home = mkdtempSync(join(tmpdir(), "realbud-hermes-mig-"));
     dirs.push(home);
     const profile = join(home, "profiles", "property");
-    mkdirSync(profile, { recursive: true });
+    privateFixtureDirectory(profile);
     writeFileSync(join(profile, "SOUL.md"), "# RealBud hands\n");
     writeFileSync(join(profile, "auth.json"), JSON.stringify({ version: 1, credential_pool: { "xai-oauth": [{}] } }));
     // Second empty home: migrate is no-op when pack already installed on root.
@@ -184,5 +381,27 @@ describe("hermesAgentDir", () => {
 describe("product fleet", () => {
   it("registers Hermes as the only built-in driver", () => {
     expect(BUILT_IN_DRIVERS.map((d) => d.driverKind)).toEqual(["hermesAgent"]);
+  });
+});
+
+describe("worker browser surface", () => {
+  it("owns the browser keys that would give Hermes its own browser and keeps the office's other browser settings", () => {
+    const office = "browser:\n  headed: true\n  backend: \"\"\n  cloud_provider: camofox\n  cdp_url: http://127.0.0.1:9222\n  engine: lightpanda\n  use_real_profile: true\n";
+    const merged = mergePropertyPolicy(office, readFileSync(join(PACK_DIR, "config.yaml"), "utf8"));
+    const doc = parseDocument(merged, { version: "1.1" });
+    expect(doc.toJS().browser).toEqual({ headed: true, ...WORKER_BROWSER_POLICY });
+    expect(WORKER_BROWSER_POLICY).toEqual({ backend: "off", cloud_provider: "local", cdp_url: "", engine: "chrome", use_real_profile: false });
+  });
+
+  it.each(Object.keys(WORKER_BROWSER_POLICY))("reads a profile whose browser.%s was changed as needing Repair", key => {
+    const home = mkdtempSync(join(tmpdir(), "realbud-worker-browser-")); dirs.push(home);
+    const { dir } = applyPropertyPack(home); const path = join(dir, "config.yaml");
+    expect(workerLimitsReady(home)).toBe(true);
+    const doc = parseDocument(readFileSync(path, "utf8"), { version: "1.1" });
+    doc.deleteIn(["browser", key]);
+    writeFileSync(path, doc.toString());
+    expect(workerLimitsReady(home)).toBe(false);
+    applyPropertyPack(home);
+    expect(workerLimitsReady(home)).toBe(true);
   });
 });

@@ -1,0 +1,131 @@
+{
+  "before": {
+    "config": {
+      "instances": "88c79e0b405c66a4c9264cfd0c6cdcf7300521d81f12c595c6e0533e57d28afb",
+      "composio": "200303f1d43049271fc2ef29ce33d5ff60177937e65b5b4bdfa3b9c7b59d1c95"
+    },
+    "workerFingerprint": "a27058e5106ef73c1fb3c6859de6b43acb97f600fbc0b468d52fcf9a1eb4abef",
+    "catalog": [
+      {
+        "id": "ba15717f-d334-44fd-a808-9a3db8784b47",
+        "operation": "morning-review",
+        "revision": "720238e9f93e92a8841b5cad3872c2dbe6e4af4138f0da6d1af5b308816de7ea",
+        "label": "Morning priorities"
+      },
+      {
+        "id": "45b3678e-6e28-4bb5-a654-7d30f397e289",
+        "operation": "prepare-recipe",
+        "revision": "bcf77ec2434c1e3fe2cd8f951d0e3dd1def4a1e4600962faffe283f8cd514f1c",
+        "label": "Fictional briefing"
+      }
+    ],
+    "authority": "8d1bc08418df4f16941711cf0f7ab251fec3ec38ec35357e0267e5a56db117e8",
+    "remote": [
+      {
+        "id": "90fb268d-401c-4507-85ad-9fb213cf9c3d",
+        "phase": "confirmed"
+      }
+    ],
+    "agencyWorkflows": [
+      {
+        "id": "bank-references",
+        "ready": false,
+        "evidenceDigest": "4a3d61a8a2a62fb999616b053f158afbf9e4e2c00127f9dd010fc91a27d15f10"
+      },
+      {
+        "id": "bills-calendar",
+        "ready": false,
+        "evidenceDigest": "1f32a95dc6df43dd610c37232ebb64da570588e018f1dc69f63ca85d13d2e808"
+      },
+      {
+        "id": "morning-priorities",
+        "ready": true,
+        "evidenceDigest": "1a8c2d4bd39679a939928968ed4f854b69cb6126db9eb109929996a447a08247"
+      }
+    ]
+  },
+  "afterSourceCheck": {
+    "config": {
+      "instances": "88c79e0b405c66a4c9264cfd0c6cdcf7300521d81f12c595c6e0533e57d28afb",
+      "composio": "200303f1d43049271fc2ef29ce33d5ff60177937e65b5b4bdfa3b9c7b59d1c95"
+    },
+    "workerFingerprint": "a27058e5106ef73c1fb3c6859de6b43acb97f600fbc0b468d52fcf9a1eb4abef",
+    "catalog": [
+      {
+        "id": "ba15717f-d334-44fd-a808-9a3db8784b47",
+        "operation": "morning-review",
+        "revision": "720238e9f93e92a8841b5cad3872c2dbe6e4af4138f0da6d1af5b308816de7ea",
+        "label": "Morning priorities"
+      },
+      {
+        "id": "45b3678e-6e28-4bb5-a654-7d30f397e289",
+        "operation": "prepare-recipe",
+        "revision": "bcf77ec2434c1e3fe2cd8f951d0e3dd1def4a1e4600962faffe283f8cd514f1c",
+        "label": "Fictional briefing"
+      }
+    ],
+    "authority": "8d1bc08418df4f16941711cf0f7ab251fec3ec38ec35357e0267e5a56db117e8",
+    "remote": [
+      {
+        "id": "90fb268d-401c-4507-85ad-9fb213cf9c3d",
+        "phase": "confirmed"
+      }
+    ],
+    "agencyWorkflows": [
+      {
+        "id": "bank-references",
+        "ready": false,
+        "evidenceDigest": "4a3d61a8a2a62fb999616b053f158afbf9e4e2c00127f9dd010fc91a27d15f10"
+      },
+      {
+        "id": "bills-calendar",
+        "ready": false,
+        "evidenceDigest": "1f32a95dc6df43dd610c37232ebb64da570588e018f1dc69f63ca85d13d2e808"
+      },
+      {
+        "id": "morning-priorities",
+        "ready": true,
+        "evidenceDigest": "1a8c2d4bd39679a939928968ed4f854b69cb6126db9eb109929996a447a08247"
+      }
+    ]
+  },
+  "after": {
+    "config": {
+      "instances": "88c79e0b405c66a4c9264cfd0c6cdcf7300521d81f12c595c6e0533e57d28afb",
+      "composio": "200303f1d43049271fc2ef29ce33d5ff60177937e65b5b4bdfa3b9c7b59d1c95"
+    },
+    "workerFingerprint": "a27058e5106ef73c1fb3c6859de6b43acb97f600fbc0b468d52fcf9a1eb4abef",
+    "catalog": [
+      {
+        "id": "45b3678e-6e28-4bb5-a654-7d30f397e289",
+        "operation": "prepare-recipe",
+        "revision": "bcf77ec2434c1e3fe2cd8f951d0e3dd1def4a1e4600962faffe283f8cd514f1c",
+        "label": "Fictional briefing"
+      }
+    ],
+    "authority": "8d1bc08418df4f16941711cf0f7ab251fec3ec38ec35357e0267e5a56db117e8",
+    "remote": [
+      {
+        "id": "90fb268d-401c-4507-85ad-9fb213cf9c3d",
+        "phase": "revoked"
+      }
+    ],
+    "agencyWorkflows": [
+      {
+        "id": "bank-references",
+        "ready": false,
+        "evidenceDigest": "4a3d61a8a2a62fb999616b053f158afbf9e4e2c00127f9dd010fc91a27d15f10"
+      },
+      {
+        "id": "bills-calendar",
+        "ready": false,
+        "evidenceDigest": "61b1911d604e71bbe672c27707255b2f4513dd477ea861e980b18f6e9d326e11"
+      },
+      {
+        "id": "morning-priorities",
+        "ready": false,
+        "evidenceDigest": "5cdc19bd82c1e9c6aa9ec9f27fabeec4a96bf123ac58f75032ee42a15a881664"
+      }
+    ]
+  }
+}

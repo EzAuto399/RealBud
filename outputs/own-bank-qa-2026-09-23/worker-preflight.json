@@ -1,0 +1,14 @@
+{
+  "status": 200,
+  "cli": {
+    "installed": true,
+    "compatible": false,
+    "matchesPin": false
+  },
+  "ready": false,
+  "pack": {
+    "installed": true,
+    "workroomReady": true
+  },
+  "detail": "This worker release has not been checked with RealBud. Supported releases are 0.20.3 (2026.8.16.2), 0.21.0 (2026.8.31), 0.21.3 (2026.9.14), 0.21.2 (2026.9.11); the fallback pin is v0.20.3."
+}

@@ -1,0 +1,59 @@
+
+> realbud-site@0.1.0 test /Users/yoda/projects/RealBud/website
+> node --experimental-strip-types --test lib/*.test.mjs
+
+✔ persists an enquiry with a receipt, never contact data in the response (25.235334ms)
+✔ simultaneous and lost-response retries save one record and return the same receipt (2.5025ms)
+✔ invalid, cross-origin, bot and oversized requests never reach storage (1.041334ms)
+✔ database outages do not acknowledge receipt or leak errors (1.52225ms)
+✔ bounds abuse atomically while permitting an existing receipt to be retried (1.585041ms)
+✔ SQL-shaped text remains data, with no public record retrieval (0.644875ms)
+✔ www origin may post to the apex API (0.472459ms)
+✔ pairing credentials are random, bounded and validated (5.651042ms)
+✔ reports require explicit readiness and bounded version text (0.195916ms)
+✔ old, missing and future check-ins never establish current readiness (4.21975ms)
+✔ billing readers use the server mapping and only approved filters are forwarded (19.393875ms)
+✔ forged customer, role, client and duplicate filters cannot change account authority (1.451791ms)
+✔ unlinked customers, missing configuration and insecure remote URLs refuse before transport (1.012375ms)
+✔ wrong upstream customer, role and period cannot masquerade as scoped analytics (0.682417ms)
+✔ empty query defaults to Brisbane month and upstream errors never forward private diagnostics (1.3515ms)
+✔ decimal formatting keeps exact large amounts and token counts without floating point (21.595292ms)
+✔ missing agreed resale price stays unknown instead of exposing a wholesale amount (0.435875ms)
+✔ platform customer comes from server mapping, never a browser-supplied ID (1.160708ms)
+✔ billing and checkout preserve trusted customer scope and read-only roles (16.837125ms)
+✔ billing checks the returned customer and projects exact money without supplier fields or headers (1.77075ms)
+✔ billing and document errors redact upstream diagnostics and invalid roles never call the gateway (0.80925ms)
+✔ oversized or invalid upstream billing bodies fail closed without being forwarded (3.411375ms)
+✔ checkout exposes only admitted Square sandbox destinations without forwarding upstream fields (0.391291ms)
+✔ missing mapping and insecure remote endpoints refuse without making a request (0.133459ms)
+✔ invoice documents use the authenticated account mapping and remain available to billing readers (0.3765ms)
+✔ documents reject traversal, external invoice URLs and missing mappings before fetch (0.247667ms)
+✔ upstream cross-customer rejection remains a private error and JSON cannot masquerade as an invoice (0.220792ms)
+✔ live billing and checkout admit only production Square destinations, preserving customer scope (0.513167ms)
+✔ person RPC validates exact authoritative shape and safe fields (0.78625ms)
+✔ trusted issuer comes from deployment config with no path or browser data (0.156375ms)
+✔ login sends verified provider identity and rejects remapped backend output (0.464ms)
+✔ unprovisioned identity is distinguished only by the exact trusted RPC error (0.1955ms)
+✔ person gate rejects legacy, expired, future and different issuer without any RPC (16.2385ms)
+✔ every person gate refreshes current identity and observes revocation, roles and epoch (1.229834ms)
+✔ service-only login RPC uses a separate admin client after OTP changes the SDK session (33.057541ms)
+✔ session round-trip and rejects tampering (4.040958ms)
+✔ person cookie preserves stable binding and seven day authentication age (4.910292ms)
+✔ signed but malformed or downgraded person cookies fail closed (5.9575ms)
+✔ only two typed operations and reviewed bounded metadata are publishable (0.9045ms)
+✔ immutable envelopes have exact identity, explicit expiry and no source content (0.433208ms)
+✔ claim and event schemas reject actor, credential and execution argument substitution (0.156792ms)
+✔ safe integer cursors and exact submit schemas (0.082917ms)
+✔ canonical serialization is key-order independent and preserves meaningful content (0.120125ms)
+✔ request bodies are bounded independently of Content-Length including chunked input (13.351125ms)
+✔ bearer parsing hashes only exact private tokens and public errors never reflect database text (0.881959ms)
+✔ status parser disallows freeform result payloads (0.099291ms)
+✔ account history target labels remain bounded metadata with exact opaque identities (0.1985ms)
+ℹ tests 47
+ℹ suites 0
+ℹ pass 47
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 144.422584

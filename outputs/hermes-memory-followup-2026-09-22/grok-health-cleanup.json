@@ -1,0 +1,10 @@
+{
+  "at": "2026-09-21T17:36:25Z",
+  "ownedLeaderPid": 60877,
+  "requestedSession": "d8da12b8-de4d-41da-9c03-fb86c4f95a47",
+  "remainingOwnedProcesses": [],
+  "drained": true,
+  "globalConfigUnchanged": true,
+  "isolatedHomeRemoved": true,
+  "scope": "Exact probe process group/session/wrapper only; no unrelated Grok processes modified."
+}

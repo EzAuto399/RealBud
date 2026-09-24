@@ -1,0 +1,39 @@
+
+/Users/yoda/projects/RealBud/website/app/account/access-notice.tsx
+  8:5  error  Do not use an `<a>` element to navigate to `/sign-in/`. Use `<Link />` from `next/link` instead. See: https://nextjs.org/docs/messages/no-html-link-for-pages  @next/next/no-html-link-for-pages
+
+/Users/yoda/projects/RealBud/website/app/account/installations/page.tsx
+  20:78  error  Do not use an `<a>` element to navigate to `/sign-in/`. Use `<Link />` from `next/link` instead. See: https://nextjs.org/docs/messages/no-html-link-for-pages  @next/next/no-html-link-for-pages
+
+/Users/yoda/projects/RealBud/website/app/account/invoices/page.tsx
+  5:10  warning  'SUPPORT_EMAIL' is defined but never used  @typescript-eslint/no-unused-vars
+
+/Users/yoda/projects/RealBud/website/app/account/limits/page.tsx
+  4:10  warning  'SUPPORT_EMAIL' is defined but never used  @typescript-eslint/no-unused-vars
+
+/Users/yoda/projects/RealBud/website/app/account/page.tsx
+   4:10  warning  'SUPPORT_EMAIL' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     @typescript-eslint/no-unused-vars
+  52:51  error    Error: Cannot call impure function during render
+
+`Date.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component happens to re-render. (https://react.dev/reference/rules/components-and-hooks-must-be-pure#components-and-hooks-must-be-idempotent).
+
+/Users/yoda/projects/RealBud/website/app/account/page.tsx:52:51
+  50 |   const cap = formatAudFromNano(usage?.monthlyCapNanoAud);
+  51 |   const included =
+> 52 |     usage?.includedUntil && usage.includedUntil > Date.now()
+     |                                                   ^^^^^^^^^^ Cannot call impure function
+  53 |       ? new Date(usage.includedUntil).toLocaleDateString("en-AU", {
+  54 |           timeZone: "Australia/Brisbane",
+  55 |         })  react-hooks/purity
+
+/Users/yoda/projects/RealBud/website/app/account/rates/page.tsx
+  4:10  warning  'SUPPORT_EMAIL' is defined but never used  @typescript-eslint/no-unused-vars
+
+/Users/yoda/projects/RealBud/website/app/account/support/page.tsx
+  20:9  warning  'account' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+/Users/yoda/projects/RealBud/website/app/account/usage/page.tsx
+  5:10  warning  'SUPPORT_EMAIL' is defined but never used  @typescript-eslint/no-unused-vars
+
+✖ 9 problems (3 errors, 6 warnings)
+

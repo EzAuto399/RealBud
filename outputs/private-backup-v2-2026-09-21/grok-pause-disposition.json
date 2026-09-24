@@ -1,0 +1,46 @@
+{
+  "sessionId": "01a0c371-a52d-7b33-90df-c21a0b89169f",
+  "requestedModel": "grok-4.6",
+  "requestedReasoningEffort": "xhigh",
+  "actualModels": [
+    "grok-4.6-build"
+  ],
+  "stopReason": "end_turn",
+  "numTurns": 1,
+  "usage": {
+    "input_tokens": 74889,
+    "cache_read_input_tokens": 0,
+    "cache_creation_input_tokens": 0,
+    "output_tokens": 46283,
+    "reasoning_tokens": 43431,
+    "total_tokens": 121172
+  },
+  "scope": "Read-only supplied-source review; no model tool actions or delegated edits",
+  "findings": [
+    {
+      "finding": "P1 shutdown resumes held channel work before cursor mutation",
+      "disposition": "Confirmed and fixed independently while review ran. Gate assertAdmission rechecks host restore/shutdown before work(); Telegram shutdown cursor regression test passes."
+    },
+    {
+      "finding": "P2 dispatch lifetime is shorter than model turn",
+      "disposition": "Quiet-workspace admission is deliberate. assertPrivateBackupIdle rejects an already busy bot or job before pause and rechecks after handler drain; no claim that snapshot waits for an entire model turn. Keep full v2 writer-lifetime review as integration gate."
+    },
+    {
+      "finding": "P2 Discord ACK/channel timestamp is ungated",
+      "disposition": "Not a portable business snapshot writer: channel-discord.json is excluded from filesAt/capture. Keep transport ACK responsive; actual Desk decision is gated and fingerprint/pairing revalidated. Source comment added."
+    },
+    {
+      "finding": "P2 background batch recovery / remote flush / office link",
+      "disposition": "Confirmed narrower batch recovery race: parent batch status is paused while waiting for readiness (no queued parent status). Added reversible canRecover before and after awaited readiness; test preserves bytes and attempts, then resumes. Terminal BatchService.stop must not be used. Remote flush and office heartbeat write excluded auxiliary files."
+    },
+    {
+      "finding": "P3 concurrent channel release",
+      "disposition": "Gate is admission/drain, not a global worker mutex. Telegram and Slack polling await their handler; socket events can overlap and require a separate durable arrival/dispatch audit. No FIFO or exactly-once delivery claim for a socket process crash."
+    }
+  ],
+  "remaining": [
+    "Validate every v2 coordinator writer boundary and HTTP allowlist on integration",
+    "Review socket-mode/gateway arrival durability and overlapping dispatch separately",
+    "Legacy portfolio work-batches.json is outside current portable backup scope; establish explicit coverage before customer rollout"
+  ]
+}

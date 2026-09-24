@@ -1,0 +1,4 @@
+
+> realbud@0.1.19 typecheck /Users/yoda/projects/RealBud
+> tsc -b && tsc -p tsconfig.server.json
+

@@ -1,14 +1,19 @@
+import { withWorkerProfile } from "./hermes-profile.ts";
+import { applyPropertyPack, PACK_DIR } from "./hermes-pack.ts";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { HERMES_PIN } from "./hermes-pin.ts";
 import type { LedgerFacts } from "./desk.ts";
-import { parseLedgerFacts, tryHermesLedger, tryHermesPing, uncoveredPropertyIds, workerMissReason } from "./hermes-hands.ts";
+import { LEDGER_SKILL, parseLedgerFacts, tryHermesLedger, tryHermesPing, uncoveredPropertyIds, workerMissReason } from "./hermes-hands.ts";
 import { seedVault } from "./vault.ts";
 import { HermesAgentDriver } from "./drivers/acp/hermes.ts";
 import { fakeHermes } from "./testing/fake-hermes.ts";
+import { WINDOWS_PROFILE_TEST_OPTIONS } from "./testing/private-profile-fixture.ts";
+import { setWorkerModelAccessSnapshot } from "./hermes-runtime-env.ts";
+import { setWorkerModelGrant } from "./worker-model-access.ts";
 
 const fixture: LedgerFacts[] = [
   { propertyId: "prop-oak", daysSinceDue: 3, rentLanded: false, levyPaid: false, daysSinceCourtesy: null },
@@ -18,11 +23,16 @@ const dirs: string[] = [];
 
 function stubHermes(...args: Parameters<typeof fakeHermes>) {
   const fake = fakeHermes(...args);
+  fake.root = realpathSync(fake.root);
+  fake.dir = realpathSync(fake.dir);
   dirs.push(fake.dir);
   return fake;
 }
 
 afterEach(() => {
+  setWorkerModelAccessSnapshot({});
+  setWorkerModelGrant({ state: "none" });
+  vi.unstubAllEnvs();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -40,6 +50,12 @@ describe("workerMissReason", () => {
     expect(workerMissReason("", "Error: insufficient_quota (402)")).toMatch(/Billing or credits exhausted/);
     expect(workerMissReason("", "429 Too Many Requests")).toMatch(/rate-limiting/);
     expect(workerMissReason("", "No model configured for profile property")).toMatch(/no model is connected/);
+  });
+
+  it("names a pack skill the profile does not have instead of echoing the worker's error", () => {
+    expect(workerMissReason("", "ValueError: Unknown skill(s): morning-arrears")).toBe(
+      "Bud's pack skill is missing; re-apply Bud's safeguards on You",
+    );
   });
 
   it("keeps an unknown failure honest but bounded to one line", () => {
@@ -123,6 +139,21 @@ describe("tryHermesLedger (fake pinned CLI)", () => {
     expect(attempt.detail).toMatch(/answered with 1 ledger rows/);
   });
 
+  it("preloads the shipped morning-arrears skill with -s; the readiness ping loads none", async () => {
+    const ledger = stubHermes("[]");
+    await tryHermesLedger(["prop-oak"], { cli: ledger.script, root: ledger.dir });
+    const args = readFileSync(ledger.argsFile, "utf8").split("\n");
+    const at = args.indexOf("-s");
+    expect(at, `no -s in: ${args.join(" ")}`).toBeGreaterThan(args.indexOf("chat"));
+    expect(args[at + 1]).toBe(LEDGER_SKILL);
+    // Hermes resolves the preloaded name against the profile's installed skills.
+    expect(readFileSync(join(PACK_DIR, "skills", LEDGER_SKILL, "SKILL.md"), "utf8")).toMatch(new RegExp(`^---\\r?\\nname: ${LEDGER_SKILL}\\r?\\n`));
+
+    const ping = stubHermes("OK");
+    await tryHermesPing({ cli: ping.script, root: ping.dir });
+    expect(readFileSync(ping.argsFile, "utf8").split("\n")).not.toContain("-s");
+  });
+
   it("misses cleanly when the worker answers chatter", async () => {
     const { dir, script } = stubHermes("Sure, here are the rows I would check!");
     const attempt = await tryHermesLedger(["prop-oak"], { cli: script, root: dir });
@@ -163,12 +194,82 @@ describe("tryHermesPing (fake pinned CLI)", () => {
     expect(ping.elapsedMs).toBeGreaterThanOrEqual(0);
   });
 
+  it.each(["ok", "OK.", "OK!", "oK.", "\n\u001b[32mOK.\u001b[0m\nsession_id: fictional-session\n"])(
+    "accepts a clear confirmation with harmless formatting: %j",
+    async (answer) => {
+      const { dir, script } = stubHermes(answer);
+      expect(await tryHermesPing({ cli: script, root: dir })).toMatchObject({ ok: true });
+    },
+  );
+
+  it.each(["NOT OK", "OK but the connection failed", "OK\nHere is an explanation.", "Here is an explanation.\nOK", "", " \n", "OK?"])(
+    "rejects a negative, ambiguous, explanatory or empty answer: %j",
+    async (answer) => {
+      const { dir, script } = stubHermes(answer);
+      expect(await tryHermesPing({ cli: script, root: dir })).toMatchObject({
+        ok: false,
+        detail: expect.stringContaining("not with OK"),
+      });
+    },
+  );
+
+  it("does not accept a confirmation from a worker that failed", async () => {
+    const { dir, script } = stubHermes("OK.", 1, "Billing or credits exhausted: HTTP 402");
+    expect(await tryHermesPing({ cli: script, root: dir })).toMatchObject({
+      ok: false,
+      detail: expect.stringContaining("Billing or credits exhausted"),
+    });
+  });
+
+  it("explains a revoked key even when the supported CLI exits successfully", async () => {
+    const { dir, script } = stubHermes('HTTP 401: key_revoked', 0);
+    expect(await tryHermesPing({ cli: script, root: dir })).toMatchObject({
+      ok: false, detail: expect.stringContaining("access was withdrawn"),
+    });
+  });
+
+  it("accepts the supported worker's exact startup notice before its confirmation", async () => {
+    const notice = "  ⚠ tirith security scanner enabled but not available — command scanning will use pattern matching only\r\n";
+    const { dir, script } = stubHermes(`${notice}OK.\n`);
+    expect(await tryHermesPing({ cli: script, root: dir })).toMatchObject({ ok: true });
+  });
+
+  it("gives distinct explicit checks different identities without changing a worker retry's prompt", async () => {
+    const prompts: string[] = [];
+    for (let n = 0; n < 2; n++) {
+      const { dir, script, argsFile } = stubHermes("OK");
+      expect((await tryHermesPing({ cli: script, root: dir })).ok).toBe(true);
+      const args = readFileSync(argsFile, "utf8").split("\n");
+      const prompt = args[args.indexOf("-q") + 1]!;
+      expect(prompt).toMatch(/^Readiness check [a-f0-9-]{36}\. Reply with exactly OK/);
+      prompts.push(prompt);
+    }
+    expect(new Set(prompts).size).toBe(2);
+  });
+
+  it("refuses an overlapping readiness check before launching a second worker and releases the gate", async () => {
+    const { dir, script } = stubHermes("OK");
+    const first = tryHermesPing({ cli: script, root: dir });
+    expect(await tryHermesPing({ cli: script, root: dir })).toMatchObject({ ok: false, elapsedMs: 0, detail: expect.stringContaining("still running") });
+    expect((await first).ok).toBe(true);
+    expect((await tryHermesPing({ cli: script, root: dir })).ok).toBe(true);
+  });
+
+  it.each([
+    "⚠ tirith security scanner enabled but not available — command scanning will use pattern matching only",
+    "Warning: authentication failed\nOK",
+    "The security scanner says NOT OK\nOK",
+  ])("does not treat an arbitrary warning or a notice alone as an answer: %j", async (answer) => {
+    const { dir, script } = stubHermes(answer);
+    expect(await tryHermesPing({ cli: script, root: dir })).toMatchObject({ ok: false });
+  });
+
   // Per-seat isolation: the whole point of the office host is that two seats never
   // share one Hermes profile, because a profile carries one memory, skills store
   // and session database. These pin that execution resolves the profile it was
   // given rather than always the shared base — the regression would be silent,
   // since every seat would keep working while quietly sharing each other's state.
-  describe("per-seat worker profiles", () => {
+  describe("per-seat worker profiles", WINDOWS_PROFILE_TEST_OPTIONS, () => {
     const profileArg = (argsFile: string): string => {
       const args = readFileSync(argsFile, "utf8").split("\n");
       const at = args.indexOf("--profile");
@@ -184,6 +285,7 @@ describe("tryHermesPing (fake pinned CLI)", () => {
 
     it("runs the seat's own profile once a seat is given", async () => {
       const { dir, script, argsFile } = stubHermes("OK");
+      withWorkerProfile("dana", () => applyPropertyPack(dir));
       await tryHermesPing({ cli: script, root: dir, memberKey: "dana" });
       expect(profileArg(argsFile)).toBe(`${HERMES_PIN.profile}-dana`);
     });
@@ -192,6 +294,7 @@ describe("tryHermesPing (fake pinned CLI)", () => {
       const seen: string[] = [];
       for (const seat of ["dana", "sam"]) {
         const { dir, script, argsFile } = stubHermes("OK");
+        withWorkerProfile(seat, () => applyPropertyPack(dir));
         await tryHermesPing({ cli: script, root: dir, memberKey: seat });
         seen.push(profileArg(argsFile));
       }
@@ -201,14 +304,17 @@ describe("tryHermesPing (fake pinned CLI)", () => {
 
     it("resolves the same seat to the same profile every time", async () => {
       const first = stubHermes("OK");
+      withWorkerProfile("dana", () => applyPropertyPack(first.dir));
       await tryHermesPing({ cli: first.script, root: first.dir, memberKey: "dana" });
       const second = stubHermes("OK");
+      withWorkerProfile("dana", () => applyPropertyPack(second.dir));
       await tryHermesPing({ cli: second.script, root: second.dir, memberKey: "dana" });
       expect(profileArg(first.argsFile)).toBe(profileArg(second.argsFile));
     });
 
     it("carries the seat through the ledger read too, not just the ping", async () => {
       const { dir, script, argsFile } = stubHermes(JSON.stringify(fixture));
+      withWorkerProfile("sam", () => applyPropertyPack(dir));
       await tryHermesLedger(["prop-oak"], { cli: script, root: dir, memberKey: "sam" });
       expect(profileArg(argsFile)).toBe(`${HERMES_PIN.profile}-sam`);
     });
@@ -217,6 +323,7 @@ describe("tryHermesPing (fake pinned CLI)", () => {
       // A seat key reaches the profile name, which is a directory name. It must be
       // sanitised, so a caller cannot climb out of the profiles directory.
       const { dir, script, argsFile } = stubHermes("OK");
+      withWorkerProfile("../../etc/passwd", () => applyPropertyPack(dir));
       await tryHermesPing({ cli: script, root: dir, memberKey: "../../etc/passwd" });
       const profile = profileArg(argsFile);
       expect(profile).not.toContain("/");
@@ -229,12 +336,14 @@ describe("tryHermesPing (fake pinned CLI)", () => {
       // through the resolver's own unit test.
       const memberId = "3fa85f64-5717-4562-b3fc-2c963f66afa6";
       const { dir, script, argsFile } = stubHermes("OK");
+      withWorkerProfile(memberId, () => applyPropertyPack(dir));
       await tryHermesPing({ cli: script, root: dir, memberKey: memberId });
       expect(profileArg(argsFile)).toBe(`${HERMES_PIN.profile}-${memberId}`);
     });
 
     it("a blank seat is no seat, so a desk that never resolved one keeps the base", async () => {
       const { dir, script, argsFile } = stubHermes("OK");
+      withWorkerProfile("", () => applyPropertyPack(dir));
       await tryHermesPing({ cli: script, root: dir, memberKey: "" });
       expect(profileArg(argsFile)).toBe(HERMES_PIN.profile);
     });
@@ -284,9 +393,9 @@ describe.skipIf(process.platform === "win32")("hermes CLI argv contract", () => 
       // record argv without word-splitting (absolute paths: the child's cwd
       // is the caller's, not this directory)
       `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Hermes Agent v0.20.3 (2026.8.16.2)"; exit 0; fi\n` +
-        `printf "%s\\n" "$1|$2|$3|$4|$5" > "${head}"\n` +
-        `printf "%s" "$6" > "${promptFile}"\n` +
-        `printf "%s|%s\\n" "$7" "$8" > "${tail}"\n` +
+        `printf "%s\\n" "$1|$2|$3|$4|$5|$6|$7" > "${head}"\n` +
+        `printf "%s" "$8" > "${promptFile}"\n` +
+        `printf "%s|%s\\n" "$9" "\${10}" > "${tail}"\n` +
         `printf '%s' '[{"propertyId":"prop-oak","daysSinceDue":3,"rentLanded":false,"levyPaid":false,"daysSinceCourtesy":null}]'\n`,
     );
     chmodSync(script, 0o755);
@@ -296,7 +405,8 @@ describe.skipIf(process.platform === "win32")("hermes CLI argv contract", () => 
 
     // the contract: any change to these flags breaks the worker seam and
     // must be deliberate (pin bump), never accidental
-    expect(readFileSync(head, "utf8").trim()).toBe(`--profile|${HERMES_PIN.profile}|chat|-Q|-q`);
+    // -s preloads the shipped pack skill; the prompt naming it does not load it.
+    expect(readFileSync(head, "utf8").trim()).toBe(`--profile|${HERMES_PIN.profile}|chat|-Q|-s|morning-arrears|-q`);
     expect(readFileSync(tail, "utf8").trim()).toBe("--max-turns|6");
     const prompt = readFileSync(promptFile, "utf8");
     expect(prompt).toContain("Morning arrears check. Use skill morning-arrears.");
@@ -346,4 +456,75 @@ it("holds an interrupted installation before pinging or reading property facts",
   writeFileSync(join(root, ".realbud-bootstrap.json"), JSON.stringify({ version: 1, pending: true, childPid: null }));
   expect(await tryHermesPing({ root, cli: "must-not-be-spawned" })).toMatchObject({ ok: false, detail: expect.stringContaining("setup did not finish") });
   expect(await tryHermesLedger(["fictional-property"], { root, cli: "must-not-be-spawned" })).toMatchObject({ rows: null, detail: expect.stringContaining("setup did not finish") });
+});
+
+it("does not borrow a configured base pack for an unconfigured member", async () => {
+  const { dir, script, argsFile } = stubHermes("OK");
+  const result = await tryHermesPing({ cli: script, root: dir, memberKey: "new-member" });
+  expect(result).toMatchObject({ ok: false, detail: expect.stringContaining("not set up") });
+  expect(() => readFileSync(argsFile, "utf8")).toThrow();
+});
+
+
+describe("one-shot managed model access", () => {
+  const grantKey = "fictional-managed-model-key";
+  const baseUrl = "https://fictional-modelvia.invalid/v1";
+  function probe(answer: string) {
+    const fake = stubHermes(answer);
+    const script = join(fake.dir, "managed-env-probe.mjs");
+    const evidence = join(fake.dir, "env-evidence.json");
+    writeFileSync(script, [
+      "#!/usr/bin/env node",
+      'import { writeFileSync } from "node:fs";',
+      'if (process.argv.includes("--version")) { process.stdout.write("Hermes Agent v0.20.3 (2026.8.16.2)\\n"); process.exit(0); }',
+      `writeFileSync(${JSON.stringify(evidence)}, JSON.stringify({`,
+      `  keyMatchesGrant: process.env.OPENAI_API_KEY === ${JSON.stringify(grantKey)},`,
+      '  keyPresent: Boolean(process.env.OPENAI_API_KEY),',
+      '  baseUrl: process.env.OPENAI_BASE_URL ?? null,',
+      '  unrelatedCredentialPresent: Boolean(process.env.OPENROUTER_API_KEY || process.env.COMPOSIO_KEY),',
+      '  args: process.argv.slice(2),',
+      '}));',
+      `process.stdout.write(${JSON.stringify(answer)});`,
+    ].join("\n"));
+    chmodSync(script, 0o755);
+    return { ...fake, script, evidence };
+  }
+  const run = (kind: "ping" | "ledger", test: ReturnType<typeof probe>) => kind === "ping"
+    ? tryHermesPing({ cli: test.script, root: test.dir })
+    : tryHermesLedger(["prop-oak"], { cli: test.script, root: test.dir });
+
+  it.each(["ping", "ledger"] as const)("gives the %s child only its managed key after stripping ambient credentials", async kind => {
+    const test = probe(kind === "ping" ? "OK" : JSON.stringify(fixture));
+    vi.stubEnv("OPENAI_API_KEY", "fictional-ambient-key");
+    vi.stubEnv("OPENROUTER_API_KEY", "fictional-unrelated-key");
+    vi.stubEnv("COMPOSIO_KEY", "fictional-unrelated-connector");
+    setWorkerModelGrant({ state: "active", baseUrl, keyId: "fictional-key-id", spendCapLabel: "fictional-cap" });
+    setWorkerModelAccessSnapshot({ OPENAI_API_KEY: grantKey, OPENAI_BASE_URL: baseUrl });
+    const result = await run(kind, test);
+    const evidence = JSON.parse(readFileSync(test.evidence, "utf8"));
+    expect(evidence).toMatchObject({ keyMatchesGrant: true, keyPresent: true, baseUrl, unrelatedCredentialPresent: false });
+    expect(JSON.stringify(evidence.args)).not.toContain(grantKey);
+    expect(JSON.stringify(result)).not.toContain(grantKey);
+    expect(process.env.OPENAI_API_KEY).toBe("fictional-ambient-key");
+    expect(kind === "ping" ? "ok" in result && result.ok : "rows" in result && result.rows).toBeTruthy();
+  });
+
+  it.each(["ping", "ledger"] as const)("does not retain the managed key for a %s child after disconnect", async kind => {
+    const test = probe(kind === "ping" ? "OK" : JSON.stringify(fixture));
+    vi.stubEnv("OPENAI_API_KEY", "fictional-ambient-key");
+    vi.stubEnv("OPENAI_BASE_URL", "");
+    setWorkerModelAccessSnapshot({ OPENAI_API_KEY: grantKey, OPENAI_BASE_URL: baseUrl });
+    setWorkerModelAccessSnapshot({});
+    await run(kind, test);
+    expect(JSON.parse(readFileSync(test.evidence, "utf8"))).toMatchObject({ keyMatchesGrant: false, keyPresent: false });
+    expect(process.env.OPENAI_API_KEY).toBe("fictional-ambient-key");
+  });
+
+  it.each(["ping", "ledger"] as const)("holds withdrawn model access before spawning the %s child", async kind => {
+    const test = probe(kind === "ping" ? "OK" : JSON.stringify(fixture));
+    setWorkerModelAccessSnapshot({});
+    setWorkerModelGrant({ state: "withdrawn" });
+    expect(await run(kind, test)).toMatchObject({ detail: expect.stringMatching(/withdrawn/i) });
+    expect(() => readFileSync(test.evidence, "utf8")).toThrow();
+  });
 });

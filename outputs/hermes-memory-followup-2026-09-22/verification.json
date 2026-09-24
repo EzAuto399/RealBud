@@ -1,0 +1,147 @@
+{
+  "at": "2026-09-21T18:03:39.297907+00:00",
+  "status": "local-source-and-mac-package-verified-windows-and-live-gates-retained",
+  "scope": "Signed staff closure for interrupted memory proposals, missing-evidence holds and private profile/config provisioning",
+  "source": {
+    "manifest": "source-final.json",
+    "files": 1072,
+    "digest": "3aec9bcb0a2771aa18ba316fda24fd7be55d21171c3ebe98cae01d9fdf2494b5",
+    "unchangedDuringFinalSuite": true,
+    "testOnlyChangeSincePackage": [
+      "server/index.test.ts"
+    ]
+  },
+  "fullSuite": {
+    "receipt": "full-suite-final.json",
+    "files": 344,
+    "passed": 4408,
+    "failed": 0,
+    "skipped": 143,
+    "durationSeconds": 319.55,
+    "nativeHermesOptIn": true,
+    "runtime": "/Users/yoda/.realbud/hermes/runtimes/345cd2b057a452236de401d3534b8502a7465e8d-cfb3f08a9ee7/hermes-agent"
+  },
+  "overlappingFocusedChecks": {
+    "profile": {
+      "passed": 180,
+      "skipped": 6,
+      "receipt": "profile-verification.json"
+    },
+    "hostAndNativeBeforeFinalAncestry": {
+      "passed": 232,
+      "log": "host-native-final.log"
+    },
+    "nativeAndActualHTTPAfterAncestry": {
+      "passed": 60,
+      "log": "native-after-ancestry.log"
+    },
+    "client": {
+      "passed": 38,
+      "note": "Included in final full suite; recovery and normal review client tests."
+    },
+    "pythonRecovery": {
+      "passed": 25,
+      "receipt": "../hermes-memory-windows-journal-2026-09-22/proposals-interrupted-ancestry-final-receipt.json"
+    },
+    "pythonPOSIXFaults": {
+      "passed": 15,
+      "note": "Included in ancestry receipt."
+    },
+    "pythonFakeWindowsIntegration": {
+      "passed": 25,
+      "note": "Selected fictional IO with actual admitted Hermes parsing; not native Windows."
+    }
+  },
+  "gui": {
+    "source": {
+      "passed": true,
+      "checks": 13,
+      "receipt": "gui-source/receipt.json",
+      "runtime": {
+        "node": "24.19.0",
+        "electron": null
+      },
+      "cleanup": true,
+      "desktopAndMobileInspected": true
+    },
+    "packaged": {
+      "passed": true,
+      "checks": 16,
+      "receipt": "gui-packaged/receipt.json",
+      "runtime": {
+        "node": "24.18.1",
+        "electron": "43.4.0"
+      },
+      "cleanup": true,
+      "desktopAndMobileInspected": true
+    }
+  },
+  "builds": {
+    "typecheck": "typecheck-verified.log",
+    "packagePreparation": "package-prepare.log",
+    "electronSyntax": "electron-syntax.log",
+    "package": "package.log",
+    "smoke": "mac-smoke.log",
+    "helperParity": "helper-parity.json",
+    "passed": true
+  },
+  "package": {
+    "path": "/Users/yoda/projects/RealBud/outputs/hermes-memory-followup-2026-09-22/package/mac-arm64/RealBud.app",
+    "signed": false,
+    "installedApplicationChanged": false,
+    "manifest": "package-manifest.json",
+    "files": 2419,
+    "symlinks": 14,
+    "digest": "c597b054062e8515b1254497a4115b59d8d5b3e8f11db63c277976bf8db67a4e",
+    "unchangedAfterChecks": true,
+    "allFiveHelpersMatchSourceBuiltAndManifest": true
+  },
+  "grok": {
+    "requestedModel": "grok-4.7",
+    "reasoningEffort": "xhigh",
+    "health": {
+      "passed": true,
+      "actualModel": "grok-4.7-build",
+      "elapsedSeconds": 9.12,
+      "receipt": "grok-health-run.json"
+    },
+    "closureContractReview": {
+      "complete": false,
+      "timedOut": true,
+      "deadlineSeconds": 180,
+      "receipt": "grok-closure-review-run.json",
+      "findings": null
+    },
+    "processesReaped": true,
+    "globalConfigUnchanged": true,
+    "toolIsolationVerified": false
+  },
+  "preservedNegativeEvidence": [
+    {
+      "receipt": "full-suite.json",
+      "passed": 4362,
+      "failed": 4,
+      "skipped": 185,
+      "resolution": "Canonicalized the index API fixture temporary path; no profile guard weakened. All51 index checks and subsequent full suite passed."
+    },
+    {
+      "log": "host-native.log",
+      "resolution": "Corrected test expectation from recovery-required to the exact conflict taxonomy; byte preservation assertions retained."
+    },
+    {
+      "log": "typecheck-final.log",
+      "resolution": "Added explicit declaration for the test-only mjs crash fixture."
+    },
+    {
+      "receipt": "../hermes-memory-windows-journal-2026-09-22/proposals-interrupted-ancestry-before.json",
+      "resolution": "Reproduced and fixed missing evidence directories being recreated. Existing journals now require intact evidence parents."
+    }
+  ],
+  "limits": [
+    "Actual Windows execution and production memory platform admission remain unverified; no Windows CI job triggered.",
+    "Windows startup uses sequential synchronous ACL probes; real latency is unmeasured. .env and config are separate file operations.",
+    "Source and packaged GUI use fictional profiles, grants and ACP peers; no real provider or customer account was used.",
+    "Unsigned Mac package is separate from installed-device/keychain acceptance, signed distribution and office soak.",
+    "Managed provider/connector/subscription deployment, two-computer office operation and live Austin CSV/Gmail/REI acceptance remain external gates."
+  ]
+}

@@ -1,0 +1,66 @@
+{
+  "at": "2026-09-21T17:01:30.189846+00:00",
+  "status": "bounded-model-review-timed-out",
+  "grokReview": {
+    "requestedModel": "grok-4.7",
+    "reasoningEffort": "xhigh",
+    "authenticatedCliUsed": true,
+    "requestCount": 1,
+    "maxTurns": 1,
+    "tools": [],
+    "webEnabled": false,
+    "subagentsEnabled": false,
+    "hardTimeoutSeconds": 1800,
+    "elapsedSeconds": 1800.03,
+    "exitCode": -15,
+    "qualifiedResultAvailable": false,
+    "structuredOutputAvailable": false,
+    "approval": null,
+    "findings": null,
+    "restarted": false
+  },
+  "localFindings": [
+    {
+      "issue": "Raw host-lock enter/exit errors could escape the protocol boundary",
+      "status": "fixed-by-root-and-verified",
+      "evidence": "review47-local-checks.json",
+      "fixVerification": "review47-lock-fix-check.json",
+      "checksPassed": 4
+    },
+    {
+      "issue": "Deletion comment assumed own-handle close proved completed removal",
+      "status": "contract-fixed-by-root",
+      "currentContract": "deletion-requested; caller must reconcile name absence and journal before terminal cleanup",
+      "actualWindowsExecution": "not-performed"
+    }
+  ],
+  "sourceScope": {
+    "reviewedSnapshots": {
+      "server/helpers/hermes-memory-windows.py": {
+        "sha256": "46ae82871600ce6a0003092b05dad3557ebbad7c4e601ef77b57fac21021d695",
+        "bytes": 10673
+      },
+      "server/helpers/hermes-memory-windows-native.py": {
+        "sha256": "61ffd50da933fe09021b04616dc5c7d8161bc0edbd2c5e225d397c25c9e0a71a",
+        "bytes": 32311
+      }
+    },
+    "currentHashes": {
+      "server/helpers/hermes-memory-windows.py": "e838beb06d5c5f132db4e1f5158f97d72b4e7dd90e55eb4a03a7e42f280c8bfa",
+      "server/helpers/hermes-memory-windows-native.py": "b3a9d5bb67b5c2cc2f920b046b1472044204bc872ebef8113cf13d19d8e86213"
+    },
+    "postSnapshotDiff": "review47-post-snapshot.diff",
+    "grokDidNotReviewPostSnapshotChanges": true
+  },
+  "productionEditsByReviewer": false,
+  "platformHoldRemoved": false,
+  "WindowsExecuted": false,
+  "releaseSignoff": false,
+  "remainingReviewGap": "The requested independent Grok 4.7 implementation review did not return a result within its bounded attempt. Local inspection and owner tests are separate evidence.",
+  "nativeWindowsGates": [
+    "Actual supported Windows HANDLE/ABI/ACL/sharing/NTFS behavior",
+    "Namespace and signed-journal integration including deferred deletion and ambiguous mutation reconciliation",
+    "Real process-kill recovery through publication and cleanup boundaries",
+    "Windows package execution; separate evidence for any power-loss claim"
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "at": "2026-09-21T07:43:26.047Z",
+  "layer": "actual local HTTP app; fictional connector and deterministic CLI; not live Gmail/LLM/Windows proof",
+  "checks": [
+    "Actual HTTP agency setup, scoped connector acquisition and three deterministic worker batches produce45 persistent source-linked items; manual run leaves schedule disabled; same request is not repeated",
+    "Real API enforces stale edits, preserves staff decisions on rescan, reads back office timezone, pauses/requires re-review after settings change and denies revoked/unreviewed sources",
+    "Actual application renders45 fixture conversations at desktop and390px without page errors or horizontal overflow"
+  ],
+  "scanCalls": 2,
+  "workerBatches": [
+    20,
+    20,
+    5
+  ],
+  "errors": []
+}

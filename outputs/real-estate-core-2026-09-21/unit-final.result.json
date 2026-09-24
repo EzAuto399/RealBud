@@ -1,0 +1,15 @@
+{
+  "command": "PATH=/Users/yoda/.nvm/versions/node/v24.19.0/bin:$PATH pnpm test",
+  "exitCode": 0,
+  "passed": 3152,
+  "skipped": 115,
+  "failed": 0,
+  "total": 3267,
+  "filesPassed": 260,
+  "filesSkipped": 15,
+  "filesTotal": 275,
+  "durationSeconds": 163.21,
+  "log": "outputs/real-estate-core-2026-09-21/unit-final.log",
+  "separateCompanyReceipt": "outputs/real-estate-core-2026-09-21/company-final/result.json",
+  "proof": "Local application and Electron tests with synthetic fixtures. Environmental skipped company suites separately exercised against disposable real PostgreSQL. No live accounts, deployment, paid-provider or installed-device claim."
+}

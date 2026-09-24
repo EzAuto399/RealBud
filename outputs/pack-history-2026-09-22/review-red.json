@@ -1,0 +1,28 @@
+{
+  "observedAtLocal": "2026-09-22T05:33:04+10:00",
+  "command": "PATH=/Users/yoda/.nvm/versions/node/v24.19.0/bin:$PATH pnpm exec vitest run server/customer-pack-archive.review.test.ts --reporter=dot",
+  "exitCode": 1,
+  "testFilesFailed": 1,
+  "testsFailed": 2,
+  "durationSeconds": 1.69,
+  "testFile": "server/customer-pack-archive.review.test.ts",
+  "testSha256AtRed": "e9b8f58824904998a0b6d77cc2f6584198f878aaa851d8b74dd4d411d88212d7",
+  "findings": [
+    {
+      "name": "missing recent generation after committed archive",
+      "failure": "AssertionError: expected [Function] to throw an error",
+      "assertionLine": 52,
+      "reproduction": "Perform real upgrades to generation 9 and archive 1 through 6, then remove recent generation 7 from the private journal while leaving referenced archive bytes and counts intact. Complete archive-set backup admission returns without an error.",
+      "proofScope": "Journal-corruption admission regression; no customer data or same-user attacker claim."
+    },
+    {
+      "name": "partial atomic archive temporary file survives completed resume",
+      "failure": "AssertionError: promise rejected Error: Unrecognized workflow pack archive storage needs recovery before backup. instead of resolving",
+      "assertionLine": 73,
+      "productionFailureLocation": "server/private-backup-capture.ts:205",
+      "reproduction": "Before actual archive write, seed a private sibling with exact original writePrivateJson UUID .tmp naming and partial JSON bytes; throw to simulate process death, cold reopen, resume successfully, then call real privateBackupTargetPaths.",
+      "proofScope": "Seeded partial-write simulation of prior unshipped UUID-temp implementation, not an actual child crash or power-loss test. Final production deterministic-pending writer needs its own matching regression."
+    }
+  ],
+  "productionSourceHashesAtRed": "Not collected; source was under active worker editing. Evidence is the observed command output, unchanged test source and named boundaries, not a frozen production build."
+}

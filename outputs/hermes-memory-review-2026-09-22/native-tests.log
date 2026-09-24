@@ -1,0 +1,21 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ❯ server/hermes-memory-review.native.test.ts (23 tests | 1 failed) 2334ms
+     × waits for an unresponsive owned process to exit after its decision deadline 315ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/hermes-memory-review.native.test.ts > native Hermes memory reviews in isolated fictional profiles > waits for an unresponsive owned process to exit after its decision deadline
+Error: ENOENT: no such file or directory, open '/private/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/realbud-memory-test-oU0aG1/property/fixture-child.pid'
+ ❯ server/hermes-memory-review.native.test.ts:131:24
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 22 passed (23)
+   Start at  01:01:33
+   Duration  2.49s (transform 58ms, setup 19ms, import 71ms, tests 2.33s, environment 0ms)
+

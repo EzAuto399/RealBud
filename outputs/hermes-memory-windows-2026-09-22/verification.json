@@ -1,0 +1,127 @@
+{
+  "at": "2026-09-21T17:01:46.023911+00:00",
+  "status": "local-checks-complete-windows-memory-held",
+  "sourceHead": "5856140c6ba49f53e79a7edbf01800e099b53e10",
+  "sourceInputs": {
+    "server/helpers/hermes-memory-windows-native.py": "b3a9d5bb67b5c2cc2f920b046b1472044204bc872ebef8113cf13d19d8e86213",
+    "server/helpers/hermes-memory-windows.py": "e838beb06d5c5f132db4e1f5158f97d72b4e7dd90e55eb4a03a7e42f280c8bfa",
+    "server/helpers/hermes-memory-review.py": "b155b54f11fe69d7e9658f64710492a519aa8463b4005c28c202f1629ada5437",
+    "server/helpers/hermes-memory-proposals.py": "b66ed9a9539551f5a053372ebdf7fec40a2a47c5f67e33383feafb609d739e8e",
+    "scripts/testing/hermes-memory-windows-native.py": "27934423fd6ed25c4700807d6dc044a054848f55e9914de3f35cac90bc92b0aa",
+    "scripts/testing/hermes-memory-windows-abi.py": "24bb5ba5732a7781de608a72b48c1f1ec2c8d6598fd19b8237b51d0cb2f52ec6",
+    "scripts/testing/hermes-memory-windows-policy.py": "308ea076346c7516ecbcf76feedd53b98f397a74dbeae72fc1c3b05f8c09188b",
+    "scripts/testing/hermes-memory-windows-protocol.py": "e50b39ff5fa25accf33dde2c44b2df159d8b0d9a51545db265b5007b649eeaea",
+    "scripts/bundle-company-deps.mjs": "56ba0a1d5fb9f3874a8e77e082b37f119853b4a1e69015f8f0c3392452a6a628",
+    "scripts/test-windows-installer.ps1": "65d7457b37a787a6802e81c0fe736f24c7458302269e27900ee7c238ea1734cc",
+    ".github/workflows/ci.yml": "2165d31dd7229ef1c806a2e585154790af7e0de6e6513f81598f3ffa14d6bfd5"
+  },
+  "sourceDigest": "bc4a004e8442b486cfdb36189305d72b84d7aaa2e210230e50577412be6f31cf",
+  "checks": {
+    "portableAdapter": {
+      "passed": 47,
+      "abi": 12,
+      "policyAndCombinedProtocol": 14,
+      "protocolAndProductionHolds": 21
+    },
+    "portableHarnessControl": {
+      "passed": 7,
+      "receipt": "acceptance-portable-control-checks.json"
+    },
+    "hostAndPackaging": {
+      "passed": 108,
+      "initialOptInHttpSkipped": 3,
+      "log": "host-regression.log"
+    },
+    "finalNativeAndHttp": {
+      "passed": 39,
+      "nativeHermes": 36,
+      "actualHttpWithFictionalAcp": 3,
+      "log": "posix-http-final.log"
+    },
+    "typecheck": {
+      "passed": true,
+      "log": "typecheck.log"
+    },
+    "serverBuild": {
+      "passed": true,
+      "log": "build-server-final.log"
+    },
+    "exactBuiltHelpers": {
+      "passed": true,
+      "count": 4
+    },
+    "builtHelperResolution": {
+      "passed": 2,
+      "receipt": "built-helper-resolution.json"
+    },
+    "yamlParse": {
+      "passed": true,
+      "files": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/package-win.yml"
+      ]
+    },
+    "nativeWindows": {
+      "executed": false,
+      "requiredCases": 12,
+      "macGuardExit": 2,
+      "receipt": "acceptance-macos-final-v2-unsupported.json"
+    },
+    "independentLocalLockBoundary": {
+      "passed": 4,
+      "receipt": "review47-lock-fix-check.json"
+    }
+  },
+  "release": {
+    "windowsMemoryHoldRemoved": false,
+    "freshAppPackaged": false,
+    "installedAppChanged": false,
+    "remoteCiTriggered": false,
+    "liveCustomerOrProviderChecks": false
+  },
+  "limits": [
+    "Portable bindings are not native Win32/NTFS proof.",
+    "Windows journal/native-lock integration remains local implementation work.",
+    "PowerShell installer additions have not run on this Mac.",
+    "No full-suite rerun after the prior broad checkpoint.",
+    "Broad independent storage model review timed out without structured output; no approval is inferred."
+  ],
+  "sourceInputsUnchangedSinceLocalVerification": true,
+  "reviews": [
+    {
+      "requestedModel": "grok-4.6",
+      "reasoningEffort": "xhigh",
+      "state": "completed-proposal-selective-guards-adopted",
+      "receipt": "native-grok-proposal-receipt.json"
+    },
+    {
+      "requestedModel": "grok-4.6",
+      "reasoningEffort": "xhigh",
+      "state": "completed-design-review",
+      "receipt": "persistence-final-receipt.json"
+    },
+    {
+      "requestedModel": "grok-4.7",
+      "reasoningEffort": "xhigh",
+      "actualModel": "grok-4.7-build",
+      "state": "completed-four-harness-findings-fixed",
+      "receipt": "acceptance-final-v2-verification.json"
+    },
+    {
+      "requestedModel": "grok-4.7",
+      "reasoningEffort": "xhigh",
+      "state": "timed-out-no-findings-or-approval",
+      "elapsedSeconds": 1800.03,
+      "exitCode": -15,
+      "receipt": "review47-run.json"
+    }
+  ],
+  "documentation": {
+    "docs/GOAL-PROMPT.md": "86ab898c12f890d2c0923810ac8a7aba5d97d20113d119044e8f5d518f1ead24",
+    "docs/HERMES-WINDOWS-MEMORY-STORAGE-2026-09-22.md": "7efe1ef760aa4df981f42a532cb488e8c3ff0cc900fd3942b733ca88903e1bfb",
+    "docs/REAL-ESTATE-CORE-2026-09-21.md": "8071d56fa4bc95851f2254e152d9952678f9c05e78eb499f6d27fc8fb31663f2",
+    "docs/BUSINESS-DESKTOP-2026-09-21.md": "5f9a255e7abef95a8ab40e8bc3476d6451a102a87dda6be7033fce620e3cddfd",
+    "docs/CUSTOMER-WORKSPACE-IMPLEMENTATION-2026-09-21.md": "f68e5d9f06e9b930afb9deef003811e400fe08170ca01a921ed35a4cf7a8be46",
+    "docs/END-STATE.md": "d47244f61daa5c8be139eefd82227c904aff2954ad35bd6df50f1b8bedebff88"
+  }
+}

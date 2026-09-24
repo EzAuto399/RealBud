@@ -1,0 +1,26 @@
+PASS Rendered member request and exact owner review start one actual Hermes preparation; only assigned case context reaches the fictional provider and the case remains held for human review.
+PASS Actual service restart preserves the result and original run ID without a second provider request.
+PASS Mobile result view has no horizontal overflow; no uncaught browser errors.
+PASS Actual owner withdrawal aborts in-flight department preparation; a late provider response is not accepted and retrying factual delivery does not invoke the worker again.
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: {"error":"The office could not confirm this action. Keep the saved request and check the connection.","code":"department_work_held"}
+
+503 !== 200
+
+    at app (file:///Users/yoda/projects/RealBud/scripts/qa-department-work.mjs:38:45)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async file:///Users/yoda/projects/RealBud/scripts/qa-department-work.mjs:132:55
+    at async eventually (file:///Users/yoda/projects/RealBud/scripts/qa-department-work.mjs:26:57)
+    at async file:///Users/yoda/projects/RealBud/scripts/qa-department-work.mjs:132:17 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 503,
+  expected: 200,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.19.0

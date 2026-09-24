@@ -23,7 +23,7 @@ export function DeskBud({ item, connected, ready, working, availability, onAsk, 
   return <section className="desk-bud" aria-label="Bud assistant">
     <header className="desk-bud-heading">
       <MausAvatar color="green" state={!connected ? "sleeping" : working ? "working" : ready ? "idle" : "alerting"} size={40} label="Bud" trackPointer={false} />
-      <div><h2>Bud</h2><p role="status">{!connected ? "Reconnecting to this Mac" : working ? "Working" : availability?.label ?? (ready ? "Bud ready" : "Setup needed")}</p></div>
+      <div><h2>Bud</h2><p role="status">{!connected ? "Reconnecting to RealBud" : working ? "Working" : availability?.label ?? (ready ? "Bud ready" : "Setup needed")}</p></div>
     </header>
     {availability && !availability.ready && <p className="text-[12px] text-ink-muted">{availability.detail}</p>}
     <p className="desk-bud-intro">Work through a case together.</p>

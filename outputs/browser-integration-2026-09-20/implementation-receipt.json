@@ -1,0 +1,43 @@
+{
+  "scope": "Local unsigned macOS arm64 build; no personal browser or bank account accessed",
+  "sourceHead": "5856140c6ba49f53e79a7edbf01800e099b53e10",
+  "workingTreeHasOtherExistingChanges": true,
+  "files": {
+    "shared/browser.ts": "34a387dadb1b0680fc10e2e222c7c9d5aafcad8cb937c12fd947be00fad90e82",
+    "server/browser-runtime.ts": "61dc5fa0a603bd605514d2050dc43a6f0ae42815ab056c37e76cbea0362cf521",
+    "server/browser-broker.ts": "6554774356c7bfcefb38b41be700060af7ee1c1b5dfce0a0588a36a5b65753ec",
+    "server/index.ts": "f9a2762570422d1c5c79a7b508055599b44a06221c526e266335994483fdd8c9",
+    "server/drivers/acp/core.ts": "e64829cbaa10181560fcea7fc38bb17d87f5da0597b854905c22236be79b873a",
+    "server/contracts.ts": "7c97be2a75d669c9f742cf731e317d6325ca738e4e3444143c9a9cd48db764c0",
+    "server/human-handoffs.ts": "0edf49b37d641963dc3907318571cc678f2f3e57f442f0e77987bdb33f91c246",
+    "server/session-auth.ts": "5705810613a74eaa782c16f6c7e9a241bbf7c50bd024eca1dde7b4eb03ba8a92",
+    "src/components/you/BrowserCard.tsx": "28e3b1d564b8b3bbeee264eae6e1d2ed27cfe01a0cb101a0e12024da2914e9f4",
+    "src/components/HumanHandoffPanel.tsx": "b0d985c79a330d0560f8218f5ede427e1b5c75901c97c67494995faf5d0026be",
+    "src/components/YouPage.tsx": "2c604e95292f505f669e617ce0b2f72f85d9be82b109f2b732257ed8f44c6cf6",
+    "server/attended-run.ts": "b64e5140c7af3fc4d3ddfa6f31ac7afd9d4df07c13524af5762395ffbb3e5adb",
+    "server/ask-book.ts": "ecfb76eaeb42b6a2192f193929f877e4624455692970be744ead29a393b0653e",
+    "pack/property/SOUL.md": "79fa105a2e33d234cee0fe9ec69a3889874218f100ff3aae961001646eed4025",
+    "scripts/prepare-browser.mjs": "42b5850f175a3336eef23ffff24c649a72b230586b73b613ad4a824d780d58c1",
+    "electron-builder.yml": "23f738d4e894b3640495883ad022de55ec3c6d91e14b3234f7b05367c792b0d6",
+    "package.json": "7316e9f5acd203ba823ae1a9aead7f16c3111a08bd627df89ca282cd81477a67"
+  },
+  "validation": {
+    "fullSuitePassed": 2695,
+    "fullSuiteSkipped": 101,
+    "finalFocusedPassed": 174,
+    "typecheck": true,
+    "uiBuild": true,
+    "compiledServerBuild": true,
+    "realBrowserFictionalTest": true,
+    "signedOrDeployed": false,
+    "packagedServerUiPassed": true,
+    "bundledHelperHashVerified": true,
+    "compiledFilesMatchPackage": [
+      "browser-runtime.js",
+      "browser-broker.js",
+      "index.js",
+      "drivers/acp/core.js",
+      "human-handoffs.js"
+    ]
+  }
+}

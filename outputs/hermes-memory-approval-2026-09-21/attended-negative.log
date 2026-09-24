@@ -1,0 +1,113 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ❯ server/attended-run.test.ts (44 tests | 5 failed) 3132ms
+     × writes a portal rule from Allow and auto-allows the next same request 243ms
+     × never lets a fenced browser allow become a session grant 50ms
+     × opens a submit ask with the exact card summary 57ms
+     × enqueues a ready-beside-you run on the clock and starts it by runId 233ms
+     × rejects a second attend while one is in flight or Bud is busy 48ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/attended-run.test.ts > attended run route (fake ACP) > writes a portal rule from Allow and auto-allows the next same request
+AssertionError: expected 400 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 400
+
+ ❯ server/attended-run.test.ts:542:7
+    540|         })
+    541|       ).status,
+    542|     ).toBe(200);
+       |       ^
+    543|     const rules = await api("GET", "/api/rules");
+    544|     expect(rules.body.rules.some((row: { key: string }) => row.key ===…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  server/attended-run.test.ts > attended run route (fake ACP) > never lets a fenced browser allow become a session grant
+AssertionError: expected 409 to be 202 // Object.is equality
+
+- Expected
++ Received
+
+- 202
++ 409
+
+ ❯ server/attended-run.test.ts:586:77
+    584|       reply: "opening the portal",
+    585|     });
+    586|     expect((await api("POST", "/api/recipes/att-scope/attend", {})).st…
+       |                                                                             ^
+    587|     await waitFor(async () => {
+    588|       const bots = await api("GET", "/api/bots");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  server/attended-run.test.ts > attended run route (fake ACP) > opens a submit ask with the exact card summary
+AssertionError: expected 409 to be 202 // Object.is equality
+
+- Expected
++ Received
+
+- 202
++ 409
+
+ ❯ server/attended-run.test.ts:620:78
+    618|       reply: "waiting on the form",
+    619|     });
+    620|     expect((await api("POST", "/api/recipes/att-submit/attend", {})).s…
+       |                                                                              ^
+    621|     await waitFor(async () => {
+    622|       const bots = await api("GET", "/api/bots");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  server/attended-run.test.ts > attended run route (fake ACP) > enqueues a ready-beside-you run on the clock and starts it by runId
+AssertionError: expected 409 to be 202 // Object.is equality
+
+- Expected
++ Received
+
+- 202
++ 409
+
+ ❯ server/attended-run.test.ts:680:28
+    678|
+    679|     const started = await api("POST", "/api/recipes/att-ready/attend",…
+    680|     expect(started.status).toBe(202);
+       |                            ^
+    681|     expect(started.body.run).toMatchObject({ id: queued.id, status: "r…
+    682|     await waitFor(async () => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+ FAIL  server/attended-run.test.ts > attended run route (fake ACP) > rejects a second attend while one is in flight or Bud is busy
+AssertionError: expected 409 to be 202 // Object.is equality
+
+- Expected
++ Received
+
+- 202
++ 409
+
+ ❯ server/attended-run.test.ts:723:79
+    721|       reply: "still working",
+    722|     });
+    723|     expect((await api("POST", "/api/recipes/att-overlap/attend", {})).…
+       |                                                                               ^
+    724|     const again = await api("POST", "/api/recipes/att-overlap/attend",…
+    725|     expect(again.status).toBe(409);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 39 passed (44)
+   Start at  18:33:36
+   Duration  3.35s (transform 112ms, setup 18ms, import 133ms, tests 3.13s, environment 0ms)
+

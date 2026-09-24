@@ -1,0 +1,78 @@
+{
+  "checkedAt": "2026-09-23T02:03:56.725Z",
+  "layer": "deployed authenticated read-only preflight",
+  "checks": [
+    {
+      "path": "/v1/operator/status",
+      "status": 200,
+      "elapsedMs": 1636,
+      "summary": {
+        "revision": "a8938b16f07c14d213db7e56fe14654c2dc197e5",
+        "keyServingEnabled": true,
+        "routingMode": "jev-typesafe",
+        "semanticJevEnabled": true,
+        "customerPaymentMode": "disabled",
+        "catalogue": {
+          "checkedAt": "2026-09-23T02:03:56.305Z",
+          "expiringWithinMs": 86400000,
+          "state": "approved",
+          "counts": {
+            "approved": 2,
+            "expiring": 0,
+            "expired": 0
+          },
+          "routes": [
+            {
+              "model": "hosted-canary-fast",
+              "provider": "openrouter",
+              "configuration": "fictional-hosted-qualification-v1",
+              "approvedUntil": "2026-09-29T21:39:27.000Z",
+              "msUntilExpiry": 588930695,
+              "state": "approved",
+              "reviewReference": "owner-directed-renewal-2026-09-23",
+              "approvedBy": "ops-2026-09-23",
+              "approvedAt": 1790113236765,
+              "contextLength": 262144,
+              "contextLengthDefaulted": false,
+              "maxOutputTokens": 256,
+              "bootstrapped": false
+            },
+            {
+              "model": "hosted-canary-smart",
+              "provider": "openrouter",
+              "configuration": "fictional-hosted-qualification-v1",
+              "approvedUntil": "2026-09-29T21:39:27.000Z",
+              "msUntilExpiry": 588930695,
+              "state": "approved",
+              "reviewReference": "owner-directed-renewal-2026-09-23",
+              "approvedBy": "ops-2026-09-23",
+              "approvedAt": 1790113237378,
+              "contextLength": 163840,
+              "contextLengthDefaulted": false,
+              "maxOutputTokens": 256,
+              "bootstrapped": false
+            }
+          ],
+          "retired": [],
+          "version": 5,
+          "source": "ledger"
+        }
+      }
+    },
+    {
+      "path": "/v1/operator/projects",
+      "status": 200,
+      "elapsedMs": 270,
+      "summary": {
+        "projectCount": 5,
+        "activeProjectCount": 0,
+        "historicalCanaryActive": false
+      }
+    }
+  ],
+  "limits": [
+    "GET requests only; no inference",
+    "No project/key/catalogue or billing changes",
+    "No usable inference key established"
+  ]
+}

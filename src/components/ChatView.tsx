@@ -6,7 +6,7 @@ import { useChannelHandoff } from "@/lib/channel-handoff";
 import { usePhoneConnections } from "@/lib/phone-connections";
 import { phoneContinuePair, phonePaired } from "@/lib/phone-label";
 import { ChannelMark } from "./ChannelMark";
-import { Component, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Component, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import {
   AlertTriangle,
   ArrowDown,
@@ -30,7 +30,6 @@ import {
   useStore,
   useStreaming,
   formatTime,
-  messageVersions,
   visibleMessages,
   type Bot,
   type InstanceInfo,
@@ -52,6 +51,7 @@ import { OptionCard } from "./OptionCard";
 import { ApprovalCard } from "./ApprovalCard";
 import { Composer } from "./Composer";
 import { pendingApprovals } from "./PendingApproval";
+import { BrowserTaskCard, useBrowserTasks, type BrowserTaskAction, type BrowserTaskBrowser, type BrowserTaskCardView } from "./BrowserTaskCard";
 import { ModelPicker } from "./ModelPicker";
 import { TaskPicker } from "./TaskPicker";
 import { ReactionBar, ReactionChips } from "./Reactions";
@@ -68,6 +68,7 @@ import { AskReadiness } from "./AskReadiness";
 import { AskContext } from "./AskContext";
 import { hasUnfinishedJobDraft, repeatableJobDescription } from "@/lib/work-continuation";
 import { EMPTY_JOB_DRAFT } from "@/lib/job-plan";
+import { CHAT_HISTORY_PAGE, chatHistoryWindow, indexChatMessageVersions, pageChatHistory, type ChatHistoryWindow, type ChatMessageVersions } from '@/lib/chat-history';
 
 /** Long user messages collapse behind a fade so pasted walls of text don't
  * bury the conversation; bots get full markdown. */
@@ -304,6 +305,8 @@ function Bubble({
   phoneHandoffBusy,
   productAsk = false,
   versionFocus,
+  indexedVersions,
+  onVersionFocus,
 }: {
   bot: Bot;
   message: Message;
@@ -320,6 +323,8 @@ function Bubble({
   phoneHandoffBusy?: boolean;
   productAsk?: boolean;
   versionFocus?: RefObject<string | null>;
+  indexedVersions?: ChatMessageVersions;
+  onVersionFocus?: (id: string) => void;
 }) {
   const { dispatch } = useStore();
   const user = message.role === "user";
@@ -350,11 +355,12 @@ function Bubble({
   }
 
   // "‹ 2/3 ›" under an edited message — every fork it belongs to
-  const versions = user ? messageVersions(bot, message) : [message];
-  const versionIndex = versions.findIndex((v) => v.id === message.id);
+  const versions = indexedVersions?.versions ?? [message];
+  const versionIndex = indexedVersions?.index ?? 0;
   const switchTo = (v: Message | undefined) => {
     if (v && !bot.busy) {
       if (productAsk && versionFocus) versionFocus.current = v.id;
+      onVersionFocus?.(v.id);
       dispatch({ type: "switchBranch", botId: bot.id, messageId: v.id });
     }
   };
@@ -775,6 +781,15 @@ const MessagesList = memo(function MessagesList({
   onAskApprove,
   onAskSetSite,
   onAskConnectSetup,
+  browserTasks,
+  browserTaskBrowser,
+  browserTaskActing,
+  browserTaskError,
+  onBrowserTask,
+  onBrowserTaskConnect,
+  scrollRef,
+  readingEarlier,
+  onReadEarlier,
 }: {
   bot: Bot;
   messages: Message[];
@@ -808,9 +823,57 @@ const MessagesList = memo(function MessagesList({
   onAskApprove?: (recipeId: string, attach: boolean) => void;
   onAskSetSite?: (recipeId: string) => void;
   onAskConnectSetup?: (connectLabel?: string) => void;
+  /** Ask one-off browser task cards, keyed by the reply that offered each. */
+  browserTasks?: Record<string, BrowserTaskCardView>;
+  browserTaskBrowser?: BrowserTaskBrowser;
+  browserTaskActing?: string | null;
+  browserTaskError?: { id: string; text: string } | null;
+  onBrowserTask?: (id: string, action: BrowserTaskAction, site?: string) => void;
+  onBrowserTaskConnect?: () => void;
+  scrollRef: RefObject<HTMLDivElement | null>;
+  readingEarlier: boolean;
+  onReadEarlier: () => void;
 }) {
   const askEmpty = productAsk && isProductAskEmptyThread(messages);
   const versionFocus = useRef<string | null>(null);
+  const [window, setWindow] = useState<ChatHistoryWindow>(() => chatHistoryWindow(null, bot.threadId, messages));
+  const nextWindow = chatHistoryWindow(window, bot.threadId, messages, readingEarlier);
+  if (nextWindow !== window) setWindow(nextWindow);
+  const [focus, setFocus] = useState<{ threadId: string; id: string } | null>(null);
+  if (editingId && (focus?.id !== editingId || focus.threadId !== bot.threadId)) setFocus({ threadId: bot.threadId, id: editingId });
+  const retainFocus = (id: string) => setFocus({ threadId: bot.threadId, id });
+  const versions = useMemo(() => indexChatMessageVersions(bot.messages), [bot.messages]);
+  const retainedIds = new Set<string>();
+  if (editingId) retainedIds.add(editingId);
+  if (focus?.threadId === bot.threadId) retainedIds.add(focus.id);
+  for (const task of Object.values(browserTasks ?? {})) {
+    if (['proposed', 'active', 'paused', 'interrupted', 'budget'].includes(task.status) || browserTaskError?.id === task.id) retainedIds.add(task.messageId);
+  }
+  const page = pageChatHistory(messages, nextWindow.count, retainedIds);
+  const pendingAnchor = useRef<{ threadId: string; leafId: string | null; id: string | null; top: number; height: number; scrollTop: number } | null>(null);
+  const contentAnchor = (row: Element | undefined) => row?.querySelector('[data-chat-content]')?.firstElementChild;
+  const loadEarlier = () => {
+    const scroll = scrollRef.current;
+    if (scroll) {
+      const top = scroll.getBoundingClientRect().top;
+      const anchor = [...scroll.querySelectorAll<HTMLElement>('[data-chat-message-id]')].find(row => (contentAnchor(row)?.getBoundingClientRect().bottom ?? 0) > top);
+      pendingAnchor.current = { threadId: bot.threadId, leafId: nextWindow.leafId, id: anchor?.dataset.chatMessageId ?? null,
+        top: (contentAnchor(anchor)?.getBoundingClientRect().top ?? top) - top, height: scroll.scrollHeight, scrollTop: scroll.scrollTop };
+    }
+    onReadEarlier();
+    setWindow({ ...nextWindow, count: nextWindow.count + CHAT_HISTORY_PAGE });
+  };
+  useLayoutEffect(() => {
+    const anchor = pendingAnchor.current, scroll = scrollRef.current;
+    if (!anchor || !scroll) return;
+    pendingAnchor.current = null;
+    if (anchor.threadId !== bot.threadId || anchor.leafId && !messages.some(message => message.id === anchor.leafId)) return;
+    const row = [...scroll.querySelectorAll<HTMLElement>('[data-chat-message-id]')].find(row => row.dataset.chatMessageId === anchor.id);
+    const content = contentAnchor(row);
+    scroll.scrollTop = content
+      ? scroll.scrollTop + content.getBoundingClientRect().top - scroll.getBoundingClientRect().top - anchor.top
+      : anchor.scrollTop + scroll.scrollHeight - anchor.height;
+  }, [nextWindow, bot.threadId, scrollRef]);
   const showEmpty = (messages.length === 0 || askEmpty) && !bot.busy;
   return (
     <>
@@ -855,9 +918,13 @@ const MessagesList = memo(function MessagesList({
           )}
         </div>
       )}
+      {!askEmpty && page.hidden > 0 && <div className="pb-3 pt-12 text-center">
+        <button type="button" className="pm-control rounded border border-line bg-sheet px-4 text-[13px] text-ink-secondary" onClick={loadEarlier}>Load earlier messages</button>
+        <p className="mt-1 text-[12px] text-ink-muted">{page.hidden.toLocaleString()} earlier messages are kept in this task.</p>
+      </div>}
       {!askEmpty &&
-        messages.map((m, i) => {
-        const prev = messages[i - 1];
+        page.messages.map((m, i) => {
+        const prev = page.messages[i - 1];
         const newDay = !prev || new Date(prev.at).toDateString() !== new Date(m.at).toDateString();
         const row = (() => {
           switch (m.kind) {
@@ -883,8 +950,8 @@ const MessagesList = memo(function MessagesList({
               );
             case "screen":
               return m.png ? <ScreenFrame png={m.png} mime={m.mime} /> : null;
-            default:
-              return (
+            default: {
+              const bubble = (
                 <Bubble
                   bot={bot}
                   message={m}
@@ -900,15 +967,36 @@ const MessagesList = memo(function MessagesList({
                   phoneHandoffBusy={phoneHandoffBusy}
                   productAsk={productAsk}
                   versionFocus={versionFocus}
+                  indexedVersions={versions.get(m.id)}
+                  onVersionFocus={retainFocus}
                 />
               );
+              const task = m.role === "bot" ? browserTasks?.[m.id] : undefined;
+              if (!task || !onBrowserTask) return bubble;
+              return (
+                <>
+                  {bubble}
+                  <BrowserTaskCard
+                    task={task}
+                    browser={browserTaskBrowser ?? { ready: false, name: null }}
+                    busy={browserTaskActing === task.id}
+                    error={browserTaskError?.id === task.id ? browserTaskError.text : null}
+                    onStart={(site) => onBrowserTask(task.id, "start", site)}
+                    onDecline={() => onBrowserTask(task.id, "decline")}
+                    onSaveJob={() => onBrowserTask(task.id, "save-job")}
+                    onStop={() => onBrowserTask(task.id, "stop")}
+                    onConnect={() => onBrowserTaskConnect?.()}
+                  />
+                </>
+              );
+            }
           }
         })();
         if (!row) return null;
         return (
-          <div key={m.id} className="contents">
+          <div key={m.id} className="contents" data-chat-message-id={m.id}>
             {newDay && <DaySeparator at={m.at} />}
-            {row}
+            <div className="contents" data-chat-content>{row}</div>
           </div>
         );
       })}
@@ -1059,6 +1147,9 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
   }, []);
   const goYouJobs = goRoutines;
   const stopTurn = useCallback(() => dispatch({ type: "interrupt", botId: bot.id }), [bot.id, dispatch]);
+  const browserTasks = useBrowserTasks({ threadId: bot.threadId, messages, busy: Boolean(bot.busy), enabled: productAsk, onInterrupt: stopTurn });
+  const runBrowserTask = useCallback((id: string, action: BrowserTaskAction, site?: string) => { void browserTasks.act(id, action, site); }, [browserTasks.act]);
+  const connectTaskBrowser = useCallback(() => { location.hash = "you-browser"; dispatch({ type: "showYou" }); }, [dispatch]);
   const goYouSetup = useCallback(() => {
     if (availability.target === "you-recovery") { location.hash = availability.target; dispatch({ type: "showYou" }); return; }
     setScheduleContinueOpen(false);
@@ -1255,6 +1346,7 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
   // false for a frame, and breaking there kills follow permanently
   // (upstream-verified failure). Scrolling back to the end re-arms it.
   const [follow, setFollow] = useConversationFollow(bot.threadId);
+  const readEarlier = useCallback(() => setFollow(false), [setFollow]);
   const touchY = useRef(0);
 
   const followLatest = useCallback(() => {
@@ -1408,6 +1500,9 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
           <MessagesList
             bot={bot}
             messages={messages}
+            scrollRef={scrollRef}
+            readingEarlier={!follow}
+            onReadEarlier={readEarlier}
             editingId={editingId}
             lastBotTextId={lastBotTextId}
             canRetryLast={Boolean(lastUserMessage)}
@@ -1437,6 +1532,12 @@ export function ChatView({ bot, productAsk = false }: { bot: Bot; productAsk?: b
             onAskApprove={(recipeId, attach) => void runAskApprove(recipeId, attach)}
             onAskSetSite={openAskSetSite}
             onAskConnectSetup={openAskConnectSetup}
+            browserTasks={browserTasks.byMessage}
+            browserTaskBrowser={browserTasks.browser}
+            browserTaskActing={browserTasks.acting}
+            browserTaskError={browserTasks.error}
+            onBrowserTask={runBrowserTask}
+            onBrowserTaskConnect={connectTaskBrowser}
           />
           {provisioning && !productAsk && (
             <div className="flex justify-start">

@@ -1,0 +1,28 @@
+{
+  "at": "2026-09-21T08:27:26.097375+00:00",
+  "ownedUiInputsFrozen": true,
+  "sourceHashes": {
+    "src/components/PendingApproval.tsx": "556825054e6f7becf12f583ef440bda0129e19d0c9326e3d296373759872bf52",
+    "src/components/PendingApproval.test.ts": "19a4a4276f61d3edf5a0cfcea076decec186383b9a648907277d30ae8c2bb3a7",
+    "src/state/store.tsx": "0821eadda07918789fbff429b06fcc540188ae73a24885f404b53ca8a9fda699",
+    "shared/approval-policy.ts": "cb64cb9b2163741cd6663b2f8160e0ab1e3f01c7b75ea3f4ddece66f14ae4ed3"
+  },
+  "focusedClientTests": 19,
+  "frontendTypecheck": "passed",
+  "isolatedBuild": "passed",
+  "renderReceipt": "render-receipt.json",
+  "visualInspection": [
+    "complete-mobile.png",
+    "held-desktop.png"
+  ],
+  "limits": [
+    "Rendered fixture uses real components/CSS and a fictional store; not a connected ACP or actual HTTP approval proof.",
+    "Root owns the authoritative server policy and runtime security integration.",
+    "src/state/store.tsx ownership limited to MemoryApprovalReview import and OptionCardData approvalPolicy/memoryReview fields.",
+    "No frozen bill runtime files changed."
+  ],
+  "negativeCheckpoint": "Initial new test helper missed a closing brace; fixed before successful19test run. No production behavior was weakened.",
+  "status": "superseded",
+  "supersededAt": "2026-09-21T08:34:19.910624+00:00",
+  "supersededReason": "Shared validator tightened to exact native single-add descriptions. Earlier fixtures used add to MEMORY.md and prove the older guard only; use parent directory evidence for the current validator."
+}

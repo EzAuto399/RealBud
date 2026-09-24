@@ -1,0 +1,133 @@
+Review frozen source excerpts only; no tools/web/edits/questions. Find concrete rollback, retired-plan or interrupted-resume defects. Return JSON {"findings":[{"file":"...","line":1,"severity":"P1|P2","failure":"interleaving","fix":"precise fix"}],"limits":["..."]}, <=500 words. Empty findings allowed. Host journal queue is exclusive; recipe writes/reset are atomic revision-CAS. Bounded journal schema/digest validation is omitted: do not infer it. Retired plans stay saved but unavailable until reviewed rollback. Affected plans must remain paused with approvals/schedules cleared. This is code review, not approval or test proof.
+
+FILE server/customer-pack-upgrades.ts SHA256 742545536c8102bc11ad4135d47243b5e77d18ef21ec9d0f69b911582fe9082e
+
+92:export async function previewPackChange(entry: PackUpgradeState, targetPack: CustomerPack, allEntries: PackUpgradeState[], deps: Dependencies,
+93:  rollback?: PackSnapshot): Promise<{ preview: CustomerPackChangePreview; change: PackTransition }> {
+94:  const conflicts: string[] = [];
+95:  if (entry.transition) conflicts.push('Finish the saved pack change before previewing another version.');
+96:  if ((entry.history?.length ?? 0) >= 8) conflicts.push('Eight prior configurations are retained. Export the pack history and ask service support to archive it before another change.');
+97:  if (targetPack.id !== entry.pack.id || !rollback && targetPack.revision <= entry.pack.revision) conflicts.push('Choose a newer revision of this same pack, or explicitly preview a saved rollback.');
+98:  for (const role of AGENCY_RECIPE_ROLES) {
+99:    const required = workflowRecipeId(entry.pack.id, role);
+100:    if (required && !targetPack.recipes.some(r => r.id === required)) conflicts.push(`Keep ${required}: this installed RealBud version uses that fixed business-workflow role. A host adapter migration is required before removing it.`);
+101:  }
+102:  const local = new Map(deps.listRecipes().map(recipe => [recipe.id, recipe]));
+103:  const base = new Map(entry.pack.recipes.map(recipe => [recipe.id, recipe]));
+104:  const desired = new Map((rollback?.recipes ?? targetPack.recipes).map(recipe => [recipe.id, recipe]));
+105:  const recipes: RecipeChange[] = [], displayed: CustomerPackChangePreview['recipes'] = [];
+106:  const recipeIds = [...new Set([...base.keys(), ...desired.keys()])];
+107:  for (const id of recipeIds) {
+108:    if (allEntries.some(other => other.pack.id !== entry.pack.id && (other.pack.recipes.some(r => r.id === id) || other.retiredRecipeIds?.includes(id))))
+109:      conflicts.push(`${id} is claimed by another pack. Resolve plan ownership before changing it.`);
+110:    const current = local.get(id), before = current ? definition(current) : null, published = base.get(id), wanted = desired.get(id);
+111:    if (published && !current) conflicts.push(`${id} is missing. Repair its installed plan before upgrading.`);
+112:    if (!published && current && !entry.retiredRecipeIds?.includes(id)) conflicts.push(`${id} already exists outside this pack. Rename the incoming plan or resolve its ownership first.`);
+113:    let after = wanted ? definition(wanted) : before!;
+114:    if (!after) continue;
+115:    if (current && wanted) {
+116:      const original = definition(published ?? wanted), merged: Record<string, unknown> = { ...definition(current) };
+117:      for (const field of Object.keys(original) as (keyof CustomerPackRecipe)[]) {
+118:        if (field === 'id' || field === 'schedule') continue;
+119:        if (same(after[field], original[field])) continue;
+120:        if (same(before![field], original[field]) || same(before![field], after[field])) merged[field] = after[field];
+121:        else conflicts.push(`${id}: both your local plan and the incoming version changed ${field}. Resolve that field in the plan or revise the pack, then preview again.`);
+122:      }
+123:      after = definition(merged as CustomerPackRecipe);
+124:    }
+125:    after = off(after);
+126:    recipes.push({ id, revision:current?.revision ?? 0,beforeStamp:current ? stamp(current) : null,before,after,retired:!wanted });
+127:    displayed.push({ id, action:!wanted ? 'retire' : !before ? 'add' : same(off(before),after) ? 'preserve' : 'update',before,after });
+128:  }
+129:  const overrides: Record<string, SkillOverride> = {};
+130:  for (const skill of targetPack.skills) {
+131:    const override = entry.overrides?.[skill.id] ?? rollback?.overrides?.[skill.id];
+132:    if (override) overrides[skill.id] = structuredClone(override);
+133:  }
+134:  const target: PackConfiguration = { pack:targetPack,digest:digest(targetPack),...(Object.keys(overrides).length ? {overrides} : {}) };
+135:  const previousArtifacts = new Map(deps.artifacts(entry).map(a => [a.key,a])), nextArtifacts = new Map(deps.artifacts(target).map(a => [a.key,a]));
+
+152:  const retiredRecipeIds = [...new Set([...(entry.retiredRecipeIds ?? []),...recipes.filter(r => r.retired).map(r => r.id)])].filter(id => !desired.has(id));
+153:  const before: PackSnapshot = {pack:entry.pack,digest:entry.digest,...(entry.overrides ? {overrides:entry.overrides} : {}),generation:entry.generation ?? 1,
+154:    savedAt:new Date().toISOString(),recipes:entry.pack.recipes.map(r => local.get(r.id)).filter((r):r is Recipe => !!r).map(definition),retiredRecipeIds:entry.retiredRecipeIds ?? []};
+155:  const change: PackTransition = { version:1,action:rollback ? 'rollback' : 'upgrade',requestDigest:'',previewDigest:'',fromGeneration:entry.generation ?? 1,
+156:    fromDigest:entry.digest,scope:deps.scope(),target,before,recipes,artifacts,retiredRecipeIds };
+157:  change.previewDigest = transitionDigest(change);
+
+165:export function checkPackRecipeStage(change: PackTransition, current: Recipe[]): 'before' | 'paused' | 'after' {
+166:  const local = new Map(current.map(r=>[r.id,r]));
+167:  const paused = (row:RecipeChange, target:CustomerPackRecipe, revision:number) => {
+168:    const saved=local.get(row.id);
+169:    return !!saved && saved.revision===revision && saved.status==='shadow' && saved.schedule===null && saved.planApprovedAt===null && saved.approvedRevision===null && same(definition(saved),target);
+170:  };
+171:  if (change.recipes.every(r=>paused(r,r.after,r.revision===0 ? 1 : r.revision+1+(same(off(r.before!),r.after)?0:1)))) return 'after';
+172:  if (change.recipes.every(r=>r.before===null ? !local.has(r.id) : paused(r,off(r.before),r.revision+1))) return 'paused';
+173:  if (change.recipes.every(r=>r.before===null ? !local.has(r.id) : local.has(r.id)&&stamp(local.get(r.id)!)===r.beforeStamp)) return 'before';
+174:  return bad('Plans changed during this pack update. Keep the saved change and ask service support to reconcile the listed plans; no newer plan was overwritten.');
+175:}
+176:
+177:export function packRecipeWrites(change: PackTransition) {
+178:  return change.recipes.map(r=>({...r.after,status:'shadow',expectedRevision:r.revision===0 ? 0 : r.revision+1}));
+
+FILE server/customer-packs.ts SHA256 bd9e9bb6ac33dccaacd04269562f704f8af0f8cafc136fd69030329b15010d65
+
+261:  async function finishChange(entries:Record<string,Journal>,entry:Journal) {
+262:    const change=entry.transition;
+263:    if (!change) return fail('No reviewed pack change is waiting for recovery.',409);
+264:    const completed=completeChange(entries,entry); assertJournalFits(completed);
+265:    const assertCurrent=()=>{
+266:      if(scope()!==change.scope) return fail('Select the same Bud profile and workroom used to review this change before resuming it.',409);
+267:      if((options.activeRecipeIds?.() ?? []).some(id=>change.recipes.some(r=>r.id===id))) return fail('Wait for this pack’s queued or running work to finish before resuming its change.',409);
+268:    };
+269:    assertCurrent();
+270:    const paths=new Map([...changeDeps.artifacts(change.before),...changeDeps.artifacts(change.target)].map(a=>[a.key,a.path]));
+271:    for(const other of Object.values(entries).filter(e=>e.pack.id!==entry.pack.id)) {
+272:      if(other.pack.recipes.some(r=>change.recipes.some(c=>c.id===r.id))) return fail('Another pack now claims an affected plan. Resolve ownership before resuming.',409);
+273:      for(const artifact of changeDeps.artifacts(other)) for(const item of change.artifacts)
+274:        if(paths.get(item.key)===artifact.path && item.after!==artifact.contents) return fail('Another pack now owns an affected instruction file. Resolve shared ownership before resuming.',409);
+275:    }
+276:    const state=async (item:typeof change.artifacts[number])=>{
+277:      const path=paths.get(item.key); if(!path) return fail('The saved instruction target needs service recovery.',409);
+278:      const previous=item.before===null ? await artifactState(path,item.after ?? '')==='missing' : await artifactState(path,item.before)==='identical';
+279:      const next=item.after===null ? await artifactState(path,item.before ?? '')==='missing' : await artifactState(path,item.after)==='identical';
+280:      if(!previous&&!next) return fail(`Instruction ${item.key} changed after review. Preserve that file and reconcile it before resuming.`,409);
+281:      return {path,next};
+282:    };
+283:    // Validate every file and plan before the first mutation. Paused plans and
+284:    // the pending journal prevent interrupted instructions from being used.
+285:    for(const artifact of change.artifacts) await state(artifact);
+286:    let stage=checkPackRecipeStage(change,listRecipes());
+287:    assertCurrent();
+288:    if(stage==='before') {
+289:      resetApprovals(change.recipes.filter(r=>r.revision>0).map(r=>({id:r.id,revision:r.revision})));
+290:      stage=checkPackRecipeStage(change,listRecipes());
+291:    }
+292:    for(const artifact of change.artifacts) {
+293:      assertCurrent(); const current=await state(artifact); if(current.next) continue;
+294:      await safeAncestors(dirname(current.path)); assertCurrent();
+295:      if(artifact.after===null) { await unlink(current.path); fsyncDir(dirname(current.path)); }
+296:      else {
+297:        await mkdir(dirname(current.path),{recursive:true,mode:0o700});
+298:        // Only the exact reviewed before/after state is replaceable.
+299:        const checked=await state(artifact); if(!checked.next) writeFileAtomic(current.path,artifact.after,0o600);
+300:      }
+301:      if(!(await state(artifact)).next) return fail('Instruction readback is incomplete. Plans remain paused; resume the saved change.',409);
+302:    }
+303:    assertCurrent(); stage=checkPackRecipeStage(change,listRecipes());
+304:    if(stage!=='after') saveRecipes(packRecipeWrites(change));
+305:    if(checkPackRecipeStage(change,listRecipes())!=='after') return fail('Plan readback is incomplete. Resume the saved pack change.',409);
+306:    for(const artifact of change.artifacts) if(!(await state(artifact)).next) return fail('Instruction readback is incomplete. Plans remain paused.',409);
+307:    assertCurrent(); await persistJournals(completed);
+308:    return status(completed[entry.pack.id]);
+309:  }
+
+523:        const input=fields(body,packChange[2]==='resume-change' ? ['expectedInstalledDigest','expectedInstalledRevision','expectedPreviewDigest'] : ['installationRevision']);
+524:        if(packChange[2]==='resume-change') return exclusive(async()=>{
+525:          const entries=await journals(),entry=entries[packChange[1]];
+526:          if(!entry||entry.digest!==input.expectedInstalledDigest||(entry.generation ?? 1)!==input.expectedInstalledRevision||entry.transition?.previewDigest!==input.expectedPreviewDigest)
+527:            return fail('The saved change no longer matches this screen. Refresh setup before resuming.',409);
+528:          return {status:200,body:await finishChange(entries,entry)};
+529:        });
+530:        const entry=(await journals())[packChange[1]],prior=entry?.history?.find(s=>s.generation===input.installationRevision);
+531:        if(!prior) return fail('That saved configuration is unavailable. Refresh pack history.',404);
+

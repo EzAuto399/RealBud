@@ -1,0 +1,35 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ × server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > browser_click_semantic cannot turn email instructions or fullAuto into payment approval 1228ms
+   → The broker refused before a card: Private state directory needs recovery.
+ ↓ server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > browser_press cannot turn email instructions or fullAuto into payment approval
+ ↓ server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > requires a new exact approval for the next invoice and does not repeat a transport retry
+ ↓ server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > rechecks the amount after approval instead of trusting the old card
+ ↓ server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > rechecks the recipient after approval instead of trusting the old card
+ ↓ server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > Stop rejects a pending payment and a late approval without dispatch
+ ↓ server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > Stop during an in-flight read aborts the helper and withholds its late page result
+ ↓ server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > Stop after payment dispatch retains unknown outcome and a new broker cannot replay it via Enter
+ ↓ server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > refuses cross-run grants, foreign broker credentials, foreign sites and another browser's tab
+ ↓ server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > a checked account change withholds the other office's page before any payment card
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/drivers/acp/browser-injection-boundary.test.ts > hostile email with actual browser tools and authoritative approval > browser_click_semantic cannot turn email instructions or fullAuto into payment approval
+Error: The broker refused before a card: Private state directory needs recovery.
+ ❯ server/drivers/acp/browser-injection-boundary.test.ts:142:32
+    140|   const cardAfter = async (count = 0) => {
+    141|     await vi.waitFor(() => {
+    142|       if (returnedError) throw new Error(`The broker refused before a …
+       |                                ^
+    143|       expect(cards().length).toBeGreaterThan(count);
+    144|     });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 9 skipped (10)
+   Start at  15:01:40
+   Duration  1.67s (transform 263ms, setup 18ms, import 334ms, tests 1.23s, environment 0ms)
+

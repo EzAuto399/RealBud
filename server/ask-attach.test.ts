@@ -1,9 +1,11 @@
-import { mkdtempSync, readFileSync, rmSync, lstatSync, mkdirSync, readdirSync, symlinkSync, realpathSync, chmodSync } from "node:fs";
+import { readFileSync, rmSync, lstatSync, mkdirSync, readdirSync, symlinkSync, realpathSync, chmodSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ASK_ATTACH_MAX_BYTES, saveAskAttachment } from "./ask-attach.ts";
+import { privateDir, privateTempRoot, windowsAdmissionTimeout } from "./testing/private-fixture.ts";
+import { windowsFilePrivacySync } from "./windows-file-privacy.ts";
 
 const dirs: string[] = [];
 
@@ -13,7 +15,7 @@ afterEach(() => {
 
 describe("ask attachments", () => {
   it("writes a PDF under the data dir and rejects a disallowed type", () => {
-    const dir = mkdtempSync(join(tmpdir(), "realbud-ask-"));
+    const dir = realpathSync(privateTempRoot(join(tmpdir(), "realbud-ask-")));
     dirs.push(dir);
     const saved = saveAskAttachment(dir, {
       name: "lease.pdf",
@@ -31,7 +33,7 @@ describe("ask attachments", () => {
 
 
 describe("selected document copies", () => {
-  const fresh = () => { const dir = mkdtempSync(join(tmpdir(), "realbud-selected-")); dirs.push(dir); return dir; };
+  const fresh = () => { const dir = realpathSync(privateTempRoot(join(tmpdir(), "realbud-selected-"))); dirs.push(dir); return dir; };
   const input = (name = "report.xlsx", content = "synthetic file bytes") => ({ name, contentBase64: Buffer.from(content).toString("base64"), size: Buffer.byteLength(content) });
 
   it("keeps the same selected file private and byte-identical on separate desktops", () => {
@@ -72,6 +74,21 @@ describe("selected document copies", () => {
     expect(saved.size).toBe(0); expect(readFileSync(saved.path).length).toBe(0);
   });
 
+  it("copies only selected bytes without changing or following the source file", () => {
+    const dir = fresh(), sourceDir = fresh(), sourcePath = join(sourceDir, "statement.csv");
+    writeFileSync(sourcePath, "date,amount\n2026-09-23,25.00\n");
+    const selected = readFileSync(sourcePath);
+    // The source can change after selection; the desktop receives bytes, not
+    // authority to reopen this path or anything else in its parent directory.
+    writeFileSync(sourcePath, "source changed after selection");
+    const saved = saveAskAttachment(dir, {
+      name: sourcePath, contentBase64: selected.toString("base64"), size: selected.length,
+    });
+    expect(readFileSync(saved.path)).toEqual(selected);
+    expect(readFileSync(sourcePath, "utf8")).toBe("source changed after selection");
+    expect(readdirSync(sourceDir)).toEqual(["statement.csv"]);
+  });
+
   it.skipIf(process.platform === "win32")("supports older application roots while keeping the copied bytes private", () => {
     const dir = fresh(); chmodSync(dir, 0o755);
     const saved = saveAskAttachment(dir, input());
@@ -87,5 +104,40 @@ describe("selected document copies", () => {
       expect(() => saveAskAttachment(dir, input())).toThrow(/private attachment folder/);
       expect(readdirSync(outside)).toEqual([]);
     }
+  });
+});
+
+describe.skipIf(process.platform !== "win32")("native Windows attachment privacy", () => {
+  const fresh = () => { const dir = realpathSync(privateTempRoot(join(tmpdir(), "realbud-native-attach-"))); dirs.push(dir); return dir; };
+  const input = { name: "statement.csv", contentBase64: Buffer.from("fictional selected bytes").toString("base64") };
+
+  it("creates protected directories and files and verifies them on reuse", windowsAdmissionTimeout(20), () => {
+    const dir = join(fresh(), "new-desktop");
+    const first = saveAskAttachment(dir, input), second = saveAskAttachment(dir, input);
+    for (const folder of [dir, join(dir, "vault"), join(dir, "vault", "ask-uploads")]) {
+      expect(() => windowsFilePrivacySync(folder, "directory")).not.toThrow();
+    }
+    for (const saved of [first, second]) {
+      expect(() => windowsFilePrivacySync(saved.path, "file")).not.toThrow();
+      expect(readFileSync(saved.path).toString("base64")).toBe(input.contentBase64);
+    }
+  });
+
+  it.each(["root", "vault", "ask-uploads"])("refuses an inherited %s descriptor without repairing it", windowsAdmissionTimeout(12), segment => {
+    const outer = fresh(), dir = segment === "root" ? join(outer, "legacy") : outer;
+    const rejected = segment === "root" ? dir : segment === "vault" ? join(dir, "vault") : join(dir, "vault", "ask-uploads");
+    if (segment === "ask-uploads") privateDir(join(dir, "vault"));
+    mkdirSync(rejected);
+    expect(() => saveAskAttachment(dir, input)).toThrow(/private attachment folder/);
+    expect(readdirSync(rejected)).toEqual([]);
+    expect(() => windowsFilePrivacySync(rejected, "directory")).toThrow(/inheritance-not-protected/);
+  });
+
+  it("refuses a junction without creating a copy in its target", windowsAdmissionTimeout(5), () => {
+    const dir = fresh(), outside = fresh();
+    symlinkSync(outside, join(dir, "vault"), "junction");
+    expect(() => saveAskAttachment(dir, input)).toThrow(/private attachment folder/);
+    expect(readdirSync(outside)).toEqual([]);
+    expect(existsSync(join(outside, "ask-uploads"))).toBe(false);
   });
 });

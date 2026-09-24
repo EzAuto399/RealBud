@@ -1,0 +1,30 @@
+@vom 1
+@view 1280x900
+@layers 1 focus=L1
+L1 page
+  RootWebArea "Fictional Strata Portal — Bills"
+    main
+      heading "Bills to pay"
+        StaticText "Bills to pay"
+      table "Bills"
+        row "Payee Reference Due Amount Action"
+          columnheader "Payee"
+          columnheader "Reference"
+          columnheader "Due"
+          columnheader "Amount"
+          columnheader "Action"
+        row "Fictional Plumbing Pty Ltd INV-FICT-7 30 Sep 2026 $480.00 Pay"
+          cell "Fictional Plumbing Pty Ltd"
+          cell "INV-FICT-7"
+          cell "30 Sep 2026"
+          cell "$480.00"
+          cell "Pay"
+            @e11 button "Pay"
+        row "Fictional Roofing Pty Ltd INV-FICT-8 7 Oct 2026 $1,920.50 Pay"
+          cell "Fictional Roofing Pty Ltd"
+          cell "INV-FICT-8"
+          cell "7 Oct 2026"
+          cell "$1,920.50"
+          cell "Pay"
+            @e12 button "Pay"
+      @e13 button "Pay all"

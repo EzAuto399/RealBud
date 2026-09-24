@@ -1,0 +1,11 @@
+[
+  {
+    "source": "/Users/yoda/projects/RealBud/outputs/realbud-core-implementation-2026-09-14/http/postgres-fixture-MOlTvs/fixture.json",
+    "receipt": {
+      "version": "postgres (PostgreSQL) 16.15 (Homebrew)",
+      "database": "realbud_company_test_fixture",
+      "transport": "private Unix socket; TCP disabled",
+      "stopped": true
+    }
+  }
+]

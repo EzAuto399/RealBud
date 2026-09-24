@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { manualRecipeRequestKey } from "./manual-job-request.ts";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { executeRecipeJob } from "./job-executor.ts";
 import { JobRunStore } from "./job-runs.ts";
+import { removeFixture } from "./testing/private-fixture.ts";
 import type { Recipe } from "../shared/contracts.ts";
 
 const recipe = { id: "owner-pack", revision: 3 };
@@ -35,6 +36,9 @@ describe("manual job request boundary", () => {
   it("returns the in-flight run on overlap and the saved result after a lost response and restart", async () => {
     const folder = mkdtempSync(join(tmpdir(), "realbud-manual-recovery-"));
     const file = join(folder, "runs.json");
+    // Each store holds its execution-history database open in the folder; close them before removal (Windows).
+    const stores: JobRunStore[] = [];
+    const track = (store: JobRunStore) => { stores.push(store); return store; };
     const job: Recipe = {
       ...recipe, title: "Owner pack", description: "Fictional local notes", steps: ["Draft the report"],
       allowedOrigins: [], evidence: "Complete draft", capabilities: ["analyse", "draft"],
@@ -46,23 +50,30 @@ describe("manual job request boundary", () => {
       idempotencyKey: manualRecipeRequestKey(job, { requestId, expectedRevision: 3 }, "prepare"),
     };
     let release!: (value: { ok: true; stdout: string }) => void;
+    let reachWorker!: () => void;
+    // The first attempt reaches the worker after an unspecified number of awaits
+    // (optional pack instructions, assigned-case checks). Wait for the worker
+    // itself rather than assuming a microtask count.
+    const reachedWorker = new Promise<void>((resolve) => { reachWorker = resolve; });
     let calls = 0;
-    const ask = () => { calls += 1; return new Promise<{ ok: true; stdout: string }>((resolve) => { release = resolve; }); };
+    const ask = () => { calls += 1; reachWorker(); return new Promise<{ ok: true; stdout: string }>((resolve) => { release = resolve; }); };
     try {
-      const runs = new JobRunStore({ file });
+      const runs = track(new JobRunStore({ file }));
       const original = executeRecipeJob(job, input, { store: runs, ask });
       const overlapping = await executeRecipeJob(job, input, { store: runs, ask });
       expect(overlapping).toMatchObject({ reused: true, run: { status: "running" } });
+      await reachedWorker;
       expect(calls).toBe(1);
       release({ ok: true, stdout: JSON.stringify({ summary: "Draft ready", evidence: ["Fictional notes"], outputs: ["Full owner report"], needsApproval: [] }) });
       const completed = await original;
       // The first HTTP response is discarded; reopening loads its durable receipt.
-      const retry = await executeRecipeJob(job, input, { store: new JobRunStore({ file }), ask });
+      const retry = await executeRecipeJob(job, input, { store: track(new JobRunStore({ file })), ask });
       expect(retry).toMatchObject({ reused: true, run: { id: completed.run.id, status: "completed" } });
       expect(retry.run.evidence.find((row) => row.kind === "output")?.note).toBe("Full owner report");
       expect(calls).toBe(1);
     } finally {
-      rmSync(folder, { recursive: true, force: true });
+      for (const store of stores) store.close();
+      await removeFixture(folder);
     }
   });
 });

@@ -1,0 +1,86 @@
+{
+  "at": "2026-09-21T15:59:59.050Z",
+  "passed": true,
+  "node": "v24.19.0",
+  "platform": "darwin",
+  "mode": "source",
+  "memoryProposals": false,
+  "executable": "/Users/yoda/.nvm/versions/node/v24.19.0/bin/node",
+  "executableHash": null,
+  "resources": null,
+  "bootstrap": "/Users/yoda/projects/RealBud/server/bootstrap.ts",
+  "staticDirectory": "/Users/yoda/projects/RealBud/dist",
+  "admissionModule": "/Users/yoda/projects/RealBud/server/hermes-memory-review.ts",
+  "helperPath": "/Users/yoda/projects/RealBud/server/helpers/hermes-memory-review.py",
+  "runtime": {
+    "node": "24.19.0",
+    "electron": null
+  },
+  "runtimePin": "345cd2b057a452236de401d3534b8502a7465e8d",
+  "nativeModules": {
+    "tools/memory_tool.py": "ed9c5db6b3144b88425f7039280239b29a047143aa8ffdfd3b7f47bf7e707143",
+    "tools/memory_tool_store.py": "811ef2eb98a8b3f0448294b2c23d422ff7ebd4dc45835475b12df0557d7e5366",
+    "tools/write_approval.py": "9404792bc8c6637e5bd78a87f5a6dfabda6cd6a1a61083b450647ddb2951c470",
+    "tools/threat_patterns.py": "6ad8947a5a62db44f66b1cd33086e2b51c4a66019ef5301856e5efae59797341",
+    "tools/__init__.py": "7bca460f476ac9ace706c8cfd07e98f8aae34d839862f0f68abafc3a8397cf35",
+    "tools/registry.py": "310a57a5dc5d41c935eacbe707e8a258dc21fd72fd44fccbc33d1a78b7143922",
+    "utils.py": "1414f177e14940750ad80d6dd5020685219ca26b0b7d500299ab2f170118ed07",
+    "hermes_constants.py": "e5f72a309b3689f5fa2e85065e8051f8e6f7686d1ec1741e7543cc5e56bea162"
+  },
+  "sourceHashes": {
+    "server/hermes-memory-review.ts": "483ab606e5ffd13446e1fe89191848173f10d3eb51295b60642c8dca41c75501",
+    "server/helpers/hermes-memory-review.py": "d91f2d33831adcbde7fa920a9e94e751df934d8d201cd2fe0a50e072a4c38684",
+    "shared/hermes-memory-review.ts": "58168f17f6776a86e12947db3b3cf6620bb14e178b177c476b53d29d69612de0",
+    "src/components/MemoryReviewPanel.tsx": "26ffb2e678aeef028cf1a1235e84d9703a9c566feff13af95845e4241d187cfb",
+    "src/components/YouPage.tsx": "6fa7c49a2cae1c7914c17f77dbc792f7d7acb49d263db5cc88465f1deea8b501",
+    "dist/index.html": "7546d62ff81f9375ea5c02023c8871f215c453086897aa9c73cae9436eba37ff"
+  },
+  "resourceHashes": {},
+  "fixtureSourceHashes": {
+    "scripts/qa-hermes-memory-review.mjs": "d2e4ba7ee77bc4177224655d31608005329630e3477980e81a356e6d7434cf47",
+    "scripts/service-smoke-env.mjs": "1a518835520f9be47493d164e377dcbb1078abc58a589057d63204c9bcb2db44",
+    "server/service-admin.ts": "f61a815b7686110698217e5d60233479771403c06379225277af93fa8195f15d",
+    "shared/service-admin.ts": "f443a6777e592f42acbc70482e05a2997659882d7a439d36f42df81cca25246f"
+  },
+  "fixtureSetup": "Source createServiceAdminPasswordVerifier is used only to provision a fictional managed-admin verifier; no source service/UI/helper fallback is available in packaged mode.",
+  "checks": [
+    "Both memory reads and decisions reject a missing renderer session before exposing or changing preference data",
+    "Managed administrator protection is configured; ordinary staff cannot mutate provider settings or read provider login codes",
+    "Actual source bootstrap and authenticated HTTP produce a complete native replacement preview in a disposable profile",
+    "Built settings UI shows all literal before/after text and keeps Apply disabled until the exact-version checkbox is checked",
+    "At 390px the complete text remains keyboard focusable and scrolls within its region without overflowing the document",
+    "The UI dispatches one exact reviewed digest, the native file changes to the complete preview, and the persisted receipt confirms application",
+    "Reload rediscovers the persisted decision and offers no second Apply action for a completed review",
+    "Changing saved memory after preview rejects the stale approval, preserves the newer bytes and proposal, and clears the old confirmation",
+    "A newly reviewed rejection uses its new digest, preserves memory and records the rejected result",
+    "No page errors, off-origin browser requests or admitted source changes occurred"
+  ],
+  "errors": [],
+  "blockedNetwork": [],
+  "decisions": [
+    {
+      "path": "/api/hermes/memory-reviews/00000010/decision",
+      "body": {
+        "expectedDigest": "ac0e2baed211253722498f1efc97549d30f28d617e90bf4ac81865d7a01f382c",
+        "decision": "approve"
+      }
+    },
+    {
+      "path": "/api/hermes/memory-reviews/00000020/decision",
+      "body": {
+        "expectedDigest": "cb4123f570b81ca561bed40890a3b6d0cede69f8ac85724528a7a4a8fffac674",
+        "decision": "approve"
+      }
+    },
+    {
+      "path": "/api/hermes/memory-reviews/00000020/decision",
+      "body": {
+        "expectedDigest": "d282e93814766e3c047dcee626aa0b73f75243813a24c8a10b4653a9c749de38",
+        "decision": "reject"
+      }
+    }
+  ],
+  "adminHeadersSeen": 0,
+  "cleanup": true,
+  "layer": "Actual source bootstrap and built React UI; authenticated HTTP and admitted native memory modules in a fictional disposable profile. No real Hermes CLI, model/provider calls, customer accounts, installed-device restart IPC, OS keychain or Windows device acceptance."
+}

@@ -1,0 +1,15 @@
+{
+  "at": "2026-09-21T14:24:01.663688+00:00",
+  "sourceManifest": "coordinator-package-inputs.json",
+  "sourceInputCount": 1054,
+  "sourceDigest": "41e8daab4cddbb2d63b9a2587712fe308547a5e056a237f4725f1d19571e7e7f",
+  "sourceChanged": [],
+  "artifactManifest": "coordinator-artifact-manifest.json",
+  "artifactDigest": "111362aef8409ad586b6896f1063364d55b7f09bc5062cc85e90adecbdf9edab",
+  "artifactChanged": [],
+  "artifactAdded": [],
+  "artifactMissing": [],
+  "unchanged": true,
+  "scope": "Source checked unchanged after completed full suite and package/QA; artifact unchanged after all packaged/native/renderer checks.",
+  "sourceCheckedAfterFullSuiteAt": "2026-09-21T14:26:19.649948+00:00"
+}

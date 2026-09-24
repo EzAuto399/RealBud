@@ -1,0 +1,11 @@
+[
+  "server/company/postgres.integration.test.ts",
+  "server/company/member-auth.integration.test.ts",
+  "server/company/initial-enrollment.integration.test.ts",
+  "server/company/work-items.integration.test.ts",
+  "server/company/workflow-template.integration.test.ts",
+  "server/company/host-runtime.test.ts",
+  "server/company-execution-transport.integration.test.ts",
+  "server/company-execution-client.test.ts",
+  "shared/company-execution.test.ts"
+]

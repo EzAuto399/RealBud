@@ -1,25 +1,41 @@
 import { openDeskTasks } from "@/lib/desk-view-state";
 import { HumanHandoffPanel } from "@/components/HumanHandoffPanel";
 import { hasPropertyEdits } from "@/lib/property-edits";
-import { youHashTarget } from "@/lib/you-navigation";
-import { useEffect, useRef, useState } from "react";
+import { hasUnpersistedBillDrafts } from "@/lib/bill-review-drafts";
+import { youHashTarget, youRecoveryTarget } from "@/lib/you-navigation";
+import { NAVIGATION_CANCELLED } from "@/lib/navigation-guard";
+import { lazy, useEffect, useRef, useState } from "react";
+import { WorkspaceScreen } from "@/components/WorkspaceScreen";
 import { Loader2 } from "lucide-react";
-import { StoreProvider, useStore } from "@/state/store";
+import { api, StoreProvider, useStore } from "@/state/store";
 import { Sidebar } from "@/components/Sidebar";
-import { ChatView } from "@/components/ChatView";
+
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { DesktopCapabilitiesProvider } from "@/components/DesktopCapabilities";
-import { RoutinesPage } from "@/components/RoutinesPage";
-import { DeskPage } from "@/components/DeskPage";
+
+
 import type { CaseEdit } from "@/components/desk/DeskCase";
-import { YouPage } from "@/components/YouPage";
-import { Onboarding } from "@/components/Onboarding";
-import { firstRunDone } from "@/lib/first-run";
-import { doorHashToWrite, viewFromHash, type DeskView } from "@/lib/app-route";
+
+
+import { createFirstRunApi, firstRunDone } from "@/lib/first-run";
+import type { OnboardingState } from '@shared/onboarding';
+import { doorHashToWrite, viewFromHash, workspaceViewFromHash, workspaceViewHash, type DeskView } from "@/lib/app-route";
+import { WorkspaceTabsProvider, useWorkspaceTabs } from '@/lib/workspace-tabs';
+
+
 import { SHOW_DESK_EVENT } from "@/lib/notify-desktop";
-import { WorkspaceSetup } from "@/components/WorkspaceSetup";
+
 import { WORKSPACE_SETUP_EVENT, isWorkspaceSetupTarget, type WorkspaceSetupTarget } from "@/lib/workspace-setup";
 import { ActionNotice } from "@/components/ActionNotice";
+
+const ChatView = lazy(() => import('@/components/ChatView').then(module => ({ default: module.ChatView })));
+const RoutinesPage = lazy(() => import('@/components/RoutinesPage').then(module => ({ default: module.RoutinesPage })));
+const DeskPage = lazy(() => import('@/components/DeskPage').then(module => ({ default: module.DeskPage })));
+const YouPage = lazy(() => import('@/components/YouPage').then(module => ({ default: module.YouPage })));
+const Onboarding = lazy(() => import('@/components/Onboarding').then(module => ({ default: module.Onboarding })));
+const WorkspaceTabsManager = lazy(() => import('@/components/WorkspaceTabsManager').then(module => ({ default: module.WorkspaceTabsManager })));
+const WorkspaceSavedView = lazy(() => import('@/components/WorkspaceSavedView').then(module => ({ default: module.WorkspaceSavedView })));
+const WorkspaceSetup = lazy(() => import('@/components/WorkspaceSetup').then(module => ({ default: module.WorkspaceSetup })));
 
 function macDoorKeys(): boolean {
   const uaData = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData;
@@ -38,13 +54,15 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
   const deskCaseEdits = useRef(new Map<string, CaseEdit>());
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
-      if (!hasPropertyEdits() && deskCaseEdits.current.size === 0) return;
+      if (!hasPropertyEdits() && !hasUnpersistedBillDrafts() && deskCaseEdits.current.size === 0) return;
       event.preventDefault(); event.returnValue = "";
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, []);
   const { state, dispatch } = useStore();
+  const workspaceTabs = useWorkspaceTabs();
+  const savedView = workspaceTabs.data?.state?.tabs.find(tab => tab.id === state.workspaceTabId && tab.visible);
   const [setup, setSetup] = useState<WorkspaceSetupTarget | null>(initialSetup);
   useEffect(() => {
     const open = (event: Event) => {
@@ -66,6 +84,8 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
 
   useEffect(() => {
     const openSettings = () => {
+      const saved = workspaceViewFromHash(window.location.hash);
+      if (saved) { guidedByHash.current = true; dispatch({ type: 'showWorkspaceTab', ...(saved.id ? { id: saved.id } : {}) }); return; }
       if (youHashTarget(window.location.hash)) {
         // Keep the deep-link hash; do not let the door mirror rewrite it to `#/you`.
         guidedByHash.current = true;
@@ -75,15 +95,21 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
       // Door routes (`#/desk`, `#/ask`, …). Checked after the You deep links so
       // their existing root-level scheme keeps working unchanged.
       const routed = viewFromHash(window.location.hash);
+      // Cancelling Back can restore this route before its queued hashchange.
+      // That second event must not suppress the next ordinary door change.
+      if (routed === previousView.current) { guidedByHash.current = false; return; }
       if (routed) { guidedByHash.current = true; dispatch(VIEW_ACTIONS[routed]); }
     };
     openSettings();
     // pushState (door mirror) does not fire hashchange; Back/Forward fire popstate.
     window.addEventListener("hashchange", openSettings);
     window.addEventListener("popstate", openSettings);
+    const cancelNavigation = () => { guidedByHash.current = false; };
+    window.addEventListener(NAVIGATION_CANCELLED, cancelNavigation);
     return () => {
       window.removeEventListener("hashchange", openSettings);
       window.removeEventListener("popstate", openSettings);
+      window.removeEventListener(NAVIGATION_CANCELLED, cancelNavigation);
     };
   }, [dispatch]);
 
@@ -92,9 +118,9 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
   // not written back, which is what stops the two from fighting.
   useEffect(() => {
     if (guidedByHash.current) { guidedByHash.current = false; return; }
-    const next = doorHashToWrite(window.location.hash, state.activeView);
-    if (next) window.history.pushState(null, "", next);
-  }, [state.activeView]);
+    const next = state.activeView === 'workspace' ? workspaceViewHash(state.workspaceTabId) : doorHashToWrite(window.location.hash, state.activeView);
+    if (next && next !== window.location.hash) window.history.pushState(null, "", next);
+  }, [state.activeView, state.workspaceTabId]);
 
   useEffect(() => {
     const go = () => { openDeskTasks(); dispatch({ type: "showDesk" }); };
@@ -166,8 +192,11 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
         <Sidebar />
         {/* Keyed on the view: each place rises in once on arrival. Pages already
             remount on switch (the ternary above), so no state contract changes. */}
-        <div key={state.activeView} className="animate-view-in flex min-h-0 min-w-0 flex-1">
-          {state.activeView === "desk" ? (
+        <div key={`${state.activeView}:${state.activeView === 'workspace' ? state.workspaceTabId ?? 'manage' : ''}`} className="animate-view-in flex min-h-0 min-w-0 flex-1">
+          <WorkspaceScreen label={state.activeView === 'workspace' ? savedView?.label ?? 'saved views' : state.activeView === 'schedule' ? 'Schedule' : state.activeView === 'you' ? 'You' : state.activeView === 'desk' ? 'Desk' : 'Ask'}>
+          {state.activeView === 'workspace' ? (
+            state.workspaceTabId === null ? <WorkspaceTabsManager /> : savedView ? <WorkspaceSavedView key={`${savedView.id}:${savedView.view.kind}:${savedView.view.filter}`} tab={savedView} /> : <main className="h-full min-w-0 flex-1 overflow-y-auto bg-paper p-6"><h1 className="text-2xl font-semibold">{workspaceTabs.loading ? 'Loading saved view…' : 'This saved view is unavailable'}</h1><p role={workspaceTabs.error ? 'alert' : 'status'} className="mt-3 text-[14px] text-ink-secondary">{workspaceTabs.error || (workspaceTabs.loading ? 'Checking this private workspace.' : 'It may have been hidden or removed. Your records remain in their original workspace.')}</p><button className="mt-4 min-h-11 rounded border border-line bg-sheet px-3 py-2" onClick={() => dispatch({ type: 'showWorkspaceTab' })}>Manage views</button></main>
+          ) : state.activeView === "desk" ? (
             <DeskPage caseEdits={deskCaseEdits.current} />
           ) : state.activeView === "schedule" ? (
             <RoutinesPage />
@@ -181,20 +210,43 @@ function Shell({ initialSetup = null }: { initialSetup?: WorkspaceSetupTarget | 
               <div className="text-[14px]">{state.connected ? "Bud is starting…" : "Connecting…"}</div>
             </main>
           )}
+          </WorkspaceScreen>
         </div>
       </div>
-      {setup && <WorkspaceSetup target={setup} error={state.error} onDismissError={() => dispatch({ type: "error", message: null })} origin={state.activeView === "desk" ? "Desk" : state.activeView === "schedule" ? "Schedule" : state.activeView === "you" ? "You" : "Ask"} onTarget={setSetup} onClose={() => setSetup(null)} onAsk={() => { setSetup(null); dispatch({ type: "showAsk" }); }} onSchedule={() => { setSetup(null); dispatch({ type: "showRoutines" }); }} />}
+      {setup && <WorkspaceScreen key="setup" label="setup" onClose={() => setSetup(null)}><WorkspaceSetup target={setup} error={state.error} onDismissError={() => dispatch({ type: "error", message: null })} origin={state.activeView === "desk" ? "Desk" : state.activeView === "schedule" ? "Schedule" : state.activeView === "you" ? "You" : "Ask"} onTarget={setSetup} onClose={() => setSetup(null)} onAsk={() => { setSetup(null); dispatch({ type: "showAsk" }); }} onSchedule={() => { setSetup(null); dispatch({ type: "showRoutines" }); }} /></WorkspaceScreen>}
     </div>
   );
 }
 
-export default function App() {
+function FirstRunGate() {
   const [initialSetup, setInitialSetup] = useState<WorkspaceSetupTarget | null>(null);
-  const [welcome, setWelcome] = useState(() => !firstRunDone());
+  const [saved, setSaved] = useState<OnboardingState | null>(null);
+  const [entered, setEntered] = useState(false);
+  const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setError('');
+    void createFirstRunApi(api).read().then(next => {
+      if (!active) return;
+      if (next.stage === 'recovery') location.hash = youRecoveryTarget(location.hash);
+      setSaved(next);
+    }).catch(cause => { if (active) setError(cause instanceof Error ? cause.message : 'Your saved setup could not be checked.'); });
+    return () => { active = false; };
+  }, [attempt]);
+  if (entered || firstRunDone(saved) || saved?.stage === 'recovery') return <Shell initialSetup={initialSetup} />;
+  if (!saved) return <main className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 bg-paper p-6" role={error ? 'alert' : 'status'}>
+    <p>{error || 'Checking your saved setup…'}</p>
+    {error && <><button className="pm-control" onClick={() => setAttempt(value => value + 1)}>Try again</button><button className="pm-control" onClick={() => { location.hash = 'you-recovery'; setEntered(true); }}>Open recovery</button></>}
+  </main>;
+  return <WorkspaceScreen label="welcome"><Onboarding initialState={saved} onDone={(target) => { setInitialSetup(target ?? null); setEntered(true); }} /></WorkspaceScreen>;
+}
+
+export default function App() {
   return (
     <DesktopCapabilitiesProvider>
       <StoreProvider>
-        {welcome ? <Onboarding onDone={(target) => { setInitialSetup(target ?? null); setWelcome(false); }} /> : <Shell initialSetup={initialSetup} />}
+        <WorkspaceTabsProvider><FirstRunGate /></WorkspaceTabsProvider>
       </StoreProvider>
     </DesktopCapabilitiesProvider>
   );

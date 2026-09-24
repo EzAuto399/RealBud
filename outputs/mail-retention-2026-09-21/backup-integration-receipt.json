@@ -1,0 +1,67 @@
+{
+  "at": "2026-09-21T07:41:05.237056+00:00",
+  "scope": "Normalized mail private-backup integration; local fictional-data library and production-reader tests only",
+  "status": "passed",
+  "checks": [
+    {
+      "log": "backup-final-integration.log",
+      "files": 6,
+      "passed": 71,
+      "failed": 0,
+      "scope": "Mail, legacy graph, general private backup, bank, source bills and invoice proposals before final gap-preservation followup"
+    },
+    {
+      "log": "backup-mail-final-green.log",
+      "files": 2,
+      "passed": 31,
+      "failed": 0,
+      "scope": "Final mail and legacy gates including retained interruption gaps, both legacy-running restore variants and source/prepared integrity"
+    },
+    {
+      "log": "backup-pending-count.log",
+      "passed": 1,
+      "filteredOut": 9,
+      "scope": "Forged prepared pending count with recomputed digest rejected"
+    },
+    {
+      "log": "backup-typecheck-final.log",
+      "exitCode": 0,
+      "scope": "Server TypeScript"
+    }
+  ],
+  "retention": {
+    "tasks": 2101,
+    "receipts": 1021,
+    "sourceBundles": 22,
+    "physicalBackupRecords": 3147,
+    "legacyFailedReceipts": 999,
+    "newMockedProviderScans": 21,
+    "threadsPerNewScan": 100
+  },
+  "preserved": [
+    "source legacy files remain byte-identical",
+    "different-key restore retains legacy logical values and original source content",
+    "old done/manual task",
+    "original prepared input in migration origin after current input replaced",
+    "current normalized prepared binding",
+    "existing interruption gaps",
+    "source-account approvals cleared and clocks paused"
+  ],
+  "negativeReceipts": [
+    "backup-first-integration.log: missing task accepted before reverse-link fix",
+    "backup-mail-final.log: first-open legacy interruption dropped gaps before runtime fix"
+  ],
+  "limits": [
+    "Backup v1 5000 physical rows and existing aggregate bounds remain; explicit 5001 refusal tested",
+    "No live Gmail access, native application, Windows execution or customer acceptance claimed",
+    "Root owns final native package and source-wide gates"
+  ],
+  "ownedSourceSha256": {
+    "server/private-backup-mail-validation.ts": "288b4c120e52227d885ca52e312e768ccd9b69908c4a806327a8bb4ed2251797",
+    "server/private-workspace-backup.ts": "012ffe39a114d9975779621ce8af9ef8ad5154c6e027beee32be9036efa36165",
+    "server/private-backup-mail-retention.test.ts": "43d608e0a61588270b8439dfc4155ce62349d3e3d9939c45f249debc76c2383d",
+    "server/private-backup-mail-validation.test.ts": "02b088d9e45ab6326b9cfe723bf1a4d35a96caa64d9a307659670c36dc77277b",
+    "server/private-workspace-backup.test.ts": "bec7a9550da5de98b5891c8244b70b68e4eb4c950bb38a5f170829a49eee3e17",
+    "server/testing/mail-backup-fixture.ts": "d2bfa994ee4955a60d83811cc71975d02ba0353354130fa19512d539b0e7d30f"
+  }
+}

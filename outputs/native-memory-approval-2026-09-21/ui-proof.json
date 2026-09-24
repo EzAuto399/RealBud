@@ -1,0 +1,32 @@
+{
+  "at": "2026-09-21T08:45:29.243717+00:00",
+  "status": "current exact-native-single-add validator and shared once/provider-once policy",
+  "ownedUiInputsFrozen": true,
+  "sourceHashes": {
+    "src/components/PendingApproval.tsx": "bc271eb7573b98aa784a22d8cc3624f00395f2fb5e3bcee9f536fe9ef7f0cf9d",
+    "src/components/PendingApproval.test.ts": "a323f6c866ccf1d960fc301ade0c72dbe11a0a236f2df936e28ead30dcaa746d",
+    "src/state/store.tsx": "e2b26cfa52a682718f89f9c8784786bc55bcc6e6e71a78a4995c304c50495053",
+    "shared/approval-policy.ts": "3b526647425bd74747dd9655fa0d769bb5a740d82dfeb8a82d64e2f8f1a2c2aa"
+  },
+  "focusedClientTests": 28,
+  "frontendTypecheck": "passed after shared ApprovalPolicy type alignment",
+  "isolatedBuild": "passed before provider-once union update; current frontend typecheck and focused tests passed, final integration build owned by root",
+  "renderReceipt": "render-receipt.json",
+  "visualInspection": [
+    "complete-mobile.png",
+    "batch-held-mobile.png"
+  ],
+  "supersedes": "superseded-initial-guard/ui-proof.json",
+  "limits": [
+    "Rendered fixture uses actual components/production CSS with a fictional store; not connected ACP or actual HTTP approval proof.",
+    "Root owns authoritative producer classification and server approval policy.",
+    "Only exact native single-add operations to memory and user profile allow review. Replace/remove/batch remain held despite a complete:true claim.",
+    "This update changes only Pending.approvalPolicy to the shared type union and targeted client tests; no bill runtime changes."
+  ],
+  "negativeCheckpoints": [
+    "Earlier MEMORY.md description fixture applies only to the superseded guard. New fixtures use exact native producer descriptions.",
+    "Initial historical test helper syntax typo was fixed before prior successful run. No observed new failure in this focused rerun.",
+    "Shared ApprovalPolicy expansion exposed a narrower local Pending type; fixed to import the shared union. Both policies now explicitly tested with/without a forged site rule and for Bud/non-Bud controls."
+  ],
+  "visualEvidenceReuseReason": "Existing memory screenshots remain representative: the UI change imports the shared type union only, and the native memory validator/rendering is unchanged. New provider-once control and dispatch behavior is covered by focused component tests."
+}

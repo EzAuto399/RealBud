@@ -1,0 +1,24 @@
+@vom 1
+@view 1280x900
+@layers 1 focus=L1
+L1 page
+  RootWebArea "Fictional Sign — Review and sign"
+    banner
+      StaticText "Fictional Sign"
+    main
+      form "Review and sign"
+        heading "Fictional Lot 12 By-law Consent"
+          StaticText "Fictional Lot 12 By-law Consent"
+        paragraph "Envelope: FICT-ENV-0007"
+          StaticText "Envelope: FICT-ENV-0007"
+        document "Fictional Lot 12 By-law Consent"
+          paragraph "The fictional owner of Lot 12 consents to the fictional pet by-law."
+            StaticText "The fictional owner of Lot 12 consents to the fictional pet by-law."
+          paragraph "Page 3 of 3"
+            StaticText "Page 3 of 3"
+        LabelText "Full name"
+          @e3 textbox "Full name" value="Fictional Owner"
+          StaticText "Full name"
+        @e4 checkbox "I agree to sign electronically" [checked]
+        @e5 button "Sign document"
+        @e6 button "Decline"

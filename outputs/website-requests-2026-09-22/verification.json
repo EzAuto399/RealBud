@@ -1,0 +1,337 @@
+{
+  "at": "2026-09-21T20:42:30.543261+00:00",
+  "passed": true,
+  "source": {
+    "head": "5856140c6ba49f53e79a7edbf01800e099b53e10",
+    "files": 1119,
+    "digest": "f8faf5d02c1a615c99f1d73655395a75f0ff2fb6d57484ade6a1cbc01edb282a",
+    "unchanged": true,
+    "scope": "Desktop source and build inputs plus the changed managed-gateway connector implementation/tests; website has its own source manifest."
+  },
+  "fullSuite": {
+    "passed": 4574,
+    "failed": 0,
+    "skipped": 149,
+    "files": 359,
+    "reportedSeconds": 357.315,
+    "receipt": "full-final-tests.json"
+  },
+  "focusedSuite": {
+    "passed": 126,
+    "failed": 0,
+    "overlapsFullSuite": true
+  },
+  "website": {
+    "ok": true,
+    "websiteBuild": true,
+    "websiteTests": {
+      "passed": 37,
+      "failed": 0
+    },
+    "postgresAssertions": 72,
+    "portalGuiScenarioGroups": 5,
+    "focusedLint": true,
+    "fullLint": {
+      "preexistingFailures": [
+        "website/app/account/page.tsx:63 react-hooks/purity",
+        "website/app/page.tsx:39 no-html-link-for-pages"
+      ]
+    },
+    "desktopEnvelopeUnchangedByHistoricalLabels": true,
+    "liveDeployment": false,
+    "liveMigration": false,
+    "customerData": false,
+    "supabaseTransport": "local fixture bridge; real PostgreSQL RPC state",
+    "execution": "portal run receipt simulation; actual desktop separately owned",
+    "cleanup": true
+  },
+  "managedAccountPrecondition": {
+    "ok": true,
+    "wire": {
+      "requiredExactEnvelope": [
+        "expectedAccountId",
+        "scope"
+      ],
+      "precondition": "Must equal server-derived effective account binding before any provider read; never an account override.",
+      "legacyClients": "Missing precondition rejected with 400; changed reviewed account rejected with 409. Client presents update/review guidance."
+    },
+    "clientTests": 31,
+    "gatewayFullTests": 103,
+    "gatewayFocusedTests": 16,
+    "gatewayTypecheck": true,
+    "serverTypecheck": true,
+    "independentRebindProof": "grok-observation-account-green.json: zero provider calls for expected A/current B",
+    "files": [
+      {
+        "path": "server/managed-connectors.ts",
+        "sha256": "bf8b5ee79414b33435ef7cf95c7fb32a65ea3fcac1d213ebde1e9bd62947d61b"
+      },
+      {
+        "path": "server/managed-connectors.test.ts",
+        "sha256": "0f5aac2d7057f2980e2b787a748a0b3afa5d14e3570b2fffa248bcbc86949bca"
+      },
+      {
+        "path": "managed-gateway/connectors.ts",
+        "sha256": "e0043a20f7ffbb1d6a89f5c4428ec034746556339525a36fa15e5f7a5bcee535"
+      },
+      {
+        "path": "managed-gateway/connectors.test.ts",
+        "sha256": "4ccf5da205bf61ce41fd82b6d7dd54de2545152571422275882a3e14bfa8c811"
+      }
+    ],
+    "deployment": false
+  },
+  "artifact": {
+    "path": "/Users/yoda/projects/RealBud/outputs/website-requests-2026-09-22/package/mac-arm64/RealBud.app",
+    "entries": 2440,
+    "digest": "62bc38b8d4b7b7409ac7a12bf0c68242660cac8d84bb84ad909d7efc3071ccde",
+    "unchanged": true,
+    "signed": false,
+    "installedReplacement": false,
+    "electron": "43.4.0",
+    "node": "24.18.1"
+  },
+  "sourceGui": {
+    "at": "2026-09-21T20:35:40.028Z",
+    "layer": "Actual local desktop + Next HTTP + disposable PostgreSQL; fictional mail/CLI; no live provider, deployment or Windows proof",
+    "checks": [
+      "Real owner pairing, desktop linking and rendered explicit two-workflow opt-in persist a distinct command grant through Next and PostgreSQL.",
+      "Exact local plan renders at desktop/390px; lost browser approval response recovers one actual CLI run and one PostgreSQL completed receipt; cross-company history stays empty.",
+      "Website Morning priorities invokes the existing real loop, fictional scoped connector and deterministic CLI, preserving one source-linked item without enabling a schedule while twelve concurrent read-only connection checks remain harmless.",
+      "SIGKILL after real SQL claim commit and before dispatch restarts as interrupted, preserves earlier run identity, and does not auto-run the saved approval.",
+      "Owner cancellation before claim prevents dispatch; local disable revokes the real website catalog while keeping saved local history."
+    ],
+    "errors": [],
+    "denied": [],
+    "scanCalls": 1,
+    "workerCalls": 2,
+    "site": {
+      "rpcCount": 39,
+      "violations": [],
+      "databaseErrors": []
+    }
+  },
+  "packagedGui": {
+    "at": "2026-09-21T20:36:59.407Z",
+    "layer": "Actual local desktop + Next HTTP + disposable PostgreSQL; fictional mail/CLI; no live provider, deployment or Windows proof",
+    "checks": [
+      "Real owner pairing, desktop linking and rendered explicit two-workflow opt-in persist a distinct command grant through Next and PostgreSQL.",
+      "Exact local plan renders at desktop/390px; lost browser approval response recovers one actual CLI run and one PostgreSQL completed receipt; cross-company history stays empty.",
+      "Website Morning priorities invokes the existing real loop, fictional scoped connector and deterministic CLI, preserving one source-linked item without enabling a schedule while twelve concurrent read-only connection checks remain harmless.",
+      "SIGKILL after real SQL claim commit and before dispatch restarts as interrupted, preserves earlier run identity, and does not auto-run the saved approval.",
+      "Owner cancellation before claim prevents dispatch; local disable revokes the real website catalog while keeping saved local history."
+    ],
+    "errors": [],
+    "denied": [],
+    "scanCalls": 1,
+    "workerCalls": 2,
+    "site": {
+      "rpcCount": 39,
+      "violations": [],
+      "databaseErrors": []
+    }
+  },
+  "managedSource": {
+    "at": "2026-09-21T20:35:36.059Z",
+    "passed": true,
+    "layer": "Source two local managed desktop processes, actual source gateway/default Gmail adapter; fictional upstream and deterministic Hermes CLI; no live provider/model or native Windows proof",
+    "checks": [
+      "Two managed desktops with distinct signed grants/admins use real gateway HTTP, default Composio parser, two provider pages and three reasoning batches each; retry has no duplicate scan; account-linked data remains separate.",
+      "Staff cannot override source scope/account; missing or forged expected-account preconditions, extra fields and mismatched profile are refused before provider access; agency A cannot read agency B saved rows.",
+      "Device revocation and tenant suspension during held provider reads reject late success and retain both agencies\u2019 exact prior staff rows.",
+      "Changing reviewed settings cancels an in-flight read through desktop, gateway HTTP and upstream AbortSignal; released late success cannot overwrite staff data.",
+      "Upstream errors, malformed evidence and missing server key fail closed; normal recovery preserves staff decisions; incomplete provider coverage is recorded as partial.",
+      "A cold service restart retains reviewed staff decisions; the other agency remains unchanged.",
+      "A selected-pack update durably disables the enabled morning clock through reapproval/restart; unrelated packs/agencies stay enabled and a completed retry preserves a later explicit schedule choice.",
+      "No fictional vendor key appears in HTTP responses, desktop files (including workflow inputs and database bytes), or captured service diagnostics; only revocable customer credentials were provisioned."
+    ],
+    "stats": {
+      "agencies": {
+        "A": {
+          "calls": 384,
+          "listCalls": 16,
+          "threadCalls": 140,
+          "aborted": 1,
+          "held": 3,
+          "violations": 0,
+          "holding": false
+        },
+        "B": {
+          "calls": 155,
+          "listCalls": 2,
+          "threadCalls": 45,
+          "aborted": 0,
+          "held": 0,
+          "violations": 0,
+          "holding": false
+        }
+      },
+      "violations": 0
+    },
+    "cleaned": true
+  },
+  "managedPackaged": {
+    "at": "2026-09-21T20:36:57.274Z",
+    "passed": true,
+    "layer": "Packaged two local managed desktop processes, actual source gateway/default Gmail adapter; fictional upstream and deterministic Hermes CLI; no live provider/model or native Windows proof",
+    "checks": [
+      "Two managed desktops with distinct signed grants/admins use real gateway HTTP, default Composio parser, two provider pages and three reasoning batches each; retry has no duplicate scan; account-linked data remains separate.",
+      "Staff cannot override source scope/account; missing or forged expected-account preconditions, extra fields and mismatched profile are refused before provider access; agency A cannot read agency B saved rows.",
+      "Device revocation and tenant suspension during held provider reads reject late success and retain both agencies\u2019 exact prior staff rows.",
+      "Changing reviewed settings cancels an in-flight read through desktop, gateway HTTP and upstream AbortSignal; released late success cannot overwrite staff data.",
+      "Upstream errors, malformed evidence and missing server key fail closed; normal recovery preserves staff decisions; incomplete provider coverage is recorded as partial.",
+      "A cold service restart retains reviewed staff decisions; the other agency remains unchanged.",
+      "A selected-pack update durably disables the enabled morning clock through reapproval/restart; unrelated packs/agencies stay enabled and a completed retry preserves a later explicit schedule choice.",
+      "No fictional vendor key appears in HTTP responses, desktop files (including workflow inputs and database bytes), or captured service diagnostics; only revocable customer credentials were provisioned."
+    ],
+    "stats": {
+      "agencies": {
+        "A": {
+          "calls": 384,
+          "listCalls": 16,
+          "threadCalls": 140,
+          "aborted": 1,
+          "held": 3,
+          "violations": 0,
+          "holding": false
+        },
+        "B": {
+          "calls": 155,
+          "listCalls": 2,
+          "threadCalls": 45,
+          "aborted": 0,
+          "held": 0,
+          "violations": 0,
+          "holding": false
+        }
+      },
+      "violations": 0
+    },
+    "cleaned": true
+  },
+  "profile": {
+    "passed": true,
+    "platform": "darwin",
+    "arch": "arm64",
+    "node": "v24.18.1",
+    "source": "/Users/yoda/projects/RealBud/outputs/website-requests-2026-09-22/package/mac-arm64/RealBud.app/Contents/Resources",
+    "packSource": "/Users/yoda/projects/RealBud/outputs/website-requests-2026-09-22/package/mac-arm64/RealBud.app/Contents/Resources/pack/property",
+    "runtime": "installed Electron/Node",
+    "proofLayer": "Compiled service and fresh private profile from the selected inputs; not Hermes runtime installation, model access, GUI or two-device acceptance",
+    "timings": {
+      "startupMs": 669,
+      "profileCheckMs": 8,
+      "watchdogMs": 25000,
+      "readinessAttempts": 150,
+      "perHealthRequestMs": 500
+    },
+    "profileProof": {
+      "freshHome": true,
+      "installed": true,
+      "approvalsManual": true,
+      "workroomReady": true,
+      "modelAttached": false,
+      "workerReady": false,
+      "privacy": "POSIX owner and private mode",
+      "files": 7,
+      "directories": 6
+    },
+    "checks": [
+      "Compiled server starts outside checkout without node_modules",
+      "Packaged PostgreSQL driver loads; unprovisioned company status is usable",
+      "Packaged TLS certificate generator executes successfully",
+      "Fresh private Hermes profile has shipped safeguards and skills, private storage, and no model credentials"
+    ],
+    "cleanupComplete": true
+  },
+  "nativeMacSmoke": {
+    "passed": true,
+    "receipt": "mac-smoke.log"
+  },
+  "buildComparison": {
+    "server": {
+      "checked": 338,
+      "mismatches": []
+    },
+    "shared": {
+      "checked": 49,
+      "mismatches": []
+    },
+    "supporting": {
+      "checked": 3,
+      "mismatches": []
+    },
+    "renderer": {
+      "checked": 342,
+      "mismatches": []
+    }
+  },
+  "grokReviews": [
+    {
+      "receipt": "grok-website-disposition.json",
+      "actualModel": [
+        "grok-4.7-build"
+      ],
+      "effort": "xhigh",
+      "modelCalls": 1,
+      "turns": 1,
+      "stopReason": "end_turn",
+      "seconds": 170.084,
+      "cleanup": "grok-website-cleanup.json"
+    },
+    {
+      "receipt": "grok-observation-disposition.json",
+      "actualModel": [
+        "grok-4.7-build"
+      ],
+      "effort": "xhigh",
+      "modelCalls": 1,
+      "turns": 1,
+      "stopReason": "end_turn",
+      "seconds": 111.195,
+      "cleanup": "grok-observation-cleanup.json"
+    }
+  ],
+  "independentAccountRebind": {
+    "verifiedAt": "2026-09-21T20:34:14.529Z",
+    "scope": "Actual desktop connector client and gateway in a no-network in-memory fixture; fictional provider only",
+    "reviewedAccount": "account-a",
+    "gatewayCurrentAccount": "account-b",
+    "providerScanCalls": 0,
+    "providerAccountRead": null,
+    "clientResult": "rejected-before-read",
+    "requestFields": [
+      "expectedAccountId",
+      "scope"
+    ],
+    "sourceSha256": {
+      "server/managed-connectors.ts": "bf8b5ee79414b33435ef7cf95c7fb32a65ea3fcac1d213ebde1e9bd62947d61b",
+      "managed-gateway/connectors.ts": "e0043a20f7ffbb1d6a89f5c4428ec034746556339525a36fa15e5f7a5bcee535"
+    },
+    "passed": true
+  },
+  "cleanup": {
+    "websiteQaProcessesExitZero": true,
+    "managedQaReceiptsCleaned": true,
+    "profileReceiptCleaned": true,
+    "grokHomesRemoved": true
+  },
+  "limits": [
+    "No deployed portal migration or service update",
+    "Fictional mail/provider and deterministic CLI responses; no real Gmail/LLM/customer acceptance",
+    "Unsigned fresh artifact; installed app not replaced",
+    "No native Windows or physical two-device proof",
+    "Remote approver enrollment and shared-department adapters remain pending",
+    "Reviewed skill-instruction archival remains next local work",
+    "Full-site lint retains two documented pre-existing failures"
+  ],
+  "nextPlan": {
+    "document": "docs/SKILL-HISTORY-ARCHIVAL-PLAN-2026-09-22.md",
+    "implemented": false,
+    "reviewReceipt": "outputs/skill-history-plan-2026-09-22/grok-skill-history-disposition.json",
+    "actualModel": "grok-4.7-build",
+    "effort": "xhigh",
+    "completed": true,
+    "cleanupVerified": true
+  }
+}

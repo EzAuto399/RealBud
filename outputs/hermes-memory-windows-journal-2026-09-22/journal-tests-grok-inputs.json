@@ -1,0 +1,12 @@
+{
+  "harness_sha256": "dcebd7aeb26ecc0aef30fd9dbb911869c6f131bab9a6df612540c595b3880696",
+  "prompt_bytes": 7005,
+  "selected_functions": [
+    "move_new",
+    "delete_exact",
+    "child_main",
+    "test_delete_request_is_not_terminal_cleanup",
+    "test_public_json_and_direct_dispatch_cannot_bypass_windows_hold"
+  ],
+  "scope": "selected excerpts plus explicit interface and test inventory; not whole-source review"
+}

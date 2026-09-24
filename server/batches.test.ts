@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { BatchService } from "./batches.ts";
 import { Desk } from "./desk.ts";
 import { batchCounts } from "../shared/batches.ts";
+import { removeFixture, windowsAdmissionTimeout } from "./testing/private-fixture.ts";
 
 const dirs: string[] = [];
 const services: BatchService[] = [];
@@ -14,7 +15,7 @@ function deferred<T>() {
   const promise = new Promise<T>(done => { resolve = done; });
   return { promise, resolve };
 }
-function setup() {
+function setup(canRecover?: () => boolean) {
   const dir = mkdtempSync(join(tmpdir(), "realbud-batches-")); dirs.push(dir);
   const desk = new Desk({ file: join(dir, "desk.json") });
   const snapshot = desk.snapshot();
@@ -22,12 +23,12 @@ function setup() {
   const available = vi.fn(async () => true);
   const notes = vi.fn((id: string) => `Private reference for ${id}`);
   const file = join(dir, "batches.json");
-  const deps = { retryDelayMs: 0, file, snapshot: () => snapshot, notes, ask, available };
+  const deps = { retryDelayMs: 0, file, snapshot: () => snapshot, notes, ask, available, canRecover };
   const service = new BatchService(deps); services.push(service);
   const input = { task: "owner-update", propertyIds: ["prop-oak", "prop-pine"], instruction: "Concise please", requestKey: "request-0001", expectedRevision: snapshot.revision };
   return { service, snapshot, ask, available, notes, input, file, deps };
 }
-afterEach(() => { services.splice(0).forEach(s => s.stop()); dirs.splice(0).forEach(dir => rmSync(dir, { recursive: true, force: true })); vi.restoreAllMocks(); });
+afterEach(async () => { services.splice(0).forEach(s => s.stop()); for (const dir of dirs.splice(0)) await removeFixture(dir); vi.restoreAllMocks(); });
 
 describe("durable property batches", () => {
   it("isolates each property, saves complete results, and uses only bounded preparation tools", async () => {
@@ -209,7 +210,31 @@ describe("durable property batches", () => {
 
 
 describe("persistent portfolio preparation", () => {
-  it.each([20, 50, 100, 150, 200, 500])("completes %i independent properties and preserves progress on reload", async count => {
+  it.each(['before probe', 'during probe'] as const)('preserves automatic recovery while the host pauses %s', async when => {
+    let held = false;
+    const { service, input, available, ask, file } = setup(() => !held);
+    available.mockResolvedValue(false);
+    const created = service.create({ ...input, autoContinue: true }); await service.wait(created.id);
+    const before = readFileSync(file), calls = available.mock.calls.length;
+    expect(service.get(created.id)).toMatchObject({ status: 'paused', waitingForWorker: true });
+    if (when === 'before probe') {
+      held = true; await service.recoverReadyWork(); expect(available).toHaveBeenCalledTimes(calls);
+    } else {
+      const probe = deferred<boolean>(); available.mockReturnValueOnce(probe.promise);
+      const recovery = service.recoverReadyWork(); expect(available).toHaveBeenCalledTimes(calls + 1);
+      held = true; probe.resolve(true); await recovery;
+    }
+    expect(readFileSync(file)).toEqual(before); expect(ask).not.toHaveBeenCalled();
+    expect(service.get(created.id)).toMatchObject({ status: 'paused', waitingForWorker: true });
+    held = false; available.mockResolvedValue(true);
+    await service.recoverReadyWork(); await service.wait(created.id);
+    expect(service.get(created.id).status).toBe('finished'); expect(ask).toHaveBeenCalledTimes(2);
+    expect(service.get(created.id).items.map(item => item.attempt)).toEqual([1, 1]);
+  });
+
+  // Each saved progress step costs one Windows admission (2N+6 launches). Beyond 100
+  // properties the scale adds no platform coverage, so Windows runs up to 100 only.
+  for (const count of [20, 50, 100, 150, 200, 500]) it.skipIf(process.platform === "win32" && count > 100)(`completes ${count} independent properties and preserves progress on reload`, { timeout: 60000, ...windowsAdmissionTimeout(2 * count + 6) }, async () => {
     const { service, snapshot, input, ask, deps } = setup();
     snapshot.properties = Array.from({ length: count }, (_, n) => ({ ...snapshot.properties[0], id: `portfolio-${n}`, address: `${n} Portfolio Road` }));
     const created = service.create({ ...input, propertyIds: snapshot.properties.map(p => p.id), autoContinue: true });
@@ -223,7 +248,7 @@ describe("persistent portfolio preparation", () => {
     expect(ask).toHaveBeenCalledTimes(count);
     expect(restored.view(created.id)?.items.every(i => i.source === "" && i.output)).toBe(true);
     expect(restored.view(created.id, restored.get(created.id).revision)).toBeNull();
-  }, 60000);
+  });
 
   it("resumes after restart only when opted in and never repeats completed items", async () => {
     const { service, input, ask, deps } = setup();

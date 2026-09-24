@@ -1,0 +1,44 @@
+{
+  "layer": "Source and synthetic local files/processes; not public v2 UI, packaged desktop, Windows or customer acceptance.",
+  "fullSource": {
+    "passed": 4086,
+    "failed": 0,
+    "skipped": 143,
+    "files": 329,
+    "seconds": 288.32,
+    "receipt": "full-source-resource-lifecycle.json",
+    "inputs": "resource-lifecycle-source-inputs.json",
+    "selectedInputCount": 973,
+    "inputDigest": "bbf5a246b6efe01d518e769c2ee5605b6f381571e3b55dfed35ccb1f3fc439e2",
+    "unchangedAtCompletion": true
+  },
+  "afterFullSuite": {
+    "changes": [
+      "server/private-backup-resource-runtime.ts",
+      "server/private-backup-resource-runtime.test.ts",
+      "server/private-backup-legacy.test.ts"
+    ],
+    "reason": "Per-item recovery isolation, process-local fallback when a failed-close hold cannot persist, and regression/return-shape checks.",
+    "passed": 92,
+    "failed": 0,
+    "skipped": 0,
+    "files": 5,
+    "seconds": 8.13,
+    "receipt": "resource-review-followup-tests.log",
+    "inputs": "resource-review-followup-inputs.json",
+    "selectedInputCount": 973,
+    "inputDigest": "2db956ecd3124f436a92ef539af85b16fcbe8239cc16a8a7cdf8264ea905be0d",
+    "unchangedAfterVerification": true
+  },
+  "builds": {
+    "initialServerBuild": "resource-lifecycle-server-build.log",
+    "finalServerTypecheck": "resource-review-followup-tsc.log",
+    "finalServerBuild": "resource-review-followup-server-build.log"
+  },
+  "remaining": [
+    "Public transfer coordinator/HTTP/UI and snapshot-lease integration.",
+    "Aggregate physical admission for prepared/builder/transfer journals and retained historical artifacts.",
+    "New desktop package and installed macOS/Windows acceptance.",
+    "Managed-service commissioning, customer Gmail/paired-bank-CSV/REI acceptance and office soak."
+  ]
+}

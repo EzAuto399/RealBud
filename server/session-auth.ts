@@ -1,5 +1,5 @@
 // Per-boot API session + loopback Host/Origin checks.
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 
 export const SESSION_TOKEN = randomBytes(24).toString("hex");
@@ -36,6 +36,34 @@ export function originAllowed(origin: string | undefined, listenPort: number): b
   }
 }
 
+const DOWNLOAD_PATH = /^\/api\/private-backup\/v2\/downloads\/[A-Za-z0-9_-]{32,128}$/;
+const DOWNLOAD_COOKIE = 'realbud-backup-download=';
+const DOWNLOAD_KEY = randomBytes(32), DOWNLOAD_LIFETIME = 5 * 60_000;
+function downloadProof(path: string, expiresAt: number): string {
+  return createHmac('sha256', DOWNLOAD_KEY).update(`backup-download-v1\n${path}\n${expiresAt}`).digest('hex');
+}
+/** Native downloads cannot attach the renderer's custom header. This separate
+ * per-boot proof grants only the exact ticket GET until expiry. It is never an
+ * app session token, including if copied into a header or query parameter. */
+export function privateBackupDownloadSessionCookie(ticket: { url: string; expiresAt: number }): string {
+  const remaining = ticket.expiresAt - Date.now();
+  if (!DOWNLOAD_PATH.test(ticket.url) || !Number.isSafeInteger(ticket.expiresAt) || remaining <= 0 || remaining > DOWNLOAD_LIFETIME) throw new Error('Invalid backup download grant.');
+  return `${DOWNLOAD_COOKIE}${ticket.expiresAt}.${downloadProof(ticket.url, ticket.expiresAt)}; HttpOnly; SameSite=Strict; Path=${ticket.url}; Max-Age=${Math.ceil(remaining / 1000)}`;
+}
+function downloadSessionOk(req: IncomingMessage): boolean {
+  if ((req.method ?? 'GET') !== 'GET') return false;
+  try {
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+    if (!DOWNLOAD_PATH.test(url.pathname)) return false;
+    const values = (req.headers.cookie ?? '').split(';').map(part => part.trim()).filter(part => part.startsWith(DOWNLOAD_COOKIE));
+    // Ambiguous credentials fail closed; each ticket uses its own cookie path.
+    if (values.length !== 1) return false;
+    const match = /^(\d{13})\.([a-f0-9]{64})$/.exec(values[0]!.slice(DOWNLOAD_COOKIE.length));
+    if (!match) return false;
+    const expiresAt = Number(match[1]), remaining = expiresAt - Date.now();
+    return remaining > 0 && remaining <= DOWNLOAD_LIFETIME && tokensEqual(match[2]!, downloadProof(url.pathname, expiresAt));
+  } catch { return false; }
+}
 function tokenFromRequest(req: IncomingMessage): string | null {
   const auth = req.headers.authorization;
   if (auth?.startsWith("Bearer ")) return auth.slice(7).trim();
@@ -66,7 +94,7 @@ export function sessionOk(req: IncomingMessage, listenPort: number): { ok: true 
     return { ok: false, status: 403, error: "refused origin" };
   }
   const token = tokenFromRequest(req);
-  if (!token || !tokensEqual(token, SESSION_TOKEN)) {
+  if (token ? !tokensEqual(token, SESSION_TOKEN) : !downloadSessionOk(req)) {
     return { ok: false, status: 401, error: "session required" };
   }
   return { ok: true };
@@ -83,19 +111,29 @@ export function needsSession(path: string, method?: string): boolean {
     /^\/api\/(?:bots|threads|instances)(?:\/|$)/.test(path)) return true;
   return (
     path === "/api/config" ||
+    /^\/api\/onboarding(?:\/|$)/.test(path) ||
     path.startsWith("/api/hermes") ||
     path.startsWith("/api/care") ||
     path.startsWith("/api/service-admin") ||
     path.startsWith("/api/service/") ||
+    path.startsWith("/api/support/") ||
     path.startsWith("/api/tts") ||
     path.startsWith("/api/company") ||
     path.startsWith("/api/connected-apps") ||
+    path === "/api/browser" || path.startsWith("/api/browser/") ||
     path.startsWith("/api/desk") ||
     path.startsWith("/api/channels") ||
     path.startsWith("/api/rules") ||
     path.startsWith("/api/law-watch") ||
     path.startsWith("/api/workflow-packs") ||
+    path.startsWith("/api/customer-packs") ||
+    path.startsWith("/api/agency-setup") ||
+    /^\/api\/(?:website-requests|office-link)(?:\/|$)/.test(path) ||
+    path.startsWith("/api/private-backup") ||
+    path.startsWith("/api/mail-workspace") ||
+    path.startsWith("/api/workspace-tabs") ||
     path.startsWith("/api/expected-bills") ||
+    /^\/api\/bill-(?:register|evidence|occurrences|series|scan|proposals|review-drafts)(?:\/|$)/.test(path) ||
     path.startsWith("/api/recipes") ||
     path.startsWith("/api/job-runs") ||
     path.startsWith("/api/computer-history") ||

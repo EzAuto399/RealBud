@@ -187,8 +187,13 @@ describe.runIf(process.env.REALBUD_TEST_POSTGRES === '1')('reviewed work between
   });
 
   it('reassigns explicitly, resets acceptance, retains old replies and reconciles the original lost creation response', async () => {
+    // A different person needs a separate private workspace. The host's
+    // workspace is already bound to the owner and must not be rebound here.
+    const maintenanceApp = installation('maintenance');
+    const hostCode = (await call(owner, 'host-code')).body.hostCode;
+    expect((await request(maintenanceApp, 'connect-host', { hostCode })).status).toBe(200);
     const invitation = await call(owner, 'invitations', { displayName: 'Practice maintenance' });
-    const maintenance = await identify(host, await request(host, 'join', { invitationToken: invitation.body.invitationToken,
+    const maintenance = await identify(maintenanceApp, await request(maintenanceApp, 'join', { invitationToken: invitation.body.invitationToken,
       credential: { loginName: 'maintenance', password } }));
     const draft = { ...input, requestId: randomUUID(), purpose: 'handoff' };
     const created = await call(accounts, 'work', draft);

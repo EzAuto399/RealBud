@@ -1,0 +1,35 @@
+/** Versioned website request protocol. No source data, recipe ids, paths or instructions. */
+export const WEBSITE_COMMAND_PROTOCOL = 1;
+export const COMMAND_PAGE_SIZE = 32;
+export const COMMAND_OPERATIONS = ['morning-review', 'prepare-recipe'];
+export const COMMAND_PHASES = ['queued', 'delivered', 'accepted', 'running', 'completed', 'needs-review', 'partial', 'failed', 'interrupted', 'rejected', 'cancelled', 'expired', 'stale'];
+export const COMMAND_OUTCOMES = ['prepared', 'review-required', 'partial-results', 'execution-failed', 'execution-interrupted', 'declined', 'cancelled', 'expired', 'binding-changed'];
+export const commandUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+export const commandDigest = /^[a-f0-9]{64}$/;
+const obj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+const exact = (v, keys) => obj(v) && Object.keys(v).length === keys.length && keys.every(k => Object.hasOwn(v, k));
+export const commandLabel = (v, max = 80) => typeof v === 'string' && v.length > 0 && v.length <= max && v.trim() === v && !/[\u0000-\u001f\u007f]/.test(v);
+const uuid = (v) => typeof v === 'string' && commandUuid.test(v);
+const digest = (v) => typeof v === 'string' && commandDigest.test(v);
+const positive = (v) => Number.isSafeInteger(v) && v > 0 && v <= 2147483647;
+const cursor = (v) => Number.isSafeInteger(v) && v >= 0;
+const date = (v) => typeof v === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(v) && Number.isFinite(Date.parse(v));
+export function isWebsiteCommandDescriptor(v) { return exact(v, ['id', 'operation', 'revision', 'label']) && uuid(v.id) && COMMAND_OPERATIONS.includes(v.operation) && digest(v.revision) && commandLabel(v.label); }
+const enrollmentKeys = ['protocol', 'grantId', 'generation', 'installationId', 'workspaceId', 'workspaceLabel', 'descriptors'];
+function grantFields(v) { return v.protocol === 1 && uuid(v.grantId) && positive(v.generation) && uuid(v.installationId) && uuid(v.workspaceId) && commandLabel(v.workspaceLabel) && Array.isArray(v.descriptors) && v.descriptors.length > 0 && v.descriptors.length <= 16 && v.descriptors.every(isWebsiteCommandDescriptor) && new Set(v.descriptors.map(d => d.id)).size === v.descriptors.length; }
+export function isWebsiteCommandEnrollment(v) { return exact(v, [...enrollmentKeys, 'commandToken']) && grantFields(v) && digest(v.commandToken); }
+export function isWebsiteCommandGrant(v) { return exact(v, [...enrollmentKeys, 'companyId', 'enrolledAt', 'revokedAt']) && grantFields(v) && commandLabel(v.companyId, 100) && date(v.enrolledAt) && (v.revokedAt === null || date(v.revokedAt)); }
+export function isWebsiteCommandEnvelope(v) { return exact(v, ['protocol', 'id', 'companyId', 'installationId', 'workspaceId', 'grantId', 'generation', 'descriptor', 'requester', 'createdAt', 'expiresAt']) && v.protocol === 1 && uuid(v.id) && commandLabel(v.companyId, 100) && uuid(v.installationId) && uuid(v.workspaceId) && uuid(v.grantId) && positive(v.generation) && isWebsiteCommandDescriptor(v.descriptor) && commandLabel(v.requester, 160) && date(v.createdAt) && date(v.expiresAt) && Date.parse(v.expiresAt) > Date.parse(v.createdAt) && Date.parse(v.expiresAt) - Date.parse(v.createdAt) <= 86400000; }
+export function isWebsiteCommandState(v) { return exact(v, ['envelope', 'revision', 'phase', 'cancellationRequested', 'runReference', 'outcome', 'updatedAt', 'sequence']) && isWebsiteCommandEnvelope(v.envelope) && positive(v.revision) && COMMAND_PHASES.includes(v.phase) && typeof v.cancellationRequested === 'boolean' && (v.runReference === null || uuid(v.runReference)) && (v.outcome === null || COMMAND_OUTCOMES.includes(v.outcome)) && date(v.updatedAt) && cursor(v.sequence); }
+export function isWebsiteCommandPoll(v) { return exact(v, ['grantId', 'generation', 'cursor']) && uuid(v.grantId) && positive(v.generation) && cursor(v.cursor); }
+export function isWebsiteCommandSubmit(v) { return exact(v, ['requestId', 'grantId', 'descriptorId', 'descriptorRevision']) && uuid(v.requestId) && uuid(v.grantId) && uuid(v.descriptorId) && digest(v.descriptorRevision); }
+export function isWebsiteCommandEvent(v) { return exact(v, ['grantId', 'generation', 'requestId', 'eventId', 'expectedRevision', 'phase', 'outcome', 'runReference']) && uuid(v.grantId) && positive(v.generation) && uuid(v.requestId) && uuid(v.eventId) && positive(v.expectedRevision) && COMMAND_PHASES.includes(v.phase) && (v.outcome === null || COMMAND_OUTCOMES.includes(v.outcome)) && (v.runReference === null || uuid(v.runReference)); }
+export function isWebsiteCommandClaim(v) { return exact(v, ['grantId', 'generation', 'requestId', 'expectedRevision', 'envelope', 'previewDigest', 'claimId']) && uuid(v.grantId) && positive(v.generation) && uuid(v.requestId) && positive(v.expectedRevision) && isWebsiteCommandEnvelope(v.envelope) && v.envelope.id === v.requestId && v.envelope.grantId === v.grantId && v.envelope.generation === v.generation && digest(v.previewDigest) && uuid(v.claimId); }
+export function isWebsiteCommandPollResult(v) { return exact(v, ['grant', 'requests', 'cursor', 'hasMore', 'serverTime']) && isWebsiteCommandGrant(v.grant) && Array.isArray(v.requests) && v.requests.length <= COMMAND_PAGE_SIZE && v.requests.every(isWebsiteCommandState) && cursor(v.cursor) && typeof v.hasMore === 'boolean' && date(v.serverTime); }
+export function isWebsiteCommandClaimResult(v) { return exact(v, ['request', 'claimId', 'previewDigest', 'validUntil', 'serverTime']) && isWebsiteCommandState(v.request) && uuid(v.claimId) && digest(v.previewDigest) && date(v.validUntil) && date(v.serverTime); }
+/** Deterministic digest input across object key order, not a SQL hash contract. */
+export function canonicalWebsiteCommand(value) { if (Array.isArray(value))
+    return `[${value.map(canonicalWebsiteCommand).join(',')}]`; if (obj(value))
+    return `{${Object.keys(value).sort().map(k => `${JSON.stringify(k)}:${canonicalWebsiteCommand(value[k])}`).join(',')}}`; const text = JSON.stringify(value); if (text === undefined)
+    throw new Error('Invalid command value'); return text; }
+export function isWebsiteCommandAccountResult(v) { return exact(v, ['catalog', 'targetReferences', 'requests', 'cursor', 'hasMore', 'serverTime']) && Array.isArray(v.targetReferences) && v.targetReferences.length <= COMMAND_PAGE_SIZE && v.targetReferences.every(t => exact(t, ['grantId', 'installationId', 'workspaceId', 'installationLabel', 'workspaceLabel']) && uuid(t.grantId) && uuid(t.installationId) && uuid(t.workspaceId) && commandLabel(t.installationLabel) && commandLabel(t.workspaceLabel)) && new Set(v.targetReferences.map(t => t.grantId)).size === v.targetReferences.length && Array.isArray(v.catalog) && v.catalog.length <= 1000 && v.catalog.every(c => exact(c, ['grant', 'installationLabel']) && isWebsiteCommandGrant(c.grant) && commandLabel(c.installationLabel)) && Array.isArray(v.requests) && v.requests.length <= COMMAND_PAGE_SIZE && v.requests.every(isWebsiteCommandState) && cursor(v.cursor) && typeof v.hasMore === 'boolean' && date(v.serverTime); }

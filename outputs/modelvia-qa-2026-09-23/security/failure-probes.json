@@ -1,0 +1,43 @@
+{
+  "at": "2026-09-23T03:24:11.824Z",
+  "proofLayer": "local injected synthetic failure probes",
+  "node": "v24.19.0",
+  "results": [
+    {
+      "id": "usage-cross-office-race",
+      "reproduced": true,
+      "currentOffice": "fictional-office-b",
+      "shownUsageOffice": "fictional-office-a",
+      "newOfficeUsageCalls": 0
+    },
+    {
+      "id": "revocation-withdrawal-not-retried",
+      "reproduced": true,
+      "initialError": "config_recovery_required",
+      "linkState": "revoked",
+      "provisionedAfterRepairAndReport": true,
+      "runtimeKeyPresent": true,
+      "withdrawalCalls": 1
+    },
+    {
+      "id": "vault-removal-refusal-swallowed",
+      "reproduced": true,
+      "clearResolved": true,
+      "encryptedCredentialRetained": true,
+      "provisioningRecordRetained": false,
+      "bindingRetained": false
+    },
+    {
+      "id": "env-entry-value-redaction-bypass",
+      "reproduced": true,
+      "ordinaryTextRedacts": true,
+      "credentialNameNotRequiredForRecognizablePrefix": true
+    }
+  ],
+  "externalRequests": 0,
+  "limits": [
+    "Observed current defects; these are not product acceptance passes",
+    "No live Modelvia, website, provider or customer data",
+    "POSIX vault-mode refusal probe; no native Windows proof"
+  ]
+}

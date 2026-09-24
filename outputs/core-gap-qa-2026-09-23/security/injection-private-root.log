@@ -1,0 +1,19 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ✓ server/drivers/acp/browser-injection-boundary.test.ts (10 tests) 3638ms
+     ✓ browser_click_semantic cannot turn email instructions or fullAuto into payment approval  306ms
+     ✓ browser_press cannot turn email instructions or fullAuto into payment approval  375ms
+     ✓ requires a new exact approval for the next invoice and does not repeat a transport retry  391ms
+     ✓ rechecks the amount after approval instead of trusting the old card  333ms
+     ✓ rechecks the recipient after approval instead of trusting the old card  337ms
+     ✓ Stop rejects a pending payment and a late approval without dispatch  482ms
+     ✓ Stop during an in-flight read aborts the helper and withholds its late page result  363ms
+     ✓ Stop after payment dispatch retains unknown outcome and a new broker cannot replay it via Enter  554ms
+
+ Test Files  1 passed (1)
+      Tests  10 passed (10)
+   Start at  15:02:57
+   Duration  4.56s (transform 587ms, setup 56ms, import 700ms, tests 3.64s, environment 0ms)
+
+JSON report written to /Users/yoda/projects/RealBud/outputs/core-gap-qa-2026-09-23/security/injection-private-root.json

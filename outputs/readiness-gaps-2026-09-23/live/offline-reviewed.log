@@ -1,0 +1,17 @@
+✔ forty-one bounded successes, six ledger-preserving negatives, retail-price receipts and complete cleanup (2635.112541ms)
+✔ lost mint reply is reconciled by project key listing without a second mint (0.711042ms)
+✔ timeout after admission stops further inference, preserves liability and executes cleanup (2602.690459ms)
+✔ unknown after admission stops further inference, preserves liability and executes cleanup (2604.352708ms)
+✔ pre-dispatch cap refusal never retries a positive request or raises the cap (2603.93825ms)
+✔ cleanup failure cannot leave an overall passing receipt and does not skip account disable (2628.21125ms)
+✔ existing namespace collision causes zero POSTs and leaves the existing account untouched (0.378792ms)
+✔ persistent receipt write failure after mint still revokes the discovered key and disables all accounts (0.55375ms)
+✔ initial receipt write failure prevents every HTTP request and mutation (0.330875ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 13120.658042

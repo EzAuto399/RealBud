@@ -1,0 +1,17 @@
+test_create_collision_is_fixed_conflict_and_security_allocation_is_freed (__main__.RawWin32Contract.test_create_collision_is_fixed_conflict_and_security_allocation_is_freed) ... ok
+test_delete_is_source_handle_disposition_not_path_deletion (__main__.RawWin32Contract.test_delete_is_source_handle_disposition_not_path_deletion) ... ok
+test_descriptor_and_simple_ace_parse_by_handle_and_free_allocations (__main__.RawWin32Contract.test_descriptor_and_simple_ace_parse_by_handle_and_free_allocations) ... ok
+test_descriptor_free_failure_after_open_closes_unreturned_handle (__main__.RawWin32Contract.test_descriptor_free_failure_after_open_closes_unreturned_handle) ... ok
+test_every_bound_entry_has_explicit_signature (__main__.RawWin32Contract.test_every_bound_entry_has_explicit_signature) ... ok
+test_foreign_ace_pointer_is_refused_before_sid_dereference (__main__.RawWin32Contract.test_foreign_ace_pointer_is_refused_before_sid_dereference) ... ok
+test_private_create_attributes_precede_content_and_handle_is_not_inheritable (__main__.RawWin32Contract.test_private_create_attributes_precede_content_and_handle_is_not_inheritable) ... ok
+test_rename_uses_handle_parent_and_utf16_byte_count (__main__.RawWin32Contract.test_rename_uses_handle_parent_and_utf16_byte_count) ... ok
+test_sid_length_cannot_cross_ace_boundary (__main__.RawWin32Contract.test_sid_length_cannot_cross_ace_boundary) ... ok
+test_structures_are_windows_width_on_non_windows (__main__.RawWin32Contract.test_structures_are_windows_width_on_non_windows) ... ok
+test_token_buffer_sid_is_bounded_and_token_is_closed (__main__.RawWin32Contract.test_token_buffer_sid_is_bounded_and_token_is_closed) ... ok
+test_unknown_ace_is_refused_before_its_sid_is_decoded (__main__.RawWin32Contract.test_unknown_ace_is_refused_before_its_sid_is_decoded) ... ok
+
+----------------------------------------------------------------------
+Ran 12 tests in 0.001s
+
+OK

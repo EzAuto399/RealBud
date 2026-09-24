@@ -1,0 +1,21 @@
+{
+  "runtime": "v24.19.0",
+  "observations": [
+    {
+      "requestedFamily": "default",
+      "options": {
+        "hints": 1024,
+        "all": true
+      },
+      "noNetworkDispatch": true
+    },
+    {
+      "requestedFamily": 4,
+      "options": {
+        "family": 4,
+        "hints": 0
+      },
+      "noNetworkDispatch": true
+    }
+  ]
+}

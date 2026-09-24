@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Recipe } from "../shared/contracts.ts";
+import { removeFixture } from "./testing/private-fixture.ts";
 import {
   coverageFromUncoveredHeld,
   LOOP_CATALOG,
@@ -17,6 +18,13 @@ import {
 } from "./routines.ts";
 
 const dirs: string[] = [];
+// Each manager holds its execution-history database open in the fixture
+// folder; Windows cannot remove the folder until every one is closed.
+const managers: LoopManager[] = [];
+function track(manager: LoopManager): LoopManager {
+  managers.push(manager);
+  return manager;
+}
 
 function tempFile() {
   const dir = mkdtempSync(join(tmpdir(), "realbud-loops-"));
@@ -24,8 +32,9 @@ function tempFile() {
   return join(dir, "loops.json");
 }
 
-afterEach(() => {
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+afterEach(async () => {
+  for (const manager of managers.splice(0)) manager.close();
+  for (const dir of dirs.splice(0)) await removeFixture(dir);
 });
 
 describe("nextOccurrence", () => {
@@ -70,7 +79,7 @@ function taughtJob(overrides: Partial<Recipe> = {}): Recipe {
 function makeManager(options: Partial<LoopManagerOptions> & { execute?: LoopManagerOptions["execute"] } = {}) {
   const calls: Loop[] = [];
   const runs: LoopRun[] = [];
-  const manager = new LoopManager({
+  const manager = track(new LoopManager({
     file: tempFile(),
     now: () => options.now?.() ?? Date.now(),
     emit: (payload) => {
@@ -87,7 +96,7 @@ function makeManager(options: Partial<LoopManagerOptions> & { execute?: LoopMana
         calls.push(loop);
         return { ok: true, detail: "desk check done — 2 drafts waiting" };
       }),
-  });
+  }));
   return { manager, calls, runs };
 }
 
@@ -98,7 +107,7 @@ describe("LoopManager catalog", () => {
     expect(loops.map((loop) => loop.id)).toEqual(["morning-arrears", "owner-letter", "inbound-triage"]);
     expect(loops[0]).toMatchObject({ available: true, enabled: true, name: "Morning money check" });
     expect(loops[1]).toMatchObject({ available: true, enabled: true });
-    expect(loops[2]).toMatchObject({ available: false, enabled: false });
+    expect(loops[2]).toMatchObject({ available: true, enabled: false });
     expect(loops[0].nextRunAt).not.toBeNull();
     expect(loops[1].nextRunAt).not.toBeNull();
     expect(loops[2].nextRunAt).toBeNull();
@@ -111,25 +120,23 @@ describe("LoopManager catalog", () => {
     expect(JSON.stringify(manager.listLoops().map((loop) => loop.description))).not.toMatch(/Hermes/i);
   });
 
-  it("refuses to enable or run a loop that is not available yet; owner-letter v0 runs", () => {
+  it("allows a deliberate manual inbox review without enabling its recurring schedule", async () => {
     const { manager, calls } = makeManager();
-    expect(() => manager.setEnabled("inbound-triage", true)).toThrow(/not built yet/);
-    expect(manager.runNow("inbound-triage")).toBeNull();
-    // owner-letter v0 is built: Run now goes through the injected executor
-    const run = manager.runNow("owner-letter");
-    expect(run).not.toBeNull();
-    void manager.tick();
-    expect(calls.some((loop) => loop.id === "owner-letter")).toBe(true);
+    expect(manager.listLoops().find(loop => loop.id === 'inbound-triage')?.enabled).toBe(false);
+    expect(manager.runNow('inbound-triage')).not.toBeNull();
+    await manager.tick();
+    expect(calls.some(loop => loop.id === 'inbound-triage')).toBe(true);
+    expect(manager.listLoops().find(loop => loop.id === 'inbound-triage')?.enabled).toBe(false);
   });
 
   it("persists the enabled flag across reloads", () => {
     const file = tempFile();
-    const first = new LoopManager({
+    const first = track(new LoopManager({
       file,
       execute: async () => ({ ok: true, detail: "" }),
-    });
+    }));
     first.setEnabled("morning-arrears", false);
-    const second = new LoopManager({ file, execute: async () => ({ ok: true, detail: "" }) });
+    const second = track(new LoopManager({ file, execute: async () => ({ ok: true, detail: "" }) }));
     expect(second.listLoops().find((loop) => loop.id === "morning-arrears")?.enabled).toBe(false);
   });
 
@@ -137,7 +144,7 @@ describe("LoopManager catalog", () => {
     const file = tempFile();
     mkdirSync(join(file, ".."), { recursive: true });
     writeFileSync(file, "not json {{{");
-    const manager = new LoopManager({ file, execute: async () => ({ ok: true, detail: "" }) });
+    const manager = track(new LoopManager({ file, execute: async () => ({ ok: true, detail: "" }) }));
     const loops = manager.listLoops();
     expect(loops.map((loop) => loop.id)).toEqual(["morning-arrears", "owner-letter", "inbound-triage"]);
     expect(loops.find((loop) => loop.id === "morning-arrears")?.enabled).toBe(true);
@@ -254,7 +261,7 @@ describe("LoopManager runs", () => {
         runs: [],
       }),
     );
-    const manager = new LoopManager({ file, now: () => now, execute: async () => ({ ok: true, detail: "" }) });
+    const manager = track(new LoopManager({ file, now: () => now, execute: async () => ({ ok: true, detail: "" }) }));
     await manager.tick();
     const runs = manager.listRuns();
     expect(runs.some((run) => run.status === "missed")).toBe(true);
@@ -312,7 +319,7 @@ describe("LoopManager runs", () => {
         ],
       }),
     );
-    const manager = new LoopManager({ file, execute: async () => ({ ok: true, detail: "" }) });
+    const manager = track(new LoopManager({ file, execute: async () => ({ ok: true, detail: "" }) }));
     const runs = manager.listRuns();
     expect(runs.every((run) => run.status === "interrupted")).toBe(true);
     expect(runs.every((run) => /not resumed/i.test(run.detail ?? ""))).toBe(true);
@@ -322,11 +329,11 @@ describe("LoopManager runs", () => {
     // Production constructs LoopManager without `timezone`. That used to fall
     // back to local-Date arithmetic, leaving the DST-aware path — and its test
     // — unreachable from the running clock.
-    const manager = new LoopManager({
+    const manager = track(new LoopManager({
       file: tempFile(),
       hostTimezone: "Australia/Sydney",
       execute: async () => ({ ok: true, detail: "" }),
-    });
+    }));
     const loop = manager.listLoops().find((row) => row.id === "morning-arrears")!;
     expect(loop.timezonePaused).toBeFalsy();
     expect(loop.nextRunAt).not.toBeNull();
@@ -337,13 +344,13 @@ describe("LoopManager runs", () => {
 
   it("keeps an overdue run locked until its actual result arrives while other loops remain usable", async () => {
     let finish!: (result: { ok: boolean; detail: string }) => void;
-    const manager = new LoopManager({
+    const manager = track(new LoopManager({
       file: tempFile(),
       runDeadlineMs: 20,
       execute: (loop) => loop.id === "morning-arrears"
         ? new Promise((resolve) => { finish = resolve; })
         : Promise.resolve({ ok: true, detail: "Other job prepared" }),
-    });
+    }));
     const run = manager.runNow("morning-arrears")!;
     await vi.waitFor(
       () => expect(manager.listRuns().find((row) => row.id === run.id)?.detail).toMatch(/taking longer/i),
@@ -362,12 +369,12 @@ describe("LoopManager runs", () => {
 
   it("pauses the clock when the agency timezone does not match the host", () => {
     const { manager } = makeManager();
-    const paused = new LoopManager({
+    const paused = track(new LoopManager({
       file: tempFile(),
       timezone: "Australia/Sydney",
       hostTimezone: "America/Los_Angeles",
       execute: async () => ({ ok: true, detail: "" }),
-    });
+    }));
     const loop = paused.listLoops()[0];
     expect(loop.timezonePaused).toBe(true);
     expect(loop.nextRunAt).toBeNull();
@@ -418,7 +425,7 @@ describe("LoopManager clock retune (PR A)", () => {
         runs: [],
       }),
     );
-    const first = new LoopManager({ file, execute: async () => ({ ok: true, detail: "" }) });
+    const first = track(new LoopManager({ file, execute: async () => ({ ok: true, detail: "" }) }));
     const loop = first.listLoops().find((l) => l.id === "morning-arrears")!;
     expect(loop.schedule).toMatchObject({ time: "07:30", weekdays: [1, 2, 3, 4, 5] });
     expect(loop.revision).toBe(1);
@@ -428,7 +435,7 @@ describe("LoopManager clock retune (PR A)", () => {
     expect(onDisk.version).toBe(3);
     expect(onDisk.state["morning-arrears"]).toMatchObject({ schedule: { time: "08:15" }, revision: 2 });
 
-    const second = new LoopManager({ file, execute: async () => ({ ok: true, detail: "" }) });
+    const second = track(new LoopManager({ file, execute: async () => ({ ok: true, detail: "" }) }));
     const reloaded = second.listLoops().find((l) => l.id === "morning-arrears")!;
     expect(reloaded.schedule.time).toBe("08:15");
     expect(reloaded.revision).toBe(2);
@@ -459,22 +466,12 @@ describe("LoopManager clock retune (PR A)", () => {
     expect(calls).toHaveLength(0); // no surprise run for the earlier slot
   });
 
-  it("lets a planned loop retune its clock but still refuses to enable it", () => {
+  it("retunes the inbox clock without enabling collection until explicitly enabled", () => {
     const { manager } = makeManager();
-    const patched = manager.patchClock("inbound-triage", { time: "09:15", weekdays: [1, 2, 3, 4, 5] });
-    expect(patched.schedule.time).toBe("09:15");
+    const patched = manager.patchClock('inbound-triage', { time: '09:15', weekdays: [1,2,3,4,5], timezone: 'Australia/Brisbane' });
+    expect(patched.schedule).toMatchObject({ time: '09:15', timezone: 'Australia/Brisbane' });
     expect(patched.enabled).toBe(false);
-    expect(() => manager.patchClock("inbound-triage", { enabled: true })).toThrow(/not built yet/);
-    // Declared-but-not-built is a state conflict, not malformed input, so it must be
-    // 409 — the same code the run route returns. It used to surface as 400 because
-    // this throw carried no status and the PATCH handler defaults to 400.
-    let status: number | undefined;
-    try {
-      manager.patchClock("inbound-triage", { enabled: true });
-    } catch (error) {
-      status = (error as { status?: number }).status;
-    }
-    expect(status).toBe(409);
+    expect(manager.patchClock('inbound-triage', { enabled: true }).enabled).toBe(true);
   });
 
   it("rejects malformed clock patches with a 400 status", () => {
@@ -553,7 +550,7 @@ describe("LoopManager recipe loops", () => {
     let recipe = taughtJob({ status: "active", planApprovedAt: 1, approvedRevision: 1 });
     const execute = vi.fn(async () => ({ ok: true, detail: "prepared" }));
     const options = { file, now: () => now, emit: () => {}, listRecipes: () => [recipe], execute };
-    const manager = new LoopManager(options);
+    const manager = track(new LoopManager(options));
     manager.setEnabled("morning-arrears", false);
     manager.setEnabled("owner-letter", false);
     manager.patchClock("recipe-job-1", { time: "17:00" });
@@ -563,7 +560,7 @@ describe("LoopManager recipe loops", () => {
     expect(manager.listLoops().find((loop) => loop.id === "recipe-job-1")).toMatchObject({ enabled: true, schedule: { time: "15:30" } });
     await manager.tick();
     expect(execute).not.toHaveBeenCalled();
-    const restarted = new LoopManager(options);
+    const restarted = track(new LoopManager(options));
     expect(restarted.listLoops().find((loop) => loop.id === "recipe-job-1")).toMatchObject({ enabled: true, schedule: { time: "15:30" } });
     await restarted.tick();
     expect(execute).not.toHaveBeenCalled();
@@ -700,5 +697,26 @@ describe("LoopManager recipe loops", () => {
     await manager.tick();
     expect(calls.filter((loop) => loop.id === "recipe-job-1")).toHaveLength(2);
     expect(manager.listLoops().find((loop) => loop.id === "recipe-job-1")?.waitingForPlan).toBe(false);
+  });
+});
+
+describe('explicit office timezone for the morning mailbox', () => {
+  it('keeps a reviewed office zone across reload and host timezone changes', async () => {
+    const file=tempFile(); let now=Date.parse('2026-09-21T21:59:00Z'); const execute=vi.fn(async()=>({ok:true,detail:'Collected'}));
+    const manager=track(new LoopManager({file,now:()=>now,hostTimezone:'UTC',execute}));
+    manager.patchClock('inbound-triage',{enabled:true,time:'08:00',weekdays:[1,2,3,4,5],timezone:'Australia/Brisbane'});
+    const before=manager.listLoops().find(l=>l.id==='inbound-triage')!;
+    expect(before.nextRunAt).toBe(Date.parse('2026-09-21T22:00:00Z'));
+    const restored=track(new LoopManager({file,now:()=>now,hostTimezone:'America/New_York',execute}));
+    const current=restored.listLoops().find(l=>l.id==='inbound-triage')!;
+    expect(current.schedule.timezone).toBe('Australia/Brisbane'); expect(current.timezonePaused).toBe(false);
+    expect(restored.listLoops().find(l=>l.id==='morning-arrears')?.timezonePaused).toBe(true);
+    now=Date.parse('2026-09-21T22:01:00Z'); await restored.tick(); expect(execute).toHaveBeenCalledTimes(1);
+    await restored.tick(); expect(execute).toHaveBeenCalledTimes(1);
+  });
+  it('rejects malformed office zones without altering a saved clock',()=>{
+    const {manager}=makeManager(); const before=manager.listLoops();
+    expect(()=>manager.patchClock('inbound-triage',{timezone:'bad/timezone',enabled:true})).toThrow(/timezone/);
+    expect(manager.listLoops()).toEqual(before);
   });
 });

@@ -1,0 +1,2 @@
+{"at":"2026-09-21T20:16:53.226Z","event":"crash","detail":"worker failed with XAI_API_KEY=«redacted 24 chars» in env"}
+JSON report written to /Users/yoda/projects/RealBud/outputs/website-requests-2026-09-22/full-tests.json

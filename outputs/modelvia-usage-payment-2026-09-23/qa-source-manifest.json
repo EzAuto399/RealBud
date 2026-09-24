@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "scope": "Local disposable PostgreSQL / production Next QA with fictional providers only",
+  "websiteBase": "b9c764c0b97d406b0c9ce3bfd6dddb06ac7bba2a",
+  "files": [
+    {
+      "path": "website/scripts/testing/command-site.mjs",
+      "sha256": "c4db1f1f960b43c78f8f97b3b749af3235992fe35a5614635e8c5be84d854435"
+    },
+    {
+      "path": "website/scripts/qa-modelvia-usage-payment.mjs",
+      "sha256": "320f84ea35f6201a0405c134311f1f210918a8fbe905cbefab25ea7a3e96f187"
+    }
+  ]
+}

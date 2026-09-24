@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, statSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -19,6 +19,12 @@ function tempFile() {
 }
 
 describe("DeskStore", () => {
+  it.skipIf(process.platform === 'win32')('creates private ciphertext and tightens an older owned file without changing its bytes', () => {
+    const { file, key } = tempFile(); new DeskStore({ file, key, book: fixtureBook() });
+    expect(statSync(file).mode & 0o077).toBe(0); const original = readFileSync(file); chmodSync(file, 0o644);
+    new DeskStore({ file, key, book: fixtureBook() }); expect(statSync(file).mode & 0o077).toBe(0); expect(readFileSync(file)).toEqual(original);
+  });
+
   it("migrates a v1 book without claiming old approvals were sent", () => {
     const { file, key } = tempFile();
     writeFileSync(
@@ -60,6 +66,33 @@ describe("DeskStore", () => {
     const again = new DeskStore({ file, book: fixtureBook(), key });
     expect(again.data.workItems[0]?.state).toBe("approved");
     expect(again.v3.version).toBe(3);
+  });
+
+  it("stamps the host timezone on a migrated v1 book instead of a fixed Australian zone", () => {
+    const { file, key } = tempFile();
+    writeFileSync(file, JSON.stringify({
+      version: 1,
+      properties: fixtureBook().properties,
+      ledger: fixtureBook().ledger.map((row) => ({ ...row, daysSinceCourtesy: 0 })),
+      drafts: [],
+      escalations: [],
+      lastRunAt: null,
+      results: [],
+      hands: "fixture",
+      handsDetail: null,
+    }));
+    const previousTz = process.env.TZ;
+    process.env.TZ = "America/New_York";
+    try {
+      expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe("America/New_York");
+      const store = new DeskStore({ file, book: fixtureBook(), key });
+      expect(store.recovery.active).toBe(false);
+      expect(store.data.timezone).toBe("America/New_York");
+      expect(store.v3.agency.timezone).toBe("America/New_York");
+      expect(store.data.timezone).not.toBe("Australia/Sydney");
+    } finally {
+      if (previousTz === undefined) delete process.env.TZ; else process.env.TZ = previousTz;
+    }
   });
 
   it("keeps a licensee escalation's explanation across a restart", () => {

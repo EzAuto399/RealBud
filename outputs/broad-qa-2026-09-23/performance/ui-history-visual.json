@@ -1,0 +1,42 @@
+{
+  "at": "2026-09-23T02:55:53.310Z",
+  "layer": "built-renderer-with-synthetic-history",
+  "node": "v24.19.0",
+  "completed": true,
+  "measurements": [],
+  "behaviorChecks": [
+    {
+      "check": "Old approvals and errors stay rendered; full pending approval still disables composer; switching an old root version resets paging and retains focused target and full history; history navigation controls do not overlap",
+      "storedMessages": 800,
+      "branchRenderedRows": 203,
+      "historyControlBounds": {
+        "earlier": {
+          "x": 699.703125,
+          "y": 156.03125,
+          "width": 157.59375,
+          "height": 44
+        },
+        "latest": {
+          "x": 718.21875,
+          "y": 102,
+          "width": 128.5625,
+          "height": 32.125
+        }
+      }
+    }
+  ],
+  "errors": [],
+  "deniedRequests": [],
+  "failure": null,
+  "sourceDigests": {
+    "src/components/ChatView.tsx": "38f41d75b44ecf5b575a00b3c57ae66af9709bc1091bc4f4af81d5c4b15c3a33",
+    "src/lib/chat-history.ts": "5d1476760e009632cbfd39636b12626018be7c9548d3165c916e178d2fc7030c"
+  },
+  "limits": [
+    "Disposable loopback source service and production-built renderer in headless macOS Chrome; not installed Electron or Windows.",
+    "Only /api/bots history response is synthetic; 50/50 user/assistant text in one valid active branch. Existing HTTP benchmark measures actual server history download separately.",
+    "One run per size on this laptop; measurements are observations, not a performance SLA.",
+    "No model/provider/connector dispatch or customer data. Browser non-GET API requests are denied except the synthetic local branch-selection response in the behavior probe; draft typing is never sent.",
+    "Heap is a browser JS sample, not total/peak renderer RSS. The fixture itself makes no product code changes. This after-fix build includes bounded ChatView history rendering and indexed request versions."
+  ]
+}

@@ -1,0 +1,18 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Startup must reconcile the remote revocation
+
+'stale' !== 'revoked'
+
+    at file:///Users/yoda/projects/RealBud/scripts/qa-remote-enrollment.mjs:80:457 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 'stale',
+  expected: 'revoked',
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.19.0

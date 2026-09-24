@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "at": "2026-09-21T17:14:50Z",
+  "layer": "Actual admitted Hermes parser/dry-run and owned journal logic with explicit POSIX-backed fake Windows IO; no WinAPI",
+  "passed": false,
+  "tests_run": 25,
+  "failures": 1,
+  "errors": 0,
+  "skipped": 0,
+  "elapsed_seconds": 6.086,
+  "native_windows_validation": false,
+  "source_hashes": {
+    "/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-windows-journal.py": "dcebd7aeb26ecc0aef30fd9dbb911869c6f131bab9a6df612540c595b3880696",
+    "/Users/yoda/projects/RealBud/server/helpers/hermes-memory-review.py": "2a1ce893919e7ec84d5a5a7fc302b6bddf6df54d93ae951980933b236b8c26a4",
+    "/Users/yoda/projects/RealBud/server/helpers/hermes-memory-proposals.py": "8f30fa8f855133a679f5c743d429dad7efdf71e1257ba8df42249da1e94742ff",
+    "/Users/yoda/.realbud/hermes/runtimes/345cd2b057a452236de401d3534b8502a7465e8d-cfb3f08a9ee7/hermes-agent/tools/memory_tool.py": "ed9c5db6b3144b88425f7039280239b29a047143aa8ffdfd3b7f47bf7e707143",
+    "/Users/yoda/.realbud/hermes/runtimes/345cd2b057a452236de401d3534b8502a7465e8d-cfb3f08a9ee7/hermes-agent/tools/memory_tool_store.py": "811ef2eb98a8b3f0448294b2c23d422ff7ebd4dc45835475b12df0557d7e5366"
+  },
+  "sources_unchanged": true,
+  "failed_tests": [
+    {
+      "test": "__main__.WindowsJournalIntegration.test_untrusted_request_and_payload_fields_are_rejected",
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/yoda/projects/RealBud/scripts/testing/hermes-memory-windows-journal.py\", line 547, in test_untrusted_request_and_payload_fields_are_rejected\n    self.assertEqual(self.call(self.request(input=modified)), {\"ok\": False, \"code\": \"invalid\"})\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: {'ok': False, 'code': 'unsupported'} != {'ok': False, 'code': 'invalid'}\n- {'code': 'unsupported', 'ok': False}\n?           ^ ^^^^^^^^\n\n+ {'code': 'invalid', 'ok': False}\n?           ^ ^^^^\n\n"
+    }
+  ],
+  "limits": [
+    "No WinAPI, ACL, sharing, filesystem durability, installed Windows application, GUI, provider or customer validation.",
+    "Faults are actual child-process exits against fictional fixture files; fake IO does not reproduce native Windows storage guarantees.",
+    "Public main and dispatch platform holds remain enforced; no JSON or environment test override is added."
+  ]
+}

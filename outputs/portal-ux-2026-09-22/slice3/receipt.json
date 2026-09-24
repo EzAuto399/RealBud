@@ -1,0 +1,35 @@
+{
+  "ok": true,
+  "checks": [
+    "Dropping the harness reply to the real realbud_require_portal_person RPC (single-use fault injection) makes /account fail closed with a plain sentence and no status code, then a normal request right after succeeds again.",
+    "AI usage & billing serves a skeleton, a visually hidden loading label and aria-busy in its first HTML, before any client fetch resolves.",
+    "The overview care fee is never the literal $125.00 fallback: with no agreed fee in the fixture, it reads \"On your invoice\", not a fabricated amount.",
+    "None of the five billing-group pages renders a bare failure code or an \"Oops\" in its server HTML.",
+    "Overview, AI usage & billing, invoices, rates and limits render at 360, 768, 1280 px in light and at 1280 px in dark with no horizontal overflow, and every rendered .notice carries no HTTP status digits."
+  ],
+  "cleanup": true,
+  "browserErrors": [],
+  "consoleErrors": [],
+  "offOriginRequests": [],
+  "stats": {
+    "rpcCount": 38,
+    "violations": [],
+    "databaseErrors": [],
+    "authRejections": [],
+    "migrationHashes": {
+      "portalPeople": "17d9df75b244cb13e356ccfff3c27591aaf7a38aec0f0c4ce003d671cb79904d"
+    }
+  },
+  "layers": {
+    "portal": "actual built Next pages, cookies and APIs rendered in Chromium",
+    "database": "actual disposable PostgreSQL RPCs, including one single-use dropped-reply fault injection",
+    "provider": "fictional local Supabase verification response",
+    "gateway": "none: this harness serves no managed-gateway (/v1/portal/*) or platform-billing transport"
+  },
+  "limits": [
+    "No deployed site, real customer account or real provider sign-in.",
+    "The managed gateway and platform billing are not served by this harness, so every one of the five pages renders its unreachable/unconfigured failure branch here, never a loaded or empty payload. Those shapes are unit-tested in lib/portal-errors.test.mjs, lib/platform-billing.test.mjs and lib/platform-analytics.test.mjs. Serving them here would require adding /v1/portal/* and platform-billing routes to scripts/testing/command-site.mjs, which is outside this packet's file ownership.",
+    "The skeleton-before-load assertion applies only to AI usage & billing (a client component); the other four pages are server components with no separate loading state to assert.",
+    "A screenshot is not customer acceptance."
+  ]
+}

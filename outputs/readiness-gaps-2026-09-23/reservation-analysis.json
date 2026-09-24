@@ -1,0 +1,78 @@
+{
+  "layer": "read-only financial analysis of preserved six-request live receipts and current source",
+  "historicalRevision": "8ba0ba4daece55fd94249b35754e8d38d46de2f9",
+  "currentReviewedRevision": "d5a355dab049aca8e51d9290d2c6b618bae3e720",
+  "qaRateNotActualSupplierCost": true,
+  "calls": [
+    {
+      "name": "readiness",
+      "reservedNanoAud": "524312000",
+      "chargedNanoAud": "31000"
+    },
+    {
+      "name": "bank-csv-preservation",
+      "reservedNanoAud": "524948000",
+      "chargedNanoAud": "365000"
+    },
+    {
+      "name": "email-bill-due-date",
+      "reservedNanoAud": "524768000",
+      "chargedNanoAud": "267000"
+    },
+    {
+      "name": "morning-priorities-untrusted-email",
+      "reservedNanoAud": "524648000",
+      "chargedNanoAud": "193000"
+    },
+    {
+      "name": "streaming-readiness",
+      "reservedNanoAud": "524312000",
+      "chargedNanoAud": "21000"
+    },
+    {
+      "name": "clarified-streaming-readiness",
+      "reservedNanoAud": "524312000",
+      "chargedNanoAud": "31000"
+    }
+  ],
+  "totalQaRateNanoAud": "908000",
+  "maximumObservedHoldNanoAud": "524948000",
+  "qaMonthlyCapNanoAud": "600000000",
+  "remainingSettledSpendBeforeLargestRequestRefusalNanoAud": "75052000",
+  "twoSimultaneousLargestHoldsNanoAud": "1049896000",
+  "ordering": "monthly exposure + reservation checked before concurrency; with a 0.60 AUD cap a second full-context request can fail monthly_cap_exceeded before concurrency_limit",
+  "illustrativeCaps": [
+    {
+      "capAud": "0.5",
+      "largestHoldSharePercent": 104.9896,
+      "largestSimultaneousHoldsBeforeSpend": 0
+    },
+    {
+      "capAud": "0.6",
+      "largestHoldSharePercent": 87.4913,
+      "largestSimultaneousHoldsBeforeSpend": 1
+    },
+    {
+      "capAud": "1",
+      "largestHoldSharePercent": 52.4948,
+      "largestSimultaneousHoldsBeforeSpend": 1
+    },
+    {
+      "capAud": "10",
+      "largestHoldSharePercent": 5.2495,
+      "largestSimultaneousHoldsBeforeSpend": 19
+    },
+    {
+      "capAud": "100",
+      "largestHoldSharePercent": 0.5249,
+      "largestSimultaneousHoldsBeforeSpend": 190
+    }
+  ],
+  "limits": [
+    "Caps other than A$0.60 are illustrative, not observed customer plans.",
+    "No accepted real customer cap or account mapping was available; integration fixture caps are not customer settings.",
+    "No reservation was weakened, customer limit raised or old accounting treatment changed.",
+    "A reserved amount is not a bill. Settled usage releases unused capacity; unknown outcomes continue holding exposure.",
+    "Internal accounting records zero wholesale debt but priced allocations still consume caps; supplier USD cost is separate."
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "kind": "accounts-anz-reference-candidates",
+  "status": "complete",
+  "coverageComplete": true,
+  "itemArray": "rows",
+  "itemIdKey": "sourceRow",
+  "itemCount": 3,
+  "items": {
+    "1": {
+      "decision": "assign",
+      "propertyId": "SYN-P01",
+      "proposedReference": "000127"
+    },
+    "2": {
+      "decision": "keep",
+      "propertyId": null
+    },
+    "3": {
+      "decision": "keep",
+      "propertyId": null
+    }
+  },
+  "requiredHolds": [],
+  "actionsPerformed": [],
+  "hostValidation.required": true,
+  "hostValidation.applied": false,
+  "bankRowOrderAndDigest": true,
+  "originalDigest": "70ce96f3060d9a5559954fe3438cca012d34a1540a0cfb5e35a6b38997376336",
+  "hostValidation.batchId": "SYN-BANK-BATCH-COMPLETE",
+  "hostValidation.batchRevision": 1
+}

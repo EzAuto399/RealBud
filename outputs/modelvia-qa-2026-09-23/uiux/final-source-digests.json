@@ -1,0 +1,15 @@
+{
+  "src/components/you/WebsiteLinkCard.tsx": "101d1584da0170d1b3095cf669bb01f7dbc1dc550e78860ce34d6560028e3e26",
+  "src/components/you/WebsiteLinkCard.test.ts": "6da6e5d33af269ef72db074be2e09c0731d3dc5359112c0d6972f09abccd0307",
+  "src/components/ManagedBudStatus.tsx": "50b8335ffd0a855c8114530db8d6cb7bce27c186437a89312aac96ea556e5186",
+  "src/components/BudSetupCard.test.ts": "212a7dfba5d2ddb50e1ae6b629826f2501ebeec123c55b3c52acd83dace5d554",
+  "src/components/YouPage.tsx": "ba97dac04595aaef4f5d5c1786ab02708741cdbc4a890c37f99836d8b1117ac0",
+  "src/lib/you-navigation.ts": "2829a98475209eb44072de752298d1b4963eab6ae1f01a5032b3982c54b8d99b",
+  "src/lib/you-navigation.test.ts": "975d54d1e0eacd4758cff4ee68f065cb1817a219f7e3165d770c4d30814aebd8",
+  "src/lib/navigation-guard.ts": "8d85316dd3448362b17687fdde8ef6dfea8969b9cccd9a6ad0f5abc0fdbffc7a",
+  "src/lib/navigation-guard.test.ts": "62da30fa33186d19a7f59b3f225d8cfa62e4b7abbc5113927f76b1873653a13c",
+  "src/components/schedule/BankReferenceReview.tsx": "664622af1e60e04f87a77e657c960b9475619e50982c29f9af50b4d4f12294ef",
+  "src/state/store.tsx": "615759a713382fbcc225a263d4caf1ef4fd15f5d3d5d9accaaf4b6919d800336",
+  "src/App.tsx": "1871772003c3b3d454e03d223514fc5b6d1a401fc68fe7e112bf92278e34f34c",
+  "dist/index.html": "3f121a5dcab960ae2841c4d9c188675e9a94161fb1cfed6347576e571c426b6d"
+}

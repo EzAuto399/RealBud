@@ -1,0 +1,46 @@
+{
+  "sources": {
+    "agentMode": "https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/15-agent-mode.md",
+    "agentDefinition": "https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-agent/README.md",
+    "cliDispatch": "https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager-bin/src/main.rs",
+    "settings": "https://docs.x.ai/build/settings/reference",
+    "headless": "https://docs.x.ai/build/cli/headless-scripting"
+  },
+  "claims": [
+    {
+      "claim": "Local --no-leader help says start a new agent even when config enables leader mode.",
+      "evidence": "grok-agent-help.txt"
+    },
+    {
+      "claim": "Official ACP docs describe initialize, session/new, session/prompt, configOptions and reasoning_effort.",
+      "source": "agentMode"
+    },
+    {
+      "claim": "Agent definitions use Markdown YAML frontmatter; promptMode full, tools [], agentsMd false, permissionMode plan are documented.",
+      "source": "agentDefinition"
+    },
+    {
+      "claim": "Current official CLI source forwards permission mode, trust, updater and web-search options into run_agent_command, but not top-level max_turns or CLI tool allowlist. This source is not established as byte-identical to the installed binary.",
+      "source": "cliDispatch"
+    },
+    {
+      "claim": "The collector sends one ACP prompt and stops on tool/client-operation activity or total 300s deadline. It does not assert a native max-turns flag in agent mode.",
+      "evidence": "grok-acp-windows-fixture-review.py"
+    }
+  ],
+  "notClaims": [
+    "No inference that flags prove MCP isolation.",
+    "No native Windows execution or product acceptance.",
+    "No reuse or retry of earlier review packets."
+  ],
+  "files": {
+    "grok-acp-prompt.txt": "1f981d8967eb519b5421db666a4c9f11a6223cf0d7f8cb513d8338b22ea0134c",
+    "grok-acp-windows-fixture-review.py": "9a06c1fca61a4918027e1e0a044981013d8c182f3c56542ab8526d0d941b55e1",
+    "grok-acp-windows-fixture-run.json": "2d7815a6ea1c666a85c97c84472dc6f72cd32e171448226b74facfe8a72ea506",
+    "grok-acp-profile.md": "3dc12c10e8ee2eae93732fd01ecb39fa7152ad63e4da29a68aea835168449fb2",
+    "grok-acp-cleanup.json": "1cbb0b2a23041a7a08190c5013847ad8373d863fea3f0fb8b01d84005d3a5199",
+    "grok-agent-stdio-help.txt": "3c3fe7911c3a8d5194c498914d99765bc9aff273af06cf647b38096fa5193bff",
+    "grok-agent-help.txt": "056e71951a4badab3948a351143cfc170beb12daf6708ed1bff2e0ed92189079",
+    "grok-acp-diagnosis.md": "2b4715479e26039106e9d474adef2a5a7d8bc572a6f519cb5e73ba3fc0bf89ed"
+  }
+}

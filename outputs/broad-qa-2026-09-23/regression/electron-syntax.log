@@ -1,0 +1,5 @@
+
+> realbud@0.1.19 check:electron /Users/yoda/projects/RealBud
+> node scripts/check-electron.mjs
+
+checked 23 electron modules: 23 ok, 0 failed

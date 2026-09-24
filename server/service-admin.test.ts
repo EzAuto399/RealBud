@@ -206,6 +206,7 @@ describe("service mutation route contract", () => {
 
   it.each([
     ["GET", "/api/hermes/model", undefined],
+    ["POST", "/api/hermes/memory-reviews/1234abcd/decision", { expectedDigest: 'a'.repeat(64), decision: 'approve' }],
     ["POST", "/api/care/unlock", { secret: PASSWORD }],
     ["POST", "/api/care/lock", {}],
     ["PATCH", "/api/config", { profile: { name: "Member", email: "member@example.test" }, tts: { voice: "voice-id" } }],

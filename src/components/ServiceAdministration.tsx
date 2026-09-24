@@ -7,6 +7,7 @@ import { BudSetupCard } from "./BudSetupCard";
 import { CareUnlockCard } from "./CareUnlockCard";
 import { GmailReadOnlySetup, useConnectionSettingsPending } from "./GmailReadOnlySetup";
 import { Card } from "./SettingsPrimitives";
+import { ManagedConnectionsCard } from "./ManagedConnectionsCard";
 
 function ConnectionServiceSettings() {
   const { state, dispatch } = useStore();
@@ -34,7 +35,8 @@ export function ServiceAdministration({ children }: { children?: ReactNode }) {
       {allowed ? <>
         <p className="text-[13px] leading-relaxed text-ink-secondary">Administrator access only changes setup on this computer. It does not renew service access. This build checks a locally signed grant; online billing and remote suspension still require the managed gateway.</p>
         <BudSetupCard id="you-service-worker" administration />
-        <ConnectionServiceSettings />
+        <ManagedConnectionsCard />
+        {!state.config?.composio.managed && <details><summary className="cursor-pointer text-sm text-ink-secondary">Legacy local connection setup</summary><div className="mt-3"><ConnectionServiceSettings /></div></details>}
         {children}
       </> : null}
     </div>

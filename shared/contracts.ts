@@ -62,7 +62,7 @@ export type WorkState =
 
 export type LoopId = "morning-arrears" | "owner-letter" | "inbound-triage" | `recipe-${string}`;
 
-export type LoopSchedule = { type: "daily"; time: string; weekdays: number[] };
+export type LoopSchedule = { type: "daily"; time: string; weekdays: number[]; timezone?: string };
 
 export type LoopRunStatus =
   | "queued"

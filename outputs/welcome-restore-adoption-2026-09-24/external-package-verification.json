@@ -1,0 +1,30 @@
+{
+  "verifiedAt": "2026-09-23T23:28:51.731970+00:00",
+  "packageReceipt": "/Volumes/RealBud-TestLab/qa/output/mac-b8aa9f2f-requalified-v2/package-receipt.json",
+  "packageReceiptSha256": "996e5519d134cdf67a47d094917afb4475fff738fa4766a69ba19e6361efc572",
+  "sourceRevision": "b8aa9f2fee9dcc634e8ff8f9153103701aa4e1ca",
+  "artifacts": [
+    {
+      "path": "/Volumes/RealBud-TestLab/qa/output/mac-b8aa9f2f-requalified-v2/artifacts/RealBud-0.1.19-arm64.zip",
+      "bytes": 292098250,
+      "sha256": "fef1908feaf72e22338861d8ba13a9cb6a4e0436b7b4022752207a8927351839",
+      "verified": true
+    },
+    {
+      "path": "/Volumes/RealBud-TestLab/qa/output/mac-b8aa9f2f-requalified-v2/artifacts/RealBud-0.1.19.dmg",
+      "bytes": 292834826,
+      "sha256": "0daf42fbe4ae17b017f260cfd3fabea4d0ae6af2a729e17c6155bf042bb35bed",
+      "verified": true
+    }
+  ],
+  "previousFailedReceiptPreserved": true,
+  "observedCounts": {
+    "nativeDeploymentTargetsChecked": 69,
+    "serviceChecks": 4,
+    "backupChecks": 9,
+    "boundaryChecks": 7
+  },
+  "nativeWelcomeRestoreAcceptance": "pending separate receipts",
+  "notarized": false,
+  "vmAcceptance": false
+}

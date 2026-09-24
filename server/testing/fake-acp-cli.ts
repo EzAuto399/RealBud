@@ -16,7 +16,8 @@
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { spawn } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { closeSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 
 const mode = process.env.FAKE_ACP_MODE ?? "happy";
 const argv = process.argv.slice(2);
@@ -24,9 +25,39 @@ if (argv.includes("--version")) {
   console.log("fake-acp 1.0.0");
   process.exit(0);
 }
-if (process.env.FAKE_ACP_DUMP) {
-  writeFileSync(process.env.FAKE_ACP_DUMP, JSON.stringify({ argv, env: process.env, pid: process.pid, promptCount: 0 }, null, 2));
+
+function renameDump(from: string, to: string) {
+  // Match atomic.ts without importing the product's private-storage runtime.
+  // Windows readers can briefly hold the target; retry the same atomic rename,
+  // never unlink it or rewrite the complete temporary snapshot between tries.
+  const delays = [10, 20, 40, 80, 160, 320, 370]; // 1 s total
+  for (let attempt = 0; ; attempt++) {
+    try { renameSync(from, to); return; }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException | null)?.code;
+      const delay = process.platform === "win32" && ["EPERM", "EBUSY", "EACCES"].includes(code ?? "") ? delays[attempt] : undefined;
+      if (delay === undefined) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
+    }
+  }
 }
+
+function publishDump(snapshot: unknown) {
+  const dump = process.env.FAKE_ACP_DUMP;
+  if (!dump) return;
+  const contents = JSON.stringify(snapshot, null, 2);
+  const temporary = `${dump}.${process.pid}.${randomUUID()}.tmp`;
+  // Readers in another process must see a complete old or new snapshot, even
+  // when a replacement worker publishes its initial state to the same path.
+  const fd = openSync(temporary, "wx", 0o600);
+  try {
+    try { writeFileSync(fd, contents); } finally { closeSync(fd); }
+    renameDump(temporary, dump);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+}
+publishDump({ argv, env: process.env, pid: process.pid, promptCount: 0 });
 
 const out = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");
 const result = (id: unknown, res: unknown) => out({ jsonrpc: "2.0", id, result: res });
@@ -45,15 +76,7 @@ let promptCount = 0;
 let pendingPromptId: number | null = null;
 
 function dumpState() {
-  if (!process.env.FAKE_ACP_DUMP) return;
-  writeFileSync(
-    process.env.FAKE_ACP_DUMP,
-    JSON.stringify(
-      { argv, env: process.env, pid: process.pid, promptCount, mcpServers: seenMcpServers, selectedPermissionOption, sessionMode },
-      null,
-      2,
-    ),
-  );
+  publishDump({ argv, env: process.env, pid: process.pid, promptCount, mcpServers: seenMcpServers, selectedPermissionOption, sessionMode });
 }
 
 /** Minimal one-shot MCP stdio client: initialize, call each tool in
@@ -107,7 +130,7 @@ function driveMcp(entry: McpEntry, calls: Array<{ name: string; args: (prev: str
 }
 
 function scriptedTurn() {
-  let tool = process.env.FAKE_ACP_TOOL ?? "";
+  let tool: unknown = process.env.FAKE_ACP_TOOL ?? "";
   let rawInput = {};
   let reply = process.env.FAKE_ACP_REPLY ?? "";
   let title = "";
@@ -115,7 +138,7 @@ function scriptedTurn() {
   if (process.env.FAKE_ACP_SCRIPT) {
     try {
       const script = JSON.parse(readFileSync(process.env.FAKE_ACP_SCRIPT, "utf8"));
-      if (typeof script.tool === "string") tool = script.tool;
+      if (Object.hasOwn(script, "tool")) tool = script.tool;
       if (script.rawInput && typeof script.rawInput === "object") rawInput = script.rawInput;
       if (typeof script.reply === "string") reply = script.reply;
       if (typeof script.title === "string") title = script.title;

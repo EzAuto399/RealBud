@@ -54,6 +54,42 @@ export const OFFICE_OS_LABELS: Record<OfficeOs, string> = {
 const TRAINING_AGENCY = new Set(["demo agency", "realbud demo book"]);
 const FIELD_MAX = 80;
 
+/**
+ * How long a closed or wound-down office's encrypted book is kept before its
+ * key may be destroyed. This is the office's own policy, not a statutory
+ * period: RealBud must never invent a legal clock, so the default is a plain
+ * operational choice the office can change.
+ *
+ * `null` means "keep until a person decides" — never destroy automatically.
+ */
+export const DEFAULT_RETENTION_DAYS = 90;
+/** Below a week the window is almost certainly a typo rather than a policy. */
+export const MIN_RETENTION_DAYS = 7;
+export const MAX_RETENTION_DAYS = 3650;
+
+export type RetentionParse =
+  | { ok: true; value: number | null }
+  | { ok: false; error: string };
+
+/**
+ * Retention is whole days, or null to keep until a person decides. The floor
+ * matters because this number decides when a book becomes unreadable: a typo of
+ * 0 would mean "destroy now".
+ */
+export function parseRetentionDays(value: unknown): RetentionParse {
+  if (value === null) return { ok: true, value: null };
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+    return { ok: false, error: "Retention must be a whole number of days, or empty to keep the book until you decide." };
+  }
+  if (value < MIN_RETENTION_DAYS) {
+    return { ok: false, error: `Retention must be at least ${MIN_RETENTION_DAYS} days. A shorter window would destroy the book almost immediately.` };
+  }
+  if (value > MAX_RETENTION_DAYS) {
+    return { ok: false, error: `Retention must be ${MAX_RETENTION_DAYS} days or fewer. Choose no value to keep the book until you decide.` };
+  }
+  return { ok: true, value };
+}
+
 export function emptyOffice(): Office {
   return {
     pmUser: "",

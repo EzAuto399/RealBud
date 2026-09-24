@@ -1,0 +1,118 @@
+✖ five bounded successes, four ledger-preserving negatives, direct-price receipts and complete cleanup (8.919084ms)
+✖ lost mint reply is reconciled by project key listing without a second mint (0.599292ms)
+✖ timeout after admission stops further inference, preserves liability and executes cleanup (0.346958ms)
+✖ unknown after admission stops further inference, preserves liability and executes cleanup (0.19125ms)
+✖ pre-dispatch cap refusal never retries a positive request or raises the cap (0.155791ms)
+✖ cleanup failure cannot leave an overall passing receipt and does not skip account disable (0.342958ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 0
+ℹ fail 6
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 88.141542
+
+✖ failing tests:
+
+test at outputs/modelvia-live-2026-09-23/run.test.mjs:119:1
+✖ five bounded successes, four ledger-preserving negatives, direct-price receipts and complete cleanup (8.919084ms)
+  AssertionError [ERR_ASSERTION]: Reviewed routes changed
+  
+  false !== true
+  
+      at TestContext.<anonymous> (file:///Users/yoda/projects/RealBud/outputs/modelvia-live-2026-09-23/run.test.mjs:121:10)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at outputs/modelvia-live-2026-09-23/run.test.mjs:129:1
+✖ lost mint reply is reconciled by project key listing without a second mint (0.599292ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /lost mint/. Input:
+  
+  'Reviewed routes changed'
+  
+      at TestContext.<anonymous> (file:///Users/yoda/projects/RealBud/outputs/modelvia-live-2026-09-23/run.test.mjs:131:46)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'Reviewed routes changed',
+    expected: /lost mint/,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at outputs/modelvia-live-2026-09-23/run.test.mjs:137:45
+✖ timeout after admission stops further inference, preserves liability and executes cleanup (0.346958ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///Users/yoda/projects/RealBud/outputs/modelvia-live-2026-09-23/run.test.mjs:139:46)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at outputs/modelvia-live-2026-09-23/run.test.mjs:137:45
+✖ unknown after admission stops further inference, preserves liability and executes cleanup (0.19125ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///Users/yoda/projects/RealBud/outputs/modelvia-live-2026-09-23/run.test.mjs:139:46)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at outputs/modelvia-live-2026-09-23/run.test.mjs:145:1
+✖ pre-dispatch cap refusal never retries a positive request or raises the cap (0.155791ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /request_cap_exceeded/. Input:
+  
+  'Reviewed routes changed'
+  
+      at TestContext.<anonymous> (file:///Users/yoda/projects/RealBud/outputs/modelvia-live-2026-09-23/run.test.mjs:147:46)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'Reviewed routes changed',
+    expected: /request_cap_exceeded/,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at outputs/modelvia-live-2026-09-23/run.test.mjs:152:1
+✖ cleanup failure cannot leave an overall passing receipt and does not skip account disable (0.342958ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 5
+  
+      at TestContext.<anonymous> (file:///Users/yoda/projects/RealBud/outputs/modelvia-live-2026-09-23/run.test.mjs:154:10)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 5,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

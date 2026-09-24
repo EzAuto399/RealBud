@@ -1,0 +1,53 @@
+{
+  "at": "2026-09-24T00:04:18.593124+00:00",
+  "sourceRevision": "d7906bf480f6926520a0e663f50a5acd3022ca7d",
+  "tests": {
+    "success": true,
+    "numPassedTests": 240,
+    "numFailedTests": 0,
+    "numPendingTests": 0,
+    "numTotalTests": 240
+  },
+  "files": [
+    "shared/browser-task.test.ts",
+    "server/attended-run.test.ts",
+    "server/browser-authority.test.ts",
+    "server/browser-broker.test.ts",
+    "server/browser-runtime.test.ts",
+    "server/browser-task-signin.route.test.ts"
+  ],
+  "reportSha256": "d23424a3382d6d524b70f8ac005799332d8cf8ff74bf4ffe3282a90bdb504521",
+  "sourceHashes": {
+    "shared/browser-task.ts": "8e30087f24f71f031bab74d27ee2eaaf16e8f5282059d12f70e63346d0209097",
+    "server/browser-authority.ts": "d27a2fdb59a7e0e56ecd9a1f449f7e3282c78298cf48ca6a5530c07d599167ab",
+    "server/browser-broker.ts": "71dc00b525f5ea6b78e7cb1a9467d931e084889bac0de68158f0fe51994e4276",
+    "server/browser-runtime.ts": "b2d50695c1af189751cf673f63e83986bbd8a66934262252b95c72651f73fcce",
+    "server/attended-run.ts": "6bd068ec5153cb938ef619c1e9a10abe5b4a2cc393cb6f39f74d6b425b4568c8",
+    "src/components/you/BrowserCard.tsx": "28e3b1d564b8b3bbeee264eae6e1d2ed27cfe01a0cb101a0e12024da2914e9f4"
+  },
+  "liveObservation": {
+    "tool": "Codex browser UI",
+    "browser": "Brave Browser on this Mac",
+    "origin": "https://app.reimasterapps.com.au",
+    "page": "Agents",
+    "authenticatedPageObserved": true,
+    "siteRecordMutations": 0,
+    "credentialsReadOrCopied": false,
+    "personalRecordsExported": false,
+    "realbudAppObserved": "Installed /Applications/RealBud.app 0.1.18 at fresh welcome; left unchanged",
+    "realbudBrowserConnectionVerified": false,
+    "realbudDataProfileIdentified": false
+  },
+  "api": {
+    "entitlement": "unconfirmed",
+    "pricing": "unconfirmed",
+    "requestStatus": "draft-unsent",
+    "vendorPortal": "https://reimasterapi.developer.azure-api.net/signin"
+  },
+  "limits": [
+    "Local contract tests and browser UI inspection; not RealBud live execution or customer acceptance.",
+    "Brave access via Codex does not prove BrowserSkill compatibility or RealBud profile connection.",
+    "No import, posting, payment, sending, extension installation or API call was performed."
+  ],
+  "metadataReceiptSha256": "d5ff7be9f8d1a8f121a6fba7f585b6ca5a06f9dbd1dd5438993cf3064b2db230"
+}

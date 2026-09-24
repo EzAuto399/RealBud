@@ -1,0 +1,55 @@
+✔ forty-one bounded successes, six ledger-preserving negatives, retail-price receipts and complete cleanup (2663.063958ms)
+✖ lost mint reply is reconciled by project key listing without a second mint (1.81275ms)
+✔ timeout after admission stops further inference, preserves liability and executes cleanup (2606.365292ms)
+✔ unknown after admission stops further inference, preserves liability and executes cleanup (2605.735625ms)
+✔ pre-dispatch cap refusal never retries a positive request or raises the cap (2607.024167ms)
+✔ cleanup failure cannot leave an overall passing receipt and does not skip account disable (2627.46625ms)
+✔ existing namespace collision causes zero POSTs and leaves the existing account untouched (0.353458ms)
+✖ persistent receipt write failure after mint still revokes the discovered key and disables all accounts (0.531292ms)
+✔ initial receipt write failure prevents every HTTP request and mutation (0.259ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 7
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 13183.695875
+
+✖ failing tests:
+
+test at outputs/readiness-gaps-2026-09-23/live/run.test.mjs:140:1
+✖ lost mint reply is reconciled by project key listing without a second mint (1.81275ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  2 !== 4
+  
+      at assertDisabled (file:///Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/live/run.test.mjs:121:129)
+      at TestContext.<anonymous> (file:///Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/live/run.test.mjs:145:75)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 2,
+    expected: 4,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at outputs/readiness-gaps-2026-09-23/live/run.test.mjs:179:1
+✖ persistent receipt write failure after mint still revokes the discovered key and disables all accounts (0.531292ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  2 !== 4
+  
+      at assertDisabled (file:///Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/live/run.test.mjs:121:129)
+      at TestContext.<anonymous> (file:///Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/live/run.test.mjs:182:79)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 2,
+    expected: 4,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

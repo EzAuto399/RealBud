@@ -1,0 +1,41 @@
+{
+  "startedAt": "2026-09-21T03:11:26.867Z",
+  "elapsedMs": 29464,
+  "postgres": "postgres (PostgreSQL) 16.15 (Homebrew)",
+  "files": [
+    "server/company/backup.integration.test.ts",
+    "server/company/departments-transport.integration.test.ts",
+    "server/company/departments.integration.test.ts",
+    "server/company/host-certificate.test.ts",
+    "server/company/host-runtime.test.ts",
+    "server/company/host-transport.test.ts",
+    "server/company/initial-credential.test.ts",
+    "server/company/initial-enrollment.integration.test.ts",
+    "server/company/member-auth.integration.test.ts",
+    "server/company/member-credentials.test.ts",
+    "server/company/membership.integration.test.ts",
+    "server/company/postgres-runtime.test.ts",
+    "server/company/postgres.integration.test.ts",
+    "server/company/work-items.integration.test.ts",
+    "server/company/workflow-template.integration.test.ts",
+    "server/company/workflow-template.test.ts",
+    "server/company-departments.integration.test.ts",
+    "server/company-host.test.ts",
+    "server/company-installation-binding.test.ts",
+    "server/company-installation-provision.test.ts",
+    "server/company-installation.integration.test.ts",
+    "server/company-installation.test.ts",
+    "server/company-outbox.test.ts",
+    "server/company-recovery.integration.test.ts",
+    "server/company-work.integration.test.ts"
+  ],
+  "exit": {
+    "exit": 1,
+    "signal": null
+  },
+  "passed": 196,
+  "failed": 1,
+  "skipped": 0,
+  "total": 197,
+  "proof": "Disposable real PostgreSQL, restricted application role, synthetic agencies; no live customer data or remote deployment"
+}

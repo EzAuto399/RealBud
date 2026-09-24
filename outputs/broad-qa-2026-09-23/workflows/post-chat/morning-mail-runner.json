@@ -1,0 +1,9 @@
+{
+  "script": "/Users/yoda/projects/RealBud/scripts/qa-morning-mail.mjs",
+  "sha256": "e6bfe436857f778d83dfee51bc06cc1ec30a0608cb31d0bd4aec467cf0f681b0",
+  "exitCode": 0,
+  "seconds": 6.93,
+  "started": "2026-09-23T02:53:14.300551+00:00",
+  "log": "/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/workflows/post-chat/morning-mail.log",
+  "tier": "current source HTTP server and final rebuilt dist renderer; synthetic data; disposable headless Chrome; not installed or live integration proof"
+}

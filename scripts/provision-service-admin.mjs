@@ -65,20 +65,27 @@ $ErrorActionPreference = 'Stop'
 $path = $env:REALBUD_PROVISION_ACL_PATH
 $directory = $env:REALBUD_PROVISION_ACL_KIND -eq 'directory'
 $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
-$system = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
+$system = [System.Security.Principal.SecurityIdentifier]::new('S-1-5-18')
 if ($env:REALBUD_PROVISION_ACL_ACTION -eq 'restrict') {
-  if ($directory) { $acl = New-Object System.Security.AccessControl.DirectorySecurity }
-  else { $acl = New-Object System.Security.AccessControl.FileSecurity }
-  $acl.SetOwner($sid)
+  if ($directory) { $acl = [System.Security.AccessControl.DirectorySecurity]::new() }
+  else { $acl = [System.Security.AccessControl.FileSecurity]::new() }
+  # Writing an owner needs WRITE_OWNER even when it does not change, and the .NET
+  # call enables no privilege for it; the owner's implicit WRITE_DAC is enough for
+  # the descriptor itself, so an object already owned by the caller keeps its owner.
+  if ($directory) { $owned = ([System.IO.DirectoryInfo]::new($path)).GetAccessControl([System.Security.AccessControl.AccessControlSections]::Owner) }
+  else { $owned = ([System.IO.FileInfo]::new($path)).GetAccessControl([System.Security.AccessControl.AccessControlSections]::Owner) }
+  if ($owned.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { $acl.SetOwner($sid) }
   $acl.SetAccessRuleProtection($true, $false)
   foreach ($principal in @($sid, $system)) {
-    if ($directory) { $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($principal, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow') }
-    else { $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($principal, 'FullControl', 'Allow') }
+    if ($directory) { $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($principal, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow') }
+    else { $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($principal, 'FullControl', 'Allow') }
     $acl.AddAccessRule($rule)
   }
-  Set-Acl -LiteralPath $path -AclObject $acl
+  if ($directory) { ([System.IO.DirectoryInfo]::new($path)).SetAccessControl($acl) }
+  else { ([System.IO.FileInfo]::new($path)).SetAccessControl($acl) }
 }
-$actual = Get-Acl -LiteralPath $path
+if ($directory) { $actual = ([System.IO.DirectoryInfo]::new($path)).GetAccessControl() }
+else { $actual = ([System.IO.FileInfo]::new($path)).GetAccessControl() }
 $allowed = @($sid.Value, 'S-1-5-18', 'S-1-5-32-544')
 if ($allowed -notcontains $actual.GetOwner([System.Security.Principal.SecurityIdentifier]).Value) { exit 2 }
 $usable = $false

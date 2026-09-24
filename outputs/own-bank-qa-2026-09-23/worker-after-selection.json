@@ -1,0 +1,12 @@
+{
+  "port": 8799,
+  "instanceId": "b53960ba84729ff27e262a0f83e1d8c8",
+  "installed": true,
+  "compatible": true,
+  "matchesPin": false,
+  "version": "Hermes Agent v0.21.3 (2026.9.14) · upstream 6b3005c4 · local 345cd2b0 (+34703 carried commits)",
+  "ready": false,
+  "detail": "Worker 0.21.3 and the pack are installed. Run the hands test before Recheck or Ask.",
+  "packInstalled": true,
+  "workroomReady": true
+}

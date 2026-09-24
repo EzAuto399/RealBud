@@ -1,0 +1,285 @@
+{
+  "startedAt": "2026-09-21T18:19:13.233451+00:00",
+  "requestedModel": "grok-4.7",
+  "reasoningEffort": "xhigh",
+  "hardTimeoutSeconds": 300,
+  "transport": "fresh agent --no-leader stdio ACP",
+  "maxPromptRequests": 1,
+  "turnLimitScope": "One ACP prompt; cancel/stop on any tool-call or client permission request. Top-level --max-turns is not forwarded to the agent branch in the inspected official source.",
+  "prompt": "Review these bank-review amendment invariants. Metadata/design only: no customer data. No tools/web. Find up to four concrete counterexamples and minimal fixes, not broad advice. Keep the entire answer under 350 words.\n\nIdentity: each immutable imported source digest has review IDs bank:<digest>, then :r2, :r3, up to :r999999. Review version differs from the database CAS revision. Re-upload of the same source returns the root record, rejecting a different normalized mapping. Old original/prepared artifacts stay retrievable.\n\nAmend(parentID,{revision,reason,mapping}): exact body keys; positive integer revision; nonempty trimmed bounded reason; mapping has columns/dateFormat/rules. Within one database transaction, validate/read parent and original source, rebuild a fresh unreviewed child from those original bytes plus new mapping, calculate F=SHA256(JSON.stringify({id:parentID,revision,reason,input:normalizedChildInput})). Parent and child keep byte-identical source; amendments never use prepared output as input.\n\nIf parent already has supersededBy, only matching previousRevision+F with parent current revision=revision+1 may retry; return the existing child after checking its backlink, reason and normalized input. That child may since have been reviewed or superseded itself. Otherwise require parent current revision=revision, refuse a pre-existing next ID, insert next sequential child containing amends:{id,revision,reason}, CAS-update parent with supersededBy:{id:childID,previousRevision:revision,requestDigest:F}, then validate child. Insert and parent update commit/rollback together. Never overwrite parent output or retained decisions.\n\nLocal saved-record validation reconstructs rows and prepared output from original bytes and allowed reference-cell decisions; exact legacy text-only output compatibility is retained. Local validation enforces predecessor/successor IDs using the same digest and adjacent review number.\n\nNew cross-record validation on live get/history/settings checks one hop each way: both rows valid; reciprocal parent/child IDs; previousRevision==child.amends.revision; parent.currentRevision==that revision+1; equal source object, source format and input CSV text; recomputed F matches parent's link. Missing/mismatching linked rows cause recovery hold. It is deliberately not recursive. Normal review mutation currently checks only local record validity inside CAS update, then refuses an already-reviewed or superseded row. Planned portable backup integration will validate every imported/exported bank row and its links in a complete snapshot, atomically refusing broken graphs before restore.\n\nFocus on concurrent amend versus review, lost-response retries after descendants change, corrupt/orphan links, graph validation boundary, and legacy-source preservation. Distinguish a demonstrated metadata-level gap from a condition requiring database/backup implementation verification. Return JSON with keys findings (array of at most 4 objects, each with severity, counterexample, minimalFix, evidenceLimit strings), verificationCases (array of at most 4 short strings). Do not claim actual tests passed.",
+  "promptBytes": 3155,
+  "promptSha256": "2edb493eb7a5eba8fc793b0a66fa43ab966065bcdd1c3f06147446dc28396af3",
+  "profileSha256": "fba2225ab350ed7784108685ea16ab8823efef109b19059de55e8afe3aa0a226",
+  "processOverrides": {
+    "GROK_DISABLE_AUTOUPDATER": "1",
+    "GROK_MEMORY": "0",
+    "GROK_SUBAGENTS": "0",
+    "GROK_CURSOR_SKILLS_ENABLED": "0",
+    "GROK_CURSOR_RULES_ENABLED": "0",
+    "GROK_CURSOR_AGENTS_ENABLED": "0",
+    "GROK_CURSOR_MCPS_ENABLED": "0",
+    "GROK_CURSOR_HOOKS_ENABLED": "0",
+    "GROK_CLAUDE_SKILLS_ENABLED": "0",
+    "GROK_CLAUDE_RULES_ENABLED": "0",
+    "GROK_CLAUDE_AGENTS_ENABLED": "0",
+    "GROK_CLAUDE_MCPS_ENABLED": "0",
+    "GROK_CLAUDE_HOOKS_ENABLED": "0"
+  },
+  "credentialsReadByHarness": false,
+  "credentialsCopied": false,
+  "rawDiagnosticsPersisted": false,
+  "authentication": "Existing cached auth via opaque symlink in disposable private GROK_HOME; harness never opens auth contents.",
+  "globalConfigSha256Before": "ada54f57ec570d8e70cba35400ea2b557914ede90ffa893b5da122a7f69d6736",
+  "promptRequestsSent": 1,
+  "updates": {
+    "available_commands_update": 3,
+    "agent_thought_chunk": 31,
+    "session_info_update": 1
+  },
+  "safeEvents": [],
+  "assistantText": "",
+  "toolCallCount": 0,
+  "permissionRequestCount": 0,
+  "unsupportedClientRequests": [],
+  "mcpIsolationVerified": false,
+  "toolIsolationVerified": false,
+  "cliVersion": "grok 1.0.34 (3736acbc8658)",
+  "argv": [
+    "/Users/yoda/.local/bin/grok",
+    "--no-auto-update",
+    "--disable-web-search",
+    "--permission-mode",
+    "plan",
+    "agent",
+    "--no-leader",
+    "--model",
+    "grok-4.7",
+    "--reasoning-effort",
+    "xhigh",
+    "--agent-profile",
+    "/Users/yoda/projects/RealBud/outputs/bank-amendments-2026-09-22/grok-bank-acp-profile.md",
+    "stdio"
+  ],
+  "ownedPid": 76509,
+  "requests": [
+    {
+      "id": 1,
+      "method": "initialize",
+      "atSeconds": 0.04
+    },
+    {
+      "id": 2,
+      "method": "session/new",
+      "atSeconds": 1.1
+    },
+    {
+      "id": 3,
+      "method": "session/prompt",
+      "atSeconds": 1.312
+    }
+  ],
+  "elapsedSeconds": 303.274,
+  "firstStdoutSeconds": 1.099,
+  "stdoutBytes": 463644,
+  "initialize": {
+    "protocolVersion": 1,
+    "agentInfo": null,
+    "agentCapabilities": {
+      "loadSession": true,
+      "promptCapabilities": {
+        "image": false,
+        "audio": false,
+        "embeddedContext": true
+      },
+      "mcpCapabilities": {
+        "http": true,
+        "sse": true
+      },
+      "sessionCapabilities": {
+        "list": {},
+        "resume": {},
+        "close": {}
+      },
+      "auth": {},
+      "_meta": {
+        "x.ai/fs_notify": true,
+        "x.ai/hooks": {
+          "blockingEvents": [
+            "pre_tool_use",
+            "stop",
+            "subagent_stop"
+          ],
+          "decisions": [
+            "deny",
+            "block"
+          ],
+          "stopSignals": [
+            "continue",
+            "stopReason",
+            "additionalContext"
+          ]
+        },
+        "x.ai/capabilities": {
+          "toolOverrides": {
+            "x_keyword_search": true,
+            "x_semantic_search": true,
+            "x_user_search": false,
+            "x_thread_fetch": false
+          }
+        }
+      }
+    }
+  },
+  "initializeMetaKeys": [
+    "agentId",
+    "agentInstanceId",
+    "agentVersion",
+    "availableCommands",
+    "cancelRewind",
+    "currentWorkingDirectory",
+    "defaultAuthMethodId",
+    "feedbackTraceOffer",
+    "grokShell",
+    "hostname",
+    "mcpApps",
+    "mcpServers",
+    "metadata",
+    "modelState",
+    "sessionRecap",
+    "voiceMode",
+    "x.ai/mcp/sdk",
+    "x.ai/pluginDirs"
+  ],
+  "initializeMcpShape": "list",
+  "initializeMcpCount": 0,
+  "initializeMcpNames": [],
+  "authMethodIds": [
+    "cached_token",
+    "grok.com"
+  ],
+  "observedMcpServerCount": 0,
+  "observedMcpServerNames": [],
+  "notificationMethods": {
+    "_x.ai/mcp/servers_updated": 1,
+    "_x.ai/mcp_initialized": 1,
+    "_x.ai/session_notification": 2,
+    "_x.ai/sessions/changed": 1,
+    "_x.ai/queue/changed": 2,
+    "_x.ai/models/update": 2,
+    "_x.ai/settings/update": 2,
+    "_x.ai/announcements/update": 3
+  },
+  "notificationShapes": {
+    "_x.ai/mcp/servers_updated": [
+      "mcpServers"
+    ],
+    "_x.ai/mcp_initialized": [
+      "elapsedMs",
+      "mcpToolCount",
+      "sessionId"
+    ],
+    "_x.ai/session_notification": [
+      "sessionId",
+      "update"
+    ],
+    "_x.ai/sessions/changed": [
+      "removed",
+      "upserted"
+    ],
+    "_x.ai/queue/changed": [
+      "entries",
+      "runningKind",
+      "runningPromptId",
+      "runningText",
+      "sessionId"
+    ],
+    "_x.ai/models/update": [
+      "availableModels",
+      "currentModelId"
+    ],
+    "_x.ai/settings/update": [
+      "allow_access",
+      "announcements",
+      "auto_permission_mode_enabled",
+      "campaigns",
+      "collapsed_edit_blocks",
+      "consent_gate",
+      "dock_enabled",
+      "gate_label",
+      "gate_message",
+      "gate_url",
+      "group_tool_verbs",
+      "permission_mode",
+      "privacy_banner_reshow_days",
+      "privacy_notice_rollout",
+      "prompt_suggestions_enabled",
+      "session_picker_grouped",
+      "sharing_enabled",
+      "show_resolved_model",
+      "slash_command_tags",
+      "subscription_tier_display",
+      "subscription_watch_interval_secs",
+      "terminal_theme_enabled",
+      "tips"
+    ],
+    "_x.ai/announcements/update": [
+      "announcements",
+      "gen"
+    ]
+  },
+  "firstStderrSeconds": 1.213,
+  "stderrBytes": 5774,
+  "observedMcpInitialization": {
+    "elapsedMs": 0,
+    "mcpToolCount": 0,
+    "sessionId": "01a0c531-8e23-7f03-96d9-9f228929f51c"
+  },
+  "sessionId": "01a0c531-8e23-7f03-96d9-9f228929f51c",
+  "sessionConfigOptions": [
+    {
+      "id": "model",
+      "name": "Model",
+      "category": "model",
+      "type": "select",
+      "currentValue": "grok-4.7"
+    },
+    {
+      "id": "reasoning_effort",
+      "name": "Reasoning Effort",
+      "category": "thought_level",
+      "type": "select",
+      "currentValue": "xhigh"
+    }
+  ],
+  "sessionMeta": {},
+  "sessionMetaKeys": [
+    "codebaseIndexed",
+    "currentWorkingDirectory",
+    "feedbackEnabled",
+    "gitRoot",
+    "isGitRepo",
+    "showNonGitWarning",
+    "x.ai/memoryMode",
+    "x.ai/sessionConfig",
+    "x.ai/sessionDetail"
+  ],
+  "sessionResultKeys": [
+    "_meta",
+    "configOptions",
+    "models",
+    "sessionId"
+  ],
+  "returnedModelOption": "grok-4.7",
+  "returnedReasoningEffort": "xhigh",
+  "timedOut": true,
+  "completed": false,
+  "failure": "Hard 300-second deadline reached.",
+  "cancelSent": true,
+  "shutdown": "owned-group-sigterm",
+  "exitCode": 0,
+  "remainingOwnedGroupPids": [],
+  "processReaped": true,
+  "isolatedHomeRemoved": true,
+  "globalConfigSha256After": "ada54f57ec570d8e70cba35400ea2b557914ede90ffa893b5da122a7f69d6736",
+  "globalConfigUnchanged": true
+}

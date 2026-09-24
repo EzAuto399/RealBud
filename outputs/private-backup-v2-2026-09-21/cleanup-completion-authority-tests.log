@@ -1,0 +1,57 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > publishes authenticated operation completion only after exact cold application and reconciles the restored identity 184ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > recovers the empty mutex after a real process kill while its lock is created 210ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > recovers the empty mutex after a real process kill while its lock is initializing 200ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > releases the real process lock after a killed stage owner and preserves retry evidence 209ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > releases the real process lock after a killed apply owner and preserves retry evidence 217ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > holds competing stage writers until the owning operation finishes 92ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > stages without replacing business files, applies exact bytes, then records completion once 95ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > resumes exact intended files after interruption following replacement/removal 1 102ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > resumes exact intended files after interruption following replacement/removal 2 103ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > resumes exact intended files after interruption following replacement/removal 3 106ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > resumes exact intended files after interruption following replacement/removal 4 103ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > holds the entire application before writes for edited target 31ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > holds the entire application before writes for new business file 32ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > holds the entire application before writes for configuration 30ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > holds the entire application before writes for membership 28ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > holds the entire application before writes for database journal 26ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > preserves a target changed while its replacement stream was being written 51ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > rejects changed prepared identity, occupied targets and conflicting legacy staging 14ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > keeps staged evidence and targets when the destination key is unavailable or wrong 31ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > keeps encrypted records, immutable snapshots, revision checks and request replay 24ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > atomically refuses quota overbooking and retains reservations after cancellation until cleanup 18ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses identity changes, non-transactional callbacks and unsupported private metadata 17ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > cannot advertise completion for a failed export or advance upload progress backwards 17ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > retains restore-held artifacts across cancellation, pruning, reopen and failed apply 21ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > freezes reviewed and prepared identities through completion and retains reservations until cleanup 27ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > reconciles an authenticated cold completion without relabelling old transfers or releasing their disk reservations 31ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > reconciles a same-workspace completion once without changing it on a later restart 28ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > replays a completion whose journal commit outlived its process before proof consumption 106ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses absent reconciliation evidence and retains the journal 39ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses plaintext reconciliation evidence and retains the journal 36ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses wrong-key reconciliation evidence and retains the journal 33ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses previous-workspace reconciliation evidence and retains the journal 32ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses archive-workspace reconciliation evidence and retains the journal 31ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses operation reconciliation evidence and retains the journal 33ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses prepared reconciliation evidence and retains the journal 34ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses archive-digest reconciliation evidence and retains the journal 33ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses pending-stage reconciliation evidence and retains the journal 31ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses changed-workspace reconciliation evidence and retains the journal 34ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > interrupts dead computations on reopen while keeping sealed upload evidence and requesting the passphrase again 18ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > paginates stable operation identities with bounded pages and refuses unknown workspace/key reuse 32ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses a second owner in the same process without changing the active journal 15ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > admits only one of two simultaneous initializers and keeps the winning journal usable 26ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > recovers after an actual process kill at initial-ready without treating a partial database as initialized 90ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > recovers after an actual process kill at initial-linked without treating a partial database as initialized 80ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > preserves an empty pre-existing fixed journal rather than assuming that it never contained records 1ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses swapped files, extra schema and malformed encrypted rows without replacing original evidence 61ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses public or multiply linked journal files 17ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > survives an actual killed owner and refuses takeover while that owner remains alive 80ms
+
+ Test Files  2 passed (2)
+      Tests  48 passed (48)
+   Start at  21:52:01
+   Duration  3.30s (transform 208ms, setup 18ms, import 250ms, tests 2.91s, environment 0ms)
+

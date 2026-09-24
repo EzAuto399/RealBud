@@ -1,0 +1,128 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ✓ server/private-backup-v2-integration.test.ts > actual filesystem v2 backup and restore pipeline > captures, transfers, prepares and cold-restores over 5,000 records with exact bank bytes and a different destination key 19210ms
+ ✓ server/private-backup-archive.test.ts > authenticated portable business catalog archives > enforces the host catalog storage reservation through actual archive decode without losing the source 1456ms
+ ✓ server/private-backup-archive.test.ts > authenticated portable business catalog archives > rejects invalid host catalog capacity before pulling input or creating an import directory 1ms
+ ✓ server/private-backup-archive.test.ts > authenticated portable business catalog archives > drains and closes in-flight catalog creation before returning cancellation 101ms
+ ✓ server/private-backup-archive.test.ts > authenticated portable business catalog archives > preserves exact file bytes and actual reviewed bank records under a different installation key 151ms
+ ✓ server/private-backup-archive.test.ts > authenticated portable business catalog archives > retains more than the v1 record cap, exact closed draft fields and insertion order 6846ms
+ ✓ server/private-backup-archive.test.ts > authenticated portable business catalog archives > keeps decoded entries provisional until exact EOF and the expected uploaded digest validate 242ms
+ ✓ server/private-backup-archive.test.ts > authenticated portable business catalog archives > rejects authenticated but invalid logical archives: source key field 88ms
+ ✓ server/private-backup-archive.test.ts > authenticated portable business catalog archives > rejects authenticated but invalid logical archives: wrong encoding 97ms
+ ✓ server/private-backup-archive.test.ts > authenticated portable business catalog archives > rejects authenticated but invalid logical archives: extra record field 96ms
+ ✓ server/private-backup-archive.test.ts > authenticated portable business catalog archives > rejects authenticated but invalid logical archives: unknown path 99ms
+ ✓ server/private-backup-archive.test.ts > authenticated portable business catalog archives > rejects authenticated but invalid logical archives: no identity 98ms
+ ✓ server/private-backup-archive.test.ts > authenticated portable business catalog archives > rejects authenticated but invalid logical archives: no database flag 96ms
+ ✓ server/private-backup-archive.test.ts > authenticated portable business catalog archives > rejects authenticated but invalid logical archives: invalid UTF-8 89ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > preserves exact ordinary bytes, logical ordering, revision and insertion order across restart and a different key 28ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > does not trust a collection missing required identity or Desk records 9ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > rejects unapproved file identity ../config.json 9ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > rejects unapproved file identity /tmp/payload 9ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > rejects unapproved file identity C:\payload 9ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > rejects unapproved file identity vault/workflow-inputs/CON.json 10ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > rejects unapproved file identity workflow-state.sqlite 10ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > rejects unapproved file identity config.json 10ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > rejects duplicate/case-folded file paths and global workflow identities atomically 11ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > enforces encoding, workspace and declared capacity without partial admission 16ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > refuses unknown kinds, invalid revisions and closed oversized drafts before insertion 10ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > retains exact bank original and reviewed artifact bytes 14ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > requires the owned identity and unchanged installation key on reopen 11ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > seals atomically and refuses mutations from a stale independent worker and reopened handle 102ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > does not publish a seal for an incomplete graph and rejects invalid UTF-8 JSON 8ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > refuses preexisting directories, links and unrecognized internal schema 8ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > refuses hardlinked or broadened catalog permissions without repairing them 11ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > detects authenticated entry corruption: delete 10ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > detects authenticated entry corruption: payload-swap 11ms
+ ✓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > detects authenticated entry corruption: metadata-swap 10ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > retains historical bill aliases, inactive patterns and reservations, using the same v1 invariant 31ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > rejects an individually readable bill graph missing bill-source-alias 19ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > rejects an individually readable bill graph missing bill-pattern-slot 18ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > rejects an individually readable bill graph missing bill-arrival-slot 19ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > rejects an individually readable bill graph missing bill-origin 21ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > rejects an individually readable bill graph missing bill-occurrence 19ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > rejects an individually readable bill graph missing bill-register 26ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > validates normalized and inert legacy mail with exact origin-era ordering and prepared input 79ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > holds missing/conflicting mail evidence: all-legacy 47ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > holds missing/conflicting mail evidence: mail-source 46ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > holds missing/conflicting mail evidence: mail-receipt 49ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > holds missing/conflicting mail evidence: mail-item 50ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > holds missing/conflicting mail evidence: ordered-origin 49ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > accepts an unrelated workroom input without inventing mail state 10ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > preserves every draft state and checks optional-present proposal links before preview 31ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > retains permanent execution/request/checkpoint bindings and rejects missing retry receipts 53ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > retains more than 5,000 records and 96 MiB without full-history record reads 4482ms
+ ✓ server/private-backup-catalog.test.ts > complete bounded business graph validation > admits more than the v1 3,000-file ceiling and enumerates names without dropping any file 1676ms
+ ✓ server/private-backup-catalog.test.ts > physical sqlite storage bounds > hits sqlite page limits, preserves admitted rows across reopen, and reapplies the cap 140ms
+ ✓ server/private-backup-catalog.test.ts > physical sqlite storage bounds > commits and reopens the full 8 MiB supported entry with cache spilling disabled 8776ms
+ ✓ server/private-backup-catalog.test.ts > physical sqlite storage bounds > recovers a real killed writer and its hot rollback journal before applying the persisted cap 637ms
+ ✓ server/private-backup-catalog.test.ts > physical sqlite storage bounds > opens legacy maxEntries/maxBytes headers without rewriting them 13ms
+ ✓ server/private-backup-catalog.test.ts > physical sqlite storage bounds > rejects an oversized physical catalog file and leaves the original bytes in place 236ms
+ ✓ server/private-backup-catalog.test.ts > physical sqlite storage bounds > rejects explicit storage caps outside the documented range 1ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > publishes authenticated operation completion only after exact cold application and reconciles the restored identity 188ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > recovers the empty mutex after a real process kill while its lock is created 223ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > recovers the empty mutex after a real process kill while its lock is initializing 207ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > releases the real process lock after a killed stage owner and preserves retry evidence 211ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > releases the real process lock after a killed apply owner and preserves retry evidence 214ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > holds competing stage writers until the owning operation finishes 97ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > stages without replacing business files, applies exact bytes, then records completion once 100ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > resumes exact intended files after interruption following replacement/removal 1 105ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > resumes exact intended files after interruption following replacement/removal 2 110ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > resumes exact intended files after interruption following replacement/removal 3 107ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > resumes exact intended files after interruption following replacement/removal 4 111ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > holds the entire application before writes for edited target 31ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > holds the entire application before writes for new business file 32ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > holds the entire application before writes for configuration 31ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > holds the entire application before writes for membership 29ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > holds the entire application before writes for database journal 26ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > preserves a target changed while its replacement stream was being written 59ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > rejects changed prepared identity, occupied targets and conflicting legacy staging 14ms
+ ✓ server/private-backup-cold-restore.test.ts > bounded cold private restore coordination > keeps staged evidence and targets when the destination key is unavailable or wrong 28ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > keeps encrypted records, immutable snapshots, revision checks and request replay 22ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > atomically refuses quota overbooking and retains reservations after cancellation until cleanup 20ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses identity changes, non-transactional callbacks and unsupported private metadata 17ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > cannot advertise completion for a failed export or advance upload progress backwards 17ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > retains restore-held artifacts across cancellation, pruning, reopen and failed apply 23ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > freezes reviewed and prepared identities through completion and retains reservations until cleanup 31ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > reconciles an authenticated cold completion without relabelling old transfers or releasing their disk reservations 33ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > reconciles a same-workspace completion once without changing it on a later restart 29ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > replays a completion whose journal commit outlived its process before proof consumption 99ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses absent reconciliation evidence and retains the journal 36ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses plaintext reconciliation evidence and retains the journal 35ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses wrong-key reconciliation evidence and retains the journal 34ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses previous-workspace reconciliation evidence and retains the journal 34ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses archive-workspace reconciliation evidence and retains the journal 33ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses operation reconciliation evidence and retains the journal 33ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses prepared reconciliation evidence and retains the journal 34ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses archive-digest reconciliation evidence and retains the journal 34ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses pending-stage reconciliation evidence and retains the journal 34ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses changed-workspace reconciliation evidence and retains the journal 33ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > interrupts dead computations on reopen while keeping sealed upload evidence and requesting the passphrase again 19ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > paginates stable operation identities with bounded pages and refuses unknown workspace/key reuse 33ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses a second owner in the same process without changing the active journal 17ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > admits only one of two simultaneous initializers and keeps the winning journal usable 24ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > recovers after an actual process kill at initial-ready without treating a partial database as initialized 89ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > recovers after an actual process kill at initial-linked without treating a partial database as initialized 80ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > preserves an empty pre-existing fixed journal rather than assuming that it never contained records 1ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses swapped files, extra schema and malformed encrypted rows without replacing original evidence 62ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > refuses public or multiply linked journal files 17ms
+ ✓ server/private-backup-operations.test.ts > durable private backup operation records > survives an actual killed owner and refuses takeover while that owner remains alive 84ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > hits an actual SQLite page cap without staging partial database bytes, then retries into a fresh prepared store 78ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > preserves a pre-existing build allocation when exclusive creation fails 24ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > holds unexpected files in its own build allocation instead of recursively deleting them 28ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid build allocation ../other before preparation 24ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid build allocation /tmp/other before preparation 15ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid build allocation unknown before preparation 17ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid internal byte capacity 0 before writing 19ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid internal byte capacity 65537 before writing 19ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid internal byte capacity 1099511627776 before writing 15ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid internal byte capacity NaN before writing 18ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > does not accept an asynchronous lease assertion as successful admission 15ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > awaits progress persistence and rechecks admission before publishing a seal 21ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > propagates failed progress persistence without sealing or publishing a restore 22ms
+
+ Test Files  6 passed (6)
+      Tests  119 passed (119)
+   Start at  22:14:06
+   Duration  49.97s (transform 481ms, setup 37ms, import 762ms, tests 48.81s, environment 0ms)
+

@@ -1,0 +1,39 @@
+{
+  "at": "2026-09-21T15:42:39.525120+00:00",
+  "scope": "Hermes ACP memory-proposal integration; actual loopback broker with fictional ACP subprocess, no provider calls",
+  "checks": [
+    {
+      "command": "pnpm exec vitest run server/drivers/acp/memory-proposals.test.ts",
+      "passed": 11,
+      "failed": 0,
+      "seconds": 4.08
+    },
+    {
+      "command": "pnpm exec vitest run server/drivers/acp/acp.test.ts server/drivers/acp/hermes-memory-approval.test.ts",
+      "passed": 89,
+      "failed": 0,
+      "seconds": 4.32
+    },
+    {
+      "command": "pnpm exec tsc --noEmit --pretty false",
+      "exitCode": 0
+    },
+    {
+      "command": "git diff --check -- server/contracts.ts server/drivers/acp/core.ts server/drivers/acp/memory-proposals.test.ts",
+      "exitCode": 0
+    }
+  ],
+  "grokReviewReceipt": "acp-lifecycle-review-receipt.json",
+  "sourceSha256": {
+    "server/contracts.ts": "ad161de0993d2018cc3870bb7b68284caca4dea326c2a500b3101a5d769648dc",
+    "server/drivers/acp/core.ts": "8df1ccbda9a68afe0cfad318709417088930d0a90cfa1f7e625ee23581f4a4b8",
+    "server/drivers/acp/memory-proposals.test.ts": "abef0cae93b0f5e8e74b2d10690e0e8160dbe4a98b11002c25d1b1b5263698cc",
+    "shared/hermes-memory-proposal.ts": "0d3d1508d155d378966a5b57ae8ffdefb72baf3050176adab5f66e9a2a8b6158",
+    "server/hermes-memory-proposal-broker.ts": "b75e9200263933a6bb668aae115e3783734db8313d806bc11e821138c0308154"
+  },
+  "limits": [
+    "No real provider invocation",
+    "No installed-device or Windows execution proof",
+    "Native proposal persistence and human approval are separate coordinator-owned verification layers"
+  ]
+}

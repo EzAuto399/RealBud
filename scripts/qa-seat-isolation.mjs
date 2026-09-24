@@ -51,8 +51,8 @@ function fakeWorker(home) {
 }
 
 /** The pack files `tryHermesPing` requires before it will spawn anything. */
-function seedPack(home) {
-  const profile = join(home, "profiles", BASE_PROFILE);
+function seedPack(home, member) {
+  const profile = join(home, "profiles", `${BASE_PROFILE}-${member}`);
   mkdirSync(profile, { recursive: true });
   writeFileSync(join(profile, "SOUL.md"), "# RealBud\n");
   writeFileSync(join(profile, "config.yaml"), "approvals:\n  mode: manual\ncron_mode: deny\n");
@@ -66,7 +66,7 @@ async function startSeat(seat, index) {
   // pack check reported "Bud is not set up" for both.
   const home = join(scratch, seat.name);
   mkdirSync(home, { recursive: true });
-  seedPack(join(home, ".realbud", "hermes"));
+  seedPack(join(home, ".realbud", "hermes"), seat.member);
   const worker = fakeWorker(home);
   const dataDir = join(home, ".realbud");
   const port = PORT_BASE + index;

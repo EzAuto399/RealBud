@@ -1,0 +1,26 @@
+@vom 1
+@view 1280x900
+@layers 1 focus=L1
+L1 page
+  RootWebArea "Fictional bank — RealBud test"
+    heading "Fictional office account"
+      StaticText "Fictional office account"
+    heading "Transaction history"
+      StaticText "Transaction history"
+    paragraph "This is a local test page. No real accounts or money."
+      StaticText "This is a local test page. No real accounts or money."
+    table "Date Reference Amount 20 September Sample rent $120.00"
+      row "Date Reference Amount"
+        columnheader "Date"
+        columnheader "Reference"
+        columnheader "Amount"
+      row "20 September Sample rent $120.00"
+        cell "20 September"
+        cell "Sample rent"
+        cell "$120.00"
+    @e1 button "Show statements"
+    paragraph
+    LabelText "Reference"
+      @e2 textbox "Reference" [empty]
+      StaticText "Reference"
+    @e3 button "Transfer money"

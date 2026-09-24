@@ -1,0 +1,59 @@
+{
+  "completed": true,
+  "requestedModel": "grok-4.7",
+  "selectedModel": "grok-4.7",
+  "effort": "xhigh",
+  "actualModels": [
+    "grok-4.7-build"
+  ],
+  "modelCalls": 1,
+  "numTurns": 1,
+  "terminalStopReason": "end_turn",
+  "terminalUsage": {
+    "inputTokens": 32923,
+    "outputTokens": 15445,
+    "totalTokens": 48368,
+    "cachedReadTokens": 1152,
+    "cacheCreationTokens": 0,
+    "reasoningTokens": 15031,
+    "modelCalls": 1,
+    "apiDurationMs": 216736,
+    "costUsdTicks": 1567880000,
+    "modelUsage": {
+      "grok-4.7-build": {
+        "inputTokens": 32923,
+        "outputTokens": 15445,
+        "totalTokens": 48368,
+        "cachedReadTokens": 1152,
+        "cacheCreationTokens": 0,
+        "reasoningTokens": 15031,
+        "modelCalls": 1,
+        "apiDurationMs": 216736,
+        "costUsdTicks": 1567880000
+      }
+    },
+    "numTurns": 1
+  },
+  "terminalTopLevelTotalTokens": 48377,
+  "usageAccountingNote": "Retained as returned: terminal top-level total differs from usage/model-bucket total; do not silently reconcile.",
+  "terminalSeconds": 218.605,
+  "elapsedIncludingCleanupSeconds": 221.543,
+  "promptBytes": 1952,
+  "promptRequests": 1,
+  "toolCalls": 0,
+  "permissionRequests": 0,
+  "mcp": {
+    "elapsedMs": 0,
+    "mcpToolCount": 0,
+    "sessionId": "01a0c5b3-2b0b-7a02-94fa-bb2dd2fdf099"
+  },
+  "mcpServers": 0,
+  "advisoryCorrections": [
+    "Advice case 1 is a proposed ABA stress test, not an observed defect. The proposed archive preview already binds generation, active revision/digest, exact hot list and head. Revert needs equivalent durable binding. No extra epoch should be added unless those identities cannot uniquely bind the operation.",
+    "Advice case 2 says a retry must not block backup. That is only correct after archival completion: an unresolved durable intent intentionally blocks backup. Before the journal commit, old referenced history plus exact pending intent must remain recoverable; automatic rollback of every journal byte is not the design.",
+    "Advice case 3 assumes archival clears approvals; this is incorrect. Metadata-only archival preserves all approval/schedule/active-instruction values. A reviewed revert, separately, clears approvals and pauses schedules.",
+    "Advice case 3 says every root is acyclic while their union cycles. With complete traversal and canonical immutable node identity, that cannot happen: a reachable cycle belongs to a root traversal. Implement path-local cycle detection plus global validated-node memoization; the real risk is confusing repeated valid references with cycles or skipping validation after incorrect identity deduplication.",
+    "The review gives test suggestions only. No source implementation, test execution, release approval, provider call or customer acceptance was performed by Grok."
+  ],
+  "proofScope": "Sanitized source/design packet; advice only, no production source access or test evidence."
+}

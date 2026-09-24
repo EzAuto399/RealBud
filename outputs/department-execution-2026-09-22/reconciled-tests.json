@@ -1,0 +1,2210 @@
+[
+  {
+    "file": "shared/company-execution.test.ts",
+    "test": "company execution authority contract accepts the complete attended grant, bounded lease and recovery-only settlement",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "shared/company-execution.test.ts",
+    "test": "company execution authority contract requires own exact fields and excludes website/private scope and credentials",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "shared/company-execution.test.ts",
+    "test": "company execution authority contract separates execution secrets from member sessions and rejects version/ID coercion",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "shared/company-execution.test.ts",
+    "test": "company execution authority contract keeps bigint revisions exact and never accepts overflow or numeric approximations",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "shared/company-execution.test.ts",
+    "test": "company execution authority contract bounds grant and lease duration independently, including renewal",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "shared/company-execution.test.ts",
+    "test": "company execution authority contract does not coerce arrays or objects into approved phases and outcomes",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "shared/company-execution.test.ts",
+    "test": "company execution authority contract rejects impossible dates, cross-case projections and a dispatch deadline after the lease",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "shared/company-execution.test.ts",
+    "test": "company execution authority contract requires confirmation and revocation evidence to agree with the grant phase",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company-department-outbox.test.ts",
+    "test": "durable department mutation journal persists before dispatch, recovers an encrypted uncertain request after restart, and replays once",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-department-outbox.test.ts",
+    "test": "durable department mutation journal normalizes and validates the create operation and its receipt identity",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-department-outbox.test.ts",
+    "test": "durable department mutation journal normalizes and validates the assign operation and its receipt identity",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-department-outbox.test.ts",
+    "test": "durable department mutation journal normalizes and validates the close operation and its receipt identity",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-department-outbox.test.ts",
+    "test": "durable department mutation journal normalizes and validates the recover operation and its receipt identity",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-department-outbox.test.ts",
+    "test": "durable department mutation journal normalizes and validates the lifecycle operation and its receipt identity",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-department-outbox.test.ts",
+    "test": "durable department mutation journal holds edited, replacement and changed-path attempts without overwriting the original",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-department-outbox.test.ts",
+    "test": "durable department mutation journal requires acknowledgement before another request and retains confirmation after a failed explicit replay",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-department-outbox.test.ts",
+    "test": "durable department mutation journal refuses mismatched seats and conceals a pending payload from a different authenticated identity",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-department-outbox.test.ts",
+    "test": "durable department mutation journal does not dispatch when departure is pending or durable admission cannot be written",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-department-outbox.test.ts",
+    "test": "durable department mutation journal clears a first definitive rejection but retains any rejection after uncertainty and any timeout",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-department-outbox.test.ts",
+    "test": "durable department mutation journal keeps an uncertain journal when success has a bad receipt field",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-department-outbox.test.ts",
+    "test": "durable department mutation journal keeps an uncertain journal when success has a bad entity field",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-department-outbox.test.ts",
+    "test": "durable department mutation journal keeps an uncertain journal when success has a bad replayed field",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-department-outbox.test.ts",
+    "test": "durable department mutation journal stores only the minimal confirmed receipt, without upstream diagnostics or credentials",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-department-outbox.test.ts",
+    "test": "durable department mutation journal retains the pending command when a committed result cannot be persisted, then confirms its replay",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-department-outbox.test.ts",
+    "test": "durable department mutation journal holds malformed persisted records without rewriting or deleting their bytes",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-department-outbox.test.ts",
+    "test": "durable department mutation journal archives offline only after explicit acknowledgement and exports a validated encrypted outcome",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-department-outbox.test.ts",
+    "test": "durable department mutation journal does not claim an archive exists when another tab acknowledged the confirmed change first",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-department-outbox.test.ts",
+    "test": "durable department mutation journal preserves the original archive receipt when removal failed and holds conflicting archive evidence",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-department-outbox.test.ts",
+    "test": "durable department mutation journal does not clear pending work when archive creation fails or export a malformed archive",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-department-outbox.test.ts",
+    "test": "durable department mutation journal serializes simultaneous requests and drain waits for the outstanding mutation",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-department-outbox.test.ts",
+    "test": "durable department mutation journal rejects extra, oversized, malformed identity/revision and invalid route fields before journaling",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-departments.integration.test.ts",
+    "test": "fictional agency department workday over company TLS shares a sourced office procedure with all five staff without granting edit authority",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-departments.integration.test.ts",
+    "test": "fictional agency department workday over company TLS keeps each personal note private, including from the company owner",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-departments.integration.test.ts",
+    "test": "fictional agency department workday over company TLS allows an explicit accounts handover and read-only PM review, hiding it from leasing",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-departments.integration.test.ts",
+    "test": "fictional agency department workday over company TLS rejects a simultaneous stale edit and preserves both accepted versions with their sources",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-departments.integration.test.ts",
+    "test": "fictional agency department workday over company TLS gives one accountant the job, supports renewal and handover, and rejects stale or duplicate completion",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-departments.integration.test.ts",
+    "test": "fictional agency department workday over company TLS rejects forged authority and invalid lifecycle requests before they change work",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-departments.integration.test.ts",
+    "test": "fictional agency department workday over company TLS removes department access immediately even with a warm session and an active claim",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-departments.integration.test.ts",
+    "test": "fictional agency department workday over company TLS lets only the owner cancel an unused invitation and prevents its redemption",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-departments.integration.test.ts",
+    "test": "fictional agency department workday over company TLS offboards a staff member, revokes sign-in and holds their active job for recovery",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-departments.integration.test.ts",
+    "test": "fictional agency department workday over company TLS holds an expired lease for review instead of automatically repeating its work",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-departments.integration.test.ts",
+    "test": "fictional agency department workday over company TLS reopens the host and every client, preserving company records, private records and offboarding",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-execution-client.test.ts",
+    "test": "company execution client with encrypted vault and simulated host retries lost begin, admission, renewal and settlement exactly across cold clients",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company-execution-client.test.ts",
+    "test": "company execution client with encrypted vault and simulated host rejects corrupted encrypted files and malformed authenticated state without a network retry",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company-execution-client.test.ts",
+    "test": "company execution client with encrypted vault and simulated host rejects forged successful grant/source/receipt bindings while preserving exact intent",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company-execution-client.test.ts",
+    "test": "company execution client with encrypted vault and simulated host does not adopt authority returned after the seat or host changed during the request",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company-execution-client.test.ts",
+    "test": "company execution client with encrypted vault and simulated host keeps dispatch expiry immutable through renewal and rejects dispatch at its exact deadline",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company-execution-client.test.ts",
+    "test": "company execution client with encrypted vault and simulated host recognizes a pending renewal receipt after reply loss but rejects an unknown receipt operation",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company-execution-client.test.ts",
+    "test": "company execution client with encrypted vault and simulated host retains a denied factual settlement and never replaces it or starts again",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company-execution-transport.integration.test.ts",
+    "test": "encrypted department delegation client through real office TLS and PostgreSQL survives lost grant and claim replies, then runs scoped checks after the member session is revoked",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company-execution-transport.integration.test.ts",
+    "test": "encrypted department delegation client through real office TLS and PostgreSQL keeps the original start deadline through lost renewal replies and settles preparation into human review",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company-execution-transport.integration.test.ts",
+    "test": "encrypted department delegation client through real office TLS and PostgreSQL holds scoped reads on permission loss and retains a failed settlement without touching a recovered case",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company-host.test.ts",
+    "test": "company + service administration through the real HTTP server protects administrator/company APIs with ordinary session and separate admin authority",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-host.test.ts",
+    "test": "company + service administration through the real HTTP server logs in only this admin session and creates a single host company",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-host.test.ts",
+    "test": "company + service administration through the real HTTP server redeems one-use invitations without inheriting service administration",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-host.test.ts",
+    "test": "company + service administration through the real HTTP server enforces private and shared revision access through actual routes",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-host.test.ts",
+    "test": "company + service administration through the real HTTP server preserves member sessions across service restart while revoking admin sessions",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-host.test.ts",
+    "test": "company + service administration through the real HTTP server does not let service administration impersonate the owner or invalidate their session",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-host.test.ts",
+    "test": "company + service administration through the real HTTP server reports damaged shared work as recovery through the full local HTTP boundary",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-host.test.ts",
+    "test": "company + service administration through the real HTTP server requires service entitlement for paid work while allowing records and revocation",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation-binding.test.ts",
+    "test": "office identity before session adoption rejects a different office on create without returning a token or writing identity",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation-binding.test.ts",
+    "test": "office identity before session adoption rejects a different office on join without returning a token or writing identity",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation-binding.test.ts",
+    "test": "office identity before session adoption rejects a different office on sign-in without returning a token or writing identity",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation-binding.test.ts",
+    "test": "office identity before session adoption rejects a different office on recover-member without returning a token or writing identity",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation-binding.test.ts",
+    "test": "office identity before session adoption rejects a successful session without a company identity",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation-binding.test.ts",
+    "test": "office identity before session adoption adopts the matching office once and refuses a different person without replacing saved work identity",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation-binding.test.ts",
+    "test": "office identity before session adoption does not adopt a member from an unauthenticated host connection check",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation-binding.test.ts",
+    "test": "durable membership recovery keeps an uncertain department update encrypted across restart and blocks departure until reconciled",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation-binding.test.ts",
+    "test": "durable membership recovery archives an unknown department result locally after access is lost without cancelling remote work",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation-binding.test.ts",
+    "test": "durable membership recovery serializes leave with a department update already in flight",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation-binding.test.ts",
+    "test": "durable membership recovery serializes replace-host with a department update already in flight",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation-binding.test.ts",
+    "test": "durable membership recovery serializes archive with a department update already in flight",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation-binding.test.ts",
+    "test": "durable membership recovery does not persist malformed enrollment and lets the original member recover after a rejected identity",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation-binding.test.ts",
+    "test": "durable membership recovery recovers lost enrollment after restart by signing in, without replaying the invitation",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation-binding.test.ts",
+    "test": "durable membership recovery confirms a lost departure response after restart without trying to leave twice",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation-binding.test.ts",
+    "test": "durable membership recovery detaches an unavailable remote host only with explicit unknown-outcome acknowledgement",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation-binding.test.ts",
+    "test": "durable membership recovery preserves separate unknown-access receipts after joining and disconnecting from another office",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation-binding.test.ts",
+    "test": "durable membership recovery keeps the previous single encrypted receipt readable alongside later disconnects",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation-binding.test.ts",
+    "test": "durable membership recovery finishes an interrupted local disconnect from its journal without losing or duplicating its receipt",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation-binding.test.ts",
+    "test": "durable membership recovery reports unreadable historical receipts without inventing a revoked-access result or removing them",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation-binding.test.ts",
+    "test": "durable membership recovery re-pairs only the same office explicitly and preserves private and member identities",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation-provision.test.ts",
+    "test": "host provisioning without an environment override provisions owned storage from the admitted runtime and reports it available",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation-provision.test.ts",
+    "test": "host provisioning without an environment override provisions from the runtime the installer staged, not the build machine",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation-provision.test.ts",
+    "test": "host provisioning without an environment override records which runtime source was admitted, without a terminal step",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation.integration.test.ts",
+    "test": "owned host setup and encrypted second-client joining requires admin, creates a new owned database, then gives the owner independent sign-in",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation.integration.test.ts",
+    "test": "owned host setup and encrypted second-client joining enables company-only TLS and joins from an independent client with a one-use invitation",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation.integration.test.ts",
+    "test": "owned host setup and encrypted second-client joining puts reviewed work on the joined desktop and keeps private files on their own computers",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation.integration.test.ts",
+    "test": "owned host setup and encrypted second-client joining holds peer work during host loss and reconnects without re-pairing or replaying writes",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation.integration.test.ts",
+    "test": "owned host setup and encrypted second-client joining reopens the same host and client, signs in again and preserves shared company data",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation.integration.test.ts",
+    "test": "owned host setup and encrypted second-client joining renews the host identity, leaves cleanly, and joins another office without changing private work",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation.test.ts",
+    "test": "native companion setup boundary restores the saved identity and refuses malformed identity instead of selecting the base",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation.test.ts",
+    "test": "native companion setup boundary offers joining without administrator keys or a local Postgres dependency",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation.test.ts",
+    "test": "native companion setup boundary shows host setup to a signed-in administrator without an env-var binary path",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation.test.ts",
+    "test": "native companion setup boundary never overwrites malformed saved host settings while retrying as administrator",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation.test.ts",
+    "test": "native companion setup boundary does not save an invalid pairing and leaves a valid retry possible",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-installation.test.ts",
+    "test": "native companion setup boundary denies all work once shutdown starts",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-outbox.test.ts",
+    "test": "durable reviewed sharing recovers the same encrypted request after restart and never creates a second work item",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-outbox.test.ts",
+    "test": "durable reviewed sharing holds edited or replacement attempts while outcome is unknown",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-outbox.test.ts",
+    "test": "durable reviewed sharing does not lose a confirmed original when the same request id is misused",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-outbox.test.ts",
+    "test": "durable reviewed sharing archives unknown outcomes only with explicit acknowledgement, preserving a recoverable encrypted record",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-outbox.test.ts",
+    "test": "durable reviewed sharing does not reveal a saved payload to a different authenticated office identity",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-recovery.integration.test.ts",
+    "test": "owned office backup, standby restore and planned cutover requires service administration and the current owner, and never exposes recovery over TLS",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-recovery.integration.test.ts",
+    "test": "owned office backup, standby restore and planned cutover rejects damaged encryption and wrong passphrases without creating an office",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-recovery.integration.test.ts",
+    "test": "owned office backup, standby restore and planned cutover restores only to an empty host, starts held, invalidates tokens and requires explicit owner cutover",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-recovery.integration.test.ts",
+    "test": "owned office backup, standby restore and planned cutover reconciles a restore receipt lost after the database commit",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-recovery.integration.test.ts",
+    "test": "owned office backup, standby restore and planned cutover keeps the retired source held across restart, including its existing TLS endpoint",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-work.integration.test.ts",
+    "test": "reviewed work between two department profiles lists people without exposing credentials or opening their private work",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-work.integration.test.ts",
+    "test": "reviewed work between two department profiles creates one reviewed item over TLS despite simultaneous retries",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-work.integration.test.ts",
+    "test": "reviewed work between two department profiles rejects forged authority and generic writes to the structured work record",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-work.integration.test.ts",
+    "test": "reviewed work between two department profiles preserves one response, detects stale edits and retains the sender\u2019s exact summary",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-work.integration.test.ts",
+    "test": "reviewed work between two department profiles recovers a joined application from its saved host configuration and preserves private sources",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-work.integration.test.ts",
+    "test": "reviewed work between two department profiles closes collaboration without granting execution or claiming a payment happened",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-work.integration.test.ts",
+    "test": "reviewed work between two department profiles immediately removes work visibility and write access after a grant is revoked",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-work.integration.test.ts",
+    "test": "reviewed work between two department profiles requires the named recipient to accept a handoff and preserves the reviewed evidence and activity",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company-work.integration.test.ts",
+    "test": "reviewed work between two department profiles reassigns explicitly, resets acceptance, retains old replies and reconciles the original lost creation response",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-execution-context.test.ts",
+    "test": "refuses a website dispatch when its durable request is missing",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-execution-context.test.ts",
+    "test": "rechecks permission after an awaited source check before allowing provider entry",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-execution-context.test.ts",
+    "test": "retains required provenance in the queued Morning callback without affecting manual work",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-execution-context.test.ts",
+    "test": "requires current permission for a recovered loop associated with a saved website request",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "default off performs no connection checks, preview, network or dispatch",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "publishes only approved disclosure and executes morning-review through existing guarded executor",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "publishes only approved disclosure and executes prepare-recipe through existing guarded executor",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "persists exact review before upload and retries original lost response after restart",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "ambiguous claim after restart never dispatches a new worker",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "changed worker at claim await prevents dispatch and leaves recoverable evidence",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "local disable while publication waits prevents subsequent execution and never revives old activation",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "metadata refresh failure holds enabled work without preview or network",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "restored records retain evidence but clear publication, claim and cancellation authority",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "rejects a substituted review receipt without clearing the saved exact outbox",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "rejects substituted claimId in online claim receipt",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "rejects substituted activationId in online claim receipt",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "rejects substituted previewDigest in online claim receipt",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "expired claim during a slow network wait is never dispatched",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "lost running acknowledgement reuses the event and never dispatches twice",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "offline local cancel retains exact cancellation intent across restart",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "an unreviewed person decision is rejected before it can become local execution authority",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "same executor UUID cannot be ingested under both protocols",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "restored approved review cannot regain work authority or be uploaded",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "revoked approver status reconciles inactive work under hold without preparing or dispatching",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "revocation while running cancels the existing executor and reports its outcome",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "accepted cancellation retains an interrupted local outcome when dispatch cannot be proved",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "nullable persisted authority fields reject undefined and non-object values",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "accepted cancellation reports a proved completed executor after lost running acknowledgement",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-remote-work.test.ts",
+    "test": "cold recovery retries the exact interrupted receipt after a committed claim and lost interruption reply",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-work-adapters.test.ts",
+    "test": "uses the actual preparation executor and its persisted key for duplicates and completion",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-work-adapters.test.ts",
+    "test": "never advertises portal work or dedicated ingestion recipes through generic preparation",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-work-adapters.test.ts",
+    "test": "holds changed plan, instructions, private book, configuration and entitlement",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-work-adapters.test.ts",
+    "test": "rechecks after the executor instruction await and saves failure without invoking the worker",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-work-adapters.test.ts",
+    "test": "binds morning runs to the selected reviewed source and exact schedule revision",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-work-adapters.test.ts",
+    "test": "detects a recipe edit during an awaited pack check without publishing mixed bindings",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-work-adapters.test.ts",
+    "test": "rejects a newly reviewed replacement mail scope even when the clock revision is unchanged",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-work-adapters.test.ts",
+    "test": "closes the mutation window even when an edit and rollback restore the same visible values",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-work-adapters.test.ts",
+    "test": "does not enqueue when a mutation starts during credential reads after a successful check",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-work-adapters.test.ts",
+    "test": "allows a concurrent connection observation but fences actual settings writes across awaits",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-work-adapters.test.ts",
+    "test": "shows the exact local prompt instructions and refuses an oversized review without truncation",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-work-adapters.test.ts",
+    "test": "creates complete typed remote disclosure for both adapters without private bindings or raw mailbox identifiers",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-work-adapters.test.ts",
+    "test": "keeps implicit private-book sources local and refuses raw mailbox identifiers in alias or instructions",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-work-adapters.test.ts",
+    "test": "enqueues morning-review before the first microtask after claim admission and preserves the existing key",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/website-work-adapters.test.ts",
+    "test": "enqueues prepare-recipe before the first microtask after claim admission and preserves the existing key",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/backup.integration.test.ts",
+    "test": "office backup data integrity on real PostgreSQL rejects another office in the payload and rolls back rows already inserted",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/backup.integration.test.ts",
+    "test": "office backup data integrity on real PostgreSQL rejects unknown columns and incompatible migrations rather than executing uploaded instructions",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/backup.integration.test.ts",
+    "test": "office backup data integrity on real PostgreSQL admits only the exact trusted 0005 prefix, never unknown versions or altered checksums",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/backup.integration.test.ts",
+    "test": "office backup data integrity on real PostgreSQL rejects forged legacy columns and post-0005 state instead of deriving permissive defaults",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/backup.integration.test.ts",
+    "test": "office backup data integrity on real PostgreSQL rejects matching but untrusted target and uploaded migration checksums",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/backup.integration.test.ts",
+    "test": "office backup data integrity on real PostgreSQL upgrades a genuine 0005 shape with unassigned active defaults and preserves claim fencing",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/backup.integration.test.ts",
+    "test": "office backup data integrity on real PostgreSQL upgrades exact trusted 0006 with no implicit portal binding and rejects forged added fields",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/backup.integration.test.ts",
+    "test": "office backup data integrity on real PostgreSQL upgrades exact trusted 0007 without importing background authority or forged epoch defaults",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/backup.integration.test.ts",
+    "test": "office backup data integrity on real PostgreSQL restores data while fencing in-flight claims and revoking restored credentials for sessions",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-execution.integration.test.ts",
+    "test": "scoped department execution on actual PostgreSQL requires assigned member consent then current owner confirmation, exposing only the exact case",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-execution.integration.test.ts",
+    "test": "scoped department execution on actual PostgreSQL keeps begin, confirmation and admission exact across lost replies and a new kernel",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-execution.integration.test.ts",
+    "test": "scoped department execution on actual PostgreSQL serializes competing claims through independent pools and preserves one case fence",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-execution.integration.test.ts",
+    "test": "scoped department execution on actual PostgreSQL admits only one of two separately confirmed grants for the same assigned case",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-execution.integration.test.ts",
+    "test": "scoped department execution on actual PostgreSQL clips initial and renewed leases to grant expiry and refuses expired admission replay",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-execution.integration.test.ts",
+    "test": "scoped department execution on actual PostgreSQL observes revocation committed before a waiting admission reaches its lifecycle guard",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-execution.integration.test.ts",
+    "test": "scoped department execution on actual PostgreSQL rejects another grant, company, executor request and generic session routes",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-execution.integration.test.ts",
+    "test": "scoped department execution on actual PostgreSQL renews with immutable receipt IDs, grant clipping and the unchanged initial dispatch deadline",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-execution.integration.test.ts",
+    "test": "scoped department execution on actual PostgreSQL revocation holds the case and denies new reads, renewal and settlement",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-execution.integration.test.ts",
+    "test": "scoped department execution on actual PostgreSQL permission and ownership ABA cannot restore consumed background authority",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-execution.integration.test.ts",
+    "test": "scoped department execution on actual PostgreSQL prepared settlement is exact and leaves human recovery, never done or released",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-execution.integration.test.ts",
+    "test": "scoped department execution on actual PostgreSQL certificate changes and revoked sessions are separate from scoped background authority",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-execution.integration.test.ts",
+    "test": "scoped department execution on actual PostgreSQL keeps lookup RLS isolated on reused connections and immutable receipt/tombstone rows",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-execution.integration.test.ts",
+    "test": "scoped department execution on actual PostgreSQL restores inert grant/claim history, rotates host identity and preserves explicit recovery",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-lifecycle.integration.test.ts",
+    "test": "department case lifecycle on real PostgreSQL creates exactly once across kernels, preserving the original binding after reassignment and closure",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-lifecycle.integration.test.ts",
+    "test": "department case lifecycle on real PostgreSQL assigns only current writers without granting access; rejects reader, foreign and removed members",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-lifecycle.integration.test.ts",
+    "test": "department case lifecycle on real PostgreSQL keeps responsibility independent of leases and prevents generic claim bypass",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-lifecycle.integration.test.ts",
+    "test": "department case lifecycle on real PostgreSQL records explicit human closure once, refusing another writer, stale edits and changed retry notes",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-lifecycle.integration.test.ts",
+    "test": "department case lifecycle on real PostgreSQL blocks departure for assigned work and marks lost access for reassignment without erasing history",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-lifecycle.integration.test.ts",
+    "test": "department case lifecycle on real PostgreSQL serializes assignment versus claim and gives only one concurrent edit the original fence",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-lifecycle.integration.test.ts",
+    "test": "department case lifecycle on real PostgreSQL keeps a hidden unassigned interrupted claim as a departure hold without exposing its contents",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-lifecycle.integration.test.ts",
+    "test": "department case lifecycle on real PostgreSQL fails closed when the hidden-work predicate owner cannot bypass forced RLS",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-lifecycle.integration.test.ts",
+    "test": "department case lifecycle on real PostgreSQL retirement refuses unresolved work, preserves read history, denies generic and RLS writes, and reactivates without work",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-lifecycle.integration.test.ts",
+    "test": "department case lifecycle on real PostgreSQL serializes retirement versus both generic and typed creation across kernels",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-lifecycle.integration.test.ts",
+    "test": "department case lifecycle on real PostgreSQL checks current owner after transfer and never changes reviewed SharedWork semantics",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-lifecycle.integration.test.ts",
+    "test": "department case lifecycle on real PostgreSQL upgrades an actual 0005 database without rewriting cases, receipts, grants or active claims",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-lifecycle.integration.test.ts",
+    "test": "department case lifecycle on real PostgreSQL reapplies the checksummed migration without changing existing business records",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-recovery.integration.test.ts",
+    "test": "department recovery on real PostgreSQL resolves the read-only holder departure deadlock, preserves the note and never restores the old claim",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-recovery.integration.test.ts",
+    "test": "department recovery on real PostgreSQL refuses live claims, admits expired claims only after review, and preserves idempotency after new work starts",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-recovery.integration.test.ts",
+    "test": "department recovery on real PostgreSQL serializes concurrent decisions across kernels and rejects stale fence decisions without changing the winner",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-recovery.integration.test.ts",
+    "test": "department recovery on real PostgreSQL never exposes a foreign office, private scope, unrelated reviewed handoff or no-access department",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-recovery.integration.test.ts",
+    "test": "department recovery on real PostgreSQL makes removed-member claims reviewable and checks current owner authority even for a replay",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-recovery.integration.test.ts",
+    "test": "department recovery on real PostgreSQL fences the previous owner\u2019s implicit department claims immediately on ownership transfer, retaining explicit grants",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/department-recovery.integration.test.ts",
+    "test": "department recovery on real PostgreSQL pages all case records, rejects invalid input, and cannot recover ordinary open or settled cases",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/departments-transport.integration.test.ts",
+    "test": "department API over pinned office TLS authenticates, validates and persists department access across the reviewed LAN routes",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/departments-transport.integration.test.ts",
+    "test": "department API over pinned office TLS serves bounded case review and owner recovery over the authenticated TLS allowlist",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/departments-transport.integration.test.ts",
+    "test": "department API over pinned office TLS creates, assigns, closes and retires through pinned TLS with exact request retries and strict fields",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/departments.integration.test.ts",
+    "test": "explicit departments on real PostgreSQL lists only explicit departments and never exposes other offices or unrelated shared review scopes",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/departments.integration.test.ts",
+    "test": "explicit departments on real PostgreSQL creates once after a lost response and rejects conflicting reuse and duplicate names",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/departments.integration.test.ts",
+    "test": "explicit departments on real PostgreSQL enforces read-only then write then removal against real department records",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/departments.integration.test.ts",
+    "test": "explicit departments on real PostgreSQL rejects simultaneous stale access edits and generic grant bypasses",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/departments.integration.test.ts",
+    "test": "explicit departments on real PostgreSQL binds management and implicit access to the current office owner without transferring private scopes",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/departments.integration.test.ts",
+    "test": "explicit departments on real PostgreSQL rejects revoked and foreign members and immediately holds work after edit access is removed",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/departments.integration.test.ts",
+    "test": "explicit departments on real PostgreSQL paginates current members without silently excluding large offices",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-certificate.test.ts",
+    "test": "company host identity creates a native certificate for the exact host and rejects a different private key",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-certificate.test.ts",
+    "test": "company host identity permits expired material only for local recovery, never new pairing or network admission",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-certificate.test.ts",
+    "test": "company host identity pairs only with a matching HTTPS host without credentials, paths or extra fields",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-runtime.test.ts",
+    "test": "Windows native PostgreSQL shutdown contract uses pg_ctl only after matching the owned postmaster identity",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/host-runtime.test.ts",
+    "test": "Windows native PostgreSQL shutdown contract refuses a different postmaster and preserves the process",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/host-runtime.test.ts",
+    "test": "postgresBinary plans unix and windows executables without pretending an install exists",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/host-runtime.test.ts",
+    "test": "openOwnedPostgres preserves unrelated files and refuses to adopt their directory",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/host-runtime.test.ts",
+    "test": "openOwnedPostgres preserves initialized data after cancellation and holds incomplete setup for recovery",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/host-runtime.test.ts",
+    "test": "openOwnedPostgres rejects an already aborted signal before touching binaries",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/host-runtime.test.ts",
+    "test": "openOwnedPostgres refuses an occupied loopback port",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/host-runtime.test.ts",
+    "test": "openOwnedPostgres requires operator recovery for a stale wx lock and never treats PID as safety",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/host-runtime.test.ts",
+    "test": "openOwnedPostgres refuses a symbolic-link root",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/host-runtime.test.ts",
+    "test": "openOwnedPostgres fails closed on unfinished setup and unrelated data directories",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/host-runtime.test.ts",
+    "test": "openOwnedPostgres rejects a trusted binary that is not PostgreSQL 16",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/host-runtime.test.ts",
+    "test": "openOwnedPostgres refuses leftover postmaster.pid instead of adopting it",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/host-runtime.test.ts",
+    "test": "openOwnedPostgres first-boots with argv execFile, static conf, scram hba, then reopens the same data",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/host-runtime.test.ts",
+    "test": "openOwnedPostgres redacts credentials on failure and never wipes the data directory",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport carries reviewed work over the same pinned member channel without admitting new methods",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport bounds large collaboration responses independently from request limits",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport exports a stable SHA-256 DER fingerprint",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport matching pin success forwards JSON and omits CORS wildcards",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport wrong CA/pin never calls handle and does not send the member token",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport hostname mismatch never calls handle",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport never follows redirects and does not hit the Location target",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport forwards only x-realbud-member-session and rejects browser origin",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport GET /create is forbidden",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport POST /setup is forbidden",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport POST /recover-owner is forbidden",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport GET /admin is forbidden",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport GET /settings is forbidden",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport GET /api is forbidden",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport GET /session is forbidden",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport GET /Ask is forbidden",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport GET /Desk is forbidden",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport GET /status/ is forbidden",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport GET //status is forbidden",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport GET /status?x=1 is forbidden",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport POST /cases/claim/../claim is forbidden",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport rejects malformed and oversized JSON without calling handle",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport keeps local state and every department outbox route off the LAN before member authentication",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport honors cancellation before completion",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport ends a request at its deadline when the host handler never replies",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/host-transport.test.ts",
+    "test": "company host transport rejects http, userinfo, query, and path-bearing origins",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/initial-credential.test.ts",
+    "test": "prepareInitialCredential normalizes login name and returns matching verifier and recovery secret",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/initial-credential.test.ts",
+    "test": "prepareInitialCredential rejects malformed and extra fields without mutating input",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/initial-enrollment.integration.test.ts",
+    "test": "atomic initial enrollment lets an owner credential sign in from another kernel after the founding session is revoked",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/initial-enrollment.integration.test.ts",
+    "test": "atomic initial enrollment lets a joining member sign in and recover the same identity",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/initial-enrollment.integration.test.ts",
+    "test": "atomic initial enrollment rejects malformed credentials without creating a company or consuming an invitation",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/initial-enrollment.integration.test.ts",
+    "test": "atomic initial enrollment rejects a case-insensitive duplicate username on join without extra durable rows",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/initial-enrollment.integration.test.ts",
+    "test": "atomic initial enrollment allows only one concurrent join for the same username and keeps the other invitation usable",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/member-auth.integration.test.ts",
+    "test": "durable independent member authentication signs back into the same owner identity and private knowledge after logout",
+    "status": "passed",
+    "report": "credential-regression-final.json"
+  },
+  {
+    "file": "server/company/member-auth.integration.test.ts",
+    "test": "durable independent member authentication commits failed attempts across kernels and casing, then permits sign-in after the block expires",
+    "status": "passed",
+    "report": "credential-regression-final.json"
+  },
+  {
+    "file": "server/company/member-auth.integration.test.ts",
+    "test": "durable independent member authentication allows exactly one concurrent recovery and revokes previous sessions without changing identity",
+    "status": "passed",
+    "report": "credential-regression-final.json"
+  },
+  {
+    "file": "server/company/member-auth.integration.test.ts",
+    "test": "durable independent member authentication requires the current password for changes and retires other sessions and the old recovery key",
+    "status": "passed",
+    "report": "credential-regression-final.json"
+  },
+  {
+    "file": "server/company/member-auth.integration.test.ts",
+    "test": "durable independent member authentication blocks password and recovery access after membership revocation, with no administrator impersonation route",
+    "status": "passed",
+    "report": "credential-regression-final.json"
+  },
+  {
+    "file": "server/company/member-auth.integration.test.ts",
+    "test": "durable independent member authentication checks the additive credential migration checksum while preserving the original migration",
+    "status": "passed",
+    "report": "credential-regression-final.json"
+  },
+  {
+    "file": "server/company/member-credentials.test.ts",
+    "test": "member credential helpers lowercases conservative ASCII login names and rejects the rest",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/member-credentials.test.ts",
+    "test": "member credential helpers requires passwords between 12 and 256 characters",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/member-credentials.test.ts",
+    "test": "member credential helpers derives a bounded scrypt verifier without persisting the password",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/member-credentials.test.ts",
+    "test": "member credential helpers hashes recovery keys one-way",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/member-credentials.test.ts",
+    "test": "member credential helpers rejects extra KDF work instead of queueing",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/membership.integration.test.ts",
+    "test": "membership lifecycle on real PostgreSQL restricts management and offers to this office owner",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/membership.integration.test.ts",
+    "test": "membership lifecycle on real PostgreSQL requires recipient acceptance, changes authority atomically and preserves private scopes",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/membership.integration.test.ts",
+    "test": "membership lifecycle on real PostgreSQL denies cancelled, expired and revoked-recipient transfers",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/membership.integration.test.ts",
+    "test": "membership lifecycle on real PostgreSQL serializes owner acceptance against revocation without leaving two owners or a revoked owner",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/membership.integration.test.ts",
+    "test": "membership lifecycle on real PostgreSQL serializes departure against new shared work so a successful write cannot be orphaned",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/membership.integration.test.ts",
+    "test": "membership lifecycle on real PostgreSQL blocks unresolved shared work, then revokes every session and records a private departure receipt",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/multi-agency-transport.integration.test.ts",
+    "test": "independent agency authority over real PostgreSQL and pinned TLS binds credentials, invitations, records and department permissions to the selected office",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/multi-agency-transport.integration.test.ts",
+    "test": "independent agency authority over real PostgreSQL and pinned TLS keeps LAN callers outside service administration, device enrollment and agent execution",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/multi-agency-transport.integration.test.ts",
+    "test": "independent agency authority over real PostgreSQL and pinned TLS revokes every member session and recovery route while holding uncertain work and preserving the other office",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-bindings.integration.test.ts",
+    "test": "attended company portal identity on real PostgreSQL binds once with member consent and independent owner proof, projecting no provider/session details",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-bindings.integration.test.ts",
+    "test": "attended company portal identity on real PostgreSQL rejects unconfigured hosts and nonowner creation before any proof/network operation",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-bindings.integration.test.ts",
+    "test": "attended company portal identity on real PostgreSQL requires the selected member, original current owner and exact company at both phases",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-bindings.integration.test.ts",
+    "test": "attended company portal identity on real PostgreSQL retains begin and failed redemption intent, exact retry IDs and immutable deadlines across restart",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-bindings.integration.test.ts",
+    "test": "attended company portal identity on real PostgreSQL rechecks certificate, session and member revocation after external verification",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-bindings.integration.test.ts",
+    "test": "attended company portal identity on real PostgreSQL does not accept an unbranded proof object even when every field has the right shape",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-bindings.integration.test.ts",
+    "test": "attended company portal identity on real PostgreSQL rechecks a certificate changed outside the gate during the final member-map row wait",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-bindings.integration.test.ts",
+    "test": "attended company portal identity on real PostgreSQL rechecks a certificate changed outside the gate during the final member-confirm row wait",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-bindings.integration.test.ts",
+    "test": "attended company portal identity on real PostgreSQL holds certificate rotation until the complete admitted mapping transaction commits",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-bindings.integration.test.ts",
+    "test": "attended company portal identity on real PostgreSQL lets rotation finish during external redemption and holds the later final transaction",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-bindings.integration.test.ts",
+    "test": "attended company portal identity on real PostgreSQL requires exact person confirmation and anchors the local office to the first portal company",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-bindings.integration.test.ts",
+    "test": "attended company portal identity on real PostgreSQL revocation is terminal, retries are exact, and historical people cannot move to another member",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-bindings.integration.test.ts",
+    "test": "attended company portal identity on real PostgreSQL enforces owner/self RLS and paginated safe views, including missing certificate holds",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-bindings.integration.test.ts",
+    "test": "attended company portal identity on real PostgreSQL rechecks member revocation after a real competing transaction held the final admission lock",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-bindings.integration.test.ts",
+    "test": "attended company portal identity on real PostgreSQL rechecks the exact proof deadline after waiting and preserves the original reserved intent",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-bindings.integration.test.ts",
+    "test": "attended company portal identity on real PostgreSQL does not reuse an operation UUID across another member binding or department mutation",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-bindings.integration.test.ts",
+    "test": "attended company portal identity on real PostgreSQL keeps immutable anchors and revoked history against direct backend updates",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-bindings.integration.test.ts",
+    "test": "attended company portal identity on real PostgreSQL restores evidence and anchors while rotating authority and revoking every mapping",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-proof.test.ts",
+    "test": "company host independent portal identity verifier calls only the fixed HTTPS endpoint without member, provider, session or command credentials",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-proof.test.ts",
+    "test": "company host independent portal identity verifier rejects a receipt for another target companyId",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-proof.test.ts",
+    "test": "company host independent portal identity verifier rejects a receipt for another target authorityId",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-proof.test.ts",
+    "test": "company host independent portal identity verifier rejects a receipt for another target certificateDigest",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-proof.test.ts",
+    "test": "company host independent portal identity verifier rejects a receipt for another target bindingId",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-proof.test.ts",
+    "test": "company host independent portal identity verifier rejects a receipt for another target memberId",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-proof.test.ts",
+    "test": "company host independent portal identity verifier rejects a receipt for another target challengeHash",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-proof.test.ts",
+    "test": "company host independent portal identity verifier rejects a receipt for another target purpose",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-proof.test.ts",
+    "test": "company host independent portal identity verifier rejects a receipt for another target expiresAt",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-proof.test.ts",
+    "test": "company host independent portal identity verifier rejects self-asserted evidence, nonce substitution, excess fields and malformed identity",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-proof.test.ts",
+    "test": "company host independent portal identity verifier uses a snapshot of target and handle while I/O is pending",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-proof.test.ts",
+    "test": "company host independent portal identity verifier does not cache a previously accepted proof or convert an expired deadline into a fresh one",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-proof.test.ts",
+    "test": "company host independent portal identity verifier fails closed on slow streaming, excessive content, redirects, malformed JSON and failed requests",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/portal-proof.test.ts",
+    "test": "company host independent portal identity verifier keeps bridge proofs disjoint from remote worker approval protocols",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/postgres-runtime.test.ts",
+    "test": "admitted PostgreSQL runtime admits a runtime that provides every required executable and reports 16",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/postgres-runtime.test.ts",
+    "test": "admitted PostgreSQL runtime rejects a runtime missing any required executable",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/postgres-runtime.test.ts",
+    "test": "admitted PostgreSQL runtime rejects a non-16 runtime rather than adopting a newer or older cluster",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/postgres-runtime.test.ts",
+    "test": "admitted PostgreSQL runtime rejects a symlinked executable so an update cannot repoint the database binary",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/postgres-runtime.test.ts",
+    "test": "admitted PostgreSQL runtime rejects a directory that does not exist",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/postgres-runtime.test.ts",
+    "test": "admitted PostgreSQL runtime reports the bundled source it admitted",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/postgres-runtime.test.ts",
+    "test": "admitted PostgreSQL runtime reports the configured source it admitted",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/postgres-runtime.test.ts",
+    "test": "admitted PostgreSQL runtime reports the system source it admitted",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/postgres-runtime.test.ts",
+    "test": "runtime discovery order lets an explicit override win over a bundled runtime and never probes PATH",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/postgres-runtime.test.ts",
+    "test": "runtime discovery order fails closed with staff-facing copy when no runtime is admitted",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/postgres-runtime.test.ts",
+    "test": "runtime discovery order names the missing runtime without telling staff to use a terminal",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/postgres-runtime.test.ts",
+    "test": "resources directory resolution derives the resources root from the UI directory Electron passes",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/postgres-runtime.test.ts",
+    "test": "resources directory resolution honours an explicit resources override for staged installers",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/postgres-runtime.test.ts",
+    "test": "resources directory resolution reports no bundled location when the server runs outside the desktop app",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/postgres-runtime.test.ts",
+    "test": "untrusted runtime layout does not read a version from a directory that only looks like a runtime",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/postgres.integration.test.ts",
+    "test": "company kernel on real PostgreSQL refuses superuser runtime credentials and checks migration checksums",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/postgres.integration.test.ts",
+    "test": "company kernel on real PostgreSQL serializes single-host bootstrap and persists the resulting office",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/postgres.integration.test.ts",
+    "test": "company kernel on real PostgreSQL stores only token hashes and redeems one invitation exactly once across pools",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/postgres.integration.test.ts",
+    "test": "company kernel on real PostgreSQL rejects expired/revoked invitations and revoked/expired sessions",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/postgres.integration.test.ts",
+    "test": "company kernel on real PostgreSQL holds owner recovery without owner proof, preserving sessions and private confidentiality",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/postgres.integration.test.ts",
+    "test": "company kernel on real PostgreSQL keeps private scopes private even from the company owner and separates companies",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/postgres.integration.test.ts",
+    "test": "company kernel on real PostgreSQL serializes competing first knowledge revisions and preserves revision history",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/postgres.integration.test.ts",
+    "test": "company kernel on real PostgreSQL rejects concurrent stale grant edits and reads after revocation across warm instances",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/postgres.integration.test.ts",
+    "test": "company kernel on real PostgreSQL RLS hides private content and pooled transaction actor context clears on success and failure",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/postgres.integration.test.ts",
+    "test": "company kernel on real PostgreSQL allows one case claimant, renews its lease and fences a released generation",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/postgres.integration.test.ts",
+    "test": "company kernel on real PostgreSQL holds an expired claim and refuses late renewal or completion",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/postgres.integration.test.ts",
+    "test": "company kernel on real PostgreSQL revokes members without releasing unsettled work to another claimant",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/postgres.integration.test.ts",
+    "test": "company kernel on real PostgreSQL fences active work when editing access is removed, even if access is later restored ('read')",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/postgres.integration.test.ts",
+    "test": "company kernel on real PostgreSQL fences active work when editing access is removed, even if access is later restored ('none')",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/postgres.integration.test.ts",
+    "test": "company kernel on real PostgreSQL preserves claims when editing authority remains and does not affect another scope",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/postgres.integration.test.ts",
+    "test": "company kernel on real PostgreSQL concurrent session revocations are idempotent without a lock-upgrade deadlock",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/postgres.integration.test.ts",
+    "test": "company kernel on real PostgreSQL member revocation waits for an already-authorized write then denies every later write",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/work-items.integration.test.ts",
+    "test": "company shared work items on PostgreSQL shares only to named recipients and leaves private knowledge untouched",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/work-items.integration.test.ts",
+    "test": "company shared work items on PostgreSQL retains readable legacy work, upgrades it on an explicit action, and rejects another company",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/work-items.integration.test.ts",
+    "test": "company shared work items on PostgreSQL pages immutable history and does not let a non-assigned audience member provide the named review",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/work-items.integration.test.ts",
+    "test": "company shared work items on PostgreSQL replays identical requests, rejects collisions and stale replies, and closes in-band",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/work-items.integration.test.ts",
+    "test": "company shared work items on PostgreSQL drops visibility when grants are removed or the recipient is revoked",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/work-items.integration.test.ts",
+    "test": "company shared work items on PostgreSQL reports current viewer actions and refuses a stale writer after a read-only downgrade",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/work-items.integration.test.ts",
+    "test": "company shared work items on PostgreSQL pages within the chosen audience without hiding older open work behind sent items",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/work-items.integration.test.ts",
+    "test": "company shared work items on PostgreSQL reports damaged shared records instead of silently showing an empty list",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/work-items.integration.test.ts",
+    "test": "company shared work items on PostgreSQL does not let generic case APIs alias shared work or turn a review into a worker claim",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/work-items.integration.test.ts",
+    "test": "company shared work items on PostgreSQL preserves the exact reviewed whitespace and canonicalizes UUID casing",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/work-items.integration.test.ts",
+    "test": "company shared work items on PostgreSQL handles overlapping recipients and revocation, then replays a saved request with its reduced audience",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/workflow-template.integration.test.ts",
+    "test": "company workflow templates on PostgreSQL shares dormant plans with a second member and preserves the template in a new kernel",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/workflow-template.integration.test.ts",
+    "test": "company workflow templates on PostgreSQL rejects member publication, revoked reads and cross-company visibility",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/workflow-template.integration.test.ts",
+    "test": "company workflow templates on PostgreSQL admits one concurrent revision and keeps the previous value after malformed input",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/workflow-template.integration.test.ts",
+    "test": "company workflow templates on PostgreSQL enforces owner-only writes and company isolation in PostgreSQL RLS itself",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/workflow-template.integration.test.ts",
+    "test": "company workflow templates on PostgreSQL checks the additive template migration checksum",
+    "status": "passed",
+    "report": "remaining-regression.json"
+  },
+  {
+    "file": "server/company/workflow-template.test.ts",
+    "test": "native pack sample roundtrip",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/workflow-template.test.ts",
+    "test": "unsafe fields stripped, schedule disabled, no input mutation",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/workflow-template.test.ts",
+    "test": "rejects invalid schedule instead of disabling it",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/workflow-template.test.ts",
+    "test": "final invalid row rejects the snapshot",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/workflow-template.test.ts",
+    "test": "duplicate ids, empty snapshot, bad version",
+    "status": "passed",
+    "report": "company-regression.json"
+  },
+  {
+    "file": "server/company/workflow-template.test.ts",
+    "test": "size bounds and nonserializable data",
+    "status": "passed",
+    "report": "company-regression.json"
+  }
+]

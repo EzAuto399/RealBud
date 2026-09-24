@@ -15,15 +15,25 @@ concurrency:
 
 jobs:
   test:
-    name: typecheck + test (${{ matrix.os }})
+    name: typecheck + test (${{ matrix.os }}${{ matrix.shard && format(' {0}/3', matrix.shard) || '' }})
     strategy:
       fail-fast: false
       matrix:
         # The harness and pure desktop capabilities stay portable across all
         # supported host platforms. POSIX-only process tests self-skip.
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        # Windows pays a PowerShell ACL admission for every private file it
+        # creates, so its unit run is split three ways to stay inside the limit;
+        # steps that need no repeat run on the first shard only.
+        include:
+          - os: macos-latest
+          - os: ubuntu-latest
+          - { os: windows-latest, shard: 1 }
+          - { os: windows-latest, shard: 2 }
+          - { os: windows-latest, shard: 3 }
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    # The suite passed 5,000 tests in September; hosted runners need well over 15 minutes for it,
+    # and the Windows runner (native ACL suites, cold PowerShell) needs about twice the others.
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 120 || 45 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
@@ -32,9 +42,57 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-      - run: pnpm test
-      - run: pnpm check:electron
+      - name: Compile Windows launchers for native process tests
+        if: matrix.os == 'windows-latest'
+        run: |
+          pnpm build:worker:win
+          pnpm build:cua-launcher:win
+      - name: Portable Windows memory policy and recovery protocol
+        run: |
+          python --version
+          python scripts/testing/hermes-memory-windows-abi.py
+          python scripts/testing/hermes-memory-windows-policy.py
+          python scripts/testing/hermes-memory-windows-protocol.py
+          python scripts/testing/hermes-memory-windows-journal-io.py
+          python scripts/testing/hermes-memory-windows-journal-native.test.py
+      - name: Native Windows memory storage candidate (production hold stays)
+        if: matrix.os == 'windows-latest' && matrix.shard == 1
+        # A held candidate: its receipt is the evidence, and its failure must not
+        # hide the real Windows test results that follow.
+        continue-on-error: true
+        # Nested under the job's 15 minutes: the script's own budgets (120 s per
+        # fixture command, 300 s per check, 480 s overall) expire first so a
+        # failure still writes a receipt, and this bound is the backstop.
+        timeout-minutes: 10
+        run: python scripts/testing/hermes-memory-windows-native.py --receipt outputs/windows-memory-ci.json
+      - name: Preserve native memory acceptance evidence
+        if: always() && matrix.os == 'windows-latest' && matrix.shard == 1
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-memory-source-proof
+          path: outputs/windows-memory-ci.json
+          if-no-files-found: warn
+          retention-days: 14
+      - if: ${{ !matrix.shard || matrix.shard == 1 }}
+        run: pnpm typecheck
+      - name: Unit and contract tests
+        run: pnpm test ${{ matrix.shard && format('--shard={0}/3', matrix.shard) || '' }}
+        env:
+          # Runners have a fraction of a developer machine's memory; vitest forks inherit this.
+          NODE_OPTIONS: --max-old-space-size=6144
+      - name: Two-device evidence contract tests
+        if: ${{ !matrix.shard || matrix.shard == 1 }}
+        run: pnpm test:two-device-evidence
+      - name: Release guard tests
+        # Pure fs/path guards on notarisation acceptance and artifact
+        # promotion — portable, so every host runs them.
+        if: ${{ !matrix.shard || matrix.shard == 1 }}
+        run: pnpm test:release-guards
+      - name: Windows build prerequisite checker contracts
+        if: ${{ !matrix.shard || matrix.shard == 1 }}
+        run: pnpm test:windows-build
+      - if: ${{ !matrix.shard || matrix.shard == 1 }}
+        run: pnpm check:electron
       - name: coverage thresholds (ubuntu only — fastest, same numbers)
         if: matrix.os == 'ubuntu-latest'
         run: pnpm test:coverage
@@ -44,8 +102,18 @@ jobs:
       - name: production UI build
         if: matrix.os == 'ubuntu-latest'
         run: pnpm exec vite build
+      # The installed app runs the compiled server with vendored dependencies; the
+      # bundler refuses an import its vendored bundles do not export, which unit
+      # tests from source cannot see (the packaged service once failed to start).
+      - name: packaged server bundle
+        if: matrix.os == 'ubuntu-latest'
+        run: pnpm build:server
 
   package-linux:
+    # Linux is a desktop beta without an office host: no PostgreSQL runtime is
+    # pinned for linux-x64, so this job reports but does not block the matrix,
+    # and its first step skips the build until a runtime is pinned.
+    continue-on-error: true
     name: package + smoke (Ubuntu 24.04 x64)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -53,25 +121,44 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      # `scripts/prepare-postgres.mjs` refuses to package a target with no pinned
+      # PostgreSQL runtime, by design. Until one is pinned for linux-x64 the job
+      # says so and stops, instead of failing on every pull request. The check
+      # uses the runner's own Node (the module is plain ESM with no dependencies)
+      # so no pnpm cache is set up for a build that will not run.
+      - name: Linux office storage runtime pinned?
+        id: target
+        run: |
+          supported=$(node --input-type=module -e "import { artifactFor } from './scripts/postgres-artifacts.mjs'; console.log(artifactFor('linux', 'x64') ? 'true' : 'false')")
+          echo "supported=$supported" >> "$GITHUB_OUTPUT"
+          if [ "$supported" != "true" ]; then echo "::notice title=Linux package skipped::No pinned PostgreSQL 16 runtime for linux-x64 (scripts/postgres-artifacts.mjs); Windows and macOS are the supported targets."; fi
+      - if: steps.target.outputs.supported == 'true'
+        uses: pnpm/action-setup@v4
+      - if: steps.target.outputs.supported == 'true'
+        uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: pnpm
       - name: Install package validation tools
+        if: steps.target.outputs.supported == 'true'
         run: sudo apt-get update && sudo apt-get install -y desktop-file-utils xvfb dbus-x11
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm package:linux
-      - run: node scripts/verify-linux-package.mjs
+      - if: steps.target.outputs.supported == 'true'
+        run: pnpm install --frozen-lockfile
+      - if: steps.target.outputs.supported == 'true'
+        run: pnpm package:linux
+      - if: steps.target.outputs.supported == 'true'
+        run: node scripts/verify-linux-package.mjs
       - name: Configure Chromium sandbox for the unpacked app
+        if: steps.target.outputs.supported == 'true'
         run: |
           sudo chown root:root release/linux-unpacked/chrome-sandbox
           sudo chmod 4755 release/linux-unpacked/chrome-sandbox
           test "$(stat -c '%U:%G %a' release/linux-unpacked/chrome-sandbox)" = "root:root 4755"
       - name: Launch packaged app and verify lifecycle
+        if: steps.target.outputs.supported == 'true'
         run: dbus-run-session -- xvfb-run -a node scripts/smoke-linux-package.mjs
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && steps.target.outputs.supported == 'true'
         with:
           name: openmausbot-ubuntu-x64
           path: |

@@ -1,0 +1,20 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ✓ server/drivers/acp/browser-injection-boundary.test.ts (10 tests) 3789ms
+     ✓ browser_click_semantic cannot turn email instructions or fullAuto into payment approval  755ms
+     ✓ browser_press cannot turn email instructions or fullAuto into payment approval  320ms
+     ✓ requires a new exact approval for the next invoice and does not repeat a transport retry  408ms
+     ✓ rechecks the amount after approval instead of trusting the old card  316ms
+     ✓ rechecks the recipient after approval instead of trusting the old card  316ms
+     ✓ Stop after payment dispatch retains unknown outcome and a new broker cannot replay it via Enter  562ms
+     ✓ a checked account change withholds the other office's page before any payment card  319ms
+ ✓ server/config-recovery.test.ts (14 tests) 38ms
+ ✓ server/config-private-root.test.ts (2 tests) 31ms
+
+ Test Files  3 passed (3)
+      Tests  26 passed (26)
+   Start at  15:05:34
+   Duration  4.51s (transform 305ms, setup 30ms, import 412ms, tests 3.86s, environment 0ms)
+
+JSON report written to /Users/yoda/projects/RealBud/outputs/core-gap-qa-2026-09-23/security/final-tests.json

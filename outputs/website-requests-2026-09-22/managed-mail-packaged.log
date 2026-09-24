@@ -1,0 +1,14 @@
+{
+  "output": "/Users/yoda/projects/RealBud/outputs/website-requests-2026-09-22/managed-mail-packaged",
+  "checks": [
+    "Two managed desktops with distinct signed grants/admins use real gateway HTTP, default Composio parser, two provider pages and three reasoning batches each; retry has no duplicate scan; account-linked data remains separate.",
+    "Staff cannot override source scope/account; missing or forged expected-account preconditions, extra fields and mismatched profile are refused before provider access; agency A cannot read agency B saved rows.",
+    "Device revocation and tenant suspension during held provider reads reject late success and retain both agencies’ exact prior staff rows.",
+    "Changing reviewed settings cancels an in-flight read through desktop, gateway HTTP and upstream AbortSignal; released late success cannot overwrite staff data.",
+    "Upstream errors, malformed evidence and missing server key fail closed; normal recovery preserves staff decisions; incomplete provider coverage is recorded as partial.",
+    "A cold service restart retains reviewed staff decisions; the other agency remains unchanged.",
+    "A selected-pack update durably disables the enabled morning clock through reapproval/restart; unrelated packs/agencies stay enabled and a completed retry preserves a later explicit schedule choice.",
+    "No fictional vendor key appears in HTTP responses, desktop files (including workflow inputs and database bytes), or captured service diagnostics; only revocable customer credentials were provisioned."
+  ],
+  "cleaned": true
+}

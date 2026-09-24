@@ -1,0 +1,142 @@
+[
+  {
+    "path": "/account",
+    "width": 360,
+    "colorScheme": "light",
+    "scroll": 360,
+    "wide": []
+  },
+  {
+    "path": "/account",
+    "width": 768,
+    "colorScheme": "light",
+    "scroll": 768,
+    "wide": []
+  },
+  {
+    "path": "/account",
+    "width": 1280,
+    "colorScheme": "light",
+    "scroll": 1280,
+    "wide": []
+  },
+  {
+    "path": "/account/ai-billing",
+    "width": 360,
+    "colorScheme": "light",
+    "scroll": 360,
+    "wide": []
+  },
+  {
+    "path": "/account/ai-billing",
+    "width": 768,
+    "colorScheme": "light",
+    "scroll": 768,
+    "wide": []
+  },
+  {
+    "path": "/account/ai-billing",
+    "width": 1280,
+    "colorScheme": "light",
+    "scroll": 1280,
+    "wide": []
+  },
+  {
+    "path": "/account/invoices",
+    "width": 360,
+    "colorScheme": "light",
+    "scroll": 360,
+    "wide": []
+  },
+  {
+    "path": "/account/invoices",
+    "width": 768,
+    "colorScheme": "light",
+    "scroll": 768,
+    "wide": []
+  },
+  {
+    "path": "/account/invoices",
+    "width": 1280,
+    "colorScheme": "light",
+    "scroll": 1280,
+    "wide": []
+  },
+  {
+    "path": "/account/rates",
+    "width": 360,
+    "colorScheme": "light",
+    "scroll": 360,
+    "wide": []
+  },
+  {
+    "path": "/account/rates",
+    "width": 768,
+    "colorScheme": "light",
+    "scroll": 768,
+    "wide": []
+  },
+  {
+    "path": "/account/rates",
+    "width": 1280,
+    "colorScheme": "light",
+    "scroll": 1280,
+    "wide": []
+  },
+  {
+    "path": "/account/limits",
+    "width": 360,
+    "colorScheme": "light",
+    "scroll": 360,
+    "wide": []
+  },
+  {
+    "path": "/account/limits",
+    "width": 768,
+    "colorScheme": "light",
+    "scroll": 768,
+    "wide": []
+  },
+  {
+    "path": "/account/limits",
+    "width": 1280,
+    "colorScheme": "light",
+    "scroll": 1280,
+    "wide": []
+  },
+  {
+    "path": "/account",
+    "width": 1280,
+    "colorScheme": "dark",
+    "scroll": 1280,
+    "wide": []
+  },
+  {
+    "path": "/account/ai-billing",
+    "width": 1280,
+    "colorScheme": "dark",
+    "scroll": 1280,
+    "wide": []
+  },
+  {
+    "path": "/account/invoices",
+    "width": 1280,
+    "colorScheme": "dark",
+    "scroll": 1280,
+    "wide": []
+  },
+  {
+    "path": "/account/rates",
+    "width": 1280,
+    "colorScheme": "dark",
+    "scroll": 1280,
+    "wide": []
+  },
+  {
+    "path": "/account/limits",
+    "width": 1280,
+    "colorScheme": "dark",
+    "scroll": 1280,
+    "wide": []
+  }
+]

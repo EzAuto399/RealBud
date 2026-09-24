@@ -2,7 +2,7 @@ import { propertyPortalView } from "./property-portals.ts";
 // Desk spine: evaluate → proposal → human decision. Encrypted v2 store.
 // snapshot() is side-effect free. Approval never means sent.
 import { randomUUID } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, renameSync } from "node:fs";
 import { decryptJson } from "./desk-crypto.ts";
 import { basename, dirname, join } from "node:path";
 
@@ -21,6 +21,7 @@ import type {
   WorkState,
 } from "../shared/contracts.ts";
 import { DATA_DIR } from "./config.ts";
+import { writeFilePrivateSync } from "./atomic.ts";
 import { persistArtifact } from "./audit-artifacts.ts";
 import { parsePmsExport, resolveExportRows } from "./csv-ledger.ts";
 import { runBoundedPrefill } from "./portal-handoff.ts";
@@ -657,7 +658,7 @@ export class Desk {
       } catch {
         continue;
       }
-      writeFileSync(this.keyFilePath, key, { mode: 0o600 });
+      writeFilePrivateSync(this.keyFilePath, key, 0o600);
       const deskFile = this.keyFilePath.replace(/desk\.key$/, "desk.json");
       if (existsSync(deskFile) && deskFile !== candidate) {
         renameSync(deskFile, `${deskFile}.replaced-${Date.now()}`);

@@ -1,0 +1,39 @@
+{
+  "at": "2026-09-21T16:27:52.758653+00:00",
+  "complete": true,
+  "scope": "Windows signed-memory persistence design and bounded review only",
+  "productionEdits": false,
+  "windowsExecution": false,
+  "platformHoldRemoved": false,
+  "files": {
+    "persistence-recommendation.md": "fbd7a36dca2b1b1239d2db5410d825cf37bcc08d3fd9b1b459d010833a5b9865",
+    "persistence-source-evidence.json": "d6b53021ad6a48580063f15c836bff63873af0b76a5d9821f5ef3aced5806f05",
+    "persistence-grok-review.prompt.md": "fd4c31a19e2ff71b6b4b4af45bc89e8ae209d8519f7863cda2fd514c5a330ab9",
+    "persistence-grok-review.schema.json": "e5fc86a04164cf85460bd1135f0fc91387c678fcc1b74a32f4a897c3476c2db3",
+    "persistence-run-review.py": "024b41a4c055ebf5f87d49207087b73b2afe25185b7942d34f49d9e6027e4b3b",
+    "persistence-grok-run.json": "f0165646f46e613d73a556f4490f75fa89224643bc476167dd8a262316a952d9",
+    "persistence-grok-review.json": "ae8f0fe6c30cb23e817d3391a876da3cc11332873854f4cc5034a21a020ecf09",
+    "persistence-grok-disposition.json": "c7f050d809338de5e71611e89b3f406477cd5a9552c8829732ac72278c5448e6"
+  },
+  "verification": {
+    "admittedSourceHashesChecked": 3,
+    "officialMicrosoftSourcesReviewed": 14,
+    "grokRequestedModel": "grok-4.6",
+    "grokObservedModelUsage": [
+      "grok-4.6-build"
+    ],
+    "grokReasoningEffort": "xhigh",
+    "grokSessionId": "01a0c4c7-126f-7fd0-b27c-f1ef10c7818f",
+    "grokPromptBytes": 17630,
+    "grokTurns": 1,
+    "grokElapsedSeconds": 179.66,
+    "grokExitCode": 0,
+    "hardTimeoutSeconds": 1800
+  },
+  "remainingGates": [
+    "Parent implementation and integration",
+    "Real Windows API/ACL/sharing/native-lock/process-kill recovery tests",
+    "Supported Windows package validation",
+    "Separate power-loss proof for any claimed durability beyond process-crash recovery"
+  ]
+}

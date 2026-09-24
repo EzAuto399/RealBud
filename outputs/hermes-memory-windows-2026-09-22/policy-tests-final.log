@@ -1,0 +1,19 @@
+test_acl_unknown_deny_foreign_owner_null_or_inherit_only_refused (__main__.NativePolicy.test_acl_unknown_deny_foreign_owner_null_or_inherit_only_refused) ... ok
+test_admission_requires_local_ntfs_unique_identity (__main__.NativePolicy.test_admission_requires_local_ntfs_unique_identity) ... ok
+test_bounded_read_and_new_file_only_writes (__main__.NativePolicy.test_bounded_read_and_new_file_only_writes) ... ok
+test_change_during_read_never_returns_bytes (__main__.NativePolicy.test_change_during_read_never_returns_bytes) ... ok
+test_created_file_must_be_empty_before_handle_is_returned (__main__.NativePolicy.test_created_file_must_be_empty_before_handle_is_returned) ... ok
+test_fixed_errors_do_not_expose_native_details (__main__.NativePolicy.test_fixed_errors_do_not_expose_native_details) ... ok
+test_foreign_handles_rejected_and_close_failure_remains_owned (__main__.NativePolicy.test_foreign_handles_rejected_and_close_failure_remains_owned) ... ok
+test_generic_and_split_full_control_grants_are_effective (__main__.NativePolicy.test_generic_and_split_full_control_grants_are_effective) ... ok
+test_identity_acl_or_principal_drift_refused (__main__.NativePolicy.test_identity_acl_or_principal_drift_refused) ... ok
+test_inherited_child_requires_private_current_root_and_actual_allowlist (__main__.NativePolicy.test_inherited_child_requires_private_current_root_and_actual_allowlist) ... ok
+test_no_clobber_rename_preserves_object_and_delete_is_handle_bound (__main__.NativePolicy.test_no_clobber_rename_preserves_object_and_delete_is_handle_bound) ... ok
+test_paths_refused_before_io (__main__.NativePolicy.test_paths_refused_before_io) ... ok
+test_uncertain_write_cannot_be_replayed_on_same_handle (__main__.NativePolicy.test_uncertain_write_cannot_be_replayed_on_same_handle) ... ok
+test_real_policy_and_protocol_publish_replace_and_request_delete (__main__.OwnedProtocolIntegration.test_real_policy_and_protocol_publish_replace_and_request_delete) ... ok
+
+----------------------------------------------------------------------
+Ran 14 tests in 0.005s
+
+OK

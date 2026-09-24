@@ -1,0 +1,183 @@
+{
+  "at": "2026-09-23T05:11:51.609Z",
+  "proofLayer": "Local real app/server + pinned Hermes integration with fictional website, connector and provider",
+  "passed": false,
+  "checks": [
+    {
+      "name": "isolated-runtime-and-source",
+      "passed": true,
+      "elapsedMs": 153,
+      "detail": {
+        "disposableHome": true,
+        "noUserCredentialReads": true,
+        "sourceFilesModified": false
+      }
+    },
+    {
+      "name": "local-modelvia-and-fictional-billing",
+      "passed": true,
+      "elapsedMs": 444,
+      "detail": {
+        "fixedModel": "deepseek-chat",
+        "contextLength": 65536,
+        "outputCeiling": 256,
+        "maxConcurrent": 1,
+        "provider": "in-process fictional SSE"
+      }
+    },
+    {
+      "name": "local-realbud-provisioning-gateway",
+      "passed": true,
+      "elapsedMs": 120,
+      "detail": {
+        "composio": "fictional loopback organisation",
+        "provisioning": "real gateway implementation"
+      }
+    },
+    {
+      "name": "controlled-website-and-real-desktop",
+      "passed": true,
+      "elapsedMs": 1687,
+      "detail": {
+        "managedPolicy": true,
+        "entitlementEnforced": true,
+        "actualPinnedCli": true,
+        "websiteAuthority": "fixture, no real sign-in",
+        "appOrigin": "http://127.0.0.1:55091"
+      }
+    },
+    {
+      "name": "app-browser-link-consumes-real-provisioning",
+      "passed": true,
+      "elapsedMs": 157,
+      "detail": {
+        "linked": true,
+        "provisioned": true,
+        "modelKeyId": "2c1a8d988bc6afcc",
+        "projectId": "rb-5e9a4218-8a76-4311-8743-590ed0066842",
+        "profileUsesGateway": true,
+        "plaintextKeyFiles": 0,
+        "serviceBeforeEntitlement": "unconfigured"
+      }
+    },
+    {
+      "name": "wrong-bound-entitlement-refused-before-worker",
+      "passed": true,
+      "elapsedMs": 25,
+      "detail": {
+        "state": "invalid",
+        "workerProviderCalls": 0,
+        "detail": "Managed service entitlement could not be verified. Contact service support."
+      }
+    },
+    {
+      "name": "trusted-entitlement-and-real-worker-readiness",
+      "passed": true,
+      "elapsedMs": 4018,
+      "detail": {
+        "connectAndCheck": {
+          "ok": true,
+          "detail": "Bud answered OK — Recheck can ask for the morning ledger.",
+          "elapsedMs": 2237,
+          "workerFingerprint": "c11b56065713b7d452e0e195b077a68bd0044c341b035bbacafafe63f0bcd91f"
+        },
+        "explicitReadiness": {
+          "ok": true,
+          "detail": "Bud answered OK — Recheck can ask for the morning ledger.",
+          "elapsedMs": 1716,
+          "workerFingerprint": "8ea6ae5f52fa7abddeb21ca60a21ef12b3e47a2918307a46e12d15aa812b7225"
+        },
+        "actualWorkerProviderCalls": 2,
+        "settledRequests": 2
+      }
+    },
+    {
+      "name": "revoked-model-key-refuses-real-worker-without-extra-charge",
+      "passed": false,
+      "elapsedMs": 1855,
+      "error": "The input did not match the regular expression /key|connection|refus|auth/i. Input:\n\n\"Bud could not answer — Bud's model access was withdrawn; open You and reconnect the model service.\"\n"
+    }
+  ],
+  "source": {
+    "realbudHead": "e82ea2f067b7aa73d9bdc6e355a9bc4f1f1694c7",
+    "modelviaRevision": "d5a355dab049aca8e51d9290d2c6b618bae3e720",
+    "modelviaSource": "git archive, exact revision",
+    "hermesCli": "/Users/yoda/.realbud/hermes/runtimes/345cd2b057a452236de401d3534b8502a7465e8d-cfb3f08a9ee7/hermes-agent/venv/bin/hermes",
+    "node": "v24.19.0"
+  },
+  "limits": [
+    "No hosted Modelvia, real website sign-in, customer account, Composio organisation or paid inference.",
+    "Website approval/report is a controlled HTTP fixture; it does not prove the real Next/Supabase identity flow.",
+    "Modelvia ledger/admission and RealBud provisioning/desktop routes are real local source; provider answers are synthetic.",
+    "Trusted entitlement is signed by a disposable QA issuer; it is not a production service grant.",
+    "No native Electron window, Windows machine, bank/email/calendar operation or same-LAN second-device acceptance."
+  ],
+  "cleanup": true,
+  "lastLinkStatus": {
+    "state": "linked",
+    "id": "5e9a4218-8a76-4311-8743-590ed0066842",
+    "label": "Fictional app QA Mac",
+    "agencyLabel": "Fictional app QA office",
+    "lastReportedAt": "2026-09-23T05:11:54.127Z",
+    "usage": {
+      "state": "checking"
+    },
+    "provisioned": true
+  },
+  "workerCalls": [
+    {
+      "model": "deepseek-chat",
+      "stream": true,
+      "messageCount": 2,
+      "tools": [
+        "tool_search",
+        "tool_describe",
+        "tool_call"
+      ],
+      "maxTokens": 256
+    },
+    {
+      "model": "deepseek-chat",
+      "stream": true,
+      "messageCount": 2,
+      "tools": [
+        "tool_search",
+        "tool_describe",
+        "tool_call"
+      ],
+      "maxTokens": 256
+    }
+  ],
+  "settled": [
+    {
+      "requestId": "f1e1be0e-692f-49f2-a2f5-7504c39d409f",
+      "state": "settled",
+      "projectId": "rb-5e9a4218-8a76-4311-8743-590ed0066842",
+      "model": "deepseek-chat",
+      "pricingContract": 2,
+      "priceBasis": "direct",
+      "chargedNanoAud": "124",
+      "units": {
+        "cache_read_tokens": 0,
+        "input_tokens": 123,
+        "output_tokens": 1
+      }
+    },
+    {
+      "requestId": "f1f66240-b9ed-48eb-a68e-736d15851631",
+      "state": "settled",
+      "projectId": "rb-5e9a4218-8a76-4311-8743-590ed0066842",
+      "model": "deepseek-chat",
+      "pricingContract": 2,
+      "priceBasis": "direct",
+      "chargedNanoAud": "124",
+      "units": {
+        "cache_read_tokens": 0,
+        "input_tokens": 123,
+        "output_tokens": 1
+      }
+    }
+  ],
+  "failure": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /key|connection|refus|auth/i. Input:\n\n\"Bud could not answer — Bud's model access was withdrawn; open You and reconnect the model service.\"\n\n    at file:///Users/yoda/projects/RealBud/scripts/qa-modelvia-app.mjs:228:12\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async step (file:///Users/yoda/projects/RealBud/scripts/qa-modelvia-app.mjs:49:24)\n    at async file:///Users/yoda/projects/RealBud/scripts/qa-modelvia-app.mjs:224:3",
+  "completedAt": "2026-09-23T05:12:01.169Z"
+}

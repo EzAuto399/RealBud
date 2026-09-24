@@ -1,0 +1,10 @@
+name: property
+version: 0.1.0
+description: "RealBud locked PM worker — draft only, no send, no trust."
+hermes_requires: ">=0.20.0"
+author: "EzAuto399"
+license: "MIT"
+distribution_owned:
+  - SOUL.md
+  - config.yaml
+  - skills/

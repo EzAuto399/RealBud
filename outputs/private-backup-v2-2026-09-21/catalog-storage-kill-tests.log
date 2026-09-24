@@ -1,0 +1,52 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ↓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > preserves exact ordinary bytes, logical ordering, revision and insertion order across restart and a different key
+ ↓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > does not trust a collection missing required identity or Desk records
+ ↓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > rejects unapproved file identity ../config.json
+ ↓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > rejects unapproved file identity /tmp/payload
+ ↓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > rejects unapproved file identity C:\payload
+ ↓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > rejects unapproved file identity vault/workflow-inputs/CON.json
+ ↓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > rejects unapproved file identity workflow-state.sqlite
+ ↓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > rejects unapproved file identity config.json
+ ↓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > rejects duplicate/case-folded file paths and global workflow identities atomically
+ ↓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > enforces encoding, workspace and declared capacity without partial admission
+ ↓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > refuses unknown kinds, invalid revisions and closed oversized drafts before insertion
+ ↓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > retains exact bank original and reviewed artifact bytes
+ ↓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > requires the owned identity and unchanged installation key on reopen
+ ↓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > seals atomically and refuses mutations from a stale independent worker and reopened handle
+ ↓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > does not publish a seal for an incomplete graph and rejects invalid UTF-8 JSON
+ ↓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > refuses preexisting directories, links and unrecognized internal schema
+ ↓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > refuses hardlinked or broadened catalog permissions without repairing them
+ ↓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > detects authenticated entry corruption: delete
+ ↓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > detects authenticated entry corruption: payload-swap
+ ↓ server/private-backup-catalog.test.ts > target-key encrypted private backup catalog > detects authenticated entry corruption: metadata-swap
+ ↓ server/private-backup-catalog.test.ts > complete bounded business graph validation > retains historical bill aliases, inactive patterns and reservations, using the same v1 invariant
+ ↓ server/private-backup-catalog.test.ts > complete bounded business graph validation > rejects an individually readable bill graph missing bill-source-alias
+ ↓ server/private-backup-catalog.test.ts > complete bounded business graph validation > rejects an individually readable bill graph missing bill-pattern-slot
+ ↓ server/private-backup-catalog.test.ts > complete bounded business graph validation > rejects an individually readable bill graph missing bill-arrival-slot
+ ↓ server/private-backup-catalog.test.ts > complete bounded business graph validation > rejects an individually readable bill graph missing bill-origin
+ ↓ server/private-backup-catalog.test.ts > complete bounded business graph validation > rejects an individually readable bill graph missing bill-occurrence
+ ↓ server/private-backup-catalog.test.ts > complete bounded business graph validation > rejects an individually readable bill graph missing bill-register
+ ↓ server/private-backup-catalog.test.ts > complete bounded business graph validation > validates normalized and inert legacy mail with exact origin-era ordering and prepared input
+ ↓ server/private-backup-catalog.test.ts > complete bounded business graph validation > holds missing/conflicting mail evidence: all-legacy
+ ↓ server/private-backup-catalog.test.ts > complete bounded business graph validation > holds missing/conflicting mail evidence: mail-source
+ ↓ server/private-backup-catalog.test.ts > complete bounded business graph validation > holds missing/conflicting mail evidence: mail-receipt
+ ↓ server/private-backup-catalog.test.ts > complete bounded business graph validation > holds missing/conflicting mail evidence: mail-item
+ ↓ server/private-backup-catalog.test.ts > complete bounded business graph validation > holds missing/conflicting mail evidence: ordered-origin
+ ↓ server/private-backup-catalog.test.ts > complete bounded business graph validation > accepts an unrelated workroom input without inventing mail state
+ ↓ server/private-backup-catalog.test.ts > complete bounded business graph validation > preserves every draft state and checks optional-present proposal links before preview
+ ↓ server/private-backup-catalog.test.ts > complete bounded business graph validation > retains permanent execution/request/checkpoint bindings and rejects missing retry receipts
+ ↓ server/private-backup-catalog.test.ts > complete bounded business graph validation > retains more than 5,000 records and 96 MiB without full-history record reads
+ ↓ server/private-backup-catalog.test.ts > complete bounded business graph validation > admits more than the v1 3,000-file ceiling and enumerates names without dropping any file
+ ✓ server/private-backup-catalog.test.ts > physical sqlite storage bounds > hits sqlite page limits, preserves admitted rows across reopen, and reapplies the cap 125ms
+ ✓ server/private-backup-catalog.test.ts > physical sqlite storage bounds > recovers a real killed writer and its hot rollback journal before applying the persisted cap 633ms
+ ✓ server/private-backup-catalog.test.ts > physical sqlite storage bounds > opens legacy maxEntries/maxBytes headers without rewriting them 24ms
+ ✓ server/private-backup-catalog.test.ts > physical sqlite storage bounds > rejects an oversized physical catalog file and leaves the original bytes in place 225ms
+ ✓ server/private-backup-catalog.test.ts > physical sqlite storage bounds > rejects explicit storage caps outside the documented range 1ms
+
+ Test Files  1 passed (1)
+      Tests  5 passed | 38 skipped (43)
+   Start at  22:05:39
+   Duration  1.39s (transform 247ms, setup 15ms, import 296ms, tests 1.01s, environment 0ms)
+

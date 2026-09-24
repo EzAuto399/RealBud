@@ -1,0 +1,25 @@
+test_direct_helper_dispatch_cannot_bypass_windows_hold (__main__.ProductionHold.test_direct_helper_dispatch_cannot_bypass_windows_hold) ... ok
+test_binds_private_children_and_pins_every_ancestor (__main__.WindowsProtocol.test_binds_private_children_and_pins_every_ancestor) ... ok
+test_bounded_reads_and_writes (__main__.WindowsProtocol.test_bounded_reads_and_writes) ... ok
+test_changed_handle_path_or_multiple_links_refused_without_read (__main__.WindowsProtocol.test_changed_handle_path_or_multiple_links_refused_without_read) ... ok
+test_changed_target_or_stage_never_renames (__main__.WindowsProtocol.test_changed_target_or_stage_never_renames) ... ok
+test_cleanup_requires_matching_bytes_and_delete_capable_handle (__main__.WindowsProtocol.test_cleanup_requires_matching_bytes_and_delete_capable_handle) ... ok
+test_close_failure_does_not_report_completion_and_other_handles_drain (__main__.WindowsProtocol.test_close_failure_does_not_report_completion_and_other_handles_drain) ... ok
+test_exact_whole_file_replacement_closes_target_but_pins_ancestry (__main__.WindowsProtocol.test_exact_whole_file_replacement_closes_target_but_pins_ancestry) ... ok
+test_existing_publication_target_keeps_both_files (__main__.WindowsProtocol.test_existing_publication_target_keeps_both_files) ... ok
+test_host_lock_enter_failure_hides_private_native_details_before_io (__main__.WindowsProtocol.test_host_lock_enter_failure_hides_private_native_details_before_io) ... ok
+test_lock_exit_failure_is_fixed_and_leaves_prepared_bytes_for_recovery (__main__.WindowsProtocol.test_lock_exit_failure_is_fixed_and_leaves_prepared_bytes_for_recovery) ... ok
+test_native_lock_required_before_any_mutation (__main__.WindowsProtocol.test_native_lock_required_before_any_mutation) ... ok
+test_new_file_is_private_empty_and_locked_before_content (__main__.WindowsProtocol.test_new_file_is_private_empty_and_locked_before_content) ... ok
+test_new_write_never_overwrites_existing_and_uncertain_flush_keeps_stage (__main__.WindowsProtocol.test_new_write_never_overwrites_existing_and_uncertain_flush_keeps_stage) ... ok
+test_no_clobber_publication_and_handle_identity_preservation (__main__.WindowsProtocol.test_no_clobber_publication_and_handle_identity_preservation) ... ok
+test_pending_delete_is_not_a_terminal_absence_receipt (__main__.WindowsProtocol.test_pending_delete_is_not_a_terminal_absence_receipt) ... ok
+test_preserves_captured_profile_spelling_for_case_variant_input (__main__.WindowsProtocol.test_preserves_captured_profile_spelling_for_case_variant_input) ... ok
+test_read_drift_or_acl_change_never_returns_unverified_bytes (__main__.WindowsProtocol.test_read_drift_or_acl_change_never_returns_unverified_bytes) ... ok
+test_rejects_escape_device_ads_alias_and_sibling_paths_before_open (__main__.WindowsProtocol.test_rejects_escape_device_ads_alias_and_sibling_paths_before_open) ... ok
+test_sharing_failure_has_no_copy_truncate_or_delete_fallback (__main__.WindowsProtocol.test_sharing_failure_has_no_copy_truncate_or_delete_fallback) ... ok
+
+----------------------------------------------------------------------
+Ran 20 tests in 0.013s
+
+OK

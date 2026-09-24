@@ -1,0 +1,99 @@
+
+> realbud@0.1.19 test /Users/yoda/projects/RealBud
+> vitest run
+
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ❯ server/website-remote-approvers.test.ts (31 tests | 4 failed) 2057ms
+   × cancels exact ambiguous parent before-publication into a tombstone and permits a new generation 40ms
+   × cancels exact ambiguous parent lost-publication-receipt into a tombstone and permits a new generation 96ms
+   × pending parent cancellation survives a lost tombstone receipt and never requests current disclosure approval 47ms
+   × pending parent cancellation holds a changed installation report identity without erasing the marker 30ms
+ ❯ server/website-requests-transport.test.ts (12 tests | 1 failed) 18ms
+   × v2 route v2/command-grants/cancel has its own fixed path and no v1 retry 3ms
+{"at":"2026-09-21T22:36:22.925Z","event":"crash","detail":"worker failed with XAI_API_KEY=«redacted 24 chars» in env"}
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/website-remote-approvers.test.ts > cancels exact ambiguous parent before-publication into a tombstone and permits a new generation
+Error: Website request access is no longer active.
+ ❯ Object.post server/website-requests-transport.ts:25:33
+     23|         const response = await fetcher(url, { method, headers: { 'Cont…
+     24|         if (response.redirected || (response.url && response.url !== u…
+     25|         if (!response.ok) throw new WebsiteRequestsTransportError(resp…
+       |                                 ^
+     26|         if (response.headers.get('content-type')?.split(';')[0] !== 'a…
+     27|         reader = response.body?.getReader();
+ ❯ disableSaved server/website-remote-approvers.ts:183:17
+ ❯ server/website-remote-approvers.ts:187:101
+ ❯ server/website-remote-approvers.ts:74:125
+ ❯ exclusiveInternal server/website-requests.ts:121:47
+ ❯ server/website-remote-approvers.test.ts:166:123
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  server/website-remote-approvers.test.ts > cancels exact ambiguous parent lost-publication-receipt into a tombstone and permits a new generation
+TypeError: Cannot read properties of undefined (reading 'body')
+ ❯ server/website-remote-approvers.test.ts:168:61
+    166|  await expect(f.prepare()).rejects.toThrow();const original=state(f).p…
+    167|  expect(state(f).revoked).toBe(true);expect(state(f).grant.revokedAt).…
+    168|  expect(f.calls.find(c=>c.route==='v2/command-grants/cancel')!.body).t…
+       |                                                             ^
+    169|  await f.prepare();expect(state(f).parent.generation).toBe(original.ge…
+    170| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  server/website-remote-approvers.test.ts > pending parent cancellation survives a lost tombstone receipt and never requests current disclosure approval
+Error: Website request access is no longer active.
+ ❯ Object.post server/website-requests-transport.ts:25:33
+     23|         const response = await fetcher(url, { method, headers: { 'Cont…
+     24|         if (response.redirected || (response.url && response.url !== u…
+     25|         if (!response.ok) throw new WebsiteRequestsTransportError(resp…
+       |                                 ^
+     26|         if (response.headers.get('content-type')?.split(';')[0] !== 'a…
+     27|         reader = response.body?.getReader();
+ ❯ disableSaved server/website-remote-approvers.ts:183:17
+ ❯ server/website-remote-approvers.ts:163:151
+ ❯ server/website-remote-approvers.ts:74:125
+ ❯ exclusiveInternal server/website-requests.ts:121:47
+ ❯ server/website-remote-approvers.test.ts:174:14
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  server/website-remote-approvers.test.ts > pending parent cancellation holds a changed installation report identity without erasing the marker
+AssertionError: expected [Function] to throw error matching /original computer link/ but got 'Website request access is no longer a…'
+
+- Expected:
+/original computer link/
+
++ Received:
+"Website request access is no longer active."
+
+ ❯ server/website-remote-approvers.test.ts:178:41
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+ FAIL  server/website-requests-transport.test.ts > v2 route v2/command-grants/cancel has its own fixed path and no v1 retry
+AssertionError: expected [Function] to throw error matching /no longer active/ but got 'The website could not confirm this re…'
+
+- Expected:
+/no longer active/
+
++ Received:
+"The website could not confirm this request. Reconnect and try again."
+
+ ❯ server/website-requests-transport.test.ts:36:81
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+
+ Test Files  2 failed | 343 passed | 21 skipped (366)
+      Tests  5 failed | 4616 passed | 191 skipped (4812)
+   Start at  08:30:21
+   Duration  375.23s (transform 3.47s, setup 1.50s, import 10.42s, tests 339.26s, environment 16ms)
+
+ ELIFECYCLE  Test failed. See above for more details.

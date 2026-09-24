@@ -1,0 +1,1832 @@
+{
+  "createdAt": "2026-09-21T04:41:45.918518+00:00",
+  "repository": "/Users/yoda/projects/RealBud",
+  "baseCommit": "5856140c6ba49f53e79a7edbf01800e099b53e10",
+  "containsUncommittedWork": true,
+  "platform": "darwin-arm64",
+  "signing": "unsigned local test build; no release or notarization",
+  "build": "pnpm package:prepare; pnpm build:server; electron-builder --mac dir --arm64 --publish never",
+  "sourceDigest": "f7c4de8b415d39bb47a8a100049311acf0da013bb980d639fbd6dc008f1fa1f8",
+  "sourceFiles": {
+    "server/accounts-review-schemas.ts": "b469e53274b088ba97e7114dac88ad9e8a25010b8acb0e552ec9ffcb223ab32f",
+    "server/accounts-review.ts": "27028f29e4a2d4545201b788479ee9aaebaf2977dcc18afc9344a22e621e9dbd",
+    "server/agency-setup.ts": "12770bba9407ac311fd0b5c4e667e692604bd2fd0c3d4488ee7f2f72ea7d8a79",
+    "server/app-version.ts": "6a966931d2d6eb967aa1f6f51f16d488318be1e8709957ba41f7245c552947c7",
+    "server/ask-attach.ts": "fce3d39991ce07d09b1c1bc511ed784bef9d59d0df267c47c93460fd3893c3d6",
+    "server/ask-book.ts": "ecfb76eaeb42b6a2192f193929f877e4624455692970be744ead29a393b0653e",
+    "server/ask-control-intent.ts": "f184a0843b743dd613435842fdaaa54e210d37063535dffd9c17ab9718c0d129",
+    "server/atomic.ts": "0e73d8e943ff87d16bccfc91a104bbb449d3e6d5a27c486b572d2119630b14f2",
+    "server/attended-run.ts": "b64e5140c7af3fc4d3ddfa6f31ac7afd9d4df07c13524af5762395ffbb3e5adb",
+    "server/audit-artifacts.ts": "d4b41d8e8e1c22296fc25bad4c71b2f09878f6c97d5c457b53ae447659a6891a",
+    "server/auto-approve.ts": "21df24d68c3bcb314626871df6daad8265cc0342485de476f70c8aa776cde2a8",
+    "server/bank-reference-store.ts": "6d45f74b12244da2bf4aa0dcc622929254f034a9bd2f9d457fe70b7e8395a3ee",
+    "server/bank-reference.ts": "a712547b5c54948556226e2c09a8cb2c55be9f162842a8a88a14c7cc23ed491b",
+    "server/batches.ts": "699a5f9c2e248896169ce298b3565836afbd4763e9a1a5904adda0e9aef25763",
+    "server/bill-proposals.ts": "1868b089b14c254be4b88ba7659fc156a709e9a844ca215f0b80499ab6bd8439",
+    "server/bootstrap.ts": "b5e5a9cf69fcfd81f5e743e451ad1f5e653579da30d76d3344ce390cd6eef792",
+    "server/box.ts": "32766ffb7abc587e641a3afdc091e39670ef5dc6c67db24674a7d9636672ed39",
+    "server/browser-broker.ts": "6554774356c7bfcefb38b41be700060af7ee1c1b5dfce0a0588a36a5b65753ec",
+    "server/browser-runtime.ts": "61dc5fa0a603bd605514d2050dc43a6f0ae42815ab056c37e76cbea0362cf521",
+    "server/care-unlock.ts": "7b0754804ec3f90b077287c8a7f3b0ee59ade92a855418138c4476ddffff4a14",
+    "server/case-evaluator.ts": "36c63e846c283d75bba896c4a267a339f2f9e38b5d514bd11e40949668dfaff5",
+    "server/channel-continuation.ts": "d66bc1381ebfde7e359ca1f405edab05318c0395733d334e58d03d030637b2fc",
+    "server/channel-handoff.ts": "770fe6445ed993ab06ad50f69210e7c2f88a247b1011f81c43c1e65dd808b83c",
+    "server/channel-pairing.ts": "a4fbe828f00d26f34e11b96c01b52ea414048abe37fe67c7e3b1fdf328d5c894",
+    "server/channels/discord.ts": "2fabd55cb4be1076c4de90610cb3f4cb88f50786e953d0c1e13f72dd3b538cfc",
+    "server/channels/slack.ts": "381ea0437daf600c89cc62e6e509a44b36c62e47a7fc9a20d3358acaee786988",
+    "server/channels/telegram.ts": "8503c60f06d64d414b1240f5cc5dcd59faefdd42825e5b36a477ef78fe515d95",
+    "server/channels/types.ts": "0bd185e545d0a7ed45662ff03fefdc5268dcd2fce2a3b0ed9a41a6b6ecf2f7d0",
+    "server/chief-of-staff.ts": "8b73c46d519b42ed9c14deecde1d8cd74f1fbfabace8fd24724d228e9ac1c0f2",
+    "server/company/backup.ts": "351a8aef93b6789c4e9edfd835babc716026edb6df0475b56fad367f9a65dc15",
+    "server/company/departments.ts": "b13f127135e666b61d69f9de5b0f3e6699724b7a7dcc3ac443b6433bf1dc54cb",
+    "server/company/host-certificate.ts": "fa5ba8853cce906d9611cd45c5b6ccbc5ab76e47880f44dbea32dc553106a29d",
+    "server/company/host-runtime.ts": "64c6424c09f8c9258944272be7d3e6358842ad8af9e34f18da3fab60f28b42ad",
+    "server/company/host-transport.ts": "9f8cdcaede40ec74bbf3f7645240703d9e7644c04278112f4f640b7fd05495e2",
+    "server/company/index.ts": "9ce938943b17240997ebcad140d82f6e959bfb322c979473e75f5d16ca7c6fa3",
+    "server/company/initial-credential.ts": "9bba303e2c82e22fb65186267d00a39db6c3dfdba09b9e083f537caf78ae32ae",
+    "server/company/member-credentials.ts": "0f840ff93fea08cbb2b57334adc992dc11b43ba42296a4b912fe25f346f93eb9",
+    "server/company/membership.ts": "0918b531a9371d8160814a006f7366d6e32b5eb3cd537de7ae37333293f4377c",
+    "server/company/postgres-runtime.ts": "fec1080b8c83a260b2d4670cf3cb2d1f8fe8635acd8580e1ad8f9a7a31a10cdc",
+    "server/company/schema.ts": "243d88035499de6a7995a19617284a3354e37ab535bbe0f4a9a2a0a890824923",
+    "server/company/testing-postgres.ts": "6d5501233eedda7c06196a88250829942d355340537beba91fc901e863ffccbe",
+    "server/company/types.ts": "97d9a910a1eab5ace4b503220f5246d444fe9f568a54b4675d29fe4257ca9ef3",
+    "server/company/work-items.ts": "3a5905efe13692d89ee966774cbad9f2f5d7831ce9c8107e13d3412d0611c1b7",
+    "server/company/workflow-template.ts": "28490c1dd887a8778762d3f81ef7b3858566c69712b94dc4bb78b2e7ccf35be0",
+    "server/company-host.ts": "86275c99db4823e7ace337bc4d2252736342d4c9a9355025301eb9e56ee4fdbf",
+    "server/company-installation.ts": "df9080a33cfd935d0ddbf2a2f728dd0ebcfe5d78d4ec1fe0a4410a6ac49f7d7f",
+    "server/company-outbox.ts": "ca29f70c70fcfd756e246d8f556911b657ca89ace4eeceee9ae695c7b34da95c",
+    "server/company-recovery.ts": "8bfcfd02f6114ad61c37e3096930c34d1d5d023edb89daa273ba8d7cb2b5323b",
+    "server/composio-gmail.ts": "d4e1ea589d32a83c2b0928397ddc150fc435033ba11f45c315927a6881558d3b",
+    "server/composio-project.ts": "577575157126531e2d2ef4670c02902f2b4b60032c501d2238dfd474151f1fe0",
+    "server/composio.ts": "26768894d24a2170698d91ae8e06bbb97c97cb4c9d89b31871bfae2dddfd5ba8",
+    "server/computer-history.ts": "bc933f247413d342aa19ac353f36ac5871b1ba2db9a95d7539b110e3b9c34cf0",
+    "server/computer-lease.ts": "b790482e8e97d89f7f084fb3ba621e3a47dd3e59a8e828aae9c3ac60b3018fbe",
+    "server/computer-observation.ts": "ccdef92eae26727e494cb205eb8ab3a5db9f71ae89944260c4a2ede27aa16b5c",
+    "server/computer-proxy.ts": "d01b8c0173007959b031078d73f6132bbd9bb94843d439f8a2a7e0248ac31556",
+    "server/config.ts": "95dd026ce54a98c758ef35314770703b440e0d8b042a704f19c1a450307521b4",
+    "server/connected-app-access.ts": "de4f35f482769577f7c03057c314204a006e42713fea0d2332e75b61ee9b765e",
+    "server/connected-app-operations.ts": "9a617cd75628a7cfe09907c607ea2c8c3014e00d9b8df6ef89bfb6b17ac3c94b",
+    "server/connected-apps-broker.ts": "d2aebbeee7e7a91a401cbb5d90526c8068f04219bcac6750509463ced976db47",
+    "server/connected-status-intent.ts": "9086149723f6014196fb3488e4297cf7ebb44bbcbf7da8959de6bc495dd30612",
+    "server/connection-intent.ts": "ca1e735e0af4b9756a37f91d5e0c6716fd824f2ada47fa70cfb00ae7026fcd60",
+    "server/container-computer.ts": "4252ca6171419ed0606bcd243c5a668a5a5fc4490a96f2623db8a8a969f20a09",
+    "server/container-mcp.ts": "573038d379aaac2df08fb9e130eee143abeac2e25dbc1dab4eb6f227aefb4db1",
+    "server/contracts.ts": "7c97be2a75d669c9f742cf731e317d6325ca738e4e3444143c9a9cd48db764c0",
+    "server/csv-ledger.ts": "f3cff219e757fd4ae95736bb4c083d07063c40fc36fd1bc5e27fa730d4568d45",
+    "server/cua-bounded.ts": "2da810f6f314fb94e2ec23f65ed1c2191fed8dbbe174ec9bd7c689178d66cdda",
+    "server/cua-human-control.ts": "348d4de631c2dae81cd9123e81e2314424ab3642ff5666a6c3f11904d1965fb5",
+    "server/customer-pack-definition.ts": "2080194da9b9bbddf097ce07caf682871d08a821195d871b1cd5e5f36d78e5b2",
+    "server/customer-packs.ts": "bc4a60a31ebcaf93255138c4c36480ad07b0da824e03dbea759406e501bbc331",
+    "server/decode.ts": "89e97036d79db77364eea7e6c90990d3715d1c35aa674da28be8a1644753a1c1",
+    "server/desk-auto-restore.ts": "58b1346787b2cc5530be8640efd114f4610ecf7d88c9002fa4f4b0896227404b",
+    "server/desk-context.ts": "53809d666921409b273882653620a9f1c5367f4ad5b10601bbeadd67d26c976d",
+    "server/desk-crypto.ts": "a41f2fb0fdcd9ac1332baa5d2576f7bcef71c98b5e5ffb5cb462fba70804623e",
+    "server/desk-evaluate.ts": "35814a65a0a40a04b11ba6602586648688feb3ce1f9f292c44b1a39ceabab8ca",
+    "server/desk-key.ts": "2560271b9961d52c98c8b3eed45ef9ef884c1aab3fbed9991a428b90285a93ab",
+    "server/desk-store.ts": "2bca9b98f4f26f6104ef2d5efdd99f8222129c992466b259d638d67d641b5e54",
+    "server/desk-v3-commit.ts": "7667dcf27d7b277fc229fe398478924565a3f238e9c28820ac217ff21158f7ce",
+    "server/desk-v3-decode.ts": "ba8b2ee0e7124dfbd94caaf23ca0f3a319c3bee4f67a5ab8fced8c68b2094e21",
+    "server/desk-v3-demo-breadth.ts": "2eade28506996b08bebacf125dffc007733534910d35ccd01c148d753bdd5730",
+    "server/desk-v3-migrate.ts": "26931d614e70b45946a0389c900988b2488321b34d0ec8fcc21095e6e3e0ed2c",
+    "server/desk-v3-project.ts": "057b6ac1daab030882baa6eed11c3bd634486a97dd121bc9769386512c6dfa93",
+    "server/desk-v3-recovery.ts": "313fc1f13e11c712db926e2e2928a0dd309c97effd05af61a75f2d3c4765b47d",
+    "server/desk-v3-sync.ts": "eff3edde2f7ad538e1df90c2ca8f16d00e7d87ee71d82266be6711d8ac4f6f88",
+    "server/desk-work.ts": "1bbb9cd39ae8375695150a27e48a6ecad816fa968f827ff1a25ecf485437b041",
+    "server/desk.ts": "b7f900ac59cc51d30b5462924178bd19448dc99eef7992fbfe9883211af7d57f",
+    "server/drivers/acp/core.ts": "e64829cbaa10181560fcea7fc38bb17d87f5da0597b854905c22236be79b873a",
+    "server/drivers/acp/gemini.ts": "cd4ce22efe19b263d5c539c3185da3732d2a3761ab92b40969db1d4b0a8b8ce4",
+    "server/drivers/acp/grok.ts": "cc8bd078a047584ad7c3062374eb39d38125320442be3ee1274fc3a3df65b80a",
+    "server/drivers/acp/hermes.ts": "3713924021966e1a9e22f4dac9bf1e6cd7562f1aa5d0e11b71737796ed2bfc8e",
+    "server/drivers/acp/kimi.ts": "aff8a93816fb0971f3dfe415a5cb80576a174c0e8fa38d5b2069724bfd6e5fae",
+    "server/drivers/agents-proxy.ts": "5db066024f9686021071451653163da952531dac1b53ee289bc11788e9ec074b",
+    "server/drivers/antigravity.ts": "74fc490a6e28756a098cc841f30acf773b3b6f86b559b9d77316d4b8805ae6d3",
+    "server/drivers/boxagent.ts": "9a0919800c3983e603f6abfcdddc23cc5b9700591825037fe3a7ea2556f18b09",
+    "server/drivers/builtIn.ts": "52da70ab7b21aae81268c8adef9e3b8bd6b1cf74ac1ba3b77396f25f1c6fc770",
+    "server/drivers/claude.ts": "723886a7c7185f7910f1ec78d0cdbafc6233e1ade41f2754936afc67f735b080",
+    "server/drivers/codex.ts": "7b54349ca270ec174fbe86ce4cbd04819e19874c0e7fc9bd6abe8f49e6d1b5f0",
+    "server/drivers/grok.ts": "0f89d94e5cf6aa9f1ad343aebc290b9e9479a59035706b189f5bac482703a4a3",
+    "server/drivers/grokagent.ts": "8ae876aaca35202e78dd9adcafafb2fbdb3c0fe5cb43c9a2991fe858a67a8bbc",
+    "server/drivers/native.ts": "f9f7ebfb2a02c3b094407b3b0194b64983eb3b9e05175f5914f3ce89dba6f135",
+    "server/engine-setup.ts": "195c6b3015bd0857b0413b4d3962afb391f0cb4f91e934d85228a08026b67511",
+    "server/env-path.ts": "9a15341251851afc9e8d77f1196d4d324d0e844fb3842c6277017d363bb3a93d",
+    "server/evidence-projector.ts": "571f5115f58c6ba1e9936c0e9596533ccaafe8ed50d342ac17f0b08907a5eaa5",
+    "server/expected-bills.ts": "fd9d0b7ee1b34d7effead34f919ee63e8875b5907b21a54483d7cdf1d42b6ef5",
+    "server/fixtures/accounts-review/anz-reference-prep/ambiguous-and-short-stay/bank-settings.json": "15dbc86b869b8ddfd2534b8d6102a8a24c8f61a0496e8d51b446b49609494b99",
+    "server/fixtures/accounts-review/anz-reference-prep/ambiguous-and-short-stay/expected.json": "9b181a7c24b65e7952de06007bf17088081b208f29424ce4b7689d6e8c763612",
+    "server/fixtures/accounts-review/anz-reference-prep/ambiguous-and-short-stay/input.json": "6de6768cd61a714b0597b3468ddee8e69499df2abd3a4fd0e23d2c9bd7aab61f",
+    "server/fixtures/accounts-review/anz-reference-prep/complete/bank-settings.json": "15dbc86b869b8ddfd2534b8d6102a8a24c8f61a0496e8d51b446b49609494b99",
+    "server/fixtures/accounts-review/anz-reference-prep/complete/expected.json": "849dd4f071146e0167383e968ecc1e9757f6b9ce9594f6a97ec58c420cc3e799",
+    "server/fixtures/accounts-review/anz-reference-prep/complete/input.json": "1a9f20a98944a8d0dc7a1fba6e408391819889b287e0a940ffa682186446e997",
+    "server/fixtures/accounts-review/anz-reference-prep/format-unconfirmed/expected.json": "86604d6c953b0a81d69664f909fdc2b21dcbf584031d7892ed3f5811025b7956",
+    "server/fixtures/accounts-review/anz-reference-prep/format-unconfirmed/input.json": "a562fa5bfb629b0331d554deae785e2336e1e13686b9e9076549ec4b52b3ebb4",
+    "server/fixtures/accounts-review/bill-exceptions/complete/expected.json": "0b984bc46337969d88891488c2db9f4b4e1f33071e9096f93a110070e97dfd2e",
+    "server/fixtures/accounts-review/bill-exceptions/complete/input.json": "e4bb3a3039f63705bac99d7eb714c724defe1b1a78b602d8a51d9d72ba82621e",
+    "server/fixtures/accounts-review/bill-exceptions/coverage-and-state-gaps/expected.json": "9dc22e414da26fdc3b57646615aa8d34167611a9884728543096279aec9cfc7a",
+    "server/fixtures/accounts-review/bill-exceptions/coverage-and-state-gaps/input.json": "1e29be5f595e8939638482d79f131ea0e8d43d6b183374796dca1f0a28f29405",
+    "server/fixtures/accounts-review/inbox-triage/complete/expected.json": "681fb11933e5af4c052dcb2476240aab98f019518711670c3e39883f585ba8f3",
+    "server/fixtures/accounts-review/inbox-triage/complete/input.json": "d87114c3d159aef66ff4763672dbd265a9319e973e0d2864db8de6012ca70a17",
+    "server/fixtures/accounts-review/inbox-triage/coverage-gap/expected.json": "5adb3c6e61e1f09bd7b4e6838b6ea22e8621ffcd76834ef167f2e82763e806d7",
+    "server/fixtures/accounts-review/inbox-triage/coverage-gap/input.json": "4afc0734f9c8ddbcf2c001ee3a788add11d481b82cc0da3ba0a2975199a7c93b",
+    "server/fixtures/accounts-review/invoice-review/complete/expected.json": "4b628be7710a1f34dd75792ec3dd96038c0fbc6886d867567f85a0d4bdc8d15c",
+    "server/fixtures/accounts-review/invoice-review/complete/input.json": "dc1a82074aefd0c63809be53745abab05074827a19d619742b8e1e4065780486",
+    "server/fixtures/accounts-review/invoice-review/correction-and-gaps/expected.json": "42781fc7e36a624c35954b61030d2f1f3ffbea9fbde28eaf51d177257d947427",
+    "server/fixtures/accounts-review/invoice-review/correction-and-gaps/input.json": "ec3945af5c2dd01d282bd5471472287a1a2861c48a321eca69b53f17137d7ebf",
+    "server/fixtures/accounts-review/manifest.json": "7286206e61128e868f30b6fa1dd6a72ca1e4e74cc3ace18fed86e3d08c3bfa3f",
+    "server/fixtures/accounts-review/qa/live-01/SYN-ANZ-REFERENCE-PREP-AMBIGUOUS-AND-SHORT-STAY.input.json": "afc500e6e508f676f68b84c0f16a019293192097f3df69b70fe2a18802261762",
+    "server/fixtures/accounts-review/qa/live-01/SYN-ANZ-REFERENCE-PREP-AMBIGUOUS-AND-SHORT-STAY.typed.json": "f1257e2b400d9da2b58c93059b34a0970379dfb404d3d734c064991d68a24c33",
+    "server/fixtures/accounts-review/qa/live-01/SYN-ANZ-REFERENCE-PREP-COMPLETE.input.json": "fc15cf65ccfb3d138966f203f1445f47702e91cdfeea7c2c45b7bc8ea4c4a937",
+    "server/fixtures/accounts-review/qa/live-01/SYN-ANZ-REFERENCE-PREP-COMPLETE.typed.json": "a8054ff39c33b3ae6c5ceb7938b4010e1f6cb8adcea1f31016027b2e3c7cf702",
+    "server/fixtures/accounts-review/qa/live-01/SYN-ANZ-REFERENCE-PREP-FORMAT-UNCONFIRMED.input.json": "1d044ca1d5188ad6460f137a2579f0608ece4d5ee087a45967d25adeb63aa7ab",
+    "server/fixtures/accounts-review/qa/live-01/SYN-BILL-EXCEPTIONS-COMPLETE.input.json": "2d2434e5a836cf055c9e8b7ab6913d304ae4631ddf988dcb65e82d2595606214",
+    "server/fixtures/accounts-review/qa/live-01/SYN-BILL-EXCEPTIONS-COMPLETE.typed.json": "976a569cf21545fbafc29b21f0887ce05651fb96125de3ebd6169b18a52b2901",
+    "server/fixtures/accounts-review/qa/live-01/SYN-BILL-EXCEPTIONS-COVERAGE-AND-STATE-GAPS.input.json": "019f6fe68931f3a5a9ec7ea8d83863fe6dfd86f26223f7c489779b1431d17e74",
+    "server/fixtures/accounts-review/qa/live-01/SYN-BILL-EXCEPTIONS-COVERAGE-AND-STATE-GAPS.typed.json": "18ebd98a50fbfe82b5e4b2af6084c42bd81d1569c1d4cb58393eb852d804b879",
+    "server/fixtures/accounts-review/qa/live-01/SYN-INVOICE-REVIEW-COMPLETE.input.json": "25b2f6a4ed5e4484dd03dfc7a70f80f68ec7d8794ea9e038b385cbf4e7af1e0e",
+    "server/fixtures/accounts-review/qa/live-01/SYN-INVOICE-REVIEW-COMPLETE.typed.json": "5d6bb09ee938ecb6e0dad0e1e0287e99a914ada33344a4946ce9029196d29cb7",
+    "server/fixtures/accounts-review/qa/live-01/SYN-INVOICE-REVIEW-CORRECTION-AND-GAPS.input.json": "a55ffdbbb2fa505d1ee7e56851ec597aea8fd234e57396aedc35117e8f28c92e",
+    "server/fixtures/accounts-review/qa/live-01/SYN-INVOICE-REVIEW-CORRECTION-AND-GAPS.typed.json": "e10ecda70a6fd3195049ddf99fd092df12cc22a157bc677c269697d8c006f881",
+    "server/fixtures/accounts-review/qa/live-02/SYN-ANZ-REFERENCE-PREP-FORMAT-UNCONFIRMED.input.json": "0c2d06dcf5a9a12a1faff12cc16947fb44f172f7e6985fd7030c15316b1cebe6",
+    "server/fixtures/accounts-review/qa/live-02/SYN-ANZ-REFERENCE-PREP-FORMAT-UNCONFIRMED.typed.json": "a5fa2056dcab2ecacddbd404e4d110361f1344292a3e2f30353e472e964ad813",
+    "server/fixtures/rent-source-dates/source-limits-correction.md": "436527071b0aa4b4be8ca2c77974de9f1b6931234ab2d2c767244c703b4acea3",
+    "server/handoff-auth.ts": "0343cf30abb53b1b33582342a8de9d1cd5ea277079be1977db10eb2678c0570c",
+    "server/hands-last.ts": "394ff8d0f18453f68de95e56d148841f93887402cb3cc01f237e271a94099e48",
+    "server/harness/bus.ts": "7f945a1895a2c459c17dbed4e4d15ad8b288e9eeefd1d9cebb289f10f891851b",
+    "server/harness/registry.ts": "34df24b5abb2829cca2ca1ac93070e8e58f1e94d30001fc843242de095353a30",
+    "server/hermes-bridge.ts": "740a2dadcd29467ae9d53401118394167f099562cbb7d1400f3feed4d1a54570",
+    "server/hermes-hands.ts": "05c3cb3e08f42ae928ccd31a9414a3219efbda901207b2a9bb05c6ce6bc31fe2",
+    "server/hermes-lifecycle.ts": "a4345b05857e3fdb427e20988104acceccbdf0ee0142b7ab7da83f08eb8c9093",
+    "server/hermes-oauth.ts": "5853d0aa251806925685e1474e11958c8446b7fc0a67b441b43d900ab245358b",
+    "server/hermes-pack.ts": "c95dd51cf7fc48589a392c19cbf6900330f1cd0ee4a2a4a0579a1cc61eb66847",
+    "server/hermes-paths.ts": "0e28083c787c81c722e9958db6242b6cbabd616d7dcdb44410a17a8fb059bbdf",
+    "server/hermes-pin.ts": "c60a1038674304a45c5e22c2d98149dfe11465112ef7efc870229dec2cac5b6c",
+    "server/hermes-profile.ts": "5436c8ee8f839f93462079f80ca9267bbfd5386736107731f33e5ee777ca95a4",
+    "server/hermes-releases.ts": "7b3ed1ea11f1fefbfbd63d1e332d63be8270e48cadef4cbda8c827b5d5583ae6",
+    "server/hermes-runtime-check.ts": "251574d9e36149184b0a617e70e152c057a9b52bab19148ad3565c02dc4d81ff",
+    "server/hermes-runtime-env.ts": "e6f4a15cacf81419e4144572688b09f58493afd73a0a4667b24e2dd20b834509",
+    "server/hermes-runtime-selection.ts": "2de9c7e0046a6b7d23db41696dfe7dfabdd500c27b341beac2ebc6047355665a",
+    "server/hermes-status.ts": "22bfd51954a15557feb8f058da76ebf5220d6f338e78816a36dda735f12320be",
+    "server/hermes-update.ts": "beb2b81b86ad62f820701bc0f41d01f8c06472b77efc1b4fdcc6f98a5494dad4",
+    "server/human-handoffs.ts": "0edf49b37d641963dc3907318571cc678f2f3e57f442f0e77987bdb33f91c246",
+    "server/import-inspect.ts": "e489de0186f70db0df23514757b70266587d5574854f258dc54499163f4c0543",
+    "server/index.ts": "1fb0f1ede2466336eb8185a51f9e58df75a978c1c9d7f7ca77c6c691fd452245",
+    "server/intake.ts": "a36340fe6c2363b54bfb98b378b52397e32fa7919b1246b12c1cd3e67922b8d5",
+    "server/job-executor.ts": "e36f9727c1faf3a7b19b8445841b1dc183aa6dcdeccf80317b0c5281b230265b",
+    "server/job-runs.ts": "f5ebf79284a57daf4fb5f2e073a16adf6ec60abbbdb4df886d490adce5ee4fed",
+    "server/law-reference.ts": "03ce7731261177ee76df0178ce38bfeda7b811bf6c644fced715a8a812af3990",
+    "server/law-watch.ts": "cd44bc2028c974481dc042c95637c676c8f5f5b85afcb00ba7c1fb6aa406600a",
+    "server/local-computer.ts": "bfea5b629b0628b610acb049b4d8e6a1fd4e9e2857f85a83da81564b73620796",
+    "server/mail-ingestion.ts": "079627753aefbba7cbe687072236fe5af5d91ce152943d64d76a506f020f0ece",
+    "server/mail-workspace-integrity.ts": "17d97370564d000b01d52653e56ff322a8f70b4d42a754825b037122d633d57d",
+    "server/managed-connectors.ts": "9e1910029607b3daeef59478919987891f4bd5f908326dbed2f18f58137bbfbe",
+    "server/managed-service.ts": "ef2e565033d4c183dd3bf1bb401e2f1ac45dbb97636e08b6b94ed980d2144c35",
+    "server/manual-job-request.ts": "7f4babb4cb5e22136deae590ee72a924433c7d4d183fac0ba28caea1468ac949",
+    "server/morning-mail-workflow.ts": "4e7e91f8f3a92da3b77a4d3c8af172c1aed36249973f6848035fc2db71bf4e95",
+    "server/morning-money.ts": "dab88b3a43b16dfdfd58d1b599476d84732af4e777fb1f5c6148a871328adb61",
+    "server/names.ts": "32ddd183b7b868934849c04db91db004faa5dd3d179bd7df6568717310a6d4c9",
+    "server/office-core-pack.ts": "4c1c0724e9a1fb898055d46d0347a4b6370704bccb020c90b01a9c32da120a7b",
+    "server/office-link.ts": "eb6e95b7920d37f192958b431aada02ec86977b080380fa22e14f5f29dfd3fac",
+    "server/office-source-turn.ts": "1b469b01d235c6bd010b02d1852b81a37e944234388e986742e20850ee4cbd1f",
+    "server/oplog.ts": "7e9abb2650f99dacdae7aba8047e6ba1bc331b9b32be926f6042d29b2e66b89c",
+    "server/owner-letter.ts": "36db9fc5cdfa3903f724c23c50b249ccf0b7586dadc4c6de779bfd3099f00b20",
+    "server/permission-proxy.ts": "fe22ffd9c4fab4abca938a0b8849e65c661bcf2f197ee4033fe1a496f5d01967",
+    "server/pilot-contract.ts": "b0e8263a0facb56f031500d845c7b890da24cdc225fd3fc7f0d2cce93b059c2c",
+    "server/portal-fence.ts": "e4e84d78b53a2bbd803f67050bc2b60b5a955d43761249141bd4023beb4bb129",
+    "server/portal-handoff.ts": "5461ea93cc894589ae3250d3bf1e3d192c7c66295b76e2b100ed9e9000abfd1b",
+    "server/portal-job-intent.ts": "c6d62ce93bcd2133f1363b4906563e6235ee682829cb4122eebff88aaa59b6ff",
+    "server/portal-recipe.ts": "7e3224c6fe7206463164aa430c0fa48ab5266fb5cedacabcab6ba7803b8f7f60",
+    "server/portal-sessions.ts": "b88d29659618012b1047f9569ace48286b863a7cf3aa74d7c42db78b4ac65e98",
+    "server/private-backup-api.ts": "ee7862ab456b60eb7a3754df346e992aff0ab259c272e771dc9f62e6e25fe3bf",
+    "server/private-backup-mail-validation.ts": "792053bb21982d9e424d910fc1f2c7b7183c9404423be2b9cffc4818dcbc9cb4",
+    "server/private-file.ts": "1235d1e6d88c66a7aad57abb576737f8266f2b4829d3f6413e1001a0fbc7145d",
+    "server/private-json.ts": "24fa54ac629b95d5b5beaa7a260237ac992b791121c059a3b0ddf5bc75dc44a5",
+    "server/private-vault.ts": "28c6bc452ea5ad4fe3bdc14b3d57ad9095ebc5de2d3a1878965153a003de7f12",
+    "server/private-workspace-backup.ts": "aa8e94dc4c476727aa33b811fc4145df507db44271fa667c26a0ff76109fd9fd",
+    "server/procs.ts": "663c3d2afba8708b1e1613e8f076a4b6472c61aa25f8d4f1933d30c9caa2d467",
+    "server/product-mode.ts": "0fc69f34d9b2730f821ddc93274af04eb84086b62fcff1bc163599291f307bd3",
+    "server/property-portals.ts": "91a530f97e860a0d044f991b6b8555b3c4a8e508b0c33b14449e16e867620297",
+    "server/proxy-paths.ts": "a357a9731eb1daa5cdf9ad2fcdb921006a785e9d6f4b13533d0efea641d28211",
+    "server/pulses.ts": "3292abaa1b50a919c8cad4d2f654d70f4cde5cef771d645ea12e8d6c011dea79",
+    "server/recipe-distill.ts": "0474e9915110fafd22f2bffa5f28059e7fdde2fe6ea6cd74a8285f15b22df0b7",
+    "server/recipe-draft.ts": "d4d42f9eebb5505f8b2be5000b62c7a85fd8142a684415637f317070aa55cecb",
+    "server/recipes.ts": "54953d49fcc9d190d25545cfb300a320e968a3993dff87297e48ac851359eacd",
+    "server/redact.ts": "0408a8b98396f15c127fd002fa8d3ea95916f3d0de3649a7d1080a0ac5f14563",
+    "server/remote-decisions.ts": "33802127189e0eaa37d621c3187114bed3088a4d521abcbc6020385202a9c20e",
+    "server/request-decision.ts": "dde76d3c3c41c1e25eff94f2cd00913de83e83b488e7c761809e9be255485c45",
+    "server/routine-persistence.ts": "edeba077f95c69c385174f5207bfde1699eb90e35e4ae4465265b62b47582c98",
+    "server/routines.ts": "c977be52d08c64e473f6503ec4a422630f3df07087d3ebd7c3257ba8a5932d44",
+    "server/rules.ts": "64294f9a43c3e9ad13d4f68b3f9a483b5835a09c2d22072b1ce00be6f50327fd",
+    "server/schedule-intent.ts": "5af3fd68b5811c997ef152d4d9eb27c5f765e95a987068fb2c1e4348f6cdc62f",
+    "server/service-admin.ts": "e33acae465e52b241d041260e391163a2051edb865f4da13a93e5e5e32e096b0",
+    "server/service-child-env.ts": "b397742b10d14c2e85d0b179afbfd18c757a8b3b5b23d9745fe885d2ffcf8af5",
+    "server/service-control.ts": "d2d82d54e4a9a568d25dd0794a384a7de5c0fb02b73039f58c71ef194f86b261",
+    "server/service-entitlement.ts": "6fb5111b31f287550617d05eec758b03c9eac45a5f3ba23a69105c531eb747f5",
+    "server/session-auth.ts": "ae51bba8c039726dd3f8a6c43d5d162dc2ccd1c7538b8667bd1857f2db2de437",
+    "server/single-flight.ts": "f14e091638cef4816c55913688b6560c1a6529e759c1a5d68b429a814d0cd125",
+    "server/source-bills-api.ts": "1480c538860d4b39dae98a9d4cd84378b39ad59e3012c0d32b9197bdb2c98561",
+    "server/source-bills.ts": "2656084cbcf94e174f4938a10720e90515cf75d22f1180c18791cd7d997b10e6",
+    "server/source-gate.ts": "f9f7f63f1ab7d21d4137ceabf5c17696faa9993192785802cadf1db82304f71d",
+    "server/store.ts": "2057b55ab7d557721fd1f340838b415eb871ef904a6c3bfbfcd95b42b5e94358",
+    "server/testing/events.ts": "6c1709b713c5665d8d85f1a415fc58e2cb08c408688443531eb7adfb52bce9ad",
+    "server/testing/fake-acp-cli.ts": "f792c8976398a6a24ecaf54c4277a651202da8d4eb404ff071c42817482b7a9c",
+    "server/testing/fake-agy-cli.ts": "58c6d925816862a8763ab17469861ec19543c9d0ec8397856095a99a50745a04",
+    "server/testing/fake-claude-cli.ts": "c3a21347cd5406b142d39614796b70ec7e457a1a271b192d0c143447d8f7cbfc",
+    "server/testing/fake-codex-app-server.ts": "b679cd47dbc4b6be5014150e7c7ed56baec5be4365b2883463ab44d91652444b",
+    "server/testing/fake-driver.ts": "c4ffe3c60c3e9962e023d9ea74f81d72f719e6f5e2802027d31d18697e8bc86b",
+    "server/testing/fake-hermes.ts": "bc1324b3c1a4019a3592dfcfc9cb6cae4aa9f2bceeefd24ceefab899a96c7bd5",
+    "server/testing/fake-portal.ts": "d92911dd6fa205cdbab084b51f227575ea456fb03331ed273a1bbb48a56cb9e4",
+    "server/testing/legacy-law-reference.md": "423851e6a64a97fa11c03cab9f8e0247512d2ee2d97bfeced1e9b5c041f7ae41",
+    "server/testing/setup.ts": "71c1ef57432d164815dd5cda6800fa574c198ef3f4decc2ec4ef290dc27d76dd",
+    "server/testing/test-fleet.ts": "800cb82eddd0aecb9f54388791ecfbc05d9759f61e269909e43f31af5737a7fa",
+    "server/tool-fingerprint.ts": "8bb3f73d091c62e212e9ce44af92f3efc1ae481be1e58d7ff09e005a6eed93ec",
+    "server/tts/elevenlabs.ts": "44c9b8c7873e2061b936def47d28687ea645afa8affb6091a3135e52fb30b546",
+    "server/tts/index.ts": "aa4c777c59bef9c3e79b322edfee037ed5e92e3b2883183cdb07dcad6d12dc09",
+    "server/tts/speech-text.ts": "9ee7bdfcaf35a7a56a92b15e8308bac9dcc7e8120a371a96d9954fb80a010345",
+    "server/turn-watchdog.ts": "45b14f5a286a59d6d443ac1562c7267fba839205d8973ea8f559204d7a1d891c",
+    "server/vault.ts": "6cf83a39ce32a1ae31707a45cc8c6d23aba72aa37d90f6f70510d6fbac4369d1",
+    "server/windows-file-privacy.ts": "3c1fcf2b033078222b31a186078b9ff2d27de064c40f7201ae139c0a930c638f",
+    "server/worker-bootstrap.ts": "e1d4be8c75b9b76c4a5c166958e24923571a383442b77efffdd9287b4275929c",
+    "server/worker-issues.ts": "d674debe78db6f9b35fc045aa40147001b412095acb73b1682bc53debe49e9f6",
+    "server/workflow-catalog.ts": "022960e5e02ab069572c6e45fab891936f5a44a02051aa0c93b2ae6ab51efc0d",
+    "server/workflow-database.ts": "eec756b0aadcaebdb7fd7bec75ba5f5891247622dcf0b27b6ad9903528cb0c54",
+    "server/workflow-packs.ts": "63464a1aaeda1fd7e9cd52d9fd944a53b0e68c82ceb9af6e930fa7074a319339",
+    "server/workflow-services.ts": "4c6e64ba2f0a5c8aebab7ef6474e2a7f3b075accbe98af958a97010ae7e563e4",
+    "server/workspace-identity.ts": "cbf411c5bc003102b5a8097517c83839d7cd6c77c73b7e05d6f548ab1ebd5582",
+    "server/workspace-tabs.ts": "b0522bc0afad3e8329d44f48c9c3146fe4226265c0d6acf0c1f0fc2829ca4122",
+    "shared/accounts-review.ts": "e3aa0f82bed5608670a2a56b25051d8b706c794ea4f73d078f2b74f992e261b3",
+    "shared/agency-setup.ts": "c3755b416c02189eb69e1031f2a808147dadfef91e133bbdbc94745ac4f481c4",
+    "shared/agency-workflow-packs.ts": "69af32cd3d0cecedb184b3bf93216edb719bd17d1b1c06448ff04b9bd3ec81a4",
+    "shared/ask-attachments.ts": "473adc496e95ba815ef5a93c8ec9c4dc1fcaec7f086da6b6039dfeb68d47e7e7",
+    "shared/ask-controls.ts": "49ddfeefd3bb04f89b75e6ae7411b5a4d9e68963e2ed12bf9f131bf12ce95190",
+    "shared/ask-message.ts": "42dbbc329bce2cad44b1803baf2a94cdd6db62e1a63adbd0a36ee0d31afc5caf",
+    "shared/bank-source.ts": "8c370047c06362189cefe8a33fb7d2dba68bebc3b2d4786011b64f41d6412d6c",
+    "shared/batches.ts": "a5db7ca875f982d5587408aa9c0ec666818aa283602920b43b94c505e61fb4f5",
+    "shared/bill-dates.ts": "70ec720138c81d66f0a74763d197151ab3e0e36e2369234b11e0837173c21e19",
+    "shared/browser.ts": "34a387dadb1b0680fc10e2e222c7c9d5aafcad8cb937c12fd947be00fad90e82",
+    "shared/bud-identity.ts": "f1df7b5683fd9c88f765ac652f59b055302946007258c5f0328e6cd495b2f463",
+    "shared/company-api.ts": "38c12e22c044f022647dd848a088ae64efbab13a54b1cc3e5db01222252c685d",
+    "shared/company-work.ts": "8166987332e17bf47c6a7c122077371054538a3c8d368a1f466a2587893eb96b",
+    "shared/contracts.ts": "dcd9af646a94ec646cfdd31df3986af4ec9144a517bb8a3de8e964f294941230",
+    "shared/customer-packs.ts": "dc80d77853cb0ac7c9b7d55b3f0024e4b983ddbda6f2cfa250b9d9b2f0f6051f",
+    "shared/desk-v2.ts": "ba44d0db08972ca27b28bca09d541cf92cfdb3b8bab97160f5c34cd6cc773f23",
+    "shared/desk-v3.ts": "de4a762c865bcacdaba3c58449fec18fbd95ed8ab0a93af9dbc3749ccfe41c34",
+    "shared/job-output.ts": "465a6344404b5ba322c125837707e2ee8850fd5ce15c0d435aeb003df46ccbe7",
+    "shared/mail-ingestion.ts": "57d6610ecc1ef59ffcba6c66eb26bd4e424458c10f871c9fbae9a4499a84729e",
+    "shared/manual-job-request.ts": "0691bf044fcd7a1051ba32b1ef1ca0066c24eae2417f458238338f4d4d5871a5",
+    "shared/office-sources.ts": "8be7b0d971ce0d9eb0688ecf771b9727fe3d3184ceae8bf94f36e660e73ea2a9",
+    "shared/office.ts": "73d5d6839679f53f9335a9bdc54acfd0b7a4f1b9b9be8dd62e329298659ec89c",
+    "shared/pm-evidence-rules.ts": "24e3ffdf2c643fb52c25d8e446bd2dab4c125ed8e3fc5f7ec9799c8dde2875eb",
+    "shared/private-workspace-backup.ts": "e86b2a43746c46fff4987bf07d015a88c3818f619818d9c12fe690b9159c9c5f",
+    "shared/rent-source-dates.ts": "330249d3fd77dd5c9b1e5f846a88f1dc79f01d9c48070fa9668254afb4e7eae9",
+    "shared/rent-workflow.ts": "3a17d54b5a8b28d523ae355c5aa9dcf8db40899074af4e607484a2263e752a43",
+    "shared/service-admin.ts": "f443a6777e592f42acbc70482e05a2997659882d7a439d36f42df81cca25246f",
+    "shared/service-entitlement.ts": "bbda7c168b89cb49691afc7bbf3505adbefbe10b3b5c62c76aee02aaa73e7cba",
+    "shared/service-identity.mjs": "0b17daa59f550134474fde77af43925ee3b41b140df03ef65db65ce0c755bc27",
+    "shared/source-bills.ts": "f9591c665ddd8bb6ca34538e79d65125137799a7076ebc6c272531daf55d830d",
+    "shared/worker-providers.ts": "d90596fa160d56cc8d3d70896d30d9f8c901ae395ed600a9aaac22a13090f46b",
+    "shared/workspace-tabs.ts": "82e7a80d1f4977394ff31bf63b61c37fd16c680793497df2908db792f079fc5e",
+    "src/App.tsx": "911dd083af8754d85821761b0f1522e2e4dd6e124a7ac90c7aec07e115656101",
+    "src/ask.css": "c8d65c9a66bc3349deb5126df6b2c4e3bb8f0b886fadac96ce48185c79c499de",
+    "src/batch.css": "5ea712277cf27461d45d0b2a4351ed53216ac6233d458f2dd509bf0ea159932d",
+    "src/components/ActionNotice.tsx": "60df9acf044709e368bd040d1f42a95e948d86dcb0f852f1e3d2b51feceeb3bc",
+    "src/components/AgentUpdates.tsx": "ece96b6ae6ec1a07f651c12dfa513037db51a20d2dd5540d910b83db9fe192c4",
+    "src/components/ApiKeys.tsx": "d37763d8a5dfa69672eb631c4f0e4e7504646fc1c0a042c2eaaf95fa80d0aaa4",
+    "src/components/ApprovalCard.tsx": "41fad2a3b5c8d297de72f562d76f53beec4d5eb915231e614b1df98c0f160cf1",
+    "src/components/ApprovalScope.tsx": "4586395d4a3cf5c36a19c91c1a17a6bbe8cc8b7d09cc09ca9e0c7fb499773ba7",
+    "src/components/AskContext.tsx": "7d088fdf5f32861b1f806ec4584f86bd9053d4045225d2de37a56b8fc5b4d5ed",
+    "src/components/AskMessage.tsx": "eeb4707200684a1b865a9ef929eda8ff08683399209c13273a0edc4ba4442599",
+    "src/components/AskPhoneContinueCard.tsx": "cf87ab762eac39a3f23de0e60fa88ac4cd0761fd66801716b77b6ab7542955f1",
+    "src/components/AskReadiness.tsx": "fa45bcbf601dae6bdef7201603633aa96f265c6aec505da83c5643c291758713",
+    "src/components/AskScheduleCard.tsx": "93bf5340363e09e5ec55ff7c5bbaa68fd66ae4f0cd1073cebb2718e44bcbc7ea",
+    "src/components/AskWorkspaceSheet.tsx": "d4df71d6b726c816a0283eae7eff35629c5bba9297145fb79cb6f9828c5c507c",
+    "src/components/Avatar.tsx": "7915e924febf1258e7b46067945e6a76ba75a27d11376d9b835a6d2a5fa2e8e5",
+    "src/components/BudSetupCard.tsx": "2b62ec3af3c56f7a9bb8f62a90158ebfb0bfe79805d8dd712a033e1e1a245244",
+    "src/components/CallView.tsx": "c316c9e64e4b34662b1cc02f8b740ee0fef008e3e6d7f42a06a5dc3a38f36a0e",
+    "src/components/CareUnlockCard.tsx": "0e9d1d4f7bcf3ef6cf5fc48c244bbbbbb312b8cc5b3afc7713c25a19c13f11f3",
+    "src/components/ChannelMark.tsx": "971295c8e9c6fb4d1daf49f44e3b4a61266a232f38fe4e899fb579fa9189c5cb",
+    "src/components/ChatMarkdown.tsx": "488c90df39e7e94a28c7be79dfc83ea78b34f05b6e4e5391ab83ec05a33cec37",
+    "src/components/ChatView.tsx": "22c1c36edbe1c7facb61a62fe2d48454c8ff4bc17f6eb9c46a4aeea1501e21b3",
+    "src/components/CompanyDepartments.tsx": "a1be8a0f6a978f47d7fa56fafb1df467371b9a350e76335c72080d35f68199ae",
+    "src/components/CompanyHostRecovery.tsx": "68f63e7d2f81a6fc1c23cb68c4fae76f7996a34e97d12cf5f7da887717abc71c",
+    "src/components/CompanyMembers.tsx": "3ae1f5f486bb8eba8b3aa64498279089042c0c3dc143cf4dd611361ef62d6b39",
+    "src/components/CompanyRecovery.tsx": "b31f2932e35e416fb6a6acfa141f3883a35d465cf69c3c4eef7439dbce253b7f",
+    "src/components/CompanySetupCard.tsx": "9f85c46bfaccdd56f35452d740b9ca4b8269f4cf1f5f16daa27533a9356c2b43",
+    "src/components/Composer.tsx": "0a42fadd9aab0c3e5cc748874937938079168795ff9b71adeafc3fa11544869b",
+    "src/components/ComposerAttachments.tsx": "b6478b5a4070b62090e26873b5f7918dd1d9143dbe65f6835fcced0b9e2d24c2",
+    "src/components/ComposerOfficeToolkit.tsx": "584b7d6bb06e7588ed934b6c804e7649da97d595b2fb5604709c1aa9637254a8",
+    "src/components/ComputerPanel.tsx": "720ee1390a30ba00442286ca452a791e4211e20dde35b90f66dce03e9fb7645d",
+    "src/components/ConnectedAppsCard.tsx": "4b42b2ec2b8eeb9772365b3fec7e4356ed624395d962dd9aa645de0909f92c14",
+    "src/components/CopyButton.tsx": "abb58af5de5ada48fb9730eb2b66006f27dcd8cd5d6df498606f6a408ae89aa4",
+    "src/components/CursorAvatar.tsx": "dcb2b150794641d44a091e4aba069d788c1d26f308db402b194a424b155d0ed9",
+    "src/components/DeskPage.tsx": "711e7280a6d31fa01b57eee7784d865b90929e926c5afc45005a3c8d28b0e1aa",
+    "src/components/DesktopCapabilities.tsx": "1e63b538843d60590c2b14149c6dc356e2dcf3e8d44dd1dca04f8ecd0dad6144",
+    "src/components/EngineSetup.tsx": "caab0ee564774214ef7d6ebe80442094414af33e24cb91562edb970b5da88e4e",
+    "src/components/GmailReadOnlySetup.tsx": "c884550d7460de0d39153a5cc39684c87c939a1de988e320f94a61ee4c3f6912",
+    "src/components/GroupCallView.tsx": "a46e6f42bb9be094ed2caf8213f1c1a218df91b582dbb38fd077b9f05d10661e",
+    "src/components/GroupView.tsx": "3c154c1471bdd85771d28909d03c217c61db03a9be6258570dfe580e1da8e73a",
+    "src/components/HumanHandoffPanel.tsx": "b0d985c79a330d0560f8218f5ede427e1b5c75901c97c67494995faf5d0026be",
+    "src/components/LocalComputerSection.tsx": "9d4e7553cc9235215be90314c3e3a15671b281f8b0de97841de82b0a8b44e699",
+    "src/components/ManagedBudStatus.tsx": "722dabf077387564adf7268f5b22c0b6dc7e5ec4ea0e473ce940aebf0452eb85",
+    "src/components/ManagedConnectionsCard.tsx": "eec4cb641f1c03cbc5a9f4e2733cf5429fc1bf55cbce99e699a03032f82d6908",
+    "src/components/ModelPicker.tsx": "9f060794e8f651c5aea834c0bf716f14c70494464c9597f65986d9aed4814c87",
+    "src/components/NoEngines.tsx": "57b6c2b238c866f01c55096cacfddad5ccff0fb86b5024ae628703a7c626d886",
+    "src/components/Onboarding.tsx": "bdbb136a48fb45a81614ca5ea56c63d6c22cdd84cba6ea14294497ace9f69b24",
+    "src/components/OpenBillsView.tsx": "9e04bb808c6da9ad2960d4b13ad79fbb6af971d302a4a1e5ea02a3588d5b32e9",
+    "src/components/OptionCard.tsx": "efc2cd157663fdf0cd79d8ae32515c6489ed2fbf233aefd36dce160effc92147",
+    "src/components/PendingApproval.tsx": "00bd059ef56cc8fff06885d0824ef1f99a365c9c645c38a20a74e2f58dec4e61",
+    "src/components/PluginsPanel.tsx": "ff072a040a7fbb1f4092ee2ff6014c3fb6624f3f62b81239b97a766dc544ba43",
+    "src/components/PmTaskStarters.tsx": "5562e5628d4311c7c1b2e25bfcc2747d99fe21a214b03552b981fa11d90d4289",
+    "src/components/PrivateWorkspaceBackup.tsx": "87fdc72ca1bcbb3de76c71f13bc2ec654642094df7d1f0f58a27418591274f98",
+    "src/components/ProviderIcons.tsx": "5fedf529727d043c7c6a2bd95c30e643ae99755fcc6b04743a5f3d25526c5b26",
+    "src/components/Reactions.tsx": "06e352b2e1fe159c8a3d3406c2131d20a5e13807c3be7caf90dde95d7808b05c",
+    "src/components/RoutinesPage.tsx": "6bed0b5915e47f0962667b225c83e853ffc2888679c179a6cc6b7caa2b1ffdf9",
+    "src/components/ServiceAdministration.tsx": "b58a6aa89aa3ed44d00f8b205ab25806c981eff395402c723f4a57286594fe49",
+    "src/components/ServiceStatusCard.tsx": "73e793f221e73c143aedd9ed3f34c2b679f9d3181543260a532415e578ed33f6",
+    "src/components/SettingsModal.tsx": "81a166e89de1e69ee6a93b63d86f5eb89d5e5a8eb4961d8db985c6be8f22d30b",
+    "src/components/SettingsPanel.tsx": "dc83658510c44594184fca8ce58bffd5084a921315d5df7a7f715977fc9c2281",
+    "src/components/SettingsPrimitives.tsx": "11062967dac65d4dc59f47fc5a8b3ffc1775a58cafa856d8ed347ca89a6eac17",
+    "src/components/Sidebar.tsx": "82b3d88a83bc970b056fe36a1eb6cccd6e76ae29daeee0651701c44e904212c2",
+    "src/components/SpeakButton.tsx": "6df05def750b22333c47cc4855da1824d4df68dc7099f66ab31146db266db707",
+    "src/components/TaskPicker.tsx": "85a051818e9da55a0bd891ec9b9009a865e0fe89760860d445bac4f2ca934cf0",
+    "src/components/UpdateBanner.tsx": "5a7b80793f9b5d66a1b6e133a0c936528103bf1bf325711f2b54c3b408f15123",
+    "src/components/VoiceSettings.tsx": "60c6d4989c2c436b9ac8b24a092568949e52fbc0145bbbd4b2077ab386dd3bc9",
+    "src/components/WorkContextCard.tsx": "f5c5f47824ad55e2ea4d5142ec70a2651aa66ffd67195879727831fc541e484e",
+    "src/components/WorkdayPulse.tsx": "ed4a36140a3bd715869e63352f847ca262fac83d8e717b45952cbb5ab7be5793",
+    "src/components/WorkspaceSavedView.tsx": "b73b6776821a333fbbe472a8f079091277b5c1fae406d3fd45672ab3ba4e5ed3",
+    "src/components/WorkspaceSetup.tsx": "a299256ce71bc28890fad593c102df76a423868442c095a3de202253cb3545c9",
+    "src/components/WorkspaceTabsManager.tsx": "39d634602eda38a2bb7e7dc8bd3d297d0a16ea9e9ec4dc45aacd4d3ba0a72176",
+    "src/components/YouPage.tsx": "4e8be00210d275cba3b9dc95e42b650404d307322ea78b51c50a3732b19a8d92",
+    "src/components/desk/BatchWorkspace.tsx": "1b88f7b21fdafa1ad95aed2ea74049655b91411ff4241088f3a75e0e87098a09",
+    "src/components/desk/DeskBook.tsx": "e35eb8cbb14744f34340ec16c70f796a07d8a7d8a990c38a08db285a7fdce943",
+    "src/components/desk/DeskBud.tsx": "d8cb3be8803cb4ed079f13b4e5cb3cf19d92813a13c0bac2ecc99289a071fb8b",
+    "src/components/desk/DeskCase.tsx": "faa49a75b9a4f38e6dd8f0fd42969481edc1ceaa20b3a7fe59d0293a1f074bff",
+    "src/components/desk/DeskEvidence.tsx": "42b00aa87ce516f63f27ef88bde2ca94d6a8edb44e918c5b1b78e9ab33af071a",
+    "src/components/desk/ExpectedBillsBoard.tsx": "cd2e630dc1e4046130ddb19671c22b2184ddcc65d6acea74f802e96b3fcd9963",
+    "src/components/desk/GoLiveCard.tsx": "47a7a6b07d198fa4e5e393f798e7551aeadc2845488ed34da6140e2ef5a2af8c",
+    "src/components/desk/JobRunFeed.tsx": "4cdd2a66bcc5253d8dfcd0306eab30c8049702b35de0166d8c34552e2b439b69",
+    "src/components/desk/MailWorkPanel.tsx": "8f2aa22560c10d3455e4b3694e9b3f7cdf5c201d345a81c177ee9a37ff20ab2f",
+    "src/components/desk/MorningBrief.tsx": "943b815cfe7442db0f0992446b0a40f2681d21a00bd4f74da7ad9cb2b33be5f6",
+    "src/components/desk/SharedWorkDetails.tsx": "63d6d0a6857595b55174bacdbe3e8f4a71b315b8314b57bc52afa8a808cfc716",
+    "src/components/desk/SharedWorkPanel.tsx": "9371fc9a99269677073d9aaa825c313844d7785a996ea7ef53aa00506916f0cf",
+    "src/components/desk/SourceBillsPanel.tsx": "e3bdf87c7ad7e225b7cfe53b881879fc94fc81a180b653ddd2693ef363ea6bb5",
+    "src/components/desk/WorkspaceLayout.tsx": "0954f55f5f66f9c931c86d8e616f96c2468c790e470eb81f034625653e837cdf",
+    "src/components/desk/labels.ts": "e43217e85e00ec516e103eefcfc0dc555e9bf818a1126d552787200413e1cb9b",
+    "src/components/pm/index.ts": "27fde10edd1d2bc144c672fcdb99f4d5cfbdf6e00b4b402de3871477e354e651",
+    "src/components/pm/primitives.tsx": "e3c371559801dfdcb5a8e2b3995e46cdce99ed17c0943ed849db9d22f2ed0938",
+    "src/components/schedule/AgencyWorkflowSetup.tsx": "f9e3a82d88df2f6b7b12a40b21ddd08dd513491cda2b2478be4e594a08e7dd60",
+    "src/components/schedule/BankReferenceReview.tsx": "9f5bcf0eeddf6ecb5c3f665c0127bb92b38d6f63815efb543bcb75c02dd144a8",
+    "src/components/schedule/CompanyWorkflowTemplates.tsx": "9704cb5e6cc177fc4a217c20b24d675596794460ff286ad7c88479c0c9eae911",
+    "src/components/schedule/CustomerPackSetupCard.tsx": "ff35928d852f68574af32822b3b4edafaa34cedbdfe9313be7f5a511ae3e195b",
+    "src/components/schedule/JobWorkspace.tsx": "2c1f1a42b88c63fdbfb39477fb2b766b7a7729267752f204cebd59c53e0b20de",
+    "src/components/schedule/MonthCalendar.tsx": "d5f99c5010e9ca1f323e5c057ca45c1bc2d53010aa8965afbdfb2447d3466fac",
+    "src/components/schedule/PackSkillReview.tsx": "f6e5ce6da9a9c3e8746117c2cd4880a3978e740a5ca1dfbec4128b60c5132fe0",
+    "src/components/schedule/PortalJobActions.tsx": "7e880dcfbb40ff78a46d2feba6da061d511c72e9af3bdac1f50adf39c7dc93ee",
+    "src/components/schedule/WeekCalendar.tsx": "e48029de3460b13f36f08ecc3267d9b3c195c5cf25fdc76b010b7b20c4aa9a4a",
+    "src/components/schedule/WorkflowPacksCard.tsx": "f4f93f3e90cff95db0f71ab6110491d15bc98da1b0c0cba03c0ae979a2327e81",
+    "src/components/you/BrowserCard.tsx": "28e3b1d564b8b3bbeee264eae6e1d2ed27cfe01a0cb101a0e12024da2914e9f4",
+    "src/components/you/LawWatchCard.tsx": "d1b72a83908a09ccd35da902dc145e2fe60679befe62de845994376d8617e300",
+    "src/components/you/OfficeCard.tsx": "b561960b8a27d846bd66f0b892be78b92a6fdc6bfc890365e69ddd9c9e97de1f",
+    "src/components/you/WebsiteLinkCard.tsx": "65d3d3d919b79c573eb0b0a6001ab3d984e97ccdb096c8d75d5d9701189572df",
+    "src/desk.css": "76c444d6af722fcc8cf8733132505884858f0edb5aeb435ff0e66c45273fc34b",
+    "src/lib/analytics.ts": "6a6f398f721990c7c96ae34acd77bad9562e371b877c8c7a82da6c623863d8fd",
+    "src/lib/api-error.ts": "9bcd7e4d5bef87882eb7bb3d4d57c58d651f3b832b7b1898b4066d0ea80fdc6f",
+    "src/lib/app-route.ts": "4ceedfd26af1cbb5eb8d54bd23dcc7691729645a9a210504e36eb5fe12537075",
+    "src/lib/ask-attach-client.ts": "4197c26d00480335d6941d073f3d468dd493ad0f0a4b65708d372cc35e0aebc4",
+    "src/lib/ask-attach.ts": "8035475f056e82913eec16817c8706ed1298db74074ca95b9a6f63d57896bb53",
+    "src/lib/ask-next.ts": "85c083cb3c87bac55893fbf33373684a915881e1a8e8035a419f88db016acc82",
+    "src/lib/au.ts": "54d1f8b81cbe8d6ed8a38437536c48811e07d44b2e1da3787781f8bb3638e1d1",
+    "src/lib/bank-file.ts": "7d651d2aad22896eba92ea54cca41863a5a9ae3a8f7721854382819e57174089",
+    "src/lib/batch-review.ts": "2cc94f2ca5e0603b577f0a37f6087df6d8657d25b3faad6583341a655037d9d1",
+    "src/lib/book-groups.ts": "7efef62acb7e6bb18f02fe809402bbe9ecf1d4728c45d7056732726083769d8c",
+    "src/lib/boot-heal.ts": "d99c1f71a6af32829222188faaf5a474ec08841f4286db069b561c8158753846",
+    "src/lib/bud-readiness.ts": "8db5d610ed7519f68e0b1def75824cbd20af986b3da722a591a9a62186f9d041",
+    "src/lib/bud-setup.ts": "1d01a492484dee82de52c8c36717fa84743228ddc5bb2d2be2af0529c408541f",
+    "src/lib/call.ts": "b8dda63017071e53224ec776c35eb4b21a7263a01811b7b73d86265d107af49b",
+    "src/lib/channel-handoff.ts": "5dc07822e6ffdb4a126ab679c3460d0d60ce01e647e7a1a16afd2599cc9bc62a",
+    "src/lib/channel-message.ts": "b10bc69e1d82878fab3c398d462cb2eb6be6bc7a96d8d9e1ab28f5fb561565e4",
+    "src/lib/chat-scroll.ts": "aaa2b47249e0c009e7069b545b4fc7f64ae5db6d0c9af12ae5a12641f34c9dd8",
+    "src/lib/cn.ts": "d1f1e0d62cb8d8d1e04c26e14de842d8a151f75812d81b046c65b5d1fe8e4b27",
+    "src/lib/company-api.ts": "4d191f27217032710c881928e2786d13f5624e802a0db6601d3eb9850371b97f",
+    "src/lib/company-status-monitor.ts": "4fa05886a63c05326e44455f4f0d83c9070efc39dfc40d41fd32b15c29af391e",
+    "src/lib/company-work-response.ts": "6cea89fe44c63069f1031a0d77a08bc2914a71c5b952e29187d3965dfa54f70d",
+    "src/lib/completeness.ts": "13b73414f6e3cf4e5f77256a072d60f788312ed53277802e1d4a863bf1260e70",
+    "src/lib/compose-job.ts": "eb091d3931055daa69388728ba58b581ae9dff7d26a3665743e66de1ceb65228",
+    "src/lib/composer-attachments.ts": "378d468e09e11f0f92bcd65ef89f2f11a1f64aef07e8280bb5d194b65e4df74c",
+    "src/lib/composer-office-toolkit.ts": "220f3a07295dbcc0741c190fe43931b45fb233ee850926b53965617b5a54ae9c",
+    "src/lib/computer-activity.ts": "30aaed466b056be7614225b625056942fbdff26d9bf7325da18101aa6ccc29f1",
+    "src/lib/connected-apps-refresh.ts": "117c3d4f4acc332cb1e1c7d1505b1c60092eb84a4afe1da0984f9fcb23779b9a",
+    "src/lib/connected-apps.ts": "6a6c54cb31b5dfd9d9522eb9be3221084412ff10afeb059c959e9613e9f24ece",
+    "src/lib/desk-ask-context.ts": "0da4d37a4a72bb91b18c9503feebe7015ba064d19950289df1b12f0c8f751244",
+    "src/lib/desk-queue.ts": "1d81ebe5d52c18226e40e6b84fcc834038bb37fa04a52fd652ebb7634ec58adf",
+    "src/lib/desk-view-state.ts": "1b59b8aeb1de13e793ccc91c1d15178c72b09728d28beb6726507e4a4229d239",
+    "src/lib/desk.ts": "09f70668deb525820cff6f6504e4089dcd08d9666e07767ef2898ae90d60dda2",
+    "src/lib/desktop.ts": "031e072e8ec26e42eb6e2eb4cb989453f6a17efca13d93b2209f9adf6323aeef",
+    "src/lib/drafts.ts": "2539ea06ef95055ff512720afd7d418d034bd7fdabd2770994a943b6fd919925",
+    "src/lib/first-run.ts": "63f3b963faf07a28647b1619debd60d9e95baaf484e03cf2d2ad3d5c66bb366a",
+    "src/lib/go-live.ts": "e8893b4fe976e71923c932b4a1431867286ac09b6efe03923fe34b1de8c20451",
+    "src/lib/group-call.ts": "ea34add34cf21e3f5ecc184520f8b9425d9a259f0dc4556b5363d760ec32122b",
+    "src/lib/group-routing.ts": "8ea05b3ae2cc0b193fc7eef5e05502b7562b9e10c30fca24e719fa2ca32ff94a",
+    "src/lib/hands-label.ts": "f088b71ff4e1774e73f2bbb6289e291e5510d93f0f66dde1d94d7303f869fb51",
+    "src/lib/job-plan.ts": "674d750f376f3a07361c603422f769d3ce6c8ef503731d6c5058e13f7f2332ef",
+    "src/lib/job-run.ts": "cf3a6cc1899f904a7aa4215e414e38b01be14d33dec7791c4984c0723a85e68c",
+    "src/lib/law-watch.ts": "53e86acbd9be11220acf258f5e69f84b128828956591e1bc104ade64ade93eca",
+    "src/lib/local-session.ts": "ee6787e6ee7905a9b731c4be018de864652a7b04df3bbf46974427beee38c2a8",
+    "src/lib/looks-like-secret.ts": "90e1b7b6e1c003ff8e16b54a7afc085edb634c08d2589952df889cb9520d4ad2",
+    "src/lib/manual-job-request.ts": "16413d9e5e8175930ad493a6853eb880efe3ab0476bbb7093dd448e100e3ef92",
+    "src/lib/manual-loop-request.ts": "7a3bd1384a72babcaa2cf319e8909185ec28c78894e9a08347866e871faefcb6",
+    "src/lib/mascot.ts": "b1a7d26f57e3d0bd8f22e059c24e7c8a3a6fecbc0dbdf2bc2e71e55c03a807d4",
+    "src/lib/morning-brief.ts": "c1f789e360fa57395c0ba4b6654472f3e661543480e693a40e71f3a4fa29c43e",
+    "src/lib/notify-desktop.ts": "d9fd5b00ed317011d0c1da4555f32c8edd704234b11f009aa1731e21b0088685",
+    "src/lib/observed-stale.ts": "668508b556b9292a0ba9f0218ee82f2e3b2baa70bae27977e92adcfcc2ffe5c9",
+    "src/lib/office-setup.ts": "2fdb96d9f699c4aba9d3230bc3c30fbd4a11856d6aad170c51ef530f373c040a",
+    "src/lib/office-source-store.ts": "764d76d68acac8898df56fa8836d1cc224e859ace590de38c574ed18cc2a5b42",
+    "src/lib/office-wind-down.ts": "48ea2be73ab6b4338effca5910b8d4f0787a4d2a2496b7cc21b5253e7de6f669",
+    "src/lib/phone-connections.ts": "39f097bee12fab71d49828455042ac44b701d5aeda6ed9f804212cdc08fd747a",
+    "src/lib/phone-label.ts": "3482ca715c5d94ec4093eec0c6ba172899493b3d603834e9b4299da53c880897",
+    "src/lib/pm-task-starters.ts": "70726399a71165b7a11338899c7157427abaae718b380b1c0627dccc309e47e4",
+    "src/lib/portal-job.ts": "20e79f22a02fe32f231ae48eba78a6831edb66828377fa956697b17eb3b1bf0b",
+    "src/lib/private-backup.ts": "90e1278bb7def3511b1b827193293c5d69a602000b100372ef8053a02a291149",
+    "src/lib/product-bud.ts": "e9bb3dd92693a1f84ab41598c81ede19b88727a44c61eb8a7aa2e9ae1f7bfee2",
+    "src/lib/property-edits.ts": "468bbd371b7c4c7552d68cf1e690d5844f5e7f4597c74e6d570f2240bb9f3368",
+    "src/lib/push-to-talk.ts": "dcd2feb97db2cc59817a1eef6f53721093c25287fabd2a06551d21fbec28c45c",
+    "src/lib/routines.ts": "501ab0e075ec648e7123113c19c69b1c7ea8d98ed19baa856d36bc523686e7e9",
+    "src/lib/schedule-state.ts": "41d0c2f978fc578ad41fcdd8a34823fba7a744cacb9355479fe5bd74e1dac0a3",
+    "src/lib/schedule-week.ts": "e36efeae8e408cc0b51fe5911851661f54ac48d1924c405485f141480d1b513e",
+    "src/lib/service-admin-session.ts": "878ee450fc0647b1b419e2d6a812814ec2f14bf7040daed13daec92129456dd3",
+    "src/lib/service-status.ts": "de5f062f58ff31291f82c7bdd2356cfa1d3180bccecec2734fd2174c1bbaea3d",
+    "src/lib/source-bill-form.ts": "f446ae97bfa07e54567e89aa56d641b2664f6ab947045e5103837f642f4e9f06",
+    "src/lib/source-check.ts": "51e96fa6c0d009eae36e137816ca4aa848fadc54cf59f2f5680b5427a729e60a",
+    "src/lib/task-progress.ts": "836b62f4f820218c9f792f699f1201495d029adc54b55ae569af9952a6c0ec6c",
+    "src/lib/telegram-channel.ts": "b596ee809975546f0ba3f97f4662eabbb27e1539947b25624faad231884b5c35",
+    "src/lib/tool-label.ts": "c5ced4ee9960e2beae209a0077a52fbbc16a10c29dbd4bd335dee50d3bf06263",
+    "src/lib/tts/index.ts": "b92073be2468575d9885c6fd0ee8de846117e7861d18b074b5c8737c94bfd56a",
+    "src/lib/tts/useSpeech.ts": "d447072ea03527389bd67252267728f4ea44d41f18516599e0d55b788e009934",
+    "src/lib/updater.ts": "68caddbee0e03f70450fd0ae93a4274635b3994ca3d5a84c5367ce22a934f1d1",
+    "src/lib/use-copy-text.ts": "d093c5b50548b052be3509da671445e5c687fd14eae81569b825a3e135fa7e77",
+    "src/lib/use-dialog-keyboard.ts": "e5b25122ddbe1ef3853b07498438e93e625fd256d7fb995868a7a45b52ed0f17",
+    "src/lib/use-media-query.ts": "16e6992a0d8c6a92da66bb3dfa872ee37eeb4c18fb899391734cbff936c529e6",
+    "src/lib/use-service-admin-access.ts": "38e3cccdd33d00366821cbb9b68c08f40c764eb6e2d29dd28e0dea4857c8f1e0",
+    "src/lib/use-stream-preview.ts": "0257a545141423e215e1cb53f8b2cad937a24515e15bb9ee0d24efbc4a90a317",
+    "src/lib/work-activity.ts": "6fd9c5a8aaac826e574babb45bfcdd57716734952b5dd9f7f1861f35d8dc18f1",
+    "src/lib/work-continuation.ts": "ace1b22bb75abce101e4eff69df9cc3dd3b5f9e938f7013e88018bd4051c7907",
+    "src/lib/workday.ts": "953e9ad652e9e10d2386615f498441774332323347766044b0d4d3f754b1ee22",
+    "src/lib/worker-issues.ts": "7c905d60f0550af894cbf8fb74741bce016a8762485d511b2c739996931b0452",
+    "src/lib/workflow-packs.ts": "53bb018f628f21dc505d33b249b4a689a9af5937cd8a892a20a91d7f445c60d7",
+    "src/lib/workspace-preferences.ts": "c68d64cbdb7ab6e4386ec3e04a3df17497e96f587a8f2ff043625a7cefee517b",
+    "src/lib/workspace-setup.ts": "80dc013ecd37ee701ef7a34505222e70591efa14f5d7fef5ec2ba86643a4066b",
+    "src/lib/workspace-tabs.tsx": "db28351eea06284cbff2aad0fb1c283ffe7531f47e52da8ec9ebdd53d33a014b",
+    "src/lib/workspace-view-state.ts": "043fa8b2ebfa9937f0c8baa9bbe437709aabc34b30c11451f5d117516330ca30",
+    "src/lib/you-navigation.ts": "4052766e33fa717dc65a98a30f4a44c356aa070cd6b555e22b89dcd1079855db",
+    "src/main.tsx": "ccbefe7be6c69706a1bb01c4c3f20492eb002435af6ba7e5a6d45f7c6aa3a140",
+    "src/mascot-preview.css": "1f85337fc77add2df7c2eee24946e2a4090c83dc21643d80d8add5e84fcaddcf",
+    "src/mascot-preview.tsx": "401a66bb9da1910f5ca2ce3977adccd8085d22abc46641dbd83c67fe8dbb1dfa",
+    "src/state/store.tsx": "6c7ce18ef945b0894fd36ec1466a2a8e562f911db89d5f6a3ed84cd73e062d62",
+    "src/styles.css": "09569791febb594976d61f900cc631520f0485391392dd82c97d0a3f83b99445",
+    "src/types/ogb.d.ts": "22ff90bb2e5fed711e21b5a663b3b3ec8d86669f533ac30c1448101e9c522ae5",
+    "src/workspace-tabs.css": "4e1139ac1f6bdbdf58d1977f61355e303a65d80d8d411283ac67e7015fc0f4ce",
+    "src/workspace.css": "8f273b2233bee364efaf09a87d66410969578504bfb54fdc572a0effa59946ec",
+    "electron/build-speech-helper-win.mjs": "00a50b342f68fceb967ba348c0ff62fc797a70f0b2a4dc018e000b5ba7d22b87",
+    "electron/build-speech-helper.mjs": "de9c46047cd6f718cf76e00d8494c6b9cb3836eb42346965051726f0709a0d41",
+    "electron/capabilities.cjs": "6cdd7be6a3fef560c6a19c0fbf572b3a697557c2a7577ef84d3ab31134539d37",
+    "electron/cua-connection.cjs": "c8d75a1a35e6f76143ffce1d3f62121e5461f8672ae986e835b324ec3c70e44f",
+    "electron/cua-control.mjs": "14a6c1abc61082a92320c813f4466a95241e57f6c3afb53e4bdfe72b8646ac7c",
+    "electron/cua-login-check.mjs": "feb0f8a6d7033c66377c3e9bf06174f7672d4af7c88498b4af6182227eaad46d",
+    "electron/cua.mjs": "94432020bd5518784c5222446c95e733683eeaf436eb2901efe3eef9924ebbea",
+    "electron/main.mjs": "cfecb45f0dffd75581aee99ef3cac91e56032ea477a204fc268e7bf431768d44",
+    "electron/perm-settings.cjs": "aad090257cab43206e5edb3e7a1ac4c0da74d4980f76e4d49feeb48bbafc5ba2",
+    "electron/preload.cjs": "53394f7f10f89a9d298e8bcae4199c90efce1dee29cc89ce858769ce29bf60e7",
+    "electron/server-supervisor.mjs": "654aa3b608ec2b3c265646df5fdf372c44bc4c0e4d3405f15de374484b6efbee",
+    "electron/service-instance.mjs": "3cf0a6b95cf6ceb3eff6f6cd2b1a8f0e458b9feca78d9894dd3bd822e4fa060c",
+    "electron/service-lifecycle.mjs": "c386b9710ccae74988371b19c1e79ea313040ff99db367400895236c101bf9df",
+    "electron/shutdown.mjs": "b0d5e3ed94c63411a6da06d2dfffe074804261df6fad88467163a9ef03738884",
+    "electron/speech.mjs": "eaf26d2aa83ada45364120e2eb835322332c56494f3c5ac6aa270084fb24c0f3",
+    "electron/terminal-launch.mjs": "2ae92a19a6e5e6d0f89ba3f1b3342cb456644beb21dac69512460ac9bd641ec1",
+    "electron/updater-action.mjs": "69268e376462d9401919530dccd4f0d7a9aa16497c82537a8be541bf78a0ce9e",
+    "electron/updater.mjs": "2d0f7e3c8b4f3675b8889c998c13c5681129c28c8eb16ece9db88bb3679b7998",
+    "pack/property/SOUL.md": "79fa105a2e33d234cee0fe9ec69a3889874218f100ff3aae961001646eed4025",
+    "pack/property/config.yaml": "9bf7bb1831d5168ca8d2228bde4d41b6357674ad5c0a6d60d91e7b2fba22e86c",
+    "pack/property/distribution.yaml": "16ab4b26c5820004e6368b7afb7b6392667179ec68e9dc21f590f91e1677d25b",
+    "pack/property/profile.yaml": "7d6aa5c2428da79f0765d248ab2b37841754a34929c774d734181662e101a6d7",
+    "pack/property/skills/intake-properties/SKILL.md": "97d66d8c3890c938a3cb3d285a6f696bb61bc9e83f1278e2ea708f27780f2bcc",
+    "pack/property/skills/morning-arrears/SKILL.md": "8717c84daaf112b1135d3458f41085cfc4ca46d69f3fbb1758df0762fdb3b249",
+    "pack/testing/agency-day-examples.json": "4996aecf10ed81f2f479443b6d04007c888c170836d2d749585f722285d2e99b",
+    "pack/testing/two-profile-practice.json": "fad1737217d8d3f02789f3ca57bd4070d703c7177fc1e3601a602c1bc7754893",
+    "pack/workflows/austin-accounts/README.md": "0c9c07d9166c10a275734391c4e7ae09ab56925bb2f5ac5ab1fb719b3c051429",
+    "pack/workflows/austin-accounts/contracts/accounts-anz-reference-candidates.schema.json": "cada9bc7ebca7ce72891b2980c3b6b06d3fe9066532175b6e795dfe1838c1512",
+    "pack/workflows/austin-accounts/contracts/accounts-bill-exception-review.schema.json": "4f650849aeafac05d3e8067aad76795b56ee0407f632355f2083b83707d80a6b",
+    "pack/workflows/austin-accounts/contracts/accounts-inbox-triage.schema.json": "adf1f51b44556ffcbe1f8203e4043afe3de8646e9037daeb395271e300a3952b",
+    "pack/workflows/austin-accounts/contracts/accounts-invoice-entry-review.schema.json": "610a8c06fe4c3740075c9141db49fc96c9683f63dd790d0ab9c693488b2d1a66",
+    "pack/workflows/austin-accounts/contracts/outputs.ts": "e3aa0f82bed5608670a2a56b25051d8b706c794ea4f73d078f2b74f992e261b3",
+    "pack/workflows/austin-accounts/morning-brief-preferences.example.json": "48d970d43d7bcdd895c954a87aacea2b179665354a87aa6e64886a0f986efb90",
+    "pack/workflows/austin-accounts/schedule-proposals.json": "ab8d817c9227d6b3b453ef4254ee375d65ddb3635a6e8e7cf6c6fbe6ed6f6949",
+    "pack/workflows/austin-accounts/support/email-inbox-triage/SKILL.md": "cd57ccc9d563b5186012b41d6bbf52e96c2837c5b8e79d524e8e5e6a44af6021",
+    "pack/workflows/austin-accounts/support/provenance.json": "df6509dc93a0c4da2fd73d34f2393b853bba1058ae1b0987ddae5fa44a80f868",
+    "pack/workflows/austin-accounts/workflows.json": "b3cd16ee895a9574a927b91714e4af2966dc1450b8963c2bcf0354dbd47ba389",
+    "pack/workflows/austin-office/README.md": "88745cb3cd17b19f9afc289a5e192aecc42c6fa3b45e3eae6221210714424e99",
+    "pack/workflows/austin-office/realbud-austin-office-v1.json": "fe59339bd7e25334b7f36fad92b0a8542971a68bad00a6a70bc35cc836fb8901",
+    "pack/workflows/austin-phase-1/README.md": "5e8e5725f4c9739dc22bda4b20e3bc1b134fbb27cc4ed7797947e9c22b5f5003",
+    "pack/workflows/austin-phase-1/fixtures/bank-settings.json": "067ad3eb092af4ecda8c24af1449e9ca0c7daaf73ee0a9d88d24112522fd3d08",
+    "pack/workflows/austin-phase-1/fixtures/expected-bills.json": "ff9ab61598f251cc1ea29d6b32b017a2bcc0b57066a463004e0a5f645885cb6f",
+    "pack/workflows/austin-phase-1/workflows.json": "2d09b4df43a2fe34bb3f0b296d9cdc895fc651e95c212bfedb2aeb07959c7ab5",
+    "pack/workflows/office-core/README.md": "cadbd3511c5bd6d1d15d0b026762e1af68d8a3e896ab1f1c1bf2e09eea3f4aea",
+    "pack/workflows/office-core/realbud-office-core-v1.json": "eeaefe1ee7b071fe621892c94b12cf8e22b4ee96c0263c873ce281e2d71717ec",
+    "package.json": "fce5f107e2f3fc33ec096646c5f4a6057e17e4d9fd192866108319063aeb0f0c",
+    "pnpm-lock.yaml": "4277dff43300b3815d3df1357caa03502cb544af64a4032130c78dccbe78e8c4",
+    "electron-builder.yml": "f24f46eb00191c24f3b1aec79bf66ece319f388f318c202d4f13a7d820dd40e4",
+    "tsconfig.server.build.json": "c896daf91cef4211fa564c78b971a72dd528c69a8b433b1c95bce82c5a700f32"
+  },
+  "artifacts": {
+    "package/mac-arm64/RealBud.app/Contents/MacOS/RealBud": {
+      "sha256": "1af684f056a8eb13e49fbd677072e437316086b076e3b9b92de3ddb343edc5b1",
+      "bytes": 33968
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/app.asar": {
+      "sha256": "423afff25eac23989330f112badb313b50f55258faa3199e339021b20cb7b656",
+      "bytes": 1036961
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/server/bootstrap.js": {
+      "sha256": "2567a50b4638d2789c135bfa708df7d5d9250bc826fd4267281e2e1641bee9d8",
+      "bytes": 1706
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/server/index.js": {
+      "sha256": "e870802d469eb9d4b44da71866515968b8382e048e2a3924c43eb9274046b4a7",
+      "bytes": 289853
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/server/private-workspace-backup.js": {
+      "sha256": "71b34b52adf2d2cd184d77c3180d9119f4538707a80001cac16ebbabb00705bd",
+      "bytes": 43386
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/index.html": {
+      "sha256": "d3201c24260a1c9b61393e62d7f6304ccf4e2332e691ce620a4fca3e85597e38",
+      "bytes": 458
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/abap-BdImnpbu.js": {
+      "sha256": "d0a7972c37e141f01cc3aaf9aabbbb3e87c4778b9fdd3ccb575d1e1ff279c0fc",
+      "bytes": 15852
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/actionscript-3-B3316cI-.js": {
+      "sha256": "34dcf5394cb476db026a03b23ebd94a8e72da98dc3303d958c8136a8287294b0",
+      "bytes": 15541
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/ada-bCR0ucgS.js": {
+      "sha256": "fc5d05054dc584a01ec795083de1774ef07f3a29fc6cfbc1902c208a09862313",
+      "bytes": 48082
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/ahk-CsyLZFj1.js": {
+      "sha256": "34bd9fb05b422d5bf8f532fbcdc6e68e0015b9115421252a79b0a755b01d1992",
+      "bytes": 31439
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/ahk2-8Zs4aa1G.js": {
+      "sha256": "4c1fb4b6b82030376c3eb176b1e1019540706a406ff627ccdc80c27e04ebed1f",
+      "bytes": 45065
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/andromeeda-C4gqWexZ.js": {
+      "sha256": "7fcfeda6c4e4d7cc1ce1c72aaca6d802bc7e107858bf0d34eca95ff4223669bd",
+      "bytes": 9015
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/angular-html-DA-rfuFy.js": {
+      "sha256": "20c25efd0ad9b3afd86114f4ec9bf568ef3fd651ae9db9701bcf6f5e4e1c514f",
+      "bytes": 24287
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/angular-ts-BrjP3tb8.js": {
+      "sha256": "d37531488d4cb2bcfd58c536f953ed9ad37b08de5250c49565bc59aedb8a30f6",
+      "bytes": 183820
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/apache-Pmp26Uib.js": {
+      "sha256": "35abb1e73308f0f43a4f76af3a4c1157bf524cbfb2908581305f6fb1cf743b24",
+      "bytes": 12456
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/apex-DhZFqWV2.js": {
+      "sha256": "391beb490d3d3517672f6fb51ae3c714a93f9178ce716226d852bd7c3189b683",
+      "bytes": 47890
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/apl-CORt7UWP.js": {
+      "sha256": "39ecaee60e716b567b1728ed9c5192f1a188c02764af88c441bb29120b1d883c",
+      "bytes": 24039
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/applescript-Co6uUVPk.js": {
+      "sha256": "e681551fbe1ac7d862ad06eae5833e6a32871de76532de01b27c5004c71c79df",
+      "bytes": 29571
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/ara-BRHolxvo.js": {
+      "sha256": "f3c7f066af4d1907c2249c7089ae8b763d88ad2f25e88f867f20e3dbb256cffb",
+      "bytes": 6362
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/asciidoc-CSVQ5wI8.js": {
+      "sha256": "9b414e47f97214f443fc137698fc42b6d4a633b91cb476241f8a1e7f2e84c4ae",
+      "bytes": 136051
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/asm-D_Q5rh1f.js": {
+      "sha256": "a43218a06da8dd93a8dd3c2b458479674d973079fe18922fe556dafa17be50a9",
+      "bytes": 40717
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/astro-HNnZUWAn.js": {
+      "sha256": "90149402df9427dfa75f428dac8873baa92b54d8043a6d15f3e3d4db717b5b0a",
+      "bytes": 24008
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/aurora-x-D-2ljcwZ.js": {
+      "sha256": "e47c699d4515a3e898860e171aa49e276c80d475e49d57ec002afdccdd760781",
+      "bytes": 13659
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/awk-DMzUqQB5.js": {
+      "sha256": "ff7d9aed38679838b5bbaae495275ae2e8fc5215811062e4eef19f6f786089cb",
+      "bytes": 5461
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/ayu-dark-DYE7WIF3.js": {
+      "sha256": "7a9244f8489f4c2f8d98500f3b9d33bf84d934cde79120ddd1de6078b8c9dbc1",
+      "bytes": 20081
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/ayu-light-BA47KaF1.js": {
+      "sha256": "3bfa9a52cf22931b3f65091b27f150d07deba32f82ec02488e36a4a24fe8ae31",
+      "bytes": 20152
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/ayu-mirage-32ctXXKs.js": {
+      "sha256": "93f93dd14750e6e3453f99e549701050a9ca11ead2186befb232bb7bc6a173d1",
+      "bytes": 20085
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/ballerina-BFfxhgS-.js": {
+      "sha256": "148a30bb0b51d5e1f00536337facfc90f70e659b3310d5875fc6d8db62c98f0c",
+      "bytes": 58693
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/bat-CickPsom.js": {
+      "sha256": "0bd1f69ed1594d1e3832ca1d1108c52060f732c435e5cd2f10a1503bebeeca54",
+      "bytes": 12894
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/beancount-k_qm7-4y.js": {
+      "sha256": "62cf81ef2432aa71aba4a8559e5c5970ce13576b19db0d75c421de19f0a662c6",
+      "bytes": 10373
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/berry-uYugtg8r.js": {
+      "sha256": "6f2394fb74b945c92dea425f90c70222f319b72a6dd9c093a7e32ebfdf60d026",
+      "bytes": 3005
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/bibtex-CHM0blh-.js": {
+      "sha256": "0a3dd8093d3aa1baaad2d1d98ecbf09c7f093517baee20e4d8e7de768c8dca37",
+      "bytes": 4795
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/bicep-Bmn6On1c.js": {
+      "sha256": "77925b291b8d048086f7fd14d23fa4ab0a4831551b1e9512c035948cfab402ee",
+      "bytes": 5382
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/bird2-Bx8U0n9b.js": {
+      "sha256": "9f2aedc9354dddaa9574b7baab60c748aaa6eb48f31cd7646dd76a700e061a24",
+      "bytes": 38681
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/blade-2xfisSek.js": {
+      "sha256": "8fdb121d61e1429b61600d41b8fcec48946174c72353e4316e77c39c3dab1363",
+      "bytes": 104981
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/bsl-DlhNcFeZ.js": {
+      "sha256": "f599effaa335754093cda3c864965ebd032e4c4d949d8a2020d11c1f8a56c668",
+      "bytes": 33952
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/c-BIGW1oBm.js": {
+      "sha256": "d6cf83167ef5e3f3ce64b34b57082b5ad6824eba4970eae9a278ab9285c9f3d8",
+      "bytes": 72113
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/c3-Dp5svz6Z.js": {
+      "sha256": "467fcff92b5f23370ec946832136c846c3dbe31b7af2cd3682f012e4f48a02c5",
+      "bytes": 26386
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/cadence-Bv_4Rxtq.js": {
+      "sha256": "eb6ab19c5a35cd1da0a04c8a01c5be50284f5655462475a7f8656a32075de3df",
+      "bytes": 23669
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/cairo-KRGpt6FW.js": {
+      "sha256": "cb3ef520248905e08410aa414b326b0a1ad308ef13c23dc9741340ba5d1ba610",
+      "bytes": 2936
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/catppuccin-frappe-CZL1YF0i.js": {
+      "sha256": "c8cfacccb41906025c57884bb351fb1f809a99f23144db317bbf5067af8d2a8a",
+      "bytes": 50853
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/catppuccin-latte-DH-8KZSZ.js": {
+      "sha256": "e223e1b9c2cae4e162dc524cc871ed8a627ac9126537c9f2509f1b259d365503",
+      "bytes": 50851
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/catppuccin-macchiato-B7yYVSCf.js": {
+      "sha256": "756df570870dd0585fc565f0076d939d008d3e0ac4ffa5ea6f97157c459be69a",
+      "bytes": 50858
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/catppuccin-mocha-Ct7hS0mc.js": {
+      "sha256": "efcbf0856a38b2a1c57cf545593de5327a6713418b157da1017fdc21a7003f4d",
+      "bytes": 50850
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/chapel-DTp_pixX.js": {
+      "sha256": "4269e5ccebef4bd885e69f27b71fb68d995ca6171738ed7315335acdc041176f",
+      "bytes": 6623
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/clarity-Dn5IMItf.js": {
+      "sha256": "cbde6347a4a9b2e7ddedb4a9240bf3889a722281d1f735b3ebe92c8198918e40",
+      "bytes": 14362
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/clojure-P80f7IUj.js": {
+      "sha256": "d84e3798038c4ac8cc2748cd8a7b606de826d38cda40fcd1af0157a2c205fad3",
+      "bytes": 6413
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/cmake-D1j8_8rp.js": {
+      "sha256": "20de18825679753afc48318521d760d4daea701c95137a58b7343f6ad6bed4f9",
+      "bytes": 9855
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/cobol-nBiQ_Alo.js": {
+      "sha256": "dffe8f987f388eb80126a75094ecf4fabb516e711d09f482d8b465ecd57b524a",
+      "bytes": 39129
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/codeowners-Bp6g37R7.js": {
+      "sha256": "748b547cc141abd1b350d2f2e3b0562606ffaf23e88bb89c8b4e7f7df3c425f7",
+      "bytes": 547
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/codeql-DsOJ9woJ.js": {
+      "sha256": "d06a0d7ec54beba6ac8aac8db0675b696bda5a7756273663bf7b5cdab0d3285e",
+      "bytes": 26883
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/coffee-Ch7k5sss.js": {
+      "sha256": "2cf05264d5ada366f643b56fa1145af2af574ed8bcd8ce653ffff95b24d8ab89",
+      "bytes": 27422
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/common-lisp-Cg-RD9OK.js": {
+      "sha256": "2fc697c25d367e1f9f950e7bae36f1a739b500bb1e646396484edb3c7e23a96b",
+      "bytes": 22581
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/coq-C7JzOVbR.js": {
+      "sha256": "0beffc40a3f6beae1448824d4633b9c7841253b7d2df5ad29e4e80ebc5ee358a",
+      "bytes": 6010
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/cpp-BMRokrvK.js": {
+      "sha256": "b8840db7709a8c61f3826b21b9787665815eac54ad06b005f501501aac606017",
+      "bytes": 785490
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/crystal-DGywbUpC.js": {
+      "sha256": "7292d63980960283d8036983107c7b911bc65bdf20d7d5218b8c8f95cfffc573",
+      "bytes": 29388
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/csharp-DSvCPggb.js": {
+      "sha256": "1ed6cae3a3f91c58b1ce9d8da2f95090c1804cd330b3ef813d35df14da2b88c6",
+      "bytes": 90189
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/css-CLj8gQPS.js": {
+      "sha256": "2848016b846e4595ae4798cb70305f259eb0e8d297b0cc9fa4ac5b0b612a3166",
+      "bytes": 49041
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/csv-fuZLfV_i.js": {
+      "sha256": "e78e725cd6790c0062e5e941943b776280c971046b16144a117a28f248156091",
+      "bytes": 1143
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/cue-D82EKSYY.js": {
+      "sha256": "d462534c02551b41f1b3198ef6faa32fdfda6bc5aa14e441e6df367fb0485ea7",
+      "bytes": 16204
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/cypher-COkxafJQ.js": {
+      "sha256": "6953f20dbca19c201dd4a7845f0fb4f3f52a82ad0a0ec6e4a418e49dd7f50666",
+      "bytes": 5956
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/d-85-TOEBH.js": {
+      "sha256": "bc9e087cec1757269bb3e28c1df26140f6fc454de2ec7e453385d27ed3b39c18",
+      "bytes": 43795
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/dark-plus-C3mMm8J8.js": {
+      "sha256": "b8b869d6edc688a6855924a0fcbb663d8c22897e84f94f8273f53cb432be2d3a",
+      "bytes": 9097
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/dart-bE4Kk8sk.js": {
+      "sha256": "2cdb81143af7036eaaee976385babd4e4610838e94e72c95eea43825a6d8260d",
+      "bytes": 8623
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/dax-CEL-wOlO.js": {
+      "sha256": "e112cfc4f22edb11cf16e6cc9c6f30c1bc44d399442a826e1c2fa68be217f4b1",
+      "bytes": 5365
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/desktop-BmXAJ9_W.js": {
+      "sha256": "fbbe32cc99e0e74b11e742aaae97dfaf0a7b553719ec179638313cc8a8039cbe",
+      "bytes": 1833
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/diff-D97Zzqfu.js": {
+      "sha256": "071f6c7f36d51227bb0701147c7508f96a0f342ba5df808ed83a820ee486c17b",
+      "bytes": 2569
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/docker-BcOcwvcX.js": {
+      "sha256": "0995ae194f7a702d1572e90b064fd0b1ee0a8da03b8f587c12261c00306eb145",
+      "bytes": 1741
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/dotenv-Da5cRb03.js": {
+      "sha256": "551287cfbe5723329a252cc084780c0511bcf7e9fc6370c241cc458fe2b7dc62",
+      "bytes": 1422
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/dracula-BzJJZx-M.js": {
+      "sha256": "6349dc749f3cf65b72d22a359e6dff84401fee8b3fccb62812bd8463e9e838c9",
+      "bytes": 21066
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/dracula-soft-BXkSAIEj.js": {
+      "sha256": "77ad2cd2bdedc3fb6c78edb3fc9bacf6838ffcad1ec6927f3a7bb6e75e1cd8b7",
+      "bytes": 21076
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/dream-maker-BtqSS_iP.js": {
+      "sha256": "44d40108b2579475555c0727913f37bf2f696a0ed48a68fd264cb601fde06cb6",
+      "bytes": 10469
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/edge-FbVlp4U3.js": {
+      "sha256": "ecc6b23827ccf76a05692cdc28127c80ab118eb59d2db10eadd04a2147458ceb",
+      "bytes": 2363
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/elixir-CkH2-t6x.js": {
+      "sha256": "128234a685dd73c5f396a5b979409814f0e92ae83c8a5675f630e811f03042a0",
+      "bytes": 16321
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/elm-DbKCFpqz.js": {
+      "sha256": "7deaadb185bfb1298a8ac5fed1a531457c7fdc5745a583ad0f783e16b8bcc1d6",
+      "bytes": 10968
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/emacs-lisp-C_m_b--Z.js": {
+      "sha256": "3781ad56dc7351e3002090ecb5da37a5da738b922592e397f8a9d000afa9641f",
+      "bytes": 790007
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/erb-DXfck5VN.js": {
+      "sha256": "953a6a99bbb1e41bbdfb04cc8852ef02ef0b7a2a926ed2553eb336f9918e4564",
+      "bytes": 2607
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/erlang-DsQrWhSR.js": {
+      "sha256": "5dea30124e59e6a84f9519a5da5944d3470182989e62d9aa65bb9b068df90c13",
+      "bytes": 37480
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/everforest-dark-BgDCqdQA.js": {
+      "sha256": "826c6890db7a065c9d4ac75850fbadde410ca10872705c74bb6c1f543f051676",
+      "bytes": 53745
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/everforest-light-C8M2exoo.js": {
+      "sha256": "2ac34042eb335675bd7c5035f2c81ccd503e6a60fe8b047396ab6486fa4f20f3",
+      "bytes": 53748
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/fennel-BYunw83y.js": {
+      "sha256": "0bb4581df6bc62ce293fd6715c42bfe54b77ffb18ce9761d0262eee728079c6e",
+      "bytes": 4768
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/fish-BvzEVeQv.js": {
+      "sha256": "31e609691f04394f54edcf86890e0f7a66aa8fed436d63da5480381875b1a3e5",
+      "bytes": 13038
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/fluent-C4IJs8-o.js": {
+      "sha256": "2929a3bca0b053d7bf7abbe02db3da7d65692836a281dc04510baaa635514cb0",
+      "bytes": 3610
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/fortran-fixed-form-CkoXwp7k.js": {
+      "sha256": "5368f7fe5dc74f0601978b78fea6617eaf5c03090f9f8600d67bd126729f9283",
+      "bytes": 1665
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/fortran-free-form-BxgE0vQu.js": {
+      "sha256": "9aa28f072525e1fd2c4963431f29d5d0918c6bd422142c98e6182e4b998370dc",
+      "bytes": 88969
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/fsharp-CXgrBDvD.js": {
+      "sha256": "2c0618c951b62650650d0c44950072534f0cfe3b4fcd58573a0024a64e53c52a",
+      "bytes": 25305
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/gdresource-TyuKm33G.js": {
+      "sha256": "fa0bb165705b7a74479b6b69878a4f61e336319072f052948f718f496e343ac2",
+      "bytes": 5285
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/gdscript-DqcFQ5yU.js": {
+      "sha256": "bfc1eee2b816f02cbc065c443c31c47560040b7e34ae9ba256a3e0ecb7569e36",
+      "bytes": 19088
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/gdshader-DkwncUOv.js": {
+      "sha256": "73f353c2c614fec2d8cfae89fb40ee57d4c406bc00b8aeafe4f7a0aa3395f603",
+      "bytes": 6326
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/genie-D0YGMca9.js": {
+      "sha256": "1ae6367d77ad7ef0abbac818ca67a213ee812abb47d1aefc5427120b1a6fd13c",
+      "bytes": 3356
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/gherkin-DyxjwDmM.js": {
+      "sha256": "c7bd366597ab12a5977d62813a92022bfbce506f2a3c70d0b3819aa39344c7ae",
+      "bytes": 11946
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/git-commit-F4YmCXRG.js": {
+      "sha256": "783b8cb9af4cb9b869335cd5cca6a2125bb97719b21ef21b004c0974181bcae6",
+      "bytes": 1230
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/git-rebase-r7XF79zn.js": {
+      "sha256": "88402cafff4897e7d7931bdb17acfcad0916e1f54353e578e876b21055ccbef9",
+      "bytes": 983
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/github-dark-DHJKELXO.js": {
+      "sha256": "8f7ccd8274e8950ef099d389c70d379782cf17f39424090949ba45833eeee022",
+      "bytes": 11405
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/github-dark-default-Cuk6v7N8.js": {
+      "sha256": "c748b560af550be6ed802ebe5433b0688f617925feafdd98d8e3d43470c24a1b",
+      "bytes": 14435
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/github-dark-dimmed-DH5Ifo-i.js": {
+      "sha256": "8bb97e7c16cb22f8acf952c9e0af4d9bc1e13cc7ad44fadd98b5df37bf3ba5f4",
+      "bytes": 14433
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/github-dark-high-contrast-E3gJ1_iC.js": {
+      "sha256": "18f1a70b963db803f141be93c79c80a0dc38f78cd47fea1ff8b05cec409b7fe9",
+      "bytes": 14595
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/github-light-DAi9KRSo.js": {
+      "sha256": "9ad9f268476dc0edc85cdb9a9ae940ee7d0ad267d5de82810fef40d2f13462ab",
+      "bytes": 11184
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/github-light-default-D7oLnXFd.js": {
+      "sha256": "212b28c6987d30991d6bc3f812cf69d93694a557235bd9e1e4460855edb2e4f4",
+      "bytes": 14156
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/github-light-high-contrast-BfjtVDDH.js": {
+      "sha256": "1b1d4ff8b3fccaa0e7cfcf8688e7fb75b086e8b879c62353f6c580f8cd260e54",
+      "bytes": 14275
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/gleam-BspZqrRM.js": {
+      "sha256": "96ee8ab10150415113386ffb698a6e578947cf099f72daf24984f09da77c2118",
+      "bytes": 2577
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/glimmer-js-ByusRIyA.js": {
+      "sha256": "7813a14696d5f5971e16e5b1f8d9eaa38089532d1f240878bb41636006087a45",
+      "bytes": 20071
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/glimmer-ts-BfAWNZQY.js": {
+      "sha256": "bbbfafb1ad45ae091bde6d2e499eed635b073cfda9146c664d9ca6102b3f73ba",
+      "bytes": 20071
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/glsl-DplSGwfg.js": {
+      "sha256": "d73db15d8c26ce44204eccdc3f250039018f34902874d55920b51f171d75a737",
+      "bytes": 3634
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/gn-n2N0HUVH.js": {
+      "sha256": "8ebd06d1b7db73d2b6a50f2072c23af6b2164783b8268fa8c8d643d4d3e72ae0",
+      "bytes": 4002
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/gnuplot-DdkO51Og.js": {
+      "sha256": "44e79156d6f1fda5d964731ffbf67170dfc593edd18e9ad76f2e984d5e90a17c",
+      "bytes": 14783
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/go-C27-OAKa.js": {
+      "sha256": "46ec75c1455e917fb6e0b1b4aa0f0b15686386aba0c8e3ca3615984ae9be696e",
+      "bytes": 46818
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/graphql-ChdNCCLP.js": {
+      "sha256": "ce3367ffe23232e3d6d2ce940d1bb233839c0ebf02b9f12b151108c8bc2d4b58",
+      "bytes": 18002
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/groovy-gcz8RCvz.js": {
+      "sha256": "a03245cec1dc1cbbf9d68a083dcc04b77cbf748ad95bdd0291bf7ae3555bc1b2",
+      "bytes": 19179
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/gruvbox-dark-hard-CFHQjOhq.js": {
+      "sha256": "d298e64968c577792359edbd2bee987149cd3b6252b82836f28dbd96cb521d3f",
+      "bytes": 22633
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/gruvbox-dark-medium-GsRaNv29.js": {
+      "sha256": "cd2d75705169e923822a9f8bc1141e8f5e7c0a5af0b5ded469dc76e5d03ada21",
+      "bytes": 22637
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/gruvbox-dark-soft-CVdnzihN.js": {
+      "sha256": "fdbd1d78ed6a4fce75feefb8797570a4568edce8ded59af0d99f83e20f3307dc",
+      "bytes": 22633
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/gruvbox-light-hard-CH1njM8p.js": {
+      "sha256": "7b2fa3d574f3ef80a213d88fddb684431e94bdb472d523d8f0caad96d5d376f8",
+      "bytes": 22636
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/gruvbox-light-medium-DRw_LuNl.js": {
+      "sha256": "62a938850d5e4fc934e44213eff465fb3618456b0490adc4887d4a83bd0d9e29",
+      "bytes": 22640
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/gruvbox-light-soft-hJgmCMqR.js": {
+      "sha256": "090f38c249b8bccd7b283926da32fa0095e8c27b5dd88ae2746863f7b7bc4ccd",
+      "bytes": 22636
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/hack-BWmVpMyf.js": {
+      "sha256": "e1db616f941bef37cfaf6623801373ea64b4d332d1d1214c231253897f9b4d00",
+      "bytes": 81131
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/haml-D5jkg6IW.js": {
+      "sha256": "f09ee1a955cd9932c1d7cec12bcde382dd619a67be150e78cf3d3c804a2cd898",
+      "bytes": 8263
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/handlebars-BpdQsYii.js": {
+      "sha256": "59889a7191fa6a95d04786d70f83b38bcf8d73cb73e0da3b48e06c2b0bfc399d",
+      "bytes": 12150
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/haskell-Df6bDoY_.js": {
+      "sha256": "164e3b023115e70432602c2da71d1c0ac7184ea91deea1dc70cf17ef74b84fa6",
+      "bytes": 41490
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/haxe-CfZj7gIn.js": {
+      "sha256": "ff0c7a20b0534485bc9a6dae421fcb7bc623bba5d646ba188bd38dcb4b85fff6",
+      "bytes": 35953
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/hcl-BWvSN4gD.js": {
+      "sha256": "2d11254542388410861c6a6a3c0f57deb9c218fdc2c1c5ffac901bdb876fe80a",
+      "bytes": 10053
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/hjson-D5-asLiD.js": {
+      "sha256": "6a7e74cb9d734dfd58aeeae9224a7b4b69a86edcc6b73d0e3e36e98dacb3300b",
+      "bytes": 12053
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/hlsl-D3lLCCz7.js": {
+      "sha256": "f5bff090211e17e314660363157f351c5a0b8e707db3ef26cdd78c8522c7d133",
+      "bytes": 7264
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/horizon-BUw7H-hv.js": {
+      "sha256": "d43f28552f920fd99607f754ce527ee0be5654097c479c446d86df933c911b72",
+      "bytes": 8780
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/horizon-bright-CUuTKBJd.js": {
+      "sha256": "d0979e7f67f06dcbce9465dc5e78779ff667236e9cffdaa91d1078e6706b6047",
+      "bytes": 8787
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/houston-DnULxvSX.js": {
+      "sha256": "91c981557306d7a18f7ff39d9060dd2b582604a75aff38ae79edc647e4d9ff93",
+      "bytes": 35422
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/html-derivative-DlHx6ybY.js": {
+      "sha256": "f94d90985d277a19bac83bcb3c913186fe83cb3388b4a21542b3f979fa48e20c",
+      "bytes": 900
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/html-pp8916En.js": {
+      "sha256": "ebe4cd4e01fd2bea09e62bc3e6117f98e0c50876ecc95aa142a3660f12a0bc53",
+      "bytes": 57247
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/http-jrhK8wxY.js": {
+      "sha256": "5bb8464898add03e8c22970d9eb4cc467b40ae2888e4d5623c9fde4209dd4d29",
+      "bytes": 4549
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/hurl-irOxFIW8.js": {
+      "sha256": "f87e3fbbc06d52e9d69c1a8cb0a3d64e430ccb85faddeb7a5f87aa12ed6d01a2",
+      "bytes": 3652
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/hxml-2-FPmUDs.js": {
+      "sha256": "99083d2dd0908659f9dff7dce19edf0d572d8bc936dc22795b1f6cf0d1ce4f70",
+      "bytes": 1894
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/hy-DFXneXwc.js": {
+      "sha256": "22df29d8b5c5119f1bd25e998bf7b359a29dc5b826e50597cee67731679cca68",
+      "bytes": 2648
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/imba-DGztddWO.js": {
+      "sha256": "73402caea94e54100c970c652577abf4995f79310e7528744b46a37227057e35",
+      "bytes": 49930
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/index-CTgVqS8d.js": {
+      "sha256": "d8980b4645637ff456366f7bc36afe2103aedf660fa4b84e73505dff8bd89c58",
+      "bytes": 198044
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/index-CZUFPlX8.js": {
+      "sha256": "0bafa9236afade3b4758ac9725984fd50281b7d7585a9014712c5f55cfa25e94",
+      "bytes": 1303431
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/index-D1CDaPtR.css": {
+      "sha256": "7b1dd31d2bbd52072a740e9489c405dcfb5c36d8d426e92494827466ff5ab1c9",
+      "bytes": 117782
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/ini-BEwlwnbL.js": {
+      "sha256": "7830e62a2a96e22c418b5a1e52ba15545ece3c5684346dd50fc174a60b3c225f",
+      "bytes": 1525
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/java-CylS5w8V.js": {
+      "sha256": "2bec4be5ba0dea3d8258669df1e6957e1ba2590a1ad56c6e103ea8c00baeba7e",
+      "bytes": 27219
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/javascript-wDzz0qaB.js": {
+      "sha256": "a4a56cc72c7d0f1ecbbeb1ba6bf5f532193c8d13fc3de19910f8d64c70aec4e9",
+      "bytes": 174827
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/jinja-f2NsQr07.js": {
+      "sha256": "16c44c1b5b54df5d7178ef7bd3486beac4e99d96e39338476eca7501ad720575",
+      "bytes": 5685
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/jison-wvAkD_A8.js": {
+      "sha256": "3d09bd59c47dffe52f1eee5bd2371ecc2c8340daac0400872472affdf0c95392",
+      "bytes": 9690
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/json-Cp-IABpG.js": {
+      "sha256": "ca32840cab9c2eb61da2afd6581e7a22c9937229f6b1a47115eea432794e7740",
+      "bytes": 2824
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/json5-C9tS-k6U.js": {
+      "sha256": "84985fb6e4953e5eccc4d704e4db9eb5c0045b74a11d3edd3a9b4c0bd3d5c2e4",
+      "bytes": 3254
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/jsonc-Des-eS-w.js": {
+      "sha256": "1a23e00b91a35d38fba019125c68139ed9c6b9a0bdb953e9b21a709875f41125",
+      "bytes": 3109
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/jsonl-DcaNXYhu.js": {
+      "sha256": "10ebbfda6fda38f977a98ef80441310d350b084c6c27c811296ddcf2d84ba3ea",
+      "bytes": 3011
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/jsonnet-DFQXde-d.js": {
+      "sha256": "198a5e9985d5d96fae3f00e0d707841393882f4b9e2bf60ab5145af13c88b513",
+      "bytes": 3618
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/jssm-C2t-YnRu.js": {
+      "sha256": "5b09940400c8fb823c95c198c9363791948e6a9229da2873bdf27b806452b831",
+      "bytes": 2238
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/jsx-g9-lgVsj.js": {
+      "sha256": "abb8a7007d9a1f743c33283c233a509dc702eb618d1447d128b1330b73851bf2",
+      "bytes": 177792
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/julia-5Bft2YPA.js": {
+      "sha256": "18a4fea8141c5a03ffdd60043d84b85a9886b7ab380ac81e98f2482f04464420",
+      "bytes": 31076
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/just-Cwhn7H3k.js": {
+      "sha256": "1f9ec3de255a94efe8669a0f995d3b71cf518b35f82c9c7c18d4f0919357c109",
+      "bytes": 11233
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/kanagawa-dragon-BuwD2xS4.js": {
+      "sha256": "b8c65fd96235e984ceae45fa618fbe6d1e12c351a0bd5ed598740e8626100aa6",
+      "bytes": 17123
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/kanagawa-lotus-C3DzagqV.js": {
+      "sha256": "97f5cb8e805ce43842308ed2fc5d658c45c22b2ebfd5321e4abd3e85bbea3e93",
+      "bytes": 17122
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/kanagawa-wave-DFGoQZhC.js": {
+      "sha256": "8013315ef8e305c56ab87cfdf3d74a1f284a2cbecde3a6e2e9311217fd522d90",
+      "bytes": 17119
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/kdl-DV7GczEv.js": {
+      "sha256": "24eccbf01c8c213cb407ee8b0294e0fe4d362c2a6c173a9516d41bf76e8cd387",
+      "bytes": 3629
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/kotlin-BdnUsdx6.js": {
+      "sha256": "2a95758b9ec1532516fb3fa38cdd82fed5534d944ca791f327e624ec94e829ac",
+      "bytes": 8785
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/kusto-wEQ09or8.js": {
+      "sha256": "255f5391b61f30323769884f680e235da9cfe6d696f2dd9200543911c361f88c",
+      "bytes": 15173
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/laserwave-DUszq2jm.js": {
+      "sha256": "d56a0486f8b143d6d31a0b0230ccc5914ffbb751543a7dc97d697cbc1152da69",
+      "bytes": 11499
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/latex-D5pSuvFb.js": {
+      "sha256": "f8a21f5b96903566d1db591922ed566e07acdc687e54bac1421a6b99cd164e62",
+      "bytes": 72902
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/lean-BZvkOJ9d.js": {
+      "sha256": "b34bf987976167f4de82af23930eaa4471b06320f236a5d00e3e9098fc704301",
+      "bytes": 5784
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/less-B1dDrJ26.js": {
+      "sha256": "ed3ea44927fda1db6ba56ae932f08ce7f82f8d8a06d2b3d63e3b29db54ec5c65",
+      "bytes": 97633
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/light-plus-B7mTdjB0.js": {
+      "sha256": "44ec2993b3cc158ca691da352114658cacc0812ba4678faec2a6370262415979",
+      "bytes": 9941
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/liquid-C0sCDyMI.js": {
+      "sha256": "f44f6ac66721b61b4608a581bd973540d0326a8a5db6d7601259061b56d0666a",
+      "bytes": 18089
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/llvm-BZoOZj88.js": {
+      "sha256": "9a303336a89f1f144e8dd97d8ffe91aa164544e6ab744a1c4b8b50b9fd54f66f",
+      "bytes": 5040
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/log-2UxHyX5q.js": {
+      "sha256": "784500daa4b6a6ac32f95c19dc166914133189decc3ed10faf43578fe522a786",
+      "bytes": 2852
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/logo-BtOb2qkB.js": {
+      "sha256": "0ded9d4454ae3e08017b17f93c117c3e451698f42109e15d69380ec089406060",
+      "bytes": 3127
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/lua-BaeVxFsk.js": {
+      "sha256": "890724e2d1bc79e6f6498ce6cedd5a4bed0d9489121621c1946ef05e209f5623",
+      "bytes": 15535
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/luau-BnpPk5vE.js": {
+      "sha256": "d0910710cdeed2d7202da8c450539dcac97f6507c2e5dc0d25b0ae59a856b9d9",
+      "bytes": 16138
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/make-CHLpvVh8.js": {
+      "sha256": "50df72a259773a4ca73a97534238010cdef78d632729871d880b58fcc6d3112f",
+      "bytes": 8961
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/markdown-Cvjx9yec.js": {
+      "sha256": "ce6a8b1a6ed9b803b1847231214ba37621c2fa51611ec3037d38b561b360c278",
+      "bytes": 59335
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/marko-DjSrsDqO.js": {
+      "sha256": "48e64452df45eac2cb4e3b01aa799b084c1eab8bed09cb8d4e48a8b0039a4b64",
+      "bytes": 25479
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/material-theme-D5KoaKCx.js": {
+      "sha256": "d0950f3965aecb678089843c133f238db6b308f218e98bdee1412de56b0af425",
+      "bytes": 18615
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/material-theme-darker-BfHTSMKl.js": {
+      "sha256": "ec892813b7a31e9e2d83f54a05450f9a406de273628838b016e828db7ed72572",
+      "bytes": 18629
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/material-theme-lighter-B0m2ddpp.js": {
+      "sha256": "4547e1325624259cb17dfa811e29b0d3e3f9a07c9f37b4cb8d4b4f945d9f2f5b",
+      "bytes": 18634
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/material-theme-ocean-CyktbL80.js": {
+      "sha256": "f80d8209f2d352d0aea9f47759017fa0f994e71e79db1e722be9d82a974692a4",
+      "bytes": 18629
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/material-theme-palenight-Csfq5Kiy.js": {
+      "sha256": "6261dfa64833f4e0c0316a1d41efc5ba6fc43a376bca6f936b4f3b76a6396af7",
+      "bytes": 18635
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/matlab-D7o27uSR.js": {
+      "sha256": "463b698b6acd5b08065007f5376b060dda4fe19f9e27259da52d40a30bc2bc66",
+      "bytes": 16086
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/mdc-D1_yUvq7.js": {
+      "sha256": "c75482b924124de5a5987cdbef73a24bb1091094d32885ed3176b85646095780",
+      "bytes": 20175
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/mdx-Cmh6b_Ma.js": {
+      "sha256": "c2c652334464f6085341dd1c46e32717e22556890fbc0d2651d9200f372069bb",
+      "bytes": 136114
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/mermaid-CQcHuHx7.js": {
+      "sha256": "82f6b9a2ce0fadf1bf76a24d14b621412f28535d2786b60ea65cd656a1ef8576",
+      "bytes": 54814
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/min-dark-CafNBF8u.js": {
+      "sha256": "4c0956f147c2dd5aef71894b78d7e95b7a766deeb20712ad94e5897bed620792",
+      "bytes": 6291
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/min-light-CTRr51gU.js": {
+      "sha256": "27e91e09c261ea328ed371e734655f83543da150143a49d5ae39598dad6cd844",
+      "bytes": 6969
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/mipsasm-CKIfxQSi.js": {
+      "sha256": "c2cdb4e8e7172f68f5bb6e0615696c2a023a2b8bfe008f424c8bbae1e120dd2b",
+      "bytes": 3259
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/mojo-DJz3ZmWd.js": {
+      "sha256": "2ae4b80c95b301f58b8e7d8501dc64f73618221dd6b5614ed21b73b015971df9",
+      "bytes": 69517
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/monokai-BRVnQi9A.js": {
+      "sha256": "7fc9211de0c0bb35524c6046c295201246b50441e96820c26aff7899441da823",
+      "bytes": 8032
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/moonbit-CHtswR0a.js": {
+      "sha256": "d05eeed6319a5c728763648765a96cff3b65640c38cfadea62e464e1a4bfedca",
+      "bytes": 24939
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/move-el3G9tDJ.js": {
+      "sha256": "b687a211e984e5dceb76fdd7eccdf8626d35241a97bb4f4e135d046db76aa46a",
+      "bytes": 17657
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/narrat-DRg8JJMk.js": {
+      "sha256": "37b1a4a08e1a0d4cf06e1ca8adddf1c51b9600b695f017b911799099ac5d8671",
+      "bytes": 3672
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/nextflow-C-mBbutL.js": {
+      "sha256": "7c78f3d862753953afee76d5ae146df0b7dd4febb549893199ada62ae433b4b9",
+      "bytes": 4510
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/nextflow-groovy-vE_lwT2v.js": {
+      "sha256": "b5e6334e56f5db6b389035922e884a0adb984b420b231d71be73d6716b337815",
+      "bytes": 10438
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/nginx-BpAMiNFr.js": {
+      "sha256": "25b53af8ecce64bdefc084c8b7af5f27537ef7022618e8d90e4b20fd1ebe485f",
+      "bytes": 35374
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/night-owl-C39BiMTA.js": {
+      "sha256": "2b8554d4a01b6e062bb929507c741070c04d4f194b424942c5f208891afa1360",
+      "bytes": 28913
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/night-owl-light-CMTm3GFP.js": {
+      "sha256": "68b5b21d900e1409b772220982c7837bd77003f084069160edc37f9eccd46758",
+      "bytes": 25902
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/nim-BIad80T-.js": {
+      "sha256": "ec12b2bd40df8b6bd6f9fed275a730551db132b69a8a420ddab621702c3bd5b8",
+      "bytes": 22460
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/nix-CwoSXNpI.js": {
+      "sha256": "1d064eb88b18c48846c1ad0e438c869aa25813361efba72de9725932c0310449",
+      "bytes": 15511
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/nord-Ddv68eIx.js": {
+      "sha256": "243a9dfea9c93c40586d279de5ea4cd8f3de380c2e3c0ea7ba58e93ef12cbcf5",
+      "bytes": 26723
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/nsis-BlV79W_Q.js": {
+      "sha256": "33258d96bfe4dc252fc7c102ecc8f777ff72dbdea8d1d7786e079db5150b448a",
+      "bytes": 13126
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/nushell-D3jzshHO.js": {
+      "sha256": "cbc1512887f0c8d9be69dfc2c1f1dee3df53ec9ae8e2e8501b0123c995946db5",
+      "bytes": 20882
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/objective-c-DXmwc3jG.js": {
+      "sha256": "aa3b80179150c0bf74649497bbeb60a36f025631ea64ca23c9e2aca64ec71c44",
+      "bytes": 105413
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/objective-cpp-CLxacb5B.js": {
+      "sha256": "9841e552a948f571c39f594fc27661f1262e589c9f53898c8ac2de469b1d85f3",
+      "bytes": 171972
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/ocaml-C0hk2d4L.js": {
+      "sha256": "eb5a88927867a33e866a8fea38c91799b28739c6038264e5a3560519951d1dc3",
+      "bytes": 62449
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/odin-BBf5iR-q.js": {
+      "sha256": "886d9212bdf48ee8eb6ba85adb1a07ca6519e5c60e4e73b5323c1cb4d8969939",
+      "bytes": 16513
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/one-dark-pro-DVMEJ2y_.js": {
+      "sha256": "7c55d00426abb85391f3432fd1282150e0bd7d54a8e5de7553a1d65c31459eb2",
+      "bytes": 33787
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/one-light-C3Wv6jpd.js": {
+      "sha256": "8f9b7f248dd34ae2acccfb35c8c095f0b581ea4e0d3351c7fe25721b914ae177",
+      "bytes": 25300
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/openscad-C4EeE6gA.js": {
+      "sha256": "36bb06e21f4dae2e8f47a92050501a4c989273bafde4096e151f591635fbed55",
+      "bytes": 2824
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/org-DM6o9KBp.js": {
+      "sha256": "b47d41b3f87c0900d5b5072b9c337395c52759a8f0acfff971413467a3a38a9e",
+      "bytes": 36323
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/pascal-D93ZcfNL.js": {
+      "sha256": "65c2b6be568561feb139eb54e384137c54c3d53b49be7be851e28aa0fc2f8c22",
+      "bytes": 4150
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/perl-B9cMNwum.js": {
+      "sha256": "d86ac3f3fd974cb6d430769ac09a155fb45aa88b260bb6767ed6015ca9da81d4",
+      "bytes": 43156
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/php-Csjmro_R.js": {
+      "sha256": "d343f73b0522b328ecd47df9de83cb919bcec370314c8f23c1e95d2126a636c4",
+      "bytes": 113090
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/pkl-u5AG7uiY.js": {
+      "sha256": "1acafc1de9c65cd06c2b6a3b0bfb928a92fd13fa5182fbc4df0f03f41ca79c24",
+      "bytes": 10372
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/plastic-3e1v2bzS.js": {
+      "sha256": "f507b7e3105e92c0d7de6346751da2f369d9d10a9237539fb2f41ca22f3f674d",
+      "bytes": 9295
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/plsql-ChMvpjG-.js": {
+      "sha256": "5b08ff2f2caca88ca87a1e02c740ec32d06d8b96d70e210abcc2729858cd9a2e",
+      "bytes": 8512
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/po-BTJTHyun.js": {
+      "sha256": "c6925708c8b9b9a2793d10218ab601e30f79eab0c2892985fd6b3f8382377b32",
+      "bytes": 3239
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/poimandres-CS3Unz2-.js": {
+      "sha256": "f3a6399c5ae3fe8b7ce02c29c7278199a4ca3ff9b39be1b455a9124c17227de3",
+      "bytes": 33494
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/polar-C0HS_06l.js": {
+      "sha256": "b6205f4f60671b327a436f3a5c02197826ed563c0c23d22d8231095515274c6d",
+      "bytes": 4671
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/postcss-CXtECtnM.js": {
+      "sha256": "748810304adf9da83f71983e99219a242fac24424483e68c0145e0edb6610136",
+      "bytes": 6417
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/powerquery-CEu0bR-o.js": {
+      "sha256": "2560bd4cef47cf5dee7b8c2204ae8008ce73f85f41764683afa1d0988f4d1d7e",
+      "bytes": 5903
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/powershell-BmBUJMz7.js": {
+      "sha256": "dc784b8a7baa1ec8a68fe8a790d540ae21c924c3181b239683d48bea87cfb1e0",
+      "bytes": 20158
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/prisma-Vru482bI.js": {
+      "sha256": "b3fde1ec204bd87bc16f820a438db08ec481521edebdf36ab0c033ef0cfd5a1e",
+      "bytes": 7744
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/prolog-CbFg5uaA.js": {
+      "sha256": "3cbc885011b27249f5a0b7660b6f7c87ac5ab4f44487107cc1e92d0c19ebb3cd",
+      "bytes": 11356
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/proto-C7zT0LnQ.js": {
+      "sha256": "2f6893062281306a31a73dcc50949a332ade86a11565f7b78d66e28ed2aaa627",
+      "bytes": 6548
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/pug-DKIMFp6K.js": {
+      "sha256": "c483d3e6e2d9a710ab36dba068fb4efbb1810cc2fbe7387b023bf6d2f53ade88",
+      "bytes": 13842
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/puppet-BMWR74SV.js": {
+      "sha256": "a7a22bdeccfe37f60d59da8851019f47f08eef8250f9a1e2f25560c12a021467",
+      "bytes": 11437
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/purescript-CklMAg4u.js": {
+      "sha256": "8fd484a61ea9faa0ef7e299f9188cb74dabea59625c822f537f7ae850d18daac",
+      "bytes": 24686
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/python-B6aJPvgy.js": {
+      "sha256": "7652ab863f920a5959c4aa52d6decb8c11d23fd590773977ce8aa0fbb3c555c4",
+      "bytes": 69952
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/qml-3beO22l8.js": {
+      "sha256": "5c58408fde8b3b813f2519a720d074dc688eaff4cc4b6db2fb1b6215dd4aff65",
+      "bytes": 5336
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/qmldir-C8lEn-DE.js": {
+      "sha256": "ad76c02c2bb338b0314af1cb1514f1fbbd31a1a78d5d931632e313fb9b374480",
+      "bytes": 1002
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/qss-IeuSbFQv.js": {
+      "sha256": "24a87ea2b74ac3f815e14d173752f42380cd4ad6faabba3b0737c66c83d7e8c3",
+      "bytes": 7472
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/r-Cf5RLm7j.js": {
+      "sha256": "128c2bf72b3160e52494e9ee0a7ff6b89bf33eb2ceb8c03de16cacd8cedd1614",
+      "bytes": 6735
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/racket-BqYA7rlc.js": {
+      "sha256": "34061595fb5ce70cda2139f9d82f5a980821fd92ea3ad48c6bbdde5ce887ff01",
+      "bytes": 92389
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/raku-DXvB9xmW.js": {
+      "sha256": "5fcd9c398ef0361d59c9d8122e3f949d13316c2f9dd673a3385c951b768ca711",
+      "bytes": 10472
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/razor-BjBPvh-w.js": {
+      "sha256": "e165e23ff46246233efce03a919a09716ee599ee49e1c6a5c640e9365b9a3655",
+      "bytes": 27510
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/rbs-CpoqiR4B.js": {
+      "sha256": "bef624b689e102d17e49bdb3305ba7ac1b3f5e3cbba51e1f5e2651adaae68183",
+      "bytes": 3311
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/red-hvxz__6c.js": {
+      "sha256": "3b40434758594762bb16e5104430da75fc93299f3be3b71b0bb82f1343d9cadb",
+      "bytes": 6418
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/reg-C-SQnVFl.js": {
+      "sha256": "c944196b442e75be8722bce04f9aa6ef7698200cfe314e998cd29b70faa75fff",
+      "bytes": 2345
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/regexp-CDVJQ6XC.js": {
+      "sha256": "4f4da7e45d7bac4acaf584b492337cc0fcfc0b2453073026b7f2d2878935ed7a",
+      "bytes": 7988
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/rel-C3B-1QV4.js": {
+      "sha256": "5e46343461aedbfdd92b75bcc78bf3f40b0383490f4e139874221766c4c73158",
+      "bytes": 3368
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/riscv-BM1_JUlF.js": {
+      "sha256": "287e2bda433a92ccd15dbd75b8b95e2ee9ca016d3501387d1b923660fa69a52c",
+      "bytes": 6914
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/ron-D8l8udqQ.js": {
+      "sha256": "c91a2f5aabc02f69e8844c66e8abbb5e2d6997c5868b974679b0dca8e68a6746",
+      "bytes": 3914
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/rose-pine-5qJOZa0Y.js": {
+      "sha256": "2792556423027effc6d8f295bc358e0d0d503dc4044d9faa552373b100fc200c",
+      "bytes": 21741
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/rose-pine-dawn-zx0QlTCp.js": {
+      "sha256": "281bac5cda64efc5b80c0227f3be933529a2a8075ef7a7ee79e6391b84181576",
+      "bytes": 21752
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/rose-pine-moon-C9pEdX9L.js": {
+      "sha256": "be365d605f464bd505051701ffe065723ee5cae7cb87126ea49f6e8833229de1",
+      "bytes": 21751
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/rosmsg-BJDFO7_C.js": {
+      "sha256": "895c74a701284063ecd96cff31b08b9e7d913b68d069907bd562b6db4f2a078d",
+      "bytes": 4523
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/rst-bs7f0vWN.js": {
+      "sha256": "249e5af679ec989354485bca928c810edc4f64998b2359e22e18cdf8c2301ec4",
+      "bytes": 10673
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/ruby-C0TQ7zu5.js": {
+      "sha256": "e9394f6234e1eeeb4039f18a69d390c92b7eea2cdf5978aefeff755af6f2135c",
+      "bytes": 46719
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/rust-B1yitclQ.js": {
+      "sha256": "c48161f6b21740ac415d982a627f24bb81081225f7405632784f667cf915d985",
+      "bytes": 15069
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/sas-DEy46yEz.js": {
+      "sha256": "0c67e604de0d4e3f02965e9ad7e9cb5b6d58757441537f0a929c237fc9939132",
+      "bytes": 9062
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/sass-Cj5Yp3dK.js": {
+      "sha256": "d3d1152bdf9e9582f0d94521982944d7dacd0e8ece70a6a51dc621b146f90c05",
+      "bytes": 9289
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/scala-CqE71os6.js": {
+      "sha256": "49722f789f01275a832469db84cef6009c48b2e9ceb5bf047b798399d5ce6093",
+      "bytes": 28889
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/scheme-C98Dy4si.js": {
+      "sha256": "743503a0223f9e794eaa6e2ec9b1a4b9e23870ea92f8a91c608bd5632159a820",
+      "bytes": 7169
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/scss-D5BDwBP9.js": {
+      "sha256": "82424791b215254726f7754b2b7ac79cf90ec58a31c023cc959957e832fa0326",
+      "bytes": 27204
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/sdbl-DVxCFoDh.js": {
+      "sha256": "09bba6eb98cb1660429de423a032b8ecc9e943af9b2ae4dc798fe665b2f4de19",
+      "bytes": 4702
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/shaderlab-Dg9Lc6iA.js": {
+      "sha256": "0f15272ff852b3807636b594b3f7ee05de4f01acf6cd35622e94c14eed99353f",
+      "bytes": 5922
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/shellscript-Yzrsuije.js": {
+      "sha256": "6a7311ff85af4098e170435bf140299e6be66e458e51d97ff91b2cea51300438",
+      "bytes": 41479
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/shellsession-BADoaaVG.js": {
+      "sha256": "8bb2a6459a5dbbe5364b504567be9b0eec02b9271d893c6377a1bb64d3f13c25",
+      "bytes": 711
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/slack-dark-BthQWCQV.js": {
+      "sha256": "f9254bd3bd7981950384332249c3bd31ff108fc659edd24b49ee6716bc23fac0",
+      "bytes": 9117
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/slack-ochin-DqwNpetd.js": {
+      "sha256": "1ede16ae081bae361e415891901a4aa6dc20de301aef52403863933d74b76783",
+      "bytes": 9431
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/smalltalk-BOQMe2GC.js": {
+      "sha256": "8a82ac5a55be2929a527f1f1881f7d14af5d259b1f4982e3986f70427d991866",
+      "bytes": 14126
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/smithy-cds9vsN8.js": {
+      "sha256": "85bdf3806717e727b7a434840d9a3de7ff1f5c89b3ea383b4e9b5174129964ab",
+      "bytes": 9134
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/snazzy-light-Bw305WKR.js": {
+      "sha256": "7721708cf2d4a690c8c599de620236acddccbbfedacf09ab0c6cc463f60ebe00",
+      "bytes": 20773
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/solarized-dark-CpvCGNkr.js": {
+      "sha256": "6b2fb4056522348f65d9b08d2151f1164cf98ab31f47112a170808bfe2f49184",
+      "bytes": 7000
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/solarized-light-Dlz6yCKv.js": {
+      "sha256": "123fd62b5015be797ca48aa510639da5ff1d1a818150a947fe817faab92c2212",
+      "bytes": 6628
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/solidity-DijEV5ha.js": {
+      "sha256": "1220df9d38a31beeaafca62c249ba525d705c53eff4b013b1aa4d354e440bc41",
+      "bytes": 16407
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/soy-8wufbnw4.js": {
+      "sha256": "e7c89ef03550bca1688783434d8247b5fcd3af09699450f82d14e3e3e3a32ec3",
+      "bytes": 6981
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/sparql-rVzFXLq3.js": {
+      "sha256": "7ad999b9fba56728f2297fbee2250f845093f2b57eacd1fcb045d6f5a32d7de2",
+      "bytes": 1480
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/splunk-BtCnVYZw.js": {
+      "sha256": "64ebc92eebd3550e91fbfc5fcbd72bfdec37d3e1d299660140ca28c2cd30cc1f",
+      "bytes": 3436
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/sql-CRqJ_cUM.js": {
+      "sha256": "6df4a8b7587aced94ab3c692d791a8095269b8cb3106c7276088aaa3b7a016e7",
+      "bytes": 23428
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/ssh-config-_ykCGR6B.js": {
+      "sha256": "59773508bec4b474f7a01df0c9a1d67d9cc6a5e90cd8be3355e7a51d45a48718",
+      "bytes": 3617
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/stata-DI20mbqo.js": {
+      "sha256": "c1088b99636bbb8fcc125b1ff81b737bdf2f28d610ec6b66e7db8bafcd851e7b",
+      "bytes": 56991
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/stylus-BEDo0Tqx.js": {
+      "sha256": "7f4744cdde011a08696b25091cb57a8af8762c48fe52bda2f929376600a17f23",
+      "bytes": 31074
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/surrealql-Cjom0U5J.js": {
+      "sha256": "b8fa8288dbec49b3d2593e4d44c752ddaa370b2878b203d2d337440029467d4f",
+      "bytes": 12059
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/svelte-Cy7k_4gC.js": {
+      "sha256": "8a74566ff0fda9c8b1f2954b7426257c3fe25d9a9624bcc844686aa175eb73f0",
+      "bytes": 18242
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/swift-C2oV4EkX.js": {
+      "sha256": "9f7077844a225a537eea5869de8ca98bd00d512cf62674f7d0b903d827cab839",
+      "bytes": 87231
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/synthwave-84-CbfX1IO0.js": {
+      "sha256": "345be8ec59dedde8193a830c5119b99ab1a263d8a0b8d0d98580b21e5b53856f",
+      "bytes": 14036
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/system-verilog-0hqHdDBg.js": {
+      "sha256": "94cef5676056c5a825431204170f562e1c4ddddcaf298ed19ed095c079fda2f7",
+      "bytes": 26556
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/systemd-4A_iFExJ.js": {
+      "sha256": "7ee808ec3ed0bd4d87a6c0b5f034ce21b5522664b1a956381a3c287c674c0ffa",
+      "bytes": 7869
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/talonscript-CkByrt1z.js": {
+      "sha256": "df10bc43abea3666beac95f07c8082bbd953cfcce01b384cac1e5bb783e3d656",
+      "bytes": 6757
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/tasl-QIJgUcNo.js": {
+      "sha256": "f8ad184dcd423a710bfe0a7c84487334383318e2e1b7b98ef0371be9f3e6c130",
+      "bytes": 3288
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/tcl-dwOrl1Do.js": {
+      "sha256": "a1a8b949384eb718737fa7f088b806e0ab6736264dbd3135ca01eaee68295f12",
+      "bytes": 4429
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/templ-DhtptRzy.js": {
+      "sha256": "0243b01689951261ad4280046d38c9292c7dde9cbc3c8e58611d58ba1b57520d",
+      "bytes": 24064
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/terraform-BETggiCN.js": {
+      "sha256": "845d38e761505099172e28bb36870b326f66ab907aaa625fcc9c4d0fee4eca49",
+      "bytes": 11389
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/tex-D96PA37w.js": {
+      "sha256": "7ed401f4a81fc4d476c64370bcdb5320b2628c597fd55f3a6c211fd2ac9305ac",
+      "bytes": 9669
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/tokyo-night-hegEt444.js": {
+      "sha256": "e00a860ce7f328571e523246063124ac104fd16c7c4a1939985c04e2912dc8dc",
+      "bytes": 35665
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/toml-vGWfd6FD.js": {
+      "sha256": "13957c3e75de850523d59c55223a274de54f38319159b54c11a41e1e909965de",
+      "bytes": 6426
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/ts-tags-D351s5mN.js": {
+      "sha256": "254942c2287e5abe4b7c5926ae18f1b5a36130acde3f1f1b4bc79a5ed3a69c54",
+      "bytes": 16571
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/tsv-B_m7g4N7.js": {
+      "sha256": "1a04ec966e09f3783309f7536dae8e824d4f8ec6ec0b6e1880c1b95a3d17762b",
+      "bytes": 739
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/tsx-COt5Ahok.js": {
+      "sha256": "6f65bdaf80285d2241cf747f58b0c2bdd7485e25bbfbc0144840ed8e13f31a4d",
+      "bytes": 175536
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/turtle-BsS91CYL.js": {
+      "sha256": "b39750a94e32101604c09b24cbc2b03cfec7089ea6b3af27863d2889003046bd",
+      "bytes": 3700
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/twig-27uCiNez.js": {
+      "sha256": "154999e832173af31311faeaf013824e36aa56d4c38693a33a1f82333938baf6",
+      "bytes": 21976
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/typescript-BPQ3VLAy.js": {
+      "sha256": "fcdcca54a7ccb637627d4dba50774a3dc7a5bae93a9f0a43c7748114b1d1d75f",
+      "bytes": 181080
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/typespec-CAFt9gP4.js": {
+      "sha256": "e1c6fefd6eda7001eeff766e90748b59a26bef3d5cbb7e35c3ed02d6b27fad3a",
+      "bytes": 25045
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/typst-BUadGCkm.js": {
+      "sha256": "516589ec0858c9310085626d5520aee724ac36b36477940b01b6f1c6c4d4048e",
+      "bytes": 163547
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/v-BGw2Nkan.js": {
+      "sha256": "2bb9592de1acc804eed5b3ea93f85a38740130bacc614a1ffdf2604f129607a0",
+      "bytes": 13330
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/vala-CsfeWuGM.js": {
+      "sha256": "9ca40f96a2c5ea6c15a4aa070af170b6a4fb19dce1aea0162639c456e88c1ee6",
+      "bytes": 3370
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/vb-Cu-pLBUe.js": {
+      "sha256": "90340c8b81180fcf3b886697596aa2d9519645c8c2a9cd4eaf92703898338938",
+      "bytes": 6075
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/verilog-nZwndyjY.js": {
+      "sha256": "4f4570244b06c1271caac10a3993318e7dc8badbba3d36c978500adb673b8e10",
+      "bytes": 6407
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/vesper-DRje8inN.js": {
+      "sha256": "58c6b0d954b34636e4629f8fff94dec40609e9522fb08ebfd615d8063d017b54",
+      "bytes": 12733
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/vhdl-CeAyd5Ju.js": {
+      "sha256": "4aa59b0e56b6ade915050f27c9359de4b33c7435f1e715b1027f6c44ff08d05f",
+      "bytes": 24264
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/viml-CJc9bBzg.js": {
+      "sha256": "255a5fbaf5961b394d403c022e2b57baf6855132db6ab4e8b3f8b6ccffdc5fc6",
+      "bytes": 20365
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/vitesse-black-Bkuqu6BP.js": {
+      "sha256": "f25530f6e39e64d7dcc0464821c2fff73bf5aab1e311d61645cd740e886a2160",
+      "bytes": 13677
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/vitesse-dark-D0r3Knsf.js": {
+      "sha256": "f3a4064c8e89ebd2349cf3dbf3e211d73b05d11cbd9bbc00feefa1820d74990b",
+      "bytes": 13759
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/vitesse-light-CVO1_9PV.js": {
+      "sha256": "272401bf8f7fa77313d7d3dbdc609a59bde479c8d69763047b5aa508e16ead9d",
+      "bytes": 13616
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/vue-BqiEGhQt.js": {
+      "sha256": "7fa1c0c0cf9501bceaafa5d5b7dfbc4ffc6ce7049c9d0327ccac359be6c57cd7",
+      "bytes": 24956
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/vue-html-AaS7Mt5G.js": {
+      "sha256": "a9066b052de965759c4456bed9e3e412c25f1050f3585a2dc6714747bbec1c0e",
+      "bytes": 8472
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/vue-vine-BoDAl6tE.js": {
+      "sha256": "afa7f4368fcaa78d83c5a184c2905effd031a31b5ef776352e62e219414a6496",
+      "bytes": 190051
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/vyper-CDx5xZoG.js": {
+      "sha256": "ff66f70ed9d0a15a77389cfc35cef85ff1f4932bef9e508f9a19b1c87d7f46e9",
+      "bytes": 74648
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/wasm-CG6Dc4jp.js": {
+      "sha256": "8deb47b0d7b203f733275b554ccf654df3b76026bd14cab89130ae2a61abd719",
+      "bytes": 622336
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/wasm-MzD3tlZU.js": {
+      "sha256": "ecac025bef526964873260d057a8af935fe8b86da2b9845051051266b019c8da",
+      "bytes": 12007
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/wenyan-BV7otONQ.js": {
+      "sha256": "40ed524c0cfce810853c17a6e99f8c357dc1ea9d5df901dcf60a2b7a45e63f7f",
+      "bytes": 2157
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/wgsl-Dx-B1_4e.js": {
+      "sha256": "97dee41e3f719e15ac2c06cbf36677252c7654e254f178128113744841a4806e",
+      "bytes": 5144
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/wikitext-BhOHFoWU.js": {
+      "sha256": "22c8b6a379a9a1aa4df1fa90a85d054b78c5414e772c062611997d98de2cdb64",
+      "bytes": 55885
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/wit-5i3qLPDT.js": {
+      "sha256": "2b2cfcdfceebf61cad332a1b126a7bce2afe89b0b5c6bf8791067154e8229bb9",
+      "bytes": 21467
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/wolfram-lXgVvXCa.js": {
+      "sha256": "5077bf9f804422eafafce9c7bc5bfd04f094ae624f0136c9a33daeac942fe75d",
+      "bytes": 262391
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/xml-sdJ4AIDG.js": {
+      "sha256": "50f00554f7503986c098ada8706f8e6a8fdad39e5158c7626d31532a883a51e8",
+      "bytes": 5384
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/xsl-CtQFsRM5.js": {
+      "sha256": "b47bbb39b319947a57525dc114ec30eb2e697bf451be75f0b79850866f6811be",
+      "bytes": 1385
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/yaml-Buea-lGh.js": {
+      "sha256": "a7a8b4fc14fa7ba338598f61185a3a13e49d7450830af367407ae61b9634bede",
+      "bytes": 10506
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/zenscript-DVFEvuxE.js": {
+      "sha256": "58a812eb8d71121ee3bd6e513b8a20555bec44f968f7c378bd7ecbfde05866a7",
+      "bytes": 3912
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/ui/assets/zig-VOosw3JB.js": {
+      "sha256": "7c369292579d89b781e91b76a4df1bfba604287c7a5e2c426925935ef08c0841",
+      "bytes": 5340
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/pack/workflows/office-core/README.md": {
+      "sha256": "cadbd3511c5bd6d1d15d0b026762e1af68d8a3e896ab1f1c1bf2e09eea3f4aea",
+      "bytes": 1887
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/pack/workflows/office-core/realbud-office-core-v1.json": {
+      "sha256": "eeaefe1ee7b071fe621892c94b12cf8e22b4ee96c0263c873ce281e2d71717ec",
+      "bytes": 26589
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/pack/workflows/austin-office/README.md": {
+      "sha256": "88745cb3cd17b19f9afc289a5e192aecc42c6fa3b45e3eae6221210714424e99",
+      "bytes": 2006
+    },
+    "package/mac-arm64/RealBud.app/Contents/Resources/pack/workflows/austin-office/realbud-austin-office-v1.json": {
+      "sha256": "fe59339bd7e25334b7f36fad92b0a8542971a68bad00a6a70bc35cc836fb8901",
+      "bytes": 26473
+    }
+  },
+  "verification": {
+    "unit": "unit-final.result.json",
+    "postgres": "company-final/result.json",
+    "nativeGui": "native/native-qa.json",
+    "packagedBackupUi": "packaged-backup/receipt.json",
+    "packagedBackupBoundary": "packaged-backup-boundaries.json",
+    "compiledService": "compiled-service.json",
+    "macSmoke": "mac-smoke.log"
+  }
+}

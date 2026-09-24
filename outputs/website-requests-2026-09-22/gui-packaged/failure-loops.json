@@ -1,0 +1,39 @@
+{
+  "version": 3,
+  "executionHistory": 1,
+  "timezone": "Australia/Brisbane",
+  "state": {
+    "morning-arrears": {
+      "enabled": true,
+      "handledThrough": 1790022105106,
+      "revision": 1
+    },
+    "owner-letter": {
+      "enabled": true,
+      "handledThrough": 1790022105107,
+      "revision": 1
+    },
+    "inbound-triage": {
+      "enabled": false,
+      "handledThrough": 1790022105108,
+      "revision": 1
+    }
+  },
+  "runs": [
+    {
+      "id": "f3dba018-fefb-433f-8598-d5485c11b70e",
+      "loopId": "inbound-triage",
+      "loopName": "Morning priorities",
+      "scheduledFor": 1790022108623,
+      "status": "failed",
+      "manual": true,
+      "loopRevision": 1,
+      "createdAt": 1790022108623,
+      "requestId": "cb84f814-9102-49d0-9d3f-3aacd89b50c8",
+      "startedAt": 1790022108635,
+      "workerFingerprint": "64355d6cddd8f8492c7603f976163bc15f9cc83b514e6caad205f7a5e2c44134",
+      "detail": "The reviewed workspace settings changed. Refresh the request and review it again.",
+      "finishedAt": 1790022108680
+    }
+  ]
+}

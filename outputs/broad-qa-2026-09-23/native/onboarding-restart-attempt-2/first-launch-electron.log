@@ -1,0 +1,10 @@
+Debugger listening on ws://127.0.0.1:58595/bf6f9128-d142-4b3e-b0a1-19e72e8ecbba
+For help, see: https://nodejs.org/learn/getting-started/debugging
+
+DevTools listening on ws://127.0.0.1:58596/devtools/browser/9e8e3674-0eee-4960-8f53-2b9cc687c0e8
+Debugger attached.
+Debugger ending on ws://127.0.0.1:58595/bf6f9128-d142-4b3e-b0a1-19e72e8ecbba
+For help, see: https://nodejs.org/learn/getting-started/debugging
+(node:80618) electron: Failed to load URL: http://127.0.0.1:28799/ with error: ERR_NAME_NOT_RESOLVED
+(Use `RealBud --trace-warnings ...` to show where the warning was created)
+(node:80618) electron: Failed to load URL: http://127.0.0.1:28799/ with error: ERR_NAME_NOT_RESOLVED

@@ -1,0 +1,57 @@
+{
+  "type": "object",
+  "properties": {
+    "findings": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "function": {
+            "type": "string"
+          },
+          "issue": {
+            "type": "string"
+          },
+          "trigger": {
+            "type": "string"
+          },
+          "correction": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "severity",
+          "function",
+          "issue",
+          "trigger",
+          "correction"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "reviewedScope": {
+      "type": "string"
+    },
+    "limits": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "findings",
+    "reviewedScope",
+    "limits"
+  ],
+  "additionalProperties": false
+}

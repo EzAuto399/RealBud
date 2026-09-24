@@ -1,0 +1,215 @@
+{
+  "moduleFile": "outputs/two-device-gate-2026-09-22/before/scripts/check-two-device-acceptance.mjs",
+  "syntheticOnly": true,
+  "outcomes": [
+    {
+      "name": "valid synthetic receipt",
+      "threw": false,
+      "evidenceComplete": true,
+      "issues": []
+    },
+    {
+      "name": "numeric workflow id",
+      "threw": true,
+      "message": "r?.id?.startsWith is not a function"
+    },
+    {
+      "name": "unknown and duplicate participant slots",
+      "threw": false,
+      "evidenceComplete": true,
+      "issues": []
+    },
+    {
+      "name": "empty participants on all non-designated cases",
+      "threw": false,
+      "evidenceComplete": true,
+      "issues": []
+    },
+    {
+      "name": "shortened operational inventory contract",
+      "threw": false,
+      "evidenceComplete": true,
+      "issues": []
+    },
+    {
+      "name": "malformed devices element null",
+      "threw": false,
+      "evidenceComplete": false,
+      "issues": [
+        "macos-macos: two distinct device slots required",
+        "macos-macos/A: missing memberAlias",
+        "macos-macos/A: missing deviceAlias",
+        "macos-macos/A: missing providerUserAlias"
+      ]
+    },
+    {
+      "name": "malformed devices element 7",
+      "threw": false,
+      "evidenceComplete": false,
+      "issues": [
+        "macos-macos: two distinct device slots required",
+        "macos-macos/A: missing memberAlias",
+        "macos-macos/A: missing deviceAlias",
+        "macos-macos/A: missing providerUserAlias"
+      ]
+    },
+    {
+      "name": "malformed devices element \"x\"",
+      "threw": false,
+      "evidenceComplete": false,
+      "issues": [
+        "macos-macos: two distinct device slots required",
+        "macos-macos/A: missing memberAlias",
+        "macos-macos/A: missing deviceAlias",
+        "macos-macos/A: missing providerUserAlias"
+      ]
+    },
+    {
+      "name": "malformed devices element {}",
+      "threw": false,
+      "evidenceComplete": false,
+      "issues": [
+        "macos-macos: two distinct device slots required",
+        "macos-macos/A: missing memberAlias",
+        "macos-macos/A: missing deviceAlias",
+        "macos-macos/A: missing providerUserAlias"
+      ]
+    },
+    {
+      "name": "malformed devices element []",
+      "threw": false,
+      "evidenceComplete": false,
+      "issues": [
+        "macos-macos: two distinct device slots required",
+        "macos-macos/A: missing memberAlias",
+        "macos-macos/A: missing deviceAlias",
+        "macos-macos/A: missing providerUserAlias"
+      ]
+    },
+    {
+      "name": "malformed workflowRuns element null",
+      "threw": false,
+      "evidenceComplete": false,
+      "issues": [
+        "macos-macos/morning-a: required passing observation missing",
+        "macos-macos/morning-a: installed-device evidence required",
+        "macos-macos/morning-a: missing evidence files",
+        "macos-macos/morning-a: wrong workflow/member mapping"
+      ]
+    },
+    {
+      "name": "malformed workflowRuns element 7",
+      "threw": false,
+      "evidenceComplete": false,
+      "issues": [
+        "macos-macos/morning-a: required passing observation missing",
+        "macos-macos/morning-a: installed-device evidence required",
+        "macos-macos/morning-a: missing evidence files",
+        "macos-macos/morning-a: wrong workflow/member mapping"
+      ]
+    },
+    {
+      "name": "malformed workflowRuns element \"x\"",
+      "threw": false,
+      "evidenceComplete": false,
+      "issues": [
+        "macos-macos/morning-a: required passing observation missing",
+        "macos-macos/morning-a: installed-device evidence required",
+        "macos-macos/morning-a: missing evidence files",
+        "macos-macos/morning-a: wrong workflow/member mapping"
+      ]
+    },
+    {
+      "name": "malformed workflowRuns element {}",
+      "threw": false,
+      "evidenceComplete": false,
+      "issues": [
+        "macos-macos/morning-a: required passing observation missing",
+        "macos-macos/morning-a: installed-device evidence required",
+        "macos-macos/morning-a: missing evidence files",
+        "macos-macos/morning-a: wrong workflow/member mapping"
+      ]
+    },
+    {
+      "name": "malformed workflowRuns element []",
+      "threw": false,
+      "evidenceComplete": false,
+      "issues": [
+        "macos-macos/morning-a: required passing observation missing",
+        "macos-macos/morning-a: installed-device evidence required",
+        "macos-macos/morning-a: missing evidence files",
+        "macos-macos/morning-a: wrong workflow/member mapping"
+      ]
+    },
+    {
+      "name": "malformed checks element null",
+      "threw": false,
+      "evidenceComplete": false,
+      "issues": [
+        "macos-macos: exactly the applicable operational cases must be recorded",
+        "macos-macos/OP-001: required passing observation missing",
+        "macos-macos/OP-001: installed-device evidence required",
+        "macos-macos/OP-001: missing evidence files"
+      ]
+    },
+    {
+      "name": "malformed checks element 7",
+      "threw": false,
+      "evidenceComplete": false,
+      "issues": [
+        "macos-macos: exactly the applicable operational cases must be recorded",
+        "macos-macos/OP-001: required passing observation missing",
+        "macos-macos/OP-001: installed-device evidence required",
+        "macos-macos/OP-001: missing evidence files"
+      ]
+    },
+    {
+      "name": "malformed checks element \"x\"",
+      "threw": false,
+      "evidenceComplete": false,
+      "issues": [
+        "macos-macos: exactly the applicable operational cases must be recorded",
+        "macos-macos/OP-001: required passing observation missing",
+        "macos-macos/OP-001: installed-device evidence required",
+        "macos-macos/OP-001: missing evidence files"
+      ]
+    },
+    {
+      "name": "malformed checks element {}",
+      "threw": false,
+      "evidenceComplete": false,
+      "issues": [
+        "macos-macos: exactly the applicable operational cases must be recorded",
+        "macos-macos/OP-001: required passing observation missing",
+        "macos-macos/OP-001: installed-device evidence required",
+        "macos-macos/OP-001: missing evidence files"
+      ]
+    },
+    {
+      "name": "malformed checks element []",
+      "threw": false,
+      "evidenceComplete": false,
+      "issues": [
+        "macos-macos: exactly the applicable operational cases must be recorded",
+        "macos-macos/OP-001: required passing observation missing",
+        "macos-macos/OP-001: installed-device evidence required",
+        "macos-macos/OP-001: missing evidence files"
+      ]
+    },
+    {
+      "name": "stat-to-read symlink substitution reads outside",
+      "threw": false,
+      "evidenceComplete": false,
+      "issues": [
+        "macos-macos/morning-b: evidence escapes receipt directory",
+        "macos-macos/bills-a: evidence escapes receipt directory",
+        "macos-macos/bills-b: evidence escapes receipt directory",
+        "macos-macos/bank-a: evidence escapes receipt directory"
+      ]
+    },
+    {
+      "name": "path race hook fired",
+      "attacked": true
+    }
+  ]
+}

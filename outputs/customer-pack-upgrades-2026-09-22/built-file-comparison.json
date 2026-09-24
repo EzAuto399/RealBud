@@ -1,0 +1,9 @@
+{
+  "passed": true,
+  "counts": {
+    "compiled-server": 334,
+    "compiled-shared": 48,
+    "compiled-src": 3,
+    "renderer": 342
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "timestamp": "2026-09-22T00:09:34.601524+00:00",
+  "checks": {
+    "actualPostgresVitest": {
+      "passed": 18,
+      "failed": 0,
+      "command": "REALBUD_TEST_POSTGRES=1 npx vitest run server/company/portal-bindings.integration.test.ts"
+    },
+    "serverTypeScript": "passed"
+  },
+  "files": {
+    "server/company/portal-bindings.ts": "2dc82da479a40dfc0a923cbe7f25a7feaff0db09d26c10aa0ebccd7f1dd591fc",
+    "server/company/portal-bindings.integration.test.ts": "baf56f99493fb25bd05b7509d5da138283a8656c4ba4d3ba43458828f10fe5cc",
+    "server/company/portal-proof.ts": "ba88193cf1304af366010b659a699308daa6e47727e9d0494fe1069e488379b5"
+  },
+  "limits": "Focused disposable PostgreSQL and source checks. Root owns integrated production network renewal and GUI checks."
+}

@@ -1,0 +1,61 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ❯ server/private-backup-mail-retention.test.ts (5 tests | 1 failed) 10874ms
+     × rejects incomplete and forged normalized graphs before preview or target mutation 499ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/private-backup-mail-retention.test.ts > normalized mail retention through private backup > rejects incomplete and forged normalized graphs before preview or target mutation
+AssertionError: promise resolved "{ …(9) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "createdAt": "2026-09-21T00:00:00.000Z",
++   "digest": "dd62676fefdce7cd57662333200a76053a19f0fc099f550b9e08c10c7aaa69c2",
++   "excluded": [
++     "Provider keys, connected-account credentials and sign-in sessions",
++     "Shared office database and company membership",
++     "Worker installation, authentication, conversations and memory",
++     "Files outside the listed business folders and external attachments",
++   ],
++   "fileCount": 4,
++   "included": [
++     "Private Desk book and property notes",
++     "Saved mail work and collected source evidence",
++     "Bank originals, reviewed copies, bills and preparation receipts",
++     "Agency settings, saved views, plans and instruction revision history",
++   ],
++   "plainBytes": 8181,
++   "recordCount": 5,
++   "restoreChanges": [
++     "Use this installation’s protected encryption key",
++     "Clear connected-account selection and setup approvals",
++     "Pause all schedules and require plan review",
++     "Retain job history; interrupt unfinished work and close sign-in handoffs",
++     "Repair the installed instruction pack before running its plans",
++   ],
++   "workspaceId": "a4da65cd-0dc3-4409-b080-1ddda28eebc9",
+  }
+
+ ❯ expectRefusalUnchanged server/private-backup-mail-retention.test.ts:72:59
+     70| async function expectRefusalUnchanged(target: Awaited<ReturnType<typeo…
+     71|   const before = await readFile(join(target.directory, 'desk.json'));
+     72|   await expect(target.backup.previewBackup(backup, phrase)).rejects.to…
+       |                                                           ^
+     73|   await expect(target.backup.stageRestore({ backup, passphrase: phrase…
+     74|   expect(await readFile(join(target.directory, 'desk.json'))).toEqual(…
+ ❯ server/private-backup-mail-retention.test.ts:137:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  1 failed | 52 passed (53)
+   Start at  17:30:59
+   Duration  16.68s (transform 315ms, setup 32ms, import 493ms, tests 15.95s, environment 0ms)
+

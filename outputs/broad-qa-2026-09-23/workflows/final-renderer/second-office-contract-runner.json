@@ -1,0 +1,9 @@
+{
+  "script": "/Users/yoda/projects/RealBud/scripts/qa-second-office-contract.mjs",
+  "sha256": "a880ee5925c4ba9a3c3c561efd40e2770de5c453d6a71bad0065c0b5d844cbcf",
+  "exitCode": 0,
+  "seconds": 1.6,
+  "started": "2026-09-23T02:38:28.722816+00:00",
+  "log": "/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/workflows/final-renderer/second-office-contract.log",
+  "tier": "current source HTTP server and final rebuilt dist renderer; synthetic data; disposable headless Chrome; not installed or live integration proof"
+}

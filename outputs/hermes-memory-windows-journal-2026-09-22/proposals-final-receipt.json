@@ -1,0 +1,77 @@
+{
+  "at": "2026-09-21T17:23:01.768548+00:00",
+  "sourceFile": "server/helpers/hermes-memory-proposals.py",
+  "sourceSha256": "13f9c35ccb5d6d6c1f20743592348f306b1ba4b18beb2e608a19915ffe3213df",
+  "sourceFrozen": true,
+  "result": "implemented-with-portable-and-POSIX-evidence",
+  "behavior": [
+    "Selected Windows publication uses exclusive stage creation then no-clobber handle move.",
+    "Prepared source-only can publish after readiness checks; matching pending-only reconciles without restaging.",
+    "Both names, missing both names, mismatches, orphan stages, and collisions remain held.",
+    "Signed human receipts prevent proposal restaging; POSIX hardlink recovery is retained."
+  ],
+  "verification": {
+    "at": "2026-09-21T17:22:20.052051+00:00",
+    "sourceSha256": "13f9c35ccb5d6d6c1f20743592348f306b1ba4b18beb2e608a19915ffe3213df",
+    "syntax": "passed",
+    "isolatedWindowsTransitions": {
+      "passed": 10,
+      "failed": 0,
+      "receipt": "proposals-state-checks.json",
+      "WindowsNativeExecuted": false
+    },
+    "existingPosixFaultSuite": {
+      "passed": 15,
+      "failed": 0,
+      "seconds": 2.775,
+      "exitCode": 0,
+      "log": "proposals-posix-faults.log",
+      "realAdmittedNativeSource": true,
+      "profiles": "disposable-fictional-only"
+    },
+    "productionWindowsHoldChanged": false,
+    "grokReview": "timed-out-no-qualified-result",
+    "otherSourceEdits": false
+  },
+  "grok": {
+    "at": "2026-09-21T17:23:01.768332+00:00",
+    "reviewStatus": "bounded-attempt-timed-out",
+    "model": "grok-4.7",
+    "effort": "xhigh",
+    "elapsedSeconds": 600.04,
+    "exitCode": -15,
+    "structuredResultAvailable": false,
+    "approvalClaimed": false,
+    "restarted": false,
+    "findingsFromModel": null,
+    "manualHardening": {
+      "finding": "New publication must not adopt an existing stage, even if content matches.",
+      "resolution": "Windows _write_stage unconditionally uses exclusive write_new; legitimate prepared stage recovery remains separate.",
+      "tested": true,
+      "deltaReceipt": "proposals-grok-post-snapshot.json"
+    },
+    "limits": [
+      "The timed-out model run supplies no independent review conclusion.",
+      "Portable synthetic IO probes do not execute Windows APIs.",
+      "Windows production holds remain intact."
+    ]
+  },
+  "independentIntegration": "QA owner rerunning its actual-helper synthetic-IO integration on final source; reported separately.",
+  "proofLimits": {
+    "nativeWindowsExecuted": false,
+    "productionWindowsHoldChanged": false,
+    "providerCalls": false,
+    "realProfilesModified": false,
+    "otherProductionFilesEdited": false
+  },
+  "ownedProcessesRemaining": false,
+  "artifacts": {
+    "proposals-verification.json": "8731f7683d330000cc04f42113c43a4ca5285bd6ff32cf2fa948666fd6825f69",
+    "proposals-state-checks.json": "054d00ee73d9f446d5dfd4537010d6dc40b52e51a7a96142f39c40ef8dd823e5",
+    "proposals-posix-faults.log": "4490b41c896782f071224a400bec6517f9b57e7f289b88c733d9f4e473493d47",
+    "proposals-grok-run.json": "d0b602f08140159a1b275ca47bcbf41f756416ac5f04fa8dd4fe2bbd8777a8a6",
+    "proposals-grok-disposition.json": "b460f04aeacf36a429c1d608d1ef2f298c00aa65029706fdbaf75a3309e8ac7d",
+    "proposals-grok-post-snapshot.diff": "15620c79a8df184bf0da25313b4d12118a7dd68156be33b8a21d2a73777c0bf1",
+    "proposals-grok-post-snapshot.json": "ca25ca350ed63db29bd62de2300cce2b8af2e1a9ed935c7a618857279c9fdf87"
+  }
+}

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -6,8 +6,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Recipe } from "../shared/contracts.ts";
 import { JobRunStore } from "./job-runs.ts";
 import * as atomic from "./atomic.ts";
+import { removeFixture } from "./testing/private-fixture.ts";
 
 const dirs: string[] = [];
+// Each store holds its execution-history database open in the fixture folder;
+// Windows cannot remove the folder until every one is closed.
+const stores: JobRunStore[] = [];
+function track(store: JobRunStore): JobRunStore {
+  stores.push(store);
+  return store;
+}
 
 function tempFile(): string {
   const dir = mkdtempSync(join(tmpdir(), "realbud-job-runs-"));
@@ -15,9 +23,10 @@ function tempFile(): string {
   return join(dir, "job-runs.json");
 }
 
-afterEach(() => {
+afterEach(async () => {
   vi.restoreAllMocks();
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const store of stores.splice(0)) store.close();
+  for (const dir of dirs.splice(0)) await removeFixture(dir);
 });
 
 function job(overrides: Partial<Recipe> = {}): Recipe {
@@ -46,7 +55,7 @@ function job(overrides: Partial<Recipe> = {}): Recipe {
 
 describe("JobRunStore", () => {
   it("deduplicates an idempotency key and freezes the queued revision", () => {
-    const store = new JobRunStore({ file: tempFile(), now: () => 100 });
+    const store = track(new JobRunStore({ file: tempFile(), now: () => 100 }));
     const recipe = job();
     const first = store.enqueue(recipe, {
       mode: "prepare",
@@ -57,7 +66,7 @@ describe("JobRunStore", () => {
     });
     recipe.steps[0] = "Changed later";
     recipe.revision = 3;
-    const again = store.enqueue(recipe, {
+    const again = store.enqueue(job(), {
       mode: "prepare",
       trigger: "schedule",
       scheduledFor: 90,
@@ -65,6 +74,7 @@ describe("JobRunStore", () => {
       idempotencyKey: "job-1:2:90",
     });
 
+    expect(() => store.enqueue(recipe, { mode: "prepare", trigger: "schedule", scheduledFor: 90, loopRunId: "loop-1", idempotencyKey: "job-1:2:90" })).toThrow(expect.objectContaining({ status: 409 }));
     expect(first.created).toBe(true);
     expect(again.created).toBe(false);
     expect(again.run.id).toBe(first.run.id);
@@ -74,7 +84,7 @@ describe("JobRunStore", () => {
   });
 
   it("rejects overlapping unresolved work for the same job", () => {
-    const store = new JobRunStore({ file: tempFile() });
+    const store = track(new JobRunStore({ file: tempFile() }));
     store.enqueue(job(), { mode: "shadow", trigger: "manual", idempotencyKey: "manual-1" });
     expect(() =>
       store.enqueue(job(), { mode: "shadow", trigger: "manual", idempotencyKey: "manual-2" }),
@@ -89,7 +99,7 @@ describe("JobRunStore", () => {
   });
 
   it("does not let a safely held receipt deadlock the next scheduled occurrence", () => {
-    const store = new JobRunStore({ file: tempFile(), now: () => 100 });
+    const store = track(new JobRunStore({ file: tempFile(), now: () => 100 }));
     const first = store.enqueue(job(), {
       mode: "prepare",
       trigger: "schedule",
@@ -113,7 +123,7 @@ describe("JobRunStore", () => {
   it("redacts receipts, persists them, and marks seen once", () => {
     let now = 100;
     const file = tempFile();
-    const store = new JobRunStore({ file, now: () => now });
+    const store = track(new JobRunStore({ file, now: () => now }));
     const queued = store.enqueue(job(), { mode: "prepare", trigger: "manual", idempotencyKey: "manual-1" }).run;
     store.start(queued.id);
     now = 120;
@@ -132,7 +142,7 @@ describe("JobRunStore", () => {
     const seen = store.markSeen(queued.id);
     now = 140;
     expect(store.markSeen(queued.id).seenAt).toBe(seen.seenAt);
-    expect(new JobRunStore({ file }).get(queued.id)).toMatchObject({
+    expect(track(new JobRunStore({ file })).get(queued.id)).toMatchObject({
       status: "awaiting-approval",
       seenAt: 130,
     });
@@ -141,7 +151,7 @@ describe("JobRunStore", () => {
   it("keeps a queued attended run and misses it after a day", () => {
     const file = tempFile();
     let now = 100;
-    const first = new JobRunStore({ file, now: () => now });
+    const first = track(new JobRunStore({ file, now: () => now }));
     const queued = first.enqueue(job({ capabilities: ["portal-read"] }), {
       mode: "attended",
       trigger: "schedule",
@@ -150,11 +160,11 @@ describe("JobRunStore", () => {
     }).run;
     expect(queued.status).toBe("queued");
 
-    const restarted = new JobRunStore({ file, now: () => 200 });
+    const restarted = track(new JobRunStore({ file, now: () => 200 }));
     expect(restarted.get(queued.id)?.status).toBe("queued");
 
     now = 100 + 24 * 60 * 60_000 + 1;
-    const late = new JobRunStore({ file, now: () => now });
+    const late = track(new JobRunStore({ file, now: () => now }));
     expect(late.get(queued.id)).toMatchObject({
       status: "missed",
       detail: "Not started — the run waited a day for someone at the screen.",
@@ -163,11 +173,11 @@ describe("JobRunStore", () => {
 
   it("marks queued and running work interrupted after restart", () => {
     const file = tempFile();
-    const first = new JobRunStore({ file, now: () => 100 });
+    const first = track(new JobRunStore({ file, now: () => 100 }));
     const running = first.enqueue(job(), { mode: "prepare", trigger: "manual", idempotencyKey: "manual-1" }).run;
     first.start(running.id);
 
-    const second = new JobRunStore({ file, now: () => 200 });
+    const second = track(new JobRunStore({ file, now: () => 200 }));
     expect(second.get(running.id)).toMatchObject({
       status: "interrupted",
       finishedAt: 200,
@@ -184,7 +194,7 @@ describe("JobRunStore", () => {
     const file = tempFile();
     mkdirSync(join(file, ".."), { recursive: true });
     writeFileSync(file, contents);
-    const store = new JobRunStore({ file });
+    const store = track(new JobRunStore({ file }));
     expect(store.recovery).toMatchObject({ active: true, detail: expect.stringMatching(/preserved/) });
     for (const action of [
       () => store.list(),
@@ -200,7 +210,7 @@ describe("JobRunStore", () => {
 
   it("rejects persisted snapshots with invented capabilities or unbounded limits", () => {
     const file = tempFile();
-    const store = new JobRunStore({ file, now: () => 100 });
+    const store = track(new JobRunStore({ file, now: () => 100 }));
     const run = store.enqueue(job(), {
       mode: "prepare",
       trigger: "manual",
@@ -215,48 +225,49 @@ describe("JobRunStore", () => {
     };
     writeFileSync(file, JSON.stringify(unsafe));
 
-    expect(() => new JobRunStore({ file }).list()).toThrow(/history needs recovery/);
+    expect(() => track(new JobRunStore({ file })).list()).toThrow(/history needs recovery/);
   });
 
   it("accepts legacy arrays while blocking duplicate receipt identities", () => {
     const file = tempFile();
-    const original = new JobRunStore({ file, now: () => 100 });
+    const original = track(new JobRunStore({ file: tempFile(), now: () => 100 }));
     const run = original.enqueue(job(), { mode: "attended", trigger: "manual", idempotencyKey: "legacy-key" }).run;
     writeFileSync(file, JSON.stringify([run]));
-    expect(new JobRunStore({ file, now: () => 101 }).get(run.id)).toEqual(run);
+    expect(track(new JobRunStore({ file, now: () => 101 })).get(run.id)).toEqual(run);
     for (const duplicate of [{ ...run, id: "another-id" }, { ...run, idempotencyKey: "another-key" }]) {
       const contents = JSON.stringify({ version: 1, runs: [run, duplicate] });
       writeFileSync(file, contents);
-      expect(() => new JobRunStore({ file }).list()).toThrow(/history needs recovery/);
+      expect(() => track(new JobRunStore({ file })).list()).toThrow(/history needs recovery/);
       expect(readFileSync(file, "utf8")).toBe(contents);
     }
   });
 
-  it("does not publish or retain a queued run when disk space runs out", () => {
+  it("holds a durable intent without publishing it when the activity projection cannot be saved", () => {
     const file = tempFile();
     const emit = vi.fn();
-    const store = new JobRunStore({ file, now: () => 100, emit });
+    const store = track(new JobRunStore({ file, now: () => 100, emit }));
     vi.spyOn(atomic, "writeFileAtomic").mockImplementationOnce(() => {
       throw Object.assign(new Error("ENOSPC: sensitive file path"), { code: "ENOSPC" });
     });
     const input = { mode: "attended" as const, trigger: "manual" as const, idempotencyKey: "disk-full-key" };
     expect(() => store.enqueue(job(), input)).toThrow(expect.objectContaining({ status: 503, message: expect.stringContaining("disk space") }));
-    expect(store.list()).toEqual([]);
+    expect(() => store.list()).toThrow(expect.objectContaining({ status: 503 }));
     expect(emit).not.toHaveBeenCalled();
-    expect(store.recovery.active).toBe(false);
-    const retry = store.enqueue(job(), input);
-    expect(retry.created).toBe(true);
-    expect(new JobRunStore({ file, now: () => 101 }).get(retry.run.id)).toEqual(retry.run);
+    expect(store.recovery.active).toBe(true);
+    expect(() => store.enqueue(job(), input)).toThrow(expect.objectContaining({ status: 503 }));
+    const restarted = track(new JobRunStore({ file, now: () => 101 }));
+    const retry = restarted.enqueue(job(), input);
+    expect(retry.created).toBe(false);
+    expect(restarted.get(retry.run.id)).toEqual(retry.run);
   });
 
-  it.each(["start", "evidence", "settle", "seen", "cancel", "sweep"] as const)("rolls back a failed %s write without publishing partial state", (action) => {
+  it.each(["start", "evidence", "settle", "seen", "cancel", "sweep"] as const)("holds a failed %s projection without publishing or replaying its durable transition", (action) => {
     const file = tempFile();
     let now = 100;
     const emit = vi.fn();
-    const store = new JobRunStore({ file, now: () => now, emit });
+    const store = track(new JobRunStore({ file, now: () => now, emit }));
     const run = store.enqueue(job(), { mode: "attended", trigger: "manual", idempotencyKey: `rollback-${action}` }).run;
     if (action === "evidence" || action === "settle") store.start(run.id);
-    const before = store.get(run.id);
     const onDisk = readFileSync(file, "utf8");
     emit.mockClear();
     now += 24 * 60 * 60_000 + 1;
@@ -272,32 +283,36 @@ describe("JobRunStore", () => {
       return store.sweepQueuedAttended();
     };
     expect(change).toThrow(expect.objectContaining({ status: 503 }));
-    expect(store.get(run.id)).toEqual(before);
+    expect(() => store.get(run.id)).toThrow(expect.objectContaining({ status: 503 }));
     expect(readFileSync(file, "utf8")).toBe(onDisk);
     expect(emit).not.toHaveBeenCalled();
-    expect(change).not.toThrow();
-    expect(emit).toHaveBeenCalledOnce();
+    expect(change).toThrow(expect.objectContaining({ status: 503 }));
+    const restarted = track(new JobRunStore({ file, now: () => now }));
+    const saved = restarted.get(run.id)!;
+    expect(saved.status).toBe(action === 'settle' ? 'completed' : action === 'cancel' ? 'cancelled' : action === 'sweep' || action === 'seen' ? 'missed' : 'interrupted');
+    if (action === 'seen') expect(saved.seenAt).toBe(now);
+    if (action === 'evidence' || action === 'settle') expect(saved.evidence[0]?.note).toBe('complete draft');
   });
 
   it("keeps the app available but pauses work if restart recovery cannot be saved", () => {
     const file = tempFile();
-    const original = new JobRunStore({ file, now: () => 100 });
+    const original = track(new JobRunStore({ file, now: () => 100 }));
     const run = original.enqueue(job(), { mode: "prepare", trigger: "manual", idempotencyKey: "interrupted" }).run;
     original.start(run.id);
     const before = readFileSync(file, "utf8");
     vi.spyOn(atomic, "writeFileAtomic").mockImplementationOnce(() => {
       throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
     });
-    const restarted = new JobRunStore({ file, now: () => 200 });
+    const restarted = track(new JobRunStore({ file, now: () => 200 }));
     expect(restarted.recovery.active).toBe(true);
     expect(() => restarted.list()).toThrow(expect.objectContaining({ status: 503 }));
     expect(readFileSync(file, "utf8")).toBe(before);
-    expect(new JobRunStore({ file, now: () => 300 }).get(run.id)).toMatchObject({ status: "interrupted", finishedAt: 300 });
+    expect(track(new JobRunStore({ file, now: () => 300 })).get(run.id)).toMatchObject({ status: "interrupted", finishedAt: 200 });
   });
 
   it("does not revert an already-renamed receipt when the final directory flush fails", () => {
     const file = tempFile();
-    const store = new JobRunStore({ file, now: () => 100 });
+    const store = track(new JobRunStore({ file, now: () => 100 }));
     const run = store.enqueue(job(), { mode: "prepare", trigger: "manual", idempotencyKey: "uncertain-save" }).run;
     store.start(run.id);
     const write = atomic.writeFileAtomic;
@@ -309,17 +324,17 @@ describe("JobRunStore", () => {
     expect(store.recovery.active).toBe(true);
     expect(() => store.get(run.id)).toThrow(expect.objectContaining({ status: 503 }));
     expect(JSON.parse(readFileSync(file, "utf8")).runs[0]).toMatchObject({ id: run.id, status: "completed" });
-    expect(new JobRunStore({ file }).get(run.id)).toMatchObject({ status: "completed" });
+    expect(track(new JobRunStore({ file })).get(run.id)).toMatchObject({ status: "completed" });
   });
 
   it("keeps concurrent duplicate requests on the same persisted receipt", async () => {
     const file = tempFile();
-    const store = new JobRunStore({ file, now: () => 100 });
+    const store = track(new JobRunStore({ file, now: () => 100 }));
     const results = await Promise.all(Array.from({ length: 8 }, async () => store.enqueue(job(), {
       mode: "attended", trigger: "manual", idempotencyKey: "one-operation",
     })));
     expect(results.filter((result) => result.created)).toHaveLength(1);
     expect(new Set(results.map((result) => result.run.id)).size).toBe(1);
-    expect(new JobRunStore({ file, now: () => 101 }).list()).toHaveLength(1);
+    expect(track(new JobRunStore({ file, now: () => 101 })).list()).toHaveLength(1);
   });
 });

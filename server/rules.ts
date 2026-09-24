@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { writeFileAtomic } from "./atomic.ts";
 import { approvalKey, looksDestructive, looksSensitive } from "./auto-approve.ts";
 import { DATA_DIR } from "./config.ts";
+import { reservedApprovalKey } from '../shared/approval-policy.ts';
 
 export type PortalRuleSurface = "portal-read" | "portal-prefill";
 
@@ -120,6 +121,7 @@ export function ruleLabel(key: string): string {
 }
 
 export function addRule(key: string, decision: BudRule["decision"], label?: string): BudRule[] {
+  if (reservedApprovalKey(key)) throw Object.assign(new Error('Memory changes require a separate review each time and cannot use saved rules.'), { status: 400 });
   const portal = parsePortalRuleKey(key);
   if (portal) {
     if (decision !== "allow") {
@@ -165,6 +167,7 @@ export function removeRule(id: string): BudRule[] {
 }
 
 export function evaluateRules(rules: BudRule[], tool: string, summary: string): "allow" | "deny" | null {
+  if (reservedApprovalKey(tool)) return null;
   if (looksDestructive(tool) || looksDestructive(summary) || looksSensitive(summary)) return null;
   const key = approvalKey(tool, summary);
   return rules.find((rule) => rule.key === key)?.decision ?? null;

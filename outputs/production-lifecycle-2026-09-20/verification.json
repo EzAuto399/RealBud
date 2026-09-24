@@ -1,0 +1,68 @@
+{
+  "recordedAt": "2026-09-20T12:27:35.158340+00:00",
+  "baseCommit": "5856140c",
+  "checkout": "Existing dirty checkout; no commit or deployment",
+  "fullRootSuite": {
+    "passedTests": 2712,
+    "skippedTests": 53,
+    "passedFiles": 241,
+    "skippedFiles": 5,
+    "postgresEnabled": true
+  },
+  "finalFocusedHttpRecoveryClient": {
+    "passedTests": 37
+  },
+  "additionalTlsLifecycleJourney": {
+    "passedTests": 6,
+    "includesNewLeaveRestartDifferentOfficeCase": true
+  },
+  "builds": [
+    "pnpm build",
+    "pnpm build:server"
+  ],
+  "browser": {
+    "sourceServer": "passed",
+    "compiledServer": "passed",
+    "viewports": [
+      1365,
+      390
+    ],
+    "companyResponses": "synthetic",
+    "visualInspection": true,
+    "darkPreference": "product retains its light palette"
+  },
+  "sourceSha256": {
+    "server/company-installation.ts": "5ac8569e0755bd86b324d59952e566a27faa2b8f60b29cc55f6eafe5497e73c2",
+    "server/company-host.ts": "633da1efb9457d82a117826dd3889f778adc9765fc49c323d72de7cd0dfb1fde",
+    "server/company-recovery.ts": "8bfcfd02f6114ad61c37e3096930c34d1d5d023edb89daa273ba8d7cb2b5323b",
+    "server/company-outbox.ts": "ca29f70c70fcfd756e246d8f556911b657ca89ace4eeceee9ae695c7b34da95c",
+    "server/private-json.ts": "24fa54ac629b95d5b5beaa7a260237ac992b791121c059a3b0ddf5bc75dc44a5",
+    "server/private-vault.ts": "28c6bc452ea5ad4fe3bdc14b3d57ad9095ebc5de2d3a1878965153a003de7f12",
+    "server/workspace-identity.ts": "cbf411c5bc003102b5a8097517c83839d7cd6c77c73b7e05d6f548ab1ebd5582",
+    "server/company/index.ts": "a4d319339b3b84b038d145b325e1c6308f8b06e27244833af89a6a3545a38b97",
+    "server/company/schema.ts": "d75cad7aff64cb0bea4b9d4ea41c3f904a2deb4cb48b17c65a372a4896a222a5",
+    "server/company/membership.ts": "0918b531a9371d8160814a006f7366d6e32b5eb3cd537de7ae37333293f4377c",
+    "server/company/backup.ts": "351a8aef93b6789c4e9edfd835babc716026edb6df0475b56fad367f9a65dc15",
+    "server/company/host-certificate.ts": "fa5ba8853cce906d9611cd45c5b6ccbc5ab76e47880f44dbea32dc553106a29d",
+    "server/company/host-transport.ts": "ed0c15a95efcb4eed7309d470ad9397cc0d1f587e06e0ebd7973c565f2c0a7d4",
+    "server/index.ts": "afe1b88f87061e89ba9f302f15b0d2035422c8992148b41f4c74e8c174dcf9ff",
+    "shared/company-api.ts": "b02deb11c49839c28b2f31c4d820fe3ea184110c816b055de5b426af280965ca",
+    "src/lib/company-api.ts": "5b0c40e3f1342b7305ed0ed6495b9ee485fa85d37ee58fdea10a5f871f504976",
+    "src/components/CompanySetupCard.tsx": "334e6947b58a028cd778f0d0a57052897b9fea8ffb4e3caaa1f06a5314ea2e95",
+    "src/components/CompanyMembers.tsx": "3ae1f5f486bb8eba8b3aa64498279089042c0c3dc143cf4dd611361ef62d6b39",
+    "src/components/CompanyRecovery.tsx": "81c02a8e39316c970de476cacdc60507e4fe1049478a62035005e2accbdaa176",
+    "src/components/CompanyHostRecovery.tsx": "68f63e7d2f81a6fc1c23cb68c4fae76f7996a34e97d12cf5f7da887717abc71c",
+    "src/components/desk/SharedWorkPanel.tsx": "b53a0ecd6c9873fe045ac067c464976551a9eea33032dcc192e9274db9c85b76",
+    "src/components/SettingsPrimitives.tsx": "11062967dac65d4dc59f47fc5a8b3ffc1775a58cafa856d8ed347ca89a6eac17",
+    "scripts/qa-solo-office-review.mjs": "f94239b6909f986b5caa000a33acae31cde5df149366daa2c05f5eeb314461f7"
+  },
+  "notEstablished": [
+    "installed Windows or Mac acceptance",
+    "live office acceptance",
+    "website deployment or command delivery",
+    "per-device enrollment",
+    "private workspace restore",
+    "complete office closure",
+    "new live model/provider workflow"
+  ]
+}

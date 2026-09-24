@@ -59,6 +59,7 @@ function readConfigStatus(value: unknown): ConfigStatus {
     composio: {
       configured: status.composio.configured,
       apiKeyConfigured: status.composio.apiKeyConfigured === true,
+      ...(typeof status.composio.managed === 'boolean' ? { managed: status.composio.managed } : {}),
       mode: status.composio.mode,
       readOnlyConfigured: status.composio.readOnlyConfigured,
       ...(typeof status.composio.readOnlyAuthConfigId === "string" ? { readOnlyAuthConfigId: status.composio.readOnlyAuthConfigId } : {}),

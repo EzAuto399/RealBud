@@ -1,0 +1,50 @@
+{
+  "passed": true,
+  "sourceRevision": "a8938b16f07c14d213db7e56fe14654c2dc197e5",
+  "requestFields": [
+    "messages",
+    "model",
+    "stream",
+    "stream_options",
+    "tools"
+  ],
+  "requestPaths": [
+    {
+      "method": "GET",
+      "path": "/api/v1/models"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tags"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/props"
+    },
+    {
+      "method": "GET",
+      "path": "/props"
+    },
+    {
+      "method": "GET",
+      "path": "/version"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/models"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/chat/completions"
+    }
+  ],
+  "gatewayParserAccepted": true,
+  "parsedMaxOutputTokens": null,
+  "parsedToolCount": 3,
+  "sourceDerivedOutputDefault": 256,
+  "limits": [
+    "Pure deployed-revision parser only; no transport/secret invocation or ledger admission",
+    "256-token default derived from deployed KeyGateway.request source, not a provider model call",
+    "Prompt byte count is not a verified token count; full Ask histories and model quality remain separate"
+  ]
+}

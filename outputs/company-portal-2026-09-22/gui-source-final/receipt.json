@@ -1,0 +1,94 @@
+{
+  "ok": true,
+  "at": "2026-09-22T00:12:19.582Z",
+  "layer": "Source desktop HTTP/rendered UI, owned company PostgreSQL, built Next and separate website PostgreSQL; fictional identities only",
+  "checks": [
+    "Actual owned office database, current network certificate and authenticated owner create a durable member-specific challenge through the desktop UI.",
+    "Fresh portal login issues a bounded proof through actual Next/PostgreSQL; lost issue and committed company acceptance replies recover exact saved requests and one candidate.",
+    "Cold desktop restart retains the same candidate and challenge. Lost committed website redemption retries the original nonce and receipt, then owner confirmation commits once. Actual pinned TLS exposes the same record only with a valid member session.",
+    "Desktop and portal mapping screens render at desktop/mobile widths without horizontal overflow; proof codes are masked in captured evidence.",
+    "Explicit disconnect is terminal and survives another restart; stale proof submission cannot revive the mapping. No case claim, mailbox read or worker is started."
+  ],
+  "errors": [],
+  "mutations": [
+    {
+      "path": "/api/company/portal-bindings/list",
+      "requestId": null,
+      "bodyDigest": "f43e6439f6835d327ac1e3b81f9c5214d591bb7e8f0211b90b5693b6f94652b2"
+    },
+    {
+      "path": "/api/company/portal-bindings/begin",
+      "requestId": "039994c1-1fc5-45bc-a52c-a4785faa3d00",
+      "bodyDigest": "3b6b309a922d8adb8668bf3eef8361c9c86a1787b6c3d204a9e74d083c4a9881"
+    },
+    {
+      "path": "/api/company/portal-bindings/accept",
+      "requestId": "6a7e3141-fa08-4150-8bd9-b761d504f205",
+      "bodyDigest": "2e0fda2e324ede310f7abdafc704d7e75b6d19f76436f8ea65096074b671754e"
+    },
+    {
+      "path": "/api/company/portal-bindings/accept",
+      "requestId": "6a7e3141-fa08-4150-8bd9-b761d504f205",
+      "bodyDigest": "2e0fda2e324ede310f7abdafc704d7e75b6d19f76436f8ea65096074b671754e"
+    },
+    {
+      "path": "/api/company/portal-bindings/list",
+      "requestId": null,
+      "bodyDigest": "f43e6439f6835d327ac1e3b81f9c5214d591bb7e8f0211b90b5693b6f94652b2"
+    },
+    {
+      "path": "/api/company/portal-bindings/confirm",
+      "requestId": "cf33d087-48c6-4ee9-ba97-f955677a8bf7",
+      "bodyDigest": "401c2db588d43adbbf3e0d00da401af48cf5d6cbba2e50a83d676c2f562b6aaf"
+    },
+    {
+      "path": "/api/company/portal-bindings/confirm",
+      "requestId": "cf33d087-48c6-4ee9-ba97-f955677a8bf7",
+      "bodyDigest": "401c2db588d43adbbf3e0d00da401af48cf5d6cbba2e50a83d676c2f562b6aaf"
+    },
+    {
+      "path": "/api/company/portal-bindings/revoke",
+      "requestId": "bde2a681-9967-4f67-92ca-90811c477e60",
+      "bodyDigest": "accf765e2afda432d7776264875bdea1a743dbe71c4d69169cba58361741f8e8"
+    }
+  ],
+  "requests": [
+    {
+      "path": "/api/company-portal/redeem",
+      "ok": true,
+      "bodyDigest": "e9a09e28e2c251da359a6847c8e5d389a60c9618e1547d4cbb7a42213dd93ef1"
+    },
+    {
+      "path": "/api/company-portal/redeem",
+      "ok": true,
+      "bodyDigest": "e9a09e28e2c251da359a6847c8e5d389a60c9618e1547d4cbb7a42213dd93ef1"
+    },
+    {
+      "path": "/api/company-portal/redeem",
+      "ok": true,
+      "bodyDigest": "3b17a471b3ce75b69056c4d04cde5a32013254422cee7327dba149c1849bf3e0"
+    },
+    {
+      "path": "/api/company-portal/redeem",
+      "ok": true,
+      "bodyDigest": "3b17a471b3ce75b69056c4d04cde5a32013254422cee7327dba149c1849bf3e0"
+    }
+  ],
+  "caseClaims": 0,
+  "executorRuns": 0,
+  "site": {
+    "rpcCount": 17,
+    "violations": [],
+    "databaseErrors": [],
+    "authRejections": [],
+    "migrationHashes": {
+      "portalPeople": "17d9df75b244cb13e356ccfff3c27591aaf7a38aec0f0c4ce003d671cb79904d",
+      "remoteApprovers": "17825f58da8cac746e98b5ac36d8ba7005210882b564174bc53fdfa236297b08",
+      "companyPortal": "9b47a8cc3949bb6514d50cf17151933f84750141e48ad2856f804404acc12b2a"
+    }
+  },
+  "limits": [
+    "Identity mapping only; no department executor admission",
+    "No deployment, native installer or live customer proof"
+  ]
+}

@@ -1,0 +1,4 @@
+
+> realbud@0.1.19 typecheck
+> tsc -b && tsc -p tsconfig.server.json
+

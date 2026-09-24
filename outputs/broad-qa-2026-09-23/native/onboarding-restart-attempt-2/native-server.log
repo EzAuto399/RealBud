@@ -1,0 +1,4 @@
+[2026-09-23T03:11:17.880Z] adopted the running office service on port 28799
+[2026-09-23T03:11:18.392Z] the desk failed to load (-105 http://127.0.0.1:28799/); waiting for the office service
+[2026-09-23T03:11:20.410Z] the office service answered on port 28799; opening the desk
+[2026-09-23T03:11:22.981Z] service stopped restarts=0

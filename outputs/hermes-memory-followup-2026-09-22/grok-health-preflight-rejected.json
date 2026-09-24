@@ -1,0 +1,135 @@
+{
+  "startedAt": "2026-09-21T17:33:26.006525+00:00",
+  "cliVersion": "1.0.34 (3736acbc8658)",
+  "requestedModel": "grok-4.7",
+  "reasoningEffort": "xhigh",
+  "requestedSession": "f1af6a89-83fc-4301-ac27-ada69b3e7b04",
+  "hardTimeoutSeconds": 180,
+  "prompt": "Health probe only: compute 2 + 2. Return the schema object with probe realbud-cli-health and answer 4. No tools or explanation.",
+  "expectedOutput": {
+    "probe": "realbud-cli-health",
+    "answer": 4
+  },
+  "promptBytes": 127,
+  "maxTurns": 1,
+  "processOverrides": {
+    "GROK_DISABLE_AUTOUPDATER": "1",
+    "GROK_MEMORY": "0",
+    "GROK_SUBAGENTS": "0",
+    "GROK_CURSOR_SKILLS_ENABLED": "0",
+    "GROK_CURSOR_RULES_ENABLED": "0",
+    "GROK_CURSOR_AGENTS_ENABLED": "0",
+    "GROK_CURSOR_MCPS_ENABLED": "0",
+    "GROK_CURSOR_HOOKS_ENABLED": "0",
+    "GROK_CLAUDE_SKILLS_ENABLED": "0",
+    "GROK_CLAUDE_RULES_ENABLED": "0",
+    "GROK_CLAUDE_AGENTS_ENABLED": "0",
+    "GROK_CLAUDE_MCPS_ENABLED": "0",
+    "GROK_CLAUDE_HOOKS_ENABLED": "0"
+  },
+  "rawDiagnosticsPersisted": false,
+  "credentialsReadByHarness": false,
+  "authentication": "Opaque auth.json symlink in private disposable GROK_HOME; no credential contents copied or printed.",
+  "globalConfigSha256Before": "ada54f57ec570d8e70cba35400ea2b557914ede90ffa893b5da122a7f69d6736",
+  "isolationPreflight": {
+    "grokVersion": "1.0.34",
+    "projectTrusted": true,
+    "counts": {
+      "projectInstructions": 1,
+      "mcpServers": 1,
+      "hooks": 1,
+      "skills": 387,
+      "plugins": 0
+    },
+    "compatibilityScanners": [
+      {
+        "vendor": "cursor",
+        "surface": "skills",
+        "enabled": false,
+        "source": "env"
+      },
+      {
+        "vendor": "cursor",
+        "surface": "rules",
+        "enabled": false,
+        "source": "env"
+      },
+      {
+        "vendor": "cursor",
+        "surface": "agents",
+        "enabled": false,
+        "source": "env"
+      },
+      {
+        "vendor": "cursor",
+        "surface": "mcps",
+        "enabled": false,
+        "source": "env"
+      },
+      {
+        "vendor": "cursor",
+        "surface": "hooks",
+        "enabled": false,
+        "source": "env"
+      },
+      {
+        "vendor": "cursor",
+        "surface": "sessions",
+        "enabled": true,
+        "source": "default"
+      },
+      {
+        "vendor": "claude",
+        "surface": "skills",
+        "enabled": false,
+        "source": "env"
+      },
+      {
+        "vendor": "claude",
+        "surface": "rules",
+        "enabled": false,
+        "source": "env"
+      },
+      {
+        "vendor": "claude",
+        "surface": "agents",
+        "enabled": false,
+        "source": "env"
+      },
+      {
+        "vendor": "claude",
+        "surface": "mcps",
+        "enabled": false,
+        "source": "env"
+      },
+      {
+        "vendor": "claude",
+        "surface": "hooks",
+        "enabled": false,
+        "source": "env"
+      },
+      {
+        "vendor": "claude",
+        "surface": "sessions",
+        "enabled": true,
+        "source": "default"
+      },
+      {
+        "vendor": "codex",
+        "surface": "sessions",
+        "enabled": true,
+        "source": "default"
+      }
+    ],
+    "mcpNames": [
+      "semble"
+    ],
+    "globalConfigRead": false
+  },
+  "passed": false,
+  "failureType": "RuntimeError",
+  "failure": "Isolation did not exclude inherited MCP/hooks/config; probe was not started.",
+  "processReaped": true,
+  "globalConfigSha256After": "ada54f57ec570d8e70cba35400ea2b557914ede90ffa893b5da122a7f69d6736",
+  "globalConfigUnchanged": true
+}

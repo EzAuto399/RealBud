@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# least privilege: CI only reads the checkout, it never writes back
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: typecheck + test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # The harness and pure desktop capabilities stay portable across all
+        # supported host platforms. POSIX-only process tests self-skip.
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Portable Windows memory policy and recovery protocol
+        run: |
+          python --version
+          python scripts/testing/hermes-memory-windows-abi.py
+          python scripts/testing/hermes-memory-windows-policy.py
+          python scripts/testing/hermes-memory-windows-protocol.py
+          python scripts/testing/hermes-memory-windows-journal-io.py
+      - name: Native Windows memory storage candidate (production hold stays)
+        if: matrix.os == 'windows-latest'
+        run: python scripts/testing/hermes-memory-windows-native.py --receipt outputs/windows-memory-ci.json
+      - name: Preserve native memory acceptance evidence
+        if: always() && matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-memory-source-proof
+          path: outputs/windows-memory-ci.json
+          if-no-files-found: warn
+          retention-days: 14
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm check:electron
+      - name: coverage thresholds (ubuntu only — fastest, same numbers)
+        if: matrix.os == 'ubuntu-latest'
+        run: pnpm test:coverage
+      - name: PM e2e battery (no engines needed)
+        if: matrix.os == 'ubuntu-latest'
+        run: node scripts/qa-e2e.mjs
+      - name: production UI build
+        if: matrix.os == 'ubuntu-latest'
+        run: pnpm exec vite build
+
+  package-linux:
+    name: package + smoke (Ubuntu 24.04 x64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install package validation tools
+        run: sudo apt-get update && sudo apt-get install -y desktop-file-utils xvfb dbus-x11
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm package:linux
+      - run: node scripts/verify-linux-package.mjs
+      - name: Configure Chromium sandbox for the unpacked app
+        run: |
+          sudo chown root:root release/linux-unpacked/chrome-sandbox
+          sudo chmod 4755 release/linux-unpacked/chrome-sandbox
+          test "$(stat -c '%U:%G %a' release/linux-unpacked/chrome-sandbox)" = "root:root 4755"
+      - name: Launch packaged app and verify lifecycle
+        run: dbus-run-session -- xvfb-run -a node scripts/smoke-linux-package.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: openmausbot-ubuntu-x64
+          path: |
+            release/*.deb
+            release/*.AppImage
+          if-no-files-found: error

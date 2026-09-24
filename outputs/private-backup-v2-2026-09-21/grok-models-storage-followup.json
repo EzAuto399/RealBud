@@ -1,0 +1,11 @@
+{
+  "checkedAt": "2026-09-21T11:58:41Z",
+  "provider": "grok.com",
+  "default": "grok-4.6",
+  "available": [
+    "grok-4.6",
+    "grok-4.5"
+  ],
+  "requestedReasoningEffort": "xhigh",
+  "source": "Completed grok models command; no 4.7 listed"
+}

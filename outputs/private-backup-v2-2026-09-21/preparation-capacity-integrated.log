@@ -1,0 +1,22 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ✓ server/private-backup-v2-integration.test.ts > actual filesystem v2 backup and restore pipeline > captures, transfers, prepares and cold-restores over 5,000 records with exact bank bytes and a different destination key 16095ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > hits an actual SQLite page cap without staging partial database bytes, then retries into a fresh prepared store 156ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > preserves a pre-existing build allocation when exclusive creation fails 23ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid build allocation ../other before preparation 15ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid build allocation /tmp/other before preparation 15ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid build allocation unknown before preparation 15ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid internal byte capacity 0 before writing 16ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid internal byte capacity 65537 before writing 16ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid internal byte capacity 1099511627776 before writing 15ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > rejects invalid internal byte capacity NaN before writing 15ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > does not accept an asynchronous lease assertion as successful admission 17ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > awaits progress persistence and rechecks admission before publishing a seal 23ms
+ ✓ server/private-backup-prepare.test.ts > bounded restore database preparation > propagates failed progress persistence without sealing or publishing a restore 22ms
+
+ Test Files  2 passed (2)
+      Tests  13 passed (13)
+   Start at  21:51:08
+   Duration  17.14s (transform 411ms, setup 23ms, import 541ms, tests 16.45s, environment 0ms)
+

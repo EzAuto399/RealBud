@@ -1,3 +1,4 @@
+import type { WorkspaceActivity } from '../workspace-activity.ts';
 import { matchesPairingCode, clearPairingCode } from "../channel-pairing.ts";
 import { channelContinuation } from "../channel-continuation.ts";
 // RealBud owns the Telegram channel: Bot API long-poll over HTTPS, then
@@ -49,6 +50,8 @@ export type StartTurnFn = (
 ) => Promise<void>;
 
 export type TelegramDeps = {
+  /** Host admission and drain boundary; channel queues remain intact. */
+  withWorkspaceActivity?: WorkspaceActivity;
   store: Store;
   startTurn: StartTurnFn;
   subscribe: (listener: (event: RuntimeEvent) => void) => () => void;
@@ -57,7 +60,7 @@ export type TelegramDeps = {
   now?: () => number;
 };
 
-const PAIR_REPLY = "Paired with RealBud on this Mac. Send a task, /continue for your latest saved reply, /summary for a short handoff, or /help. Keep this Mac awake and online.";
+const PAIR_REPLY = "Paired with your RealBud computer. Send a task, /continue for your latest saved reply, /summary for a short handoff, or /help. Keep that computer awake and online.";
 const ELSEWHERE_REPLY = "This Bud is paired elsewhere.";
 const BAD_TOKEN = "that token did not answer — check it against BotFather";
 const CLIP_AT = 3900;
@@ -468,7 +471,11 @@ function queueAsk(item: QueuedAsk): void {
   inboundQueue = [item];
 }
 
-async function enqueueOrStart(prefixed: string, deps: TelegramDeps, userMessage?: Message): Promise<void> {
+function enqueueOrStart(prefixed: string, deps: TelegramDeps, userMessage?: Message): Promise<void> {
+  const work = () => enqueueOrStartAdmitted(prefixed, deps, userMessage);
+  return deps.withWorkspaceActivity ? deps.withWorkspaceActivity(work) : work();
+}
+async function enqueueOrStartAdmitted(prefixed: string, deps: TelegramDeps, userMessage?: Message): Promise<void> {
   const bot = deps.store.productBud();
   if (!bot) return;
   const message =
@@ -478,8 +485,8 @@ async function enqueueOrStart(prefixed: string, deps: TelegramDeps, userMessage?
     const replaced = inboundQueue.length > 0;
     queueAsk({ text: prefixed, userMessage: message });
     await relayText(replaced
-      ? "Your latest follow-up replaces the waiting request. Both messages are saved in Ask on your Mac. Bud will pick up the latest one after the current work finishes."
-      : "Saved in Ask on your Mac. Bud is working and will pick this up next. If RealBud restarts first, open Ask to resume the saved request.", deps);
+      ? "Your latest follow-up replaces the waiting request. Both messages are saved in Ask on desktop. Bud will pick up the latest one after the current work finishes."
+      : "Saved in Ask on desktop. Bud is working and will pick this up next. If RealBud restarts first, open Ask to resume the saved request.", deps);
     return;
   }
   pendingRelay = { threadId: bot.threadId, userMessageId: message.id };
@@ -562,7 +569,11 @@ export function flushTelegramRelayForThread(threadId: string): void {
   })();
 }
 
-export async function handleTelegramUpdates(updates: unknown[], deps: TelegramDeps): Promise<void> {
+export function handleTelegramUpdates(updates: unknown[], deps: TelegramDeps): Promise<void> {
+  const work = () => handleTelegramUpdatesAdmitted(updates, deps);
+  return deps.withWorkspaceActivity ? deps.withWorkspaceActivity(work) : work();
+}
+async function handleTelegramUpdatesAdmitted(updates: unknown[], deps: TelegramDeps): Promise<void> {
   bound = deps;
   const record = loadChannel();
   if (!record) return;

@@ -1,0 +1,13 @@
+{
+  "checkedAt": "2026-09-23T03:35:09.562Z",
+  "revision": "a8938b16f07c14d213db7e56fe14654c2dc197e5",
+  "clientId": "fictional-hosted-client-20260922",
+  "billingCompanyId": "fictional-hosted-billing-20260922",
+  "tenant": {
+    "active": false,
+    "serviceExpiresAt": 1790116585883,
+    "expiresIso": "2026-09-22T22:36:25.883Z",
+    "includedUntil": 1790030184883
+  },
+  "statusHttp": 200
+}

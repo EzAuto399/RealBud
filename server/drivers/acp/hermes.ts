@@ -6,21 +6,32 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { hermesCli, hermesInstallCommand } from "../../hermes-pin.ts";
-import { baseWorkerProfile, hermesProfileFor } from "../../hermes-profile.ts";
+import { baseWorkerProfile, currentWorkerProfile } from "../../hermes-profile.ts";
 import { seedVault } from "../../vault.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 import { BUD_IDENTITY } from "../../../shared/bud-identity.ts";
 import { stripServiceSecrets } from "../../service-child-env.ts";
 import { hermesHome } from "../../hermes-paths.ts";
+import { applyWorkerModelAccessEnv, selectedWindowsRuntimeHome, windowsHermesRuntimeEnv, workerModelAccessSnapshot } from "../../hermes-runtime-env.ts";
 
 // Keep ACP's explicit per-session tools separate from configured discovery.
 // The startup skip flag alone does not cover discovery restarted by an agent.
 export const HERMES_CONFIGURED_MCP_FILTER = `realbud_explicit_${randomUUID().replaceAll("-", "")}`;
 
+const HERMES_BROWSER_ENV = /^(?:AGENT_BROWSER_\w*|BROWSER_CDP_URL|CAMOFOX_URL|PLAYWRIGHT_BROWSERS_PATH)$/i;
+
 export function hardenHermesChildEnv(env: Record<string, string | undefined>): void {
   // Upstream does not understand RealBud's data/profile variables. Resolve
   // the child environment here so ACP and one-shot work use the same home.
   env.HERMES_HOME = hermesHome(undefined, env);
+  if (process.platform === "win32") {
+    const runtime = selectedWindowsRuntimeHome(env.HERMES_HOME);
+    if (runtime) {
+      const prepared = windowsHermesRuntimeEnv(runtime, env);
+      for (const key of Object.keys(env)) if (key.toUpperCase() === "PATH") delete env[key];
+      Object.assign(env, prepared);
+    }
+  }
   stripServiceSecrets(env);
   // The property profile owns its model. Ambient provider keys can silently
   // reroute a turn, so they never reach the worker process.
@@ -32,6 +43,12 @@ export function hardenHermesChildEnv(env: Record<string, string | undefined>): v
   delete env.REALBUD_CUA_CONTROL_TOKEN;
   delete env.REALBUD_CUA_CONTROL_URL;
   delete env.REALBUD_DESK_KEY;
+  // Ask and its subagents get no Hermes browser; RealBud's fenced browser is
+  // the only one. Hermes' availability check (tools/browser_tool_install.py
+  // `check_browser_requirements`, which also gates the credential vault) reads
+  // these to attach to a running browser, choose Camofox or an engine, or find
+  // a Chromium. The profile policy pins the matching config keys.
+  for (const key of Object.keys(env)) if (HERMES_BROWSER_ENV.test(key)) delete env[key];
   // RealBud is the capability broker. Globally configured MCP servers must
   // not appear in Ask; only per-turn servers explicitly mounted by RealBud do.
   env.HERMES_ACP_SKIP_CONFIGURED_MCP = "1";
@@ -87,7 +104,7 @@ const support: AcpSupport = {
     // seat's own profile; without it every seat would share one memory, skills
     // store and session database. The resolver is fixed at construction — this
     // path never accepts a caller-supplied profile name.
-    const profile = support.workerProfile?.(config, turn) ?? hermesProfileFor(baseWorkerProfile()).profile;
+    const profile = support.workerProfile?.(config, turn) ?? currentWorkerProfile().profile;
     return [
       "-p",
       profile,
@@ -99,7 +116,12 @@ const support: AcpSupport = {
 
   // A leftover provider key can reroute Hermes; globally configured MCP
   // servers would bypass RealBud's explicit connection boundary.
-  transformEnv: hardenHermesChildEnv,
+  // Strip first, then place only the grant RealBud resolved for this
+  // installation (empty when no vendor provisioning exists).
+  transformEnv: (env) => {
+    hardenHermesChildEnv(env);
+    applyWorkerModelAccessEnv(env, workerModelAccessSnapshot());
+  },
 
   pickAuthMethod: () => null,
   authFailure: "continue",

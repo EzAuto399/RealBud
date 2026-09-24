@@ -3,7 +3,7 @@
 // never-rules, headless worker, no starter bot, no prompt-runner. Each gate
 // is asserted somewhere in the suite; this file re-asserts ALL of them in
 // one place so a regression in any of them fails here first and loudly.
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync as makeTemp, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,7 +13,10 @@ import { applyPropertyPack, PACK_DIR } from "./hermes-pack.ts";
 import { Desk, NEVER_ACTIONS } from "./desk.ts";
 import { LOOP_CATALOG } from "./routines.ts";
 
+import { privateFixtureRoot, WINDOWS_PROFILE_TEST_OPTIONS } from "./testing/private-profile-fixture.ts";
+
 const dirs: string[] = [];
+const mkdtempSync = (prefix: string) => realpathSync(makeTemp(prefix));
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
@@ -66,8 +69,8 @@ describe("hard gates (canary)", () => {
     expect(BUILT_IN_DRIVERS.map((d) => d.driverKind)).toEqual(["hermesAgent"]);
   });
 
-  it("the property pack locks approvals to manual and cron to deny — no yolo", () => {
-    const home = mkdtempSync(join(tmpdir(), "realbud-gates-pack-"));
+  it("the property pack locks approvals to manual and cron to deny — no yolo", WINDOWS_PROFILE_TEST_OPTIONS, () => {
+    const home = privateFixtureRoot(join(tmpdir(), "realbud-gates-pack-"));
     dirs.push(home);
     applyPropertyPack(home);
     const config = readFileSync(join(home, "profiles", "property", "config.yaml"), "utf8");

@@ -1,0 +1,43 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ❯ server/hermes-hands.test.ts (40 tests | 2 failed) 9751ms
+     × gives the ping child only its managed key after stripping ambient credentials 400ms
+     × gives the ledger child only its managed key after stripping ambient credentials 398ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/hermes-hands.test.ts > one-shot managed model access > gives the ping child only its managed key after stripping ambient credentials
+ FAIL  server/hermes-hands.test.ts > one-shot managed model access > gives the ledger child only its managed key after stripping ambient credentials
+AssertionError: expected { keyMatchesGrant: false, …(4) } to match object { keyMatchesGrant: true, …(3) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "baseUrl": "https://fictional-modelvia.invalid/v1",
+-   "keyMatchesGrant": true,
+-   "keyPresent": true,
++   "baseUrl": null,
++   "keyMatchesGrant": false,
++   "keyPresent": false,
+    "unrelatedCredentialPresent": false,
+  }
+
+ ❯ server/hermes-hands.test.ts:435:22
+    433|     const result = await run(kind, test);
+    434|     const evidence = JSON.parse(readFileSync(test.evidence, "utf8"));
+    435|     expect(evidence).toMatchObject({ keyMatchesGrant: true, keyPresent…
+       |                      ^
+    436|     expect(JSON.stringify(evidence.args)).not.toContain(grantKey);
+    437|     expect(JSON.stringify(result)).not.toContain(grantKey);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 38 passed (40)
+   Start at  13:26:53
+   Duration  10.22s (transform 290ms, setup 23ms, import 361ms, tests 9.75s, environment 0ms)
+

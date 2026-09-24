@@ -1,0 +1,40 @@
+{
+  "recordedAt": "2026-09-21T06:23:21.215Z",
+  "scope": "Private source-bill API, historical lookup and expected-bills paging",
+  "runtime": "v24.19.0",
+  "tests": {
+    "passed": 60,
+    "failed": 0,
+    "pending": 0,
+    "success": true
+  },
+  "serverTypecheck": "passed",
+  "ownedFileWhitespace": "passed",
+  "sourceHashes": {
+    "server/source-bills-api.ts": "8b3d64677845264e2b3c05ec8627e3d51df12774e036192bb7272eec0416e5e4",
+    "server/source-bills-api.test.ts": "a3b295fe6cf7cef11a360727e09e98f380c26d51f0b905eba8fcdbc8e943c659",
+    "server/bill-api-query.ts": "a8d037c7bfdf056336d52967251aed6dcf0d641c67205430205026e5e2b6452c",
+    "server/expected-bills-page.ts": "d104f255d760e2e10ffe1085605a02e97738143737d778d91551a744cdc462a0",
+    "server/expected-bills-page.test.ts": "f622b4b06471f3eaab9c7a9e61e8e0ebf71b217cca2ea8b0751a2e6911adaac1",
+    "shared/source-bills-api.ts": "2c40d0e740c1cc39fec99e9080400edc02b6c595b5a49c9cbb40c118ff4b57b9",
+    "shared/source-bills.ts": "6dc55744cc785b0eb82f2d64bc7559f6f7261db953a86f638cbe67f640ceec99",
+    "server/source-bills.ts": "126172863681fa679753834e8c5db9e1a30b48f45b242d83d1b4a304adefeb99",
+    "server/source-bill-storage.ts": "a2c012bd3714b9e7c1a9ed5924e1d82d3a170a2a915e7800282f431df374f86b",
+    "server/source-bill-graph.ts": "70b329dedce25cf4e2a73a1d0f71408f59330592adf03e6e751ac54a4099b0cd",
+    "server/source-bill-rules.ts": "effd7dbf01bd100d1f07235be0786f30122e4a53bee73fc5cf8030937fa04e97",
+    "server/workflow-database.ts": "7d1c8b5631c0dfa167ee18f7daaf741186bf6c2a1ab53c5fa4a6dbaccba7c214"
+  },
+  "proof": [
+    "Real encrypted SQLite with 501 bills and 101 arrival patterns",
+    "Exact historical lookup/correction/pattern pause beyond first pages",
+    "Complete filtered counts and insertion-stable cursors",
+    "Authoritative stored current-mail binding; retained historical source on missing current mail",
+    "Two database handles change revision between reads: 409 refresh and retained edits",
+    "Calendar prediction suppression and separate invoice due date"
+  ],
+  "limits": [
+    "Local synthetic tests only; browser, packaged and live customer proof belong to separate gates",
+    "Exact summary counts scan bounded source pages",
+    "Existing per-record history, private-mail and backup limits remain separate"
+  ]
+}

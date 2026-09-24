@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">RealBud</title>
+  <desc id="desc">The RealBud property-agent mark on a dark rounded app tile.</desc>
+  <defs>
+    <clipPath id="tile-clip"><rect width="1024" height="1024" rx="224" /></clipPath>
+    <radialGradient id="tile" cx="68%" cy="34%" r="94%">
+      <stop offset="0" stop-color="#202923" />
+      <stop offset="0.58" stop-color="#131916" />
+      <stop offset="1" stop-color="#090C0A" />
+    </radialGradient>
+    <linearGradient id="bud-green" x1="18%" y1="16%" x2="82%" y2="88%">
+      <stop offset="0" stop-color="#3B8065" />
+      <stop offset="1" stop-color="#205843" />
+    </linearGradient>
+    <linearGradient id="roof-fold" x1="22%" y1="8%" x2="78%" y2="92%">
+      <stop offset="0" stop-color="#B7D1BF" />
+      <stop offset="1" stop-color="#75A388" />
+    </linearGradient>
+  </defs>
+  <g clip-path="url(#tile-clip)">
+    <rect width="1024" height="1024" fill="url(#tile)" />
+    <path fill="url(#bud-green)" fill-rule="evenodd" d="M693 122C735 89 774 113 766 164L724 421C718 455 727 479 752 504L878 629C910 661 901 700 862 718L772 758 752 878C747 909 724 928 692 928H638V846C638 775 582 718 512 718S386 775 386 846V928H302C267 928 243 902 247 868L263 739 176 700C124 676 112 615 152 570L693 122ZM448 928V846C448 810 477 781 512 781S576 810 576 846V928Z" />
+    <path d="M704 151C728 132 744 141 739 170L702 395C696 428 700 455 714 478C671 430 650 374 661 311C673 245 687 185 704 151Z" fill="url(#roof-fold)" opacity=".9" />
+    <g fill="#0D1514"><rect x="407" y="511" width="46" height="112" rx="23" transform="rotate(-7 430 567)" /><rect x="584" y="506" width="46" height="112" rx="23" transform="rotate(5 607 562)" /></g>
+    <path d="M427 652C477 711 552 715 607 653" fill="none" stroke="#0D1514" stroke-width="34" stroke-linecap="round" />
+    <rect x="8" y="8" width="1008" height="1008" rx="216" fill="none" stroke="#FFFFFF" stroke-opacity=".07" stroke-width="16" />
+  </g>
+</svg>

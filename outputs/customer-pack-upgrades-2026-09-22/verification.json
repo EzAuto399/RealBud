@@ -1,0 +1,43 @@
+{
+  "checkedAt": "2026-09-21T19:19:46.962238+00:00",
+  "source": {
+    "files": 1103,
+    "digest": "b4494fb3dff7210275aa1af180fa52f7207cb947c2b584e902eecf9483e69a49",
+    "unchanged": true
+  },
+  "tests": {
+    "passed": 4496,
+    "failed": 0,
+    "skipped": 149,
+    "files": 353,
+    "reportedSeconds": 333.5856123046875
+  },
+  "package": {
+    "path": "/Users/yoda/projects/RealBud/outputs/customer-pack-upgrades-2026-09-22/package/mac-arm64/RealBud.app",
+    "signed": false,
+    "installed": false,
+    "digest": "48afdc418ce83e1cd20d6f13a605e387ec4ef9d7f2e7b82854585fb4a2f68a3a",
+    "unchanged": true
+  },
+  "checks": {
+    "packagePrepare": true,
+    "electronSyntax": true,
+    "nativeMacSmoke": true,
+    "freshPackagedProfile": true,
+    "packagedBrowserGroups": 5,
+    "packagedManagedMailGroups": 8,
+    "desktopAndMobileInspected": true,
+    "builtFileComparison": {
+      "compiled-server": 334,
+      "compiled-shared": 48,
+      "compiled-src": 3,
+      "renderer": 342
+    }
+  },
+  "limits": [
+    "Windows remains unrun",
+    "Gmail upstream and Hermes reasoning remain fictional in the managed-mail rehearsal",
+    "Gateway is real source; packaged desktops use Electron Node mode",
+    "No installed app replacement, external deployment, live source access or customer acceptance"
+  ]
+}

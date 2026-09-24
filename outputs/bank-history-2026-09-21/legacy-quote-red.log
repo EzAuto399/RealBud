@@ -1,0 +1,33 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ❯ server/private-backup-bank-retention.test.ts (4 tests | 1 failed | 3 skipped) 23ms
+     × retains the actual legacy quoted-reference output without rewriting its historical bytes 21ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/private-backup-bank-retention.test.ts > retained bank history through private backup > retains the actual legacy quoted-reference output without rewriting its historical bytes
+Error: This saved bank review failed its integrity check. Keep this review and recover the saved data.
+ ❯ hold server/bank-reference-validation.ts:7:49
+      5| const object = (value: unknown): value is Record<string, unknown> => !…
+      6| const at = (value: unknown): value is number => typeof value === 'numb…
+      7| const hold = (): never => { throw Object.assign(new Error('This saved …
+       |                                                 ^
+      8|
+      9| /** Pure validation shared by live reads/mutations and portable backup…
+ ❯ validateSavedBankBatch server/bank-reference-validation.ts:43:20
+ ❯ validateRecord server/private-workspace-backup.ts:193:26
+ ❯ server/private-workspace-backup.ts:180:119
+ ❯ recordsAt server/private-workspace-backup.ts:180:110
+ ❯ server/private-workspace-backup.ts:395:80
+ ❯ exclusive server/private-workspace-backup.ts:370:155
+ ❯ server/private-backup-bank-retention.test.ts:42:35
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 3 skipped (4)
+   Start at  16:40:22
+   Duration  381ms (transform 213ms, setup 25ms, import 256ms, tests 23ms, environment 0ms)
+

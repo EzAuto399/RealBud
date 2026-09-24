@@ -1,9 +1,9 @@
 // The PM's book: markdown files Hermes may read. Not a second brain UI.
 // Worker SOUL stays in the Hermes pack. Evaluate never reads these files.
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { writeFileAtomic } from "./atomic.ts";
+import { createEmptyFileSync, mkdirNewSync, restrictNewSync, writeFileAtomic, writeFilePrivateSync, type NewPrivateObject } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 import { LAW_REFERENCE_FILE, LAW_REFERENCE_MARKDOWN, refreshBundledLawReference } from "./law-reference.ts";
 
@@ -30,9 +30,13 @@ function propertyPath(id: string, book?: string): string {
   return join(bookDir(book), "properties", `${safeId(id)}.md`);
 }
 
-function ensurePrivateDir(path: string): void {
+/** Folders this call creates get their own protected Windows descriptor: at
+ * once, or in the caller's single batch when it passes `created`. */
+function ensurePrivateDir(path: string, created?: NewPrivateObject[]): void {
   if (hardenedDirs.has(path)) return;
-  mkdirSync(path, { recursive: true, mode: 0o700 });
+  const made = mkdirNewSync(path, 0o700).map((folder) => ({ path: folder, kind: "directory" as const }));
+  if (created) created.push(...made);
+  else restrictNewSync(made);
   try {
     chmodSync(path, 0o700);
   } catch {
@@ -52,38 +56,52 @@ function keepPrivateFile(path: string): void {
   hardenedFiles.add(path);
 }
 
+/** Exact bundled defaults distinguish a fresh restore target from edited notes. */
+export const DEFAULT_VAULT_DOCUMENTS: Readonly<Record<string,string>> = {
+  'USER.md': '# You\n\nThis is the property manager RealBud works for.\n',
+  'README.md': ['# Book','','Notes on each property live in properties/. They are preferences, not law.',
+    'Desk shop rules and the ledger win. Do not invent a legal clock.','Process for notices and trust sits with the licensee.',''].join('\n'),
+  [LAW_REFERENCE_FILE]: LAW_REFERENCE_MARKDOWN,
+};
+
 export function seedVault(book?: string): string {
   const dir = bookDir(book);
-  ensurePrivateDir(dir);
-  ensurePrivateDir(join(dir, "properties"));
-  ensurePrivateDir(join(dir, "owners"));
-  ensurePrivateDir(join(dir, "decisions"));
-  const user = join(dir, "USER.md");
-  if (!existsSync(user)) {
-    writeFileSync(user, "# You\n\nThis is the property manager RealBud works for.\n", { mode: 0o600 });
+  const folders = [dir, join(dir, "properties"), join(dir, "owners"), join(dir, "decisions")];
+  // Everything a first run creates here is restricted in one PowerShell
+  // process on Windows, while the new documents are still empty.
+  const created: NewPrivateObject[] = [];
+  const fresh: Array<[string, string]> = [];
+  try {
+    for (const folder of folders) ensurePrivateDir(folder, created);
+    for (const name of ["USER.md", "README.md", LAW_REFERENCE_FILE]) {
+      const path = join(dir, name);
+      if (!existsSync(path) && createEmptyFileSync(path, 0o600)) {
+        created.push({ path, kind: "file" });
+        fresh.push([path, DEFAULT_VAULT_DOCUMENTS[name]]);
+      }
+    }
+    restrictNewSync(created);
+  } catch (error) {
+    // Nothing new stays behind unprotected: a retry creates it again.
+    for (const { path, kind } of created.reverse()) {
+      try {
+        if (kind === "file") unlinkSync(path);
+        else rmdirSync(path);
+      } catch {
+        /* already removed, or no longer empty */
+      }
+    }
+    for (const folder of folders) hardenedDirs.delete(folder);
+    throw error;
   }
+  for (const [path, content] of fresh) writeFileSync(path, content, { mode: 0o600 });
+  const user = join(dir, "USER.md");
   keepPrivateFile(user);
   const readme = join(dir, "README.md");
-  if (!existsSync(readme)) {
-    writeFileSync(
-      readme,
-      [
-        "# Book",
-        "",
-        "Notes on each property live in properties/. They are preferences, not law.",
-        "Desk shop rules and the ledger win. Do not invent a legal clock.",
-        "Process for notices and trust sits with the licensee.",
-        "",
-      ].join("\n"),
-      { mode: 0o600 },
-    );
-  }
   keepPrivateFile(readme);
   // Upgrade the known bundled reference atomically; office additions survive.
   const law = join(dir, LAW_REFERENCE_FILE);
-  if (!existsSync(law)) {
-    writeFileSync(law, LAW_REFERENCE_MARKDOWN, { mode: 0o600 });
-  } else {
+  if (!fresh.some(([path]) => path === law)) {
     const existing = readFileSync(law, "utf8");
     const refreshed = refreshBundledLawReference(existing);
     if (refreshed !== existing) writeFileAtomic(law, refreshed, 0o600);
@@ -153,7 +171,7 @@ export function appendAllowedLine(id: string, line: string, book?: string, addre
   const log = join(bookDir(book), "decisions", `${day}.md`);
   ensurePrivateDir(dirname(log));
   const prev = existsSync(log) ? readFileSync(log, "utf8") : `# ${day}\n\n`;
-  writeFileSync(log, `${prev.trimEnd()}\n${bullet}\n`, { mode: 0o600 });
+  writeFilePrivateSync(log, `${prev.trimEnd()}\n${bullet}\n`, 0o600);
   keepPrivateFile(log);
 }
 
@@ -176,6 +194,6 @@ export function appendAllowedLines(
   const log = join(bookDir(book), "decisions", `${day}.md`);
   ensurePrivateDir(dirname(log));
   const prev = existsSync(log) ? readFileSync(log, "utf8") : `# ${day}\n\n`;
-  writeFileSync(log, `${prev.trimEnd()}\n${bullets.join("\n")}\n`, { mode: 0o600 });
+  writeFilePrivateSync(log, `${prev.trimEnd()}\n${bullets.join("\n")}\n`, 0o600);
   keepPrivateFile(log);
 }

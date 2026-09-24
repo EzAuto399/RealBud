@@ -1,0 +1,11 @@
+{
+  "checkedAt": "2026-09-21T03:50:46.186Z",
+  "layer": "rendered production React components and actual persisted agency/encrypted mail stores; fictional source and queue adapters; no live account, model or desktop package proof",
+  "checks": [
+    "Four-step setup persists actual agency settings and digest-bound review; acceptance unverified and schedule off",
+    "Actual encrypted mail journal collects fixture evidence, preserves human edits, reopens changed evidence, and renders hostile source markup as text",
+    "Uncertain review retry preserves request ID and revision, running review blocks duplicates, explicit schedule toggle reads back",
+    "Reload preserves saved agency and mail records; both 390px components have no overflow or browser errors"
+  ],
+  "errors": []
+}

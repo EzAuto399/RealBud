@@ -1,0 +1,57 @@
+{
+  "scope": "metadata-only website requests protocol design advice; no production-source inspection or approval",
+  "completed": true,
+  "requestedModel": "grok-4.7",
+  "selectedModelOption": "grok-4.7",
+  "selectedEffort": "xhigh",
+  "actualModelBuckets": [
+    "grok-4.7-build"
+  ],
+  "modelCalls": 1,
+  "numTurns": 1,
+  "stopReason": "end_turn",
+  "terminalUsage": {
+    "inputTokens": 32900,
+    "outputTokens": 13129,
+    "totalTokens": 46029,
+    "cachedReadTokens": 1152,
+    "cacheCreationTokens": 0,
+    "reasoningTokens": 12686,
+    "modelCalls": 1,
+    "apiDurationMs": 168214,
+    "costUsdTicks": 1428460000,
+    "modelUsage": {
+      "grok-4.7-build": {
+        "inputTokens": 32900,
+        "outputTokens": 13129,
+        "totalTokens": 46029,
+        "cachedReadTokens": 1152,
+        "cacheCreationTokens": 0,
+        "reasoningTokens": 12686,
+        "modelCalls": 1,
+        "apiDurationMs": 168214,
+        "costUsdTicks": 1428460000
+      }
+    },
+    "numTurns": 1
+  },
+  "terminalAtSeconds": 170.084,
+  "collectionAndCleanupSeconds": 173.076,
+  "promptBytes": 1924,
+  "promptRequestsSent": 1,
+  "toolCallCount": 0,
+  "permissionRequestCount": 0,
+  "observedMcpInitialization": {
+    "elapsedMs": 0,
+    "mcpToolCount": 0,
+    "sessionId": "01a0c583-6254-78c0-8730-c20ab32481dc"
+  },
+  "observedMcpServerCount": 0,
+  "disposition": "Use returned cases as guidance for implementation and regression tests only. Actual request, authority, executor, recovery and privacy behavior requires separate application/test evidence.",
+  "advisoryCorrections": [
+    "A dispatch intent is deliberately persisted before claim, so claim denial can leave an intent. Assert no valid dispatch permission or new executor receipt, rather than no intent.",
+    "An absent executor receipt after startup must not automatically resume an old approval or expired claim. The contract requires interrupted status and renewed review/claim for the same logical request; stable keys continue to prevent duplicate runs.",
+    "The single saved intent and claim identity may gain later durable reconciliation/decision events. Do not interpret no second intent as forbidding required append-only recovery evidence."
+  ],
+  "retryCount": 0
+}

@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "recordedAt": "2026-09-21T18:22:26.589653+00:00",
+  "scope": "Test-owned Windows profile fixtures and native Node setup acceptance; no production changes",
+  "platform": "Darwin",
+  "nativeWindowsExecuted": false,
+  "files": {
+    "server/testing/private-profile-fixture.ts": "b504d24f8b2186b990b406c71c3e34df1b60445b3992088f14949d28668f7699",
+    "server/hermes-profile-windows.test.ts": "6499ca3eb71971f10c6c0de1a21c7dc0d18c2804b76bffe434203dd19d8973f6",
+    "server/hermes-pack.test.ts": "3b2ea0b24b7c1d1c2e1841f9dd64eef3bb7507a3aab02b83f7b49975abe56763",
+    "server/hermes-bridge.test.ts": "94b0793c1928f81c6a20f693d9489886352a22c5db32ca6d7c9960af51e47bcd",
+    "server/hermes-update.test.ts": "fd583a7c86c2521e832997b83a5a38d08f067a5212c0797f95d5c64d5593f527",
+    "server/gates.test.ts": "cd68e10d8745124a8120170249d59c280047c06ff25222561d233598d3530a91",
+    "server/hermes-lifecycle.test.ts": "74c23b7e5bb81c307f0f47bfa7e46c102dd34dcb8b762694b37c2a902a7aea7d",
+    "server/testing/fake-hermes.ts": "9bd65d96e486fb6a231829d97ff9f14c49f507ba0daacfb6016d79474f974693",
+    "server/hermes-hands.test.ts": "6e1b30fb54050dae6486bd43503429867a9b71773348024992fdbad1953642a6",
+    "docs/WINDOWS-PROFILE-ACCEPTANCE.md": "f6bd083961fea66ea3f7957d8853a9a5bfc933ce53b6781c1c4b65d027a824e0"
+  },
+  "checks": [
+    {
+      "command": [
+        "pnpm",
+        "exec",
+        "vitest",
+        "run",
+        "server/hermes-pack.test.ts",
+        "server/hermes-bridge.test.ts",
+        "server/hermes-update.test.ts",
+        "server/gates.test.ts",
+        "server/hermes-lifecycle.test.ts",
+        "server/hermes-profile-windows.test.ts",
+        "server/hermes-hands.test.ts",
+        "server/law-watch.test.ts",
+        "server/import-inspect.test.ts",
+        "server/recipe-distill.test.ts",
+        "server/recipe-draft.test.ts"
+      ],
+      "exitCode": 0,
+      "passed": 137,
+      "skipped": 6,
+      "nativeWindowsSkipped": 6,
+      "log": "outputs/hermes-windows-acceptance-2026-09-22/profile-fixture-tests.log"
+    },
+    {
+      "command": [
+        "pnpm",
+        "exec",
+        "tsc",
+        "-p",
+        "tsconfig.server.json",
+        "--pretty",
+        "false"
+      ],
+      "exitCode": 0,
+      "log": "outputs/hermes-windows-acceptance-2026-09-22/profile-fixture-typecheck.log"
+    },
+    {
+      "command": [
+        "node",
+        "--experimental-strip-types",
+        "outputs/hermes-windows-acceptance-2026-09-22/profile-cold-process-local.mjs"
+      ],
+      "exitCode": 0,
+      "log": "outputs/hermes-windows-acceptance-2026-09-22/profile-cold-process-local.log"
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check",
+        "--",
+        "server/testing/private-profile-fixture.ts",
+        "server/hermes-profile-windows.test.ts",
+        "server/hermes-pack.test.ts",
+        "server/hermes-bridge.test.ts",
+        "server/hermes-update.test.ts",
+        "server/gates.test.ts",
+        "server/hermes-lifecycle.test.ts",
+        "server/testing/fake-hermes.ts",
+        "server/hermes-hands.test.ts",
+        "docs/WINDOWS-PROFILE-ACCEPTANCE.md"
+      ],
+      "exitCode": 0
+    }
+  ],
+  "earlierDiagnostic": {
+    "log": "outputs/hermes-windows-acceptance-2026-09-22/profile-fixture-typecheck-initial.log",
+    "description": "Initial typecheck reported concurrent bank-reference-store.ts:112 body.reason narrowing; root owner fixed it; final typecheck clean."
+  },
+  "nativeCasesPrepared": [
+    "Fresh private profile plus fictional key attach/replacement; independent ACL witness; cold Node process preserves bytes, file identity/timestamps and parent/file SDDL",
+    "Inherited existing home refusal before descendants; repeated admission leaves SDDL unchanged",
+    "Inherited config refusal before changing existing credentials; bytes and parent/file SDDL unchanged",
+    "Protected config with explicit Users-read grant refused; bytes and parent/file SDDL unchanged",
+    "Hardlinked config refused before credential creation; original bytes and SDDL unchanged",
+    "Junction profile refused before credential creation; original target bytes and SDDL unchanged"
+  ],
+  "boundaries": [
+    "Fixture preparation uses real production ACL restriction only on new empty test-owned paths; existing fixture overwrites retain their ACLs.",
+    "Independent PowerShell witness does not import the production verifier/script; returns only owner/protection/grant booleans and SDDL SHA256; it is a DACL witness, not a separate Windows AccessCheck/token impersonation engine.",
+    "Native tests use actual filesystem/PowerShell and a cold Node child; no ACL mocks, process-wide platform mocks, provider calls or live profiles.",
+    "Native Windows tests are discovered by existing pnpm test Windows CI. No Windows, packaged, provider, upstream installer or power-loss execution was performed here.",
+    "Windows memory holds and production privacy policy remain unchanged.",
+    "Startup still invokes eight or nine sequential PowerShell checks; native timing and end-to-end Windows CI duration remain unmeasured.",
+    "Packaged service health alone does not prove profile provisioning; no smoke/production source changes in this unit."
+  ]
+}

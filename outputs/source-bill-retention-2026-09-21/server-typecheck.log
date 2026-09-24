@@ -1,0 +1,2 @@
+server/source-bill-storage.ts(82,13): error TS7022: 'page' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+server/source-bill-storage.ts(83,39): error TS7031: Binding element 'value' implicitly has an 'any' type.

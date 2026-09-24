@@ -1,5 +1,5 @@
 // Import first-party office packs onto Schedule. RealBud owns the clock;
-// Hermes remains hands for prepare steps after Kevin approves a plan.
+// Hermes prepares steps after the workspace owner approves a plan.
 import { useCallback, useEffect, useState } from "react";
 import { PackagePlus, Loader2, CheckCircle2, CircleAlert, Download, Upload } from "lucide-react";
 
@@ -11,6 +11,8 @@ import {
 } from "@/lib/workflow-packs";
 import { api } from "@/state/store";
 import { CompanyWorkflowTemplates } from './CompanyWorkflowTemplates';
+import { CustomerPackSetupCard } from './CustomerPackSetupCard';
+import { AgencyWorkflowSetup } from './AgencyWorkflowSetup';
 
 type Props = {
   onInstalled?: () => void | Promise<void>;
@@ -73,7 +75,7 @@ export function WorkflowPacksCard({ onInstalled, className }: Props) {
       anchor.download = `realbud-workflow-packs-${new Date().toISOString().slice(0, 10)}.json`;
       anchor.click();
       URL.revokeObjectURL(url);
-      setNotice("Pack export downloaded. Keep it with office backups — it restores Schedule jobs, not bank or REI logins.");
+      setNotice("Pack export downloaded. Keep it with office backups — it restores Schedule jobs, not source-account sign-ins or credentials.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Export failed.");
     } finally {
@@ -108,18 +110,25 @@ export function WorkflowPacksCard({ onInstalled, className }: Props) {
       id="schedule-packs"
       tabIndex={-1}
       role="region"
-      aria-label="Import office packs"
+      aria-label="Agency workflow setup and packs"
       className={cn("mb-6 rounded-xl border border-line bg-sheet p-4", className)}
     >
       <div className="flex items-start gap-3">
         <PackagePlus size={20} className="mt-0.5 shrink-0 text-agency" aria-hidden />
         <div className="min-w-0 flex-1">
-          <h2 className="text-[15px] font-medium text-ink">Import office packs</h2>
+          <h2 className="text-[15px] font-medium text-ink">Set up your workflows</h2>
           <p className="mt-1 text-[13px] text-ink-secondary">
-            Add prepared workflows onto Schedule. Bud runs them on RealBud’s clock; your team approves plans and keeps financial control.
+            The three workspace setup steps happen here: your agency’s name, timezone and pack on one form, then your own Gmail, then approving the selected work and turning its schedule on. Enabling a schedule stays a decision you take yourself.
           </p>
         </div>
       </div>
+
+      <div className="mt-4"><AgencyWorkflowSetup onSaved={onInstalled} /></div>
+      <CustomerPackSetupCard onInstalled={async () => { await refresh(); await onInstalled?.(); }} />
+      <CompanyWorkflowTemplates onInstalled={async () => { await refresh(); await onInstalled?.(); }} />
+      <details className="mt-5 border-t border-line pt-3">
+        <summary className="min-h-11 cursor-pointer text-sm font-medium text-ink">Optional Austin Phase 1 examples and older pack snapshots</summary>
+        <p className="mt-2 text-sm text-ink-secondary">These customer-specific examples are optional. Importing them does not select an agency, connect an account or enable a schedule. For your own agency, use the guided setup and preview a matching pack above.</p>
 
       {error ? (
         <p role="alert" className="mt-3 text-[13px] text-danger">{error}</p>
@@ -229,7 +238,7 @@ export function WorkflowPacksCard({ onInstalled, className }: Props) {
           New jobs stay off until you approve the plan. Restore keeps identical local jobs and rejects conflicting edits.
         </p>
       </div>
-      <CompanyWorkflowTemplates onInstalled={async () => { await refresh(); await onInstalled?.(); }} />
+      </details>
     </section>
   );
 }

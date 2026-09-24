@@ -1,0 +1,18 @@
+{
+  "port": 28799,
+  "listeners": [
+    {
+      "pid": 52622,
+      "apps": [
+        {
+          "path": "/Applications/RealBud.app",
+          "bundleId": "com.realbud.app",
+          "version": "0.1.18",
+          "build": "0.1.18"
+        }
+      ],
+      "observedDefaultProfileRoots": []
+    }
+  ],
+  "readOnlyMetadata": true
+}

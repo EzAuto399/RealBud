@@ -1,0 +1,24 @@
+test_create_collision_is_fixed_conflict_and_security_allocation_is_freed (__main__.RawWin32Contract.test_create_collision_is_fixed_conflict_and_security_allocation_is_freed) ... ok
+test_delete_is_source_handle_disposition_not_path_deletion (__main__.RawWin32Contract.test_delete_is_source_handle_disposition_not_path_deletion) ... ok
+test_descriptor_and_simple_ace_parse_by_handle_and_free_allocations (__main__.RawWin32Contract.test_descriptor_and_simple_ace_parse_by_handle_and_free_allocations) ... ok
+test_descriptor_free_failure_after_open_closes_unreturned_handle (__main__.RawWin32Contract.test_descriptor_free_failure_after_open_closes_unreturned_handle) ... ok
+test_enumeration_holds_on_malformed_records_or_over_limit (__main__.RawWin32Contract.test_enumeration_holds_on_malformed_records_or_over_limit) ... ok
+test_enumeration_is_paged_handle_bound_utf16_and_restartable (__main__.RawWin32Contract.test_enumeration_is_paged_handle_bound_utf16_and_restartable) ... ok
+test_enumeration_only_no_more_files_means_completion (__main__.RawWin32Contract.test_enumeration_only_no_more_files_means_completion) ... ok
+test_every_bound_entry_has_explicit_signature (__main__.RawWin32Contract.test_every_bound_entry_has_explicit_signature) ... ok
+test_foreign_ace_pointer_is_refused_before_sid_dereference (__main__.RawWin32Contract.test_foreign_ace_pointer_is_refused_before_sid_dereference) ... ok
+test_lock_file_shares_read_write_but_never_delete_and_creates_private (__main__.RawWin32Contract.test_lock_file_shares_read_write_but_never_delete_and_creates_private) ... ok
+test_native_locks_use_exact_immediate_exclusive_byte_zero_and_checked_release (__main__.RawWin32Contract.test_native_locks_use_exact_immediate_exclusive_byte_zero_and_checked_release) ... ok
+test_only_existing_leaf_error_two_is_not_found (__main__.RawWin32Contract.test_only_existing_leaf_error_two_is_not_found) ... ok
+test_only_lock_violation_retries_not_io_pending_or_access_denied (__main__.RawWin32Contract.test_only_lock_violation_retries_not_io_pending_or_access_denied) ... ok
+test_private_create_attributes_precede_content_and_handle_is_not_inheritable (__main__.RawWin32Contract.test_private_create_attributes_precede_content_and_handle_is_not_inheritable) ... ok
+test_rename_uses_handle_parent_and_utf16_byte_count (__main__.RawWin32Contract.test_rename_uses_handle_parent_and_utf16_byte_count) ... ok
+test_sid_length_cannot_cross_ace_boundary (__main__.RawWin32Contract.test_sid_length_cannot_cross_ace_boundary) ... ok
+test_structures_are_windows_width_on_non_windows (__main__.RawWin32Contract.test_structures_are_windows_width_on_non_windows) ... ok
+test_token_buffer_sid_is_bounded_and_token_is_closed (__main__.RawWin32Contract.test_token_buffer_sid_is_bounded_and_token_is_closed) ... ok
+test_unknown_ace_is_refused_before_its_sid_is_decoded (__main__.RawWin32Contract.test_unknown_ace_is_refused_before_its_sid_is_decoded) ... ok
+
+----------------------------------------------------------------------
+Ran 19 tests in 0.002s
+
+OK

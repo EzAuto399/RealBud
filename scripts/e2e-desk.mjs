@@ -7,6 +7,7 @@
 //   node scripts/e2e-desk.mjs           (port 18879)
 //   OMB_E2E_PORT=8899 node scripts/e2e-desk.mjs
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -133,10 +134,57 @@ try {
   check("remove property drops it with its facts", removed.status === 200 && removed.body.properties.length === 6 && !removed.body.ledger.some((r) => r.propertyId === property.id));
 
   // ── Schedule: named loops ──
+  // All three are built. Morning priorities (inbound-triage) is available but
+  // its clock stays off until agency setup adopts the reviewed schedule, so a
+  // fresh book must show it disabled with no next run.
   const loops = (await api("GET", "/api/loops")).body;
-  check("three named loops, inbound stays Planned", loops?.loops?.map((l) => l.id).join(",") === "morning-arrears,owner-letter,inbound-triage" && loops.loops[0].available === true && loops.loops[1].available === true && loops.loops[2].available === false);
-  const plannedRun = await api("POST", "/api/loops/inbound-triage/run", {});
-  check("planned loops refuse to run", plannedRun.status === 409);
+  const inbound = loops?.loops?.find((l) => l.id === "inbound-triage");
+  check(
+    "three named loops; inbound is available but disabled until agency setup enables it",
+    loops?.loops?.map((l) => l.id).join(",") === "morning-arrears,owner-letter,inbound-triage" &&
+      loops.loops[0].available === true && loops.loops[1].available === true &&
+      inbound?.available === true && inbound?.enabled === false && inbound?.nextRunAt === null,
+    `inbound available=${inbound?.available} enabled=${inbound?.enabled} nextRunAt=${inbound?.nextRunAt}`,
+  );
+
+  // A manual inbound run is identified work: it carries the request ID and the
+  // schedule revision it was started from, or it is refused outright.
+  const unidentifiedRun = await api("POST", "/api/loops/inbound-triage/run", {});
+  check(
+    "inbound Run now without a request identifier is refused",
+    unidentifiedRun.status === 400 && /request identifier/i.test(String(unidentifiedRun.body?.error ?? "")),
+    `${unidentifiedRun.status} · ${unidentifiedRun.body?.error}`,
+  );
+
+  // Manual runs are allowed while the clock is off, but without a reviewed
+  // agency plan the run settles as a refusal — nothing is collected or sent.
+  const inboundRun = await api("POST", "/api/loops/inbound-triage/run", {
+    requestId: randomUUID(),
+    expectedRevision: inbound?.revision,
+  });
+  let inboundSettled = null;
+  if (inboundRun.status === 201) {
+    const inboundDeadline = Date.now() + 30_000;
+    for (;;) {
+      const state = (await api("GET", "/api/loops")).body;
+      inboundSettled = state.runs.find((r) => r.id === inboundRun.body.run.id);
+      if (inboundSettled && !["queued", "running"].includes(inboundSettled.status)) break;
+      if (Date.now() > inboundDeadline) break;
+      await sleep(250);
+    }
+  }
+  check(
+    "identified inbound run is accepted and settles held on plan approval",
+    inboundRun.status === 201 && inboundRun.body?.run?.manual === true &&
+      inboundSettled?.status === "failed" && /approve the current morning plan/i.test(String(inboundSettled?.detail ?? "")),
+    `${inboundRun.status} · ${inboundSettled?.status} · ${inboundSettled?.detail}`,
+  );
+  const inboundAfter = (await api("GET", "/api/loops")).body?.loops?.find((l) => l.id === "inbound-triage");
+  check(
+    "a manual inbound run never turns the schedule on",
+    inboundAfter?.enabled === false && inboundAfter?.nextRunAt === null,
+    `enabled=${inboundAfter?.enabled} nextRunAt=${inboundAfter?.nextRunAt}`,
+  );
 
   const ran = await api("POST", "/api/loops/morning-arrears/run", {});
   check("morning-arrears run accepted", ran.status === 201 && ran.body?.run?.loopId === "morning-arrears");

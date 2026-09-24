@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "platform": "darwin",
+  "arch": "arm64",
+  "node": "v24.19.0",
+  "source": "/Users/yoda/projects/RealBud/dist-server",
+  "runtime": "Node",
+  "proofLayer": "Compiled service from the selected bundle in an isolated directory; not GUI or two-device acceptance",
+  "checks": [
+    "Compiled server starts outside checkout without node_modules",
+    "Packaged PostgreSQL driver loads; unprovisioned company status is usable",
+    "Packaged TLS certificate generator executes successfully"
+  ],
+  "cleanupComplete": true
+}

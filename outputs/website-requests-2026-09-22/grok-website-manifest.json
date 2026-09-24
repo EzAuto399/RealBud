@@ -1,0 +1,34 @@
+{
+  "grok-website-acp-profile.md": {
+    "bytes": 449,
+    "sha256": "26de95b2454884be806cea6fbda3b212672a838bd12befbd68554525208cc53b"
+  },
+  "grok-website-acp-prompt.txt": {
+    "bytes": 1925,
+    "sha256": "1b1d2eecef597c10d2f6d10df605c21324c2789ea8cb26dc74fff72a00932fd1"
+  },
+  "grok-website-acp-review.py": {
+    "bytes": 18807,
+    "sha256": "fdaa817031a1fdd07d78b12620175a6ea2df3d39ff84f5b448851012b7525c1d"
+  },
+  "grok-website-acp-run.json": {
+    "bytes": 14887,
+    "sha256": "2c8e5b57a342b31da2c164a5bbba9cff9303aa3c30a545093bb07cffbf4a6938"
+  },
+  "grok-website-cleanup.json": {
+    "bytes": 446,
+    "sha256": "3f22912a5d03e6d542fb34c16dc9f543c6f963be7a24ace6e373c832c220be16"
+  },
+  "grok-website-disposition.json": {
+    "bytes": 2232,
+    "sha256": "8f9e419168e6262d04db1007315c04e28fe79c2cf026d088de128a9f4a8dcd0f"
+  },
+  "grok-website-finalize.py": {
+    "bytes": 6061,
+    "sha256": "eee122aafb67fa3378012fcbae8d9c336ac29187d44f69888cda7013d76993a5"
+  },
+  "grok-website-review.md": {
+    "bytes": 3746,
+    "sha256": "d615adbf1c41818a5ea39de5c2a6e285bcd149d5708c6c3008557c17d6e804e3"
+  }
+}

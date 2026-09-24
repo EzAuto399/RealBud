@@ -1,0 +1,14 @@
+PASS isolated-runtime-and-source (174ms)
+PASS local-modelvia-and-fictional-billing (551ms)
+PASS local-realbud-provisioning-gateway (117ms)
+PASS controlled-website-and-real-desktop (2008ms)
+PASS app-browser-link-consumes-real-provisioning (162ms)
+PASS wrong-bound-entitlement-refused-before-worker (25ms)
+FAIL trusted-entitlement-and-real-worker-readiness (4381ms)
+{
+  "passed": false,
+  "checks": 7,
+  "failure": "AssertionError [ERR_ASSERTION]: Bud could not answer — HTTP 409: request_already_processed.",
+  "cleanup": true,
+  "receipt": "/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/app/2026-09-23T05-10-41.364Z/receipt.json"
+}

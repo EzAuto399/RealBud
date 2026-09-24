@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "checkedAt": "2026-09-21T16:10:58.520614+00:00",
+  "requestedModel": "grok-4.6",
+  "requestedReasoningEffort": "xhigh",
+  "actualModel": null,
+  "sessionId": null,
+  "status": "incomplete",
+  "verdict": null,
+  "reason": "Single bounded Grok CLI call reached its subprocess hard timeout before producing structured stdout. This is not approval and no Grok findings were received.",
+  "process": {
+    "exitCode": 124,
+    "elapsedSeconds": 900.029
+  },
+  "stdoutBytes": 0,
+  "stderrBytes": 832197,
+  "packet": "outputs/hermes-memory-proposals-2026-09-22/native-final-review.prompt.md",
+  "packetSha256": "fdd8c949c687d027fdd8d37557cab62fddece708f32dc07c83f154ecb519ccc6",
+  "sourceSha256": {
+    "server/helpers/hermes-memory-proposals.py": "b66ed9a9539551f5a053372ebdf7fec40a2a47c5f67e33383feafb609d739e8e",
+    "server/helpers/hermes-memory-review.py": "d91f2d33831adcbde7fa920a9e94e751df934d8d201cd2fe0a50e072a4c38684"
+  },
+  "sourceUnchanged": true,
+  "capabilityRestrictions": {
+    "tools": false,
+    "web": false,
+    "subagents": false,
+    "sourceOnly": true
+  },
+  "attempts": 1,
+  "restarted": false,
+  "productionEdits": false,
+  "localDisposition": {
+    "additionalDemonstratedDefects": [],
+    "note": "Independent bounded source pass identified no additional demonstrated defect; it is not a substitute for the incomplete Grok verdict.",
+    "reviewedBoundaries": [
+      {
+        "file": "server/helpers/hermes-memory-proposals.py",
+        "functions": [
+          "_parse_input",
+          "_strict_payload",
+          "_check_text",
+          "_proposal_key",
+          "_verify_journal",
+          "_load_journal",
+          "_write_journal"
+        ],
+        "checks": [
+          "Strict operation fields and UTF8/control validation",
+          "Domain-separated request and journal HMACs",
+          "Workspace/profile/runtime/scope/request-key/path/pending-digest bindings"
+        ]
+      },
+      {
+        "file": "server/helpers/hermes-memory-proposals.py",
+        "functions": [
+          "_write_stage",
+          "_require_stage_file",
+          "_link_stage",
+          "_read_pair",
+          "_unlink_stage",
+          "_commit_published"
+        ],
+        "checks": [
+          "Native pending publication uses non-overwriting hard link",
+          "Only the exact owned two-path/two-link inode pair is admitted",
+          "Pending is re-read and file/parent are fsynced before published journal"
+        ]
+      },
+      {
+        "file": "server/helpers/hermes-memory-proposals.py",
+        "functions": [
+          "_recover_prepared",
+          "_success_existing",
+          "_dry_run",
+          "propose"
+        ],
+        "checks": [
+          "Prepared recovery covers stage/pending presence combinations",
+          "Published missing pending is held without matching human decision",
+          "Matching human intent/final receipt is bound to pending digest and does not restage",
+          "Native dry run and current readiness precede new/recovered publication"
+        ]
+      },
+      {
+        "file": "server/helpers/hermes-memory-review.py",
+        "functions": [
+          "_safe_read",
+          "_check_ancestors",
+          "_ensure_helper_dir",
+          "_atomic_write",
+          "_review_lock",
+          "_target_lock",
+          "_read_receipt",
+          "_verify_receipt",
+          "_cmd_decide",
+          "_recover_intent",
+          "_assert_current"
+        ],
+        "checks": [
+          "Private regular files, owner/mode checks, no-follow reads, inode/stat stability",
+          "Per-profile serialization and native target lock",
+          "Receipt signature/ID/runtime/pending digest and human review compare-and-swap context"
+        ]
+      }
+    ],
+    "limits": [
+      "Source-only bounded pass; no new execution evidence beyond the earlier fault suite",
+      "No claim against an actively malicious root or same-account process holding the host private key",
+      "No physical power-loss, Windows, or live workflow validation"
+    ]
+  },
+  "priorEvidence": "15 local macOS subprocess crash tests passed; that receipt remains separate and is not a completed source-review verdict.",
+  "notVerified": [
+    "Grok final source-audit verdict",
+    "physical power-loss durability",
+    "Windows ACL/filesystem admission",
+    "live customer workflow"
+  ],
+  "followUp": "If another independent model audit is requested, split this packet into substantially narrower publication and receipt-recovery slices; do not treat this timed-out attempt as approval."
+}

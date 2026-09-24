@@ -1,0 +1,10 @@
+{
+  "model": "grok-4.7",
+  "reasoningEffort": "xhigh",
+  "promptBytes": 4404,
+  "promptSha256": "cbf6ab8fc1f03aedbd23cb8b3c16913d17b78609018e81c02bdaea040875478a",
+  "deadlineSeconds": 600,
+  "tools": false,
+  "web": false,
+  "subagents": false
+}

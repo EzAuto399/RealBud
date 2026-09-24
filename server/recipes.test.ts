@@ -17,6 +17,7 @@ const {
   patchRecipe,
   patchRecipeStatus,
   recipeClockRunnable,
+  resetRecipeApprovalsAtomically,
   saveRecipe,
   validateRecipe,
 } = await import("./recipes.ts");
@@ -43,6 +44,36 @@ const card = {
 };
 
 describe("reviewed job versions", () => {
+  it("preserves omitted site notes but clears explicitly removed instructions and their approval", () => {
+    const [first] = saveRecipe({ ...card, id: "clear-notes", siteNotes: "Old property instructions" });
+    patchRecipe(first.id, { planApproved: true, expectedRevision: first.revision });
+    const [unchanged] = saveRecipe({ ...card, id: first.id, expectedRevision: first.revision });
+    expect(unchanged.siteNotes).toBe("Old property instructions");
+    expect(unchanged.approvedRevision).toBe(first.revision);
+    const [cleared] = saveRecipe({ ...unchanged, siteNotes: null, expectedRevision: unchanged.revision });
+    expect(cleared.siteNotes).toBeNull();
+    expect(cleared.revision).toBe(first.revision + 1);
+    expect(cleared.approvedRevision).toBeNull();
+    expect(cleared.planApprovedAt).toBeNull();
+    expect(loadRecipes(true)[0]).toEqual(cleared);
+  });
+
+  it("invalidates a set of instruction-dependent plans atomically and retains attachments", () => {
+    saveRecipe({ ...card, id: "pack-first", status: "active", capabilities: ["portal-read", "analyse", "draft"], schedule: { time: "09:00", weekdays: [1] } });
+    patchRecipe("pack-first", { attach: true, planApproved: true });
+    saveRecipe({ ...card, id: "pack-second", status: "active" });
+    patchRecipe("pack-second", { planApproved: true });
+    const before = loadRecipes(true), first = getRecipe("pack-first")!, second = getRecipe("pack-second")!;
+    expect(() => resetRecipeApprovalsAtomically([{ id: first.id, revision: first.revision }, { id: second.id, revision: 99 }])).toThrow(/changed elsewhere/);
+    expect(loadRecipes(true)).toEqual(before);
+    expect(() => resetRecipeApprovalsAtomically([{ id: first.id, revision: undefined as unknown as number }])).toThrow(/version is invalid/);
+    const reset = resetRecipeApprovalsAtomically([{ id: first.id, revision: first.revision }, { id: second.id, revision: second.revision }]);
+    expect(reset.every(recipe => recipe.status === "shadow" && recipe.schedule === null && recipe.planApprovedAt === null && recipe.approvedRevision === null)).toBe(true);
+    expect(getRecipe(first.id)?.attachment).toEqual(first.attachment);
+    expect(getRecipe(first.id)?.revision).toBe(first.revision + 1);
+    expect(getRecipe(second.id)?.revision).toBe(second.revision + 1);
+  });
+
   it("rejects stale saves and approvals without changing the newer plan", () => {
     const [first] = saveRecipe({ ...card, id: "reviewed", expectedRevision: 0 });
     patchRecipe(first.id, { planApproved: true, expectedRevision: first.revision });

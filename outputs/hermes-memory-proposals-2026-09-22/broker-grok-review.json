@@ -1,0 +1,51 @@
+{
+  "text": "{\n  \"approved\": true,\n  \"findings\": [\n    {\n      \"severity\": \"low\",\n      \"file\": \"server/hermes-memory-proposal-broker.ts\",\n      \"issue\": \"403/405/400/413 replies end the response without destroying the socket or draining leftover request bytes, and keep-alive stays enabled. Unread body bytes on an HTTP/1.1 connection can be parsed as the next request.\",\n      \"fix\": \"On those paths call req.resume() or req.destroy(), and send Connection: close (or always destroy after 413 once the running byte count exceeds 70KiB).\"\n    },\n    {\n      \"severity\": \"low\",\n      \"file\": \"server/hermes-memory-proposal-broker.ts\",\n      \"issue\": \"The 70KiB body cap is applied only after a chunk is already allocated, so one oversized chunk can exceed the budget before the 413 return.\",\n      \"fix\": \"Reject Content-Length above 70KiB before reading, and destroy the request as soon as the running byte count exceeds the cap.\"\n    }\n  ],\n  \"limits\": [\n    \"Review is of the three supplied files only; native propose/assertCapability/isActive, managed-service, ACP, and Hermes client behavior were out of scope.\",\n    \"No tools, tests, or runtime execution were used.\",\n    \"Persistent idempotency, credential handling, and threat checks are assumed to live in the native host as specified.\",\n    \"Keep-alive leftover-body desync was not demonstrated against a live Hermes HTTP client.\"\n  ]\n}",
+  "stopReason": "end_turn",
+  "sessionId": "01a0c4a3-6773-7bf0-b015-14a79525be01",
+  "requestId": "640df5e5-aa87-46a6-bfa4-41bc6a8c19e8",
+  "thought": "The user wants me to perform a bounded independent security/correctness review of three supplied files. They explicitly said:\n{\n  \"approved\": false,\n  \"findings\": [\n    {\n      \"severity\": \"high\",\n      \"file\": \"memory_proposal_handler.py\",\n      \"issue\": \"Missing explicit rejection for control/lone-surrogate characters in input validation\",\n      \"fix\": \"Add Unicode normalization and surrogate pair filtering 0xD800-0xDFFF before text processing\"\n    },\n    {\n      \"severity\": \"medium\",\n      \"file\": \"memory_proposal_handler.py\",\n      \"issue\": \"No enforcement of exact 64KiB serialized input limit\",\n      \"fix\": \"Implement byte-length check on serialized payload 0-65536 bytes\"\n    },\n    {\n      \"severity\": \"low\",\n      \"file\": \"memory_proposal_handler.py\",\n      \"issue\": \"Batch operation validation allows nested targets\",\n      \"fix\": \"Disallow nested target fields in batch operations\"\n    }\n  ],\n  \"limits\": [\n    \"Memory proposal input size limited to 64KiB\",\n     \"Request ID format restricted to alphanumeric + .",
+  "usage": {
+    "input_tokens": 62041,
+    "cache_read_input_tokens": 5376,
+    "cache_creation_input_tokens": 0,
+    "output_tokens": 62100,
+    "reasoning_tokens": 61755,
+    "total_tokens": 129517
+  },
+  "num_turns": 1,
+  "total_cost_usd": 0.1697858,
+  "total_cost_usd_ticks": 1697858000,
+  "modelUsage": {
+    "grok-4.6-build": {
+      "inputTokens": 62041,
+      "outputTokens": 62100,
+      "cacheReadInputTokens": 5376,
+      "cacheCreationInputTokens": 0,
+      "modelCalls": 1,
+      "costUSD": 0.1697858
+    }
+  },
+  "structuredOutput": {
+    "approved": true,
+    "findings": [
+      {
+        "severity": "low",
+        "file": "server/hermes-memory-proposal-broker.ts",
+        "issue": "403/405/400/413 replies end the response without destroying the socket or draining leftover request bytes, and keep-alive stays enabled. Unread body bytes on an HTTP/1.1 connection can be parsed as the next request.",
+        "fix": "On those paths call req.resume() or req.destroy(), and send Connection: close (or always destroy after 413 once the running byte count exceeds 70KiB)."
+      },
+      {
+        "severity": "low",
+        "file": "server/hermes-memory-proposal-broker.ts",
+        "issue": "The 70KiB body cap is applied only after a chunk is already allocated, so one oversized chunk can exceed the budget before the 413 return.",
+        "fix": "Reject Content-Length above 70KiB before reading, and destroy the request as soon as the running byte count exceeds the cap."
+      }
+    ],
+    "limits": [
+      "Review is of the three supplied files only; native propose/assertCapability/isActive, managed-service, ACP, and Hermes client behavior were out of scope.",
+      "No tools, tests, or runtime execution were used.",
+      "Persistent idempotency, credential handling, and threat checks are assumed to live in the native host as specified.",
+      "Keep-alive leftover-body desync was not demonstrated against a live Hermes HTTP client."
+    ]
+  }
+}

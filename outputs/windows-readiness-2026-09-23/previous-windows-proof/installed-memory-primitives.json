@@ -1,0 +1,72 @@
+{
+  "schema": 1,
+  "at": "2026-09-23T01:38:12Z",
+  "passed": true,
+  "status": "passed",
+  "platform": "win32",
+  "python": "3.12.10",
+  "architecture": "AMD64",
+  "windows": [
+    "2025Server",
+    "10.0.26100",
+    "SP0",
+    "Multiprocessor Free"
+  ],
+  "selected_module": "D:\\a\\_temp\\RealBud installed probe c1ea768c5e9047cf945ea820f26123f9\\resources\\server\\helpers\\hermes-memory-windows-native.py",
+  "script_sha256": "0ac28ededa07a2330a442564018576e3e68bead7d89552a9061932c8aebcfcb1",
+  "checks": [
+    "Private empty creation precedes content; Unicode and spaced paths round-trip with stable identity",
+    "Missing opens and existing create collisions cannot create, replace or truncate data",
+    "An inherited child requires its containing protected root; absent and unrelated roots are refused without repair",
+    "An explicit broad grant is refused with or without a private root, without repair or data changes",
+    "Ordinary-file admission refuses multiple links and preserves the original identity after owned alias cleanup",
+    "A target junction is refused without following or mutating its target",
+    "Handle-bound same-volume no-clobber publication moves one complete file",
+    "No-clobber publication collision preserves both identities and byte sequences",
+    "Whole-file replacement preserves private ACL and uses the staged identity",
+    "Real sharing denial preserves old and staged files without fallback; retry is flushed after release",
+    "Exact-handle deletion invalidates that handle and preserves an unrelated sibling",
+    "Delete-sharing reader proves deferred deletion until final close; no journal completion is inferred",
+    "Pinned directory inventory is bounded, preserves Unicode and restarts after refusal",
+    "Private byte-zero locks contend with another handle and an independent Hermes-compatible CRT process",
+    "A nonempty pre-existing lock is refused and preserved"
+  ],
+  "cleanup": true,
+  "native_validation": true,
+  "check_seconds": [
+    0.0,
+    0.0,
+    76.2,
+    68.2,
+    0.0,
+    35.3,
+    0.5,
+    0.7,
+    0.1,
+    0.1,
+    0.1,
+    0.0,
+    0.1,
+    0.1,
+    0.0
+  ],
+  "timeouts": {
+    "fixture_seconds": 120,
+    "check_seconds": 300,
+    "run_seconds": 480
+  },
+  "limits": [
+    "Primitive acceptance only; production platform holds remain unchanged.",
+    "No Hermes runtime, model/provider, customer profile or credential is used.",
+    "No full application, installed GUI, Windows 11 device or power-loss guarantee is implied.",
+    "Ancestor pinning and ancestor-junction refusal belong to the separate portable protocol and are not established by this leaf-primitive script.",
+    "Successful deletion requests are not journal completion; namespace/journal reconciliation requires the separate protocol."
+  ],
+  "module_sha256": "6ba5081488a75bac8da7c754fb7c79d6a27ba82f7f51d77a6174a0467dd6baa4",
+  "volume": {
+    "filesystem": "NTFS",
+    "volume_flags": 65482495,
+    "drive_type": 3
+  },
+  "handles_drained": true
+}

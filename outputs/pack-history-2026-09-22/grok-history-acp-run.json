@@ -1,0 +1,375 @@
+{
+  "startedAt": "2026-09-21T19:24:43.762132+00:00",
+  "requestedModel": "grok-4.7",
+  "reasoningEffort": "xhigh",
+  "hardTimeoutSeconds": 300,
+  "reviewDeadlineSeconds": 290,
+  "transport": "fresh agent --no-leader stdio ACP",
+  "maxPromptRequests": 1,
+  "turnLimitScope": "One ACP prompt; cancel/stop on any tool-call or client permission request. Top-level --max-turns is not forwarded to the agent branch in the inspected official source.",
+  "prompt": "Metadata-only design review; no tools/web/files. RealBud is a local business desktop. Its private journal retains at most 8 prior workflow-pack configurations for rollback. A deliberate user-reviewed archive operation should retain the newest rollback configurations and externalize older snapshots into private immutable content-addressed files. Do not change active configuration, approvals, schedules, business data, or retirement/ownership claims. Archive preview/confirmation must bind to exact generation, history and selection. Hashes verify exact bytes; archive must be durable before journal references change. Operations need crash recovery and exact retries. Private backup/restore must include archives and refuse missing/tampered referenced files. No automatic pruning, hidden data loss, live clients, or external calls.\nReturn the top 3 concrete design failure paths and tests for this archival operation. Focus on actual interleavings (stale confirmation, partial writes, crash/retry, cross-profile/wrong-pack substitution, backup races) and which durable state proves success. Explain any remaining integrity/authenticity limits of plain hashes. Rank by severity. Return JSON {\"cases\":[{\"title\":\"...\",\"setup\":\"...\",\"assertions\":[\"...\"]}]} with exactly 3 cases, at most 4 assertions each, under 280 words. This is design advice, not implementation or test evidence.",
+  "promptBytes": 1380,
+  "promptSha256": "6215bab1923f6735593a2ab7ab7fa7543830dc7b88cb4d5d4bf9bf186f57fd59",
+  "profileSha256": "93f81c4059d53fe7115c32213d37c20a836126733c426a8dfb19e2c6c554b2c6",
+  "processOverrides": {
+    "GROK_DISABLE_AUTOUPDATER": "1",
+    "GROK_MEMORY": "0",
+    "GROK_SUBAGENTS": "0",
+    "GROK_CURSOR_SKILLS_ENABLED": "0",
+    "GROK_CURSOR_RULES_ENABLED": "0",
+    "GROK_CURSOR_AGENTS_ENABLED": "0",
+    "GROK_CURSOR_MCPS_ENABLED": "0",
+    "GROK_CURSOR_HOOKS_ENABLED": "0",
+    "GROK_CLAUDE_SKILLS_ENABLED": "0",
+    "GROK_CLAUDE_RULES_ENABLED": "0",
+    "GROK_CLAUDE_AGENTS_ENABLED": "0",
+    "GROK_CLAUDE_MCPS_ENABLED": "0",
+    "GROK_CLAUDE_HOOKS_ENABLED": "0"
+  },
+  "credentialsReadByHarness": false,
+  "credentialsCopied": false,
+  "rawDiagnosticsPersisted": false,
+  "authentication": "Existing cached auth via opaque symlink in disposable private GROK_HOME; harness never opens auth contents.",
+  "globalConfigSha256Before": "ada54f57ec570d8e70cba35400ea2b557914ede90ffa893b5da122a7f69d6736",
+  "promptRequestsSent": 1,
+  "updates": {
+    "available_commands_update": 4,
+    "agent_thought_chunk": 26,
+    "session_info_update": 1,
+    "agent_message_chunk": 406
+  },
+  "safeEvents": [],
+  "assistantText": "{\"cases\":[{\"title\":\"S1 stale or cross-profile commit\",\"setup\":\"Confirm binds P, pack K, generation G, history H, and older selection S. Shift H, or replay the token on P2 or K2.\",\"assertions\":[\"Mismatch of profile, pack, G, H, or S aborts; journal and active config stay unchanged.\",\"Only S is removed from the journal; newest 8, active config, approvals, schedules, business data, and ownership or retirement claims unchanged.\",\"Proof is the new journal plus private content-addressed bytes hashing to S, not a status flag.\",\"A foreign profile or pack token cannot select or drop rows.\"]},{\"title\":\"S2 crash before durable ref swap\",\"setup\":\"Kill after temp write, hash, or pre-fsync, and after ref edit but before journal fsync. Retry the same confirm once H has moved.\",\"assertions\":[\"Refs update only after durable read-back equals confirmed bytes and hash.\",\"Retry completes or no-ops that pair; it never prunes or follows a newer S.\",\"No crash leaves a missing, short, or hash-mismatched ref.\",\"Active config and unselected history stay byte-identical.\"]},{\"title\":\"S3 backup race and plain-hash limits\",\"setup\":\"Backup overlaps archive and may store new refs without files, or files without the journal. Restore missing, short, re-digested, and cross-pack files.\",\"assertions\":[\"Complete backup has the post-archive journal and every referenced byte; else it is incomplete. Bad restores fail closed, no prune.\",\"Restored journal matches rollback and active config; archives are included, not only the live 8.\",\"A plain hash only shows bytes match a digest. It does not bind profile, pack, generation, or confirmation; rewriting journal and file together forges a pair.\",\"No external calls, live clients, or automatic deletes.\"]}]}",
+  "toolCallCount": 0,
+  "permissionRequestCount": 0,
+  "unsupportedClientRequests": [],
+  "mcpIsolationVerified": false,
+  "toolIsolationVerified": false,
+  "cliVersion": "grok 1.0.34 (3736acbc8658)",
+  "argv": [
+    "/Users/yoda/.local/bin/grok",
+    "--no-auto-update",
+    "--disable-web-search",
+    "--permission-mode",
+    "plan",
+    "agent",
+    "--no-leader",
+    "--model",
+    "grok-4.7",
+    "--reasoning-effort",
+    "xhigh",
+    "--agent-profile",
+    "/Users/yoda/projects/RealBud/outputs/pack-history-2026-09-22/grok-history-acp-profile.md",
+    "stdio"
+  ],
+  "ownedPid": 95437,
+  "requests": [
+    {
+      "id": 1,
+      "method": "initialize",
+      "atSeconds": 0.04
+    },
+    {
+      "id": 2,
+      "method": "session/new",
+      "atSeconds": 1.073
+    },
+    {
+      "id": 3,
+      "method": "session/prompt",
+      "atSeconds": 1.242
+    }
+  ],
+  "elapsedSeconds": 192.83,
+  "firstStdoutSeconds": 1.073,
+  "stdoutBytes": 862531,
+  "initialize": {
+    "protocolVersion": 1,
+    "agentInfo": null,
+    "agentCapabilities": {
+      "loadSession": true,
+      "promptCapabilities": {
+        "image": false,
+        "audio": false,
+        "embeddedContext": true
+      },
+      "mcpCapabilities": {
+        "http": true,
+        "sse": true
+      },
+      "sessionCapabilities": {
+        "list": {},
+        "resume": {},
+        "close": {}
+      },
+      "auth": {},
+      "_meta": {
+        "x.ai/fs_notify": true,
+        "x.ai/hooks": {
+          "blockingEvents": [
+            "pre_tool_use",
+            "stop",
+            "subagent_stop"
+          ],
+          "decisions": [
+            "deny",
+            "block"
+          ],
+          "stopSignals": [
+            "continue",
+            "stopReason",
+            "additionalContext"
+          ]
+        },
+        "x.ai/capabilities": {
+          "toolOverrides": {
+            "x_keyword_search": true,
+            "x_semantic_search": true,
+            "x_user_search": false,
+            "x_thread_fetch": false
+          }
+        }
+      }
+    }
+  },
+  "initializeMetaKeys": [
+    "agentId",
+    "agentInstanceId",
+    "agentVersion",
+    "availableCommands",
+    "cancelRewind",
+    "currentWorkingDirectory",
+    "defaultAuthMethodId",
+    "feedbackTraceOffer",
+    "grokShell",
+    "hostname",
+    "mcpApps",
+    "mcpServers",
+    "metadata",
+    "modelState",
+    "sessionRecap",
+    "voiceMode",
+    "x.ai/mcp/sdk",
+    "x.ai/pluginDirs"
+  ],
+  "initializeMcpShape": "list",
+  "initializeMcpCount": 0,
+  "initializeMcpNames": [],
+  "authMethodIds": [
+    "cached_token",
+    "grok.com"
+  ],
+  "observedMcpServerCount": 0,
+  "observedMcpServerNames": [],
+  "notificationMethods": {
+    "_x.ai/mcp/servers_updated": 1,
+    "_x.ai/mcp_initialized": 1,
+    "_x.ai/session_notification": 4,
+    "_x.ai/sessions/changed": 2,
+    "_x.ai/queue/changed": 3,
+    "_x.ai/models/update": 2,
+    "_x.ai/settings/update": 2,
+    "_x.ai/announcements/update": 3,
+    "_x.ai/session/prompt_complete": 1
+  },
+  "notificationShapes": {
+    "_x.ai/mcp/servers_updated": [
+      "mcpServers"
+    ],
+    "_x.ai/mcp_initialized": [
+      "elapsedMs",
+      "mcpToolCount",
+      "sessionId"
+    ],
+    "_x.ai/session_notification": [
+      "_meta",
+      "sessionId",
+      "update"
+    ],
+    "_x.ai/sessions/changed": [
+      "removed",
+      "upserted"
+    ],
+    "_x.ai/queue/changed": [
+      "entries",
+      "sessionId"
+    ],
+    "_x.ai/models/update": [
+      "availableModels",
+      "currentModelId"
+    ],
+    "_x.ai/settings/update": [
+      "allow_access",
+      "announcements",
+      "auto_permission_mode_enabled",
+      "campaigns",
+      "collapsed_edit_blocks",
+      "consent_gate",
+      "dock_enabled",
+      "gate_label",
+      "gate_message",
+      "gate_url",
+      "group_tool_verbs",
+      "permission_mode",
+      "privacy_banner_reshow_days",
+      "privacy_notice_rollout",
+      "prompt_suggestions_enabled",
+      "session_picker_grouped",
+      "sharing_enabled",
+      "show_resolved_model",
+      "slash_command_tags",
+      "subscription_tier_display",
+      "subscription_watch_interval_secs",
+      "terminal_theme_enabled",
+      "tips"
+    ],
+    "_x.ai/announcements/update": [
+      "announcements",
+      "gen"
+    ],
+    "_x.ai/session/prompt_complete": [
+      "agentResult",
+      "promptId",
+      "sessionId",
+      "stopReason"
+    ]
+  },
+  "firstStderrSeconds": 1.169,
+  "stderrBytes": 5568,
+  "observedMcpInitialization": {
+    "elapsedMs": 0,
+    "mcpToolCount": 0,
+    "sessionId": "01a0c56d-87a9-7183-a4a1-b16ebb124bfe"
+  },
+  "sessionId": "01a0c56d-87a9-7183-a4a1-b16ebb124bfe",
+  "sessionConfigOptions": [
+    {
+      "id": "model",
+      "name": "Model",
+      "category": "model",
+      "type": "select",
+      "currentValue": "grok-4.7"
+    },
+    {
+      "id": "reasoning_effort",
+      "name": "Reasoning Effort",
+      "category": "thought_level",
+      "type": "select",
+      "currentValue": "xhigh"
+    }
+  ],
+  "sessionMeta": {},
+  "sessionMetaKeys": [
+    "codebaseIndexed",
+    "currentWorkingDirectory",
+    "feedbackEnabled",
+    "gitRoot",
+    "isGitRepo",
+    "showNonGitWarning",
+    "x.ai/memoryMode",
+    "x.ai/sessionConfig",
+    "x.ai/sessionDetail"
+  ],
+  "sessionResultKeys": [
+    "_meta",
+    "configOptions",
+    "models",
+    "sessionId"
+  ],
+  "returnedModelOption": "grok-4.7",
+  "returnedReasoningEffort": "xhigh",
+  "terminal": {
+    "stopReason": "end_turn",
+    "_meta": {
+      "sessionId": "01a0c56d-87a9-7183-a4a1-b16ebb124bfe",
+      "requestId": "15a45066-a76f-486c-a16b-e5389db084d4",
+      "modelId": "grok-4.7",
+      "inputTokens": 32804,
+      "outputTokens": 12856,
+      "reasoningTokens": 12450,
+      "cachedReadTokens": 1152,
+      "totalTokens": 45667,
+      "usage": {
+        "inputTokens": 32804,
+        "outputTokens": 12856,
+        "totalTokens": 45660,
+        "cachedReadTokens": 1152,
+        "cacheCreationTokens": 0,
+        "reasoningTokens": 12450,
+        "modelCalls": 1,
+        "apiDurationMs": 187823,
+        "costUsdTicks": 1410160000,
+        "modelUsage": {
+          "grok-4.7-build": {
+            "inputTokens": 32804,
+            "outputTokens": 12856,
+            "totalTokens": 45660,
+            "cachedReadTokens": 1152,
+            "cacheCreationTokens": 0,
+            "reasoningTokens": 12450,
+            "modelCalls": 1,
+            "apiDurationMs": 187823,
+            "costUsdTicks": 1410160000
+          }
+        },
+        "numTurns": 1
+      }
+    }
+  },
+  "terminalMetaKeys": [
+    "cachedReadTokens",
+    "inputTokens",
+    "modelId",
+    "outputTokens",
+    "promptId",
+    "reasoningTokens",
+    "requestId",
+    "sessionId",
+    "totalTokens",
+    "usage"
+  ],
+  "terminalAtSeconds": 189.608,
+  "structuredOutputValid": true,
+  "structuredOutput": {
+    "cases": [
+      {
+        "title": "S1 stale or cross-profile commit",
+        "setup": "Confirm binds P, pack K, generation G, history H, and older selection S. Shift H, or replay the token on P2 or K2.",
+        "assertions": [
+          "Mismatch of profile, pack, G, H, or S aborts; journal and active config stay unchanged.",
+          "Only S is removed from the journal; newest 8, active config, approvals, schedules, business data, and ownership or retirement claims unchanged.",
+          "Proof is the new journal plus private content-addressed bytes hashing to S, not a status flag.",
+          "A foreign profile or pack token cannot select or drop rows."
+        ]
+      },
+      {
+        "title": "S2 crash before durable ref swap",
+        "setup": "Kill after temp write, hash, or pre-fsync, and after ref edit but before journal fsync. Retry the same confirm once H has moved.",
+        "assertions": [
+          "Refs update only after durable read-back equals confirmed bytes and hash.",
+          "Retry completes or no-ops that pair; it never prunes or follows a newer S.",
+          "No crash leaves a missing, short, or hash-mismatched ref.",
+          "Active config and unselected history stay byte-identical."
+        ]
+      },
+      {
+        "title": "S3 backup race and plain-hash limits",
+        "setup": "Backup overlaps archive and may store new refs without files, or files without the journal. Restore missing, short, re-digested, and cross-pack files.",
+        "assertions": [
+          "Complete backup has the post-archive journal and every referenced byte; else it is incomplete. Bad restores fail closed, no prune.",
+          "Restored journal matches rollback and active config; archives are included, not only the live 8.",
+          "A plain hash only shows bytes match a digest. It does not bind profile, pack, generation, or confirmation; rewriting journal and file together forges a pair.",
+          "No external calls, live clients, or automatic deletes."
+        ]
+      }
+    ]
+  },
+  "completed": true,
+  "shutdown": "owned-group-sigterm",
+  "exitCode": 0,
+  "remainingOwnedGroupPids": [],
+  "processReaped": true,
+  "isolatedHomeRemoved": true,
+  "globalConfigSha256After": "ada54f57ec570d8e70cba35400ea2b557914ede90ffa893b5da122a7f69d6736",
+  "globalConfigUnchanged": true
+}

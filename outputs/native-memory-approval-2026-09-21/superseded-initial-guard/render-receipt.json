@@ -1,0 +1,10 @@
+{
+  "at": "2026-09-21T08:27:03.939Z",
+  "passed": true,
+  "layer": "Actual PendingApproval server-rendered fixture with production CSS, fictional store only; not connected ACP or actual approval dispatch proof",
+  "checks": [
+    "Full and held content states render desktop and390px without horizontal overflow",
+    "Missing content disables Allow; no reusable controls",
+    "Full content is keyboard-scrollable and retains its final line"
+  ]
+}

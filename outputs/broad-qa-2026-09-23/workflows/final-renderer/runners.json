@@ -1,0 +1,47 @@
+[
+  {
+    "script": "/Users/yoda/projects/RealBud/scripts/qa-bank-bytes.mjs",
+    "sha256": "6fb969a3766e2e903c11d4d85e1836ff1965c0762ed8707f1399d8435fb55783",
+    "exitCode": 0,
+    "seconds": 12.67,
+    "started": "2026-09-23T02:38:11.360924+00:00",
+    "log": "/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/workflows/final-renderer/bank-bytes.log",
+    "tier": "current source HTTP server and final rebuilt dist renderer; synthetic data; disposable headless Chrome; not installed or live integration proof"
+  },
+  {
+    "script": "/Users/yoda/projects/RealBud/scripts/qa-bank-amendments.mjs",
+    "sha256": "c28ab6a9efa970832a4358b6850d549a11f819aad9e0b397dd6bb677b0a4b392",
+    "exitCode": 0,
+    "seconds": 9.73,
+    "started": "2026-09-23T02:38:11.361082+00:00",
+    "log": "/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/workflows/final-renderer/bank-amendments.log",
+    "tier": "current source HTTP server and final rebuilt dist renderer; synthetic data; disposable headless Chrome; not installed or live integration proof"
+  },
+  {
+    "script": "/Users/yoda/projects/RealBud/scripts/qa-source-bills.mjs",
+    "sha256": "042757a47d545dde38eed2234a1f68e9128f464c97061a54965659cd8741da0f",
+    "exitCode": 0,
+    "seconds": 22.45,
+    "started": "2026-09-23T02:38:21.087243+00:00",
+    "log": "/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/workflows/final-renderer/source-bills.log",
+    "tier": "current source HTTP server and final rebuilt dist renderer; synthetic data; disposable headless Chrome; not installed or live integration proof"
+  },
+  {
+    "script": "/Users/yoda/projects/RealBud/scripts/qa-morning-mail.mjs",
+    "sha256": "e6bfe436857f778d83dfee51bc06cc1ec30a0608cb31d0bd4aec467cf0f681b0",
+    "exitCode": 0,
+    "seconds": 4.69,
+    "started": "2026-09-23T02:38:24.028675+00:00",
+    "log": "/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/workflows/final-renderer/morning-mail.log",
+    "tier": "current source HTTP server and final rebuilt dist renderer; synthetic data; disposable headless Chrome; not installed or live integration proof"
+  },
+  {
+    "script": "/Users/yoda/projects/RealBud/scripts/qa-second-office-contract.mjs",
+    "sha256": "a880ee5925c4ba9a3c3c561efd40e2770de5c453d6a71bad0065c0b5d844cbcf",
+    "exitCode": 0,
+    "seconds": 1.6,
+    "started": "2026-09-23T02:38:28.722816+00:00",
+    "log": "/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/workflows/final-renderer/second-office-contract.log",
+    "tier": "current source HTTP server and final rebuilt dist renderer; synthetic data; disposable headless Chrome; not installed or live integration proof"
+  }
+]

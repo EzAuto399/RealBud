@@ -1,0 +1,11 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ✓ src/components/MemoryReviewPanel.test.ts (19 tests) 504ms
+
+ Test Files  1 passed (1)
+      Tests  19 passed (19)
+   Start at  01:23:10
+   Duration  744ms (transform 102ms, setup 20ms, import 151ms, tests 504ms, environment 0ms)
+
+JSON report written to /Users/yoda/projects/RealBud/outputs/hermes-memory-review-2026-09-22/ui-identity-tests.json

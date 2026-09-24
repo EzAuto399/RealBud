@@ -31,7 +31,8 @@ export function budFacingCopy(value: unknown, fallback: string): string {
   const raw = value instanceof Error ? value.message : typeof value === "string" ? value : "";
   if (!raw.trim()) return fallback;
   return raw
-    .replace(/~\/\.hermes\b/gi, "Bud's private setup")
+    .replace(/(?:~[\\/]|[A-Za-z]:[\\/]|[\\/])(?:[^\n\\/"'<>()[\]{};,:!?]+[\\/])*\.hermes(?:[\\/][^\s"'<>()[\]{};,:!?]*)?/gi, "Bud's private setup")
+    .replace(/\.hermes\b/gi, "Bud's private setup")
     .replace(/Hermes Agent/gi, "Bud")
     .replace(/Hermes CLI/gi, "Bud")
     .replace(/\bHermes\b/gi, "Bud")
@@ -90,8 +91,13 @@ export function budAvailability(status: HermesStatus | null, connected: boolean,
   const unavailable = (label: string, detail: string, action: string | null = null, target = "you-worker") =>
     ({ ready: false, label, detail, action, target, canVerify: false });
   if (!connected) return unavailable("Reconnecting", "The local service is reconnecting. Keep drafting; new work can start when the connection returns.");
-  if (recovering) return unavailable("Recovery needed", "Restoring the property book when this Mac still has the key. Your draft stays here.", "Unlock book", "you-recovery");
+  if (recovering) return unavailable("Recovery needed", "Restoring the property book when its saved key is available. Your draft stays here.", "Unlock book", "you-recovery");
   if (!status) return unavailable("Checking Bud", "Checking Bud's setup. You can prepare your request while this finishes.");
+  // A withdrawn service grant is its own hold: nothing on this computer is
+  // broken, no key can fix it, and every saved record stays readable.
+  if (status.modelAccess?.withdrawn) {
+    return unavailable("Model access withdrawn", status.modelAccess.detail, null);
+  }
   if (status.cli.probeState === "timeout" || status.cli.probeState === "error") {
     return unavailable("Check Bud", "Bud's last setup check did not finish. Check the connection before trying new work.", "Check Bud");
   }
@@ -117,7 +123,11 @@ export function budAvailability(status: HermesStatus | null, connected: boolean,
     return unavailable("Setup needed", "Finish Bud's installation before starting work. You can prepare your request now.", status.cli.installed ? "Check Bud setup" : "Set up Bud");
   }
   if (stage === "safeguards") return unavailable("Setup needed", "Finish Bud's private workroom and property safeguards before starting work.", "Finish Bud setup");
-  if (stage === "model") return unavailable("Model needed", "Connect a model for Bud. Your request stays here while you finish setup.", "Connect a model", "attach-model");
+  if (stage === "model") {
+    return status.modelAccess?.managed
+      ? unavailable("Model choice needed", status.modelAccess.detail, "Choose a model", "attach-model")
+      : unavailable("Model needed", "Connect a model for Bud. Your request stays here while you finish setup.", "Connect a model", "attach-model");
+  }
   if (stage === "verify") return { ...unavailable("Check needed", "Run the private readiness check to confirm Bud can answer with this connection.", "Run readiness check"), canVerify: true };
   if (stage === "checking") return unavailable("Checking Bud", "The model connection has not been checked yet. Open setup to refresh its status.", "Check Bud");
   return { ready: true, label: "Bud ready", detail: "Bud can prepare work using the book, files and permitted tools.", action: null, target: "you-worker", canVerify: false };

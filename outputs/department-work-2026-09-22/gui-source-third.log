@@ -1,0 +1,9 @@
+<anonymous_script>:1
+
+
+SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at Server.<anonymous> (file:///Users/yoda/projects/RealBud/scripts/qa-department-work.mjs:43:85)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+
+Node.js v24.19.0

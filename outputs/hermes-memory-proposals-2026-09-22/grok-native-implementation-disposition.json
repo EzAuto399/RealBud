@@ -1,0 +1,31 @@
+{
+  "requestedModel": "grok-4.6",
+  "reasoningEffort": "xhigh",
+  "sessionId": "01a0c497-49e8-7c63-82fc-a4cf99f56995",
+  "models": [
+    "grok-4.6-build"
+  ],
+  "output": "grok-native-proposal.json",
+  "draft": "grok-native-proposed.py",
+  "implemented": "server/helpers/hermes-memory-proposals.py",
+  "accepted": "Signed prepared/published journal, stable scope/request HMAC identity, private staged payload and no-clobber native publication with explicit replay/recovery. Codex owns final implementation and verification.",
+  "integrationCorrections": [
+    "Removed generated production crash-test hook; subprocess tests monkeypatch only their test child.",
+    "Preserved nonblank input whitespace; native preview determines final entry normalization.",
+    "Bound request byte limits to canonical UTF-8 rather than escaped ASCII size.",
+    "Refused all Unicode Bidi_Control characters and malformed scalar text.",
+    "Verified signed journal file/key/ID and matching decision pending digest.",
+    "Handled approval or rejection after publication but before final journal without republishing.",
+    "Revalidated config/native dry run before publishing recovered prepared work.",
+    "Added bounded directory accounting and fsynced publication/decision reconciliation.",
+    "Aligned strict result with shared proposal-only response."
+  ],
+  "proof": [
+    "native-contract-final.json",
+    "fault-verification.json",
+    "http-pack-verification.json",
+    "native-discovery.log",
+    "gui-packaged/receipt.json"
+  ],
+  "review": "Independent final source audit tracked separately."
+}

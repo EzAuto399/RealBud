@@ -1,0 +1,78 @@
+{
+  "sessionId": "01a0c4a3-6773-7bf0-b015-14a79525be01",
+  "stopReason": "end_turn",
+  "requested": {
+    "model": "grok-4.6",
+    "reasoningEffort": "xhigh",
+    "tools": [],
+    "permissionMode": "plan",
+    "subagents": false
+  },
+  "modelUsage": {
+    "grok-4.6-build": {
+      "inputTokens": 62041,
+      "outputTokens": 62100,
+      "cacheReadInputTokens": 5376,
+      "cacheCreationInputTokens": 0,
+      "modelCalls": 1,
+      "costUSD": 0.1697858
+    }
+  },
+  "review": {
+    "approved": true,
+    "findings": [
+      {
+        "severity": "low",
+        "file": "server/hermes-memory-proposal-broker.ts",
+        "issue": "403/405/400/413 replies end the response without destroying the socket or draining leftover request bytes, and keep-alive stays enabled. Unread body bytes on an HTTP/1.1 connection can be parsed as the next request.",
+        "fix": "On those paths call req.resume() or req.destroy(), and send Connection: close (or always destroy after 413 once the running byte count exceeds 70KiB)."
+      },
+      {
+        "severity": "low",
+        "file": "server/hermes-memory-proposal-broker.ts",
+        "issue": "The 70KiB body cap is applied only after a chunk is already allocated, so one oversized chunk can exceed the budget before the 413 return.",
+        "fix": "Reject Content-Length above 70KiB before reading, and destroy the request as soon as the running byte count exceeds the cap."
+      }
+    ],
+    "limits": [
+      "Review is of the three supplied files only; native propose/assertCapability/isActive, managed-service, ACP, and Hermes client behavior were out of scope.",
+      "No tools, tests, or runtime execution were used.",
+      "Persistent idempotency, credential handling, and threat checks are assumed to live in the native host as specified.",
+      "Keep-alive leftover-body desync was not demonstrated against a live Hermes HTTP client."
+    ]
+  },
+  "dispositions": [
+    {
+      "finding": 0,
+      "status": "not reproduced; underlying framing claim contradicted by actual runtime",
+      "evidence": [
+        "Actual Node 24.19.0 resOnFinish drains unconsumed IncomingMessage through req._dump(); primary runtime excerpt in broker-node-framing-source-node24.txt",
+        "Four real-broker raw TCP pipelining cases cover early403/405/400/413; embedded authorized calls never dispatch",
+        "Successful following ping after403/405/400 proves unread request bytes stay within the rejected body;413 closes before another call"
+      ],
+      "receipt": "outputs/hermes-memory-proposals-2026-09-22/broker-framing-tests.json"
+    },
+    {
+      "finding": 1,
+      "status": "optional early-rejection optimization, not a violated retained-body bound",
+      "evidence": [
+        "Application checks running byte count before retaining each chunk; over-limit chunks are not added to body buffers",
+        "Node itself allocates transport chunks before application code; a Content-Length precheck does not establish a hard process allocation cap",
+        "Actual oversized-body tests return413 and dispatch no native call; both declared and chunked body paths share the running bound"
+      ],
+      "decision": "No production change during frozen broad verification for this optional optimization."
+    }
+  ],
+  "additionalTests": {
+    "passed": 4,
+    "failed": 0,
+    "success": true
+  },
+  "applicationFilesChanged": false,
+  "limits": [
+    "Review is of the three supplied files only; native propose/assertCapability/isActive, managed-service, ACP, and Hermes client behavior were out of scope.",
+    "No tools, tests, or runtime execution were used.",
+    "Persistent idempotency, credential handling, and threat checks are assumed to live in the native host as specified.",
+    "Keep-alive leftover-body desync was not demonstrated against a live Hermes HTTP client."
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "sessionId": "01a0c3ed-8df8-7e02-b79a-8f56673d5d05",
+  "requestedModel": "grok-4.6",
+  "reasoningEffort": "xhigh",
+  "recordedModel": "grok-4.6-build",
+  "completion": "end_turn, one model call; completed normally",
+  "originalProposal": "grok-resource-journal.patch",
+  "sourceOwnership": [
+    "server/private-backup-operations.ts",
+    "server/private-backup-operations.test.ts"
+  ],
+  "integration": [
+    "Original git apply --check rejected inaccurate hunk placement; all hunks were then applied through exact unique old-text matches to the two allowlisted files, preserving before-source copies.",
+    "Added explicit tracked creation; the runtime refuses untracked legacy operations and automatic reservation release never infers absent legacy files.",
+    "Added authoritative internal resource-binding and cleanup reads; public get/list remain scoped.",
+    "New references require matching allocated resources; removed/deleting references cannot be newly admitted. Existing historical references remain retained.",
+    "Validate resource ID/nonce uniqueness on journal reopen, as well as allocation.",
+    "Added a durable failed-close PID hold. Confirmed process exit is required before cleanup; a new runtime or released journal owner is insufficient.",
+    "Corrected the proposal test fixture to supply its actual restored workspace ID; did not relax encrypted completion validation."
+  ],
+  "limits": [
+    "No HTTP/UI wiring or physical aggregate disk enforcement is established by this journal.",
+    "Filesystem deletion and fsync are performed by the separately tested resource runtime/helper.",
+    "The earlier first request ended with max-turns cancellation after attempting an unavailable read_file tool; it supplied no patch. The retry completed."
+  ]
+}

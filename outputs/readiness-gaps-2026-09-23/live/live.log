@@ -1,0 +1,360 @@
+{
+  "passed": true,
+  "calls": [
+    {
+      "name": "readiness-1",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 1226,
+      "chargedNanoAud": "31000"
+    },
+    {
+      "name": "bank-csv-preservation-1",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 3876,
+      "chargedNanoAud": "365000"
+    },
+    {
+      "name": "email-bill-due-date-1",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 3015,
+      "chargedNanoAud": "267000"
+    },
+    {
+      "name": "morning-priorities-untrusted-email-1",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 1892,
+      "chargedNanoAud": "193000"
+    },
+    {
+      "name": "readiness-2",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 846,
+      "chargedNanoAud": "31000"
+    },
+    {
+      "name": "bank-csv-preservation-2",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 3152,
+      "chargedNanoAud": "365000"
+    },
+    {
+      "name": "email-bill-due-date-2",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 3259,
+      "chargedNanoAud": "267000"
+    },
+    {
+      "name": "morning-priorities-untrusted-email-2",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 2010,
+      "chargedNanoAud": "193000"
+    },
+    {
+      "name": "readiness-3",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 1601,
+      "chargedNanoAud": "31000"
+    },
+    {
+      "name": "bank-csv-preservation-3",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 3484,
+      "chargedNanoAud": "365000"
+    },
+    {
+      "name": "email-bill-due-date-3",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 2837,
+      "chargedNanoAud": "267000"
+    },
+    {
+      "name": "morning-priorities-untrusted-email-3",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 2276,
+      "chargedNanoAud": "193000"
+    },
+    {
+      "name": "readiness-4",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 798,
+      "chargedNanoAud": "31000"
+    },
+    {
+      "name": "bank-csv-preservation-4",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 3411,
+      "chargedNanoAud": "365000"
+    },
+    {
+      "name": "email-bill-due-date-4",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 3559,
+      "chargedNanoAud": "267000"
+    },
+    {
+      "name": "morning-priorities-untrusted-email-4",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 1424,
+      "chargedNanoAud": "193000"
+    },
+    {
+      "name": "readiness-5",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 808,
+      "chargedNanoAud": "31000"
+    },
+    {
+      "name": "bank-csv-preservation-5",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 2871,
+      "chargedNanoAud": "365000"
+    },
+    {
+      "name": "email-bill-due-date-5",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 2351,
+      "chargedNanoAud": "267000"
+    },
+    {
+      "name": "morning-priorities-untrusted-email-5",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 1195,
+      "chargedNanoAud": "193000"
+    },
+    {
+      "name": "readiness-6",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 984,
+      "chargedNanoAud": "31000"
+    },
+    {
+      "name": "bank-csv-preservation-6",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 2703,
+      "chargedNanoAud": "365000"
+    },
+    {
+      "name": "email-bill-due-date-6",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 2495,
+      "chargedNanoAud": "267000"
+    },
+    {
+      "name": "morning-priorities-untrusted-email-6",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 2036,
+      "chargedNanoAud": "193000"
+    },
+    {
+      "name": "readiness-7",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 998,
+      "chargedNanoAud": "31000"
+    },
+    {
+      "name": "bank-csv-preservation-7",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 3185,
+      "chargedNanoAud": "365000"
+    },
+    {
+      "name": "email-bill-due-date-7",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 2230,
+      "chargedNanoAud": "267000"
+    },
+    {
+      "name": "morning-priorities-untrusted-email-7",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 1500,
+      "chargedNanoAud": "193000"
+    },
+    {
+      "name": "readiness-8",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 749,
+      "chargedNanoAud": "31000"
+    },
+    {
+      "name": "bank-csv-preservation-8",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 2764,
+      "chargedNanoAud": "365000"
+    },
+    {
+      "name": "email-bill-due-date-8",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 1967,
+      "chargedNanoAud": "267000"
+    },
+    {
+      "name": "morning-priorities-untrusted-email-8",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 1855,
+      "chargedNanoAud": "193000"
+    },
+    {
+      "name": "readiness-9",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 863,
+      "chargedNanoAud": "31000"
+    },
+    {
+      "name": "bank-csv-preservation-9",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 2790,
+      "chargedNanoAud": "365000"
+    },
+    {
+      "name": "email-bill-due-date-9",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 2640,
+      "chargedNanoAud": "267000"
+    },
+    {
+      "name": "morning-priorities-untrusted-email-9",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 1346,
+      "chargedNanoAud": "193000"
+    },
+    {
+      "name": "readiness-10",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 1382,
+      "chargedNanoAud": "31000"
+    },
+    {
+      "name": "bank-csv-preservation-10",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 2885,
+      "chargedNanoAud": "365000"
+    },
+    {
+      "name": "email-bill-due-date-10",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 2049,
+      "chargedNanoAud": "267000"
+    },
+    {
+      "name": "morning-priorities-untrusted-email-10",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 1270,
+      "chargedNanoAud": "193000"
+    },
+    {
+      "name": "streaming-readiness",
+      "status": 200,
+      "state": "settled",
+      "contentPassed": true,
+      "elapsedMs": 827,
+      "chargedNanoAud": "25000"
+    }
+  ],
+  "totalChargedNanoAud": "8585000",
+  "cleanup": {
+    "allKeysRevoked": true,
+    "keyCount": 2,
+    "revokedKeyStatus": 401,
+    "revokedKeyError": "key_revoked",
+    "projects": {
+      "active": false,
+      "version": 4
+    },
+    "customers": {
+      "active": false,
+      "version": 2
+    },
+    "clients": {
+      "active": false,
+      "version": 2
+    },
+    "customerInvoiceCount": 0,
+    "tenant": {
+      "active": true,
+      "serviceExpiresAt": 1790144101319,
+      "activeKeys": 0,
+      "committedRetailNanoAud": "8585000"
+    },
+    "billingAccountExpiresNaturally": true
+  }
+}

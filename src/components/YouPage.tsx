@@ -1,3 +1,9 @@
+import { WebsiteLinkCard } from "./you/WebsiteLinkCard";
+import { AiUsageCard } from "./you/AiUsageCard";
+import { RemoteApproversCard } from "./you/RemoteApproversCard";
+import { RemoteWorkCard } from "./you/RemoteWorkCard";
+import { WebsiteRequestsCard } from "./you/WebsiteRequestsCard";
+import { BrowserCard } from "./you/BrowserCard";
 import { usePhoneConnections } from "@/lib/phone-connections";
 import { useServiceAdminAccess } from "@/lib/use-service-admin-access";
 import { useWorkspaceScroll } from "@/lib/workspace-view-state";
@@ -25,6 +31,7 @@ import {
 } from "@/lib/portal-job";
 import { sourceCheckCopy } from "@/lib/source-check";
 import { attendedRunLabel, jobRunStatusChip, jobRunSummaryLine, safeJobRunDetail } from "@/lib/job-run";
+import { budFacingCopy } from "@/lib/bud-setup";
 import { PortalJobActions } from "./schedule/PortalJobActions";
 import { WorkflowPacksCard } from "./schedule/WorkflowPacksCard";
 import {
@@ -42,6 +49,7 @@ import { readLawWatch, type LawWatch } from "@/lib/law-watch";
 import { api, useStore, type HermesStatus } from "@/state/store";
 import { AdvancedDiagnostics, RecoveryNotice, StatusLabel, type StatusTone } from "./pm";
 import { BudSetupCard } from "./BudSetupCard";
+import { MemoryReviewPanel } from './MemoryReviewPanel';
 import { ConnectedAppsCard } from "./ConnectedAppsCard";
 import { ServiceAdministration } from "./ServiceAdministration";
 import { ServiceStatusCard } from "./ServiceStatusCard";
@@ -49,8 +57,12 @@ import { CompanySetupCard } from "./CompanySetupCard";
 import { Card } from "./SettingsPrimitives";
 import { ProfileFields } from "./SettingsModal";
 import { GoLiveCard } from "./desk/GoLiveCard";
+import { coerceOffice } from "../../shared/office";
 import { LawWatchCard } from "./you/LawWatchCard";
 import { OfficeCard } from "./you/OfficeCard";
+import { UnattendedWorkCard } from "./you/UnattendedWorkCard";
+import { SupportCard } from "./you/SupportCard";
+import { PrivateWorkspaceBackup } from "./PrivateWorkspaceBackup";
 
 function YouLoadLines({ label }: { label: string }) {
   return (
@@ -64,6 +76,7 @@ function YouLoadLines({ label }: { label: string }) {
 const YOU_JUMP_LINKS = [
   { id: "you-worker", label: "Bud" },
   { id: "you-office", label: "Office" },
+  { id: "you-browser", label: "Browser" },
   { id: "you-connected-apps", label: "Apps" },
   { id: "you-phone", label: "Phone" },
   { id: "you-profile", label: "Profile" },
@@ -121,17 +134,17 @@ function workerDiagnosticsText(hermes: HermesStatus | null | undefined, version?
     return lines.join("\n");
   }
   lines.push(
-    `worker ${hermes.cli.installed ? "installed" : "not installed"} · ${(hermes.cli.compatible ?? hermes.cli.matchesPin) ? "matches supported build" : "does not match supported build"}`,
+    `Bud ${hermes.cli.installed ? "installed" : "not installed"} · ${(hermes.cli.compatible ?? hermes.cli.matchesPin) ? "matches supported build" : "does not match supported build"}`,
   );
   lines.push(
-    `pack ${hermes.pack.installed ? "installed" : "missing"} · approvals ${hermes.pack.approvalsManual ? "manual" : "not manual"} · workroom ${hermes.pack.workroomReady ? "ready" : "needs repair"}`,
+    `safeguards ${hermes.pack.installed ? "installed" : "missing"} · approvals ${hermes.pack.approvalsManual ? "manual" : "not manual"} · workroom ${hermes.pack.workroomReady ? "ready" : "needs repair"}`,
   );
   lines.push(`ready ${hermes.ready ? "yes" : "no"}`);
-  if (hermes.detail) lines.push(hermes.detail);
+  if (hermes.detail) lines.push(budFacingCopy(hermes.detail, "Bud status unavailable"));
   if (hermes.lastPing) lines.push(`lastPing ${fmtDateTime(hermes.lastPing.at)} · ${hermes.lastPing.ok ? "ok" : "miss"}`);
   if (hermes.lastTest) lines.push(`lastTest ${fmtDateTime(hermes.lastTest.at)} · ${hermes.lastTest.ok ? "ok" : "miss"}`);
-  if (hermes.homeDir) lines.push(`data dir ${hermes.homeDir}`);
-  if (hermes.profileDir) lines.push(`${hermes.handsLabel ?? "Bud's hands"} · ${hermes.profileDir}`);
+  if (hermes.homeDir) lines.push("Bud data directory configured");
+  if (hermes.profileDir) lines.push(`${budFacingCopy(hermes.handsLabel, "Bud's hands")} · private directory configured`);
   return lines.join("\n");
 }
 
@@ -226,7 +239,13 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
   const hermes = state.hermes;
   const recovery = desk?.recovery?.active;
   const agency = desk?.book?.agency;
-  const timezone = agency?.timezone || desk?.timezone || "Australia/Sydney";
+  // The book's zone is a recorded fact or it is absent. A fixture zone shown as
+  // the book's setting would invent configuration, so the display gets null and
+  // says so. Formatting still needs a real zone: times below use this computer's
+  // zone explicitly, which the office card names rather than passing off as the
+  // book's own.
+  const bookTimezone = agency?.timezone || desk?.timezone || null;
+  const timezone = bookTimezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   const budReady = Boolean(hermes?.ready);
 
   const copyDiagnostics = () => {
@@ -260,11 +279,10 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
         </span>
       </summary>
       <div className="settings-section-body">
-        <CompanySetupCard />
         {desk ? (
           <OfficeCard
             agencyName={agency?.name ?? ""}
-            timezone={timezone}
+            timezone={bookTimezone}
             jurisdictions={agency?.jurisdictions ?? []}
             office={desk.book?.office}
             revision={desk.revision}
@@ -295,6 +313,14 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
         ) : (
           <Card title="This office" subtitle="Open Desk once to load the book." />
         )}
+        <CompanySetupCard />
+        <section id={section ? undefined : "you-website"} tabIndex={-1} aria-label="Website account">
+          <WebsiteLinkCard />
+        </section>
+        <AiUsageCard />
+        <WebsiteRequestsCard />
+        <RemoteApproversCard />
+        <RemoteWorkCard />
       </div>
     </details>
   );
@@ -305,6 +331,8 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
       agencyName={agency?.name ?? ""}
       workerReady={budReady}
       compact
+      jurisdictions={agency?.jurisdictions ?? []}
+      office={desk.book?.office ? coerceOffice(desk.book.office) : undefined}
       onConnectExport={() => dispatch({ type: "showDesk", book: true })}
       attachWorkerLabel="Set up Bud"
       onAttachWorker={() => scrollYouTarget("you-worker")}
@@ -454,24 +482,22 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
             {!desk?.sources?.length && <li>No sources yet.</li>}
           </ul>
         </Card>
-        <Card title="Browser profile" subtitle="Dedicated ~/.realbud/chrome-profile. You sign in. Passwords and cookies never enter config, recipes, or Ask.">
-          <div className="text-[13px] text-ink-secondary">
-            Retention: {desk?.retentionDays ?? "not set"} days. Full captures stay off the event stream.
-          </div>
-          {recovery ? (
-            <p className="mt-2 text-[13px] text-hold">Browser work is paused in recovery. Prepare is refused until you resume.</p>
-          ) : (
-            <p className="mt-2 text-[13px] text-ink-secondary">Handoffs stay case-scoped. You submit in the PMS.</p>
-          )}
+        <Card title="Keeping your records" subtitle="Saved jobs, shared office records and your private workspace have different recovery needs.">
+          <p className="text-sm text-ink-secondary">Export saved jobs to keep a copy of their plans. An office backup covers shared office records; neither includes your private book, files or conversations.</p>
+          <p className="mt-2 text-sm text-ink-secondary">Automatic deletion after a set number of days is not enabled. Use the private business backup below for the included records, and retain source documents separately.</p>
+          <button type="button" className="mt-3 min-h-11 rounded border border-line px-3 py-2 text-sm hover:bg-selected" onClick={() => scrollYouTarget("you-packs")}>Open saved-job import and export</button>
         </Card>
+        <div id="you-private-backup" tabIndex={-1}>
+          <PrivateWorkspaceBackup />
+        </div>
         <AdvancedDiagnostics>
           {hermes ? (
             <>
-              <div>pin {hermes.pin.product} / {hermes.pin.tag}</div>
-              <div>profile {hermes.pin.profile}</div>
-              <div>pack {hermes.pack.installed ? "installed" : "missing"} · workroom {hermes.pack.workroomReady ? "ready" : "needs repair"} · approvals {hermes.pack.approvalsManual ? "manual" : "not manual"}</div>
+              <div>Bud build {hermes.pin.tag}</div>
+              <div>Bud workroom {budFacingCopy(hermes.pin.profile, "unknown")}</div>
+              <div>safeguards {hermes.pack.installed ? "installed" : "missing"} · workroom {hermes.pack.workroomReady ? "ready" : "needs repair"} · approvals {hermes.pack.approvalsManual ? "manual" : "not manual"}</div>
               <div>private-workroom edits run automatically · sensitive and consequential steps still ask · scheduling stays on RealBud's clock</div>
-              <div>{hermes.detail}</div>
+              <div>{budFacingCopy(hermes.detail, "Bud status unavailable")}</div>
             </>
           ) : (
             <div>Engine status is not available yet.</div>
@@ -539,7 +565,12 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
           )}
         </YouGroup>
 
+        <YouGroup label="Bud memory">
+          <MemoryReviewPanel />
+        </YouGroup>
+
         <YouGroup label="Connections">
+          <BrowserCard />
           {appsSection}
           {phoneSection}
         </YouGroup>
@@ -547,6 +578,8 @@ export function YouPage({ section }: { section?: "phone" | "office" } = {}) {
         <YouGroup label="Account">
           {profileSection}
           <ServiceStatusCard />
+          <SupportCard />
+          <UnattendedWorkCard />
         </YouGroup>
 
         <YouGroup label="More">
@@ -805,7 +838,7 @@ const CHANNEL_SETUP: Record<
     connectLabel: "Connect",
   },
   discord: {
-    explainer: "Connect your Discord bot (Message Content Intent on), then pair using a code from this Mac.",
+    explainer: "Connect your Discord bot (Message Content Intent on), then pair using a code from this computer.",
     tokenLabel: "Bot token from the Discord developer portal",
     connectLabel: "Connect",
   },
@@ -1185,7 +1218,7 @@ function RecoveryKeyCard({ recoveryActive }: { recoveryActive: boolean }) {
             {startAgainOpen ? (
               <div className="mt-2 rounded-lg border border-danger/25 bg-danger/5 p-3">
                 <p className="text-[12px] text-ink-secondary">
-                  Start a new book only if this one cannot be recovered. The locked encrypted files stay preserved on this Mac; RealBud will not delete or overwrite them.
+                  Start a new book only if this one cannot be recovered. The locked encrypted files stay preserved in this workspace; RealBud will not delete or overwrite them.
                 </p>
                 <label className="mt-2 block text-[12px] text-ink-muted">
                   Type START AGAIN to confirm

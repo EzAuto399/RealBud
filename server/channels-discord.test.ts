@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:f
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DiscordDeps, DiscordFetch, DiscordRecord, DiscordSocketLike, StartTurnFn } from "./channels/discord.ts";
+import { WorkspaceActivityGate } from './workspace-activity.ts';
 
 const dataDir = vi.hoisted(() => {
   const base = process.env.TEMP || process.env.TMPDIR || process.cwd();
@@ -183,6 +184,14 @@ describe("verifyToken", () => {
 });
 
 describe("gateway pairing and relay", () => {
+  it('holds incoming work intact during a backup pause, then dispatches once', async () => {
+    const store = new Store(() => ({ instanceId: '', model: '' })); store.seedIfEmpty();
+    saveConnected({ pairedChannelId: '99', pairedName: 'Sam' });
+    const gate = new WorkspaceActivityGate(), startTurn = vi.fn(async () => {}), lease = await gate.pause();
+    const incoming = discord.handleInbound(dm('99', 'Review the fictional tasks', 'Sam'), { store, startTurn, subscribe: () => () => {}, fetch: stubFetch(), withWorkspaceActivity: gate.run });
+    await new Promise(resolve => setImmediate(resolve)); expect(startTurn).not.toHaveBeenCalled();
+    lease.release(); await incoming; expect(startTurn).toHaveBeenCalledTimes(1);
+  });
   it("pairs with the Mac code, refuses another user once, and preserves channel attribution while routing the raw request", async () => {
     const store = new Store(() => ({ instanceId: "", model: "" }));
     store.seedIfEmpty();
@@ -204,7 +213,7 @@ describe("gateway pairing and relay", () => {
 
     socket.dispatch("MESSAGE_CREATE", dm("99", createPairingCode("discord").command, "Sam"));
     await vi.waitFor(() => {
-      expect(sent).toEqual([{ channelId: "99", text: "Paired with RealBud on this Mac. Send a task, /continue for your latest saved reply, /summary for a short handoff, or /help. Keep this Mac awake and online." }]);
+      expect(sent).toEqual([{ channelId: "99", text: "Paired with your RealBud computer. Send a task, /continue for your latest saved reply, /summary for a short handoff, or /help. Keep that computer awake and online." }]);
     });
     expect(discord.loadChannel()).toMatchObject({ pairedChannelId: "99", pairedName: "Sam" });
     expect(startTurn).not.toHaveBeenCalled();

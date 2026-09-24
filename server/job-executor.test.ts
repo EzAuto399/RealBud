@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -8,17 +8,26 @@ import { executeRecipeJob, jobWorkerToolsets, parsePrepareResult, prepareJobProm
 import { JobRunStore } from "./job-runs.ts";
 import { JOB_OUTPUT_MAX_CHARS } from "../shared/job-output.ts";
 import { deskContextMarkdown, DESK_CONTEXT_MAX_CHARS } from "./desk-context.ts";
+import { removeFixture } from "./testing/private-fixture.ts";
 
 const dirs: string[] = [];
+// Each store holds its execution-history database open in the fixture folder;
+// Windows cannot remove the folder until every one is closed.
+const stores: JobRunStore[] = [];
+function track(store: JobRunStore): JobRunStore {
+  stores.push(store);
+  return store;
+}
 
 function store(): JobRunStore {
   const dir = mkdtempSync(join(tmpdir(), "realbud-job-executor-"));
   dirs.push(dir);
-  return new JobRunStore({ file: join(dir, "runs.json"), now: () => 100 });
+  return track(new JobRunStore({ file: join(dir, "runs.json"), now: () => 100 }));
 }
 
-afterEach(() => {
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+afterEach(async () => {
+  for (const store of stores.splice(0)) store.close();
+  for (const dir of dirs.splice(0)) await removeFixture(dir);
 });
 
 function job(overrides: Partial<Recipe> = {}): Recipe {
@@ -110,6 +119,39 @@ describe("prepare result", () => {
 });
 
 describe("executeRecipeJob", () => {
+  it('claims the run before loading reviewed instructions and retains their receipt on retry', async () => {
+    const runs = store();
+    const source = job({ capabilities: ['analyse', 'draft'] });
+    const instructions = 'Reviewed instruction revision 2: include missing-source uncertainty.';
+    const instructionContext = vi.fn(async (id: string) => {
+      expect(id).toBe(source.id);
+      expect(runs.list(source.id).some(run => run.status === 'running')).toBe(true);
+      return instructions;
+    });
+    const ask = vi.fn(async (prompt: string, options: any) => {
+      expect(prompt).toContain(instructions);
+      expect(options.toolsets).toEqual(['todo']);
+      return { ok: true as const, stdout: JSON.stringify({ summary: 'Checked', evidence: [], outputs: ['Missing sources identified.'], needsApproval: [] }) };
+    });
+    const input = { mode: 'prepare' as const, trigger: 'manual' as const, idempotencyKey: 'reviewed' };
+    const first = await executeRecipeJob(source, input, { store: runs, ask, instructionContext });
+    expect(first.run.status).toBe('completed');
+    expect(first.run.evidence).toContainEqual(expect.objectContaining({ note: expect.stringContaining('Reviewed workflow instruction context sha256=') }));
+    expect((await executeRecipeJob(source, input, { store: runs, ask, instructionContext })).reused).toBe(true);
+    expect(instructionContext).toHaveBeenCalledTimes(1);
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(source.description).not.toContain(instructions);
+  });
+
+  it('records an instruction recovery failure without calling the worker', async () => {
+    const ask = vi.fn();
+    const result = await executeRecipeJob(job(), { mode: 'prepare', trigger: 'manual', idempotencyKey: 'pack-recovery' }, {
+      store: store(), ask, instructionContext: async () => { throw new Error('Pack needs recovery'); },
+    });
+    expect(result.run.status).toBe('failed');
+    expect(result.run.detail).toBe('Pack needs recovery');
+    expect(ask).not.toHaveBeenCalled();
+  });
   it("captures each new book revision at execution, freezes its prompt and retains the source stamp on retry", async () => {
     const runs = store();
     let snapshot = currentBook();
@@ -176,11 +218,11 @@ describe("executeRecipeJob", () => {
     const file = join(dir, "runs.json");
     const report = `Maintenance comparison\n\n${"A verified finding. ".repeat(100)}\n\nThe final recommendation is for review.`;
     const result = await executeRecipeJob(job(), { mode: "prepare", trigger: "manual", idempotencyKey: "full-report" }, {
-      readBookSnapshot: currentBook, store: new JobRunStore({ file }),
+      readBookSnapshot: currentBook, store: track(new JobRunStore({ file })),
       ask: async () => ({ ok: true, stdout: JSON.stringify({ summary: "Report prepared", evidence: ["Supplied quotes"], outputs: [report], needsApproval: [] }) }),
     });
     expect(result.run.status).toBe("completed");
-    const loaded = new JobRunStore({ file }).get(result.run.id);
+    const loaded = track(new JobRunStore({ file })).get(result.run.id);
     expect(loaded?.evidence.find((item) => item.kind === "output")?.note).toBe(report);
   });
 

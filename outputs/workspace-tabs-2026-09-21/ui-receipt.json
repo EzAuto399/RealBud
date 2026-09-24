@@ -1,0 +1,30 @@
+{
+  "checkedAt": "2026-09-21T03:55:22.612Z",
+  "realServer": true,
+  "realSavedViewPersistence": true,
+  "syntheticBusinessRecords": true,
+  "fakeOfflineWorker": true,
+  "authenticatedRoutes": [
+    "GET",
+    "PUT",
+    "reset"
+  ],
+  "addRenameReorderHideShowRemove": true,
+  "reloadAndDeepLink": true,
+  "realTasksBillsJobsViews": true,
+  "mailShortcutCreatesOnce": true,
+  "mailSavedFilter": true,
+  "mailEmptyCoverageNotClaimed": true,
+  "jobOpensExactPlan": true,
+  "unsavedJobWordingPreserved": true,
+  "sharedWorkRequiresSignIn": true,
+  "staleWindowRejected": true,
+  "coreShortcuts": true,
+  "desktop": 1365,
+  "mobile": 390,
+  "noHorizontalOverflow": true,
+  "explicitRecoveryReset": true,
+  "damagedBytesArchived": true,
+  "businessRecordsPreserved": true,
+  "pageErrors": []
+}

@@ -1,0 +1,31 @@
+# Build context is the repository root (deploy.sh). Allowlist of files, never
+# folders: re-including a folder admits everything below it. The runtime image
+# needs only the gateway's TypeScript modules, its package/lock/tsconfig and the
+# shared server files its imports reach (image-closure.test.ts keeps this list
+# complete). Everything else, including local credentials, SQLite data and keys,
+# never enters the build context, whether or not COPY selects it.
+**
+!managed-gateway/*.ts
+managed-gateway/*.test.ts
+managed-gateway/testing.ts
+managed-gateway/sandbox-smoke.ts
+!managed-gateway/package.json
+!managed-gateway/package-lock.json
+!managed-gateway/tsconfig.json
+!server/composio-gmail.ts
+!server/source-attachments.ts
+!server/pdf-text.ts
+!server/redact.ts
+!server/helpers/pdf-text-worker.mjs
+!shared/mail-ingestion.ts
+!shared/source-attachments.ts
+# Belt and braces on top of the allowlist: nothing below may ever be copied.
+managed-gateway/.env
+managed-gateway/.env.*
+managed-gateway/data/
+managed-gateway/data/**
+**/*.sqlite
+**/*.sqlite-*
+**/*.pem
+**/*.key
+**/*.p12

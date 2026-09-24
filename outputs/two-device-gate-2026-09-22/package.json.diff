@@ -1,0 +1,29 @@
+diff --git a/outputs/two-device-gate-2026-09-22/before/package.json b/package.json
+index 914213c4..d5c97ff7 100644
+--- a/outputs/two-device-gate-2026-09-22/before/package.json
++++ b/package.json
+@@ -28,6 +28,7 @@
+     "build": "tsc -b && tsc -p tsconfig.server.json && vite build",
+     "typecheck": "tsc -b && tsc -p tsconfig.server.json",
+     "test": "vitest run",
++    "test:two-device-evidence": "node --test scripts/check-two-device-acceptance.test.mjs",
+     "test:coverage": "vitest run --coverage",
+     "qa:e2e": "node scripts/qa-e2e.mjs",
+     "qa:e2e:quick": "node scripts/qa-e2e.mjs --quick",
+@@ -35,6 +36,7 @@
+     "qa:workflow-packs": "node scripts/qa-workflow-packs-sim.mjs",
+     "qa:company": "node --experimental-strip-types scripts/qa-company-core.mjs",
+     "qa:second-office": "node --experimental-strip-types scripts/qa-second-office-contract.mjs",
++    "qa:two-device-evidence": "node scripts/check-two-device-acceptance.mjs",
+     "qa:seat-isolation": "node scripts/qa-seat-isolation.mjs",
+     "qa:acp-smoke": "node scripts/qa-acp-smoke.mjs",
+     "qa:austin-packs": "node scripts/qa-austin-pack-roundtrip.mjs",
+@@ -44,7 +46,7 @@
+     "qa:full": "pnpm qa && pnpm qa:company && pnpm qa:second-office && pnpm qa:seat-isolation && pnpm qa:scale && pnpm qa:live-worker",
+     "qa:package:mac": "node scripts/smoke-mac-package.mjs",
+     "smoke:mac": "node scripts/smoke-mac-package.mjs",
+-    "qa": "pnpm typecheck && pnpm test && pnpm qa:e2e",
++    "qa": "pnpm typecheck && pnpm test && pnpm test:two-device-evidence && pnpm qa:e2e",
+     "bench:observation": "node --experimental-strip-types scripts/bench-observation.ts",
+     "test:watch": "vitest",
+     "test:cua": "pnpm build:cua && node scripts/smoke-cua.mjs",

@@ -1,0 +1,35 @@
+{
+  "exitCode": 0,
+  "seconds": 2.07,
+  "command": [
+    "/Users/yoda/projects/RealBud/node_modules/.pnpm/electron@43.4.0/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
+    "--user-data-dir=/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/native/path-probe-fixture/electron",
+    "--disable-background-networking",
+    "--disable-component-update",
+    "--no-first-run",
+    "--use-mock-keychain",
+    "/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/native/electron-path-probe.cjs"
+  ],
+  "observations": [
+    {
+      "stage": "before-ready",
+      "userData": "/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/native/path-probe-fixture/electron",
+      "home": "/Users/yoda",
+      "appData": "/Users/yoda/Library/Application Support",
+      "expected": "/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/native/path-probe-fixture/electron",
+      "matches": true,
+      "electron": "43.4.0"
+    },
+    {
+      "stage": "after-ready",
+      "userData": "/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/native/path-probe-fixture/electron",
+      "home": "/Users/yoda",
+      "appData": "/Users/yoda/Library/Application Support",
+      "expected": "/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/native/path-probe-fixture/electron",
+      "matches": true,
+      "electron": "43.4.0"
+    }
+  ],
+  "limit": "Neutral development Electron43.4.0 app only; no product imports, BrowserWindow, TCC or profile-file reads. Package resolver unexpectedly invoked its install helper before this explicit binary run.",
+  "cleanup": "Neutral probe exited0; owned fixture directory removed"
+}

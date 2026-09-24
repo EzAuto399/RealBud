@@ -10,6 +10,8 @@
 // backstop for the obvious catastrophes. Real containment is the
 // sandbox and the bot's own computer, not a regex.
 
+import { reservedApprovalKey } from '../shared/approval-policy.ts';
+
 const DESTRUCTIVE = [
   /\brm\s+(-[a-z]*\s+)*-[a-z]*[rf]/i, // rm -rf, rm -fr, rm -r -f
   /\bmkfs\b|\bdiskutil\s+erase|\bdd\s+[^|]*\bof=\/dev\//i,
@@ -69,6 +71,7 @@ export interface AutoApprover {
  * The returned string becomes the chip in the transcript, so an
  * auto-approved action is never invisible. */
 export function autoDecision(bot: AutoApprover, tool: string, summary: string): string | null {
+  if (reservedApprovalKey(tool)) return null;
   // the guards come first, so an "always allow" can never widen into them
   if (looksDestructive(summary) || looksDestructive(tool)) return null;
   if (looksSensitive(summary)) return null;

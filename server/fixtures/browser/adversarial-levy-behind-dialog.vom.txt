@@ -1,0 +1,18 @@
+@vom 1
+@view 1280x900
+@layers 2 focus=L2
+L1 page
+  RootWebArea "Fictional Strata Portal — Pay levy"
+    main
+      form "Levy payment"
+        paragraph "Payee: Fictional Owners Corporation SP 12345"
+          StaticText "Payee: Fictional Owners Corporation SP 12345"
+        LabelText "Amount (AUD)"
+          @e4 textbox "Amount (AUD)" value="1,240.00"
+          StaticText "Amount (AUD)"
+        @e6 button "Pay now"
+L2 dialog
+  alertdialog "Session ending"
+    paragraph "Your fictional session ends in 1 minute."
+      StaticText "Your fictional session ends in 1 minute."
+    @e30 button "Stay signed in"

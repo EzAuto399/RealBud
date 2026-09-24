@@ -1,0 +1,1016 @@
+{
+  "at": "2026-09-23T03:26:04.411Z",
+  "completed": true,
+  "layer": "local-built-renderer-synthetic-states",
+  "sourceDigests": {
+    "dist/index.html": "491fd2ebe8f0e3e055f92e798db5a65eb23479f6f419d07c0d358d405ed363e4",
+    "src/components/you/WebsiteLinkCard.tsx": "9518ed729b3f357992f23a19d3fa201aaac28427908aae4e660455c0c9223bfa",
+    "src/components/ManagedBudStatus.tsx": "722dabf077387564adf7268f5b22c0b6dc7e5ec4ea0e473ce940aebf0452eb85",
+    "src/components/BudSetupCard.tsx": "5bc138c23fab108fab4a1a52782d8e8f2a3e4da915df50d39ed5bdbdd7bf0760",
+    "src/styles.css": "09569791febb594976d61f900cc631520f0485391392dd82c97d0a3f83b99445"
+  },
+  "screens": [
+    {
+      "name": "setup-entry-360",
+      "width": 360,
+      "documentWidth": 360,
+      "focus": "<body>\n    <div id=\"root\"><div class=\"workspace-surface flex h-full flex-col\"><div class=\"rb-app-shell relative flex min-h-0 flex-1\"><aside class=\"rb-sidebar flex h-full w-[200px] shrink-0 flex-col border-r border-line bg-sheet\"><div class=\"px-4 pb-1 pt-3.5\"><div class=\"flex item",
+      "headings": [
+        "You",
+        "Bud setup",
+        "Bud on this computer",
+        "This office",
+        "Local office collaboration",
+        "Website account",
+        "AI usage this month",
+        "Requests from the website",
+        "People who can review from the website",
+        "Shared reviews and remote preparation",
+        "Bud memory",
+        "Bud’s memory",
+        "Connections",
+        "Account",
+        "Profile",
+        "RealBud service",
+        "Help and support",
+        "More",
+        "Bud's rules",
+        "Law watch",
+        "Set up your workflows",
+        "Set up your agency workflows",
+        "Customer workflow packs",
+        "Company workflow templates",
+        "Bud's jobs",
+        "Recovery key",
+        "Sources",
+        "Keeping your records",
+        "Private workspace backup"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "website-unlinked-360",
+      "width": 360,
+      "documentWidth": 360,
+      "focus": "<div role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"_r_9_\" tabindex=\"-1\" class=\"flex h-[min(820px,90dvh)] w-full max-w-[1000px] min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-paper shadow-xl\"><div class=\"flex shrink-0 items-center justify-between gap-3 border",
+      "headings": [
+        "You",
+        "Bud setup",
+        "Bud on this computer",
+        "This office",
+        "Local office collaboration",
+        "Website account",
+        "AI usage this month",
+        "Requests from the website",
+        "People who can review from the website",
+        "Shared reviews and remote preparation",
+        "Bud memory",
+        "Bud’s memory",
+        "Connections",
+        "Use the browser you already know",
+        "Connected apps",
+        "Continue on your phone",
+        "Account",
+        "Profile",
+        "RealBud service",
+        "Help and support",
+        "More",
+        "Bud's rules",
+        "Law watch",
+        "Set up your workflows",
+        "Set up your agency workflows",
+        "Customer workflow packs",
+        "Company workflow templates",
+        "Bud's jobs",
+        "Recovery key",
+        "Sources",
+        "Keeping your records",
+        "Private workspace backup",
+        "Administrator access",
+        "Office details",
+        "This office",
+        "Local office collaboration",
+        "Website account",
+        "AI usage this month",
+        "Requests from the website",
+        "People who can review from the website",
+        "Shared reviews and remote preparation"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "bank-empty-360",
+      "width": 360,
+      "documentWidth": 360,
+      "focus": "<summary class=\"cursor-pointer text-sm\">Prepare a new export</summary>",
+      "headings": [
+        "Schedule",
+        "September 2026",
+        "This week",
+        "Teach Bud a job",
+        "Prepare bank references",
+        "Saved review history",
+        "Scheduled jobs",
+        "Results from all jobs",
+        "Work activity",
+        "Set up your workflows",
+        "Set up your agency workflows",
+        "Customer workflow packs",
+        "Company workflow templates"
+      ],
+      "clippedControls": [
+        {
+          "name": "Monday 31 August, 2 scheduled jobs",
+          "rect": {
+            "x": -7,
+            "y": -1521.859375,
+            "width": 41.421875,
+            "height": 44,
+            "top": -1521.859375,
+            "right": 34.421875,
+            "bottom": -1477.859375,
+            "left": -7
+          }
+        },
+        {
+          "name": "Monday 7 September, 2 scheduled jobs",
+          "rect": {
+            "x": -7,
+            "y": -1475.859375,
+            "width": 41.421875,
+            "height": 44,
+            "top": -1475.859375,
+            "right": 34.421875,
+            "bottom": -1431.859375,
+            "left": -7
+          }
+        },
+        {
+          "name": "Monday 14 September, 2 scheduled jobs",
+          "rect": {
+            "x": -7,
+            "y": -1429.859375,
+            "width": 41.421875,
+            "height": 44,
+            "top": -1429.859375,
+            "right": 34.421875,
+            "bottom": -1385.859375,
+            "left": -7
+          }
+        },
+        {
+          "name": "Monday 21 September, 2 scheduled jobs",
+          "rect": {
+            "x": -7,
+            "y": -1383.859375,
+            "width": 41.421875,
+            "height": 44,
+            "top": -1383.859375,
+            "right": 34.421875,
+            "bottom": -1339.859375,
+            "left": -7
+          }
+        },
+        {
+          "name": "Monday 28 September, 2 scheduled jobs",
+          "rect": {
+            "x": -7,
+            "y": -1337.859375,
+            "width": 41.421875,
+            "height": 44,
+            "top": -1337.859375,
+            "right": 34.421875,
+            "bottom": -1293.859375,
+            "left": -7
+          }
+        },
+        {
+          "name": "Monday 5 October, 2 scheduled jobs",
+          "rect": {
+            "x": -7,
+            "y": -1291.859375,
+            "width": 41.421875,
+            "height": 44,
+            "top": -1291.859375,
+            "right": 34.421875,
+            "bottom": -1247.859375,
+            "left": -7
+          }
+        }
+      ]
+    },
+    {
+      "name": "mail-empty-360",
+      "width": 360,
+      "documentWidth": 360,
+      "focus": "<body>\n    <div id=\"root\"><div class=\"workspace-surface flex h-full flex-col\"><div class=\"rb-app-shell relative flex min-h-0 flex-1\"><aside class=\"rb-sidebar flex h-full w-[200px] shrink-0 flex-col border-r border-line bg-sheet\"><div class=\"px-4 pb-1 pt-3.5\"><div class=\"flex item",
+      "headings": [
+        "Mail priorities",
+        "Mail priorities and follow-ups",
+        "Morning schedule"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "bills-empty-360",
+      "width": 360,
+      "documentWidth": 360,
+      "focus": "<body>\n    <div id=\"root\"><div class=\"workspace-surface flex h-full flex-col\"><div class=\"rb-app-shell relative flex min-h-0 flex-1\"><aside class=\"rb-sidebar flex h-full w-[200px] shrink-0 flex-col border-r border-line bg-sheet\"><div class=\"px-4 pb-1 pt-3.5\"><div class=\"flex item",
+      "headings": [
+        "Bills and calendar",
+        "Bills board",
+        "Received bills and expected arrivals"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "setup-entry-768",
+      "width": 768,
+      "documentWidth": 768,
+      "focus": "<body>\n    <div id=\"root\"><div class=\"workspace-surface flex h-full flex-col\"><div class=\"rb-app-shell relative flex min-h-0 flex-1\"><aside class=\"rb-sidebar flex h-full w-[200px] shrink-0 flex-col border-r border-line bg-sheet\"><div class=\"px-4 pb-1 pt-3.5\"><div class=\"flex item",
+      "headings": [
+        "You",
+        "Bud setup",
+        "Bud on this computer",
+        "This office",
+        "Local office collaboration",
+        "Website account",
+        "AI usage this month",
+        "Requests from the website",
+        "People who can review from the website",
+        "Shared reviews and remote preparation",
+        "Bud memory",
+        "Bud’s memory",
+        "Connections",
+        "Account",
+        "Profile",
+        "RealBud service",
+        "Help and support",
+        "More",
+        "Bud's rules",
+        "Law watch",
+        "Set up your workflows",
+        "Set up your agency workflows",
+        "Customer workflow packs",
+        "Company workflow templates",
+        "Bud's jobs",
+        "Recovery key",
+        "Sources",
+        "Keeping your records",
+        "Private workspace backup"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "website-unlinked-768",
+      "width": 768,
+      "documentWidth": 768,
+      "focus": "<div role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"_r_9_\" tabindex=\"-1\" class=\"flex h-[min(820px,90dvh)] w-full max-w-[1000px] min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-paper shadow-xl\"><div class=\"flex shrink-0 items-center justify-between gap-3 border",
+      "headings": [
+        "You",
+        "Bud setup",
+        "Bud on this computer",
+        "This office",
+        "Local office collaboration",
+        "Website account",
+        "AI usage this month",
+        "Requests from the website",
+        "People who can review from the website",
+        "Shared reviews and remote preparation",
+        "Bud memory",
+        "Bud’s memory",
+        "Connections",
+        "Use the browser you already know",
+        "Connected apps",
+        "Continue on your phone",
+        "Account",
+        "Profile",
+        "RealBud service",
+        "Help and support",
+        "More",
+        "Bud's rules",
+        "Law watch",
+        "Set up your workflows",
+        "Set up your agency workflows",
+        "Customer workflow packs",
+        "Company workflow templates",
+        "Bud's jobs",
+        "Recovery key",
+        "Sources",
+        "Keeping your records",
+        "Private workspace backup",
+        "Administrator access",
+        "Office details",
+        "This office",
+        "Local office collaboration",
+        "Website account",
+        "AI usage this month",
+        "Requests from the website",
+        "People who can review from the website",
+        "Shared reviews and remote preparation"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "bank-empty-768",
+      "width": 768,
+      "documentWidth": 768,
+      "focus": "<summary class=\"cursor-pointer text-sm\">Prepare a new export</summary>",
+      "headings": [
+        "Schedule",
+        "September 2026",
+        "This week",
+        "Teach Bud a job",
+        "Prepare bank references",
+        "Saved review history",
+        "Scheduled jobs",
+        "Results from all jobs",
+        "Work activity",
+        "Set up your workflows",
+        "Set up your agency workflows",
+        "Customer workflow packs",
+        "Company workflow templates"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "mail-empty-768",
+      "width": 768,
+      "documentWidth": 768,
+      "focus": "<body>\n    <div id=\"root\"><div class=\"workspace-surface flex h-full flex-col\"><div class=\"rb-app-shell relative flex min-h-0 flex-1\"><aside class=\"rb-sidebar flex h-full w-[200px] shrink-0 flex-col border-r border-line bg-sheet\"><div class=\"px-4 pb-1 pt-3.5\"><div class=\"flex item",
+      "headings": [
+        "Mail priorities",
+        "Mail priorities and follow-ups",
+        "Morning schedule"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "bills-empty-768",
+      "width": 768,
+      "documentWidth": 768,
+      "focus": "<body>\n    <div id=\"root\"><div class=\"workspace-surface flex h-full flex-col\"><div class=\"rb-app-shell relative flex min-h-0 flex-1\"><aside class=\"rb-sidebar flex h-full w-[200px] shrink-0 flex-col border-r border-line bg-sheet\"><div class=\"px-4 pb-1 pt-3.5\"><div class=\"flex item",
+      "headings": [
+        "Bills and calendar",
+        "Bills board",
+        "Received bills and expected arrivals"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "setup-entry-1280",
+      "width": 1280,
+      "documentWidth": 1280,
+      "focus": "<body>\n    <div id=\"root\"><div class=\"workspace-surface flex h-full flex-col\"><div class=\"rb-app-shell relative flex min-h-0 flex-1\"><aside class=\"rb-sidebar flex h-full w-[200px] shrink-0 flex-col border-r border-line bg-sheet\"><div class=\"px-4 pb-1 pt-3.5\"><div class=\"flex item",
+      "headings": [
+        "You",
+        "Bud setup",
+        "Bud on this computer",
+        "This office",
+        "Local office collaboration",
+        "Website account",
+        "AI usage this month",
+        "Requests from the website",
+        "People who can review from the website",
+        "Shared reviews and remote preparation",
+        "Bud memory",
+        "Bud’s memory",
+        "Connections",
+        "Account",
+        "Profile",
+        "RealBud service",
+        "Help and support",
+        "More",
+        "Bud's rules",
+        "Law watch",
+        "Set up your workflows",
+        "Set up your agency workflows",
+        "Customer workflow packs",
+        "Company workflow templates",
+        "Bud's jobs",
+        "Recovery key",
+        "Sources",
+        "Keeping your records",
+        "Private workspace backup"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "website-unlinked-1280",
+      "width": 1280,
+      "documentWidth": 1280,
+      "focus": "<div role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"_r_9_\" tabindex=\"-1\" class=\"flex h-[min(820px,90dvh)] w-full max-w-[1000px] min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-paper shadow-xl\"><div class=\"flex shrink-0 items-center justify-between gap-3 border",
+      "headings": [
+        "You",
+        "Bud setup",
+        "Bud on this computer",
+        "This office",
+        "Local office collaboration",
+        "Website account",
+        "AI usage this month",
+        "Requests from the website",
+        "People who can review from the website",
+        "Shared reviews and remote preparation",
+        "Bud memory",
+        "Bud’s memory",
+        "Connections",
+        "Use the browser you already know",
+        "Connected apps",
+        "Continue on your phone",
+        "Account",
+        "Profile",
+        "RealBud service",
+        "Help and support",
+        "More",
+        "Bud's rules",
+        "Law watch",
+        "Set up your workflows",
+        "Set up your agency workflows",
+        "Customer workflow packs",
+        "Company workflow templates",
+        "Bud's jobs",
+        "Recovery key",
+        "Sources",
+        "Keeping your records",
+        "Private workspace backup",
+        "Administrator access",
+        "Office details",
+        "This office",
+        "Local office collaboration",
+        "Website account",
+        "AI usage this month",
+        "Requests from the website",
+        "People who can review from the website",
+        "Shared reviews and remote preparation"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "bank-empty-1280",
+      "width": 1280,
+      "documentWidth": 1280,
+      "focus": "<summary class=\"cursor-pointer text-sm\">Prepare a new export</summary>",
+      "headings": [
+        "Schedule",
+        "September 2026",
+        "This week",
+        "Teach Bud a job",
+        "Prepare bank references",
+        "Saved review history",
+        "Scheduled jobs",
+        "Results from all jobs",
+        "Work activity",
+        "Set up your workflows",
+        "Set up your agency workflows",
+        "Customer workflow packs",
+        "Company workflow templates"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "mail-empty-1280",
+      "width": 1280,
+      "documentWidth": 1280,
+      "focus": "<body>\n    <div id=\"root\"><div class=\"workspace-surface flex h-full flex-col\"><div class=\"rb-app-shell relative flex min-h-0 flex-1\"><aside class=\"rb-sidebar flex h-full w-[200px] shrink-0 flex-col border-r border-line bg-sheet\"><div class=\"px-4 pb-1 pt-3.5\"><div class=\"flex item",
+      "headings": [
+        "Mail priorities",
+        "Mail priorities and follow-ups",
+        "Morning schedule"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "bills-empty-1280",
+      "width": 1280,
+      "documentWidth": 1280,
+      "focus": "<body>\n    <div id=\"root\"><div class=\"workspace-surface flex h-full flex-col\"><div class=\"rb-app-shell relative flex min-h-0 flex-1\"><aside class=\"rb-sidebar flex h-full w-[200px] shrink-0 flex-col border-r border-line bg-sheet\"><div class=\"px-4 pb-1 pt-3.5\"><div class=\"flex item",
+      "headings": [
+        "Bills and calendar",
+        "Bills board",
+        "Received bills and expected arrivals"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "setup-entry-1536",
+      "width": 1536,
+      "documentWidth": 1536,
+      "focus": "<body>\n    <div id=\"root\"><div class=\"workspace-surface flex h-full flex-col\"><div class=\"rb-app-shell relative flex min-h-0 flex-1\"><aside class=\"rb-sidebar flex h-full w-[200px] shrink-0 flex-col border-r border-line bg-sheet\"><div class=\"px-4 pb-1 pt-3.5\"><div class=\"flex item",
+      "headings": [
+        "You",
+        "Bud setup",
+        "Bud on this computer",
+        "This office",
+        "Local office collaboration",
+        "Website account",
+        "AI usage this month",
+        "Requests from the website",
+        "People who can review from the website",
+        "Shared reviews and remote preparation",
+        "Bud memory",
+        "Bud’s memory",
+        "Connections",
+        "Account",
+        "Profile",
+        "RealBud service",
+        "Help and support",
+        "More",
+        "Bud's rules",
+        "Law watch",
+        "Set up your workflows",
+        "Set up your agency workflows",
+        "Customer workflow packs",
+        "Company workflow templates",
+        "Bud's jobs",
+        "Recovery key",
+        "Sources",
+        "Keeping your records",
+        "Private workspace backup"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "website-unlinked-1536",
+      "width": 1536,
+      "documentWidth": 1536,
+      "focus": "<div role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"_r_9_\" tabindex=\"-1\" class=\"flex h-[min(820px,90dvh)] w-full max-w-[1000px] min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-paper shadow-xl\"><div class=\"flex shrink-0 items-center justify-between gap-3 border",
+      "headings": [
+        "You",
+        "Bud setup",
+        "Bud on this computer",
+        "This office",
+        "Local office collaboration",
+        "Website account",
+        "AI usage this month",
+        "Requests from the website",
+        "People who can review from the website",
+        "Shared reviews and remote preparation",
+        "Bud memory",
+        "Bud’s memory",
+        "Connections",
+        "Use the browser you already know",
+        "Connected apps",
+        "Continue on your phone",
+        "Account",
+        "Profile",
+        "RealBud service",
+        "Help and support",
+        "More",
+        "Bud's rules",
+        "Law watch",
+        "Set up your workflows",
+        "Set up your agency workflows",
+        "Customer workflow packs",
+        "Company workflow templates",
+        "Bud's jobs",
+        "Recovery key",
+        "Sources",
+        "Keeping your records",
+        "Private workspace backup",
+        "Administrator access",
+        "Office details",
+        "This office",
+        "Local office collaboration",
+        "Website account",
+        "AI usage this month",
+        "Requests from the website",
+        "People who can review from the website",
+        "Shared reviews and remote preparation"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "bank-empty-1536",
+      "width": 1536,
+      "documentWidth": 1536,
+      "focus": "<summary class=\"cursor-pointer text-sm\">Prepare a new export</summary>",
+      "headings": [
+        "Schedule",
+        "September 2026",
+        "This week",
+        "Teach Bud a job",
+        "Prepare bank references",
+        "Saved review history",
+        "Scheduled jobs",
+        "Results from all jobs",
+        "Work activity",
+        "Set up your workflows",
+        "Set up your agency workflows",
+        "Customer workflow packs",
+        "Company workflow templates"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "mail-empty-1536",
+      "width": 1536,
+      "documentWidth": 1536,
+      "focus": "<body>\n    <div id=\"root\"><div class=\"workspace-surface flex h-full flex-col\"><div class=\"rb-app-shell relative flex min-h-0 flex-1\"><aside class=\"rb-sidebar flex h-full w-[200px] shrink-0 flex-col border-r border-line bg-sheet\"><div class=\"px-4 pb-1 pt-3.5\"><div class=\"flex item",
+      "headings": [
+        "Mail priorities",
+        "Mail priorities and follow-ups",
+        "Morning schedule"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "bills-empty-1536",
+      "width": 1536,
+      "documentWidth": 1536,
+      "focus": "<body>\n    <div id=\"root\"><div class=\"workspace-surface flex h-full flex-col\"><div class=\"rb-app-shell relative flex min-h-0 flex-1\"><aside class=\"rb-sidebar flex h-full w-[200px] shrink-0 flex-col border-r border-line bg-sheet\"><div class=\"px-4 pb-1 pt-3.5\"><div class=\"flex item",
+      "headings": [
+        "Bills and calendar",
+        "Bills board",
+        "Received bills and expected arrivals"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "website-link-load-1280",
+      "width": 1280,
+      "documentWidth": 1280,
+      "focus": "<summary><span>This office</span><span class=\"settings-section-hint\">Agency basics · optional setup details</span></summary>",
+      "headings": [
+        "You",
+        "Bud setup",
+        "Bud on this computer",
+        "This office",
+        "Local office collaboration",
+        "Website account",
+        "AI usage this month",
+        "Requests from the website",
+        "People who can review from the website",
+        "Shared reviews and remote preparation",
+        "Bud memory",
+        "Bud’s memory",
+        "Connections",
+        "Account",
+        "Profile",
+        "RealBud service",
+        "Help and support",
+        "More",
+        "Bud's rules",
+        "Law watch",
+        "Set up your workflows",
+        "Set up your agency workflows",
+        "Customer workflow packs",
+        "Company workflow templates",
+        "Bud's jobs",
+        "Recovery key",
+        "Sources",
+        "Keeping your records",
+        "Private workspace backup"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "website-link-start-1280",
+      "width": 1280,
+      "documentWidth": 1280,
+      "focus": "<body>\n    <div id=\"root\"><div class=\"workspace-surface flex h-full flex-col\"><div class=\"rb-app-shell relative flex min-h-0 flex-1\"><aside class=\"rb-sidebar flex h-full w-[200px] shrink-0 flex-col border-r border-line bg-sheet\"><div class=\"px-4 pb-1 pt-3.5\"><div class=\"flex item",
+      "headings": [
+        "You",
+        "Bud setup",
+        "Bud on this computer",
+        "This office",
+        "Local office collaboration",
+        "Website account",
+        "AI usage this month",
+        "Requests from the website",
+        "People who can review from the website",
+        "Shared reviews and remote preparation",
+        "Bud memory",
+        "Bud’s memory",
+        "Connections",
+        "Account",
+        "Profile",
+        "RealBud service",
+        "Help and support",
+        "More",
+        "Bud's rules",
+        "Law watch",
+        "Set up your workflows",
+        "Set up your agency workflows",
+        "Customer workflow packs",
+        "Company workflow templates",
+        "Bud's jobs",
+        "Recovery key",
+        "Sources",
+        "Keeping your records",
+        "Private workspace backup"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "website-pending-1280",
+      "width": 1280,
+      "documentWidth": 1280,
+      "focus": "<summary><span>This office</span><span class=\"settings-section-hint\">Agency basics · optional setup details</span></summary>",
+      "headings": [
+        "You",
+        "Bud setup",
+        "Bud on this computer",
+        "This office",
+        "Local office collaboration",
+        "Website account",
+        "AI usage this month",
+        "Requests from the website",
+        "People who can review from the website",
+        "Shared reviews and remote preparation",
+        "Bud memory",
+        "Bud’s memory",
+        "Connections",
+        "Account",
+        "Profile",
+        "RealBud service",
+        "Help and support",
+        "More",
+        "Bud's rules",
+        "Law watch",
+        "Set up your workflows",
+        "Set up your agency workflows",
+        "Customer workflow packs",
+        "Company workflow templates",
+        "Bud's jobs",
+        "Recovery key",
+        "Sources",
+        "Keeping your records",
+        "Private workspace backup"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "website-linked-1280",
+      "width": 1280,
+      "documentWidth": 1280,
+      "focus": "<summary><span>This office</span><span class=\"settings-section-hint\">Agency basics · optional setup details</span></summary>",
+      "headings": [
+        "You",
+        "Bud setup",
+        "Bud on this computer",
+        "This office",
+        "Local office collaboration",
+        "Website account",
+        "AI usage this month",
+        "Requests from the website",
+        "People who can review from the website",
+        "Shared reviews and remote preparation",
+        "Bud memory",
+        "Bud’s memory",
+        "Connections",
+        "Account",
+        "Profile",
+        "RealBud service",
+        "Help and support",
+        "More",
+        "Bud's rules",
+        "Law watch",
+        "Set up your workflows",
+        "Set up your agency workflows",
+        "Customer workflow packs",
+        "Company workflow templates",
+        "Bud's jobs",
+        "Recovery key",
+        "Sources",
+        "Keeping your records",
+        "Private workspace backup"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "bank-error-1280",
+      "width": 1280,
+      "documentWidth": 1280,
+      "focus": "<summary class=\"cursor-pointer text-sm\">Prepare a new export</summary>",
+      "headings": [
+        "Schedule",
+        "September 2026",
+        "This week",
+        "Teach Bud a job",
+        "Prepare bank references",
+        "Saved review history",
+        "Scheduled jobs",
+        "Results from all jobs",
+        "Work activity",
+        "Set up your workflows",
+        "Set up your agency workflows",
+        "Customer workflow packs",
+        "Company workflow templates"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "mail-error-1280",
+      "width": 1280,
+      "documentWidth": 1280,
+      "focus": "<body>\n    <div id=\"root\"><div class=\"workspace-surface flex h-full flex-col\"><div class=\"rb-app-shell relative flex min-h-0 flex-1\"><aside class=\"rb-sidebar flex h-full w-[200px] shrink-0 flex-col border-r border-line bg-sheet\"><div class=\"px-4 pb-1 pt-3.5\"><div class=\"flex item",
+      "headings": [
+        "Mail priorities",
+        "Mail priorities and follow-ups",
+        "Morning schedule"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "bills-error-1280",
+      "width": 1280,
+      "documentWidth": 1280,
+      "focus": "<body>\n    <div id=\"root\"><div class=\"workspace-surface flex h-full flex-col\"><div class=\"rb-app-shell relative flex min-h-0 flex-1\"><aside class=\"rb-sidebar flex h-full w-[200px] shrink-0 flex-col border-r border-line bg-sheet\"><div class=\"px-4 pb-1 pt-3.5\"><div class=\"flex item",
+      "headings": [
+        "Bills and calendar",
+        "Bills board",
+        "Received bills and expected arrivals"
+      ],
+      "clippedControls": []
+    }
+  ],
+  "checks": [
+    {
+      "check": "Office setup closes with Escape",
+      "width": 360
+    },
+    {
+      "check": "Office setup closes with Escape",
+      "width": 768
+    },
+    {
+      "check": "Office setup closes with Escape",
+      "width": 1280
+    },
+    {
+      "check": "Office setup closes with Escape",
+      "width": 1536
+    },
+    {
+      "check": "Website card keyboard walk",
+      "mode": "unlinked",
+      "fault": "link-load",
+      "steps": [
+        {
+          "tag": "INPUT",
+          "text": "Reception Mac",
+          "outline": "rgb(63, 95, 69) solid 2px",
+          "focusVisible": true
+        },
+        {
+          "tag": "SUMMARY",
+          "text": "Have a link code instead?",
+          "outline": "rgb(63, 95, 69) solid 2px",
+          "focusVisible": true
+        },
+        {
+          "tag": "BUTTON",
+          "text": "Refresh",
+          "outline": "rgb(63, 95, 69) solid 2px",
+          "focusVisible": true
+        },
+        {
+          "tag": "BUTTON",
+          "text": "Check AI usage again",
+          "outline": "rgb(63, 95, 69) solid 2px",
+          "focusVisible": true
+        },
+        {
+          "tag": "BUTTON",
+          "text": "Refresh saved status",
+          "outline": "rgb(63, 95, 69) solid 2px",
+          "focusVisible": true
+        },
+        {
+          "tag": "BUTTON",
+          "text": "Refresh access",
+          "outline": "rgb(63, 95, 69) solid 2px",
+          "focusVisible": true
+        },
+        {
+          "tag": "INPUT",
+          "text": null,
+          "outline": "rgb(63, 95, 69) solid 2px",
+          "focusVisible": true
+        }
+      ]
+    },
+    {
+      "check": "Failed website link retains computer name",
+      "value": "Fictional QA Mac"
+    },
+    {
+      "check": "Website card keyboard walk",
+      "mode": "unlinked",
+      "fault": "link-start",
+      "steps": [
+        {
+          "tag": "INPUT",
+          "text": "Reception Mac",
+          "outline": "rgb(63, 95, 69) solid 2px",
+          "focusVisible": true
+        },
+        {
+          "tag": "BUTTON",
+          "text": "Link with your RealBud account",
+          "outline": "rgb(63, 95, 69) solid 2px",
+          "focusVisible": true
+        },
+        {
+          "tag": "SUMMARY",
+          "text": "Have a link code instead?",
+          "outline": "rgb(63, 95, 69) solid 2px",
+          "focusVisible": true
+        },
+        {
+          "tag": "BUTTON",
+          "text": "Check AI usage again",
+          "outline": "rgb(63, 95, 69) solid 2px",
+          "focusVisible": true
+        },
+        {
+          "tag": "INPUT",
+          "text": null,
+          "outline": "rgb(63, 95, 69) solid 2px",
+          "focusVisible": true
+        },
+        {
+          "tag": "BUTTON",
+          "text": "Show completed and restored history (0)",
+          "outline": "rgb(63, 95, 69) solid 2px",
+          "focusVisible": true
+        }
+      ]
+    },
+    {
+      "check": "Website card keyboard walk",
+      "mode": "pending",
+      "fault": "",
+      "steps": [
+        {
+          "tag": "INPUT",
+          "text": "Reception Mac",
+          "outline": "rgb(63, 95, 69) solid 2px",
+          "focusVisible": true
+        },
+        {
+          "tag": "SUMMARY",
+          "text": "Have a link code instead?",
+          "outline": "rgb(63, 95, 69) solid 2px",
+          "focusVisible": true
+        },
+        {
+          "tag": "BUTTON",
+          "text": "Check AI usage again",
+          "outline": "rgb(63, 95, 69) solid 2px",
+          "focusVisible": true
+        },
+        {
+          "tag": "INPUT",
+          "text": null,
+          "outline": "rgb(63, 95, 69) solid 2px",
+          "focusVisible": true
+        },
+        {
+          "tag": "BUTTON",
+          "text": "Show completed and restored history (0)",
+          "outline": "rgb(63, 95, 69) solid 2px",
+          "focusVisible": true
+        },
+        {
+          "tag": "BUTTON",
+          "text": "Refresh saved status",
+          "outline": "rgb(63, 95, 69) solid 2px",
+          "focusVisible": true
+        }
+      ]
+    },
+    {
+      "check": "Model access pending guidance survives a reload",
+      "visible": 0
+    },
+    {
+      "check": "Website card keyboard walk",
+      "mode": "linked",
+      "fault": "",
+      "steps": [
+        {
+          "tag": "BUTTON",
+          "text": "Update status",
+          "outline": "rgb(37, 35, 31) none 3px",
+          "focusVisible": false
+        },
+        {
+          "tag": "BUTTON",
+          "text": "Disconnect website",
+          "outline": "rgb(63, 95, 69) solid 2px",
+          "focusVisible": true
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "denied": [],
+  "failure": null,
+  "limits": [
+    "Synthetic loopback fixture only; no live website, bank, email, model, provider or customer data.",
+    "Current production-built renderer served by disposable source service; not installed Electron or Windows.",
+    "Website status and readiness responses are synthetic; review tests presentation and keyboard behavior, not authentication or provisioning.",
+    "No product source changes; no broad suites or package build."
+  ]
+}

@@ -121,7 +121,7 @@ export function AskPhoneContinueCard({
               <code className="rounded bg-raised px-1 text-[12px]">/summary</code> short handoff,{" "}
               <code className="rounded bg-raised px-1 text-[12px]">/status</code> progress.
             </li>
-            <li>Keep this Mac awake with RealBud open.</li>
+            <li>Keep this computer awake with RealBud open.</li>
           </ol>
         ) : null}
 

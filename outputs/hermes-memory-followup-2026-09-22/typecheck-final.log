@@ -1,0 +1,6 @@
+
+> realbud@0.1.19 typecheck /Users/yoda/projects/RealBud
+> tsc -b && tsc -p tsconfig.server.json
+
+server/hermes-memory-recovery.native.test.ts(12,49): error TS7016: Could not find a declaration file for module './testing/memory-prepared-fixture.mjs'. '/Users/yoda/projects/RealBud/server/testing/memory-prepared-fixture.mjs' implicitly has an 'any' type.
+ ELIFECYCLE  Command failed with exit code 2.

@@ -1,0 +1,42 @@
+{
+  "grok-skill-history-acp-profile.md": {
+    "bytes": 446,
+    "sha256": "ec10044eb2d96ea8add83a3c2489f508369044fba69158566f01694aa698a012"
+  },
+  "grok-skill-history-acp-prompt.txt": {
+    "bytes": 1953,
+    "sha256": "f08668045b90644ed0a1eadcd088e067a11f17fa2244fa35ade174912e7b47f9"
+  },
+  "grok-skill-history-acp-review.py": {
+    "bytes": 18869,
+    "sha256": "c2ab2787df078891fdce3c0a548a0b73bf1e9b34addb60abddf1804c034e82da"
+  },
+  "grok-skill-history-acp-run.json": {
+    "bytes": 14765,
+    "sha256": "0449eeb0b3a9381e3a0338769c743d23d8f31393bce1200e0c344377f27944aa"
+  },
+  "grok-skill-history-cleanup.json": {
+    "bytes": 371,
+    "sha256": "1090f2d970d33d3e917a7552a3e677ce5d76a5121c94889b64cf816fea866ade"
+  },
+  "grok-skill-history-disposition.json": {
+    "bytes": 2929,
+    "sha256": "d262a6574b752e0be8b775b659f71ac61ba395bb8d0abc585b36b85e0c877f3c"
+  },
+  "grok-skill-history-finalize.py": {
+    "bytes": 5059,
+    "sha256": "604d35107434f7260699857e73429b6ef491e4fb1ea8e2df0b4fc68f93532670"
+  },
+  "grok-skill-history-review.md": {
+    "bytes": 3911,
+    "sha256": "bdc57a8c8d6592d3e604eac875c5d9ca7c772983912ea531fc1366d671aba518"
+  },
+  "skill-history-plan.md": {
+    "bytes": 12578,
+    "sha256": "065f238065d435a198bb820611e3e0507871a9e8081a1c3f614f3786519088c9"
+  },
+  "source-fingerprints.json": {
+    "bytes": 1512,
+    "sha256": "ff6a627e8c31c0fbb8e456b0ea8581019b50495f42861ed1646e7e06a2665df0"
+  }
+}

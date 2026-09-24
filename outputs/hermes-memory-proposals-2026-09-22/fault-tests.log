@@ -1,0 +1,20 @@
+test_approval_after_unlink_crash_completes_receipt_without_recreating_pending (__main__.HermesMemoryProposalFaults.test_approval_after_unlink_crash_completes_receipt_without_recreating_pending) ... ok
+test_crash_after_durable_intent_reuses_the_saved_pending_id (__main__.HermesMemoryProposalFaults.test_crash_after_durable_intent_reuses_the_saved_pending_id) ... ok
+test_crash_after_hard_link_recovers_only_the_owned_two_link_pair (__main__.HermesMemoryProposalFaults.test_crash_after_hard_link_recovers_only_the_owned_two_link_pair) ... ok
+test_crash_after_private_stage_write_publishes_once (__main__.HermesMemoryProposalFaults.test_crash_after_private_stage_write_publishes_once) ... ok
+test_crash_after_published_receipt_before_output_replays_saved_id (__main__.HermesMemoryProposalFaults.test_crash_after_published_receipt_before_output_replays_saved_id) ... ok
+test_crash_after_stage_unlink_finishes_the_same_pending_record (__main__.HermesMemoryProposalFaults.test_crash_after_stage_unlink_finishes_the_same_pending_record) ... ok
+test_foreign_pending_created_at_publication_is_not_overwritten (__main__.HermesMemoryProposalFaults.test_foreign_pending_created_at_publication_is_not_overwritten) ... ok
+test_foreign_replacement_of_linked_pending_preserves_both_files (__main__.HermesMemoryProposalFaults.test_foreign_replacement_of_linked_pending_preserves_both_files) ... ok
+test_missing_published_pending_is_held_without_recreation (__main__.HermesMemoryProposalFaults.test_missing_published_pending_is_held_without_recreation) ... ok
+test_private_stage_corruption_is_held_without_overwriting_evidence (__main__.HermesMemoryProposalFaults.test_private_stage_corruption_is_held_without_overwriting_evidence) ... ok
+test_rejection_after_unlink_crash_completes_receipt_without_recreating_pending (__main__.HermesMemoryProposalFaults.test_rejection_after_unlink_crash_completes_receipt_without_recreating_pending) ... ok
+test_repeat_after_human_approval_does_not_recreate_or_apply_again (__main__.HermesMemoryProposalFaults.test_repeat_after_human_approval_does_not_recreate_or_apply_again) ... ok
+test_repeat_after_human_rejection_does_not_recreate_or_write_memory (__main__.HermesMemoryProposalFaults.test_repeat_after_human_rejection_does_not_recreate_or_write_memory) ... ok
+test_same_request_id_with_changed_payload_is_denied (__main__.HermesMemoryProposalFaults.test_same_request_id_with_changed_payload_is_denied) ... ok
+test_third_hard_link_is_held_and_all_bytes_preserved (__main__.HermesMemoryProposalFaults.test_third_hard_link_is_held_and_all_bytes_preserved) ... ok
+
+----------------------------------------------------------------------
+Ran 15 tests in 2.695s
+
+OK

@@ -1,0 +1,124 @@
+{
+  "proofLayer": "live Modelvia API, fictional inputs, no app account linking",
+  "revision": "d5a355dab049aca8e51d9290d2c6b618bae3e720",
+  "passed": true,
+  "cases": {
+    "readiness": {
+      "passed": 10,
+      "failed": 0,
+      "n": 10,
+      "medianMs": 923.5,
+      "p95Ms": 1601,
+      "minMs": 749,
+      "maxMs": 1601
+    },
+    "bank-csv-preservation": {
+      "passed": 10,
+      "failed": 0,
+      "n": 10,
+      "medianMs": 3018.5,
+      "p95Ms": 3876,
+      "minMs": 2703,
+      "maxMs": 3876
+    },
+    "email-bill-due-date": {
+      "passed": 10,
+      "failed": 0,
+      "n": 10,
+      "medianMs": 2567.5,
+      "p95Ms": 3559,
+      "minMs": 1967,
+      "maxMs": 3559
+    },
+    "morning-priorities-untrusted-email": {
+      "passed": 10,
+      "failed": 0,
+      "n": 10,
+      "medianMs": 1677.5,
+      "p95Ms": 2276,
+      "minMs": 1195,
+      "maxMs": 2276
+    },
+    "streaming-readiness": {
+      "passed": 1,
+      "failed": 0,
+      "n": 1,
+      "medianMs": 827,
+      "p95Ms": 827,
+      "minMs": 827,
+      "maxMs": 827
+    }
+  },
+  "qaAllocationNanoAud": "8585000",
+  "wholesaleChargeNanoAud": "0",
+  "capNanoAud": "600000000",
+  "negativeChecks": [
+    {
+      "name": "forbidden model",
+      "status": 503,
+      "error": "model_route_unavailable",
+      "expectedStatus": 503,
+      "expectedCode": "model_route_unavailable",
+      "ledgerUnchanged": true,
+      "passed": true
+    },
+    {
+      "name": "output ceiling",
+      "status": 400,
+      "error": "output_limit_exceeded",
+      "expectedStatus": 400,
+      "expectedCode": "output_limit_exceeded",
+      "ledgerUnchanged": true,
+      "passed": true
+    },
+    {
+      "name": "expired key",
+      "status": 401,
+      "error": "key_expired",
+      "expectedStatus": 401,
+      "expectedCode": "key_expired",
+      "ledgerUnchanged": true,
+      "passed": true
+    },
+    {
+      "name": "request capacity limit",
+      "status": 402,
+      "error": "project_request_cap_exceeded",
+      "expectedStatus": 402,
+      "expectedCode": "project_request_cap_exceeded",
+      "ledgerUnchanged": true,
+      "passed": true
+    },
+    {
+      "name": "exact duplicate",
+      "status": 409,
+      "error": "request_already_processed",
+      "expectedStatus": 409,
+      "expectedCode": "request_already_processed",
+      "ledgerUnchanged": true,
+      "passed": true
+    },
+    {
+      "name": "changed duplicate",
+      "status": 409,
+      "error": "idempotency_conflict",
+      "expectedStatus": 409,
+      "expectedCode": "idempotency_conflict",
+      "ledgerUnchanged": true,
+      "passed": true
+    }
+  ],
+  "limits": [
+    "10 trials per case are a small sample, not a general reliability guarantee.",
+    "Fictional API prompts do not prove real bank CSV layouts, email acquisition or calendar effects.",
+    "No tools offered on the live priority prompt; tool approval boundary has separate deterministic integration evidence.",
+    "Internal priced allocations are not actual supplier costs.",
+    "No real RealBud website identity or installation entitlement was used for these hosted API calls."
+  ],
+  "sha256": {
+    "run.mjs": "0cf2ffdecba996ce4e424cd00e93adc7ebc18bf5ae605b45021c83a3960eac1c",
+    "run.test.mjs": "6662d5b115d0fdf46882f0a60fbaaeafd24b89b8d11957239f51ad117786e909",
+    "receipt.json": "4c1a87cc2e391e6b87b7c5355e8a9619d3f85dadebfe4629fe2fecf6f2b8a043",
+    "offline-reviewed.log": "9182990396c6d67fb0341a76545a2da00b4cd64896f7b29ee6b07c5229c5c86c"
+  }
+}

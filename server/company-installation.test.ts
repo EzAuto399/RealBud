@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createCompanyInstallation } from './company-installation.ts';
+import { plantPrivateFile } from './testing/private-fixture.ts';
 
 const roots: string[] = [];
 const instances: ReturnType<typeof createCompanyInstallation>[] = [];
@@ -18,6 +19,18 @@ async function fixture(saved?: string) {
 }
 
 describe('native companion setup boundary', () => {
+  it('restores the saved identity and refuses malformed identity instead of selecting the base', async () => {
+    const { app, root } = await fixture();
+    expect(await app.seatIdentity()).toBeNull();
+    const path = join(root, 'company-installation/seat.json');
+    // The product writes this file privately; a plain write is refused on Windows.
+    plantPrivateFile(path, JSON.stringify({ version: 1, memberId: 'seat-member-123' }));
+    expect(await app.seatIdentity()).toBe('seat-member-123');
+    await writeFile(path, JSON.stringify({ version: 2, memberId: 'seat-member-123' }));
+    await expect(app.seatIdentity()).rejects.toThrow(/needs recovery/);
+    await writeFile(path, 'null');
+    await expect(app.seatIdentity()).rejects.toThrow(/needs recovery/);
+  });
   it('offers joining without administrator keys or a local Postgres dependency', async () => {
     const { app } = await fixture();
     const status = await app.handle('/api/company/status', 'GET', { headers: {} });

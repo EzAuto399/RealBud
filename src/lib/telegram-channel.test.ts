@@ -106,7 +106,7 @@ describe("telegram pairing line", () => {
   it("asks the first chat to write when unpaired", () => {
     expect(
       telegramPairingLine({ paired: false, pairedName: null, lastMessageAt: null }),
-    ).toBe("Create a pairing code on this Mac, then send it to the bot in a private chat.");
+    ).toBe("Create a pairing code on this computer, then send it to the bot in a private chat.");
   });
 
   it("names the pair and a last-message stamp when present", () => {
@@ -126,13 +126,13 @@ describe("channelStatusLine", () => {
   it("asks Discord for a first DM when unpaired", () => {
     expect(
       channelStatusLine("discord", { paired: false, pairedName: null, lastMessageAt: null }),
-    ).toBe("Create a pairing code on this Mac, then send it to the bot in a private chat.");
+    ).toBe("Create a pairing code on this computer, then send it to the bot in a private chat.");
   });
 
   it("asks Slack for a first DM when unpaired", () => {
     expect(
       channelStatusLine("slack", { paired: false, pairedName: null, lastMessageAt: null }),
-    ).toBe("Create a pairing code on this Mac, then send it to the bot in a private chat.");
+    ).toBe("Create a pairing code on this computer, then send it to the bot in a private chat.");
   });
 
   it("keeps Telegram copy and a last-message stamp", () => {

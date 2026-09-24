@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "layer": "Built server helper resolution, not installed application or Windows execution",
+  "selectedProtocol": "/Users/yoda/projects/RealBud/dist-server/server/helpers/hermes-memory-windows.py",
+  "selectedNative": "/Users/yoda/projects/RealBud/dist-server/server/helpers/hermes-memory-windows-native.py",
+  "nativeSha256": "b3a9d5bb67b5c2cc2f920b046b1472044204bc872ebef8113cf13d19d8e86213",
+  "checks": [
+    "Built protocol loads exact built sibling",
+    "Missing sibling refuses despite previously loaded native module"
+  ],
+  "windowsExecution": false
+}

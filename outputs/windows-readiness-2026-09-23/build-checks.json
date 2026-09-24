@@ -1,0 +1,26 @@
+[
+  {
+    "command": "pnpm build",
+    "exitCode": 0,
+    "seconds": 12.51,
+    "log": "final-source-build.log"
+  },
+  {
+    "command": "pnpm build:server",
+    "exitCode": 0,
+    "seconds": 3.44,
+    "log": "final-server-bundle.log"
+  },
+  {
+    "command": "pnpm check:electron",
+    "exitCode": 0,
+    "seconds": 0.72,
+    "log": "final-electron-check.log"
+  },
+  {
+    "command": "pnpm test:windows-build",
+    "exitCode": 0,
+    "seconds": 0.29,
+    "log": "preflight-tests.log"
+  }
+]

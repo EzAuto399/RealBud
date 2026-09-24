@@ -1,0 +1,9 @@
+
+> realbud@0.1.19 typecheck /Users/yoda/projects/RealBud
+> tsc -b && tsc -p tsconfig.server.json
+
+server/hermes-memory-approval-http.test.ts(121,20): error TS2571: Object is of type 'unknown'.
+server/hermes-memory-approval-http.test.ts(124,13): error TS2571: Object is of type 'unknown'.
+server/hermes-memory-approval-http.test.ts(161,100): error TS18048: 'message.card' is possibly 'undefined'.
+server/hermes-memory-approval-http.test.ts(177,97): error TS2353: Object literal may only specify known properties, and 'name' does not exist in type '{ command: string; description: string; }'.
+ ELIFECYCLE  Command failed with exit code 2.

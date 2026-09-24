@@ -1,0 +1,42 @@
+{
+  "at": "2026-09-23T02:53:20.951Z",
+  "layer": "actual local HTTP app; fictional connector and deterministic CLI; not live Gmail/LLM/Windows proof",
+  "checks": [
+    "Actual HTTP agency setup, scoped connector acquisition and three deterministic worker batches produce45 persistent source-linked items; manual run leaves schedule disabled; same request is not repeated",
+    "Checking the selected Gmail account starts windowed history acquisition with no separate collect action: it holds before the plan review, then tiles a 90-day approved interval into three checkpointed 30-day windows read across six actual connector pages, reports complete coverage with nothing unchecked in both the workspace read model and the setup check, and a repeat check re-requests no completed window",
+    "Real API enforces stale edits, preserves staff decisions on rescan, reads back office timezone, pauses/requires re-review after settings change and denies revoked/unreviewed sources",
+    "Actual application renders45 fixture conversations at desktop and390px without page errors or horizontal overflow"
+  ],
+  "scanCalls": 2,
+  "historyTrigger": "agency-setup check-gmail and plan review only; no collectHistory call in this script",
+  "historyWindows": [
+    {
+      "index": 0,
+      "startAt": 1787493600000,
+      "endAt": 1790131997007
+    },
+    {
+      "index": 1,
+      "startAt": 1784901600000,
+      "endAt": 1787493600000
+    },
+    {
+      "index": 2,
+      "startAt": 1782309600000,
+      "endAt": 1784901600000
+    }
+  ],
+  "historyPageReads": 6,
+  "workerBatches": [
+    20,
+    20,
+    5
+  ],
+  "errors": [],
+  "limits": [
+    "Fictional connector and deterministic CLI: no live Gmail OAuth, no real pagination or mailbox mutation.",
+    "The history coverage group composes production service seams in process; it does not prove the app server history trigger end to end.",
+    "No packaged, Electron, Windows or backup/restore evidence; the history checkpoint is not carried by backup.",
+    "Coverage is acquisition progress only: no bill records, no recurrence detection and no schedule activation follow from it."
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "at": "2026-09-24T01:41:44.568Z",
+  "layer": "RealBud pack installer plus installed Hermes skill_view in a disposable profile",
+  "skillVisible": true,
+  "liveReferenceReadable": true,
+  "readOnlyScopePresent": true,
+  "limits": [
+    "No model turn or live worker profile changed",
+    "Not yet in the packaged customer app"
+  ],
+  "cleanupCompleted": true
+}

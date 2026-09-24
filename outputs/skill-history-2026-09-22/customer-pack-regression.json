@@ -1,0 +1,72 @@
+{
+  "checkedAt": "2026-09-21T21:03:57.594Z",
+  "layer": "actual local HTTP server and rendered browser with fictional pending proposal; no live worker/model/account proof",
+  "checks": [
+    "Read and mutation routes reject unauthenticated requests",
+    "Rendered preview is read-only; confirmed import persists four shadow plans, real instruction dependencies, and incomplete live acceptance",
+    "Exact native staged edit is visibly reviewed, applied to owned skill, and reverted as revision 3 with baseline/history retained",
+    "Generic office pack preview/import installs independent owned instructions alongside Austin without selecting the active agency pack or changing Austin bytes",
+    "Reload and repeat import preserve revisions; 390 px view has no horizontal overflow or browser errors"
+  ],
+  "errors": [],
+  "installed": {
+    "id": "austin-office",
+    "revision": 1,
+    "localReady": true,
+    "checks": [
+      {
+        "id": "installation",
+        "state": "passed"
+      },
+      {
+        "id": "worker",
+        "state": "needed"
+      },
+      {
+        "id": "browser-account",
+        "state": "unknown"
+      },
+      {
+        "id": "bank-mapping",
+        "state": "unknown"
+      },
+      {
+        "id": "input-coverage",
+        "state": "unknown"
+      },
+      {
+        "id": "workflow-acceptance",
+        "state": "unknown"
+      },
+      {
+        "id": "mail-account",
+        "state": "needed"
+      },
+      {
+        "id": "bill-register",
+        "state": "needed"
+      },
+      {
+        "id": "timezone",
+        "state": "unknown"
+      }
+    ]
+  },
+  "skillRevisions": [
+    {
+      "revision": 3,
+      "active": true,
+      "reason": "Reviewed revert to instruction revision 1 from configuration 1"
+    },
+    {
+      "revision": 2,
+      "active": false,
+      "reason": "Reviewed native proposal 1234abcd"
+    },
+    {
+      "revision": 1,
+      "active": false,
+      "reason": "Published pack baseline"
+    }
+  ]
+}

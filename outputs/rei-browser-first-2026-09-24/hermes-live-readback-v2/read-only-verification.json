@@ -1,0 +1,73 @@
+{
+  "at": "2026-09-24T01:43:37.045753+00:00",
+  "layer": "User-signed-in native Hermes readback; bounded schema-only review",
+  "result": "passed",
+  "authority": "User expressly limited the live run to review and learning without submissions or changes",
+  "hermesReadback": {
+    "verified": true,
+    "state": "authenticated_navigation_observed",
+    "origin": "https://app.reimasterapps.com.au",
+    "knownNavigation": [
+      "Agents",
+      "Rentals",
+      "Tenants",
+      "Owners",
+      "Suppliers",
+      "Contacts",
+      "Tasks",
+      "Listings",
+      "Sales",
+      "Reports"
+    ],
+    "uiVersions": [
+      "26.0922.0"
+    ],
+    "snapshotSha256": "60bf16ec32eab4f0b4ec396573b8c83b6143245a95b0441209849ef03d096a63",
+    "rawSnapshotPersisted": false,
+    "inputValuesRetained": false,
+    "queryRetained": false,
+    "accountBindingVerified": false,
+    "at": "2026-09-24T01:37:03.042Z"
+  },
+  "schemaObservation": {
+    "path": "unclassified REI path omitted",
+    "navigationLabelsObserved": 20,
+    "roleCounts": {
+      "generic": 91,
+      "button": 17,
+      "StaticText": 190,
+      "link": 61,
+      "list": 3,
+      "listitem": 37,
+      "form": 1,
+      "heading": 1,
+      "tablist": 1,
+      "tab": 2,
+      "tabpanel": 1,
+      "LineBreak": 1,
+      "LabelText": 1,
+      "switch": 1,
+      "region": 4,
+      "SvgRoot": 3,
+      "image": 23
+    },
+    "snapshotSha256": "bdb40ea56b09bc37229f55778f5ea4eec14d362c420b495ae3ef4c43f9155975"
+  },
+  "agentPageInteractionCommandsAfterScopeConfirmation": 0,
+  "knownRetainedData": [
+    "public navigation labels",
+    "UI version",
+    "role counts",
+    "observation digests"
+  ],
+  "cookiesReadOrCopied": false,
+  "rawPageTreeInSharedArtifacts": false,
+  "customerRowsInSharedArtifacts": false,
+  "limits": [
+    "Current rendered page only; not complete website or workflow coverage",
+    "No production account binding or normal app connection proof",
+    "No model turn, live submission, file transfer, installed Windows or API entitlement proof"
+  ],
+  "handoffExpiresAt": "2026-09-24T01:53:58.911Z",
+  "handoffClosedAt": null
+}

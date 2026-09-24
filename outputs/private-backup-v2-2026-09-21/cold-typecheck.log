@@ -1,0 +1,4 @@
+server/private-backup-capture.ts(191,22): error TS2322: Type 'Stats | undefined' is not assignable to type 'Stats'.
+  Type 'undefined' is not assignable to type 'Stats'.
+server/private-backup-v2-integration.test.ts(79,24): error TS2339: Property 'name' does not exist on type 'Office'.
+server/private-backup-v2-integration.test.ts(79,53): error TS2339: Property 'name' does not exist on type 'Office'.

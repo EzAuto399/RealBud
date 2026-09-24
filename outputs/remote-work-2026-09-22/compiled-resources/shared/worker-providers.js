@@ -1,0 +1,100 @@
+/** Hermes can keep a provider login under a profile-specific id while its
+ * model catalogue uses the public provider id. These aliases let RealBud show
+ * the right catalogue without replacing an existing OAuth login with an API
+ * key configuration. */
+export const WORKER_PROVIDER_ALIASES = {
+    "xai-oauth": "xai",
+    /** Hermes device-code / ChatGPT subscription login id. */
+    "openai-codex": "openai-api",
+    /** Legacy RealBud alias — prefer openai-codex. */
+    "openai-oauth": "openai-api",
+    "google-oauth": "google",
+};
+/** Device-code OAuth RealBud can start from Connect model. Keyed by the
+ * curated API-key provider id shown in the picker. */
+export const WORKER_OAUTH_LOGINS = {
+    "openai-api": { oauthId: "openai-codex", signInLabel: "Sign in with ChatGPT" },
+    xai: { oauthId: "xai-oauth", signInLabel: "Sign in with xAI" },
+};
+export const WORKER_PROVIDERS = [
+    {
+        id: "anthropic",
+        label: "Anthropic",
+        envVar: "ANTHROPIC_API_KEY",
+        recommendedModels: ["claude-sonnet-5", "claude-opus-5", "claude-fable-5", "claude-haiku-4-5"],
+    },
+    {
+        id: "openai-api",
+        label: "OpenAI",
+        envVar: "OPENAI_API_KEY",
+        recommendedModels: ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.5"],
+    },
+    {
+        id: "google",
+        label: "Google",
+        envVar: "GOOGLE_API_KEY",
+        recommendedModels: ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview"],
+    },
+    {
+        id: "deepseek",
+        label: "DeepSeek",
+        envVar: "DEEPSEEK_API_KEY",
+        recommendedModels: ["deepseek-flash", "deepseek-v4-pro"],
+    },
+    {
+        id: "moonshotai",
+        label: "Kimi (Moonshot)",
+        envVar: "MOONSHOT_API_KEY",
+        recommendedModels: ["kimi-k3", "kimi-k2.7-code", "kimi-k2.6"],
+    },
+    {
+        id: "xai",
+        label: "xAI",
+        envVar: "XAI_API_KEY",
+        recommendedModels: ["grok-4.6", "grok-4.20-0309-reasoning", "grok-4.20-0309-non-reasoning", "grok-4.3"],
+    },
+    {
+        id: "groq",
+        label: "Groq",
+        envVar: "GROQ_API_KEY",
+        recommendedModels: ["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "openai/gpt-oss-20b", "groq/compound"],
+    },
+    {
+        id: "mistral",
+        label: "Mistral",
+        envVar: "MISTRAL_API_KEY",
+        recommendedModels: ["mistral-medium-2604", "mistral-small-2603", "mistral-large-2512", "mistral-small-latest"],
+    },
+    {
+        id: "openrouter",
+        label: "OpenRouter",
+        envVar: "OPENROUTER_API_KEY",
+        recommendedModels: [
+            "anthropic/claude-sonnet-5",
+            "openai/gpt-5.6-terra",
+            "x-ai/grok-4.6",
+            "google/gemini-3.6-flash",
+            "deepseek/deepseek-flash",
+            "deepseek/deepseek-v4-pro",
+            "moonshotai/kimi-k3",
+        ],
+    },
+    {
+        id: "ollama-cloud",
+        label: "Ollama Cloud",
+        envVar: "OLLAMA_CLOUD_API_KEY",
+        recommendedModels: ["kimi-k3", "deepseek-flash", "glm-5.3", "mistral-large-3:675b"],
+    },
+];
+export function workerProvider(providerId) {
+    if (!providerId)
+        return null;
+    const canonical = WORKER_PROVIDER_ALIASES[providerId] ?? providerId;
+    return WORKER_PROVIDERS.find((provider) => provider.id === canonical) ?? null;
+}
+export function workerLoginMethods(providerId) {
+    const canonical = workerProvider(providerId)?.id ?? providerId;
+    if (canonical && WORKER_OAUTH_LOGINS[canonical])
+        return ["oauth", "api_key"];
+    return ["api_key"];
+}

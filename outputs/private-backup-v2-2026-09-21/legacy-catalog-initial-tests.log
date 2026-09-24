@@ -1,0 +1,43 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ❯ server/private-backup-legacy.test.ts (10 tests | 2 failed) 811ms
+     × binds formatted uploaded bytes and preserves real bank originals and exact ordinary files under a new key 118ms
+     × restores converted legacy data through the existing transform, preparation and cold-restore implementation 132ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/private-backup-legacy.test.ts > legacy backup conversion into the durable catalog path > binds formatted uploaded bytes and preserves real bank originals and exact ordinary files under a new key
+Error: The private backup catalog needs recovery. Its original files were preserved.
+ ❯ invalid server/private-backup-catalog.ts:60:23
+     58| const digest = (value: Buffer | string) => createHash('sha256').update…
+     59| function invalid(message = 'The private backup catalog needs recovery.…
+     60|   throw Object.assign(new Error(message), { status });
+       |                       ^
+     61| }
+     62| function jsonBytes(data: Buffer): unknown {
+ ❯ PrivateBackupCatalog.open server/private-backup-catalog.ts:201:65
+ ❯ server/private-backup-legacy.test.ts:57:49
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  server/private-backup-legacy.test.ts > legacy backup conversion into the durable catalog path > restores converted legacy data through the existing transform, preparation and cold-restore implementation
+Error: ENOENT: no such file or directory, lstat '/private/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/RealBud legacy Ω 5vrz9Q/private-backup-v2'
+ ❯ ancestors server/private-backup-prepared.ts:77:18
+     75|   for (const part of directory.slice(root.length).split(/[\\/]/).filte…
+     76|     current = join(current, part);
+     77|     const stat = await lstat(current);
+       |                  ^
+     78|     if (!stat.isDirectory() || stat.isSymbolicLink()) fail('Prepared b…
+     79|   }
+ ❯ PrivateBackupPreparedStore.create server/private-backup-prepared.ts:131:5
+ ❯ server/private-backup-legacy.test.ts:66:47
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 8 passed (10)
+   Start at  22:38:45
+   Duration  1.16s (transform 226ms, setup 19ms, import 269ms, tests 811ms, environment 0ms)
+

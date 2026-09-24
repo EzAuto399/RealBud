@@ -1,0 +1,36 @@
+{
+  "status": "incomplete",
+  "requestedModel": "grok-4.7",
+  "requestedReasoningEffort": "xhigh",
+  "actualModel": null,
+  "run": {
+    "startedAt": "2026-09-21T17:14:49.576262+00:00",
+    "requestedModel": "grok-4.7",
+    "reasoningEffort": "xhigh",
+    "maxTurns": 1,
+    "tools": [],
+    "webEnabled": false,
+    "subagentsEnabled": false,
+    "permissionMode": "plan",
+    "hardTimeoutSeconds": 600,
+    "promptBytes": 6473,
+    "promptSha256": "e8601efc8a54b47a9a43e1c5ccf53d7c1a41be4722c14d8c086072d76464e772",
+    "timedOut": true,
+    "exitCode": -15,
+    "elapsedSeconds": 600.03,
+    "hasStructuredOutput": false
+  },
+  "findings": null,
+  "approval": false,
+  "retryPerformed": false,
+  "sourceSnapshot": {
+    "sourceSha256": "467310a21292240f581b7b696353cee47d58328efc3131324ec9a28fae9f5ddb",
+    "packetBytes": 6473,
+    "scope": "facade only"
+  },
+  "originalDiagnostics": {
+    "bytes": 141491,
+    "sha256": "43f9df0086c0e2eefab3bc100c5442e780a8eaecb81a12b5ac403212f4d86063"
+  },
+  "diagnosticSummary": "CLI emitted unrelated configured-MCP initialization warnings; these do not establish the cause of the review timeout. No global configuration was changed."
+}

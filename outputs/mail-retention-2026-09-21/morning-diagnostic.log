@@ -1,0 +1,13 @@
+file:///Users/yoda/projects/RealBud/scripts/qa-morning-mail.mjs:46
+  const request=async(path,method='GET',body,expected=200)=>{const r=await fetch(base+path,{method,signal:AbortSignal.timeout(60000),headers:{'content-type':'application/json','x-realbud-session':token},...(body===undefined?{}:{body:JSON.stringify(body)})}).catch(error=>{throw new Error(`${method} ${path} failed: ${error.message}`,{cause:error});});const v=await r.json();assert.equal(r.status,expected,`${path}: ${JSON.stringify(v)}`);return v;};
+                                                                                                                                                                                                                                                                                      ^
+
+Error: GET /api/mail-workspace failed: The operation was aborted due to timeout
+    at file:///Users/yoda/projects/RealBud/scripts/qa-morning-mail.mjs:46:279
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async request (file:///Users/yoda/projects/RealBud/scripts/qa-morning-mail.mjs:46:70)
+    at async file:///Users/yoda/projects/RealBud/scripts/qa-morning-mail.mjs:63:32 {
+  [cause]: [DOMException [TimeoutError]: The operation was aborted due to timeout]
+}
+
+Node.js v24.19.0

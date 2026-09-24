@@ -1,0 +1,39 @@
+{
+  "mcpServers": [
+    {
+      "name": "semble",
+      "source": {
+        "type": "mcpJson",
+        "path": "/Users/yoda/.cursor/mcp.json"
+      },
+      "disabled": true,
+      "compatibilityStatus": "disabled",
+      "vendor": "cursor"
+    }
+  ],
+  "hooks": [
+    {
+      "event": "stop",
+      "hookType": "command",
+      "source": {
+        "type": "user",
+        "path": "/Users/yoda/.claude"
+      },
+      "vendor": "claude",
+      "disabled": true,
+      "compatibilityStatus": "disabled"
+    }
+  ],
+  "skillsDisabledCount": 168,
+  "skillCount": 387,
+  "sampleSkillMetadata": [
+    {
+      "name": "ab-testing",
+      "source": {
+        "type": "user",
+        "path": "/Users/yoda/.agents/skills/ab-testing/SKILL.md"
+      },
+      "userInvocable": true
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "at": "2026-09-23T02:37:22.700Z",
+  "passed": true,
+  "case": "damaged config then ordinary profile save",
+  "refused": true,
+  "originalBytesPreserved": true,
+  "deliberateRepairAllowsSave": true,
+  "existingCredentialPreserved": true
+}

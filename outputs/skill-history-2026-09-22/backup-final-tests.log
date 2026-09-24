@@ -1,0 +1,36 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ✓ server/private-backup-capture.test.ts (34 tests) 19054ms
+     ✓ refuses oversized portfolio history instead of sealing an incomplete backup  8713ms
+     ✓ captures and rechecks more than 5,000 records and 3,000 files with bounded source reads  9641ms
+ ✓ server/private-backup-catalog.test.ts (44 tests) 17754ms
+     ✓ retains more than 5,000 records and 96 MiB without full-history record reads  4738ms
+     ✓ admits more than the v1 3,000-file ceiling and enumerates names without dropping any file  1929ms
+     ✓ commits and reopens the full 8 MiB supported entry with cache spilling disabled  8939ms
+     ✓ recovers a real killed writer and its hot rollback journal before applying the persisted cap  657ms
+ ✓ server/private-backup-pack-upgrade.test.ts (14 tests) 9568ms
+     ✓ v1 retains history, retired plans and staff edits, repairs omitted native files, then safely rolls back  530ms
+     ✓ v2 retains history, retired plans and staff edits, repairs omitted native files, then safely rolls back  600ms
+     ✓ rejects corrupt prior digest in authenticated v1 restore and real v2 catalog admission  355ms
+     ✓ rejects corrupt prior generation in authenticated v1 restore and real v2 catalog admission  348ms
+     ✓ rejects corrupt prior recipe in authenticated v1 restore and real v2 catalog admission  341ms
+     ✓ rejects corrupt prior retired-path in authenticated v1 restore and real v2 catalog admission  337ms
+     ✓ v1 restores exact archive bytes and live/retired plans, repairs instructions, then rolls back to archived generation one  1135ms
+     ✓ v2 restores exact archive bytes and live/retired plans, repairs instructions, then rolls back to archived generation one  1273ms
+     ✓ rejects authenticated missing archive at v1 import and v2 capture/catalog seal without changing the destination  989ms
+     ✓ rejects authenticated truncated archive at v1 import and v2 capture/catalog seal without changing the destination  956ms
+     ✓ rejects authenticated wrong-pack archive at v1 import and v2 capture/catalog seal without changing the destination  896ms
+     ✓ rejects authenticated orphan archive at v1 import and v2 capture/catalog seal without changing the destination  974ms
+     ✓ refuses an actual interrupted archive in both backup formats and admits it only after explicit recovery  733ms
+ ✓ server/private-backup-skill-history.test.ts (9 tests) 1867ms
+     ✓ v1 preserves shared and removed-skill archive roots, rekeys, repairs native instructions and performs reviewed archived revert  552ms
+     ✓ v2 preserves shared and removed-skill archive roots, rekeys, repairs native instructions and performs reviewed archived revert  691ms
+ ✓ server/customer-pack-skill-backup.test.ts (13 tests) 19ms
+
+ Test Files  5 passed (5)
+      Tests  114 passed (114)
+   Start at  07:06:29
+   Duration  49.31s (transform 404ms, setup 34ms, import 694ms, tests 48.26s, environment 0ms)
+
+JSON report written to /Users/yoda/projects/RealBud/outputs/skill-history-2026-09-22/backup-final-tests.json

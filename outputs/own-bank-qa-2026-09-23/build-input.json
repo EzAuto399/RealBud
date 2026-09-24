@@ -1,0 +1,24 @@
+{
+  "startedAt": "2026-09-23T12:00:18.480986+10:00",
+  "head": "fb6cebed63aaed9d81f9112005ac938644d2fa86",
+  "sourceSha256": "116d2816faa474cdd233662cdbd6cf3073c0ad598e00e0f816ac6f596a1bd88e",
+  "dirtySourceIncluded": [
+    "server/ask-attach.ts",
+    "server/ask-attach.test.ts",
+    "server/ask-attach-privacy.test.ts",
+    "server/store.ts",
+    "server/store.test.ts",
+    "server/store-recovery.test.ts"
+  ],
+  "sourceFileCount": 1256,
+  "scope": [
+    "Mac packaged smoke",
+    "own bank export to CSV with user sign-in",
+    "minimal Modelvia service request"
+  ],
+  "limits": [
+    "No bank test completed yet",
+    "No Modelvia service request completed yet",
+    "No publication or replacement of installed app"
+  ]
+}

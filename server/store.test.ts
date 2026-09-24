@@ -167,6 +167,26 @@ describe("Store", () => {
     expect(reloaded.bot(bot.id)?.resumeCursors).toEqual({ codex: "thread-xyz" });
   });
 
+  it('persists complete memory review without grant expansion and drops credential-bearing previews', () => {
+    const store = new Store(selection), bot = store.createBot();
+    const review = { description: 'Save to memory: add to memory', content: 'Fictional full review 私人\n'.repeat(40), complete: true as const };
+    const kept = store.appendMessage(bot.threadId, { role: 'bot', kind: 'options', card: {
+      title: 'Review memory change', subtitle: review.description, options: ['Allow', 'Deny'],
+      tool: 'hermes_memory_write', allowKey: 'shell:git', memoryReview: review,
+    } });
+    expect(kept.card).toMatchObject({ approvalPolicy: 'once', memoryReview: review });
+    expect(kept.card).not.toHaveProperty('allowKey');
+    const secret = `sk-test-${'x'.repeat(24)}`;
+    const held = store.appendMessage(bot.threadId, { role: 'bot', kind: 'options', card: {
+      title: 'Review memory change', subtitle: review.description, options: ['Allow', 'Deny'],
+      tool: 'hermes_memory_write', memoryReview: { ...review, content: `Fictional API_KEY=${secret}` },
+    } });
+    expect(held.card).not.toHaveProperty('memoryReview');
+    const reopened = new Store(selection).messagesFor(bot.threadId);
+    expect(reopened.find(row => row.id === kept.id)?.card?.memoryReview).toEqual(review);
+    expect(JSON.stringify(reopened)).not.toContain(secret);
+  });
+
   it("redacts credential-shaped text on bot messages, not user ones", () => {
     const store = new Store(selection);
     const bot = store.createBot();
@@ -325,13 +345,13 @@ describe("Store", () => {
     expect(reloaded.activePath(bot.threadId).map((m) => m.id)).toEqual(["m1", "m2"]);
   });
 
-  it("tolerates a corrupt bots.json by starting empty", () => {
+  it("holds a corrupt bots.json for recovery without starting empty", () => {
     const store = new Store(selection);
     store.createBot();
     writeFileSync(join(DATA_DIR, "bots.json"), "{not json");
 
-    const reloaded = new Store(selection);
-    expect(reloaded.bots).toEqual([]);
+    expect(() => new Store(selection)).toThrow(/need recovery/);
+    expect(readFileSync(join(DATA_DIR, "bots.json"), "utf8")).toBe("{not json");
   });
 
   it("busy is wiped even when bots.json says otherwise", () => {

@@ -1,0 +1,31 @@
+test_after_final_receipt_retry_only_cleans_up (__main__.WindowsJournalIntegration.test_after_final_receipt_retry_only_cleans_up) ... ok
+test_after_memory_write_retry_flushes_without_rewrite (__main__.WindowsJournalIntegration.test_after_memory_write_retry_flushes_without_rewrite) ... ok
+test_after_publication_crash_reconciles_once (__main__.WindowsJournalIntegration.test_after_publication_crash_reconciles_once) ... ok
+test_after_published_receipt_replays_exactly (__main__.WindowsJournalIntegration.test_after_published_receipt_replays_exactly) ... ok
+test_before_final_receipt_retry_flushes_without_rewrite (__main__.WindowsJournalIntegration.test_before_final_receipt_retry_flushes_without_rewrite) ... ok
+test_before_memory_write_retry_writes_once (__main__.WindowsJournalIntegration.test_before_memory_write_retry_writes_once) ... ok
+test_before_publication_crash_retries_once (__main__.WindowsJournalIntegration.test_before_publication_crash_retries_once) ... ok
+test_before_published_receipt_crash_reconciles_once (__main__.WindowsJournalIntegration.test_before_published_receipt_crash_reconciles_once) ... ok
+test_changed_claim_is_preserved_without_duplicate_memory_write (__main__.WindowsJournalIntegration.test_changed_claim_is_preserved_without_duplicate_memory_write) ... ok
+test_changed_memory_after_intent_preserves_current_content (__main__.WindowsJournalIntegration.test_changed_memory_after_intent_preserves_current_content) ... ok
+test_changed_stage_preserves_unreviewed_bytes (__main__.WindowsJournalIntegration.test_changed_stage_preserves_unreviewed_bytes) ... ok
+test_colliding_destination_preserves_both_files (__main__.WindowsJournalIntegration.test_colliding_destination_preserves_both_files) ... ok
+test_delete_request_is_not_terminal_cleanup (__main__.WindowsJournalIntegration.test_delete_request_is_not_terminal_cleanup) ... ok
+test_equal_bytes_in_two_names_are_not_a_valid_move_replay (__main__.WindowsJournalIntegration.test_equal_bytes_in_two_names_are_not_a_valid_move_replay) ... ok
+test_human_approval_before_proposal_receipt_never_restages (__main__.WindowsJournalIntegration.test_human_approval_before_proposal_receipt_never_restages) ... ok
+test_human_rejection_before_proposal_receipt_never_restages (__main__.WindowsJournalIntegration.test_human_rejection_before_proposal_receipt_never_restages) ... ok
+test_native_dry_run_rejects_missing_replace_match (__main__.WindowsJournalIntegration.test_native_dry_run_rejects_missing_replace_match) ... ok
+test_prepared_intent_with_both_names_missing_is_held (__main__.WindowsJournalIntegration.test_prepared_intent_with_both_names_missing_is_held) ... ok
+test_propose_list_preview_approve_and_exact_replay (__main__.WindowsJournalIntegration.test_propose_list_preview_approve_and_exact_replay) ... ok
+test_public_json_and_direct_dispatch_cannot_bypass_windows_hold (__main__.WindowsJournalIntegration.test_public_json_and_direct_dispatch_cannot_bypass_windows_hold) ... ok
+test_reject_and_replay_never_writes_memory (__main__.WindowsJournalIntegration.test_reject_and_replay_never_writes_memory) ... ok
+test_review_intent_retry_writes_once (__main__.WindowsJournalIntegration.test_review_intent_retry_writes_once) ... ok
+test_stage_crash_retries_once (__main__.WindowsJournalIntegration.test_stage_crash_retries_once) ... ok
+test_unsigned_orphan_stage_is_not_adopted (__main__.WindowsJournalIntegration.test_unsigned_orphan_stage_is_not_adopted) ... ok
+test_untrusted_request_and_payload_fields_are_rejected (__main__.WindowsJournalIntegration.test_untrusted_request_and_payload_fields_are_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 25 tests in 5.704s
+
+OK
+{"passed": true, "tests_run": 25, "failures": 0, "errors": 0, "receipt": "outputs/hermes-memory-windows-journal-2026-09-22/proposals-interrupted-windows-regression.json"}

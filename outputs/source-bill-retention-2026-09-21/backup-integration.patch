@@ -1,0 +1,51 @@
+--- a/server/private-workspace-backup.ts
++++ b/server/private-workspace-backup.ts
+@@ -11,7 +11,7 @@
+ import { validateCustomerPack } from './customer-packs.ts';
+ import { parseWorkspaceTabs } from '../shared/workspace-tabs.ts';
+ import { JOB_CAPABILITIES } from '../shared/contracts.ts';
+-import { validateSourceBillRegister } from './source-bills.ts';
++import { SOURCE_BILL_RECORD_KINDS, validateSourceBillRecord, validateSourceBillRecords } from './source-bill-graph.ts';
+ import { BILL_STATUSES } from './expected-bills.ts';
+ import { bankBatchSource, decodeBankSource, type BankReferenceBatch } from './bank-reference.ts';
+ import { validateBackupMail } from './private-backup-mail-validation.ts';
+@@ -26,7 +26,8 @@
+ const WORKSPACE = 'company-installation/workspace.json';
+ const DATABASE = 'workflow-state.sqlite';
+ const STATIC = new Set(['desk.json', WORKSPACE, 'agency-setup.json', 'workspace-views/tabs.json', 'recipes.json', 'job-runs.json', 'loops.json', 'expected-bills.json', 'customer-packs.json', 'vault/USER.md', 'vault/README.md', 'vault/AU-RENTAL-LAW.md']);
+-const KINDS = new Set(['bank', 'handoff', 'bill-register', 'bill-proposal', ...EXECUTION_RECORD_KINDS]);
++const KINDS = new Set(['bank', 'handoff', 'bill-proposal', ...SOURCE_BILL_RECORD_KINDS, ...EXECUTION_RECORD_KINDS]);
++const BILL_KINDS: ReadonlySet<string> = new Set(SOURCE_BILL_RECORD_KINDS);
+ const GUARDED = ['config.json', 'company-installation/host.json', 'company-installation/peer.json', 'company-installation/seat.json', 'company-installation/enrollment.json'];
+ const COMPANY_DIRECTORY_GUARD = '$company-directory';
+ const INCLUDED = ['Private Desk book and property notes', 'Saved mail work and collected source evidence', 'Bank originals, reviewed copies, bills and preparation receipts', 'Agency settings, saved views, plans and instruction revision history'];
+@@ -186,7 +187,7 @@
+   let plain: unknown; try { plain = decryptJson(key, r.payload); } catch { return fail('Workflow history does not open with this business key.', 400); }
+   if (!object(plain) || Buffer.byteLength(json(plain)) > MAX_FILE) return fail('The workflow history payload is invalid.', 400);
+   if (r.kind.startsWith('execution-')) validateExecutionRecord(r.kind, plain);
+-  if (r.kind === 'bill-register') { if (r.id !== 'source-bills') fail('The bill register identity is invalid.', 400); validateSourceBillRegister(plain); }
++  if (BILL_KINDS.has(r.kind)) validateSourceBillRecord(r.kind, r.id, Number(r.revision), plain);
+   if (r.kind === 'bank') {
+     if (plain.version !== 1 || !object(plain.batch)) fail('The bank history needs recovery.', 400);
+     const source = bankBatchSource(plain.batch as unknown as BankReferenceBatch);
+@@ -226,7 +227,9 @@
+       validateBusinessFile(f.path, value);
+     }
+     validateBackupMail(files, key, s.workspaceId);
+-    validateExecutionRecords(records.map(r => ({ id: r.id, kind: r.kind, revision: r.revision, value: decryptJson(key, r.payload) })), executionFiles(files));
++    const logicalRecords = records.map(r => ({ id: r.id, kind: r.kind, revision: r.revision, value: decryptJson(key, r.payload) }));
++    validateSourceBillRecords(logicalRecords);
++    validateExecutionRecords(logicalRecords, executionFiles(files));
+     return { ...s, files, records } as unknown as Snapshot;
+   } finally { key.fill(0); }
+ }
+@@ -300,6 +303,9 @@
+     for (const id of ['morning-arrears', 'owner-letter', 'inbound-triage']) state.state[id] = { ...(object(state.state[id]) ? state.state[id] : {}), enabled: false, handledThrough: at };
+     const safeLoops = file('loops.json', Buffer.from(json(state))); if (loops) output[output.indexOf(loops)] = safeLoops; else output.push(safeLoops);
+     const execution = restoreExecutionRecords(s.records.map(r => ({ id: r.id, kind: r.kind, revision: r.revision, value: decryptJson(sourceKey, r.payload) })), executionFiles(s.files), executionFiles(output), at);
++    // Bill facts, source aliases, reviews and lookup reservations remain one
++    // validated graph while generic restoration rekeys the logical records.
++    validateSourceBillRecords(execution.records);
+     for (const [path, content] of Object.entries(execution.files)) {
+       const index = output.findIndex(f => f.path === path), restored = file(path, Buffer.from(content));
+       if (index < 0) output.push(restored); else output[index] = restored;

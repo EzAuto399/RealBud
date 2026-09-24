@@ -1,0 +1,40 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ❯ server/private-backup-prepared.test.ts (18 tests | 1 failed) 515ms
+     × returns 413 when SQLite reaches the main page ceiling 16ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/private-backup-prepared.test.ts > exact encrypted prepared restore artifacts > returns 413 when SQLite reaches the main page ceiling
+AssertionError: promise resolved "{ sequence: 5, …(4) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "beforeHash": null,
++   "bytes": 0,
++   "intendedHash": null,
++   "path": "vault/USER.md",
++   "sequence": 5,
+  }
+
+ ❯ server/private-backup-prepared.test.ts:171:59
+    169|     expect(error).toMatchObject({ status: 413, message: expect.stringM…
+    170|     const entries = f.store.summary().entries;
+    171|     await expect(f.store.addRemoval('vault/USER.md', null)).rejects.to…
+       |                                                           ^
+    172|     expect(f.store.summary().entries).toBe(entries);
+    173|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 4 passed (5)
+      Tests  1 failed | 72 passed (73)
+   Start at  23:33:22
+   Duration  20.46s (transform 478ms, setup 34ms, import 669ms, tests 19.45s, environment 0ms)
+

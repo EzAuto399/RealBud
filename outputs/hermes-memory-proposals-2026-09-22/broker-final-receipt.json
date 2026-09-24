@@ -1,0 +1,44 @@
+{
+  "at": "2026-09-21T16:08:50.754Z",
+  "complete": true,
+  "files": {
+    "shared/hermes-memory-proposal.ts": "0d3d1508d155d378966a5b57ae8ffdefb72baf3050176adab5f66e9a2a8b6158",
+    "server/hermes-memory-proposal-broker.ts": "86d4af779bb986ae20cd376d9f7124638c5ee5dbd94940653496ece0f26ffd6e",
+    "server/hermes-memory-proposal-broker.test.ts": "adc40c2ba21ed6223d6ef724c8ddcd6c97b4d59d6008c9d0cca8944a6dd102bb"
+  },
+  "unchangedSinceCheckpoint": true,
+  "verification": {
+    "focusedBrokerAndSharedTests": {
+      "passed": 50,
+      "failed": 0,
+      "receipt": "outputs/hermes-memory-proposals-2026-09-22/broker-tests.json"
+    },
+    "realTcpFramingChecks": {
+      "passed": 4,
+      "failed": 0,
+      "receipt": "outputs/hermes-memory-proposals-2026-09-22/broker-framing-tests.json"
+    },
+    "serverTypecheck": {
+      "exitCode": 0,
+      "log": "outputs/hermes-memory-proposals-2026-09-22/broker-typecheck.log"
+    },
+    "grokImplementation": {
+      "sessionId": "01a0c497-b89a-7be1-8a67-e04acc956eb1",
+      "requestedModel": "grok-4.6",
+      "reasoningEffort": "xhigh",
+      "disposition": "outputs/hermes-memory-proposals-2026-09-22/broker-grok-implementation-disposition.json"
+    },
+    "grokReview": {
+      "sessionId": "01a0c4a3-6773-7bf0-b015-14a79525be01",
+      "approved": true,
+      "advisories": 2,
+      "disposition": "outputs/hermes-memory-proposals-2026-09-22/broker-grok-review-disposition.json"
+    }
+  },
+  "limits": [
+    "Actual authenticated loopback HTTP and deterministic fixtures; no model runtime, private profiles or live memory used",
+    "Native service persistent idempotency, admission and proposal publication are parent-owned layers",
+    "No packaged or Windows acceptance is asserted by this checkpoint"
+  ],
+  "remainingBrokerWork": []
+}

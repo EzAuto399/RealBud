@@ -1,0 +1,107 @@
+RealBud
+App connected
+
+WORKSPACE
+
+Desk
+Tasks & properties
+Ask
+Work with Bud
+Schedule
+Jobs & routines
+You
+Office & settings
+Bills and calendar
+Bills
+Manage views
+Connections
+PRACTICE SAFELY
+Run the sample morning
+
+Use labelled training facts to learn the full Desk flow. This practice stays in your private workspace and does not contact your PMS.
+
+Run sample morning
+Sample book
+·
+Bud ready
+·
+Next Morning money check 22 Sept, 7:30 am
+
+Saved view · Bills
+
+Bills and calendar
+
+All · This private workspace. Opening a view does not start a job.
+
+Manage views
+Bills board
+
+Saved bills by property, with source review and a calendar for confirmed due dates and expected arrivals.
+
+No earlier bill-register records. Source-reviewed bills and calendar appear below.
+
+Received bills and expected arrivals
+
+Review facts from saved Gmail messages. Confirm recurring arrival patterns separately; an expected arrival is not an invoice or payment.
+
+Refresh bills and sources
+Property filter
+All available properties
+12 Oak St, Dickson ACT
+4/22 Harbour Rd, Kingston ACT
+8 Pine Ave, Braddon ACT
+91 King St, Narrabundah ACT
+3 Birch Cl, Watson ACT
+2/5 Flora St, Ainslie ACT
+Fictional Oak Street
+Fictional Pine Street
+Review a bill from saved mail
+Check inbox for bills
+
+This checks the Gmail account, date range and message limit reviewed in Agency setup. It saves available conversations for bill review; attachment contents need separate checking.
+
+Latest mail collection: partial · 1 conversations
+Review a received bill
+
+One bill per saved message in this workflow. Enter only facts you have checked. Unknown dates and amounts can stay blank. This records an AUD bill; it does not mark payment confirmed.
+
+Find a saved conversation
+
+Showing 1 of 1 conversations. Search checks all saved conversations.
+
+Saved conversation
+Choose a saved conversation…
+Fictional water invoice · Oak Street
+Bill property
+Choose a property…
+12 Oak St, Dickson ACT
+4/22 Harbour Rd, Kingston ACT
+8 Pine Ave, Braddon ACT
+91 King St, Narrabundah ACT
+3 Birch Cl, Watson ACT
+2/5 Flora St, Ainslie ACT
+Fictional Oak Street
+Fictional Pine Street
+Bill kind
+Vendor
+Amount (AUD)
+Invoice date, if confirmed
+Actual due date, if confirmed
+Bill note
+Reason for this bill review
+I reviewed this source and confirmed the entered property, AUD amount and dates.
+Accept reviewed bill
+Cancel bill review
+Bill calendar
+
+Showing 0 entries from Sep 21, 2026 to Mar 20, 2027 · all pages loaded. Predictions remain separate from actual due dates.
+
+Calendar from
+Calendar to
+Show calendar range
+
+No entries on this loaded calendar page. Check any remaining pages below.
+
+Received bill records (0 of 0)
+
+No bill records on this loaded page. Check any remaining pages below.

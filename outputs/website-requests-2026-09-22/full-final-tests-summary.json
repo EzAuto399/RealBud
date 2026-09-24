@@ -1,0 +1,13 @@
+{
+  "exitCode": 0,
+  "success": true,
+  "passed": 4574,
+  "failed": 0,
+  "skipped": 149,
+  "total": 4723,
+  "actualTestFiles": 359,
+  "durationSeconds": 357.3150798339844,
+  "hermesRuntime": "/Users/yoda/.realbud/hermes/runtimes/345cd2b057a452236de401d3534b8502a7465e8d-cfb3f08a9ee7/hermes-agent",
+  "jsonSha256": "3b7c46c2367aed17e702a5574c07c282de551cd684fd5e75d148e39fbafc98bb",
+  "logSha256": "5ec1cb7d5f9cbbee4605fc136e23de548b1b2ff7e943c9a30bf7eae876d2d5fb"
+}

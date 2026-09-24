@@ -1,0 +1,33 @@
+{
+  "at": "2026-09-22T00:15:01.907Z",
+  "files": {
+    "shared/company-portal.ts": "6d811af3cb6c5a84d8e2cc5dc104e026461b8343ad2f76a3aad2d9b74d1011bb",
+    "server/company/portal-proof.ts": "ba88193cf1304af366010b659a699308daa6e47727e9d0494fe1069e488379b5",
+    "server/company/portal-proof.test.ts": "38d8572d6c7fcd5bdc08a196bec0a9614047566ba1daabc2384adc4321d11bbf",
+    "server/company/portal-bindings.ts": "2dc82da479a40dfc0a923cbe7f25a7feaff0db09d26c10aa0ebccd7f1dd591fc",
+    "server/company/portal-bindings.integration.test.ts": "baf56f99493fb25bd05b7509d5da138283a8656c4ba4d3ba43458828f10fe5cc",
+    "server/company/index.ts": "d7ba823b8d9216e2e56b84aa1ecc633b21530a3a44f48e0dc8ce081b6286078f",
+    "server/company/schema.ts": "915b80d9f7f4e30021640f3f45478576baf0d89305319b1ca7050425a09ea39e",
+    "server/company/backup.ts": "63f0db179f7d754732bbbd3361eebd9cccef97636f96008dd1cc9abfdbe48d8b",
+    "server/company/backup.integration.test.ts": "973eb094dea9adb07a6342e8cad40e65218363ba235e0c00c59427199093969f",
+    "server/company/host-transport.ts": "d650f4695b4dccaa48a2088fbac6d593be564a3cc715c06f3e5ce1841c124105",
+    "server/company-host.ts": "e413eb0d27e4ecd8b363676aaa73d2bb8698d4c428399bf688ea6742e015dff4",
+    "server/company-installation.ts": "28741291bd84451e707a616d2ce38d0cb2b351851e3cbd3f19423acfbfe59bba",
+    "src/components/CompanySetupCard.tsx": "98c5e123f8dab2d39103b7d19225402e5cd609a35045f4f407cbc66904324893",
+    "src/components/company/CompanyPortalBindingsCard.tsx": "cc6c68e8f178bece017620470abbf5d618c85046abfe466d66fe71832eeb57b6",
+    "src/lib/company-api.ts": "0eee55a716b2d226ffe9f5d3d3c2ffdcaffef59542d5ae81711d0bfef73a9170",
+    "src/lib/company-portal-code.ts": "0340dc883aa9d99d6cf54ee0687d6f12c383353292f8d8daa56484f2624e8bea",
+    "src/lib/company-portal-code.test.ts": "3252005b8e8c8b093d28a99e059f7a4780b882e4d96af76c08b43efcffab8401",
+    "website/supabase/migrations/202609220005_company_portal_proofs.sql": "9b47a8cc3949bb6514d50cf17151933f84750141e48ad2856f804404acc12b2a",
+    "website/lib/company-portal.ts": "a0f2a1115cf8143a71b30f4e2116a94900b6ff29288413ed4f94a73f6272ee32",
+    "website/lib/company-portal.test.mjs": "141a42ed2af332425fcde37f9737f2349ca30e1ebd5aaf647bb8248ceadbf858",
+    "website/app/api/account/company-portal/route.ts": "ac842713d804667fbd9c2e8b5b8b040185b66cb832667e7b6e4122af6d3d2baf",
+    "website/app/api/company-portal/redeem/route.ts": "7156799cf61a62b8b69a61c865bbf5f16f8cbfbc1722eb251592545afb0c7e37",
+    "website/app/account/company-portal/page.tsx": "2895e294f2761d37717ff8e19850f9986ecf46cd1cbbff581b53226397901cce",
+    "website/app/account/company-portal/panel.tsx": "b74023395ee04ffec8f3ba4fb31aaa5cf0301e9c677e3b2a518b881c47db85f8",
+    "website/app/account/account-shell.tsx": "1fd3a46834055219dfea705507c88d8ad3a4081e70cd8344439e2d8105d54736",
+    "website/scripts/testing/company-portal-postgres.mjs": "25795605ff4249824fdf72f072f5cd17f12166be214c80acc4f4407bb35bccf9",
+    "website/scripts/testing/command-site.mjs": "60acf341eb1db1fb53fd385b81514ee35eb2a76960cab9553a6f3a3725927ac5",
+    "scripts/qa-company-portal.mjs": "5b207c76095bdf7a18f5ad2a333003ccd112bc32f6d428f84cecdfce674255a9"
+  }
+}

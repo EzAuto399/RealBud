@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "kind": "accounts-anz-reference-candidates",
+  "sourceReference": "QA-SYN-ANZ-REFERENCE-PREP-FORMAT-UNCONFIRMED-e95dcd0e-71d1-4ab9-a19e-fcbf2db8d232",
+  "status": "blocked",
+  "coverageComplete": false,
+  "originalDigest": "70ce96f3060d9a5559954fe3438cca012d34a1540a0cfb5e35a6b38997376336",
+  "rows": [],
+  "hostValidation": {
+    "required": true,
+    "batchId": "SYN-BANK-BATCH-FORMAT-UNCONFIRMED",
+    "batchRevision": 1,
+    "originalDigest": "70ce96f3060d9a5559954fe3438cca012d34a1540a0cfb5e35a6b38997376336",
+    "applied": false
+  },
+  "holds": [
+    {
+      "itemId": "formatConfirmation",
+      "reason": "formatConfirmed=false (formatConfirmationSource \"synthetic-test-layout-only\"): the supplied CSV layout is a synthetic test layout, not a verified ANZ customer export format, so no row decisions can be produced."
+    },
+    {
+      "itemId": "SYN-BANK-BATCH-FORMAT-UNCONFIRMED",
+      "reason": "Batch identity, revision 1 and approved mapping are known, but the batch is not usable until the exact ANZ banking service, login/export route and customer CSV layout are confirmed by office fit check."
+    },
+    {
+      "itemId": "approved-rule-alias-overlap",
+      "reason": "Approved alias \"Synthetic Shared Payer\" appears in both the SYN-P01 and SYN-P02 rules; the overlap is unresolved and cannot decide payer identity."
+    }
+  ],
+  "actionsPerformed": []
+}

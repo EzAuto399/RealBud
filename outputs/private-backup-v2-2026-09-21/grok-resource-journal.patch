@@ -1,0 +1,512 @@
+--- a/server/private-backup-operations.ts
++++ b/server/private-backup-operations.ts
+@@ -23,6 +23,20 @@ export interface BackupCatalogReference {
+ export interface BackupPreparedReference { directoryId: string; storeId: string; workspaceId: string; digest: string }
++export type BackupResourceRole = 'capture' | 'decoded' | 'preview' | 'prepared' | 'archive' | 'build' | 'upload';
++export const BACKUP_RESOURCE_ROLES: readonly BackupResourceRole[] = ['capture', 'decoded', 'preview', 'prepared', 'archive', 'build', 'upload'];
++export interface BackupResourceAllocation {
++  id: string; nonce: string; role: BackupResourceRole; bytes: number; state: 'allocated' | 'deleting' | 'removed';
++}
++/** Filesystem marker for a retained allocation. State is journal-only and must
++ * never appear here. Prepared files stay at DATA/private-backup-v2/prepared/<allocation.id>. */
++export interface BackupResourceMarker {
++  version: 1; operationId: string; workspaceId: string;
++  allocation: { id: string; nonce: string; role: BackupResourceRole; bytes: number };
++}
+ export interface BackupOperationRecord {
+   version: 1; revision: number; operation: PrivateBackupTransferOperation;
+   reservedBytes: number;
+   /** Sticky from staging onward, including a failed/uncertain stage. Only a
+    * separately verified cold completion permits releasing its reservation. */
+   restoreHeld: boolean;
+   references: { capture?: BackupCatalogReference; preview?: BackupCatalogReference; prepared?: BackupPreparedReference };
++  /** Absent on legacy records. allocate() creates the list; removed rows stay. */
++  allocations?: BackupResourceAllocation[];
+ }
+ export interface BackupOperationStoreOptions {
+   directory: string; key: Buffer; workspaceId: string;
+   /** Installation-owned business directory, used only to verify a cold restore
+    * when its archive replaced the prior workspace identity. Never an HTTP path. */
+   restoreDirectory?: string;
+   limits?: { records?: number; active?: number; reservationBytes?: number };
+   now?: () => number;
+   /** Test-only process interruption seam; never populated from serialized input. */
+   fault?: (point: 'initial-ready' | 'initial-linked' | 'completion-committed') => void;
++  /** Test-only identity seam; never populated from serialized input. */
++  randomId?: () => string;
+ }
+ const SCHEMA = {
+   control: 'CREATE TABLE control (id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL)',
+   operations: 'CREATE TABLE operations (id TEXT PRIMARY KEY, revision INTEGER NOT NULL, payload TEXT NOT NULL)',
+ };
+ const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+ const exact = (v: Record<string, unknown>, required: string[], optional: string[] = []) => required.every(k => Object.hasOwn(v, k)) && Object.keys(v).every(k => required.includes(k) || optional.includes(k));
+ const integer = (v: unknown, minimum = 0): v is number => Number.isSafeInteger(v) && Number(v) >= minimum && Number(v) < Number.MAX_SAFE_INTEGER;
+ const closedPhases = new Set<PrivateBackupTransferPhase>(['cancelled', 'expired', 'completed']);
+ const restorePhases = new Set<PrivateBackupTransferPhase>(['staging', 'staged', 'applying']);
+ const interruptedPhases = new Set<PrivateBackupTransferPhase>(['capturing', 'sealing', 'checking']);
++const RESOURCE_KIND: Record<'export' | 'upload', readonly BackupResourceRole[]> = { export: ['capture', 'archive'], upload: ['decoded', 'preview', 'prepared', 'build', 'upload'] };
+ const transitions: Record<PrivateBackupTransferPhase, readonly PrivateBackupTransferPhase[]> = {
+@@ -64,9 +80,42 @@ function reference(v: unknown, prepared: boolean): boolean {
+   return prepared || typeof v.createdAt === 'string' && Number.isFinite(Date.parse(v.createdAt)) && new Date(v.createdAt).toISOString() === v.createdAt && typeof v.databasePresent === 'boolean';
+ }
++export function backupResourceMarker(operationId: string, workspaceId: string, allocation: BackupResourceAllocation): BackupResourceMarker {
++  return { version: 1, operationId, workspaceId, allocation: { id: allocation.id, nonce: allocation.nonce, role: allocation.role, bytes: allocation.bytes } };
++}
++export function parseBackupResourceMarker(v: unknown): BackupResourceMarker | null {
++  if (!object(v) || !exact(v, ['version', 'operationId', 'workspaceId', 'allocation']) || v.version !== 1 || !privateBackupTransferId(v.operationId) || !privateBackupTransferId(v.workspaceId) || !object(v.allocation) ||
++      !exact(v.allocation, ['id', 'nonce', 'role', 'bytes']) || !privateBackupTransferId(v.allocation.id) || !privateBackupTransferId(v.allocation.nonce) ||
++      !BACKUP_RESOURCE_ROLES.includes(v.allocation.role as BackupResourceRole) || !integer(v.allocation.bytes, 1) || v.allocation.bytes > PRIVATE_BACKUP_OPERATION_LIMITS.reservationBytes) return null;
++  return { version: 1, operationId: v.operationId, workspaceId: v.workspaceId, allocation: { id: v.allocation.id, nonce: v.allocation.nonce, role: v.allocation.role as BackupResourceRole, bytes: v.allocation.bytes } };
++}
++function cleanupEligible(record: BackupOperationRecord, workspaceId: string) {
++  if (record.restoreHeld && record.operation.phase !== 'completed') return false;
++  return closedPhases.has(record.operation.phase) || record.operation.workspaceId === workspaceId && (record.operation.phase === 'failed' || record.operation.phase === 'interrupted');
++}
++function parseAllocations(v: unknown, kind: 'export' | 'upload', reservedBytes: number, references: BackupOperationRecord['references']): BackupResourceAllocation[] | undefined {
++  if (v === undefined) return undefined;
++  if (!Array.isArray(v) || v.length > 32) return fail();
++  const parsed: BackupResourceAllocation[] = []; const ids = new Set<string>(); const nonces = new Set<string>(); const live = new Set<BackupResourceRole>(); let liveBytes = 0;
++  for (const item of v) {
++    if (!object(item) || !exact(item, ['id', 'nonce', 'role', 'bytes', 'state']) || !privateBackupTransferId(item.id) || !privateBackupTransferId(item.nonce) ||
++        !BACKUP_RESOURCE_ROLES.includes(item.role as BackupResourceRole) || !(RESOURCE_KIND[kind] as readonly string[]).includes(item.role as string) || !integer(item.bytes, 1) ||
++        item.bytes > PRIVATE_BACKUP_OPERATION_LIMITS.reservationBytes || item.state !== 'allocated' && item.state !== 'deleting' && item.state !== 'removed' ||
++        ids.has(item.id) || nonces.has(item.nonce) || ids.has(item.nonce) || nonces.has(item.id)) return fail();
++    ids.add(item.id); nonces.add(item.nonce);
++    if (item.state !== 'removed') { if (live.has(item.role as BackupResourceRole)) return fail(); live.add(item.role as BackupResourceRole); liveBytes += item.bytes; }
++    parsed.push({ id: item.id, nonce: item.nonce, role: item.role as BackupResourceRole, bytes: item.bytes, state: item.state });
++  }
++  if (!integer(liveBytes) || liveBytes > reservedBytes) return fail();
++  for (const name of ['capture', 'preview', 'prepared'] as const) {
++    const ref = references[name]; if (ref && !parsed.some(a => a.role === name && a.id === ref.directoryId)) return fail();
++  }
++  return parsed;
++}
+ function validate(v: unknown, workspaceId: string): BackupOperationRecord {
+-  if (!object(v) || !exact(v, ['version', 'revision', 'operation', 'reservedBytes', 'restoreHeld', 'references']) || v.version !== 1 || !integer(v.revision, 1) || !integer(v.reservedBytes) ||
++  if (!object(v) || !exact(v, ['version', 'revision', 'operation', 'reservedBytes', 'restoreHeld', 'references'], ['allocations']) || v.version !== 1 || !integer(v.revision, 1) || !integer(v.reservedBytes) ||
+       v.reservedBytes > PRIVATE_BACKUP_OPERATION_LIMITS.reservationBytes || typeof v.restoreHeld !== 'boolean' || !object(v.references) || !exact(v.references, [], ['capture', 'preview', 'prepared'])) return fail();
+   const op = parsePrivateBackupTransferOperation(v.operation); if (!op || op.workspaceId !== workspaceId) return fail();
+   for (const [name, ref] of Object.entries(v.references)) if (!reference(ref, name === 'prepared')) return fail();
+   if (op.kind === 'export' && (v.references.preview || v.references.prepared || v.restoreHeld) || op.kind === 'upload' && v.references.capture) return fail();
+   if (op.phase === 'completed' && (op.kind !== 'upload' || !v.restoreHeld || !v.references.prepared)) return fail();
+   if (restorePhases.has(op.phase) && !v.restoreHeld || v.restoreHeld && (op.canCancel || ['cancelled', 'expired'].includes(op.phase)) || v.restoreHeld && op.phase !== 'completed' && !v.reservedBytes) return fail();
+   if (v.references.capture && (v.references.capture as BackupCatalogReference).workspaceId !== workspaceId) return fail();
+   if (v.references.preview && op.preview && (v.references.preview as BackupCatalogReference).workspaceId !== op.preview.workspaceId) return fail();
+   if (v.references.prepared && (!v.restoreHeld || !v.references.preview || (v.references.prepared as BackupPreparedReference).workspaceId !== (v.references.preview as BackupCatalogReference).workspaceId)) return fail();
++  const parsedAllocations = parseAllocations(v.allocations, op.kind, v.reservedBytes, v.references as BackupOperationRecord['references']);
+   if (Buffer.byteLength(JSON.stringify(v)) > PRIVATE_BACKUP_OPERATION_LIMITS.recordBytes) return fail();
+-  return { version: 1, revision: v.revision, operation: op, reservedBytes: v.reservedBytes, restoreHeld: v.restoreHeld, references: structuredClone(v.references) } as BackupOperationRecord;
++  return { version: 1, revision: v.revision, operation: op, reservedBytes: v.reservedBytes, restoreHeld: v.restoreHeld, references: structuredClone(v.references), ...(parsedAllocations ? { allocations: parsedAllocations } : {}) } as BackupOperationRecord;
+ }
+@@ -139,7 +188,7 @@ export async function createBackupOperationStore(options: BackupOperationStoreOptions) {
+   if (!Buffer.isBuffer(options.key) || options.key.length !== 32 || !privateBackupTransferId(options.workspaceId)) fail('A protected workspace is required.', 400);
+-  const limits = { ...PRIVATE_BACKUP_OPERATION_LIMITS, ...options.limits }, now = options.now ?? Date.now;
++  const limits = { ...PRIVATE_BACKUP_OPERATION_LIMITS, ...options.limits }, now = options.now ?? Date.now, newId = options.randomId ?? randomUUID;
+   for (const name of ['records', 'active', 'reservationBytes'] as const) if (!integer(limits[name], 1) || limits[name] > PRIVATE_BACKUP_OPERATION_LIMITS[name]) fail('Invalid backup operation limits.', 400);
+@@ -214,6 +263,14 @@ export async function createBackupOperationStore(options: BackupOperationStoreOptions) {
+   const save = (record: BackupOperationRecord) => db.prepare('INSERT OR REPLACE INTO operations VALUES(?,?,?)').run(record.operation.id, record.revision, encode(record));
+   const stamp = () => { const value = now(); if (!integer(value, 1)) fail('The backup clock is unavailable.'); return value; };
++  const persist = (before: BackupOperationRecord, workspace: string, edit: (next: BackupOperationRecord) => void) => {
++    const next = structuredClone(before);
++    edit(next);
++    next.revision = before.revision + 1;
++    next.operation.updatedAt = Math.max(stamp(), before.operation.updatedAt);
++    validate(next, workspace);
++    save(next);
++    return structuredClone(next);
++  };
+   try {
+@@ -310,6 +367,18 @@ export async function createBackupOperationStore(options: BackupOperationStoreOptions) {
+         if (before.restoreHeld) {
+           for (const name of ['preview', 'prepared'] as const) {
+             if (before.references[name] && JSON.stringify(before.references[name]) !== JSON.stringify(next.references[name])) fail('Restore artifacts must be retained for recovery.', 409);
+           }
+           if (next.operation.phase !== 'completed' && next.reservedBytes !== before.reservedBytes || next.reservedBytes > before.reservedBytes) fail('Restore storage must remain reserved until completion and cleanup.', 409);
+         }
++        if (JSON.stringify(next.allocations) !== JSON.stringify(before.allocations)) fail();
++        if (before.allocations && next.reservedBytes < before.reservedBytes) fail('Restore storage must remain reserved until completion and cleanup.', 409);
++        if (before.operation.phase === 'completed' && next.reservedBytes !== before.reservedBytes) fail('Restore storage must remain reserved until completion and cleanup.', 409);
++        if (next.allocations) {
++          for (const name of ['capture', 'preview', 'prepared'] as const) {
++            const ref = next.references[name]; if (!ref) continue;
++            const live = next.allocations.find(a => a.role === name && a.state !== 'removed');
++            if (live ? live.id !== ref.directoryId : !next.allocations.some(a => a.role === name && a.id === ref.directoryId)) fail();
++          }
++        }
+         if (before.operation.kind === 'upload' && (next.operation.progress.totalBytes !== before.operation.progress.totalBytes || next.operation.receivedBytes! < before.operation.receivedBytes!)) fail();
+         const used = totals(); if (used.reservedBytes - before.reservedBytes + next.reservedBytes > limits.reservationBytes) fail('Backup temporary storage is fully reserved.', 507);
+         save(next); return structuredClone(next);
+       });
+     },
++    /** Creates a retained allocation. Identifiers are generated here; callers
++     * never supply paths, passphrases or business values. */
++    allocate(id: string, revision: number, request: { role: BackupResourceRole; bytes: number }) {
++      return tx(() => {
++        assertOwner(); const before = read(id); if (before.operation.workspaceId !== options.workspaceId) fail('This backup operation was not found.', 404);
++        if (before.revision !== revision) fail('Backup progress changed. Check the saved operation before retrying.', 409);
++        if (closedPhases.has(before.operation.phase)) fail('This backup transition is unavailable.', 409);
++        const role = request.role, bytes = request.bytes;
++        if (!(RESOURCE_KIND[before.operation.kind] as readonly string[]).includes(role) || !integer(bytes, 1) || bytes > PRIVATE_BACKUP_OPERATION_LIMITS.reservationBytes) fail('Invalid backup operation.', 400);
++        if (before.restoreHeld && (before.operation.phase !== 'staging' || before.references.prepared || role !== 'prepared' && role !== 'build')) fail('Restore artifacts must be retained for recovery.', 409);
++        const existing = before.allocations ?? [];
++        if (existing.length >= 32) fail('Saved backup operations have reached their limit. Review existing operations first.', 409);
++        if (existing.some(a => a.state !== 'removed' && a.role === role)) fail('This backup transition is unavailable.', 409);
++        const liveBytes = existing.reduce((sum, a) => a.state === 'removed' ? sum : sum + a.bytes, 0);
++        if (!integer(liveBytes + bytes) || liveBytes + bytes > before.reservedBytes) fail('Backup temporary storage is fully reserved.', 507);
++        const allocationId = newId(), allocationNonce = newId();
++        if (!privateBackupTransferId(allocationId) || !privateBackupTransferId(allocationNonce)) fail('Invalid backup operation.', 400);
++        if (allocationId === allocationNonce) fail('This operation identifier belongs to a different request.', 409);
++        for (const row of rows()) {
++          for (const a of rowRecord(row).allocations ?? []) {
++            if (a.id === allocationId || a.nonce === allocationNonce || a.id === allocationNonce || a.nonce === allocationId) fail('This operation identifier belongs to a different request.', 409);
++          }
++        }
++        return persist(before, options.workspaceId, next => {
++          next.allocations = [...(next.allocations ?? []), { id: allocationId, nonce: allocationNonce, role, bytes, state: 'allocated' }];
++        });
++      });
++    },
++    /** Marks a retained allocation deleting. Does not imply writers are idle;
++     * callers must abort, drain and close before removing files. Never releases
++     * reservedBytes. */
++    beginResourceCleanup(id: string, revision: number, allocationId: string) {
++      return tx(() => {
++        assertOwner(); const before = read(id);
++        if (before.revision !== revision) fail('Backup progress changed. Check the saved operation before retrying.', 409);
++        if (!cleanupEligible(before, options.workspaceId)) fail('This backup transition is unavailable.', 409);
++        if (!privateBackupTransferId(allocationId)) fail('Invalid backup operation.', 400);
++        const current = before.allocations?.find(a => a.id === allocationId); if (!current) fail('Invalid backup operation.', 400);
++        if (current.state !== 'allocated') return structuredClone(before);
++        return persist(before, before.operation.workspaceId, next => { next.allocations!.find(a => a.id === allocationId)!.state = 'deleting'; });
++      });
++    },
++    /** Caller invokes only after strict filesystem removal and fsync. Keeps
++     * identity and bytes for audit; does not lower reservedBytes. */
++    finishResourceCleanup(id: string, revision: number, allocationId: string) {
++      return tx(() => {
++        assertOwner(); const before = read(id);
++        if (before.revision !== revision) fail('Backup progress changed. Check the saved operation before retrying.', 409);
++        if (!cleanupEligible(before, options.workspaceId)) fail('This backup transition is unavailable.', 409);
++        if (!privateBackupTransferId(allocationId)) fail('Invalid backup operation.', 400);
++        const current = before.allocations?.find(a => a.id === allocationId); if (!current) fail('Invalid backup operation.', 400);
++        if (current.state === 'removed') return structuredClone(before);
++        if (current.state !== 'deleting') fail('This backup transition is unavailable.', 409);
++        return persist(before, before.operation.workspaceId, next => { next.allocations!.find(a => a.id === allocationId)!.state = 'removed'; });
++      });
++    },
++    /** Sets reservedBytes to 0 after every retained allocation is removed, or
++     * when nothing was ever allocated. Sole path that lowers reservation on
++     * allocation-aware and completed records. */
++    releaseCleanedReservation(id: string, revision: number) {
++      return tx(() => {
++        assertOwner(); const before = read(id);
++        if (before.revision !== revision) fail('Backup progress changed. Check the saved operation before retrying.', 409);
++        if (!closedPhases.has(before.operation.phase)) fail('This backup transition is unavailable.', 409);
++        const hasFiles = !!(before.references.capture || before.references.preview || before.references.prepared || before.operation.artifact);
++        if (before.allocations ? before.allocations.some(a => a.state !== 'removed') : hasFiles) fail('This backup transition is unavailable.', 409);
++        if (!before.reservedBytes) return structuredClone(before);
++        return persist(before, before.operation.workspaceId, next => { next.reservedBytes = 0; });
++      });
++    },
++    /** Internal page of records whose files or reservations still need cleanup.
++     * Includes foreign terminal work; public get/list still hide those. */
++    cleanupCandidates(pageOptions: { limit?: number; after?: string } = {}) {
++      assertOwner(); const limit = pageOptions.limit ?? 20;
++      if (!integer(limit, 1) || limit > 20 || pageOptions.after !== undefined && !privateBackupTransferId(pageOptions.after)) fail('Invalid backup operation page.', 400);
++      const result: BackupOperationRecord[] = []; let next: string | null = null, total = 0;
++      for (const row of rows()) {
++        const record = rowRecord(row);
++        if (!cleanupEligible(record, options.workspaceId) || !record.reservedBytes && !(record.allocations ?? []).some(a => a.state !== 'removed')) continue;
++        total++;
++        if (record.operation.id <= (pageOptions.after ?? '')) continue;
++        if (result.length === limit) { next = result.at(-1)!.operation.id; continue; }
++        result.push(record);
++      }
++      return { items: result, next, total };
++    },
++    /** Cancels foreign, unheld, nonterminal records after control.workspaceId
++     * changes. Strips public artifact/preview; keeps owner, refs, allocations
++     * and reservation so cleanup can finish. */
++    retireForeign() {
++      return tx(() => {
++        assertOwner(); const targets: BackupOperationRecord[] = [];
++        for (const row of rows()) {
++          const before = rowRecord(row);
++          if (before.operation.workspaceId === options.workspaceId || before.restoreHeld || closedPhases.has(before.operation.phase)) continue;
++          targets.push(before);
++        }
++        for (const before of targets) persist(before, before.operation.workspaceId, next => {
++          next.operation.phase = 'cancelled'; next.operation.canCancel = false; next.operation.requiresPassphrase = false;
++          delete next.operation.artifact; delete next.operation.preview;
++        });
++        return targets.length;
++      });
++    },
+     /** Only removes old terminal metadata whose artifact cleanup already
+      * released all reservations. Never removes staged/restore-held evidence. */
+     prune(beforeTime: number): number {
+       return tx(() => {
+         assertOwner(); if (!integer(beforeTime, 1)) fail('Invalid backup retention time.', 400);
+         const ids: string[] = [];
+-        for (const row of rows()) { const r = rowRecord(row); if (!r.restoreHeld && !r.reservedBytes && ['cancelled', 'expired'].includes(r.operation.phase) && r.operation.updatedAt < beforeTime) ids.push(r.operation.id); }
++        for (const row of rows()) {
++          const r = rowRecord(row);
++          if (r.reservedBytes || (r.allocations ?? []).some(a => a.state !== 'removed') || r.operation.updatedAt >= beforeTime) continue;
++          if (r.operation.phase === 'completed' || !r.restoreHeld && ['cancelled', 'expired'].includes(r.operation.phase)) ids.push(r.operation.id);
++        }
+         for (const id of ids) db.prepare('DELETE FROM operations WHERE id=?').run(id); return ids.length;
+       });
+     },
+--- a/server/private-backup-operations.test.ts
++++ b/server/private-backup-operations.test.ts
+@@ -4,7 +4,7 @@ import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+ import { tmpdir } from 'node:os';
+ import { join } from 'node:path';
+ import { pathToFileURL } from 'node:url';
+ import { spawn } from 'node:child_process';
+ import { DatabaseSync } from 'node:sqlite';
+-import { createBackupOperationStore, type BackupOperationStore, type BackupOperationRecord, type BackupOperationStoreOptions } from './private-backup-operations.ts';
++import { backupResourceMarker, createBackupOperationStore, parseBackupResourceMarker, type BackupOperationStore, type BackupOperationRecord, type BackupOperationStoreOptions } from './private-backup-operations.ts';
+ import type { PrivateBackupTransferOperation } from '../shared/private-backup-transfers.ts';
+ import { encryptJson, decryptJson } from './desk-crypto.ts';
+ import { PRIVATE_BACKUP_COMPLETION_FILE, type BackupColdCompletion } from './private-backup-completion.ts';
+@@ -36,6 +36,22 @@ function staged(store: BackupOperationStore, restoredWorkspaceId = archiveWorkspace) {
+   r = change(store, r, next => { next.operation.phase = 'staging'; next.operation.canCancel = false; next.restoreHeld = true;
+     next.references.prepared = { directoryId: randomUUID(), storeId: randomUUID(), workspaceId: restoredWorkspaceId, digest: digest('prepared') }; });
+   return change(store, r, next => { next.operation.phase = 'staged'; });
+ }
++function allocatedStaged(store: BackupOperationStore, restoredWorkspaceId = archiveWorkspace) {
++  let r = store.create(operation('upload'), 100);
++  r = store.allocate(r.operation.id, r.revision, { role: 'upload', bytes: 20 });
++  r = change(store, r, next => { next.operation.phase = 'uploaded'; next.operation.receivedBytes = 123; next.operation.progress.completedBytes = 123;
++    next.operation.artifact = { archiveBytes: 123, archiveDigest: digest('fixture ciphertext') }; next.operation.requiresPassphrase = true; });
++  r = store.allocate(r.operation.id, r.revision, { role: 'decoded', bytes: 10 });
++  r = change(store, r, next => { next.operation.phase = 'checking'; next.operation.requiresPassphrase = false; });
++  r = store.allocate(r.operation.id, r.revision, { role: 'preview', bytes: 10 });
++  const preview = r.allocations!.find(a => a.role === 'preview')!;
++  r = change(store, r, next => { next.operation.phase = 'reviewed'; next.operation.preview = { digest: next.operation.artifact!.archiveDigest, workspaceId: restoredWorkspaceId,
++    createdAt: '2026-09-21T00:00:00.000Z', fileCount: 2, recordCount: 0, plainBytes: 30, included: ['Private saved work'], excluded: ['Credentials'], restoreChanges: ['Pause work'] };
++    next.references.preview = { directoryId: preview.id, catalogId: randomUUID(), workspaceId: restoredWorkspaceId, digest: digest('catalog'), createdAt: '2026-09-21T00:00:00.000Z', databasePresent: false }; });
++  r = change(store, r, next => { next.operation.phase = 'staging'; next.operation.canCancel = false; next.restoreHeld = true; });
++  r = store.allocate(r.operation.id, r.revision, { role: 'prepared', bytes: 20 });
++  r = store.allocate(r.operation.id, r.revision, { role: 'build', bytes: 10 });
++  const prepared = r.allocations!.find(a => a.role === 'prepared')!;
++  r = change(store, r, next => { next.references.prepared = { directoryId: prepared.id, storeId: randomUUID(), workspaceId: restoredWorkspaceId, digest: digest('prepared') }; });
++  return change(store, r, next => { next.operation.phase = 'staged'; });
++}
+ function coldProof(record: BackupOperationRecord): BackupColdCompletion {
+@@ -331,3 +347,168 @@ describe('durable private backup operation records', () => {
+     expect(store.usage()).toMatchObject({ records: 1, reservedBytes: 100 });
+   }, 15_000);
+ });
++
++describe('durable backup resource allocations', () => {
++  it('allocates immutable roles under CAS, quota, reopen and generic tamper guards', async () => {
++    const { store, settings } = await setup();
++    let r = store.create(operation(), 100);
++    const first = store.allocate(r.operation.id, r.revision, { role: 'capture', bytes: 40 });
++    expect(first.revision).toBe(r.revision + 1);
++    expect(first.allocations).toHaveLength(1);
++    expect(first.allocations![0]).toMatchObject({ role: 'capture', bytes: 40, state: 'allocated' });
++    expect(first.allocations![0].id).not.toBe(first.allocations![0].nonce);
++    first.allocations![0].state = 'removed'; first.allocations![0].bytes = 1;
++    expect(store.get(r.operation.id).allocations![0]).toMatchObject({ role: 'capture', bytes: 40, state: 'allocated' });
++    expect(() => store.allocate(r.operation.id, r.revision, { role: 'archive', bytes: 10 })).toThrow(/progress changed/i);
++    r = store.get(r.operation.id);
++    expect(() => store.allocate(r.operation.id, r.revision, { role: 'capture', bytes: 10 })).toThrow();
++    expect(() => store.allocate(r.operation.id, r.revision, { role: 'decoded', bytes: 10 })).toThrow(/Invalid/i);
++    expect(() => store.allocate(r.operation.id, r.revision, { role: 'archive', bytes: 0 })).toThrow(/Invalid/i);
++    expect(() => store.allocate(r.operation.id, r.revision, { role: 'archive', bytes: 61 })).toThrow(/fully reserved/);
++    r = store.allocate(r.operation.id, r.revision, { role: 'archive', bytes: 60 });
++    expect(r.allocations).toHaveLength(2);
++    expect(() => change(store, r, next => { next.allocations![0].state = 'deleting'; })).toThrow();
++    expect(() => change(store, r, next => { next.reservedBytes = 0; })).toThrow();
++    expect(() => change(store, r, next => { next.references.capture = { directoryId: randomUUID(), catalogId: randomUUID(), workspaceId, digest: digest('source'), createdAt: '2026-09-21T00:00:00.000Z', databasePresent: false }; })).toThrow();
++    const capture = r.allocations!.find(a => a.role === 'capture')!;
++    r = change(store, r, next => { next.references.capture = { directoryId: capture.id, catalogId: randomUUID(), workspaceId, digest: digest('source'), createdAt: '2026-09-21T00:00:00.000Z', databasePresent: false }; });
++    const marker = backupResourceMarker(r.operation.id, r.operation.workspaceId, capture);
++    expect(marker).toEqual({ version: 1, operationId: r.operation.id, workspaceId, allocation: { id: capture.id, nonce: capture.nonce, role: 'capture', bytes: 40 } });
++    expect(parseBackupResourceMarker({ ...marker, allocation: { ...marker.allocation, state: 'allocated' } })).toBeNull();
++    store.close();
++    const { store: reopened } = await setup(settings);
++    expect(reopened.get(r.operation.id).allocations).toEqual(r.allocations);
++    expect(() => reopened.allocate(r.operation.id, reopened.get(r.operation.id).revision, { role: 'archive', bytes: 1 })).toThrow();
++    let upload = reopened.create(operation('upload'), 50);
++    expect(() => reopened.allocate(upload.operation.id, upload.revision, { role: 'capture', bytes: 10 })).toThrow(/Invalid/i);
++    upload = reopened.allocate(upload.operation.id, upload.revision, { role: 'decoded', bytes: 50 });
++    expect(upload.allocations![0].role).toBe('decoded');
++  });
++
++  it('retains reservations through cancelled and failed cleanup until finish and release', async () => {
++    const { store } = await setup();
++    let cancelled = store.create(operation(), 80);
++    cancelled = store.allocate(cancelled.operation.id, cancelled.revision, { role: 'capture', bytes: 80 });
++    const cancelledId = cancelled.allocations![0].id;
++    cancelled = change(store, cancelled, next => { next.operation.phase = 'cancelled'; next.operation.canCancel = false; });
++    expect(() => change(store, cancelled, next => { next.reservedBytes = 0; })).toThrow();
++    cancelled = store.beginResourceCleanup(cancelled.operation.id, cancelled.revision, cancelledId);
++    expect(cancelled.allocations![0].state).toBe('deleting');
++    expect(cancelled.reservedBytes).toBe(80);
++    expect(store.beginResourceCleanup(cancelled.operation.id, cancelled.revision, cancelledId).revision).toBe(cancelled.revision);
++    cancelled = store.finishResourceCleanup(cancelled.operation.id, cancelled.revision, cancelledId);
++    expect(cancelled.allocations![0]).toMatchObject({ id: cancelledId, bytes: 80, state: 'removed' });
++    expect(cancelled.reservedBytes).toBe(80);
++    expect(store.finishResourceCleanup(cancelled.operation.id, cancelled.revision, cancelledId).revision).toBe(cancelled.revision);
++    cancelled = store.releaseCleanedReservation(cancelled.operation.id, cancelled.revision);
++    expect(cancelled.reservedBytes).toBe(0);
++
++    let failed = store.create(operation(), 50);
++    failed = store.allocate(failed.operation.id, failed.revision, { role: 'archive', bytes: 20 });
++    failed = change(store, failed, next => { next.operation.phase = 'failed'; next.operation.error = { code: 'storage-unavailable' }; });
++    const firstArchive = failed.allocations![0].id;
++    failed = store.beginResourceCleanup(failed.operation.id, failed.revision, firstArchive);
++    failed = store.finishResourceCleanup(failed.operation.id, failed.revision, firstArchive);
++    failed = store.allocate(failed.operation.id, failed.revision, { role: 'archive', bytes: 20 });
++    expect(failed.allocations!.filter(a => a.role === 'archive')).toHaveLength(2);
++    const second = failed.allocations!.find(a => a.state === 'allocated')!;
++    failed = store.beginResourceCleanup(failed.operation.id, failed.revision, second.id);
++    failed = store.finishResourceCleanup(failed.operation.id, failed.revision, second.id);
++    expect(failed.reservedBytes).toBe(50);
++    expect(() => store.releaseCleanedReservation(failed.operation.id, failed.revision)).toThrow();
++    failed = change(store, failed, next => { next.operation.phase = 'cancelled'; next.operation.canCancel = false; delete next.operation.error; });
++    failed = store.releaseCleanedReservation(failed.operation.id, failed.revision);
++    expect(failed.reservedBytes).toBe(0);
++    expect(store.usage().reservedBytes).toBe(0);
++  });
++
++  it('keeps deleting allocations across restart and refuses stage-held cleanup even when foreign', async () => {
++    const { store, settings } = await setup({ limits: { reservationBytes: 400 } });
++    let exp = store.create(operation(), 40);
++    exp = store.allocate(exp.operation.id, exp.revision, { role: 'capture', bytes: 40 });
++    exp = change(store, exp, next => { next.operation.phase = 'cancelled'; next.operation.canCancel = false; });
++    exp = store.beginResourceCleanup(exp.operation.id, exp.revision, exp.allocations![0].id);
++    store.close();
++    const { store: same } = await setup(settings);
++    expect(same.get(exp.operation.id).allocations![0].state).toBe('deleting');
++    expect(same.get(exp.operation.id).reservedBytes).toBe(40);
++    expect(same.cleanupCandidates().items.some(item => item.operation.id === exp.operation.id)).toBe(true);
++    const live = same.create(operation(), 10);
++    const held = staged(same);
++    const restored = staged(same);
++    const directory = folder(); same.close();
++    writeColdProof(directory, settings.key, coldProof(restored));
++    const { store: foreign } = await setup({ ...settings, workspaceId: archiveWorkspace, restoreDirectory: directory });
++    expect(() => foreign.get(held.operation.id)).toThrow(/not found/);
++    expect(() => foreign.beginResourceCleanup(held.operation.id, held.revision, randomUUID())).toThrow();
++    expect(foreign.cleanupCandidates().items.some(item => item.operation.id === held.operation.id)).toBe(false);
++    expect(foreign.retireForeign()).toBe(1);
++    const db = new DatabaseSync(join(settings.directory, 'operations.sqlite'), { readOnly: true });
++    try {
++      const heldRow = db.prepare('SELECT payload FROM operations WHERE id=?').get(held.operation.id)!;
++      expect(decryptJson(settings.key, JSON.parse(String(heldRow.payload)))).toMatchObject({ restoreHeld: true, reservedBytes: 100, operation: { workspaceId, phase: 'staged' } });
++      const liveRow = db.prepare('SELECT payload FROM operations WHERE id=?').get(live.operation.id)!;
++      expect(decryptJson(settings.key, JSON.parse(String(liveRow.payload)))).toMatchObject({ reservedBytes: 10, operation: { workspaceId, phase: 'cancelled' } });
++    } finally { db.close(); }
++  });
++
++  it('cleans completed foreign work after encrypted cold completion without exposing old history', async () => {
++    const { store, settings } = await setup({ limits: { reservationBytes: 200 } }), directory = folder();
++    const oldExport = store.create(operation(), 100);
++    let restored = allocatedStaged(store); store.close();
++    writeColdProof(directory, settings.key, coldProof(restored));
++    const { store: reopened } = await setup({ ...settings, workspaceId: archiveWorkspace, restoreDirectory: directory });
++    expect(reopened.list()).toEqual({ items: [], total: 0, next: null });
++    expect(() => reopened.get(restored.operation.id)).toThrow(/not found/);
++    expect(() => reopened.get(oldExport.operation.id)).toThrow(/not found/);
++    expect(() => reopened.allocate(restored.operation.id, restored.revision, { role: 'preview', bytes: 1 })).toThrow(/not found/);
++    const found = reopened.cleanupCandidates().items.find(item => item.operation.id === restored.operation.id);
++    expect(found?.operation.workspaceId).toBe(workspaceId);
++    expect(found?.operation.phase).toBe('completed');
++    restored = found!;
++    for (const allocation of restored.allocations!.filter(a => a.state !== 'removed')) {
++      restored = reopened.beginResourceCleanup(restored.operation.id, restored.revision, allocation.id);
++      restored = reopened.finishResourceCleanup(restored.operation.id, restored.revision, allocation.id);
++    }
++    expect(restored.reservedBytes).toBe(100);
++    restored = reopened.releaseCleanedReservation(restored.operation.id, restored.revision);
++    expect(restored).toMatchObject({ reservedBytes: 0, restoreHeld: true, operation: { workspaceId, phase: 'completed' } });
++    expect(restored.references.prepared).toBeDefined();
++    expect(() => reopened.get(restored.operation.id)).toThrow(/not found/);
++    expect(reopened.list().total).toBe(0);
++    expect(reopened.prune(10_000)).toBe(1);
++    expect(reopened.usage()).toMatchObject({ records: 1, reservedBytes: 100 });
++  });
++
++  it('retires foreign unheld work while preserving owner, references and reservations', async () => {
++    const { store, settings } = await setup({ limits: { reservationBytes: 200 } }), directory = folder();
++    let exp = store.create(operation(), 40);
++    exp = store.allocate(exp.operation.id, exp.revision, { role: 'capture', bytes: 20 });
++    const capture = exp.allocations![0];
++    exp = change(store, exp, next => { next.operation.phase = 'sealing'; next.references.capture = { directoryId: capture.id, catalogId: randomUUID(), workspaceId, digest: digest('source'), createdAt: '2026-09-21T00:00:00.000Z', databasePresent: false }; });
++    exp = change(store, exp, next => { next.operation.phase = 'ready'; next.operation.artifact = { archiveBytes: 10, archiveDigest: digest('export') }; next.operation.progress.completedBytes = 10; });
++    const restored = staged(store); store.close();
++    writeColdProof(directory, settings.key, coldProof(restored));
++    const { store: reopened } = await setup({ ...settings, workspaceId: archiveWorkspace, restoreDirectory: directory });
++    expect(reopened.retireForeign()).toBe(1);
++    expect(reopened.list().total).toBe(0);
++    expect(() => reopened.get(exp.operation.id)).toThrow(/not found/);
++    expect(reopened.cleanupCandidates().items.some(item => item.operation.id === exp.operation.id)).toBe(true);
++    const db = new DatabaseSync(join(settings.directory, 'operations.sqlite'), { readOnly: true });
++    try {
++      const row = db.prepare('SELECT payload FROM operations WHERE id=?').get(exp.operation.id)!;
++      const payload = decryptJson(settings.key, JSON.parse(String(row.payload))) as BackupOperationRecord;
++      expect(payload).toMatchObject({ reservedBytes: 40, restoreHeld: false, operation: { workspaceId, phase: 'cancelled', kind: 'export' }, references: { capture: { directoryId: capture.id } } });
++      expect(payload.operation.artifact).toBeUndefined();
++      expect(payload.allocations![0]).toMatchObject({ id: capture.id, state: 'allocated', bytes: 20 });
++    } finally { db.close(); }
++  });
++
++  it('prunes completed work only after every allocation is removed and reservation released', async () => {
++    const { store, settings } = await setup(); let cancelled = store.create(operation(), 30);
++    cancelled = store.allocate(cancelled.operation.id, cancelled.revision, { role: 'capture', bytes: 30 });
++    cancelled = change(store, cancelled, next => { next.operation.phase = 'cancelled'; next.operation.canCancel = false; });
++    expect(store.prune(10_000)).toBe(0);
++    cancelled = store.beginResourceCleanup(cancelled.operation.id, cancelled.revision, cancelled.allocations![0].id);
++    cancelled = store.finishResourceCleanup(cancelled.operation.id, cancelled.revision, cancelled.allocations![0].id);
++    expect(store.prune(10_000)).toBe(0);
++    cancelled = store.releaseCleanedReservation(cancelled.operation.id, cancelled.revision);
++    expect(store.prune(10_000)).toBe(1);
++
++    let r = allocatedStaged(store, workspaceId); const directory = folder(); store.close();
++    writeColdProof(directory, settings.key, coldProof(r));
++    const { store: reopened } = await setup({ ...settings, restoreDirectory: directory });
++    r = reopened.get(r.operation.id);
++    expect(r.operation.phase).toBe('completed');
++    expect(() => change(reopened, r, next => { next.reservedBytes = 0; })).toThrow();
++    expect(() => reopened.allocate(r.operation.id, r.revision, { role: 'build', bytes: 1 })).toThrow();
++    expect(reopened.prune(10_000)).toBe(0);
++    for (const allocation of r.allocations!.filter(a => a.state !== 'removed')) {
++      r = reopened.beginResourceCleanup(r.operation.id, r.revision, allocation.id);
++      r = reopened.finishResourceCleanup(r.operation.id, r.revision, allocation.id);
++    }
++    expect(reopened.prune(10_000)).toBe(0);
++    r = reopened.releaseCleanedReservation(r.operation.id, r.revision);
++    expect(r.restoreHeld).toBe(true); expect(r.references.prepared).toBeDefined();
++    expect(reopened.prune(10_000)).toBe(1);
++    expect(() => reopened.get(r.operation.id)).toThrow(/not found/);
++  });
++
++  it('refuses legacy held reference cleanup and colliding generated identities', async () => {
++    const { store, settings } = await setup();
++    const held = staged(store);
++    expect(() => store.beginResourceCleanup(held.operation.id, held.revision, randomUUID())).toThrow();
++    expect(() => store.releaseCleanedReservation(held.operation.id, held.revision)).toThrow();
++    expect(store.get(held.operation.id)).toMatchObject({ restoreHeld: true, reservedBytes: 100 });
++    const allocated = store.create(operation(), 10);
++    const withId = store.allocate(allocated.operation.id, allocated.revision, { role: 'capture', bytes: 10 });
++    store.close();
++    const { store: colliding } = await setup({ ...settings, randomId: () => withId.allocations![0].id });
++    const second = colliding.create(operation(), 10);
++    expect(() => colliding.allocate(second.operation.id, second.revision, { role: 'capture', bytes: 1 })).toThrow(/different request/);
++    expect(colliding.get(second.operation.id).allocations).toBeUndefined();
++    colliding.close();
++    const directory = folder(); writeColdProof(directory, settings.key, coldProof(held));
++    const { store: completed } = await setup({ ...settings, restoreDirectory: directory });
++    const done = completed.get(held.operation.id);
++    expect(done.operation.phase).toBe('completed');
++    expect(() => completed.releaseCleanedReservation(done.operation.id, done.revision)).toThrow();
++    expect(completed.get(done.operation.id)).toMatchObject({ restoreHeld: true, reservedBytes: 100 });
++    expect(completed.prune(10_000)).toBe(0);
++  });
++});

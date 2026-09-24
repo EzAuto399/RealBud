@@ -19,6 +19,8 @@ const argument = name => {
   return value;
 };
 const cli = argument("--cli") || process.env.REALBUD_HERMES_CLI || "hermes";
+const memoryProposals = process.argv.includes("--memory-proposals");
+const serverName = memoryProposals ? "memory-proposals" : "connected-apps";
 const installRoot = resolve(argument("--install-root") || join(homedir(), ".hermes/hermes-agent"));
 assert.ok(existsSync(join(installRoot, "hermes_cli/main.py")), "Specify the installed CLI source with --install-root.");
 // Upstream loads a source-tree .env as well as HERMES_HOME/.env. Refuse that
@@ -37,8 +39,9 @@ const pending = new Map();
 let nextId = 1;
 let failure;
 let protocolFailure;
+let proposalBroker;
 
-async function fixture(name, model = false) {
+async function fixture(name, model = false, upstream) {
   const calls = [];
   const server = createServer((req, res) => {
     void (async () => {
@@ -49,8 +52,18 @@ async function fixture(name, model = false) {
       }
       let message;
       try { message = body ? JSON.parse(body) : {}; } catch { res.writeHead(400).end(); return; }
-      calls.push({ method: req.method, path: req.url, rpc: message.method ?? null });
+      const call = { method: req.method, path: req.url, rpc: message.method ?? null }; calls.push(call);
       if (model) { res.writeHead(503, { "content-type": "application/json" }).end(JSON.stringify({ error: "No model is available in this fixture." })); return; }
+      if (upstream) {
+        // Observe the actual broker without production-only logging hooks.
+        // This fixture has no active turn or ability to publish a proposal.
+        assert.ok(["initialize", "tools/list", "ping", "notifications/initialized"].includes(message.method));
+        const response = await fetch(upstream.url, { method: "POST", signal: AbortSignal.timeout(10000),
+          headers: { "content-type": "application/json", ...Object.fromEntries(upstream.headers.map(row => [row.name, row.value])) }, body });
+        const text = await response.text();
+        if (message.method === "tools/list") call.toolNames = JSON.parse(text).result?.tools?.map(tool => tool.name);
+        res.writeHead(response.status, { "content-type": "application/json" }).end(text); return;
+      }
       if (req.method === "DELETE") { res.writeHead(200).end(); return; }
       if (req.method !== "POST") { res.writeHead(405).end(); return; }
       if (message.id === undefined) { res.writeHead(202).end(); return; }
@@ -104,7 +117,12 @@ async function stopChild() {
 
 try {
   const configured = await fixture("configured");
-  const explicit = await fixture("explicit");
+  if (memoryProposals) {
+    const { startMemoryProposalBroker } = await import("../server/hermes-memory-proposal-broker.ts");
+    proposalBroker = await startMemoryProposalBroker({ isActive: () => false, assertCapability: () => {},
+      propose: async () => { throw new Error("Discovery must not publish a proposal."); } });
+  }
+  const explicit = await fixture("explicit", false, proposalBroker?.descriptor);
   const model = await fixture("model", true);
   const hermesHome = join(scratch, "profiles", "mcp-isolation");
   const operatingHome = join(scratch, "home");
@@ -113,7 +131,7 @@ try {
   // JSON is valid YAML; no YAML serializer or MCP SDK is needed by this test.
   writeFileSync(join(hermesHome, "config.yaml"), JSON.stringify({
     model: { provider: "custom", default: "realbud-inert-fixture", base_url: model.url.replace("/mcp", "/v1"), api_key: "fixture-not-a-real-key", api_mode: "chat_completions", context_length: 128_000 },
-    mcp_servers: { "connected-apps": { url: configured.url, enabled: true } },
+    mcp_servers: { [serverName]: { url: configured.url, enabled: true } },
   }, null, 2), { mode: 0o600 });
   writeFileSync(join(hermesHome, ".env"), "# Empty isolated fixture; no inherited provider credentials.\n", { mode: 0o600 });
   const selector = `realbud_explicit_${randomUUID().replaceAll("-", "")}`;
@@ -156,7 +174,7 @@ try {
   });
   const initialized = await request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } }, clientInfo: { name: "realbud-mcp-isolation", version: "1.0.0" } });
   assert.equal(initialized.protocolVersion, 1, "Installed Hermes must initialize ACP v1.");
-  const session = await request("session/new", { cwd, mcpServers: [{ type: "http", name: "connected-apps", url: explicit.url, headers: [] }] });
+  const session = await request("session/new", { cwd, mcpServers: [{ type: "http", name: serverName, url: explicit.url, headers: [] }] });
   assert.ok(typeof session.sessionId === "string" && session.sessionId, "Installed Hermes must create a real ACP session.");
   // The complete session/new response follows registration. A short grace
   // catches any still-running configured-discovery attempt before shutdown.
@@ -166,6 +184,7 @@ try {
   assert.ok(explicit.calls.some(call => call.rpc === "initialize"), "Explicit same-name MCP must initialize.");
   assert.ok(explicit.calls.some(call => call.rpc === "tools/list"), "Explicit same-name MCP must list tools.");
   assert.equal(explicit.calls.filter(call => call.rpc === "tools/call").length, 0, "No fixture tool may execute.");
+  if (memoryProposals) assert.deepEqual(explicit.calls.find(call => call.rpc === "tools/list").toolNames, ["memory_propose"], "The native runtime discovers only the proposal tool, with no approval capability.");
   // Hermes detects local model-server metadata during agent construction.
   // Only these inert GETs are allowed; the fixture supplies no model and all
   // inference/other requests fail this regression. No external provider exists.
@@ -173,7 +192,8 @@ try {
   assert.ok(model.calls.length <= 20 && model.calls.every(call => call.method === "GET" && metadataPaths.has(call.path)),
     `Only inert local metadata GETs are allowed (${model.calls.map(call => `${call.method} ${call.path}`).join(", ")}).`);
   console.log("PASS installed Hermes ACP initialize + session/new with isolated synthetic home");
-  console.log(`PASS configured connected-apps calls: ${configured.calls.length}; explicit same-name initialize/tools-list: ${explicit.calls.filter(call => call.rpc === "initialize" || call.rpc === "tools/list").map(call => call.rpc).join(", ")}`);
+  console.log(`PASS configured ${serverName} calls: ${configured.calls.length}; explicit same-name initialize/tools-list: ${explicit.calls.filter(call => call.rpc === "initialize" || call.rpc === "tools/list").map(call => call.rpc).join(", ")}`);
+  if (memoryProposals) console.log("PASS unmodified Hermes discovers the actual proposal-only broker; no storage operation or approval tool exposed");
   console.log(`PASS ${model.calls.length} inert local metadata GETs; zero inference requests, prompts, or tool executions`);
   console.log("PASS isolated dummy provider and allowlisted environment; no external provider or inherited credentials configured");
 } catch (error) {
@@ -184,6 +204,7 @@ try {
   process.exitCode = 1;
 } finally {
   await stopChild();
+  proposalBroker?.close();
   for (const { server } of fixtures) {
     server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));

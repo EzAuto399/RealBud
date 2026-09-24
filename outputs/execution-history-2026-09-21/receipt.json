@@ -1,0 +1,11 @@
+{
+  "at": "2026-09-21T05:14:12.135Z",
+  "passed": true,
+  "layer": "Real isolated source bootstrap, legacy migration and built UI; fictional settled receipts and injected read failure",
+  "checks": [
+    "Authenticated history migrates all55legacy job receipts and pages them without loss or duplicates; malformed requests fail",
+    "History loads on demand, renders evidence as text, pages forward/back, retains the current page on a read failure, and refreshes",
+    "Routine history switches independently and both desktop and390px views fit without page errors"
+  ],
+  "errors": []
+}

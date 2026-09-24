@@ -1,0 +1,117 @@
+{
+  "at": "2026-09-21T14:26:19.649948+00:00",
+  "status": "local-source-built-ui-and-unsigned-macos-package-verified",
+  "goalComplete": false,
+  "baseCommit": "5856140c6ba49f53e79a7edbf01800e099b53e10",
+  "sourceInputs": 1054,
+  "sourceManifest": "coordinator-package-inputs.json",
+  "sourceDigest": "41e8daab4cddbb2d63b9a2587712fe308547a5e056a237f4725f1d19571e7e7f",
+  "artifact": "/Users/yoda/projects/RealBud/outputs/private-backup-v2-2026-09-21/package/mac-arm64/RealBud.app",
+  "artifactManifest": "coordinator-artifact-manifest.json",
+  "artifactDigest": "111362aef8409ad586b6896f1063364d55b7f09bc5062cc85e90adecbdf9edab",
+  "packagedFiles": 2408,
+  "packagedSymlinks": 14,
+  "inputsAndArtifactUnchanged": true,
+  "consistencyReceipt": "coordinator-package-snapshot-check.json",
+  "fullSource": {
+    "passed": 4123,
+    "skipped": 143,
+    "failed": 0,
+    "files": 332,
+    "durationSeconds": 306.19,
+    "receipt": "coordinator-release-source.json"
+  },
+  "focusedBoundaryTests": {
+    "passed": 106,
+    "skipped": 0,
+    "failed": 0,
+    "receipt": "coordinator-followup-boundaries-final-tests.log"
+  },
+  "sourceBrowser": {
+    "passed": 9,
+    "receipt": "coordinator-browser-scoped-cookie/receipt.json"
+  },
+  "packagedBrowser": {
+    "passed": 9,
+    "receipt": "coordinator-packaged-browser/receipt.json",
+    "runtime": {
+      "node": "24.18.1",
+      "electron": "43.4.0"
+    },
+    "layer": "Actual packaged compiled server/UI on packaged Electron Node-mode runtime; browser-driven v2 export/import; service restart via owned child stop/start."
+  },
+  "nativeLifecycle": {
+    "passed": 8,
+    "receipt": "coordinator-native-restore/receipt.json",
+    "runtime": {
+      "node": "24.18.1",
+      "electron": "43.4.0",
+      "packaged": true,
+      "resources": "/Users/yoda/projects/RealBud/outputs/private-backup-v2-2026-09-21/package/mac-arm64/RealBud.app/Contents/Resources",
+      "initialLogs": "/private/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/RealBud native restore 5JTPVA/electron/logs",
+      "logs": "/private/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/RealBud native restore 5JTPVA/electron/logs"
+    },
+    "cleanup": {
+      "capturedServicePids": [
+        4102,
+        4207,
+        4681,
+        4935
+      ],
+      "serviceProcessesExited": true,
+      "scratchRemoved": true
+    },
+    "layer": "Actual packaged main/preload/renderer/restore button IPC and detached service cold restart. v1 archive imported through v2 UI/coordinator. safeStorage is explicitly labelled fixture AES, not real Keychain/DPAPI."
+  },
+  "typecheck": "passed",
+  "serverBuild": "passed",
+  "packagePrepare": "passed",
+  "electronSyntax": "passed",
+  "macSmoke": "passed",
+  "visualInspection": [
+    "coordinator-native-restore/native-restore-staged-context.png",
+    "coordinator-packaged-browser/private-backup-preview-mobile.png"
+  ],
+  "grok": {
+    "requestedModel": "grok-4.6",
+    "reasoningEffort": "xhigh",
+    "availability": "4.6 and 4.5 listed; 4.7 absent in grok-models-coordinator.txt",
+    "completedFinalBoundaryReview": "01a0c454-36dc-7052-9d73-c4933bf012d6",
+    "verdict": "approve",
+    "actualModels": [
+      "grok-4.6-build"
+    ],
+    "scope": "Only corrected copied-buffer/withheld-tail HTTP streaming and separate HMAC ticket-cookie authority. No full-product approval.",
+    "disposition": "grok-download-boundary-disposition.json"
+  },
+  "earlierEvidence": [
+    {
+      "receipt": "coordinator-full-source.json",
+      "passed": 4115,
+      "sourceDrift": "Two coordinator files changed during run; coordinator-first-full-snapshot-drift.json."
+    },
+    {
+      "receipt": "coordinator-final-full-source.json",
+      "passed": 4118,
+      "sourceDrift": "No drift during run (981 inputs). Six files changed afterward for the later reviewed boundaries; current source is bound separately."
+    }
+  ],
+  "negativeReceipts": [
+    "coordinator-browser/receipt.json",
+    "coordinator-browser-diagnostic/receipt.json",
+    "coordinator-browser-private-desk/receipt.json",
+    "coordinator-components-tests.log",
+    "coordinator-followup-typecheck.log"
+  ],
+  "remaining": [
+    "Native Windows ACL failure and installed Windows acceptance",
+    "Real OS Keychain/DPAPI custody, reboot/update/uninstall and signing/notarization",
+    "Large HTTP/native transfers, actual disk exhaustion, conservative export reservation and retained historical-artifact inventory",
+    "Native v2 file-dialog/download behavior separately from native v1-import restart and packaged-browser v2 bytes",
+    "Hermes pending-memory inbox and complete before-state replacement/removal/batch review",
+    "Managed connector/subscription deployment and multi-device office recovery/soak",
+    "Authorized live customer Gmail, paired bank CSV and supervised REI Cloud recognition"
+  ],
+  "installedAppChanged": false,
+  "published": false
+}

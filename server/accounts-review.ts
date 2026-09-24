@@ -9,6 +9,10 @@ import { accountsReviewSchemas } from "./accounts-review-schemas.ts";
 import { vaultDir } from "./vault.ts";
 
 const contracts = {
+  'wf-office-core-inbox-triage': ['accounts-inbox-triage', 'accounts-inbox.json', 'threads', 'threadId'],
+  'wf-office-core-invoice-review': ['accounts-invoice-entry-review', 'accounts-invoices.json', 'documents', 'documentId'],
+  'wf-office-core-bill-exceptions': ['accounts-bill-exception-review', 'accounts-bill-exceptions.json', 'register', 'occurrenceId'],
+  'wf-office-core-bank-reference-prep': ['accounts-anz-reference-candidates', 'accounts-bank-reference.json', 'rows', 'rowId'],
   "wf-austin-accounts-inbox-triage": ["accounts-inbox-triage", "accounts-inbox.json", "threads", "threadId"],
   "wf-austin-accounts-invoice-review": ["accounts-invoice-entry-review", "accounts-invoices.json", "documents", "documentId"],
   "wf-austin-accounts-bill-exceptions": ["accounts-bill-exception-review", "accounts-bill-exceptions.json", "register", "occurrenceId"],

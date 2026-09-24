@@ -1,0 +1,13 @@
+  • electron-builder  version=26.15.3 os=25.6.0
+  • loaded configuration  file=/Users/yoda/projects/RealBud/electron-builder.yml
+  • detected workspace root for project using packageManager field  pm=pnpm config=pnpm@10.33.0 resolved=/Users/yoda/projects/RealBud projectDir=/Users/yoda/projects/RealBud
+  • executing @electron/rebuild  electronVersion=43.4.0 arch=arm64 buildFromSource=false workspaceRoot=/Users/yoda/projects/RealBud projectDir=./ appDir=./
+  • installing native dependencies  arch=arm64
+  • completed installing native dependencies
+  • packaging       platform=darwin arch=arm64 electron=43.4.0 appOutDir=outputs/website-requests-2026-09-22/package/mac-arm64
+  • downloaded      label=electron progress=100%
+  • downloaded electron zip extracted successfully  output=/Users/yoda/projects/RealBud/outputs/website-requests-2026-09-22/package/mac-arm64
+  • searching for node modules  pm=pnpm searchDir=/Users/yoda/projects/RealBud
+  • duplicate dependency references  dependencies=["@posthog/core@1.47.0","@types/mdast@4.0.4","remark-parse@11.0.0","unified@11.0.5","@shikijs/types@4.4.3","@types/hast@3.0.5","unist-util-visit@5.1.0","vfile@6.0.3","mdast-util-from-markdown@2.0.3","mdast-util-to-markdown@2.1.2","micromark-util-combine-extensions@2.0.1","unist-util-is@6.0.1","vfile-message@4.0.3","micromark-util-sanitize-uri@2.0.1","unist-util-position@5.0.0","micromark-util-decode-numeric-character-reference@2.0.2","micromark-util-normalize-identifier@2.0.1","micromark-util-classify-character@2.0.1","micromark-util-chunked@2.0.1","micromark-util-character@2.1.1","micromark-core-commonmark@2.0.3","micromark-factory-space@2.0.1","micromark-util-resolve-all@2.0.1","stringify-entities@4.0.4","@types/estree-jsx@1.0.5","micromark-util-subtokenize@2.1.0"]
+  • platform-specific optional dependencies not bundled — add them to your project's optionalDependencies if your app requires them (pnpm 10+ does not auto-install transitive platform binaries)  dependencies=["@trycua/cua-driver-darwin-x64@0.19.3","@trycua/cua-driver-linux-arm64-gnu@0.19.3","@trycua/cua-driver-linux-x64-gnu@0.19.3","@trycua/cua-driver-win32-arm64-msvc@0.19.3","@trycua/cua-driver-win32-x64-msvc@0.19.3","@ubjs/node-darwin-x64@0.31.0-3","@ubjs/node-linux-arm64-gnu@0.31.0-3","@ubjs/node-linux-arm64-musl@0.31.0-3","@ubjs/node-linux-x64-gnu@0.31.0-3","@ubjs/node-linux-x64-musl@0.31.0-3","@ubjs/node-win32-arm64-msvc@0.31.0-3","@ubjs/node-win32-x64-msvc@0.31.0-3"]
+  • skipped macOS application code signing  reason=, see https://electron.build/code-signing CSC_IDENTITY_AUTO_DISCOVERY=false

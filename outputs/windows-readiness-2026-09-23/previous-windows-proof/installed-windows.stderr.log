@@ -1,0 +1,3 @@
+Cua Driver sends content-free product telemetry by default. Run `cua-driver telemetry disable` to stop it; `cua-driver telemetry status` shows the current setting.
+Cua Driver daemon listening on \\.\pipe\cua-8808-ea1bacd8
+Cua Driver embedded host closed its lifetime pipe; shutting down.

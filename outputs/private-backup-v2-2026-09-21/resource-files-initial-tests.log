@@ -1,0 +1,21 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ✓ server/private-backup-resources.test.ts > journal-bound backup resource ownership > claims before creation and removes an actual closed catalog without changing business files 64ms
+ ✓ server/private-backup-resources.test.ts > journal-bound backup resource ownership > supports a per-operation upload store without rebinding historical workspace identity 54ms
+ ✓ server/private-backup-resources.test.ts > journal-bound backup resource ownership > requires persisted deleting intent and rejects stale or asynchronous ownership assertions 15ms
+ ✓ server/private-backup-resources.test.ts > journal-bound backup resource ownership > refuses pre-existing unclaimed data and malformed ownership records without overwriting them 4ms
+ ✓ server/private-backup-resources.test.ts > journal-bound backup resource ownership > preserves files when the marker is missing or its ciphertext changed 35ms
+ ✓ server/private-backup-resources.test.ts > journal-bound backup resource ownership > preflights every filename and preserves all contents when an unknown file appears 17ms
+ ✓ server/private-backup-resources.test.ts > journal-bound backup resource ownership > never follows a substituted role-parent symlink while inspecting or removing resources 17ms
+ ✓ server/private-backup-resources.test.ts > journal-bound backup resource ownership > replays cleanup after interruption at file-removed 35ms
+ ✓ server/private-backup-resources.test.ts > journal-bound backup resource ownership > replays cleanup after interruption at directory-removed 36ms
+ ✓ server/private-backup-resources.test.ts > journal-bound backup resource ownership > replays cleanup after interruption at claim-removed 37ms
+ ✓ server/private-backup-resources.test.ts > journal-bound backup resource ownership > recovers an authenticated claim after an actual killed publisher at claim-ready 116ms
+ ✓ server/private-backup-resources.test.ts > journal-bound backup resource ownership > recovers an authenticated claim after an actual killed publisher at claim-linked 93ms
+
+ Test Files  1 passed (1)
+      Tests  12 passed (12)
+   Start at  22:28:32
+   Duration  874ms (transform 230ms, setup 22ms, import 265ms, tests 525ms, environment 0ms)
+

@@ -224,6 +224,37 @@ describe.skipIf(!connectionString)('company kernel on real PostgreSQL', () => {
     await expect(kernel.claimCase(owner.sessionToken, { caseId: work.caseId, ttlMs: 30_000 })).rejects.toMatchObject({ code: 'recovery_required' });
   });
 
+  it.each([{ access: 'read', permissions: ['read'] as Array<'read'> }, { access: 'none', permissions: [] as Array<'read'> }])(
+    'fences active work when editing access is removed, even if access is later restored ($access)', async ({ permissions }) => {
+      const { owner, member, scope } = await team();
+      const work = await kernel.createCase(owner.sessionToken, { scopeId: scope.id, title: 'Access changed during work' });
+      const claim = await other.claimCase(member.sessionToken, { caseId: work.caseId, ttlMs: 30_000 });
+      const removed = await kernel.setScopeGrant(owner.sessionToken, { scopeId: scope.id, memberId: member.memberId, permissions, expectedRevision: scope.revision });
+      const held = await admin.query('SELECT status,fence,claim_token_hash,lease_expires_at FROM realbud_company.cases WHERE id=$1', [work.caseId]);
+      expect(held.rows[0]).toEqual({ status: 'recovery_required', fence: String(BigInt(claim.fence) + 1n), claim_token_hash: null, lease_expires_at: null });
+      await kernel.setScopeGrant(owner.sessionToken, { scopeId: scope.id, memberId: member.memberId, permissions: ['write'], expectedRevision: removed.revision });
+      await expect(other.renewClaim(member.sessionToken, { ...claim, ttlMs: 30_000 })).rejects.toMatchObject({ code: 'stale_claim' });
+      await expect(other.settleClaim(member.sessionToken, { ...claim, outcome: 'done' })).rejects.toMatchObject({ code: 'stale_claim' });
+      await expect(kernel.claimCase(owner.sessionToken, { caseId: work.caseId, ttlMs: 30_000 })).rejects.toMatchObject({ code: 'recovery_required' });
+    },
+  );
+
+  it('preserves claims when editing authority remains and does not affect another scope', async () => {
+    const { owner, member, scope } = await team();
+    const retainedWork = await kernel.createCase(owner.sessionToken, { scopeId: scope.id, title: 'Retained editing grant' });
+    const retainedClaim = await other.claimCase(member.sessionToken, { caseId: retainedWork.caseId, ttlMs: 30_000 });
+    const retained = await kernel.setScopeGrant(owner.sessionToken, { scopeId: scope.id, memberId: member.memberId, permissions: ['read', 'write'], expectedRevision: scope.revision });
+    await other.renewClaim(member.sessionToken, { ...retainedClaim, ttlMs: 30_000 });
+    const ownWork = await kernel.createCase(owner.sessionToken, { scopeId: scope.id, title: 'Implicit owner authority' });
+    const ownClaim = await kernel.claimCase(owner.sessionToken, { caseId: ownWork.caseId, ttlMs: 30_000 });
+    const updated = await kernel.setScopeGrant(owner.sessionToken, { scopeId: scope.id, memberId: owner.memberId, permissions: [], expectedRevision: retained.revision });
+    const privateWork = await other.createCase(member.sessionToken, { scopeId: member.privateScope.id, title: 'Private work' });
+    const privateClaim = await other.claimCase(member.sessionToken, { caseId: privateWork.caseId, ttlMs: 30_000 });
+    await kernel.setScopeGrant(owner.sessionToken, { scopeId: scope.id, memberId: member.memberId, permissions: [], expectedRevision: updated.revision });
+    await expect(kernel.settleClaim(owner.sessionToken, { ...ownClaim, outcome: 'done' })).resolves.toMatchObject({ status: 'done' });
+    await expect(other.settleClaim(member.sessionToken, { ...privateClaim, outcome: 'done' })).resolves.toMatchObject({ status: 'done' });
+  });
+
   it('concurrent session revocations are idempotent without a lock-upgrade deadlock', async () => {
     const { member } = await office();
     await Promise.all([kernel.revokeSession(member.sessionToken), other.revokeSession(member.sessionToken)]);

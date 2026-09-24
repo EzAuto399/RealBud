@@ -1,0 +1,9 @@
+{
+  "script": "/Users/yoda/projects/RealBud/scripts/qa-source-bills.mjs",
+  "sha256": "042757a47d545dde38eed2234a1f68e9128f464c97061a54965659cd8741da0f",
+  "exitCode": 0,
+  "seconds": 22.45,
+  "started": "2026-09-23T02:38:21.087243+00:00",
+  "log": "/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/workflows/final-renderer/source-bills.log",
+  "tier": "current source HTTP server and final rebuilt dist renderer; synthetic data; disposable headless Chrome; not installed or live integration proof"
+}

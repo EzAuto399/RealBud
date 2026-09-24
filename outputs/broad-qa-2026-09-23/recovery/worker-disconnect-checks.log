@@ -1,0 +1,19 @@
+Saved transcript of completed tool checks; not a fresh rerun.
+
+PATH=/Users/yoda/.nvm/versions/node/v24.19.0/bin:$PATH COREPACK_HOME=/Users/yoda/.cache/node/corepack COREPACK_ENABLE_NETWORK=0 pnpm exec vitest run server/worker-model-access.test.ts server/office-link.test.ts
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ Test Files  2 passed (2)
+      Tests  52 passed (52)
+   Start at  12:41:59
+   Duration  12.40s (transform 2.14s, setup 101ms, import 2.55s, tests 8.74s, environment 0ms)
+Exit code: 0
+
+PATH=/Users/yoda/.nvm/versions/node/v24.19.0/bin:$PATH COREPACK_HOME=/Users/yoda/.cache/node/corepack COREPACK_ENABLE_NETWORK=0 pnpm exec tsc -p tsconfig.server.json
+(no output)
+Exit code: 0
+
+git diff --check -- server/worker-model-access.ts server/worker-model-access.test.ts server/office-link.test.ts
+(no output)
+Exit code: 0

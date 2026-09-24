@@ -1,0 +1,27 @@
+@vom 1
+@view 1280x900
+@layers 1 focus=L1
+L1 page
+  RootWebArea "Fictional Strata Portal — Statements"
+    main
+      heading "Levy statements"
+        StaticText "Levy statements"
+      table "Period Issued Amount Statement"
+        row "Period Issued Amount Statement"
+          columnheader "Period"
+          columnheader "Issued"
+          columnheader "Amount"
+          columnheader "Statement"
+        row "Q3 2026 1 July 2026 A$1,240.00 Download Q3 2026 statement (PDF)"
+          cell "Q3 2026"
+          cell "1 July 2026"
+          cell "A$1,240.00"
+          cell "Download Q3 2026 statement (PDF)"
+            @e7 link "Download Q3 2026 statement (PDF)"
+        row "Q2 2026 1 April 2026 A$1,180.00 Download Q2 2026 statement (PDF)"
+          cell "Q2 2026"
+          cell "1 April 2026"
+          cell "A$1,180.00"
+          cell "Download Q2 2026 statement (PDF)"
+            @e8 link "Download Q2 2026 statement (PDF)"
+      @e9 button "Pay levy now"

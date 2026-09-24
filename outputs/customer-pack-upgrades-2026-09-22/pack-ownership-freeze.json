@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "recordedAt": "2026-09-21T19:09:45.548780+00:00",
+  "scope": "pack ownership reservation fix",
+  "checks": [
+    {
+      "command": "pnpm exec vitest run server/customer-pack-upgrades.review.test.ts server/customer-pack-upgrades.test.ts server/customer-packs.test.ts",
+      "passed": 41,
+      "failed": 0,
+      "exitCode": 0,
+      "proof": "Observed terminal session 83582 exit 0; three independent regressions plus domain and existing pack checks."
+    },
+    {
+      "command": "pnpm typecheck",
+      "exitCode": 0,
+      "proof": "Observed terminal session 31768 exit 0."
+    }
+  ],
+  "sha256": {
+    "server/customer-packs.ts": "0a7309a3e21366710e8123720e17ad4760ea487371e9c7f4b3276c1624ca1cf7",
+    "server/customer-pack-upgrades.ts": "e60e13bb0184495d61077f6d5b006b030ed78d0800b717c3f4ed14009ce60218"
+  },
+  "behavior": [
+    "Initial preview and fresh install reject other packs active, retired and pending target or affected recipe claims.",
+    "Upgrade preview, resume and runtime ownership use the same claim extractor.",
+    "Readiness requires conflict-free inspection; duplicate legacy owners are held.",
+    "Existing compatible shared support-file behavior is unchanged."
+  ],
+  "limits": [
+    "Independent review-test owner is adding further legacy and manual-adoption compatibility cases.",
+    "No packaged, native Windows, or live customer verification in this receipt."
+  ]
+}

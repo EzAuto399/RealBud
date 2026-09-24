@@ -1,0 +1,11 @@
+{
+  "failure": "Backup coordinator unavailable before cancellation tests",
+  "cause": "macOS /tmp is a symlink; the old source onboarding harness used its unresolved spelling, correctly refused by backup storage ancestor checks",
+  "reproduction": {
+    "tmpdirSpellingOpened": false,
+    "resolvedSpellingOpened": true
+  },
+  "fix": "Resolve tmpdir before creating the disposable source QA workspace",
+  "productSecurityPolicyChanged": false,
+  "priorFailedReceiptPreserved": true
+}

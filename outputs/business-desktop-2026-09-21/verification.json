@@ -1,0 +1,46 @@
+{
+  "verifiedAt": "2026-09-21T01:58:08.235515+00:00",
+  "package": "Mac arm64 0.1.19 local unsigned directory build",
+  "fullSuite": {
+    "passed": 2785,
+    "skipped": 53,
+    "passedFiles": 248,
+    "skippedFiles": 5,
+    "postgresEnabled": true
+  },
+  "focusedSuite": {
+    "passed": 149,
+    "files": 14
+  },
+  "nativeSmoke": "passed renderer, capabilities, embedded harness and controlled shutdown",
+  "nativeGui": {
+    "date": "2026-09-21T01:57:34.575Z",
+    "executable": "/Users/yoda/projects/RealBud/outputs/business-desktop-2026-09-21/package/mac-arm64/RealBud.app/Contents/MacOS/RealBud",
+    "native": true,
+    "database": "postgres (PostgreSQL) 16.15 (Homebrew)",
+    "fictionalDataOnly": true,
+    "checks": [
+      "Actual packaged native preload and authenticated service adoption",
+      "Native department creation, persisted read/edit grants, reduction confirmation and cancellation",
+      "Stale native permission edit rejected; refreshed database state replaces old controls",
+      "Encrypted offline-detachment receipt visible after native renderer reload",
+      "Native stop-impact confirmation and cancellation leave the office service running",
+      "Records guidance distinguishes office backups from unavailable complete private-workspace restore",
+      "390px department and recovery UI with no horizontal overflow"
+    ],
+    "rendererErrors": [],
+    "limitations": [
+      "Unsigned local Mac build",
+      "No model calls, bank accounts or customer office",
+      "Same-Mac PostgreSQL fixture; no physical peer/device proof",
+      "Department access administration only; no departmental work queue or retirement"
+    ]
+  },
+  "build": "typecheck, Vite, compiled server and Electron syntax passed",
+  "sha256": {
+    "app.asar": "52f6acfe3f10e1fb6272ff52dc91ac99b563631858f427193c0a845dd70ca9c8",
+    "server/index.js": "a3654c36c9c12e0562b9dc28c2f44a9e7f90b20ca66519fbaaca68e3bd24b505",
+    "server/service-control.js": "828f460f0a9d5604009bb9e3411511219b025b9a318103e739d6a85ea7fb6c8c",
+    "ui/index.html": "8d6104c9f794e56a35951e04e3b452d06713a5b4ab9054601f9c9af876358479"
+  }
+}

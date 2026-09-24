@@ -1,0 +1,13 @@
+[smoke-mac-package] kept diagnostics: /private/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/realbud-mac-smoke-O9X8dm
+file:///Users/yoda/projects/RealBud/scripts/smoke-mac-package.mjs:164
+  if (!hasExited()) throw new Error(`Electron did not exit after its window closed.\n${output}`);
+                          ^
+
+Error: Electron did not exit after its window closed.
+[smoke] renderer-ready {"capabilities":{"host":{"platform":"darwin","label":"macOS","session":"unknown","packaged":true},"windowChrome":"mac-inset","screenPreview":{"available":true,"interaction":"direct"},"dictation":{"available":true,"engine":"apple-speech","onDevice":true},"localComputer":{"available":false,"support":"unsupported","reasonCode":"cua-driver-unavailable"}},"health":{"app":"realbud","pid":4724,"static":true,"instanceId":"7def0808d499ea13160383e3114e2b57","controlId":"c0900d90e95d2df9bb0988e824e68c42774c2981894d16cc051ace402dba37dc"},"company":{"remoteJoinAvailable":true,"configured":false},"location":"http://127.0.0.1:28799/","title":"RealBud"}
+
+    at waitForExit (file:///Users/yoda/projects/RealBud/scripts/smoke-mac-package.mjs:164:27)
+    at async file:///Users/yoda/projects/RealBud/scripts/smoke-mac-package.mjs:197:3
+
+Node.js v24.19.0
+exit=1

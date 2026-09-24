@@ -1,0 +1,39 @@
+{
+  "version": 3,
+  "executionHistory": 1,
+  "timezone": "Australia/Brisbane",
+  "state": {
+    "morning-arrears": {
+      "enabled": true,
+      "handledThrough": 1790021638597,
+      "revision": 1
+    },
+    "owner-letter": {
+      "enabled": true,
+      "handledThrough": 1790021638598,
+      "revision": 1
+    },
+    "inbound-triage": {
+      "enabled": false,
+      "handledThrough": 1790021638598,
+      "revision": 1
+    }
+  },
+  "runs": [
+    {
+      "id": "33ab9366-06ac-477b-9c94-96b1eb8dcf5b",
+      "loopId": "inbound-triage",
+      "loopName": "Morning priorities",
+      "scheduledFor": 1790021642060,
+      "status": "failed",
+      "manual": true,
+      "loopRevision": 1,
+      "createdAt": 1790021642060,
+      "requestId": "cc589805-f7f2-40a2-8352-a03fb426e65a",
+      "startedAt": 1790021642073,
+      "workerFingerprint": "4b04a4fb1d84c0bb51a39e40538e78ee58981e48f4cd64737346a26256d5f4ac",
+      "detail": "The reviewed work or source changed. Refresh the request and review it again.",
+      "finishedAt": 1790021642120
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "date": "2026-09-21",
+  "milestone": "Permanent encrypted execution receipts and paged history",
+  "result": "passed",
+  "verification": {
+    "focusedTests": 215,
+    "testFiles": 9,
+    "typecheck": "pnpm typecheck passed",
+    "diffCheck": "git diff --check passed",
+    "externalCalls": 0,
+    "runtime": "Node 24.19.0 / Vitest 4.1.10"
+  },
+  "focusedCommand": "pnpm exec vitest run server/execution-history.test.ts server/job-runs.test.ts server/routines.test.ts server/routines-recovery.test.ts server/bill-proposals.test.ts server/private-workspace-backup.test.ts server/job-executor.test.ts server/human-handoffs.test.ts server/bank-reference.test.ts",
+  "coverage": [
+    "oldest job request and full result beyond 1000 recent rows survive restart",
+    "oldest manual loop request beyond 2000 rows does not dispatch again",
+    "historical seen updates and stable filtered insertion cursors",
+    "queued/running work remains visible to admission guards",
+    "changed plans/modes/scheduled inputs conflict on reused keys",
+    "stale second writers hold before dispatch",
+    "failed projection keeps durable intent and holds until restart",
+    "failed or source-changed legacy migration rolls back and preserves source bytes",
+    "missing permanent ledger cannot be rebuilt from marked rolling projections",
+    "discovered corrupt request receipt pauses subsequent work",
+    "distinct history filenames remain isolated in one directory",
+    "backup restores keys and historical results; unfinished work interrupted; all clocks off",
+    "invoice historical resolver retains source/authority checks"
+  ],
+  "limits": [
+    "Local fictional fixtures and source checks, not live worker/provider or customer acceptance proof",
+    "Existing records discarded by older releases cannot be reconstructed",
+    "Mail, source-bill, bank and invoice-proposal lifetime limits remain unchanged",
+    "Private backup total size/record limits remain separate lifecycle work",
+    "Physical disk capacity still bounds permanent history"
+  ],
+  "sourceSha256": {
+    "shared/execution-history.ts": "7979b099c65cceb688e3c6279369bb2fbe8d7a398c35a3a60839b26d90173663",
+    "server/execution-history.ts": "f87783a16bc8ff11356ca5e13ff83c6a015586db8a685c810978131d62e97199",
+    "server/execution-history-backup.ts": "5410cd8d117fe2216ab486ddaca634da548667c8bc1b9ada274efa19d003430d",
+    "server/execution-history.test.ts": "e3a5034ee60435d0ba5ae04456ff573b4f84d943f13755f8809cd9bf25346b54",
+    "server/job-run-validation.ts": "a40b71e7092b88c3de6a1349f276b09d9ee1880cd97d2871ef1f29621ded01d5",
+    "server/job-runs.ts": "652284ecd4b811a6972b4cdf1e639114f80f182310d9fd448396b2217a617d0e",
+    "server/job-runs.test.ts": "7576a5d7971f6cd6ea62ac04fc1286d778c24bda9d7586bd9f276be5e8dc5a18",
+    "server/routines.ts": "9a274067142c0d69f2330d69147fa200aa4b141204487793ce285c1f2fe8e70a",
+    "server/routines-recovery.test.ts": "996f2b9ac8e9fc76333b08ef8e2b54b130108aef41207b67a0f972be3514645d",
+    "server/routine-persistence.ts": "f3e6d99b6de7d45c717d4b6cef95799b2956fdf07efbc9be6b7d2a4904e7e4d9",
+    "server/workflow-database.ts": "aacb1d39a30198bfc213f3c37ef78073eb5cc06091d5ebf14002ca964b1833e3",
+    "server/bill-proposals.ts": "a2f6b75942f4c46549bfb250007a76b6d65d1d7deb6f34595079edd6b73e1493",
+    "server/bill-proposals.test.ts": "ffd9dbb88ddfe81f88419f0126da54d0521a0ff458ed16c1c06e25b8eb4d721f"
+  }
+}

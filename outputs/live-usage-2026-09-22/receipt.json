@@ -1,0 +1,118 @@
+{
+  "check": "realbud-live-usage",
+  "layer": "local-modelvia-branch",
+  "checkedAt": "2026-09-22T08:25:24.957Z",
+  "node": "v24.19.0",
+  "modelvia": {
+    "repository": "/Users/yoda/projects/modelvia",
+    "branch": "codex/neon-release",
+    "commit": "4db16c75ed7277a927310b6ab4163a2fdf35b56a",
+    "origin": "http://127.0.0.1:18971"
+  },
+  "realbudGateway": {
+    "origin": "http://127.0.0.1:18972",
+    "source": "/Users/yoda/projects/RealBud/managed-gateway/server.ts"
+  },
+  "tenant": {
+    "companyId": "fictional-office-co",
+    "clientId": "realbud-qa",
+    "customerId": "fictional-office",
+    "environment": "development",
+    "model": "deepseek-chat",
+    "fictional": true
+  },
+  "installation": {
+    "installationId": "qa-809e79cd-6e78-4a5f-9212-e9fd65cb71c9",
+    "modelProjectId": "rb-qa-809e79cd-6e78-4a5f-9212-e9fd65cb71c9",
+    "modelKeyId": "38428e835db81cfd",
+    "spendCapLabel": "monthly-cap 10000000000 nanoAUD, request-cap 1000000000 nanoAUD, max-concurrent 10"
+  },
+  "usage": {
+    "period": "2026-09",
+    "completionStatus": 200,
+    "completionOutcome": "settled",
+    "chargedNanoAud": "20",
+    "idempotencyKeyHeaderSent": false,
+    "afterRevokeStatus": 401,
+    "afterRevokeError": "key_revoked",
+    "installationUsageSummary": {
+      "period": "2026-09",
+      "requests": 1,
+      "tokens": {
+        "input": "8",
+        "output": "8"
+      },
+      "money": {
+        "customerNetNanoAud": "20"
+      },
+      "updatedAt": 1790065523923
+    }
+  },
+  "steps": [
+    {
+      "name": "modelvia-worktree",
+      "status": "passed",
+      "elapsedMs": 77,
+      "detail": "codex/neon-release @ 4db16c75ed72"
+    },
+    {
+      "name": "modelvia-boot",
+      "status": "passed",
+      "elapsedMs": 418,
+      "detail": "listening on http://127.0.0.1:18971"
+    },
+    {
+      "name": "modelvia-seed",
+      "status": "passed",
+      "elapsedMs": 18,
+      "detail": "client realbud-qa, customer fictional-office, rates qa-live-usage-1 accepted"
+    },
+    {
+      "name": "fake-composio",
+      "status": "passed",
+      "elapsedMs": 3,
+      "detail": "fictional Composio org endpoint on 127.0.0.1:18973"
+    },
+    {
+      "name": "realbud-gateway-boot",
+      "status": "passed",
+      "elapsedMs": 244,
+      "detail": "listening on http://127.0.0.1:18972, provisioning composed"
+    },
+    {
+      "name": "provision-installation",
+      "status": "passed",
+      "elapsedMs": 20,
+      "detail": "project rb-qa-809e79cd-6e78-4a5f-9212-e9fd65cb71c9, one rbk_ key (id 38428e835db81cfd) issued once"
+    },
+    {
+      "name": "completion-no-idempotency-key",
+      "status": "passed",
+      "elapsedMs": 12,
+      "detail": "request 0dcdb166-10a1-442f-9a69-d8a56cc8f7c2 settled, charged 20 nanoAUD"
+    },
+    {
+      "name": "analytics-counts-the-request",
+      "status": "passed",
+      "elapsedMs": 9,
+      "detail": "1 request(s), desktop summary in=8 out=8 net=20"
+    },
+    {
+      "name": "revoke-refuses-further-usage",
+      "status": "passed",
+      "elapsedMs": 9,
+      "detail": "revoked key refused 401 key_revoked, analytics still 1"
+    }
+  ],
+  "totalElapsedMs": 810,
+  "passed": true,
+  "limits": [
+    "Local only: Modelvia ran from a detached git worktree of its own branch on loopback. No hosted Modelvia, no api.modelvia.dev, no deployment.",
+    "No real model provider. The pinned DeepSeek endpoint was answered in-process by a fictional upstream supplied on Modelvia's command line; no third-party provider was contacted and no model ran.",
+    "The Composio organisation surface was a local fake (list + create only). No Composio project, no OAuth credential and no real ak_ key exist.",
+    "Every identity is fictional: company, client, customer, licence, rate card, operator and portal principals. None of it is customer evidence.",
+    "No Hermes worker, no desktop app, no browser and no customer session took part. The desktop card shape was checked by running the reducer, not by rendering a screen.",
+    "No money moved and no payment surface was exercised; the rate card and caps are invented for this run.",
+    "Modelvia gateway dependencies were reused from the sibling checkout's node_modules rather than a fresh npm ci."
+  ]
+}

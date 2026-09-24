@@ -1,0 +1,35 @@
+PASS Full bills view collects only the real HTTP host-reviewed fictional Gmail scope without enabling a schedule
+PASS Explicit lost-response injection preserves the real proposal request ID and bill draft across search/refresh; same-ID retry runs the fictional worker once
+PASS Source-bound deterministic worker proposal renders held fields without accepting a bill or inventing attachment extraction
+PASS Actual UI acceptance requires source review plus unread-attachment acknowledgement and retains source evidence
+PASS Real host API deduplicates a rescan while rejecting stale source digest and unknown workspace property
+PASS Separate explicit recurring approval produces arrival predictions while preserving the single reviewed invoice due date
+PASS UI correction and reload retain earlier evidence; real API rejects stale corrections and payment-state mutation
+PASS Built full-page UI, source form and saved history render at desktop and390px with no page errors or horizontal overflow
+PASS Bounded received pages load25 unique records; property changes reset cursors; separate earlier-register query retains its legacy row
+PASS Source picker requests bounded pages and loads all25 conversations only after explicit continuation
+PASS Bill source search retains its off-page selection; explicitly injected failed source read and cancelled discard preserve evidence and unsaved fields
+PASS Direct source identity finds an accepted bill outside the firstpage; direct current-mail source opens it and refresh preserves its unsaved draft
+PASS Paged calendar opens off-page bill and arrival-pattern origin directly; independent pattern pages retain all25 reviewed series
+PASS Filtered saved bill shortcut queries all matching retained records and opens the selected off-page source bill directly
+PASS An unsaved selected-bill draft survives search changes; switching bills requires explicit discard
+{
+  "output": "/Users/yoda/projects/RealBud/outputs/mail-retention-2026-09-21/source-bills",
+  "checks": [
+    "Full bills view collects only the real HTTP host-reviewed fictional Gmail scope without enabling a schedule",
+    "Explicit lost-response injection preserves the real proposal request ID and bill draft across search/refresh; same-ID retry runs the fictional worker once",
+    "Source-bound deterministic worker proposal renders held fields without accepting a bill or inventing attachment extraction",
+    "Actual UI acceptance requires source review plus unread-attachment acknowledgement and retains source evidence",
+    "Real host API deduplicates a rescan while rejecting stale source digest and unknown workspace property",
+    "Separate explicit recurring approval produces arrival predictions while preserving the single reviewed invoice due date",
+    "UI correction and reload retain earlier evidence; real API rejects stale corrections and payment-state mutation",
+    "Built full-page UI, source form and saved history render at desktop and390px with no page errors or horizontal overflow",
+    "Bounded received pages load25 unique records; property changes reset cursors; separate earlier-register query retains its legacy row",
+    "Source picker requests bounded pages and loads all25 conversations only after explicit continuation",
+    "Bill source search retains its off-page selection; explicitly injected failed source read and cancelled discard preserve evidence and unsaved fields",
+    "Direct source identity finds an accepted bill outside the firstpage; direct current-mail source opens it and refresh preserves its unsaved draft",
+    "Paged calendar opens off-page bill and arrival-pattern origin directly; independent pattern pages retain all25 reviewed series",
+    "Filtered saved bill shortcut queries all matching retained records and opens the selected off-page source bill directly",
+    "An unsaved selected-bill draft survives search changes; switching bills requires explicit discard"
+  ]
+}

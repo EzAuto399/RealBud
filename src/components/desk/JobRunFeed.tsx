@@ -2,7 +2,7 @@ import { useWorkspaceViewState } from "@/lib/workspace-view-state";
 import { CopyButton } from "../CopyButton";
 import { WorkContextCard } from "../WorkContextCard";
 import { useId, useMemo, useState } from "react";
-import { Loader2, MessageSquare, Play } from "lucide-react";
+import { Loader2, MessageSquare, Play, Square } from "lucide-react";
 
 import { fmtDateTime } from "@/lib/au";
 import type { JobRun } from "@/lib/desk";
@@ -18,6 +18,7 @@ import {
   preparedJobText,
 } from "@/lib/job-run";
 import { api, useStore } from "@/state/store";
+import { resolveProductBud } from "@/lib/product-bud";
 import { cn } from "@/lib/cn";
 import { buildWorkActivity, type WorkActivity } from "@/lib/work-activity";
 import { hasHeldPreparationContext, jobRunContext } from "@/lib/work-continuation";
@@ -174,10 +175,17 @@ export function JobRunFeed({
                     </button>
                   </div>
                 ) : null}
-                {isAttendedMode(run.mode) && run.status === "running" ? <button type="button" className="pm-control mb-2 rounded border border-line px-3 text-sm" onClick={() => void (async () => {
-                  try { await api("/api/human-handoffs", { method: "POST", body: JSON.stringify({ runId: run.id, reason: "login" }) }); await refreshActivity(); }
-                  catch (cause) { setStartError(cause instanceof Error ? cause.message : "The sign-in handover could not be confirmed."); }
-                })()}>Pause for sign-in or verification code</button> : null}
+                {isAttendedMode(run.mode) && run.status === "running" ? <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <button type="button" className="pm-control rounded border border-line px-3 text-sm" onClick={() => void (async () => {
+                    try { await api("/api/human-handoffs", { method: "POST", body: JSON.stringify({ runId: run.id, reason: "login" }) }); await refreshActivity(); }
+                    catch (cause) { setStartError(cause instanceof Error ? cause.message : "The sign-in handover could not be confirmed."); }
+                  })()}>Pause for sign-in or verification code</button>
+                  {/* Stop ends Bud's whole turn: browser work closes and any waiting approval is recorded as stopped. */}
+                  <button type="button" aria-label={`Stop this job: ${run.jobTitle}`} className="pm-control inline-flex items-center gap-1.5 rounded border border-line px-3 text-sm text-ink hover:bg-selected" onClick={() => {
+                    const bud = resolveProductBud(state.bots);
+                    if (bud) dispatch({ type: "interrupt", botId: bud.id });
+                  }}><Square size={12} className="fill-current" aria-hidden="true" />Stop this job</button>
+                </div> : null}
                 <details open={expandedActivities.includes(`job-${run.id}`)} data-activity-id={`activity-job-${run.id}`} onToggle={(event) => { remember(`job-${run.id}`, event.currentTarget.open); if (event.currentTarget.open) onOpenResult?.(activity); }}>
                   <summary className="cursor-pointer list-none">
                     <div className="flex flex-wrap items-start justify-between gap-2">

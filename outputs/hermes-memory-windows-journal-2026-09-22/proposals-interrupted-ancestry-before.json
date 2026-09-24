@@ -1,0 +1,53 @@
+{
+  "confirmed": true,
+  "fixtures": [
+    {
+      "selectedSyntheticWindowsIO": false,
+      "removed": "claims",
+      "listState": "interrupted",
+      "parentRecreated": true,
+      "closeResult": "closed",
+      "closeOk": true
+    },
+    {
+      "selectedSyntheticWindowsIO": false,
+      "removed": "pending-memory",
+      "listState": "interrupted",
+      "parentRecreated": true,
+      "closeResult": "closed",
+      "closeOk": true
+    },
+    {
+      "selectedSyntheticWindowsIO": false,
+      "removed": "pending",
+      "listState": "interrupted",
+      "parentRecreated": true,
+      "closeResult": "closed",
+      "closeOk": true
+    },
+    {
+      "selectedSyntheticWindowsIO": true,
+      "removed": "claims",
+      "listState": "interrupted",
+      "parentRecreated": true,
+      "closeResult": "closed",
+      "closeOk": true
+    },
+    {
+      "selectedSyntheticWindowsIO": true,
+      "removed": "pending-memory",
+      "listState": "interrupted",
+      "parentRecreated": true,
+      "closeResult": "closed",
+      "closeOk": true
+    },
+    {
+      "selectedSyntheticWindowsIO": true,
+      "removed": "pending",
+      "listState": "interrupted",
+      "parentRecreated": true,
+      "closeResult": "closed",
+      "closeOk": true
+    }
+  ]
+}

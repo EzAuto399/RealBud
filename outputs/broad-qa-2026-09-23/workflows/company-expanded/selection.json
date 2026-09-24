@@ -1,0 +1,55 @@
+{
+  "files": [
+    {
+      "file": "server/company-departments.integration.test.ts",
+      "previouslySkippedCases": 11
+    },
+    {
+      "file": "server/company-execution-transport.integration.test.ts",
+      "previouslySkippedCases": 4
+    },
+    {
+      "file": "server/company-host.test.ts",
+      "previouslySkippedCases": 8
+    },
+    {
+      "file": "server/company-installation.integration.test.ts",
+      "previouslySkippedCases": 6
+    },
+    {
+      "file": "server/company-recovery.integration.test.ts",
+      "previouslySkippedCases": 5
+    },
+    {
+      "file": "server/company-work.integration.test.ts",
+      "previouslySkippedCases": 9
+    },
+    {
+      "file": "server/company/backup.integration.test.ts",
+      "previouslySkippedCases": 9
+    },
+    {
+      "file": "server/company/department-execution.integration.test.ts",
+      "previouslySkippedCases": 18
+    },
+    {
+      "file": "server/company/department-lifecycle.integration.test.ts",
+      "previouslySkippedCases": 13
+    },
+    {
+      "file": "server/company/department-recovery.integration.test.ts",
+      "previouslySkippedCases": 7
+    },
+    {
+      "file": "server/company/departments-transport.integration.test.ts",
+      "previouslySkippedCases": 3
+    },
+    {
+      "file": "server/company/portal-bindings.integration.test.ts",
+      "previouslySkippedCases": 18
+    }
+  ],
+  "priorSeparateCases": 16,
+  "selectedPreviouslySkippedCases": 111,
+  "notSelected": "Windows/native Hermes/URL-only gates; already passed three runIf files"
+}

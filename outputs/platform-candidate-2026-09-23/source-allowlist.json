@@ -1,0 +1,1479 @@
+{
+  "schema": 1,
+  "kind": "realbud-desktop-source-overlay-allowlist",
+  "generatedAt": "2026-09-23T08:57:27.941314+00:00",
+  "repository": "/Users/yoda/projects/RealBud",
+  "baseRevision": "e82ea2f067b7aa73d9bdc6e355a9bc4f1f1694c7",
+  "scope": "Overlay these reviewed source/documentation paths on an isolated checkout of baseRevision. Unchanged tracked base files are prerequisites and are not repeated in files.",
+  "files": [
+    ".claude/skills/windows-release/SKILL.md",
+    ".github/workflows/ci.yml",
+    ".github/workflows/package-win.yml",
+    "docs/CORE-READINESS-2026-09-23.md",
+    "docs/END-STATE.md",
+    "docs/GATES-2026-09-22.md",
+    "docs/GOAL-PROMPT.md",
+    "docs/GRADUATE-RELEASE.md",
+    "docs/MODELVIA-QA-2026-09-23.md",
+    "docs/READINESS-GAPS-2026-09-23.md",
+    "docs/WINDOWS-BUILD-AND-TEST.md",
+    "docs/WINDOWS-READINESS-2026-09-23.md",
+    "docs/decisions/2026-09-21-business-os-and-austin-workflows.md",
+    "docs/decisions/2026-09-23-core-first-and-workflow-scope.md",
+    "electron/build-speech-helper-win.mjs",
+    "managed-gateway/connectors.test.ts",
+    "managed-gateway/connectors.ts",
+    "package.json",
+    "pnpm-lock.yaml",
+    "scripts/bundle-company-deps.mjs",
+    "scripts/check-windows-build.mjs",
+    "scripts/check-windows-build.test.mjs",
+    "scripts/qa-bank-amendments.mjs",
+    "scripts/qa-bank-bytes.mjs",
+    "scripts/qa-live-usage.md",
+    "scripts/qa-live-usage.mjs",
+    "scripts/qa-modelvia-app.mjs",
+    "scripts/qa-morning-mail.mjs",
+    "scripts/qa-onboarding-restart.mjs",
+    "scripts/qa-onboarding.mjs",
+    "scripts/qa-second-office-contract.mjs",
+    "scripts/qa-source-bills.mjs",
+    "scripts/test-windows-installer.ps1",
+    "server/ask-attach-privacy.test.ts",
+    "server/ask-attach.test.ts",
+    "server/ask-attach.ts",
+    "server/ask-book.ts",
+    "server/bill-proposal-validation.ts",
+    "server/bill-proposals.test.ts",
+    "server/bill-proposals.ts",
+    "server/composio-gmail.test.ts",
+    "server/composio-gmail.ts",
+    "server/config-private-root.test.ts",
+    "server/config-recovery.test.ts",
+    "server/config.ts",
+    "server/drivers/acp/browser-injection-boundary.test.ts",
+    "server/helpers/pdf-text-worker.mjs",
+    "server/hermes-hands.test.ts",
+    "server/hermes-hands.ts",
+    "server/index.ts",
+    "server/managed-connectors.test.ts",
+    "server/managed-connectors.ts",
+    "server/model-service-failure.test.ts",
+    "server/model-service-failure.ts",
+    "server/office-link.test.ts",
+    "server/office-link.ts",
+    "server/onboarding.test.ts",
+    "server/onboarding.ts",
+    "server/pdf-text.test.ts",
+    "server/pdf-text.ts",
+    "server/private-backup-proposal-retention.test.ts",
+    "server/redact.test.ts",
+    "server/redact.ts",
+    "server/session-auth.ts",
+    "server/source-attachments.test.ts",
+    "server/source-attachments.ts",
+    "server/source-bill-rules.ts",
+    "server/store-recovery.test.ts",
+    "server/store.test.ts",
+    "server/store.ts",
+    "server/testing/pdf-fixture.ts",
+    "server/worker-model-access.test.ts",
+    "server/worker-model-access.ts",
+    "shared/bill-attachment-reads.test.ts",
+    "shared/bill-proposals.ts",
+    "shared/office-link.test.ts",
+    "shared/office-link.ts",
+    "shared/onboarding.ts",
+    "shared/source-attachments.ts",
+    "src/App.tsx",
+    "src/components/BudSetupCard.test.ts",
+    "src/components/ChatView.tsx",
+    "src/components/ManagedBudStatus.tsx",
+    "src/components/Onboarding.tsx",
+    "src/components/YouPage.tsx",
+    "src/components/desk/SourceBillsPanel.tsx",
+    "src/components/schedule/BankReferenceReview.tsx",
+    "src/components/you/WebsiteLinkCard.test.ts",
+    "src/components/you/WebsiteLinkCard.tsx",
+    "src/lib/chat-history.test.ts",
+    "src/lib/chat-history.ts",
+    "src/lib/first-run.test.ts",
+    "src/lib/first-run.ts",
+    "src/lib/navigation-guard.test.ts",
+    "src/lib/navigation-guard.ts",
+    "src/lib/you-navigation.test.ts",
+    "src/lib/you-navigation.ts",
+    "src/state/store.tsx"
+  ],
+  "deleteFiles": [],
+  "counts": {
+    "files": 98,
+    "modifiedTracked": 64,
+    "untrackedSource": 34,
+    "byGroup": {
+      "build-and-qa": 15,
+      "ci": 2,
+      "connector-contract": 2,
+      "desktop-source": 37,
+      "documentation": 13,
+      "test": 29
+    }
+  },
+  "contentDigest": {
+    "algorithm": "sha256",
+    "definition": "UTF-8 sorted path + NUL + SHA256 + newline for each file",
+    "value": "922f1643ed4b24995e167348f0dc1b8be0b835204fb435d369534a6f246bdcd3"
+  },
+  "fileDetails": [
+    {
+      "path": ".claude/skills/windows-release/SKILL.md",
+      "gitStatus": " M",
+      "group": "documentation",
+      "bytes": 4922,
+      "sha256": "4a79c710a5c6f80076d5945cd734c3bc7e47f9852c64662865a198dca1aff3b6"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "gitStatus": " M",
+      "group": "ci",
+      "bytes": 7749,
+      "sha256": "23aa96f2902daeda14e12d997d6e2d8e0ccaf7347b57823aff5559948c6f46bb"
+    },
+    {
+      "path": ".github/workflows/package-win.yml",
+      "gitStatus": " M",
+      "group": "ci",
+      "bytes": 3758,
+      "sha256": "19e0a604076182f60e711c9b6027b6f54b490d65fa649ba3a9d4c856316ded03"
+    },
+    {
+      "path": "docs/CORE-READINESS-2026-09-23.md",
+      "gitStatus": "??",
+      "group": "documentation",
+      "bytes": 11898,
+      "sha256": "24fced38c987473c25a2c6acaf8f58e6f844251984b3dc5770c948c5492c6975"
+    },
+    {
+      "path": "docs/END-STATE.md",
+      "gitStatus": " M",
+      "group": "documentation",
+      "bytes": 13162,
+      "sha256": "2f229766cc4740fca14c815a62ff051bf25b110710dac557bcc588a8b7310a7f"
+    },
+    {
+      "path": "docs/GATES-2026-09-22.md",
+      "gitStatus": " M",
+      "group": "documentation",
+      "bytes": 9397,
+      "sha256": "7834f3f06896f770b4ae75e812158103e1adee46dc3db2055b459241fe77b41c"
+    },
+    {
+      "path": "docs/GOAL-PROMPT.md",
+      "gitStatus": " M",
+      "group": "documentation",
+      "bytes": 16209,
+      "sha256": "812cdf7b9185f69f36426db15c8bbe79b226c74fcaec61eb768324751ed552ff"
+    },
+    {
+      "path": "docs/GRADUATE-RELEASE.md",
+      "gitStatus": " M",
+      "group": "documentation",
+      "bytes": 7257,
+      "sha256": "400f73d3c5f1390bc15f9f7f1fbe05535beae6ca84c61ae0b4d603f55ced1307"
+    },
+    {
+      "path": "docs/MODELVIA-QA-2026-09-23.md",
+      "gitStatus": "??",
+      "group": "documentation",
+      "bytes": 6812,
+      "sha256": "8a77862796c6505400d2034fd5330ea267da192cebbf4e9fd6ded464353c9de6"
+    },
+    {
+      "path": "docs/READINESS-GAPS-2026-09-23.md",
+      "gitStatus": "??",
+      "group": "documentation",
+      "bytes": 12426,
+      "sha256": "57cee737bef11f98962bf8a917160b244079fa43e58b255c370473544c33af65"
+    },
+    {
+      "path": "docs/WINDOWS-BUILD-AND-TEST.md",
+      "gitStatus": "??",
+      "group": "documentation",
+      "bytes": 5511,
+      "sha256": "7139d75ac368350e1433a0dcf61b3839947b6569f82411724b62d837fb6be094"
+    },
+    {
+      "path": "docs/WINDOWS-READINESS-2026-09-23.md",
+      "gitStatus": "??",
+      "group": "documentation",
+      "bytes": 6015,
+      "sha256": "d010ac3337c22e92ac3adbc0fee515777019e6dd0c70f3f709cf7741ef8559bd"
+    },
+    {
+      "path": "docs/decisions/2026-09-21-business-os-and-austin-workflows.md",
+      "gitStatus": " M",
+      "group": "documentation",
+      "bytes": 19809,
+      "sha256": "4ec240a12c811c79e2bfffdbe031db3dfda156afa4a12c55f4cdb5921185385c"
+    },
+    {
+      "path": "docs/decisions/2026-09-23-core-first-and-workflow-scope.md",
+      "gitStatus": "??",
+      "group": "documentation",
+      "bytes": 4989,
+      "sha256": "8c273528408354b702fb10d884eabe68b150e78cd2d4105082ef0f75a23946b6"
+    },
+    {
+      "path": "electron/build-speech-helper-win.mjs",
+      "gitStatus": " M",
+      "group": "build-and-qa",
+      "bytes": 3651,
+      "sha256": "470ddf767f522e82cd5053bdfe56874156fea16620dca7bbb68f12d7cc52f123"
+    },
+    {
+      "path": "managed-gateway/connectors.test.ts",
+      "gitStatus": " M",
+      "group": "connector-contract",
+      "bytes": 23095,
+      "sha256": "51aa8405b0eaae82c087466a7d0a6ceb3431c7da71ad8a8ca8f07a336fff46d8"
+    },
+    {
+      "path": "managed-gateway/connectors.ts",
+      "gitStatus": " M",
+      "group": "connector-contract",
+      "bytes": 17306,
+      "sha256": "8b15504c138a3b62bdeeda59abb43f8addc59525f4e717f1c746f848e0cbba72"
+    },
+    {
+      "path": "package.json",
+      "gitStatus": " M",
+      "group": "build-and-qa",
+      "bytes": 5510,
+      "sha256": "a133887063b300eb977535e72cf30ae07d7867cd8c46f6c362d65f820aeee0b9"
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "gitStatus": " M",
+      "group": "build-and-qa",
+      "bytes": 175676,
+      "sha256": "32fcb4f516e1093422e3c21ce0f105e0964eec5d275d7c971c50363bf3f5dc6b"
+    },
+    {
+      "path": "scripts/bundle-company-deps.mjs",
+      "gitStatus": " M",
+      "group": "build-and-qa",
+      "bytes": 7315,
+      "sha256": "1562d792a1d15bb4a3f54554322025f020398394a6646f20974facb820785d54"
+    },
+    {
+      "path": "scripts/check-windows-build.mjs",
+      "gitStatus": "??",
+      "group": "build-and-qa",
+      "bytes": 12776,
+      "sha256": "efa4d57ae8ea7576c109b798b7d72d78586a810123e011454eb7222020ef974d"
+    },
+    {
+      "path": "scripts/check-windows-build.test.mjs",
+      "gitStatus": "??",
+      "group": "test",
+      "bytes": 14715,
+      "sha256": "0230d869f4b223e00398eb74de9cd157a1653df2a316496e5c7ab56845aec750"
+    },
+    {
+      "path": "scripts/qa-bank-amendments.mjs",
+      "gitStatus": " M",
+      "group": "build-and-qa",
+      "bytes": 11874,
+      "sha256": "c28ab6a9efa970832a4358b6850d549a11f819aad9e0b397dd6bb677b0a4b392"
+    },
+    {
+      "path": "scripts/qa-bank-bytes.mjs",
+      "gitStatus": " M",
+      "group": "build-and-qa",
+      "bytes": 19891,
+      "sha256": "6fb969a3766e2e903c11d4d85e1836ff1965c0762ed8707f1399d8435fb55783"
+    },
+    {
+      "path": "scripts/qa-live-usage.md",
+      "gitStatus": " M",
+      "group": "documentation",
+      "bytes": 4589,
+      "sha256": "230922b3805b2fce0b7136c4b7f76f2cb4f21f243723830bcf531f1a50631fe0"
+    },
+    {
+      "path": "scripts/qa-live-usage.mjs",
+      "gitStatus": " M",
+      "group": "build-and-qa",
+      "bytes": 36968,
+      "sha256": "43045d2871c6d28131de801f6bea7f5c2cf6ff234325af8be445568802f89321"
+    },
+    {
+      "path": "scripts/qa-modelvia-app.mjs",
+      "gitStatus": "??",
+      "group": "build-and-qa",
+      "bytes": 33493,
+      "sha256": "360f531aa3777c1763043b491f2096d41b9f7fa6da036580c341ab4cb369a7d7"
+    },
+    {
+      "path": "scripts/qa-morning-mail.mjs",
+      "gitStatus": " M",
+      "group": "build-and-qa",
+      "bytes": 23399,
+      "sha256": "e6bfe436857f778d83dfee51bc06cc1ec30a0608cb31d0bd4aec467cf0f681b0"
+    },
+    {
+      "path": "scripts/qa-onboarding-restart.mjs",
+      "gitStatus": "??",
+      "group": "build-and-qa",
+      "bytes": 10401,
+      "sha256": "af536e9e870b8338d3a2e5c123e59db10b53d4534dc8c5ac6672fedd54a6830f"
+    },
+    {
+      "path": "scripts/qa-onboarding.mjs",
+      "gitStatus": "??",
+      "group": "build-and-qa",
+      "bytes": 1043,
+      "sha256": "2ec2bdd9a4361f7c9e3fb3e37664ccefd482080cd9d514777af221909a4decac"
+    },
+    {
+      "path": "scripts/qa-second-office-contract.mjs",
+      "gitStatus": " M",
+      "group": "build-and-qa",
+      "bytes": 8308,
+      "sha256": "a880ee5925c4ba9a3c3c561efd40e2770de5c453d6a71bad0065c0b5d844cbcf"
+    },
+    {
+      "path": "scripts/qa-source-bills.mjs",
+      "gitStatus": " M",
+      "group": "build-and-qa",
+      "bytes": 52315,
+      "sha256": "da0479704fac3315ef1d336c4d9248604aed9ff25d4f9581826d0ef297f78281"
+    },
+    {
+      "path": "scripts/test-windows-installer.ps1",
+      "gitStatus": " M",
+      "group": "build-and-qa",
+      "bytes": 17514,
+      "sha256": "802b80e4d67e375aa2a0c21ddbd5650f98dc2764d3a957f52b88c266215ddec5"
+    },
+    {
+      "path": "server/ask-attach-privacy.test.ts",
+      "gitStatus": "??",
+      "group": "test",
+      "bytes": 6038,
+      "sha256": "0fa1663293debb18ffb58d061a3c1ce13a2dfe9751247465f51ac491755a68e5"
+    },
+    {
+      "path": "server/ask-attach.test.ts",
+      "gitStatus": " M",
+      "group": "test",
+      "bytes": 7622,
+      "sha256": "1605ae3df24374e350b7e9ccab05de82de45c856a314d668d5608bdc6c462079"
+    },
+    {
+      "path": "server/ask-attach.ts",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 4797,
+      "sha256": "bb7e36714217def17ee6eb4c76e4c5a16aee9a32d110eea4daad86198dcf4234"
+    },
+    {
+      "path": "server/ask-book.ts",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 13984,
+      "sha256": "717412d08cbe18d4d28c589b8e97201ed46880622ef77e8bfce7616180f7a936"
+    },
+    {
+      "path": "server/bill-proposal-validation.ts",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 8458,
+      "sha256": "bdbd71e441d185ba4f5f69d30369c2c9fe7f5912b0c74b05a6a1b40fd5b0b293"
+    },
+    {
+      "path": "server/bill-proposals.test.ts",
+      "gitStatus": " M",
+      "group": "test",
+      "bytes": 21782,
+      "sha256": "78e6986c319afe95d9c4e0f9d185157809748654a18792101eae7033b0e974ee"
+    },
+    {
+      "path": "server/bill-proposals.ts",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 14182,
+      "sha256": "acbf1f5f55e01e639ab4f45d08c8ccfcd3a409a112eaf1f03bc68013d13256b6"
+    },
+    {
+      "path": "server/composio-gmail.test.ts",
+      "gitStatus": " M",
+      "group": "test",
+      "bytes": 30529,
+      "sha256": "cc35956e53074fc365e4623499b8f1dab7bd7df90ba1383b95062775666e15bf"
+    },
+    {
+      "path": "server/composio-gmail.ts",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 41636,
+      "sha256": "8850489f0b94e3975a9e0ab1cf93880ed2b2a46c3e2b3998dcf2a89fa686e0e9"
+    },
+    {
+      "path": "server/config-private-root.test.ts",
+      "gitStatus": "??",
+      "group": "test",
+      "bytes": 3007,
+      "sha256": "392bcfa205b2770bc5448dfcbfbf91df85e88f9cb15d9424b7cfa7bc29739ec6"
+    },
+    {
+      "path": "server/config-recovery.test.ts",
+      "gitStatus": "??",
+      "group": "test",
+      "bytes": 3421,
+      "sha256": "3545d6ab47a550b84f096fec2cbf67503a9c098e6ea2bf493529a31da11aafbf"
+    },
+    {
+      "path": "server/config.ts",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 7134,
+      "sha256": "236dc37c86444aa61ab017b82f7b591cee872cad6fbd8f4107a6021d0652f247"
+    },
+    {
+      "path": "server/drivers/acp/browser-injection-boundary.test.ts",
+      "gitStatus": "??",
+      "group": "test",
+      "bytes": 19063,
+      "sha256": "374a9d0a41cb473d20423a49a6d7cdef121d8c286d83de4ace9e15f73209483a"
+    },
+    {
+      "path": "server/helpers/pdf-text-worker.mjs",
+      "gitStatus": "??",
+      "group": "desktop-source",
+      "bytes": 1750,
+      "sha256": "e1dfeecaf0ffd32f46449aeb9e10915e27571695b411f458c228bb2a62b6f293"
+    },
+    {
+      "path": "server/hermes-hands.test.ts",
+      "gitStatus": " M",
+      "group": "test",
+      "bytes": 26797,
+      "sha256": "af0b9b2fa9c2f8fbda30b159b1268aee26d8ed2a6f1505abae0852a513577136"
+    },
+    {
+      "path": "server/hermes-hands.ts",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 16159,
+      "sha256": "307c96fed8ed1b80c16853b68ae2efc33c8e9de957bd81955f0a9d682d7c5fce"
+    },
+    {
+      "path": "server/index.ts",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 321626,
+      "sha256": "88d748edb0b3517ab1845cec0087789f856bd002237878aa690d639fd42b21db"
+    },
+    {
+      "path": "server/managed-connectors.test.ts",
+      "gitStatus": " M",
+      "group": "test",
+      "bytes": 12820,
+      "sha256": "f784a727d06ac2ae3244ac96cdf75c3637610f75172344a848993afced7eaa8f"
+    },
+    {
+      "path": "server/managed-connectors.ts",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 9779,
+      "sha256": "0327db520167dc6bcb5ac7a68029251aa23ae31c045ab6408d9ace01b02cf9dd"
+    },
+    {
+      "path": "server/model-service-failure.test.ts",
+      "gitStatus": "??",
+      "group": "test",
+      "bytes": 2058,
+      "sha256": "e5e467cadd7562cec445b256587e0cff4178ca0937119bda44d43dc0f19a0d4e"
+    },
+    {
+      "path": "server/model-service-failure.ts",
+      "gitStatus": "??",
+      "group": "desktop-source",
+      "bytes": 1208,
+      "sha256": "788cebda83d7b7e1c600161f02969034780d3538a6fc8d38a86426aa6873d8ba"
+    },
+    {
+      "path": "server/office-link.test.ts",
+      "gitStatus": " M",
+      "group": "test",
+      "bytes": 54307,
+      "sha256": "f9fc5d6525ef0f907c089c726c41e73ad877f6ce2f173a2ed9e569ee624444eb"
+    },
+    {
+      "path": "server/office-link.ts",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 31422,
+      "sha256": "c71d230965ec7fc3680ccf3d59e88a06649ba1cb76f55f8e4dfd1a908a3ed2c5"
+    },
+    {
+      "path": "server/onboarding.test.ts",
+      "gitStatus": "??",
+      "group": "test",
+      "bytes": 5937,
+      "sha256": "9d1145d8d8f5f650c4d78cd1a60d65e80f3c265ec0a280d1bd52047d5fb1d225"
+    },
+    {
+      "path": "server/onboarding.ts",
+      "gitStatus": "??",
+      "group": "desktop-source",
+      "bytes": 4689,
+      "sha256": "b1033090212fd6c360c01f03224aebf0cc870fb6608a2b22766f5d7ebb7a9f34"
+    },
+    {
+      "path": "server/pdf-text.test.ts",
+      "gitStatus": "??",
+      "group": "test",
+      "bytes": 1167,
+      "sha256": "691b56e6f50bee7415d01e72b9e14c92c7cdf4a6cc79e1f8505b94596afefb76"
+    },
+    {
+      "path": "server/pdf-text.ts",
+      "gitStatus": "??",
+      "group": "desktop-source",
+      "bytes": 2309,
+      "sha256": "20811caa3f880b8f1e8b60a5d88c062bd8b8522a97dbf8e8eb9c506918d12b2e"
+    },
+    {
+      "path": "server/private-backup-proposal-retention.test.ts",
+      "gitStatus": " M",
+      "group": "test",
+      "bytes": 8219,
+      "sha256": "d5a46df5b4216fa9d07003412425022ca07320456c438b1d878d72e5d6105936"
+    },
+    {
+      "path": "server/redact.test.ts",
+      "gitStatus": " M",
+      "group": "test",
+      "bytes": 5327,
+      "sha256": "23182554f1c8b8af387e1ca0b8fcb896e4565e6b87c923d901a1b24e4166d704"
+    },
+    {
+      "path": "server/redact.ts",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 4446,
+      "sha256": "8baef313785fd08f217ef7d9be7e283ede88d3ecd4c6bfee9d684851289be5a2"
+    },
+    {
+      "path": "server/session-auth.ts",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 7148,
+      "sha256": "af73542169bc0a8edd319433eff93ec6ad5f8740673a5c442bbcfb38d0211fe7"
+    },
+    {
+      "path": "server/source-attachments.test.ts",
+      "gitStatus": "??",
+      "group": "test",
+      "bytes": 4903,
+      "sha256": "89c4565bd384db56b9ce92609d1fa0221a178521eb1001d4c5b8469c70fed2af"
+    },
+    {
+      "path": "server/source-attachments.ts",
+      "gitStatus": "??",
+      "group": "desktop-source",
+      "bytes": 5808,
+      "sha256": "3c3cd2a6038f055abd30ab71f53b7ca1d04ae7467cf1d3d86c9904c2df28c9f0"
+    },
+    {
+      "path": "server/source-bill-rules.ts",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 14291,
+      "sha256": "6de68913f950dd22aa64530862bb5b540db463f0897f259017d30a1bf439563d"
+    },
+    {
+      "path": "server/store-recovery.test.ts",
+      "gitStatus": "??",
+      "group": "test",
+      "bytes": 11104,
+      "sha256": "a3ddaefddff1172c5a88ff33b08d12e7e72b26df01f1bafa2b175a86c2bfd5ad"
+    },
+    {
+      "path": "server/store.test.ts",
+      "gitStatus": " M",
+      "group": "test",
+      "bytes": 21729,
+      "sha256": "71acddf49281a1060220d861e9006404d79416d25ee7b909e80e51ddc9fd1bc9"
+    },
+    {
+      "path": "server/store.ts",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 41042,
+      "sha256": "53542786f02ab6e0782da3f2c3ab36be43391f8dad7541b1f4401e711fe5dd48"
+    },
+    {
+      "path": "server/testing/pdf-fixture.ts",
+      "gitStatus": "??",
+      "group": "test",
+      "bytes": 1081,
+      "sha256": "88490a254af8e3f2b86d91de22f4d73a42de09d507a1599535fdbb23d9adca10"
+    },
+    {
+      "path": "server/worker-model-access.test.ts",
+      "gitStatus": " M",
+      "group": "test",
+      "bytes": 21794,
+      "sha256": "9fbdcc881352557f76a530dfab1e072b705d6b40a88e84b7a7db970c1b450c24"
+    },
+    {
+      "path": "server/worker-model-access.ts",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 15727,
+      "sha256": "b53e855fb8d52dbe5fd66c64aee421a106190590a3da6dc0f3dca48fa51ed254"
+    },
+    {
+      "path": "shared/bill-attachment-reads.test.ts",
+      "gitStatus": "??",
+      "group": "test",
+      "bytes": 691,
+      "sha256": "f0aa325c49fea9e89566ea313fee3dd598f3481a7b5afbdddea38ec77b24ffc5"
+    },
+    {
+      "path": "shared/bill-proposals.ts",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 2051,
+      "sha256": "825e0ae2ddaf0ea156466d78977a2364dd40a837a60f8fa884df9d2365b43e22"
+    },
+    {
+      "path": "shared/office-link.test.ts",
+      "gitStatus": "??",
+      "group": "test",
+      "bytes": 2760,
+      "sha256": "6bede55924e3530223834ee563ac7dbadf5d950cd98ea41785cd6e84cdd5c201"
+    },
+    {
+      "path": "shared/office-link.ts",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 11803,
+      "sha256": "bc1e76d9e102f87138694ab1cf65fefb342f865d68bd4488c616f34d6dafea4f"
+    },
+    {
+      "path": "shared/onboarding.ts",
+      "gitStatus": "??",
+      "group": "desktop-source",
+      "bytes": 1072,
+      "sha256": "3a14d69da08594fef5e4d04485ab2472459059320405f36c869b349a995648f7"
+    },
+    {
+      "path": "shared/source-attachments.ts",
+      "gitStatus": "??",
+      "group": "desktop-source",
+      "bytes": 1902,
+      "sha256": "cc4fae6d6ffa1bebc3d53c69972bb2fce7157a4eb6dae25d9df298b01a0b208e"
+    },
+    {
+      "path": "src/App.tsx",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 13746,
+      "sha256": "1871772003c3b3d454e03d223514fc5b6d1a401fc68fe7e112bf92278e34f34c"
+    },
+    {
+      "path": "src/components/BudSetupCard.test.ts",
+      "gitStatus": " M",
+      "group": "test",
+      "bytes": 7875,
+      "sha256": "5c13368e8e31c570308107752fbba0226ebfb1aacd03ce527bf8981a22f79a1d"
+    },
+    {
+      "path": "src/components/ChatView.tsx",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 73927,
+      "sha256": "38f41d75b44ecf5b575a00b3c57ae66af9709bc1091bc4f4af81d5c4b15c3a33"
+    },
+    {
+      "path": "src/components/ManagedBudStatus.tsx",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 4109,
+      "sha256": "814490674f09a4b9dbfbd4ae60ed28980f0b56757ac29b8c13e2fd4a62242775"
+    },
+    {
+      "path": "src/components/Onboarding.tsx",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 16738,
+      "sha256": "f8e01f08b9398886319f83e523f9358a03198cfaf285261c05056d47a56baef7"
+    },
+    {
+      "path": "src/components/YouPage.tsx",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 54254,
+      "sha256": "ba97dac04595aaef4f5d5c1786ab02708741cdbc4a890c37f99836d8b1117ac0"
+    },
+    {
+      "path": "src/components/desk/SourceBillsPanel.tsx",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 64493,
+      "sha256": "d8704e532751259b2a6468b06ea9b381c88e29a6aa98a082eff2d3a89a50e677"
+    },
+    {
+      "path": "src/components/schedule/BankReferenceReview.tsx",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 23745,
+      "sha256": "664622af1e60e04f87a77e657c960b9475619e50982c29f9af50b4d4f12294ef"
+    },
+    {
+      "path": "src/components/you/WebsiteLinkCard.test.ts",
+      "gitStatus": " M",
+      "group": "test",
+      "bytes": 10089,
+      "sha256": "6da6e5d33af269ef72db074be2e09c0731d3dc5359112c0d6972f09abccd0307"
+    },
+    {
+      "path": "src/components/you/WebsiteLinkCard.tsx",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 18481,
+      "sha256": "101d1584da0170d1b3095cf669bb01f7dbc1dc550e78860ce34d6560028e3e26"
+    },
+    {
+      "path": "src/lib/chat-history.test.ts",
+      "gitStatus": "??",
+      "group": "test",
+      "bytes": 5479,
+      "sha256": "711e74f242c4b3744aad6d0578f0238cb3251e74a4b0a0188b42a48a8498ddc5"
+    },
+    {
+      "path": "src/lib/chat-history.ts",
+      "gitStatus": "??",
+      "group": "desktop-source",
+      "bytes": 2840,
+      "sha256": "5d1476760e009632cbfd39636b12626018be7c9548d3165c916e178d2fc7030c"
+    },
+    {
+      "path": "src/lib/first-run.test.ts",
+      "gitStatus": " M",
+      "group": "test",
+      "bytes": 3454,
+      "sha256": "8330b907e6aa01f62e169cfc34d702712db5fd50338d716234a70816b66075dc"
+    },
+    {
+      "path": "src/lib/first-run.ts",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 2504,
+      "sha256": "8ef02b3da007e7d2de108aa9c510cf79b86395fbf5315115c1a749077e0ba24a"
+    },
+    {
+      "path": "src/lib/navigation-guard.test.ts",
+      "gitStatus": "??",
+      "group": "test",
+      "bytes": 2000,
+      "sha256": "62da30fa33186d19a7f59b3f225d8cfa62e4b7abbc5113927f76b1873653a13c"
+    },
+    {
+      "path": "src/lib/navigation-guard.ts",
+      "gitStatus": "??",
+      "group": "desktop-source",
+      "bytes": 986,
+      "sha256": "8d85316dd3448362b17687fdde8ef6dfea8969b9cccd9a6ad0f5abc0fdbffc7a"
+    },
+    {
+      "path": "src/lib/you-navigation.test.ts",
+      "gitStatus": " M",
+      "group": "test",
+      "bytes": 3250,
+      "sha256": "975d54d1e0eacd4758cff4ee68f065cb1817a219f7e3165d770c4d30814aebd8"
+    },
+    {
+      "path": "src/lib/you-navigation.ts",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 2013,
+      "sha256": "2829a98475209eb44072de752298d1b4963eab6ae1f01a5032b3982c54b8d99b"
+    },
+    {
+      "path": "src/state/store.tsx",
+      "gitStatus": " M",
+      "group": "desktop-source",
+      "bytes": 66770,
+      "sha256": "615759a713382fbcc225a263d4caf1ef4fd15f5d3d5d9accaaf4b6919d800336"
+    }
+  ],
+  "dependencyReview": {
+    "method": "Read changed production wiring/build contracts; statically resolve literal relative, @/ and @shared/ import specifiers in selected JS/TS source. This is an inventory, not a typecheck/test/security approval.",
+    "missingStaticImports": [],
+    "selectedImportEdges": [
+      {
+        "from": "managed-gateway/connectors.test.ts",
+        "to": "managed-gateway/connectors.ts"
+      },
+      {
+        "from": "managed-gateway/connectors.ts",
+        "to": "server/composio-gmail.ts"
+      },
+      {
+        "from": "managed-gateway/connectors.ts",
+        "to": "shared/source-attachments.ts"
+      },
+      {
+        "from": "scripts/check-windows-build.mjs",
+        "to": "electron/build-speech-helper-win.mjs"
+      },
+      {
+        "from": "scripts/check-windows-build.test.mjs",
+        "to": "electron/build-speech-helper-win.mjs"
+      },
+      {
+        "from": "scripts/check-windows-build.test.mjs",
+        "to": "scripts/check-windows-build.mjs"
+      },
+      {
+        "from": "scripts/qa-bank-amendments.mjs",
+        "to": "scripts/qa-onboarding.mjs"
+      },
+      {
+        "from": "scripts/qa-bank-bytes.mjs",
+        "to": "scripts/qa-onboarding.mjs"
+      },
+      {
+        "from": "scripts/qa-morning-mail.mjs",
+        "to": "scripts/qa-onboarding.mjs"
+      },
+      {
+        "from": "scripts/qa-source-bills.mjs",
+        "to": "scripts/qa-onboarding.mjs"
+      },
+      {
+        "from": "scripts/qa-source-bills.mjs",
+        "to": "server/testing/pdf-fixture.ts"
+      },
+      {
+        "from": "server/ask-attach-privacy.test.ts",
+        "to": "server/ask-attach.ts"
+      },
+      {
+        "from": "server/ask-attach.test.ts",
+        "to": "server/ask-attach.ts"
+      },
+      {
+        "from": "server/ask-book.ts",
+        "to": "server/model-service-failure.ts"
+      },
+      {
+        "from": "server/bill-proposal-validation.ts",
+        "to": "server/source-attachments.ts"
+      },
+      {
+        "from": "server/bill-proposal-validation.ts",
+        "to": "server/source-bill-rules.ts"
+      },
+      {
+        "from": "server/bill-proposals.test.ts",
+        "to": "server/bill-proposals.ts"
+      },
+      {
+        "from": "server/bill-proposals.test.ts",
+        "to": "server/source-attachments.ts"
+      },
+      {
+        "from": "server/bill-proposals.test.ts",
+        "to": "server/testing/pdf-fixture.ts"
+      },
+      {
+        "from": "server/bill-proposals.test.ts",
+        "to": "shared/source-attachments.ts"
+      },
+      {
+        "from": "server/bill-proposals.ts",
+        "to": "server/bill-proposal-validation.ts"
+      },
+      {
+        "from": "server/bill-proposals.ts",
+        "to": "server/source-attachments.ts"
+      },
+      {
+        "from": "server/bill-proposals.ts",
+        "to": "shared/bill-proposals.ts"
+      },
+      {
+        "from": "server/bill-proposals.ts",
+        "to": "shared/source-attachments.ts"
+      },
+      {
+        "from": "server/composio-gmail.test.ts",
+        "to": "server/composio-gmail.ts"
+      },
+      {
+        "from": "server/composio-gmail.test.ts",
+        "to": "server/source-attachments.ts"
+      },
+      {
+        "from": "server/composio-gmail.test.ts",
+        "to": "server/testing/pdf-fixture.ts"
+      },
+      {
+        "from": "server/composio-gmail.ts",
+        "to": "server/source-attachments.ts"
+      },
+      {
+        "from": "server/composio-gmail.ts",
+        "to": "shared/source-attachments.ts"
+      },
+      {
+        "from": "server/config-private-root.test.ts",
+        "to": "server/config.ts"
+      },
+      {
+        "from": "server/config-recovery.test.ts",
+        "to": "server/config.ts"
+      },
+      {
+        "from": "server/drivers/acp/browser-injection-boundary.test.ts",
+        "to": "server/config.ts"
+      },
+      {
+        "from": "server/hermes-hands.test.ts",
+        "to": "server/hermes-hands.ts"
+      },
+      {
+        "from": "server/hermes-hands.test.ts",
+        "to": "server/worker-model-access.ts"
+      },
+      {
+        "from": "server/hermes-hands.ts",
+        "to": "server/model-service-failure.ts"
+      },
+      {
+        "from": "server/index.ts",
+        "to": "server/ask-attach.ts"
+      },
+      {
+        "from": "server/index.ts",
+        "to": "server/ask-book.ts"
+      },
+      {
+        "from": "server/index.ts",
+        "to": "server/bill-proposals.ts"
+      },
+      {
+        "from": "server/index.ts",
+        "to": "server/composio-gmail.ts"
+      },
+      {
+        "from": "server/index.ts",
+        "to": "server/config.ts"
+      },
+      {
+        "from": "server/index.ts",
+        "to": "server/hermes-hands.ts"
+      },
+      {
+        "from": "server/index.ts",
+        "to": "server/managed-connectors.ts"
+      },
+      {
+        "from": "server/index.ts",
+        "to": "server/office-link.ts"
+      },
+      {
+        "from": "server/index.ts",
+        "to": "server/onboarding.ts"
+      },
+      {
+        "from": "server/index.ts",
+        "to": "server/redact.ts"
+      },
+      {
+        "from": "server/index.ts",
+        "to": "server/session-auth.ts"
+      },
+      {
+        "from": "server/index.ts",
+        "to": "server/store.ts"
+      },
+      {
+        "from": "server/index.ts",
+        "to": "server/worker-model-access.ts"
+      },
+      {
+        "from": "server/managed-connectors.test.ts",
+        "to": "server/config.ts"
+      },
+      {
+        "from": "server/managed-connectors.test.ts",
+        "to": "server/managed-connectors.ts"
+      },
+      {
+        "from": "server/managed-connectors.test.ts",
+        "to": "server/source-attachments.ts"
+      },
+      {
+        "from": "server/managed-connectors.test.ts",
+        "to": "server/testing/pdf-fixture.ts"
+      },
+      {
+        "from": "server/managed-connectors.ts",
+        "to": "server/config.ts"
+      },
+      {
+        "from": "server/managed-connectors.ts",
+        "to": "server/source-attachments.ts"
+      },
+      {
+        "from": "server/managed-connectors.ts",
+        "to": "server/worker-model-access.ts"
+      },
+      {
+        "from": "server/managed-connectors.ts",
+        "to": "shared/source-attachments.ts"
+      },
+      {
+        "from": "server/model-service-failure.test.ts",
+        "to": "server/ask-book.ts"
+      },
+      {
+        "from": "server/model-service-failure.test.ts",
+        "to": "server/hermes-hands.ts"
+      },
+      {
+        "from": "server/model-service-failure.test.ts",
+        "to": "server/model-service-failure.ts"
+      },
+      {
+        "from": "server/office-link.test.ts",
+        "to": "server/config.ts"
+      },
+      {
+        "from": "server/office-link.test.ts",
+        "to": "server/office-link.ts"
+      },
+      {
+        "from": "server/office-link.test.ts",
+        "to": "server/worker-model-access.ts"
+      },
+      {
+        "from": "server/office-link.ts",
+        "to": "shared/office-link.ts"
+      },
+      {
+        "from": "server/onboarding.test.ts",
+        "to": "server/onboarding.ts"
+      },
+      {
+        "from": "server/onboarding.test.ts",
+        "to": "shared/onboarding.ts"
+      },
+      {
+        "from": "server/onboarding.ts",
+        "to": "shared/onboarding.ts"
+      },
+      {
+        "from": "server/pdf-text.test.ts",
+        "to": "server/pdf-text.ts"
+      },
+      {
+        "from": "server/pdf-text.test.ts",
+        "to": "server/testing/pdf-fixture.ts"
+      },
+      {
+        "from": "server/pdf-text.ts",
+        "to": "server/redact.ts"
+      },
+      {
+        "from": "server/pdf-text.ts",
+        "to": "shared/source-attachments.ts"
+      },
+      {
+        "from": "server/private-backup-proposal-retention.test.ts",
+        "to": "server/bill-proposals.ts"
+      },
+      {
+        "from": "server/private-backup-proposal-retention.test.ts",
+        "to": "server/source-attachments.ts"
+      },
+      {
+        "from": "server/private-backup-proposal-retention.test.ts",
+        "to": "server/testing/pdf-fixture.ts"
+      },
+      {
+        "from": "server/private-backup-proposal-retention.test.ts",
+        "to": "shared/source-attachments.ts"
+      },
+      {
+        "from": "server/redact.test.ts",
+        "to": "server/redact.ts"
+      },
+      {
+        "from": "server/source-attachments.test.ts",
+        "to": "server/source-attachments.ts"
+      },
+      {
+        "from": "server/source-attachments.test.ts",
+        "to": "server/testing/pdf-fixture.ts"
+      },
+      {
+        "from": "server/source-attachments.test.ts",
+        "to": "shared/source-attachments.ts"
+      },
+      {
+        "from": "server/source-attachments.ts",
+        "to": "server/pdf-text.ts"
+      },
+      {
+        "from": "server/source-attachments.ts",
+        "to": "shared/source-attachments.ts"
+      },
+      {
+        "from": "server/store-recovery.test.ts",
+        "to": "server/store.ts"
+      },
+      {
+        "from": "server/store.test.ts",
+        "to": "server/config.ts"
+      },
+      {
+        "from": "server/store.test.ts",
+        "to": "server/store.ts"
+      },
+      {
+        "from": "server/store.ts",
+        "to": "server/config.ts"
+      },
+      {
+        "from": "server/store.ts",
+        "to": "server/redact.ts"
+      },
+      {
+        "from": "server/worker-model-access.test.ts",
+        "to": "server/config.ts"
+      },
+      {
+        "from": "server/worker-model-access.test.ts",
+        "to": "server/redact.ts"
+      },
+      {
+        "from": "server/worker-model-access.test.ts",
+        "to": "server/worker-model-access.ts"
+      },
+      {
+        "from": "server/worker-model-access.test.ts",
+        "to": "shared/office-link.ts"
+      },
+      {
+        "from": "server/worker-model-access.ts",
+        "to": "server/config.ts"
+      },
+      {
+        "from": "server/worker-model-access.ts",
+        "to": "shared/office-link.ts"
+      },
+      {
+        "from": "shared/bill-attachment-reads.test.ts",
+        "to": "shared/bill-proposals.ts"
+      },
+      {
+        "from": "shared/office-link.test.ts",
+        "to": "shared/office-link.ts"
+      },
+      {
+        "from": "src/App.tsx",
+        "to": "shared/onboarding.ts"
+      },
+      {
+        "from": "src/App.tsx",
+        "to": "src/components/ChatView.tsx"
+      },
+      {
+        "from": "src/App.tsx",
+        "to": "src/components/Onboarding.tsx"
+      },
+      {
+        "from": "src/App.tsx",
+        "to": "src/components/YouPage.tsx"
+      },
+      {
+        "from": "src/App.tsx",
+        "to": "src/lib/first-run.ts"
+      },
+      {
+        "from": "src/App.tsx",
+        "to": "src/lib/navigation-guard.ts"
+      },
+      {
+        "from": "src/App.tsx",
+        "to": "src/lib/you-navigation.ts"
+      },
+      {
+        "from": "src/App.tsx",
+        "to": "src/state/store.tsx"
+      },
+      {
+        "from": "src/components/BudSetupCard.test.ts",
+        "to": "src/components/ManagedBudStatus.tsx"
+      },
+      {
+        "from": "src/components/BudSetupCard.test.ts",
+        "to": "src/state/store.tsx"
+      },
+      {
+        "from": "src/components/ChatView.tsx",
+        "to": "src/lib/chat-history.ts"
+      },
+      {
+        "from": "src/components/ChatView.tsx",
+        "to": "src/state/store.tsx"
+      },
+      {
+        "from": "src/components/ManagedBudStatus.tsx",
+        "to": "src/lib/you-navigation.ts"
+      },
+      {
+        "from": "src/components/ManagedBudStatus.tsx",
+        "to": "src/state/store.tsx"
+      },
+      {
+        "from": "src/components/Onboarding.tsx",
+        "to": "shared/onboarding.ts"
+      },
+      {
+        "from": "src/components/Onboarding.tsx",
+        "to": "src/lib/first-run.ts"
+      },
+      {
+        "from": "src/components/Onboarding.tsx",
+        "to": "src/state/store.tsx"
+      },
+      {
+        "from": "src/components/YouPage.tsx",
+        "to": "src/components/you/WebsiteLinkCard.tsx"
+      },
+      {
+        "from": "src/components/YouPage.tsx",
+        "to": "src/lib/you-navigation.ts"
+      },
+      {
+        "from": "src/components/YouPage.tsx",
+        "to": "src/state/store.tsx"
+      },
+      {
+        "from": "src/components/desk/SourceBillsPanel.tsx",
+        "to": "shared/bill-proposals.ts"
+      },
+      {
+        "from": "src/components/desk/SourceBillsPanel.tsx",
+        "to": "src/state/store.tsx"
+      },
+      {
+        "from": "src/components/schedule/BankReferenceReview.tsx",
+        "to": "src/lib/navigation-guard.ts"
+      },
+      {
+        "from": "src/components/schedule/BankReferenceReview.tsx",
+        "to": "src/state/store.tsx"
+      },
+      {
+        "from": "src/components/you/WebsiteLinkCard.test.ts",
+        "to": "server/office-link.ts"
+      },
+      {
+        "from": "src/components/you/WebsiteLinkCard.test.ts",
+        "to": "src/components/you/WebsiteLinkCard.tsx"
+      },
+      {
+        "from": "src/components/you/WebsiteLinkCard.tsx",
+        "to": "server/office-link.ts"
+      },
+      {
+        "from": "src/components/you/WebsiteLinkCard.tsx",
+        "to": "src/state/store.tsx"
+      },
+      {
+        "from": "src/lib/chat-history.test.ts",
+        "to": "src/lib/chat-history.ts"
+      },
+      {
+        "from": "src/lib/chat-history.test.ts",
+        "to": "src/state/store.tsx"
+      },
+      {
+        "from": "src/lib/chat-history.ts",
+        "to": "src/state/store.tsx"
+      },
+      {
+        "from": "src/lib/first-run.test.ts",
+        "to": "shared/onboarding.ts"
+      },
+      {
+        "from": "src/lib/first-run.test.ts",
+        "to": "src/lib/first-run.ts"
+      },
+      {
+        "from": "src/lib/first-run.ts",
+        "to": "shared/onboarding.ts"
+      },
+      {
+        "from": "src/lib/navigation-guard.test.ts",
+        "to": "src/lib/navigation-guard.ts"
+      },
+      {
+        "from": "src/lib/you-navigation.test.ts",
+        "to": "src/lib/you-navigation.ts"
+      },
+      {
+        "from": "src/state/store.tsx",
+        "to": "src/lib/navigation-guard.ts"
+      }
+    ],
+    "dynamicDependencies": [
+      {
+        "from": "server/pdf-text.ts",
+        "to": "server/helpers/pdf-text-worker.mjs",
+        "reason": "Runtime URL-based child process entry; not a static import."
+      },
+      {
+        "from": "scripts/bundle-company-deps.mjs",
+        "to": "server/helpers/pdf-text-worker.mjs",
+        "reason": "esbuild entrypoint must ship a self-contained packaged PDF worker."
+      },
+      {
+        "from": "server/helpers/pdf-text-worker.mjs",
+        "to": "package.json + pnpm-lock.yaml: unpdf 1.8.1",
+        "reason": "New pinned parser dependency; both manifest and lockfile are required."
+      },
+      {
+        "from": "package.json and .github/workflows/*.yml",
+        "to": "scripts/check-windows-build.mjs + scripts/check-windows-build.test.mjs",
+        "reason": "New prerequisite command and contract test entrypoints."
+      }
+    ],
+    "managedGateway": {
+      "included": [
+        "managed-gateway/connectors.ts",
+        "managed-gateway/connectors.test.ts"
+      ],
+      "reason": "Source counterpart for the desktop PDF mail-attachment contract; imports new server/shared attachment code. It is not bundled into the desktop and this allowlist authorizes no deployment."
+    },
+    "unchangedBaseRequirements": [
+      ".gitattributes",
+      "pnpm-workspace.yaml",
+      "electron-builder.yml",
+      "tsconfig.json",
+      "tsconfig.server.json",
+      "tsconfig.server.build.json",
+      "vite.config.ts",
+      "index.html",
+      "build/",
+      "licenses/",
+      "pack/",
+      "server/testing/",
+      "scripts/package-files.mjs",
+      "scripts/prepare-browser.mjs",
+      "scripts/prepare-cua.mjs",
+      "scripts/prepare-postgres.mjs"
+    ],
+    "optionalQaDependencies": [
+      "scripts/qa-modelvia-app.mjs requires explicit local Modelvia checkout and admitted Hermes runtime; its defaults are machine-specific and it is not a portable Windows acceptance command.",
+      "Renderer QA scripts require PLAYWRIGHT_MODULE and optionally CHROME_EXECUTABLE."
+    ]
+  },
+  "excluded": {
+    "prefixes": [
+      "outputs/",
+      "output/",
+      "website/"
+    ],
+    "counts": {
+      "outputs": 901,
+      "website": 1
+    },
+    "notes": [
+      "No source imports of website were found in selected desktop changes.",
+      "No outputs, installer binaries, archives, credentials, .env files, node_modules, caches or generated distribution folders are selected.",
+      "Existing ignored build/runtime files are not candidate inputs; regenerate them on the target build host."
+    ]
+  },
+  "unpublishedEvidenceLinks": [
+    {
+      "file": "docs/CORE-READINESS-2026-09-23.md",
+      "excludedTarget": "outputs/own-bank-qa-2026-09-23/README.md"
+    },
+    {
+      "file": "docs/CORE-READINESS-2026-09-23.md",
+      "excludedTarget": "outputs/broad-qa-2026-09-23/README.md"
+    },
+    {
+      "file": "docs/CORE-READINESS-2026-09-23.md",
+      "excludedTarget": "outputs/broad-qa-2026-09-23/launch-qa.command"
+    },
+    {
+      "file": "docs/MODELVIA-QA-2026-09-23.md",
+      "excludedTarget": "outputs/modelvia-live-2026-09-23/README.md"
+    },
+    {
+      "file": "docs/MODELVIA-QA-2026-09-23.md",
+      "excludedTarget": "outputs/modelvia-qa-2026-09-23/README.md"
+    },
+    {
+      "file": "docs/MODELVIA-QA-2026-09-23.md",
+      "excludedTarget": "outputs/modelvia-qa-2026-09-23/launch-qa.command"
+    },
+    {
+      "file": "docs/MODELVIA-QA-2026-09-23.md",
+      "excludedTarget": "outputs/modelvia-qa-2026-09-23/manual-qa.md"
+    },
+    {
+      "file": "docs/WINDOWS-BUILD-AND-TEST.md",
+      "excludedTarget": "outputs/windows-readiness-2026-09-23/WINDOWS-TEST-STEPS.md"
+    },
+    {
+      "file": "docs/WINDOWS-READINESS-2026-09-23.md",
+      "excludedTarget": "outputs/windows-readiness-2026-09-23/RealBud-Windows-0.1.19-baseline-fb6cebed.zip"
+    },
+    {
+      "file": "docs/WINDOWS-READINESS-2026-09-23.md",
+      "excludedTarget": "outputs/windows-readiness-2026-09-23/WINDOWS-TEST-STEPS.md"
+    },
+    {
+      "file": "docs/WINDOWS-READINESS-2026-09-23.md",
+      "excludedTarget": "outputs/windows-readiness-2026-09-23/baseline-installer-receipt.json"
+    },
+    {
+      "file": "docs/WINDOWS-READINESS-2026-09-23.md",
+      "excludedTarget": "outputs/windows-readiness-2026-09-23/test-kit-receipt.json"
+    },
+    {
+      "file": "docs/WINDOWS-READINESS-2026-09-23.md",
+      "excludedTarget": "outputs/windows-readiness-2026-09-23/held-timeout-candidate/README.md"
+    },
+    {
+      "file": "docs/WINDOWS-READINESS-2026-09-23.md",
+      "excludedTarget": "outputs/windows-readiness-2026-09-23/local-verification.json"
+    }
+  ],
+  "knownGates": [
+    "Fresh common-source macOS build/package verification and Windows CI/package/install verification must run against the resulting isolated candidate commit; older revision receipts do not cover this overlay.",
+    "Windows process-tree timeout/descendant cleanup remains unresolved; the rejected timeout experiment is not present in this allowlist.",
+    "Windows attended CUA, memory review/proposal/decision and legacy profile migration holds remain. Native primitive smoke does not remove these product holds.",
+    "Normal Windows 11 GUI/worker-model onboarding, DPAPI relaunch, sign-in/tray supervision, upgrade/data preservation and two-device office acceptance remain device gates; Windows signing and macOS notarization remain release gates.",
+    "Live Gmail PDF acquisition requires the compatible managed connector endpoint and authorized account. Including connector source does not prove hosted deployment or live attachment acceptance."
+  ],
+  "handoffChecks": [
+    "Verify every source hash immediately before copying; reject drift or regenerate this inventory.",
+    "Copy the exact files into an isolated checkout at baseRevision; stage only files, not outputs or an entire directory.",
+    "All 14 listed unpublishedEvidenceLinks refer to excluded local output evidence; preserve them as local evidence references or revise the candidate documentation links before presenting a portable/public document.",
+    "No builds, tests, network calls, secret reads, commits or source mutations were performed for this inventory."
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "at": "2026-09-23T03:28:11.754Z",
+  "passed": true,
+  "cli": "/Users/yoda/.realbud/hermes/runtimes/345cd2b057a452236de401d3534b8502a7465e8d-cfb3f08a9ee7/hermes-agent/venv/bin/hermes",
+  "exitCode": 0,
+  "requestCount": 7,
+  "calls": [
+    {
+      "fields": [
+        "messages",
+        "model",
+        "stream",
+        "stream_options",
+        "tools"
+      ],
+      "model": "hosted-canary-fast",
+      "stream": true,
+      "max_tokens": null,
+      "max_completion_tokens": null,
+      "temperature": null,
+      "reasoning_effort": null,
+      "tool_choice": null,
+      "tools": [
+        "tool_search",
+        "tool_describe",
+        "tool_call"
+      ],
+      "messageCount": 2,
+      "bodyBytes": 12566,
+      "messageCharacters": 9566
+    }
+  ],
+  "limits": [
+    "Actual pinned Hermes CLI; fictional key and loopback OpenAI-compatible response only",
+    "RealBud pack/profile copied into disposable HOME; no real credential file read or provider call",
+    "Python audit hook denies nonloopback sockets/DNS and external credential files; no source runtime modification",
+    "Payload capture assesses protocol; not model quality, cost, or actual managed readiness wiring"
+  ],
+  "cleanup": true
+}

@@ -1,0 +1,56 @@
+{
+  "scope": "metadata-only website requests protocol design advice; no production-source inspection or approval",
+  "completed": true,
+  "requestedModel": "grok-4.7",
+  "selectedModelOption": "grok-4.7",
+  "selectedEffort": "xhigh",
+  "actualModelBuckets": [
+    "grok-4.7-build"
+  ],
+  "modelCalls": 1,
+  "numTurns": 1,
+  "stopReason": "end_turn",
+  "terminalUsage": {
+    "inputTokens": 32881,
+    "outputTokens": 8002,
+    "totalTokens": 40883,
+    "cachedReadTokens": 1152,
+    "cacheCreationTokens": 0,
+    "reasoningTokens": 7582,
+    "modelCalls": 1,
+    "apiDurationMs": 108898,
+    "costUsdTicks": 1120460000,
+    "modelUsage": {
+      "grok-4.7-build": {
+        "inputTokens": 32881,
+        "outputTokens": 8002,
+        "totalTokens": 40883,
+        "cachedReadTokens": 1152,
+        "cacheCreationTokens": 0,
+        "reasoningTokens": 7582,
+        "modelCalls": 1,
+        "apiDurationMs": 108898,
+        "costUsdTicks": 1120460000
+      }
+    },
+    "numTurns": 1
+  },
+  "terminalAtSeconds": 111.195,
+  "collectionAndCleanupSeconds": 114.189,
+  "promptBytes": 1838,
+  "promptRequestsSent": 1,
+  "toolCallCount": 0,
+  "permissionRequestCount": 0,
+  "observedMcpInitialization": {
+    "elapsedMs": 0,
+    "mcpToolCount": 0,
+    "sessionId": "01a0c5a8-1499-7d71-970c-fa6efca6a39d"
+  },
+  "observedMcpServerCount": 0,
+  "disposition": "Use returned cases as guidance for implementation and regression tests only. Actual request, authority, executor, recovery and privacy behavior requires separate application/test evidence.",
+  "advisoryCorrections": [
+    "The model assumes failed or changed observations increment cache generation. Current cache increments generation only on explicit invalidate(); simultaneous refreshes share one pending request. Tests must distinguish observation replacement from credential mutation, and prove newer revocation cannot be overwritten under the real single-flight mechanism.",
+    "Current-account provider authorization alone does not prove the account equals the locally approved account. Independent client-to-gateway reproduction found a pre-existing A-to-B rebinding gap: provider reads B before desktop response validation. The subsequent expected-account precondition fix independently produced zero provider scan calls in the same actual client-to-gateway reproduction; see grok-observation-account-red.json and grok-observation-account-green.json. This is separate local test evidence, not Grok approval or live acceptance."
+  ],
+  "retryCount": 0
+}

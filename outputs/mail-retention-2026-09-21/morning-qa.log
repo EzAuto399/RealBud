@@ -1,0 +1,20 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: /api/hermes/apply-pack: {"error":"Service administrator access needs trusted provisioning.","code":"service_admin_required"}
+
+403 !== 200
+
+    at request (file:///Users/yoda/projects/RealBud/scripts/qa-morning-mail.mjs:45:289)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async file:///Users/yoda/projects/RealBud/scripts/qa-morning-mail.mjs:46:3 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 403,
+  expected: 200,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.19.0

@@ -1,0 +1,17 @@
+{
+  "at": "2026-09-21T20:58:00.820514+00:00",
+  "observed": "Common backup graph admits contradictory content digest for an older archive activeRevision once a later revision is active.",
+  "tests": {
+    "passedControl": 1,
+    "failedExpectedRejections": 2
+  },
+  "networkCalls": 0,
+  "productionEdits": false,
+  "sourceFingerprints": {
+    "server/customer-pack-skill-backup.ts": "a43eec84e1cf025b6c3c8678cff69b7dd83d6d5c5e2aab67d08890bc82fc1bda",
+    "server/customer-pack-skill-history.ts": "4d7d4a4b67a04676796e9c19fd27bbec685d0471db379805027605a5507e9d04",
+    "server/private-workspace-backup.ts": "e11becb1ba9874a6ef20ca04d4a3358814a37dce899f681e96f527c72f88ff7d"
+  },
+  "testFile": "independent-history-consistency.test.ts",
+  "receipt": "independent-history-consistency-red.json"
+}

@@ -1,0 +1,24 @@
+{
+  "requestedModel": "grok-4.6",
+  "reasoningEffort": "xhigh",
+  "sessionId": "01a0c49a-3ecd-70b0-a067-3764a7051b39",
+  "models": [
+    "grok-4.6-build"
+  ],
+  "review": {
+    "verdict": "approved",
+    "findings": [],
+    "checks": [
+      "hermesAgent-only mount: acpMcpServers pushes memory-proposals only when DRIVER_KIND==='hermesAgent' and the capability is present; createRuntime also captures memoryScope only for hermesAgent",
+      "host callback never serialized: propose stays a live closure; MCP payload is a placeholder HTTP descriptor (empty headers) later replaced by broker.descriptor; signature hashes opaque scope string only",
+      "scope validation: non-empty string, length<=4096, propose must be a function, else throw before spawn/signature",
+      "warm signature binds immutable opaque scope: signatureFor includes memoryScope iff memory-proposals is mounted; captured memoryScope is a primitive from firstTurn and never reassigned; scope/server mismatch forces runtime.stop()",
+      "same-scope warm reuse: settle(end_turn/cancelled) cancelPending only (does not close); park keeps broker; next turn with same placeholder+scope reuses runtime; currentMemoryIntegration reads the new turn callback",
+      "broker calls use current turn: propose() re-reads currentMemoryIntegration(); requires current run, promptSent, !cancellationRequested, !settled, !closed, exact scope===memoryScope, propose function; post-await rejects on abort, current!==run, or integration identity/scope change",
+      "discovery before prompt: broker starts in ready() before promptSent; isActive is false until promptSent so tools/list can proceed while tools/call/cache stay inactive",
+      "tools/call active-scope including cache: isActive is Boolean(currentMemoryIntegration()); parked/warm, pre-prompt, cancelled, settled, and closed states are inactive",
+      "cancelPending on interrupt and settle (including browser-forced terminate); close on removeRuntime/terminate and on closed-during-start; interrupt sets cancellationRequested before cancelPending",
+      "startMemoryProposalBroker contract wiring: {isActive, propose(input,signal), assertCapability}; result passed through; reasoning entitlement asserted in propose and supplied to the broker"
+    ]
+  }
+}

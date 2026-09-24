@@ -1,0 +1,16 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ✓ server/batches.test.ts (41 tests) 27638ms
+     ✓ completes 20 independent properties and preserves progress on reload  389ms
+     ✓ completes 50 independent properties and preserves progress on reload  917ms
+     ✓ completes 100 independent properties and preserves progress on reload  1858ms
+     ✓ completes 150 independent properties and preserves progress on reload  2979ms
+     ✓ completes 200 independent properties and preserves progress on reload  4211ms
+     ✓ completes 500 independent properties and preserves progress on reload  15061ms
+ ✓ server/private-backup-restore-catalog.test.ts (16 tests) 18373ms
+     ✓ rejects unrestorable batch expanded-size as a typed preparation failure without sealing output  8686ms
+     ✓ retains exact ordinary bytes and 5,101 rows in original order without collecting their bodies  7047ms
+     ✓ matches v1 execution rows, exact projection bytes and checkpoint hashes while retaining old request identities  593ms
+     ✓ normalizes legacy run arrays and timezone-less schedules using the same v1 reset semantics  372ms
+     ✓ rejects a regenerated execution projection above 8 MiB before preparing any destination rows  503ms

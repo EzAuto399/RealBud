@@ -1,17 +1,17 @@
 // Ask Bud to name ledger-export columns. The model proposes; the server
 // keeps only header names that are actually in the file.
 import { managedServiceFailure } from "./managed-service.ts";
-import { type ExecFileOptionsWithStringEncoding } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { hardenHermesChildEnv } from "./drivers/acp/hermes.ts";
 import { augmentedPath } from "./env-path.ts";
-import { execFileCli } from "./procs.ts";
+import { execFileCli, type OneShotOptions } from "./procs.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { parseCsvTable } from "./csv-ledger.ts";
 import { HERMES_PIN, hermesCli, hermesIsCompatible } from "./hermes-pin.ts";
 import { approvalsAreManual, packInstalled } from "./hermes-pack.ts";
+import { currentWorkerProfile } from "./hermes-profile.ts";
 import { probeHermesVersion } from "./hermes-status.ts";
 import { seedVault } from "./vault.ts";
 import type { CsvColumnMapping } from "../shared/contracts.ts";
@@ -122,11 +122,14 @@ export async function inspectLedgerColumns(
   const serviceFailure = managedServiceFailure("reasoning");
   if (serviceFailure) return miss(serviceFailure);
   if (process.env.VITEST && !opts?.cli) return miss("tests do not use the live worker");
+  // The pack checks read the scoped seat's profile; launch that same profile,
+  // never the shared base, so a member's upload stays in their own worker.
+  const profile = currentWorkerProfile().profile;
   if (!packInstalled(opts?.root)) {
-    return miss(`Bud is not answering — the "${HERMES_PIN.profile}" pack is missing.`);
+    return miss(`Bud is not answering — the "${profile}" pack is missing.`);
   }
   if (!approvalsAreManual(opts?.root)) {
-    return miss(`Bud is not answering — the "${HERMES_PIN.profile}" pack is not in manual approvals.`);
+    return miss(`Bud is not answering — the "${profile}" pack is not in manual approvals.`);
   }
   const cli = opts?.cli ?? hermesCli();
   const version = await probeHermesVersion(cli);
@@ -150,27 +153,19 @@ export async function inspectLedgerColumns(
     const serviceFailure = managedServiceFailure("reasoning");
     if (serviceFailure) return resolve(miss(serviceFailure));
     hardenHermesChildEnv(env);
-    const execOpts: ExecFileOptionsWithStringEncoding & { detached?: boolean } = {
+    const execOpts: OneShotOptions = {
       timeout: opts?.timeoutMs ?? INSPECT_TIMEOUT_MS,
       cwd: seedVault(),
       env,
       encoding: "utf8",
-      detached: process.platform !== "win32",
     };
-    const child = execFileCli(
+    execFileCli(
       cli,
-      ["--profile", HERMES_PIN.profile, "chat", "-Q", "-q", prompt, "--max-turns", "6"],
+      ["--profile", profile, "chat", "-Q", "-q", prompt, "--max-turns", "6"],
       execOpts,
       (err, stdout, stderr) => {
         if (err) {
           const timedOut = (err as NodeJS.ErrnoException & { killed?: boolean }).killed;
-          if (timedOut && process.platform !== "win32") {
-            try {
-              process.kill(-child.pid!, "SIGTERM");
-            } catch {
-              /* already gone */
-            }
-          }
           if (timedOut) return resolve(miss("Bud took too long to read the columns."));
           const clean = (s: string) =>
             String(s)

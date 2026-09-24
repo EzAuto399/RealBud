@@ -5,7 +5,7 @@ import { MANUAL_JOB_REQUEST_ID } from "../shared/manual-job-request.ts";
 export interface LoopsFile {
   version: 3;
   timezone: string;
-  state: Record<string, { enabled: boolean; handledThrough: number; schedule?: { time: string; weekdays: number[] }; revision?: number }>;
+  state: Record<string, { enabled: boolean; handledThrough: number; schedule?: { time: string; weekdays: number[]; timezone?: string }; revision?: number }>;
   runs: LoopRun[];
 }
 
@@ -25,7 +25,10 @@ function invalid(): never { throw new Error("Invalid saved schedule"); }
  * 1 is the historical timezone-less format; versions 2/3 require a real zone. */
 export function readLoopsFile(file: string, fallbackTimezone: string): LoopsFile {
   if (statSync(file).size > 8 * 1024 * 1024) invalid();
-  const raw: unknown = JSON.parse(readFileSync(file, "utf8"));
+  return parseLoopsFile(JSON.parse(readFileSync(file, "utf8")), fallbackTimezone);
+}
+
+export function parseLoopsFile(raw: unknown, fallbackTimezone: string): LoopsFile {
   if (!record(raw) || ![1, 2, 3].includes(Number(raw.version)) || typeof raw.version !== "number" || !record(raw.state) || !Array.isArray(raw.runs)) invalid();
   const timezone = raw.version === 1 && raw.timezone === undefined ? fallbackTimezone : raw.timezone;
   if (!validTimezone(timezone) || Object.keys(raw.state).length > 5_000 || raw.runs.length > 10_000) invalid();
@@ -33,13 +36,14 @@ export function readLoopsFile(file: string, fallbackTimezone: string): LoopsFile
   for (const [id, value] of Object.entries(raw.state)) {
     if (!identifier(id) || !record(value) || typeof value.enabled !== "boolean" || !timestamp(value.handledThrough)) invalid();
     if (value.revision !== undefined && !positiveInteger(value.revision)) invalid();
-    let schedule: { time: string; weekdays: number[] } | undefined;
+    let schedule: { time: string; weekdays: number[]; timezone?: string } | undefined;
     if (value.schedule !== undefined) {
       const clock = value.schedule;
       if (!record(clock) || typeof clock.time !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(clock.time) ||
         !Array.isArray(clock.weekdays) || !clock.weekdays.length || clock.weekdays.length > 7 ||
         clock.weekdays.some((day) => !Number.isInteger(day) || day < 0 || day > 6)) invalid();
-      schedule = { time: clock.time, weekdays: [...new Set(clock.weekdays as number[])].sort((a, b) => a - b) };
+      if (clock.timezone !== undefined && !validTimezone(clock.timezone)) invalid();
+      schedule = { time: clock.time, weekdays: [...new Set(clock.weekdays as number[])].sort((a, b) => a - b), ...(typeof clock.timezone === 'string' ? { timezone: clock.timezone } : {}) };
     }
     state[id] = { enabled: value.enabled, handledThrough: value.handledThrough, ...(schedule ? { schedule } : {}), ...(value.revision === undefined ? {} : { revision: Number(value.revision) }) };
   }

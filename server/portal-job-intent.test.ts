@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { Recipe } from "../shared/contracts.ts";
 
-import { parsePortalJobIntent, portalJobIntentReply } from "./portal-job-intent.ts";
+import { browserTaskActions, browserTaskIntent, parsePortalJobIntent, portalJobIntentReply } from "./portal-job-intent.ts";
 
 const LIVE_DISCOVERY_REQUEST = "Use the connected-apps MCP to discover the actual Gmail tools and their input schemas for reading at most 10 recent email threads from one selected account. Only call Composio tool search/schema discovery. Do not read mailbox messages, start sign-in, execute app actions, send, create drafts, or change anything. Report the exact discovered read tool names, how they choose an account and limit results, and any missing connection requirement. This is a live tool-discovery check, not a mailbox review.";
 const CONNECTED_TOOL_REQUESTS = [
@@ -93,6 +93,69 @@ describe("parsePortalJobIntent", () => {
   });
 });
 
+const IMPERATIVE = "Open this portal and download the report";
+const POLITE_REQUESTS = [
+  "Open this portal and download the report.",
+  "Open this portal and download the report, thanks",
+  "Can you open this portal and download the report?",
+  "Can you open this portal and download the report",
+  "can you please open this portal and download the report? thanks!",
+  "Could you open this portal and download the report, please?",
+  "Would you open this portal and download the report? Thank you.",
+  "Would you be able to open this portal and download the report?",
+  "Please open this portal and download the report",
+  "please open this portal and download the report. Thanks",
+  "I need you to open this portal and download the report",
+  "I'd like you to open this portal and download the report?",
+  "Are you able to open this portal and download the report?",
+  "ok so can you open this portal and download the report? cheers",
+];
+const GENUINE_QUESTIONS = [
+  "Can you see my portal?",
+  "What does the report say?",
+  "How do I download the report?",
+  "How do I download the report from the portal?",
+  "Do you have access to the portal?",
+  "Do you have access to portal.vantagestrata.com.au?",
+  "Can you tell me how to download the report from the portal?",
+  "Could you explain what the strata portal shows?",
+  "Is the portal down?",
+  "Open this portal and download the report?",
+  "Can you open the portal? What does the levy report say?",
+  "Can you open the portal and download the report?\nAlso, is the levy due?",
+  "Can you draft an update from the portal report?",
+  "Can you log in?",
+];
+const NOT_INSTRUCTIONS = [
+  'My tenant wrote: "Can you open the portal and download the report?"',
+  "Tenant said \u201cplease open the portal and download the report\u201d, what do they mean",
+  "Fwd: Please open the portal and download the report",
+  "FW: can you open the portal and download the report?",
+  "---------- Forwarded message ----------\nFrom: owner@example.com\nPlease open the portal and download the report.",
+  "> Please open the portal and download the report.\nWhat is this about",
+  'Continue this job.\n<pasted-text index="1">Can you open portal.example.com and download the report?</pasted-text>',
+];
+
+describe("parsePortalJobIntent polite requests", () => {
+  it.each(POLITE_REQUESTS)("routes %s to the same job as the imperative", text => {
+    expect(parsePortalJobIntent(text)).toEqual(parsePortalJobIntent(IMPERATIVE));
+    expect(parsePortalJobIntent(text)).toEqual({ site: null, task: IMPERATIVE, origins: [] });
+  });
+  it("keeps the named host and site on a polite request", () => {
+    const polite = parsePortalJobIntent("Could you log in to portal.vantagestrata.com.au and download the levy report? Thanks");
+    expect(polite).toEqual(parsePortalJobIntent("Log in to portal.vantagestrata.com.au and download the levy report"));
+    expect(polite?.origins).toEqual(["portal.vantagestrata.com.au"]);
+    expect(parsePortalJobIntent("Can you check the CBA business banking site every Monday?")?.task).toBe("Check the CBA business banking site every Monday");
+    expect(parsePortalJobIntent('Could you open the strata portal and download the "Levy Summary" report?')?.task).toBe('Open the strata portal and download the "Levy Summary" report');
+  });
+  it.each(GENUINE_QUESTIONS)("keeps %s a question", text => {
+    expect(parsePortalJobIntent(text)).toBeNull();
+  });
+  it.each(NOT_INSTRUCTIONS)("never routes quoted or forwarded material: %s", text => {
+    expect(parsePortalJobIntent(text)).toBeNull();
+  });
+});
+
 describe("portalJobIntentReply", () => {
   it.each(CONNECTED_TOOL_REQUESTS)("never reads saved jobs, drafts or saves a connected-tool request: %s", async text => {
     const recipes = vi.fn(() => { throw new Error("portal lookup must not run"); });
@@ -102,6 +165,17 @@ describe("portalJobIntentReply", () => {
     expect(recipes).not.toHaveBeenCalled();
     expect(draft).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
+  });
+  it("drafts a polite request from the same imperative task", async () => {
+    const draft = vi.fn(async (_text: string) => recipe({ id: "draft-polite", allowedOrigins: [] }));
+    const result = await portalJobIntentReply("Can you open this portal and download the report? Thanks", {
+      recipes: () => [],
+      draft,
+      save: (row) => row,
+    });
+    expect(draft).toHaveBeenCalledWith(IMPERATIVE);
+    expect(result?.recipeId).toBe("draft-polite");
+    expect(result?.reply).toContain("Press **Approve the plan** here in Ask");
   });
   it("returns null when the sentence is not portal work", async () => {
     expect(await portalJobIntentReply("hi", { recipes: () => [], draft: async () => recipe(), save: (row) => row })).toBeNull();
@@ -190,5 +264,78 @@ describe("portalJobIntentReply", () => {
     );
     expect(result?.reply).not.toMatch(/hunter2secret/);
     expect(result?.reply).not.toMatch(/Abcd1234Efgh5678/);
+  });
+});
+
+describe("browserTaskIntent", () => {
+  const strata = recipe({ id: "rec-strata", title: "Strata levy check", allowedOrigins: ["portal.fictional-strata.example"] });
+  const never = () => { throw new Error("saved jobs must not be read"); };
+
+  it("turns a one-off download into a task on the matched saved site, with only the steps it needs", () => {
+    expect(browserTaskIntent("Download this month's invoices from the strata portal", () => [strata])).toEqual({
+      request: "Download this month's invoices from the strata portal",
+      sites: ["portal.fictional-strata.example"],
+      siteSource: "saved-job",
+      savedJob: { id: "rec-strata", title: "Strata levy check" },
+      actions: ["read", "navigate", "click", "download"],
+    });
+  });
+
+  it("reads a polite submission as the imperative and asks for fill and submit only", () => {
+    expect(browserTaskIntent("Can you submit this maintenance request on the portal?", () => [])).toEqual({
+      request: "Submit this maintenance request on the portal",
+      sites: [],
+      siteSource: "none",
+      savedJob: null,
+      actions: ["read", "navigate", "fill", "click", "submit"],
+    });
+  });
+
+  it("uses a site named in the request before any saved job", () => {
+    const intent = browserTaskIntent("Log in to portal.fictional-strata.example and download the levy report", never);
+    expect(intent?.sites).toEqual(["portal.fictional-strata.example"]);
+    expect(intent?.siteSource).toBe("request");
+    expect(intent?.savedJob).toBeNull();
+  });
+
+  it("adds typing and keys for a search, and upload only when asked", () => {
+    expect(browserTaskIntent("Search the strata portal for the levy notice and download it", () => [])?.actions)
+      .toEqual(["read", "navigate", "fill", "click", "download", "keys"]);
+    expect(browserTaskIntent("Upload the signed form to the strata portal", () => [])?.actions).toEqual(["read", "navigate", "click", "upload"]);
+    expect(browserTaskActions("Open the portal and read the levy notice")).toEqual(["read", "navigate", "click"]);
+  });
+
+  it("leaves the site for the person when two saved jobs could match", () => {
+    const other = recipe({ id: "rec-strata-2", title: "Second strata", allowedOrigins: ["owners.fictional-strata-two.example"] });
+    const intent = browserTaskIntent("Download this month's invoices from the strata portal", () => [strata, other]);
+    expect(intent?.sites).toEqual([]);
+    expect(intent?.siteSource).toBe("none");
+  });
+
+  it.each([...GENUINE_QUESTIONS, "How do I download invoices from the strata portal?", "Can you tell me how to submit a request on the portal?"])(
+    "never offers a task for a question: %s", text => {
+      expect(browserTaskIntent(text, never)).toBeNull();
+    });
+  it.each(NOT_INSTRUCTIONS)("never offers a task for quoted or forwarded text: %s", text => {
+    expect(browserTaskIntent(text, never)).toBeNull();
+  });
+  it.each(CONNECTED_TOOL_REQUESTS)("never offers a task for a connected-tool request: %s", text => {
+    expect(browserTaskIntent(text, never)).toBeNull();
+  });
+  it.each([
+    "ok so login to it and sort things out for me completing the routine",
+    "login to existing.example.com and finish the levy routine for me",
+    "check the CBA business banking site every Monday",
+    "sign in and do the weekly levy check",
+    "login to portal.fictional-strata.example",
+  ])("keeps routine, take-over and sign-in-only requests on the saved-job path: %s", text => {
+    expect(browserTaskIntent(text, () => [strata])).toBeNull();
+    expect(parsePortalJobIntent(text)).not.toBeNull();
+  });
+
+  it("never carries a pasted password or token into the task", () => {
+    const intent = browserTaskIntent("Download the invoices from portal.fictional-strata.example password: hunter2secret token Abcd1234Efgh5678", () => []);
+    expect(intent?.request).not.toMatch(/hunter2secret|Abcd1234Efgh5678/);
+    expect(intent?.sites).toEqual(["portal.fictional-strata.example"]);
   });
 });

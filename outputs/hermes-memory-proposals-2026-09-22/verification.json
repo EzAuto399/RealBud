@@ -1,0 +1,109 @@
+{
+  "at": "2026-09-21T16:08:32.783402+00:00",
+  "scope": "Typed foreground Hermes memory proposals; local macOS source/package proof, not whole-product production acceptance",
+  "source": {
+    "manifest": "source-final.json",
+    "files": 1076,
+    "digest": "cd392dbd1d28e8901e60f4c957e9d9a59d57c69ed11504e464f7a61db434e022",
+    "changesSinceSuiteStarted": [
+      "scripts/qa-hermes-memory-review.mjs",
+      "server/drivers/acp/memory-proposals.test.ts"
+    ],
+    "productionSourceChangedSinceSuiteStarted": false,
+    "driftAtHandoff": []
+  },
+  "fullSourceRegression": {
+    "receipt": "full-suite.json",
+    "passed": 4348,
+    "failed": 1,
+    "skipped": 143,
+    "files": 339,
+    "failure": "Fictional ACP peer incorrectly sent initialize-only protocolVersion in tools/list parameters. Strict broker correctly rejected it.",
+    "resolution": "Corrected fixture to send method-specific params; explicit error assertion retained. No production guard weakened.",
+    "subsequentReceipt": "acp-broker-final.json",
+    "subsequentPassed": 160,
+    "subsequentFailed": 0,
+    "note": "No clean full-suite rerun implied. Subsequent checks overlap the initial suite."
+  },
+  "additionalOverlappingChecks": {
+    "nativeContracts": {
+      "passed": 36,
+      "receipt": "native-contract-final.json"
+    },
+    "nativeProcessFaults": {
+      "passed": 15,
+      "receipt": "fault-verification.json"
+    },
+    "actualAskHTTPAndProfile": {
+      "passed": 20,
+      "receipt": "http-pack-verification.json"
+    },
+    "actualNativeHermesDiscovery": {
+      "passed": true,
+      "receipt": "native-discovery.log",
+      "toolExecution": false,
+      "inference": false
+    },
+    "sourceRenderedProposal": {
+      "passed": 13,
+      "receipt": "gui-source-first/receipt.json"
+    },
+    "normalRenderedReview": {
+      "passed": 10,
+      "receipt": "gui-normal-regression/receipt.json"
+    }
+  },
+  "builds": {
+    "uiAndTypechecks": "build-final.log",
+    "compiledServer": "build-server.log",
+    "finalTypecheck": "typecheck-final.log",
+    "passed": true
+  },
+  "package": {
+    "path": "/Users/yoda/projects/RealBud/outputs/hermes-memory-proposals-2026-09-22/package/mac-arm64/RealBud.app",
+    "signed": false,
+    "manifest": "package-manifest.json",
+    "digest": "9a0911747027057f667ac5428bb011acd700cefb704cb257273d32c8cfc24239",
+    "files": 2414,
+    "symlinks": 14,
+    "driftAfterQA": [],
+    "helpersMatchSource": true,
+    "macSmoke": "mac-smoke.log",
+    "macSmokePassed": true,
+    "renderedProposalReceipt": "gui-packaged/receipt.json",
+    "renderedProposalChecks": 13,
+    "pageErrors": [],
+    "offOriginBrowserRequests": [],
+    "adminHeadersSeen": 0,
+    "peerDrained": true,
+    "cleanup": true,
+    "electron": "43.4.0",
+    "node": "24.18.1"
+  },
+  "grok": {
+    "model": "grok-4.6",
+    "reasoningEffort": "xhigh",
+    "receipts": [
+      "grok-native-implementation-disposition.json",
+      "broker-grok-implementation-disposition.json",
+      "acp-lifecycle-review-receipt.json",
+      "broker-final-receipt.json",
+      "broker-grok-review-disposition.json",
+      "native-final-review-receipt.json"
+    ],
+    "finalReviews": {
+      "broker": "Completed bounded review; two low advisories investigated; no production change warranted.",
+      "native": "Incomplete: single source-only93KB audit reached900-second subprocess timeout with no structured output. No Grok verdict or approval. Local code review and native/process/application tests are separate evidence."
+    },
+    "completedContributions": 4
+  },
+  "installedAppChanged": false,
+  "limits": [
+    "Fictional ACP peer, managed reasoning issuer and readiness in rendered/application tests; real Hermes discovery is separately proven without inference.",
+    "No real model proposal selection or customer account action in this wave.",
+    "Windows memory proposal/review held pending per-file ACLs and safe persistence adapter/device proof.",
+    "POSIX process-crash tests do not prove physical power-loss durability.",
+    "OS credential custody, signed install/update/reboot, managed-service commissioning, office soak and live Austin acceptance remain separate."
+  ],
+  "nextLocalWork": "Owned Windows storage adapter and admission harness; existing Windows holds remain until actual proof."
+}

@@ -1,9 +1,11 @@
+import { currentWorkerProfile } from "./hermes-profile.ts";
 // Composio Platform — Connected apps use a project API key (ak_…) plus a
 // tool-router session MCP. For You / Connect consumer keys (ck_…) are not used.
 // Catalog logos still come from backend.composio.dev when the project key works.
 import { createHash } from "node:crypto";
 import type { AppConfig } from "./config.ts";
 
+import { authorizeManagedConnection, managedConnectorAccess, managedConnectorApps, managedConnectorConfigured, managedConnectorSettings } from "./managed-connectors.ts";
 const PLATFORM_API = "https://backend.composio.dev/api/v3.1";
 const BACKEND_URL = "https://backend.composio.dev/api/v3";
 const PROJECT_KEY = /^ak_[a-zA-Z0-9_-]{6,512}$/;
@@ -137,7 +139,7 @@ export function platformProjectKey(cfg: AppConfig): string {
  * of connected accounts: one PM's Gmail would appear to be another's. The seat
  * binding has to be supplied, not inferred.
  */
-export function platformUserId(cfg: AppConfig, memberKey?: string | null): string {
+export function platformUserId(cfg: AppConfig, memberKey: string | null | undefined = currentWorkerProfile().memberKey): string {
   const saved = cfg.composio?.userId;
   if (typeof saved === "string" && /^[A-Za-z0-9._@:+-]{1,128}$/.test(saved)) return saved;
   const seat = typeof memberKey === "string" ? memberKey.trim() : "";
@@ -177,6 +179,7 @@ function sanitizeMcpHeaders(value: unknown, fallbackKey: string): Record<string,
 
 /** Resolve the Platform session MCP endpoint (or an explicit test/stub URL). */
 export async function resolveConnectedAppsMcp(cfg: AppConfig, memberKey?: string | null): Promise<{ key: string; url: string; headers: Record<string, string> }> {
+  if (managedConnectorConfigured(cfg)) return managedConnectorSettings(cfg);
   const key = platformProjectKey(cfg);
   if (cfg.composio?.url) {
     return { key, url: checkedEndpoint(cfg.composio.url), headers: { "x-api-key": key } };
@@ -440,11 +443,16 @@ async function listAccountsByToolkit(cfg: AppConfig, slugs: string[], memberKey?
  * authorization for a missing connection. Platform uses REST account listing. */
 export async function connectionStatus(cfg: AppConfig, slugs: string[]) {
   const names = checkedSlugs(slugs);
+  if (managedConnectorConfigured(cfg)) {
+    const access = await managedConnectorAccess(cfg);
+    return Object.fromEntries(names.map(name => [name, access.services[name] ?? { connected: false, status: "NOT_ADMITTED", accounts: [], accountSelectionRequired: false }]));
+  }
   if (!cfg.composio?.url) return listAccountsByToolkit(cfg, names);
   return withConnect(cfg, async (session) => parseConnectionStatus(await listConnections(session, names), names));
 }
 
 export async function checkConnectionAccess(cfg: AppConfig, slugs = [...new Set([...CURATED_SLUGS, ...(cfg.composio?.officeApps ?? [])])]) {
+  if (managedConnectorConfigured(cfg)) return managedConnectorAccess(cfg);
   if (!Array.isArray(slugs) || !slugs.length || slugs.length > 100) throw new ComposioError("Choose between 1 and 100 office apps to check.");
   const names = slugs;
   for (let offset = 0; offset < names.length; offset += MAX_SLUGS) checkedSlugs(names.slice(offset, offset + MAX_SLUGS));
@@ -477,6 +485,7 @@ export async function checkConnectionAccess(cfg: AppConfig, slugs = [...new Set(
 
 /** Disconnect a service: remove only exact provider-supplied account IDs. */
 export async function removeService(cfg: AppConfig, slug: string) {
+  if (managedConnectorConfigured(cfg)) throw Object.assign(new Error("Revoke Gmail access with the provider or ask service support to remove the managed connection."), { status: 409 });
   const names = checkedSlugs([slug]);
   return withConnect(cfg, async (session) => {
     const status = parseConnectionStatus(await listConnections(session, names), names)[slug];
@@ -502,6 +511,7 @@ function authorizationUrl(value: unknown): string | null {
 /** Only structured authorization fields can open a sign-in flow; prose,
  * arbitrary result URLs and links hidden in error text are never candidates. */
 export async function authorizeService(cfg: AppConfig, slug: string) {
+  if (managedConnectorConfigured(cfg)) return authorizeManagedConnection(cfg, slug);
   checkedSlugs([slug]);
   const out = await composioTool(cfg, "COMPOSIO_MANAGE_CONNECTIONS", { toolkits: [{ name: slug, action: "add" }] });
   const candidates = [out?.data?.results?.[slug], out?.data, out];
@@ -566,6 +576,14 @@ let toolkitCache: { at: number; cards: ToolkitCard[] } | null = null;
  * descriptions, logos — cached 10 min); falls back to the curated list.
  */
 export async function listToolkits(cfg: AppConfig): Promise<{ cards: ToolkitCard[]; source: "api" | "curated" }> {
+  if (managedConnectorConfigured(cfg)) {
+    // Exactly this installation's granted apps. The broker still decides which
+    // tools each one exposes; a card here is not a new tool surface.
+    const cards = (await managedConnectorApps()).map((slug): ToolkitCard => slug === 'gmail'
+      ? { slug, label: 'Gmail', blurb: 'Read selected recent email with managed access', domain: 'gmail.com', logo: null }
+      : CURATED.find(card => card.slug === slug) ?? { slug, label: slug, blurb: 'Connected with managed access', domain: null, logo: null });
+    return { cards, source: 'curated' };
+  }
   if (toolkitCache && Date.now() - toolkitCache.at < 10 * 60_000) {
     return { cards: toolkitCache.cards, source: "api" };
   }

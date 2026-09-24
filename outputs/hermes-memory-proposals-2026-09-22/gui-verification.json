@@ -1,0 +1,54 @@
+{
+  "at": "2026-09-21T16:01:21.616575+00:00",
+  "script": "scripts/qa-hermes-memory-review.mjs",
+  "scriptSha256": "d2e4ba7ee77bc4177224655d31608005329630e3477980e81a356e6d7434cf47",
+  "syntax": "node --check passed on Node 24.19.0",
+  "receipts": {
+    "gui-source-first": {
+      "receipt": "outputs/hermes-memory-proposals-2026-09-22/gui-source-first/receipt.json",
+      "sha256": "6aea804ef45044c8afcef4334f1a8a809f46daa9f4c4cb893c40007db9b51ae3",
+      "passed": true,
+      "checks": 13,
+      "mode": "source",
+      "memoryProposals": true,
+      "cleanup": true,
+      "peerDrained": true,
+      "ownedPeerCount": 1,
+      "pageErrors": [],
+      "blockedNetwork": []
+    },
+    "gui-normal-regression": {
+      "receipt": "outputs/hermes-memory-proposals-2026-09-22/gui-normal-regression/receipt.json",
+      "sha256": "0e47fa49e8b41a040521ec46c5ceb8616cc56272d34d9a741b6e757ab8b56423",
+      "passed": true,
+      "checks": 10,
+      "mode": "source",
+      "memoryProposals": false,
+      "cleanup": true,
+      "peerDrained": null,
+      "ownedPeerCount": null,
+      "pageErrors": [],
+      "blockedNetwork": []
+    },
+    "gui-packaged": {
+      "receipt": "outputs/hermes-memory-proposals-2026-09-22/gui-packaged/receipt.json",
+      "sha256": "6039561527bc8e061435c2326da8902aabf71206844ab7340d9b7024d444175d",
+      "passed": true,
+      "checks": 13,
+      "mode": "packaged",
+      "memoryProposals": true,
+      "cleanup": true,
+      "peerDrained": true,
+      "ownedPeerCount": 1,
+      "pageErrors": [],
+      "blockedNetwork": []
+    }
+  },
+  "sourceScreenshotsVisuallyInspected": [
+    "gui-source-first/memory-proposal-ask-desktop.png",
+    "gui-source-first/memory-review-before-after-desktop.png",
+    "gui-source-first/memory-review-before-after-mobile.png"
+  ],
+  "scope": "Actual rendered Ask, source or compiled packaged ACP core and proposal MCP, native helper publication, authenticated human review, durable replay, stale protection and rejection. Managed staff authority with independently signed throwaway reasoning grant.",
+  "limits": "The ACP peer and fingerprint-bound readiness record are fictional. No real model selection, provider call, live customer account, installed-device restart IPC, OS keychain or Windows acceptance is claimed."
+}

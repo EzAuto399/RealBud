@@ -1,0 +1,6 @@
+size  seedMs  deskMs  snapKB  practiceMs  previewMs  importMs  loopsMs
+150   1258    64      136     43          90         68        52
+300   2495    80      263     52          172        165       58
+600   4894    95      519     80          499        528       64
+900   7858    44      775     118         1051       1162      84
+scale: done

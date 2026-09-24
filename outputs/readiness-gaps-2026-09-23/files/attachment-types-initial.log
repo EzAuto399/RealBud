@@ -1,0 +1,7 @@
+
+> realbud@0.1.19 typecheck /Users/yoda/projects/RealBud
+> tsc -b && tsc -p tsconfig.server.json
+
+server/bill-proposal-validation.ts(62,38): error TS2345: Argument of type 'Record<string, unknown>' is not assignable to parameter of type 'BillMailSource'.
+  Type 'Record<string, unknown>' is missing the following properties from type 'BillMailSource': accountId, receiptId, threadId, message
+ ELIFECYCLE  Command failed with exit code 2.

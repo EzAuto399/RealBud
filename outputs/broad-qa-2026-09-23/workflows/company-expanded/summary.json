@@ -1,0 +1,20 @@
+{
+  "at": "2026-09-23T02:43:39.824815+00:00",
+  "newFiles": 12,
+  "newPassedTests": 111,
+  "newFailedTests": 0,
+  "newSkippedTests": 0,
+  "previousFiles": 3,
+  "previousPassedTests": 16,
+  "overlapTests": 0,
+  "combinedUniqueFiles": 15,
+  "combinedUniquePassedTests": 127,
+  "seconds": 42.16,
+  "remainingFromOriginalSkippedInventory": {
+    "urlOnlyPostgres": 44,
+    "nativeHermesRuntime": 51,
+    "nativeWindows": 30
+  },
+  "proof": "Current source, synthetic accounts/data, real disposable PostgreSQL16, loopback pinned TLS and HTTP; no customer, provider, installed-device or physical-LAN proof",
+  "cleanup": "No owned fixture/service processes remain; historical unique fixture receipt stopped:true and copied into historical-path-receipts.json"
+}

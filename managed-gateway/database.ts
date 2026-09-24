@@ -18,7 +18,7 @@ export class LedgerDatabase {
     const applicationId=this.get<{application_id:number}>('PRAGMA application_id')!.application_id;
     const version=this.get<{user_version:number}>('PRAGMA user_version')!.user_version;
     const count=this.get<{count:number}>("SELECT count(*) AS count FROM sqlite_master WHERE type='table'")!.count;
-    requireThat((applicationId===0 && version===0 && count===0) || (applicationId===0x52424757 && [1,2].includes(version)),'foreign_or_unsupported_database',503);
+    requireThat((applicationId===0 && version===0 && count===0) || (applicationId===0x52424757 && [1,2,3].includes(version)),'foreign_or_unsupported_database',503);
     if (version===1) {
       // Preserve v1 bodies/events byte-for-byte. Legacy attempts cannot acquire new children.
       this.sql.exec(`ALTER TABLE requests RENAME TO requests_v1;
@@ -65,11 +65,15 @@ export class LedgerDatabase {
       CREATE TABLE IF NOT EXISTS payments (id TEXT PRIMARY KEY, invoice TEXT NOT NULL UNIQUE REFERENCES invoices(id), body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS refunds (id TEXT PRIMARY KEY, payment TEXT NOT NULL, body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS refund_intents (id TEXT PRIMARY KEY, tenant TEXT NOT NULL, payment TEXT NOT NULL, credit_event INTEGER NOT NULL UNIQUE REFERENCES events(seq), body TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS commercial_terms (seq INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL, period TEXT NOT NULL, version TEXT NOT NULL, digest TEXT NOT NULL, body TEXT NOT NULL, UNIQUE(tenant,period,version));
+      CREATE INDEX IF NOT EXISTS commercial_terms_period ON commercial_terms(tenant,period,seq);
+      CREATE TABLE IF NOT EXISTS commercial_acceptances (tenant TEXT NOT NULL, period TEXT NOT NULL, version TEXT NOT NULL, digest TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(tenant,period,version));
+      CREATE TABLE IF NOT EXISTS collection_invoice_bindings (invoice TEXT PRIMARY KEY REFERENCES invoices(id), tenant TEXT NOT NULL, period TEXT NOT NULL, invoice_digest TEXT NOT NULL, terms_digest TEXT NOT NULL, amount_cents TEXT NOT NULL, body TEXT NOT NULL);
     `);
-    for (const table of ['billing_sources','report_key_mappings','report_policies','report_imports','report_rows','square_mappings','statements','statement_events','statement_acceptances','square_events','square_payments','square_refunds','attempts','events','cards','acceptances','evidence','provider_requests','invoices','invoice_events','payment_events','payments','refunds','refund_intents']) {
+    for (const table of ['billing_sources','report_key_mappings','report_policies','report_imports','report_rows','square_mappings','statements','statement_events','statement_acceptances','square_events','square_payments','square_refunds','attempts','events','cards','acceptances','evidence','provider_requests','invoices','invoice_events','payment_events','payments','refunds','refund_intents','commercial_terms','commercial_acceptances','collection_invoice_bindings']) {
       for (const action of ['UPDATE','DELETE']) this.sql.exec(`CREATE TRIGGER IF NOT EXISTS immutable_${table}_${action} BEFORE ${action} ON ${table} BEGIN SELECT RAISE(ABORT,'immutable_record'); END;`);
     }
-    this.sql.exec('PRAGMA application_id=1380075351; PRAGMA user_version=2;');
+    this.sql.exec('PRAGMA application_id=1380075351; PRAGMA user_version=3;');
     });
     if (path !== ':memory:') chmodSync(path, 0o600);
     this.sql.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;');

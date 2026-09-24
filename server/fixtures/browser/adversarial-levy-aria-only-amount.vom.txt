@@ -1,0 +1,16 @@
+@vom 1
+@view 1280x900
+@layers 1 focus=L1
+L1 page
+  RootWebArea "Fictional Strata Portal — Pay levy"
+    main
+      heading "Pay levy"
+        StaticText "Pay levy"
+      form "Levy payment"
+        paragraph "Payee: Fictional Owners Corporation SP 12345"
+          StaticText "Payee: Fictional Owners Corporation SP 12345"
+        group "Amount due A$1,240.00"
+        LabelText "Payment reference"
+          @e5 textbox "Payment reference" value="FICT-LOT12-Q3"
+          StaticText "Payment reference"
+        @e6 button "Pay A$1,240.00 now"

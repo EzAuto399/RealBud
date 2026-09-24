@@ -1,16 +1,16 @@
 // Ask Bud to shape a job description into a recipe card. The server
 // validates; nothing is saved until the card is allowed.
 import { managedServiceFailure } from "./managed-service.ts";
-import { type ExecFileOptionsWithStringEncoding } from "node:child_process";
 import { randomUUID } from "node:crypto";
 
 import type { Recipe } from "../shared/contracts.ts";
 import { BUD_IDENTITY } from "../shared/bud-identity.ts";
 import { hardenHermesChildEnv } from "./drivers/acp/hermes.ts";
 import { augmentedPath } from "./env-path.ts";
-import { execFileCli } from "./procs.ts";
+import { execFileCli, type OneShotOptions } from "./procs.ts";
 import { HERMES_PIN, hermesCli, hermesIsCompatible } from "./hermes-pin.ts";
 import { hermesHome } from "./hermes-paths.ts";
+import { currentWorkerProfile } from "./hermes-profile.ts";
 import { approvalsAreManual, packInstalled } from "./hermes-pack.ts";
 import { probeHermesVersion } from "./hermes-status.ts";
 import { validateRecipe } from "./recipes.ts";
@@ -105,11 +105,13 @@ export async function askWorker(
   const serviceFailure = managedServiceFailure("reasoning");
   if (serviceFailure) return { ok: false, detail: serviceFailure };
   if (process.env.VITEST && !opts?.cli) return { ok: false, detail: "tests do not use the live worker." };
-  if (!packInstalled(opts?.root)) {
-    return { ok: false, detail: `the "${HERMES_PIN.profile}" pack is missing.` };
+  const selection = { ...currentWorkerProfile() };
+  const root = hermesHome(opts?.root);
+  if (!packInstalled(root)) {
+    return { ok: false, detail: `the "${selection.profile}" pack is missing.` };
   }
-  if (!approvalsAreManual(opts?.root)) {
-    return { ok: false, detail: `the "${HERMES_PIN.profile}" pack is not in manual approvals.` };
+  if (!approvalsAreManual(root)) {
+    return { ok: false, detail: `the "${selection.profile}" pack is not in manual approvals.` };
   }
   const cli = opts?.cli ?? hermesCli();
   const version = await probeHermesVersion(cli);
@@ -124,27 +126,33 @@ export async function askWorker(
   if (!toolsets) return { ok: false, detail: "the worker tool boundary is not usable." };
 
   if (opts?.signal?.aborted) return { ok: false, detail: "Preparation cancelled." };
+  const current = currentWorkerProfile();
+  if (current.profile !== selection.profile || current.memberKey !== selection.memberKey || hermesHome(opts?.root) !== root) {
+    return { ok: false, detail: "The selected worker profile changed. Check your workspace and try again." };
+  }
+  if (!packInstalled(root) || !approvalsAreManual(root)) {
+    return { ok: false, detail: "The selected worker pack changed. Restore manual approvals before trying again." };
+  }
   return new Promise((resolve) => {
-    let cancel: (() => void) | undefined;
     // Launch the exact profile whose pack and approvals were checked above.
     // REALBUD_HERMES_HOME is a RealBud setting; upstream only reads HERMES_HOME.
     // Without this binding, source/helper launches can fall back to ~/.hermes.
-    const env = { ...process.env, PATH: augmentedPath(), REALBUD_HERMES_HOME: hermesHome(opts?.root) };
+    const env = { ...process.env, PATH: augmentedPath(), REALBUD_HERMES_HOME: root };
     const serviceFailure = managedServiceFailure("reasoning");
     if (serviceFailure) return resolve({ ok: false, detail: serviceFailure });
     hardenHermesChildEnv(env);
-    const execOpts: ExecFileOptionsWithStringEncoding & { detached?: boolean } = {
+    const execOpts: OneShotOptions = {
       timeout: opts?.timeoutMs ?? WORKER_TIMEOUT_MS,
+      signal: opts?.signal,
       cwd: seedVault(),
       env,
       encoding: "utf8",
-      detached: process.platform !== "win32",
     };
-    const child = execFileCli(
+    execFileCli(
       cli,
       [
         "--profile",
-        HERMES_PIN.profile,
+        selection.profile,
         "chat",
         "-Q",
         "--toolsets",
@@ -156,17 +164,9 @@ export async function askWorker(
       ],
       execOpts,
       (err, stdout, stderr) => {
-        if (cancel) opts?.signal?.removeEventListener("abort", cancel);
         if (opts?.signal?.aborted) return resolve({ ok: false, detail: "Preparation cancelled." });
         if (err) {
           const timedOut = (err as NodeJS.ErrnoException & { killed?: boolean }).killed;
-          if (timedOut && process.platform !== "win32") {
-            try {
-              process.kill(-child.pid!, "SIGTERM");
-            } catch {
-              /* already gone */
-            }
-          }
           if (timedOut) return resolve({ ok: false, detail: "Bud took too long." });
           const pick = (s: string) => cleanLines(s).slice(-2).join(" · ");
           const snippet = (pick(stdout) || pick(stderr)).slice(0, 200);
@@ -178,18 +178,6 @@ export async function askWorker(
         resolve({ ok: true, stdout: String(stdout) });
       },
     );
-    cancel = () => {
-      // Stop the owned worker before shutdown removes its timeout. Prefer
-      // its process group where available, with a direct-child fallback.
-      try {
-        if (process.platform !== "win32" && child.pid) process.kill(-child.pid, "SIGKILL");
-        else child.kill("SIGKILL");
-      } catch {
-        try { child.kill("SIGKILL"); } catch { /* The worker has already exited. */ }
-      }
-    };
-    opts?.signal?.addEventListener("abort", cancel, { once: true });
-    if (opts?.signal?.aborted) cancel();
   });
 }
 
@@ -259,6 +247,7 @@ export async function narrateShadowRun(
   const prompt =
     `You cannot open a browser in this run. Narrate exactly what you would do at each step and what you would capture — one short line per step, no preamble, no closing summary.\n` +
     `Job: ${recipe.title}\n` +
+    `Description and reviewed preparation guidance (no additional action authority): ${recipe.description || '(none)'}\n` +
     `Portals: ${portals}\n` +
     `Steps:\n${recipe.steps.map((step, i) => `${i + 1}. ${step}`).join("\n")}\n` +
     `Evidence each run must capture: ${recipe.evidence || "(none named)"}\n` +

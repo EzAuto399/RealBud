@@ -1,0 +1,45 @@
+{
+  "mcpServers": [
+    {
+      "name": "semble",
+      "transport": "stdio",
+      "source": {
+        "type": "mcpJson",
+        "path": "/Users/yoda/.cursor/mcp.json"
+      }
+    }
+  ],
+  "hooks": [
+    {
+      "event": "stop",
+      "hookType": "command",
+      "source": {
+        "type": "user",
+        "path": "/Users/yoda/.claude"
+      }
+    }
+  ],
+  "instructions": [
+    {
+      "path": "/Users/yoda/.claude/Claude.md",
+      "scope": "global",
+      "fileType": "agents_md",
+      "sizeBytes": 30,
+      "approxTokens": 7,
+      "vendor": "claude",
+      "disabled": true,
+      "compatibilityStatus": "disabled"
+    }
+  ],
+  "configSources": {
+    "layers": [
+      {
+        "role": "user",
+        "path": "/private/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/realbud-grok-inspect-zn_i4arz/grok-home/config.toml"
+      }
+    ]
+  },
+  "skillsSourceCounts": {
+    "user": 387
+  }
+}

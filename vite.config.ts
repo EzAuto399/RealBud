@@ -7,13 +7,15 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   test: {
     environment: "node",
-    include: ["server/**/*.test.ts", "electron/**/*.test.mjs", "src/**/*.test.ts"],
+    include: ["shared/**/*.test.ts", "server/**/*.test.ts", "electron/**/*.test.mjs", "src/**/*.test.ts"],
     setupFiles: ["server/testing/setup.ts"],
     // the suite spawns fake provider CLIs and a real harness server;
     // parallel files introduce load-sensitive flakes for no win
     fileParallelism: false,
-    testTimeout: 20_000,
-    hookTimeout: 30_000,
+    // Encrypted-backup suites commit multi-MiB sqlite entries; CI runners need
+    // three times a developer machine's budget before that is a real failure.
+    testTimeout: process.env.CI ? 60_000 : 20_000,
+    hookTimeout: process.env.CI ? 90_000 : 30_000,
   },
   resolve: {
     alias: {

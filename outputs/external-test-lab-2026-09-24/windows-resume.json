@@ -1,0 +1,2012 @@
+{
+  "version": 1,
+  "recordedAtUtc": "2026-09-24T06:15:30Z",
+  "evidenceSource": "Setup actions, the first installation restart, post-reboot 0% and 33%, the approximately 02:02 UTC 42% checkpoint and host activity/capacity are root-reported. The read-only monitoring agent previously observed initial-phase 76% at 01:41:15.254 UTC and post-reboot 42% at 01:52:11.032 and 01:58:53.963 UTC through CUA screenshots; it took no UI actions. This documentation update made no new UI or external-volume observation. The subsequent read-only watch observed post-reboot 42% through the screenshot call at 2026-09-24T02:22:37.582Z; root reported continuing CPU, disk activity and VDI growth around 02:23 UTC. No new UI or external-volume access occurred during this documentation update. Root subsequently reported advancement to the OOBE Australia country/region screen, selection of the default United Kingdom keyboard, skipping the second layout and an OOBE spinner. The report was recorded at 2026-09-24T02:31:43Z; exact screen/action timestamps were not supplied. This documentation-only update did not independently observe or operate the VM. Root subsequently reported OOBELOCAL advancing after one Try again, then local user name realbudqa entered and Next advancing to Create a really memorable password with an empty password field. This report was recorded at 2026-09-24T03:07:21Z; exact action timestamps were not supplied. Credential entry is a user handoff; this documentation update made no UI or external-volume access. Root subsequently reported the user completed local account credential setup, the VM moved through Windows privacy setup with user activity, and a fresh observation showed OOBE final updates: Step 1 of 3: Starting update - 6%. The report was recorded at 2026-09-24T03:22:44Z; exact action times were not supplied. No credential values, hints or individual privacy choices are recorded. A subsequent read-only CUA watch observed Step 2 downloading 10% at 03:28:01.514 UTC and 87% at 03:39:58.530 UTC. Root later reported Step 1 completed, Step 2 reached 97% and remained there for approximately 13 minutes with CPU/disk activity, then the normal Windows Update later option and Update later confirmation were selected. Root last reobserved a black screen during an apparent restart. This report was recorded at 2026-09-24T03:58:10Z; exact later screen/action timestamps were not supplied. Windows updates remain deferred and unverified. Root subsequently observed a usable Windows desktop with Recycle Bin and Microsoft Edge at approximately 14:10 Australia/Brisbane local time (04:10 UTC), following the black-screen and Windows Just a moment transition. The VM was Running. This is root-reported first desktop proof; no independent UI observation occurred during this documentation update. Correction from root follow-up: desktop/icons rendered but taskbar absent, Recycle Bin still spinning about 30 seconds after double-click, Task Manager and a black console window titled C:\\WINDOWS\\system32\\vgnupdt.exe showing Not Responding; earlier guest Task Manager showed Disk 100%. Root separately confirmed the b8 test-media ISO attachment with read-only host VBoxManage showvminfo. The earlier usable-desktop description is withdrawn; interactive shell readiness is unverified. Report recorded 2026-09-24T04:15:33Z, exact follow-up action times not supplied. Root subsequently reported the Windows taskbar appeared, a normal PowerShell prompt responds, Get-PSDrive showed D:\\ and dir D:\\ listed RealBud-0.1.19-setup.exe (161206052 bytes), SHA256SUMS.txt and TEST-PLAN.md. Guest Get-FileHash *.exe was submitted but had not returned; no installer ran. Task Manager still showed Disk 100%, led by the displayed Windows Modules Installer Worker entry. Report recorded 2026-09-24T04:37:25Z; exact observation/action times were not supplied. This documentation update made no UI or external-volume calls. Root subsequently reported the full guest output of (Get-FileHash *.exe).Hash as 7C0D23B61259DDB65EEEE4A94655E383B3D20BF7B18E78260EB39D0B45616967, exactly matching the sealed host receipt for RealBud-0.1.19-setup.exe. Report recorded 2026-09-24T04:40:10Z; exact command/result timestamps were not supplied. Installer launch awaits action-time confirmation; no installer ran. This documentation update made no UI or external-volume calls. Root subsequently reported visible guest PowerShell cmd /c ver returning Microsoft Windows [Version 10.0.26200.8037] and Get-PSDrive C showing Used 31.22 GB, Free 95.83 GB, Root C:\\. Root separately reported host df -h /Volumes/RealBud-TestLab at 2026-09-24T04:43:36Z showing size 256Gi, used 34Gi and available 222Gi; VM PID 93212 was live at 8.3% CPU then. Recorded 2026-09-24T04:43:57Z; exact guest command timestamps were not supplied. Installer action-time confirmation remains pending with no installer or app launched; no Windows Update completion claim. This documentation update made no UI or external-volume calls. Root also observed echo $env:PROCESSOR_ARCHITECTURE returning ARM64 in guest PowerShell at approximately 04:44 UTC. This is process-environment architecture evidence only, not native x64 acceptance.",
+  "vmName": "RealBud-Win11-Arm-QA",
+  "resumeVerified": true,
+  "vmStateObserved": "Running",
+  "resumeObservedAtApproxUtc": "2026-09-24 00:40 UTC",
+  "settings": {
+    "language": "English (United Kingdom)",
+    "timeAndCurrency": "English (Australia)",
+    "keyboard": "US",
+    "editionSelected": "Windows 11 Pro",
+    "productKeyOption": "I do not have a product key",
+    "productKeyProvided": false
+  },
+  "licenceAccepted": true,
+  "licenceAcceptance": {
+    "screen": "Applicable notices and licence terms",
+    "termsLastUpdatedLabel": "April 2024",
+    "userConfirmation": "Explicit Yes before the action",
+    "action": "Root clicked Accept and observed Please wait",
+    "actionTimeApproxUtc": "2026-09-24 00:43–00:44 UTC",
+    "exactClickTimestampCaptured": false
+  },
+  "targetBeforeInstallation": {
+    "label": "Disk 0 Unallocated Space",
+    "totalDisplayed": "128.0 GB",
+    "freeDisplayed": "128.0 GB",
+    "onlyTargetObserved": true,
+    "newEmptyTestVdi": true,
+    "nextClicked": true
+  },
+  "lastObservedScreen": "Windows desktop and taskbar; clean PS D:\\> prompt and prior NotSigned output visible",
+  "progressPercent": null,
+  "lastObservedAtApproxUtc": null,
+  "errorVisible": false,
+  "inputRequested": false,
+  "progressHistory": [
+    {
+      "screen": "Installing Windows 11",
+      "progressPercent": 5,
+      "recordedAtUtc": "2026-09-24T00:46:51Z",
+      "exactObservationTimestampCaptured": false
+    },
+    {
+      "screen": "Installing Windows 11",
+      "progressPercent": 16,
+      "observedAtApproxUtc": "2026-09-24 00:58–00:59 UTC",
+      "recordedAtUtc": "2026-09-24T00:59:54Z",
+      "exactObservationTimestampCaptured": false
+    },
+    {
+      "screen": "Installing Windows 11",
+      "progressPercent": 40,
+      "observedAtApproxUtc": "2026-09-24 01:18 UTC",
+      "recordedAtUtc": "2026-09-24T01:19:09.421623+00:00",
+      "evidenceSource": "Root-reported CUA observation from the previous receipt checkpoint",
+      "exactObservationTimestampCaptured": false
+    },
+    {
+      "screen": "Installing Windows 11",
+      "progressPercent": 76,
+      "observedAtApproxUtc": "2026-09-24 01:41 UTC",
+      "evidenceSource": "Root-reported CUA observation, independently corroborated by the read-only monitoring agent",
+      "monitorScreenshotCallAtUtc": "2026-09-24T01:41:15.254Z",
+      "vmStateObserved": "Running",
+      "errorVisible": false,
+      "inputRequested": false,
+      "monitorUiActionTaken": false
+    }
+  ],
+  "installationInProgress": false,
+  "installationCompleted": false,
+  "installedWindows": true,
+  "accountCreated": true,
+  "monitoring": {
+    "boundedMonitorFinished": true,
+    "activeMonitoringRequiredAtCheckpoint": false,
+    "monitoringAgentsStopped": true,
+    "activeWindowsAcceptanceGoalExists": true,
+    "nextUiActionOwner": "root",
+    "latestWatch": {
+      "firstScreenshotCallAtUtc": "2026-09-24T03:28:01.514Z",
+      "lastScreenshotCallAtUtc": "2026-09-24T03:39:58.530Z",
+      "phase": "oobe_final_updates",
+      "step": 2,
+      "initialProgressPercent": 10,
+      "finalProgressPercent": 87,
+      "vmStateObserved": "Running",
+      "step3Observed": false,
+      "errorVisible": false,
+      "inputRequested": false,
+      "desktopObserved": false,
+      "uiActionTaken": false,
+      "fileChanges": false,
+      "cuaOwnershipReturnedTo": "root"
+    },
+    "cuaCoordinationOwner": "root",
+    "nextUiActionAfter": "Root action-time confirmation and readiness check before installer launch",
+    "watchHistory": [
+      {
+        "firstScreenshotCallAtUtc": "2026-09-24T02:11:00.630Z",
+        "lastScreenshotCallAtUtc": "2026-09-24T02:22:37.582Z",
+        "progressPercentThroughout": 42,
+        "vmStateObserved": "Running",
+        "intermittentPartialTextRedraw": true,
+        "finalScreenFullyReadable": true,
+        "errorVisible": false,
+        "inputRequested": false,
+        "oobeVisible": false,
+        "rebootObservedDuringWatch": false,
+        "uiActionTaken": false,
+        "restartPerformed": false,
+        "cuaOwnershipReturnedTo": "root"
+      }
+    ]
+  },
+  "capacityObservations": {
+    "evidenceSource": "Root-reported host capacity readings around 02:23 UTC",
+    "internalObservedAtApproxUtc": "2026-09-24 02:23 UTC",
+    "internalFreeKiB": 67658760,
+    "internalFreeGiBApprox": 64.5,
+    "externalObservedAtApproxUtc": "2026-09-24 02:23 UTC",
+    "externalFreeKiB": 240877072,
+    "externalFreeGiBApprox": 229.7,
+    "externalCapacityRefreshed": true,
+    "memoryPressureRefreshed": false
+  },
+  "externalProgressReceiptUpdated": false,
+  "limits": [
+    "The taskbar and a responsive PowerShell prompt with directory-listing output are observed; full interactive readiness, completed setup acceptance, repeat sign-in and restart reliability remain unverified.",
+    "The full guest installer SHA256 matches the sealed host receipt. Installer launch awaits action-time confirmation; no installer has run. The hash match does not establish RealBud installation or app acceptance.",
+    "Windows updates remain deferred/unverified. At the preceding checkpoint, Task Manager displayed Disk 100% led by Windows Modules Installer Worker; that observation does not establish the cause or completion of activity.",
+    "Earlier unresponsive-window observations and host ISO attachment remain historical evidence. No licence entitlement, activation, Guest Additions, OS Keychain/DPAPI custody, native Intel/AMD hardware or customer acceptance is established.",
+    "Current observations are root-reported guest UI/PowerShell facts, with exact action times unknown. No credential values or hints are recorded; prior history and metrics remain preserved."
+  ],
+  "rebootObserved": true,
+  "desktopObserved": true,
+  "installedAppVerified": false,
+  "capacityHistory": [
+    {
+      "internalObservedAtApproxUtc": "2026-09-24 00:56 UTC",
+      "internalFreeKiB": 4635396,
+      "internalFreeGiBApprox": 4.42,
+      "memoryPressureFreePercent": 33
+    },
+    {
+      "internalObservedAtApproxUtc": "2026-09-24 01:12 UTC",
+      "internalFreeKiB": 63848804,
+      "internalFreeGiBApprox": 60.9,
+      "memoryPressureFreePercent": 36,
+      "externalFreeKiBPriorObservation": 255210968,
+      "externalCapacityRefreshed": false,
+      "rootDeletedFiles": false
+    },
+    {
+      "evidenceSource": "Root-reported host capacity readings",
+      "internalObservedAtApproxUtc": "2026-09-24 01:40 UTC",
+      "internalFreeKiB": 73083380,
+      "internalFreeGiBApprox": 69.7,
+      "externalObservedAtApproxUtc": "2026-09-24 01:40 UTC",
+      "externalFreeKiB": 243677712,
+      "externalFreeGiBApprox": 232.4,
+      "externalCapacityRefreshed": true,
+      "memoryPressureRefreshed": false
+    },
+    {
+      "evidenceSource": "Root-reported host capacity readings supplied with the approximately 02:02 UTC checkpoint",
+      "observationTimeNote": "A separate exact capacity-reading time was not supplied.",
+      "internalFreeKiB": 75102268,
+      "internalFreeGiBApprox": 71.6,
+      "externalFreeKiB": 241874448,
+      "externalFreeGiBApprox": 230.7,
+      "externalCapacityRefreshed": true,
+      "memoryPressureRefreshed": false
+    }
+  ],
+  "currentPhase": "pre_install_snapshot_verified",
+  "progressHistoryPhase": "initial_installer",
+  "phaseHistory": [
+    {
+      "phase": "initial_installer",
+      "lastObservedProgressPercent": 76,
+      "observedAtApproxUtc": "2026-09-24 01:41 UTC",
+      "monitorScreenshotCallAtUtc": "2026-09-24T01:41:15.254Z",
+      "evidenceSource": "Root-reported observation independently corroborated by the read-only monitoring agent",
+      "detailHistoryField": "progressHistory"
+    },
+    {
+      "phase": "first_installation_restart",
+      "screen": "VirtualBox boot spinner",
+      "observedAtApproxUtc": "2026-09-24 01:44 UTC",
+      "evidenceSource": "Root-reported CUA observation",
+      "exactObservationTimestampCaptured": false
+    },
+    {
+      "phase": "post_reboot_installation",
+      "observations": [
+        {
+          "screen": "Installing",
+          "progressPercent": 0,
+          "observedAtApproxUtc": "2026-09-24 01:47 UTC",
+          "evidenceSource": "Root-reported CUA observation",
+          "exactObservationTimestampCaptured": false
+        },
+        {
+          "screen": "Installing",
+          "progressPercent": 33,
+          "observedAtApproxUtc": "2026-09-24 01:50 UTC",
+          "evidenceSource": "Root-reported CUA observation",
+          "exactObservationTimestampCaptured": false
+        },
+        {
+          "screen": "Installing",
+          "progressPercent": 42,
+          "monitorScreenshotCallAtUtc": "2026-09-24T01:52:11.032Z",
+          "evidenceSource": "Read-only monitoring agent CUA screenshot",
+          "monitorUiActionTaken": false
+        },
+        {
+          "screen": "Installing",
+          "progressPercent": 42,
+          "monitorScreenshotCallAtUtc": "2026-09-24T01:58:53.963Z",
+          "evidenceSource": "Read-only monitoring agent CUA screenshot",
+          "monitorUiActionTaken": false
+        },
+        {
+          "screen": "Installing",
+          "progressPercent": 42,
+          "observedAtApproxUtc": "2026-09-24 02:02 UTC",
+          "evidenceSource": "Root-reported CUA observation",
+          "exactObservationTimestampCaptured": false,
+          "spinnerActive": true,
+          "errorVisible": false,
+          "inputRequested": false,
+          "oobeVisible": false
+        },
+        {
+          "screen": "Installing",
+          "progressPercent": 42,
+          "monitorScreenshotCallAtUtc": "2026-09-24T02:22:37.582Z",
+          "evidenceSource": "Read-only monitoring agent CUA screenshot",
+          "vmStateObserved": "Running",
+          "monitorUiActionTaken": false,
+          "errorVisible": false,
+          "inputRequested": false,
+          "oobeVisible": false,
+          "additionalRebootObservedDuringWatch": false
+        }
+      ]
+    },
+    {
+      "phase": "oobe",
+      "evidenceSource": "Root-reported VM UI observations and selections; no independent observation during this documentation update",
+      "reportRecordedAtUtc": "2026-09-24T02:31:43Z",
+      "exactObservationTimestampCaptured": false,
+      "observations": [
+        {
+          "screen": "Country/region",
+          "countryRegionShown": "Australia"
+        },
+        {
+          "screen": "Keyboard layout",
+          "keyboardSelected": "United Kingdom",
+          "defaultSelected": true
+        },
+        {
+          "screen": "Second keyboard layout",
+          "action": "Skipped"
+        },
+        {
+          "screen": "OOBE spinner",
+          "currentAtReport": true
+        },
+        {
+          "screen": "OOBELOCAL error",
+          "recoveryAction": "Try again",
+          "recoveryActionCount": 1,
+          "advancedAfterRecovery": true,
+          "reportRecordedAtUtc": "2026-09-24T03:07:21Z",
+          "evidenceSource": "Root-reported VM UI observation/action",
+          "exactObservationTimestampCaptured": false
+        },
+        {
+          "screen": "Local user name",
+          "localUserNameEntered": "realbudqa",
+          "action": "Next",
+          "advancedTo": "Create a really memorable password",
+          "reportRecordedAtUtc": "2026-09-24T03:07:21Z",
+          "evidenceSource": "Root-reported VM UI observation/action",
+          "exactObservationTimestampCaptured": false
+        },
+        {
+          "screen": "Create a really memorable password",
+          "passwordFieldEmpty": true,
+          "inputRequested": true,
+          "credentialEntryOwner": "user",
+          "agentCredentialEntryPerformed": false,
+          "currentAtReport": true,
+          "reportRecordedAtUtc": "2026-09-24T03:07:21Z",
+          "evidenceSource": "Root-reported VM UI observation/action",
+          "exactObservationTimestampCaptured": false
+        },
+        {
+          "screen": "Local account credential setup",
+          "completedBy": "user",
+          "completed": true,
+          "reportRecordedAtUtc": "2026-09-24T03:22:44Z",
+          "evidenceSource": "Root report",
+          "exactObservationTimestampCaptured": false
+        },
+        {
+          "screen": "Windows privacy setup",
+          "userActivityObserved": true,
+          "individualChoicesRecorded": false,
+          "reportRecordedAtUtc": "2026-09-24T03:22:44Z",
+          "evidenceSource": "Root report",
+          "exactObservationTimestampCaptured": false
+        }
+      ],
+      "completed": false
+    },
+    {
+      "phase": "oobe_final_updates",
+      "evidenceSource": "Root-reported fresh VM observation",
+      "reportRecordedAtUtc": "2026-09-24T03:22:44Z",
+      "exactObservationTimestampCaptured": false,
+      "observations": [
+        {
+          "screen": "Step 1 of 3: Starting update - 6%",
+          "step": 1,
+          "totalSteps": 3,
+          "progressPercent": 6,
+          "currentAtReport": true
+        },
+        {
+          "screen": "Step 2 of 3: Downloading - 10%",
+          "step": 2,
+          "totalSteps": 3,
+          "progressPercent": 10,
+          "monitorScreenshotCallAtUtc": "2026-09-24T03:28:01.514Z",
+          "evidenceSource": "Read-only monitoring agent CUA screenshot"
+        },
+        {
+          "screen": "Step 2 of 3: Downloading - 87%",
+          "step": 2,
+          "totalSteps": 3,
+          "progressPercent": 87,
+          "monitorScreenshotCallAtUtc": "2026-09-24T03:39:58.530Z",
+          "evidenceSource": "Read-only monitoring agent CUA screenshot"
+        },
+        {
+          "step": 1,
+          "completed": true,
+          "reportRecordedAtUtc": "2026-09-24T03:58:10Z",
+          "evidenceSource": "Root report"
+        },
+        {
+          "screen": "Step 2 of 3: Downloading - 97%",
+          "step": 2,
+          "totalSteps": 3,
+          "progressPercent": 97,
+          "unchangedDurationApproxMinutes": 13,
+          "cpuAndDiskActivityObserved": true,
+          "reportRecordedAtUtc": "2026-09-24T03:58:10Z",
+          "evidenceSource": "Root report",
+          "exactObservationTimestampCaptured": false
+        }
+      ],
+      "completed": false
+    },
+    {
+      "phase": "post_update_deferral_transition",
+      "reportRecordedAtUtc": "2026-09-24T03:58:10Z",
+      "evidenceSource": "Root-reported Windows UI actions and last reobservation",
+      "exactObservationTimestampCaptured": false,
+      "observations": [
+        {
+          "screen": "Normal Windows Update later option",
+          "action": "Update later selected"
+        },
+        {
+          "screen": "Update later confirmation",
+          "action": "Update later selected"
+        },
+        {
+          "screen": "Black screen",
+          "interpretation": "Apparent restart; restart completion not yet verified",
+          "currentAtReport": true
+        }
+      ],
+      "desktopObserved": false
+    },
+    {
+      "phase": "first_windows_desktop",
+      "evidenceSource": "Root-reported VM desktop observation",
+      "observedAtApproxLocal": "2026-09-24 14:10 Australia/Brisbane",
+      "observedAtApproxUtc": "2026-09-24 04:10 UTC",
+      "utcConversionOffset": "+10:00",
+      "reportRecordedAtUtc": "2026-09-24T04:10:30Z",
+      "exactObservationTimestampCaptured": false,
+      "precedingScreens": [
+        "Black screen",
+        "Just a moment"
+      ],
+      "screen": "Usable Windows desktop",
+      "visibleDesktopItems": [
+        "Recycle Bin",
+        "Microsoft Edge"
+      ],
+      "vmStateObserved": "Running",
+      "initialDesktopVerified": true,
+      "windowsUpdateCompletionVerified": false,
+      "installedAppVerified": false,
+      "appAcceptanceVerified": false
+    },
+    {
+      "phase": "desktop_rendered_readiness_unverified",
+      "reportRecordedAtUtc": "2026-09-24T04:15:33Z",
+      "evidenceSource": "Root-reported follow-up guest UI observations and separate read-only host media attachment check",
+      "exactObservationTimestampCaptured": false,
+      "observations": [
+        {
+          "screen": "Rendered desktop/icons with absent taskbar",
+          "interactiveShellVerified": false
+        },
+        {
+          "screen": "Recycle Bin action still spinning after approximately 30 seconds"
+        },
+        {
+          "screen": "Task Manager and console window show Not Responding",
+          "detailField": "guestReadinessObservation"
+        },
+        {
+          "hostObservation": "b8 test-media ISO mounted in VM",
+          "detailField": "testMediaMountObservation"
+        }
+      ],
+      "firstDesktopUsabilityClaimCorrected": true
+    },
+    {
+      "phase": "guest_media_listed_hash_pending",
+      "evidenceSource": "Root-reported guest UI and PowerShell output",
+      "reportRecordedAtUtc": "2026-09-24T04:37:25Z",
+      "exactObservationTimestampCaptured": false,
+      "taskbarVisible": true,
+      "powerShellPromptResponsive": true,
+      "guestMediaDirectoryListed": true,
+      "installerSizeBytes": 161206052,
+      "guestInstallerHashPending": true,
+      "guestInstallerHashVerified": false,
+      "installerRun": false,
+      "windowsUpdatesCompletionVerified": false,
+      "detailField": "guestShellObservation"
+    },
+    {
+      "phase": "guest_installer_hash_matched",
+      "evidenceSource": "Root-reported full guest PowerShell output and sealed host receipt comparison",
+      "reportRecordedAtUtc": "2026-09-24T04:40:10Z",
+      "exactObservationTimestampCaptured": false,
+      "guestInstallerHashVerified": true,
+      "installerLaunchAwaitingActionTimeConfirmation": true,
+      "installerRun": false,
+      "installedAppVerified": false,
+      "appAcceptanceVerified": false,
+      "windowsUpdatesCompletionVerified": false,
+      "detailField": "guestInstallerHashObservation"
+    },
+    {
+      "phase": "pre_install_snapshot_verified",
+      "evidenceSource": "Root-reported VBoxManage snapshot success/current-inventory readback and visible CUA desktop",
+      "reportRecordedAtUtc": "2026-09-24T04:58:45Z",
+      "exactObservationTimestampCaptured": false,
+      "snapshotName": "pre-realbud-b8-install",
+      "snapshotUuid": "f7e981cf-cb7e-423b-931c-06bae882c272",
+      "snapshotInventoryVerified": true,
+      "newGuestCommandResponsivenessTestPerformed": false,
+      "installerRun": false,
+      "appLaunched": false,
+      "installerLaunchAwaitingActionTimeConfirmation": true,
+      "detailField": "liveSnapshotObservation"
+    }
+  ],
+  "spinnerActive": false,
+  "oobeVisible": false,
+  "accountTouched": true,
+  "applicationTouched": false,
+  "hostActivityObservation": {
+    "observedAtApproxUtc": "2026-09-24 02:23 UTC",
+    "evidenceSource": "Root-reported host measurements",
+    "vmPid": 93212,
+    "cpuPercent": 153.1,
+    "physicalDisk": "disk6",
+    "diskThroughputMBpsMin": 2.24,
+    "diskThroughputMBpsMax": 10.32,
+    "vdiSizeBytes": 15670968320,
+    "vdiModifiedAtLocal": "2026-09-24T12:23:14+10:00",
+    "vdiModifiedAtUtc": "2026-09-24T02:23:14Z",
+    "priorVdiObservation": {
+      "observedAtApproxUtc": "2026-09-24 02:17 UTC",
+      "sizeBytes": 14724104192
+    },
+    "vdiGrowthBytes": 946864128,
+    "interpretation": "The static GUI percentage alone is not proof of a stall because disk writes and VDI growth continue; activity does not prove installation completion.",
+    "restartPerformed": false
+  },
+  "lastMonitorScreenshotCallAtUtc": "2026-09-24T03:39:58.530Z",
+  "hostActivityHistory": [
+    {
+      "observedAtApproxUtc": "2026-09-24 01:59 UTC",
+      "evidenceSource": "Root-reported host measurements",
+      "cpuPercent": 138.9,
+      "physicalDisk": "disk6",
+      "diskThroughputMBpsMin": 3.53,
+      "diskThroughputMBpsMax": 5.51
+    }
+  ],
+  "lastObservationRecordedAtUtc": "2026-09-24T04:58:45Z",
+  "lastObservationTimeNote": "Root-reported snapshot inventory and CUA screenshot; exact root observation and snapshot timestamps were not captured. VMStateChangeTime 2026-09-24T04:57:45.700000000 is a snapshot state change, not a root observation timestamp.",
+  "oobeReached": true,
+  "oobeCompleted": false,
+  "oobeSettings": {
+    "countryRegionShown": "Australia",
+    "keyboardSelected": "United Kingdom",
+    "secondKeyboardLayoutSkipped": true,
+    "evidenceSource": "Root report",
+    "installerSettingsPreservedSeparately": true
+  },
+  "credentialHandoff": {
+    "required": false,
+    "owner": "user",
+    "screen": "Create a really memorable password",
+    "passwordFieldEmpty": true,
+    "agentCredentialEntryPerformed": false,
+    "reportRecordedAtUtc": "2026-09-24T03:07:21Z",
+    "completed": true,
+    "completedBy": "user",
+    "completionReportRecordedAtUtc": "2026-09-24T03:22:44Z",
+    "passwordFieldObservationScope": "Historical empty-field observation at the original handoff reportRecordedAtUtc, not a current credential-state assertion."
+  },
+  "appAcceptanceVerified": false,
+  "progressScope": "Live snapshot inventory verified; desktop visible; installer action-time confirmation pending",
+  "credentialHandoffHistory": [
+    {
+      "required": true,
+      "owner": "user",
+      "screen": "Create a really memorable password",
+      "passwordFieldEmpty": true,
+      "agentCredentialEntryPerformed": false,
+      "reportRecordedAtUtc": "2026-09-24T03:07:21Z",
+      "completed": false
+    }
+  ],
+  "localAccountCredentialSetupCompleted": true,
+  "accountCreatedVerificationNote": "Root observed the initial local account session, rendered desktop and later a responsive PowerShell prompt after user-completed credentials; full interactive readiness and repeat sign-in remain unverified.",
+  "windowsUpdates": {
+    "step1Completed": true,
+    "lastDownloadStep": 2,
+    "lastDownloadProgressPercent": 97,
+    "unchangedDurationApproxMinutes": 13,
+    "cpuAndDiskActivityObservedDuringPlateau": true,
+    "deferred": true,
+    "deferralMethod": "Normal Windows Update later option and Update later confirmation",
+    "completionVerified": false,
+    "reportRecordedAtUtc": "2026-09-24T03:58:10Z"
+  },
+  "proofHistory": [
+    {
+      "recordedAtUtc": "2026-09-24T03:59:38Z",
+      "currentPhase": "post_update_deferral_transition",
+      "flags": {
+        "installationInProgress": true,
+        "installationCompleted": false,
+        "installedWindows": false,
+        "accountCreated": false,
+        "desktopObserved": false,
+        "oobeCompleted": false,
+        "installedAppVerified": false,
+        "appAcceptanceVerified": false
+      },
+      "accountCreatedVerificationNote": "Local account credential setup was completed by the user; successful account sign-in and a desktop have not been observed. accountCreated remains a conservative persisted-account proof flag."
+    },
+    {
+      "recordedAtUtc": "2026-09-24T04:12:09Z",
+      "currentPhase": "first_windows_desktop",
+      "flags": {
+        "installationInProgress": false,
+        "installationCompleted": true,
+        "installedWindows": true,
+        "accountCreated": true,
+        "desktopObserved": true,
+        "oobeCompleted": true,
+        "installedAppVerified": false,
+        "appAcceptanceVerified": false
+      },
+      "correction": "Usable-desktop/readiness inference superseded by later absent-taskbar and Not Responding observations."
+    }
+  ],
+  "firstDesktopObservation": {
+    "phase": "first_windows_desktop",
+    "evidenceSource": "Root-reported VM desktop observation",
+    "observedAtApproxLocal": "2026-09-24 14:10 Australia/Brisbane",
+    "observedAtApproxUtc": "2026-09-24 04:10 UTC",
+    "utcConversionOffset": "+10:00",
+    "reportRecordedAtUtc": "2026-09-24T04:10:30Z",
+    "exactObservationTimestampCaptured": false,
+    "precedingScreens": [
+      "Black screen",
+      "Just a moment"
+    ],
+    "screen": "Rendered Windows desktop",
+    "visibleDesktopItems": [
+      "Recycle Bin",
+      "Microsoft Edge"
+    ],
+    "vmStateObserved": "Running",
+    "initialDesktopVerified": true,
+    "windowsUpdateCompletionVerified": false,
+    "installedAppVerified": false,
+    "appAcceptanceVerified": false,
+    "interactiveShellVerified": false,
+    "descriptionCorrection": "The earlier usable descriptor was overstated; later root observations establish rendering only, with absent taskbar and Not Responding windows."
+  },
+  "limitsHistory": [
+    {
+      "recordedAtUtc": "2026-09-24T03:59:38Z",
+      "currentPhase": "post_update_deferral_transition",
+      "limits": [
+        "Installation progress is not completed installation, guest acceptance or RealBud Windows acceptance.",
+        "No licence entitlement, activation, installed account, Guest Additions, native x64 hardware or customer acceptance is established.",
+        "Receipt recording time is distinct from the approximate GUI action times.",
+        "The external setup-progress receipt was not retried after its bounded read timed out.",
+        "The first installation restart is observed; no desktop, account creation or installed RealBud application is verified at this checkpoint.",
+        "Initial-installer and post-reboot percentages describe separate phases, not cumulative progress; observed CPU and disk activity do not establish completion.",
+        "The unchanged 42% GUI percentage alone does not establish a stall while root-observed disk writes and VDI growth continue; no restart was performed for this checkpoint.",
+        "Reaching OOBE does not establish completed Windows setup, an account, a desktop or installed RealBud. installedWindows and installationCompleted remain conservative completion-proof flags; no current installation percentage is asserted.",
+        "At the historical 03:07 UTC checkpoint, entering the local user name realbudqa did not establish completed account creation. The password field was empty and credential entry was handed to the user; desktop, RealBud installation and app acceptance were unverified.",
+        "The user completed the credential handoff. The 6% progress belongs only to OOBE final-update step 1 of 3; desktop, RealBud installation and app acceptance remain unverified. No credential values or hints are recorded.",
+        "Windows updates were deferred through the normal Update later option and confirmation. The current black screen is an apparent restart only; it does not establish restart completion, a desktop, completed updates or RealBud acceptance."
+      ]
+    },
+    {
+      "recordedAtUtc": "2026-09-24T04:12:09Z",
+      "currentPhase": "first_windows_desktop",
+      "limits": [
+        "The first usable Windows desktop verifies initial installation/OOBE and the initial signed-in account session; it does not establish repeat sign-in or restart reliability.",
+        "Windows updates were deferred through normal Update later controls; update completion, installed RealBud and Windows app acceptance remain unverified.",
+        "No licence entitlement, activation, Guest Additions, OS Keychain/DPAPI custody, native Intel/AMD hardware or customer acceptance is established.",
+        "The root-reported first desktop time is approximate; recording time is distinct from observation and action timestamps. No credential values or hints are recorded.",
+        "The external setup-progress receipt was not retried after its bounded read timed out; prior negative checkpoints and update-deferral observations are preserved in historical fields."
+      ]
+    },
+    {
+      "recordedAtUtc": "2026-09-24T04:17:17Z",
+      "currentPhase": "desktop_rendered_readiness_unverified",
+      "limits": [
+        "A rendered desktop verifies desktop display only. Interactive shell readiness, completed setup acceptance, repeat sign-in and restart reliability remain unverified; the earlier usable descriptor is corrected.",
+        "Windows updates remain deferred/unverified, and RealBud installation and Windows app acceptance are unverified. Host ISO attachment does not establish guest installer access, hash or execution.",
+        "The guest console window title is not verified process identity; no cause or malware conclusion is established from the title, Not Responding status or Disk 100% observation.",
+        "No licence entitlement, activation, Guest Additions, OS Keychain/DPAPI custody, native Intel/AMD hardware or customer acceptance is established. No credential values or hints are recorded.",
+        "Observation sources distinguish root-reported guest UI from the read-only host VBoxManage attachment check. Follow-up exact times were not supplied; first desktop timing, previous proof claims and update-deferral history are retained."
+      ]
+    },
+    {
+      "recordedAtUtc": "2026-09-24T04:38:38Z",
+      "currentPhase": "guest_media_listed_hash_pending",
+      "limits": [
+        "The taskbar and a responsive PowerShell prompt with directory-listing output are observed; full interactive readiness, completed setup acceptance, repeat sign-in and restart reliability remain unverified.",
+        "Guest Get-FileHash *.exe was submitted but has not returned. Directory names and installer size do not verify its guest hash. No installer has run; RealBud installation and app acceptance remain unverified.",
+        "Windows updates remain deferred/unverified. Task Manager still displays Disk 100% led by Windows Modules Installer Worker; the displayed entry does not establish the cause or completion of activity.",
+        "Earlier unresponsive-window observations and host ISO attachment remain historical evidence. No licence entitlement, activation, Guest Additions, OS Keychain/DPAPI custody, native Intel/AMD hardware or customer acceptance is established.",
+        "Current observations are root-reported guest UI/PowerShell facts, with exact action times unknown. No credential values or hints are recorded; prior history and metrics remain preserved."
+      ]
+    }
+  ],
+  "desktopInteractiveVerified": false,
+  "shellReadinessVerified": false,
+  "setupCompletionVerificationNote": "Windows and the initial account/desktop have been observed, with a responsive PowerShell prompt and directory listing. Full interactive readiness and completed setup acceptance remain unverified; installationCompleted and oobeCompleted remain false as completion-proof gates.",
+  "firstDesktopObservationHistory": [
+    {
+      "phase": "first_windows_desktop",
+      "evidenceSource": "Root-reported VM desktop observation",
+      "observedAtApproxLocal": "2026-09-24 14:10 Australia/Brisbane",
+      "observedAtApproxUtc": "2026-09-24 04:10 UTC",
+      "utcConversionOffset": "+10:00",
+      "reportRecordedAtUtc": "2026-09-24T04:10:30Z",
+      "exactObservationTimestampCaptured": false,
+      "precedingScreens": [
+        "Black screen",
+        "Just a moment"
+      ],
+      "screen": "Usable Windows desktop",
+      "visibleDesktopItems": [
+        "Recycle Bin",
+        "Microsoft Edge"
+      ],
+      "vmStateObserved": "Running",
+      "initialDesktopVerified": true,
+      "windowsUpdateCompletionVerified": false,
+      "installedAppVerified": false,
+      "appAcceptanceVerified": false
+    }
+  ],
+  "guestReadinessObservation": {
+    "evidenceSource": "Root-reported guest UI observations",
+    "reportRecordedAtUtc": "2026-09-24T04:15:33Z",
+    "exactObservationTimestampCaptured": false,
+    "desktopIconsRendered": true,
+    "taskbarVisible": false,
+    "recycleBin": {
+      "action": "Double-click",
+      "response": "Still spinning",
+      "elapsedApproxSeconds": 30,
+      "openedVerified": false
+    },
+    "unresponsiveWindows": [
+      {
+        "title": "Task Manager",
+        "status": "Not Responding"
+      },
+      {
+        "title": "C:\\WINDOWS\\system32\\vgnupdt.exe",
+        "appearance": "Black console window",
+        "status": "Not Responding",
+        "titleOnlyNotProcessIdentity": true
+      }
+    ],
+    "earlierGuestTaskManagerDiskPercent": 100,
+    "causeVerified": false,
+    "interactiveShellVerified": false
+  },
+  "testMediaMountObservation": {
+    "evidenceSource": "Root-reported read-only host VBoxManage showvminfo",
+    "reportRecordedAtUtc": "2026-09-24T04:15:33Z",
+    "isoPath": "/Volumes/RealBud-TestLab/downloads/RealBud-b8aa9f2f-test-media.iso",
+    "mountedInVm": true,
+    "guestInstallerAccessVerified": false,
+    "guestInstallerHashVerified": false,
+    "guestInstallerExecutionVerified": false
+  },
+  "guestShellObservation": {
+    "evidenceSource": "Root-reported guest UI and PowerShell output",
+    "reportRecordedAtUtc": "2026-09-24T04:37:25Z",
+    "exactObservationTimestampCaptured": false,
+    "taskbarVisible": true,
+    "powerShellPromptResponsive": true,
+    "getPsDrive": {
+      "command": "Get-PSDrive",
+      "observedDrive": "D:\\"
+    },
+    "directoryListing": {
+      "command": "dir D:\\",
+      "entries": [
+        {
+          "name": "RealBud-0.1.19-setup.exe",
+          "sizeBytes": 161206052
+        },
+        {
+          "name": "SHA256SUMS.txt"
+        },
+        {
+          "name": "TEST-PLAN.md"
+        }
+      ]
+    },
+    "installerHash": {
+      "command": "Get-FileHash *.exe",
+      "submitted": true,
+      "returned": false,
+      "verified": false
+    },
+    "taskManager": {
+      "diskPercent": 100,
+      "leadingDisplayedEntry": "Windows Modules Installer Worker",
+      "causeVerified": false
+    },
+    "installerRun": false,
+    "fullInteractiveReadinessVerified": false
+  },
+  "guestInstallerHashVerified": true,
+  "guestInstallerHashObservation": {
+    "evidenceSource": "Root-reported full guest PowerShell output and comparison against sealed host receipt",
+    "reportRecordedAtUtc": "2026-09-24T04:40:10Z",
+    "exactObservationTimestampCaptured": false,
+    "fileName": "RealBud-0.1.19-setup.exe",
+    "command": "(Get-FileHash *.exe).Hash",
+    "algorithm": "SHA256",
+    "guestHash": "7C0D23B61259DDB65EEEE4A94655E383B3D20BF7B18E78260EB39D0B45616967",
+    "expectedHostReceiptHash": "7c0d23b61259ddb65eeee4a94655e383b3d20bf7b18e78260eb39d0b45616967",
+    "returned": true,
+    "fullOutputObserved": true,
+    "matchesSealedHostReceipt": true,
+    "verified": true,
+    "installerLaunchAwaitingActionTimeConfirmation": true,
+    "installerRun": false
+  },
+  "guestReadinessCommandsObservation": {
+    "evidenceSource": "Root-reported visible guest PowerShell command output",
+    "reportRecordedAtUtc": "2026-09-24T04:43:57Z",
+    "exactObservationTimestampCaptured": false,
+    "windowsVersion": {
+      "command": "cmd /c ver",
+      "output": "Microsoft Windows [Version 10.0.26200.8037]",
+      "version": "10.0.26200.8037"
+    },
+    "systemDrive": {
+      "command": "Get-PSDrive C",
+      "usedDisplayed": "31.22 GB",
+      "freeDisplayed": "95.83 GB",
+      "root": "C:\\",
+      "unitNote": "Display values retained as reported, without byte conversion."
+    },
+    "installerLaunchAwaitingActionTimeConfirmation": true,
+    "installerRun": false,
+    "appLaunched": false,
+    "windowsUpdateCompletionVerified": false,
+    "processArchitecture": {
+      "command": "echo $env:PROCESSOR_ARCHITECTURE",
+      "output": "ARM64",
+      "observedAtApproxUtc": "2026-09-24 04:44 UTC",
+      "exactObservationTimestampCaptured": false,
+      "evidenceScope": "Process environment architecture only; not native x64 Windows or application acceptance."
+    },
+    "operatingSystemArchitecture": {
+      "evidenceSource": "Root-reported visible guest PowerShell output",
+      "command": "(Get-CimInstance Win32_OperatingSystem).OSArchitecture",
+      "output": "ARM 64-bit Processor",
+      "observedAtApproxUtc": "2026-09-24 04:47 UTC",
+      "exactObservationTimestampCaptured": false,
+      "evidenceScope": "OS-reported architecture; stronger than process environment evidence, not native x64 app acceptance, installer launch or Windows Update completion."
+    },
+    "currentTokenGroups": {
+      "evidenceSource": "Root-reported visible guest PowerShell output",
+      "command": "whoami /groups",
+      "observedAtApproxUtc": "2026-09-24 04:48 UTC",
+      "exactObservationTimestampCaptured": false,
+      "groups": [
+        {
+          "name": "NT AUTHORITY\\Local account and member of Administrators group",
+          "sid": "S-1-5-114",
+          "attributesObserved": "Group used for deny only"
+        },
+        {
+          "name": "BUILTIN\\Administrators",
+          "sid": "S-1-5-32-544",
+          "attributesObserved": "Group used for deny only"
+        },
+        {
+          "name": "Mandatory Label\\Medium Mandatory Level",
+          "sid": "S-1-16-8192"
+        }
+      ],
+      "presentPowerShellToken": {
+        "elevated": false,
+        "filtered": true,
+        "integrityLevel": "Medium",
+        "administratorsDenyOnly": true
+      },
+      "accountAdministratorsMember": true,
+      "separateStandardAccountLoginVerified": false,
+      "realBudLaunchVerified": false,
+      "evidenceScope": "Current PowerShell token and account group membership only; not a separate standard-account login, installer execution or RealBud launch."
+    }
+  },
+  "hostReadinessCapacityObservation": {
+    "evidenceSource": "Root-reported read-only host df and VM process observation",
+    "observedAtUtc": "2026-09-24T04:43:36Z",
+    "reportRecordedAtUtc": "2026-09-24T04:43:57Z",
+    "volume": {
+      "command": "df -h /Volumes/RealBud-TestLab",
+      "mountPoint": "/Volumes/RealBud-TestLab",
+      "sizeDisplayed": "256Gi",
+      "usedDisplayed": "34Gi",
+      "availableDisplayed": "222Gi",
+      "unitNote": "Rounded human-readable display values retained; no exact byte count inferred."
+    },
+    "vmProcess": {
+      "pid": 93212,
+      "live": true,
+      "cpuPercent": 8.3
+    },
+    "interpretation": "Capacity output and a live VM process do not establish completed Windows updates, installation acceptance or app readiness."
+  },
+  "guestInstallerAuthenticodeObservation": {
+    "evidenceSource": "Root-reported visible guest PowerShell Authenticode output",
+    "command": "Get-AuthenticodeSignature *.exe",
+    "observedAtApproxUtc": "2026-09-24 04:49 UTC",
+    "exactObservationTimestampCaptured": false,
+    "drive": "D:\\",
+    "fileName": "RealBud-0.1.19-setup.exe",
+    "onlyInstallerOnDriveReported": true,
+    "status": "NotSigned",
+    "readOnlyCheck": true,
+    "sealedGuestHashAlreadyMatched": true,
+    "hashObservationField": "guestInstallerHashObservation",
+    "installerRun": false,
+    "smartScreenExperienceObserved": false,
+    "installationVerified": false,
+    "appAcceptanceVerified": false,
+    "installerLaunchAwaitingActionTimeConfirmation": true,
+    "evidenceScope": "Windows/PowerShell Authenticode status only; a matching sealed hash does not establish an Authenticode signature, SmartScreen behavior, installation or app acceptance."
+  },
+  "checkpointMetadataHistory": [
+    {
+      "recordedAtUtc": "2026-09-24T04:51:02Z",
+      "currentPhase": "guest_installer_hash_matched",
+      "lastObservedScreen": "Responsive guest PowerShell returned Windows version and C drive capacity",
+      "lastObservedAtApproxUtc": null,
+      "lastObservationRecordedAtUtc": "2026-09-24T04:43:57Z",
+      "lastObservationTimeNote": "Guest version/capacity output is root-reported without exact guest timestamps; separate host volume/VM process observations were reported at 2026-09-24T04:43:36Z.",
+      "progressScope": "Guest installer SHA256 matched; installer launch awaiting action-time confirmation"
+    }
+  ],
+  "liveSnapshotObservation": {
+    "evidenceSource": "Root-reported host VBoxManage commands, external-volume capacity and CUA guest screenshot",
+    "reportRecordedAtUtc": "2026-09-24T04:58:45Z",
+    "exactObservationTimestampCaptured": false,
+    "vmName": "RealBud-Win11-Arm-QA",
+    "before": {
+      "vmState": "running",
+      "memoryMB": 8192,
+      "priorSnapshotCount": 0,
+      "externalAvailableGiBDisplayed": 220
+    },
+    "snapshot": {
+      "name": "pre-realbud-b8-install",
+      "uuid": "f7e981cf-cb7e-423b-931c-06bae882c272",
+      "live": true,
+      "command": "VBoxManage snapshot RealBud-Win11-Arm-QA take pre-realbud-b8-install --description='Clean Windows 11 Pro ARM guest, sealed b8 installer mounted and hash-verified; RealBud not installed' --live",
+      "exitCode": 0,
+      "output": "Snapshot taken. UUID: f7e981cf-cb7e-423b-931c-06bae882c272",
+      "descriptionIsRecordedCommandArgument": true
+    },
+    "readback": {
+      "snapshotListCommand": "snapshot list --details",
+      "snapshotListedAsCurrent": true,
+      "showVmInfoCommand": "showvminfo",
+      "vmState": "running",
+      "currentSnapshotName": "pre-realbud-b8-install",
+      "currentSnapshotUuid": "f7e981cf-cb7e-423b-931c-06bae882c272",
+      "externalAvailableGiBDisplayed": 216,
+      "vmStateChangeTimeRaw": "2026-09-24T04:57:45.700000000",
+      "vmStateChangeTimeScope": "Snapshot state change, not a root observation timestamp."
+    },
+    "guestScreenshot": {
+      "evidenceSource": "Root-reported CUA screenshot",
+      "desktopVisible": true,
+      "taskbarVisible": true,
+      "powerShellPromptVisible": "PS D:\\>",
+      "priorAuthenticodeOutputVisible": "NotSigned",
+      "newCommandResponsivenessTestPerformed": false,
+      "evidenceScope": "Visible desktop and prompt only; not a new guest command-responsiveness test or application acceptance."
+    },
+    "snapshotInventoryVerified": true,
+    "snapshotRestoreTested": false,
+    "installerRun": false,
+    "appLaunched": false,
+    "installedAppVerified": false,
+    "appAcceptanceVerified": false,
+    "windowsUpdateCompletionVerified": false,
+    "installerLaunchAwaitingActionTimeConfirmation": true
+  },
+  "postSnapshotWindowsUpdateUiObservation": {
+    "evidenceSource": "Root-reported CUA interaction and immediate guest screenshots after the live snapshot",
+    "reportRecordedAtUtc": "2026-09-24T05:03:55Z",
+    "exactActionTimestampsCaptured": false,
+    "powerShellRecovery": {
+      "initialMode": "Select",
+      "keyPressed": "Escape",
+      "normalModeObserved": true,
+      "singleTestKeystroke": "e",
+      "testKeystrokeAppearedAtPrompt": "PS D:\\>",
+      "testKeystrokeErased": true,
+      "testKeystrokeSubmittedAsCommand": false
+    },
+    "settingsLaunch": {
+      "command": "start ms-settings:windowsupdate",
+      "typedCommandVisuallyVerified": true,
+      "submittedWith": "Enter",
+      "launchedAtApproxUtc": "2026-09-24 05:01 UTC",
+      "visibleScreen": "White splash/loading screen with gear"
+    },
+    "followup": {
+      "hostObservedAtApproxUtc": "2026-09-24 05:02 UTC",
+      "guestClockDisplayed": "2:02 PM",
+      "guestClockTimezoneInferred": false,
+      "sameSplashStillVisible": true
+    },
+    "closeAttempt": {
+      "action": "Click visible Settings X",
+      "clickCount": 1,
+      "actionAtApproxUtc": "2026-09-24 05:02 UTC",
+      "immediateScreenshot": "Splash still visible",
+      "closeConfirmed": false
+    },
+    "checkStatus": "Read-only Windows Update UI check failed: Settings launch timed out",
+    "updatesPendingVerified": false,
+    "updatesCompletedVerified": false,
+    "settingsPermanentlyHungVerified": false,
+    "installerRun": false,
+    "evidenceScope": "Observed slow/incomplete Settings loading and an unconfirmed close attempt; does not establish pending/completed updates, a permanent hang, installer execution or app acceptance.",
+    "checkStatusHistory": [
+      {
+        "status": "Incomplete read-only Windows Update UI check",
+        "scope": "Initial loading and immediate post-close-attempt observation before final timeout output."
+      }
+    ],
+    "finalResult": {
+      "evidenceSource": "Root-reported authoritative guest UI and PowerShell follow-up",
+      "hostObservedAtApproxUtc": "2026-09-24 05:03 UTC",
+      "guestClockDisplayed": "2:03 PM",
+      "exactObservationTimestampCaptured": false,
+      "settingsSplashDisappeared": true,
+      "command": "start ms-settings:windowsupdate",
+      "errorMessage": "This command cannot be run due to the error: The app didn't start in the required time.",
+      "categoryInfoReported": "InvalidOperation / Start-ProcessCommand",
+      "powerShellPromptReturned": "PS D:\\>",
+      "desktopVisible": true,
+      "taskbarVisible": true,
+      "secondLaunchAttempted": false,
+      "windowsUpdateCompletionVerified": false
+    }
+  },
+  "windowsUpdateServiceFollowupObservation": {
+    "evidenceSource": "Root-reported visible guest PowerShell and separate read-only host observations after the Settings timeout",
+    "reportRecordedAtUtc": "2026-09-24T05:07:03Z",
+    "exactObservationTimestampCaptured": false,
+    "guestCommand": {
+      "command": "Get-Service wuauserv",
+      "visuallyTyped": true,
+      "elapsedApproxSeconds": 60,
+      "screenshotOutput": {
+        "status": "Running",
+        "name": "wuauserv",
+        "displayName": "Windows Update"
+      },
+      "controlCPressedAsCommandCompleted": true,
+      "controlCDisplay": "^C",
+      "subsequentCleanPrompt": "PS D:\\>"
+    },
+    "hostObservation": {
+      "vmProcess": {
+        "pid": 93212,
+        "live": true,
+        "cpuPercentApprox": 45
+      },
+      "externalAvailableGiBDisplayed": 214,
+      "diskMonitoringAttempt": {
+        "command": "iostat -d disk9 1 2",
+        "failed": true,
+        "error": "could not record 'disk9' for monitoring",
+        "usableDiskIoEvidence": false
+      }
+    },
+    "installerRun": false,
+    "windowsUpdateCompletionVerified": false,
+    "successfulSettingsUiVerified": false,
+    "pendingRebootVerified": false,
+    "priorTimeoutCauseVerified": false,
+    "evidenceScope": "Displayed Windows Update service status only; not update completion, successful Settings UI, a pending reboot or timeout-cause evidence. Failed iostat provided no usable disk I/O conclusion."
+  },
+  "guiRecoveryAndTaskManagerObservation": {
+    "evidenceSource": "Root-reported CUA guest screenshots/interactions and separate read-only host VBoxManage/volume observations",
+    "observedAtApproxUtc": "2026-09-24 05:43 UTC",
+    "reportRecordedAtUtc": "2026-09-24T05:44:36Z",
+    "exactObservationTimestampCaptured": false,
+    "guiRecovery": {
+      "initialScreenshot": "Black VM screen",
+      "initialScreenshotCallElapsedApproxSeconds": 123,
+      "blackScreenDurationMeasured": false,
+      "keyboardWakeAttemptCount": 1,
+      "keyboardWakeTimedOut": true,
+      "guiRecovered": true,
+      "vmResetPerformed": false
+    },
+    "hostObservation": {
+      "vmState": "running",
+      "currentSnapshotName": "pre-realbud-b8-install",
+      "currentSnapshotUuid": "f7e981cf-cb7e-423b-931c-06bae882c272",
+      "externalVolume": {
+        "filesystem": "APFS",
+        "writableReported": true,
+        "freeGiBApprox": 214,
+        "writeTestPerformedByDocumentationTask": false
+      }
+    },
+    "taskManager": {
+      "guiEventuallyOpened": true,
+      "overall": {
+        "cpuPercent": 89,
+        "memoryPercent": 54,
+        "diskPercent": 100,
+        "networkPercent": 0
+      },
+      "visibleRows": [
+        {
+          "name": "System",
+          "cpuPercent": 11.1,
+          "diskMBpsDisplayed": 0.7
+        },
+        {
+          "name": "wsappx",
+          "cpuPercent": 3.8,
+          "diskMBpsDisplayed": 0.2
+        },
+        {
+          "name": "Windows Modules Installer Worker",
+          "cpuPercent": 12.1,
+          "diskMBpsDisplayed": 0.1
+        }
+      ],
+      "observationScope": "Point-in-time displayed percentages and rates only; not sustained performance or cause evidence."
+    },
+    "priorSettingsTimeoutStillRecorded": true,
+    "installerLaunched": false,
+    "windowsUpdateCompletionVerified": false,
+    "causalConclusionVerified": false,
+    "evidenceScope": "Temporary black screenshot and later GUI recovery with live VM/current snapshot plus point-in-time Task Manager readings. No update-completion, timeout-cause, installer-launch or app-acceptance conclusion."
+  },
+  "taskManagerFollowupObservation0545": {
+    "evidenceSource": "Root-reported CUA screenshot of guest Task Manager",
+    "observedAtApproxUtc": "2026-09-24 05:45 UTC",
+    "reportRecordedAtUtc": "2026-09-24T05:46:32Z",
+    "exactObservationTimestampCaptured": false,
+    "followsObservationField": "guiRecoveryAndTaskManagerObservation",
+    "overall": {
+      "cpuPercent": 18,
+      "memoryPercent": 49,
+      "diskPercent": 100,
+      "networkPercent": 1
+    },
+    "rowSortObserved": "Disk",
+    "visibleRows": [
+      {
+        "name": "wsappx",
+        "diskMBpsDisplayed": 8.0
+      },
+      {
+        "name": "Service Host: Network Service",
+        "diskMBpsDisplayed": 5.0,
+        "networkMbpsDisplayed": 7.9
+      },
+      {
+        "name": "System",
+        "diskMBpsDisplayed": 1.4
+      },
+      {
+        "name": "Windows Modules Installer Worker",
+        "cpuPercent": 5.0,
+        "diskMBpsDisplayed": 0.1
+      }
+    ],
+    "installerLaunched": false,
+    "windowsUpdateCompletionVerified": false,
+    "causalConclusionVerified": false,
+    "evidenceScope": "Changing point-in-time displayed activity while disk remained 100%; not sustained performance, cause or activity-completion evidence."
+  },
+  "performanceViewBlackCanvasObservation": {
+    "evidenceSource": "Root-reported CUA interactions/screenshots and separate read-only host VBoxManage/process observations",
+    "observedAtApproxUtc": "2026-09-24 05:49–05:50 UTC",
+    "reportRecordedAtUtc": "2026-09-24T05:50:46Z",
+    "exactUiActionTimestampsCaptured": false,
+    "initiatingAction": {
+      "action": "Click left Performance icon in Task Manager",
+      "intent": "Inspect disk active-time view"
+    },
+    "uiObservations": [
+      {
+        "sequence": 1,
+        "action": "Immediate CUA screenshot after click",
+        "result": "Black VM canvas"
+      },
+      {
+        "sequence": 2,
+        "action": "Second CUA screenshot",
+        "result": "Black VM canvas"
+      },
+      {
+        "sequence": 3,
+        "action": "AX Raise on VirtualBox window",
+        "subsequentAction": "One further CUA screenshot after 30 seconds",
+        "result": "Black VM canvas"
+      }
+    ],
+    "hostObservation": {
+      "vboxManageObservedAtUtc": "2026-09-24T05:49:05Z",
+      "vmState": "running",
+      "currentSnapshotName": "pre-realbud-b8-install",
+      "currentSnapshotUuid": "f7e981cf-cb7e-423b-931c-06bae882c272",
+      "vmPid": 93212,
+      "vmProcessLive": true
+    },
+    "diskPerformancePanelObserved": false,
+    "guestResponseObservedAfterClick": false,
+    "guestCrashVerified": false,
+    "permanentHangVerified": false,
+    "vmResetPerformed": false,
+    "installerRun": false,
+    "appRun": false,
+    "evidenceScope": "Black canvas in three screenshots following the Performance-icon click; host still reported a running VM and live process. No disk-performance result, crash, permanent-hang or completion inference; earlier recovered GUI remains a separate historical observation."
+  },
+  "snapshotVdiGrowthWithBlackGuiObservation": {
+    "evidenceSource": "Root-reported read-only host VBoxManage, VDI metadata and process observations plus CUA guest-canvas observation",
+    "reportRecordedAtUtc": "2026-09-24T05:56:58Z",
+    "vboxManage": {
+      "observedAtUtc": "2026-09-24T05:51:57Z",
+      "vmState": "running",
+      "currentSnapshotName": "pre-realbud-b8-install",
+      "currentSnapshotUuid": "f7e981cf-cb7e-423b-931c-06bae882c272",
+      "guestAdditionsRunLevel": 0
+    },
+    "externalVolume": {
+      "observedAtUtc": "2026-09-24T05:51:57Z",
+      "freeGiBApprox": 211
+    },
+    "activeSnapshotVdi": {
+      "priorHostCheck": {
+        "observedAtApproxUtc": "2026-09-24 05:14:45 UTC",
+        "sizeBytes": 1852833792
+      },
+      "observations": [
+        {
+          "observedAtUtc": "2026-09-24T05:51:57Z",
+          "sizeBytes": 4832886784
+        },
+        {
+          "observedAtUtc": "2026-09-24T05:54:46Z",
+          "sizeBytes": 5340397568,
+          "modifiedAtUtc": "2026-09-24T05:54:46Z"
+        }
+      ],
+      "growthObserved": true
+    },
+    "vmProcess": {
+      "pid": 93212,
+      "live": true,
+      "cpuObservedAtUtc": "2026-09-24T05:54:46Z",
+      "cpuPercentApprox": 89.8
+    },
+    "gui": {
+      "evidenceSource": "Root-reported CUA observation",
+      "normalInputCaptureAttempted": true,
+      "spaceWakeAttemptCount": 1,
+      "canvasStillBlack": true,
+      "exactScreenshotOrActionTimestampsCaptured": false
+    },
+    "vmResetPerformed": false,
+    "installerLaunched": false,
+    "guestCrashVerified": false,
+    "windowsUpdateCompletionVerified": false,
+    "diskHealthVerified": false,
+    "causeVerified": false,
+    "evidenceScope": "Active snapshot VDI growth while the GUI was unavailable; no explanation of cause, guest-crash, completed-update, disk-health or installer-launch inference. Guest additions run level is recorded without inferring installation state."
+  },
+  "intermittentGuiRecoveryObservation0557": {
+    "evidenceSource": "Root-reported CUA screenshots and separate read-only host VM/active snapshot VDI observations",
+    "reportRecordedAtUtc": "2026-09-24T05:59:59Z",
+    "recoveredScreenshot": {
+      "observedAtApproxUtc": "2026-09-24 05:57 UTC",
+      "screen": "Task Manager Processes",
+      "vmResetPerformed": false,
+      "overall": {
+        "cpuPercent": 5,
+        "memoryPercent": 43,
+        "diskPercent": 100,
+        "networkPercent": 0
+      },
+      "visibleRows": [
+        {
+          "name": "Windows Update",
+          "diskMBpsDisplayed": 1.0,
+          "topDiskRowReported": true
+        },
+        {
+          "name": "Microsoft content",
+          "diskMBpsDisplayed": 0.3,
+          "networkMbpsDisplayed": 3.5
+        },
+        {
+          "name": "Windows Modules Installer Worker",
+          "diskMBpsDisplayed": 0.2
+        }
+      ],
+      "watermarkDisplayed": "Activate Windows",
+      "activationStatusVerified": false
+    },
+    "hostObservation": {
+      "observedAtUtc": "2026-09-24T05:58:44Z",
+      "vmState": "running",
+      "currentSnapshotUnchanged": true,
+      "currentSnapshotName": "pre-realbud-b8-install",
+      "currentSnapshotUuid": "f7e981cf-cb7e-423b-931c-06bae882c272",
+      "guestAdditionsRunLevel": 0,
+      "activeSnapshotVdiSizeBytes": 5774508032
+    },
+    "laterScreenshot": {
+      "observedAtApproxUtc": "2026-09-24 05:59 UTC",
+      "screen": "Black VM canvas",
+      "intermittentVisibilityObserved": true
+    },
+    "exactScreenshotTimestampsCaptured": false,
+    "vmResetPerformed": false,
+    "installerLaunched": false,
+    "windowsUpdateCompletionVerified": false,
+    "installedAppVerified": false,
+    "appAcceptanceVerified": false,
+    "causeVerified": false,
+    "evidenceScope": "Brief recovered Task Manager display followed by another black canvas; displayed metrics and activation watermark only, with separate running-VM and VDI metadata. No activation, cause, update-completion, installation or app-acceptance inference.",
+    "laterControlEscapeRecovery": {
+      "evidenceSource": "Root-reported CUA interaction and guest Task Manager display",
+      "guestClockDisplayed": "2:59 PM",
+      "hostObservedAtUtc": null,
+      "hostObservationTimestampSupplied": false,
+      "action": "Ctrl+Escape",
+      "displayRecoveredTo": "Task Manager Processes",
+      "overall": {
+        "cpuPercent": 2,
+        "memoryPercent": 44,
+        "diskPercent": 100,
+        "networkPercent": 0
+      },
+      "topDiskRow": {
+        "name": "Windows Modules Installer Worker",
+        "diskMBpsDisplayed": 3.2
+      },
+      "guestAlreadyLoggedIn": true,
+      "credentialEntryPerformed": false,
+      "installerLaunched": false,
+      "restartPerformed": false,
+      "evidenceScope": "Later intermittent display recovery and point-in-time Task Manager activity only; no cause or update-completion inference."
+    }
+  },
+  "fictionalAcceptanceMediaObservation": {
+    "evidenceSource": "Root independent ISO/archive verification and media-worker read-only host-mount report",
+    "observedAtApproxUtc": "2026-09-24 06:04 UTC",
+    "exactVerificationTimestampCaptured": false,
+    "reportRecordedAtUtc": "2026-09-24T06:05:03Z",
+    "iso": {
+      "path": "/Volumes/RealBud-TestLab/downloads/RealBud-fictional-acceptance-media.iso",
+      "sizeBytes": 1112064,
+      "sha256": "87c0cc8c78c41381af56d52d84793437475761f13c2b75afc8bcd400257c06f6"
+    },
+    "manifestAndPlanDirectory": "/Users/yoda/projects/RealBud/outputs/external-test-lab-2026-09-24/fictional-test-media/",
+    "planSha256": "fad93bf45ceed4df081860b535c942396f2bad2211b9bfe41c101e58bfecffa1",
+    "fileCount": 4,
+    "allFourFilesMatchedExactly": true,
+    "extractedBytesMatchCheckedInSyntheticSourceAndStaging": true,
+    "readOnlyHostMountVerified": true,
+    "hostMountDetached": true,
+    "vmMounted": false,
+    "appTested": false,
+    "installerLaunched": false,
+    "evidenceScope": "Host integrity and read-only mount verification for fictional synthetic acceptance media; not VM attachment, app testing, installer launch or acceptance proof."
+  },
+  "fileExplorerBlackCanvasObservation0605": {
+    "evidenceSource": "Root-reported CUA taskbar click and immediate screenshot",
+    "observedAtApproxUtc": "2026-09-24 06:05 UTC",
+    "reportRecordedAtUtc": "2026-09-24T06:05:39Z",
+    "exactObservationTimestampCaptured": false,
+    "precedingVisibleScreen": "Task Manager",
+    "action": "Click File Explorer taskbar icon",
+    "immediateScreenshot": "Black VM canvas",
+    "fileExplorerWindowVerified": false,
+    "guestResponseVerified": false,
+    "causeVerified": false,
+    "evidenceScope": "Intermittent display behavior only; no File Explorer launch, guest response or cause established."
+  },
+  "vmReliabilityObservation0608To0613": {
+    "evidenceSource": "Root-reported host/CUA checks and independent VBox.log/Oracle documentation review, plus separately attributed read-only triage VDI sample",
+    "observedAtApproxUtc": "2026-09-24 06:08–06:13 UTC",
+    "reportRecordedAtUtc": "2026-09-24T06:15:30Z",
+    "hostCheck": {
+      "observedAtUtc": "2026-09-24T06:08:39Z",
+      "vmState": "running",
+      "currentSnapshotUuid": "f7e981cf-cb7e-423b-931c-06bae882c272",
+      "graphicsControllerConfigured": "vboxsvga",
+      "acceleration3dEnabled": false,
+      "guestAdditionsRunLevel": 0,
+      "activeSnapshotVdiSizeBytes": 6765412352,
+      "externalFreeGiBDisplayed": 210
+    },
+    "laterVdiSample": {
+      "evidenceSource": "Read-only triage report relayed by root",
+      "observedAtApproxUtc": "2026-09-24 06:10 UTC",
+      "sizeBytes": 6812598272
+    },
+    "guestUi": {
+      "evidenceSource": "Root-reported CUA views",
+      "guestClockDisplayRange": "3:08–3:13",
+      "exactScreenshotTimesCaptured": false,
+      "diskPercentDisplayed": 100,
+      "visibleActivityNames": [
+        "Windows Update",
+        "Windows Modules Installer Worker"
+      ],
+      "blackCanvasAfterInputCaptureClicksObserved": true,
+      "controlEscapeRecoveredDisplay": true,
+      "actionsWithoutVerifiedGuestResponse": [
+        "PowerShell taskbar click",
+        "Task Manager minimize click",
+        "Alt+F4"
+      ],
+      "visibleWindowSwitchOrCloseVerified": false
+    },
+    "logReview": {
+      "evidenceSource": "Root independently read VBox.log",
+      "logOpenedAtUtc": "2026-09-24T00:37:32Z",
+      "writeDelay": {
+        "lines": [
+          5511,
+          5525
+        ],
+        "logRelativeTime": "05:13:16",
+        "utcApproxMinute": "2026-09-24 05:50 UTC",
+        "device": "VD#3",
+        "writeCount": 15,
+        "activeSeconds": 28
+      },
+      "ahciOperation": {
+        "lines": [
+          5527,
+          5534
+        ],
+        "logRelativeTimeApprox": "05:15",
+        "utcApproxMinute": "2026-09-24 05:52 UTC",
+        "port": 0,
+        "operation": "reset/flush",
+        "activeSeconds": 30,
+        "subsequentlyCanceled": true
+      },
+      "laterMatchingEntriesFoundAsOfRootSearch": false,
+      "timestampNote": "Raw log-relative times retained; UTC mappings rounded to approximate minutes, not exact observation timestamps.",
+      "interpretation": "Storage-stall hypothesis only; not external-drive failure or the cause of display behavior."
+    },
+    "graphicsSupportComparison": {
+      "evidenceSource": "Root-reported review of Oracle VirtualBox 7.2 Arm host documentation plus configuration/log",
+      "documentationUrl": "https://docs.oracle.com/en/virtualization/virtualbox/7.2/user/installation.html",
+      "supportedAdapterReported": "VMSVGA only",
+      "configuredAdapter": "VBoxSVGA",
+      "logValue": "VMSVGAEnabled=1",
+      "effectiveAdapterResolved": false,
+      "configurationChangedWhileRunning": false
+    },
+    "vmResetPerformed": false,
+    "installerLaunched": false,
+    "externalDriveFailureVerified": false,
+    "displayCauseVerified": false,
+    "windowsUpdateCompletionVerified": false,
+    "evidenceScope": "Reported host/guest activity and delayed log I/O operations, with unresolved configured/effective graphics adapter. Hypothesis only; no cause, drive failure, update completion, VM reset or installer-launch inference."
+  },
+  "vmServicingCheckpoint0619To0620": {
+    "evidenceSource": "Root read-only host checks and CUA screenshot",
+    "firstHostObservationUtc": "2026-09-24T06:19:11Z",
+    "vmState": "running",
+    "graphicsControllerConfigured": "vboxsvga",
+    "acceleration3dEnabled": false,
+    "guestAdditionsRunLevel": 0,
+    "snapshotVdiSizeBytesAtFirstObservation": 6997147648,
+    "guestScreen": {
+      "taskManagerVisible": true,
+      "guestClockDisplayed": "3:19 PM",
+      "cpuPercentDisplayed": 73,
+      "memoryPercentDisplayed": 49,
+      "diskPercentDisplayed": 100,
+      "networkPercentDisplayed": 0,
+      "visibleProcessNames": [
+        "Windows Modules Installer Worker",
+        "Dism Host Servicing Process",
+        "System"
+      ]
+    },
+    "secondHostObservationUtc": "2026-09-24T06:20:39Z",
+    "snapshotVdiSizeBytesAtSecondObservation": 7042236416,
+    "vmProcessPid": 93212,
+    "vmProcessCpuPercent": 128.8,
+    "externalFreeGiBDisplayed": 209,
+    "vmResetPerformed": false,
+    "forcedShutdownPerformed": false,
+    "graphicsConfigurationChanged": false,
+    "installerLaunched": false,
+    "windowsUpdateCompletionVerified": false,
+    "guestControlsResponsiveVerified": false,
+    "appAcceptanceVerified": false,
+    "evidenceScope": "The VM and snapshot remained active while Windows servicing showed 100% guest disk utilization. This is not installer, app, update-completion, or guest-control acceptance evidence."
+  },
+  "vmScaledModeInputTriage0623To0634": {
+    "evidenceSource": "Root CUA and host observations, independently checked read-only log/config/manual findings from delegated triage",
+    "observedAtApproxUtc": "2026-09-24 06:23–06:34 UTC",
+    "vmStateReturnedAfterDelayedQuery": "running",
+    "currentSnapshotUuidUnchanged": "f7e981cf-cb7e-423b-931c-06bae882c272",
+    "guestAdditionsRunLevel": 0,
+    "snapshotVdiSizeBytesAt062328": 7103053824,
+    "snapshotVdiSizeBytesAt063156": 7228882944,
+    "taskManagerDiskPercentDisplayedRange": [51, 100],
+    "togglingOutOfScaledModeRestoredVisibleGuestScreen": true,
+    "normalWindowedModeGuestSize": "800x600",
+    "modeInterpretationCorrectedByLaterVirtualBoxDialog": true,
+    "inputCaptureIndicatorsShowedCaptured": true,
+    "normalCapturePromptDismissed": true,
+    "repeatCaptureTipSuppressed": true,
+    "boundedInputWithoutVerifiedGuestResponse": [
+      "Task Manager minimize click",
+      "Windows Start click",
+      "Alt+Space"
+    ],
+    "guestInputFunctionalVerified": false,
+    "graphicsTriage": {
+      "configuredAdapterEvidence": "RealBud-Win11-Arm-QA.vbox line 96: VBoxSVGA",
+      "installedManualEvidence": "VirtualBox 7.2 UserManual.pdf section 2.1.2, PDF page 30: Arm hosts support only VMSVGA",
+      "logEvidence": "VBox.log line 364: VMSVGAEnabled=1",
+      "effectiveAdapterResolved": false,
+      "causeVerified": false
+    },
+    "storageAndHidTriage": {
+      "hidDevicesAttachedLogLines": [619, 620],
+      "hostActiveIoLimit": 16,
+      "hostActiveIoLimitLogLine": 1262,
+      "slowAsyncCompletionLogLines": [5785, 5896],
+      "guestInputFailureCauseVerified": false
+    },
+    "transientObservationTimeouts": {
+      "cuaScreenRequestTimedOut": true,
+      "vboxManageQueryDelayedThenReturnedRunning": true,
+      "laterCuaTaskManagerVisible": true,
+      "laterGuestDiskPercentDisplayed": 96,
+      "terminalVmStateInferred": false
+    },
+    "nextSafeAction": "Allow Windows servicing to settle, then perform one controlled guest-input retest. If still reproducible, cleanly shut down before changing graphics controller to documented VMSVGA and retesting.",
+    "graphicsConfigurationChanged": false,
+    "vmResetPerformed": false,
+    "forcedShutdownPerformed": false,
+    "installerLaunched": false,
+    "appAcceptanceVerified": false,
+    "evidenceScope": "Intermittent visual redraw after toggling out of Scaled Mode and bounded input triage during active servicing, with unresolved graphics and storage hypotheses. No install or app acceptance proof."
+  },
+  "vmStaleFrameAndCatchup0640": {
+    "evidenceSource": "Root CUA screenshot, host process/VDI checks and VBox.log review",
+    "observedAtApproxUtc": "2026-09-24 06:40–06:41 UTC",
+    "cuaGuestFrameClockDisplayed": "3:28 PM",
+    "sameFrameObservedPreviouslyAroundUtc": "2026-09-24 06:34 UTC",
+    "guestScreenDataCurrentVerified": false,
+    "hostObservationAtUtc": "2026-09-24T06:40:32Z",
+    "vmProcessPid": 93212,
+    "vmProcessCpuPercent": 189.9,
+    "snapshotVdiSizeBytesAt064032": 7305428992,
+    "snapshotVdiSizeBytesAt064115": 7334789120,
+    "vboxLogCatchup": {
+      "line": 5902,
+      "logRelativeTime": "06:00:53.471200",
+      "lagNanoseconds": 372710073709,
+      "approxLagSeconds": 373,
+      "earlierLagLine": 5154,
+      "earlierApproxLagSeconds": 1617
+    },
+    "vmStateAfterDelayedQuery": "running",
+    "currentSnapshotUuidUnchanged": "f7e981cf-cb7e-423b-931c-06bae882c272",
+    "externalDriveFailureVerified": false,
+    "guestUpdateFailureVerified": false,
+    "staleFrameCauseVerified": false,
+    "forcedRecoveryActionPerformed": false,
+    "installerLaunched": false,
+    "appAcceptanceVerified": false,
+    "evidenceScope": "Intermittent timer lag and stale visual frame with resumed host CPU and VDI writes. No terminal VM, drive-failure, app-install or acceptance inference."
+  },
+  "vmModeDialogCorrection0642": {
+    "evidenceSource": "Root CUA VirtualBox View menu and mode-switch dialog",
+    "observedAtApproxUtc": "2026-09-24 06:42 UTC",
+    "dialogSaidWouldSwitchToScaleMode": true,
+    "previous800x600PresentationIdentifiedAsNormalWindowedMode": true,
+    "dialogAction": "Cancel",
+    "modeSwitchAppliedByDialog": false,
+    "immediateCanvasAfterCancel": "black",
+    "visualRecoveryStableVerified": false,
+    "guestInputResponseVerified": false,
+    "vmResetPerformed": false,
+    "installerLaunched": false,
+    "appAcceptanceVerified": false,
+    "evidenceScope": "Corrects earlier mode interpretation; display remains intermittent with no app or guest-control acceptance proof."
+  },
+  "vmAcpiGracefulShutdownRequest0646": {
+    "evidenceSource": "Root VBoxManage command result, follow-up host state and CUA display checks",
+    "preRequestObservedAtUtc": "2026-09-24T06:46:45Z",
+    "preRequestVmState": "running",
+    "currentSnapshotUuid": "f7e981cf-cb7e-423b-931c-06bae882c272",
+    "graphicsControllerConfigured": "vboxsvga",
+    "externalFreeGiBDisplayed": 209,
+    "command": "VBoxManage controlvm RealBud-Win11-Arm-QA acpipowerbutton",
+    "commandExitCode": 0,
+    "numberOfAcpiRequestsSent": 1,
+    "installedManualSemantics": "Section 15.12.2.6 describes an ACPI shutdown signal equivalent to a physical power button. Section 15.12.2.9 says the separate shutdown command requires Guest Additions.",
+    "windowsReceivedAcpiSignalVerified": false,
+    "cleanShutdownCompletedVerified": false,
+    "followUpObservedAtUtc": "2026-09-24T06:50:31Z",
+    "followUpVmState": "running",
+    "snapshotAndGraphicsControllerUnchanged": true,
+    "vmProcessPid": 93212,
+    "vmProcessCpuPercent": 88.6,
+    "snapshotVdiSizeBytes": 7747928064,
+    "adjustWindowSizeRestoredDisplay": false,
+    "scaledModeRoundTripRestoredDisplay": false,
+    "currentCanvas": "black",
+    "forcedPoweroffOrResetPerformed": false,
+    "graphicsConfigurationChanged": false,
+    "installerLaunched": false,
+    "appAcceptanceVerified": false,
+    "nextSafeAction": "Keep the active VM and external volume mounted; only change graphics controller after a verified clean power-off.",
+    "evidenceScope": "One graceful ACPI signal was dispatched, but no guest shutdown was verified four minutes later. VM remains active; no installer or app acceptance."
+  },
+  "vmSecureAttentionAndPowerNavigation0804": {
+    "evidenceSource": "Root CUA VirtualBox/guest screen observations and read-only VBoxManage/VDI checks",
+    "observedAtApproxUtc": "2026-09-24 07:59–08:05 UTC",
+    "vmName": "RealBud-Win11-Arm-QA",
+    "currentSnapshotUuid": "f7e981cf-cb7e-423b-931c-06bae882c272",
+    "graphicsControllerConfigured": "vboxsvga",
+    "guestTaskManagerVisibleAgain": true,
+    "guestTaskManagerDisplayedDiskPercentRange": "94–100",
+    "guestTaskManagerClockDisplayed": "4:59–5:00 PM, 24/09/2026",
+    "taskManagerMinimizeOrStartResponseVerified": false,
+    "virtualBoxSecureAttentionMenuAction": "Input > Keyboard > Insert Ctrl-Alt-Del",
+    "windowsSecurityScreenRendered": true,
+    "softKeyboardShiftTabFocusedPowerControl": true,
+    "powerControlInteractionAttempted": true,
+    "powerChoiceOrShutdownDispatchVerified": false,
+    "canvasAfterPowerInteraction": "black",
+    "followUpObservedAtUtc": "2026-09-24T08:05:06Z",
+    "followUpVmState": "running",
+    "snapshotVdiSizeBytes": 13603176448,
+    "snapshotVdiStillGrowing": true,
+    "cleanShutdownCompletedVerified": false,
+    "forcedPoweroffOrResetPerformed": false,
+    "graphicsConfigurationChanged": false,
+    "installerLaunched": false,
+    "appAcceptanceVerified": false,
+    "nextSafeAction": "Check for an actual powered-off state before changing to documented VMSVGA; leave the external volume mounted while VM writes continue.",
+    "evidenceScope": "Secure attention and keyboard focus worked through VirtualBox; a power-menu interaction was attempted, but no guest shutdown, installer run, or app acceptance is verified."
+  },
+  "vmCleanPoweroffAndVmsvgaRestart0808": {
+    "evidenceSource": "Root VBoxManage machine-readable state, modifyvm/startvm command results and CUA boot screen",
+    "poweroffStateChangeAtUtc": "2026-09-24T08:06:26.808Z",
+    "poweroffStateObserved": "poweroff",
+    "poweroffWasForced": false,
+    "poweroffMechanismAttributedToGuestPowerInteractionVerified": false,
+    "preChangeSnapshotVdiSizeBytes": 13626245120,
+    "preChangeCurrentSnapshotUuid": "f7e981cf-cb7e-423b-931c-06bae882c272",
+    "configurationChange": "VBoxManage modifyvm RealBud-Win11-Arm-QA --graphicscontroller vmsvga",
+    "configurationChangeExitCode": 0,
+    "verifiedGraphicsControllerAfterChange": "vmsvga",
+    "verified3dAcceleration": "off",
+    "startCommand": "VBoxManage startvm RealBud-Win11-Arm-QA --type gui",
+    "startCommandExitCode": 0,
+    "runningStateChangeAtUtc": "2026-09-24T08:07:28.344Z",
+    "followUpObservedAtUtc": "2026-09-24T08:08:01Z",
+    "followUpVmState": "running",
+    "followUpCurrentSnapshotUuid": "f7e981cf-cb7e-423b-931c-06bae882c272",
+    "guestAdditionsRunLevel": 0,
+    "cuaBootScreen": "VirtualBox splash and spinner",
+    "laterWindowsStartupObservation": {
+      "observedAtApproxUtc": "2026-09-24 08:16–08:18 UTC",
+      "screen": "Windows Please wait with animated spinner",
+      "priorBlackCanvasAfterSplash": true,
+      "scaledModeRoundTripRestoredGuestBeforePleaseWait": false,
+      "vmStateAt081750": "running",
+      "snapshotVdiSizeBytesAt081750": 13724811264,
+      "snapshotVdiStillGrowing": true,
+      "windowsBootProgressedBeyondBlackCanvas": true,
+      "signInScreenObserved": false,
+      "laterObservedAtUtc": "2026-09-24T08:20:33Z",
+      "laterScreen": "Updates are underway. Please keep your computer on.",
+      "snapshotVdiSizeBytesAt082033": 13787725824,
+      "updateCompletionVerified": false
+    },
+    "windowsRepeatSignInVerified": false,
+    "desktopInteractiveAfterChangeVerified": false,
+    "installerLaunched": false,
+    "appAcceptanceVerified": false,
+    "evidenceScope": "A clean, non-forced VM poweroff enabled a supported graphics-controller change and successful VM start. Windows boot, guest input, installer and app acceptance remain to be verified."
+  },
+  "vmLockScreenAndExplorer0829": {
+    "evidenceSource": "Root CUA Windows guest screen and read-only VBoxManage/VDI checks",
+    "observedAtApproxUtc": "2026-09-24 08:21–08:29 UTC",
+    "updatesUnderwayScreenPreviouslyObserved": true,
+    "lockScreenObserved": true,
+    "localAccountNameDisplayed": "realbudqa",
+    "emptyPasswordSubmittedOnceInadvertently": true,
+    "incorrectPasswordMessageObserved": true,
+    "userSuppliedCredentialValueRecorded": false,
+    "credentialSubmissionThatUnlockedSessionObserved": false,
+    "desktopObservedAfterRestart": true,
+    "taskbarObserved": true,
+    "explorerOpenedFromRecycleBinDoubleClick": true,
+    "explorerInitialLoadingDelayApproxSeconds": 15,
+    "explorerEventuallyDisplayedEmptyRecycleBin": true,
+    "startMenuOpened": true,
+    "laterTaskManagerObservation": {
+      "observedAtApproxUtc": "2026-09-24 08:30 UTC",
+      "shortcutResultDelayed": true,
+      "diskPercentDisplayed": 100,
+      "windowsModulesInstallerWorkerDisplayedReadMbps": 7.2,
+      "otherVisibleServicingRows": ["MoUSO Core Worker Process", "Microsoft Edge Update"],
+      "snapshotVdiSizeBytesAt083037": 13911457792,
+      "servicingCompleteVerified": false
+    },
+    "guestInstallerMediaVisibleInExplorer": {
+      "drive": "D:",
+      "fileDisplayName": "RealBud-0.1.19-setup",
+      "type": "Application",
+      "fileSizeDisplayedKiB": 157428,
+      "companionFiles": ["SHA256SUMS", "TEST-PLAN.md"]
+    },
+    "guestInstallerHashPreviouslyVerified": true,
+    "windowsUpdateCompletionVerified": false,
+    "installerLaunchConfirmationRequestedAtActionTime": true,
+    "installerLaunchConfirmationReceived": false,
+    "installerLaunched": false,
+    "appAcceptanceVerified": false,
+    "followUpObservedAtUtc": "2026-09-24T08:29:31Z",
+    "followUpVmState": "running",
+    "graphicsController": "vmsvga",
+    "currentSnapshotUuid": "f7e981cf-cb7e-423b-931c-06bae882c272",
+    "snapshotVdiSizeBytes": 13882097664,
+    "evidenceScope": "Windows reached a rendered desktop with taskbar and working Explorer/Start, and installer media is visible. Repeat sign-in mechanism, Windows Update completion, installer run and app acceptance remain unverified."
+  },
+  "vmWindowsUpdateStatus0843": {
+    "evidenceSource": "Root CUA screenshots of Task Manager and Windows Settings; read-only host stat and ps",
+    "observedAtApproxUtc": "2026-09-24 08:40–08:43 UTC",
+    "desktopAndExplorerResponsive": true,
+    "taskManagerLastDisplayedDiskPercent": 100,
+    "settingsHomeUpdateLabel": "Attention needed",
+    "updatePageMissingImportantSecurityUpdatesWarning": true,
+    "updatesDisplayed": [
+      {"name": "2026-09 Security Update", "kb": "KB5129195", "build": "26200.9457", "status": "Installing - 10%"},
+      {"name": "Microsoft Defender Antivirus security intelligence", "kb": "KB2267602", "status": "Pending install"},
+      {"name": "2026-09 .NET Framework Security Update", "kb": "KB5126052", "status": "Pending install"},
+      {"name": "Windows Security platform update", "kb": "KB5007651", "status": "Pending install"}
+    ],
+    "installAllClickedOnce": true,
+    "installAllEffectVerified": false,
+    "snapshotVdiObservedAtUtc": "2026-09-24T08:42:44Z",
+    "snapshotVdiSizeBytes": 14079229952,
+    "vmPid": 48837,
+    "vmPidLive": true,
+    "windowsUpdateCompletionVerified": false,
+    "installerLaunchConfirmationReceived": false,
+    "installerLaunched": false,
+    "appAcceptanceVerified": false,
+    "evidenceScope": "Settings confirms active and pending Windows security updates while the VM remains live. Clicking Install all has no verified effect yet; no RealBud installation or app acceptance is claimed."
+  },
+  "vmInstallerReady0849": {
+    "evidenceSource": "Root CUA Settings/Explorer screenshots, read-only VBoxManage/stat, fresh host shasum",
+    "observedAtApproxUtc": "2026-09-24 08:48–08:49 UTC",
+    "securityUpdateKb5129195DisplayedProgressPercent": 12,
+    "otherThreeSecurityUpdatesStillDisplayedPendingInstall": true,
+    "vmState": "running",
+    "graphicsController": "vmsvga",
+    "snapshotVdiObservedAtUtc": "2026-09-24T08:48:16Z",
+    "snapshotVdiSizeBytes": 14434697216,
+    "hostTransferInstallerSha256Rechecked": "7c0d23b61259ddb65eeee4a94655e383b3d20bf7b18e78260eb39d0b45616967",
+    "hostTransferInstallerSha256MatchesSealed": true,
+    "guestInstallerMediaVisible": true,
+    "guestHashPreviouslyMatchedSealed": true,
+    "actionTimeInstallerConfirmationRequestedAgain": true,
+    "actionTimeInstallerConfirmationReceived": false,
+    "installerLaunched": false,
+    "appAcceptanceVerified": false,
+    "evidenceScope": "The sealed installer is visible and host-reverified while Windows Update advances. Running this unsigned local installer still awaits the user response to the action-time confirmation."
+  },
+  "vmUpdateStillActive0857": {
+    "evidenceSource": "Root CUA Task Manager screenshot and read-only host stat/ps",
+    "guestObservedAtApproxUtc": "2026-09-24 08:56 UTC",
+    "taskManagerDiskPercentDisplayed": 100,
+    "windowsModulesInstallerWorkerDiskMbpsDisplayed": 1.6,
+    "windowsModulesInstallerWorkerCpuPercentDisplayed": 12.4,
+    "mousoCoreWorkerProcessVisible": true,
+    "taskManagerClosedAndInstallerFolderLeftVisible": true,
+    "hostObservedAtUtc": "2026-09-24T08:57:24Z",
+    "vmPid": 48837,
+    "vmPidLive": true,
+    "snapshotVdiSizeBytes": 14494466048,
+    "snapshotVdiSizeBytesAt085351": 14487126016,
+    "updateCompletionVerified": false,
+    "installerLaunchConfirmationReceived": false,
+    "installerLaunched": false,
+    "appAcceptanceVerified": false,
+    "evidenceScope": "The VM remains live with continuing Windows servicing, and the installer folder is ready. No installer or RealBud acceptance run has begun."
+  },
+  "vmIntermittentDisplay0902": {
+    "evidenceSource": "Root read-only VBoxManage/stat/ps/df and CUA screenshots/input",
+    "hostObservedAtUtc": "2026-09-24T09:01:41Z",
+    "vmState": "running",
+    "graphicsController": "vmsvga",
+    "guestAdditionsRunLevel": 0,
+    "externalVolumeAvailableGiBDisplayed": 202,
+    "vmPid": 48837,
+    "vmPidLive": true,
+    "snapshotVdiSizeBytes": 14507048960,
+    "blackGuestCanvasObserved": true,
+    "oneNeutralClickAndCtrlEscapeRestoredExplorer": true,
+    "guestDisplayAfterRecovery": "D: Explorer installer listing at 9:02 AM guest clock",
+    "vmResetPerformed": false,
+    "installerLaunched": false,
+    "appAcceptanceVerified": false,
+    "actionTimeInstallerConfirmationReceived": false,
+    "evidenceScope": "The VMSVGA VM remained live through another transient black canvas and recovered normal Explorer display after one input attempt. This is not evidence that graphics or Windows servicing is fully reliable."
+  },
+  "vmWindowsUpdateProgress0908": {
+    "evidenceSource": "Root CUA Windows Settings screenshot",
+    "observedAtApproxUtc": "2026-09-24 09:08 UTC",
+    "securityUpdateKb5129195DisplayedProgressPercent": 26,
+    "otherThreeSecurityUpdatesStillDisplayedPendingInstall": true,
+    "guestInstallerMediaVisibleBehindSettings": true,
+    "windowsUpdateCompletionVerified": false,
+    "installerLaunchConfirmationReceived": false,
+    "installerLaunched": false,
+    "appAcceptanceVerified": false,
+    "evidenceScope": "Windows security servicing advanced from 12% at 08:48 to 26%; the RealBud installer remains unlaunched pending action-time confirmation."
+  },
+  "vmRealBudUiServiceFailure1010": {
+    "evidenceSource": "Root CUA Windows guest screenshots, read-only VBoxManage/stat, sealed-installer bsdtar listing, source inspection",
+    "observedAtApproxUtc": "2026-09-24 10:05–10:10 UTC",
+    "realBudTaskbarIconAndWindowVisible": true,
+    "visibleFailure": "The office service did not start",
+    "officeServiceHealthyVerified": false,
+    "installerCompletionVerified": false,
+    "welcomeFlowVerified": false,
+    "persistenceAndBackupRecoveryVerified": false,
+    "serverLogRead": false,
+    "archiveContainsAppAsarAndServerBootstrapAndIndex": true,
+    "vmState": "running",
+    "graphicsController": "vmsvga",
+    "guestAdditionsRunLevel": 0,
+    "snapshotVdiSizeBytesAt100820": 16212033536,
+    "vmResetConfirmationCancelled": true,
+    "vmResetPerformed": false,
+    "evidenceScope": "The user-launched RealBud UI reached a service-health timeout. This was the initial observation; the later late-service-health receipt narrows the cause of the stale window."
+  },
+  "vmLateServiceHealth1024": {
+    "evidenceSource": "Root CUA Windows PowerShell and RealBud window screenshots",
+    "observedAtApproxUtc": "2026-09-24 10:18–10:24 UTC",
+    "desktopServerLogBytes": 0,
+    "desktopServerLogLastModifiedGuestTime": "2026-09-24 09:46",
+    "redactedOfficeLogBootGuestTime": "2026-09-24 09:51:40",
+    "officeLogListeningOnLoopbackPort": 8799,
+    "guestCurlHealthResponse": true,
+    "healthAppRealbud": true,
+    "healthStaticTrue": true,
+    "serviceIdentifiersOmitted": true,
+    "existingWindowStillDisplaysServiceStartFailure": true,
+    "lateHealthyServiceWindowRecoveryDefect": true,
+    "welcomeFlowVerified": false,
+    "persistenceAndBackupRecoveryVerified": false,
+    "evidenceScope": "The office service eventually answered, while the earlier timed-out window stayed on its error page. This supports a late-recovery UI defect, not a conclusion that the service cannot run on Windows Arm."
+  },
+  "lateServiceSourceCandidate": {
+    "baseCommit": "b8aa9f2fee9dcc634e8ff8f9153103701aa4e1ca",
+    "localFixCommit": "67d518817e9d398f8b85294cb4208299d0cffc8f",
+    "cleanWorktree": "/Volumes/RealBud-TestLab/candidates/windows-late-service-source",
+    "focusedTestsPassed": 76,
+    "electronModulesChecked": 28,
+    "electronCheckFailures": 0,
+    "windowsInstallerPackaged": true,
+    "guestFixInstalled": true,
+    "publicBranchPushAwaitingOwnerAnswer": false,
+    "evidenceScope": "The fix is locally tested and its Windows x64 installer passed disposable-runner installed-runtime acceptance. The updated installer was run in the Windows ARM VM and installed files were observed; installed guest GUI recovery remains unverified."
+  },
+  "windowsCiCandidate35989037761": {
+    "runUrl": "https://github.com/EzAuto399/RealBud/actions/runs/35989037761",
+    "branch": "qa/windows-late-service-2026-09-24",
+    "sourceRevision": "67d518817e9d398f8b85294cb4208299d0cffc8f",
+    "windowsX64InstallerJobPassed": true,
+    "disposableWindowsRunnerInstalledLifecyclePassed": true,
+    "installerBytes": 161207293,
+    "installerSha256": "b5bee0fcf4ff0f1f67db1d62f84c7c3f6589f7e841f82250b0dfa90273b564e1",
+    "downloadedProofDirectory": "/Volumes/RealBud-TestLab/candidates/windows-late-service-ci/35989037761/proof",
+    "transferIso": "/Volumes/RealBud-TestLab/downloads/RealBud-67d51881-test-media.iso",
+    "transferIsoSha256": "78690b0641cfaa9df245268defc216fa1ae0e23e40373dcef48338a1ffe174b5",
+    "isoInstallerHashMatchesCi": true,
+    "isoMountedInRunningVmSataPort1": true,
+    "guestInstallerBytesObserved": 161207293,
+    "guestInstallerSha256Verified": true,
+    "guestHashCommandPendingAtRecordTime": false,
+    "userConfirmedQaVmInstallerRun": true,
+    "guestInstallerLaunched": true,
+    "guestGuiRecoveryVerified": false,
+    "evidenceScope": "CI installed-runtime, host transfer integrity, guest installer SHA-256, and installed program files are verified. GUI recovery, persistence, backup and restore remain separate pending layers."
+  },
+  "vmCandidateInstalledFiles1133": {
+    "evidenceSource": "Root CUA Windows guest setup, PowerShell and Search screenshots",
+    "observedAtApproxUtc": "2026-09-24 11:16–11:49 UTC",
+    "userConfirmedUnsignedCandidateRunAtActionTime": true,
+    "setupProgressObserved": true,
+    "setupWindowClosedWithoutVisibleError": true,
+    "installerExitCodeCaptured": false,
+    "programFolderObserved": "C:\\Users\\realbudqa\\AppData\\Local\\Programs\\realbud",
+    "programFolderModifiedGuestTime": "2026-09-24 11:32",
+    "realBudExeObserved": true,
+    "resourcesFolderObserved": true,
+    "uninstallerObserved": true,
+    "windowsSearchRealBudAppObserved": true,
+    "directLaunchSubmitted": true,
+    "realBudGuiObservedAfterCandidateInstall": false,
+    "guestGuiRecoveryVerified": false,
+    "welcomePersistenceBackupVerified": false,
+    "vmStateAtCheckpoint": "running",
+    "evidenceScope": "The candidate installed program files in the guest. First-launch GUI and office-service recovery have not yet been observed."
+  },
+  "windowsCiGuiAcceptance35997169473": {
+    "evidenceSource": "Native Windows x64 GitHub Actions run and downloaded installed lifecycle and GUI receipts",
+    "runUrl": "https://github.com/EzAuto399/RealBud/actions/runs/35997169473",
+    "sourceRevision": "cd4a1480b02df8309daba4e1d626f1bde5bb32a9",
+    "proofDirectory": "/Volumes/RealBud-TestLab/candidates/windows-gui-ci-35997169473",
+    "installerPath": "/Volumes/RealBud-TestLab/candidates/windows-gui-ci-35997169473/installer/RealBud-0.1.19-setup.exe",
+    "installerBytes": 161207296,
+    "installerSha256": "b50eaa7f94814d5bbb5e1aecda279d4fdecbca9f9818c198b90339c2f82380ed",
+    "installerExitCode": 0,
+    "installedGuiWindowObserved": true,
+    "installedGuiRendererReady": true,
+    "installedGuiExitCode": 0,
+    "desktopTitle": "RealBud",
+    "preloadPlatform": "win32",
+    "localServiceHealthy": true,
+    "remoteJoinAvailable": true,
+    "uninstallExitCode": 0,
+    "linkedGuiReceiptHashesVerified": true,
+    "guestVmGuiVerified": false,
+    "evidenceScope": "Disposable native Windows x64 installed desktop smoke mode passed. Normal customer launch, Windows 11 physical device, ARM VM GUI and customer acceptance remain unverified."
+  },
+  "vmGuiFollowup1209": {
+    "evidenceSource": "Root CUA Task Manager screenshots after guest installation",
+    "observedAtApproxUtc": "2026-09-24 12:05–12:09 UTC",
+    "realBudSearchAppObserved": true,
+    "visibleRealBudGuiAfterSearchActivation": false,
+    "taskManagerRealBudProcessCount": 1,
+    "detachedServiceMayExplainProcess": true,
+    "taskManagerGuestDiskPercent": 100,
+    "windowsModulesInstallerAndAntimalwareObserved": true,
+    "evidenceScope": "Installed guest files remain verified, but guest GUI launch was not observed under heavy Windows servicing and disk load."
+  },
+  "vmGuiWelcome1231": {
+    "evidenceSource": "Root CUA observation of installed RealBud in Windows 11 ARM QA VM",
+    "observedAtApproxUtc": "2026-09-24 12:31–12:44 UTC",
+    "installerRevision": "67d518817e9d398f8b85294cb4208299d0cffc8f",
+    "installedGuiObserved": true,
+    "welcomeProfileEntered": "fictional QA Staff",
+    "welcomeAdvancedToBudSetup": true,
+    "askWorkspaceObservedAfterRendererReload": true,
+    "youOfficeSectionObserved": true,
+    "appReconnectedAfterTransientDisconnect": true,
+    "guestDiskPercentAtObservation": 100,
+    "fullProcessRestartPersistenceVerified": false,
+    "backupRestoreVerified": false,
+    "officeJoinVerified": false,
+    "evidenceScope": "Installed GUI and welcome navigation worked in the ARM-emulated Windows VM with fictional data. Renderer reload retained workspace state; clean process restart, backup/restore and local office join remain open."
+  },
+  "onboardingFinishTimeoutCandidate": {
+    "sourceRevision": "884bacf0669495bc22636872dd28b2698625d97e",
+    "qaBranch": "qa/windows-late-service-2026-09-24",
+    "windowsCiRunUrl": "https://github.com/EzAuto399/RealBud/actions/runs/36002050162",
+    "localFocusedTestsPassed": 14,
+    "typescriptBuildPassed": true,
+    "nativeWindowsX64InstallerJobPassed": true,
+    "installerPath": "/Volumes/RealBud-TestLab/candidates/windows-gui-ci-36002050162/installer/RealBud-0.1.19-setup.exe",
+    "installerBytes": 161207435,
+    "installerSha256": "5962d9f215facc3999d517519ed7611833f65f0e1fc088dcfe6686f837a9425b",
+    "installedGuiObserved": true,
+    "installedGuiRendererReady": true,
+    "installerExitCode": 0,
+    "uninstallExitCode": 0,
+    "linkedReceiptsVerified": 6,
+    "separateManagedWindowsJobFirstAttempt": "failed at verified Bud setup download, HTTP 429",
+    "separateManagedWindowsJobRerun": "attempt 2 passed after initial HTTP 429",
+    "managedRuntimeDownloadStatusOnRerun": 200,
+    "managedRuntimeRevision": "345cd2b057a452236de401d3534b8502a7465e8d",
+    "nativeWindowsJournalChecksPassed": 28,
+    "nativeWindowsJournalChecksFailed": 0,
+    "overallWorkflowConclusion": "success",
+    "evidenceScope": "Source fix adds a 15-second recoverable deadline across session setup and welcome completion. Native Windows x64 installed desktop smoke and the separate pinned Bud setup and journal passed at this SHA after one external HTTP 429 retry. The ARM VM still has Bud setup needed. The earlier VM delay later advanced and was not proven to be an app request hang."
+  },
+  "vmBackupExport1257": {
+    "evidenceSource": "Installed RealBud You > Advanced > Private workspace backup in Windows 11 ARM QA VM",
+    "observedAtApproxUtc": "2026-09-24 12:57–13:00 UTC",
+    "fictionalTestOnlyPassphraseUsed": true,
+    "exportOperationSaved": true,
+    "phaseAt1300Utc": "copying",
+    "lastObservedPhase": "failed",
+    "lastVisibleError": "Finish the current work before continuing this backup operation.",
+    "stopWaitingClearedBusyState": true,
+    "sameOperationVisibleAfterStatusRefresh": true,
+    "encryptedFileObserved": false,
+    "restoreVerified": false,
+    "taskManagerGuestDiskPercentAt1300Utc": 97,
+    "taskManagerGuestCpuPercentAt1300Utc": 62,
+    "evidenceScope": "Backup export was started and saved progress survived ending the UI wait, but the operation later failed with a broad workspace-busy message. No encrypted file or restore has been verified; the underlying server error is not yet identified."
+  },
+  "vmAppRestartAndSampleMorning1310": {
+    "evidenceSource": "Root CUA observation of installed RealBud in Windows 11 ARM QA VM",
+    "observedAtApproxUtc": "2026-09-24 13:04–13:10 UTC",
+    "appWindowClosedWithAltF4": true,
+    "taskbarAppIconDisappeared": true,
+    "reopenedFromWindowsSearch": true,
+    "savedDeskDemoLoaded": true,
+    "appConnectedAfterReopen": true,
+    "detachedServiceRestarted": false,
+    "budRuntimeStatusAfterReopen": "Setup needed",
+    "failedBackupOperationStillVisibleAfterReopen": true,
+    "fictionalSampleMorningAddressesChecked": 6,
+    "fictionalSampleMorningNeedsYou": 2,
+    "fictionalSampleMorningLicenseItems": 1,
+    "taskQueueNeedsYou": 3,
+    "evidenceScope": "Installed GUI process close/reopen retained workspace state and fictional sample morning produced a task queue; the failed backup record persisted. Bud setup is still needed. Service process restart, backup/restore, office joining and customer workflows remain unverified."
+  }
+}

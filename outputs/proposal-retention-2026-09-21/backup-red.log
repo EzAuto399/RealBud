@@ -1,0 +1,151 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+·xxx
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/private-backup-proposal-retention.test.ts > retained invoice intents through private backup > rejects a forged proposal file scope before preview or staging without replacing target bytes
+AssertionError: promise resolved "{ …(9) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "createdAt": "2026-09-21T07:06:48.664Z",
++   "digest": "a27295040642dac8ea3d29c6ac5e04dd5369534fc5f909ad5bfd1f802d3563b4",
++   "excluded": [
++     "Provider keys, connected-account credentials and sign-in sessions",
++     "Shared office database and company membership",
++     "Worker installation, authentication, conversations and memory",
++     "Files outside the listed business folders and external attachments",
++   ],
++   "fileCount": 3,
++   "included": [
++     "Private Desk book and property notes",
++     "Saved mail work and collected source evidence",
++     "Bank originals, reviewed copies, bills and preparation receipts",
++     "Agency settings, saved views, plans and instruction revision history",
++   ],
++   "plainBytes": 3116,
++   "recordCount": 1,
++   "restoreChanges": [
++     "Use this installation’s protected encryption key",
++     "Clear connected-account selection and setup approvals",
++     "Pause all schedules and require plan review",
++     "Retain job history; interrupt unfinished work and close sign-in handoffs",
++     "Repair the installed instruction pack before running its plans",
++   ],
++   "workspaceId": "91aabb48-7603-430c-9058-8dda0bb9b320",
+  }
+
+ ❯ server/private-backup-proposal-retention.test.ts:75:60
+     73|       } finally { passKey.fill(0); }
+     74|       const before = await readFile(join(to.directory, 'desk.json'));
+     75|       await expect(to.service.previewBackup(forged, phrase)).rejects.t…
+       |                                                            ^
+     76|       const digest = createHash('sha256').update(JSON.stringify(forged…
+     77|       await expect(to.service.stageRestore({ backup: forged, passphras…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  server/private-backup-proposal-retention.test.ts > retained invoice intents through private backup > rejects a forged proposal source binding before preview or staging without replacing target bytes
+AssertionError: promise resolved "{ …(9) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "createdAt": "2026-09-21T07:06:48.816Z",
++   "digest": "7a852a6ddbdd4bddd604a8ee966af42645b8dd44b8fdef8f1cb0043a75fc19b9",
++   "excluded": [
++     "Provider keys, connected-account credentials and sign-in sessions",
++     "Shared office database and company membership",
++     "Worker installation, authentication, conversations and memory",
++     "Files outside the listed business folders and external attachments",
++   ],
++   "fileCount": 3,
++   "included": [
++     "Private Desk book and property notes",
++     "Saved mail work and collected source evidence",
++     "Bank originals, reviewed copies, bills and preparation receipts",
++     "Agency settings, saved views, plans and instruction revision history",
++   ],
++   "plainBytes": 3072,
++   "recordCount": 1,
++   "restoreChanges": [
++     "Use this installation’s protected encryption key",
++     "Clear connected-account selection and setup approvals",
++     "Pause all schedules and require plan review",
++     "Retain job history; interrupt unfinished work and close sign-in handoffs",
++     "Repair the installed instruction pack before running its plans",
++   ],
++   "workspaceId": "ddf580c4-867e-4827-a9fd-a2e214b3a5ff",
+  }
+
+ ❯ server/private-backup-proposal-retention.test.ts:75:60
+     73|       } finally { passKey.fill(0); }
+     74|       const before = await readFile(join(to.directory, 'desk.json'));
+     75|       await expect(to.service.previewBackup(forged, phrase)).rejects.t…
+       |                                                            ^
+     76|       const digest = createHash('sha256').update(JSON.stringify(forged…
+     77|       await expect(to.service.stageRestore({ backup: forged, passphras…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  server/private-backup-proposal-retention.test.ts > retained invoice intents through private backup > rejects a forged proposal extra document before preview or staging without replacing target bytes
+AssertionError: promise resolved "{ …(9) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "createdAt": "2026-09-21T07:06:48.971Z",
++   "digest": "78a5dab155b07bdcc97afb95ca83a6e73a839c679e51be095f0597f301937aaa",
++   "excluded": [
++     "Provider keys, connected-account credentials and sign-in sessions",
++     "Shared office database and company membership",
++     "Worker installation, authentication, conversations and memory",
++     "Files outside the listed business folders and external attachments",
++   ],
++   "fileCount": 3,
++   "included": [
++     "Private Desk book and property notes",
++     "Saved mail work and collected source evidence",
++     "Bank originals, reviewed copies, bills and preparation receipts",
++     "Agency settings, saved views, plans and instruction revision history",
++   ],
++   "plainBytes": 3544,
++   "recordCount": 1,
++   "restoreChanges": [
++     "Use this installation’s protected encryption key",
++     "Clear connected-account selection and setup approvals",
++     "Pause all schedules and require plan review",
++     "Retain job history; interrupt unfinished work and close sign-in handoffs",
++     "Repair the installed instruction pack before running its plans",
++   ],
++   "workspaceId": "f540811c-79b5-4034-bc65-829d6a507a53",
+  }
+
+ ❯ server/private-backup-proposal-retention.test.ts:75:60
+     73|       } finally { passKey.fill(0); }
+     74|       const before = await readFile(join(to.directory, 'desk.json'));
+     75|       await expect(to.service.previewBackup(forged, phrase)).rejects.t…
+       |                                                            ^
+     76|       const digest = createHash('sha256').update(JSON.stringify(forged…
+     77|       await expect(to.service.stageRestore({ backup: forged, passphras…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 1 passed (4)
+   Start at  17:06:47
+   Duration  1.89s (transform 233ms, setup 24ms, import 279ms, tests 1.51s, environment 0ms)
+

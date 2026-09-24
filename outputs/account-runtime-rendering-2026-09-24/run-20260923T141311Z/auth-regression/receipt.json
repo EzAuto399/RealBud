@@ -1,0 +1,44 @@
+{
+  "ok": false,
+  "controlPass": false,
+  "expectedNegative": false,
+  "checks": [],
+  "routes": [],
+  "errors": [],
+  "external": [],
+  "browserMutations": [],
+  "sources": [
+    {
+      "path": "app/account/page.tsx",
+      "sha256": "1318381c131d4fd73e9877df95b1d11d0ca6aae45ac5662884984d2ded0c22c7"
+    },
+    {
+      "path": "app/account/invoices/page.tsx",
+      "sha256": "6a37442b3ea42db978da64ad9bcb58c2af6c9ad5b40104888656f5dfdb45d0e7"
+    },
+    {
+      "path": "app/account/limits/page.tsx",
+      "sha256": "4d58b60919f3c499b9b19c1f2b5867ad810941a18efd8688ca4ea563c33d163c"
+    },
+    {
+      "path": "app/account/rates/page.tsx",
+      "sha256": "e0524b3d8e9b2bbc06871adf6af1f3e2136399f5c9a0d4b38698de188baf2b62"
+    },
+    {
+      "path": "app/account/support/page.tsx",
+      "sha256": "24f0b91197736789b3cb593216429d356c86d9c3e5083bbd2a3dd919dfcfed2e"
+    },
+    {
+      "path": "app/account/usage/page.tsx",
+      "sha256": "0e7e7679c1718a3f446979763c7a084cfaebf9ba123c6890cca7923aa332cdc4"
+    }
+  ],
+  "nextBuildId": "FGiQlgQpRthGz3xY2QJ-f",
+  "cleanup": true,
+  "limits": [
+    "Actual production Next plus disposable PostgreSQL with fictional local identity and provider GET responses.",
+    "No form submissions, limit changes, rate acceptance, payment, delivered sign-in, hosted account or native device acceptance."
+  ],
+  "failure": "Error: Command failed: /opt/homebrew/opt/postgresql@16/bin/pg_ctl -D /var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/rb-runtime-auth-fh1bvfxt/rb-command-site-UNTLw9/data -l /var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/rb-runtime-auth-fh1bvfxt/rb-command-site-UNTLw9/log -o -k /var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/rb-runtime-auth-fh1bvfxt/rb-command-site-UNTLw9 -c listen_addresses='' -w start\npg_ctl: could not start server\nExamine the log output.\n",
+  "finishedAt": "2026-09-23T14:15:37.161Z"
+}

@@ -1,0 +1,18 @@
+[
+  {
+    "name": "original-sandbox-short-socket",
+    "unixSocketPathBytes": 69,
+    "exit": 1,
+    "stderr": "pg_ctl: could not start server\nExamine the log output.\n",
+    "postgresLog": "2026-09-24 00:17:06.588 AEST [37976] LOG:  starting PostgreSQL 16.15 (Homebrew) on aarch64-apple-darwin25.6.0, compiled by Apple clang version 21.0.0 (clang-2100.1.1.101), 64-bit\n2026-09-24 00:17:06.588 AEST [37976] LOG:  could not bind Unix address \"/tmp/rb-runtime-auth-l8c1wykd/rb-command-site-diagnostic/.s.PGSQL.5432\": Operation not permitted\n2026-09-24 00:17:06.588 AEST [37976] WARNING:  could not create Unix-domain socket in directory \"/tmp/rb-runtime-auth-l8c1wykd/rb-command-site-diagnostic\"\n2026-09-24 00:17:06.588 AEST [37976] FATAL:  could not create any Unix-domain sockets\n2026-09-24 00:17:06.589 AEST [37976] LOG:  database system is shut down\n",
+    "cleanup": true
+  },
+  {
+    "name": "permitted-unix-long-socket",
+    "unixSocketPathBytes": 113,
+    "exit": 1,
+    "stderr": "pg_ctl: could not start server\nExamine the log output.\n",
+    "postgresLog": "2026-09-24 00:17:07.184 AEST [37990] LOG:  starting PostgreSQL 16.15 (Homebrew) on aarch64-apple-darwin25.6.0, compiled by Apple clang version 21.0.0 (clang-2100.1.1.101), 64-bit\n2026-09-24 00:17:07.184 AEST [37990] LOG:  Unix-domain socket path \"/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/rb-runtime-auth-3uo1yq1l/rb-command-site-diagnostic/.s.PGSQL.5432\" is too long (maximum 103 bytes)\n2026-09-24 00:17:07.184 AEST [37990] WARNING:  could not create Unix-domain socket in directory \"/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/rb-runtime-auth-3uo1yq1l/rb-command-site-diagnostic\"\n2026-09-24 00:17:07.184 AEST [37990] FATAL:  could not create any Unix-domain sockets\n2026-09-24 00:17:07.184 AEST [37990] LOG:  database system is shut down\n",
+    "cleanup": true
+  }
+]

@@ -1,3 +1,4 @@
+import type { WorkspaceActivity } from './workspace-activity.ts';
 // Remote Desk decisions over a paired channel. One pending card per
 // channel. Push receipts survive restart in bind.storeDir so Telegram is
 // not re-flooded with the same Allow/Deny card after every boot.
@@ -34,6 +35,7 @@ export type RemoteDesk = {
 };
 
 export type RemoteDecisionsBind = {
+  withWorkspaceActivity?: WorkspaceActivity;
   desk: RemoteDesk;
   channels: RemoteChannelAdapter[];
   commit: (snapshot: DeskSnapshot) => void | Promise<void>;
@@ -169,7 +171,18 @@ export function notifyDeskSnapshot(_snapshot: DeskSnapshot): Promise<void> {
   return flight;
 }
 
-export async function decideRemotely(
+export function decideRemotely(
+  channel: RemoteChannelId,
+  chatKey: string,
+  decisionId: string,
+  decision: "allow" | "deny",
+  reason: string | undefined,
+  byName: string,
+): Promise<RemoteDecideResult> {
+  const work = () => decideRemotelyAdmitted(channel, chatKey, decisionId, decision, reason, byName);
+  return bound?.withWorkspaceActivity ? bound.withWorkspaceActivity(work) : work();
+}
+async function decideRemotelyAdmitted(
   channel: RemoteChannelId,
   chatKey: string,
   decisionId: string,
@@ -450,7 +463,8 @@ async function pushFromSnapshot(snapshot: DeskSnapshot): Promise<void> {
   const quiet = isQuietHours(nowMs(), snapshot.timezone || "Australia/Sydney");
   for (const channel of bound.channels) {
     if (bound !== owner) return;
-    if (!channel.pairedKey()) { pendingByChannel.delete(channel.id); persistDecisionPushStore(); continue; }
+    // Persist only a real change: each atomic write costs a PowerShell launch on Windows.
+    if (!channel.pairedKey()) { if (pendingByChannel.delete(channel.id)) persistDecisionPushStore(); continue; }
     const tracked = pendingByChannel.get(channel.id);
     if (tracked) {
       const live = snapshot.drafts.find((item) => item.id === tracked.draftId);

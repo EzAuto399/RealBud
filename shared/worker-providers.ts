@@ -57,7 +57,7 @@ export const WORKER_PROVIDERS: WorkerProvider[] = [
     id: "deepseek",
     label: "DeepSeek",
     envVar: "DEEPSEEK_API_KEY",
-    recommendedModels: ["deepseek-v4-pro", "deepseek-v4-flash"],
+    recommendedModels: ["deepseek-flash", "deepseek-v4-pro"],
   },
   {
     id: "moonshotai",
@@ -92,6 +92,7 @@ export const WORKER_PROVIDERS: WorkerProvider[] = [
       "openai/gpt-5.6-terra",
       "x-ai/grok-4.6",
       "google/gemini-3.6-flash",
+      "deepseek/deepseek-flash",
       "deepseek/deepseek-v4-pro",
       "moonshotai/kimi-k3",
     ],
@@ -100,7 +101,7 @@ export const WORKER_PROVIDERS: WorkerProvider[] = [
     id: "ollama-cloud",
     label: "Ollama Cloud",
     envVar: "OLLAMA_CLOUD_API_KEY",
-    recommendedModels: ["kimi-k3", "deepseek-v4-pro", "glm-5.3", "mistral-large-3:675b"],
+    recommendedModels: ["kimi-k3", "deepseek-flash", "glm-5.3", "mistral-large-3:675b"],
   },
 ];
 

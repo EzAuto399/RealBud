@@ -1,0 +1,276 @@
+{
+  "at": "2026-09-23T03:28:05.585Z",
+  "completed": true,
+  "layer": "local-built-renderer-synthetic-states",
+  "sourceDigests": {
+    "dist/index.html": "491fd2ebe8f0e3e055f92e798db5a65eb23479f6f419d07c0d358d405ed363e4",
+    "src/components/you/WebsiteLinkCard.tsx": "9518ed729b3f357992f23a19d3fa201aaac28427908aae4e660455c0c9223bfa",
+    "src/components/ManagedBudStatus.tsx": "722dabf077387564adf7268f5b22c0b6dc7e5ec4ea0e473ce940aebf0452eb85",
+    "src/components/BudSetupCard.tsx": "5bc138c23fab108fab4a1a52782d8e8f2a3e4da915df50d39ed5bdbdd7bf0760",
+    "src/styles.css": "09569791febb594976d61f900cc631520f0485391392dd82c97d0a3f83b99445"
+  },
+  "screens": [
+    {
+      "name": "setup-entry-900",
+      "width": 900,
+      "documentWidth": 900,
+      "focus": "<body>\n    <div id=\"root\"><div class=\"workspace-surface flex h-full flex-col\"><div class=\"rb-app-shell relative flex min-h-0 flex-1\"><aside class=\"rb-sidebar flex h-full w-[200px] shrink-0 flex-col border-r border-line bg-sheet\"><div class=\"px-4 pb-1 pt-3.5\"><div class=\"flex item",
+      "headings": [
+        "You",
+        "Bud setup",
+        "Bud on this computer",
+        "This office",
+        "Local office collaboration",
+        "Website account",
+        "AI usage this month",
+        "Requests from the website",
+        "People who can review from the website",
+        "Shared reviews and remote preparation",
+        "Bud memory",
+        "Bud’s memory",
+        "Connections",
+        "Account",
+        "Profile",
+        "RealBud service",
+        "Help and support",
+        "More",
+        "Bud's rules",
+        "Law watch",
+        "Set up your workflows",
+        "Set up your agency workflows",
+        "Customer workflow packs",
+        "Company workflow templates",
+        "Bud's jobs",
+        "Recovery key",
+        "Sources",
+        "Keeping your records",
+        "Private workspace backup"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "website-unlinked-900",
+      "width": 900,
+      "documentWidth": 900,
+      "focus": "<div role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"_r_9_\" tabindex=\"-1\" class=\"flex h-[min(820px,90dvh)] w-full max-w-[1000px] min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-paper shadow-xl\"><div class=\"flex shrink-0 items-center justify-between gap-3 border",
+      "headings": [
+        "You",
+        "Bud setup",
+        "Bud on this computer",
+        "This office",
+        "Local office collaboration",
+        "Website account",
+        "AI usage this month",
+        "Requests from the website",
+        "People who can review from the website",
+        "Shared reviews and remote preparation",
+        "Bud memory",
+        "Bud’s memory",
+        "Connections",
+        "Use the browser you already know",
+        "Connected apps",
+        "Continue on your phone",
+        "Account",
+        "Profile",
+        "RealBud service",
+        "Help and support",
+        "More",
+        "Bud's rules",
+        "Law watch",
+        "Set up your workflows",
+        "Set up your agency workflows",
+        "Customer workflow packs",
+        "Company workflow templates",
+        "Bud's jobs",
+        "Recovery key",
+        "Sources",
+        "Keeping your records",
+        "Private workspace backup",
+        "Administrator access",
+        "Office details",
+        "This office",
+        "Local office collaboration",
+        "Website account",
+        "AI usage this month",
+        "Requests from the website",
+        "People who can review from the website",
+        "Shared reviews and remote preparation"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "bank-empty-900",
+      "width": 900,
+      "documentWidth": 900,
+      "focus": "<summary class=\"cursor-pointer text-sm\">Prepare a new export</summary>",
+      "headings": [
+        "Schedule",
+        "September 2026",
+        "This week",
+        "Teach Bud a job",
+        "Prepare bank references",
+        "Saved review history",
+        "Scheduled jobs",
+        "Results from all jobs",
+        "Work activity",
+        "Set up your workflows",
+        "Set up your agency workflows",
+        "Customer workflow packs",
+        "Company workflow templates"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "bank-unprepared-before-navigation-900",
+      "width": 900,
+      "documentWidth": 900,
+      "focus": "<textarea aria-label=\"Property reference directory\" class=\"block w-full mt-1 min-h-11 rounded border border-line bg-sheet px-3 py-2 text-sm text-ink disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-agency\" rows=\"4\" placeholder=\"Property name | reference number | ",
+      "headings": [
+        "Schedule",
+        "September 2026",
+        "This week",
+        "Teach Bud a job",
+        "Prepare bank references",
+        "Saved review history",
+        "Scheduled jobs",
+        "Results from all jobs",
+        "Work activity",
+        "Set up your workflows",
+        "Set up your agency workflows",
+        "Customer workflow packs",
+        "Company workflow templates"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "bank-unprepared-after-navigation-900",
+      "width": 900,
+      "documentWidth": 900,
+      "focus": "<summary class=\"cursor-pointer text-sm\">Prepare a new export</summary>",
+      "headings": [
+        "Schedule",
+        "September 2026",
+        "This week",
+        "Teach Bud a job",
+        "Prepare bank references",
+        "Saved review history",
+        "Scheduled jobs",
+        "Results from all jobs",
+        "Work activity",
+        "Set up your workflows",
+        "Set up your agency workflows",
+        "Customer workflow packs",
+        "Company workflow templates"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "mail-empty-900",
+      "width": 900,
+      "documentWidth": 900,
+      "focus": "<body>\n    <div id=\"root\"><div class=\"workspace-surface flex h-full flex-col\"><div class=\"rb-app-shell relative flex min-h-0 flex-1\"><aside class=\"rb-sidebar flex h-full w-[200px] shrink-0 flex-col border-r border-line bg-sheet\"><div class=\"px-4 pb-1 pt-3.5\"><div class=\"flex item",
+      "headings": [
+        "Mail priorities",
+        "Mail priorities and follow-ups",
+        "Morning schedule"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "bills-empty-900",
+      "width": 900,
+      "documentWidth": 900,
+      "focus": "<body>\n    <div id=\"root\"><div class=\"workspace-surface flex h-full flex-col\"><div class=\"rb-app-shell relative flex min-h-0 flex-1\"><aside class=\"rb-sidebar flex h-full w-[200px] shrink-0 flex-col border-r border-line bg-sheet\"><div class=\"px-4 pb-1 pt-3.5\"><div class=\"flex item",
+      "headings": [
+        "Bills and calendar",
+        "Bills board",
+        "Received bills and expected arrivals"
+      ],
+      "clippedControls": []
+    },
+    {
+      "name": "website-pending-valid-1280",
+      "width": 1280,
+      "documentWidth": 1280,
+      "focus": "<summary><span>This office</span><span class=\"settings-section-hint\">Agency basics · optional setup details</span></summary>",
+      "headings": [
+        "You",
+        "Bud setup",
+        "Bud on this computer",
+        "This office",
+        "Local office collaboration",
+        "Website account",
+        "AI usage this month",
+        "Requests from the website",
+        "People who can review from the website",
+        "Shared reviews and remote preparation",
+        "Bud memory",
+        "Bud’s memory",
+        "Connections",
+        "Account",
+        "Profile",
+        "RealBud service",
+        "Help and support",
+        "More",
+        "Bud's rules",
+        "Law watch",
+        "Set up your workflows",
+        "Set up your agency workflows",
+        "Customer workflow packs",
+        "Company workflow templates",
+        "Bud's jobs",
+        "Recovery key",
+        "Sources",
+        "Keeping your records",
+        "Private workspace backup"
+      ],
+      "clippedControls": []
+    }
+  ],
+  "checks": [
+    {
+      "check": "Office setup closes with Escape",
+      "width": 900
+    },
+    {
+      "check": "Unprepared bank mapping and reference directory survive door navigation",
+      "after": {
+        "date": "",
+        "directory": "",
+        "dialogs": 0
+      }
+    },
+    {
+      "check": "Pending website approval resumes valid saved request",
+      "code": "ABCD-EFGH"
+    },
+    {
+      "check": "Website card keyboard walk",
+      "mode": "pending",
+      "fault": "",
+      "steps": [
+        {
+          "tag": "BUTTON",
+          "text": "Open the page again",
+          "outline": "rgb(37, 35, 31) none 3px",
+          "focusVisible": false
+        },
+        {
+          "tag": "BUTTON",
+          "text": "Cancel",
+          "outline": "rgb(63, 95, 69) solid 2px",
+          "focusVisible": true
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "denied": [],
+  "failure": null,
+  "limits": [
+    "Synthetic loopback fixture only; no live website, bank, email, model, provider or customer data.",
+    "Current production-built renderer served by disposable source service; not installed Electron or Windows.",
+    "Website status and readiness responses are synthetic; review tests presentation and keyboard behavior, not authentication or provisioning.",
+    "No product source changes; no broad suites or package build."
+  ]
+}

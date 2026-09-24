@@ -7,9 +7,18 @@ primary_region = 'syd'
 
 [env]
   PORT = '8787'
+  PLATFORM_BIND_HOST = '0.0.0.0'
   REALBUD_GATEWAY_DATA = '/data'
   REALBUD_ALLOWED_ORIGINS = 'https://realbud.app,https://www.realbud.app'
+  # Care-fee collection mode. deploy.sh stages the same value as a secret with
+  # the Square variables; `local` closes and reads invoices without checkout.
   REALBUD_PAYMENT_MODE = 'local'
+  # Installation provisioning, non-secret values only. Both paths are on the
+  # mounted volume so an issued credential and a stored project key survive a
+  # restart. The secrets and REALBUD_GATEWAY_PUBLIC_ORIGIN come from deploy.sh.
+  REALBUD_GATEWAY_SECRETS_DIR = '/data/secrets'
+  REALBUD_GATEWAY_CONNECTOR_REGISTRY = '/data/connectors.json'
+  REALBUD_MODELVIA_BASE_URL = 'https://api.modelvia.dev'
 
 [http_service]
   internal_port = 8787
@@ -18,6 +27,15 @@ primary_region = 'syd'
   auto_start_machines = true
   min_machines_running = 1
   processes = ['app']
+
+  # /ready is 200 only when installation provisioning is composed; a misconfigured
+  # deployment fails its health check instead of serving 503s to the portal.
+  [[http_service.checks]]
+    grace_period = '10s'
+    interval = '30s'
+    method = 'GET'
+    path = '/ready'
+    timeout = '5s'
 
 [[vm]]
   size = 'shared-cpu-2x'

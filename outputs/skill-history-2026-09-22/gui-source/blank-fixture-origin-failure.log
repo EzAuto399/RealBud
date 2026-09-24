@@ -1,0 +1,18 @@
+realbud server on http://127.0.0.1:56075
+realbud server on http://127.0.0.1:56085
+realbud server on http://127.0.0.1:56099
+realbud server on http://127.0.0.1:56117
+REALBUD_QA_SKILL_PARTIAL_WRITE_HELD
+realbud server on http://127.0.0.1:56124
+realbud server on http://127.0.0.1:56137
+
+AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
++ actual - expected
+
++ [
++   "Failed to read the 'localStorage' property from 'Window': Access is denied for this document.",
++   "Failed to read the 'localStorage' property from 'Window': Access is denied for this document.",
++   "Failed to read the 'localStorage' property from 'Window': Access is denied for this document.",
++   "Failed to read the 'localStorage' property from 'Window': Access is denied for this document."
++ ]
+- []

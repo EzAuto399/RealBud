@@ -2,6 +2,11 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { createMemberCredentialApi } from './member-credentials.ts';
 import { createWorkItemApi } from './work-items.ts';
+import { createMembershipApi } from './membership.ts';
+import { createPortalBindingApi, type CompanyPortalBridge } from './portal-bindings.ts';
+import { createDepartmentExecutionApi } from './department-execution.ts';
+import { createDepartmentApi } from './departments.ts';
+import { insertCaseRecord } from './case-records.ts';
 import { prepareInitialCredential } from './initial-credential.ts';
 import { normalizeCompanyWorkflowTemplate } from './workflow-template.ts';
 import { CompanyError, type CaseClaim, type CompanyActor, type CompanyScope, type KnowledgeRevision, type ScopeKind, type ScopePermission } from './types.ts';
@@ -44,7 +49,7 @@ function knowledge(row: Record<string, unknown>): KnowledgeRevision {
 }
 
 /** Trusted service API. Never hand this pool or its credentials to a worker. */
-export function createCompanyKernel(pool: Pool) {
+export function createCompanyKernel(pool: Pool, options: { portalBridge?: CompanyPortalBridge } = {}) {
   let checkedRole: Promise<void> | undefined;
   function checkRole(): Promise<void> {
     return checkedRole ??= (async () => {
@@ -63,7 +68,7 @@ export function createCompanyKernel(pool: Pool) {
     let broken: Error | undefined;
     try {
       await client.query('BEGIN');
-      await client.query("SELECT set_config('realbud.company_id','',true),set_config('realbud.member_id','',true)");
+      await client.query("SELECT set_config('realbud.company_id','',true),set_config('realbud.member_id','',true),set_config('realbud.delegation_hash','',true)");
       const result = await fn(client);
       await client.query('COMMIT');
       return result;
@@ -79,15 +84,18 @@ export function createCompanyKernel(pool: Pool) {
     await client.query("SELECT set_config('realbud.company_id',$1,true),set_config('realbud.member_id',$2,true)", [companyId, memberId]);
   }
 
-  async function authenticated<T>(sessionToken: string, fn: (client: PoolClient, actor: CompanyActor) => Promise<T>): Promise<T> {
+  async function authenticated<T>(sessionToken: string, fn: (client: PoolClient, actor: CompanyActor) => Promise<T>, lifecycle = false): Promise<T> {
     const tokenHash = bearer(sessionToken);
     return transaction(async (client) => {
       const candidate = await client.query(`SELECT company_id,member_id,id FROM ${S}.sessions WHERE token_hash=$1`, [tokenHash]);
       if (!candidate.rows[0]) throw new CompanyError('unauthenticated');
       const identity = candidate.rows[0];
+      // Lifecycle mutations exclude all ordinary operations before taking member
+      // locks. This prevents role/leave races without lock-order upgrades.
+      await client.query(`SELECT pg_advisory_xact_lock${lifecycle ? '' : '_shared'}(hashtextextended($1,0))`, [`company-lifecycle:${identity.company_id}`]);
       // Lock order is member then session, before rechecking either credential.
       // Revocation uses the corresponding exclusive lock; no row-lock upgrades.
-      await client.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [`member:${identity.company_id}:${identity.member_id}`]);
+      await client.query(`SELECT pg_advisory_xact_lock${lifecycle ? '' : '_shared'}(hashtextextended($1,0))`, [`member:${identity.company_id}:${identity.member_id}`]);
       await client.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [`session:${identity.id}`]);
       const result = await client.query(`SELECT m.company_id,m.id,m.display_name,m.role,s.id AS session_id
         FROM ${S}.sessions s JOIN ${S}.members m ON m.company_id=s.company_id AND m.id=s.member_id
@@ -126,6 +134,11 @@ export function createCompanyKernel(pool: Pool) {
     const result = await client.query(`SELECT * FROM ${S}.scopes WHERE company_id=$1 AND id=$2`, [actor.companyId, scopeId]);
     if (!result.rows[0]) throw new CompanyError('not_found');
     const found = scope(result.rows[0]);
+    if (result.rows[0].purpose === 'department') {
+      const allowed = await client.query(`SELECT ${S}.scope_allowed($1,$2) AS allowed`, [scopeId, permission]);
+      if (!allowed.rows[0]?.allowed) throw new CompanyError('forbidden');
+      return found;
+    }
     if (found.ownerMemberId === actor.memberId || (permission === 'read' && found.kind === 'company')) return found;
     const grant = await client.query(`SELECT 1 FROM ${S}.scope_grants WHERE company_id=$1 AND scope_id=$2 AND member_id=$3
       AND (permission=$4 OR permission='write')`, [actor.companyId, scopeId, actor.memberId, permission]);
@@ -182,6 +195,8 @@ export function createCompanyKernel(pool: Pool) {
   }
 
   return {
+    ...createMembershipApi({ authenticated, transaction }),
+    ...createDepartmentApi({ authenticated }),
     /** Trusted bootstrap API. HTTP setup requires an initial credential; optionality
      * preserves internal fixture and legacy enrollment compatibility. */
     async createCompany(input: { name: string; ownerName: string; singleHost?: boolean; credential?: unknown }) {
@@ -348,6 +363,8 @@ export function createCompanyKernel(pool: Pool) {
       const permissions = [...new Set(input.permissions)];
       return authenticated(sessionToken, async (client, actor) => {
         const found = await authorizedScope(client, actor, input.scopeId, 'read');
+        const department = await client.query(`SELECT 1 FROM ${S}.scopes WHERE company_id=$1 AND id=$2 AND purpose='department'`, [actor.companyId, input.scopeId]);
+        if (department.rowCount) throw new CompanyError('forbidden');
         if (found.ownerMemberId !== actor.memberId) throw new CompanyError('forbidden');
         if (found.kind === 'private' && input.memberId !== actor.memberId) throw new CompanyError('forbidden', 'Share a reviewed copy into a team scope');
         if (found.revision !== input.expectedRevision) throw new CompanyError('conflict');
@@ -355,6 +372,12 @@ export function createCompanyKernel(pool: Pool) {
         if (!member.rowCount) throw new CompanyError('not_found');
         await client.query(`DELETE FROM ${S}.scope_grants WHERE company_id=$1 AND scope_id=$2 AND member_id=$3`, [actor.companyId, input.scopeId, input.memberId]);
         for (const permission of permissions) await client.query(`INSERT INTO ${S}.scope_grants(company_id,scope_id,member_id,permission) VALUES($1,$2,$3,$4)`, [actor.companyId, input.scopeId, input.memberId, permission]);
+        if (input.memberId !== found.ownerMemberId && !permissions.includes('write')) {
+          // A later grant must not revive a claim from before editing access was
+          // removed. Keep uncertain work held, as with membership revocation.
+          await client.query(`UPDATE ${S}.cases SET status='recovery_required',fence=fence+1,claim_token_hash=NULL,lease_expires_at=NULL
+            WHERE company_id=$1 AND scope_id=$2 AND holder_member_id=$3 AND status='claimed'`, [actor.companyId, input.scopeId, input.memberId]);
+        }
         const updated = await client.query(`UPDATE ${S}.scopes SET revision=revision+1 WHERE company_id=$1 AND id=$2 RETURNING *`, [actor.companyId, input.scopeId]);
         return scope(updated.rows[0]);
       });
@@ -407,7 +430,7 @@ export function createCompanyKernel(pool: Pool) {
         await authorizedScope(client, actor, input.scopeId, 'write');
         await generalCaseScope(client, actor, input.scopeId);
         const caseId = randomUUID();
-        await client.query(`INSERT INTO ${S}.cases(company_id,id,scope_id,title) VALUES($1,$2,$3,$4)`, [actor.companyId, caseId, input.scopeId, title]);
+        await insertCaseRecord(client, actor, { id: caseId, scopeId: input.scopeId, title });
         return { caseId, scopeId: input.scopeId, title, status: 'open' as const, fence: '0' };
       });
     },
@@ -419,6 +442,7 @@ export function createCompanyKernel(pool: Pool) {
         if (row.status === 'claimed' && row.lease_live) throw new CompanyError('claim_busy');
         if (row.status === 'recovery_required' || row.status === 'claimed') throw new CompanyError('recovery_required');
         if (row.status !== 'open') throw new CompanyError('conflict');
+        if (row.assignee_member_id && row.assignee_member_id !== actor.memberId) throw new CompanyError('forbidden');
         const claimToken = token();
         const result = await client.query(`UPDATE ${S}.cases SET status='claimed',fence=fence+1,claim_token_hash=$3,holder_member_id=$4,
           lease_expires_at=clock_timestamp()+($5::double precision*interval '1 millisecond') WHERE company_id=$1 AND id=$2 RETURNING fence,lease_expires_at`, [actor.companyId, input.caseId, hash(claimToken), actor.memberId, input.ttlMs]);
@@ -454,6 +478,8 @@ export function createCompanyKernel(pool: Pool) {
       });
     },
     ...createWorkItemApi({ authenticated, authorizedScope, newScope }),
+    ...createPortalBindingApi({ authenticated, portalBridge: options.portalBridge }),
+    ...createDepartmentExecutionApi({ transaction, context, authenticated, portalBridge: options.portalBridge }),
   };
 }
 

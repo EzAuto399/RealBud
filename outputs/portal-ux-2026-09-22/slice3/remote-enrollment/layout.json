@@ -1,0 +1,20 @@
+[
+  {
+    "path": "/account/remote-approvers",
+    "width": 360,
+    "scroll": 360,
+    "wide": []
+  },
+  {
+    "path": "/account/remote-approvers",
+    "width": 768,
+    "scroll": 768,
+    "wide": []
+  },
+  {
+    "path": "/account/remote-approvers",
+    "width": 1280,
+    "scroll": 1280,
+    "wide": []
+  }
+]

@@ -3,7 +3,7 @@
 // member scoping, and no department names baked into code.
 import { describe, expect, it } from "vitest";
 
-import { hermesProfileFor, hermesProfilesFor } from "./hermes-profile.ts";
+import { currentWorkerProfile, withWorkerProfile, hermesProfileFor, hermesProfilesFor } from "./hermes-profile.ts";
 
 describe("worker profile selection", () => {
   it("uses the shipped base profile when no member is acting", () => {
@@ -40,9 +40,9 @@ describe("worker profile selection", () => {
   });
 
   it("sanitises keys into safe directory names without collisions from punctuation", () => {
-    expect(hermesProfileFor("property", "Accounts Team").profile).toBe("property-accounts-team");
+    expect(hermesProfileFor("property", "Accounts Team").profile).not.toBe("property-accounts-team");
     expect(hermesProfileFor("property", "accounts-team").profile).toBe("property-accounts-team");
-    expect(hermesProfileFor("property", "  ..//etc  ").profile).toBe("property-etc");
+    expect(hermesProfileFor("property", "  ..//etc  ").profile).toMatch(/^property-etc--m[a-f0-9]+$/);
   });
 
   it("does not let a crafted key escape the profiles directory", () => {
@@ -55,8 +55,8 @@ describe("worker profile selection", () => {
     }
   });
 
-  it("treats keys that sanitise to nothing as no member supplied", () => {
-    expect(hermesProfileFor("property", "!!!" )).toEqual({ profile: "property" });
+  it("keeps punctuation identities away from the shared base", () => {
+    expect(hermesProfileFor("property", "!!!" ).profile).not.toBe("property");
   });
 
   it("bounds the constructed name", () => {
@@ -74,4 +74,23 @@ describe("worker profile selection", () => {
     expect(hermesProfilesFor("property")).toEqual(["property"]);
     expect(hermesProfilesFor("property", ["accounts", "accounts", ""])).toEqual(["property", "property-accounts"]);
   });
+});
+
+it("keeps long, mixed-case and underscore member identities distinct", () => {
+  const keys = ["a_b", "a-b", "A-B", "!", "?", "a".repeat(80)+"1", "a".repeat(80)+"2"];
+  expect(new Set(keys.map(key => hermesProfileFor("property", key).profile)).size).toBe(keys.length);
+});
+it("preserves each identity across concurrent asynchronous operations", async () => {
+  const result = await Promise.all(["dana", "sam"].map(key => withWorkerProfile(key, async () => {
+    await new Promise(resolve => setTimeout(resolve, key === "dana" ? 10 : 1));
+    return currentWorkerProfile();
+  })));
+  expect(result.map(value => value.profile)).toEqual(["property-dana", "property-sam"]);
+  expect(currentWorkerProfile().profile).toBe("property");
+});
+
+it("does not let a plain-looking member impersonate a normalized profile name", () => {
+  const normalized = hermesProfileFor("property", "Member_One").profile;
+  const crafted = normalized.slice("property-".length);
+  expect(hermesProfileFor("property", crafted).profile).not.toBe(normalized);
 });

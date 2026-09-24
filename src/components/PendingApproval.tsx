@@ -13,6 +13,9 @@ import { useStore, type Bot, type Message, type RequestFence } from "@/state/sto
 import { alwaysAllowOfferLabel } from "@/lib/portal-job";
 import { approvalHeadline } from "@/lib/tool-label";
 import { cn } from "@/lib/cn";
+import { HERMES_MEMORY_APPROVAL, requiresOnceApproval, validMemoryApprovalReview, type ApprovalPolicy, type MemoryApprovalReview } from "@shared/approval-policy";
+import { readBrowserApprovalCard, type BrowserApprovalCard } from "@shared/browser-approval-card";
+import { BrowserPendingActions, BrowserPendingPanel, browserApprovalBlocked } from "./BrowserApprovalCard";
 
 export interface Pending {
   message: Message;
@@ -23,6 +26,10 @@ export interface Pending {
   detail: string;
   held?: string;
   fence?: RequestFence;
+  approvalPolicy?: ApprovalPolicy;
+  memoryReview?: MemoryApprovalReview;
+  /** A consequential browser step; null when its details did not validate. */
+  browserApproval?: BrowserApprovalCard | null;
 }
 
 /** Open approvals on a thread, oldest first — answered/dismissed drop out. */
@@ -37,6 +44,9 @@ export function pendingApprovals(messages: Message[]): Pending[] {
       detail: m.card!.subtitle,
       held: m.card!.held,
       fence: m.card!.fence,
+      approvalPolicy: m.card!.approvalPolicy,
+      memoryReview: m.card!.memoryReview,
+      ...(m.card!.browserApproval !== undefined ? { browserApproval: readBrowserApprovalCard(m.card!.browserApproval) } : {}),
     }));
 }
 
@@ -61,18 +71,24 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
   count,
   index,
   productAsk = false,
+  now,
 }: {
   pending: Pending;
   count: number;
   index: number;
   productAsk?: boolean;
+  /** Fixed clock for tests; the live card ticks on its own. */
+  now?: number;
 }) {
   const { state } = useStore();
+  if (pending.browserApproval !== undefined) return <BrowserPendingPanel approval={pending.browserApproval} count={count} index={index} now={now} />;
+  const isMemory = pending.tool === HERMES_MEMORY_APPROVAL;
+  const memoryReview = isMemory && validMemoryApprovalReview(pending.memoryReview) ? pending.memoryReview : null;
   const knownAddresses = productAsk ? (state.desk?.properties ?? []).map((row) => row.address) : [];
-  const headline = productAsk
+  const headline = isMemory ? "Review a memory change" : productAsk
     ? approvalHeadline(pending.tool, payloadText(pending), knownAddresses)
     : legacyLabel(pending.tool);
-  const isSubmit = pending.fence?.surface === "portal-submit";
+  const isSubmit = !isMemory && pending.fence?.surface === "portal-submit";
   return (
     <div className={cn("rounded-t-2xl border-b px-4 py-3", productAsk ? "border-line bg-sheet" : "border-hairline/50 bg-raised/40")}>
       <div className="flex flex-wrap items-center gap-2">
@@ -87,7 +103,16 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
         </span>
         {!productAsk && <span className="font-mono text-[11px] text-ink-muted">{pending.tool}</span>}
       </div>
-      {isSubmit ? (
+      {isMemory ? (
+        <div className="mt-2 space-y-2">
+          <p className="text-[13px] leading-relaxed text-ink">This changes information Bud can use in future conversations. Check the complete change before allowing it.</p>
+          {memoryReview ? <>
+            <p className="whitespace-pre-wrap break-words text-[13px] font-medium text-ink">{memoryReview.description}</p>
+            <pre tabIndex={0} role="region" aria-label="Complete proposed memory change" className="max-h-60 overflow-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-ink focus-visible:outline-2 focus-visible:outline-agency">{memoryReview.content}</pre>
+          </> : <p role="alert" className="text-[13px] text-hold">The complete memory change is unavailable. This request stays blocked. Deny it or stop this turn.</p>}
+          <p className="text-[12px] text-ink-muted">Approval applies to this memory change only; it does not confirm the change has finished. Future changes require their own review.</p>
+        </div>
+      ) : isSubmit ? (
         <p className="mt-2 text-[15px] font-medium leading-relaxed text-ink">{pending.detail}</p>
       ) : (
         <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-ink">
@@ -97,7 +122,7 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
       {isSubmit ? (
         <p className="mt-2 text-[12.5px] text-hold">Check the form in the browser before you allow.</p>
       ) : null}
-      {productAsk && <ApprovalScope kind="action" />}
+      {productAsk && !isMemory && <ApprovalScope kind="action" />}
       {pending.held && <div className="mt-2 text-[12px] text-hold">{pending.held}</div>}
     </div>
   );
@@ -110,6 +135,7 @@ export function PendingApprovalActions({
   onCancelTurn,
   alwaysAllowable = true,
   productAsk = false,
+  now,
 }: {
   pending: Pending;
   threadId: string;
@@ -119,27 +145,49 @@ export function PendingApprovalActions({
   /** Always allow writes a standing rule for this approval key. */
   alwaysAllowable?: boolean;
   productAsk?: boolean;
+  /** Fixed clock for tests; the live card ticks on its own. */
+  now?: number;
 }) {
   const { dispatch } = useStore();
+  const isMemory = pending.tool === HERMES_MEMORY_APPROVAL;
+  const memoryReviewAvailable = !isMemory || validMemoryApprovalReview(pending.memoryReview);
+  const onceOnly = requiresOnceApproval(pending);
   const productBud = productAsk || bot?.id === "bud" || bot?.name === "Bud";
-  const isSubmit = pending.fence?.surface === "portal-submit";
-  const ruleOffer = isSubmit ? null : pending.fence?.ruleOffer ?? null;
+  const isSubmit = !isMemory && pending.fence?.surface === "portal-submit";
+  const ruleOffer = isSubmit || onceOnly ? null : pending.fence?.ruleOffer ?? null;
   const decide = (
     behavior: "allow" | "deny",
     options?: { always?: boolean; scope?: "once" | "session"; rule?: { surface: "portal-read" | "portal-prefill"; origin: string } },
-  ) =>
-    dispatch({
+  ) => {
+    if (behavior === "allow" && !memoryReviewAvailable) return;
+    return dispatch({
       type: "decideRequest",
       threadId,
       requestId: pending.requestId,
       behavior,
       message: behavior === "deny" ? "Denied by the user." : undefined,
-      scope: options?.scope,
-      rule: options?.rule,
-      alwaysAllow: options?.always && bot && pending.allowKey ? { botId: bot.id, key: pending.allowKey } : undefined,
+      scope: behavior === "allow" && onceOnly ? "once" : options?.scope,
+      rule: onceOnly ? undefined : options?.rule,
+      alwaysAllow: !onceOnly && options?.always && bot && pending.allowKey ? { botId: bot.id, key: pending.allowKey } : undefined,
     });
+  };
 
-  const base = "pm-control rounded-full px-3.5 text-[13.5px] transition-colors";
+  // A consequential browser step: approve exactly these facts once, decline,
+  // or stop the whole task. Nothing here can save a rule or a wider grant.
+  if (pending.browserApproval !== undefined) {
+    const approval = pending.browserApproval;
+    return (
+      <BrowserPendingActions
+        approval={approval}
+        now={now}
+        onApprove={() => { if (!browserApprovalBlocked(approval, Math.max(now ?? 0, Date.now()))) decide("allow", { scope: "once" }); }}
+        onDecline={() => decide("deny")}
+        onStop={onCancelTurn}
+      />
+    );
+  }
+
+  const base = "pm-control rounded-full px-3.5 text-[13.5px] transition-colors disabled:cursor-not-allowed disabled:opacity-50";
   return (
     <div className="flex flex-col items-end gap-2 px-2 py-2">
       <div className="flex flex-wrap items-center justify-end gap-2">
@@ -155,15 +203,16 @@ export function PendingApprovalActions({
           <>
             <button
               type="button"
+              disabled={!memoryReviewAvailable}
               onClick={() => decide("allow", { scope: "once" })}
               className={cn(base, productBud ? "border border-line text-ink hover:bg-raised" : "bg-agency font-medium text-white hover:bg-agency-hover")}
             >
-              Allow once
+              {isMemory ? "Allow this memory change once" : "Allow once"}
             </button>
             {/* On a fenced browser step a task-wide grant would stop the worker
                 asking, and the fence only sees what it asks. The server coerces it
                 to once anyway; the honest offer here is the site rule below. */}
-            {productBud && !pending.fence && pending.tool !== "bud_connected_app_action" && (
+            {productBud && !onceOnly && !pending.fence && pending.tool !== "bud_connected_app_action" && (
               <button
                 type="button"
                 onClick={() => decide("allow", { scope: "session" })}
@@ -175,7 +224,7 @@ export function PendingApprovalActions({
             )}
           </>
         )}
-        {alwaysAllowable && bot && pending.allowKey && !productBud && pending.tool !== "bud_connected_app_action" && (
+        {alwaysAllowable && !onceOnly && bot && pending.allowKey && !productBud && pending.tool !== "bud_connected_app_action" && (
           <button
             type="button"
             onClick={() => decide("allow", { always: true })}

@@ -1,0 +1,31 @@
+{
+  "ok": true,
+  "checks": [
+    "actual HTTP pairing and separate grant enrollment for two agencies",
+    "browser durable UUID before submission, committed lost reply and reload retry create one queued request and zero approvals",
+    "actual browser origin/role/company boundaries and cancellation before claim",
+    "actual claim lease replay, ordered opaque run receipts and rendered terminal history",
+    "owner grant revocation isolates agency, reader history is read-only"
+  ],
+  "cleanup": true,
+  "browserErrors": [],
+  "offOriginRequests": [],
+  "stats": {
+    "rpcCount": 31,
+    "violations": [],
+    "databaseErrors": [
+      "invalid_command_grant",
+      "invalid_command_grant",
+      "command_stale",
+      "invalid_command_grant"
+    ],
+    "authRejections": [],
+    "migrationHashes": {}
+  },
+  "layers": {
+    "portal": "actual built Next and rendered React",
+    "database": "actual disposable PostgreSQL transactions",
+    "supabaseTransport": "local allowlisted REST bridge",
+    "execution": "typed receipt simulation; desktop executor proved separately"
+  }
+}

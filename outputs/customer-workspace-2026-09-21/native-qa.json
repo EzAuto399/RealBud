@@ -1,0 +1,25 @@
+{
+  "date": "2026-09-21T02:55:58.760Z",
+  "executable": "/Users/yoda/projects/RealBud/outputs/customer-workspace-2026-09-21/package/mac-arm64/RealBud.app/Contents/MacOS/RealBud",
+  "native": true,
+  "database": "postgres (PostgreSQL) 16.15 (Homebrew)",
+  "fictionalDataOnly": true,
+  "checks": [
+    "Actual packaged native preload and authenticated service adoption",
+    "Native department creation, persisted read/edit grants, reduction confirmation and cancellation",
+    "Stale native permission edit rejected; refreshed database state replaces old controls",
+    "Encrypted offline-detachment receipt visible after native renderer reload",
+    "Native stop-impact confirmation and cancellation leave the office service running",
+    "Records guidance distinguishes office backups from unavailable complete private-workspace restore",
+    "Native saved-view creation, persistent reload and real task view navigation",
+    "Native customer-pack resource loading, preview, import and truthful incomplete live acceptance",
+    "390px department and recovery UI with no horizontal overflow"
+  ],
+  "rendererErrors": [],
+  "limitations": [
+    "Unsigned local Mac build",
+    "No model calls, bank accounts or customer office",
+    "Same-Mac PostgreSQL fixture; no physical peer/device proof",
+    "Department access administration only; no departmental work queue or retirement"
+  ]
+}

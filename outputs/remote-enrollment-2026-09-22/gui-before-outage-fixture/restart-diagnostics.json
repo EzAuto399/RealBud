@@ -1,0 +1,86 @@
+{
+  "before": {
+    "config": {
+      "instances": "88c79e0b405c66a4c9264cfd0c6cdcf7300521d81f12c595c6e0533e57d28afb",
+      "composio": "0fda227398bcb0f3c79edde8113887e0954053ae91ae8ba1c565a932759b9b93"
+    },
+    "workerFingerprint": "ec1c57e9e83083cda10943599d7410799c0a44fde9b4e85bb7e7b994618ad3b7",
+    "catalog": [
+      {
+        "id": "278793bd-7839-41c2-a23f-074a0b753926",
+        "operation": "morning-review",
+        "revision": "eca7115bb8821748d389938a0481dfd8ef69cf66fdb9dc49b9a7a8672e56ea3f",
+        "label": "Morning priorities"
+      },
+      {
+        "id": "2beadfee-c809-46b8-a518-0fc295b70a51",
+        "operation": "prepare-recipe",
+        "revision": "83d9375f4e369d3ae069a46bb88a95a18321aa4e7940954b0a2a94f534828e3b",
+        "label": "Fictional briefing"
+      }
+    ],
+    "authority": "0e30abc35fbee0736d58bf201b544aabccb2f55f814c990506956ee5a0ea9aa7",
+    "remote": [
+      {
+        "id": "99860479-c2ab-488f-815b-79351e9ce295",
+        "phase": "confirmed"
+      }
+    ],
+    "agencyWorkflows": [
+      {
+        "id": "bank-references",
+        "ready": false,
+        "evidenceDigest": "4a3d61a8a2a62fb999616b053f158afbf9e4e2c00127f9dd010fc91a27d15f10"
+      },
+      {
+        "id": "bills-calendar",
+        "ready": false,
+        "evidenceDigest": "d8ce2b00c978ec6cada18c96b0c7e0d4070638ffd8c9ad957fc6bdf38dc8d9e9"
+      },
+      {
+        "id": "morning-priorities",
+        "ready": true,
+        "evidenceDigest": "be1fabcf89d0c18e3c86b595499694db8fe87aec3aa1ec83246ae69864290f6f"
+      }
+    ]
+  },
+  "after": {
+    "config": {
+      "instances": "88c79e0b405c66a4c9264cfd0c6cdcf7300521d81f12c595c6e0533e57d28afb",
+      "composio": "0fda227398bcb0f3c79edde8113887e0954053ae91ae8ba1c565a932759b9b93"
+    },
+    "workerFingerprint": "ec1c57e9e83083cda10943599d7410799c0a44fde9b4e85bb7e7b994618ad3b7",
+    "catalog": [
+      {
+        "id": "2beadfee-c809-46b8-a518-0fc295b70a51",
+        "operation": "prepare-recipe",
+        "revision": "83d9375f4e369d3ae069a46bb88a95a18321aa4e7940954b0a2a94f534828e3b",
+        "label": "Fictional briefing"
+      }
+    ],
+    "authority": "0e30abc35fbee0736d58bf201b544aabccb2f55f814c990506956ee5a0ea9aa7",
+    "remote": [
+      {
+        "id": "99860479-c2ab-488f-815b-79351e9ce295",
+        "phase": "stale"
+      }
+    ],
+    "agencyWorkflows": [
+      {
+        "id": "bank-references",
+        "ready": false,
+        "evidenceDigest": "4a3d61a8a2a62fb999616b053f158afbf9e4e2c00127f9dd010fc91a27d15f10"
+      },
+      {
+        "id": "bills-calendar",
+        "ready": false,
+        "evidenceDigest": "2606f749d0bf200e3ad923c2e555139bb140af2dc967839ba78a3f5089ba2da6"
+      },
+      {
+        "id": "morning-priorities",
+        "ready": false,
+        "evidenceDigest": "f65a6fe215e6b1ee93fdb32bbb011926eeb6b212359b47d5b8d6771b9b5b2952"
+      }
+    ]
+  }
+}

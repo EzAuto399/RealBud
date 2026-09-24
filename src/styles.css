@@ -64,6 +64,13 @@ body,
   height: 100%;
 }
 
+/* Pages own their scroll regions. Native focus/scrollIntoView must not scroll
+   the document itself and leave the application above an empty viewport. */
+html,
+body {
+  overflow: clip;
+}
+
 body {
   background-color: var(--color-paper);
   color: var(--color-ink);
@@ -71,7 +78,6 @@ body {
   font-size: 15px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
-  overflow: hidden;
 }
 
 :focus {

@@ -1,0 +1,65 @@
+{
+  "status": "locally-verified-private-remote-work-checkpoint",
+  "goalStatus": "active",
+  "verifiedAt": "2026-09-21T23:43:07.680217+00:00",
+  "scope": [
+    "explicit private-workspace opt-in",
+    "exact reviewed templates and person-authorized decisions",
+    "online claims and existing recipe/morning executors",
+    "cancellation and crash recovery",
+    "inert encrypted backup restore",
+    "rendered desktop and portal UI"
+  ],
+  "fullSuite": {
+    "numPassedTests": 4678,
+    "numFailedTests": 0,
+    "numPendingTests": 191,
+    "success": true
+  },
+  "websiteTests": {
+    "passed": 63,
+    "failed": 0
+  },
+  "postgresAssertions": 422,
+  "builds": {
+    "desktopUIAndTypes": "passed",
+    "websiteProduction": "passed",
+    "compiledService": "passed"
+  },
+  "application": {
+    "gui-source": {
+      "groups": 7,
+      "workerCalls": 3,
+      "mailScans": 1,
+      "rpcCount": 294,
+      "expectedRecoveryConflicts": [
+        "remote_work_conflict"
+      ],
+      "errors": [],
+      "cleanup": true
+    },
+    "gui-compiled": {
+      "groups": 7,
+      "workerCalls": 3,
+      "mailScans": 1,
+      "rpcCount": 300,
+      "expectedRecoveryConflicts": [
+        "remote_work_conflict"
+      ],
+      "errors": [],
+      "cleanup": true
+    }
+  },
+  "fixturesOnly": true,
+  "sourceManifest": "source-manifest.json",
+  "compiledManifest": "compiled-manifest.json",
+  "remaining": [
+    "company member and department-case authority bridge",
+    "fresh native macOS installer/profile acceptance",
+    "native Windows GUI/key custody/memory journal/update/uninstall",
+    "two-device acceptance",
+    "hosted migration and managed service commissioning",
+    "real customer bank/REI/Gmail workflow acceptance"
+  ],
+  "grok47": "not available in last verified session; no fallback prompt sent"
+}

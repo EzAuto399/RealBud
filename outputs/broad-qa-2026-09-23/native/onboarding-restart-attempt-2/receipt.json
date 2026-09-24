@@ -1,0 +1,40 @@
+{
+  "at": "2026-09-23T03:11:28.146Z",
+  "passed": false,
+  "changedPort": false,
+  "executable": "/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/package/mac-arm64/RealBud.app/Contents/MacOS/RealBud",
+  "resources": "/Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/package/mac-arm64/RealBud.app/Contents/Resources",
+  "artifacts": {
+    "app.asar": "df14eb7fdba378b98e32286aedc277ad9cb6f5277fa71962172698c104148b63",
+    "server/bootstrap.js": "ac2b94c9884c920b8a56b50209603dd72e2c5bbfcd3309afbc51b6c65a7e3796",
+    "ui/index.html": "491fd2ebe8f0e3e055f92e798db5a65eb23479f6f419d07c0d358d405ed363e4"
+  },
+  "checks": [],
+  "errors": [],
+  "requests": [],
+  "blocked": [],
+  "runtimes": [],
+  "serviceStarts": [
+    {
+      "pid": 80607,
+      "port": 28799,
+      "instanceId": "a8bb73400dc059bbc5e8eff97571444d"
+    }
+  ],
+  "cleanup": {
+    "forcedOwnedAppQuit": true,
+    "appClosed": false,
+    "serviceStopped": true,
+    "proxyClosed": true,
+    "scratchRemoved": false
+  },
+  "limits": [
+    "Actual packaged Mac Electron main, preload and renderer with the packaged compiled HTTP service; fictional isolated data only",
+    "Generated fixture key and prestarted service bypass OS Keychain custody/startup; normal packaged startup smoke is separate",
+    "Computer use paused; capability reporting does not prove TCC, dictation, screen capture or automation",
+    "No provider/model, bank, Gmail, Modelvia, REI, customer, Windows, signed distribution or reboot proof",
+    "Direct packaged spawn and renderer CDP bypass Playwright main-bridge incompatibility; loopback service guards, refusing proxy and renderer/net guards; not OS-wide network isolation"
+  ],
+  "failure": "AssertionError [ERR_ASSERTION]: {\"result\":{\"type\":\"object\",\"value\":{\"code\":\"ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING\"}},\"exceptionDetails\":{\"exceptionId\":1,\"text\":\"Uncaught (in promise) TypeError: A dynamic import callback was not specified.\",\"lineNumber\":0,\"columnNumber\":0,\"exception\":{\"type\":\"object\",\"subtype\":\"error\",\"className\":\"TypeError\",\"description\":\"TypeError: A dynamic import callback was not specified.\\n    at importModuleDynamicallyCallback (node:internal/modules/esm/utils:279:9)\\n    at <anonymous>:1:1\\n    at EventEmitter.emit (node:events:456:44)\",\"objectId\":\"-3315343632554430728.1.1\"}}}\n+ actual - expected\n\n+ {\n+   code: 'ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING'\n+ }\n- true\n\n    at launch (file:///Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/native/onboarding-restart.mjs:121:10)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async file:///Users/yoda/projects/RealBud/outputs/broad-qa-2026-09-23/native/onboarding-restart.mjs:194:3",
+  "retainedFixture": "/private/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/RealBud native onboarding QA xShrxV"
+}

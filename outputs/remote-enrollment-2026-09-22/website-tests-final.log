@@ -1,0 +1,67 @@
+
+> realbud-site@0.1.0 test /Users/yoda/projects/RealBud/website
+> node --experimental-strip-types --test lib/*.test.mjs
+
+✔ persists an enquiry with a receipt, never contact data in the response (19.834709ms)
+✔ simultaneous and lost-response retries save one record and return the same receipt (6.351458ms)
+✔ invalid, cross-origin, bot and oversized requests never reach storage (1.179125ms)
+✔ database outages do not acknowledge receipt or leak errors (2.975334ms)
+✔ bounds abuse atomically while permitting an existing receipt to be retried (2.201875ms)
+✔ SQL-shaped text remains data, with no public record retrieval (2.135417ms)
+✔ www origin may post to the apex API (1.7175ms)
+✔ pairing credentials are random, bounded and validated (1.19425ms)
+✔ reports require explicit readiness and bounded version text (0.133041ms)
+✔ old, missing and future check-ins never establish current readiness (4.16475ms)
+✔ billing readers use the server mapping and only approved filters are forwarded (25.213292ms)
+✔ forged customer, role, client and duplicate filters cannot change account authority (2.669125ms)
+✔ unlinked customers, missing configuration and insecure remote URLs refuse before transport (2.889958ms)
+✔ wrong upstream customer, role and period cannot masquerade as scoped analytics (2.05875ms)
+✔ empty query defaults to Brisbane month and upstream errors never forward private diagnostics (1.433084ms)
+✔ decimal formatting keeps exact large amounts and token counts without floating point (14.327542ms)
+✔ missing agreed resale price stays unknown instead of exposing a wholesale amount (0.437542ms)
+✔ platform customer comes from server mapping, never a browser-supplied ID (1.198417ms)
+✔ billing and checkout preserve trusted customer scope and read-only roles (22.280583ms)
+✔ billing checks the returned customer and projects exact money without supplier fields or headers (2.946333ms)
+✔ billing and document errors redact upstream diagnostics and invalid roles never call the gateway (1.003208ms)
+✔ oversized or invalid upstream billing bodies fail closed without being forwarded (7.064375ms)
+✔ checkout exposes only admitted Square sandbox destinations without forwarding upstream fields (1.586708ms)
+✔ missing mapping and insecure remote endpoints refuse without making a request (0.162084ms)
+✔ invoice documents use the authenticated account mapping and remain available to billing readers (0.410459ms)
+✔ documents reject traversal, external invoice URLs and missing mappings before fetch (0.253125ms)
+✔ upstream cross-customer rejection remains a private error and JSON cannot masquerade as an invoice (0.233667ms)
+✔ live billing and checkout admit only production Square destinations, preserving customer scope (0.518ms)
+✔ person RPC validates exact authoritative shape and safe fields (2.885792ms)
+✔ trusted issuer comes from deployment config with no path or browser data (0.127583ms)
+✔ login sends verified provider identity and rejects remapped backend output (0.40875ms)
+✔ unprovisioned identity is distinguished only by the exact trusted RPC error (0.177958ms)
+✔ person gate rejects legacy, expired, future and different issuer without any RPC (24.593833ms)
+✔ every person gate refreshes current identity and observes revocation, roles and epoch (3.7645ms)
+✔ service-only login RPC uses a separate admin client after OTP changes the SDK session (33.82775ms)
+✔ fresh enrollment actor comes only from valid cookie and current identity; old sessions can only list/revoke (16.664166ms)
+✔ accept hashes the code and forwards only server-derived actor; authority fields in browser body reject (1.24525ms)
+✔ committed challenge denial is bounded403 and arbitrary backend diagnostics never escape (0.524291ms)
+✔ parent enrollment separates report/command tokens and rejects remapped or unverified receipts (1.909667ms)
+✔ desktop status and confirmation cannot adopt another enrollment, candidate, or parent (0.525833ms)
+✔ personal lists/revocations exclude other actors, agencies, malformed entries and duplicate IDs (0.438292ms)
+✔ clock sampling authenticates the exact v2 parent and rejects decorated or invalid server time (0.265875ms)
+✔ pending parent cancellation uses reporting authority and exact revoked receipt without exposing command token (0.976125ms)
+✔ session round-trip and rejects tampering (9.117458ms)
+✔ person cookie preserves stable binding and seven day authentication age (4.434583ms)
+✔ signed but malformed or downgraded person cookies fail closed (10.1525ms)
+✔ only two typed operations and reviewed bounded metadata are publishable (0.594917ms)
+✔ immutable envelopes have exact identity, explicit expiry and no source content (0.144875ms)
+✔ claim and event schemas reject actor, credential and execution argument substitution (0.110834ms)
+✔ safe integer cursors and exact submit schemas (0.073291ms)
+✔ canonical serialization is key-order independent and preserves meaningful content (0.114166ms)
+✔ request bodies are bounded independently of Content-Length including chunked input (10.956084ms)
+✔ bearer parsing hashes only exact private tokens and public errors never reflect database text (0.8185ms)
+✔ status parser disallows freeform result payloads (0.084042ms)
+✔ account history target labels remain bounded metadata with exact opaque identities (0.181792ms)
+ℹ tests 55
+ℹ suites 0
+ℹ pass 55
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 175.64475

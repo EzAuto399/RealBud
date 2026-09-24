@@ -1,0 +1,74 @@
+{
+  "kind": "accounts-inbox-triage",
+  "status": "complete",
+  "coverageComplete": true,
+  "itemArray": "threads",
+  "itemIdKey": "threadId",
+  "itemCount": 14,
+  "items": {
+    "SYN-T001": {
+      "disposition": "action-review",
+      "owner": "accounts-reviewer"
+    },
+    "SYN-T002": {
+      "disposition": "reply-review",
+      "owner": "accounts-reviewer"
+    },
+    "SYN-T003": {
+      "disposition": "urgent-review",
+      "owner": "accounts-reviewer"
+    },
+    "SYN-T004": {
+      "disposition": "urgent-review",
+      "owner": "property-manager"
+    },
+    "SYN-T005": {
+      "disposition": "action-review",
+      "owner": "property-manager"
+    },
+    "SYN-T006": {
+      "disposition": "urgent-review",
+      "owner": "accounts-reviewer"
+    },
+    "SYN-T007": {
+      "disposition": "waiting",
+      "owner": "accounts-reviewer"
+    },
+    "SYN-T008": {
+      "disposition": "reference",
+      "owner": "accounts-reviewer"
+    },
+    "SYN-T009": {
+      "disposition": "noise",
+      "owner": "unassigned"
+    },
+    "SYN-T010": {
+      "disposition": "action-review",
+      "owner": "accounts-reviewer"
+    },
+    "SYN-T011": {
+      "disposition": "reply-review",
+      "owner": "accounts-reviewer"
+    },
+    "SYN-T012": {
+      "disposition": "action-review",
+      "owner": "accounts-reviewer"
+    },
+    "SYN-T013": {
+      "disposition": "action-review",
+      "owner": "accounts-reviewer"
+    },
+    "SYN-T014": {
+      "disposition": "reference",
+      "owner": "accounts-reviewer"
+    }
+  },
+  "requiredHolds": [],
+  "mustIncludeSourceMessageIds": {
+    "SYN-T011": [
+      "SYN-T011-M1"
+    ]
+  },
+  "actionsPerformed": [],
+  "skillSource": "email-inbox-triage@0.1.0"
+}

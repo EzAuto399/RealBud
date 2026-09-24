@@ -207,6 +207,6 @@ export function BatchWorkspace({ snapshot, scope, onClearScope, openNewDraft, on
         </> : <p>Select a property to review its result.</p>}</article>
       </div>
     </> : <div className="batch-panel" role="status">{loading ? "Loading your saved batch…" : "Choose a recent batch or start a new one."}</div>}
-    <p className="batch-footnote">Prepared work stays on this Mac. Review does not send, approve payment or change a property record. History holds up to 100 batches and {BATCH_HISTORY_ITEMS.toLocaleString()} property results; only fully reviewed, finished batches make room for new work.</p>
+    <p className="batch-footnote">Prepared work stays in this private workspace. Review does not send, approve payment or change a property record. History holds up to 100 batches and {BATCH_HISTORY_ITEMS.toLocaleString()} property results; only fully reviewed, finished batches make room for new work.</p>
   </section>;
 }

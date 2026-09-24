@@ -1,0 +1,42 @@
+{
+  "at": "2026-09-21T05:29:20.189Z",
+  "passed": true,
+  "executable": "/Users/yoda/projects/RealBud/outputs/core-lifecycle-2026-09-21/package/mac-arm64/RealBud.app/Contents/MacOS/RealBud",
+  "resources": "/Users/yoda/projects/RealBud/outputs/core-lifecycle-2026-09-21/package/mac-arm64/RealBud.app/Contents/Resources",
+  "artifact": {
+    "app.asar": "fb1a5e2ae7bc8f929a2bada3e5ad5ff41da6cbd5bbca7964567752d8fbe56eb0",
+    "server/bootstrap.js": "2567a50b4638d2789c135bfa708df7d5d9250bc826fd4267281e2e1641bee9d8",
+    "ui/index.html": "60ebfaa248a8c081aaeec616c3851e310a11713bd78563f0def551c965192b4f"
+  },
+  "runtime": {
+    "node": "24.18.1",
+    "electron": "43.4.0",
+    "packaged": true,
+    "resources": "/Users/yoda/projects/RealBud/outputs/core-lifecycle-2026-09-21/package/mac-arm64/RealBud.app/Contents/Resources",
+    "initialLogs": "/private/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/RealBud native restore 42Kg2l/electron/logs",
+    "logs": "/private/var/folders/pv/v_yx05z50rq0y4tx8_1f4jh80000gn/T/RealBud native restore 42Kg2l/electron/logs"
+  },
+  "checks": [
+    "Actual packaged app and preload adopt the isolated target service before the safeStorage fixture is installed",
+    "Real preload stop/start migrates existing custody to the mocked protected store and preserves the same key without a plaintext key file",
+    "Native Restore restart button performs real preload/main IPC and cold bootstrap, preserving target custody and exact restored bank bytes",
+    "Native restart prefers the current restored book over a stale quarantine and retains the alternative recovery key and bytes"
+  ],
+  "errors": [],
+  "keyProof": {
+    "sameTargetKeyAcrossThreeRestarts": true,
+    "sourceKeyDifferent": true,
+    "afterMigrationAndRestorePlaintextKeyAbsent": true,
+    "alternativeRecoveryKeyPreserved": true,
+    "fixtureCalls": {
+      "encrypted": 3,
+      "decrypted": 8
+    }
+  },
+  "limitations": [
+    "Actual packaged Mac runtime, main, native preload IPC, detached service, bootstrap and UI",
+    "safeStorage is an in-memory AES fixture; OS Keychain/DPAPI protection and keychain prompts are not tested",
+    "External requests blocked; only fictional isolated data",
+    "Unsigned local package; not customer installation, Windows or reboot survival"
+  ]
+}

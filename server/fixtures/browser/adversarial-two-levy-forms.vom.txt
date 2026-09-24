@@ -1,0 +1,28 @@
+@vom 1
+@view 1280x900
+@layers 1 focus=L1
+L1 page
+  RootWebArea "Fictional Strata Portal — Pay levies"
+    main
+      heading "Pay levies"
+        StaticText "Pay levies"
+      form "Lot 12 levy"
+        paragraph "Payee: Fictional Owners Corporation SP 12345"
+          StaticText "Payee: Fictional Owners Corporation SP 12345"
+        LabelText "Amount (AUD)"
+          @e4 textbox "Amount (AUD)" value="1,240.00"
+          StaticText "Amount (AUD)"
+        LabelText "Payment reference"
+          @e5 textbox "Payment reference" value="FICT-LOT12-Q3"
+          StaticText "Payment reference"
+        @e6 button "Pay now"
+      form "Lot 14 levy"
+        paragraph "Payee: Fictional Owners Corporation SP 67890"
+          StaticText "Payee: Fictional Owners Corporation SP 67890"
+        LabelText "Amount (AUD)"
+          @e8 textbox "Amount (AUD)" value="2,480.00"
+          StaticText "Amount (AUD)"
+        LabelText "Payment reference"
+          @e9 textbox "Payment reference" value="FICT-LOT14-Q3"
+          StaticText "Payment reference"
+        @e10 button "Pay now"

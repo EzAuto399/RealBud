@@ -1,0 +1,135 @@
+{
+  "at": "2026-09-23T02:41:18.669Z",
+  "layer": "built-renderer-with-synthetic-history",
+  "node": "v24.19.0",
+  "completed": true,
+  "measurements": [
+    {
+      "messages": 100,
+      "textBytesEach": 1024,
+      "syntheticResponseBytes": 114980,
+      "renderedMs": 695.98,
+      "draftInputMs": 43.16,
+      "navigationMs": 96.21,
+      "scroll": {
+        "topMs": 18.799999952316284,
+        "endMs": 32.10000002384186,
+        "top": 0,
+        "finalTop": 34592,
+        "height": 35173
+      },
+      "domNodes": 3075,
+      "heapMiB": 11.273422241210938,
+      "longTasks": [],
+      "maxTimerGapMs": 104.09999990463257,
+      "paints": [
+        {
+          "name": "first-paint",
+          "atMs": 64
+        },
+        {
+          "name": "first-contentful-paint",
+          "atMs": 76
+        }
+      ]
+    },
+    {
+      "messages": 1000,
+      "textBytesEach": 1024,
+      "syntheticResponseBytes": 1146830,
+      "renderedMs": 1088.09,
+      "draftInputMs": 266.74,
+      "navigationMs": 508.32,
+      "scroll": {
+        "topMs": 37.199999928474426,
+        "endMs": 40.89999997615814,
+        "top": 0,
+        "finalTop": 350408,
+        "height": 350989
+      },
+      "domNodes": 28725,
+      "heapMiB": 45.321045875549316,
+      "longTasks": [
+        {
+          "start": 872.1000000238419,
+          "duration": 127
+        }
+      ],
+      "maxTimerGapMs": 185.89999997615814,
+      "paints": [
+        {
+          "name": "first-paint",
+          "atMs": 20
+        },
+        {
+          "name": "first-contentful-paint",
+          "atMs": 44
+        }
+      ]
+    },
+    {
+      "messages": 10000,
+      "textBytesEach": 1024,
+      "syntheticResponseBytes": 11483330,
+      "renderedMs": 4980.1,
+      "draftInputMs": 4723.44,
+      "navigationMs": 23351.83,
+      "scroll": {
+        "topMs": 366.7000000476837,
+        "endMs": 464,
+        "top": 0,
+        "finalTop": 3508564,
+        "height": 3509145
+      },
+      "domNodes": 285225,
+      "heapMiB": 194.33389568328857,
+      "longTasks": [
+        {
+          "start": 1981.2999999523163,
+          "duration": 51
+        },
+        {
+          "start": 2907.5999999046326,
+          "duration": 50
+        },
+        {
+          "start": 2958,
+          "duration": 1484
+        },
+        {
+          "start": 4442.099999904633,
+          "duration": 52
+        },
+        {
+          "start": 4494.899999976158,
+          "duration": 372
+        }
+      ],
+      "maxTimerGapMs": 1909.5999999046326,
+      "paints": [
+        {
+          "name": "first-paint",
+          "atMs": 24
+        },
+        {
+          "name": "first-contentful-paint",
+          "atMs": 64
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "deniedRequests": [
+    "POST /api/connected-apps/check",
+    "POST /api/connected-apps/check",
+    "POST /api/connected-apps/check"
+  ],
+  "failure": null,
+  "limits": [
+    "Disposable loopback source service and production-built renderer in headless macOS Chrome; not installed Electron or Windows.",
+    "Only /api/bots history response is synthetic; 50/50 user/assistant text in one valid active branch. Existing HTTP benchmark measures actual server history download separately.",
+    "One run per size on this laptop; measurements are observations, not a performance SLA.",
+    "No model/provider/connector dispatch or customer data. Browser non-GET API requests are denied; draft typing is never sent.",
+    "Heap is a browser JS sample, not total/peak renderer RSS. No product code changes."
+  ]
+}

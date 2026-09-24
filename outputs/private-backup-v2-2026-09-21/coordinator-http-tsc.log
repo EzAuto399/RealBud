@@ -1,0 +1,12 @@
+server/index.ts(4924,17): error TS2345: Argument of type '"backup"' is not assignable to parameter of type 'OpEvent'.
+server/private-backup-v2-api.ts(107,3): error TS2322: Type 'unknown' is not assignable to type 'string'.
+server/private-backup-v2-api.ts(112,3): error TS2322: Type 'unknown' is not assignable to type 'string'.
+server/private-backup-v2-api.ts(117,3): error TS2322: Type 'unknown' is not assignable to type 'string'.
+server/private-backup-v2-api.ts(136,3): error TS2322: Type 'Uint8Array<ArrayBufferLike> | undefined' is not assignable to type 'Uint8Array<ArrayBufferLike>'.
+  Type 'undefined' is not assignable to type 'Uint8Array<ArrayBufferLike>'.
+server/private-backup-v2-api.ts(144,3): error TS2322: Type 'PrivateBackupTransferOperation | null' is not assignable to type 'PrivateBackupTransferOperation'.
+  Type 'null' is not assignable to type 'PrivateBackupTransferOperation'.
+server/private-backup-v2-api.ts(150,3): error TS2322: Type 'PrivateBackupTransferPage | null' is not assignable to type 'PrivateBackupTransferPage'.
+  Type 'null' is not assignable to type 'PrivateBackupTransferPage'.
+server/private-backup-v2-api.ts(156,3): error TS2322: Type 'PrivateBackupDownloadTicket | null' is not assignable to type 'PrivateBackupDownloadTicket'.
+  Type 'null' is not assignable to type 'PrivateBackupDownloadTicket'.

@@ -1,0 +1,84 @@
+{
+  "at": "2026-09-23T05:01:11.713Z",
+  "proofLayer": "Local real app/server + pinned Hermes integration with fictional website, connector and provider",
+  "passed": false,
+  "checks": [
+    {
+      "name": "isolated-runtime-and-source",
+      "passed": true,
+      "elapsedMs": 229,
+      "detail": {
+        "disposableHome": true,
+        "noUserCredentialReads": true,
+        "sourceFilesModified": false
+      }
+    },
+    {
+      "name": "local-modelvia-and-fictional-billing",
+      "passed": true,
+      "elapsedMs": 557,
+      "detail": {
+        "fixedModel": "deepseek-chat",
+        "contextLength": 65536,
+        "outputCeiling": 256,
+        "maxConcurrent": 1,
+        "provider": "in-process fictional SSE"
+      }
+    },
+    {
+      "name": "local-realbud-provisioning-gateway",
+      "passed": true,
+      "elapsedMs": 223,
+      "detail": {
+        "composio": "fictional loopback organisation",
+        "provisioning": "real gateway implementation"
+      }
+    },
+    {
+      "name": "controlled-website-and-real-desktop",
+      "passed": true,
+      "elapsedMs": 1849,
+      "detail": {
+        "managedPolicy": true,
+        "entitlementEnforced": true,
+        "actualPinnedCli": true,
+        "websiteAuthority": "fixture, no real sign-in",
+        "appOrigin": "http://127.0.0.1:52362"
+      }
+    },
+    {
+      "name": "app-browser-link-consumes-real-provisioning",
+      "passed": false,
+      "elapsedMs": 20136,
+      "error": "Timed out waiting for grant applied"
+    }
+  ],
+  "source": {
+    "realbudHead": "e82ea2f067b7aa73d9bdc6e355a9bc4f1f1694c7",
+    "modelviaRevision": "8ba0ba4daece55fd94249b35754e8d38d46de2f9",
+    "modelviaSource": "git archive, exact revision",
+    "hermesCli": "/Users/yoda/.realbud/hermes/runtimes/345cd2b057a452236de401d3534b8502a7465e8d-cfb3f08a9ee7/hermes-agent/venv/bin/hermes",
+    "node": "v24.19.0"
+  },
+  "limits": [
+    "No hosted Modelvia, real website sign-in, customer account, Composio organisation or paid inference.",
+    "Website approval/report is a controlled HTTP fixture; it does not prove the real Next/Supabase identity flow.",
+    "Modelvia ledger/admission and RealBud provisioning/desktop routes are real local source; provider answers are synthetic.",
+    "Trusted entitlement is signed by a disposable QA issuer; it is not a production service grant.",
+    "No native Electron window, Windows machine, bank/email/calendar operation or same-LAN second-device acceptance."
+  ],
+  "cleanup": true,
+  "lastLinkStatus": {
+    "state": "linked",
+    "id": "afd0ab99-75d0-4ffd-9903-f89252aa8679",
+    "label": "Fictional app QA Mac",
+    "agencyLabel": "Fictional app QA office",
+    "usage": {
+      "state": "unavailable"
+    },
+    "provisioned": false,
+    "error": "The website returned service setup this computer cannot accept. Retry the same code."
+  },
+  "failure": "Error: Timed out waiting for grant applied\n    at until (file:///Users/yoda/projects/RealBud/scripts/qa-modelvia-app.mjs:66:179)\n    at async file:///Users/yoda/projects/RealBud/scripts/qa-modelvia-app.mjs:186:5\n    at async step (file:///Users/yoda/projects/RealBud/scripts/qa-modelvia-app.mjs:49:24)\n    at async file:///Users/yoda/projects/RealBud/scripts/qa-modelvia-app.mjs:181:3",
+  "completedAt": "2026-09-23T05:01:35.771Z"
+}

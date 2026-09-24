@@ -1,0 +1,31 @@
+{
+  "sourceSha256": "e838beb06d5c5f132db4e1f5158f97d72b4e7dd90e55eb4a03a7e42f280c8bfa",
+  "checks": [
+    {
+      "case": "enter",
+      "passed": true,
+      "fixedCode": "unavailable",
+      "contextSuppressed": true
+    },
+    {
+      "case": "exit",
+      "passed": true,
+      "fixedCode": "unavailable",
+      "contextSuppressed": true
+    },
+    {
+      "case": "recognized-code",
+      "passed": true,
+      "fixedCode": "conflict",
+      "contextSuppressed": true
+    },
+    {
+      "case": "public-write-entry",
+      "passed": true,
+      "fixedCode": "unavailable"
+    }
+  ],
+  "passed": 4,
+  "WindowsExecuted": false,
+  "realProfilesAccessed": false
+}

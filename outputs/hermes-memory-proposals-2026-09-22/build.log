@@ -1,0 +1,11 @@
+
+> realbud@0.1.19 build /Users/yoda/projects/RealBud
+> tsc -b && tsc -p tsconfig.server.json && vite build
+
+server/hermes-memory-review.native.test.ts(184,45): error TS2322: Type '{ target: string; action: string; old_text: string; new_text: string; content?: undefined; decision?: undefined; operations?: undefined; } | { target: string; action: string; content: string; decision: string; old_text?: undefined; new_text?: undefined; operations?: undefined; } | { ...; } | { ...; }' is not assignable to type 'MemoryProposalPayload'.
+  Type '{ target: string; action: string; old_text: string; new_text: string; content?: undefined; decision?: undefined; operations?: undefined; }' is not assignable to type 'MemoryProposalPayload'.
+    Type '{ target: string; action: string; old_text: string; new_text: string; content?: undefined; decision?: undefined; operations?: undefined; }' is not assignable to type '{ target: "memory" | "user"; } & { action: "replace"; content: string; old_text: string; }'.
+      Type '{ target: string; action: string; old_text: string; new_text: string; content?: undefined; decision?: undefined; operations?: undefined; }' is not assignable to type '{ target: "memory" | "user"; }'.
+        Types of property 'target' are incompatible.
+          Type 'string' is not assignable to type '"memory" | "user"'.
+ ELIFECYCLE  Command failed with exit code 2.

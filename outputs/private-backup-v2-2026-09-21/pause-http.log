@@ -1,0 +1,58 @@
+
+ RUN  v4.1.10 /Users/yoda/projects/RealBud
+
+ ❯ server/private-backup-v2-bootstrap.test.ts (4 tests | 1 failed) 680ms
+     × applies before stores load and exposes the persisted completion receipt through actual HTTP 263ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/private-backup-v2-bootstrap.test.ts > real service bootstrap for prepared v2 restoration > applies before stores load and exposes the persisted completion receipt through actual HTTP
+AssertionError: node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+file:///Users/yoda/projects/RealBud/server/workspace-activity.ts:19
+  private readonly context = new AsyncLocalStorage<{ active: boolean }>();
+  constructor(private readonly maxWaiting = 256) {
+                               ^^^^^^^^^^^^^^^^
+    if (!Number.isSafeInteger(maxWaiting) || maxWaiting < 1 || maxWaiting > 1024) throw new Error('Invalid workspace pause queue limit.');
+
+SyntaxError [ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX]: TypeScript parameter property is not supported in strip-only mode
+    at parseTypeScript (node:internal/modules/typescript:68:40)
+    at processTypeScriptCode (node:internal/modules/typescript:146:42)
+    at stripTypeScriptModuleTypes (node:internal/modules/typescript:215:22)
+    at ModuleLoader.<anonymous> (node:internal/modules/esm/translators:680:29)
+    at #translate (node:internal/modules/esm/loader:434:20)
+    at afterLoad (node:internal/modules/esm/loader:502:29)
+    at ModuleLoader.loadAndTranslate (node:internal/modules/esm/loader:507:12)
+    at #getOrCreateModuleJobAfterResolve (node:internal/modules/esm/loader:560:36)
+    at afterResolve (node:internal/modules/esm/loader:607:52)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:613:12) {
+  code: 'ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX'
+}
+
+Node.js v24.19.0
+: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ server/private-backup-v2-bootstrap.test.ts:70:34
+     68|       await delay(100);
+     69|     }
+     70|     expect(ready, server.logs()).toBe(true);
+       |                                  ^
+     71|     const session = await (await fetch(`${server.base}/api/session`)).…
+     72|     const status = await (await fetch(`${server.base}/api/private-back…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 30 passed (31)
+   Start at  20:04:31
+   Duration  1.13s (transform 244ms, setup 24ms, import 292ms, tests 688ms, environment 0ms)
+

@@ -1,0 +1,41 @@
+✔ blank templates fail closed and neither mutate nor accept the operational catalogue (3.119959ms)
+✔ a complete synthetic record proves only checker structure and integrity, not office readiness (7.420541ms)
+✔ the second independent bills workflow cannot be replaced by the handoff case (5.870459ms)
+✔ simulation cannot substitute for native observations (5.714417ms)
+✔ local-integration cannot substitute for native observations (5.346292ms)
+✔ ci cannot substitute for native observations (5.870042ms)
+✔ null cannot substitute for native observations (5.251125ms)
+✔ same identity, source account or private worker context fails isolation coverage (25.713792ms)
+✔ wrong executing device, reused job, missing result and unmanaged worker fail (27.748125ms)
+✔ Stop requested, a missing recovery case or only one observed device cannot pass (22.533292ms)
+✔ Mac evidence cannot silently weaken the default full-platform target (33.985541ms)
+✔ full-platform structure requires all four interactive pairings and Windows 11 x64 (70.541334ms)
+✔ physical Mac rehearsal refuses two simulated or virtual desktops (6.900291ms)
+✔ changed or missing evidence files fail even when every observation says pass (29.692541ms)
+✔ evidence paths cannot escape through traversal or a symbolic link (25.386667ms)
+✔ duplicate pairing/case records cannot hide missing observations (11.551167ms)
+✔ CLI returns failure for a missing receipt or an unrun template (114.277333ms)
+✔ contract retains all 71 exact historical cases, four pairings and independent bills runs (0.28075ms)
+✔ missing, damaged and reduced contracts fail admission with an actionable error (23.084625ms)
+✔ exported helpers cannot accept a caller-reduced contract or mutate an admitted policy (1.159292ms)
+✔ every case has the explicit reviewed participant policy, including host and peer Windows roles (0.173125ms)
+✔ missing required participants, duplicate and unknown slots cannot pass any case (20693.48975ms)
+✔ malformed receipt entries fail without crashing the exported checker (85.229167ms)
+✔ receipts cannot reuse an old schema or another contract digest (14.917458ms)
+✔ malformed Windows versions and receipt identity fields are reported without coercion crashes (340.949042ms)
+✔ evidence pathname replacement after open is held before reading outside content (4.628458ms)
+✔ CLI emits bound unrun templates for both targets without changing the catalogue (62.222583ms)
+✔ only an explicit Apple Accepted result passes (0.631875ms)
+✔ metadata identifies both exact archives and uses their final hashes (1.352416ms)
+✔ file hashes change with the final stapled bytes (7.004417ms)
+✔ artifact promotion replaces the complete verified set (2.381916ms)
+✔ artifact promotion restores every old file after partial failure (3.447333ms)
+✔ missing staged artifacts cannot replace any existing release file (1.887959ms)
+ℹ tests 33
+ℹ suites 0
+ℹ pass 33
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 21694.039083

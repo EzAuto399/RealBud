@@ -1,0 +1,11 @@
+{
+  "output": "/Users/yoda/projects/RealBud/outputs/customer-pack-2026-09-21",
+  "checks": [
+    "Read and mutation routes reject unauthenticated requests",
+    "Rendered preview is read-only; confirmed import persists four shadow plans, real instruction dependencies, and incomplete live acceptance",
+    "Exact native staged edit is visibly reviewed, applied to owned skill, and reverted as revision 3 with baseline/history retained",
+    "Generic office pack preview/import installs independent owned instructions alongside Austin without selecting the active agency pack or changing Austin bytes",
+    "Reload and repeat import preserve revisions; 390 px view has no horizontal overflow or browser errors"
+  ],
+  "errors": []
+}

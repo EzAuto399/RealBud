@@ -110,6 +110,8 @@ async function stoppedFixture() {
     running.kill("SIGTERM");
   });
 }
+// A hosted Windows runner boots the real server slower than a developer machine.
+const FIXTURE_START_MS = process.platform === "win32" ? 90_000 : 20_000;
 async function startFixture() {
   const reservation = createServer();
   await new Promise<void>(resolve => reservation.listen(0, "127.0.0.1", resolve));
@@ -122,7 +124,7 @@ async function startFixture() {
     stdio: ["ignore", "ignore", "pipe"],
   });
   child.stderr!.on("data", chunk => { stderr = (stderr + String(chunk)).slice(-12_000); });
-  const deadline = Date.now() + 20_000;
+  const deadline = Date.now() + FIXTURE_START_MS;
   for (;;) {
     if (child.exitCode !== null) throw new Error(`Fixture server exited ${child.exitCode}: ${stderr}`);
     try { if ((await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(500) })).ok) break; } catch { /* starting */ }
@@ -225,7 +227,7 @@ beforeEach(async () => {
     ["morning-arrears", "owner-letter", "inbound-triage"].map(id => [id, { enabled: false, handledThrough: Date.now(), revision: 1 }]),
   ) }));
   await startFixture();
-}, 25_000);
+}, FIXTURE_START_MS + 5_000);
 
 afterEach(async () => {
   holdAuth = false; for (const answer of heldAuth.splice(0)) answer();
@@ -266,7 +268,7 @@ describe("Gmail read-only setup HTTP boundary", () => {
 
   it("verifies before saving, preserves consumer access, and generates a private stable binding without switching mode", async () => {
     const result = await setup();
-    expect(result.body.composio).toEqual({ configured: true, apiKeyConfigured: true, mode: "consumer", readOnlyConfigured: true, readOnlyAuthConfigId: AUTH_CONFIG });
+    expect(result.body.composio).toEqual({ configured: true, apiKeyConfigured: true, managed: false, mode: "consumer", readOnlyConfigured: true, readOnlyAuthConfigId: AUTH_CONFIG });
     expectPublic(result.body);
     const saved = diskConfig().composio;
     expect(saved.key).toBe(PLATFORM_KEY);
@@ -326,7 +328,14 @@ describe("Gmail read-only setup HTTP boundary", () => {
     await vi.waitFor(() => expect(diskConfig().composio.gmailReadOnly?.userId).toMatch(/^realbud_/));
     const saved = diskConfig().composio.gmailReadOnly;
     expect((await api("GET", "/api/config")).body.composio.readOnlyConfigured).toBe(true);
-    await setup();
+    // The aborted request saves the binding, then finishes refreshing office
+    // sources before it releases setup; until then a retry is told setup is in
+    // progress (409), which is the answer a client must wait out, not an error.
+    await vi.waitFor(async () => {
+      const retry = await api("POST", SETUP, { apiKey: PROJECT_KEY, authConfigId: AUTH_CONFIG });
+      if (retry.status === 409) expect(retry.body.error).toMatch(/in progress/);
+      expect(retry.status).toBe(200);
+    }, { timeout: 15_000, interval: 100 });
     expect(diskConfig().composio.gmailReadOnly).toEqual(saved);
   });
 

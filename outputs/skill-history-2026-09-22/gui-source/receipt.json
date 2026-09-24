@@ -1,0 +1,26 @@
+{
+  "checkedAt": "2026-09-21T21:04:13.556Z",
+  "layer": "actual source HTTP service and compiled renderer on macOS",
+  "fixture": "100 explicitly seeded fictional retained revisions, two actual staged proposals, one actual reviewed archived revert; no model or customer data",
+  "checks": [
+    "Legacy 100-revision fixture is readable; proposal 101 is held without changing active instructions, approved scheduled plan or saved work; default history has no full instruction text.",
+    "Rendered archival requires explicit review; real EACCES preserves the full hot history and saved intent. Cold restart plus lost-response recovery commits one 98-revision archive and keeps active bytes, plan approval/schedule and saved work unchanged.",
+    "Real native proposal 101 preserves the archive head. Paged UI opens full archived baseline; stale confirmation after revision 102 is rejected and refreshed. Fresh confirmation appends revision 103 with plans and schedules held.",
+    "Actual SIGKILL during a partial immutable archive write leaves hot history and old head intact. Cold mobile UI recovery creates one second batch, removes only its owned temporary file, and returns all 103 unique revisions across bounded pages after another restart."
+  ],
+  "browserErrors": [],
+  "deniedExternalRequests": [],
+  "final": {
+    "activeRevision": 103,
+    "hotRevisions": 2,
+    "digest": "277fc6f7dbfaf87a1917483bbe8f5d7682d35d76a1c269d1bdb139c859aaa4a0",
+    "batches": 2,
+    "revisions": 101,
+    "throughRevision": 101
+  },
+  "limits": [
+    "No Windows installation or device proof",
+    "No live Hermes model, provider account or customer acceptance"
+  ],
+  "cleanup": "Owned browser/service closed and disposable workspace removed in finally"
+}

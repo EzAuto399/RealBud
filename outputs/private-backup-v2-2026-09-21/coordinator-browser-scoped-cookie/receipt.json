@@ -1,0 +1,26 @@
+{
+  "at": "2026-09-21T14:18:07.312Z",
+  "passed": true,
+  "mode": "source",
+  "executable": "/Users/yoda/.nvm/versions/node/v24.19.0/bin/node",
+  "resources": null,
+  "bootstrap": "/Users/yoda/projects/RealBud/server/bootstrap.ts",
+  "staticDirectory": "/Users/yoda/projects/RealBud/dist",
+  "runtime": {
+    "node": "24.19.0",
+    "electron": null
+  },
+  "layer": "Actual local source bootstrap, Node and built UI; fictional records; restart exercised by owned child stop/start, not native restart IPC, physical Windows or managed-service proof",
+  "checks": [
+    "Direct You navigation resolves the global sidebar book state without opening Desk",
+    "Actual UI exports an encrypted business backup, confirms matching passphrases and clears them after download",
+    "Real API preview shows included/excluded contents while the nonfresh source workspace cannot stage a restore",
+    "Reload rediscovers durable backup operations without persisting the passphrase or file in browser storage",
+    "Incorrect passphrase retains the uploaded copy and a correct retry produces a fully checked preview",
+    "Fresh-workspace restore requires reviewed preview and explicit confirmation, stages once, and shows a truthful restart requirement",
+    "Actual cold bootstrap restores the property and exact bank bytes under a different local key; reloaded UI is no longer staged",
+    "Damaged historical completion metadata shows a warning and preserves its bytes while valid business records can still be backed up",
+    "Desktop and390px previews render without page errors or horizontal overflow"
+  ],
+  "errors": []
+}

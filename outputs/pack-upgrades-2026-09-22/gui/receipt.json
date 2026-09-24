@@ -1,0 +1,14 @@
+{
+  "at": "2026-09-21T18:59:05.143Z",
+  "passed": false,
+  "layer": "Source local service and built renderer",
+  "limits": "Disposable fictional pack and POSIX file-permission failure; no live worker/provider or native Windows proof",
+  "checks": [
+    "Rendered upload preview is read-only and requires confirmation; real upgrade merges publisher change with staff title, adds optional plan, pauses approvals/schedules, and reconciles lost response without another generation.",
+    "A competing edit to the same plan field produces a visible conflict and cannot be applied."
+  ],
+  "errors": [],
+  "denied": [],
+  "cleaned": true,
+  "error": "The expression evaluated to a falsy value:\n\n  assert.ok(readFileSync(nativeSkill, 'utf8').includes('Fictional additional source coverage instruction.'))\n"
+}

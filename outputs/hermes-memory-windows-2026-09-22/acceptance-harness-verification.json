@@ -1,0 +1,29 @@
+{
+  "script": "scripts/testing/hermes-memory-windows-native.py",
+  "sha256": "b672dd40aaca823e77c838d84a71cded4c0024fb91646d63bf730bf4b8ab5bbc",
+  "syntax": "Python 3.14.4 ast.parse passed without importing backend",
+  "macos_guard": {
+    "receipt": "outputs/hermes-memory-windows-2026-09-22/acceptance-macos-unsupported.json",
+    "actual_exit_code": 2,
+    "selected_module": "nonexistent sentinel path",
+    "status": "unsupported",
+    "passed": false,
+    "native_checks": 0,
+    "cleanup": true
+  },
+  "required_windows_checks": [
+    "Private empty creation precedes content; Unicode and spaced paths round-trip with stable identity",
+    "Missing opens and existing create collisions cannot create, replace or truncate data",
+    "An inherited native child is admitted only with its protected private root and is never repaired",
+    "An explicit broad grant is refused with or without a private root, without repair or data changes",
+    "Ordinary-file admission refuses multiple links and preserves the original identity after owned alias cleanup",
+    "A target junction is refused without following or mutating its target",
+    "Handle-bound same-volume no-clobber publication moves one complete file",
+    "No-clobber publication collision preserves both identities and byte sequences",
+    "Whole-file replacement preserves private ACL and uses the staged identity",
+    "Real sharing denial preserves old and staged files without in-place fallback; retry succeeds after release"
+  ],
+  "native_validation": "Not run; requires actual Windows and completed exact selected backend.",
+  "command": "python scripts/testing/hermes-memory-windows-native.py --module <exact installed or source hermes-memory-windows-native.py> --receipt <fresh acceptance receipt.json>",
+  "scope": "Disposable fictional primitive fixtures only; production holds unchanged; ancestor pinning belongs portable protocol."
+}

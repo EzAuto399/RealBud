@@ -1,0 +1,20 @@
+--prepared:/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/package/mac-arm64/RealBud.app/Contents/Frameworks/RealBud Helper (Plugin).app
+--prepared:/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/package/mac-arm64/RealBud.app/Contents/Frameworks/ReactiveObjC.framework/Versions/Current/.
+--prepared:/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/package/mac-arm64/RealBud.app/Contents/Frameworks/RealBud Helper (Renderer).app
+--validated:/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/package/mac-arm64/RealBud.app/Contents/Frameworks/RealBud Helper (Plugin).app
+--prepared:/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/package/mac-arm64/RealBud.app/Contents/Frameworks/RealBud Helper (GPU).app
+--validated:/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/package/mac-arm64/RealBud.app/Contents/Frameworks/RealBud Helper (Renderer).app
+--prepared:/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/package/mac-arm64/RealBud.app/Contents/Frameworks/Squirrel.framework/Versions/Current/.
+--validated:/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/package/mac-arm64/RealBud.app/Contents/Frameworks/ReactiveObjC.framework/Versions/Current/.
+--validated:/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/package/mac-arm64/RealBud.app/Contents/Frameworks/RealBud Helper (GPU).app
+--validated:/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/package/mac-arm64/RealBud.app/Contents/Frameworks/Squirrel.framework/Versions/Current/.
+--prepared:/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/package/mac-arm64/RealBud.app/Contents/Frameworks/RealBud Helper.app
+--prepared:/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/package/mac-arm64/RealBud.app/Contents/Frameworks/Mantle.framework/Versions/Current/.
+--validated:/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/package/mac-arm64/RealBud.app/Contents/Frameworks/RealBud Helper.app
+--validated:/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/package/mac-arm64/RealBud.app/Contents/Frameworks/Mantle.framework/Versions/Current/.
+--prepared:/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/package/mac-arm64/RealBud.app/Contents/Frameworks/Electron Framework.framework/Versions/Current/.
+--prepared:/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/package/mac-arm64/RealBud.app/Contents/Frameworks/Electron Framework.framework/Versions/Current/Helpers/chrome_crashpad_handler
+--validated:/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/package/mac-arm64/RealBud.app/Contents/Frameworks/Electron Framework.framework/Versions/Current/Helpers/chrome_crashpad_handler
+--validated:/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/package/mac-arm64/RealBud.app/Contents/Frameworks/Electron Framework.framework/Versions/Current/.
+/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/package/mac-arm64/RealBud.app: valid on disk
+/Users/yoda/projects/RealBud/outputs/readiness-gaps-2026-09-23/package/mac-arm64/RealBud.app: satisfies its Designated Requirement

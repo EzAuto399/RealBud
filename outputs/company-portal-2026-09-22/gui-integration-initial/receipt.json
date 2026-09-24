@@ -1,0 +1,92 @@
+{
+  "ok": true,
+  "at": "2026-09-22T00:07:24.503Z",
+  "layer": "Actual desktop HTTP/rendered UI, owned company PostgreSQL, built Next and separate website PostgreSQL; fictional identities only",
+  "checks": [
+    "Actual owned office database, current network certificate and authenticated owner create a durable member-specific challenge through the desktop UI.",
+    "Fresh portal login issues a bounded proof through actual Next/PostgreSQL; lost issue and committed company acceptance replies recover exact saved requests and one candidate.",
+    "Cold desktop restart retains the same candidate and challenge. Lost committed website redemption retries the original nonce and receipt, then owner confirmation commits once.",
+    "Desktop and portal mapping screens render at desktop/mobile widths without horizontal overflow; proof codes are masked in captured evidence.",
+    "Explicit disconnect is terminal and survives another restart; stale proof submission cannot revive the mapping. No case claim, mailbox read or worker is started."
+  ],
+  "errors": [],
+  "mutations": [
+    {
+      "path": "/api/company/portal-bindings/list",
+      "requestId": null,
+      "bodyDigest": "f43e6439f6835d327ac1e3b81f9c5214d591bb7e8f0211b90b5693b6f94652b2"
+    },
+    {
+      "path": "/api/company/portal-bindings/begin",
+      "requestId": "907ea6b0-25be-4b9c-8411-de719bc48b2e",
+      "bodyDigest": "36c9556ea6c639693a0c88adad660d15f4c4ca679535fec5ee61ebaac8df4ccb"
+    },
+    {
+      "path": "/api/company/portal-bindings/accept",
+      "requestId": "70251fb7-d62a-4481-bfbc-00df6d0d235e",
+      "bodyDigest": "c96fd6cc9a288e47a32feb6028130d4317be6da5b713dfd412fdbe878a7fed7c"
+    },
+    {
+      "path": "/api/company/portal-bindings/accept",
+      "requestId": "70251fb7-d62a-4481-bfbc-00df6d0d235e",
+      "bodyDigest": "c96fd6cc9a288e47a32feb6028130d4317be6da5b713dfd412fdbe878a7fed7c"
+    },
+    {
+      "path": "/api/company/portal-bindings/list",
+      "requestId": null,
+      "bodyDigest": "f43e6439f6835d327ac1e3b81f9c5214d591bb7e8f0211b90b5693b6f94652b2"
+    },
+    {
+      "path": "/api/company/portal-bindings/confirm",
+      "requestId": "00cd2f3f-c8d4-4365-9d27-51ea6405e936",
+      "bodyDigest": "70c9da8515500be47192426dab34567fab0cc05a179b1de57b0b3b1dc8e86dfe"
+    },
+    {
+      "path": "/api/company/portal-bindings/confirm",
+      "requestId": "00cd2f3f-c8d4-4365-9d27-51ea6405e936",
+      "bodyDigest": "70c9da8515500be47192426dab34567fab0cc05a179b1de57b0b3b1dc8e86dfe"
+    },
+    {
+      "path": "/api/company/portal-bindings/revoke",
+      "requestId": "d7648f8e-0710-46c7-9932-3d98c76df8a4",
+      "bodyDigest": "15c21ed6cc02a1ba0ecb921d3fb28be3ff18bd83f345e156a56cd05b2cab5182"
+    }
+  ],
+  "requests": [
+    {
+      "path": "/api/company-portal/redeem",
+      "ok": true,
+      "bodyDigest": "d5fbe2bdb5ff291ac181759105dc6c136661aec2c67e34ba76fc716d19f9745a"
+    },
+    {
+      "path": "/api/company-portal/redeem",
+      "ok": true,
+      "bodyDigest": "d5fbe2bdb5ff291ac181759105dc6c136661aec2c67e34ba76fc716d19f9745a"
+    },
+    {
+      "path": "/api/company-portal/redeem",
+      "ok": true,
+      "bodyDigest": "2524313e02ad8e3f97099ee3d3dab6fadaa87e1aeeabd6122460392ee65144b1"
+    },
+    {
+      "path": "/api/company-portal/redeem",
+      "ok": true,
+      "bodyDigest": "2524313e02ad8e3f97099ee3d3dab6fadaa87e1aeeabd6122460392ee65144b1"
+    }
+  ],
+  "site": {
+    "rpcCount": 17,
+    "violations": [],
+    "databaseErrors": [],
+    "authRejections": [],
+    "migrationHashes": {
+      "portalPeople": "17d9df75b244cb13e356ccfff3c27591aaf7a38aec0f0c4ce003d671cb79904d",
+      "remoteApprovers": "17825f58da8cac746e98b5ac36d8ba7005210882b564174bc53fdfa236297b08",
+      "companyPortal": "9b47a8cc3949bb6514d50cf17151933f84750141e48ad2856f804404acc12b2a"
+    }
+  },
+  "limits": [
+    "Identity mapping only; no department executor admission",
+    "No deployment, native installer or live customer proof"
+  ]
+}

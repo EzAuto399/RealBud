@@ -1,0 +1,21 @@
+✔ registry admits scoped hashed credentials and rejects duplicate or secret-bearing records (6.708709ms)
+✔ service expiry, suspension, token revocation, wrong profile/license deny before provider access (3.241333ms)
+✔ successful account status uses server binding and never returns project credentials (3.19025ms)
+✔ revocation during a read withholds its data (2.049417ms)
+✔ MCP session is bound to device and configuration and does not survive expiry (2.532167ms)
+✔ unknown sign-in link outcome remains held after retry and service restart (2.430375ms)
+✔ successful sign-in link is reused, account pinned, changed binding held (1.729ms)
+✔ HTTP bearer is independent of portal auth and rejects browser origin and supplied upstream identity (26.336583ms)
+✔ mail scan uses the server-owned account binding and refuses caller authority fields before upstream (2.488625ms)
+✔ mail scan enforces token, profile, current subscription and device authority before upstream (2.348541ms)
+✔ mail scan suppresses returned evidence when subscription or device changes while the provider is pending (6.549708ms)
+✔ mail scan admits one active operation per device and releases the guard after a cancelled operation (1.983459ms)
+✔ HTTP mail scan rejects malformed scope and returns bounded projected evidence with independent device authentication (15.355458ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 194.669333

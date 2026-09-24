@@ -1,0 +1,8 @@
+Date,Amount,Description,Reference,Other
+11/09/2026,1250.00,Alex Tenant,,preserve
+11/09/2026,800.00,Shared Payer,,ambiguous
+11/09/2026,90.00,Unknown Payment,,unmatched
+11/09/2026,-35.00,Account fee,,debit
+12/09/2026,400.00,Bailey Tenant,OLD-REF,existing
+12/09/2026,600.00,Alex Tenant,,duplicate
+12/09/2026,600.00,Alex Tenant,,duplicate

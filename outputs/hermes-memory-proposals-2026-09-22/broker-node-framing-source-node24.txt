@@ -1,0 +1,17 @@
+Node 24.19.0
+Builtin _http_server SHA256 cefc145685c39e44b0d1cbb8731e57f9d4fbf0ab851ac63c7108c669a5fc08d9
+// be that in the case abortIncoming() was called that the incoming
+  // array will be empty.
+  assert(state.incoming.length === 0 || state.incoming[0] === req);
+
+  state.incoming.shift();
+
+  // If the user never called req.read(), and didn't pipe() or
+  // .resume() or .on('data'), then we call req._dump() so that the
+  // bytes will be pulled off the wire.
+  if (!req._consuming && !req._readableState.resumeScheduled)
+    req._dump();
+
+  res.detachSocket(socket);
+  clearIncoming(req);
+  process

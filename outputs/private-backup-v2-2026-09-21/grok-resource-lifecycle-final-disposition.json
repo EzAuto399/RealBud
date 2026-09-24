@@ -1,0 +1,29 @@
+{
+  "sessionId": "01a0c40a-2065-7290-bf89-b36765b86473",
+  "requestedModel": "grok-4.6",
+  "reasoningEffort": "xhigh",
+  "recordedModel": "grok-4.6-build",
+  "completion": "end_turn; one model call; completed normally",
+  "originalVerdict": "fail",
+  "acceptedFinding": "A held or untracked legacy cleanup row aborted recover() and starved later eligible operations.",
+  "fixes": [
+    "Untracked legacy candidates are preserved and counted as held without attempting reservation release.",
+    "Per-operation cleanup errors retain files/charges and do not prevent later IDs from cleaning; journal authority/integrity is rechecked before continuing.",
+    "recover() reports cleaned/held counts without exposing prior-workspace operation identifiers.",
+    "Added a mixed-order regression with legacy data, an unknown-file hold and a later successfully cleaned operation.",
+    "Added a process-local fallback for failed handle closes when persisting the durable PID hold itself fails. A new runtime in the same process cannot bypass it."
+  ],
+  "verification": {
+    "receipt": "resource-review-followup-tests.log",
+    "passed": 92,
+    "failed": 0,
+    "skipped": 0,
+    "files": 5,
+    "serverTypecheck": "resource-review-followup-tsc.log",
+    "serverBuild": "resource-review-followup-server-build.log"
+  },
+  "limits": [
+    "The supplied review packet predates the durable PID-hold and final isolation/fallback fixes. The original fail review is preserved, not relabelled as approval of later source.",
+    "No public HTTP/UI, package, native Windows or customer acceptance was established."
+  ]
+}
