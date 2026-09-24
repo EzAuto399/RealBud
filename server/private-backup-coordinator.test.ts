@@ -9,7 +9,8 @@ import { join } from 'node:path';
 import { emptyV3 } from '../shared/desk-v3.ts';
 import { encryptJson, decryptJson } from './desk-crypto.ts';
 import { createPrivateWorkspaceBackup } from './private-workspace-backup.ts';
-import { createPrivateBackupCoordinator, type PrivateBackupCoordinatorHost } from './private-backup-coordinator.ts';
+import { createPrivateBackupCoordinator, privateBackupFailureReason, privateBackupStackLocations, type PrivateBackupCoordinatorHost, type PrivateBackupFailureDiagnostic } from './private-backup-coordinator.ts';
+import { WorkspaceActivityGate } from './workspace-activity.ts';
 import { withDurablePrivateBackupRestore } from './private-backup-legacy-api.ts';
 import { createPrivateBackupV2Api } from './private-backup-v2-api.ts';
 import { handlePrivateBackupV2Http } from './private-backup-http.ts';
@@ -168,5 +169,63 @@ describe('durable private backup coordinator', () => {
     f.host.freeBytes = async () => 0;
     await expect(f.service.startUpload(randomUUID(), 4)).rejects.toMatchObject({ status: 507 });
     expect((await f.service.cancel(id)).phase).toBe('cancelled');
+  });
+});
+
+describe('private backup failure diagnostics', () => {
+  it('keeps only server/shared basenames and lines from source, compiled Windows and file URL stacks', () => {
+    // The message repeats in the stack header, including a line shaped like a frame.
+    const message = 'fictional first line C:\\Users\\fictional\\.realbud\\server\\message.ts:1:1\n    at C:\\Users\\Fictional\\shared\\Fictional-Tenancy-2026.js:12:3';
+    const stack = [
+      `Error: ${message}`,
+      '    at CaptureReader.check (/synthetic/app/server/private-backup-capture.ts:107:13)',
+      '    at file:///C:/Program%20Files/RealBud/resources/dist-server/server/private-backup-coordinator.js:250:11',
+      '    at async CaptureReader.file (C:\\Program Files\\RealBud\\resources\\server\\private-backup-capture.js:171:5)',
+      '    at parse (C:\\synthetic\\dist-server\\shared\\private-backup-transfers.js:9:2)',
+      '    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)',
+      '    at Object.<anonymous> (/synthetic/node_modules/fictional/lib/index.js:1:1)',
+    ].join('\n');
+    expect(privateBackupStackLocations({ message, stack })).toEqual(['private-backup-capture.ts:107', 'private-backup-coordinator.js:250', 'private-backup-capture.js:171', 'private-backup-transfers.js:9']);
+    const real = new Error('fictional\n    at x (/synthetic/shared/Fictional-Owner.js:4:4)');
+    expect(privateBackupStackLocations(real).join()).not.toContain('Fictional-Owner');
+    expect(privateBackupStackLocations(real)[0]).toMatch(/^private-backup-coordinator\.test\.ts:\d+$/);
+    expect(privateBackupStackLocations({ message: '', stack: ['Error', ...Array.from({ length: 12 }, (_, i) => `    at f (C:\\app\\server\\x.js:${i + 1}:1)`)].join('\n') })).toHaveLength(8);
+    expect(privateBackupStackLocations(undefined)).toEqual([]);
+  });
+  it('maps each fixed throw-site code to one reason and leaves everything else unclassified', () => {
+    const coded = (code: string, extra: object = {}) => Object.assign(new Error('Fictional message'), { status: 409, code, ...extra });
+    expect(privateBackupFailureReason(coded('bud-replying'))).toBe('bud-replying');
+    expect(privateBackupFailureReason(coded('changed-during-copy'))).toBe('changed-during-copy');
+    expect(privateBackupFailureReason(coded('private_snapshot_interrupted', { interruption: 'timeout' }))).toBe('pause-timeout');
+    expect(privateBackupFailureReason(coded('private_snapshot_interrupted', { interruption: 'queue-full' }))).toBe('pause-queue-full');
+    expect(privateBackupFailureReason(coded('private_snapshot_interrupted'))).toBe('pause-stopped');
+    for (const other of [coded('EACCES'), new Error('Bud was still replying'), 'bud-replying', null]) expect(privateBackupFailureReason(other)).toBe('unclassified');
+  });
+  it('reports a named busy reason live and in one fixed diagnostic without persisting it', async () => {
+    const f = await fixture(), events: PrivateBackupFailureDiagnostic[] = [];
+    f.host.diagnostic = event => { events.push(event); };
+    f.host.snapshotLease = async () => { throw Object.assign(new Error('Wait for current work and setup to finish (Bud to finish its current reply).'), { status: 409, code: 'bud-replying' }); };
+    const id = randomUUID(); await f.service.startExport(id, phrase);
+    expect(await f.service.settled(id)).toMatchObject({ phase: 'failed', error: { code: 'workspace-busy', reason: 'bud-replying' } });
+    expect((await f.service.get(id)).error).toEqual({ code: 'workspace-busy', reason: 'bud-replying' });
+    expect((await f.service.list({ limit: 20 })).items.find(item => item.id === id)?.error).toEqual({ code: 'workspace-busy', reason: 'bud-replying' });
+    expect(events).toEqual([{ kind: 'export', phase: 'capturing', status: 409, code: 'workspace-busy', reason: 'bud-replying', locations: expect.any(Array) }]);
+    expect(events[0]!.locations.length).toBeGreaterThan(0);
+    for (const location of events[0]!.locations) expect(location).toMatch(/^[\w.-]+\.(?:ts|js):\d+$/);
+    expect(JSON.stringify(events)).not.toMatch(/Bud to finish|Fictional|realbud|RealBud coordinator/);
+    // A restarted service reads the same saved record (not damaged) with the generic code only.
+    await f.service.close(); const restarted = await createPrivateBackupCoordinator(f.host); services.push(restarted);
+    expect((await restarted.get(id)).error).toEqual({ code: 'workspace-busy' });
+  });
+  it('names an expired capture pause from the real workspace gate', async () => {
+    const f = await fixture(), gate = new WorkspaceActivityGate(), events: PrivateBackupFailureDiagnostic[] = [];
+    f.host.diagnostic = event => { events.push(event); };
+    f.host.snapshotLease = async () => { const lease = await gate.pause({ timeoutMs: 1 }); await new Promise(resolve => setTimeout(resolve, 10)); return lease; };
+    const id = randomUUID(); await f.service.startExport(id, phrase);
+    expect((await f.service.settled(id)).error).toEqual({ code: 'workspace-busy', reason: 'pause-timeout' });
+    expect(events.map(event => [event.reason, event.code])).toEqual([['pause-timeout', 'workspace-busy']]);
+    // The stack names the capture step that found the expired pause, not the timer.
+    expect(events[0]!.locations.some(location => location.startsWith('private-backup-capture.ts:'))).toBe(true);
+    expect(gate.paused).toBe(false);
   });
 });

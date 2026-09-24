@@ -18,8 +18,8 @@ import { PrivateBackupPreparedStore, preparedStorageBudget, PRIVATE_BACKUP_PREPA
 import { preparePrivateBackupRestore, privateBackupBuildStorageBudget, PRIVATE_BACKUP_BUILD_MAX_BYTES } from './private-backup-prepare.ts';
 import { stagePrivateRestoreV2 } from './private-backup-cold-restore.ts';
 import { PRIVATE_BACKUP_TRANSFER_API, PRIVATE_BACKUP_TRANSFER_CHUNK_BYTES, PRIVATE_BACKUP_TRANSFER_MAX_BYTES,
-  privateBackupTransferDigest, privateBackupTransferId, type PrivateBackupTransferOperation, type PrivateBackupTransferPage,
-  type PrivateBackupDownloadTicket, type PrivateBackupTransferErrorCode } from '../shared/private-backup-transfers.ts';
+  privateBackupBusyReason, privateBackupTransferDigest, privateBackupTransferId, type PrivateBackupTransferOperation, type PrivateBackupTransferPage,
+  type PrivateBackupDownloadTicket, type PrivateBackupTransferErrorCode, type PrivateBackupBusyReason } from '../shared/private-backup-transfers.ts';
 
 const MiB = 1024 ** 2, MARKER = 8192, MARGIN = 128 * MiB;
 const closed = new Set(['cancelled', 'expired', 'completed']);
@@ -27,6 +27,28 @@ const sha = (data: Uint8Array | string) => createHash('sha256').update(data).dig
 function fail(message: string, status = 409): never { throw Object.assign(new Error(message), { status }); }
 function passphrase(value: string) { if (typeof value !== 'string' || value.length < 16 || value.length > 256) fail('Use a backup passphrase between 16 and 256 characters.', 400); }
 function capacity(value: number, max: number) { if (!Number.isSafeInteger(value) || value > max) fail('The restored workspace exceeds this computer’s supported backup capacity.', 413); return Math.max(65_536, Math.ceil(value / 4096) * 4096); }
+/** One failed backup task, as fixed values only: no message text, paths,
+ * business names or secrets. `locations` are `<source basename>:<line>`. */
+export interface PrivateBackupFailureDiagnostic {
+  kind: 'export' | 'upload'; phase: string; status: number; code: PrivateBackupTransferErrorCode;
+  reason: PrivateBackupBusyReason | 'unclassified'; locations: string[];
+}
+// V8 frames only (`    at …`) after every header line: a stack repeats each
+// line of its message, which must never contribute a location. Source and
+// compiled service, POSIX, Windows and file:// URL paths.
+const FRAME = /^\s+at\s.*[\\/](?:server|shared)[\\/]([\w.-]{1,80}\.(?:ts|js)):(\d{1,7}):\d+/;
+export function privateBackupStackLocations(error: unknown): string[] {
+  const { stack, message } = error && typeof error === 'object' ? error as { stack?: unknown; message?: unknown } : {};
+  if (typeof stack !== 'string') return [];
+  const header = typeof message === 'string' ? message.split('\n').length : 1;
+  return stack.split('\n').slice(header).flatMap(line => { const match = FRAME.exec(line); return match ? [`${match[1]}:${match[2]}`] : []; }).slice(0, 8);
+}
+/** Maps the fixed code a throw site attached; anything else stays unclassified. */
+export function privateBackupFailureReason(error: unknown): PrivateBackupBusyReason | 'unclassified' {
+  const { code, interruption } = error && typeof error === 'object' ? error as { code?: unknown; interruption?: unknown } : {};
+  if (code === 'private_snapshot_interrupted') return interruption === 'timeout' ? 'pause-timeout' : interruption === 'queue-full' ? 'pause-queue-full' : 'pause-stopped';
+  return privateBackupBusyReason(code) ? code : 'unclassified';
+}
 export interface PrivateBackupCoordinatorHost {
   directory: string; key: Buffer; workspaceId: string;
   snapshotLease(): Promise<{ assertCurrent(): void; release(): void }>;
@@ -37,8 +59,8 @@ export interface PrivateBackupCoordinatorHost {
   /** Host/test admission policy; never supplied by an HTTP request. */
   freeBytes?: () => Promise<number>;
   captureLimits?: CatalogLimits;
-  /** Optional code-location diagnostics; no exception text or business values. */
-  diagnostic?: (event: { phase: string; status: number; locations: string[] }) => void;
+  /** Code-location diagnostics; no exception text or business values. */
+  diagnostic?: (event: PrivateBackupFailureDiagnostic) => void;
 }
 export async function createPrivateBackupCoordinator(host: PrivateBackupCoordinatorHost) {
   const directory = resolve(host.directory), root = join(directory, 'private-backup-v2'), key = Buffer.from(host.key), now = host.now ?? Date.now;
@@ -46,6 +68,13 @@ export async function createPrivateBackupCoordinator(host: PrivateBackupCoordina
   const runtime = createBackupResourceRuntime({ journal, directory: root, key });
   const tasks = new Map<string, Promise<unknown>>(), tickets = new Map<string, { id: string; ticket: PrivateBackupDownloadTicket }>();
   let closing = false, closedService = false, restoring: string | null = null;
+  // Live busy reasons for failed operations. Deliberately not persisted; see
+  // PRIVATE_BACKUP_BUSY_REASONS. Lost on restart, leaving the generic code.
+  const reasons = new Map<string, PrivateBackupBusyReason>();
+  const view = (op: PrivateBackupTransferOperation): PrivateBackupTransferOperation => {
+    const reason = op.phase === 'failed' && op.error?.code === 'workspace-busy' ? reasons.get(op.id) : undefined;
+    return reason ? { ...op, error: { code: 'workspace-busy', reason } } : op;
+  };
   const edit = (id: string, change: (record: BackupOperationRecord) => void) => journal.update(id, journal.get(id).revision, change);
   const operation = (id: string, kind?: 'export' | 'upload') => { const record = journal.get(id); if (kind && record.operation.kind !== kind) fail('This backup operation was not found.', 404); return record; };
   const check = (id: string) => { if (closing || closed.has(operation(id).operation.phase)) fail('This backup operation is closed.'); };
@@ -84,10 +113,15 @@ export async function createPrivateBackupCoordinator(host: PrivateBackupCoordina
   }
   function failed(id: string, error: unknown) {
     const record = operation(id); if (closed.has(record.operation.phase) || record.restoreHeld) return;
-    if (['ready', 'reviewed'].includes(record.operation.phase)) { edit(id, next => { next.operation.error = { code: 'recovery-required' }; next.operation.requiresPassphrase = false; }); return; }
-    const status = (error as { status?: number })?.status;
-    host.diagnostic?.({ phase: record.operation.phase, status: status ?? 503, locations: ((error as Error)?.stack ?? '').split('\n').slice(1).flatMap(line => { const match = /server\/([A-Za-z0-9_.-]+\.ts:\d+:\d+)/.exec(line); return match ? [match[1]!] : []; }).slice(0, 8) });
-    const code: PrivateBackupTransferErrorCode = status === 413 || status === 507 ? 'insufficient-space' : status === 400 ? 'invalid-backup' : status === 409 ? 'workspace-busy' : 'storage-unavailable';
+    reasons.delete(id);
+    const raw = error && typeof error === 'object' ? (error as { status?: unknown }).status : undefined;
+    const status = Number.isInteger(raw) && Number(raw) >= 400 && Number(raw) <= 599 ? Number(raw) : 503, reason = privateBackupFailureReason(error);
+    const recovery = ['ready', 'reviewed'].includes(record.operation.phase);
+    const code: PrivateBackupTransferErrorCode = recovery ? 'recovery-required' : status === 413 || status === 507 ? 'insufficient-space' : status === 400 ? 'invalid-backup' : status === 409 ? 'workspace-busy' : 'storage-unavailable';
+    // A failing log sink must never stop the failure from being saved.
+    try { host.diagnostic?.({ kind: record.operation.kind, phase: record.operation.phase, status, code, reason, locations: privateBackupStackLocations(error) }); } catch { /* diagnostic only */ }
+    if (recovery) { edit(id, next => { next.operation.error = { code: 'recovery-required' }; next.operation.requiresPassphrase = false; }); return; }
+    if (code === 'workspace-busy' && reason !== 'unclassified') reasons.set(id, reason);
     edit(id, next => { next.operation.phase = 'failed'; next.operation.error = { code }; delete next.operation.preview;
       next.operation.requiresPassphrase = next.operation.kind === 'export' || next.operation.receivedBytes === next.operation.progress.totalBytes; });
   }
@@ -176,9 +210,9 @@ export async function createPrivateBackupCoordinator(host: PrivateBackupCoordina
     async list(options: { limit: number; cursor?: string }): Promise<PrivateBackupTransferPage> {
       const after = options.cursor; if (after && !privateBackupTransferId(after)) fail('Invalid backup page.', 400);
       const page = journal.list({ limit: options.limit, after });
-      return { version: 2, workspaceId: host.workspaceId, limits: { archiveBytes: PRIVATE_BACKUP_TRANSFER_MAX_BYTES, chunkBytes: PRIVATE_BACKUP_TRANSFER_CHUNK_BYTES }, items: page.items.map(r => r.operation), total: page.total, nextCursor: page.next };
+      return { version: 2, workspaceId: host.workspaceId, limits: { archiveBytes: PRIVATE_BACKUP_TRANSFER_MAX_BYTES, chunkBytes: PRIVATE_BACKUP_TRANSFER_CHUNK_BYTES }, items: page.items.map(r => view(r.operation)), total: page.total, nextCursor: page.next };
     },
-    get: uploadStatus,
+    async get(id: string) { return view(await uploadStatus(id)); },
     async startUpload(id: string, totalBytes: number) {
       writable(); const record = await maybeCreate(id, 'upload', totalBytes, backupTransferStorageBudget(totalBytes).totalBytes + MARKER);
       if (closed.has(record.operation.phase) || record.restoreHeld || tasks.has(id)) return record.operation;
@@ -268,7 +302,7 @@ export async function createPrivateBackupCoordinator(host: PrivateBackupCoordina
         });
       } finally { restoring = null; }
     },
-    async cancel(id: string) { for (const [token, saved] of tickets) if (saved.id === id) tickets.delete(token); return (await runtime.cancel(id)).operation; },
+    async cancel(id: string) { for (const [token, saved] of tickets) if (saved.id === id) tickets.delete(token); const result = (await runtime.cancel(id)).operation; reasons.delete(id); return result; },
     async downloadTicket(id: string, digest: string): Promise<PrivateBackupDownloadTicket> {
       const record = operation(id, 'export'); if (tasks.has(id) || runtime.busy(id) || record.operation.phase !== 'ready' || record.operation.artifact?.archiveDigest !== digest) fail('Create or check the completed backup before downloading.');
       for (const [token, saved] of tickets) if (saved.ticket.expiresAt <= now()) tickets.delete(token);
@@ -290,7 +324,7 @@ export async function createPrivateBackupCoordinator(host: PrivateBackupCoordina
       // handle closes have actually succeeded after recovery.
       if (operation(saved.id).operation.error) edit(saved.id, next => { delete next.operation.error; });
     },
-    async settled(id: string) { await tasks.get(id); return operation(id).operation; },
+    async settled(id: string) { await tasks.get(id); return view(operation(id).operation); },
     heldOperation() { return heldOperation()?.operation ?? null; },
     async close() { if (closedService) return; closing = true; tickets.clear(); await runtime.close(); await Promise.allSettled(tasks.values()); journal.close(); key.fill(0); closedService = true; },
   };

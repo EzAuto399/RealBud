@@ -23,6 +23,36 @@ export const PRIVATE_BACKUP_TRANSFER_ERRORS = {
   expired: 'This saved transfer has expired. Keep the original backup file.',
 } as const;
 export type PrivateBackupTransferErrorCode = keyof typeof PRIVATE_BACKUP_TRANSFER_ERRORS;
+/** Fixed explanations for a `workspace-busy` failure. Never persisted: a saved
+ * operation keeps only `{code}` because older services reject any other key
+ * and would hold the whole journal. The running service reports a reason only
+ * while it remembers that failure; after a restart the code message remains. */
+export const PRIVATE_BACKUP_BUSY_REASONS = {
+  'bud-replying': 'Bud was still replying — try again when it finishes.',
+  'mail-collection': 'Mail was still being collected — try again when it finishes.',
+  'desk-check': 'A Desk check was still running — try again when it finishes.',
+  'website-request': 'A website request was still in progress — try again when it finishes.',
+  'department-work': 'Department work was still running — try again when it finishes.',
+  'job-running': 'A job was running or queued — try again when it finishes.',
+  'batch-running': 'A batch was still running — try again when it finishes.',
+  'routine-running': 'A scheduled routine was still running — try again when it finishes.',
+  'bud-setup': 'Bud setup was still running — try again when it finishes.',
+  'workspace-change': 'Another workspace change was still in progress — try again when it finishes.',
+  'restore-or-restart': 'RealBud was finishing a restore or restart — try again after it finishes.',
+  'requests-draining': 'Earlier requests did not finish in time — try again in a minute.',
+  'pause-timeout': 'Copying took longer than the safe pause — try again with the computer idle.',
+  'pause-queue-full': 'Too much other work was waiting during the copy — try again when RealBud is quiet.',
+  'pause-stopped': 'The copy stopped because RealBud was stopping — try again after it restarts.',
+  'changed-during-copy': 'Business records changed while they were being copied — try again when nothing else is running.',
+  'database-journal': 'The workflow database was still finishing a save — wait a minute, then try again.',
+} as const;
+export type PrivateBackupBusyReason = keyof typeof PRIVATE_BACKUP_BUSY_REASONS;
+export const privateBackupBusyReason = (v: unknown): v is PrivateBackupBusyReason => typeof v === 'string' && Object.hasOwn(PRIVATE_BACKUP_BUSY_REASONS, v);
+export interface PrivateBackupTransferError { code: PrivateBackupTransferErrorCode; reason?: PrivateBackupBusyReason }
+/** One plain sentence: the specific busy reason when known, else the code's. */
+export function privateBackupTransferErrorText(error: PrivateBackupTransferError): string {
+  return error.code === 'workspace-busy' && error.reason ? PRIVATE_BACKUP_BUSY_REASONS[error.reason] : PRIVATE_BACKUP_TRANSFER_ERRORS[error.code];
+}
 export interface PrivateBackupTransferArtifact { archiveBytes: number; archiveDigest: string }
 export interface PrivateBackupTransferOperation {
   version: 2; id: string; workspaceId: string; kind: 'export' | 'upload';
@@ -34,7 +64,8 @@ export interface PrivateBackupTransferOperation {
   artifact?: PrivateBackupTransferArtifact;
   /** Published only after complete authentication AND business graph validation. */
   preview?: PrivateBackupReceipt;
-  error?: { code: PrivateBackupTransferErrorCode };
+  /** `reason` appears only in live responses, never in the saved journal. */
+  error?: PrivateBackupTransferError;
 }
 export interface PrivateBackupTransferPage {
   version: 2; workspaceId: string;
@@ -91,7 +122,8 @@ export function parsePrivateBackupTransferOperation(v: unknown): PrivateBackupTr
   if (parsedPreview === null || parsedPreview && (!parsedArtifact || !['ready', 'reviewed', 'staging', 'staged', 'applying', 'completed'].includes(phase))) return null;
   if (parsedPreview && parsedPreview.digest !== parsedArtifact?.archiveDigest) return null;
   if (['reviewed', 'staging', 'staged', 'applying'].includes(phase) && !parsedPreview) return null;
-  if (v.error !== undefined && (!object(v.error) || !keys(v.error, ['code']) || typeof v.error.code !== 'string' || !Object.hasOwn(PRIVATE_BACKUP_TRANSFER_ERRORS, v.error.code))) return null;
+  if (v.error !== undefined && (!object(v.error) || !keys(v.error, ['code'], ['reason']) || typeof v.error.code !== 'string' || !Object.hasOwn(PRIVATE_BACKUP_TRANSFER_ERRORS, v.error.code) ||
+      Object.hasOwn(v.error, 'reason') && (v.error.code !== 'workspace-busy' || !privateBackupBusyReason(v.error.reason)))) return null;
   return {
     version: 2, id: v.id, workspaceId: v.workspaceId, kind: v.kind as 'export' | 'upload', phase,
     createdAt: v.createdAt, updatedAt: v.updatedAt, expiresAt: v.expiresAt as number | null,
@@ -99,7 +131,8 @@ export function parsePrivateBackupTransferOperation(v: unknown): PrivateBackupTr
     canCancel: v.canCancel, requiresPassphrase: v.requiresPassphrase,
     ...(v.kind === 'upload' ? { receivedBytes: v.receivedBytes as number, prefixCommitment: v.prefixCommitment as string } : {}),
     ...(parsedArtifact ? { artifact: parsedArtifact } : {}), ...(parsedPreview ? { preview: parsedPreview } : {}),
-    ...(v.error ? { error: { code: (v.error as { code: PrivateBackupTransferErrorCode }).code } } : {}),
+    ...(v.error ? { error: { code: (v.error as { code: PrivateBackupTransferErrorCode }).code,
+      ...(privateBackupBusyReason((v.error as { reason?: unknown }).reason) ? { reason: (v.error as { reason: PrivateBackupBusyReason }).reason } : {}) } } : {}),
   };
 }
 export function parsePrivateBackupTransferResponse(v: unknown): PrivateBackupTransferOperation | null {

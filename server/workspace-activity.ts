@@ -6,10 +6,15 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 export type WorkspaceActivity = <T>(work: () => T | Promise<T>) => Promise<T>;
 export interface WorkspaceSnapshotLease { assertCurrent(): void; release(): void }
 type Owner = {
-  released: boolean; failure?: Error; resume: () => void; wait: Promise<void>;
+  released: boolean; failure?: WorkspacePauseEnd; resume: () => void; wait: Promise<void>;
   drained: () => void; drain: Promise<void>; dispose: () => void;
 };
-const interrupted = () => Object.assign(new Error('The backup pause ended before capture completed. Current work was preserved; retry when the workspace is quiet.'), { status: 409, code: 'private_snapshot_interrupted' });
+/** Why a pause ended early. The code stays `private_snapshot_interrupted`;
+ * this fixed detail only lets the backup diagnostic name the cause. The error
+ * is created where the lease is asserted, so its stack names that caller
+ * (capture, drain) rather than the timer or queue that ended the pause. */
+export type WorkspacePauseEnd = 'timeout' | 'queue-full' | 'stopped';
+const interrupted = (interruption: WorkspacePauseEnd) => Object.assign(new Error('The backup pause ended before capture completed. Current work was preserved; retry when the workspace is quiet.'), { status: 409, code: 'private_snapshot_interrupted', interruption });
 
 export class WorkspaceActivityGate {
   private owner?: Owner;
@@ -28,14 +33,14 @@ export class WorkspaceActivityGate {
   get active() { return this.running; }
   get queued() { return this.waiting; }
   /** Service shutdown invalidates only the current snapshot lease. */
-  cancelPause(): void { if (this.owner) this.end(this.owner, interrupted()); }
+  cancelPause(): void { if (this.owner) this.end(this.owner, 'stopped'); }
 
   readonly run: WorkspaceActivity = async work => {
     // Nested work belonging to an admitted task must be allowed to drain. A
     // detached callback after its parent finishes is a new admission instead.
     while (this.owner && !this.context.getStore()?.active) {
       const owner = this.owner;
-      if (this.waiting >= this.maxWaiting) { this.end(owner, interrupted()); break; }
+      if (this.waiting >= this.maxWaiting) { this.end(owner, 'queue-full'); break; }
       this.waiting++;
       try { await owner.wait; } finally { this.waiting--; }
     }
@@ -49,28 +54,28 @@ export class WorkspaceActivityGate {
       if (this.running === 0) this.owner?.drained();
     }
   };
-  private end(owner: Owner, error?: Error) {
+  private end(owner: Owner, failure?: WorkspacePauseEnd) {
     if (owner.released) return;
-    owner.released = true; owner.failure = error;
+    owner.released = true; owner.failure = failure;
     if (this.owner === owner) this.owner = undefined;
     owner.resume(); owner.drained(); owner.dispose();
   }
   /** Installs its admission barrier synchronously, before the first await.
    * The timeout bounds the entire pause, including capture after drain. */
   async pause(options: { signal?: AbortSignal; timeoutMs?: number; onReleased?: () => void } = {}): Promise<WorkspaceSnapshotLease> {
-    if (this.owner || this.context.getStore()?.active) throw Object.assign(new Error('Another workspace operation is active. Retry the backup after it finishes.'), { status: 409 });
+    if (this.owner || this.context.getStore()?.active) throw Object.assign(new Error('Another workspace operation is active. Retry the backup after it finishes.'), { status: 409, code: 'workspace-change' });
     const timeout = options.timeoutMs ?? 30_000;
     if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 120_000) throw new Error('Invalid snapshot pause deadline.');
     options.signal?.throwIfAborted();
     let resume!: () => void, drained!: () => void;
     const wait = new Promise<void>(resolve => { resume = resolve; }), drain = new Promise<void>(resolve => { drained = resolve; });
     const owner: Owner = { released: false, resume, wait, drained, drain, dispose: () => {} };
-    const cancel = () => this.end(owner, interrupted());
-    const timer = setTimeout(cancel, timeout); timer.unref?.();
+    const cancel = () => this.end(owner, 'stopped');
+    const timer = setTimeout(() => this.end(owner, 'timeout'), timeout); timer.unref?.();
     owner.dispose = () => { clearTimeout(timer); options.signal?.removeEventListener('abort', cancel); options.onReleased?.(); };
     this.owner = owner; options.signal?.addEventListener('abort', cancel, { once: true });
     if (this.running === 0) owner.drained();
-    const assertCurrent = () => { if (owner.failure) throw owner.failure; if (this.owner !== owner || owner.released) throw interrupted(); };
+    const assertCurrent = () => { if (owner.failure) throw interrupted(owner.failure); if (this.owner !== owner || owner.released) throw interrupted('stopped'); };
     await owner.drain; assertCurrent();
     return { assertCurrent, release: () => this.end(owner) };
   }

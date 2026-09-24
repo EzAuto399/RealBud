@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { WorkspaceActivityGate } from './workspace-activity.ts';
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>(r => { resolve = r; }); return { promise, resolve }; };
 const turn = () => new Promise<void>(resolve => setImmediate(resolve));
+const thrown = (work: () => unknown) => { try { work(); } catch (error) { return error; } throw new Error('Expected a throw'); };
 
 describe('queue-preserving workspace snapshot pause', () => {
   it('drains admitted work and preserves the waiting work until release', async () => {
@@ -42,6 +43,17 @@ describe('queue-preserving workspace snapshot pause', () => {
     const gate = new WorkspaceActivityGate(), lease = await gate.pause({ timeoutMs: 10 }); let executed = false;
     const work = gate.run(() => { executed = true; }); await new Promise(resolve => setTimeout(resolve, 30)); await work;
     expect(executed).toBe(true); expect(() => lease.assertCurrent()).toThrow(/pause ended/);
+  });
+  it('names why a pause ended with one fixed detail under the existing code', async () => {
+    const timed = await new WorkspaceActivityGate().pause({ timeoutMs: 1 }); await new Promise(resolve => setTimeout(resolve, 10));
+    expect(thrown(() => timed.assertCurrent())).toMatchObject({ status: 409, code: 'private_snapshot_interrupted', interruption: 'timeout' });
+    const pressured = new WorkspaceActivityGate({ maxWaiting: 1 }), full = await pressured.pause();
+    await Promise.all([pressured.run(() => {}), pressured.run(() => {})]);
+    expect(thrown(() => full.assertCurrent())).toMatchObject({ code: 'private_snapshot_interrupted', interruption: 'queue-full' });
+    const stopping = new WorkspaceActivityGate(), stopped = await stopping.pause(); stopping.cancelPause();
+    expect(thrown(() => stopped.assertCurrent())).toMatchObject({ code: 'private_snapshot_interrupted', interruption: 'stopped' });
+    const busy = new WorkspaceActivityGate(), held = await busy.pause();
+    await expect(busy.pause()).rejects.toMatchObject({ status: 409, code: 'workspace-change' }); held.release();
   });
   it('does not let an admitted action pause itself or retain activity after failure', async () => {
     const gate = new WorkspaceActivityGate();

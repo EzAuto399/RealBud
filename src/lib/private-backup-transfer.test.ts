@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  PRIVATE_BACKUP_TRANSFER_CHUNK_BYTES as CHUNK, PRIVATE_BACKUP_TRANSFER_MAX_BYTES as MAX_BYTES,
-  parsePrivateBackupTransferOperation, parsePrivateBackupTransferPage, parsePrivateBackupDownloadTicket,
+  PRIVATE_BACKUP_TRANSFER_CHUNK_BYTES as CHUNK, PRIVATE_BACKUP_TRANSFER_ERRORS, PRIVATE_BACKUP_TRANSFER_MAX_BYTES as MAX_BYTES,
+  parsePrivateBackupTransferOperation, parsePrivateBackupTransferPage, parsePrivateBackupDownloadTicket, privateBackupTransferErrorText,
   type PrivateBackupTransferOperation as Operation, type PrivateBackupChunkTuple,
 } from '@shared/private-backup-transfers';
 import {
-  PrivateBackupTransferClient, PrivateBackupTransferUncertainError, privateBackupChunkCommitment,
+  PrivateBackupTransferClient, PrivateBackupTransferHttpError, PrivateBackupTransferUncertainError, cancelPrivateBackup, privateBackupChunkCommitment,
   privateBackupTransferHttp, requestPrivateBackupDownload,
   type PrivateBackupTransferTransport, type PrivateBackupTransferRequest,
 } from './private-backup-transfer';
@@ -88,6 +88,14 @@ describe('private backup public projections', () => {
     expect(parsePrivateBackupTransferOperation({ ...input, error: { code: 'storage-unavailable', message: 'secret path' } })).toBeNull();
     expect(parsePrivateBackupTransferOperation({ ...input, artifact: { ...input.artifact, key: 'secret' } })).toBeNull();
     expect(parsePrivateBackupTransferOperation({ ...input, preview: { ...input.preview, passphrase: 'secret' } })).toBeNull();
+  });
+  it('accepts a fixed live busy reason only with workspace-busy and explains it in one sentence', () => {
+    const failed = { ...operation(), phase: 'failed', error: { code: 'workspace-busy', reason: 'pause-timeout' } };
+    expect(parsePrivateBackupTransferOperation(failed)?.error).toEqual({ code: 'workspace-busy', reason: 'pause-timeout' });
+    expect(parsePrivateBackupTransferOperation({ ...failed, error: { code: 'workspace-busy', reason: 'fictional-unknown' } })).toBeNull();
+    expect(parsePrivateBackupTransferOperation({ ...failed, error: { code: 'storage-unavailable', reason: 'pause-timeout' } })).toBeNull();
+    expect(privateBackupTransferErrorText({ code: 'workspace-busy', reason: 'pause-timeout' })).toBe('Copying took longer than the safe pause — try again with the computer idle.');
+    expect(privateBackupTransferErrorText({ code: 'workspace-busy' })).toBe(PRIVATE_BACKUP_TRANSFER_ERRORS['workspace-busy']);
   });
   it.each([
     { receivedBytes: 1 }, { receivedBytes: CHUNK * 4 }, { prefixCommitment: HASH.toUpperCase() },
@@ -236,6 +244,35 @@ describe('operation controls and narrow download', () => {
     });
     expect((await new PrivateBackupTransferClient(WORKSPACE, { request: cancellable }).cancel(ID)).phase).toBe('cancelled');
     expect(cancellable.mock.calls.map(c => c[1].method)).toEqual(['GET', 'POST', 'GET']);
+  });
+  it('settles Cancel this backup from the saved operation: confirmed, lost reply, refused hold or unconfirmed', async () => {
+    const running: Operation = { version: 2, id: ID, workspaceId: WORKSPACE, kind: 'export', phase: 'capturing', createdAt: 1, updatedAt: 1, expiresAt: null,
+      progress: { completedBytes: 0, totalBytes: null }, canCancel: true, requiresPassphrase: false };
+    const cancelled: Operation = { ...running, phase: 'cancelled', canCancel: false }, held: Operation = { ...reviewed(), phase: 'staging', canCancel: false };
+    const host = (post: () => void, saved: () => Operation | null) => { let posted = false; return { request: vi.fn(async (_path: string, req: PrivateBackupTransferRequest) => {
+      if (req.method === 'POST') { posted = true; post(); return { operation: cancelled }; }
+      const current = posted ? saved() : running; if (!current) throw new TypeError('Fictional unreadable status'); return { operation: current };
+    }) }; };
+    const outcome = (transport: PrivateBackupTransferTransport) => cancelPrivateBackup(new PrivateBackupTransferClient(WORKSPACE, transport), ID);
+    const refused = () => { throw new PrivateBackupTransferHttpError(409); }, lostReply = () => { throw new TypeError('Lost fictional reply'); };
+    expect(await outcome(host(() => {}, () => cancelled))).toEqual({ kind: 'cancelled', operation: cancelled });
+    const lost = host(lostReply, () => cancelled);
+    expect(await outcome(lost)).toEqual({ kind: 'cancelled', operation: cancelled });
+    expect(lost.request.mock.calls.map(c => c[1].method)).toEqual(['GET', 'POST', 'GET']);
+    expect(await outcome(host(refused, () => held))).toEqual({ kind: 'held', operation: held });
+    const kept = { request: vi.fn(async (_path: string, _req: PrivateBackupTransferRequest) => ({ operation: held })) };
+    expect(await outcome(kept)).toEqual({ kind: 'held', operation: held });
+    expect(kept.request.mock.calls.map(c => c[1].method)).toEqual(['GET', 'GET']);
+    expect(await outcome(host(refused, () => running))).toEqual({ kind: 'unconfirmed', operation: running });
+    expect(await outcome(host(lostReply, () => null))).toEqual({ kind: 'unconfirmed', operation: null });
+    const expired: Operation = { ...running, phase: 'expired', canCancel: false };
+    expect(await outcome({ request: vi.fn(async () => ({ operation: expired })) })).toEqual({ kind: 'closed', operation: expired });
+  });
+  it('never removes a backup that finished after Cancel this backup was shown', async () => {
+    const finished: Operation = { ...ready(), id: ID };
+    const request = vi.fn(async (_path: string, _req: PrivateBackupTransferRequest) => ({ operation: finished }));
+    expect(await cancelPrivateBackup(new PrivateBackupTransferClient(WORKSPACE, { request }), ID, { whileRunning: true })).toEqual({ kind: 'changed', operation: finished });
+    expect(request.mock.calls.map(c => c[1].method)).toEqual(['GET']);
   });
   it('stops polling after a pause without issuing any further request', async () => {
     vi.useFakeTimers();

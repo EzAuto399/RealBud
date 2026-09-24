@@ -73,7 +73,7 @@ export function CareUnlockCard() {
       {!administration.managed ? <p className="text-sm text-ink-secondary">This development checkout is not enrolled as a managed service. Customer installations require separate administrator access.</p> : !allowed ? (
         <>
           <p role="status" className="text-[13px] leading-relaxed text-ink-secondary">
-            Use the administrator password for this computer. Joining a company does not share administrator access. Your work accounts stay available under Apps.
+            {administration.configured ? "Sign in with the RealBud service administrator password that RealBud support set up for this installation. It is not your Windows or Mac sign-in password. " : ""}Joining a company does not share administrator access. Your work accounts stay available under Apps.
           </p>
           {administration.configured ? (
             <form className="mt-3 flex flex-wrap gap-2" onSubmit={(event) => { event.preventDefault(); unlock(); }}>

@@ -1,0 +1,4 @@
+node v24.19.0, macOS arm64, source worktree (no build, no Postgres)
+pnpm typecheck
+pnpm exec vitest run server/private-backup*.test.ts server/workspace-activity.test.ts src/components/PrivateWorkspaceBackup.test.ts src/components/CareUnlockCard.test.ts src/lib/private-backup-transfer.test.ts
+result: 35 files, 563 passed / 0 failed / 0 skipped; typecheck exit 0
