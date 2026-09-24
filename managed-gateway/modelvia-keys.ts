@@ -34,6 +34,13 @@
  *   GET  {MODELVIA}/v1/operator/customers              → { accounts: CustomerAccount[] }
  *     Every customer (`accounts.ts` CustomerAccount: id, clientId, active,
  *     monthlyCapNanoAud, maxConcurrent, …); there is no read by id either.
+ *   POST {MODELVIA}/v1/operator/customers
+ *     { id, name, active, monthlyCapNanoAud, maxConcurrent, allowedModels,
+ *       version, clientId, payer?, billingCompanyId? }  → the saved record.
+ *     An upsert of the FULL record (`accounts.ts` `put`): `version` 0 creates, a
+ *     stale one is 409 `account_version_conflict`; clientId, payer and
+ *     billingCompanyId are immutable. The operator credential is global, so this
+ *     client only ever reads or writes customers under its own `clientId`.
  *
  * Caps live on the PROJECT, not the key (`requestCapNanoAud`,
  * `monthlyCapNanoAud`, `maxConcurrent`). That is why one project is created per
@@ -131,6 +138,50 @@ export interface ModelviaClient {
   updateProjectCaps(projectId: string, caps: ModelviaCaps): Promise<{ updated: boolean; version: number }>;
 }
 
+/** An office's default AI monthly cap: A$200 in nanoAUD (owner, 24 September 2026). */
+export const DEFAULT_OFFICE_AI_CAP_NANO_AUD = '200000000000';
+/** The largest custom cap this gateway will write: A$10,000 in nanoAUD. */
+export const MAX_OFFICE_AI_CAP_NANO_AUD = '10000000000000';
+/** Concurrency given to a customer this gateway creates. */
+export const NEW_CUSTOMER_MAX_CONCURRENT = 2;
+/** What a RealBud operator sets for one office. `disabled` leaves the cap as it is. */
+export type OfficeAiAccess = { mode: 'default' } | { mode: 'custom'; monthlyCapNanoAud: string } | { mode: 'disabled' };
+/** Exactly one of the three shapes, or `invalid_ai_access`. A custom cap is a
+ * whole number of nanoAUD from 1 to A$10,000. */
+export function parseOfficeAiAccess(value: unknown): OfficeAiAccess {
+  requireThat(record(value) && typeof value.mode === 'string', 'invalid_ai_access');
+  const v = value as Record<string, unknown>, keys = Object.keys(v).sort().join(',');
+  if (v.mode === 'default' && keys === 'mode') return { mode: 'default' };
+  if (v.mode === 'disabled' && keys === 'mode') return { mode: 'disabled' };
+  requireThat(v.mode === 'custom' && keys === 'mode,monthlyCapNanoAud' && typeof v.monthlyCapNanoAud === 'string'
+    && NANO.test(v.monthlyCapNanoAud) && BigInt(v.monthlyCapNanoAud) >= 1n && BigInt(v.monthlyCapNanoAud) <= BigInt(MAX_OFFICE_AI_CAP_NANO_AUD), 'invalid_ai_access');
+  return { mode: 'custom', monthlyCapNanoAud: v.monthlyCapNanoAud as string };
+}
+/** A customer exactly as Modelvia's `accounts.put` admits it (id, name, active,
+ * monthlyCapNanoAud, maxConcurrent, allowedModels, version, clientId, payer,
+ * billingCompanyId). `payer` and `billingCompanyId` are immutable there, so an
+ * update carries back whatever was read. */
+export interface ModelviaCustomerRecord {
+  id: string; name: string; active: boolean; monthlyCapNanoAud: string; maxConcurrent: number; allowedModels: string[];
+  version: number; clientId: string; payer?: 'client' | 'customer'; billingCompanyId?: string;
+}
+/** The customer-record half of the operator client, used only by the operator
+ * office AI access route. Kept apart from `ModelviaClient` so provisioning's
+ * fakes need not grow it. */
+export interface ModelviaCustomerAdmin {
+  /** The full stored record, or null when Modelvia holds no customer with that
+   * id. A customer under another platform client is `modelvia_customer_foreign`. */
+  readCustomerRecord(customerId: string): Promise<ModelviaCustomerRecord | null>;
+  /** Upserts the full record at its `version` (0 creates). Refuses, before any
+   * request, a record under another client. A stale version is
+   * `modelvia_customer_version_conflict` (409). */
+  putCustomer(record: ModelviaCustomerRecord): Promise<ModelviaCustomerRecord>;
+  /** Sets one office's AI access, creating its customer under this client when
+   * Modelvia holds none. Re-reads once after a version conflict. */
+  setCustomerAccess(customerId: string, input: { name: string; access: OfficeAiAccess }): Promise<{ active: boolean; monthlyCapNanoAud: string; created: boolean }>;
+}
+export type ModelviaOperatorClient = ModelviaClient & ModelviaCustomerAdmin;
+
 function origin(raw: string): string {
   let url: URL; try { url = new URL(raw); } catch { throw new GatewayError('modelvia_base_invalid', 503); }
   const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
@@ -160,6 +211,22 @@ function storedProject(value: unknown): StoredProject {
   return { id: v.id, name: v.name, active: v.active, monthlyCapNanoAud: v.monthlyCapNanoAud, maxConcurrent: v.maxConcurrent, allowedModels: [...v.allowedModels],
     version: v.version, clientId: v.clientId, customerId: v.customerId, environments: [...v.environments], requestCapNanoAud: v.requestCapNanoAud };
 }
+/** A listed customer reduced to the fields `accounts.put` admits, or
+ * `modelvia_unreadable`. Anything else is dropped: a write carrying an unknown
+ * field is refused there. */
+function storedCustomer(value: unknown): ModelviaCustomerRecord {
+  requireThat(record(value) && typeof value.id === 'string' && PATH_ID.test(value.id) && typeof value.name === 'string' && value.name.trim().length > 0 && value.name.length <= 200
+    && typeof value.active === 'boolean' && typeof value.monthlyCapNanoAud === 'string' && NANO.test(value.monthlyCapNanoAud)
+    && typeof value.maxConcurrent === 'number' && Number.isSafeInteger(value.maxConcurrent) && value.maxConcurrent > 0 && value.maxConcurrent <= 100
+    && Array.isArray(value.allowedModels) && value.allowedModels.length > 0 && value.allowedModels.length <= 64 && value.allowedModels.every(item => typeof item === 'string' && ACCOUNT_ID.test(item))
+    && typeof value.version === 'number' && Number.isSafeInteger(value.version) && value.version >= 0
+    && typeof value.clientId === 'string' && ACCOUNT_ID.test(value.clientId)
+    && (value.payer === undefined || value.payer === 'client' || value.payer === 'customer')
+    && (value.billingCompanyId === undefined || (typeof value.billingCompanyId === 'string' && ACCOUNT_ID.test(value.billingCompanyId))), 'modelvia_unreadable', 502);
+  const v = value as unknown as ModelviaCustomerRecord;
+  return { id: v.id, name: v.name, active: v.active, monthlyCapNanoAud: v.monthlyCapNanoAud, maxConcurrent: v.maxConcurrent, allowedModels: [...v.allowedModels],
+    version: v.version, clientId: v.clientId, ...(v.payer === undefined ? {} : { payer: v.payer }), ...(v.billingCompanyId === undefined ? {} : { billingCompanyId: v.billingCompanyId }) };
+}
 const sameCaps = (a: ModelviaCaps, b: ModelviaCaps) => a.monthlyCapNanoAud === b.monthlyCapNanoAud && a.requestCapNanoAud === b.requestCapNanoAud && a.maxConcurrent === b.maxConcurrent;
 
 export function modelviaKeyClient(options: {
@@ -177,7 +244,7 @@ export function modelviaKeyClient(options: {
   fetch: HttpTransport;
   /** Injected clock: the minted token's window must match Modelvia's. */
   now?: () => number;
-}): ModelviaClient {
+}): ModelviaOperatorClient {
   const base = origin(options.serviceOrigin);
   requireThat(ACCOUNT_ID.test(options.clientId), 'modelvia_client_id_invalid', 503);
   requireThat(options.operatorSubject.length > 0 && options.operatorSubject.length <= 320, 'modelvia_operator_subject_invalid', 503);
@@ -230,6 +297,31 @@ export function modelviaKeyClient(options: {
     // A project under another platform client is not one this service may touch.
     requireThat(project.clientId === options.clientId, 'modelvia_project_scope_mismatch', 502);
     return project;
+  };
+  /** Modelvia has no customer read by id either. A customer under another
+   * platform client is refused outright: the operator credential is global, so
+   * this check is the only thing keeping this service inside RealBud's client. */
+  const readCustomer = async (customerId: string): Promise<ModelviaCustomerRecord | null> => {
+    requireThat(PATH_ID.test(customerId), 'invalid_modelvia_account');
+    const body = await read('/v1/operator/customers');
+    requireThat(record(body) && Array.isArray(body.accounts), 'modelvia_unreadable', 502);
+    const found = (body.accounts as unknown[]).filter(entry => record(entry) && entry.id === customerId);
+    requireThat(found.length <= 1, 'modelvia_unreadable', 502);
+    if (!found.length) return null;
+    requireThat((found[0] as Record<string, unknown>).clientId === options.clientId, 'modelvia_customer_foreign', 409);
+    return storedCustomer(found[0]);
+  };
+  const putCustomer = async (input: ModelviaCustomerRecord): Promise<ModelviaCustomerRecord> => {
+    let next: ModelviaCustomerRecord;
+    try { next = storedCustomer(input); } catch { throw new GatewayError('invalid_modelvia_customer_record'); }
+    // Never write, or create, a customer under another platform client.
+    requireThat(next.clientId === options.clientId, 'modelvia_customer_foreign', 409);
+    const answer = await callRaw('/v1/operator/customers', next, ['account_version_conflict']);
+    if (answer.conflict) throw new GatewayError('modelvia_customer_version_conflict', 409);
+    const saved = storedCustomer(answer.body);
+    requireThat(saved.id === next.id && saved.clientId === next.clientId && saved.active === next.active
+      && saved.monthlyCapNanoAud === next.monthlyCapNanoAud && saved.version > next.version, 'modelvia_customer_scope_mismatch', 502);
+    return saved;
   };
   /** Checks a returned key against the record Modelvia says it belongs to. */
   const issuedKey = (body: unknown, projectId?: string): { key: string; keyId: string; projectId: string } => {
@@ -346,6 +438,35 @@ export function modelviaKeyClient(options: {
         return { updated: true, version: (saved as Record<string, unknown>).version as number };
       }
       throw new GatewayError('modelvia_project_version_conflict', 502);
+    },
+    readCustomerRecord: readCustomer,
+    putCustomer,
+    async setCustomerAccess(customerId, input) {
+      requireThat(PATH_ID.test(customerId), 'invalid_modelvia_account');
+      const name = typeof input.name === 'string' ? input.name.trim() : '';
+      requireThat(name.length > 0 && name.length <= 200 && !/[\u0000-\u001f\u007f]/.test(name), 'invalid_ai_access');
+      const access = parseOfficeAiAccess(input.access);
+      const active = access.mode !== 'disabled';
+      // Read, write the full record back at its stored version, and re-read once
+      // if another writer moved it in between. Only `active` and the cap change;
+      // an existing customer keeps its name, concurrency, models and bindings.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const current = await readCustomer(customerId);
+        const monthlyCapNanoAud = access.mode === 'custom' ? access.monthlyCapNanoAud
+          : access.mode === 'default' || !current ? DEFAULT_OFFICE_AI_CAP_NANO_AUD : current.monthlyCapNanoAud;
+        if (current && current.active === active && current.monthlyCapNanoAud === monthlyCapNanoAud) return { active, monthlyCapNanoAud, created: false };
+        const next: ModelviaCustomerRecord = current ? { ...current, active, monthlyCapNanoAud }
+          : { id: customerId, name, active, monthlyCapNanoAud, maxConcurrent: NEW_CUSTOMER_MAX_CONCURRENT,
+            allowedModels: [...options.allowedModels], version: 0, clientId: options.clientId };
+        try {
+          const saved = await putCustomer(next);
+          return { active: saved.active, monthlyCapNanoAud: saved.monthlyCapNanoAud, created: !current };
+        } catch (error) {
+          if (error instanceof GatewayError && error.code === 'modelvia_customer_version_conflict') continue;
+          throw error;
+        }
+      }
+      throw new GatewayError('modelvia_customer_version_conflict', 409);
     },
   };
 }

@@ -7,7 +7,7 @@ The gateway runs on Fly (Sydney) from `deploy.sh` and `fly.toml`. The website ru
 ## Order of operations
 
 1. **Deploy.** Export the variables below, then run `managed-gateway/deploy.sh`. It refuses to run while any required variable is unset, and names each missing one without echoing a value.
-2. **Check readiness.** `curl -fsS "$REALBUD_GATEWAY_URL/ready"`. A 200 response means provisioning is composed. A 503 response names the variable still to set, never its value. Both responses report `modelviaOperator: configured|missing`. `/ready` makes no network call.
+2. **Check readiness.** `curl -fsS "$REALBUD_GATEWAY_URL/ready"`. A 200 response means provisioning is composed. A 503 response names the variable still to set, never its value. Both responses report `modelviaOperator` and `operatorAccess` (`configured|missing`). `/ready` makes no network call.
 3. **Create each office's service entitlement** on the machine (`fly ssh console -a realbud-managed-gateway`, then `cd /app/managed-gateway`):
 
    ```sh
@@ -17,7 +17,7 @@ The gateway runs on Fly (Sydney) from `deploy.sh` and `fly.toml`. The website ru
    ```
 
    `--go-live` must be today or earlier, and `--expires` must be after `--go-live` (otherwise `invalid_go_live` or `invalid_service_expiry`). The command opens `/data/ledger.sqlite`, the database the server uses. It refuses to create a database, so a wrong path fails loudly. Without an entitlement, provisioning answers 403 `tenant_unavailable`. Suspend an office with `--active false`. Renew by setting a later `--expires`; existing connectors follow the current entitlement, so they keep working without reprovisioning.
-4. **Confirm the office's Modelvia customer** is active, sits under `REALBUD_MODELVIA_CLIENT_ID`, and has a non-zero monthly cap. Otherwise provisioning answers 409 `modelvia_customer_not_ready` and creates nothing.
+4. **Set the office's AI access** with `POST /v1/operator/offices/ai-access` (see [Office AI access](#office-ai-access)). `default` creates the office's Modelvia customer under `REALBUD_MODELVIA_CLIENT_ID` with the A$200 cap. Without an active customer with a non-zero cap, provisioning answers 409 `modelvia_customer_not_ready` and creates nothing.
 5. Set the website's `REALBUD_GATEWAY_URL` to the app origin (`fly status -a realbud-managed-gateway`) and `REALBUD_GATEWAY_PORTAL_SECRET` to the same value as the gateway. Secrets never go in a `NEXT_PUBLIC_` variable.
 
 ## Environment
@@ -25,6 +25,7 @@ The gateway runs on Fly (Sydney) from `deploy.sh` and `fly.toml`. The website ru
 | Variable | Required | What it is |
 | --- | --- | --- |
 | `REALBUD_GATEWAY_PORTAL_SECRET` | yes | portal bearer secret, >=32 chars, shared with the website BFF |
+| `REALBUD_GATEWAY_OPERATOR_SECRET` | for operator routes | RealBud operator bearer secret, >=32 chars, different from the portal secret. Missing, short or equal leaves operator routes off (503 `operator_unconfigured`, `/ready` `operatorAccess: missing`). Held only by the operator console that mints operator tokens |
 | `REALBUD_GATEWAY_DATA` | fly.toml | `/data`, the mounted volume; the ledger is `ledger.sqlite` inside it |
 | `REALBUD_ALLOWED_ORIGINS` | fly.toml | browser origins admitted; default `https://realbud.app,https://www.realbud.app` |
 | `REALBUD_ENABLE_PROVIDER` | gate | `1` composes provisioning; anything else leaves it off (`provisioning_disabled`) and hands no transport to any client |
@@ -75,6 +76,27 @@ node --experimental-strip-types caps-cli.ts apply --company <companyId>
 It needs the Modelvia operator variables. It reads the customer once and updates every `ready` installation project of that company; pending and revoked installations are skipped. It prints installation ids and `applied`/`failed` states only, with an error code per failure, and exits non-zero unless every installation applied. One failure never stops the others; rerun it to retry.
 
 `revoke` does not need an entitlement. It deactivates the device, then revokes the model key. The Modelvia project is left in place. The Composio project is deleted only on an explicit `deleteProject: true`, which is irreversible. Revoke writes one audit line, with no secret in it.
+
+## Office AI access
+
+Each office's Modelvia customer has an AI monthly cap of A$200 by default. A RealBud operator can set a custom cap or disable AI for the office. Modelvia is the only source of caps; this gateway alone holds the Modelvia operator credential, so it makes the write.
+
+```
+POST /v1/operator/offices/ai-access          Authorization: Bearer <operator token>
+  { "companyId": "…", "customerId": "<Modelvia customer id>", "name": "<office name>",
+    "access": { "mode": "default" } | { "mode": "custom", "monthlyCapNanoAud": "…" } | { "mode": "disabled" } }
+→ { "customer": { "active": true, "monthlyCapNanoAud": "200000000000", "created": true },
+    "projects": [ { "installationId": "…", "state": "applied" | "failed", "error": "<code>" } ] }
+```
+
+- **Authority.** An operator token (`operator-token.ts`): claims `{subject: "operator:<email>", role: "realbud_operator", iat, exp}`, at most five minutes long, signed with `REALBUD_GATEWAY_OPERATOR_SECRET`. A portal token is never accepted here, and an operator token is never accepted on a portal route.
+- **Modes.** `default` is A$200 (`200000000000` nanoAUD). `custom` is 1 nanoAUD to A$10,000 (`10000000000000`). `disabled` sets the customer inactive and leaves its cap. Anything else is 400 `invalid_ai_access`.
+- **Customer.** If Modelvia holds no customer with that id, one is created under `REALBUD_MODELVIA_CLIENT_ID` with `name`, concurrency 2 and the `REALBUD_MODELVIA_MODELS` models. An existing customer keeps its name, concurrency, models and bindings; only `active` and the cap change. A customer under another platform client is 409 `modelvia_customer_foreign`, and nothing is written. A stale version is re-read and retried once, then 409 `modelvia_customer_version_conflict`.
+- **Projects.** After `default` or `custom`, the new cap is pushed to the company's ready installation projects, as `caps-cli.ts apply` does. `disabled` pushes nothing: Modelvia refuses serving for an inactive customer.
+- **Checks and audit.** The company must have an entitlement record (403 `tenant_unavailable` otherwise). Requests are serialized per company. Two ledger lines, `office_ai_access_requested` (before any Modelvia call) and `office_ai_access_set`, carry the operator subject, company, mode, cap and project results. They never carry the Modelvia customer id or a secret.
+- **Errors.** 401 `operator_unauthenticated`; 503 `operator_unconfigured` (operator secret missing or equal to the portal secret, Modelvia operator variables missing, or `REALBUD_ENABLE_PROVIDER` not `1`); 409 `modelvia_customer_foreign`; 400 `invalid_ai_access`.
+
+Minting operator tokens (the operator console) is not part of this service.
 
 ## Managed Gmail compatibility (22 September 2026)
 

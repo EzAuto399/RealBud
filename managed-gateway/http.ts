@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { GatewayError, requireThat, type PortalPrincipal } from './contracts.ts';
 import type { ManagedConnectors } from './connectors.ts';
 import { provisioningError, type InstallationProvisioning } from './provisioning.ts';
+import type { OperatorRoutes } from './office-ai-access.ts';
 
 export interface PortalIdentity {
   /** Verify audience, expiry, revocation and tenant binding server-side. Never derive
@@ -24,16 +25,23 @@ function reply(res:ServerResponse,status:number,data:unknown) {
  * TLS termination, request concurrency/rate limits and external identity admission are
  * explicit deployment gates. No cookie auth or permissive CORS is installed.
  *
- * Routes: GET /health, GET /ready, /v1/connectors/*, and POST
- * /v1/portal/installations/{provision,revoke}. Nothing else. AI rates, caps,
+ * Routes: GET /health, GET /ready, /v1/connectors/*, POST
+ * /v1/portal/installations/{provision,revoke}, and the operator-only POST
+ * /v1/operator/offices/ai-access. Nothing else. AI rates, caps,
  * usage and invoices are Modelvia's; this service has no billing route. */
 export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigins:ReadonlySet<string>;connectors?:ManagedConnectors;provisioning?:InstallationProvisioning;
   /** Why provisioning is not composed, as a code naming the missing variable — never its value. */
   provisioningUnavailable?:string;
   /** Whether the Modelvia operator variables are all present. Configuration state only;
    * `/ready` never calls Modelvia. Defaults to `configured` exactly when provisioning is composed. */
-  modelviaOperator?:'configured'|'missing'}) {
+  modelviaOperator?:'configured'|'missing';
+  /** RealBud operator routes, under their own bearer (operator-token.ts). Absent
+   * when `REALBUD_GATEWAY_OPERATOR_SECRET` is missing, short or equal to the portal secret. */
+  operator?:OperatorRoutes;
+  /** Presence of the operator secret, for `/ready`. Defaults to whether `operator` is composed. */
+  operatorAccess?:'configured'|'missing'}) {
   const modelviaOperator=options.modelviaOperator??(options.provisioning?'configured':'missing');
+  const operatorAccess=options.operatorAccess??(options.operator?'configured':'missing');
   const server=createServer(async(req,res)=>{
     const abort=new AbortController(); res.once('close',()=>{if(!res.writableEnded) abort.abort();});
     res.setHeader('Cache-Control','no-store'); res.setHeader('X-Content-Type-Options','nosniff');
@@ -48,8 +56,8 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
       // variable to set — never its value. Unauthenticated on purpose: it reveals
       // configuration state, never configuration.
       if(req.method==='GET' && url.pathname==='/ready') {
-        if(options.provisioning) { reply(res,200,{ready:true,provisioning:'composed',modelviaOperator}); return; }
-        reply(res,503,{ready:false,error:options.provisioningUnavailable||'provisioning_unavailable',modelviaOperator}); return;
+        if(options.provisioning) { reply(res,200,{ready:true,provisioning:'composed',modelviaOperator,operatorAccess}); return; }
+        reply(res,503,{ready:false,error:options.provisioningUnavailable||'provisioning_unavailable',modelviaOperator,operatorAccess}); return;
       }
       if(url.pathname.startsWith('/v1/connectors/')) {
         requireThat(options.connectors, 'connectors_unavailable', 503);
@@ -61,6 +69,18 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
           body:req.method==='POST'?json(await body(req,32_000)):undefined,signal:abort.signal});
         if(result.session) res.setHeader('mcp-session-id',result.session);
         if(result.body===undefined) { res.writeHead(result.status);res.end(); } else reply(res,result.status,result.body);
+        return;
+      }
+      // RealBud operator: set one office's AI access at Modelvia. Its own bearer and
+      // secret; a portal token is never an operator and never reaches this write.
+      if(req.method==='POST' && url.pathname==='/v1/operator/offices/ai-access') {
+        requireThat(options.operator,'operator_unconfigured',503);
+        let operator;
+        try { operator=await options.operator!.authenticate(bearer(req)); } catch { throw new GatewayError('operator_unauthenticated',401); }
+        requireThat(options.operator!.officeAiAccess,'operator_unconfigured',503);
+        const value=json(await body(req,4096));
+        try { reply(res,200,await options.operator!.officeAiAccess!.set(operator,value)); }
+        catch(error) { throw error instanceof GatewayError?error:new GatewayError('office_ai_access_failed',502); }
         return;
       }
       requireThat(url.pathname.startsWith('/v1/portal/'),'not_found',404);

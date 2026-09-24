@@ -31,7 +31,8 @@ On 24 September, realbud.app showed a Modelvia QA rate card (`fictional-hosted-r
 - **Pricing:** agreed retail terms are recorded in Modelvia as a commercial policy. The website shows the resulting customer price and has no acceptance control.
 - **Service entitlement:** entitlement records are created by a trusted operator command (`managed-gateway/entitlement-cli.ts`), not by test fixtures.
 - **Stored data:** existing ledger tables and records remain readable. Nothing is dropped.
-- **Care fee:** Modelvia cannot issue a non-AI line on a customer invoice. The gateway never closed a care invoice in production. Who issues the monthly care fee is an open owner decision; nothing in this change bills it.
+- **Care fee** (owner decision, 24 September): billed each month as a manual Square invoice outside RealBud and Modelvia. Modelvia cannot issue a non-AI line, and the gateway never closed a care invoice in production.
+- **Office AI access** (owner decision, 24 September): each office gets a A$200 monthly cap by default. A RealBud operator can set a custom cap or turn AI off from `/admin/offices`. The gateway applies the change in Modelvia with its operator credential, only for customers under RealBud's client.
 
 ## Still required outside the code (owner authority)
 

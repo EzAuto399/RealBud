@@ -112,10 +112,10 @@ test('/health carries no billing state and /ready reports the Modelvia operator 
   const f=await serverFixture();
   assert.deepEqual(await(await f.request('GET','/health',null)).json(),{service:'realbud-managed-ai'});
   const ready=await f.request('GET','/ready',null);assert.equal(ready.status,200);
-  assert.deepEqual(await ready.json(),{ready:true,provisioning:'composed',modelviaOperator:'configured'});
+  assert.deepEqual(await ready.json(),{ready:true,provisioning:'composed',modelviaOperator:'configured',operatorAccess:'missing'});
   const bare=await serverFixture({provisioning:false});
   const unready=await bare.request('GET','/ready',null);assert.equal(unready.status,503);
-  assert.deepEqual(await unready.json(),{ready:false,error:'provisioning_unavailable',modelviaOperator:'missing'});
+  assert.deepEqual(await unready.json(),{ready:false,error:'provisioning_unavailable',modelviaOperator:'missing',operatorAccess:'missing'});
   assert.deepEqual([...f.modelviaCalls,...bare.modelviaCalls],[]);
 });
 

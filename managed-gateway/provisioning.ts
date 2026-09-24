@@ -30,7 +30,7 @@ import { canonical, GatewayError, id, object, requireThat, type PortalPrincipal 
 import { newConnectorCredential, validateConnectorDevices, type ConnectorDevice } from './connectors.ts';
 import type { UsageLedger } from './ledger.ts';
 import { composioOrgClient, type ComposioOrgClient, type HttpTransport } from './composio-org.ts';
-import { modelviaKeyClient, type ModelviaCaps, type ModelviaClient, type ModelviaCustomer, type ModelviaMintedKey } from './modelvia-keys.ts';
+import { modelviaKeyClient, type ModelviaCaps, type ModelviaClient, type ModelviaCustomer, type ModelviaMintedKey, type ModelviaOperatorClient } from './modelvia-keys.ts';
 
 // ---------------------------------------------------------------------------
 // Registry file (shared with the provision-connector CLI)
@@ -201,7 +201,7 @@ interface StoredRecord {
    * records still carry it and still parse; nothing reads or writes it now. */
   modelviaCaps?: unknown;
 }
-const MODELVIA_CUSTOMER = /^[A-Za-z0-9_.-]{1,128}$/;
+export const MODELVIA_CUSTOMER = /^[A-Za-z0-9_.-]{1,128}$/;
 /** A pending attempt younger than this may still be running, so it is not
  * resumed. It comfortably exceeds `ATTEMPT_EFFECT_DEADLINE_MS` plus one bounded
  * Modelvia call (30 s), so a resumed attempt never races the one it replaces. */
@@ -541,9 +541,10 @@ function ensureProvisioningTable(ledger: UsageLedger) {
  * Modelvia customer id. */
 export interface CapsApplied { installationId: string; state: 'applied' | 'failed'; error?: string }
 
-/** One refresh per company at a time, within this process. */
+/** One refresh per company at a time, within this process. Also used, under its
+ * own key, by the operator office AI access route (office-ai-access.ts). */
 const capQueues = new Map<string, Promise<unknown>>();
-function serialized<T>(key: string, work: () => Promise<T>): Promise<T> {
+export function serialized<T>(key: string, work: () => Promise<T>): Promise<T> {
   const run = (capQueues.get(key) ?? Promise.resolve()).then(work, work);
   const tail = run.then(() => undefined, () => undefined);
   capQueues.set(key, tail);
@@ -632,7 +633,7 @@ export type ProvisioningComposition = { provisioning: InstallationProvisioning }
  * variables is the caller's check; this validates their shape and the optional
  * ones, and reports a code naming the variable, never a value.
  */
-export function composeModelvia(options: { env: NodeJS.ProcessEnv; fetch: HttpTransport }): { modelvia: ModelviaClient; requestCapNanoAud: string } | { unavailable: string } {
+export function composeModelvia(options: { env: NodeJS.ProcessEnv; fetch: HttpTransport }): { modelvia: ModelviaOperatorClient; requestCapNanoAud: string } | { unavailable: string } {
   const env = options.env;
   const value = (name: string) => (env[name] ?? '').trim();
   const environment = value('REALBUD_MODELVIA_ENVIRONMENT') || 'production';

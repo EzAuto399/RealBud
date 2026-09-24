@@ -13,16 +13,19 @@ Off-device service with three jobs:
 | Route | Auth | Purpose |
 | --- | --- | --- |
 | `GET /health` | none | liveness |
-| `GET /ready` | none | 200 only when provisioning is composed; always reports `modelviaOperator: configured\|missing`. Makes no network call |
+| `GET /ready` | none | 200 only when provisioning is composed; always reports `modelviaOperator` and `operatorAccess` (`configured\|missing`). Makes no network call |
 | `POST /v1/portal/installations/provision` | portal bearer, `billing_owner` | needs an active entitlement and a ready Modelvia customer |
 | `POST /v1/portal/installations/revoke` | portal bearer, `billing_owner` | no entitlement needed, so a lapsed office can still be shut off |
 | `/v1/connectors/*` | connector credential | needs an active entitlement |
+| `POST /v1/operator/offices/ai-access` | operator bearer, `realbud_operator` | sets one office's AI access at Modelvia: default A$200 monthly cap, a custom cap, or disabled ([DEPLOY.md](DEPLOY.md#office-ai-access)) |
 
 Every other path returns 404. The error codes that tell an operator what to fix:
 
 - `tenant_unavailable` (403): the company has no entitlement. Create one with the entitlement command.
 - `service_unavailable` (402): the entitlement is inactive, expired, or not yet live.
-- `modelvia_customer_not_ready` (409): the office's Modelvia customer is missing, inactive, under another client, or has a zero monthly cap. Fix it in Modelvia.
+- `modelvia_customer_not_ready` (409): the office's Modelvia customer is missing, inactive, under another client, or has a zero monthly cap. Set it with the office AI access route.
+- `modelvia_customer_foreign` (409): the Modelvia customer id belongs to another platform client. Nothing was written.
+- `operator_unauthenticated` (401) / `operator_unconfigured` (503): no valid operator bearer, or the operator secret or Modelvia operator variables are not set.
 
 The installation project copies the Modelvia customer's caps at provisioning. Its monthly cap and concurrency are the customer's; its request cap is `REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD` (default A$1), never above the monthly cap. After the customer's caps change, `caps-cli.ts apply --company <id>` (`pnpm run caps`) re-applies them to every ready installation. Cap fields stored in the ledger are legacy and drive nothing.
 
@@ -59,7 +62,8 @@ The root `pnpm test` does not include this service. Every fixture here is synthe
 | --- | --- |
 | `http.ts`, `server.ts` | Route set above; production composition from env |
 | `provisioning.ts`, `provision-connector.mjs` | Installation provisioning and revocation; connector registry CLI |
-| `modelvia-keys.ts` | Modelvia operator client: customer read, project, key, rotate, revoke |
+| `modelvia-keys.ts` | Modelvia operator client: customer read and write (own client only), project, key, rotate, revoke |
+| `office-ai-access.ts`, `operator-token.ts` | Operator office AI access route and its own operator bearer |
 | `composio-org.ts`, `connectors.ts` | Composio org client; connector broker |
 | `entitlement-cli.ts`, `local-env.ts` | Operator entitlement command; shared `.env.local` and database path |
 | `database.ts`, `ledger.ts` | SQLite ledger: entitlements, audit chain. Older billing tables stay in the schema, readable and unused |

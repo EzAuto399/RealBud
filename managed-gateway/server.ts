@@ -15,6 +15,7 @@ import { GatewayError, requireThat } from "./contracts.ts";
 import { connectorRegistry, ManagedConnectors } from "./connectors.ts";
 import { composeProvisioning, modelviaOperatorState } from "./provisioning.ts";
 import { ledgerPath, loadLocalEnv } from "./local-env.ts";
+import { composeOperatorRoutes, operatorAccessState } from "./office-ai-access.ts";
 
 loadLocalEnv();
 
@@ -49,18 +50,21 @@ const ledger = new UsageLedger(db, Date.now);
 // variable answers 503 naming that variable, rather than booting with a
 // half-built Composio or Modelvia client. `fetch` is handed over only when the
 // gate is open, so nothing can call out while provisioning is disabled.
-const provisioningComposition = composeProvisioning({
-  env: process.env,
-  ledger,
-  fetch: process.env.REALBUD_ENABLE_PROVIDER === "1" ? fetch : (async () => {
-    throw new GatewayError("provisioning_disabled", 503);
-  }),
+const gatedFetch: typeof fetch = process.env.REALBUD_ENABLE_PROVIDER === "1" ? fetch : (async () => {
+  throw new GatewayError("provisioning_disabled", 503);
 });
+const provisioningComposition = composeProvisioning({ env: process.env, ledger, fetch: gatedFetch });
 const modelviaOperator = modelviaOperatorState(process.env);
+// Operator routes (office AI access) under their own secret. Missing, short or
+// equal to the portal secret composes nothing: the route answers 503.
+const operator = composeOperatorRoutes({ env: process.env, ledger, fetch: gatedFetch });
+const operatorAccess = operatorAccessState(process.env);
 
 const server = createGatewayServer({
   allowedOrigins: siteOrigins,
   modelviaOperator,
+  operatorAccess,
+  ...(operator ? { operator } : {}),
   ...("provisioning" in provisioningComposition
     ? { provisioning: provisioningComposition.provisioning }
     : { provisioningUnavailable: provisioningComposition.unavailable }),
@@ -88,6 +92,7 @@ server.listen(port, "0.0.0.0", () => {
       // Codes, never values: say which variable a deployment still has to set.
       provisioning: "provisioning" in provisioningComposition ? "composed" : provisioningComposition.unavailable,
       modelviaOperator,
+      operatorAccess,
     }),
   );
 });

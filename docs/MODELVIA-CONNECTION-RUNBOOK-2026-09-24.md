@@ -68,6 +68,6 @@ Computers → Remove. The website now sends the company ID the gateway requires;
 
 ## Known gaps
 
-- **Care fee:** who issues the monthly care fee is an open owner decision. Nothing bills it.
+- **Care fee:** each office's agreed monthly care amount is sent as a manual Square invoice. RealBud does not bill it.
 - **Office mapping:** it lives in one environment variable, so each new office needs a redeploy. Moving it into the database is the next reduction.
 - **Readiness through a client key:** Modelvia cannot yet report rate acceptance, terms or caps to the client key before the first request. See `docs/MODELVIA-INTEGRATOR-GAPS-2026-09-24.md`.
