@@ -22,6 +22,7 @@ fi
 # here rather than shipping a gateway that looks healthy and cannot provision.
 missing=()
 for name in \
+  REALBUD_GATEWAY_OPERATOR_SECRET \
   REALBUD_COMPOSIO_ORG_KEY \
   REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL \
   REALBUD_MODELVIA_OPERATOR_SECRET \
@@ -35,6 +36,11 @@ if (( ${#missing[@]} )); then
   echo "Export these before deploy (values are never echoed): ${missing[*]}"
   exit 1
 fi
+# The operator secret must be its own value: a portal token must never pass as an operator token.
+if (( ${#REALBUD_GATEWAY_OPERATOR_SECRET} < 32 )) || [[ "$REALBUD_GATEWAY_OPERATOR_SECRET" == "$REALBUD_GATEWAY_PORTAL_SECRET" ]]; then
+  echo "REALBUD_GATEWAY_OPERATOR_SECRET must be at least 32 characters and differ from the portal secret"
+  exit 1
+fi
 # Modelvia's verifier refuses a shorter operator secret outright.
 if (( ${#REALBUD_MODELVIA_OPERATOR_SECRET} < 32 )); then
   echo "REALBUD_MODELVIA_OPERATOR_SECRET must be at least 32 characters"
@@ -43,6 +49,7 @@ fi
 
 fly secrets set \
   REALBUD_GATEWAY_PORTAL_SECRET="$REALBUD_GATEWAY_PORTAL_SECRET" \
+  REALBUD_GATEWAY_OPERATOR_SECRET="$REALBUD_GATEWAY_OPERATOR_SECRET" \
   REALBUD_ALLOWED_ORIGINS="https://realbud.app,https://www.realbud.app" \
   REALBUD_ENABLE_PROVIDER="1" \
   REALBUD_COMPOSIO_ORG_KEY="$REALBUD_COMPOSIO_ORG_KEY" \

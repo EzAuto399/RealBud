@@ -37,26 +37,23 @@ This runbook has not yet been executed end to end against hosted services. Its s
 ## Once per office
 
 5. **Create the office** in `/admin/offices`. Copy its company ID exactly.
-6. **Ask Modelvia to set up the office's customer** under RealBud's client:
-   - active;
-   - a non-zero monthly cap;
-   - a commercial policy (required before any client-paid request).
-7. **Map the office to its Modelvia customer.** Add `"<companyId>":"<customerId>"` to `REALBUD_PLATFORM_CUSTOMERS_JSON`, then redeploy.
-   - Check: the office's row reads pass.
-   - "AI spend not enabled" means the cap is still zero.
-8. **Create the office's service entitlement** on the gateway. See `managed-gateway/DEPLOY.md` step 3.
+6. **Create the office's service entitlement** on the gateway. See `managed-gateway/DEPLOY.md` step 3.
+7. **Turn on AI** in `/admin/offices` → AI access → Default (A$200/month), Custom or Off → Save.
+   - This creates the office's Modelvia customer `realbud-<companyId>` under RealBud's client, or updates it. No environment edit or redeploy is needed.
+   - Check: the office's row on `/admin/connection` reads pass.
+8. **Confirm the office's pricing with Modelvia.** Modelvia must record a commercial policy before any client-paid request (`customer_terms_required`). Your own office runs as internal cost.
 9. **Pair the computer.** Go to Computers → Pair a new computer, then enter the code in the desktop app.
    - The gateway checks the entitlement and the Modelvia customer before creating anything.
    - If either is not ready, the computer stays linked without AI.
    - The redeem response names the missing step:
-     - `service_not_entitled` or `service_not_active` → step 8.
-     - `modelvia_customer_not_ready` → step 6.
+     - `service_not_entitled` or `service_not_active` → step 6.
+     - `modelvia_customer_not_ready` → step 7 (AI is off or has no cap).
      - `no_platform_customer` → step 7.
    - Fix that step, then pair again.
 
 ## Changing an office's cap
 
-Change it in Modelvia, then run `node --experimental-strip-types caps-cli.ts apply --company <companyId>` on the gateway. It copies the cap to each of the office's computers and prints each one's result.
+Change it on `/admin/offices` → AI access → Save. The gateway updates Modelvia and each linked computer, and the page lists each computer's result. If a computer shows "not applied", save again. `caps-cli.ts apply --company <companyId>` on the gateway does the same push without the website.
 
 ## Renewing an office
 
@@ -69,5 +66,4 @@ Computers → Remove. The website now sends the company ID the gateway requires;
 ## Known gaps
 
 - **Care fee:** each office's agreed monthly care amount is sent as a manual Square invoice. RealBud does not bill it.
-- **Office mapping:** it lives in one environment variable, so each new office needs a redeploy. Moving it into the database is the next reduction.
 - **Readiness through a client key:** Modelvia cannot yet report rate acceptance, terms or caps to the client key before the first request. See `docs/MODELVIA-INTEGRATOR-GAPS-2026-09-24.md`.
