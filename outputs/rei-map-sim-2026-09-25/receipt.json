@@ -1,0 +1,323 @@
+{
+  "at": "2026-09-24T15:06:03.361Z",
+  "layer": "Map lint + recipe execution against a fictional local REI-style mock (Chromium, request interception, no network)",
+  "result": "passed",
+  "map": {
+    "path": "pack/workflows/austin-accounts/support/rei-cloud-navigation/references/website-map.md",
+    "sha256": "29ea4a70346cdc6b4e1c124c85df9de2d19619f24eff126465110c3cbf239174",
+    "screens": 15,
+    "recipes": 13,
+    "uiVersion": "26.0922.0"
+  },
+  "lint": "clean",
+  "scenarios": {
+    "passed": 26,
+    "total": 26,
+    "results": [
+      {
+        "id": "open-session",
+        "ok": true,
+        "outcome": "completed",
+        "ms": 149,
+        "rows": 0,
+        "flags": [],
+        "blocked": [],
+        "effects": []
+      },
+      {
+        "id": "find-record/one",
+        "ok": true,
+        "outcome": "completed",
+        "ms": 745,
+        "rows": 1,
+        "flags": [],
+        "blocked": [],
+        "effects": []
+      },
+      {
+        "id": "find-record/many",
+        "ok": true,
+        "outcome": "completed",
+        "ms": 785,
+        "rows": 2,
+        "flags": [],
+        "blocked": [],
+        "effects": []
+      },
+      {
+        "id": "find-record/empty",
+        "ok": true,
+        "outcome": "completed",
+        "ms": 833,
+        "rows": 0,
+        "flags": [],
+        "blocked": [],
+        "effects": []
+      },
+      {
+        "id": "arrears-review",
+        "ok": true,
+        "outcome": "completed",
+        "ms": 977,
+        "rows": 6,
+        "flags": [],
+        "blocked": [],
+        "effects": []
+      },
+      {
+        "id": "receipt-register",
+        "ok": true,
+        "outcome": "completed",
+        "ms": 1991,
+        "rows": 3,
+        "flags": [],
+        "blocked": [],
+        "effects": []
+      },
+      {
+        "id": "bulk-receipting-preview/match",
+        "ok": true,
+        "outcome": "completed",
+        "ms": 779,
+        "rows": 3,
+        "flags": [
+          "preview rows=3 total=1275.00 unmatched=1"
+        ],
+        "blocked": [],
+        "effects": [
+          "upload"
+        ]
+      },
+      {
+        "id": "bulk-receipting-preview/mismatch→hold",
+        "ok": true,
+        "outcome": "completed",
+        "ms": 734,
+        "rows": 3,
+        "flags": [
+          "preview rows=3 total=1275.00 unmatched=1"
+        ],
+        "blocked": [],
+        "effects": [
+          "upload"
+        ]
+      },
+      {
+        "id": "bulk-receipting-preview/no-grant",
+        "ok": true,
+        "outcome": "handover:upload-not-granted",
+        "ms": 300,
+        "rows": 0,
+        "flags": [],
+        "blocked": [],
+        "effects": []
+      },
+      {
+        "id": "bulk-receipting-preview/unknown→readback-no-retry",
+        "ok": true,
+        "outcome": "blocked:second upload refused; reconcile first",
+        "ms": 7019,
+        "rows": 3,
+        "flags": [
+          "unknown: page.waitForFunction: Timeout 5000ms exceeded."
+        ],
+        "blocked": [],
+        "effects": [
+          "upload"
+        ]
+      },
+      {
+        "id": "post-import-readback/confirmed",
+        "ok": true,
+        "outcome": "completed",
+        "ms": 2347,
+        "rows": 0,
+        "flags": [
+          "register=1200.00 batch=1200.00 stillInArrears=none"
+        ],
+        "blocked": [],
+        "effects": []
+      },
+      {
+        "id": "post-import-readback/partial→hold",
+        "ok": true,
+        "outcome": "completed",
+        "ms": 2365,
+        "rows": 0,
+        "flags": [
+          "register=660.00 batch=1200.00 stillInArrears=Bravo"
+        ],
+        "blocked": [],
+        "effects": []
+      },
+      {
+        "id": "bank-reconciliation-read",
+        "ok": true,
+        "outcome": "completed",
+        "ms": 625,
+        "rows": 2,
+        "flags": [],
+        "blocked": [],
+        "effects": []
+      },
+      {
+        "id": "tasks-due",
+        "ok": true,
+        "outcome": "completed",
+        "ms": 373,
+        "rows": 2,
+        "flags": [],
+        "blocked": [],
+        "effects": []
+      },
+      {
+        "id": "compliance-expiry",
+        "ok": true,
+        "outcome": "completed",
+        "ms": 486,
+        "rows": 7,
+        "flags": [],
+        "blocked": [],
+        "effects": []
+      },
+      {
+        "id": "unknown-screen-study",
+        "ok": true,
+        "outcome": "completed",
+        "ms": 178,
+        "rows": 0,
+        "flags": [],
+        "blocked": [],
+        "effects": []
+      },
+      {
+        "id": "trap/sign-in-cancelled",
+        "ok": true,
+        "outcome": "handover:sign-in",
+        "ms": 46,
+        "rows": 0,
+        "flags": [],
+        "blocked": [],
+        "effects": []
+      },
+      {
+        "id": "trap/agency-changed",
+        "ok": true,
+        "outcome": "handover:agency-changed",
+        "ms": 55,
+        "rows": 0,
+        "flags": [],
+        "blocked": [],
+        "effects": []
+      },
+      {
+        "id": "trap/lookalike-origin",
+        "ok": true,
+        "outcome": "handover:origin https://rei-mock.fictional.test.evil.test",
+        "ms": 18,
+        "rows": 0,
+        "flags": [],
+        "blocked": [],
+        "effects": []
+      },
+      {
+        "id": "trap/version-drift",
+        "ok": true,
+        "outcome": "handover:map-drift-blocks-upload",
+        "ms": 234,
+        "rows": 0,
+        "flags": [
+          "map-drift 26.1001.0"
+        ],
+        "blocked": [],
+        "effects": []
+      },
+      {
+        "id": "trap/bare-route-loses-context",
+        "ok": true,
+        "outcome": "handover:agency-marker-missing",
+        "ms": 1545,
+        "rows": 0,
+        "flags": [],
+        "blocked": [],
+        "effects": []
+      },
+      {
+        "id": "trap/search-without-input-event",
+        "ok": true,
+        "outcome": "error",
+        "ms": 568,
+        "rows": 0,
+        "flags": [],
+        "blocked": [],
+        "effects": [],
+        "error": "search-not-applied (trap reproduced)"
+      },
+      {
+        "id": "trap/status-default-hides-inactive",
+        "ok": true,
+        "outcome": "completed",
+        "ms": 689,
+        "rows": 0,
+        "flags": [],
+        "blocked": [],
+        "effects": []
+      },
+      {
+        "id": "guard/consequential-click",
+        "ok": true,
+        "outcome": "blocked:refused consequential Process Receipts",
+        "ms": 123,
+        "rows": 0,
+        "flags": [],
+        "blocked": [
+          "Process Receipts"
+        ],
+        "effects": []
+      },
+      {
+        "id": "guard/notice-on-arrears",
+        "ok": true,
+        "outcome": "blocked:refused consequential Notice",
+        "ms": 949,
+        "rows": 6,
+        "flags": [],
+        "blocked": [
+          "Notice"
+        ],
+        "effects": []
+      },
+      {
+        "id": "guard/forbidden-settings",
+        "ok": true,
+        "outcome": "handover:forbidden area Settings",
+        "ms": 138,
+        "rows": 0,
+        "flags": [],
+        "blocked": [
+          "Settings"
+        ],
+        "effects": []
+      }
+    ]
+  },
+  "exercisedRecipes": [
+    "arrears-review",
+    "bank-reconciliation-read",
+    "bulk-receipting-preview",
+    "compliance-expiry",
+    "find-record",
+    "open-session",
+    "post-import-readback",
+    "receipt-register",
+    "tasks-due",
+    "unknown-screen-study"
+  ],
+  "limits": [
+    "Fictional mock derived from the map itself; not REI Cloud and not evidence of REI behaviour",
+    "Deterministic executor over the map's recipe grammar; no Hermes model turn, no RealBud broker, no ACP",
+    "No live account, credentials, uploads to REI, receipting, payments, notices or sends",
+    "Unobserved (tier U) recipes and unconfirmed parent menus are not exercised",
+    "Headless Chromium on macOS only; no Windows or packaged-app execution"
+  ]
+}

@@ -49,12 +49,27 @@ describe('Austin office pack definition', () => {
     expect(JSON.stringify(map)).not.toMatch(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|reicid=(?!\{reicid\})/);
     // Source references beside the skill: every file is hashed, none is published, and they hold placeholders only.
     const references = readdirSync(join(support, 'references')).map(file => `references/${file}`).sort();
+    expect(references).toEqual(expect.arrayContaining(['references/task-recipes.md', 'references/website-map.md']));
     expect(Object.keys(provenance.referencesSha256).sort()).toEqual(references);
     for (const file of references) {
       expect(provenance.referencesSha256[file]).toBe(digest(file));
       const text = readFileSync(join(support, file), 'utf8');
       expect(text).not.toMatch(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|reicid=(?!\{reicid\})|\/Users\/|\b\d{5,}\b/);
+      expect(text).not.toMatch(/password\s*[:=]|C:\\/i);
+      expect(text).toMatch(/Austin Realty add-on pack source reference, not RealBud core/);
     }
-    expect(JSON.stringify(austinCustomerPack())).not.toContain('task-recipes');
+    const websiteMap = readFileSync(join(support, 'references', 'website-map.md'), 'utf8');
+    expect(websiteMap).not.toMatch(/read_safe_labels: \[[^\]]*Preview/);
+    expect(websiteMap).not.toMatch(/- click: Preview/);
+    expect(websiteMap).toMatch(/recipe: receipt-register[\s\S]*?grant_needs: \[download\][\s\S]*?- select: \{field: Output, option: Export Only\}/);
+    expect(websiteMap).toMatch(/recipe: open-session[\s\S]*?- check: account/);
+    expect(JSON.stringify(austinCustomerPack())).not.toMatch(/task-recipes|website-map/);
+  });
+
+  it('points the REI map simulation at the Austin reference, never at the core Hermes profile', () => {
+    const sim = readFileSync(join(root, 'scripts', 'qa-rei-map-sim.mjs'), 'utf8');
+    expect(sim).toContain('"pack/workflows/austin-accounts/support/rei-cloud-navigation/references/website-map.md"');
+    expect(sim).not.toContain('pack/property');
+    expect(sim).toContain('REI_MAP_OVERRIDE');
   });
 });
