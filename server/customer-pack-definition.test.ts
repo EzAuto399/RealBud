@@ -58,6 +58,11 @@ describe('Austin office pack definition', () => {
       expect(text).not.toMatch(/password\s*[:=]|C:\\/i);
       expect(text).toMatch(/Austin Realty add-on pack source reference, not RealBud core/);
     }
+    const websiteMap = readFileSync(join(support, 'references', 'website-map.md'), 'utf8');
+    expect(websiteMap).not.toMatch(/read_safe_labels: \[[^\]]*Preview/);
+    expect(websiteMap).not.toMatch(/- click: Preview/);
+    expect(websiteMap).toMatch(/recipe: receipt-register[\s\S]*?grant_needs: \[download\][\s\S]*?- select: \{field: Output, option: Export Only\}/);
+    expect(websiteMap).toMatch(/recipe: open-session[\s\S]*?- check: account/);
     expect(JSON.stringify(austinCustomerPack())).not.toMatch(/task-recipes|website-map/);
   });
 

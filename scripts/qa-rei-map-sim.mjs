@@ -9,7 +9,8 @@
 //    no network, no REI account, no model). The mock reproduces the traps the
 //    map records: agency context in the query string, async tables and
 //    modal, a search box that ignores non-input assignment, Active-by-default
-//    status, pagination, sign-in cancel page, version drift, account switch,
+//    status, pagination, sign-in cancel page, version drift, independent URL
+//    reicid and header business-code switches,
 //    an unknown upload outcome and consequential buttons that count effects.
 //
 // Limits: the mock is derived from the map, so passing proves the recipes are
@@ -45,7 +46,7 @@ const screens = blocks.find(b => b?.screens)?.screens ?? [];
 const recipes = Object.fromEntries(blocks.filter(b => b?.recipe).map(b => [b.recipe, b]));
 const labels = blocks.find(b => b?.read_safe_labels);
 const TOP = ["Dashboard", "Business", "Owners", "Pool of Owners", "Contacts", "Rentals", "Tenants", "Suppliers", "Communities", "Sales", "Listings", "Agents", "Booking Calendar", "Tasks", "Receipts", "Process", "Reports", "Settings", "Tools", "My Profile"];
-const VERBS = new Set(["nav", "check", "type", "select", "radio", "click", "wait", "read", "paginate", "upload", "run"]);
+const VERBS = new Set(["nav", "check", "type", "select", "radio", "click", "wait", "read", "paginate", "upload", "download", "run"]);
 const lint = [];
 const fail = msg => lint.push(msg);
 
@@ -56,6 +57,7 @@ for (const s of screens) {
   if (/\?/.test(s.route)) fail(`screen ${s.id}: route keeps a query string`);
 }
 const safe = new Set(labels.read_safe_labels), conseq = new Set(labels.consequential_labels);
+if (safe.has("Preview")) fail("report Preview cannot be read-safe without live qualification");
 for (const l of safe) if (conseq.has(l)) fail(`label ${l} is both read-safe and consequential`);
 for (const s of screens) for (const l of s.stop ?? []) if (!conseq.has(l)) fail(`screen ${s.id}: stop ${l} not consequential`);
 const menuPaths = new Set(screens.map(s => s.menu.join(" › ")));
@@ -69,8 +71,12 @@ for (const [name, r] of Object.entries(recipes)) {
     if (verb === "nav" && !String(arg[0]).startsWith("{") && !TOP.includes(arg[0])) fail(`${name}: nav root ${arg[0]} unknown`);
     if (verb === "nav" && arg.length > 1 && !menuPaths.has(arg.join(" › "))) fail(`${name}: nav path ${arg.join(" › ")} not a mapped screen`);
     if (verb === "run" && !recipes[arg]) fail(`${name}: runs missing recipe ${arg}`);
+    if (verb === "run") for (const need of recipes[arg]?.grant_needs ?? []) if (!(r.grant_needs ?? []).includes(need)) fail(`${name}: sub-recipe ${arg} requires ${need}`);
     if (verb === "upload" && r.kind === "read") fail(`${name}: read recipe uploads`);
     if (verb === "upload" && !(r.grant_needs ?? []).includes("upload")) fail(`${name}: upload without grant_needs`);
+    if (verb === "download" && !(r.grant_needs ?? []).includes("download")) fail(`${name}: download without grant_needs`);
+    if (verb === "download" && r.kind === "read") fail(`${name}: read recipe downloads`);
+    if (verb === "click" && arg === "Preview") fail(`${name}: unverified report Preview cannot be read-safe`);
     if (verb === "click" && !safe.has(arg)) fail(`${name}: click ${arg} not read-safe`);
     if (verb === "click" && conseq.has(arg)) fail(`${name}: clicks consequential ${arg}`);
   }
@@ -79,8 +85,8 @@ for (const [name, r] of Object.entries(recipes)) {
   steps.forEach((step, i) => {
     const [verb, arg] = Object.entries(step)[0];
     if (verb !== "nav") return;
-    // Every navigation is followed by an agency re-check (bare routes lose context).
-    const nextStep = steps[i + 1]; if (!nextStep || nextStep.check !== "agency") fail(`${name}: nav ${JSON.stringify(arg)} not followed by check: agency`);
+    // Every navigation is followed by both account-marker checks (bare routes lose context).
+    const nextStep = steps[i + 1]; if (!nextStep || nextStep.check !== "account") fail(`${name}: nav ${JSON.stringify(arg)} not followed by check: account`);
     // A recipe that reaches a screen must stop before that screen's own consequential buttons.
     const screen = screens.find(s => s.menu.join(" › ") === arg.join(" › "));
     for (const l of screen?.stop ?? []) if (!(r.stop_before ?? []).includes(l)) fail(`${name}: reaches ${screen.id} but stop_before lacks ${l}`);
@@ -95,6 +101,7 @@ for (const [n] of noSteps) fail(`${n}: claims S without steps`);
 const ORIGIN = "https://rei-mock.fictional.test";
 const AGENCY = "Fictional Realty Office";
 const B = "FICT1";
+const REICID = "fictional-reicid-1";
 const CHILDREN = { Tenants: [["Arrears", "/customers/arrears/"]], Receipts: [["Tenant receipts", "/customers/transaction/tenantreceipt"], ["Bulk receipting", "/customers/importbanklink/index"]], Process: [["Bank reconciliation", "/customers/reconciliation/bankreconciliation"]], Settings: [["Integrations", "/RequesterIntegrations"]] };
 const ROUTES = Object.fromEntries(screens.filter(s => s.menu.length === 1).map(s => [s.menu[0], s.route]));
 ROUTES.Dashboard = "/dashboard";
@@ -120,14 +127,17 @@ const data = {
   reports: { cols: ["Report"], rows: [["Receipt Register"], ["Receipt Register - Reversals"], ["Arrears Report"], ["Owner Statement"]] },
 };
 
-function shell({ title, body, b, version, agency, path }) {
-  const q = b ? `?b=${b}` : "";
+function shell({ title, body, b, reicid, version, agency, path, switchReicid, switchBusiness }) {
+  const q = b && reicid ? `?reicid=${encodeURIComponent(reicid)}&b=${encodeURIComponent(b)}` : "";
   const nav = TOP.map(t => {
-    const href = (ROUTES[t] ?? `/area/${encodeURIComponent(t)}`) + q;
+    const linkReicid = t === "Tenants" && switchReicid ? switchReicid : reicid;
+    const linkBusiness = t === "Tenants" && switchBusiness ? switchBusiness : b;
+    const linkQ = linkBusiness && linkReicid ? `?reicid=${encodeURIComponent(linkReicid)}&b=${encodeURIComponent(linkBusiness)}` : "";
+    const href = (ROUTES[t] ?? `/area/${encodeURIComponent(t)}`) + linkQ;
     const kids = (CHILDREN[t] ?? []).map(([l, r]) => `<li><a href="${r}${q}">${l}</a></li>`).join("");
     return `<li><a href="${href}">${t}</a>${kids ? `<ul>${kids}</ul>` : ""}</li>`;
   }).join("");
-  const marker = b ? `<span id="agency" data-agency>${agency}</span>` : `<p id="no-business">Select a business to continue</p>`;
+  const marker = b ? `<span id="agency" data-agency>${agency}</span><span data-business>${b}</span>` : `<p id="no-business">Select a business to continue</p>`;
   return `<!doctype html><html lang="en"><meta charset="utf-8"><title>${title} - REI Cloud</title>
 <header>${marker}</header><nav aria-label="Main"><ul>${nav}</ul></nav>
 <main data-path="${path}"><h1>${title}</h1>${b ? body : ""}</main>
@@ -188,9 +198,9 @@ const PAGES = {
  <input type="radio" name="RangeOfPeriod" id="r1"><label for="r1">Current Period</label>
  <input type="radio" name="RangeOfPeriod" id="r2"><label for="r2">Date Range</label>
  <label for="fd">From Date</label><input id="fd" disabled><label for="td">To Date</label><input id="td" disabled>
- <button id="preview">Preview</button><button id="close">Close</button>
+ <label for="output">Output</label><select id="output"><option>Export Only</option><option>Email Only</option><option>Export & Email</option></select>
+ <button id="export">Export</button><button id="close">Close</button>
 </div>
-<table aria-label="Report output" hidden><tbody></tbody></table>
 <script>
 const REPORTS = ${JSON.stringify(data.reports.rows.map(r => r[0]))}; let q = ''; let tok = 0;
 function list() { const my = ++tok; const tb = document.querySelector('table[aria-label=Results] tbody');
@@ -202,16 +212,17 @@ document.getElementById('search').addEventListener('input', e => { q = e.target.
 document.getElementById('r2').onchange = () => { fd.disabled = false; td.disabled = false; };
 document.getElementById('r1').onchange = () => { fd.disabled = true; td.disabled = true; };
 document.getElementById('close').onclick = () => { document.getElementById('modal').hidden = true; };
-document.getElementById('preview').onclick = () => {
-  const out = document.querySelector('table[aria-label="Report output"]'); out.hidden = false;
-  const tb = out.querySelector('tbody'); tb.innerHTML = '<tr class="loading"><td>Loading…</td></tr>';
-  document.querySelector('table[aria-label=Results]').setAttribute('aria-label', 'Report list');
-  out.setAttribute('aria-label', 'Results');
-  setTimeout(() => { tb.innerHTML = window.__register(fd.value, td.value); }, 400); };
+document.getElementById('export').onclick = () => {
+  if (output.value !== 'Export Only') { window.__effect('send-report'); return; }
+  const csv = window.__register(fd.value, td.value);
+  const link = document.createElement('a'); link.download = 'fictional-receipt-register.csv';
+  link.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  link.click(); };
 window.__register = (f, t) => {
   const rows = (window.__receipts || []).filter(r => r[0] >= f && r[0] <= t);
   const total = rows.reduce((s, r) => s + Number(r[2]), 0).toFixed(2);
-  return rows.map(r => '<tr><td>' + r.join('</td><td>') + '</td></tr>').join('') + '<tr class="total"><td>Total</td><td></td><td>' + total + '</td></tr>'; };
+  const header = ['Scope', 'Value', '', ['reicid', new URL(location.href).searchParams.get('reicid'), ''].join(','), ['business', document.querySelector('[data-business]').textContent, ''].join(','), ['from', f, ''].join(','), ['to', t, ''].join(','), 'Date,Reference,Amount'];
+  return [...header, ...rows.map(r => r.join(',')), ['Total', '', total].join(',')].join('\\n'); };
 list();
 </script>`],
   "/customers/importbanklink/index": ({ unknownUpload }) => ["Bulk receipting", `<label for="fmt">File Format</label><select id="fmt"><option value="">Select…</option><option>ABA</option><option>Custom CSV</option><option>Fictional Bank CSV</option></select>
@@ -279,6 +290,27 @@ async function runRecipe(page, name, inputs, ctx) {
         await page.getByLabel(arg.field, { exact: true }).setInputFiles(arg.file);
         break;
       }
+      case "download": {
+        if (!ctx.grant?.includes("download")) throw new Handover("download-not-granted");
+        if (ctx.drift) throw new Handover("map-drift-blocks-download");
+        await check(page, "account", ctx);
+        const outputMode = await page.getByLabel("Output", { exact: true }).inputValue();
+        if (outputMode !== "Export Only") throw new Blocked("non-export-only report output refused");
+        const [file] = await Promise.all([
+          page.waitForEvent("download"),
+          page.getByRole("button", { name: arg.label, exact: true }).click(),
+        ]);
+        const content = await readFile(await file.path(), "utf8");
+        const lines = content.trim().split(/\r?\n/).map(line => line.split(","));
+        const scope = Object.fromEntries(lines.slice(3, 7).map(([key, value]) => [key, value]));
+        if (scope.reicid !== ctx.reicid || scope.business !== ctx.business) throw new Blocked("download-account-mismatch");
+        if (scope.from !== inputs.date_from || scope.to !== inputs.date_to) throw new Blocked("download-period-mismatch");
+        if (lines[7]?.join(",") !== "Date,Reference,Amount") throw new Blocked("download-format-unverified");
+        ctx.result.rows = lines.slice(8);
+        ctx.downloads++;
+        await check(page, "account", ctx);
+        break;
+      }
       case "run": { // sub-recipe results are kept separately so they cannot mix
         const outer = ctx.result; ctx.result = { rows: [] };
         await runRecipe(page, arg, inputs, ctx);
@@ -300,10 +332,14 @@ async function check(page, what, ctx) {
   const url = new URL(page.url());
   if (what === "origin" && url.origin !== ctx.origin) throw new Handover(`origin ${url.origin}`);
   if (what === "signin" && /Sign In Cancelled|Sign in/i.test(await page.title())) throw new Handover("sign-in");
-  if (what === "agency") {
-    const marker = await page.locator("[data-agency]").textContent({ timeout: 1500 }).catch(() => null);
-    if (!marker) throw new Handover("agency-marker-missing");
-    if (marker.trim() !== ctx.agency) throw new Handover("agency-changed");
+  if (what === "account") {
+    if (url.origin !== ctx.origin) throw new Handover(`origin ${url.origin}`);
+    const reicid = url.searchParams.get("reicid");
+    if (!reicid) throw new Handover("reicid-missing");
+    if (reicid !== ctx.reicid) throw new Handover("reicid-changed");
+    const business = await page.locator("[data-business]").textContent({ timeout: 1500 }).catch(() => null);
+    if (!business) throw new Handover("business-code-missing");
+    if (business.trim() !== ctx.business) throw new Handover("business-code-changed");
   }
   if (what === "version") {
     const v = (await page.locator("footer").textContent()).match(/v ([\d.]+)/)?.[1];
@@ -326,7 +362,7 @@ const exercised = new Set();
 
 async function scenario(id, opts, fn) {
   const state = { effects: [], ...opts };
-  const context = await browser.newContext();
+  const context = await browser.newContext({ acceptDownloads: true });
   await context.route("**/*", async route => {
     const url = new URL(route.request().url());
     if (url.origin !== ORIGIN && url.origin !== state.lookalike) return route.abort();
@@ -334,15 +370,16 @@ async function scenario(id, opts, fn) {
     if (state.signin) return route.fulfill({ contentType: "text/html", body: `<!doctype html><title>Sign In Cancelled - REI Cloud</title><p>You cancelled the previous sign-in or there was a sign-in issue (MFA).</p>` });
     const page = PAGES[url.pathname];
     const [title, body] = page ? page(state) : [decodeURIComponent(url.pathname.split("/").pop()), `<label for="search">Search</label><input id="search"><table aria-label="Results"><tbody><tr class="empty"><td>No records found</td></tr></tbody></table><button id="next" disabled>Next</button>`];
-    route.fulfill({ contentType: "text/html", body: shell({ title, body, b: url.searchParams.get("b"), version: state.version ?? EXPECTED_VERSION, agency: state.agency ?? AGENCY, path: url.pathname }) });
+    route.fulfill({ contentType: "text/html", body: shell({ title, body, b: url.searchParams.get("b"), reicid: url.searchParams.get("reicid"), version: state.version ?? EXPECTED_VERSION, agency: state.agency ?? AGENCY, path: url.pathname, switchReicid: state.switchReicid, switchBusiness: state.switchBusiness }) });
   });
   const page = await context.newPage();
   if (state.receipts) await page.addInitScript(r => { window.__receipts = r; }, state.receipts);
-  const ctx = { origin: ORIGIN, agency: AGENCY, trace: [], result: { rows: [] }, blocked: [], flags: [], uploads: 0, grant: state.grant };
+  const ctx = { origin: ORIGIN, reicid: REICID, business: B, trace: [], result: { rows: [] }, blocked: [], flags: [], uploads: 0, downloads: 0, grant: state.grant };
   let outcome = "completed", error;
   const t0 = Date.now();
   try {
-    await page.goto(`${state.lookalike ?? ORIGIN}${state.start ?? "/dashboard"}${state.noContext ? "" : `?b=${B}`}`);
+    const query = state.noContext ? "" : `?${state.noReicid ? "" : `reicid=${encodeURIComponent(REICID)}&`}${state.noBusiness ? "" : `b=${encodeURIComponent(B)}`}`;
+    await page.goto(`${state.lookalike ?? ORIGIN}${state.start ?? "/dashboard"}${query}`);
     await fn(page, ctx, state);
   } catch (e) {
     if (e instanceof Handover) outcome = `handover:${e.reason}`; else if (e instanceof Blocked) outcome = `blocked:${e.message}`; else { outcome = "error"; error = e.message; }
@@ -353,7 +390,7 @@ async function scenario(id, opts, fn) {
   await context.close();
   const writes = state.effects.filter(e => e !== "upload");
   const ok = verdict === true && writes.length === 0;
-  results.push({ id, ok, outcome, ms: Date.now() - t0, rows: ctx.result.rows.length, flags: ctx.flags, blocked: ctx.blocked, effects: state.effects, ...(error ? { error } : {}), ...(verdict !== true ? { why: verdict } : {}) });
+  results.push({ id, ok, outcome, ms: Date.now() - t0, rows: ctx.result.rows.length, downloads: ctx.downloads, flags: ctx.flags, blocked: ctx.blocked, effects: state.effects, ...(error ? { error } : {}), ...(verdict !== true ? { why: verdict } : {}) });
   if (state.covers) for (const c of state.covers) if (ok) exercised.add(c);
 }
 const is = (cond, why) => cond ? true : why;
@@ -370,7 +407,9 @@ await scenario("find-record/empty", { expect: (o, c) => is(o === "completed" && 
 await scenario("arrears-review", { covers: ["arrears-review"], shot: true, expect: (o, c) => is(o === "completed" && c.result.rows.length === 6 && !c.result.rows.some(r => r[1] === "Vacated"), `${o} rows=${c.result.rows.length}`) },
   async (p, c) => { await open(p, c); await runRecipe(p, "arrears-review", { min_days: "1" }, c); });
 const receipts = [["2026-09-25", "FT-BRAVO", "540.00"], ["2026-09-25", "FT-ECHO", "660.00"], ["2026-09-24", "FT-OLD", "100.00"]];
-await scenario("receipt-register", { covers: ["receipt-register"], receipts, shot: true, expect: (o, c) => is(o === "completed" && c.result.rows.at(-1)?.[2] === "1200.00", `${o} ${JSON.stringify(c.result.rows.at(-1))}`) },
+await scenario("receipt-register-approved-fictional-export", { covers: ["receipt-register"], grant: ["download"], receipts, shot: true, expect: (o, c) => is(o === "completed" && c.downloads === 1 && c.result.rows.at(-1)?.[2] === "1200.00", `${o} ${JSON.stringify(c.result.rows.at(-1))}`) },
+  async (p, c) => { await open(p, c); await runRecipe(p, "receipt-register", { date_from: "2026-09-25", date_to: "2026-09-25" }, c); });
+await scenario("receipt-register/no-download-approval", { receipts, expect: (o, c) => is(o === "handover:download-not-granted" && c.downloads === 0, o) },
   async (p, c) => { await open(p, c); await runRecipe(p, "receipt-register", { date_from: "2026-09-25", date_to: "2026-09-25" }, c); });
 const csv = join(temp, "fictional-bank.csv");
 await writeFile(csv, "date,reference,amount\n2026-09-25,FT-BRAVO,540.00\n2026-09-25,FT-ECHO,660.00\n2026-09-25,UNKNOWN REF,75.00\n");
@@ -381,13 +420,20 @@ await scenario("bulk-receipting-preview/mismatch→hold", { grant: ["upload"], e
   async (p, c) => { await open(p, c); await runRecipe(p, "bulk-receipting-preview", { bank_format: "Fictional Bank CSV", approved_file: csv, expected_rows: 2, expected_total: "1200.00" }, c); });
 await scenario("bulk-receipting-preview/no-grant", { expect: o => is(o === "handover:upload-not-granted", o) },
   async (p, c) => { await open(p, c); await runRecipe(p, "bulk-receipting-preview", { bank_format: "Fictional Bank CSV", approved_file: csv, expected_rows: 3, expected_total: "1275.00" }, c); });
-await scenario("bulk-receipting-preview/unknown→readback-no-retry", { grant: ["upload"], unknownUpload: true, receipts, expect: (o, c, s) => is(o.startsWith("blocked:second upload") && s.effects.filter(e => e === "upload").length === 1 && c.trace.includes("run receipt-register"), `${o} uploads=${s.effects.filter(e => e === "upload").length}`) },
+await scenario("bulk-receipting-preview/unknown→approved-export-no-retry", { grant: ["upload", "download"], unknownUpload: true, receipts, expect: (o, c, s) => is(o.startsWith("blocked:second upload") && s.effects.filter(e => e === "upload").length === 1 && c.downloads === 1 && c.trace.includes("run receipt-register"), `${o} uploads=${s.effects.filter(e => e === "upload").length} downloads=${c.downloads}`) },
   async (p, c) => {
     await open(p, c);
     try { await runRecipe(p, "bulk-receipting-preview", { bank_format: "Fictional Bank CSV", approved_file: csv, expected_rows: 3, expected_total: "1275.00" }, c); }
     catch (e) { c.flags.push(`unknown: ${e.message.split("\n")[0]}`); }
     await runRecipe(p, "receipt-register", { date_from: "2026-09-25", date_to: "2026-09-25" }, c); // on_unknown
     await runRecipe(p, "bulk-receipting-preview", { bank_format: "Fictional Bank CSV", approved_file: csv, expected_rows: 3, expected_total: "1275.00" }, c); // a naive retry must be refused
+  });
+await scenario("bulk-receipting-preview/unknown-no-export-approval→hold", { grant: ["upload"], unknownUpload: true, receipts, expect: (o, c, s) => is(o === "handover:download-not-granted" && s.effects.filter(e => e === "upload").length === 1 && c.downloads === 0, `${o} uploads=${s.effects.filter(e => e === "upload").length} downloads=${c.downloads}`) },
+  async (p, c) => {
+    await open(p, c);
+    try { await runRecipe(p, "bulk-receipting-preview", { bank_format: "Fictional Bank CSV", approved_file: csv, expected_rows: 3, expected_total: "1275.00" }, c); }
+    catch (e) { c.flags.push(`unknown: ${e.message.split("\n")[0]}`); }
+    await runRecipe(p, "receipt-register", { date_from: "2026-09-25", date_to: "2026-09-25" }, c);
   });
 // post-import-readback: Bud's success rule applied to the sub-recipe results.
 const readbackVerdict = (c, total, tenantsCsv) => {
@@ -398,9 +444,11 @@ const readbackVerdict = (c, total, tenantsCsv) => {
   return regTotal === total && still.length === 0 ? "confirmed" : "hold";
 };
 const pir = { date_from: "2026-09-25", date_to: "2026-09-25", min_days: "1", batch_total: "1200.00", batch_tenants: "Bravo,Echo" };
-await scenario("post-import-readback/confirmed", { covers: ["post-import-readback"], receipts, paid: ["Bravo", "Echo"], expect: (o, c) => is(o === "completed" && readbackVerdict(c, pir.batch_total, pir.batch_tenants) === "confirmed", `${o} ${c.flags}`) },
+await scenario("post-import-readback/fictional-export-match", { covers: ["post-import-readback"], grant: ["download"], receipts, paid: ["Bravo", "Echo"], expect: (o, c) => is(o === "completed" && c.downloads === 1 && readbackVerdict(c, pir.batch_total, pir.batch_tenants) === "confirmed", `${o} ${c.flags}`) },
   async (p, c) => { await open(p, c); await runRecipe(p, "post-import-readback", pir, c); });
-await scenario("post-import-readback/partial→hold", { receipts: receipts.slice(1), paid: ["Echo"], expect: (o, c) => is(o === "completed" && readbackVerdict(c, pir.batch_total, pir.batch_tenants) === "hold", `${o} ${c.flags}`) },
+await scenario("post-import-readback/partial→hold", { grant: ["download"], receipts: receipts.slice(1), paid: ["Echo"], expect: (o, c) => is(o === "completed" && readbackVerdict(c, pir.batch_total, pir.batch_tenants) === "hold", `${o} ${c.flags}`) },
+  async (p, c) => { await open(p, c); await runRecipe(p, "post-import-readback", pir, c); });
+await scenario("post-import-readback/no-export-approval→hold", { receipts, expect: (o, c) => is(o === "handover:download-not-granted" && c.downloads === 0, o) },
   async (p, c) => { await open(p, c); await runRecipe(p, "post-import-readback", pir, c); });
 await scenario("bank-reconciliation-read", { covers: ["bank-reconciliation-read"], expect: (o, c) => is(o === "completed" && c.result.rows.length === 2, o) },
   async (p, c) => { await open(p, c); await runRecipe(p, "bank-reconciliation-read", {}, c); });
@@ -413,12 +461,17 @@ await scenario("unknown-screen-study", { covers: ["unknown-screen-study"], expec
 
 // Guards and traps.
 await scenario("trap/sign-in-cancelled", { signin: true, expect: o => is(o === "handover:sign-in", o) }, open);
-await scenario("trap/agency-changed", { agency: "Other Fictional Office", expect: o => is(o === "handover:agency-changed", o) }, open);
+await scenario("trap/reicid-missing-business-present", { noReicid: true, expect: o => is(o === "handover:reicid-missing", o) }, open);
+await scenario("trap/business-missing-reicid-present", { noBusiness: true, expect: o => is(o === "handover:business-code-missing", o) }, open);
+await scenario("trap/reicid-switch-business-constant", { switchReicid: "fictional-reicid-2", expect: o => is(o === "handover:reicid-changed", o) },
+  async (p, c) => { await open(p, c); await runRecipe(p, "find-record", { list: "Tenants", query: "Delta" }, c); });
+await scenario("trap/business-switch-reicid-constant", { switchBusiness: "FICT2", expect: o => is(o === "handover:business-code-changed", o) },
+  async (p, c) => { await open(p, c); await runRecipe(p, "find-record", { list: "Tenants", query: "Delta" }, c); });
 await scenario("trap/lookalike-origin", { lookalike: "https://rei-mock.fictional.test.evil.test", expect: o => is(o.startsWith("handover:origin"), o) }, open);
 await scenario("trap/version-drift", { version: "26.1001.0", grant: ["upload"], expect: (o, c) => is(o === "handover:map-drift-blocks-upload" && c.flags.some(f => f.startsWith("map-drift")), o) },
   async (p, c) => { await open(p, c); await runRecipe(p, "bulk-receipting-preview", { bank_format: "Fictional Bank CSV", approved_file: csv, expected_rows: 3, expected_total: "1275.00" }, c); });
-await scenario("trap/bare-route-loses-context", { noContext: true, start: "/customers/arrears/", expect: o => is(o === "handover:agency-marker-missing", o) },
-  async (p, c) => { await check(p, "origin", c); await check(p, "agency", c); });
+await scenario("trap/bare-route-loses-context", { noContext: true, start: "/customers/arrears/", expect: o => is(o === "handover:reicid-missing", o) },
+  async (p, c) => { await check(p, "origin", c); await check(p, "account", c); });
 await scenario("trap/search-without-input-event", { expect: o => is(o === "error", `naive assignment must be caught, got ${o}`) },
   async (p, c) => {
     await open(p, c); await p.getByRole("navigation").getByRole("link", { name: "Tenants", exact: true }).click(); await settle(p);
@@ -457,6 +510,7 @@ const receipt = {
     "Fictional mock derived from the map itself; not REI Cloud and not evidence of REI behaviour",
     "Deterministic executor over the map's recipe grammar; no Hermes model turn, no RealBud broker, no ACP",
     "No live account, credentials, uploads to REI, receipting, payments, notices or sends",
+    "The Export Only button and CSV file are fictional mock controls; actual REI report generation, file format and register contents remain unverified",
     "Unobserved (tier U) recipes and unconfirmed parent menus are not exercised",
     "Headless Chromium on macOS only; no Windows or packaged-app execution",
   ],
