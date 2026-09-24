@@ -18,11 +18,46 @@ export interface InstallationProvisioning {
   model: { provider: "modelvia"; baseUrl: string; projectId: string; key: string; keyId: string; spendCapLabel: string };
 }
 
+/**
+ * The reasons the website states when it deliberately issued no grant
+ * (`website/lib/installation-provisioning.ts`). The first four name a setup
+ * step on the office's account that support finishes, after which the next
+ * check-in provisions; the gateway ones name RealBud's own service setup; the
+ * last is an attempt whose outcome the website could not record, held for
+ * support. The card shows one sentence per reason.
+ */
+export const PROVISIONING_SKIP_REASONS = [
+  "no_platform_customer",
+  "service_not_entitled",
+  "service_not_active",
+  "modelvia_customer_not_ready",
+  "provisioning_gateway_unconfigured",
+  "provisioning_gateway_same_as_platform",
+  "provisioning_gateway_wrong_service",
+  "provisioning_gateway_not_ready",
+  "provisioning_attempt_requires_review",
+] as const;
+export type ProvisioningSkipReason = typeof PROVISIONING_SKIP_REASONS[number];
+/** A stated absence: linked, but no grant was issued, for `skipped`. A reason
+ * a newer website adds is kept verbatim (bounded identifier) rather than
+ * refused, so it can never turn linking into a failure. */
+export interface ProvisioningSkipped { skipped: string }
+export function isProvisioningSkipReason(value: string): value is ProvisioningSkipReason {
+  return (PROVISIONING_SKIP_REASONS as readonly string[]).includes(value);
+}
+export function isProvisioningSkipped(value: InstallationProvisioning | ProvisioningSkipped | undefined): value is ProvisioningSkipped {
+  return value !== undefined && "skipped" in value;
+}
+/** Shape of a stored or reported reason; the website's own spelling. */
+export function isProvisioningSkipReasonText(value: unknown): value is string {
+  return typeof value === "string" && SKIP_REASON.test(value);
+}
+
 export interface OfficeLinkRedeemResult {
   installationId: string;
   companyId: string;
   agencyLabel: string;
-  provisioning?: InstallationProvisioning;
+  provisioning?: InstallationProvisioning | ProvisioningSkipped;
 }
 
 /** Service ledger identifiers: opaque, not names. Same shape the entitlement
@@ -35,7 +70,13 @@ const MODEL_KEY = /^rbk_[A-Za-z0-9_-]{24,200}$/;
 const KEY_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const PROFILE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const APP = /^[a-z][a-z0-9_-]{0,63}$/;
-const SPEND_CAP = /^[\x20-\x7e]{1,80}$/;
+/** Printable ASCII. The gateway emits a short human label ("A$200/month,
+ * A$1/request, 2 at once", never above 80); gateways from before 25 September
+ * 2026 emitted the raw nanoAUD figures at about 82 characters, so the bound
+ * stays wide enough for both. Nothing parses the label; it is shown as is. */
+const SPEND_CAP = /^[\x20-\x7e]{1,160}$/;
+/** Lower-case identifier, as the website spells every stated reason. */
+const SKIP_REASON = /^[a-z][a-z0-9_]{0,63}$/;
 /** Anything shaped like a vendor organization/project key must never be handed
  * to a customer machine, whatever field it arrives in. */
 const ORGANIZATION_KEY = /(?:\b(?:ak|ck)_[A-Za-z0-9_-]{16,})|(?:\bsk-[A-Za-z0-9_-]{16,})/;
@@ -94,20 +135,21 @@ function refuseOrganizationKeys(value: unknown, depth = 0): void {
 }
 
 /**
- * `undefined` when the reply carries no provisioning (today's behaviour).
+ * `undefined` when the reply carries no provisioning at all (an older website,
+ * or one whose gateway was unreachable this time).
  *
- * The portal also answers `{ skipped: <reason> }` when it deliberately did not
- * mint a grant — for example an office with no platform customer binding. That
- * is a stated absence, not a malformed descriptor, so it reads the same as an
- * absent field and must never block linking. Anything else that is present but
- * malformed throws a user-facing sentence.
+ * The portal answers `{ skipped: <reason> }` when it deliberately did not mint
+ * a grant — for example an office with no platform customer binding. That is a
+ * stated absence, not a malformed descriptor: it never blocks linking, and the
+ * reason is returned so the card can say what to do next. Anything else that
+ * is present but malformed throws a user-facing sentence.
  */
-export function parseInstallationProvisioning(value: unknown): InstallationProvisioning | undefined {
+export function parseInstallationProvisioning(value: unknown): InstallationProvisioning | ProvisioningSkipped | undefined {
   if (value === undefined || value === null) return undefined;
   refuseOrganizationKeys(value);
   if (object(value) && Object.keys(value).length === 1 && Object.hasOwn(value, "skipped")) {
-    if (typeof value.skipped !== "string" || !/^[a-z][a-z0-9_]{0,63}$/.test(value.skipped)) invalid();
-    return undefined;
+    if (!isProvisioningSkipReasonText(value.skipped)) invalid();
+    return { skipped: value.skipped };
   }
   const root = exact(value, ["version", "service", "connector", "model"]);
   if (root.version !== INSTALLATION_PROVISIONING_VERSION) invalid();

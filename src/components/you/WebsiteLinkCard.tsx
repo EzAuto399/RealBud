@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "@/state/store";
 import { Card } from "../SettingsPrimitives";
 import { LINK_POLL_INTERVAL_MS, isLinkRequestIssued } from "@shared/installation-link";
+import { isProvisioningSkipReason, type ProvisioningSkipReason } from "@shared/office-link";
 import type { BrowserLinkRequest, BrowserLinkView, OfficeLinkStatus } from "../../../server/office-link";
 
 /** Where the browser approval stands on this screen. */
@@ -57,21 +58,49 @@ function phaseFor(view: BrowserLinkView): BrowserLinkPhase {
 
 /**
  * Bud's model access after a link. Approval carries no credential: it arrives
- * with the first status report, so until that report settles it is being set up.
+ * with the first status report, so until that report settles it is being set
+ * up. `skipped` is the account saying, by reason, why it issued none yet.
  */
-export type ModelAccessState = "ready" | "setting-up" | "not-yet" | "failed";
+export type ModelAccessState = "ready" | "setting-up" | "not-yet" | "failed" | "skipped";
 export function modelAccessState(status: OfficeLinkStatus | null): ModelAccessState | null {
   if (status?.state !== "linked" || status.serviceWithdrawn) return null;
   if (status.provisioned === true) return "ready";
+  if (status.provisioningSkipped) return "skipped";
   if (status.error) return "failed";
   return status.lastReportedAt ? "not-yet" : "setting-up";
 }
-const MODEL_ACCESS: Record<ModelAccessState, string> = {
+/** The only way out once the account has recorded a delivery this computer never
+ * received: the website replays nothing for a delivered installation. */
+const START_AGAIN_STEP = "remove this computer under Account → Computers on realbud.app, then link it again";
+const START_AGAIN = `To start again, ${START_AGAIN_STEP}.`;
+const CHECKS_AGAIN = "RealBud checks again with each status update.";
+const SERVICE_NOT_SET_UP = `RealBud’s AI service isn’t set up yet. Contact RealBud support; ${CHECKS_AGAIN}`;
+const SKIPPED: Record<ProvisioningSkipReason, string> = {
+  no_platform_customer: `Bud’s model access is waiting on your office’s AI account, which RealBud support sets up. ${CHECKS_AGAIN}`,
+  service_not_entitled: `AI isn’t turned on for your office yet. RealBud support turns it on; ${CHECKS_AGAIN}`,
+  service_not_active: `Your office’s AI service isn’t active right now. Check your subscription on realbud.app or contact RealBud support; ${CHECKS_AGAIN}`,
+  modelvia_customer_not_ready: `Your office’s AI account isn’t ready yet. RealBud support finishes it; ${CHECKS_AGAIN}`,
+  provisioning_gateway_unconfigured: SERVICE_NOT_SET_UP,
+  provisioning_gateway_same_as_platform: SERVICE_NOT_SET_UP,
+  provisioning_gateway_wrong_service: SERVICE_NOT_SET_UP,
+  provisioning_gateway_not_ready: SERVICE_NOT_SET_UP,
+  provisioning_attempt_requires_review: `Bud’s model access needs review by RealBud support before it can arrive here. ${START_AGAIN}`,
+};
+const MODEL_ACCESS: Record<Exclude<ModelAccessState, "skipped">, string> = {
   ready: "Bud’s model access is set up.",
   "setting-up": "Setting up Bud’s model access…",
-  "not-yet": "Bud’s model access has not arrived from your account yet. RealBud checks again with each status update.",
+  "not-yet": `Bud’s model access has not arrived from your account yet. ${CHECKS_AGAIN} If it still hasn’t arrived after the next update, ${START_AGAIN_STEP}.`,
   failed: "Bud’s model access is not set up yet. Use Update status to try again.",
 };
+/** One plain sentence on where Bud's model access stands, with the next step. */
+export function modelAccessMessage(status: OfficeLinkStatus | null): string | null {
+  const access = modelAccessState(status);
+  if (!access) return null;
+  if (access !== "skipped") return MODEL_ACCESS[access];
+  const reason = status?.provisioningSkipped ?? "";
+  return isProvisioningSkipReason(reason) ? SKIPPED[reason]
+    : `Bud’s model access was not set up by your account (it reported “${reason}”). Contact RealBud support; ${CHECKS_AGAIN}`;
+}
 
 /** The sentences the live region announces for a phase. */
 export function browserLinkMessage(phase: BrowserLinkPhase): string {
@@ -100,6 +129,9 @@ export interface WebsiteLinkCardViewProps {
   label: string;
   code: string;
   busy: boolean;
+  /** Which request `busy` is waiting on. Linking and updating wait on the
+   * account's provisioning chain, so each says how long that can take. */
+  action?: "link" | "report" | "disconnect";
   error: string;
   confirm: boolean;
   onLabel: (value: string) => void;
@@ -116,7 +148,7 @@ export interface WebsiteLinkCardViewProps {
 }
 
 export function WebsiteLinkCardView(props: WebsiteLinkCardViewProps) {
-  const { status, phase, label, code, busy, error, confirm } = props;
+  const { status, phase, label, code, busy, action, error, confirm } = props;
   const linked = status?.state === "linked";
   const request = phase.kind === "waiting" || phase.kind === "cancelling" || (phase.kind === "unreachable" && phase.request) ? phase.request : null;
   const codePending = status?.state === "pending" && !status.browser;
@@ -127,7 +159,11 @@ export function WebsiteLinkCardView(props: WebsiteLinkCardViewProps) {
   const joined = phase.kind === "linked";
   // Access is a saved service fact, not a transient browser-approval phase.
   const access = modelAccessState(status);
+  const accessMessage = modelAccessMessage(status);
   const message = browserLinkMessage(phase);
+  // Redeem and the first report wait on the account's provisioning chain
+  // (health, readiness, then the vendor mint): say so rather than sit still.
+  const waiting = action === "link" ? "Linking… this can take up to a minute." : action === "report" ? "Updating… this can take up to a minute." : "";
   const nameField = <label className="block">Computer name<input required maxLength={80} autoComplete="off" value={label} onChange={event => props.onLabel(event.target.value)} placeholder="Reception Mac" className={field} /></label>;
   return <Card title="Website account" subtitle="Link this computer with your RealBud account. Your account can then set up Bud’s model access and account connections here.">
     <div className="space-y-3 text-sm">
@@ -135,13 +171,14 @@ export function WebsiteLinkCardView(props: WebsiteLinkCardViewProps) {
       <p className="text-ink-secondary">The website receives this computer’s name, app and Bud versions, readiness, and last check-in. Your conversations, documents, and connected-app keys stay here.</p>
       {status?.serviceWithdrawn ? <p role="status" className="rounded border border-line p-3">Service access was withdrawn; your records are kept. Everything saved on this computer stays readable and exportable. Ask service support to add this computer again to restore connected accounts and Bud’s model.</p> : null}
       {/* One polite live region, always in the page, announces every approval change. */}
-      <p role="status" aria-live="polite" className="sr-only">{[message, access ? MODEL_ACCESS[access] : ""].filter(Boolean).join(" ")}</p>
+      <p role="status" aria-live="polite" className="sr-only">{[message, accessMessage ?? "", waiting].filter(Boolean).join(" ")}</p>
       {message ? <p className={request || joined ? "font-medium text-ink" : "text-ink-secondary"}>{message}</p> : null}
       {request ? <p className="rounded border border-line bg-paper px-4 py-3 text-center" aria-hidden="true">
         <span className="block text-[12px] text-ink-muted">Code on this computer</span>
         <span className="block font-mono text-[22px] font-semibold tracking-[0.12em] text-ink">{request.displayCode}</span>
       </p> : null}
-      {access ? <p className="text-ink-secondary" aria-busy={access === "setting-up" || undefined}>{MODEL_ACCESS[access]}</p> : null}
+      {accessMessage ? <p className="text-ink-secondary" aria-busy={access === "setting-up" || undefined}>{accessMessage}</p> : null}
+      {waiting ? <p className="text-ink-secondary" aria-busy="true">{waiting}</p> : null}
       {joined ? <>
         <button type="button" className={secondary} disabled={busy} onClick={props.onDisconnect}>Not your office? Disconnect</button>
       </> : null}
@@ -191,6 +228,7 @@ export function WebsiteLinkCard() {
   const [status, setStatus] = useState<OfficeLinkStatus | null>(null);
   const [code, setCode] = useState(""); const [label, setLabel] = useState("");
   const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  const [action, setAction] = useState<WebsiteLinkCardViewProps["action"]>(undefined);
   const [confirm, setConfirm] = useState(false);
   const [phase, setPhase] = useState<BrowserLinkPhase>({ kind: "idle" });
   const polling = useRef<Promise<unknown> | null>(null);
@@ -268,16 +306,21 @@ export function WebsiteLinkCard() {
     } finally { void refresh().catch(() => {}); changed(); }
   };
   const act = async (action: "link" | "report" | "disconnect") => {
-    setBusy(true); setError("");
+    setBusy(true); setAction(action); setError("");
     try {
-      await api(`/api/office-link${action === "report" ? "/report" : ""}`, { method: action === "disconnect" ? "DELETE" : "POST", body: action === "link" ? JSON.stringify({ code, label }) : "{}" }, { timeoutMs: 20_000 });
+      // The service waits up to 60 s on the website for redeem and for report,
+      // and linking with a code reports once straight after redeeming, so these
+      // budgets sit above the service's own or a slow account would read as a
+      // local outage.
+      const timeoutMs = action === "link" ? 130_000 : action === "report" ? 70_000 : 20_000;
+      await api(`/api/office-link${action === "report" ? "/report" : ""}`, { method: action === "disconnect" ? "DELETE" : "POST", body: action === "link" ? JSON.stringify({ code, label }) : "{}" }, { timeoutMs });
       if (action !== "report") { setCode(""); setPhase({ kind: "idle" }); }
       setConfirm(false); await refresh();
     } catch (e) { setError(e instanceof Error ? e.message : "The website link could not be updated."); }
-    finally { setBusy(false); changed(); }
+    finally { setBusy(false); setAction(undefined); changed(); }
   };
 
-  return <WebsiteLinkCardView status={status} phase={phase} label={label} code={code} busy={busy} error={error} confirm={confirm}
+  return <WebsiteLinkCardView status={status} phase={phase} label={label} code={code} busy={busy} action={action} error={error} confirm={confirm}
     onLabel={setLabel} onCode={setCode} onStart={() => void start()} onOpenAgain={item => openApproval(item.approvalUrl)}
     onCancel={item => void cancel(item)} onRetry={item => { setError(""); setPhase({ kind: "waiting", request: item }); }}
     onLinkCode={() => void act("link")} onReport={() => void act("report")} onDisconnect={() => void act("disconnect")}

@@ -170,17 +170,34 @@ export class ManagedConnectors {
         requireThat(typeof input.body.app === 'string' && APP.test(input.body.app), 'connector_app_not_admitted', 403);
         this.admit(device, input.body.app as string);
         const existing = this.link(device);
+        /** The account a lapsed link initiated, once the provider has said it never connected. */
+        let lapsed: string | null | undefined;
         if (existing) {
           requireThat(existing.state === 'ready' && existing.result, 'connector_link_outcome_unknown', 409);
-          const result = JSON.parse(existing.result) as { url: string; expiresAt: string };
-          requireThat(Date.parse(result.expiresAt) > now, 'connector_link_expired_needs_recovery', 409);
-          return { status: 200, body: { url: result.url } };
+          const result = JSON.parse(existing.result) as { url: string; accountId?: string; expiresAt: string };
+          if (Date.parse(result.expiresAt) > now) return { status: 200, body: { url: result.url } };
+          // The sign-in link lapsed. It is replaced by a fresh one only once the
+          // provider confirms the account it initiated never connected: an
+          // account that did connect is this device's account (never re-linked
+          // to another), and a provider that cannot say keeps the hold.
+          if (result.accountId) {
+            let status: Awaited<ReturnType<typeof getGmailReadOnlyAccess>>;
+            try { status = await (this.options.access ?? getGmailReadOnlyAccess)({ ...this.binding(device), assertAuthority: current }); }
+            catch { throw new GatewayError('connector_link_expired_needs_recovery', 409); }
+            current();
+            requireThat(!(status.services.gmail?.accounts ?? []).some(account => account.id === result.accountId && account.status === 'ACTIVE'), 'connector_account_already_bound', 409);
+          }
+          lapsed = result.accountId ?? null;
         }
-        const binding = this.binding(device);
+        // Never the lapsed link's account: only a registry-pinned one binds here.
+        const binding = { ...this.binding(device), accountId: device.accountId };
         requireThat(!binding.accountId, 'connector_account_already_bound', 409);
         this.options.ledger.db.transaction(() => {
-          this.options.ledger.db.run('INSERT INTO connector_links(device,binding,state,created) VALUES(?,?,?,?)', device.id, this.linkIdentity(device), 'unknown', now);
-          this.options.ledger.db.append(device.companyId, 'connector_link_requested', null, now, { deviceId: device.id });
+          // One link per device: a replacement takes over the row, so a lost
+          // reply on the way is held exactly as a first attempt's would be.
+          if (lapsed === undefined) this.options.ledger.db.run('INSERT INTO connector_links(device,binding,state,created) VALUES(?,?,?,?)', device.id, this.linkIdentity(device), 'unknown', now);
+          else this.options.ledger.db.run('UPDATE connector_links SET state=?,result=NULL,created=? WHERE device=? AND binding=?', 'unknown', now, device.id, this.linkIdentity(device));
+          this.options.ledger.db.append(device.companyId, lapsed === undefined ? 'connector_link_requested' : 'connector_link_replaced', null, now, { deviceId: device.id, ...(lapsed ? { lapsedAccountId: lapsed } : {}) });
         });
         const result = await (this.options.authorize ?? authorizeGmailReadOnly)({ ...binding, assertAuthority: current });
         // Persist the receipt even if access was revoked during the external

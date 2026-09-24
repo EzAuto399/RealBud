@@ -116,7 +116,7 @@ test('provision and revoke work for an entitled company, and revoke still works 
   assert.equal(created.status,200);
   const descriptor=(await created.json() as {provisioning:{model:{spendCapLabel:string}}}).provisioning;
   // Caps come from the Modelvia customer, never the ledger tenant.
-  assert.equal(descriptor.model.spendCapLabel,'monthly-cap 100000000000 nanoAUD, request-cap 1000000000 nanoAUD, max-concurrent 4');
+  assert.equal(descriptor.model.spendCapLabel,'A$100/month, A$1/request, 4 at once');
   assert.equal(f.projects.get('rb-install-one')!.monthlyCapNanoAud,'100000000000');
   f.ledger.putEntitlement({...f.tenant,active:false},'fixture-suspension');
   assert.equal((await f.request('POST','/v1/portal/installations/provision',OWNER,{...f.provisionBody,installationId:'install-two'})).status,402);

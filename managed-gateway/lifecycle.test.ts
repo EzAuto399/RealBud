@@ -532,7 +532,7 @@ test('8. AI access disabled after provisioning stops serving and new provisionin
     assert.ok(h.v.serves(one.model.key!) && h.v.serves(two.model.key!));
     // The repeat descriptor reports the caps now in force, still without a key.
     const repeat = (await h.provision('install-one')).provisioning;
-    assert.match(repeat.model.spendCapLabel, /monthly-cap 90000000000 nanoAUD/); assert.equal(repeat.model.key, undefined);
+    assert.equal(repeat.model.spendCapLabel, 'A$90/month, A$1/request, 3 at once'); assert.equal(repeat.model.key, undefined);
   } finally { h.close(); }
 });
 

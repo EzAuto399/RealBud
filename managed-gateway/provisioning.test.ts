@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fixture } from './testing.ts';
 import { createGatewayServer } from './http.ts';
 import { validateConnectorDevices } from './connectors.ts';
-import { composeProvisioning, DEFAULT_REQUEST_CAP_NANO_AUD, fileSecretStore, InstallationProvisioning, PENDING_RESUME_AFTER_MS, projectCaps, PROVISIONING_ENV, type ProvisioningDescriptor } from './provisioning.ts';
+import { composeProvisioning, DEFAULT_REQUEST_CAP_NANO_AUD, fileSecretStore, InstallationProvisioning, PENDING_RESUME_AFTER_MS, projectCaps, PROVISIONING_ENV, SPEND_CAP_LABEL_MAX, spendCapLabel, type ProvisioningDescriptor } from './provisioning.ts';
 import type { ComposioOrgClient, HttpTransport } from './composio-org.ts';
 import type { ModelviaCaps, ModelviaClient, ModelviaCustomer, ModelviaProjectInput } from './modelvia-keys.ts';
 import { GatewayError } from './contracts.ts';
@@ -23,7 +23,7 @@ const synthetic = (keyId: string) => `rbk_${keyId}_${(keyId === KEY_IDS[0] ? 'A'
 const CUSTOMER_CAPS = { monthlyCapNanoAud: '70000000000', maxConcurrent: 3 };
 /** The request cap is the default A$1, below the customer's monthly cap. */
 const PROJECT_CAPS = { monthlyCapNanoAud: '70000000000', requestCapNanoAud: '1000000000', maxConcurrent: 3 };
-const SPEND_LABEL = 'monthly-cap 70000000000 nanoAUD, request-cap 1000000000 nanoAUD, max-concurrent 3';
+const SPEND_LABEL = 'A$70/month, A$1/request, 3 at once';
 
 function harness() {
   const f = fixture();
@@ -406,7 +406,7 @@ test('the request cap defaults to A$1, takes an override, and never exceeds the 
     const composed = composeProvisioning({ env, ledger: h.f.ledger, fetch: never, org: h.orgClient, modelvia: h.modelviaClient }) as { provisioning: InstallationProvisioning };
     const provisioned = (await composed.provisioning.provision(h.f.owner, h.request)).provisioning;
     assert.equal((h.modelvia.projects[0] as ModelviaCaps).requestCapNanoAud, '2000000000');
-    assert.match(provisioned.model.spendCapLabel, /request-cap 2000000000 nanoAUD/);
+    assert.equal(provisioned.model.spendCapLabel, 'A$70/month, A$2/request, 3 at once');
   } finally { h.close(); }
 });
 
@@ -433,7 +433,7 @@ test('applyCustomerCaps re-applies the customer caps to every ready project and 
     assert.equal(h.modelvia.customerReads, 1);
     // A repeat provision reports the caps now in force, still without secrets.
     const repeat = (await h.make().provision(h.f.owner, h.request)).provisioning;
-    assert.equal(repeat.model.spendCapLabel, 'monthly-cap 90000000000 nanoAUD, request-cap 1000000000 nanoAUD, max-concurrent 5');
+    assert.equal(repeat.model.spendCapLabel, 'A$90/month, A$1/request, 5 at once');
     assert.equal(repeat.model.key, undefined);
     // Audit lines carry installation ids and states, never the customer id.
     const audit = h.f.ledger.db.all<{ kind: string; body: string }>("SELECT kind, body FROM events WHERE kind LIKE 'installation_caps_%'");
@@ -666,4 +666,25 @@ test('the HTTP portal route provisions once, is unavailable when unconfigured, a
     await new Promise<void>(resolve => misconfigured.close(() => resolve()));
     h.close();
   }
+});
+
+test('the spend cap label is short human text the desktop contract accepts for every cap Modelvia can hold', async () => {
+  // Whole dollars print without cents; anything else prints to the cent.
+  assert.equal(spendCapLabel({ monthlyCapNanoAud: '1000000000', requestCapNanoAud: '1000000000', maxConcurrent: 1 }), 'A$1/month, A$1/request, 1 at once');
+  assert.equal(spendCapLabel({ monthlyCapNanoAud: '200000000000', requestCapNanoAud: '1000000000', maxConcurrent: 2 }), 'A$200/month, A$1/request, 2 at once');
+  assert.equal(spendCapLabel({ monthlyCapNanoAud: '10000000000000', requestCapNanoAud: '500000000', maxConcurrent: 100 }), 'A$10,000/month, A$0.50/request, 100 at once');
+  assert.equal(spendCapLabel({ monthlyCapNanoAud: '41230000000', requestCapNanoAud: '1999999999', maxConcurrent: 3 }), 'A$41.23/month, A$2/request, 3 at once');
+  // The widest figures the cap validator admits (21 digits, concurrency 100)
+  // still fit the desktop's bound, in printable ASCII only.
+  const widest = spendCapLabel({ monthlyCapNanoAud: '9'.repeat(21), requestCapNanoAud: '9'.repeat(21), maxConcurrent: 100 });
+  assert.ok(widest.length <= SPEND_CAP_LABEL_MAX, widest);
+  assert.match(widest, /^[\x20-\x7e]+$/);
+  // Through a real provision: the office's A$10,000 cap with 100 concurrent turns.
+  const h = harness(); try {
+    h.modelvia.customer = { active: true, monthlyCapNanoAud: '10000000000000', maxConcurrent: 100 };
+    const label = (await h.make().provision(h.f.owner, h.request)).provisioning.model.spendCapLabel;
+    assert.equal(label, 'A$10,000/month, A$1/request, 100 at once');
+    assert.ok(label.length <= SPEND_CAP_LABEL_MAX);
+    assert.ok(!label.includes('nanoAUD'));
+  } finally { h.close(); }
 });
