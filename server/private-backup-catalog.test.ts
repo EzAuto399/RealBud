@@ -412,13 +412,14 @@ describe('physical sqlite storage bounds', () => {
     expect(restarted.summary().sealed).toBe(false);
   });
   it('commits and reopens the full 8 MiB supported entry with cache spilling disabled', async () => {
+    // FULL synchronous durable writes and validation of 8 MiB can exceed the default timeout on loaded hosts.
     const f = await fixture({ maxEntries: 20, maxBytes: 16 * 1024 ** 2, maxStorageBytes: 32 * 1024 ** 2 });
     const body = randomBytes(8 * 1024 ** 2);
     f.catalog.addFile({ path: 'vault/workflow-inputs/maximum.csv', encoding: 'bytes', data: body });
     const sealed = f.catalog.seal(), reopened = await f.reopen();
     expect(reopened.validate()).toEqual(sealed);
     expect(reopened.getFile('vault/workflow-inputs/maximum.csv')!.data).toEqual(body);
-  });
+  }, 60_000);
   it('recovers its own killed writer from the protected journal before applying the persisted cap, on every platform', async () => {
     const f = await fixture({ maxStorageBytes: 2 * 1024 * 1024 });
     const retained = Buffer.from('Fictional retained bytes '.repeat(12_000));
