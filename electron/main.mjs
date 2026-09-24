@@ -3,6 +3,7 @@ import { createServerSupervisor } from "./server-supervisor.mjs";
 import { findRunningService, isOurService, probeService, serviceIdentity } from "./service-instance.mjs";
 import { abandonSpawnedService, availableServicePort, clearServiceHandle, ownsRunningService, processAlive, requestServiceStop, readServiceHandle, SERVICE_WAIT_INTERVAL_MS, serviceWaitTicks, shouldRestartServiceWait, shouldStartService, spawnedServiceState, startDetachedService, systemBootedAt } from "./service-lifecycle.mjs";
 import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, powerMonitor, powerSaveBlocker, safeStorage, session, shell, systemPreferences, Tray, utilityProcess } from "electron";
+import { createServiceWindowRecovery } from "./service-window-recovery.mjs";
 import { createServiceWatchdog, WATCHDOG_DEFAULTS } from "./service-watchdog.mjs";
 import { SERVICE_MODE_FLAG, keepAwakeDecision, parseServiceModeArgs, planStartupRegistration, startupRegistrationSupport } from "./service-persistence.mjs";
 import { headlessHostShouldExit, secondInstanceAction, unattendedWorkWanted, windowsClosedAction } from "./unattended-host.mjs";
@@ -110,17 +111,16 @@ let serviceStopRequested = false;
 // The packaged app has no terminal: everything about the server child's life
 // goes to server.log in the OS log dir (~/Library/Logs/RealBud on macOS,
 // Console.app-visible; %APPDATA%\RealBud\logs on Windows), which is also
-// why stdio is piped, not inherited — under a Finder/Explorer launch the
-// parent's stdio leads nowhere and a failed boot is otherwise undiagnosable.
+// why utility-process output is piped. Detached service output uses its own
+// inherited private file descriptors and survives the desktop process.
 const LOG_DIR = configureLogDirectory(app);
-let logStream = null;
+const officeWindowRecoveries = new Map();
 function slog(line) {
   try {
-    if (!logStream) {
-      fs.mkdirSync(LOG_DIR, { recursive: true });
-      logStream = fs.createWriteStream(path.join(LOG_DIR, "server.log"), { flags: "a" });
-    }
-    logStream.write(`[${new Date().toISOString()}] ${line}\n`);
+    fs.mkdirSync(LOG_DIR, { recursive: true, mode: 0o700 });
+    // Small lifecycle records must survive an early exit. A WriteStream can
+    // leave an opened but empty file and reports I/O errors asynchronously.
+    fs.appendFileSync(path.join(LOG_DIR, "server.log"), `[${new Date().toISOString()}] ${line}\n`, { mode: 0o600 });
   } catch {
     /* logging must never break startup */
   }
@@ -215,16 +215,15 @@ async function startServerPackaged({ onlyPort = null } = {}) {
 const ERROR_PAGE =
   "data:text/html;charset=utf-8," +
   encodeURIComponent(
-    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:380px"><div style="font-size:40px">🏠</div><h2 style="font-weight:600;margin:12px 0 6px">Waiting for the office service</h2><p style="color:#fcfcfc99;line-height:1.5">RealBud keeps checking for the office service for the next few minutes and opens the desk as soon as it answers. A first start can be slow while the company database opens.</p><p style="color:#fcfcfc99;line-height:1.5">If this page stays, reopen RealBud, or ask your administrator to check its service log and saved workspace key. Keep the existing workspace files for recovery — they are what the office is restored from.</p></div></body>`,
+    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:380px"><div style="font-size:40px">🏠</div><h2 style="font-weight:600;margin:12px 0 6px">Waiting for the office service</h2><p style="color:#fcfcfc99;line-height:1.5">RealBud keeps checking for the office service for the next few minutes and opens the desk as soon as it answers. A first start can be slow while the company database opens.</p><p style="color:#fcfcfc99;line-height:1.5">If this page stays, reopen RealBud, or ask your administrator to check server.log and office-service/stdout-stderr.log in RealBud’s logs folder, and its saved workspace key. Keep the existing workspace files for recovery — they are what the office is restored from.</p></div></body>`,
   );
 
-// Shown when the bounded wait above runs out. A page that still promises to keep
-// checking after it has stopped checking is worse than no page: staff wait for
-// something that is never going to happen.
+// Shown when the dedicated bounded wait runs out. The ordinary background
+// watchdog can still recover this window if the service eventually answers.
 const WAIT_ENDED_PAGE =
   "data:text/html;charset=utf-8," +
   encodeURIComponent(
-    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:380px"><div style="font-size:40px">🏠</div><h2 style="font-weight:600;margin:12px 0 6px">The office service did not start</h2><p style="color:#fcfcfc99;line-height:1.5">RealBud has stopped checking. Reopen RealBud to try again, or ask your administrator to check its service log and saved workspace key.</p><p style="color:#fcfcfc99;line-height:1.5">Keep the existing workspace files for recovery — they are what the office is restored from. Nothing has been lost by this.</p></div></body>`,
+    `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:380px"><div style="font-size:40px">🏠</div><h2 style="font-weight:600;margin:12px 0 6px">The office service did not start</h2><p style="color:#fcfcfc99;line-height:1.5">The initial wait has ended. RealBud will open the desk if its background check finds the service. Reopen RealBud to try again, or ask your administrator to check server.log and office-service/stdout-stderr.log in RealBud’s logs folder, and its saved workspace key.</p><p style="color:#fcfcfc99;line-height:1.5">Keep the existing workspace files for recovery — they are what the office is restored from. Nothing has been lost by this.</p></div></body>`,
   );
 
 let cuaReady = Promise.resolve({ mode: "unavailable", reason: "not-started" });
@@ -362,23 +361,26 @@ function createWindow() {
     // tested; the window only carries it out.
     let waitTimer = null;
     let lastRestartAt = null;
+    let waitGeneration = 0;
     const stopWait = () => {
+      waitGeneration++;
       if (waitTimer) clearTimeout(waitTimer);
       waitTimer = null;
     };
     const waitForOfficeService = () => {
       if (waitTimer || win.isDestroyed()) return;
+      const generation = waitGeneration;
       let remaining = serviceWaitTicks();
       const look = async () => {
         waitTimer = null;
-        if (win.isDestroyed()) return;
+        if (win.isDestroyed() || generation !== waitGeneration || serviceStopRequested || appQuitting()) return;
         let found = null;
         try {
           found = await findRunningService(serviceIdentity(realbudDataDir()));
         } catch {
           found = null;
         }
-        if (win.isDestroyed()) return;
+        if (win.isDestroyed() || generation !== waitGeneration || serviceStopRequested || appQuitting()) return;
         if (found) {
           SERVER_PORT = found.port;
           serverReady = true;
@@ -396,6 +398,21 @@ function createWindow() {
       };
       waitTimer = setTimeout(look, SERVICE_WAIT_INTERVAL_MS);
     };
+    const recoverWindow = createServiceWindowRecovery({
+      window: win,
+      fallbackUrls: [ERROR_PAGE, WAIT_ENDED_PAGE],
+      blocked: () => serviceStopRequested || appQuitting(),
+      beforeLoad: (port) => {
+        stopWait();
+        SERVER_PORT = port;
+        serverReady = true;
+        serverEverStarted = true;
+        slog(`the office service answered on port ${port}; recovering the waiting desk`);
+      },
+      loadFailed: () => slog("the recovered desk failed to load; awaiting the next service check"),
+    });
+    officeWindowRecoveries.set(win, recoverWindow);
+    win.on("closed", () => officeWindowRecoveries.delete(win));
     // Closing the window must not leave a timer polling a service nobody is
     // watching. The office service itself deliberately keeps running.
     win.on("closed", stopWait);
@@ -1202,6 +1219,8 @@ async function startOrAdoptOfficeServiceOnce() {
       port,
       dataDirectory,
       instanceId: identity.instanceId,
+      logDirectory: LOG_DIR,
+      onDiagnostic: slog,
       env: {
         ...process.env,
         OMB_STATIC_DIR: path.join(process.resourcesPath, "ui"),
@@ -1274,6 +1293,11 @@ function startServiceWatchdog() {
       const dataDirectory = realbudDataDir();
       const identity = serviceIdentity(dataDirectory);
       const running = await findRunningService(identity);
+      // The watchdog can observe healthy on the SAME port, which is not an
+      // adoption or restart. Recover exhausted fallback windows in that case too.
+      if (running && !serviceStopRequested && !appQuitting()) {
+        for (const recover of officeWindowRecoveries.values()) recover(running.port);
+      }
       const recorded = serviceHandle ?? readServiceHandle(dataDirectory, identity.instanceId);
       let recordedAlive = false;
       let recordedPortAnswers = false;

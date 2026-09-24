@@ -4,7 +4,7 @@
 // the app's lifetime, and a later launch must be able to tell "our service is
 // already running" from "that pid is stale" without ever signalling a pid that
 // is not ours.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, statSync, fstatSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -229,6 +229,82 @@ describe("waiting for a slow service", () => {
 });
 
 describe("detached start", () => {
+  it("persists real child stdout and fatal startup stderr without parent pipes", async () => {
+    const dir = tempDir();
+    const entry = join(dir, "failing.cjs");
+    writeFileSync(entry, 'console.log("fictional startup"); throw new Error("fictional boot failure");');
+    const messages = [];
+    startDetachedService({ entry, port: 8799, env: {}, dataDirectory: dir, instanceId: INSTANCE,
+      executable: process.execPath, logDirectory: join(dir, "logs"), onDiagnostic: message => messages.push(message) });
+    await vi.waitFor(() => expect(messages.some(message => message.includes("exited code=1"))).toBe(true));
+    const log = join(dir, "logs", "office-service", "stdout-stderr.log");
+    expect(readFileSync(log, "utf8")).toContain("fictional startup");
+    expect(readFileSync(log, "utf8")).toContain("fictional boot failure");
+    if (process.platform !== "win32") expect(statSync(log).mode & 0o777).toBe(0o600);
+  });
+
+  it("rotates oversized prior output, retains evidence, and closes the parent's descriptor", () => {
+    const dir = tempDir();
+    const logDirectory = join(dir, "logs");
+    mkdirSync(join(logDirectory, "office-service"), { recursive: true });
+    const log = join(logDirectory, "office-service", "stdout-stderr.log");
+    writeFileSync(log, "x".repeat(1024 * 1024));
+    writeFileSync(`${log}.previous`, "older evidence");
+    let fd;
+    startDetachedService({ entry: "/fictional.js", port: 8799, env: {}, dataDirectory: dir, instanceId: INSTANCE,
+      logDirectory, spawnImpl: (_exe, _args, options) => {
+        expect(options.detached).toBe(true);
+        expect(options.stdio[0]).toBe("ignore");
+        expect(options.stdio[1]).toBe(options.stdio[2]);
+        fd = options.stdio[1];
+        writeFileSync(fd, "fictional child output");
+        return { pid: 777, unref() {} };
+      } });
+    expect(readFileSync(`${log}.previous`, "utf8")).toBe("x".repeat(1024 * 1024));
+    expect(readFileSync(log, "utf8")).toContain("fictional child output");
+    expect(() => fstatSync(fd)).toThrow();
+  });
+
+  it("keeps Windows logging independent of POSIX permission changes", () => {
+    const dir = tempDir();
+    const logDirectory = join(dir, "logs");
+    mkdirSync(join(logDirectory, "office-service"), { recursive: true });
+    const log = join(logDirectory, "office-service", "stdout-stderr.log");
+    writeFileSync(log, "prior startup\n", { mode: 0o644 });
+    const beforeMode = statSync(log).mode;
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+    try {
+      Object.defineProperty(process, "platform", { value: "win32" });
+      startDetachedService({ entry: "/fictional.js", port: 8799, env: {}, dataDirectory: dir, instanceId: INSTANCE,
+        logDirectory, spawnImpl: (_exe, _args, options) => {
+          expect(Array.isArray(options.stdio)).toBe(true);
+          writeFileSync(options.stdio[2], "fictional Windows startup failure");
+          return { pid: 777, unref() {} };
+        } });
+    } finally {
+      Object.defineProperty(process, "platform", platformDescriptor);
+    }
+    expect(statSync(log).mode).toBe(beforeMode);
+    expect(readFileSync(log, "utf8")).toContain("fictional Windows startup failure");
+  });
+
+  it("reports unavailable diagnostics and asynchronous spawn failure without crashing", () => {
+    const dir = tempDir();
+    const logDirectory = join(dir, "not-a-directory");
+    writeFileSync(logDirectory, "fictional obstruction");
+    const messages = [];
+    const listeners = {};
+    const handle = startDetachedService({ entry: "/fictional.js", port: 8799, env: {}, dataDirectory: dir, instanceId: INSTANCE,
+      logDirectory, onDiagnostic: message => messages.push(message), spawnImpl: (_exe, _args, options) => {
+        expect(options.stdio).toBe("ignore");
+        return { unref() {}, on: (event, callback) => { listeners[event] = callback; } };
+      } });
+    listeners.error(Object.assign(new Error("not found"), { code: "ENOENT" }));
+    expect(spawnedServiceState(handle)).toBe("exited");
+    expect(messages.join("\n")).toContain("diagnostic log unavailable");
+    expect(messages.join("\n")).toContain("process error (ENOENT)");
+  });
+
   it("spawns detached, unrefs, and records the handle", () => {
     const dir = tempDir();
     const unref = vi.fn();
