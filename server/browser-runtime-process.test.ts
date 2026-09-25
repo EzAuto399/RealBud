@@ -10,7 +10,7 @@ vi.mock("node:child_process", async importOriginal => ({
   execFile: vi.fn((_file, _args, options, callback) => {
     processCalls.environments.push(options.env);
     queueMicrotask(() => callback(processCalls.running ? null : new Error("Not started"), JSON.stringify({
-      daemon_version: "0.3.0", protocol_version: "1.3", browsers: [], sessions: [],
+      daemon_version: "0.3.1", protocol_version: "1.3", browsers: [], sessions: [],
     })));
   }),
   spawn: vi.fn((_file, _args, options) => {

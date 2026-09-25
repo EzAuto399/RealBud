@@ -83,7 +83,7 @@ async function fixture(options: { checkedAccount?: boolean } = {}) {
     if (hold?.verb === args[0]) {
       const waiting = hold; hold = null; waiting.signal = signal; waiting.entered(); await waiting.wait;
     }
-    if (args[0] === "status") return { daemon_version: "0.3.0", protocol_version: "1.3", browsers: [{ instance_id: "office-alpha", browser_name: "Chrome", extension_version: "0.3.0", extension_protocol_version: "1.3" }], sessions: session ? [{ session_id: "fictional-session", browser_instance_id: "office-alpha", interaction: { borrow_confirmation: "always", request_help: "enabled" } }] : [] };
+    if (args[0] === "status") return { daemon_version: "0.3.1", protocol_version: "1.3", browsers: [{ instance_id: "office-alpha", browser_name: "Chrome", extension_version: "0.3.1", extension_protocol_version: "1.3" }], sessions: session ? [{ session_id: "fictional-session", browser_instance_id: "office-alpha", interaction: { borrow_confirmation: "always", request_help: "enabled" } }] : [] };
     if (args[0] === "session" && args[1] === "start") { session = true; return { session_id: "fictional-session", browser_instance_id: "office-alpha", interaction: { borrow_confirmation: "always", request_help: "enabled" } }; }
     if (args[0] === "session" && args[1] === "stop") { session = false; scope = "user"; return { stopped: ["fictional-session"], failed: [], return_failures: [] }; }
     if (args[0] === "tab" && args[1] === "list") return { tabs: [

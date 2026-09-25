@@ -9,8 +9,19 @@ import { windowsFilePrivacy } from "./windows-file-privacy.ts";
 import type { BrowserStatus, BrowserConnection } from "../shared/browser.ts";
 import { browserTaskUploadName, type BrowserTaskUpload } from "../shared/browser-task.ts";
 
-export const BROWSER_VERSION = "0.3.0";
+export const BROWSER_VERSION = "0.3.1";
+/** Wire protocol shared by the pinned helper and extension (BrowserSkill `PROTOCOL_VERSION`). */
+export const BROWSER_PROTOCOL = "1.3";
 export const BROWSER_PORT = 52800;
+/** The bundled helper stays pinned exactly. The extension updates from its store on
+ * its own schedule, so any release of the helper's major.minor speaking the same
+ * protocol is admitted; another protocol or minor needs a reviewed RealBud update. */
+export function browserExtensionCompatible(extensionVersion: unknown, extensionProtocol: unknown, helperVersion = BROWSER_VERSION): boolean {
+  if (extensionProtocol !== BROWSER_PROTOCOL || typeof extensionVersion !== "string") return false;
+  const release = /^(\d+)\.(\d+)\.\d+$/;
+  const extension = release.exec(extensionVersion); const helper = release.exec(helperVersion);
+  return !!extension && !!helper && extension[1] === helper[1] && extension[2] === helper[2];
+}
 /** In-page sign-in help. Below Hermes' 300 s MCP tool-call default, so the
  * worker's browser call is still waiting when the person finishes. */
 export const BROWSER_HELP_TIMEOUT_MS = 240_000;
@@ -126,10 +137,10 @@ export class BrowserRuntime {
       if (!saved.enabled) return base;
       let raw: BrowserJson;
       try { raw = await this.command(["status"]); } catch { return { ...base, state: "disconnected", detail: "The browser helper is disconnected. Reconnect it before running a website job." }; }
-      if (raw.daemon_version !== BROWSER_VERSION || raw.protocol_version !== "1.3") return { ...base, state: "needs_update", detail: "The browser helper needs a compatible update. Browser work is paused." };
+      if (raw.daemon_version !== BROWSER_VERSION || raw.protocol_version !== BROWSER_PROTOCOL) return { ...base, state: "needs_update", detail: "The browser helper needs a compatible update. Browser work is paused." };
       const browsers: BrowserConnection[] = (Array.isArray(raw.browsers) ? raw.browsers : []).filter(record).filter(b => id(b.instance_id)).map(b => ({
         id: String(b.instance_id), name: String(b.browser_name ?? "Browser").slice(0, 60), label: String(b.label ?? "").slice(0, 80),
-        compatible: b.extension_protocol_version === "1.3" && b.extension_version === BROWSER_VERSION,
+        compatible: browserExtensionCompatible(b.extension_version, b.extension_protocol_version),
       }));
       base.browsers = browsers;
       const chosen = browsers.find(b => b.id === saved.browserId);
