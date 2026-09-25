@@ -49,7 +49,7 @@ it.each([24, 60])('admits every read path of %i files in one batch per pass', as
   // Every file read and every directory listed is admitted, each exactly once.
   expect(captured.filter(operation => operation.kind === 'file').map(operation => operation.path))
     .toEqual(expect.arrayContaining([join(f.directory, 'desk.json'), join(f.directory, `vault/properties/fictional-${files - 1}.md`)]));
-  expect(captured.filter(operation => operation.kind === 'file' && operation.path.includes('vault/properties'))).toHaveLength(files);
+  expect(captured.filter(operation => operation.kind === 'file' && operation.path.startsWith(join(f.directory, 'vault', 'properties')))).toHaveLength(files);
   expect(captured).toContainEqual({ path: join(f.directory, 'vault/properties'), kind: 'directory', action: 'verify' });
   expect(new Set(captured.map(operation => `${operation.kind}:${operation.path}`)).size).toBe(captured.length);
   await verifyPrivateWorkspaceCapture(f.options, receipt);
@@ -64,7 +64,7 @@ it('splits a long list into bounded batches in the original order', async () => 
   await capturePrivateWorkspace(f.options);
   expect(batches.calls.map(batch => batch.length).every(length => length <= 64)).toBe(true);
   expect(batches.calls).toHaveLength(Math.ceil(batches.calls.flat().length / 64));
-  expect(batches.calls.flat().filter(operation => operation.path.includes('vault/properties') && operation.kind === 'file')).toHaveLength(150);
+  expect(batches.calls.flat().filter(operation => operation.path.includes(join('vault', 'properties')) && operation.kind === 'file')).toHaveLength(150);
 });
 
 it('fails the pass closed when an admission refuses, with no receipt and no sealed catalog', async () => {
