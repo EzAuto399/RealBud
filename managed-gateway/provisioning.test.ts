@@ -21,9 +21,9 @@ const synthetic = (keyId: string) => `rbk_${keyId}_${(keyId === KEY_IDS[0] ? 'A'
 /** The office's Modelvia customer as the fake holds it. Deliberately different
  * from the fixture tenant's stored ledger caps, which must drive nothing. */
 const CUSTOMER_CAPS = { monthlyCapNanoAud: '70000000000', maxConcurrent: 3 };
-/** The request cap is the default A$1, below the customer's monthly cap. */
-const PROJECT_CAPS = { monthlyCapNanoAud: '70000000000', requestCapNanoAud: '1000000000', maxConcurrent: 3 };
-const SPEND_LABEL = 'A$70/month, A$1/request, 3 at once';
+/** The request cap is the default A$4, below the customer's monthly cap. */
+const PROJECT_CAPS = { monthlyCapNanoAud: '70000000000', requestCapNanoAud: '4000000000', maxConcurrent: 3 };
+const SPEND_LABEL = 'A$70/month, A$4/request, 3 at once';
 
 function harness() {
   const f = fixture();
@@ -490,10 +490,10 @@ test('project caps come from the Modelvia customer, never from the ledger tenant
   } finally { h.close(); }
 });
 
-test('the request cap defaults to A$1, takes an override, and never exceeds the monthly cap', async () => {
+test('the request cap defaults to A$4 (above the Kimi K3 route hold), takes an override, and never exceeds the monthly cap', async () => {
   const customer = { active: true, monthlyCapNanoAud: '70000000000', maxConcurrent: 3 };
-  assert.equal(DEFAULT_REQUEST_CAP_NANO_AUD, '1000000000');
-  assert.deepEqual(projectCaps(customer), { monthlyCapNanoAud: '70000000000', requestCapNanoAud: '1000000000', maxConcurrent: 3 });
+  assert.equal(DEFAULT_REQUEST_CAP_NANO_AUD, '4000000000');
+  assert.deepEqual(projectCaps(customer), { monthlyCapNanoAud: '70000000000', requestCapNanoAud: '4000000000', maxConcurrent: 3 });
   assert.equal(projectCaps(customer, '5000000000').requestCapNanoAud, '5000000000');
   // Clamped to the monthly cap, which Modelvia requires.
   assert.equal(projectCaps({ ...customer, monthlyCapNanoAud: '500000000' }).requestCapNanoAud, '500000000');
@@ -531,7 +531,7 @@ async function capsHarness() {
   h.modelvia.customer = { active: true, monthlyCapNanoAud: '90000000000', maxConcurrent: 5 };
   return h;
 }
-const RAISED = { monthlyCapNanoAud: '90000000000', requestCapNanoAud: '1000000000', maxConcurrent: 5 };
+const RAISED = { monthlyCapNanoAud: '90000000000', requestCapNanoAud: '4000000000', maxConcurrent: 5 };
 
 test('applyCustomerCaps re-applies the customer caps to every ready project and skips pending and revoked ones', async () => {
   const h = await capsHarness(); try {
@@ -542,7 +542,7 @@ test('applyCustomerCaps re-applies the customer caps to every ready project and 
     assert.equal(h.modelvia.customerReads, 1);
     // A repeat provision reports the caps now in force, still without secrets.
     const repeat = (await h.make().provision(h.f.owner, h.request)).provisioning;
-    assert.equal(repeat.model.spendCapLabel, 'A$90/month, A$1/request, 5 at once');
+    assert.equal(repeat.model.spendCapLabel, 'A$90/month, A$4/request, 5 at once');
     assert.equal(repeat.model.key, undefined);
     // Audit lines carry installation ids and states, never the customer id.
     const audit = h.f.ledger.db.all<{ kind: string; body: string }>("SELECT kind, body FROM events WHERE kind LIKE 'installation_caps_%'");
@@ -795,7 +795,7 @@ test('the spend cap label is short human text the desktop contract accepts for e
   const h = harness(); try {
     h.modelvia.customer = { active: true, monthlyCapNanoAud: '10000000000000', maxConcurrent: 100 };
     const label = (await h.make().provision(h.f.owner, h.request)).provisioning.model.spendCapLabel;
-    assert.equal(label, 'A$10,000/month, A$1/request, 100 at once');
+    assert.equal(label, 'A$10,000/month, A$4/request, 100 at once');
     assert.ok(label.length <= SPEND_CAP_LABEL_MAX);
     assert.ok(!label.includes('nanoAUD'));
   } finally { h.close(); }

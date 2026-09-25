@@ -16,6 +16,8 @@ import { hermesIsCompatible } from './hermes-pin.ts';
 import { probeHermesVersion } from './hermes-status.ts';
 import { spawnCli, killCliTree } from './procs.ts';
 import { augmentedPath } from './env-path.ts';
+import { modelServiceFailure } from './model-service-failure.ts';
+import { modelviaRefusal } from '../shared/modelvia-receipt.ts';
 
 export const DEPARTMENT_WORKER_RUNTIME = '345cd2b057a452236de401d3534b8502a7465e8d';
 // Runtime changes require a new isolation capture, rather than admitting a
@@ -34,6 +36,28 @@ const nativeFiles: Record<string, string> = {
   'tools/registry.py': '310a57a5dc5d41c935eacbe707e8a258dc21fd72fd44fccbc33d1a78b7143922',
 };
 const helper = fileURLToPath(new URL('./helpers/department-worker.py', import.meta.url));
+
+/**
+ * The `Idempotency-Key` for one relayed inference request. One logical request
+ * is one body within one run: an SDK retry of that body after a lost reply
+ * carries the same key, so Modelvia answers it with the original receipt (409
+ * `request_already_processed`) instead of charging again, while the same case
+ * prepared again (a new run) is a new request even with a byte-identical body.
+ * Without the header Modelvia derives a key from the body alone and refuses an
+ * identical resend delivered moments earlier, which would refuse a genuine
+ * second run. The run id is random and never leaves this process otherwise.
+ */
+export function relayIdempotencyKey(runId: string, body: Uint8Array): string {
+  return `realbud-case-${createHash('sha256').update(runId).update('\0').update(body).digest('hex').slice(0, 48)}`;
+}
+/** A known model-service refusal in an upstream error body, as one sentence the
+ * office can act on; null for anything else. The body is never surfaced. */
+export function relayRefusalDetail(status: number, body: Uint8Array): string | null {
+  if (status < 400 || body.length > 64 * 1024) return null;
+  let parsed: unknown; try { parsed = JSON.parse(Buffer.from(body).toString('utf8')); } catch { return null; }
+  const refusal = modelviaRefusal(parsed), reason = refusal && modelServiceFailure(refusal.code);
+  return reason ? `${reason[0]!.toUpperCase()}${reason.slice(1)}.` : null;
+}
 const unavailable = 'This worker route cannot prepare an isolated department case. Check the supported worker setup.';
 const cancelled = 'Preparation cancelled.';
 type Result = { ok: true; stdout: string } | { ok: false; detail: string };
@@ -71,8 +95,9 @@ export async function askDepartmentWorker(prompt: string, opts: DepartmentWorker
     if (!version || !hermesIsCompatible(version)) return { ok: false, detail: unavailable };
     scratch = await mkdtemp(join(tmpdir(), 'realbud-department-'));
     windowsFilePrivacySync(scratch, 'directory', true);
-    const token = randomBytes(32).toString('hex');
+    const token = randomBytes(32).toString('hex'), runId = randomBytes(16).toString('hex');
     let route: { base_url: string; api_key: string; model: string } | undefined;
+    let refusal: string | null = null;
     let deny: () => void = () => {};
     relay = createServer(async (request, response) => {
       try {
@@ -99,9 +124,11 @@ export async function askDepartmentWorker(prompt: string, opts: DepartmentWorker
         if (opts.signal?.aborted || forwarding.signal.aborted || managedServiceFailure('reasoning')) throw new Error();
         const headers: Record<string, string> = { 'content-type': 'application/json' };
         headers.authorization = `Bearer ${route.api_key}`;
+        headers['idempotency-key'] = relayIdempotencyKey(runId, body);
         const upstream = await fetch(route.base_url + request.url, { method: 'POST', headers, body, redirect: 'error', signal: forwarding.signal });
         const received: Uint8Array[] = []; let total = 0;
         if (upstream.body) for await (const part of upstream.body) { total += part.length; if (total > 2 * 1024 * 1024) throw new Error(); received.push(part); }
+        refusal = relayRefusalDetail(upstream.status, Buffer.concat(received)) ?? refusal;
         response.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') || 'application/json', 'cache-control': 'no-store' });
         response.end(Buffer.concat(received));
       } catch {
@@ -139,9 +166,9 @@ export async function askDepartmentWorker(prompt: string, opts: DepartmentWorker
         const bytes = Buffer.concat(chunks); chunks.forEach(chunk => chunk.fill(0));
         try {
           if (opts.signal?.aborted) return accept({ ok: false, detail: cancelled });
-          if (killed || failed || code !== 0) return accept({ ok: false, detail: unavailable });
+          if (killed || failed || code !== 0) return accept({ ok: false, detail: refusal ?? unavailable });
           const result = JSON.parse(bytes.toString('utf8'));
-          if (result?.ok !== true || typeof result.stdout !== 'string' || Object.keys(result).sort().join(',') !== 'ok,stdout') return accept({ ok: false, detail: unavailable });
+          if (result?.ok !== true || typeof result.stdout !== 'string' || Object.keys(result).sort().join(',') !== 'ok,stdout') return accept({ ok: false, detail: refusal ?? unavailable });
           accept({ ok: true, stdout: result.stdout });
         } catch { accept({ ok: false, detail: unavailable }); } finally { bytes.fill(0); }
       });

@@ -99,7 +99,7 @@ test('disabling sets active=false and leaves the cap; an absent customer is crea
 
 test('a customer under another client is refused and nothing is written', async () => {
   const m = fakeModelvia({ customers: [existing({ clientId: 'another-platform-client' })] });
-  for (const access of [{ mode: 'default' }, { mode: 'disabled' }, { mode: 'custom', monthlyCapNanoAud: '1' }] as const) {
+  for (const access of [{ mode: 'default' }, { mode: 'disabled' }, { mode: 'custom', monthlyCapNanoAud: '10000000' }] as const) {
     await assert.rejects(() => m.client.setCustomerAccess(CUSTOMER, { name: 'Fictional Office', access }), (error: unknown) =>
       error instanceof GatewayError && error.code === 'modelvia_customer_foreign' && error.status === 409);
   }
@@ -123,10 +123,11 @@ test('a version conflict is retried once from a fresh read; a second one is repo
   assert.equal(stuck.posts().length, 2);
 });
 
-test('cap bounds: 1 nanoAUD to A$10,000, whole-number strings only, exact shapes', async () => {
-  assert.deepEqual(parseOfficeAiAccess({ mode: 'custom', monthlyCapNanoAud: '1' }), { mode: 'custom', monthlyCapNanoAud: '1' });
+test('cap bounds: one cent to A$10,000, whole cents only, whole-number strings only, exact shapes', async () => {
+  assert.deepEqual(parseOfficeAiAccess({ mode: 'custom', monthlyCapNanoAud: '10000000' }), { mode: 'custom', monthlyCapNanoAud: '10000000' });
   assert.deepEqual(parseOfficeAiAccess({ mode: 'custom', monthlyCapNanoAud: '10000000000000' }), { mode: 'custom', monthlyCapNanoAud: '10000000000000' });
   for (const bad of [{ mode: 'custom', monthlyCapNanoAud: '10000000000001' }, { mode: 'custom', monthlyCapNanoAud: '0' }, { mode: 'custom', monthlyCapNanoAud: '-1' },
+    { mode: 'custom', monthlyCapNanoAud: '1' }, { mode: 'custom', monthlyCapNanoAud: '10000001' }, { mode: 'custom', monthlyCapNanoAud: '200000000001' },
     { mode: 'custom', monthlyCapNanoAud: '01' }, { mode: 'custom', monthlyCapNanoAud: 5 }, { mode: 'custom' }, { mode: 'default', monthlyCapNanoAud: '1' },
     { mode: 'disabled', extra: true }, { mode: 'unlimited' }, null, 'default', []]) {
     assert.throws(() => parseOfficeAiAccess(bad), /invalid_ai_access/, JSON.stringify(bad));
@@ -203,11 +204,12 @@ test('operator routes are not composed without a distinct operator secret or wit
 test('default and custom set the customer, push the cap to ready projects and audit without the customer id', async () => {
   const r = await routeFixture();
   const created = await r.post(ROUTE, operatorToken(), officeBody({ mode: 'default' }));
-  assert.deepEqual(created, { status: 200, body: { customer: { active: true, monthlyCapNanoAud: '200000000000', created: true }, projects: [{ installationId: 'install-one', state: 'applied' }] } });
+  // No terms policy is configured for this office, so none is written (see modelvia-live-contract.test.ts).
+  assert.deepEqual(created, { status: 200, body: { customer: { active: true, monthlyCapNanoAud: '200000000000', created: true }, projects: [{ installationId: 'install-one', state: 'applied' }], terms: { state: 'unconfigured' } } });
   assert.equal(r.m.projects.get('rb-install-one')!.monthlyCapNanoAud, '200000000000');
   assert.equal(r.m.projects.get('rb-install-one')!.maxConcurrent, 2);
   const custom = await r.post(ROUTE, operatorToken(), officeBody({ mode: 'custom', monthlyCapNanoAud: '350000000000' }));
-  assert.deepEqual(custom.body, { customer: { active: true, monthlyCapNanoAud: '350000000000', created: false }, projects: [{ installationId: 'install-one', state: 'applied' }] });
+  assert.deepEqual(custom.body, { customer: { active: true, monthlyCapNanoAud: '350000000000', created: false }, projects: [{ installationId: 'install-one', state: 'applied' }], terms: { state: 'unconfigured' } });
   assert.equal(r.m.projects.get('rb-install-one')!.monthlyCapNanoAud, '350000000000');
   const events = r.events();
   assert.deepEqual(events.map(e => e.kind), ['office_ai_access_requested', 'office_ai_access_set', 'office_ai_access_requested', 'office_ai_access_set']);

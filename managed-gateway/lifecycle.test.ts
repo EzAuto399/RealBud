@@ -30,7 +30,7 @@ const ORG_KEY = 'fictional-org-key-never-in-a-response';
 const PROJECT_KEY = 'ak_fictional_office_project_key_';
 const ACCOUNT = 'account-fictional';
 const CAPS = { monthlyCapNanoAud: '70000000000', maxConcurrent: 3 };
-const PROJECT_CAPS = { monthlyCapNanoAud: '70000000000', requestCapNanoAud: '1000000000', maxConcurrent: 3 };
+const PROJECT_CAPS = { monthlyCapNanoAud: '70000000000', requestCapNanoAud: '4000000000', maxConcurrent: 3 };
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 const failure = (promise: Promise<unknown>) => promise.then(() => undefined, error => error as GatewayError);
 
@@ -532,7 +532,7 @@ test('8. AI access disabled after provisioning stops serving and new provisionin
     assert.ok(h.v.serves(one.model.key!) && h.v.serves(two.model.key!));
     // The repeat descriptor reports the caps now in force, still without a key.
     const repeat = (await h.provision('install-one')).provisioning;
-    assert.equal(repeat.model.spendCapLabel, 'A$90/month, A$1/request, 3 at once'); assert.equal(repeat.model.key, undefined);
+    assert.equal(repeat.model.spendCapLabel, 'A$90/month, A$4/request, 3 at once'); assert.equal(repeat.model.key, undefined);
   } finally { h.close(); }
 });
 
