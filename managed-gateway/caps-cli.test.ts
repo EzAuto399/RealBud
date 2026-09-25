@@ -48,8 +48,8 @@ test('apply refreshes every ready installation and prints installation ids and s
     assert.equal(printed.result, 'applied');
     assert.deepEqual(printed.installations, [{ installationId: 'install-one', state: 'applied' }, { installationId: 'install-two', state: 'applied' }]);
     assert.deepEqual(h.calls.updates, [
-      { projectId: 'rb-install-one', monthlyCapNanoAud: '90000000000', requestCapNanoAud: '1000000000', maxConcurrent: 5 },
-      { projectId: 'rb-install-two', monthlyCapNanoAud: '90000000000', requestCapNanoAud: '1000000000', maxConcurrent: 5 }]);
+      { projectId: 'rb-install-one', monthlyCapNanoAud: '90000000000', requestCapNanoAud: '4000000000', maxConcurrent: 5 },
+      { projectId: 'rb-install-two', monthlyCapNanoAud: '90000000000', requestCapNanoAud: '4000000000', maxConcurrent: 5 }]);
     assert.equal(h.calls.reads, 1);
     const output = h.lines.concat(h.errors).join('\n');
     assert.ok(!output.includes(CUSTOMER)); assert.ok(!output.includes(OPERATOR_SECRET));

@@ -30,7 +30,7 @@ import { canonical, GatewayError, id, object, requireThat, type PortalPrincipal 
 import { newConnectorCredential, validateConnectorDevices, type ConnectorDevice } from './connectors.ts';
 import type { UsageLedger } from './ledger.ts';
 import { composioOrgClient, type ComposioOrgClient, type HttpTransport } from './composio-org.ts';
-import { modelviaKeyClient, type ModelviaCaps, type ModelviaClient, type ModelviaCustomer, type ModelviaMintedKey, type ModelviaOperatorClient } from './modelvia-keys.ts';
+import { hasCustomerTerms, modelviaKeyClient, type ModelviaCaps, type ModelviaClient, type ModelviaCustomer, type ModelviaMintedKey, type ModelviaOperatorClient, type ModelviaTermsClient } from './modelvia-keys.ts';
 
 // ---------------------------------------------------------------------------
 // Registry file (shared with the provision-connector CLI)
@@ -209,9 +209,21 @@ export const PENDING_RESUME_AFTER_MS = 10 * 60_000;
 /** An attempt that has not reached its model-key step by then stops before it,
  * leaving the key to a later resume rather than to two concurrent writers. */
 const ATTEMPT_EFFECT_DEADLINE_MS = 5 * 60_000;
-/** Default per-request cap: A$1 in nanoAUD. `REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD`
- * overrides it. */
-export const DEFAULT_REQUEST_CAP_NANO_AUD = '1000000000';
+/**
+ * Default per-request cap: A$4 in nanoAUD. `REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD`
+ * overrides it.
+ *
+ * Modelvia holds a request's WHOLE route bound before it runs: the route's full
+ * context window as input and cache reads, plus its output limit, priced on the
+ * accepted card (`key-gateway.ts` admission). On `openrouter-2026-09-r2` that is
+ * about A$3.27 for `kimi-k3` and up to about A$1.4 for `deepseek-v4.1-flash`. A
+ * project request cap below a route's hold drops that route (402
+ * `project_request_cap_exceeded` when none is left), so the old A$1 default
+ * could never serve Kimi and not always Flash. A$4 covers both and equals the
+ * request cap on RealBud's billing account at Modelvia. Settlement charges what
+ * was generated, not the hold.
+ */
+export const DEFAULT_REQUEST_CAP_NANO_AUD = '4000000000';
 const NANO_AUD = /^[1-9][0-9]{0,20}$/;
 /**
  * The installation project's caps, copied from the office's Modelvia customer.
@@ -262,8 +274,11 @@ export interface ProvisioningOptions {
   modelvia: ModelviaClient;
   /** app → the reviewed read-only OAuth configuration id admitted for it. */
   authConfigs: Readonly<Record<string, string>>;
-  /** Per-request cap in nanoAUD, a positive integer string. Default A$1. */
+  /** Per-request cap in nanoAUD, a positive integer string. Default A$4. */
   requestCapNanoAud?: string;
+  /** The customer's commercial terms at Modelvia, read before anything is
+   * created. Always composed in production (`composeProvisioning`). */
+  terms?: Pick<ModelviaTermsClient, 'customerTermsReadiness'>;
 }
 
 export class InstallationProvisioning {
@@ -360,6 +375,14 @@ export class InstallationProvisioning {
     const tenant = this.options.ledger.tenant(companyId);
     const entitled = this.options.ledger.now();
     requireThat(tenant.active && tenant.serviceExpiresAt > entitled && entitled >= tenant.goLiveAt, 'service_unavailable', 402);
+    // The customer's commercial terms at Modelvia: a read, never an effect. A
+    // customer RealBud's client pays for serves nothing without an active policy
+    // (409 `customer_terms_required` on every request), so no key is issued into
+    // that state; to the office it is the same step as an unready customer. A
+    // delivered installation is not re-checked: a repeat asks Modelvia nothing.
+    if (this.options.terms && this.saved(companyId, installationId)?.state !== 'ready') {
+      requireThat(await this.options.terms.customerTermsReadiness(customerId) !== 'terms_required', 'modelvia_customer_not_ready', 409);
+    }
 
     const recorded = (): StoredRecord | undefined => {
       const existing = this.saved(companyId, installationId);
@@ -766,6 +789,8 @@ export function composeProvisioning(options: { env: NodeJS.ProcessEnv; ledger: U
       modelvia: options.modelvia ?? model.modelvia,
       authConfigs: { gmail: value('REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL') },
       requestCapNanoAud: model.requestCapNanoAud,
+      // The composed client always reads terms; an injected one only if it can.
+      ...(hasCustomerTerms(options.modelvia ?? model.modelvia) ? { terms: (options.modelvia ?? model.modelvia) as unknown as ModelviaTermsClient } : {}),
     }) };
   } catch (error) {
     // A malformed value (not a missing one) — report the code, never the value.
