@@ -103,6 +103,12 @@ fly volumes list -a realbud-managed-gateway 2>/dev/null | grep -q gateway_data |
   printf 'REALBUD_MODELVIA_CLIENT_ID=%s\n' "$REALBUD_MODELVIA_CLIENT_ID"
   [[ -z "${REALBUD_MODELVIA_MODELS:-}" ]] || printf 'REALBUD_MODELVIA_MODELS=%s\n' "$REALBUD_MODELVIA_MODELS"
   printf 'REALBUD_PAYMENT_MODE=%s\n' "$payment_mode"
+  # Modelvia commercial terms and the per-request cap: non-secret, set only when
+  # exported (DEPLOY.md, "Live Modelvia integration values").
+  for name in REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES REALBUD_MODELVIA_CLIENT_FUNDED_REFERENCE \
+    REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS REALBUD_MODELVIA_RESALE_TERMS_REFERENCE REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD; do
+    [[ -z "${!name:-}" ]] || printf '%s=%s\n' "$name" "${!name}"
+  done
   if [[ "$payment_mode" != "local" ]]; then
     printf 'REALBUD_AUTHORIZE_COLLECTION=1\n'
     for name in "${square_names[@]}"; do printf '%s=%s\n' "$name" "${!name}"; done

@@ -17,7 +17,7 @@ The gateway runs on Fly (Sydney) from `deploy.sh` and `fly.toml`. The website ru
    ```
 
    `--go-live` must be today or earlier, and `--expires` must be after `--go-live` (otherwise `invalid_go_live` or `invalid_service_expiry`). The command opens `/data/ledger.sqlite`, the database the server uses. It refuses to create a database, so a wrong path fails loudly. Without an entitlement, provisioning answers 403 `tenant_unavailable`. Suspend an office with `--active false`. Renew by setting a later `--expires`; existing connectors follow the current entitlement, so they keep working without reprovisioning.
-4. **Set the office's AI access** with `POST /v1/operator/offices/ai-access` (see [Office AI access](#office-ai-access)). `default` creates the office's Modelvia customer under `REALBUD_MODELVIA_CLIENT_ID` with the A$200 cap. Without an active customer with a non-zero cap, provisioning answers 409 `modelvia_customer_not_ready` and creates nothing.
+4. **Set the office's AI access** with `POST /v1/operator/offices/ai-access` (see [Office AI access](#office-ai-access)). `default` creates the office's Modelvia customer under `REALBUD_MODELVIA_CLIENT_ID` with the A$200 cap, then its commercial terms (the response's `terms.state` must read `active`, `pending` or `not_required`). Without an active customer with a non-zero cap and terms in force, provisioning answers 409 `modelvia_customer_not_ready` and creates nothing.
 5. Set the website's `REALBUD_GATEWAY_URL` to the app origin (`fly status -a realbud-managed-gateway`) and `REALBUD_GATEWAY_PORTAL_SECRET` to the same value as the gateway. Secrets never go in a `NEXT_PUBLIC_` variable.
 6. **Publish each office's monthly care terms and its Square mapping** on the machine, then let the office's billing owner accept and pay ([Care fee collection](#care-fee-collection-square)).
 
@@ -42,7 +42,10 @@ The gateway runs on Fly (Sydney) from `deploy.sh` and `fly.toml`. The website ru
 | `REALBUD_MODELVIA_CLIENT_ID` | yes | RealBud's platform client id at Modelvia; only customers under it are provisioned into |
 | `REALBUD_MODELVIA_MODELS` | no | comma-separated `allowedModels` per project; default `auto` |
 | `REALBUD_MODELVIA_ENVIRONMENT` | no | `production` (default) or `development` |
-| `REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD` | no | per-request cap on each installation project, a positive integer in nanoAUD; default `1000000000` (A$1). Clamped to the customer's monthly cap. A malformed value answers `provisioning_unconfigured:REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD` |
+| `REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD` | no | per-request cap on each installation project, a positive integer in nanoAUD; default `4000000000` (A$4). Clamped to the customer's monthly cap. Modelvia holds a request's whole route bound up front (about A$3.27 for `kimi-k3`, up to about A$1.4 for `deepseek-v4.1-flash`); a cap below a route's hold drops that route, and below both refuses with 402 `project_request_cap_exceeded`. A malformed value answers `provisioning_unconfigured:REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD` |
+| `REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES` | for terms | comma-separated RealBud companyIds whose AI RealBud absorbs (the owner's and internal offices). Setting AI access for one of them writes a `client_funded` commercial policy at Modelvia. Unset: no office gets client-funded terms |
+| `REALBUD_MODELVIA_CLIENT_FUNDED_REFERENCE` | no | acceptance reference on those policies; default `realbud-owner-decision-2026-09-24-internal-ai` |
+| `REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS`, `REALBUD_MODELVIA_RESALE_TERMS_REFERENCE` | resale only | both or neither. With both, AI access for any office not listed above writes a `resale` policy at that markup (0 to 100000) and reference. Unset (the default), such an office gets no terms and cannot be provisioned. A malformed terms variable leaves the office AI access route off (503 `operator_unconfigured`) |
 | `REALBUD_PAYMENT_MODE` | fly.toml | care-fee collection: `local` (default; invoices close and read, checkout answers 503 `payment_provider_unselected`), `sandbox` or `live` |
 | `REALBUD_INTERNAL_COMPANY_ID` | for care routes | RealBud's own company id. Never invoiced, mapped or checked out. Unset, every care route answers 503 `commercial_terms_unavailable` |
 | `REALBUD_AUTHORIZE_COLLECTION` | sandbox, live | must be `1`; the explicit statement that this deployment collects money |
@@ -73,8 +76,10 @@ POST /v1/portal/installations/revoke
 3. It journals the attempt.
 4. It creates or reuses the company's Composio project. The `ak_` key stays in the secret store.
 5. It admits the `rbc_` connector credential by hash.
-6. It creates `rb-<installationId>` under the customer, with the customer's monthly cap and concurrency. The request cap is `REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD` (default A$1), never above the monthly cap.
+6. It creates `rb-<installationId>` under the customer, with the customer's monthly cap and concurrency. The request cap is `REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD` (default A$4), never above the monthly cap.
 7. It mints one key labelled `<companyId>:<installationId>`.
+
+Before step 3, a customer RealBud's client pays for must have a commercial policy in force at Modelvia (see [Office AI access](#office-ai-access), "Terms"). Without one every request would be refused with `customer_terms_required`, so provisioning answers 409 `modelvia_customer_not_ready` and creates nothing, the same answer the website already maps to "set the office's AI access". A delivered installation is not re-checked.
 
 Every installation of an office shares the office's one Composio project and its key; concurrent first provisions of one office create it once. If the new project's key cannot be written to the secret store, the new project is deleted and the call answers 503 `connector_project_key_unwritable`; a resume after `PENDING_RESUME_AFTER_MS` starts clean. If that delete is not confirmed either, provisioning answers 409 `connector_project_key_unavailable` until an operator removes the keyless project. Two projects with the office's name are 409 `connector_project_ambiguous`. The connector routes read each office's key from the same secret store (`REALBUD_GATEWAY_SECRETS_DIR`), falling back to a same-named environment variable only for devices registered by the operator CLI.
 
@@ -106,10 +111,32 @@ POST /v1/operator/offices/ai-access          Authorization: Bearer <operator tok
 - **Modes.** `default` is A$200 (`200000000000` nanoAUD). `custom` is 1 nanoAUD to A$10,000 (`10000000000000`). `disabled` sets the customer inactive and leaves its cap. Anything else is 400 `invalid_ai_access`.
 - **Customer.** If Modelvia holds no customer with that id, one is created under `REALBUD_MODELVIA_CLIENT_ID` with `name`, concurrency 2 and the `REALBUD_MODELVIA_MODELS` models. An existing customer keeps its name, concurrency, models and bindings; only `active` and the cap change. A customer under another platform client is 409 `modelvia_customer_foreign`, and nothing is written. A stale version is re-read and retried once, then 409 `modelvia_customer_version_conflict`.
 - **Projects.** After `default` or `custom`, the new cap is pushed to the company's ready installation projects, as `caps-cli.ts apply` does. `disabled` pushes nothing: Modelvia refuses serving for an inactive customer.
+- **Terms.** After `default` or `custom`, the office's commercial policy. Modelvia refuses every request of a customer RealBud's client pays for until an active policy is in force (409 `customer_terms_required`). A company in `REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES` gets `{payer: client, invoiceIssuer: client, collection: invoice, management: self_service, platformFeeBasisPoints: 0, clientMarkupBasisPoints: 0, customerBilling: client_funded}`, effective one minute before now. Any other office gets `resale` at the configured markup, or nothing (`"terms": {"state": "unconfigured"}`). A policy already in force is kept as it is, whatever it says: changing how an office is billed is a dated migration at Modelvia, never this route. A customer that pays Modelvia itself needs none (`not_required`). The response adds `"terms": {"state": "active"|"pending"|"not_required", "created", "policyId", "customerBilling"}`, or `{"state": "failed", "error": "<code>"}` (`modelvia_terms_payer_mismatch`, `modelvia_terms_clock_skew`, `modelvia_terms_refused`, `modelvia_terms_conflict`) without undoing the customer or caps; save again to retry. The audit line carries the policy id, never the customer id.
+- **Custom caps** are whole cents: a multiple of `10000000` nanoAUD, from one cent to A$10,000.
 - **Checks and audit.** The company must have an entitlement record (403 `tenant_unavailable` otherwise). Requests are serialized per company. Two ledger lines, `office_ai_access_requested` (before any Modelvia call) and `office_ai_access_set`, carry the operator subject, company, mode, cap and project results. They never carry the Modelvia customer id or a secret.
 - **Errors.** 401 `operator_unauthenticated`; 503 `operator_unconfigured` (operator secret missing or equal to the portal secret, Modelvia operator variables missing, or `REALBUD_ENABLE_PROVIDER` not `1`); 409 `modelvia_customer_foreign`; 400 `invalid_ai_access`.
 
 Minting operator tokens (the operator console) is not part of this service.
+
+## Live Modelvia integration values
+
+Checked against Modelvia `main` 49327ba, the build api.modelvia.dev served on 25 September 2026. Names and non-secret values only; secrets stay in protected storage and are exported only for `deploy.sh`.
+
+| Variable | Value |
+| --- | --- |
+| `REALBUD_MODELVIA_BASE_URL` | `https://api.modelvia.dev` (fly.toml) |
+| `REALBUD_MODELVIA_CLIENT_ID` | `realbud` |
+| `REALBUD_MODELVIA_MODELS` | `deepseek-v4.1-flash,kimi-k3`. The customer and project allowlists must name served route ids; `auto` is what the desktop REQUESTS (Jev then picks model and effort), and as an allowlist entry it matches no route (503 `model_route_unavailable`). Retired ids (`hosted-canary-fast`, `hosted-canary-smart`, `deepseek-chat`, `deepseek-flash`) serve nothing |
+| `REALBUD_MODELVIA_ENVIRONMENT` | `production` (default) |
+| `REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD` | unset, or `4000000000` (A$4). This equals the request cap on RealBud's internal-cost billing account at Modelvia, which also caps every request |
+| `REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES` | the owner office's RealBud companyId: the company whose Modelvia customer is `realbud-owner` (the website derives `realbud-<companyId>`, so `owner` unless `REALBUD_PLATFORM_CUSTOMERS_JSON` binds it explicitly). Confirm it on `/admin/offices` before deploying |
+| `REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS`, `REALBUD_MODELVIA_RESALE_TERMS_REFERENCE` | unset until the owner approves a customer-office markup and its signed terms |
+| `REALBUD_MODELVIA_OPERATOR_SUBJECT` | the operator subject Modelvia issued for this gateway |
+| `REALBUD_MODELVIA_OPERATOR_SECRET` | secret; never written here |
+
+Modelvia objects this integration expects (created by Modelvia's operator, not by RealBud): the internal-cost billing account `rbco_1946641d97e347d5a0c297128b3aad22` (A$10/month, A$4/request), rate card `openrouter-2026-09-r2` accepted for it, client `realbud` (`billingMode: client`), customer `realbud-owner`, and its active client-funded policy `realbud-owner-internal-2026-09-25`. Saving the owner office's AI access keeps that policy and writes none. The billing account's A$10 monthly cap binds before the A$200 office default does. `rbco_…` is Modelvia's billing account id, not a RealBud companyId.
+
+What the desktop sees from Modelvia for a RealBud key: receipts are `priceAudience: resale_customer`, `chargeDetail: all_in`, `description: "AI usage"`, with `usedBy` `{kind: customer|client_internal, displayName}`; a client-funded office's receipts are `priceBasis: withheld` (no price for the office, never zero). A completed request resent with the same `Idempotency-Key`, or a header-less identical body within 30 s of delivery, is 409 `request_already_processed` with the original receipt and no second charge; the case relay sends one key per logical request (`server/department-worker.ts`). A Stop or a provider failure before any answer text costs A$0.
 
 ## Care fee collection (Square)
 
