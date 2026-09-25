@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { BrowserJson } from "../browser-runtime.ts";
+import { BROWSER_PROTOCOL, BROWSER_VERSION, type BrowserJson } from "../browser-runtime.ts";
 import { parsePortalRecipePack, type PortalRecipePack } from "../portal-recipe.ts";
 
 /** The Austin pack's REI recipes, pointed at the fictional origins instead of REI Cloud. */
@@ -222,7 +222,7 @@ export function fictionalReiPortal(options: FictionalReiOptions = {}) {
     calls.push([...args]);
     if (["navigate", "click", "fill", "press", "select", "upload", "download"].includes(args[0])) steps += 1;
     const interaction = { borrow_confirmation: "always", request_help: "enabled" };
-    if (args[0] === "status") return { daemon_version: "0.3.0", protocol_version: "1.3", browsers: [{ instance_id: "work", browser_name: "Chrome", extension_version: "0.3.0", extension_protocol_version: "1.3" }], sessions: session ? [{ session_id: "owned", browser_instance_id: "work", interaction }] : [] };
+    if (args[0] === "status") return { daemon_version: BROWSER_VERSION, protocol_version: BROWSER_PROTOCOL, browsers: [{ instance_id: "work", browser_name: "Chrome", extension_version: BROWSER_VERSION, extension_protocol_version: BROWSER_PROTOCOL }], sessions: session ? [{ session_id: "owned", browser_instance_id: "work", interaction }] : [] };
     if (args[0] === "session" && args[1] === "start") { session = true; return { session_id: "owned", browser_instance_id: "work", interaction }; }
     if (args[0] === "session" && args[1] === "stop") { session = false; return { stopped: ["owned"], failed: [], return_failures: [] }; }
     if (args[0] === "tab" && args[1] === "list") return { tabs: [{ tab_id: 1, url, title: "REI", scope }, { tab_id: 2, url: "https://unrelated.fictional.test/inbox", title: "Unrelated", scope: "user" }] };
