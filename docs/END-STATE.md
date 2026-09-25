@@ -1,5 +1,7 @@
 # RealBud end state
 
+Latest QA checkpoint: [QA fixes and 0.1.20 Mac candidate](QA-FIXES-2026-09-25.md) records the REI recipe runner (fictional simulation only), provisioning and billing fixes on a local rig, Electron 43.7.5 and BrowserSkill 0.3.1, and installed 0.1.20 QA on the owner's Mac with disposable data. Windows 0.1.20, live vendors, live REI and customer acceptance remain open.
+
 Latest continuation: [External test lab](EXTERNAL-TEST-LAB-2026-09-24.md) records package qualification plus 8 native cancellation/setup and 14 restore groups on the same signed Mac candidate, with root-verified hashes, cleanup and screenshots. The sealed Mac/Windows test kit and installer transfer ISO have also passed artifact-integrity verification. Earlier failures remain preserved; OS custody remains fixture-only. VirtualBox is installed and the external Windows Arm VM has started successfully without an OS; the official Windows media has passed its checksum and the VM has reached Windows 11 Setup. Installation is still pending. No Windows guest/device acceptance is claimed.
 
 Parallel work: [REI browser first and API access](REI-BROWSER-FIRST-2026-09-24.md) records the owner's browser-first sequencing, 240 passing candidate source checks and an unsent API request. Root verified retained report/source hashes; the browser owner observed signed-in Brave access and left the installed Mac 0.1.18/profile unchanged. RealBud live connection, workflow acceptance and API entitlement remain unverified.

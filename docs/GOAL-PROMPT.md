@@ -6,6 +6,8 @@ Parallel work: [REI browser first and API access](REI-BROWSER-FIRST-2026-09-24.m
 
 25 September browser-engine decision: [Bud browser engine candidate](BUD-BROWSER-ENGINE-2026-09-25.md) retains the pinned native transport as dormant host-side source. Bud remains the visible product identity. Current product code still selects the existing broker and browser runtime; native packaging, installed-device behavior and task integration remain open.
 
+Latest QA checkpoint: [QA fixes and 0.1.20 Mac candidate](QA-FIXES-2026-09-25.md) records the REI recipe runner (fictional simulation only), provisioning and billing fixes on a local rig, Electron 43.7.5 and BrowserSkill 0.3.1, and installed 0.1.20 QA on the owner's Mac with disposable data. Windows 0.1.20, live vendors, live REI and customer acceptance remain open.
+
 Previous continuation: [platform follow-up](PLATFORM-FOLLOWUP-2026-09-24.md) records the native welcome/restore defect, source correction, packaged Electron team proof and separate Windows startup diagnostic. Read its source and device limits before selecting an installer.
 
 Previous continuation: [Welcome backup recovery](WELCOME-BACKUP-RECOVERY-2026-09-24.md) adopts the verified direct restore entry and adds a safe return to welcome after cancellation. Canonical verification passes 1,048 tests, full typechecking and nine actual source-rendered checks. The newer candidate compiles and passes signature verification, but its first full package QA stopped at backup export with HTTP 507. That failure and prior artifacts remain preserved. Native cancellation acceptance, OS custody, Windows device and customer acceptance remain open.
