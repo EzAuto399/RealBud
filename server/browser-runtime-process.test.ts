@@ -5,22 +5,32 @@ import { afterEach, expect, it, vi } from "vitest";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 
 const processCalls = vi.hoisted(() => ({ environments: [] as NodeJS.ProcessEnv[], running: false }));
-vi.mock("node:child_process", async importOriginal => ({
-  ...await importOriginal<typeof import("node:child_process")>(),
-  execFile: vi.fn((_file, _args, options, callback) => {
+// Only the fixture helper is faked. Everything else, including the Windows
+// file-privacy check that promisifies execFile, runs the real command.
+vi.mock("node:child_process", async importOriginal => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  const { promisify } = await import("node:util");
+  const execFile = vi.fn((file, args, options, callback) => {
+    if (file !== "/fixture/bsk") return actual.execFile(file, args, options, callback);
     processCalls.environments.push(options.env);
     queueMicrotask(() => callback(processCalls.running ? null : new Error("Not started"), JSON.stringify({
       daemon_version: "0.3.0", protocol_version: "1.3", browsers: [], sessions: [],
     })));
-  }),
-  spawn: vi.fn((_file, _args, options) => {
-    processCalls.environments.push(options.env); processCalls.running = true;
-    const child = Object.assign(new EventEmitter(), { exitCode: null as number | null, kill: () => {
-      child.exitCode = 0; processCalls.running = false; child.emit("exit", 0); return true;
-    } });
-    return child;
-  }),
-}));
+  });
+  Object.assign(execFile, { [promisify.custom]: (actual.execFile as unknown as Record<symbol, unknown>)[promisify.custom] });
+  return {
+    ...actual,
+    execFile,
+    spawn: vi.fn((file, args, options) => {
+      if (file !== "/fixture/bsk") return actual.spawn(file, args, options);
+      processCalls.environments.push(options.env); processCalls.running = true;
+      const child = Object.assign(new EventEmitter(), { exitCode: null as number | null, kill: () => {
+        child.exitCode = 0; processCalls.running = false; child.emit("exit", 0); return true;
+      } });
+      return child;
+    }),
+  };
+});
 import { BrowserRuntime } from "./browser-runtime.ts";
 
 const roots: string[] = [];

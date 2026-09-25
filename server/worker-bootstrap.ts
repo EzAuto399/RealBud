@@ -105,12 +105,55 @@ export function bootstrapStageLabel(stage: string): string {
   return "Finishing setup";
 }
 
+// Retry only when the server said "later" or the connection dropped. A hash
+// mismatch, size breach, redirect or any other 4xx is final: the pinned bytes
+// cannot change on a second request.
+const DOWNLOAD_ATTEMPTS = 3;
+const DOWNLOAD_BACKOFF_MS = [5_000, 15_000];
+const MAX_RETRY_AFTER_MS = 60_000;
+const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
+const CONNECTION_RESET = new Set(["ECONNRESET", "EPIPE", "ETIMEDOUT", "EAI_AGAIN", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"]);
+const CONNECTION_FAILED = "Couldn’t download Bud setup. Check your connection, then try again.";
+class RetryableDownload extends BootstrapError { constructor(message: string, readonly delayMs?: number) { super(message); } }
+function connectionReset(error: unknown): boolean {
+  for (let cause = error, depth = 0; cause instanceof Object && depth < 4; cause = (cause as { cause?: unknown }).cause, depth++)
+    if (CONNECTION_RESET.has(String((cause as { code?: unknown }).code))) return true;
+  return false;
+}
+function retryAfterMs(header: string | null): number | undefined {
+  if (!header) return undefined;
+  const ms = /^\s*\d+\s*$/.test(header) ? Number(header) * 1000 : Date.parse(header) - Date.now();
+  return ms > 0 ? Math.min(ms, MAX_RETRY_AFTER_MS) : undefined;
+}
+const pause = (ms: number, signal: AbortSignal) => new Promise<void>((resolve, reject) => {
+  if (signal.aborted) return reject(signal.reason);
+  const stop = () => { clearTimeout(timer); reject(signal.reason); };
+  const timer = setTimeout(() => { signal.removeEventListener("abort", stop); resolve(); }, ms);
+  signal.addEventListener("abort", stop, { once: true });
+});
+
 export async function downloadBootstrap(plan: { url: string; sha256: string }, signal: AbortSignal, request: typeof fetch = fetch): Promise<Uint8Array> {
+  for (let attempt = 1; ; attempt++) {
+    try { return await downloadBootstrapOnce(plan, signal, request); }
+    catch (error) {
+      if (!(error instanceof RetryableDownload) || attempt >= DOWNLOAD_ATTEMPTS) throw error;
+      await pause(error.delayMs ?? DOWNLOAD_BACKOFF_MS[attempt - 1], signal);
+    }
+  }
+}
+
+async function downloadBootstrapOnce(plan: { url: string; sha256: string }, signal: AbortSignal, request: typeof fetch): Promise<Uint8Array> {
   const bounded = AbortSignal.any([signal, AbortSignal.timeout(60_000)]);
   let response: Response;
   try { response = await request(plan.url, { signal: bounded, redirect: "error" }); }
-  catch { throw new BootstrapError("Couldn’t download Bud setup. Check your connection, then try again."); }
-  if (!response.ok || !response.body) throw new BootstrapError("Bud setup could not be downloaded. Try again shortly.");
+  catch (error) { throw !signal.aborted && connectionReset(error) ? new RetryableDownload(CONNECTION_FAILED) : new BootstrapError(CONNECTION_FAILED); }
+  if (!response.ok || !response.body) {
+    await response.body?.cancel().catch(() => {});
+    if (RETRYABLE_STATUS.has(response.status)) throw new RetryableDownload(response.status === 429
+      ? "The download server is busy (429). Try again in a few minutes."
+      : `The download server is unavailable (${response.status}). Try again in a few minutes.`, retryAfterMs(response.headers.get("retry-after")));
+    throw new BootstrapError("Bud setup could not be downloaded. Try again shortly.");
+  }
   const reader = response.body.getReader();
   const abortRead = () => { void reader.cancel().catch(() => {}); };
   bounded.addEventListener("abort", abortRead, { once: true });
@@ -126,6 +169,9 @@ export async function downloadBootstrap(plan: { url: string; sha256: string }, s
       chunks.push(value);
     }
     bounded.throwIfAborted();
+  } catch (error) {
+    if (!(error instanceof BootstrapError) && !signal.aborted && connectionReset(error)) throw new RetryableDownload(CONNECTION_FAILED);
+    throw error;
   } finally { bounded.removeEventListener("abort", abortRead); await reader.cancel().catch(() => {}); }
   const bytes = Buffer.concat(chunks);
   if (createHash("sha256").update(bytes).digest("hex") !== plan.sha256) throw new BootstrapError("The setup download didn’t match the verified version. Nothing from it was run. Try again.");
