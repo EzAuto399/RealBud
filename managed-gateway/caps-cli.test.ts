@@ -12,7 +12,7 @@ import type { ModelviaCaps, ModelviaClient, ModelviaCustomer } from './modelvia-
 const CUSTOMER = 'cus-fictional-office';
 const OPERATOR_SECRET = 'fictional-operator-secret-of-32-chars-never-printed';
 const OPERATOR_ENV = { REALBUD_MODELVIA_BASE_URL: 'https://api.modelvia.dev', REALBUD_MODELVIA_OPERATOR_SECRET: OPERATOR_SECRET,
-  REALBUD_MODELVIA_OPERATOR_SUBJECT: 'realbud-operator', REALBUD_MODELVIA_CLIENT_ID: 'realbud' };
+  REALBUD_MODELVIA_OPERATOR_SUBJECT: 'realbud-operator', REALBUD_MODELVIA_CLIENT_ID: 'realbud', REALBUD_MODELVIA_MODELS: 'fictional-model' };
 
 function harness() {
   const root = mkdtempSync(join(tmpdir(), 'realbud-caps-'));

@@ -21,7 +21,7 @@ type Row = Record<string, unknown>;
 /** A stand-in with Modelvia's `accounts.put` rules: exact fields, optimistic
  * version (0 creates), immutable bindings. `conflicts` makes the next N customer
  * writes lose to another writer, who bumps the stored version. Fictional only. */
-function fakeModelvia(options: { customers?: Row[]; projects?: Row[]; conflicts?: number } = {}) {
+function fakeModelvia(options: { customers?: Row[]; projects?: Row[]; conflicts?: number; billingMode?: 'client' | 'customer' | 'mixed' } = {}) {
   const customers = new Map<string, Row>((options.customers ?? []).map(row => [row.id as string, { ...row }]));
   const projects = new Map<string, Row>((options.projects ?? []).map(row => [row.id as string, { ...row }]));
   const calls: { method: string; path: string; body?: Row }[] = [];
@@ -38,6 +38,7 @@ function fakeModelvia(options: { customers?: Row[]; projects?: Row[]; conflicts?
   const fetchLike: HttpTransport = async (url, init) => {
     const path = new URL(url).pathname, body = init.body === undefined ? undefined : JSON.parse(String(init.body)) as Row;
     calls.push({ method: String(init.method), path, ...(body ? { body } : {}) });
+    if (path === '/v1/operator/clients' && init.method === 'GET') return Response.json({ accounts: [{ id: 'realbud', billingMode: options.billingMode ?? 'client' }] });
     if (path === '/v1/operator/customers' && init.method === 'GET') return Response.json({ accounts: [...customers.values()] });
     if (path === '/v1/operator/customers') {
       if (conflicts > 0) {
@@ -144,7 +145,7 @@ const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { while (cleanups.length) await cleanups.pop()!(); });
 const ENV = { REALBUD_GATEWAY_PORTAL_SECRET: PORTAL_SECRET, REALBUD_GATEWAY_OPERATOR_SECRET: OPERATOR_SECRET, REALBUD_ENABLE_PROVIDER: '1',
   REALBUD_MODELVIA_BASE_URL: 'https://api.modelvia.dev', REALBUD_MODELVIA_OPERATOR_SECRET: 'fictional-modelvia-operator-secret-32ch',
-  REALBUD_MODELVIA_OPERATOR_SUBJECT: 'realbud-provisioning', REALBUD_MODELVIA_CLIENT_ID: 'realbud' };
+  REALBUD_MODELVIA_OPERATOR_SUBJECT: 'realbud-provisioning', REALBUD_MODELVIA_CLIENT_ID: 'realbud', REALBUD_MODELVIA_MODELS: 'fictional-model' };
 const PROJECT: Row = { id: 'rb-install-one', name: 'RealBud installation install-one', active: true, monthlyCapNanoAud: '100000000000', maxConcurrent: 4,
   allowedModels: ['auto'], version: 1, clientId: 'realbud', customerId: CUSTOMER, environments: ['production'], requestCapNanoAud: '1000000000' };
 

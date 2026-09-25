@@ -155,7 +155,7 @@ test('/health carries no billing state and /ready reports the Modelvia operator 
 });
 
 test('modelviaOperatorState names presence only', ()=>{
-  const full={REALBUD_MODELVIA_BASE_URL:'https://api.modelvia.dev',REALBUD_MODELVIA_OPERATOR_SECRET:'fictional-operator-secret-of-32-chars',REALBUD_MODELVIA_OPERATOR_SUBJECT:'realbud-provisioning',REALBUD_MODELVIA_CLIENT_ID:'realbud'};
+  const full={REALBUD_MODELVIA_BASE_URL:'https://api.modelvia.dev',REALBUD_MODELVIA_OPERATOR_SECRET:'fictional-operator-secret-of-32-chars',REALBUD_MODELVIA_OPERATOR_SUBJECT:'realbud-provisioning',REALBUD_MODELVIA_CLIENT_ID:'realbud',REALBUD_MODELVIA_MODELS:'fictional-model'};
   assert.equal(modelviaOperatorState(full),'configured');
   for(const name of Object.keys(full)) assert.equal(modelviaOperatorState({...full,[name]:' '}),'missing',name);
   assert.equal(modelviaOperatorState({...full,REALBUD_MODELVIA_OPERATOR_SECRET:'short'}),'missing');

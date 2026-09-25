@@ -105,8 +105,9 @@ export interface ModelviaProjectInput {
 export interface ModelviaMintedKey { key: string; keyId: string; baseUrl: string }
 export interface ModelviaCaps { monthlyCapNanoAud: string; requestCapNanoAud: string; maxConcurrent: number }
 /** The office's customer account at Modelvia, read back only for what provisioning
- * needs: whether it may serve, and the caps an installation project copies. */
-export interface ModelviaCustomer { active: boolean; monthlyCapNanoAud: string; maxConcurrent: number }
+ * needs: whether it may serve, the caps an installation project copies, and the
+ * billing account it is bound to when the customer pays Modelvia itself. */
+export interface ModelviaCustomer { active: boolean; monthlyCapNanoAud: string; maxConcurrent: number; billingCompanyId?: string }
 /** A project as Modelvia stores it, read back for adoption and cap updates. */
 export interface ModelviaProjectRecord extends ModelviaCaps {
   projectId: string; clientId: string; customerId: string; environments: string[]; active: boolean; version: number;
@@ -178,7 +179,7 @@ export interface ModelviaCustomerAdmin {
   putCustomer(record: ModelviaCustomerRecord): Promise<ModelviaCustomerRecord>;
   /** Sets one office's AI access, creating its customer under this client when
    * Modelvia holds none. Re-reads once after a version conflict. */
-  setCustomerAccess(customerId: string, input: { name: string; access: OfficeAiAccess }): Promise<{ active: boolean; monthlyCapNanoAud: string; created: boolean }>;
+  setCustomerAccess(customerId: string, input: { name: string; access: OfficeAiAccess; billingCompanyId?: string }): Promise<{ active: boolean; monthlyCapNanoAud: string; created: boolean }>;
 }
 export type ModelviaOperatorClient = ModelviaClient & ModelviaCustomerAdmin;
 
@@ -274,7 +275,7 @@ export function modelviaKeyClient(options: {
           body: JSON.stringify(body) });
     } catch { throw new GatewayError('modelvia_unreachable', 502); }
     if (response.redirected) { await response.body?.cancel().catch(() => {}); throw new GatewayError('modelvia_redirected', 502); }
-    if (response.status === 409 && conflicts.length) {
+    if ((response.status === 409 || response.status === 404) && conflicts.length) {
       let code: unknown;
       try { code = ((await response.json()) as Record<string, unknown>).error; } catch { throw new GatewayError('modelvia_rejected', 502); }
       if (typeof code === 'string' && conflicts.includes(code)) return { conflict: code };
@@ -311,12 +312,29 @@ export function modelviaKeyClient(options: {
     requireThat((found[0] as Record<string, unknown>).clientId === options.clientId, 'modelvia_customer_foreign', 409);
     return storedCustomer(found[0]);
   };
+  /** Who pays for a customer created under this client, from Modelvia's own
+   * client record (`accounts.ts` put): `client` needs no binding; `customer`
+   * needs the office's billing account; `mixed` needs `payer` too, and RealBud
+   * offices pay for their own AI. */
+  const newCustomerBinding = async (billingCompanyId: string | undefined): Promise<Pick<ModelviaCustomerRecord, 'payer' | 'billingCompanyId'>> => {
+    const body = await read('/v1/operator/clients');
+    requireThat(record(body) && Array.isArray(body.accounts), 'modelvia_unreadable', 502);
+    const found = (body.accounts as unknown[]).filter(entry => record(entry) && entry.id === options.clientId) as Record<string, unknown>[];
+    requireThat(found.length === 1 && ['client', 'customer', 'mixed'].includes(String(found[0]!.billingMode)), 'modelvia_unreadable', 502);
+    const mode = found[0]!.billingMode;
+    if (mode === 'client') return {};
+    requireThat(typeof billingCompanyId === 'string' && ACCOUNT_ID.test(billingCompanyId), 'modelvia_billing_binding_required', 409);
+    return mode === 'mixed' ? { payer: 'customer', billingCompanyId } : { billingCompanyId };
+  };
   const putCustomer = async (input: ModelviaCustomerRecord): Promise<ModelviaCustomerRecord> => {
     let next: ModelviaCustomerRecord;
     try { next = storedCustomer(input); } catch { throw new GatewayError('invalid_modelvia_customer_record'); }
     // Never write, or create, a customer under another platform client.
     requireThat(next.clientId === options.clientId, 'modelvia_customer_foreign', 409);
-    const answer = await callRaw('/v1/operator/customers', next, ['account_version_conflict']);
+    const answer = await callRaw('/v1/operator/customers', next, ['account_version_conflict', 'billing_account_not_found', 'billing_account_already_bound']);
+    // The office's Modelvia billing account is an operator step at Modelvia.
+    if (answer.conflict === 'billing_account_not_found') throw new GatewayError('modelvia_billing_account_missing', 409);
+    if (answer.conflict === 'billing_account_already_bound') throw new GatewayError('modelvia_billing_account_bound', 409);
     if (answer.conflict) throw new GatewayError('modelvia_customer_version_conflict', 409);
     const saved = storedCustomer(answer.body);
     requireThat(saved.id === next.id && saved.clientId === next.clientId && saved.active === next.active
@@ -380,7 +398,9 @@ export function modelviaKeyClient(options: {
         && typeof c.maxConcurrent === 'number' && Number.isSafeInteger(c.maxConcurrent) && c.maxConcurrent >= 0 && c.maxConcurrent <= 100, 'modelvia_unreadable', 502);
       // A customer under another platform client is not this service's to provision into.
       if (c.clientId !== options.clientId) return null;
-      return { active: c.active as boolean, monthlyCapNanoAud: c.monthlyCapNanoAud as string, maxConcurrent: c.maxConcurrent as number };
+      requireThat(c.billingCompanyId === undefined || (typeof c.billingCompanyId === 'string' && ACCOUNT_ID.test(c.billingCompanyId)), 'modelvia_unreadable', 502);
+      return { active: c.active as boolean, monthlyCapNanoAud: c.monthlyCapNanoAud as string, maxConcurrent: c.maxConcurrent as number,
+        ...(typeof c.billingCompanyId === 'string' ? { billingCompanyId: c.billingCompanyId } : {}) };
     },
     async findProject(projectId) {
       requireThat(PATH_ID.test(projectId), 'invalid_modelvia_account');
@@ -457,7 +477,7 @@ export function modelviaKeyClient(options: {
         if (current && current.active === active && current.monthlyCapNanoAud === monthlyCapNanoAud) return { active, monthlyCapNanoAud, created: false };
         const next: ModelviaCustomerRecord = current ? { ...current, active, monthlyCapNanoAud }
           : { id: customerId, name, active, monthlyCapNanoAud, maxConcurrent: NEW_CUSTOMER_MAX_CONCURRENT,
-            allowedModels: [...options.allowedModels], version: 0, clientId: options.clientId };
+            allowedModels: [...options.allowedModels], version: 0, clientId: options.clientId, ...await newCustomerBinding(input.billingCompanyId) };
         try {
           const saved = await putCustomer(next);
           return { active: saved.active, monthlyCapNanoAud: saved.monthlyCapNanoAud, created: !current };

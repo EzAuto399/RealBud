@@ -40,7 +40,7 @@ The gateway runs on Fly (Sydney) from `deploy.sh` and `fly.toml`. The website ru
 | `REALBUD_MODELVIA_OPERATOR_SECRET` | yes | Modelvia operator HMAC secret, >=32 chars. A fresh two-minute bearer is minted per request; a static token would 401 |
 | `REALBUD_MODELVIA_OPERATOR_SUBJECT` | yes | operator subject in Modelvia's audit trail |
 | `REALBUD_MODELVIA_CLIENT_ID` | yes | RealBud's platform client id at Modelvia; only customers under it are provisioned into |
-| `REALBUD_MODELVIA_MODELS` | no | comma-separated `allowedModels` per project; default `auto` |
+| `REALBUD_MODELVIA_MODELS` | yes | comma-separated Modelvia route ids for each customer's and project's `allowedModels`. No default: Modelvia matches these against its real route ids, so `auto` (a value a request may send) is refused as an entry. Unset or `auto` answers `provisioning_unconfigured:REALBUD_MODELVIA_MODELS` on `/ready` |
 | `REALBUD_MODELVIA_ENVIRONMENT` | no | `production` (default) or `development` |
 | `REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD` | no | per-request cap on each installation project, a positive integer in nanoAUD; default `1000000000` (A$1). Clamped to the customer's monthly cap. A malformed value answers `provisioning_unconfigured:REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD` |
 | `REALBUD_PAYMENT_MODE` | fly.toml | care-fee collection: `local` (default; invoices close and read, checkout answers 503 `payment_provider_unselected`), `sandbox` or `live` |
@@ -69,7 +69,7 @@ POST /v1/portal/installations/revoke
 `provision` checks, in order:
 
 1. The service entitlement.
-2. The Modelvia customer, a read only.
+2. The Modelvia customer, a read only. It must be bound to this office: a customer-paid customer's `billingCompanyId` must be the `companyId`; a client-paid customer must not be recorded for another office, nor this office for another customer, by the office AI access route. Otherwise 403 `modelvia_customer_not_bound`, before anything is created. A client-paid office never set through that route has no binding to check; set its access once to record one.
 3. It journals the attempt.
 4. It creates or reuses the company's Composio project. The `ak_` key stays in the secret store.
 5. It admits the `rbc_` connector credential by hash.
@@ -104,7 +104,7 @@ POST /v1/operator/offices/ai-access          Authorization: Bearer <operator tok
 
 - **Authority.** An operator token (`operator-token.ts`): claims `{subject: "operator:<email>", role: "realbud_operator", iat, exp}`, at most five minutes long, signed with `REALBUD_GATEWAY_OPERATOR_SECRET`. A portal token is never accepted here, and an operator token is never accepted on a portal route.
 - **Modes.** `default` is A$200 (`200000000000` nanoAUD). `custom` is 1 nanoAUD to A$10,000 (`10000000000000`). `disabled` sets the customer inactive and leaves its cap. Anything else is 400 `invalid_ai_access`.
-- **Customer.** If Modelvia holds no customer with that id, one is created under `REALBUD_MODELVIA_CLIENT_ID` with `name`, concurrency 2 and the `REALBUD_MODELVIA_MODELS` models. An existing customer keeps its name, concurrency, models and bindings; only `active` and the cap change. A customer under another platform client is 409 `modelvia_customer_foreign`, and nothing is written. A stale version is re-read and retried once, then 409 `modelvia_customer_version_conflict`.
+- **Customer.** If Modelvia holds no customer with that id, one is created under `REALBUD_MODELVIA_CLIENT_ID` with `name`, concurrency 2 and the `REALBUD_MODELVIA_MODELS` models. Its billing binding follows the client's `billingMode` at Modelvia: `client` needs none; `customer` binds `billingCompanyId` to the office's `companyId`; `mixed` also sets `payer: "customer"`. That Modelvia billing account must exist first (409 `modelvia_billing_account_missing`; one already bound elsewhere is 409 `modelvia_billing_account_bound`). The route also records the office↔customer binding provisioning checks; a customer already bound to another office is 409 `modelvia_customer_bound_elsewhere`. An existing customer keeps its name, concurrency, models and bindings; only `active` and the cap change. A customer under another platform client is 409 `modelvia_customer_foreign`, and nothing is written. A stale version is re-read and retried once, then 409 `modelvia_customer_version_conflict`.
 - **Projects.** After `default` or `custom`, the new cap is pushed to the company's ready installation projects, as `caps-cli.ts apply` does. `disabled` pushes nothing: Modelvia refuses serving for an inactive customer.
 - **Checks and audit.** The company must have an entitlement record (403 `tenant_unavailable` otherwise). Requests are serialized per company. Two ledger lines, `office_ai_access_requested` (before any Modelvia call) and `office_ai_access_set`, carry the operator subject, company, mode, cap and project results. They never carry the Modelvia customer id or a secret.
 - **Errors.** 401 `operator_unauthenticated`; 503 `operator_unconfigured` (operator secret missing or equal to the portal secret, Modelvia operator variables missing, or `REALBUD_ENABLE_PROVIDER` not `1`); 409 `modelvia_customer_foreign`; 400 `invalid_ai_access`.

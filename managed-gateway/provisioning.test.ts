@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fixture } from './testing.ts';
 import { createGatewayServer } from './http.ts';
 import { validateConnectorDevices } from './connectors.ts';
-import { composeProvisioning, DEFAULT_REQUEST_CAP_NANO_AUD, fileSecretStore, InstallationProvisioning, PENDING_RESUME_AFTER_MS, projectCaps, PROVISIONING_ENV, SPEND_CAP_LABEL_MAX, spendCapLabel, type ProvisioningDescriptor } from './provisioning.ts';
+import { bindOfficeCustomer, composeProvisioning, DEFAULT_REQUEST_CAP_NANO_AUD, fileSecretStore, InstallationProvisioning, PENDING_RESUME_AFTER_MS, projectCaps, PROVISIONING_ENV, SPEND_CAP_LABEL_MAX, spendCapLabel, type ProvisioningDescriptor } from './provisioning.ts';
 import type { ComposioOrgClient, HttpTransport } from './composio-org.ts';
 import type { ModelviaCaps, ModelviaClient, ModelviaCustomer, ModelviaProjectInput } from './modelvia-keys.ts';
 import { GatewayError } from './contracts.ts';
@@ -348,6 +348,115 @@ test('of two concurrent resumes exactly one proceeds', async () => {
   } finally { h.close(); }
 });
 
+test('a lost reply after ready is redelivered: the one key is rotated and the connector credential replaced, nothing new created', async () => {
+  const h = harness(); try {
+    // The secret-bearing reply is delivered here and then lost on the way to the desktop.
+    const lost = (await h.make().provision(h.f.owner, h.request)).provisioning;
+    const lostHash = h.devices()[0]!.tokenHash;
+    // A plain repeat still delivers nothing and rotates nothing.
+    assert.equal((await h.make().provision(h.f.owner, h.request)).provisioning.model.key, undefined);
+    assert.deepEqual(h.modelvia.rotated, []);
+
+    const again = (await h.make().provision(h.f.owner, { ...h.request, redeliver: true })).provisioning;
+    assert.deepEqual(h.modelvia.rotated, [lost.model.keyId]);
+    assert.deepEqual(live(h), ['fedcba9876543210']);
+    assert.equal(again.model.key, synthetic('fedcba9876543210'));
+    assert.equal(again.model.keyId, 'fedcba9876543210');
+    assert.match(again.connector.credential!, /^rbc_[a-f0-9]{64}$/);
+    assert.notEqual(again.connector.credential, lost.connector.credential);
+    // Same device, new hash: the undelivered credential no longer authenticates.
+    assert.equal(h.devices().length, 1);
+    assert.notEqual(h.devices()[0]!.tokenHash, lostHash);
+    assert.equal(h.modelvia.minted.length, 1); assert.equal(h.modelvia.projects.length, 1);
+    assert.deepEqual(h.org.created, [`realbud-${h.f.tenant.companyId}`]);
+    assert.deepEqual({ ...again, connector: { ...again.connector, credential: undefined }, model: { ...again.model, key: undefined } },
+      { ...lost, connector: { ...lost.connector, credential: undefined }, model: { ...lost.model, keyId: 'fedcba9876543210', key: undefined } });
+    // The stored record follows the rotation, so a later revoke reaches the live key.
+    const repeat = (await h.make().provision(h.f.owner, h.request)).provisioning;
+    assert.equal(repeat.model.keyId, 'fedcba9876543210'); assert.equal(repeat.model.key, undefined);
+    const events = h.f.ledger.db.all<{ kind: string; body: string }>('SELECT kind,body FROM events');
+    const redelivered = events.filter(row => row.kind === 'installation_credentials_redelivered');
+    assert.equal(redelivered.length, 1);
+    assert.deepEqual(JSON.parse(redelivered[0]!.body), { installationId: 'install-one', modelKeyId: 'fedcba9876543210', modelKeyRotatedFrom: '0123456789abcdef' });
+    const everything = events.map(row => row.body).join('\n') + h.f.ledger.db.get<{ body: string }>('SELECT body FROM installation_provisioning')!.body;
+    for (const secret of [PROJECT_KEY, ORG_KEY, again.model.key!, again.connector.credential!, lost.model.key!]) assert.ok(!everything.includes(secret));
+    assert.ok(!JSON.stringify(again).includes('ak_'));
+    await h.make().revoke(h.f.owner, { companyId: h.f.tenant.companyId, installationId: 'install-one' });
+    assert.deepEqual(h.modelvia.revoked, ['fedcba9876543210']);
+  } finally { h.close(); }
+});
+
+test('of two concurrent redeliveries exactly one rotates; another office, a revoked installation and a bad flag get nothing', async () => {
+  const h = harness(); try {
+    await h.make().provision(h.f.owner, h.request);
+    const ask = () => h.make().provision(h.f.owner, { ...h.request, redeliver: true });
+    const outcomes = await Promise.allSettled([ask(), ask()]);
+    assert.deepEqual(outcomes.map(outcome => outcome.status).sort(), ['fulfilled', 'rejected']);
+    assert.match(String((outcomes.find(outcome => outcome.status === 'rejected') as PromiseRejectedResult).reason), /installation_provisioning_in_progress/);
+    assert.deepEqual(h.modelvia.rotated, ['0123456789abcdef']);
+    assert.equal(live(h).length, 1);
+
+    await assert.rejects(() => h.make().provision({ ...h.f.owner, companyId: 'company-other' }, { ...h.request, redeliver: true }), /company_scope_mismatch/);
+    await assert.rejects(() => h.make().provision(h.f.owner, { ...h.request, redeliver: false }), /invalid_fields/);
+    await h.make().revoke(h.f.owner, { companyId: h.f.tenant.companyId, installationId: 'install-one' });
+    await assert.rejects(ask, /installation_revoked/);
+    assert.deepEqual(h.modelvia.rotated, ['0123456789abcdef']);
+  } finally { h.close(); }
+});
+
+test('a redelivery whose rotate reply is lost is taken over later and rotates the replacement', async () => {
+  const h = harness(); try {
+    await h.make().provision(h.f.owner, h.request);
+    h.modelvia.lose = 'rotate';
+    await assert.rejects(() => h.make().provision(h.f.owner, { ...h.request, redeliver: true }), /modelvia_unreachable/);
+    await assert.rejects(() => h.make().provision(h.f.owner, { ...h.request, redeliver: true }), /installation_provisioning_in_progress/);
+    later(h);
+    const again = (await h.make().provision(h.f.owner, { ...h.request, redeliver: true })).provisioning;
+    assert.deepEqual(h.modelvia.rotated, ['0123456789abcdef', 'fedcba9876543210']);
+    assert.deepEqual(live(h), ['00000000000000a3']);
+    assert.equal(again.model.keyId, '00000000000000a3');
+  } finally { h.close(); }
+});
+
+test('a redelivery overtaken by a revoke revokes its fresh key and delivers nothing', async () => {
+  const h = harness(); try {
+    await h.make().provision(h.f.owner, h.request);
+    const racing = h.make({ modelvia: { ...h.modelviaClient, async rotate(keyId) {
+      const rotated = await h.modelviaClient.rotate(keyId);
+      await h.make().revoke(h.f.owner, { companyId: h.f.tenant.companyId, installationId: 'install-one' });
+      return rotated;
+    } } });
+    await assert.rejects(() => racing.provision(h.f.owner, { ...h.request, redeliver: true }), /installation_provisioning_superseded/);
+    // The revoke reached the recorded (already rotated-away) key; the fresh one is revoked here.
+    assert.deepEqual(h.modelvia.revoked, ['0123456789abcdef', 'fedcba9876543210']);
+    assert.equal(h.devices()[0]!.active, false);
+  } finally { h.close(); }
+});
+
+test('an office can only provision into a Modelvia customer bound to it', async () => {
+  // Customer-paid: Modelvia's billing account names the office.
+  const other = harness(); try {
+    other.modelvia.customer = { active: true, ...CUSTOMER_CAPS, billingCompanyId: 'company-other' };
+    await assert.rejects(() => other.make().provision(other.f.owner, other.request), (error: unknown) =>
+      error instanceof GatewayError && error.code === 'modelvia_customer_not_bound' && error.status === 403);
+    assert.equal(other.modelvia.projects.length, 0); assert.equal(existsSync(other.registry), false);
+    other.modelvia.customer = { active: true, ...CUSTOMER_CAPS, billingCompanyId: other.f.tenant.companyId };
+    assert.ok((await other.make().provision(other.f.owner, other.request)).provisioning.model.key);
+  } finally { other.close(); }
+  // Client-paid: the operator binding decides, both ways.
+  const bound = harness(); try {
+    bindOfficeCustomer(bound.f.ledger, 'company-other', CUSTOMER);
+    await assert.rejects(() => bound.make().provision(bound.f.owner, bound.request), /modelvia_customer_not_bound/);
+    bindOfficeCustomer(bound.f.ledger, 'company-other', 'cus-other-office');
+    bindOfficeCustomer(bound.f.ledger, bound.f.tenant.companyId, 'cus-fictional-elsewhere');
+    await assert.rejects(() => bound.make().provision(bound.f.owner, bound.request), /modelvia_customer_not_bound/);
+    assert.throws(() => bindOfficeCustomer(bound.f.ledger, bound.f.tenant.companyId, 'cus-other-office'), /modelvia_customer_bound_elsewhere/);
+    bindOfficeCustomer(bound.f.ledger, bound.f.tenant.companyId, CUSTOMER);
+    assert.ok((await bound.make().provision(bound.f.owner, bound.request)).provisioning.model.key);
+    assert.equal(bound.modelvia.projects.length, 1);
+  } finally { bound.close(); }
+});
+
 test('a Modelvia customer that is missing, inactive, another client\'s or zero-capped is refused before any effect', async () => {
   for (const customer of [null, { active: false, ...CUSTOMER_CAPS }, { active: true, monthlyCapNanoAud: '0', maxConcurrent: 3 }, { active: true, monthlyCapNanoAud: '70000000000', maxConcurrent: 0 }]) {
     const h = harness(); try {
@@ -396,7 +505,7 @@ test('the request cap defaults to A$1, takes an override, and never exceeds the 
       REALBUD_ENABLE_PROVIDER: '1', REALBUD_GATEWAY_SECRETS_DIR: h.secretsDir, REALBUD_GATEWAY_CONNECTOR_REGISTRY: h.registry,
       REALBUD_GATEWAY_PUBLIC_ORIGIN: 'https://managed.example.invalid', REALBUD_COMPOSIO_ORG_KEY: 'fictional-org-key', REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL: 'ac-fictional-readonly',
       REALBUD_MODELVIA_BASE_URL: 'https://api.modelvia.dev', REALBUD_MODELVIA_OPERATOR_SECRET: 'fictional-operator-secret-of-32-chars',
-      REALBUD_MODELVIA_OPERATOR_SUBJECT: 'realbud-provisioning', REALBUD_MODELVIA_CLIENT_ID: 'realbud', REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD: '2000000000',
+      REALBUD_MODELVIA_OPERATOR_SUBJECT: 'realbud-provisioning', REALBUD_MODELVIA_CLIENT_ID: 'realbud', REALBUD_MODELVIA_MODELS: 'fictional-model', REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD: '2000000000',
     };
     const never: HttpTransport = async () => { throw new Error('the resolver must not call out'); };
     for (const bad of ['0', '-1', '1.5', '1e9', 'one', '0100']) {
@@ -576,7 +685,7 @@ test('the env resolver fails closed, names only the missing variable, and never 
       REALBUD_COMPOSIO_ORG_KEY: secret, REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL: 'ac-fictional-readonly',
       REALBUD_MODELVIA_BASE_URL: 'https://api.modelvia.dev', REALBUD_MODELVIA_OPERATOR_SECRET: 'fictional-operator-secret-of-32-chars',
       REALBUD_MODELVIA_OPERATOR_SUBJECT: 'realbud-provisioning',
-      REALBUD_MODELVIA_CLIENT_ID: 'realbud',
+      REALBUD_MODELVIA_CLIENT_ID: 'realbud', REALBUD_MODELVIA_MODELS: 'fictional-model',
     };
     const never: HttpTransport = async () => { throw new Error('the resolver must not call out'); };
     const resolve = (env: NodeJS.ProcessEnv) => composeProvisioning({ env, ledger: h.f.ledger, fetch: never });
@@ -596,6 +705,9 @@ test('the env resolver fails closed, names only the missing variable, and never 
       assert.match(result.unavailable, /^provisioning_unconfigured:/);
       assert.ok(!result.unavailable.includes(secret), `reason leaked a value: ${result.unavailable}`);
     }
+    // No model default: `auto` is a request value, never an allowlist entry.
+    for (const models of [undefined, 'auto', 'fictional-model, auto', 'AUTO'])
+      assert.deepEqual(resolve({ ...full, REALBUD_MODELVIA_MODELS: models }), { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_MODELS' });
     const composed = resolve(full);
     assert.ok('provisioning' in composed);
     // Composition alone makes no provider call; the transport above would throw.
