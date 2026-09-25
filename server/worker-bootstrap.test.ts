@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapInvocation, bootstrapPending, bootstrapPlan, bootstrapStageEnv, downloadBootstrap, finishWorkerBootstrap, runBootstrapStage, runWorkerBootstrap } from "./worker-bootstrap.ts";
 import { HERMES_PIN } from "./hermes-pin.ts";
 import { HERMES_RECOMMENDED, HERMES_RELEASES } from "./hermes-releases.ts";
@@ -86,7 +86,7 @@ describe("verified setup download", () => {
   it("rejects modified, oversized and unavailable downloads", async () => {
     await expect(downloadBootstrap(plan, controller().signal, async () => new Response("changed"))).rejects.toThrow(/verified version/);
     await expect(downloadBootstrap(plan, controller().signal, async () => new Response(new Uint8Array(1_000_001)))).rejects.toThrow(/size/);
-    await expect(downloadBootstrap(plan, controller().signal, async () => new Response("", { status: 503 }))).rejects.toThrow(/downloaded/);
+    await expect(downloadBootstrap(plan, controller().signal, async () => new Response("", { status: 404 }))).rejects.toThrow(/downloaded/);
   });
   it("stops a stalled body when cancelled", async () => {
     const abort = controller();
@@ -96,6 +96,84 @@ describe("verified setup download", () => {
     abort.abort();
     await expect(result).rejects.toThrow();
     expect(cancelled).toHaveBeenCalled();
+  });
+});
+
+describe("setup download retry", () => {
+  const status = (code: number, headers?: Record<string, string>) => new Response("", { status: code, headers });
+  const reset = () => Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error("fictional reset"), { code: "ECONNRESET" }) });
+  const sequence = (...steps: Array<Response | Error>) => vi.fn(async () => {
+    const next = steps.shift() ?? new Response(bytes);
+    if (next instanceof Error) throw next;
+    return next;
+  });
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] }); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("retries a rate limit after the backoff and still verifies the bytes", async () => {
+    const request = sequence(status(429));
+    const result = downloadBootstrap(plan, controller().signal, request);
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(request).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(result).resolves.toEqual(bytes);
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+  it("retries a transient server error and a connection reset", async () => {
+    const request = sequence(status(503), reset());
+    const result = downloadBootstrap(plan, controller().signal, request);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(request).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(15_000);
+    await expect(result).resolves.toEqual(bytes);
+    expect(request).toHaveBeenCalledTimes(3);
+  });
+  it("honours Retry-After and caps it at one minute", async () => {
+    const request = sequence(status(429, { "retry-after": "2" }), status(503, { "retry-after": "3600" }));
+    const result = downloadBootstrap(plan, controller().signal, request);
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(request).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(request).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(request).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(result).resolves.toEqual(bytes);
+    expect(request).toHaveBeenCalledTimes(3);
+  });
+  it("gives up after three attempts and names the status", async () => {
+    const request = vi.fn(async () => status(429));
+    const settled = expect(downloadBootstrap(plan, controller().signal, request)).rejects.toThrow("The download server is busy (429). Try again in a few minutes.");
+    await vi.advanceTimersByTimeAsync(20_000);
+    await settled;
+    expect(request).toHaveBeenCalledTimes(3);
+    const unavailable = vi.fn(async () => status(502));
+    const failed = expect(downloadBootstrap(plan, controller().signal, unavailable)).rejects.toThrow("The download server is unavailable (502). Try again in a few minutes.");
+    await vi.advanceTimersByTimeAsync(20_000);
+    await failed;
+    expect(unavailable).toHaveBeenCalledTimes(3);
+  });
+  it("never retries a hash mismatch, another client error or a refused redirect", async () => {
+    for (const [response, reason] of [[new Response("changed"), /verified version/], [status(404), /downloaded/], [status(403), /downloaded/]] as const) {
+      const request = vi.fn(async () => response);
+      await expect(downloadBootstrap(plan, controller().signal, request)).rejects.toThrow(reason);
+      expect(request).toHaveBeenCalledTimes(1);
+    }
+    const redirect = vi.fn(async () => { throw new TypeError("fictional redirect refused"); });
+    await expect(downloadBootstrap(plan, controller().signal, redirect)).rejects.toThrow(/connection/);
+    expect(redirect).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("stops during the wait when setup is cancelled", async () => {
+    const abort = controller();
+    const request = vi.fn(async () => status(429, { "retry-after": "60" }));
+    const settled = expect(downloadBootstrap(plan, abort.signal, request)).rejects.toMatchObject({ name: "AbortError" });
+    await vi.advanceTimersByTimeAsync(1_000);
+    abort.abort();
+    await settled;
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(request).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -72,7 +72,7 @@ Run the steps in order. Every step depends on the ones before it.
 
 ## C. The Windows computer (installed-device proof)
 
-11. **Install the build from main.** Use the NSIS installer from the Package Windows run for the merged main commit, not the older `67d51881` build. Uninstall the old app first.
+11. **Install the build from main.** Use the NSIS installer from the Package Windows run for the merged main commit (5d162956 or later), not the older `67d51881` build. Uninstall the old app first.
     - Check: the window fits inside the screen at 800×600, and welcome completes.
 12. **Service administrator.** Support provisions `service-admin.json` on this computer:
     ```bash
@@ -99,6 +99,15 @@ Run the steps in order. Every step depends on the ones before it.
 19. **Revoke and re-link:** remove the computer on realbud.app.
     - Check: the desktop shows unlinked and the Modelvia key stops working.
     - Link again, and check a new key arrives.
+
+## Known failures to watch for
+
+- **Backup export fails with "Finish the current work before continuing this backup operation."** This is the generic 409; its cause is still unknown. Capture the reason sentence, how long the export ran (the budget is now 120 s), and the one `Private backup failure {…}` line from `%APPDATA%\RealBud\logs\office-service\stdout-stderr.log`. Seen on the ARM VM ([Windows QA handoff](WINDOWS-QA-HANDOFF-2026-09-24.md)).
+- **"The office service did not start" while the service comes up late.** Capture a screenshot, the time, and whether the desk opened on its own afterwards. Keep the logs private. Seen on the ARM VM ([external test lab](EXTERNAL-TEST-LAB-2026-09-24.md)). Fixed in `67d51881`; the late start has not been deliberately re-run on a device.
+- **The window's right edge is cut off at 800×600.** Capture a screenshot and the display resolution and scale. Seen on the ARM VM ([Windows QA handoff](WINDOWS-QA-HANDOFF-2026-09-24.md)). Fixed in `815e5a41` and `248115d9`; not yet checked on a device.
+- **Bud setup stops at the download.** The upstream download returned HTTP 429 (rate limit). Capture the exact message and the time, retry once after a minute, and record both attempts. Seen in Windows CI ([platform candidate](PLATFORM-CANDIDATE-2026-09-23.md), [Windows QA handoff](WINDOWS-QA-HANDOFF-2026-09-24.md)).
+- **Google warns that the app is unverified during Gmail sign-in.** Capture a screenshot of the warning and the app name, with no account details. Continue only if the account owner accepts it for this run; otherwise record step 16 as `not run`, with the warning. Listed as open in the [gates register](GATES-2026-09-22.md); not yet seen on a device.
+- **SmartScreen warns about the unsigned installer.** Capture the exact prompt text and the choice made. The installer has no Authenticode signature: the lab recorded `NotSigned` ([external test lab](EXTERNAL-TEST-LAB-2026-09-24.md)). The prompt itself has not been seen yet.
 
 ## Stop conditions
 
