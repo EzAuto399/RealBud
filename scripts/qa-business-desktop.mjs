@@ -41,8 +41,10 @@ async function stopService() {
 }
 async function openOffice(page) {
   await page.getByRole('button', { name: /^You\b/ }).first().click();
-  const section = page.locator('details').filter({ has: page.getByText('This office', { exact: true }) }).first();
-  if (await section.count()) await section.evaluate(node => { node.open = true; });
+  // The You page mounts after the click; wait for the section rather than skipping it.
+  const summary = page.locator('summary').filter({ has: page.getByText('This office', { exact: true }) }).first();
+  await summary.waitFor();
+  await summary.evaluate(node => { node.parentElement.open = true; });
   await page.getByRole('heading', { name: 'Local office collaboration', exact: true }).waitFor();
 }
 async function expand(page, text) {
@@ -87,6 +89,17 @@ try {
   const signedIn = await fetch(origin + '/api/company/sign-in', { method: 'POST', headers: { 'content-type': 'application/json', 'x-realbud-session': session }, body: JSON.stringify({ loginName: 'practice.owner', password: 'Fictional-preview-password-2026' }) });
   assert.equal(signedIn.status, 200);
   const memberToken = (await signedIn.json()).memberToken;
+  // First run is a server receipt (/api/onboarding), not a browser flag: walk the
+  // same profile -> office-rules -> complete stages the welcome screens record.
+  const onboardingHeaders = { 'content-type': 'application/json', 'x-realbud-session': session, 'x-realbud-member-session': memberToken };
+  let onboarding = await (await fetch(origin + '/api/onboarding', { headers: onboardingHeaders })).json();
+  for (const stage of ['office-rules', 'complete']) {
+    if (onboarding.stage === 'complete') break;
+    const saved = await fetch(origin + '/api/onboarding', { method: 'PUT', headers: onboardingHeaders, body: JSON.stringify({ expectedScope: onboarding.scope, expectedRevision: onboarding.revision, stage }) });
+    onboarding = await saved.json();
+    assert.equal(saved.status, 200, `Onboarding ${stage} failed: ${JSON.stringify(onboarding)}`);
+  }
+  assert.equal(onboarding.stage, 'complete', 'Server must record first run as complete');
   delete env.REALBUD_SERVICE_CONTROL_TOKEN;
   delete env.REALBUD_DESK_KEY;
   nativeChild = spawn(executable, [`--user-data-dir=${userData}`, '--remote-debugging-port=0'], { env, cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -106,7 +119,7 @@ try {
   if (!page) page = await context.waitForEvent('page', { timeout: 30_000 });
   page.setDefaultTimeout(15_000);
   await page.waitForURL(origin + '/**');
-  const init = token => { localStorage.setItem('realbud.first-run-done', '1'); sessionStorage.setItem('realbud.company-member-session', token); };
+  const init = token => { sessionStorage.setItem('realbud.company-member-session', token); };
   await page.context().addInitScript(init, memberToken);
   await page.reload();
   page.on('pageerror', error => errors.push(error.message));
