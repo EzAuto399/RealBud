@@ -11,8 +11,10 @@ import {
   browserKey,
   classifyBrowserAction,
   consequentialKind,
+  accountMarkerShown,
   legacyBrowserGrant,
   type BrowserObservation,
+  type BrowserPortalControls,
 } from "./browser-authority.ts";
 import { privateTempRoot, removeFixture } from "./testing/private-fixture.ts";
 import { parseBrowserTaskGrant, type BrowserActionClass, type BrowserTaskGrant } from "../shared/browser-task.ts";
@@ -421,6 +423,174 @@ describe("facts from the helper's observation (VOM)", () => {
     // The same amount written twice is one amount.
     expect(draft('Amount: $1,240.00\n@e1 textbox "Amount" value="1240.00"').unconfirmed).toEqual([]);
     expect(draft('@e1 textbox "Amount" value="1,240.00"').unconfirmed).toEqual(["currency"]);
+  });
+});
+
+describe("a portal pack's declared read-safe controls", () => {
+  const PORTAL: BrowserPortalControls = {
+    origin: "https://portal.example", readSafe: ["Search", "Status", "Next", "Previous"], menu: ["Process", "Bank reconciliation"], pagination: ["Next", "Previous"], pager: { role: "navigation", name: "Pagination" },
+    consequential: ["Save", "Process Receipts", "Finalise", "Reconcile", "Post", "Disburse", "Pay"], signInHosts: ["signin.portal.example"],
+  };
+  const task = explicitTask({ route: "ask", sites: ["https://portal.example", "https://signin.portal.example"], actions: ["read", "navigate", "click", "fill", "keys"] });
+  const vom = (lines: string[], url = "https://portal.example/reconciliation/bank") => page(["@vom 1", "@view 1280x900", "@layers 1 focus=L1", "L1 page", ...lines].join("\n"), url);
+  /** A bank reconciliation page: a search bar and a pager beside the grid, the page's record-changing controls elsewhere in main. */
+  const BANK_LINES = [
+    '  RootWebArea "Bank reconciliation"',
+    "    banner", '      @e20 button "FICT1"',
+    '    navigation "Main"', '      @e1 link "Process"', '        @e2 link "Bank reconciliation"', '      @e3 link "Settings"',
+    "    main", '      heading "Bank reconciliation"', '      StaticText "Statement balance: 1,185.00"',
+    '      region "Unreconciled items"',
+    '        search "Filter"', '          @e4 textbox "Search" value=""',
+    '        table "Results"', "          row", '            columnheader "Description"', "          row", '            cell "Fictional deposit"',
+    '        navigation "Pagination"', '          @e5 button "Previous" [disabled]', '          @e21 link "1"', '          @e6 button "Next"',
+    '      @e7 button "Save"', '      @e8 button "Process Receipts"', '      @e9 button "Finalise"', '      @e10 button "Cancel"',
+  ];
+  const BANK_VOM = vom(BANK_LINES);
+  const use = (tool: string, args: Record<string, unknown>, observation = BANK_VOM, portal: BrowserPortalControls | null = PORTAL, grant = task) =>
+    authorizeBrowserAction(grant, observation, tool, args, portal ? { portal } : {});
+  /** Relaxed to a read: a routine click or fill. (Off a bank page the global rule still makes Next a routine submit, which a read grant lacks.) */
+  const routine = (auth: ReturnType<typeof use>) => auth.classification.class === "routine" && auth.classification.action !== "submit";
+
+  it("reads the search bar, a pager beside the grid and the menu as reading, on the pack's own origin", () => {
+    // Without the pack's declaration the global bank heuristic still decides.
+    expect(use("browser_fill", { ref: "@e4", value: "deposit" }, BANK_VOM, null)).toMatchObject({ decision: "deny", classification: { class: "consequential", kind: "pay" } });
+    expect(use("browser_click_semantic", { ref: "@e6" }, BANK_VOM, null)).toMatchObject({ classification: { class: "consequential", kind: "pay" } });
+    expect(use("browser_click_semantic", { ref: "@e1" }, BANK_VOM, null)).toMatchObject({ decision: "ask", once: true, classification: { class: "unknown" } });
+    expect(use("browser_fill", { ref: "@e4", value: "deposit" })).toMatchObject({ decision: "ask", once: false, classification: { class: "routine", action: "fill" } });
+    expect(use("browser_press", { ref: "@e4", key: "Tab" })).toMatchObject({ classification: { class: "routine", action: "keys" } });
+    expect(use("browser_press", { ref: "@e4", key: "Enter" })).toMatchObject({ classification: { class: "routine", action: "keys" } });
+    expect(use("browser_click_semantic", { ref: "@e6" })).toMatchObject({ decision: "ask", once: false, classification: { class: "routine", action: "click" }, fence: { surface: "portal-read" } });
+    expect(use("browser_press", { ref: "@e6", key: "Enter" })).toMatchObject({ classification: { class: "routine", action: "click" } });
+    expect(use("browser_click_semantic", { ref: "@e1" })).toMatchObject({ classification: { class: "routine", action: "click" } });
+    expect(use("browser_click_semantic", { ref: "@e2" })).toMatchObject({ classification: { class: "routine", action: "click" } });
+    // A menu link the pack does not list is not relaxed.
+    expect(use("browser_click_semantic", { ref: "@e3" })).toMatchObject({ decision: "ask", once: true, classification: { class: "unknown" } });
+  });
+
+  it("keeps Save, Process, Finalise and Cancel on the same bank page approval-only", () => {
+    expect(use("browser_click_semantic", { ref: "@e7" })).toMatchObject({ decision: "deny", classification: { class: "consequential", kind: "pay" } });
+    for (const ref of ["@e8", "@e9"]) {
+      expect(use("browser_click_semantic", { ref })).toMatchObject({ decision: "ask", once: true, classification: { class: "unknown" } });
+      expect(authorizeBrowserAction(task, BANK_VOM, "browser_click_semantic", { ref }, { portal: PORTAL, rules: [{ key: "portal:read:portal.example", decision: "allow" }] }).decision).not.toBe("allow");
+    }
+    expect(use("browser_click_semantic", { ref: "@e10" })).toMatchObject({ classification: { class: "consequential", kind: "account-change" } });
+    // A pack-consequential name is never routine, even off a bank page.
+    expect(use("browser_click_semantic", { ref: "@e1" }, vom(["  main", '    @e1 button "Finalise"'], "https://portal.example/work"))).toMatchObject({ decision: "ask", once: true, classification: { class: "unknown" } });
+  });
+
+  it("never relaxes Next beside a consequential control, outside a pager by a grid, or in an unnamed form", () => {
+    const bank = (lines: string[]) => vom(['  RootWebArea "Bank reconciliation"', "    main", '      heading "Bank reconciliation"',
+      '      table "Results"', "        row", '          cell "Fictional deposit"', ...lines]);
+    // Next loose in main (no pager group) beside a pack or global consequential control.
+    for (const other of ['button "Finalise"', 'button "Post"', 'button "Disburse"', 'button "Delete batch"', 'button "Issue notice"', 'button "Close account"']) {
+      expect(routine(use("browser_click_semantic", { ref: "@e1" }, bank(['      @e1 button "Next"', `      @e2 ${other}`]))), other).toBe(false);
+    }
+    // Next loose in main with nothing else is still not a pager beside a grid.
+    expect(routine(use("browser_click_semantic", { ref: "@e1" }, bank(['      @e1 button "Next"'])))).toBe(false);
+    // A pager group that holds a consequential control.
+    expect(routine(use("browser_click_semantic", { ref: "@e1" }, bank(['      navigation "Pagination"', '        @e1 button "Next"', '        @e2 button "Reconcile"'])))).toBe(false);
+    // A pager group with no table or grid beside it.
+    expect(routine(use("browser_click_semantic", { ref: "@e1" }, vom(['  RootWebArea "Bank reconciliation"', "    main", '      navigation "Pagination"', '        @e1 button "Next"'])))).toBe(false);
+    // Chromium shows an unnamed <form> as a plain generic node: Next and Save share it and nothing names a form.
+    expect(routine(use("browser_click_semantic", { ref: "@e1" }, bank(["      generic", '        @e1 button "Next"', '        @e2 button "Save"'])))).toBe(false);
+    // With no form around it, a page that shows a payment form anywhere keeps the global rule, even for a proper pager.
+    const payingPage = bank(['      navigation "Pagination"', '        @e1 button "Next"', "      generic", '        StaticText "Payee: Fictional Plumbing"', '        StaticText "Amount: AUD 480.00"']);
+    expect(routine(use("browser_click_semantic", { ref: "@e1" }, payingPage))).toBe(false);
+    // A search field beside Reconcile in main (no search bar) is not relaxed either.
+    expect(use("browser_fill", { ref: "@e1", value: "x" }, bank(['      @e1 textbox "Search" value=""', '      @e2 button "Reconcile"']))).toMatchObject({ decision: "deny" });
+    // Next inside a named payment form stays the payment's step.
+    const payForm = vom(["  main", '    form "Transfer"', '      StaticText "Payee: Fictional Plumbing"', '      StaticText "Amount: AUD 480.00"',
+      '      table "Lines"', "        row", '          cell "Levy"', '      navigation "Pagination"', '        @e1 button "Next"'], "https://portal.example/bank/transfer");
+    expect(routine(use("browser_click_semantic", { ref: "@e1" }, payForm))).toBe(false);
+  });
+
+  it("never relaxes a wizard's Next, a pager under an open confirm, or Next in main beside Reconcile", () => {
+    const grid = ['      table "Preview"', "        row", '          cell "Fictional deposit"'];
+    const withRegion = (lines: string[]) => vom(['  RootWebArea "Bank reconciliation"', "    main", '      region "Items"', ...lines.map(line => `  ${line}`)]);
+    // A: a "Wizard" group holding Next and Finalise, beside a table.
+    const wizard = withRegion([...grid, '      group "Wizard"', '        @e1 button "Next"', '        @e2 button "Finalise"']);
+    expect(routine(use("browser_click_semantic", { ref: "@e1" }, wizard))).toBe(false);
+    // A as reported: main > [table "Preview", group "Wizard" > Next, Finalise beside the group], no region.
+    const reported = vom(['  RootWebArea "Wizard"', "    main", ...grid, '      group "Wizard"', '        @e1 button "Next"', '      @e2 button "Finalise"'], "https://portal.example/import");
+    expect(routine(use("browser_click_semantic", { ref: "@e1" }, reported))).toBe(false);
+    // A fieldset shown as a group: Next beside a field is a wizard step, not a pager.
+    const fieldset = withRegion([...grid, '      group "Step 2 of 3"', '        @e1 textbox "Amount" value=""', '        @e2 button "Next"']);
+    expect(routine(use("browser_click_semantic", { ref: "@e2" }, fieldset))).toBe(false);
+    // A real pager (page numbers, arrows, page size) stays read-safe.
+    const pager = withRegion([...grid, '      navigation "Pagination"', '        @e1 button "Previous"', '        @e2 link "1"', '        @e3 link "2"', '        @e4 button "Next"',
+      '        @e5 combobox "Page size" value="25"']);
+    expect(use("browser_click_semantic", { ref: "@e4" }, pager)).toMatchObject({ classification: { class: "routine", action: "click" } });
+    // E: an alertdialog layered above that same valid pager.
+    const confirm = vom(['  RootWebArea "Bank reconciliation"', "    main", '      region "Items"', ...[...grid, '      navigation "Pagination"', '        @e3 link "1"', '        @e4 button "Next"'].map(line => `  ${line}`),
+      '    alertdialog "Finalise period?"', '      StaticText "This closes the period."', '      @e9 button "OK"']);
+    expect(routine(use("browser_click_semantic", { ref: "@e4" }, confirm))).toBe(false);
+    // A second layer that has focus is the same.
+    const layered = page(["@vom 1", "@layers 2 focus=L2", "L1 page", "  main", '    region "Items"', ...grid.map(line => `  ${line}`), '      navigation "Pagination"', '        @e3 link "1"', '        @e4 button "Next"',
+      "L2 popup", '  @e9 button "OK"'].join("\n"), "https://portal.example/reconciliation/bank");
+    expect(routine(use("browser_click_semantic", { ref: "@e4" }, layered))).toBe(false);
+    // I2: main > region "Step 2 of 3" > [table "Preview", group "Footer" > Next], sibling region "Footer actions" > Process Receipts.
+    const i2 = vom(['  RootWebArea "Bulk receipting"', "    main", '      region "Step 2 of 3"', '        table "Preview"', "          row", '            cell "Fictional deposit"',
+      '        group "Footer"', '          @e1 button "Next"', '      region "Footer actions"', '        @e2 button "Process Receipts"'], "https://portal.example/importbanklink");
+    expect(routine(use("browser_click_semantic", { ref: "@e1" }, i2))).toBe(false);
+    // A "Wizard" group with Previous + Next beside table "Preview", Process Receipts in a sibling region: arrows alone never make a pager.
+    const arrows = vom(['  RootWebArea "Bulk receipting"', "    main", '      region "Step 2 of 3"', '        table "Preview"', "          row", '            cell "Fictional deposit"',
+      '        group "Wizard"', '          @e1 button "Previous"', '          @e2 button "Next"', '      region "Footer actions"', '        @e3 button "Process Receipts"'], "https://portal.example/importbanklink");
+    expect(routine(use("browser_click_semantic", { ref: "@e2" }, arrows))).toBe(false);
+    // A lone Next in a navigation group beside a table, nothing consequential anywhere: still not a pager.
+    const lone = vom(['  RootWebArea "Bank reconciliation"', "    main", '      region "Items"', ...grid.map(line => `  ${line}`), '        navigation "Pagination"', '          @e1 button "Next"']);
+    expect(routine(use("browser_click_semantic", { ref: "@e1" }, lone))).toBe(false);
+    // The pure pager (page numbers + Next beside a table, nothing consequential anywhere) stays read-safe.
+    const pure = vom(['  RootWebArea "Bank reconciliation"', "    main", ...grid, '      navigation "Pagination"', '        @e1 link "1"', '        @e2 link "2"', '        @e3 button "Next"']);
+    expect(use("browser_click_semantic", { ref: "@e3" }, pure)).toMatchObject({ classification: { class: "routine", action: "click" } });
+    // Without a declared pager nothing is a read-safe pager, whatever its shape.
+    const { pager: _pager, ...undeclared } = PORTAL;
+    expect(routine(use("browser_click_semantic", { ref: "@e3" }, pure, undeclared))).toBe(false);
+    // A numbered step bar has a pager's shape but is not the declared pager.
+    const steps = vom(['  RootWebArea "Bank reconciliation"', "    main", ...grid, '      group "Steps"', '        @e1 button "1"', '        @e2 button "2"', '        @e3 button "3"',
+      '        @e4 button "Previous"', '        @e5 button "Next"']);
+    expect(routine(use("browser_click_semantic", { ref: "@e5" }, steps))).toBe(false);
+    // A valid pager straight in main (no region of its own) beside Reconcile: main is its landmark.
+    const inMain = vom(['  RootWebArea "Bank reconciliation"', "    main", ...grid, '      navigation "Pagination"', '        @e3 link "1"', '        @e4 button "Next"', '      @e5 button "Reconcile"']);
+    expect(routine(use("browser_click_semantic", { ref: "@e4" }, inMain))).toBe(false);
+  });
+
+  it("checks the account marker only where the portal shows it", () => {
+    const bound = explicitTask({ route: "ask", sites: ["https://portal.example"], actions: ["read", "click"], browser: { id: null, accountMarker: "FICT1" } });
+    const marked = { ...PORTAL, accountMarker: { landmark: "banner", role: "button" } };
+    expect(use("browser_click_semantic", { ref: "@e6" }, BANK_VOM, marked, bound)).toMatchObject({ classification: { class: "routine" } });
+    // The banner shows FICT2; FICT1 appears only in an account-switcher list and a table cell.
+    const switched = vom(BANK_LINES.map(line => line.replace('@e20 button "FICT1"', '@e20 button "FICT2"'))
+      .concat(['    complementary "Switch business"', '      list', '        listitem "FICT1"', '      table "Businesses"', "        row", '          cell "FICT1"']));
+    expect(use("browser_click_semantic", { ref: "@e6" }, switched, marked, bound)).toMatchObject({ decision: "deny", classification: { class: "out-of-scope" } });
+  });
+
+  it("does not relax a read-safe label on another origin, another scheme or subdomain, or without the helper's tree", () => {
+    const both = explicitTask({ route: "ask", sites: ["https://portal.example", "https://other-portal.example"], actions: ["read", "navigate", "click", "fill", "keys"] });
+    const elsewhere = { ...BANK_VOM, url: "https://other-portal.example/reconciliation/bank" };
+    expect(use("browser_click_semantic", { ref: "@e6" }, elsewhere, PORTAL, both)).toMatchObject({ classification: { class: "consequential", kind: "pay" } });
+    expect(use("browser_fill", { ref: "@e4", value: "x" }, elsewhere, PORTAL, both)).toMatchObject({ decision: "deny" });
+    for (const origin of ["http://portal.example", "https://app.portal.example"]) {
+      expect(use("browser_click_semantic", { ref: "@e6" }, BANK_VOM, { ...PORTAL, origin })).toMatchObject({ classification: { class: "consequential", kind: "pay" } });
+    }
+    expect(use("browser_click_semantic", { ref: "@e1" }, page('Bank reconciliation\n@e1 button "Next"'))).toMatchObject({ classification: { class: "consequential", kind: "pay" } });
+  });
+
+  it("only waits on the pack's sign-in host: nothing is typed, pressed or opened there", () => {
+    const signIn = page('@vom 1\nL1 page\n  main\n    @e1 textbox "Email Address"\n    @e2 button "Next"', "https://signin.portal.example/authorize");
+    expect(use("browser_read", { tab_id: 1 }, signIn)).toMatchObject({ decision: "ask", classification: { class: "routine", action: "read" } });
+    expect(use("browser_fill", { ref: "@e1", value: "x" }, signIn)).toMatchObject({ decision: "deny", classification: { class: "credential" } });
+    expect(use("browser_click_semantic", { ref: "@e2" }, signIn)).toMatchObject({ decision: "deny", classification: { class: "credential" } });
+    expect(use("browser_navigate", { url: "https://signin.portal.example/other" }, signIn)).toMatchObject({ decision: "deny" });
+  });
+
+  it("requires the account marker as a whole name, not a substring", () => {
+    const bound = explicitTask({ route: "ask", sites: ["https://portal.example"], actions: ["read", "click"], browser: { id: null, accountMarker: "FICT1" } });
+    expect(use("browser_click_semantic", { ref: "@e6" }, BANK_VOM, PORTAL, bound)).toMatchObject({ classification: { class: "routine" } });
+    const otherBusiness = vom(BANK_LINES.map(line => line.replace('"FICT1"', '"FICT10"')));
+    expect(use("browser_click_semantic", { ref: "@e6" }, otherBusiness, PORTAL, bound)).toMatchObject({ decision: "deny", classification: { class: "out-of-scope" } });
+    expect(accountMarkerShown("Signed in to FICT10 today", "FICT1")).toBe(false);
+    expect(accountMarkerShown('@e1 button "FICT1"', "FICT1")).toBe(true);
+    expect(accountMarkerShown("  FICT1  ", "FICT1")).toBe(true);
   });
 });
 

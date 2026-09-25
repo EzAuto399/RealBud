@@ -181,13 +181,152 @@ export function browserStep(tool: string): BrowserStep | null {
   return Object.hasOwn(STEPS, name) ? STEPS[name] : null;
 }
 
-export function classifyBrowserAction(grant: BrowserTaskGrant, observation: BrowserObservation | null, tool: string, args: Args): BrowserClassification {
+// ── a portal pack's declared controls ────────────────────────────────────
+/** A workflow pack's controls for its portal, supplied by the host from the
+ * pack's recipes document (never by a model or a page). They apply only on the
+ * pack's exact origin, and only when the task's grant includes that origin.
+ * There, a declared read-safe control (a grid filter, Next, a view choice) is
+ * read even on a page that mentions a bank; the pack's consequential names are
+ * never routine; and its sign-in hosts are for waiting only. The global tables
+ * decide everything else, unchanged. */
+export interface BrowserPortalControls {
+  origin: string;
+  readSafe: readonly string[];
+  /** Menu link names, read-safe only inside the page's navigation landmark. */
+  menu: readonly string[];
+  /** Pager names (Next, Previous): read-safe only in a pager group beside a table or grid. */
+  pagination: readonly string[];
+  /** The portal's pager group exactly (role and accessible name). Without it no pager is read-safe. */
+  pager?: { role: string; name: string };
+  consequential: readonly string[];
+  /** Where the portal shows the selected account (landmark and role); the grant's marker must be exactly there. */
+  accountMarker?: { landmark: string; role: string };
+  signInHosts: readonly string[];
+}
+const SIGN_IN_WAIT = "This is the site's sign-in page. The person signs in here; Bud only waits and reads the page afterwards.";
+const PACK_CONSEQUENTIAL = "This portal marks this control as one that changes records, so Bud asks once before using it.";
+function portalControlsFor(grant: BrowserTaskGrant, portal: BrowserPortalControls | undefined, current: URL): BrowserPortalControls | null {
+  if (!portal) return null;
+  let origin: string;
+  try { origin = new URL(portal.origin).origin; } catch { return null; }
+  return origin === current.origin && jobBrowserUrl(`${origin}/`, grant.sites) ? portal : null;
+}
+/** The verified account label is shown as a whole: a visible node's name or value in
+ * the helper's tree, or a whole line or quoted name in plain text. "FICT1" is not
+ * shown by "FICT10" or by a sentence that mentions it. */
+export function accountMarkerShown(text: string, marker: string): boolean {
+  const wanted = marker.trim();
+  if (!wanted) return false;
+  if (isVomObservation(text)) {
+    return parseVom(text).nodes.some(node => !hiddenNode(node) && !ancestorsOf(node).some(hiddenNode) && (node.name?.trim() === wanted || node.value?.trim() === wanted));
+  }
+  return text.split("\n").some(line => line.trim() === wanted ||
+    [...line.matchAll(/"((?:[^"\\]|\\.)*)"/g)].some(quoted => unescapeVom(quoted[1]).trim() === wanted));
+}
+/** On a declared portal the account marker counts only where the pack says it is shown:
+ * the first node of its role in the page's first such landmark (the business switcher in the banner). */
+function portalMarkerShown(text: string, where: { landmark: string; role: string }, marker: string): boolean {
+  const { nodes } = parseVom(text);
+  const landmark = nodes.find(node => node.role === where.landmark.toLowerCase() && !hiddenNode(node));
+  const shown = landmark ? descendants(landmark).find(node => node.role === where.role.toLowerCase() && !hiddenNode(node)) : undefined;
+  return shown?.name?.trim() === marker.trim() && marker.trim() !== "";
+}
+const FORM_ROLE = new Set(["form", "dialog", "alertdialog"]);
+/** Groups that hold their own controls: a filter or search bar, a pager, a menu. */
+const GROUP_ROLE = new Set(["navigation", "search", "toolbar", "group"]);
+const descendants = (node: VomNode): VomNode[] => node.children.flatMap(child => [child, ...descendants(child)]);
+const nodeLines = (nodes: VomNode[]) => nodes.map(node => `${node.role} "${node.name ?? ""}"${node.value !== null ? ` value="${node.value}"` : ""}`).join("\n");
+/** The observed control is one of the portal's declared read-safe controls and
+ * the part of the page it acts in cannot change anything:
+ * - Next/Previous only inside a pager group beside (or inside) a table or grid;
+ *   a menu name only inside the navigation landmark; a filter by its name;
+ * - its scope (its form or dialog; else its filter, pager or menu group; else
+ *   its region or main; else the page) holds no control the pack or the global
+ *   table calls consequential, and shows no pay, sign, send, notice, deletion or
+ *   account-change form;
+ * - with no form or dialog around it (Chromium shows an unnamed form as a plain
+ *   generic node), the whole page shows none of those either. */
+function readSafeControl(portal: BrowserPortalControls, text: string, ref: string, label: string): boolean {
+  const name = controlName(label);
+  if (portal.consequential.includes(name) || consequentialKind(label) || !isVomObservation(text)) return false;
+  const { nodes } = parseVom(text);
+  const targets = nodes.filter(node => node.ref === ref);
+  if (targets.length !== 1 || targets[0].name !== name) return false;
+  const target = targets[0]; const ancestors = ancestorsOf(target);
+  if (hiddenNode(target) || ancestors.some(hiddenNode)) return false;
+  const form = ancestors.find(node => FORM_ROLE.has(node.role));
+  // Another open dialog or layer above the page (a "Finalise period?" confirm) means the page is not just being read.
+  if (nodes.some(node => FORM_ROLE.has(node.role) && node !== form && !ancestors.includes(node) && !hiddenNode(node) && !ancestorsOf(node).some(hiddenNode))) return false;
+  const { focus } = parseVom(text);
+  const layer = ancestors.find(node => node.role === "layer");
+  if (focus && layer && layer.name !== focus) return false;
+  const group = ancestors.find(node => GROUP_ROLE.has(node.role) && (!form || ancestorsOf(node).includes(form)));
+  let allowed: boolean; let menuLink = false;
+  if (portal.pagination.includes(name)) {
+    // A pager holds only pager controls: a wizard's Next beside Finalise, or a fieldset with fields, is not one.
+    const others = group ? descendants(group).filter(node => node.ref !== null && node !== target && !hiddenNode(node)) : [];
+    const pagerOnly = group !== undefined && others.every(node => pagerControl(portal, node));
+    // Arrows alone are a wizard's steps (a wizard has Previous and Next too): a pager also shows a page number or a page-size choice.
+    const pagerShape = others.some(node => pageNumberOrSize(node));
+    // The group must be exactly the pack's declared pager (a numbered step bar has the same shape); none declared, no pager.
+    const declaredPager = portal.pager !== undefined && group !== undefined && group.role === portal.pager.role.toLowerCase() && group.name === portal.pager.name;
+    allowed = (target.role === "button" || target.role === "link") && declaredPager && group !== undefined && pagerOnly && pagerShape &&
+      (ancestorsOf(group).some(node => TABLE_ROLE.has(node.role)) || (group.parent?.children ?? []).some(sibling => sibling !== group && TABLE_ROLE.has(sibling.role)));
+  } else if (portal.menu.includes(name) && (target.role === "link" || target.role === "menuitem") && group?.role === "navigation") {
+    allowed = true; menuLink = true;
+  } else allowed = portal.readSafe.includes(name) && !portal.pagination.includes(name);
+  if (!allowed) return false;
+  const changes = (scope: VomNode) => {
+    const inside = descendants(scope);
+    return inside.some(node => node !== target && !hiddenNode(node) && (node.ref !== null || FORM_ROLE.has(node.role)) && consequentialName(portal, node.name ?? "")) ||
+      pageConsequentialKind(nodeLines(inside)) !== null;
+  };
+  if (form) return !changes(form);
+  // No form or dialog around it (Chromium shows an unnamed form as a plain node): its group, its
+  // landmark (region or main; the navigation landmark for a menu link) and the whole page's wording must be clear.
+  // A whole-page control-name check is NOT applied: every mapped list screen carries its own
+  // consequential button (Notice, Reconcile), so it would refuse all paging (see the report).
+  const root = ancestors.at(-1) ?? target;
+  const landmark = ancestors.find(node => REGION_ROLE.has(node.role) || (menuLink && node === group)) ?? root;
+  return !(group && changes(group)) && !changes(landmark) && pageConsequentialKind(nodeLines(nodes)) === null;
+}
+/** A pack or global consequential label, as a whole phrase anywhere in the name ("Finalise period?"). */
+function consequentialName(portal: BrowserPortalControls, name: string): boolean {
+  return consequentialKind(name) !== null || portal.consequential.some(label =>
+    new RegExp(`(?:^|[^\\p{L}\\p{N}])${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:$|[^\\p{L}\\p{N}])`, "iu").test(name));
+}
+const PAGER_WORDS = /^(?:first|last|next|previous|prev|«|»|‹|›|<|>|<<|>>|\.\.\.|…|\d{1,5}|page \d{1,5}|go to page \d{1,5})$/i;
+const PAGE_NUMBER = /^(?:\d{1,5}|page \d{1,5}|go to page \d{1,5})$/i;
+const PAGE_SIZE = /^(?:page size|per page|rows per page|items per page|show)$/i;
+function pageNumberOrSize(node: VomNode): boolean {
+  const name = (node.name ?? "").trim();
+  return ((node.role === "button" || node.role === "link") && PAGE_NUMBER.test(name)) || ((node.role === "combobox" || node.role === "listbox") && PAGE_SIZE.test(name));
+}
+/** Pager controls: the pack's pager names, page numbers and arrows, and a page-size choice. */
+function pagerControl(portal: BrowserPortalControls, node: VomNode): boolean {
+  const name = (node.name ?? "").trim();
+  if (portal.pagination.includes(name)) return true;
+  if ((node.role === "button" || node.role === "link") && PAGER_WORDS.test(name)) return true;
+  return (node.role === "combobox" || node.role === "listbox") && /^(?:page size|per page|rows per page|items per page|show)$/i.test(name);
+}
+
+export function classifyBrowserAction(grant: BrowserTaskGrant, observation: BrowserObservation | null, tool: string, args: Args, portal?: BrowserPortalControls): BrowserClassification {
   const step = browserStep(tool);
   if (!step) return { class: "out-of-scope", step: null, reason: "This browser tool or its arguments are not available." };
   if (step === "list" || step === "release") return { class: "routine", step, action: "read" };
   const current = observation ? jobBrowserUrl(observation.url, grant.sites) : null;
   if (!current) return { class: "out-of-scope", step, reason: "That tab is outside this job or is no longer borrowed. Stop and choose the intended page again." };
   if (step === "borrow" || step === "read") return { class: "routine", step, action: "read" };
+  // A pack's sign-in host is in the grant only so Bud can wait there: nothing is typed, pressed or opened on it.
+  if (portal?.signInHosts.some(host => host.toLowerCase() === current.hostname.toLowerCase())) return { class: "credential", step, reason: SIGN_IN_WAIT };
+  const declared = portalControlsFor(grant, portal, current);
+  const classification = classifyStep(grant, observation!, current, step, args, declared);
+  if (declared && classification.class === "routine" && classification.label && declared.consequential.includes(controlName(classification.label))) {
+    return { class: "unknown", step, label: classification.label, reason: PACK_CONSEQUENTIAL };
+  }
+  return classification;
+}
+function classifyStep(grant: BrowserTaskGrant, observation: BrowserObservation, current: URL, step: BrowserStep, args: Args, portal: BrowserPortalControls | null): BrowserClassification {
   if (step === "navigate") {
     const target = jobBrowserUrl(args.url, grant.sites);
     if (!target || target.origin !== current.origin || target.hash) return { class: "out-of-scope", step, reason: NAVIGATE_OUT };
@@ -201,11 +340,14 @@ export function classifyBrowserAction(grant: BrowserTaskGrant, observation: Brow
   const ref = typeof args.ref === "string" ? args.ref : "";
   const label = /^@e\d+$/.test(ref) ? observationRefs(text).get(ref) : undefined;
   if (!label) return { class: "out-of-scope", step, reason: STALE_CONTROL };
-  if (grant.browser.accountMarker && !text.includes(grant.browser.accountMarker)) {
+  const markerShown = (marker: string) => portal?.accountMarker && isVomObservation(text) ? portalMarkerShown(text, portal.accountMarker, marker) : accountMarkerShown(text, marker);
+  if (grant.browser.accountMarker && !markerShown(grant.browser.accountMarker)) {
     return { class: "out-of-scope", step, reason: "The verified account label is no longer visible. Check the account and page before continuing." };
   }
   if (CREDENTIAL_FIELD.test(label) || SIGN_IN_CONTROL.test(label)) return { class: "credential", step, reason: CREDENTIAL };
-  const financial = FINANCIAL_PAGE.test(`${text} ${observation?.url ?? ""}`);
+  // A declared read-safe control reads on its portal, even on a page that mentions a bank.
+  const readSafe = portal !== null && (step === "fill" || step === "click" || step === "press" || step === "select") && readSafeControl(portal, text, ref, label);
+  const financial = !readSafe && FINANCIAL_PAGE.test(`${text} ${observation.url}`);
   const kind = consequentialKind(label);
   if (step === "fill") {
     if (typeof args.value !== "string" || args.value.length > 2000 || /[\x00-\x1f]/.test(args.value)) return { class: "out-of-scope", step, reason: "Use one ordinary field value without key presses." };
@@ -213,7 +355,7 @@ export function classifyBrowserAction(grant: BrowserTaskGrant, observation: Brow
     if (financial) return { class: "consequential", step, kind: "pay", label, reason: FINANCIAL_FILL };
     return { class: "routine", step, action: "fill", label };
   }
-  const control: Control = { step, label, text, financial, kind };
+  const control: Control = { step, label, text, financial, kind, readSafe };
   if (step === "press") {
     const key = browserKey(args.key);
     return key ? pressKey(control, key) : { class: "out-of-scope", step, reason: KEY_SPEC };
@@ -233,11 +375,13 @@ export function classifyBrowserAction(grant: BrowserTaskGrant, observation: Brow
   return pressControl(control);
 }
 
-type Control = { step: BrowserStep; label: string; text: string; financial: boolean; kind: BrowserConsequentialKind | null };
+type Control = { step: BrowserStep; label: string; text: string; financial: boolean; kind: BrowserConsequentialKind | null; readSafe?: boolean };
 const roleOf = (label: string) => label.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
 /** A control being pressed: a click, or Enter or Space on a button or link. */
-function pressControl({ step, label, text, financial, kind }: Control): BrowserClassification {
+function pressControl({ step, label, text, financial, kind, readSafe }: Control): BrowserClassification {
   if (kind) return { class: "consequential", step, kind, label, reason: ASK_ONCE };
+  // A portal's declared read-safe control (Next, Search) reads: it is not a confirming step.
+  if (readSafe) return { class: "routine", step, action: "click", label };
   const affirmative = SUBMIT_CONTROL.test(label) || AFFIRMATIVE.test(label);
   if (financial) {
     // On a bank page, a confirming step may move money; reading stays routine.
@@ -658,6 +802,8 @@ export interface BrowserAuthorityOptions {
   now?: number;
   /** Browser actions this grant has already dispatched. */
   used?: number;
+  /** The task's portal pack controls, from the host. */
+  portal?: BrowserPortalControls;
 }
 
 function ruleAllows(rules: BrowserAuthorityOptions["rules"], surface: PortalRuleSurface, site: string, url: URL): boolean {
@@ -670,7 +816,7 @@ const missingAction = (action: BrowserActionClass) =>
 
 export function authorizeBrowserAction(grant: BrowserTaskGrant, observation: BrowserObservation | null, tool: string, args: Args, options: BrowserAuthorityOptions = {}): BrowserAuthorization {
   const now = options.now ?? Date.now();
-  const classification = classifyBrowserAction(grant, observation, tool, args);
+  const classification = classifyBrowserAction(grant, observation, tool, args, options.portal);
   const deny = (reason: string, draft: BrowserApprovalDraft | null = null): BrowserAuthorization => ({ decision: "deny", classification, reason, draft });
   if (classification.class === "credential" || classification.class === "out-of-scope") return deny(classification.reason);
   if (classification.step === "list" || classification.step === "release") return { decision: "allow", classification, fence: null, note: "" };

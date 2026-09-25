@@ -27,6 +27,7 @@ import {
   type BrowserApprovalStore,
   type BrowserAuthorization,
   type BrowserClassification,
+  type BrowserPortalControls,
   type BrowserFenceProjection,
 } from "./browser-authority.ts";
 import { loadRules } from "./rules.ts";
@@ -163,6 +164,8 @@ export async function startBrowserBroker(options: {
   now?: () => number;
   /** RealBud's private folder for this task's downloads and granted uploads. Never supplied by a model. */
   workroom?: string;
+  /** A workflow pack's declared controls for its portal (server/portal-recipe-runner.ts), from the host; never from a model. */
+  portal?: BrowserPortalControls;
 }): Promise<BrowserBroker> {
   const runtime = options.runtime ?? browserRuntime;
   const operations = options.operations ?? connectedAppOperations;
@@ -172,6 +175,7 @@ export async function startBrowserBroker(options: {
   const owner = `${options.runId}:${randomUUID()}`;
   const token = randomBytes(32).toString("hex");
   const context = structuredClone(options.context);
+  const portal = options.portal ? structuredClone(options.portal) : undefined;
   const checkpoint = options.checkpoint ? structuredClone(options.checkpoint) : undefined;
   // The grant is the only authority: there is no fallback to the job's capabilities here.
   if (!options.grant) throw problem("This browser work has no saved permission, so nothing was opened. Start it again.");
@@ -203,7 +207,7 @@ export async function startBrowserBroker(options: {
     for (const listener of decisionListeners) { try { listener({ threadId: options.threadId, runId: options.runId, entry, ...(action ? { action } : {}) }); } catch { /* evidence display is best effort */ } }
   };
   const authorize = (tool: string, url: string | null, args: BrowserJson, page?: string): BrowserAuthorization =>
-    authorizeBrowserAction(grant, url === null ? null : { url, ...(page !== undefined ? { text: page } : {}) }, tool, args, { rules: rules(), now: now(), used });
+    authorizeBrowserAction(grant, url === null ? null : { url, ...(page !== undefined ? { text: page } : {}) }, tool, args, { rules: rules(), now: now(), used, ...(portal ? { portal } : {}) });
   const ensure = async (signal: AbortSignal) => {
     check(signal);
     if (checkpoint && (await runtime.status()).selectedBrowserId !== checkpoint.browserId) throw problem("The browser profile changed after sign-in. Check the intended page again before continuing.");

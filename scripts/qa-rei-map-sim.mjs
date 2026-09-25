@@ -96,6 +96,11 @@ for (const [name, r] of Object.entries(recipes)) {
 if (/\/Users\/|C:\\|password\s*[:=]|ak_[A-Za-z0-9]{8}/.test(mapText)) fail("map contains a machine path or credential-shaped text");
 const noSteps = Object.entries(recipes).filter(([, r]) => r.tier.includes("S") && !r.steps);
 for (const [n] of noSteps) fail(`${n}: claims S without steps`);
+// The runner's machine-readable recipes (recipes.json) must be generated from this map.
+{
+  const { reiRecipesDrift } = await import("./rei-recipes.mjs");
+  if ((await reiRecipesDrift(MAP)).drifted) fail("recipes.json drifted from the website map; run node scripts/rei-recipes.mjs --write and review");
+}
 
 // ── 2. fictional mock ────────────────────────────────────────────────────────
 const ORIGIN = "https://rei-mock.fictional.test";
