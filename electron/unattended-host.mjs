@@ -115,3 +115,26 @@ export function secondInstanceAction({ serviceMode, incomingServiceMode, hasWind
   if (serviceMode === true) return "hand-over";
   return "open-window";
 }
+
+/**
+ * A second launch focuses the open window. If that window is showing the
+ * office but has gone blank or stopped answering (a renderer left behind by a
+ * busy or restarted service), focusing alone leaves the person staring at an
+ * empty window until they know to press Ctrl+R. Reload it instead.
+ *
+ * Only the office origin is reloaded: a fallback or start-problem page is
+ * already a message, and another origin is never ours to touch.
+ *
+ * @param {object} state
+ * @param {string} state.url The window's current URL.
+ * @param {string} state.officeOrigin `http://127.0.0.1:<port>` the window should load.
+ * @param {{ answered: boolean, textLength: number } } state.probe The renderer's reply to a short check.
+ * @returns {"keep" | "reload"}
+ */
+export function focusedWindowAction({ url, officeOrigin, probe }) {
+  let origin = "";
+  try { origin = new URL(url).origin; } catch { return "keep"; }
+  if (origin !== officeOrigin) return "keep";
+  if (!probe.answered) return "reload";
+  return probe.textLength > 0 ? "keep" : "reload";
+}

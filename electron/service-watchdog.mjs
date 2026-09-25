@@ -22,6 +22,12 @@
 // start or a hang; starting beside it is the exact duplicate this design exists
 // to prevent, so that case is left to the person and the existing banner.
 //
+// Confirmed first: a service busy with slow work (a long Recheck, a backup
+// pause) can miss a 1.5 s health probe while its process is alive, and the
+// recorded handle may be an older, ended start. So an outage counts only after
+// `confirmChecks` consecutive failed checks spanning at least `confirmMs`; one
+// answer in between starts the count again.
+//
 // Bounded: 5 s, 30 s, then 2 min between attempts (a minimum; the check runs on
 // a fixed tick), and no more than 5 attempts in any hour. After that the banner
 // and its Start button are in charge again.
@@ -31,6 +37,10 @@ export const WATCHDOG_DEFAULTS = Object.freeze({
   tickMs: 10_000,
   /** Minimum wait before the 1st, 2nd and every later attempt in the budget window. */
   backoffMs: Object.freeze([5_000, 30_000, 120_000]),
+  /** Consecutive failed checks before an outage is believed. */
+  confirmChecks: 3,
+  /** And the least time those failed checks must span. */
+  confirmMs: 45_000,
   /** Attempts allowed inside `windowMs` before automatic restarts pause. */
   maxRestarts: 5,
   windowMs: 60 * 60_000,
@@ -52,13 +62,14 @@ export const WATCHDOG_DEFAULTS = Object.freeze({
 /** @typedef {object} WatchdogHistory
  * @property {readonly number[]} attempts Start times of automatic restart attempts.
  * @property {number | null} downSince When the current outage was first observed.
+ * @property {number} [downChecks] Consecutive checks that found it down.
  */
 
 /** @typedef {'none' | 'wait' | 'adopt' | 'restart'} WatchdogAction */
-/** @typedef {'quitting' | 'stopped-deliberately' | 'start-in-flight' | 'healthy' | 'answering-elsewhere' | 'no-record' | 'process-alive' | 'recorded-port-answers' | 'exhausted' | 'backoff' | 'service-down'} WatchdogReason */
+/** @typedef {'quitting' | 'stopped-deliberately' | 'start-in-flight' | 'healthy' | 'answering-elsewhere' | 'no-record' | 'process-alive' | 'recorded-port-answers' | 'exhausted' | 'confirming' | 'backoff' | 'service-down'} WatchdogReason */
 
 /** @type {WatchdogHistory} */
-export const EMPTY_WATCHDOG_HISTORY = Object.freeze({ attempts: Object.freeze([]), downSince: null });
+export const EMPTY_WATCHDOG_HISTORY = Object.freeze({ attempts: Object.freeze([]), downSince: null, downChecks: 0 });
 
 /**
  * Decide what to do about the office service right now. Pure: the next history
@@ -72,14 +83,14 @@ export const EMPTY_WATCHDOG_HISTORY = Object.freeze({ attempts: Object.freeze([]
  */
 export function decideServiceRestart(observation, history = EMPTY_WATCHDOG_HISTORY, now = Date.now(), limits = WATCHDOG_DEFAULTS) {
   const attempts = history.attempts.filter((at) => at > now - limits.windowMs && at <= now);
-  /** @param {number | null} downSince */
-  const keep = (downSince) => ({ attempts, downSince });
+  /** @param {number | null} downSince @param {number} [downChecks] */
+  const keep = (downSince, downChecks = 0) => ({ attempts, downSince, downChecks: downSince === null ? 0 : downChecks });
 
   if (observation.quitting) return { action: "none", reason: "quitting", history: keep(null) };
   // The person's decision outranks every observation. Their Start clears it.
   if (observation.stopRequested) return { action: "none", reason: "stopped-deliberately", history: keep(null) };
   // Someone is already starting it; an attempt here would be counted but add nothing.
-  if (observation.startInFlight) return { action: "none", reason: "start-in-flight", history: keep(history.downSince) };
+  if (observation.startInFlight) return { action: "none", reason: "start-in-flight", history: keep(history.downSince, history.downChecks ?? 0) };
 
   if (observation.answeringPort !== null) {
     if (observation.answeringPort === observation.currentPort) return { action: "none", reason: "healthy", history: keep(null) };
@@ -98,13 +109,18 @@ export function decideServiceRestart(observation, history = EMPTY_WATCHDOG_HISTO
   if (observation.recordedPortAnswers) return { action: "none", reason: "recorded-port-answers", history: keep(null) };
 
   const downSince = history.downSince ?? now;
-  if (attempts.length >= limits.maxRestarts) return { action: "none", reason: "exhausted", history: keep(downSince) };
+  const downChecks = (history.downChecks ?? 0) + 1;
+  if (attempts.length >= limits.maxRestarts) return { action: "none", reason: "exhausted", history: keep(downSince, downChecks) };
   const delay = limits.backoffMs[Math.min(attempts.length, limits.backoffMs.length - 1)];
   const lastAttempt = attempts.length ? attempts[attempts.length - 1] : -Infinity;
-  const retryAt = Math.max(downSince, lastAttempt) + delay;
-  if (now < retryAt) return { action: "wait", reason: "backoff", retryAt, history: keep(downSince) };
+  const confirmedAt = downSince + (limits.confirmMs ?? 0);
+  const retryAt = Math.max(Math.max(downSince, lastAttempt) + delay, confirmedAt);
+  if (downChecks < (limits.confirmChecks ?? 1) || now < confirmedAt) {
+    return { action: "wait", reason: "confirming", retryAt, history: keep(downSince, downChecks) };
+  }
+  if (now < retryAt) return { action: "wait", reason: "backoff", retryAt, history: keep(downSince, downChecks) };
   // Counted before it is attempted, so a start that hangs or fails still spends budget.
-  return { action: "restart", reason: "service-down", history: { attempts: [...attempts, now], downSince } };
+  return { action: "restart", reason: "service-down", history: { attempts: [...attempts, now], downSince, downChecks } };
 }
 
 /** @param {number} a @param {number} b */
@@ -118,6 +134,7 @@ const TRANSITION_LOG = {
   "no-record": "no office service is recorded for this computer; not restarting one automatically",
   "process-alive": "the office service process is alive but not answering; not starting another beside it",
   "recorded-port-answers": "another office service of this installation holds the recorded port; not starting another",
+  confirming: "the office service did not answer and its recorded process has ended; checking again before restarting it",
   backoff: "the office service is not answering and its process has ended; restarting it automatically after the backoff",
   exhausted: "automatic restarts of the office service have paused after reaching the hourly limit; the Start button is in charge",
 };

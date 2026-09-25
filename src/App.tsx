@@ -17,7 +17,7 @@ import { DesktopCapabilitiesProvider } from "@/components/DesktopCapabilities";
 import type { CaseEdit } from "@/components/desk/DeskCase";
 
 
-import { createFirstRunApi, firstRunDone } from "@/lib/first-run";
+import { firstRunDone, readSavedSetup } from "@/lib/first-run";
 import type { OnboardingState } from '@shared/onboarding';
 import { doorHashToWrite, viewFromHash, workspaceViewFromHash, workspaceViewHash, type DeskView } from "@/lib/app-route";
 import { WorkspaceTabsProvider, useWorkspaceTabs } from '@/lib/workspace-tabs';
@@ -227,7 +227,7 @@ function FirstRunGate() {
   useEffect(() => {
     let active = true;
     setError('');
-    void createFirstRunApi(api).read().then(next => {
+    void readSavedSetup(api).then(next => {
       if (!active) return;
       if (next.stage === 'recovery') location.hash = youRecoveryTarget(location.hash);
       setSaved(next);

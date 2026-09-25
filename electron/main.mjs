@@ -1,13 +1,13 @@
 import { registerDesktopShutdown } from "./shutdown.mjs";
 import { createServerSupervisor } from "./server-supervisor.mjs";
-import { findRunningService, isOurService, probeService, serviceIdentity } from "./service-instance.mjs";
+import { findBusyService, findRunningService, isOurService, probeService, serviceIdentity } from "./service-instance.mjs";
 import { abandonSpawnedService, availableServicePort, clearServiceHandle, ownsRunningService, processAlive, requestServiceStop, readServiceHandle, SERVICE_WAIT_INTERVAL_MS, serviceWaitTicks, shouldRestartServiceWait, shouldStartService, spawnedServiceState, startDetachedService, systemBootedAt } from "./service-lifecycle.mjs";
 import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, Tray, utilityProcess } from "electron";
 import { createServiceWindowRecovery } from "./service-window-recovery.mjs";
 import { createServiceWatchdog, WATCHDOG_DEFAULTS } from "./service-watchdog.mjs";
 import { classifyServiceOutput, classifyStartError, readServiceOutputTail, startProblemPage } from "./service-start-problem.mjs";
 import { SERVICE_MODE_FLAG, keepAwakeDecision, parseServiceModeArgs, planStartupRegistration, startupRegistrationSupport } from "./service-persistence.mjs";
-import { headlessHostShouldExit, secondInstanceAction, unattendedWorkWanted, windowsClosedAction } from "./unattended-host.mjs";
+import { focusedWindowAction, headlessHostShouldExit, secondInstanceAction, unattendedWorkWanted, windowsClosedAction } from "./unattended-host.mjs";
 import { resolveDeskKey } from "./desk-key-custody.mjs";
 import { configureLogDirectory } from "./log-directory.mjs";
 import fs from "node:fs";
@@ -68,6 +68,7 @@ if (!smokeMode && !app.requestSingleInstanceLock()) {
     if (action === "focus" && win) {
       if (win.isMinimized()) win.restore();
       win.focus();
+      void recoverBlankWindow(win);
     } else if (action === "hand-over") {
       // No window to focus: this process is the headless service host the login
       // item started, and someone has just opened RealBud. Holding the lock must
@@ -82,6 +83,21 @@ if (!smokeMode && !app.requestSingleInstanceLock()) {
       openWindowFromBackground();
     }
   });
+}
+
+/** A second launch found the window; make sure it is showing something. */
+async function recoverBlankWindow(win) {
+  if (win.isDestroyed() || win.webContents.isLoading()) return;
+  const probe = await Promise.race([
+    win.webContents.executeJavaScript("(document.body ? document.body.innerText.trim().length : 0)", false)
+      .then((length) => ({ answered: true, textLength: Number(length) || 0 }), () => ({ answered: false, textLength: 0 })),
+    new Promise((resolve) => setTimeout(() => resolve({ answered: false, textLength: 0 }), 3_000)),
+  ]);
+  if (win.isDestroyed()) return;
+  const action = focusedWindowAction({ url: win.webContents.getURL(), officeOrigin: `http://127.0.0.1:${SERVER_PORT}`, probe });
+  if (action !== "reload") return;
+  slog(`a second launch found the window ${probe.answered ? "blank" : "not answering"}; reloading it`);
+  try { win.webContents.reload(); } catch (error) { slog(`window reload failed: ${error instanceof Error ? error.message : String(error)}`); }
 }
 
 // Packaged: the harness server ships in Resources (compiled JS, zero deps)
@@ -1145,6 +1161,17 @@ async function startOrAdoptOfficeServiceOnce() {
     serverEverStarted = true;
     serviceAdopted = true;
     slog(`adopted the running office service on port ${running.port}`);
+    return true;
+  }
+  // A busy service (a long Recheck, a backup pause) can miss the quick probe
+  // while it holds its port. Ask each bound port again, patiently, before any
+  // child is abandoned or spawned.
+  const busy = await findBusyService(identity, { isPortFree: async (port) => (await availableServicePort([port])) !== null });
+  if (busy) {
+    SERVER_PORT = busy.port;
+    serverEverStarted = true;
+    serviceAdopted = true;
+    slog(`adopted the busy office service on port ${busy.port}; it answered a patient health check`);
     return true;
   }
 
