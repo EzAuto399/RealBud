@@ -10,6 +10,7 @@
     "test": "node --experimental-strip-types --test ./*.test.ts",
     "typecheck": "tsc -p tsconfig.json",
     "entitlement": "node --experimental-strip-types entitlement-cli.ts",
+    "service:issue": "node --experimental-strip-types service-entitlement-issuer.ts",
     "caps": "node --experimental-strip-types caps-cli.ts",
     "smoke:sandbox": "node --experimental-strip-types sandbox-smoke.ts"
   }
