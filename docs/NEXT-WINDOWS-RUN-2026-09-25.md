@@ -1,6 +1,8 @@
 # Next Windows run: one ordered sheet
 
 25 September 2026. This sheet covers one fresh Windows 11 run, end to end:
+
+**26 September update:** the global Gmail auth-config ID is no longer a deployment input. Provisioning resolves a Gmail read-only auth config per office project. See [managed-gateway/DEPLOY.md](../managed-gateway/DEPLOY.md) for the current gateway contract.
 - install RealBud and link the computer to the office on realbud.app;
 - deliver its Modelvia key and Composio connector, and install Bud;
 - ask Bud a question, connect Gmail, scan mail into bills, and test a backup.
@@ -23,11 +25,11 @@ Run the steps in order. Every step depends on the ones before it.
      ```
    - Add the vendor values. Each command prompts, so no value goes into shell history:
      ```bash
-     for n in REALBUD_COMPOSIO_ORG_KEY REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL REALBUD_MODELVIA_OPERATOR_SECRET REALBUD_MODELVIA_CLIENT_ID; do security add-generic-password -a realbud -s "$n" -w; done
+     for n in REALBUD_COMPOSIO_ORG_KEY REALBUD_MODELVIA_OPERATOR_SECRET REALBUD_MODELVIA_CLIENT_ID; do security add-generic-password -a realbud -s "$n" -w; done
      ```
    - Load them into the current shell when needed:
      ```bash
-     for n in REALBUD_GATEWAY_PORTAL_SECRET REALBUD_GATEWAY_OPERATOR_SECRET REALBUD_COMPOSIO_ORG_KEY REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL REALBUD_MODELVIA_OPERATOR_SECRET REALBUD_MODELVIA_CLIENT_ID; do export "$n=$(security find-generic-password -a realbud -s "$n" -w)"; done; export REALBUD_MODELVIA_OPERATOR_SUBJECT=realbud-gateway REALBUD_GATEWAY_PUBLIC_ORIGIN=https://realbud-managed-gateway.fly.dev
+     for n in REALBUD_GATEWAY_PORTAL_SECRET REALBUD_GATEWAY_OPERATOR_SECRET REALBUD_COMPOSIO_ORG_KEY REALBUD_MODELVIA_OPERATOR_SECRET REALBUD_MODELVIA_CLIENT_ID; do export "$n=$(security find-generic-password -a realbud -s "$n" -w)"; done; export REALBUD_MODELVIA_OPERATOR_SUBJECT=realbud-gateway REALBUD_GATEWAY_PUBLIC_ORIGIN=https://realbud-managed-gateway.fly.dev
      ```
 2. **Deploy the gateway** from the main checkout:
    ```bash

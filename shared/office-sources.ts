@@ -8,6 +8,8 @@ export interface ConnectedService {
   selectedAccountId?: string;
 }
 export interface ConnectedAppsStatus {
+  sourceKind?: "personal" | "office_shared";
+  policyRevision?: number;
   configured: boolean;
   checkedAt: string;
   services: Record<string, ConnectedService>;

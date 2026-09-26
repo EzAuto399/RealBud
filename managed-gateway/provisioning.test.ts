@@ -87,7 +87,7 @@ function harness() {
   const secrets = fileSecretStore(secretsDir);
   const make = (overrides: Partial<ConstructorParameters<typeof InstallationProvisioning>[0]> = {}) => new InstallationProvisioning({
     ledger: f.ledger, registry, endpoint: 'https://managed.example.invalid', secrets,
-    org: orgClient, modelvia: modelviaClient, authConfigs: { gmail: 'ac-fictional-readonly' }, ...overrides,
+    org: orgClient, modelvia: modelviaClient, authConfigs: { resolveGmail: async () => 'ac-fictional-readonly' }, ...overrides,
   });
   const request = { companyId: f.tenant.companyId, installationId: 'install-one', customerId: CUSTOMER, profile: 'property' };
   return { f, root, registry, secretsDir, secrets, org, modelvia, orgClient, modelviaClient, make, request,
@@ -193,7 +193,6 @@ test('an unknown or unconfigured app is refused before any external call', async
     for (const apps of [['slack'], ['gmail', 'slack'], ['gmail', 'gmail'], [], 'gmail']) {
       await assert.rejects(() => h.make().provision(h.f.owner, { ...h.request, apps }));
     }
-    await assert.rejects(() => h.make({ authConfigs: {} }).provision(h.f.owner, { ...h.request, apps: ['gmail'] }), /connector_app_not_admitted/);
     assert.equal(h.org.orgKeyReads, 0); assert.equal(h.modelvia.minted.length, 0);
   } finally { h.close(); }
 });
@@ -503,7 +502,7 @@ test('the request cap defaults to A$4 (above the Kimi K3 route hold), takes an o
     assert.throws(() => h.make({ requestCapNanoAud: '0' }), /modelvia_request_cap_invalid/);
     const env: NodeJS.ProcessEnv = {
       REALBUD_ENABLE_PROVIDER: '1', REALBUD_GATEWAY_SECRETS_DIR: h.secretsDir, REALBUD_GATEWAY_CONNECTOR_REGISTRY: h.registry,
-      REALBUD_GATEWAY_PUBLIC_ORIGIN: 'https://managed.example.invalid', REALBUD_COMPOSIO_ORG_KEY: 'fictional-org-key', REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL: 'ac-fictional-readonly',
+      REALBUD_GATEWAY_PUBLIC_ORIGIN: 'https://managed.example.invalid', REALBUD_COMPOSIO_ORG_KEY: 'fictional-org-key',
       REALBUD_MODELVIA_BASE_URL: 'https://api.modelvia.dev', REALBUD_MODELVIA_OPERATOR_SECRET: 'fictional-operator-secret-of-32-chars',
       REALBUD_MODELVIA_OPERATOR_SUBJECT: 'realbud-provisioning', REALBUD_MODELVIA_CLIENT_ID: 'realbud', REALBUD_MODELVIA_MODELS: 'fictional-model', REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD: '2000000000',
     };
@@ -512,7 +511,7 @@ test('the request cap defaults to A$4 (above the Kimi K3 route hold), takes an o
       assert.deepEqual(composeProvisioning({ env: { ...env, REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD: bad }, ledger: h.f.ledger, fetch: never }),
         { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD' }, bad);
     }
-    const composed = composeProvisioning({ env, ledger: h.f.ledger, fetch: never, org: h.orgClient, modelvia: h.modelviaClient }) as { provisioning: InstallationProvisioning };
+    const composed = composeProvisioning({ env, ledger: h.f.ledger, fetch: never, org: h.orgClient, modelvia: h.modelviaClient, authConfigs: { resolveGmail: async () => 'ac-fictional-readonly' } }) as { provisioning: InstallationProvisioning };
     const provisioned = (await composed.provisioning.provision(h.f.owner, h.request)).provisioning;
     assert.equal((h.modelvia.projects[0] as ModelviaCaps).requestCapNanoAud, '2000000000');
     assert.equal(provisioned.model.spendCapLabel, 'A$70/month, A$2/request, 3 at once');
@@ -682,7 +681,7 @@ test('the env resolver fails closed, names only the missing variable, and never 
       REALBUD_ENABLE_PROVIDER: '1',
       REALBUD_GATEWAY_SECRETS_DIR: h.secretsDir, REALBUD_GATEWAY_CONNECTOR_REGISTRY: h.registry,
       REALBUD_GATEWAY_PUBLIC_ORIGIN: 'https://managed.example.invalid',
-      REALBUD_COMPOSIO_ORG_KEY: secret, REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL: 'ac-fictional-readonly',
+      REALBUD_COMPOSIO_ORG_KEY: secret,
       REALBUD_MODELVIA_BASE_URL: 'https://api.modelvia.dev', REALBUD_MODELVIA_OPERATOR_SECRET: 'fictional-operator-secret-of-32-chars',
       REALBUD_MODELVIA_OPERATOR_SUBJECT: 'realbud-provisioning',
       REALBUD_MODELVIA_CLIENT_ID: 'realbud', REALBUD_MODELVIA_MODELS: 'fictional-model',
@@ -798,5 +797,71 @@ test('the spend cap label is short human text the desktop contract accepts for e
     assert.equal(label, 'A$10,000/month, A$4/request, 100 at once');
     assert.ok(label.length <= SPEND_CAP_LABEL_MAX);
     assert.ok(!label.includes('nanoAUD'));
+  } finally { h.close(); }
+});
+
+test('three office installations reuse a verified config, another office uses its own project key and config', async () => {
+  const h = harness(); try {
+    const { composioAuthConfigClient, GMAIL_AUTH_CONFIG_NAME, GMAIL_READONLY_SCOPE } = await import('./composio-auth-config.ts');
+    const configs = new Map<string, unknown[]>(); let creates = 0;
+    const authConfigs = composioAuthConfigClient({ fetch: async (_url, init) => {
+      const key = new Headers(init.headers).get('x-api-key')!;
+      if (init.method === 'POST') {
+        const id = `ac_office${++creates}`;
+        configs.set(key, [{ id, name: GMAIL_AUTH_CONFIG_NAME, toolkit: { slug: 'gmail' }, auth_scheme: 'OAUTH2', is_composio_managed: true, status: 'ENABLED', credentials: { scopes: GMAIL_READONLY_SCOPE } }]);
+        return Response.json({ auth_config: { id } }, { status: 201 });
+      }
+      return Response.json({ items: configs.get(key) ?? [] });
+    } });
+    const org = { ...h.orgClient, async createProject(name: string) { const p = await h.orgClient.createProject(name); return { ...p, apiKey: `${PROJECT_KEY}_${p.id}` }; } };
+    for (const installationId of ['install-one', 'install-two', 'install-three']) await h.make({ authConfigs, org }).provision(h.f.owner, { ...h.request, installationId });
+    assert.equal(creates, 1); assert.equal(h.org.created.length, 1);
+    assert.deepEqual(h.devices().map(d => d.authConfigId), ['ac_office1', 'ac_office1', 'ac_office1']);
+    const other = { ...h.f.owner, companyId: 'company-b' };
+    h.f.ledger.provisionTenant({ ...h.f.tenant, companyId: 'company-b', licenseId: 'license-b' });
+    await h.make({ authConfigs, org }).provision(other, { ...h.request, companyId: 'company-b', installationId: 'install-four' });
+    assert.equal(creates, 2); assert.equal(h.devices()[3]!.authConfigId, 'ac_office2');
+  } finally { h.close(); }
+});
+
+test('uncertain auth config intent survives restart and blocks another installation from creating again', async () => {
+  const h = harness(); try {
+    let creates = 0;
+    const authConfigs = { async resolveGmail(o: { allowCreate: boolean; beforeCreate(): void }) { if (o.allowCreate) { o.beforeCreate(); creates++; } throw new GatewayError('connector_auth_config_create_unconfirmed', 409); } };
+    await assert.rejects(h.make({ authConfigs }).provision(h.f.owner, h.request), /create_unconfirmed/);
+    await assert.rejects(h.make({ authConfigs }).provision(h.f.owner, { ...h.request, installationId: 'install-two' }), /create_unconfirmed/);
+    h.f.setTime(h.f.now() + PENDING_RESUME_AFTER_MS);
+    await assert.rejects(h.make({ authConfigs }).provision(h.f.owner, h.request), /create_unconfirmed/);
+    assert.equal(creates, 1); assert.equal(existsSync(h.registry), false); assert.equal(h.modelvia.minted.length, 0);
+  } finally { h.close(); }
+});
+
+test('config verification rejects broadened scopes before device admission and preserves ready bindings', async () => {
+  const h = harness(); try {
+    await h.make().provision(h.f.owner, h.request);
+    const original = h.devices()[0]!;
+    const { composioAuthConfigClient, GMAIL_AUTH_CONFIG_NAME } = await import('./composio-auth-config.ts');
+    let reads = 0;
+    const authConfigs = composioAuthConfigClient({ fetch: async () => { reads++; return Response.json({ items: [{ id: 'ac_unsafe', name: GMAIL_AUTH_CONFIG_NAME, toolkit: { slug: 'gmail' }, auth_scheme: 'OAUTH2', is_composio_managed: true, status: 'ENABLED', credentials: { scopes: 'https://mail.google.com/' } }] }); } });
+    await assert.rejects(h.make({ authConfigs }).provision(h.f.owner, { ...h.request, installationId: 'install-two' }), /scopes_not_admitted/);
+    assert.deepEqual(h.devices(), [original]); assert.equal(h.modelvia.minted.length, 1);
+    await h.make({ authConfigs }).provision(h.f.owner, h.request);
+    await h.make({ authConfigs }).provision(h.f.owner, { ...h.request, redeliver: true });
+    assert.equal(reads, 1); assert.equal(h.devices()[0]!.authConfigId, original.authConfigId);
+    assert.equal(h.devices()[0]!.projectKeyEnv, original.projectKeyEnv);
+  } finally { h.close(); }
+});
+
+test('auth config create intent for a deleted project does not block a replacement office project', async () => {
+  const h = harness(); try {
+    const created: string[] = [];
+    const authConfigs = { async resolveGmail(o: { projectKey: string; allowCreate: boolean; beforeCreate(): void }) {
+      assert.equal(o.allowCreate, true); o.beforeCreate(); created.push(o.projectKey); return `ac_office${created.length}`;
+    } };
+    await h.make({ authConfigs }).provision(h.f.owner, h.request);
+    await h.make({ authConfigs }).revoke(h.f.owner, { companyId: h.request.companyId, installationId: h.request.installationId, deleteProject: true });
+    await h.make({ authConfigs }).provision(h.f.owner, { ...h.request, installationId: 'install-new' });
+    assert.equal(created.length, 2); assert.equal(h.org.created.length, 2);
+    assert.equal(h.devices().find(d => d.id === 'install-new')!.authConfigId, 'ac_office2');
   } finally { h.close(); }
 });

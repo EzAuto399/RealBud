@@ -1,3 +1,4 @@
+import type { ConnectedAppsStatus } from '../shared/office-sources.ts';
 import { currentWorkerProfile } from "./hermes-profile.ts";
 // Composio Platform — Connected apps use a project API key (ak_…) plus a
 // tool-router session MCP. For You / Connect consumer keys (ck_…) are not used.
@@ -178,8 +179,8 @@ function sanitizeMcpHeaders(value: unknown, fallbackKey: string): Record<string,
 }
 
 /** Resolve the Platform session MCP endpoint (or an explicit test/stub URL). */
-export async function resolveConnectedAppsMcp(cfg: AppConfig, memberKey?: string | null): Promise<{ key: string; url: string; headers: Record<string, string> }> {
-  if (managedConnectorConfigured(cfg)) return managedConnectorSettings(cfg);
+export async function resolveConnectedAppsMcp(cfg: AppConfig, memberKey?: string | null, expectedPolicyRevision?: number): Promise<{ key: string; url: string; headers: Record<string, string> }> {
+  if (managedConnectorConfigured(cfg)) return managedConnectorSettings(cfg, expectedPolicyRevision);
   const key = platformProjectKey(cfg);
   if (cfg.composio?.url) {
     return { key, url: checkedEndpoint(cfg.composio.url), headers: { "x-api-key": key } };
@@ -451,7 +452,7 @@ export async function connectionStatus(cfg: AppConfig, slugs: string[]) {
   return withConnect(cfg, async (session) => parseConnectionStatus(await listConnections(session, names), names));
 }
 
-export async function checkConnectionAccess(cfg: AppConfig, slugs = [...new Set([...CURATED_SLUGS, ...(cfg.composio?.officeApps ?? [])])]) {
+export async function checkConnectionAccess(cfg: AppConfig, slugs = [...new Set([...CURATED_SLUGS, ...(cfg.composio?.officeApps ?? [])])]): Promise<Omit<ConnectedAppsStatus, "configured">> {
   if (managedConnectorConfigured(cfg)) return managedConnectorAccess(cfg);
   if (!Array.isArray(slugs) || !slugs.length || slugs.length > 100) throw new ComposioError("Choose between 1 and 100 office apps to check.");
   const names = slugs;

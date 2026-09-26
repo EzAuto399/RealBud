@@ -132,3 +132,12 @@ describe("connected app outcome receipts", () => {
     expect(readConnectedAppOperations({ operations: [] })).toEqual([]);
   });
 });
+
+
+it('projects shared source metadata without claiming an unconnected mailbox is usable', () => {
+  const projected = readConnectedAppsStatus({ ...status(), sourceKind: 'office_shared', policyRevision: 7, credential: 'fictional-hidden', services: { gmail: { connected: false, status: 'NOT_CONNECTED', accounts: [], accountSelectionRequired: false } }, tools: { available: false, names: [] } });
+  expect(projected.sourceKind).toBe('office_shared'); expect(projected.policyRevision).toBe(7);
+  expect(projected).not.toHaveProperty('credential');
+  expect(canPrepareConnectedEmail(projected, 'gmail')).toBe(false);
+  expect(() => readConnectedAppsStatus({ ...status(), sourceKind: 'office_shared' })).toThrow(/policy/);
+});

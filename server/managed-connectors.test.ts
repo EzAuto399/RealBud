@@ -1,7 +1,7 @@
 import { fictionalPdf } from './testing/pdf-fixture.ts';
 import { attachmentHash } from './source-attachments.ts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { readManagedMailAttachment, authorizeManagedConnection, managedConnectorAccess, managedConnectorSettings, scanManagedMail } from './managed-connectors.ts';
+import { managedMailBindingRevision, readManagedMailAttachment, authorizeManagedConnection, managedConnectorAccess, managedConnectorSettings, scanManagedMail } from './managed-connectors.ts';
 import { join } from 'node:path';
 import { withWorkerProfile } from './hermes-profile.ts';
 import { connectedAppsConfigured } from './connected-app-access.ts';
@@ -142,7 +142,8 @@ describe('managed saved PDF bytes',()=>{
   const envelope={...selected,bytesBase64:bytes.toString('base64'),sha256:attachmentHash(bytes)};
   it('binds the returned bytes to the requested source and sends only scoped device credentials',async()=>{
     const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify(envelope)));vi.stubGlobal('fetch',fetcher);
-    expect(await readManagedMailAttachment(cfg,selected,new AbortController().signal)).toEqual(envelope);
+    expect(await readManagedMailAttachment(cfg,selected,new AbortController().signal,5)).toEqual(envelope);
+    expect(fetcher.mock.calls[0][1].headers['x-realbud-policy-revision']).toBe('5');
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual(selected);expect(String(fetcher.mock.calls[0][0]).endsWith('/v1/connectors/mail-attachment')).toBe(true);
   });
   it.each([{accountId:'other'},{sha256:'0'.repeat(64)},{downloadUrl:'https://evil.invalid'}])('rejects unbound or tampered gateway bytes %j',async change=>{
@@ -151,5 +152,38 @@ describe('managed saved PDF bytes',()=>{
   });
   it('rejects oversized source locally before transport',async()=>{
     const fetcher=vi.fn();vi.stubGlobal('fetch',fetcher);await expect(readManagedMailAttachment(cfg,{...selected,attachment:{...selected.attachment,size:2_000_001}},new AbortController().signal)).rejects.toThrow();expect(fetcher).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('office shared mailbox authority', () => {
+  it('preserves trusted policy identity even before the owner connects a shared mailbox', async () => {
+    const value = { ...access(), sourceKind: 'office_shared', policyRevision: 3,
+      services: { gmail: { connected: false, status: 'NOT_CONNECTED', accounts: [], accountSelectionRequired: false } }, tools: { available: false, names: [] } };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(value))));
+    expect(await managedConnectorAccess(cfg)).toEqual(value);
+  });
+  it.each([{ sourceKind: 'other', policyRevision: 1 }, { sourceKind: 'office_shared' }, { policyRevision: 1 }, { sourceKind: 'office_shared', policyRevision: -1 }, { sourceKind: 'personal', policyRevision: 1.5 }])('rejects incomplete policy identity %j', async policy => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ ...access(), ...policy }))));
+    await expect(managedConnectorAccess(cfg)).rejects.toThrow(/needs review/);
+  });
+  it('invalidates a same-account binding after revoke/regrant, account replacement or source mode change', () => {
+    const source = { ...access(), sourceKind: 'office_shared' as const, policyRevision: 1 };
+    const revision = (value = source) => managedMailBindingRevision('workspace-a', 'property', cfg.composio, value);
+    expect(revision()).toBe(revision({ ...source, checkedAt: '2026-09-22T00:00:00.000Z' }));
+    expect(revision()).not.toBe(revision({ ...source, policyRevision: 3 }));
+    expect(revision()).not.toBe(managedMailBindingRevision('workspace-a', 'property', cfg.composio, { ...source, sourceKind: 'personal' }));
+    expect(revision()).not.toBe(revision({ ...source, services: { gmail: { ...source.services.gmail, accounts: [{ id: 'replacement', label: 'Replacement mailbox', status: 'ACTIVE' }] } } }));
+  });
+  it('pins the reviewed policy revision in MCP settings without upgrading another turn', async () => {
+    expect((await resolveConnectedAppsMcp(cfg, null, 7)).headers['x-realbud-policy-revision']).toBe('7');
+    expect((await resolveConnectedAppsMcp(cfg, null, 2)).headers['x-realbud-policy-revision']).toBe('2');
+    expect(managedConnectorSettings(cfg).headers).not.toHaveProperty('x-realbud-policy-revision');
+  });
+  it('sends the reviewed policy revision and surfaces stale-policy scan denial', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response('{}', { status: 409 })); vi.stubGlobal('fetch', fetcher);
+    const scope = { windowStartAt: 1_790_000_000_000, windowEndAt: 1_790_086_400_000, maxMessages: 10, includeSent: true, carryThreadIds: [] };
+    await expect(scanManagedMail(cfg, 'account-one', scope, new AbortController().signal, 4)).rejects.toThrow(/changed/);
+    expect(fetcher.mock.calls[0][1].headers['x-realbud-policy-revision']).toBe('4');
   });
 });

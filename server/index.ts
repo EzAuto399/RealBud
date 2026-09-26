@@ -2,7 +2,7 @@ import { appVersion } from "./app-version.ts";
 import { createWorkspaceTabsHandler } from "./workspace-tabs.ts";
 import { createOnboardingHandler } from "./onboarding.ts";
 import { createCustomerPackService } from "./customer-packs.ts";
-import { managedConnectorAccess, managedConnectorConfigured, managedConnectorSettings } from "./managed-connectors.ts";
+import { managedMailBindingRevision, managedConnectorAccess, managedConnectorConfigured, managedConnectorSettings } from "./managed-connectors.ts";
 import { createOfficeLink, installationWorkerVersion } from "./office-link.ts";
 import { createWorkerModelAccess } from "./worker-model-access.ts";
 import { setWorkerModelAccessSnapshot } from "./hermes-runtime-env.ts";
@@ -1995,7 +1995,7 @@ async function startSeatTurn(
         authConfigId: gmailBinding.authConfigId, userId: gmailBinding.userId, accountId: gmailBinding.accountId, requestId: newId(),
       } };
       else if (!gmailReadOnlyMode(cfg) && connectedAppsConfigured(cfg) && (!PRODUCT_MODE || allowedApps.length)) {
-        const mcp = await composio.resolveConnectedAppsMcp(cfg, currentWorkerProfile().memberKey);
+        const mcp = await composio.resolveConnectedAppsMcp(cfg, currentWorkerProfile().memberKey, access?.policyRevision);
         integrations.composio = { ...(PRODUCT_MODE ? { allowedApps } : {}), key: mcp.key, url: mcp.url, headers: mcp.headers };
       }
       if (PRODUCT_MODE) {
@@ -5448,14 +5448,16 @@ const customerPacks = createCustomerPackService({ directory: DATA_DIR,
     };
   },
 });
-const mailBindingRevision = () => createHash('sha256').update(JSON.stringify({ workspace: workspaceIdentity.id, profile: currentWorkerProfile().profile, connection: cfg.composio })).digest('hex');
+const reviewedMailSources = new WeakMap<object, { bindingRevision: string; policyRevision?: number }>();
+const managedMailPolicyRevision = () => { const access = connectedAppAccess.status(connectedAppsConfigured(cfg)); return 'policyRevision' in access ? access.policyRevision : undefined; };
+const mailBindingRevision = () => managedMailBindingRevision(workspaceIdentity.id, currentWorkerProfile().profile, cfg.composio, connectedAppAccess.status(connectedAppsConfigured(cfg)));
 const agencySetup = createAgencySetupService({ directory: DATA_DIR, workspaceId: workspaceIdentity.id, actorId: () => workspaceIdentity.id,
-  // Verifying the agency's own private account is what starts bounded history
+  // Verifying the agency's selected account is what starts bounded history
   // acquisition. Start and return: never await the collection here.
   onGmailVerified: event => { void mailWorkspace.startHistory(event); },
   checkGmail: async accountId => {
     const access = await refreshOfficeSources();
-    if (!access.tools.available || !access.services.gmail?.connected || !access.services.gmail.accounts.some(a => a.id === accountId && /^active$/i.test(a.status))) throw Object.assign(new Error('This exact private Gmail source could not be verified.'), { status: 409 });
+    if (!access.tools.available || !access.services.gmail?.connected || !access.services.gmail.accounts.some(a => a.id === accountId && /^active$/i.test(a.status))) throw Object.assign(new Error('This exact selected Gmail source could not be verified.'), { status: 409 });
   },
   observe: async settings => {
     const access = connectedAppAccess.status(connectedAppsConfigured(cfg)), gmail = access.services.gmail;
@@ -5475,7 +5477,7 @@ const agencySetup = createAgencySetupService({ directory: DATA_DIR, workspaceId:
     const billsReady = !!invoiceRecipe && recipeClockRunnable(invoiceRecipe) && worker.ready && !!invoiceBinding;
     const scan = (await mailWorkspace.get()).latestScan;
     return {
-      gmail: { accounts: (gmail?.accounts ?? []).map(a => ({ id: a.id, label: a.label ?? 'Private Gmail account', status: /^active$/i.test(a.status) ? 'active' as const : 'unavailable' as const })), accountId,
+      gmail: { ...('sourceKind' in access ? { sourceKind: access.sourceKind } : {}), accounts: (gmail?.accounts ?? []).map(a => ({ id: a.id, label: a.label ?? ('sourceKind' in access && access.sourceKind === 'office_shared' ? 'Office shared Gmail' : 'Gmail account'), status: /^active$/i.test(a.status) ? 'active' as const : 'unavailable' as const })), accountId,
         state: sourceAllowed && gmail?.connected && access.tools.available ? 'verified' as const : 'unverified' as const, checkedAt: access.checkedAt ? Date.parse(access.checkedAt) : null, bindingRevision: mailBindingRevision() },
       properties: { state: 'available' as const, revision: createHash('sha256').update(JSON.stringify(properties)).digest('hex'), items: properties },
       billRegister: { state: 'available' as const, count: listExpectedBills().length + sourceBills().counts().occurrences },
@@ -5500,15 +5502,20 @@ const mailWorkspace = createMailIngestionService({ directory: DATA_DIR, workspac
     await refreshOfficeSources();
     await checkWebsiteExecution();
     const ready = await agencySetup.assertWorkflowReady(purpose);
-    if (!ready.settings.gmailAccountId) throw new Error('Choose and review the private Gmail source.');
-    return { accountId: ready.settings.gmailAccountId, bindingRevision: createHash('sha256').update(`${mailBindingRevision()}:${ready.evidenceDigest}`).digest('hex'), settings: ready.settings, settingsRevision: ready.revision };
+    if (!ready.settings.gmailAccountId) throw new Error('Choose and review the selected Gmail source.');
+    const source = { bindingRevision: mailBindingRevision(), policyRevision: managedMailPolicyRevision() };
+    const authority = { accountId: ready.settings.gmailAccountId, bindingRevision: createHash('sha256').update(`${source.bindingRevision}:${ready.evidenceDigest}`).digest('hex'), settings: ready.settings, settingsRevision: ready.revision };
+    reviewedMailSources.set(authority, source);
+    return authority;
   },
   scan: async (authority, request, signal) => {
     await checkWebsiteExecution();
-    const connectionRevision = mailBindingRevision();
+    const reviewedSource = reviewedMailSources.get(authority);
+    if (!reviewedSource) throw new Error('The reviewed mail source is unavailable.');
+    const connectionRevision = reviewedSource.bindingRevision;
     const assertAuthority = () => { signal.throwIfAborted(); if (mailBindingRevision() !== connectionRevision) throw new Error('Mail authority changed.'); };
     assertAuthority();
-    if (managedConnectorConfigured(cfg)) return scanManagedMail(structuredClone(cfg), authority.accountId, request, signal);
+    if (managedConnectorConfigured(cfg)) { const result = await scanManagedMail(structuredClone(cfg), authority.accountId, request, signal, reviewedSource.policyRevision); assertAuthority(); return result; }
     const binding = gmailReadOnlyMode(cfg) ? gmailReadOnlyBinding(cfg) : null;
     if (!binding || binding.accountId !== authority.accountId) throw new Error('The reviewed Gmail binding is unavailable.');
     return scanGmailReadOnly({ ...binding, assertAuthority }, request, signal);
@@ -5551,7 +5558,7 @@ const billProposals = createBillProposals({database:workflowDatabase,workroom:jo
     await checkWebsiteExecution();const revision=mailBindingRevision();
     const assertAuthority=()=>{signal.throwIfAborted();if(mailBindingRevision()!==revision||cfg.composio?.excludedApps?.includes('gmail'))throw new Error('Mail authority changed.');};
     assertAuthority();
-    if(managedConnectorConfigured(cfg)){const result=await readManagedMailAttachment(structuredClone(cfg),source,signal);assertAuthority();return result;}
+    if(managedConnectorConfigured(cfg)){const result=await readManagedMailAttachment(structuredClone(cfg),source,signal,managedMailPolicyRevision());assertAuthority();return result;}
     const binding=gmailReadOnlyMode(cfg)?gmailReadOnlyBinding(cfg):null;
     if(!binding||binding.accountId!==source.accountId)throw new Error('The reviewed Gmail binding is unavailable.');
     return readGmailPdfAttachment({...binding,assertAuthority},source,signal);

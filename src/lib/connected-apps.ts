@@ -23,6 +23,8 @@ const timestamp = (value: unknown) => typeof value === "string" && Number.isFini
 export function readConnectedAppsStatus(value: unknown): ConnectedAppsStatus {
   if (!record(value) || typeof value.configured !== "boolean" || !record(value.services) || !record(value.tools) ||
     typeof value.tools.available !== "boolean" || !Array.isArray(value.tools.names)) throw new Error("Connected app status was incomplete. Check access again.");
+  if ((value.sourceKind !== undefined || value.policyRevision !== undefined) &&
+    (!['personal', 'office_shared'].includes(String(value.sourceKind)) || !Number.isSafeInteger(value.policyRevision) || Number(value.policyRevision) < 0)) throw new Error("Mail source policy was incomplete. Check access again.");
   const services: Record<string, ConnectedService> = {};
   for (const slug of Object.keys(value.services).slice(0, 100)) {
     if (!/^[a-z][a-z0-9_]{0,63}$/.test(slug)) continue;
@@ -42,6 +44,7 @@ export function readConnectedAppsStatus(value: unknown): ConnectedAppsStatus {
   }
   return {
     excludedApps: Array.isArray(value.excludedApps) ? value.excludedApps.filter((slug): slug is string => typeof slug === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(slug)).slice(0, 100) : [],
+    ...(value.sourceKind !== undefined ? { sourceKind: value.sourceKind as 'personal' | 'office_shared', policyRevision: Number(value.policyRevision) } : {}),
     configured: value.configured, checkedAt: timestamp(value.checkedAt), services,
     tools: { available: value.tools.available, names: [...new Set(value.tools.names.map(name => label(name, 160)).filter(Boolean))].slice(0, 200) },
     ...(label(value.error, 600) ? { error: label(value.error, 600) } : {}),

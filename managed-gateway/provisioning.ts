@@ -23,6 +23,7 @@
  *   - No default transport. The Composio org client, the Modelvia client and the
  *     secret store are all injected. Nothing here is deployed.
  */
+import { composioAuthConfigClient, type ComposioAuthConfigClient } from './composio-auth-config.ts';
 import { randomBytes } from 'node:crypto';
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
@@ -197,6 +198,8 @@ interface StoredRecord {
    * hash, never the credential; it is what lets a resumed attempt prove the
    * registry device is its own and was never delivered. */
   deviceTokenHash?: string;
+  /** Durable office-wide guard against retrying an uncertain config creation. */
+  authConfigCreateProjectId?: string;
   /** Ready only, while a credential redelivery is running: which attempt owns
    * it and since when. Cleared when that redelivery is recorded. */
   redelivery?: { attempt: string; at: number };
@@ -275,8 +278,8 @@ export interface ProvisioningOptions {
   secrets: SecretStore;
   org: ComposioOrgClient;
   modelvia: ModelviaClient;
-  /** app → the reviewed read-only OAuth configuration id admitted for it. */
-  authConfigs: Readonly<Record<string, string>>;
+  /** Project-key resolver that verifies the managed read-only Gmail config. */
+  authConfigs: ComposioAuthConfigClient;
   /** Per-request cap in nanoAUD, a positive integer string. Default A$4. */
   requestCapNanoAud?: string;
   /** The customer's commercial terms at Modelvia, read before anything is
@@ -369,12 +372,11 @@ export class InstallationProvisioning {
     requireThat(MODELVIA_CUSTOMER.test(`rb-${installationId}`), 'installation_id_not_modelvia_safe');
     const apps = body.apps === undefined ? [...ADMITTED_APPS] : body.apps;
     requireThat(Array.isArray(apps) && apps.length > 0 && apps.length <= 8 && new Set(apps).size === apps.length, 'invalid_connector_apps');
-    for (const app of apps as unknown[]) requireThat(typeof app === 'string' && (ADMITTED_APPS as readonly string[]).includes(app) && this.options.authConfigs[app], 'connector_app_not_admitted', 403);
+    for (const app of apps as unknown[]) requireThat(typeof app === 'string' && (ADMITTED_APPS as readonly string[]).includes(app), 'connector_app_not_admitted', 403);
     // One device carries one reviewed OAuth configuration, so a device is
     // provisioned for exactly the app that configuration covers. A second app
     // needs its own device and its own reviewed configuration.
     requireThat((apps as string[]).length === 1, 'connector_app_not_admitted', 403);
-    const app = (apps as string[])[0]!;
 
     // Service entitlement, from the operator's entitlement record
     // (entitlement-cli.ts). A company without one is `tenant_unavailable`.
@@ -472,6 +474,18 @@ export class InstallationProvisioning {
       return created.id;
     });
 
+    const authConfigId = await serialized(`composio-auth-config:${companyId}`, async () => {
+      const rows = this.options.ledger.db.all<{ body: string }>('SELECT body FROM installation_provisioning WHERE tenant=?', companyId);
+      const attempted = rows.some(row => (JSON.parse(row.body) as StoredRecord).authConfigCreateProjectId === projectId);
+      const projectKey = this.options.secrets.read(projectKeyEnv);
+      requireThat(projectKey, 'connector_project_key_unavailable', 409);
+      return this.options.authConfigs.resolveGmail({ projectKey: projectKey!, allowCreate: !attempted, beforeCreate: () => {
+        requireThat(this.options.ledger.now() - attemptAt < ATTEMPT_EFFECT_DEADLINE_MS, 'installation_provisioning_expired', 409);
+        pending = { ...pending, authConfigCreateProjectId: projectId };
+        this.options.ledger.db.transaction(() => this.journal(companyId, installationId, attempt, pending));
+      } });
+    });
+
     // (b) The revocable `rbc_` connector credential, admitted by hash only. A
     // resumed attempt replaces the device its predecessor admitted: that
     // credential was never delivered, because the record never reached `ready`.
@@ -482,7 +496,7 @@ export class InstallationProvisioning {
       // installation across members needs a separate device per member.
       memberId: installationId, installationId, profile,
       tokenHash: credential.tokenHash, active: true, expiresAt: tenant.serviceExpiresAt,
-      projectKeyEnv, authConfigId: this.options.authConfigs[app]!, userId: `installation-${installationId}`,
+      projectKeyEnv, authConfigId, userId: `installation-${installationId}`,
       apps: apps as string[],
     };
     const admitted = pending.deviceTokenHash;
@@ -539,7 +553,7 @@ export class InstallationProvisioning {
       connector: { endpoint: this.endpoint, profile, apps: apps as string[], projectId },
       model: { provider: 'modelvia', baseUrl: minted.baseUrl, keyId: minted.keyId, projectId: modelProject.projectId, spendCapLabel },
     };
-    const ready: StoredRecord = { state: 'ready', profile, apps: apps as string[], customerId, descriptor, deviceId: device.id, projectId, projectKeyEnv, keyId: minted.keyId, modelProjectId: modelProject.projectId };
+    const ready: StoredRecord = { state: 'ready', authConfigCreateProjectId: pending.authConfigCreateProjectId, profile, apps: apps as string[], customerId, descriptor, deviceId: device.id, projectId, projectKeyEnv, keyId: minted.keyId, modelProjectId: modelProject.projectId };
     this.options.ledger.db.transaction(() => {
       this.journal(companyId, installationId, attempt, ready);
       // Audit line carries identifiers only: no project key, no connector
@@ -834,7 +848,7 @@ export function applyCustomerCaps(options: { ledger: UsageLedger; modelvia: Mode
  * named in the 503 reason; a *value* never is. */
 export const PROVISIONING_ENV = [
   'REALBUD_GATEWAY_SECRETS_DIR', 'REALBUD_GATEWAY_CONNECTOR_REGISTRY', 'REALBUD_GATEWAY_PUBLIC_ORIGIN',
-  'REALBUD_COMPOSIO_ORG_KEY', 'REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL',
+  'REALBUD_COMPOSIO_ORG_KEY',
   'REALBUD_MODELVIA_BASE_URL', 'REALBUD_MODELVIA_OPERATOR_SECRET', 'REALBUD_MODELVIA_OPERATOR_SUBJECT',
   'REALBUD_MODELVIA_CLIENT_ID', 'REALBUD_MODELVIA_MODELS',
 ] as const;
@@ -898,7 +912,7 @@ export function composeModelvia(options: { env: NodeJS.ProcessEnv; fetch: HttpTr
  * rest of `server.ts` uses for providers), and a misconfigured deployment yields
  * a 503 reason naming the one variable to fix rather than a half-built client.
  */
-export function composeProvisioning(options: { env: NodeJS.ProcessEnv; ledger: UsageLedger; fetch: HttpTransport; org?: ComposioOrgClient; modelvia?: ModelviaClient }): ProvisioningComposition {
+export function composeProvisioning(options: { env: NodeJS.ProcessEnv; ledger: UsageLedger; fetch: HttpTransport; org?: ComposioOrgClient; modelvia?: ModelviaClient; authConfigs?: ComposioAuthConfigClient }): ProvisioningComposition {
   const env = options.env;
   const value = (name: string) => (env[name] ?? '').trim();
   if (value('REALBUD_ENABLE_PROVIDER') !== '1') return { unavailable: 'provisioning_disabled' };
@@ -919,7 +933,7 @@ export function composeProvisioning(options: { env: NodeJS.ProcessEnv; ledger: U
         ...(value('REALBUD_COMPOSIO_API_BASE') ? { base: value('REALBUD_COMPOSIO_API_BASE') } : {}),
       }),
       modelvia: options.modelvia ?? model.modelvia,
-      authConfigs: { gmail: value('REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL') },
+      authConfigs: options.authConfigs ?? composioAuthConfigClient({ fetch: options.fetch, ...(value('REALBUD_COMPOSIO_API_BASE') ? { base: value('REALBUD_COMPOSIO_API_BASE') } : {}) }),
       requestCapNanoAud: model.requestCapNanoAud,
       // The composed client always reads terms; an injected one only if it can.
       ...(hasCustomerTerms(options.modelvia ?? model.modelvia) ? { terms: (options.modelvia ?? model.modelvia) as unknown as ModelviaTermsClient } : {}),

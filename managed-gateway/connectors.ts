@@ -1,6 +1,7 @@
 /** Vendor-hosted connector custody. Desktop clients receive only a revocable
  * device credential; project/org keys never leave this process. Gmail is the
  * first admitted adapter. Do not turn this into an arbitrary HTTP proxy. */
+import { OfficeMailbox } from './office-mailbox.ts';
 import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 import { GatewayError, canonical, exact, id, integer, object, requireThat } from './contracts.ts';
@@ -71,12 +72,14 @@ export interface ConnectorOptions {
   attachment?: typeof readGmailPdfAttachment;
 }
 export class ManagedConnectors {
+  readonly officeMailbox: OfficeMailbox;
   private readonly sessions = new Map<string, Session>();
   private readonly inflight = new Set<string>();
   private readonly rates = new Map<string, { starts: number; count: number }>();
   private readonly options: ConnectorOptions;
   constructor(options: ConnectorOptions) {
     this.options = options;
+    this.officeMailbox = new OfficeMailbox(options);
     options.ledger.db.run('CREATE TABLE IF NOT EXISTS connector_links (device TEXT PRIMARY KEY, binding TEXT NOT NULL, state TEXT NOT NULL, result TEXT, created INTEGER NOT NULL)');
   }
   private current(token: string, profile: string): ConnectorDevice {
@@ -98,6 +101,7 @@ export class ManagedConnectors {
     requireThat((ADAPTERS as readonly string[]).includes(app) && appsOf(device).includes(app), 'connector_app_not_admitted', 403);
   }
   private binding(device: ConnectorDevice): GmailReadOnlyBinding {
+    const shared = this.officeMailbox.binding(device); if (shared) return shared;
     const apiKey = this.options.secret(device.projectKeyEnv);
     requireThat(typeof apiKey === 'string' && /^ak_[A-Za-z0-9_-]{5,1000}$/.test(apiKey), 'connector_not_configured', 503);
     const binding = { apiKey, authConfigId: device.authConfigId, userId: device.userId, accountId: device.accountId };
@@ -117,8 +121,12 @@ export class ManagedConnectors {
     if (row && row.binding !== this.linkIdentity(device)) throw new GatewayError('connector_binding_changed_needs_recovery', 409);
     return row;
   }
-  async handle(input: { token: string; profile: string; method: string; path: string; body?: unknown; session?: string; signal: AbortSignal }): Promise<ConnectorResponse> {
+  async handle(input: { token: string; profile: string; method: string; path: string; body?: unknown; session?: string; policyRevision?: number; signal: AbortSignal }): Promise<ConnectorResponse> {
     const device = this.current(input.token, input.profile), now = this.options.ledger.now();
+    const policy=this.officeMailbox.policy(device.companyId);
+    if (input.path !== '/v1/connectors/status' && input.path !== '/v1/connectors/authorize') {
+      requireThat((policy.mode === 'personal' && policy.revision === 0 && input.policyRevision === undefined) || input.policyRevision === policy.revision, 'office_mailbox_review_required', 409);
+    }
     // Only bounded read/connection operations are admitted. No caller may choose
     // the upstream URL, project key, provider user or connected account.
     for (const [key, session] of this.sessions) if (session.expiresAt <= now) this.sessions.delete(key);
@@ -126,8 +134,8 @@ export class ManagedConnectors {
     const rate = this.rates.get(device.id) ?? { starts: now, count: 0 };
     requireThat(rate.count < 120, 'connector_rate_limited', 429); rate.count++; this.rates.set(device.id, rate);
     requireThat(!this.inflight.has(device.id), 'connector_busy', 409); this.inflight.add(device.id);
-    const fingerprint = hash(canonical(device));
-    const current = () => { input.signal.throwIfAborted(); requireThat(hash(canonical(this.current(input.token, input.profile))) === fingerprint, 'connector_binding_changed', 409); };
+    const fingerprint = hash(this.officeMailbox.fingerprint(device));
+    const current = () => { input.signal.throwIfAborted(); requireThat(hash(this.officeMailbox.fingerprint(this.current(input.token, input.profile))) === fingerprint, 'connector_binding_changed', 409); };
     try {
       if (input.path === '/v1/connectors/mail-attachment' && input.method === 'POST') {
         const source=parseSourceAttachmentRequest(input.body);this.admit(device,'gmail');
@@ -162,10 +170,15 @@ export class ManagedConnectors {
       }
       if (input.path === '/v1/connectors/status' && input.method === 'GET') {
         this.admit(device, 'gmail');
-        const result = await (this.options.access ?? getGmailReadOnlyAccess)({ ...this.binding(device), assertAuthority: current }); current();
-        return { status: 200, body: { ...result, managed: true, apps: appsOf(device), serviceExpiresAt: this.options.ledger.tenant(device.companyId).serviceExpiresAt } };
+        const policy = this.officeMailbox.policy(device.companyId);
+        const result = policy.mode === 'shared' && !this.officeMailbox.readyForDevice(device)
+          ? { checkedAt: new Date(now).toISOString(), services: { gmail: { connected: false, status: 'NOT_CONNECTED', accounts: [], accountSelectionRequired: false } }, tools: { available: false, names: [] } }
+          : await (this.options.access ?? getGmailReadOnlyAccess)({ ...this.binding(device), assertAuthority: current });
+        current();
+        return { status: 200, body: { ...result, sourceKind: policy.mode === 'shared' ? 'office_shared' : 'personal', policyRevision: policy.revision, managed: true, apps: appsOf(device), serviceExpiresAt: this.options.ledger.tenant(device.companyId).serviceExpiresAt } };
       }
       if (input.path === '/v1/connectors/authorize' && input.method === 'POST') {
+        requireThat(this.officeMailbox.policy(device.companyId).mode === 'personal', 'office_mailbox_owner_authorization_required', 403);
         object(input.body); exact(input.body, ['app']);
         requireThat(typeof input.body.app === 'string' && APP.test(input.body.app), 'connector_app_not_admitted', 403);
         this.admit(device, input.body.app as string);
@@ -224,7 +237,7 @@ export class ManagedConnectors {
         // Do not capture this HTTP request's abort signal in a multi-request
         // session. Revalidate the live device/tenant before each adapter request.
         const transport = (this.options.transport ?? createGmailReadOnlyTransport)({ ...this.binding(device), assertAuthority: () => {
-          requireThat(hash(canonical(this.current(input.token, input.profile))) === fingerprint, 'connector_binding_changed', 409);
+          requireThat(hash(this.officeMailbox.fingerprint(this.current(input.token, input.profile))) === fingerprint, 'connector_binding_changed', 409);
         } });
         const result = await transport.request('initialize', message.params, input.signal); current();
         const key = randomBytes(32).toString('hex');
