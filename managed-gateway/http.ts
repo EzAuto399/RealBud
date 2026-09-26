@@ -32,7 +32,7 @@ function reply(res:ServerResponse,status:number,data:unknown) {
  *
  * Routes: GET /health, GET /ready, /v1/connectors/*, POST
  * /v1/portal/installations/{provision,revoke}, the operator-only POST
- * /v1/operator/offices/ai-access, POST /v1/operator/offices/ai-markup[/sync],
+ * /v1/operator/offices/ai-access, PUT|GET /v1/operator/offices/entitlement, POST /v1/operator/offices/ai-markup[/sync],
  * POST /v1/operator/offices/ai-charge-detail and GET /v1/operator/billing/margins, the
  * monthly invoice routes GET
  * /v1/portal/commercial-terms, POST /v1/portal/commercial-terms/accept, GET
@@ -117,6 +117,19 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
         try { reply(res,200,await options.operator!.officeAiAccess!.set(operator,value)); }
         catch(error) { throw error instanceof GatewayError?error:new GatewayError('office_ai_access_failed',502); }
         return;
+      }
+      // RealBud operator: one office's service entitlement (operator-entitlement.ts),
+      // the write `entitlement-cli.ts set` makes. Its own bearer, as above.
+      if((req.method==='PUT' || req.method==='GET') && url.pathname==='/v1/operator/offices/entitlement') {
+        requireThat(options.operator,'operator_unconfigured',503);
+        let operator;
+        try { operator=await options.operator!.authenticate(bearer(req)); } catch { throw new GatewayError('operator_unauthenticated',401); }
+        const routes=options.operator!.entitlements; requireThat(routes,'operator_unconfigured',503);
+        if(req.method==='GET') {
+          requireThat([...url.searchParams.keys()].every(key=>key==='companyId'),'invalid_query');
+          reply(res,200,routes!.get(operator,url.searchParams.get('companyId'))); return;
+        }
+        reply(res,200,await routes!.set(operator,json(await body(req,4096)))); return;
       }
       // RealBud operator: one office's AI resale markup (a proposal the office must
       // accept), its invoice charge detail, and re-syncing Modelvia to the accepted markup.

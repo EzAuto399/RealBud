@@ -249,3 +249,16 @@ test('a foreign customer is 409 with no write; bad bodies and unknown companies 
   assert.deepEqual(r.m.calls, []);
   assert.deepEqual(r.events(), []);
 });
+
+test('an office entitled through the operator entitlement route then gets AI access without the machine command', async () => {
+  const r = await routeFixture();
+  const office = { companyId: 'company-b', customerId: 'cus-fictional-office-b', name: 'Fictional Office B', access: { mode: 'default' } };
+  assert.deepEqual(await r.post(ROUTE, operatorToken(), office), { status: 403, body: { error: 'tenant_unavailable' } });
+  const put = await fetch(`${r.base}/v1/operator/offices/entitlement`, { method: 'PUT', headers: { Authorization: `Bearer ${operatorToken()}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ companyId: 'company-b', licenseId: 'license-b', name: 'Fictional Office B Pty Ltd', address: '2 Example Street, Brisbane QLD',
+      evidence: 'operator-ticket-b', goLiveEvidence: 'signed-order-b', goLive: '2026-09-01', expires: '2027-09-01' }) });
+  assert.equal(put.status, 200); assert.equal(((await put.json()) as Row).result, 'created');
+  const access = await r.post(ROUTE, operatorToken(), office);
+  assert.equal(access.status, 200);
+  assert.deepEqual(access.body.customer, { active: true, monthlyCapNanoAud: '200000000000', created: true });
+});

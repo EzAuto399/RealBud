@@ -40,6 +40,7 @@ import { latestResaleAcceptance } from './commercial-terms.ts';
 import type { MarginReport } from './office-ai-billing.ts';
 import type { OfficeAiTermsRoutes } from './office-ai-terms.ts';
 import { OPERATOR_ROLE, verifyOperatorToken, type OperatorPrincipal } from './operator-token.ts';
+import { operatorEntitlementRoutes, type OperatorEntitlementRoutes } from './operator-entitlement.ts';
 import { applyCustomerCaps, bindOfficeCustomer, composeModelvia, MODELVIA_CUSTOMER, MODELVIA_OPERATOR_ENV, serialized, type CapsApplied } from './provisioning.ts';
 
 export interface OfficeAiAccessResult {
@@ -120,6 +121,10 @@ export interface OperatorRoutes {
   /** The owner's per-office margin for one month (`office-ai-billing.ts`). Composed
    * with care billing; absent answers `billing_unavailable`. */
   margins?: (period: string) => Promise<MarginReport>;
+  /** One office's service entitlement (`operator-entitlement.ts`): the ledger
+   * write `entitlement-cli.ts set` makes. Composed whenever operators can
+   * authenticate. */
+  entitlements?: OperatorEntitlementRoutes;
 }
 
 export const OPERATOR_SECRET_ENV = 'REALBUD_GATEWAY_OPERATOR_SECRET';
@@ -134,20 +139,23 @@ export function operatorAccessState(env: NodeJS.ProcessEnv): 'configured' | 'mis
  * Operator routes from the environment alone. No operator secret, a short one,
  * or one equal to the portal secret composes nothing (the route answers 503
  * `operator_unconfigured`). Without the Modelvia operator variables, or with the
- * provider gate closed, operators can authenticate but the write is not composed.
+ * provider gate closed, operators can authenticate and set entitlements, but the
+ * AI access write is not composed.
  */
 export function composeOperatorRoutes(options: { env: NodeJS.ProcessEnv; ledger: UsageLedger; fetch: HttpTransport; modelvia?: ModelviaOperatorClient }): OperatorRoutes | undefined {
   const env = options.env;
   if (operatorAccessState(env) !== 'configured') return undefined;
-  const authenticate = async (bearer: string) => verifyOperatorToken(bearer, (env[OPERATOR_SECRET_ENV] ?? '').trim());
+  const verify = async (bearer: string) => verifyOperatorToken(bearer, (env[OPERATOR_SECRET_ENV] ?? '').trim());
+  // Service entitlement is a local ledger write, so it needs no Modelvia configuration.
+  const base: OperatorRoutes = { authenticate: verify, entitlements: operatorEntitlementRoutes({ ledger: options.ledger }) };
   const value = (name: string) => (env[name] ?? '').trim();
-  if (value('REALBUD_ENABLE_PROVIDER') !== '1' || MODELVIA_OPERATOR_ENV.some(name => !value(name))) return { authenticate };
+  if (value('REALBUD_ENABLE_PROVIDER') !== '1' || MODELVIA_OPERATOR_ENV.some(name => !value(name))) return base;
   const composed = composeModelvia({ env, fetch: options.fetch });
-  if ('unavailable' in composed) return { authenticate };
+  if ('unavailable' in composed) return base;
   // A malformed terms variable leaves the write off rather than guessing terms.
   const terms = customerTermsPolicy(env);
-  if ('unavailable' in terms) return { authenticate };
-  return { authenticate, officeAiAccess: new OfficeAiAccessService({ ledger: options.ledger, modelvia: options.modelvia ?? composed.modelvia, requestCapNanoAud: composed.requestCapNanoAud, terms }) };
+  if ('unavailable' in terms) return base;
+  return { ...base, officeAiAccess: new OfficeAiAccessService({ ledger: options.ledger, modelvia: options.modelvia ?? composed.modelvia, requestCapNanoAud: composed.requestCapNanoAud, terms }) };
 }
 
 /** The Modelvia operator terms client for resale sync, from the environment:

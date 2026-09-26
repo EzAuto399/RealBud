@@ -8,7 +8,21 @@ The gateway runs on Fly (Sydney) from `deploy.sh` and `fly.toml`. The website ru
 
 1. **Deploy.** Export the variables below, then run `managed-gateway/deploy.sh`. It validates every variable before touching Fly, names each missing one without echoing a value, stages the secrets over stdin and deploys once. It generates no secret: every value is a stable one recovered from protected storage, so a redeploy rotates nothing.
 2. **Check readiness.** `curl -fsS "$REALBUD_GATEWAY_URL/ready"`. A 200 response means provisioning is composed. A 503 response names the variable still to set, never its value. Both responses report `modelviaOperator` and `operatorAccess` (`configured|missing`). `/ready` makes no network call. The startup log line also reports `careCollection` (`off|sandbox|live`).
-3. **Create each office's service entitlement** on the machine (`fly ssh console -a realbud-managed-gateway`, then `cd /app/managed-gateway`):
+3. **Create each office's service entitlement** with the operator route (same operator token as [Office AI access](#office-ai-access); no SSH):
+
+   ```
+   PUT /v1/operator/offices/entitlement          Authorization: Bearer <operator token>
+     { "companyId": "…", "licenseId": "…", "name": "<legal name>", "address": "<address>",
+       "evidence": "<ticket>", "goLiveEvidence": "<signed-order-ref>",
+       "goLive": "YYYY-MM-DD", "expires": "YYYY-MM-DD", "active": true }      ("active" optional)
+   → { "result": "created" | "updated" | "unchanged",
+       "entitlement": { companyId, licenseId, active, serviceAvailable, goLiveAt, serviceExpiresAt, customerName, customerAddress } }
+   GET /v1/operator/offices/entitlement?companyId=…  → { "entitlement": { … } } or 404 not_found
+   ```
+
+   It applies the command's rules (`entitlementFromFlags` in `entitlement-cli.ts`) and the same ledger write, so the same input gives the same stored entitlement and the same error codes. Every field is sent on every call; an ABN set with the command is kept. Sending what is already stored answers `unchanged` and changes nothing. Requests are serialized per company, and each success adds an `operator_entitlement_set` ledger line with the operator subject, company and result. It needs only `REALBUD_GATEWAY_OPERATOR_SECRET`, not the Modelvia variables. Errors: 401 `operator_unauthenticated` (a portal token is never accepted); 503 `operator_unconfigured`; 400 `invalid_entitlement` (wrong fields or types, empty strings), `invalid_go_live` (not a YYYY-MM-DD date, or after today), `invalid_service_expiry` (not a YYYY-MM-DD date, or not after go-live), `invalid_id`, `customer_identity_required`; 409 `license_id_immutable` when the company is already bound to a different licence.
+
+   **Fallback** when the route is not reachable: the same write on the machine (`fly ssh console -a realbud-managed-gateway`, then `cd /app/managed-gateway`):
 
    ```sh
    node --experimental-strip-types entitlement-cli.ts set --company <companyId> --evidence <ticket> \
