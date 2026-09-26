@@ -225,22 +225,24 @@ export type OfficeTermsDecision =
   /** Resale is configured, but the office's billing owner has not accepted
    * RealBud's terms with that markup and reference yet. Nothing is written. */
   | { state: 'acceptance_required' };
-/** The terms for one office: client-funded when listed; resale when resale is
- * configured AND the office accepted it, under the office's own acceptance
- * reference (`resaleAcceptance`, from commercial-terms.ts); otherwise none. */
+/** The terms for one office: client-funded when listed; otherwise resale at the
+ * markup the office itself last ACCEPTED, under that acceptance's own reference
+ * (`latestResaleAcceptance`, from commercial-terms.ts). The deployment's resale
+ * markup is only the default for new terms: it never prices an office. Without an
+ * acceptance: `acceptance_required` when resale is configured, else `unconfigured`. */
 export function termsForCompany(policy: CustomerTermsPolicy, companyId: string,
-  resaleAcceptance: (resale: { markupBasisPoints: number; termsReference: string }) => string | undefined = () => undefined): OfficeTermsDecision {
+  accepted: () => { markupBasisPoints: number; acceptanceReference: string } | undefined = () => undefined): OfficeTermsDecision {
   if (policy.clientFundedCompanies.has(companyId)) return { terms: { customerBilling: 'client_funded', acceptanceReference: policy.clientFundedReference } };
-  if (!policy.resale) return { state: 'unconfigured' };
-  const acceptanceReference = resaleAcceptance({ markupBasisPoints: policy.resale.clientMarkupBasisPoints, termsReference: policy.resale.termsReference });
-  if (!acceptanceReference) return { state: 'acceptance_required' };
-  return { terms: { customerBilling: 'resale', clientMarkupBasisPoints: policy.resale.clientMarkupBasisPoints, acceptanceReference } };
+  const acceptance = accepted();
+  if (acceptance) return { terms: { customerBilling: 'resale', clientMarkupBasisPoints: acceptance.markupBasisPoints, acceptanceReference: acceptance.acceptanceReference } };
+  return { state: policy.resale ? 'acceptance_required' : 'unconfigured' };
 }
 /**
  * The terms policy from the environment. Every value is non-secret.
  *   REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES   comma-separated companyIds
  *   REALBUD_MODELVIA_CLIENT_FUNDED_REFERENCE   optional acceptance reference
- *   REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS  0..100000, resale only (production 3000)
+ *   REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS  0..10000, the DEFAULT markup for new
+ *     office terms (production 3000); each office is priced at its own accepted markup
  *   REALBUD_MODELVIA_RESALE_TERMS_REFERENCE      required with the markup; an id
  *     (it is joined to each office's acceptance digest, inside Modelvia's 200 chars)
  * A malformed value is reported by name, never by value.
@@ -253,7 +255,7 @@ export function customerTermsPolicy(env: NodeJS.ProcessEnv): CustomerTermsPolicy
   if (!REFERENCE.test(clientFundedReference)) return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_CLIENT_FUNDED_REFERENCE' };
   const markup = value('REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS'), resaleReference = value('REALBUD_MODELVIA_RESALE_TERMS_REFERENCE');
   if (!markup && !resaleReference) return { clientFundedCompanies: new Set(companies), clientFundedReference };
-  if (!/^(0|[1-9][0-9]{0,5})$/.test(markup) || Number(markup) > 100_000) return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS' };
+  if (!/^(0|[1-9][0-9]{0,4})$/.test(markup) || Number(markup) > 10_000) return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS' };
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,159}$/.test(resaleReference)) return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_RESALE_TERMS_REFERENCE' };
   return { clientFundedCompanies: new Set(companies), clientFundedReference, resale: { clientMarkupBasisPoints: Number(markup), termsReference: resaleReference } };
 }
@@ -277,6 +279,21 @@ export interface ModelviaTermsClient {
   ensureCustomerTerms(customerId: string, terms: CustomerTerms): Promise<CustomerTermsResult>;
   /** Read only. */
   customerTermsReadiness(customerId: string): Promise<CustomerTermsReadiness>;
+  /** Make the office's ACCEPTED resale markup the one Modelvia prices at. When
+   * the resale policy in force already carries it (or none is needed) nothing is
+   * written. Otherwise ONE new active policy is appended, effective at
+   * Modelvia's own "now" (the Date header of its policy-list response, never
+   * this service's clock); the old policy is never changed, so usage admitted
+   * under it keeps its price. Refuses to turn a client-funded office into resale. */
+  syncResaleTerms?(customerId: string, terms: { clientMarkupBasisPoints: number; acceptanceReference: string }): Promise<ResaleSyncResult>;
+}
+export interface ResaleSyncResult {
+  state: 'active' | 'pending' | 'not_required';
+  created: boolean; policyId?: string; clientMarkupBasisPoints?: number;
+  /** Modelvia time the new policy took effect (created only). */
+  effectiveAt?: number;
+  /** The policy this one supersedes, left unchanged (created only). */
+  supersedes?: string;
 }
 export function hasCustomerTerms(client: object): client is ModelviaTermsClient {
   return typeof (client as Partial<ModelviaTermsClient>).ensureCustomerTerms === 'function'
@@ -393,7 +410,7 @@ export function modelviaKeyClient(options: {
   /** `conflicts` names the Modelvia error codes this call treats as a conflict
    * rather than a failure. Only a strictly shaped `{error: "<code>"}` is read,
    * and only for control flow — an upstream body is never surfaced. */
-  const callRaw = async (path: string, body: unknown, conflicts: readonly string[] = [], method: 'GET' | 'POST' = 'POST'): Promise<{ conflict?: string; body?: unknown }> => {
+  const callRaw = async (path: string, body: unknown, conflicts: readonly string[] = [], method: 'GET' | 'POST' = 'POST'): Promise<{ conflict?: string; body?: unknown; serverNow?: number }> => {
     const bearerToken = token();
     let response: Response;
     try {
@@ -412,7 +429,8 @@ export function modelviaKeyClient(options: {
     }
     // Modelvia's error bodies may quote the presented credential; only a code is reported.
     if (response.status !== 200 && response.status !== 201) { await response.body?.cancel().catch(() => {}); throw new GatewayError('modelvia_rejected', 502); }
-    try { return { body: await response.json() }; } catch { throw new GatewayError('modelvia_unreadable', 502); }
+    const date = Date.parse(response.headers.get('date') ?? '');
+    try { return { body: await response.json(), ...(Number.isFinite(date) ? { serverNow: date } : {}) }; } catch { throw new GatewayError('modelvia_unreadable', 502); }
   };
   const call = async (path: string, body: unknown): Promise<unknown> => (await callRaw(path, body)).body;
   const read = async (path: string): Promise<unknown> => (await callRaw(path, undefined, [], 'GET')).body;
@@ -496,17 +514,21 @@ export function modelviaKeyClient(options: {
   };
   /** This client's ACTIVE policies for one customer. The list is global to the
    * operator credential, so everything else is dropped unread. Drafts never price. */
-  const readPolicies = async (customerId: string): Promise<HeldPolicy[]> => {
-    const body = await read('/v1/operator/commercial-policies');
+  const readPolicies = async (customerId: string): Promise<HeldPolicy[]> => (await readPoliciesAt(customerId)).policies;
+  /** The same list with Modelvia's clock at the moment it answered (its `Date`
+   * header, whole seconds), or undefined when the header is missing. */
+  const readPoliciesAt = async (customerId: string): Promise<{ policies: HeldPolicy[]; serverNow?: number }> => {
+    const answer = await callRaw('/v1/operator/commercial-policies', undefined, [], 'GET'), body = answer.body;
     requireThat(record(body) && Array.isArray(body.policies), 'modelvia_unreadable', 502);
-    return (body.policies as unknown[]).filter(entry => record(entry) && entry.clientId === options.clientId && entry.customerId === customerId && entry.state === 'active')
+    return { ...(answer.serverNow !== undefined ? { serverNow: answer.serverNow } : {}), policies: (body.policies as unknown[]).filter(entry => record(entry) && entry.clientId === options.clientId && entry.customerId === customerId && entry.state === 'active')
       .map(entry => {
         const p = entry as Record<string, unknown>;
         requireThat(typeof p.id === 'string' && ACCOUNT_ID.test(p.id) && typeof p.effectiveAt === 'number' && Number.isSafeInteger(p.effectiveAt)
           && (p.customerBilling === undefined || p.customerBilling === 'resale' || p.customerBilling === 'client_funded'), 'modelvia_unreadable', 502);
         // Absent means resale: the only meaning a policy recorded before the field had.
-        return { id: p.id as string, effectiveAt: p.effectiveAt as number, customerBilling: (p.customerBilling ?? 'resale') as HeldPolicy['customerBilling'] };
-      });
+        return { id: p.id as string, effectiveAt: p.effectiveAt as number, customerBilling: (p.customerBilling ?? 'resale') as HeldPolicy['customerBilling'],
+          ...(Number.isSafeInteger(p.clientMarkupBasisPoints) ? { clientMarkupBasisPoints: p.clientMarkupBasisPoints as number } : {}) };
+      }) };
   };
   return {
     environment: options.environment,
@@ -692,13 +714,56 @@ export function modelviaKeyClient(options: {
       const policy = inForce(await readPolicies(customerId), clock());
       return policy && policy.effectiveAt <= clock() ? 'ready' : 'terms_required';
     },
+    async syncResaleTerms(customerId, terms) {
+      requireThat(PATH_ID.test(customerId), 'invalid_modelvia_account');
+      const wanted = validTerms({ customerBilling: 'resale', ...terms }) as Extract<CustomerTerms, { customerBilling: 'resale' }>;
+      const customer = await readCustomer(customerId);
+      requireThat(customer, 'modelvia_customer_not_ready', 409);
+      if (await effectivePayer(customer!) === 'customer') return { state: 'not_required', created: false };
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const { policies, serverNow } = await readPoliciesAt(customerId);
+        // Modelvia's own clock, never ours: a policy stamped from a local clock
+        // that runs ahead would leave a window with no price in force.
+        requireThat(serverNow !== undefined && Number.isSafeInteger(serverNow) && serverNow > 0, 'modelvia_clock_unavailable', 502);
+        const now = serverNow!;
+        const latest = [...policies].sort((a, b) => b.effectiveAt - a.effectiveAt)[0];
+        // A later policy already waiting to start would be superseded out of order.
+        requireThat(!latest || latest.effectiveAt <= now, 'modelvia_terms_pending', 409);
+        if (latest && latest.customerBilling === 'client_funded') throw new GatewayError('modelvia_terms_billing_mismatch', 409);
+        // Idempotent: the markup in force is already the accepted one.
+        if (latest && latest.clientMarkupBasisPoints === wanted.clientMarkupBasisPoints)
+          return { state: 'active', created: false, policyId: latest.id, clientMarkupBasisPoints: wanted.clientMarkupBasisPoints };
+        // Strictly after the policy it supersedes (Modelvia refuses an equal
+        // `effectiveAt`), and never in Modelvia's future. The Date header has
+        // whole seconds, so its value is at or just before Modelvia's clock.
+        const effectiveAt = latest && latest.effectiveAt >= now ? latest.effectiveAt + 1 : now;
+        requireThat(effectiveAt - now < 1000, 'modelvia_terms_pending', 409);
+        const body = {
+          id: `realbud-resale-${effectiveAt}-${randomBytes(4).toString('hex')}`,
+          clientId: options.clientId, customerId, state: 'active', effectiveAt,
+          payer: 'client', invoiceIssuer: 'client', collection: 'invoice', management: 'self_service',
+          platformFeeBasisPoints: 0, clientMarkupBasisPoints: wanted.clientMarkupBasisPoints,
+          acceptanceReference: wanted.acceptanceReference, customerBilling: 'resale',
+        };
+        const answer = await callRaw('/v1/operator/commercial-policies', body, TERMS_CONFLICTS);
+        if (answer.conflict === 'policy_version_exists' || answer.conflict === 'policy_effective_order') continue;
+        if (answer.conflict === 'payer_migration_required') throw new GatewayError('modelvia_terms_payer_mismatch', 409);
+        if (answer.conflict === 'commercial_acceptance_required') throw new GatewayError('modelvia_terms_clock_skew', 409);
+        if (answer.conflict) throw new GatewayError('modelvia_terms_refused', 409);
+        const saved = answer.body;
+        requireThat(record(saved) && saved.id === body.id && saved.customerId === customerId && saved.clientId === options.clientId
+          && saved.state === 'active' && saved.effectiveAt === effectiveAt && saved.clientMarkupBasisPoints === wanted.clientMarkupBasisPoints, 'modelvia_terms_scope_mismatch', 502);
+        return { state: 'active', created: true, policyId: body.id, clientMarkupBasisPoints: wanted.clientMarkupBasisPoints, effectiveAt, ...(latest ? { supersedes: latest.id } : {}) };
+      }
+      throw new GatewayError('modelvia_terms_conflict', 409);
+    },
   };
 }
 
 /** The Modelvia refusals `ensureCustomerTerms` reads as a code (all 409). */
 const TERMS_CONFLICTS = ['policy_version_exists', 'policy_effective_order', 'payer_migration_required', 'commercial_acceptance_required',
   'invalid_internal_commercial_policy', 'invalid_client_funded_policy', 'merchant_onboarding_required', 'hosted_collection_not_connected'] as const;
-type HeldPolicy = { id: string; effectiveAt: number; customerBilling: 'client_funded' | 'resale' };
+type HeldPolicy = { id: string; effectiveAt: number; customerBilling: 'client_funded' | 'resale'; clientMarkupBasisPoints?: number };
 function validTerms(terms: CustomerTerms): CustomerTerms {
   requireThat(record(terms) && REFERENCE.test(String(terms.acceptanceReference)), 'invalid_customer_terms');
   if (terms.customerBilling === 'client_funded') return { customerBilling: 'client_funded', acceptanceReference: terms.acceptanceReference };

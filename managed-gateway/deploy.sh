@@ -81,14 +81,15 @@ case "$payment_mode" in
 esac
 
 # --- Modelvia commercial terms (owner decision, 26 September 2026) ---------
-# Customer offices buy AI at Modelvia's rate + 30% (3000 basis points), billed on
+# Customer offices buy AI at Modelvia's rate + their own accepted markup; 30%
+# (3000 basis points) is the DEFAULT for new office terms. Billed on
 # their one monthly RealBud invoice; the owner's own and internal offices stay
 # client-funded (free). These defaults ARE the production values; exporting a
 # different markup or reference is an explicit override. Non-secret.
 : "${REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS:=3000}"
 : "${REALBUD_MODELVIA_RESALE_TERMS_REFERENCE:=realbud-office-terms-2026-09-26-ai-resale-30pct}"
-[[ "$REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS" =~ ^(0|[1-9][0-9]{0,5})$ ]] && (( REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS <= 100000 )) ||
-  fail "REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS must be a whole number of basis points from 0 to 100000 (production: 3000)"
+[[ "$REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS" =~ ^(0|[1-9][0-9]{0,4})$ ]] && (( REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS <= 10000 )) ||
+  fail "REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS must be a whole number of basis points from 0 to 10000 (production: 3000)"
 [[ "$REALBUD_MODELVIA_RESALE_TERMS_REFERENCE" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,159}$ ]] ||
   fail "REALBUD_MODELVIA_RESALE_TERMS_REFERENCE must be an id of at most 160 characters (letters, digits, _ . : / -)"
 (( REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS == 3000 )) ||

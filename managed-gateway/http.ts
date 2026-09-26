@@ -4,7 +4,8 @@ import type { ManagedConnectors } from './connectors.ts';
 import { provisioningError, type InstallationProvisioning } from './provisioning.ts';
 import type { OperatorRoutes } from './office-ai-access.ts';
 import type { BillingService } from './billing.ts';
-import { invoiceHtml } from './invoice-html.ts';
+import { invoiceHtml, presentInvoice } from './invoice-html.ts';
+import type { Invoice } from './billing.ts';
 import { marginCsv, previousPeriod } from './office-ai-billing.ts';
 
 export interface PortalIdentity {
@@ -31,10 +32,11 @@ function reply(res:ServerResponse,status:number,data:unknown) {
  *
  * Routes: GET /health, GET /ready, /v1/connectors/*, POST
  * /v1/portal/installations/{provision,revoke}, the operator-only POST
- * /v1/operator/offices/ai-access and GET /v1/operator/billing/margins, the
+ * /v1/operator/offices/ai-access, POST /v1/operator/offices/ai-markup[/sync],
+ * POST /v1/operator/offices/ai-charge-detail and GET /v1/operator/billing/margins, the
  * monthly invoice routes GET
  * /v1/portal/commercial-terms, POST /v1/portal/commercial-terms/accept, GET
- * /v1/portal/invoices[/{id}[/document|/receipt]], POST
+ * /v1/portal/invoices[/{id}[/document|/receipt|/ai-usage]], POST
  * /v1/portal/invoices/{id}/checkout, and the signed POST /v1/webhooks/square.
  * Nothing else. AI rates, caps, usage and invoices are Modelvia's; a resale
  * office's monthly invoice carries its finalized Modelvia invoices as AI usage
@@ -53,7 +55,13 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
   /** Care-fee invoices and their Square collection. Absent, every care route answers 503. */
   billing?:BillingService;
   /** True only when a Square adapter is composed; the webhook route is 503 otherwise. */
-  squareWebhooks?:boolean}) {
+  squareWebhooks?:boolean;
+  /** After a billing owner accepts terms: bring Modelvia's resale policy to the
+   * office's accepted markup (office-ai-terms.ts). Never fails the acceptance. */
+  afterTermsAccepted?:(companyId:string)=>Promise<unknown>;
+  /** The office invoice's per-request AI usage CSV (office-ai-usage-csv.ts).
+   * Absent answers 503 `modelvia_client_unconfigured`. */
+  aiUsageCsv?:(invoice:Invoice)=>Promise<string>}) {
   const modelviaOperator=options.modelviaOperator??(options.provisioning?'configured':'missing');
   const operatorAccess=options.operatorAccess??(options.operator?'configured':'missing');
   const billing=()=>{ requireThat(options.billing,'billing_unavailable',503); return options.billing; };
@@ -108,6 +116,20 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
         catch(error) { throw error instanceof GatewayError?error:new GatewayError('office_ai_access_failed',502); }
         return;
       }
+      // RealBud operator: one office's AI resale markup (a proposal the office must
+      // accept), its invoice charge detail, and re-syncing Modelvia to the accepted markup.
+      const officeTerms=/^\/v1\/operator\/offices\/(ai-markup|ai-markup\/sync|ai-charge-detail)$/.exec(url.pathname);
+      if(req.method==='POST' && officeTerms) {
+        requireThat(options.operator,'operator_unconfigured',503);
+        let operator;
+        try { operator=await options.operator!.authenticate(bearer(req)); } catch { throw new GatewayError('operator_unauthenticated',401); }
+        const routes=options.operator!.officeAiTerms; requireThat(routes,'billing_unavailable',503);
+        const value=json(await body(req,4096));
+        if(officeTerms[1]==='ai-markup') { reply(res,200,await routes!.proposeMarkup(operator,value)); return; }
+        if(officeTerms[1]==='ai-charge-detail') { reply(res,200,await routes!.setChargeDetail(operator,value)); return; }
+        requireThat(routes!.syncMarkup,'operator_unconfigured',503);
+        reply(res,200,await routes!.syncMarkup!(operator,value)); return;
+      }
       // RealBud operator: the owner's per-office margin for one month, JSON or CSV.
       // Read only; the period defaults to the last closed Brisbane month.
       if(req.method==='GET' && url.pathname==='/v1/operator/billing/margins') {
@@ -156,10 +178,14 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
         const terms=billing().commercialTerms; requireThat(terms,'commercial_terms_unavailable',503);
         const value=json(await body(req,4096)); object(value); exact(value,['period','version','digest']);
         requireThat(typeof value.period==='string' && typeof value.version==='string' && typeof value.digest==='string','invalid_acceptance');
-        reply(res,200,terms.accept(actor,value.period,value.version,value.digest)); return;
+        const accepted=terms.accept(actor,value.period,value.version,value.digest);
+        // An accepted markup change reaches Modelvia now; failures are journalled
+        // and retried by the operator (`sync-markup`), never shown as a refusal.
+        if(options.afterTermsAccepted) { try { await options.afterTermsAccepted(actor.companyId); } catch { /* journalled by the sync */ } }
+        reply(res,200,accepted); return;
       }
       if(req.method==='GET' && url.pathname==='/v1/portal/invoices') { reply(res,200,{invoices:billing().portalInvoices(actor)}); return; }
-      const match=/^\/v1\/portal\/invoices\/([A-Za-z0-9-]+)(?:\/(checkout|receipt|document))?$/.exec(url.pathname);
+      const match=/^\/v1\/portal\/invoices\/([A-Za-z0-9-]+)(?:\/(checkout|receipt|document|ai-usage))?$/.exec(url.pathname);
       if(match) {
         const invoice=billing().invoice(actor,match[1]);
         if(req.method==='POST' && match[2]==='checkout') { reply(res,200,await billing().checkout(actor,invoice.id)); return; }
@@ -167,7 +193,14 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
         if(req.method==='GET' && match[2]==='document') {
           res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"}); res.end(invoiceHtml(invoice)); return;
         }
-        if(req.method==='GET' && !match[2]) { reply(res,200,invoice); return; }
+        if(req.method==='GET' && match[2]==='ai-usage') {
+          requireThat(invoice.aiUsage?.modelviaInvoices.length,'ai_usage_not_on_invoice',404);
+          requireThat(options.aiUsageCsv,'modelvia_client_unconfigured',503);
+          const csv=await options.aiUsageCsv!(invoice);
+          res.writeHead(200,{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':`attachment; filename="realbud-ai-usage-${invoice.id}.csv"`,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
+          res.end(csv); return;
+        }
+        if(req.method==='GET' && !match[2]) { reply(res,200,presentInvoice(invoice)); return; }
       }
       throw new GatewayError('not_found',404);
     } catch(error) {

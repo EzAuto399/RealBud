@@ -63,7 +63,9 @@ function fakeModelvia(options: { marginReport?: Row[]; customerCheckout?: string
   const finalize = (id: string, period: string, totalCents: string, gstCents: string, override: Row = {}) =>
     invoices.set(id, { id, state: 'final', kind: 'Tax Invoice', clientId: CLIENT, customerId: CUSTOMER, period, currency: 'AUD', gstInclusive: true, totalCents, gstCents,
       totalNanoAud: /^-?\d+$/.test(totalCents) ? (BigInt(totalCents) * 10_000_000n).toString() : totalCents, seller: { legalName: 'Fictional RealBud Seller', abn: SELLER_ABN, address: '1 Example Seller Street', gstRegistered: true },
-      customer: { name: 'Fictional Agency A', address: '1 Example Street, Brisbane QLD' }, lines: [], paid: false, paymentState: 'not_started', ...override });
+      customer: { name: 'Fictional Agency A', address: '1 Example Street, Brisbane QLD' }, chargeDetail: 'all_in', usedBy: { kind: 'customer', customerId: CUSTOMER, displayName: 'Fictional Agency A', projectId: null },
+      lines: /^-?\d+$/.test(totalCents) ? [{ description: 'AI usage — DeepSeek V4.1 Flash — 1 request', amountNanoAud: `${totalCents}0000000`, amountCents: totalCents, gstCents, model: 'deepseek-v4.1-flash', requestCount: 1, usagePeriod: period,
+        usedBy: { kind: 'customer', customerId: CUSTOMER, displayName: 'Fictional Agency A', projectId: null } }] : [], paid: false, paymentState: 'not_started', ...override });
   const client = modelviaClientBilling({ serviceOrigin: 'https://api.modelvia.dev', clientId: CLIENT, clientKey: () => CLIENT_KEY, fetch: fetchLike });
   return { client, fetchLike, calls, invoices, usage, analytics, finalize };
 }
@@ -91,10 +93,10 @@ test('production resale terms: 30% markup, and each office policy carries that o
   const reference = resaleAcceptanceReference(PRODUCTION_RESALE_TERMS_REFERENCE, acceptance);
   assert.deepEqual(accepted, [{ period: '2026-09', version: 'care-v1', markupBasisPoints: 3000, termsReference: PRODUCTION_RESALE_TERMS_REFERENCE, acceptanceReference: reference }]);
   assert.ok(reference.length <= 200);
-  assert.deepEqual(termsForCompany(policy, 'company-a', () => reference), { terms: { customerBilling: 'resale', clientMarkupBasisPoints: 3000, acceptanceReference: reference } });
+  assert.deepEqual(termsForCompany(policy, 'company-a', () => ({ markupBasisPoints: 3000, acceptanceReference: reference })), { terms: { customerBilling: 'resale', clientMarkupBasisPoints: 3000, acceptanceReference: reference } });
   assert.deepEqual(termsForCompany(policy, 'company-b', () => undefined), { state: 'acceptance_required' });
   // The owner's own office stays client-funded (free), accepted or not.
-  assert.deepEqual(termsForCompany(policy, 'company-owner', () => reference), { terms: { customerBilling: 'client_funded', acceptanceReference: 'realbud-owner-decision-2026-09-24-internal-ai' } });
+  assert.deepEqual(termsForCompany(policy, 'company-owner', () => ({ markupBasisPoints: 3000, acceptanceReference: reference })), { terms: { customerBilling: 'client_funded', acceptanceReference: 'realbud-owner-decision-2026-09-24-internal-ai' } });
 });
 
 test('month close: one invoice = care + the finalized Modelvia AI invoice at its exact cents and GST, collected as one Square amount', async () => {
@@ -106,10 +108,10 @@ test('month close: one invoice = care + the finalized Modelvia AI invoice at its
   assert.equal(closed.ai, 'consolidated');
   assert.deepEqual(invoice.lines.map(l => [l.description, l.amountCents, l.gstCents, l.modelviaInvoice ?? null]), [
     ['RealBud software and routine maintenance — monthly care', '12500', '1137', null],
-    ['AI usage 2026-09 (Modelvia invoice CI-00000007)', '1234', '112', 'CI-00000007']]);
+    ['AI usage — DeepSeek V4.1 Flash — 1 request', '1234', '112', 'CI-00000007']]);
   // A$125.00 + A$12.34 = A$137.34; GST is the one total's inclusive GST (Square's), the AI line keeps Modelvia's.
   assert.equal(invoice.totalCents, '13734'); assert.equal(invoice.gstCents, '1249');
-  assert.deepEqual(invoice.aiUsage, { modelviaInvoices: [{ id: 'CI-00000007', period: '2026-09', totalCents: '1234', gstCents: '112' }] });
+  assert.deepEqual(invoice.aiUsage, { modelviaInvoices: [{ id: 'CI-00000007', period: '2026-09', totalCents: '1234', gstCents: '112' }], modelviaCustomerId: CUSTOMER, usedBy: 'Fictional Agency A', chargeDetail: 'all_in' });
   assert.deepEqual(f.db.all('SELECT modelvia_invoice,tenant,period,invoice FROM office_ai_consolidations').map(r => ({ ...(r as Row) })),
     [{ modelvia_invoice: 'CI-00000007', tenant: 'company-a', period: '2026-09', invoice: invoice.id }]);
   const html = invoiceHtml(invoice);
@@ -153,7 +155,7 @@ test('not finalized at Modelvia: the close waits by default; --defer-ai issues c
   const deferred = await close('2026-09', 'care-v1', true);
   assert.equal(deferred.ai, 'deferred');
   assert.deepEqual(deferred.invoice.lines.map(l => l.amountCents), ['12500']);
-  assert.deepEqual(deferred.invoice.aiUsage, { modelviaInvoices: [], deferredPeriods: ['2026-09'] });
+  assert.deepEqual(deferred.invoice.aiUsage, { modelviaInvoices: [], deferredPeriods: ['2026-09'], modelviaCustomerId: CUSTOMER, chargeDetail: 'all_in' });
   assert.match(invoiceHtml(deferred.invoice), /AI usage for 2026-09 was not yet finalized/);
   assert.equal(f.db.all("SELECT seq FROM events WHERE kind='ai_usage_deferred'").length, 1);
   // Modelvia finalizes September; October's close carries it, at its exact total.
@@ -201,17 +203,17 @@ test('margin view: AI retail, Modelvia cost, markup, care, total and margin per 
   await close();
   const report = await officeMargins({ ...options, clientFundedCompanies: new Set(['company-owner']) }, '2026-09');
   const [a, owner] = report.rows;
-  assert.deepEqual({ ...a, invoiceId: undefined }, { companyId: 'company-a', customerName: 'Fictional Agency A', billing: 'resale', aiRetailCents: '130', modelviaCostCents: '100', markupCents: '30',
+  assert.deepEqual({ ...a, invoiceId: undefined }, { companyId: 'company-a', customerName: 'Fictional Agency A', billing: 'resale', markupBasisPoints: 3000, proposedMarkupBasisPoints: null, markupPolicy: 'not_synced', aiRetailCents: '130', modelviaCostCents: '100', markupCents: '30',
     careCents: '12500', totalCents: '12630', marginCents: '12530', invoiceId: undefined, invoiceState: 'closed', aiBilledCents: '130', modelviaInvoices: ['CI-00000021'], modelviaSource: 'analytics', note: null });
   assert.deepEqual([owner.billing, owner.aiRetailCents, owner.modelviaCostCents, owner.markupCents, owner.careCents, owner.totalCents, owner.marginCents, owner.invoiceState],
     ['client_funded', '0', '20', '-20', '0', '0', '-20', 'not_closed']);
   assert.match(owner.note!, /provisional/);
   assert.deepEqual(report.totals, { aiRetailCents: '130', modelviaCostCents: '120', markupCents: '10', careCents: '12500', totalCents: '12630', marginCents: '12510' });
   const csv = marginCsv(report).split('\r\n');
-  assert.equal(csv[0], 'period,company_id,office,billing,ai_retail_aud,modelvia_cost_aud,realbud_markup_aud,care_fee_aud,total_aud,margin_aud,realbud_invoice,invoice_state,ai_billed_aud,modelvia_invoices,modelvia_source,note');
-  assert.match(csv[1], /^2026-09,company-a,Fictional Agency A,resale,1\.30,1\.00,0\.30,125\.00,126\.30,125\.30,RB-000001,closed,1\.30,CI-00000021,analytics,$/);
+  assert.equal(csv[0], 'period,company_id,office,billing,ai_retail_aud,modelvia_cost_aud,realbud_markup_aud,care_fee_aud,total_aud,margin_aud,realbud_invoice,invoice_state,ai_billed_aud,modelvia_invoices,modelvia_source,note,markup_percent,proposed_markup_percent,markup_policy');
+  assert.match(csv[1], /^2026-09,company-a,Fictional Agency A,resale,1\.30,1\.00,0\.30,125\.00,126\.30,125\.30,RB-000001,closed,1\.30,CI-00000021,analytics,,30\.00,,not_synced$/);
   assert.match(csv[2], /^2026-09,company-owner,"Owner, ""Office"" =HQ",client_funded,0\.00,0\.20,-0\.20,0\.00,0\.00,-0\.20,,not_closed,0\.00,,analytics,/);
-  assert.equal(csv[3], '2026-09,,Total,,1.30,1.20,0.10,125.00,126.30,125.10,,,,,,');
+  assert.equal(csv[3], '2026-09,,Total,,1.30,1.20,0.10,125.00,126.30,125.10,,,,,,,,,');
   // The margin report, once Modelvia serves it, replaces analytics without a RealBud change.
   const reported = fakeModelvia({ marginReport: [{ customerId: CUSTOMER, customerNetNanoAud: '2600000000', platformNetNanoAud: '2000000000' }] });
   const fromReport = await officeMargins({ billing, modelvia: reported.client, clientFundedCompanies: new Set() }, '2026-09');
@@ -326,7 +328,7 @@ test('an office that accepted resale keeps being read: owed AI under care-only t
   again.f.setTime(Date.parse('2026-11-01T00:00:00Z'));
   await assert.rejects(again.close('2026-10', 'care-v2'), /modelvia_invoice_not_finalized/);
   const carried = await again.close('2026-10', 'care-v2', true);
-  assert.deepEqual(carried.invoice.aiUsage, { modelviaInvoices: [], deferredPeriods: ['2026-09'] });
+  assert.deepEqual(carried.invoice.aiUsage, { modelviaInvoices: [], deferredPeriods: ['2026-09'], modelviaCustomerId: CUSTOMER, chargeDetail: 'all_in' });
 });
 
 test('an invoice dated before the office accepted resale is refused; later or unrelated invoices are not validated', async () => {

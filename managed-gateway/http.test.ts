@@ -86,8 +86,9 @@ test('care invoice routes are tenant-scoped, render the document and refuse chec
   const base=`http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const request=(method:string,path:string,bearer:string=OWNER)=>fetch(base+path,{method,headers:{Authorization:`Bearer ${bearer}`,...(method==='POST'?{'Content-Type':'application/json'}:{})},...(method==='POST'?{body:'{}'}:{})});
   const list=await request('GET','/v1/portal/invoices');assert.equal(list.status,200);
-  assert.deepEqual(await list.json(),{invoices:[{id:invoice.id,kind:'Tax Invoice',period:'2026-09',currency:'AUD',gstInclusive:true,totalCents:'12500',gstCents:'1136',paid:false}]});
-  assert.deepEqual(await (await request('GET',`/v1/portal/invoices/${invoice.id}`)).json(),invoice);
+  assert.deepEqual(await list.json(),{invoices:[{id:invoice.id,kind:'Tax Invoice',period:'2026-09',currency:'AUD',gstInclusive:true,totalCents:'12500',gstCents:'1136',paid:false,aiUsageCsv:false}]});
+  assert.deepEqual(await (await request('GET',`/v1/portal/invoices/${invoice.id}`)).json(),{...invoice,links:{document:`/api/account/invoices/${invoice.id}?kind=document`}});
+  assert.deepEqual(await (await request('GET',`/v1/portal/invoices/${invoice.id}/ai-usage`)).json(),{error:'ai_usage_not_on_invoice'});
   const document=await request('GET',`/v1/portal/invoices/${invoice.id}/document`,READER);
   assert.equal(document.status,200);assert.match(document.headers.get('content-type')??'',/text\/html/);
   const html=await document.text();assert.match(html,/monthly care/);assert.doesNotMatch(html,/AI usage —/);

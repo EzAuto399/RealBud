@@ -17,6 +17,17 @@
  *   GET /v1/client/customers/{c}/invoices/{id}
  *     → the finalized invoice (`state: "final"`, `CI-…` id, seller, totals) plus its
  *       payment summary (`paid`, `paymentState`, `checkoutAvailable`, `directPaymentAvailable`, …).
+ *       Presented (Modelvia `main` bb73139, `charge-presentation.ts`): `lines` are
+ *       grouped, one sale line per model with `model` and `requestCount`, each with
+ *       `usedBy` ({displayName, projectId}) and, only when RealBud's client itemizes
+ *       (`chargeDetail: "itemized"`), `components` {modelUsageCents, routingCents,
+ *       serviceFeeCents}; Σ line cents and GST are the invoice's exactly.
+ *   GET /v1/client/customers/{c}/invoices/{id}/requests.csv
+ *     → one row per sold request: invoice_id, request_id, usage_period, usage_date,
+ *       model, line, amount_nano_aud, amount_cents, gst_cents (customer prices only).
+ *   GET /v1/client/analytics?period=&customerId=&requestsLimit=&requestsCursor=
+ *     also pages `recentRequests` (createdAt, projectId, model, tokens, usedBy):
+ *     read only to add date/time, user/project and tokens to the office's CSV.
  *   GET /v1/client/analytics?period=&customerId=
  *     → client scope, `summary.money`: `customerNetNanoAud` (retail the customer
  *       pays, null when a price is unknown) and `platformNetNanoAud` (wholesale incl.
@@ -45,12 +56,34 @@ const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const CENTS = /^-?(0|[1-9][0-9]{0,14})$/;
 const NANO = /^-?(0|[1-9][0-9]{0,24})$/;
 const REQUEST_TIMEOUT_MS = 30_000;
+const MAX_CSV_BYTES = 32 * 1024 * 1024;
+/** Analytics pages read to enrich one invoice's CSV (500 requests each). */
+const MAX_ANALYTICS_PAGES = 400;
+const REQUEST_ID = /^[A-Za-z0-9_.:-]{1,160}$/;
+const LABEL = /^[^\u0000-\u001f\u007f]{1,300}$/;
+const TOKENS = /^(0|[1-9][0-9]{0,20})$/;
 
 export interface ModelviaInvoiceSummary { id: string; period: string; totalCents: string; gstCents: string }
 /** A finalized Modelvia customer invoice, reduced to what consolidation checks. */
+/** One line of a Modelvia customer invoice as the office may see it: its exact
+ * cents and GST, and who used it. `components` only when itemized. Never a
+ * wholesale, platform-fee or markup figure. */
+export interface ModelviaInvoiceLine {
+  description: string; amountCents: string; gstCents: string;
+  model?: string; requestCount?: number; usagePeriod?: string;
+  /** Adjustment and refund lines name the invoice they correct. */
+  sourceInvoice?: string; refundId?: string;
+  usedBy?: { displayName: string; projectId: string | null };
+  components?: { modelUsageCents: string; routingCents: string; serviceFeeCents: string };
+}
 export interface ModelviaCustomerInvoice extends ModelviaInvoiceSummary {
   kind: string; clientId: string; customerId: string;
   seller: { legalName: string; abn: string };
+  /** The grouped lines, summing exactly to the invoice's cents and GST. */
+  lines: ModelviaInvoiceLine[];
+  /** Whose usage the invoice is (Modelvia's display name for the customer). */
+  usedBy?: { displayName: string };
+  chargeDetail: 'all_in' | 'itemized';
   /** From Modelvia's payment summary: whether anything was paid or a checkout
    * started there, and whether Modelvia offers the customer a way to pay it. */
   paid: boolean; paymentState: string; checkoutAvailable: boolean; directPaymentAvailable: boolean;
@@ -75,9 +108,18 @@ export interface ModelviaCustomerMargin {
   /** False while requests are pending, unknown or unpriced: an estimate, not final. */
   complete: boolean;
 }
+/** One sold request of a Modelvia customer invoice, from its requests CSV,
+ * with what client analytics adds (absent when analytics has no such row). */
+export interface ModelviaInvoiceRequest {
+  invoiceId: string; requestId: string; usagePeriod: string; model: string;
+  amountCents: string; gstCents: string;
+  createdAt?: number; usedBy?: string; projectId?: string | null; tokensIn?: string; tokensOut?: string;
+}
 export interface ModelviaClientBilling {
   customerMonth(customerId: string, period: string): Promise<ModelviaCustomerMonth>;
   customerInvoice(customerId: string, invoiceId: string): Promise<ModelviaCustomerInvoice>;
+  /** The invoice's sold requests with date/time, user/project and tokens. */
+  customerInvoiceRequests?(customerId: string, invoiceId: string): Promise<ModelviaInvoiceRequest[]>;
   customerMargins(customerIds: readonly string[], period: string): Promise<Map<string, ModelviaCustomerMargin>>;
 }
 
@@ -94,7 +136,7 @@ export function modelviaClientBilling(options: {
   const base = modelviaOrigin(options.serviceOrigin);
   requireThat(/^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,159}$/.test(options.clientId), 'modelvia_client_id_invalid', 503);
   /** 200 → the JSON body; 404 → undefined when `missing` allows it; anything else a code. */
-  const read = async (path: string, missing = false): Promise<unknown> => {
+  const read = async (path: string, missing = false, text = false): Promise<unknown> => {
     const key = (options.clientKey() ?? '').trim();
     requireThat(CLIENT_KEY.test(key), 'modelvia_client_unconfigured', 503);
     let response: Response;
@@ -107,6 +149,12 @@ export function modelviaClientBilling(options: {
       if (missing && (response.status === 404 || response.status === 405)) return undefined;
       if (response.status === 404) throw new GatewayError('modelvia_customer_invoice_not_found', 404);
       throw new GatewayError(response.status === 401 || response.status === 403 ? 'modelvia_client_rejected' : 'modelvia_rejected', 502);
+    }
+    if (text) {
+      requireThat(/^text\/csv(?:;|$)/i.test(response.headers.get('content-type') ?? ''), 'modelvia_unreadable', 502);
+      const body = await response.text().catch(() => { throw new GatewayError('modelvia_unreadable', 502); });
+      requireThat(body.length <= MAX_CSV_BYTES, 'modelvia_unreadable', 502);
+      return body;
     }
     try { return await response.json(); } catch { throw new GatewayError('modelvia_unreadable', 502); }
   };
@@ -177,9 +225,47 @@ export function modelviaClientBilling(options: {
         && (value.checkoutAvailable === undefined || typeof value.checkoutAvailable === 'boolean')
         && (value.directPaymentAvailable === undefined || typeof value.directPaymentAvailable === 'boolean'), 'modelvia_unreadable', 502);
       const seller = value.seller as Record<string, unknown>;
+      requireThat(Array.isArray(value.lines) && value.lines.length <= 200_000, 'modelvia_unreadable', 502);
+      const lines = (value.lines as unknown[]).map(invoiceLine);
+      // The office sees these lines as they are; they must BE the invoice.
+      requireThat(lines.reduce((n, l) => n + BigInt(l.amountCents), 0n).toString() === base.totalCents
+        && lines.reduce((n, l) => n + BigInt(l.gstCents), 0n).toString() === base.gstCents, 'modelvia_invoice_lines_mismatch', 409);
+      const usedBy = record(value.usedBy) && typeof value.usedBy.displayName === 'string' && LABEL.test(value.usedBy.displayName) ? { displayName: value.usedBy.displayName } : undefined;
       return { ...base, kind: value.kind as string, clientId: options.clientId, customerId,
-        seller: { legalName: seller.legalName as string, abn: seller.abn as string }, paid: value.paid as boolean, paymentState: value.paymentState as string,
+        seller: { legalName: seller.legalName as string, abn: seller.abn as string }, lines, ...(usedBy ? { usedBy } : {}),
+        chargeDetail: value.chargeDetail === 'itemized' ? 'itemized' : 'all_in',
+        paid: value.paid as boolean, paymentState: value.paymentState as string,
         checkoutAvailable: value.checkoutAvailable === true, directPaymentAvailable: value.directPaymentAvailable === true };
+    },
+    async customerInvoiceRequests(customerId, invoiceId) {
+      requireThat(INVOICE_ID.test(invoiceId), 'invalid_modelvia_invoice');
+      const rows = parseRequestsCsv(await read(`${customerPath(customerId)}/invoices/${invoiceId}/requests.csv`, false, true) as string, invoiceId);
+      // Date/time, user/project and tokens come from the customer's analytics
+      // rows, paged per usage period until every request is found.
+      const wanted = new Map(rows.map(r => [r.requestId, r]));
+      for (const period of [...new Set(rows.map(r => r.usagePeriod))].sort()) {
+        let cursor: string | null = null;
+        for (let page = 0; page < MAX_ANALYTICS_PAGES; page++) {
+          const query = new URLSearchParams({ period, customerId, requestsLimit: '500', ...(cursor ? { requestsCursor: cursor } : {}) });
+          const body = await read(`/v1/client/analytics?${query}`);
+          requireThat(record(body) && Array.isArray(body.recentRequests), 'modelvia_unreadable', 502);
+          for (const entry of body.recentRequests as unknown[]) {
+            if (!record(entry) || typeof entry.requestId !== 'string') continue;
+            const row = wanted.get(entry.requestId); if (!row) continue;
+            if (Number.isSafeInteger(entry.createdAt)) row.createdAt = entry.createdAt as number;
+            if (entry.projectId === null || (typeof entry.projectId === 'string' && PATH_ID.test(entry.projectId))) row.projectId = entry.projectId as string | null;
+            if (record(entry.usedBy) && typeof entry.usedBy.displayName === 'string' && LABEL.test(entry.usedBy.displayName)) row.usedBy = entry.usedBy.displayName;
+            const tokens = record(entry.tokens) ? entry.tokens : undefined;
+            const input = tokens ? (str(tokens.totalInput, TOKENS) ? tokens.totalInput : tokens.input) : undefined;
+            if (str(input, TOKENS)) row.tokensIn = input as string;
+            if (tokens && str(tokens.output, TOKENS)) row.tokensOut = tokens.output as string;
+          }
+          const next = record(body.recentRequestsPage) ? body.recentRequestsPage.nextCursor : null;
+          if (typeof next !== 'string' || !next || rows.every(r => r.usagePeriod !== period || r.createdAt !== undefined)) break;
+          cursor = next;
+        }
+      }
+      return rows;
     },
     async customerMargins(customerIds, period) {
       month(period);
@@ -193,6 +279,48 @@ export function modelviaClientBilling(options: {
       return result;
     },
   };
+}
+
+/** One presented Modelvia invoice line, reduced to what the office may see. */
+function invoiceLine(value: unknown): ModelviaInvoiceLine {
+  requireThat(record(value) && typeof value.description === 'string' && LABEL.test(value.description) && str(value.amountCents, CENTS) && str(value.gstCents, CENTS)
+    && (value.model === undefined || (typeof value.model === 'string' && LABEL.test(value.model)))
+    && (value.requestCount === undefined || (count(value.requestCount) && (value.requestCount as number) > 0))
+    && (value.usagePeriod === undefined || str(value.usagePeriod, MONTH))
+    && (value.sourceInvoice === undefined || str(value.sourceInvoice, INVOICE_ID))
+    && (value.refundId === undefined || str(value.refundId, PATH_ID)), 'modelvia_unreadable', 502);
+  const line: ModelviaInvoiceLine = { description: value.description as string, amountCents: value.amountCents as string, gstCents: value.gstCents as string,
+    ...(value.model !== undefined ? { model: value.model as string } : {}), ...(value.requestCount !== undefined ? { requestCount: value.requestCount as number } : {}),
+    ...(value.usagePeriod !== undefined ? { usagePeriod: value.usagePeriod as string } : {}),
+    ...(value.sourceInvoice !== undefined ? { sourceInvoice: value.sourceInvoice as string } : {}), ...(value.refundId !== undefined ? { refundId: value.refundId as string } : {}) };
+  const used = value.usedBy;
+  if (record(used) && typeof used.displayName === 'string' && LABEL.test(used.displayName))
+    line.usedBy = { displayName: used.displayName, projectId: typeof used.projectId === 'string' && PATH_ID.test(used.projectId) ? used.projectId : null };
+  const c = value.components;
+  if (record(c) && str(c.modelUsageCents, CENTS) && str(c.routingCents, CENTS) && str(c.serviceFeeCents, CENTS)
+    && BigInt(c.modelUsageCents as string) + BigInt(c.routingCents as string) + BigInt(c.serviceFeeCents as string) === BigInt(line.amountCents))
+    line.components = { modelUsageCents: c.modelUsageCents as string, routingCents: c.routingCents as string, serviceFeeCents: c.serviceFeeCents as string };
+  return line;
+}
+const CSV_HEADER = 'invoice_id,request_id,usage_period,usage_date,model,line,amount_nano_aud,amount_cents,gst_cents';
+/** Modelvia's RFC 4180 requests CSV, strictly: its exact header, then one row
+ * per sold request of `invoiceId`. */
+function parseRequestsCsv(text: string, invoiceId: string): ModelviaInvoiceRequest[] {
+  const records: string[][] = []; let row: string[] = [], field = '', quoted = false, i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (quoted) { if (c === '"') { if (text[i + 1] === '"') { field += '"'; i += 2; continue; } quoted = false; i++; continue; } field += c; i++; continue; }
+    if (c === '"' && field === '') { quoted = true; i++; continue; }
+    if (c === ',') { row.push(field); field = ''; i++; continue; }
+    if (c === '\r' && text[i + 1] === '\n') { row.push(field); records.push(row); row = []; field = ''; i += 2; continue; }
+    requireThat(c !== '\r' && c !== '\n', 'modelvia_unreadable', 502);
+    field += c; i++;
+  }
+  requireThat(!quoted && field === '' && row.length === 0 && records.length >= 1 && records[0].join(',') === CSV_HEADER, 'modelvia_unreadable', 502);
+  return records.slice(1).map(r => {
+    requireThat(r.length === 9 && r[0] === invoiceId && REQUEST_ID.test(r[1]) && MONTH.test(r[2]) && (r[4] === '' || LABEL.test(r[4])) && CENTS.test(r[7]) && CENTS.test(r[8]), 'modelvia_unreadable', 502);
+    return { invoiceId, requestId: r[1], usagePeriod: r[2], model: r[4], amountCents: r[7], gstCents: r[8] };
+  });
 }
 
 /** The client-key billing reader from the environment, or undefined when the key
