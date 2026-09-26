@@ -11,7 +11,7 @@ import type { ModelviaCaps, ModelviaClient, ModelviaCustomer } from './modelvia-
 
 const CUSTOMER = 'cus-fictional-office';
 const OPERATOR_SECRET = 'fictional-operator-secret-of-32-chars-never-printed';
-const OPERATOR_ENV = { REALBUD_MODELVIA_BASE_URL: 'https://api.modelvia.dev', REALBUD_MODELVIA_OPERATOR_SECRET: OPERATOR_SECRET,
+const OPERATOR_ENV = { REALBUD_MODELVIA_BASE_URL: 'https://api.modelvia.dev', REALBUD_MODELVIA_SCOPED_SECRET: OPERATOR_SECRET,
   REALBUD_MODELVIA_OPERATOR_SUBJECT: 'realbud-operator', REALBUD_MODELVIA_CLIENT_ID: 'realbud', REALBUD_MODELVIA_MODELS: 'fictional-model' };
 
 function harness() {
@@ -72,8 +72,8 @@ test('apply refuses bad arguments, missing operator env, a bad request cap and a
     [['apply'], {}, 'invalid_arguments'],
     [['set', '--company', 'company-a'], {}, 'invalid_arguments'],
     [['apply', '--company', 'company-a', '--extra'], {}, 'invalid_arguments'],
-    [['apply', '--company', 'company-a'], { REALBUD_MODELVIA_OPERATOR_SECRET: '' }, 'modelvia_unconfigured:REALBUD_MODELVIA_OPERATOR_SECRET'],
-    [['apply', '--company', 'company-a'], { REALBUD_MODELVIA_OPERATOR_SECRET: 'short' }, 'provisioning_unconfigured:REALBUD_MODELVIA_OPERATOR_SECRET'],
+    [['apply', '--company', 'company-a'], { REALBUD_MODELVIA_SCOPED_SECRET: '' }, 'modelvia_unconfigured:REALBUD_MODELVIA_SCOPED_SECRET'],
+    [['apply', '--company', 'company-a'], { REALBUD_MODELVIA_SCOPED_SECRET: 'short' }, 'provisioning_unconfigured:REALBUD_MODELVIA_SCOPED_SECRET'],
     [['apply', '--company', 'company-a'], { REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD: '0' }, 'provisioning_unconfigured:REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD'],
     [['apply', '--company', 'company-absent'], {}, 'tenant_unavailable'],
   ];

@@ -9,9 +9,9 @@ const OPERATOR_SUBJECT = 'realbud-provisioning';
 const CLOCK = Date.parse('2026-09-22T00:00:00Z');
 
 /**
- * Verbatim copy of Modelvia's `managed-gateway/operator-token.ts`
- * (`verifyOperatorToken`) on `codex/neon-release`. Kept here so these tests prove
- * our bearer against THEIR rules rather than against our own assumption of them.
+ * Local copy of Modelvia's `verifyRealBudScopedToken` wire checks on
+ * `codex/realbud-scoped-operator`. Modelvia's independent tests cover its
+ * server-bound client ID and route restrictions.
  */
 function verifyOperatorToken(token: string, secret: string, now: number): { subject: string } {
   if (secret.length < 32) throw new Error('operator_unconfigured');
@@ -25,7 +25,8 @@ function verifyOperatorToken(token: string, secret: string, now: number): { subj
   try { claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')); } catch { claims = null; }
   if (claims === null || typeof claims !== 'object') throw new Error('unauthenticated');
   const c = claims as Record<string, unknown>;
-  if (!(c.aud === 'managed-ai-operator' && typeof c.subject === 'string' && c.subject.length > 0 && c.subject.length <= 320
+  if (!(Object.keys(c).sort().join(',') === 'aud,exp,iat,subject'
+    && c.aud === 'managed-ai-realbud' && typeof c.subject === 'string' && c.subject.length > 0 && c.subject.length <= 320
     && typeof c.iat === 'number' && Number.isSafeInteger(c.iat) && typeof c.exp === 'number' && Number.isSafeInteger(c.exp)
     && c.iat <= now + 60_000 && c.exp > now && c.exp > c.iat && c.exp - c.iat <= 300_000)) throw new Error('unauthenticated');
   return { subject: c.subject as string };
@@ -46,9 +47,9 @@ function transport(handler: (url: string, method: string) => { status?: number; 
   return { seen, fetchLike };
 }
 let clock = CLOCK;
-const client = (t: ReturnType<typeof transport>, operatorSecret: () => string | undefined = () => OPERATOR_SECRET) =>
+const client = (t: ReturnType<typeof transport>, scopedSecret: () => string | undefined = () => OPERATOR_SECRET) =>
   modelviaKeyClient({ serviceOrigin: 'https://api.modelvia.dev', environment: 'production', clientId: 'realbud',
-    allowedModels: ['auto'], operatorSecret, operatorSubject: OPERATOR_SUBJECT, fetch: t.fetchLike, now: () => clock });
+    allowedModels: ['auto'], scopedSecret, operatorSubject: OPERATOR_SUBJECT, fetch: t.fetchLike, now: () => clock });
 
 const project = { projectId: 'rb-install-one', name: 'RealBud installation install-one', customerId: 'cus-office',
   monthlyCapNanoAud: '100000000000', requestCapNanoAud: '1000000000', maxConcurrent: 4 };
@@ -128,10 +129,11 @@ test('a rejected, redirected, unreadable or mismatched mint fails closed without
 
 test('an unset secret or an unusable origin, client id or model list never reaches the network', async () => {
   const t = transport(() => ({ body: {} }));
-  await assert.rejects(() => client(t, () => undefined).revoke('0123456789abcdef'), /modelvia_operator_unconfigured/);
+  await assert.rejects(() => client(t, () => undefined).revoke('0123456789abcdef'), /modelvia_scoped_unconfigured/);
   // Modelvia refuses a secret under 32 characters outright.
-  await assert.rejects(() => client(t, () => 'too-short-secret').revoke('0123456789abcdef'), /modelvia_operator_unconfigured/);
-  const base = { environment: 'production', clientId: 'realbud', allowedModels: ['auto'], operatorSecret: () => OPERATOR_SECRET, operatorSubject: OPERATOR_SUBJECT, fetch: t.fetchLike };
+  await assert.rejects(() => client(t, () => 'too-short-secret').revoke('0123456789abcdef'), /modelvia_scoped_unconfigured/);
+  await assert.rejects(() => client(t, () => `${OPERATOR_SECRET} `).revoke('0123456789abcdef'), /modelvia_scoped_unconfigured/);
+  const base = { environment: 'production', clientId: 'realbud', allowedModels: ['auto'], scopedSecret: () => OPERATOR_SECRET, operatorSubject: OPERATOR_SUBJECT, fetch: t.fetchLike };
   for (const serviceOrigin of ['not a url', 'http://api.modelvia.dev', 'https://api.modelvia.dev/v1', 'https://user:secret@api.modelvia.dev']) {
     assert.throws(() => modelviaKeyClient({ ...base, serviceOrigin }), /modelvia_base_invalid/);
   }
@@ -158,15 +160,15 @@ test('a fresh bearer is minted per request and an old one is no longer accepted'
   // The two-minute window is inside Modelvia's five-minute ceiling.
   const claims = JSON.parse(Buffer.from(second.split('.')[0]!, 'base64url').toString('utf8'));
   assert.equal(claims.exp - claims.iat, 120_000);
-  assert.equal(claims.aud, 'managed-ai-operator');
+  assert.equal(claims.aud, 'managed-ai-realbud');
   clock = CLOCK;
 });
 
 test('operatorToken refuses a short secret, an empty subject and an over-long window', () => {
   assert.deepEqual(verifyOperatorToken(operatorToken(OPERATOR_SECRET, OPERATOR_SUBJECT, CLOCK), OPERATOR_SECRET, CLOCK), { subject: OPERATOR_SUBJECT });
-  assert.throws(() => operatorToken('short', OPERATOR_SUBJECT, CLOCK), /modelvia_operator_unconfigured/);
-  assert.throws(() => operatorToken(OPERATOR_SECRET, '', CLOCK), /modelvia_operator_unconfigured/);
-  assert.throws(() => operatorToken(OPERATOR_SECRET, OPERATOR_SUBJECT, CLOCK, 300_001), /modelvia_operator_unconfigured/);
+  assert.throws(() => operatorToken('short', OPERATOR_SUBJECT, CLOCK), /modelvia_scoped_unconfigured/);
+  assert.throws(() => operatorToken(OPERATOR_SECRET, '', CLOCK), /modelvia_scoped_unconfigured/);
+  assert.throws(() => operatorToken(OPERATOR_SECRET, OPERATOR_SUBJECT, CLOCK, 300_001), /modelvia_scoped_unconfigured/);
 });
 
 const ROTATED = `rbk_fedcba9876543210_${'B'.repeat(43)}`;
