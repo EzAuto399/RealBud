@@ -28,7 +28,8 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fixture } from './testing.ts';
+import { careTermsDraft, fixture } from './testing.ts';
+import { CommercialTermsStore, resaleAcceptanceReference } from './commercial-terms.ts';
 import { GatewayError } from './contracts.ts';
 import type { ComposioOrgClient, HttpTransport } from './composio-org.ts';
 import { customerTermsPolicy, DEFAULT_CLIENT_FUNDED_REFERENCE, modelviaKeyClient, TERMS_EFFECTIVE_LEAD_MS } from './modelvia-keys.ts';
@@ -387,12 +388,26 @@ test('resale is written only from explicit configuration, and its receipt is a r
     assert.equal(routes?.officeAiAccess, undefined);
   } finally { f.close(); }
 
-  const m = liveModelvia(), g = gateway(m, { REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES: '', REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS: '2000',
+  const m = liveModelvia(), g = gateway(m, { REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES: '', REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS: '3000',
     REALBUD_MODELVIA_RESALE_TERMS_REFERENCE: 'fictional-signed-order-7' }); try {
+    // Until the office's billing owner accepts RealBud's terms carrying AI resale, nothing is written.
+    assert.deepEqual((await g.setAccess('realbud-company-a')).terms, { state: 'acceptance_required' });
+    assert.deepEqual(m.posts('/v1/operator/commercial-policies'), []);
+    // Terms at another markup or reference are not this acceptance either.
+    const store = new CommercialTermsStore(g.f.ledger, 'realbud-internal');
+    const accept = (version: string, aiUsage: { billing: 'resale'; markupBasisPoints: number; termsReference: string }) => {
+      const published = store.publish(careTermsDraft(g.f, version, '12500', { aiUsage }));
+      return store.accept(g.f.owner, '2026-09', version, published.digest);
+    };
+    accept('care-v1', { billing: 'resale', markupBasisPoints: 2000, termsReference: 'fictional-signed-order-7' });
+    assert.deepEqual((await g.setAccess('realbud-company-a')).terms, { state: 'acceptance_required' });
+    const acceptance = accept('care-v2', { billing: 'resale', markupBasisPoints: 3000, termsReference: 'fictional-signed-order-7' });
     assert.deepEqual({ ...(await g.setAccess('realbud-company-a')).terms, policyId: undefined }, { state: 'active', created: true, policyId: undefined, customerBilling: 'resale' });
     const [policy] = m.posts('/v1/operator/commercial-policies').map(call => call.body!);
+    // The office's own reference: RealBud's terms reference plus its acceptance digest.
     assert.deepEqual({ markup: policy!.clientMarkupBasisPoints, fee: policy!.platformFeeBasisPoints, reference: policy!.acceptanceReference, billing: policy!.customerBilling, payer: policy!.payer, issuer: policy!.invoiceIssuer },
-      { markup: 2000, fee: 0, reference: 'fictional-signed-order-7', billing: 'resale', payer: 'client', issuer: 'client' });
+      { markup: 3000, fee: 0, reference: resaleAcceptanceReference('fictional-signed-order-7', acceptance), billing: 'resale', payer: 'client', issuer: 'client' });
+    assert.match(String(policy!.acceptanceReference), /^fictional-signed-order-7@[a-f0-9]{32}$/);
     const key = (await g.provision('realbud-company-a')).provisioning.model.key!;
     const answered = await chat(m, key, FIRST, 'realbud-turn-0001');
     const receipt = await receiptOf(m, key, answered.headers.get('x-request-id')!);

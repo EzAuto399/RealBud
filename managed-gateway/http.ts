@@ -5,6 +5,7 @@ import { provisioningError, type InstallationProvisioning } from './provisioning
 import type { OperatorRoutes } from './office-ai-access.ts';
 import type { BillingService } from './billing.ts';
 import { invoiceHtml } from './invoice-html.ts';
+import { marginCsv, previousPeriod } from './office-ai-billing.ts';
 
 export interface PortalIdentity {
   /** Verify audience, expiry, revocation and tenant binding server-side. Never derive
@@ -30,12 +31,14 @@ function reply(res:ServerResponse,status:number,data:unknown) {
  *
  * Routes: GET /health, GET /ready, /v1/connectors/*, POST
  * /v1/portal/installations/{provision,revoke}, the operator-only POST
- * /v1/operator/offices/ai-access, the care-fee routes GET
+ * /v1/operator/offices/ai-access and GET /v1/operator/billing/margins, the
+ * monthly invoice routes GET
  * /v1/portal/commercial-terms, POST /v1/portal/commercial-terms/accept, GET
  * /v1/portal/invoices[/{id}[/document|/receipt]], POST
  * /v1/portal/invoices/{id}/checkout, and the signed POST /v1/webhooks/square.
- * Nothing else. AI rates, caps, usage and invoices are Modelvia's; a care
- * invoice never carries AI usage. */
+ * Nothing else. AI rates, caps, usage and invoices are Modelvia's; a resale
+ * office's monthly invoice carries its finalized Modelvia invoices as AI usage
+ * lines at their exact totals (office-ai-billing.ts). */
 export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigins:ReadonlySet<string>;connectors?:ManagedConnectors;provisioning?:InstallationProvisioning;
   /** Why provisioning is not composed, as a code naming the missing variable — never its value. */
   provisioningUnavailable?:string;
@@ -104,6 +107,23 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
         try { reply(res,200,await options.operator!.officeAiAccess!.set(operator,value)); }
         catch(error) { throw error instanceof GatewayError?error:new GatewayError('office_ai_access_failed',502); }
         return;
+      }
+      // RealBud operator: the owner's per-office margin for one month, JSON or CSV.
+      // Read only; the period defaults to the last closed Brisbane month.
+      if(req.method==='GET' && url.pathname==='/v1/operator/billing/margins') {
+        requireThat(options.operator,'operator_unconfigured',503);
+        try { await options.operator!.authenticate(bearer(req)); } catch { throw new GatewayError('operator_unauthenticated',401); }
+        requireThat(options.operator!.margins,'billing_unavailable',503);
+        const period=url.searchParams.get('period')||previousPeriod(Date.now()), format=url.searchParams.get('format')||'json';
+        requireThat(/^\d{4}-(0[1-9]|1[0-2])$/.test(period),'invalid_billing_period');
+        requireThat(format==='json' || format==='csv','invalid_format');
+        requireThat([...url.searchParams.keys()].every(key=>key==='period' || key==='format'),'invalid_query');
+        const report=await options.operator!.margins!(period);
+        if(format==='csv') {
+          res.writeHead(200,{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':`attachment; filename="realbud-margins-${period}.csv"`,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
+          res.end(marginCsv(report)); return;
+        }
+        reply(res,200,report); return;
       }
       requireThat(url.pathname.startsWith('/v1/portal/'),'not_found',404);
       const actor=await options.portal.authenticate(bearer(req));

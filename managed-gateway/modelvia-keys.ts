@@ -204,25 +204,45 @@ export interface CustomerTermsPolicy {
   /** RealBud companyIds whose AI RealBud absorbs (the owner's and internal offices). */
   clientFundedCompanies: ReadonlySet<string>;
   clientFundedReference: string;
-  /** Present only when resale is explicitly configured. */
-  resale?: { clientMarkupBasisPoints: number; acceptanceReference: string };
+  /** Present only when resale is explicitly configured: the markup (production
+   * 3000, owner decision 26 September 2026) and the reference of RealBud's
+   * resale terms that each office's billing owner accepts. The reference is not
+   * itself an acceptance: each office's policy carries its own (below). */
+  resale?: { clientMarkupBasisPoints: number; termsReference: string };
 }
 /** The owner's decision that RealBud's own AI use is a client-funded internal
  * cost (docs/decisions/2026-09-24-modelvia-sole-billing.md). */
 export const DEFAULT_CLIENT_FUNDED_REFERENCE = 'realbud-owner-decision-2026-09-24-internal-ai';
+/** The documented production resale values (docs/decisions/2026-09-26-modelvia-commercial-terms.md). */
+export const PRODUCTION_RESALE_MARKUP_BASIS_POINTS = 3000;
+export const PRODUCTION_RESALE_TERMS_REFERENCE = 'realbud-office-terms-2026-09-26-ai-resale-30pct';
 const REFERENCE = /^[\x21-\x7e][\x20-\x7e]{0,198}[\x21-\x7e]$/;
-/** The terms for one office: client-funded when listed, resale when resale is
- * configured, otherwise none (the operator has not decided how it is billed). */
-export function termsForCompany(policy: CustomerTermsPolicy, companyId: string): CustomerTerms | undefined {
-  if (policy.clientFundedCompanies.has(companyId)) return { customerBilling: 'client_funded', acceptanceReference: policy.clientFundedReference };
-  return policy.resale ? { customerBilling: 'resale', ...policy.resale } : undefined;
+/** What to write for one office. */
+export type OfficeTermsDecision =
+  | { terms: CustomerTerms }
+  /** This deployment has not said how the office is billed. */
+  | { state: 'unconfigured' }
+  /** Resale is configured, but the office's billing owner has not accepted
+   * RealBud's terms with that markup and reference yet. Nothing is written. */
+  | { state: 'acceptance_required' };
+/** The terms for one office: client-funded when listed; resale when resale is
+ * configured AND the office accepted it, under the office's own acceptance
+ * reference (`resaleAcceptance`, from commercial-terms.ts); otherwise none. */
+export function termsForCompany(policy: CustomerTermsPolicy, companyId: string,
+  resaleAcceptance: (resale: { markupBasisPoints: number; termsReference: string }) => string | undefined = () => undefined): OfficeTermsDecision {
+  if (policy.clientFundedCompanies.has(companyId)) return { terms: { customerBilling: 'client_funded', acceptanceReference: policy.clientFundedReference } };
+  if (!policy.resale) return { state: 'unconfigured' };
+  const acceptanceReference = resaleAcceptance({ markupBasisPoints: policy.resale.clientMarkupBasisPoints, termsReference: policy.resale.termsReference });
+  if (!acceptanceReference) return { state: 'acceptance_required' };
+  return { terms: { customerBilling: 'resale', clientMarkupBasisPoints: policy.resale.clientMarkupBasisPoints, acceptanceReference } };
 }
 /**
  * The terms policy from the environment. Every value is non-secret.
  *   REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES   comma-separated companyIds
  *   REALBUD_MODELVIA_CLIENT_FUNDED_REFERENCE   optional acceptance reference
- *   REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS  0..100000, resale only
- *   REALBUD_MODELVIA_RESALE_TERMS_REFERENCE      required with the markup
+ *   REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS  0..100000, resale only (production 3000)
+ *   REALBUD_MODELVIA_RESALE_TERMS_REFERENCE      required with the markup; an id
+ *     (it is joined to each office's acceptance digest, inside Modelvia's 200 chars)
  * A malformed value is reported by name, never by value.
  */
 export function customerTermsPolicy(env: NodeJS.ProcessEnv): CustomerTermsPolicy | { unavailable: string } {
@@ -234,8 +254,8 @@ export function customerTermsPolicy(env: NodeJS.ProcessEnv): CustomerTermsPolicy
   const markup = value('REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS'), resaleReference = value('REALBUD_MODELVIA_RESALE_TERMS_REFERENCE');
   if (!markup && !resaleReference) return { clientFundedCompanies: new Set(companies), clientFundedReference };
   if (!/^(0|[1-9][0-9]{0,5})$/.test(markup) || Number(markup) > 100_000) return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_RESALE_MARKUP_BASIS_POINTS' };
-  if (!REFERENCE.test(resaleReference)) return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_RESALE_TERMS_REFERENCE' };
-  return { clientFundedCompanies: new Set(companies), clientFundedReference, resale: { clientMarkupBasisPoints: Number(markup), acceptanceReference: resaleReference } };
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,159}$/.test(resaleReference)) return { unavailable: 'provisioning_unconfigured:REALBUD_MODELVIA_RESALE_TERMS_REFERENCE' };
+  return { clientFundedCompanies: new Set(companies), clientFundedReference, resale: { clientMarkupBasisPoints: Number(markup), termsReference: resaleReference } };
 }
 /** What `ensureCustomerTerms` found or wrote. `policyId` is Modelvia's policy id,
  * which this client never builds from a customer id. */
@@ -292,7 +312,7 @@ export interface ModelviaCustomerAdmin {
 }
 export type ModelviaOperatorClient = ModelviaClient & ModelviaCustomerAdmin;
 
-function origin(raw: string): string {
+export function modelviaOrigin(raw: string): string {
   let url: URL; try { url = new URL(raw); } catch { throw new GatewayError('modelvia_base_invalid', 503); }
   const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
   requireThat(!url.username && !url.password && !url.hash && !url.search && url.pathname === '/' && (url.protocol === 'https:' || (url.protocol === 'http:' && loopback)), 'modelvia_base_invalid', 503);
@@ -355,7 +375,7 @@ export function modelviaKeyClient(options: {
   /** Injected clock: the minted token's window must match Modelvia's. */
   now?: () => number;
 }): ModelviaOperatorClient & ModelviaTermsClient {
-  const base = origin(options.serviceOrigin);
+  const base = modelviaOrigin(options.serviceOrigin);
   requireThat(ACCOUNT_ID.test(options.clientId), 'modelvia_client_id_invalid', 503);
   requireThat(options.operatorSubject.length > 0 && options.operatorSubject.length <= 320, 'modelvia_operator_subject_invalid', 503);
   requireThat(ACCOUNT_ID.test(options.environment), 'modelvia_environment_invalid', 503);

@@ -731,13 +731,19 @@ export function customerBoundTo(ledger: UsageLedger, companyId: string, customer
 }
 /** Operator-only: record that `customerId` is `companyId`'s Modelvia customer.
  * A customer already bound to another office is refused; an office may be
- * moved to a new customer by its operator. */
+ * moved to a new customer by its operator, unless it has accepted AI resale
+ * (409 `office_customer_rebind_blocked`). */
 export function bindOfficeCustomer(ledger: UsageLedger, companyId: string, customerId: string): void {
   id(companyId); requireThat(MODELVIA_CUSTOMER.test(customerId), 'invalid_modelvia_customer');
   ensureCustomerBindingTable(ledger);
   ledger.db.transaction(() => {
     const other = ledger.db.get<{ tenant: string }>('SELECT tenant FROM office_modelvia_customer WHERE customer=? AND tenant<>?', customerId, companyId);
     requireThat(!other, 'modelvia_customer_bound_elsewhere', 409);
+    // An office that accepted AI resale is billed from its bound customer's
+    // Modelvia invoices; moving it would strand that customer's unbilled AI.
+    const current = ledger.db.get<{ customer: string }>('SELECT customer FROM office_modelvia_customer WHERE tenant=?', companyId);
+    requireThat(!current || current.customer === customerId
+      || !ledger.db.get("SELECT seq FROM events WHERE tenant=? AND kind='ai_resale_terms_accepted' LIMIT 1", companyId), 'office_customer_rebind_blocked', 409);
     ledger.db.run('INSERT INTO office_modelvia_customer(tenant,customer) VALUES(?,?) ON CONFLICT(tenant) DO UPDATE SET customer=excluded.customer', companyId, customerId);
   });
 }

@@ -16,6 +16,9 @@ import { createGatewayServer, type PortalIdentity } from './http.ts';
 import { composeProvisioning, fileSecretStore, modelviaOperatorState, type SecretStore } from './provisioning.ts';
 import { composeOperatorRoutes, operatorAccessState } from './office-ai-access.ts';
 import { BillingService } from './billing.ts';
+import { composeModelviaClientBilling } from './modelvia-client-billing.ts';
+import { customerTermsPolicy } from './modelvia-keys.ts';
+import { officeMargins } from './office-ai-billing.ts';
 import { SquareHostedPaymentAdapter } from './square-payment.ts';
 
 export type GatewayServerOptions = Parameters<typeof createGatewayServer>[0];
@@ -99,6 +102,14 @@ export function composeGateway(options: {
   // Square is reached only in an explicit sandbox or live collection mode; the
   // ungated transport is what those modes asked for.
   const care = composeCareCollection({ env, ledger, fetch: options.fetch });
+  // The owner's margin view: care from this ledger, AI from Modelvia under the
+  // client key (read only, behind the same provider gate).
+  if (operator) {
+    const modelvia = composeModelviaClientBilling({ env, fetch: gatedFetch });
+    const policy = customerTermsPolicy(env);
+    const clientFundedCompanies = 'unavailable' in policy ? new Set<string>() : policy.clientFundedCompanies;
+    operator.margins = period => officeMargins({ billing: care.billing, ...(modelvia ? { modelvia } : {}), clientFundedCompanies }, period);
+  }
   // The store provisioning writes. When provisioning is not composed, the same
   // directory is still read, so devices it admitted earlier keep working.
   let secrets: SecretStore | undefined;
