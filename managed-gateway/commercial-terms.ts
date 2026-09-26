@@ -12,7 +12,7 @@ export interface CommercialTerms {
   companyId:string; period:string; version:string;
   /** `tradingName` is optional and shown on invoices beside the registered
    * name; name, address and ABN must match the office's entitlement record. */
-  customer:{name:string;address:string;abn?:string;tradingName?:string};
+  customer:{name:string;address:string;abn?:string;tradingName?:string;/** Exact office-approved recipient for this month's invoice. Absent on legacy terms. */billingEmail?:string};
   seller:SellerBasis;
   tax:{currency:'AUD';gstInclusive:true;gstBasisPoints:1000;treatmentRef:string};
   sellerVerificationRef:string; customerTermsRef:string;
@@ -44,6 +44,15 @@ export interface CollectionInvoiceBinding {invoiceId:string;companyId:string;per
 const hex=(value:string)=>/^[a-f0-9]{64}$/.test(value);
 const month=(value:string)=>/^\d{4}-(0[1-9]|1[0-2])$/.test(value);
 const meaningful=(value:string,max=500)=>typeof value==='string' && value.trim().length>0 && value.length<=max;
+/** An exact single mailbox: reject whitespace, controls, display names and
+ * Unicode lookalikes instead of silently normalising the accepted address. */
+export function validBillingEmail(value:unknown):value is string {
+  if(typeof value!=='string' || value.length>254 || !/^[\x21-\x7e]+$/.test(value)) return false;
+  const parts=value.split('@');
+  if(parts.length!==2 || parts[0].length<1 || parts[0].length>64 || !/^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+$/.test(parts[0]) || parts[0].startsWith('.') || parts[0].endsWith('.') || parts[0].includes('..')) return false;
+  const labels=parts[1].split('.');
+  return labels.length>=2 && labels.every(label=>label.length>0 && label.length<=63 && /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label)) && /^[A-Za-z]{2,63}$/.test(labels.at(-1)!);
+}
 
 export class CommercialTermsStore {
   readonly ledger:UsageLedger;
@@ -73,7 +82,7 @@ export class CommercialTermsStore {
    * must separately accept the exact published digest. */
   publish(draft:CommercialTermsDraft) {
     object(draft);exact(draft as unknown as Record<string,unknown>,['companyId','period','version','customer','seller','tax','sellerVerificationRef','customerTermsRef','careCents','careAgreementRef','rateCards',...(draft.aiUsage===undefined?[]:['aiUsage'])]);
-    object(draft.customer);exact(draft.customer as Record<string,unknown>,['name','address',...(draft.customer.abn===undefined?[]:['abn']),...(draft.customer.tradingName===undefined?[]:['tradingName'])]);
+    object(draft.customer);exact(draft.customer as Record<string,unknown>,['name','address',...(draft.customer.abn===undefined?[]:['abn']),...(draft.customer.tradingName===undefined?[]:['tradingName']),...(draft.customer.billingEmail===undefined?[]:['billingEmail'])]);
     object(draft.seller);exact(draft.seller as unknown as Record<string,unknown>,['legalName','product','abn','address','gstRegistered']);
     object(draft.tax);exact(draft.tax as unknown as Record<string,unknown>,['currency','gstInclusive','gstBasisPoints','treatmentRef']);
     this.outside(draft.companyId);id(draft.version);
@@ -81,6 +90,7 @@ export class CommercialTermsStore {
     const tenant=this.serving(draft.companyId);
     requireThat(draft.customer.name===tenant.customerName && draft.customer.address===tenant.customerAddress && draft.customer.abn===tenant.customerAbn,'commercial_customer_mismatch',409);
     requireThat(draft.customer.tradingName===undefined || (meaningful(draft.customer.tradingName,200) && !/[\u0000-\u001f\u007f]/.test(draft.customer.tradingName)),'commercial_customer_invalid',409);
+    requireThat(draft.customer.billingEmail===undefined || validBillingEmail(draft.customer.billingEmail),'commercial_billing_email_invalid',409);
     requireThat(meaningful(draft.seller.legalName,200) && meaningful(draft.seller.address) && draft.seller.product==='RealBud' && /^\d{11}$/.test(draft.seller.abn) && draft.seller.gstRegistered===true,'seller_basis_invalid',409);
     requireThat(draft.tax.currency==='AUD' && draft.tax.gstInclusive===true && draft.tax.gstBasisPoints===1000 && meaningful(draft.tax.treatmentRef,160),'tax_basis_invalid',409);
     [draft.sellerVerificationRef,draft.customerTermsRef].forEach(value=>{id(value);});

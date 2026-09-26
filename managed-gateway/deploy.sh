@@ -103,8 +103,27 @@ esac
 [[ "${REALBUD_MODELVIA_CLIENT_KEY:-}" =~ ^mgt_[a-f0-9]{16}_[A-Za-z0-9_-]{43}$ ]] ||
   fail "REALBUD_MODELVIA_CLIENT_KEY must be RealBud's Modelvia client integration key (mgt_…); value not echoed"
 
+# --- Monthly invoice email (separate from Supabase Auth SMTP) --------------
+# Default off. A reviewed protected Sending key and verified sender are needed
+# before close may call Resend; never read or print either value here.
+invoice_email_mode="${REALBUD_INVOICE_EMAIL_MODE:-off}"
+invoice_email_key="${REALBUD_INVOICE_RESEND_API_KEY:-}"
+case "$invoice_email_mode" in
+  off) ;;
+  resend)
+    [[ -n "${REALBUD_INTERNAL_COMPANY_ID:-}" ]] ||
+      fail "REALBUD_INTERNAL_COMPANY_ID is required when REALBUD_INVOICE_EMAIL_MODE=resend"
+    [[ ${#invoice_email_key} -ge 20 ]] && one_line "$invoice_email_key" ||
+      fail "REALBUD_INVOICE_RESEND_API_KEY must be a protected key of at least 20 characters without line breaks"
+    [[ -n "${REALBUD_INVOICE_FROM:-}" ]] && one_line "$REALBUD_INVOICE_FROM" &&
+      node --experimental-strip-types --input-type=module -e 'import { validBillingEmail } from "./commercial-terms.ts"; process.exit(validBillingEmail(process.env.REALBUD_INVOICE_FROM) ? 0 : 1)' >/dev/null 2>&1 ||
+      fail "REALBUD_INVOICE_FROM must be one exact sender mailbox accepted by the gateway"
+    ;;
+  *) fail "REALBUD_INVOICE_EMAIL_MODE must be off or resend" ;;
+esac
+
 if [[ "${1:-}" == "--check" ]]; then
-  echo "Deployment preflight passed for REALBUD_PAYMENT_MODE=$payment_mode (no Fly changes made)"
+  echo "Deployment preflight passed for REALBUD_PAYMENT_MODE=$payment_mode, REALBUD_INVOICE_EMAIL_MODE=$invoice_email_mode (no Fly changes made)"
   exit 0
 fi
 
@@ -130,6 +149,11 @@ fly volumes list -a realbud-managed-gateway 2>/dev/null | grep -q gateway_data |
   printf 'REALBUD_MODELVIA_MODELS=%s\n' "$REALBUD_MODELVIA_MODELS"
   printf 'REALBUD_MODELVIA_CLIENT_KEY=%s\n' "$REALBUD_MODELVIA_CLIENT_KEY"
   printf 'REALBUD_PAYMENT_MODE=%s\n' "$payment_mode"
+  printf 'REALBUD_INVOICE_EMAIL_MODE=%s\n' "$invoice_email_mode"
+  if [[ "$invoice_email_mode" == "resend" ]]; then
+    printf 'REALBUD_INVOICE_RESEND_API_KEY=%s\n' "$REALBUD_INVOICE_RESEND_API_KEY"
+    printf 'REALBUD_INVOICE_FROM=%s\n' "$REALBUD_INVOICE_FROM"
+  fi
   # Modelvia commercial terms and the per-request cap: non-secret, set only when
   # exported (DEPLOY.md, "Live Modelvia integration values").
   for name in REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES REALBUD_MODELVIA_CLIENT_FUNDED_REFERENCE \

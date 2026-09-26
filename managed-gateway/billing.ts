@@ -13,6 +13,7 @@ import { canonical, id, integer, nano, requireThat, type PortalPrincipal } from 
 import { digest, UsageLedger } from './ledger.ts';
 import { cents, gstCents, periodAt } from './money.ts';
 import { CommercialTermsStore } from './commercial-terms.ts';
+import { queueInvoiceEmail } from './invoice-email.ts';
 
 export interface InvoiceLine { description:string; amountNanoAud:string; amountCents:string; gstCents:string; creditId?:string; sourceInvoice?:string;
   /** An AI usage line: the Modelvia customer invoice it comes from. Each is one
@@ -33,7 +34,7 @@ export interface AiInvoiceInput extends ConsolidatedAiInvoice { lines?:AiLineInp
 export type AiLineInput = Pick<InvoiceLine,'description'|'amountCents'|'gstCents'|'model'|'requestCount'|'usedBy'|'components'>;
 export interface Invoice {
   id:string; kind:'Tax Invoice'|'Adjustment Note'; mode:'local'|'commercial'; companyId:string; period:string; issuedAt:number;
-  supplier:{legalName:string;product:'RealBud';abn:string;gstRegistered:true;address?:string}; customer:{name:string;address:string;abn?:string;tradingName?:string}; currency:'AUD'; gstInclusive:true;
+  supplier:{legalName:string;product:'RealBud';abn:string;gstRegistered:true;address?:string}; customer:{name:string;address:string;abn?:string;tradingName?:string;billingEmail?:string}; currency:'AUD'; gstInclusive:true;
   lines:InvoiceLine[]; totalCents:string; gstCents:string; careAgreementRef:string|null;
   sourceEventIds:number[];
   /** Absent only on a historical local invoice row; every invoice closed here carries it. */
@@ -91,8 +92,9 @@ export class BillingService {
       AND NOT EXISTS(SELECT 1 FROM refund_intents f WHERE f.credit_event=e.seq) ORDER BY e.seq`,companyId)
       .filter(e=>(JSON.parse(e.body) as CareCredit).period<=period);
   }
-  /** Explicit operator close (`commercial-cli.ts close`). Never schedules, emails
-   * or sends an invoice. The care amount and agreement reference come from the
+  /** Explicit operator close (`commercial-cli.ts close`). It durably queues an
+   * accepted recipient in the same transaction, but never performs network I/O.
+   * The care amount and agreement reference come from the
    * terms the office's billing owner accepted for this exact month; nothing is
    * inferred, prorated or read from usage. */
   finalizeCommercialInvoice(companyId:string,period:string,termsVersion:string,ai?:{invoices:AiInvoiceInput[];deferredPeriods?:string[];modelviaCustomerId?:string;usedBy?:string;chargeDetail?:'all_in'|'itemized'},report?:{existing?:boolean}):Invoice {
@@ -168,6 +170,7 @@ export class BillingService {
       for(const {id:entryId,period:entryPeriod,totalCents,gstCents} of aiInvoices) this.ledger.db.run('INSERT INTO office_ai_consolidations(modelvia_invoice,tenant,period,invoice,body) VALUES(?,?,?,?,?)',entryId,companyId,period,invoice.id,canonical({id:entryId,period:entryPeriod,totalCents,gstCents}));
       if(invoice.aiUsage) this.ledger.db.append(companyId,'ai_usage_consolidated',null,this.ledger.now(),{invoiceId:invoice.id,period,modelviaInvoices:invoice.aiUsage.modelviaInvoices,...(invoice.aiUsage.deferredPeriods?{deferredPeriods:invoice.aiUsage.deferredPeriods}:{})});
       this.commercialTerms!.bindInvoice(invoice);
+      queueInvoiceEmail(this.ledger,invoice,terms.customer.billingEmail,accepted.digest);
       this.ledger.db.append(companyId,'local_invoice_closed',null,this.ledger.now(),{invoiceId:invoice.id,totalCents:invoice.totalCents,digest:digest(invoice)});
       return invoice;
     });
