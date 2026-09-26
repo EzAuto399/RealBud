@@ -34,7 +34,7 @@ async function serverFixture(options:{provisioning?:boolean;customer?:Record<str
     return Response.json({error:'not_found'},{status:404});
   };
   const modelvia=modelviaKeyClient({serviceOrigin:'https://api.modelvia.dev',environment:'production',clientId:'realbud',allowedModels:['auto'],
-    operatorSecret:()=>'fictional-modelvia-operator-secret-32ch',operatorSubject:'realbud-provisioning',fetch:fetchLike,now:f.now});
+    scopedSecret:()=>'fictional-modelvia-operator-secret-32ch',operatorSubject:'realbud-provisioning',fetch:fetchLike,now:f.now});
   const org={async listProjects(){return [];},async createProject(name:string){return {id:'pr_1',name,apiKey:'ak_fictional_project_key_for_tests'};},async deleteProject(){return {revokeJobId:'job-fictional'};}};
   const provisioning=options.provisioning===false?undefined:new InstallationProvisioning({ledger:f.ledger,registry:join(root,'devices.json'),endpoint:'https://managed.example.invalid',
     secrets:fileSecretStore(join(root,'secrets')),org,modelvia,authConfigs:{resolveGmail:async () => 'ac-fictional-readonly'}});
@@ -169,9 +169,13 @@ test('/health carries no billing state and /ready reports the Modelvia operator 
   assert.deepEqual([...f.modelviaCalls,...bare.modelviaCalls],[]);
 });
 
-test('modelviaOperatorState names presence only', ()=>{
-  const full={REALBUD_MODELVIA_BASE_URL:'https://api.modelvia.dev',REALBUD_MODELVIA_OPERATOR_SECRET:'fictional-operator-secret-of-32-chars',REALBUD_MODELVIA_OPERATOR_SUBJECT:'realbud-provisioning',REALBUD_MODELVIA_CLIENT_ID:'realbud',REALBUD_MODELVIA_MODELS:'fictional-model'};
+test('modelviaOperatorState reports only a distinct RealBud-scoped credential', ()=>{
+  const full={REALBUD_MODELVIA_BASE_URL:'https://api.modelvia.dev',REALBUD_MODELVIA_SCOPED_SECRET:'fictional-operator-secret-of-32-chars',REALBUD_MODELVIA_OPERATOR_SUBJECT:'realbud-provisioning',REALBUD_MODELVIA_CLIENT_ID:'realbud',REALBUD_MODELVIA_MODELS:'fictional-model'};
   assert.equal(modelviaOperatorState(full),'configured');
   for(const name of Object.keys(full)) assert.equal(modelviaOperatorState({...full,[name]:' '}),'missing',name);
-  assert.equal(modelviaOperatorState({...full,REALBUD_MODELVIA_OPERATOR_SECRET:'short'}),'missing');
+  assert.equal(modelviaOperatorState({...full,REALBUD_MODELVIA_SCOPED_SECRET:'short'}),'missing');
+  assert.equal(modelviaOperatorState({...full,REALBUD_MODELVIA_SCOPED_SECRET:`${full.REALBUD_MODELVIA_SCOPED_SECRET} `}),'missing');
+  assert.equal(modelviaOperatorState({...full,REALBUD_MODELVIA_SCOPED_SECRET:'',REALBUD_MODELVIA_OPERATOR_SECRET:full.REALBUD_MODELVIA_SCOPED_SECRET}),'missing');
+  for(const name of ['REALBUD_MODELVIA_OPERATOR_SECRET','REALBUD_GATEWAY_PORTAL_SECRET','REALBUD_GATEWAY_OPERATOR_SECRET'])
+    assert.equal(modelviaOperatorState({...full,[name]:full.REALBUD_MODELVIA_SCOPED_SECRET}),'missing',name);
 });

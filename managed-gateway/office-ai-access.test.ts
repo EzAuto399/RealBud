@@ -54,7 +54,7 @@ function fakeModelvia(options: { customers?: Row[]; projects?: Row[]; conflicts?
     return Response.json({ error: 'not_found' }, { status: 404 });
   };
   const client = modelviaKeyClient({ serviceOrigin: 'https://api.modelvia.dev', environment: 'production', clientId: 'realbud', allowedModels: ['auto'],
-    operatorSecret: () => 'fictional-modelvia-operator-secret-32ch', operatorSubject: 'realbud-provisioning', fetch: fetchLike });
+    scopedSecret: () => 'fictional-modelvia-operator-secret-32ch', operatorSubject: 'realbud-provisioning', fetch: fetchLike });
   const posts = () => calls.filter(call => call.method === 'POST');
   return { client, fetchLike, calls, posts, customers, projects };
 }
@@ -145,7 +145,7 @@ test('cap bounds: one cent to A$10,000, whole cents only, whole-number strings o
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { while (cleanups.length) await cleanups.pop()!(); });
 const ENV = { REALBUD_GATEWAY_PORTAL_SECRET: PORTAL_SECRET, REALBUD_GATEWAY_OPERATOR_SECRET: OPERATOR_SECRET, REALBUD_ENABLE_PROVIDER: '1',
-  REALBUD_MODELVIA_BASE_URL: 'https://api.modelvia.dev', REALBUD_MODELVIA_OPERATOR_SECRET: 'fictional-modelvia-operator-secret-32ch',
+  REALBUD_MODELVIA_BASE_URL: 'https://api.modelvia.dev', REALBUD_MODELVIA_SCOPED_SECRET: 'fictional-modelvia-operator-secret-32ch',
   REALBUD_MODELVIA_OPERATOR_SUBJECT: 'realbud-provisioning', REALBUD_MODELVIA_CLIENT_ID: 'realbud', REALBUD_MODELVIA_MODELS: 'fictional-model' };
 const PROJECT: Row = { id: 'rb-install-one', name: 'RealBud installation install-one', active: true, monthlyCapNanoAud: '100000000000', maxConcurrent: 4,
   allowedModels: ['auto'], version: 1, clientId: 'realbud', customerId: CUSTOMER, environments: ['production'], requestCapNanoAud: '1000000000' };
@@ -222,13 +222,21 @@ test('default and custom set the customer, push the cap to ready projects and au
 });
 
 test('disabling writes active=false and pushes nothing to projects', async () => {
-  const r = await routeFixture({ customers: [existing()] });
+  const r = await routeFixture({ customers: [existing({ billingCompanyId: 'company-a' })] });
   const disabled = await r.post(ROUTE, operatorToken(), officeBody({ mode: 'disabled' }));
   assert.deepEqual(disabled, { status: 200, body: { customer: { active: false, monthlyCapNanoAud: '100000000000', created: false }, projects: [] } });
   assert.equal(r.m.customers.get(CUSTOMER)!.active, false);
   assert(!r.m.calls.some(call => call.path === '/v1/operator/projects'));
   assert.equal(r.m.projects.get('rb-install-one')!.version, 1);
   assert.deepEqual(JSON.parse(r.events()[0]!.body), { subject: 'operator:ops@realbud.example', companyId: 'company-a', mode: 'disabled' });
+});
+
+test('an existing customer billed to a different office cannot be changed by this office', async () => {
+  const r = await routeFixture({ customers: [existing()] });
+  const refused = await r.post(ROUTE, operatorToken(), officeBody({ mode: 'disabled' }));
+  assert.deepEqual(refused, { status: 409, body: { error: 'modelvia_billing_account_bound' } });
+  assert.equal(r.m.customers.get(CUSTOMER)!.active, true);
+  assert(!r.m.calls.some(call => call.method === 'POST' && call.path === '/v1/operator/customers'));
 });
 
 test('a foreign customer is 409 with no write; bad bodies and unknown companies are refused before Modelvia', async () => {

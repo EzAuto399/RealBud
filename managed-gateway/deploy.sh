@@ -34,7 +34,7 @@ operator_secret="${REALBUD_GATEWAY_OPERATOR_SECRET:-}"
 missing=()
 for name in \
   REALBUD_COMPOSIO_ORG_KEY \
-  REALBUD_MODELVIA_OPERATOR_SECRET \
+  REALBUD_MODELVIA_SCOPED_SECRET \
   REALBUD_MODELVIA_OPERATOR_SUBJECT \
   REALBUD_MODELVIA_CLIENT_ID \
   REALBUD_MODELVIA_MODELS \
@@ -45,8 +45,15 @@ done
 if (( ${#missing[@]} )); then
   fail "Export these before deploy (values are never echoed): ${missing[*]}"
 fi
-# Modelvia's verifier refuses a shorter operator secret outright.
-(( ${#REALBUD_MODELVIA_OPERATOR_SECRET} >= 32 )) || fail "REALBUD_MODELVIA_OPERATOR_SECRET must be at least 32 characters"
+# Modelvia's scoped verifier refuses a shorter or malformed secret outright.
+(( ${#REALBUD_MODELVIA_SCOPED_SECRET} >= 32 )) || fail "REALBUD_MODELVIA_SCOPED_SECRET must be at least 32 characters"
+one_line "$REALBUD_MODELVIA_SCOPED_SECRET" || fail "REALBUD_MODELVIA_SCOPED_SECRET must not contain line breaks"
+[[ "${REALBUD_MODELVIA_SCOPED_SECRET:0:1}" != [[:space:]] && "${REALBUD_MODELVIA_SCOPED_SECRET: -1}" != [[:space:]] ]] ||
+  fail "REALBUD_MODELVIA_SCOPED_SECRET must not start or end with whitespace"
+[[ "$REALBUD_MODELVIA_SCOPED_SECRET" != "$portal_secret" && "$REALBUD_MODELVIA_SCOPED_SECRET" != "$operator_secret" ]] ||
+  fail "REALBUD_MODELVIA_SCOPED_SECRET must be distinct from the gateway portal and operator secrets"
+[[ -z "${REALBUD_MODELVIA_OPERATOR_SECRET:-}" || "$REALBUD_MODELVIA_SCOPED_SECRET" != "$REALBUD_MODELVIA_OPERATOR_SECRET" ]] ||
+  fail "REALBUD_MODELVIA_SCOPED_SECRET must be distinct from the old global Modelvia operator secret"
 # Modelvia matches allowedModels against real route ids; `auto` is a request
 # value, never an allowlist entry, and would admit no model at all.
 [[ ",${REALBUD_MODELVIA_MODELS// /}," != *",auto,"* && ",${REALBUD_MODELVIA_MODELS// /}," != *",AUTO,"* ]] || fail "REALBUD_MODELVIA_MODELS must name Modelvia route ids, not auto"
@@ -143,7 +150,7 @@ fly volumes list -a realbud-managed-gateway 2>/dev/null | grep -q gateway_data |
   printf 'REALBUD_ALLOWED_ORIGINS=%s\n' "https://realbud.app,https://www.realbud.app"
   printf 'REALBUD_ENABLE_PROVIDER=1\n'
   printf 'REALBUD_COMPOSIO_ORG_KEY=%s\n' "$REALBUD_COMPOSIO_ORG_KEY"
-  printf 'REALBUD_MODELVIA_OPERATOR_SECRET=%s\n' "$REALBUD_MODELVIA_OPERATOR_SECRET"
+  printf 'REALBUD_MODELVIA_SCOPED_SECRET=%s\n' "$REALBUD_MODELVIA_SCOPED_SECRET"
   printf 'REALBUD_MODELVIA_OPERATOR_SUBJECT=%s\n' "$REALBUD_MODELVIA_OPERATOR_SUBJECT"
   printf 'REALBUD_MODELVIA_CLIENT_ID=%s\n' "$REALBUD_MODELVIA_CLIENT_ID"
   printf 'REALBUD_MODELVIA_MODELS=%s\n' "$REALBUD_MODELVIA_MODELS"
