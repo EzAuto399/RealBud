@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgencySetupObservations, AgencySetupView } from '../shared/agency-setup.ts';
 import type { MailHistoryStatus } from '../shared/mail-ingestion.ts';
+import { managedMailBindingRevision } from './managed-connectors.ts';
 import { createAgencySetupService, defaultAgencySettings, validateAgencySettings } from './agency-setup.ts';
 import { plantPrivateFile, privateTempRoot, removeFixture } from './testing/private-fixture.ts';
 
@@ -84,7 +85,7 @@ describe('private reusable agency setup', () => {
   });
   it('rejects unknown accounts and properties, duplicate normalized references and spreadsheet formulas', async () => {
     const f = await fixture(), settings = f.settings(); settings.gmailAccountId = 'another-agency-mail';
-    await expect(f.service.save({ expectedRevision: 0, settings })).rejects.toThrow(/private Gmail account/);
+    await expect(f.service.save({ expectedRevision: 0, settings })).rejects.toThrow(/Gmail account/);
     settings.gmailAccountId = 'mail-agency-a'; settings.propertyReferences[0].propertyId = 'another-agency-property';
     await expect(f.service.save({ expectedRevision: 0, settings })).rejects.toThrow(/property is unavailable/);
     expect(() => validateAgencySettings({ ...f.settings(), propertyReferences: [{ propertyId: 'a', reference: 'Ref1', aliases: [] }, { propertyId: 'b', reference: 'ref1', aliases: [] }] })).toThrow(/unique/);
@@ -177,7 +178,7 @@ describe('private reusable agency setup', () => {
     await never.service.save({ expectedRevision: 0, settings: never.settings() });
     const unchecked = await gmailCheck(never.service);
     expect(unchecked.state).toBe('needed');
-    expect(unchecked.detail).toContain('Choose an account and verify its current private read access.');
+    expect(unchecked.detail).toContain('Choose an account and verify its current read access.');
     expect(unchecked.detail).not.toBe(expired.detail);
     expect(unchecked.nextAction).not.toBe(expired.nextAction);
   });
@@ -261,4 +262,20 @@ describe('private reusable agency setup', () => {
     await f.service.save({ expectedRevision: 1, settings: { ...f.settings(), agencyName: 'Changed office details' } }); release();
     await expect(admission).rejects.toMatchObject({ status: 409, code: 'agency_setup_stale' });
   });
+});
+
+
+it('requires a new workflow review when the same shared mailbox policy is revoked and regranted', async () => {
+  const f = await fixture();
+  const binding = (revision: number) => managedMailBindingRevision('workspace-a', 'property', undefined, { sourceKind: 'office_shared', policyRevision: revision, services: { gmail: { connected: true, status: 'ACTIVE', accountSelectionRequired: false, accounts: [{ id: 'mail-agency-a', status: 'ACTIVE' }] } } });
+  f.observed.gmail!.sourceKind = 'office_shared'; f.observed.gmail!.bindingRevision = binding(1);
+  let view = await f.service.save({ expectedRevision: 0, settings: f.settings() });
+  const row = view.workflows.find(item => item.id === 'morning-priorities')!;
+  view = await f.service.review(row.id, { expectedRevision: view.state.revision, expectedEvidenceDigest: row.evidenceDigest });
+  expect(view.gmailSourceKind).toBe('office_shared');
+  expect(view.workflows.find(item => item.id === row.id)!.readyForRun).toBe(true);
+  f.observed.gmail!.bindingRevision = binding(3);
+  const changed = await f.service.get();
+  expect(changed.workflows.find(item => item.id === row.id)!.reviewed).toBe(false);
+  await expect(f.service.assertWorkflowReady(row.id)).rejects.toThrow();
 });
