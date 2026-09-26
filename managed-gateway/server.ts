@@ -15,6 +15,7 @@ import { verifyPortalToken } from "./portal-token.ts";
 import { GatewayError, requireThat } from "./contracts.ts";
 import { composeGateway } from "./composition.ts";
 import { ledgerPath, loadLocalEnv } from "./local-env.ts";
+import { composeResendInvoiceEmail, drainInvoiceEmails } from "./invoice-email.ts";
 
 loadLocalEnv();
 
@@ -68,7 +69,20 @@ const composition = composeGateway({
   },
 });
 const { modelviaOperator, operatorAccess, careCollection } = composition;
+const invoiceEmail=composeResendInvoiceEmail(process.env);
+const emailBilling=composition.server.billing;
+if(invoiceEmail) requireThat(emailBilling?.commercialTerms,'invoice_email_commercial_terms_unavailable',503);
 const server = createGatewayServer(composition.server);
+let emailDrain:Promise<void>|undefined;
+let emailTimer:NodeJS.Timeout|undefined;
+let stopping=false;
+const runEmailDrain=()=>{
+  if(!invoiceEmail || !emailBilling || stopping || emailDrain) return;
+  emailDrain=drainInvoiceEmails(emailBilling,invoiceEmail)
+    .then(result=>{if(result.scanned) console.log(JSON.stringify({invoiceEmailDrain:'result',...result}));})
+    .catch(()=>{console.error(JSON.stringify({invoiceEmailDrain:'failed'}));})
+    .finally(()=>{emailDrain=undefined;});
+};
 
 server.listen(port, host, () => {
   console.log(
@@ -81,13 +95,19 @@ server.listen(port, host, () => {
       modelviaOperator,
       operatorAccess,
       careCollection,
+      invoiceEmail:invoiceEmail?'resend':'off',
     }),
   );
+  if(invoiceEmail) {runEmailDrain();emailTimer=setInterval(runEmailDrain,60_000);}
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
-    server.close(() => {
+    if(stopping) return;
+    stopping=true;
+    if(emailTimer) clearInterval(emailTimer);
+    server.close(async () => {
+      await emailDrain;
       db.close();
       process.exit(0);
     });
