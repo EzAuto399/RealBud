@@ -238,17 +238,19 @@ function composio(): ComposioOrgClient & { created: string[] } {
 }
 
 /** The gateway as production composes it, over the stand-in. */
+const authConfigResponse = () => Response.json({ items: [{ id: 'ac-fictional-readonly', name: 'realbud-gmail-readonly-v1', toolkit: { slug: 'gmail' }, auth_scheme: 'OAUTH2', is_composio_managed: true, status: 'ENABLED', credentials: { scopes: 'https://www.googleapis.com/auth/gmail.readonly' } }], next_cursor: null });
+
 function gateway(m: ReturnType<typeof liveModelvia>, env: Record<string, string> = {}) {
   const f = fixture(), root = mkdtempSync(join(tmpdir(), 'realbud-live-contract-')), org = composio();
   const full: NodeJS.ProcessEnv = {
     REALBUD_ENABLE_PROVIDER: '1', REALBUD_GATEWAY_SECRETS_DIR: join(root, 'secrets'), REALBUD_GATEWAY_CONNECTOR_REGISTRY: join(root, 'registry', 'devices.json'),
-    REALBUD_GATEWAY_PUBLIC_ORIGIN: 'https://managed.example.invalid', REALBUD_COMPOSIO_ORG_KEY: 'fictional-org-key', REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL: 'ac-fictional-readonly',
+    REALBUD_GATEWAY_PUBLIC_ORIGIN: 'https://managed.example.invalid', REALBUD_COMPOSIO_ORG_KEY: 'fictional-org-key',
     REALBUD_GATEWAY_OPERATOR_SECRET: 'fictional-gateway-operator-secret-000001', REALBUD_GATEWAY_PORTAL_SECRET: 'fictional-gateway-portal-secret-00000001',
     REALBUD_MODELVIA_BASE_URL: 'https://api.modelvia.dev', REALBUD_MODELVIA_OPERATOR_SECRET: OPERATOR_SECRET, REALBUD_MODELVIA_OPERATOR_SUBJECT: 'realbud-provisioning',
     REALBUD_MODELVIA_CLIENT_ID: CLIENT, REALBUD_MODELVIA_MODELS: LIVE_MODELS, REALBUD_MODELVIA_CLIENT_FUNDED_COMPANIES: 'company-a', ...env,
   };
   const operator = composeOperatorRoutes({ env: full, ledger: f.ledger, fetch: m.fetchLike });
-  const composed = composeProvisioning({ env: full, ledger: f.ledger, fetch: m.fetchLike, org });
+  const composed = composeProvisioning({ env: full, ledger: f.ledger, fetch: async (url, init) => url.startsWith('https://backend.composio.dev/api/v3.1/auth_configs?') && init.method === 'GET' ? authConfigResponse() : m.fetchLike(url, init), org });
   assert.ok(operator?.officeAiAccess, 'office AI access is composed');
   assert.ok('provisioning' in composed, 'provisioning is composed');
   const actor = { subject: 'operator:ops@realbud.example', role: OPERATOR_ROLE } as const;

@@ -124,11 +124,24 @@ try {
     return { fixedModel: model, contextLength: 65536, outputCeiling: 256, maxConcurrent: 1, provider: 'in-process fictional SSE' };
   });
   await step('local-realbud-provisioning-gateway', async () => {
-    const projects = [];
+    const projects = [], authConfigs = [];
     const composio = await serve(async (req, res) => {
-      const send = body => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+      const send = (body, status = 200) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
       if (req.method === 'GET' && req.url.startsWith('/org/owner/project/list')) return send({ items: projects });
       if (req.method === 'POST' && req.url.startsWith('/org/owner/project/new')) { const p = { id: 'pr_fictional_app', name: `realbud-${company}` }; projects.push(p); return send({ ...p, api_key: 'ak_fictional_app_project_key_only' }); }
+      if (req.method === 'GET' && req.url.startsWith('/auth_configs?')) {
+        assert.equal(req.headers['x-api-key'], 'ak_fictional_app_project_key_only');
+        return send({ items: authConfigs, next_cursor: null });
+      }
+      if (req.method === 'POST' && req.url === '/auth_configs') {
+        assert.equal(req.headers['x-api-key'], 'ak_fictional_app_project_key_only');
+        const chunks = []; for await (const chunk of req) chunks.push(chunk);
+        const body = JSON.parse(Buffer.concat(chunks).toString());
+        assert.deepEqual(body, { toolkit: { slug: 'gmail' }, auth_config: { type: 'use_composio_managed_auth', name: 'realbud-gmail-readonly-v1', credentials: { scopes: 'https://www.googleapis.com/auth/gmail.readonly' } } });
+        const config = { id: 'ac_fictional_readonly', name: body.auth_config.name, toolkit: { slug: 'gmail' }, auth_scheme: 'OAUTH2', is_composio_managed: true, status: 'ENABLED', credentials: body.auth_config.credentials };
+        authConfigs.push(config);
+        return send({ auth_config: { id: config.id } }, 201);
+      }
       res.writeHead(404).end();
     });
     const gatewayData = join(scratch, 'rb-gateway'); mkdirSync(gatewayData);
@@ -139,7 +152,7 @@ try {
     try { const live = now() - 60000; new UsageLedger(db, Date.now).provisionTenant({ companyId: company, licenseId: 'fictional-app-license', active: true, serviceExpiresAt: now() + 3600000, customerName: 'Fictional app QA', customerAddress: '1 Fictional Street', goLiveAt: live, goLiveEvidence: 'fictional-app-qa', includedUntil: twoMonthsAfter(live), monthlyCapNanoAud: cap, requestCapNanoAud: cap, maxConcurrent: 1 }); } finally { db.close(); }
     const gatewayPort = await port(); gatewayBase = `http://127.0.0.1:${gatewayPort}`;
     const child = launch('realbud-gateway', ['--experimental-strip-types', '--import', join(scratch, 'node-guard.mjs'), 'server.ts'], {
-      HOME: home, PATH: dirname(process.execPath) + ':/usr/bin:/bin', PORT: String(gatewayPort), REALBUD_GATEWAY_DATA: gatewayData, REALBUD_GATEWAY_PORTAL_SECRET: portalSecret, REALBUD_PAYMENT_MODE: 'local', REALBUD_ALLOWED_ORIGINS: gatewayBase, REALBUD_ENABLE_PROVIDER: '1', REALBUD_GATEWAY_SECRETS_DIR: join(scratch, 'gateway-secrets'), REALBUD_GATEWAY_CONNECTOR_REGISTRY: join(scratch, 'registry/devices.json'), REALBUD_GATEWAY_PUBLIC_ORIGIN: 'https://fictional-app-gateway.invalid', REALBUD_COMPOSIO_ORG_KEY: 'fictional-app-org-key', REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL: 'ac-fictional-readonly', REALBUD_COMPOSIO_API_BASE: composio, REALBUD_MODELVIA_BASE_URL: mvBase, REALBUD_MODELVIA_OPERATOR_SECRET: mvSecret, REALBUD_MODELVIA_OPERATOR_SUBJECT: 'fictional-app-vendor', REALBUD_MODELVIA_CLIENT_ID: client, REALBUD_MODELVIA_ENVIRONMENT: 'development', REALBUD_MODELVIA_MODELS: model,
+      HOME: home, PATH: dirname(process.execPath) + ':/usr/bin:/bin', PORT: String(gatewayPort), REALBUD_GATEWAY_DATA: gatewayData, REALBUD_GATEWAY_PORTAL_SECRET: portalSecret, REALBUD_PAYMENT_MODE: 'local', REALBUD_ALLOWED_ORIGINS: gatewayBase, REALBUD_ENABLE_PROVIDER: '1', REALBUD_GATEWAY_SECRETS_DIR: join(scratch, 'gateway-secrets'), REALBUD_GATEWAY_CONNECTOR_REGISTRY: join(scratch, 'registry/devices.json'), REALBUD_GATEWAY_PUBLIC_ORIGIN: 'https://fictional-app-gateway.invalid', REALBUD_COMPOSIO_ORG_KEY: 'fictional-app-org-key', REALBUD_COMPOSIO_API_BASE: composio, REALBUD_MODELVIA_BASE_URL: mvBase, REALBUD_MODELVIA_OPERATOR_SECRET: mvSecret, REALBUD_MODELVIA_OPERATOR_SUBJECT: 'fictional-app-vendor', REALBUD_MODELVIA_CLIENT_ID: client, REALBUD_MODELVIA_ENVIRONMENT: 'development', REALBUD_MODELVIA_MODELS: model,
     }, join(root, 'managed-gateway'));
     await until(async () => { assert.equal(child.exitCode, null, child.qaLog.slice(-2000)); try { return (await call(gatewayBase, '/health', { timeout: 500 })).status === 200; } catch { return false; } }, 'RealBud gateway startup');
     assert.match(child.qaLog, /"provisioning":"composed"/);

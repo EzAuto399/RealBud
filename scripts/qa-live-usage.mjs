@@ -285,18 +285,32 @@ globalThis.fetch=async(input,init)=>{
   });
 
   await step('fake-composio', async () => {
-    // Stands in for the Composio organisation surface: list + create only, the
-    // two calls provisioning makes. A fake is never evidence of a real project.
+    // Stands in for project and project-scoped auth-config calls. A fake is
+    // never evidence of a real Composio project or Google OAuth grant.
     // It remembers what it created, so a second installation of the same company
     // finds the company project instead of looking like an orphaned key.
-    const projects = [];
-    composio = createServer((req, res) => {
+    const projects = [], authConfigs = [];
+    composio = createServer(async (req, res) => {
       const send = (status, value) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(value)); };
       if (req.method === 'GET' && req.url?.startsWith('/org/owner/project/list')) return send(200, { items: projects.map(({ id, name }) => ({ id, name })) });
       if (req.method === 'POST' && req.url?.startsWith('/org/owner/project/new')) {
         const project = { id: `pr_fictional_qa_${projects.length + 1}`, name: `realbud-${COMPANY_ID}` };
         projects.push(project);
         return send(200, { ...project, api_key: 'ak_fictional_live_usage_project_key' });
+      }
+      if (req.method === 'GET' && req.url?.startsWith('/auth_configs?')) {
+        assert(req.headers['x-api-key'] === 'ak_fictional_live_usage_project_key');
+        return send(200, { items: authConfigs, next_cursor: null });
+      }
+      if (req.method === 'POST' && req.url === '/auth_configs') {
+        assert(req.headers['x-api-key'] === 'ak_fictional_live_usage_project_key');
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        const body = JSON.parse(Buffer.concat(chunks).toString());
+        assert(JSON.stringify(body) === JSON.stringify({ toolkit: { slug: 'gmail' }, auth_config: { type: 'use_composio_managed_auth', name: 'realbud-gmail-readonly-v1', credentials: { scopes: 'https://www.googleapis.com/auth/gmail.readonly' } } }), 'unexpected fictional Gmail auth config request');
+        const authConfig = { id: 'ac_fictional_readonly', name: body.auth_config.name, toolkit: { slug: 'gmail' }, auth_scheme: 'OAUTH2', is_composio_managed: true, status: 'ENABLED', credentials: body.auth_config.credentials };
+        authConfigs.push(authConfig);
+        return send(201, { auth_config: { id: authConfig.id } });
       }
       return send(404, { error: 'not_found' });
     });
@@ -341,7 +355,6 @@ globalThis.fetch=async(input,init)=>{
         REALBUD_GATEWAY_CONNECTOR_REGISTRY: join(workspace, 'registry', 'devices.json'),
         REALBUD_GATEWAY_PUBLIC_ORIGIN: 'https://fictional-live-usage.invalid',
         REALBUD_COMPOSIO_ORG_KEY: 'fictional-live-usage-org-key',
-        REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL: 'ac-fictional-readonly',
         REALBUD_COMPOSIO_API_BASE: `http://127.0.0.1:${COMPOSIO_PORT}`,
         REALBUD_MODELVIA_BASE_URL: MV_BASE,
         // The gateway mints a fresh two-minute operator bearer per call from these.

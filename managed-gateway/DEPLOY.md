@@ -35,7 +35,7 @@ The gateway runs on Fly (Sydney) from `deploy.sh` and `fly.toml`. The website ru
 | `REALBUD_GATEWAY_CONNECTOR_REGISTRY` | fly.toml | absolute path of the connector device registry on the volume |
 | `REALBUD_GATEWAY_PUBLIC_ORIGIN` | yes | this service's HTTPS origin, put into `connector.endpoint` |
 | `REALBUD_COMPOSIO_ORG_KEY` | yes | Composio `x-org-api-key`; a vendor credential, never held by customers |
-| `REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL` | yes | the reviewed Gmail read-only OAuth configuration id |
+| Gmail auth config | automatic | Provisioning resolves or creates a Gmail OAuth2 config with `gmail.readonly` inside each office's Composio project. Its project-scoped ID stays on the gateway; do not supply one deploy-wide ID. |
 | `REALBUD_MODELVIA_BASE_URL` | fly.toml | Modelvia origin, `https://api.modelvia.dev` |
 | `REALBUD_MODELVIA_OPERATOR_SECRET` | yes | Modelvia operator HMAC secret, >=32 chars. A fresh two-minute bearer is minted per request; a static token would 401 |
 | `REALBUD_MODELVIA_OPERATOR_SUBJECT` | yes | operator subject in Modelvia's audit trail |
@@ -75,7 +75,7 @@ POST /v1/portal/installations/revoke
 1. The service entitlement.
 2. The Modelvia customer, a read only. It must be bound to this office: a customer-paid customer's `billingCompanyId` must be the `companyId`; a client-paid customer must not be recorded for another office, nor this office for another customer, by the office AI access route. Otherwise 403 `modelvia_customer_not_bound`, before anything is created. A client-paid office never set through that route has no binding to check; set its access once to record one.
 3. It journals the attempt.
-4. It creates or reuses the company's Composio project. The `ak_` key stays in the secret store.
+4. It creates or reuses the company's Composio project and its Gmail read-only auth config. The `ak_` key stays in the secret store; the auth config ID is scoped to that project.
 5. It admits the `rbc_` connector credential by hash.
 6. It creates `rb-<installationId>` under the customer, with the customer's monthly cap and concurrency. The request cap is `REALBUD_MODELVIA_REQUEST_CAP_NANO_AUD` (default A$4), never above the monthly cap.
 7. It mints one key labelled `<companyId>:<installationId>`.
@@ -83,6 +83,10 @@ POST /v1/portal/installations/revoke
 Before step 3, a customer RealBud's client pays for must have a commercial policy in force at Modelvia (see [Office AI access](#office-ai-access), "Terms"). Without one every request would be refused with `customer_terms_required`, so provisioning answers 409 `modelvia_customer_not_ready` and creates nothing, the same answer the website already maps to "set the office's AI access". A delivered installation is not re-checked.
 
 Every installation of an office shares the office's one Composio project and its key; concurrent first provisions of one office create it once. If the new project's key cannot be written to the secret store, the new project is deleted and the call answers 503 `connector_project_key_unwritable`; a resume after `PENDING_RESUME_AFTER_MS` starts clean. If that delete is not confirmed either, provisioning answers 409 `connector_project_key_unavailable` until an operator removes the keyless project. Two projects with the office's name are 409 `connector_project_ambiguous`. The connector routes read each office's key from the same secret store (`REALBUD_GATEWAY_SECRETS_DIR`), falling back to a same-named environment variable only for devices registered by the operator CLI.
+
+Each office's auth config must be confirmed by that office's project key with Gmail OAuth2 and exactly `gmail.readonly` plus permitted sign-in scopes before a device is admitted. If config creation has an uncertain outcome, reconcile that project's configs before resuming; do not create another config blindly. Existing ready device bindings keep their saved auth config IDs.
+
+The billing owner chooses `personal` or `shared` Gmail on the website's Computers page. The gateway stores this office policy and a monotonically increasing revision. In shared mode, owner-only `/v1/portal/mailbox/{authorize,verify,confirm,grants}` connects one private office account, confirms its actual Google address and grants named installations. `/v1/portal/mailbox` reads the current policy; `/v1/portal/mailbox/policy` changes the mode. All mutations require `expectedRevision`; the portal bearer determines the company. Mode changes clear grants and require fresh address confirmation. A desktop receives only a disconnected or granted Gmail status plus the policy revision, never the project key or candidate address. Reads require the reviewed revision after a policy change. Uncertain OAuth outcomes need operator reconciliation.
 
 The first successful call returns the connector credential and model key once. A repeat call returns the same descriptor without them and asks Modelvia nothing. An interrupted call can be resumed after `PENDING_RESUME_AFTER_MS`. The resume reuses the same project, rotates the one labelled key, and never mints a second key.
 

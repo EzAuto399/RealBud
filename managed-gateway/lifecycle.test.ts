@@ -122,6 +122,8 @@ function vendors() {
 /** One gateway over a file-backed ledger, secret store and registry, built by the
  * production composition. `restart()` drops every in-process object and composes
  * a fresh gateway over the same files. */
+const authConfigResponse = () => Response.json({ items: [{ id: 'ac-fictional-readonly', name: 'realbud-gmail-readonly-v1', toolkit: { slug: 'gmail' }, auth_scheme: 'OAUTH2', is_composio_managed: true, status: 'ENABLED', credentials: { scopes: 'https://www.googleapis.com/auth/gmail.readonly' } }], next_cursor: null });
+
 function lifecycle() {
   const root = mkdtempSync(join(tmpdir(), 'realbud-lifecycle-'));
   const dbPath = join(root, 'data', 'ledger.sqlite');
@@ -130,7 +132,7 @@ function lifecycle() {
   const v = vendors();
   const env: NodeJS.ProcessEnv = {
     REALBUD_ENABLE_PROVIDER: '1', REALBUD_GATEWAY_SECRETS_DIR: join(root, 'secrets'), REALBUD_GATEWAY_CONNECTOR_REGISTRY: join(root, 'registry', 'devices.json'),
-    REALBUD_GATEWAY_PUBLIC_ORIGIN: 'https://managed.example.invalid', REALBUD_COMPOSIO_ORG_KEY: ORG_KEY, REALBUD_COMPOSIO_AUTH_CONFIG_GMAIL: 'ac-fictional-readonly',
+    REALBUD_GATEWAY_PUBLIC_ORIGIN: 'https://managed.example.invalid', REALBUD_COMPOSIO_ORG_KEY: ORG_KEY,
     REALBUD_MODELVIA_BASE_URL: 'https://api.modelvia.dev', REALBUD_MODELVIA_OPERATOR_SECRET: 'fictional-modelvia-operator-secret-32ch',
     REALBUD_MODELVIA_OPERATOR_SUBJECT: 'realbud-provisioning', REALBUD_MODELVIA_CLIENT_ID: 'realbud', REALBUD_MODELVIA_MODELS: 'fictional-model',
   };
@@ -151,7 +153,7 @@ function lifecycle() {
     },
   } as unknown as Pick<ConnectorOptions, 'access' | 'authorize' | 'scan'>;
   const portal = { async authenticate(token: string) { if (token !== 'fictional-portal-token') throw new Error('no'); return f.owner; } };
-  const never: HttpTransport = async () => { throw new Error('no network in tests'); };
+  const never: HttpTransport = async (url, init) => { if (url.startsWith('https://backend.composio.dev/api/v3.1/auth_configs?') && init.method === 'GET') return authConfigResponse(); throw new Error('no network in tests'); };
   const compose = (): GatewayComposition => composeGateway({ env, ledger, fetch: never, portal, allowedOrigins: new Set(), org: v.org, modelvia: v.modelvia, connectorAdapters });
   let gateway = compose();
   const request = (installationId: string) => ({ companyId: f.tenant.companyId, installationId, customerId: CUSTOMER, profile: 'property' });
@@ -335,7 +337,7 @@ test('5. a Composio project whose key could not be stored is deleted, and a late
     const flaky: SecretStore = { read: name => store.read(name), remove: name => store.remove(name),
       write: (name, value) => { if (fail) { fail = false; throw new Error('disk full'); } store.write(name, value); } };
     const make = () => new InstallationProvisioning({ ledger: h.ledger(), registry: h.env.REALBUD_GATEWAY_CONNECTOR_REGISTRY!, endpoint: 'https://managed.example.invalid',
-      secrets: flaky, org: h.v.org, modelvia: h.v.modelvia, authConfigs: { gmail: 'ac-fictional-readonly' } });
+      secrets: flaky, org: h.v.org, modelvia: h.v.modelvia, authConfigs: { resolveGmail: async () => 'ac-fictional-readonly' } });
     const error = await failure(make().provision(h.f.owner, h.request('install-one')));
     assert.equal(error?.code, 'connector_project_key_unwritable');
     assert.deepEqual(h.v.composio.deleted, ['pr_fictional1']); assert.deepEqual(h.v.composio.projects, []);
@@ -357,7 +359,7 @@ test('5. when neither the key write nor the cleanup delete succeeds, every later
     const broken: SecretStore = { read: name => store.read(name), remove: name => store.remove(name), write: () => { throw new Error('disk full'); } };
     h.v.composio.deleteFails = true;
     const make = () => new InstallationProvisioning({ ledger: h.ledger(), registry: h.env.REALBUD_GATEWAY_CONNECTOR_REGISTRY!, endpoint: 'https://managed.example.invalid',
-      secrets: broken, org: h.v.org, modelvia: h.v.modelvia, authConfigs: { gmail: 'ac-fictional-readonly' } });
+      secrets: broken, org: h.v.org, modelvia: h.v.modelvia, authConfigs: { resolveGmail: async () => 'ac-fictional-readonly' } });
     assert.equal((await failure(make().provision(h.f.owner, h.request('install-one'))))?.code, 'connector_project_key_unavailable');
     h.later();
     // The project is there without its key: never regenerated, never duplicated.
@@ -457,7 +459,7 @@ test('6. a revoke interrupted after its Modelvia call, or after the Composio del
     const flaky: SecretStore = { read: name => store.read(name), write: (name, value) => store.write(name, value),
       remove: name => { if (fail) { fail = false; throw new Error('io'); } store.remove(name); } };
     const make = () => new InstallationProvisioning({ ledger: h.ledger(), registry: h.env.REALBUD_GATEWAY_CONNECTOR_REGISTRY!, endpoint: 'https://managed.example.invalid',
-      secrets: flaky, org: h.v.org, modelvia: h.v.modelvia, authConfigs: { gmail: 'ac-fictional-readonly' } });
+      secrets: flaky, org: h.v.org, modelvia: h.v.modelvia, authConfigs: { resolveGmail: async () => 'ac-fictional-readonly' } });
     await assert.rejects(() => make().revoke(h.f.owner, { companyId: h.f.tenant.companyId, installationId: 'install-one', deleteProject: true }));
     assert.deepEqual(h.v.composio.deleted, ['pr_fictional1']);
     h.restart();

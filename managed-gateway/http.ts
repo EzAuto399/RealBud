@@ -90,7 +90,9 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
         const profile=req.headers['x-realbud-profile'], session=req.headers['mcp-session-id'];
         requireThat(typeof profile==='string' && /^[a-z0-9-]{1,64}$/.test(profile), 'invalid_connector_profile', 403);
         requireThat(session===undefined || (typeof session==='string' && /^[a-f0-9]{64}$/.test(session)), 'invalid_connector_session', 400);
-        const result=await options.connectors.handle({token:bearer(req),profile,session,method:req.method??'',path:url.pathname,
+        const revision=req.headers['x-realbud-policy-revision'];
+        requireThat(revision===undefined||(typeof revision==='string'&&/^(0|[1-9][0-9]{0,15})$/.test(revision)&&Number.isSafeInteger(Number(revision))),'invalid_mailbox_revision');
+        const result=await options.connectors.handle({token:bearer(req),profile,session,policyRevision:revision===undefined?undefined:Number(revision),method:req.method??'',path:url.pathname,
           body:req.method==='POST'?json(await body(req,32_000)):undefined,signal:abort.signal});
         if(result.session) res.setHeader('mcp-session-id',result.session);
         if(result.body===undefined) { res.writeHead(result.status);res.end(); } else reply(res,result.status,result.body);
@@ -128,6 +130,16 @@ export function createGatewayServer(options:{portal:PortalIdentity;allowedOrigin
       requireThat(url.pathname.startsWith('/v1/portal/'),'not_found',404);
       const actor=await options.portal.authenticate(bearer(req));
       requireThat(actor && ['billing_owner','billing_reader'].includes(actor.role),'forbidden',403);
+      const mailbox=/^\/v1\/portal\/mailbox(?:\/(policy|authorize|verify|confirm|grants))?$/.exec(url.pathname);
+      if(mailbox) {
+        requireThat(options.connectors,'connectors_unavailable',503);
+        requireThat(!url.search && (mailbox[1]?req.method==='POST':req.method==='GET'),'not_found',404);
+        const ownerToken=bearer(req);
+        reply(res,200,await options.connectors.officeMailbox.handle(actor,mailbox[1]??'status',mailbox[1]?json(await body(req,4096)):undefined,async()=>{
+          const current=await options.portal.authenticate(ownerToken);
+          requireThat(current.role==='billing_owner'&&current.companyId===actor.companyId&&current.subject===actor.subject,'forbidden',403);
+        }));return;
+      }
       // Vendor-side installation provisioning and revocation. The authenticated
       // principal is the authority, so a body's companyId is only a confirmation,
       // never an assertion. Service entitlement is checked where it matters:

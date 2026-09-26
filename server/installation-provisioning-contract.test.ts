@@ -45,7 +45,11 @@ function gateway(customer: ModelviaCustomer) {
     async updateProjectCaps() { return { updated: true, version: 2 }; },
   };
   const provisioning = new InstallationProvisioning({ ledger: f.ledger, registry: join(root, 'registry', 'devices.json'), endpoint: 'https://managed.example.invalid',
-    secrets: fileSecretStore(join(root, 'secrets')), org, modelvia, authConfigs: { gmail: 'ac-fictional-readonly' } });
+    secrets: fileSecretStore(join(root, 'secrets')), org, modelvia, authConfigs: { async resolveGmail({ projectKey, allowCreate, beforeCreate }) {
+      expect(projectKey).toBe('ak_fictional_office_project_key_');
+      expect(allowCreate).toBe(true); beforeCreate();
+      return 'ac-fictional-readonly';
+    } } });
   const provision = async (installationId: string) => (await provisioning.provision(f.owner, { companyId: f.tenant.companyId, installationId, customerId: 'cus-fictional-office', profile: HERMES_PIN.profile })).provisioning;
   return { f, provision, close: () => f.close() };
 }

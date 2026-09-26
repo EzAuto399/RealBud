@@ -37,7 +37,7 @@ async function serverFixture(options:{provisioning?:boolean;customer?:Record<str
     operatorSecret:()=>'fictional-modelvia-operator-secret-32ch',operatorSubject:'realbud-provisioning',fetch:fetchLike,now:f.now});
   const org={async listProjects(){return [];},async createProject(name:string){return {id:'pr_1',name,apiKey:'ak_fictional_project_key_for_tests'};},async deleteProject(){return {revokeJobId:'job-fictional'};}};
   const provisioning=options.provisioning===false?undefined:new InstallationProvisioning({ledger:f.ledger,registry:join(root,'devices.json'),endpoint:'https://managed.example.invalid',
-    secrets:fileSecretStore(join(root,'secrets')),org,modelvia,authConfigs:{gmail:'ac-fictional-readonly'}});
+    secrets:fileSecretStore(join(root,'secrets')),org,modelvia,authConfigs:{resolveGmail:async () => 'ac-fictional-readonly'}});
   const server=createGatewayServer({allowedOrigins:new Set(['https://portal.invalid']),...(provisioning?{provisioning}:{}),portal:{async authenticate(bearer){
     if(bearer===OWNER)return f.owner;if(bearer===READER)return {...f.owner,role:'billing_reader'};
     // A signed-in portal user whose company the operator has not entitled.
