@@ -109,6 +109,33 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: pnpm build:server
 
+  managed-gateway:
+    # The managed gateway (billing, ledger, invoices, entitlements) is its own
+    # node --test suite with its own npm lockfile; the main matrix never runs it.
+    # One Linux job: it is pure Node, so a single host is enough.
+    name: managed-gateway typecheck + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      # Root deps supply TypeScript and @types/node; the gateway imports ../shared
+      # and ../server sources. The Electron binary is not needed here.
+      - run: pnpm install --frozen-lockfile
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+      - run: npm ci
+        working-directory: managed-gateway
+      - run: pnpm exec tsc -p managed-gateway/tsconfig.json
+      - run: npm test
+        working-directory: managed-gateway
+
   package-linux:
     # Linux is a desktop beta without an office host: no PostgreSQL runtime is
     # pinned for linux-x64, so this job reports but does not block the matrix,
